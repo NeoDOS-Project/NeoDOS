@@ -1,0 +1,3 @@
+[target.x86_64-unknown-none]
+rustflags = ["-C", "link-arg=-melf_x86_64", "-C", "relocation-model=static"]
+linker = "rust-lld"
