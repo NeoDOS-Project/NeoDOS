@@ -1,0 +1,20 @@
+[package]
+name = "neodos_kernel"
+version = "0.2.0"
+edition = "2021"
+
+[dependencies]
+log = "0.4"
+x86_64 = { version = "0.14.10", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
+lazy_static = { version = "1.4", features = ["spin_no_std"] }
+spin = "0.9"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = false
+debug = true
+
+[[bin]]
+name = "neodos_kernel"
+path = "src/main.rs"

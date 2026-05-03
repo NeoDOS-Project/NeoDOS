@@ -1,0 +1,18 @@
+[package]
+name = "neodos_bootloader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uefi = { version = "0.37", features = ["alloc", "global_allocator", "logger", "panic_handler"] }
+log = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = false
+debug = true
+
+[[bin]]
+name = "neodos_bootloader"
+path = "src/main.rs"
