@@ -11,6 +11,7 @@ use crate::print;
 pub struct DosShell<'a> {
     pub current_dir: [u8; 128],
     pub current_dir_len: usize,
+    pub current_dir_inode: u32,
     pub environment: Environment,
     pub fs: &'a mut NeoDosFs,
     pub cache: &'a mut BlockCache,
@@ -23,6 +24,7 @@ impl<'a> DosShell<'a> {
         let mut shell = DosShell {
             current_dir: [0; 128],
             current_dir_len: 1,
+            current_dir_inode: 0,
             environment: Environment::new(),
             fs,
             cache,
