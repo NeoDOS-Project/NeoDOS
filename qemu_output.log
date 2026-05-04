@@ -21,8 +21,45 @@ NeoDOS Kernel v0.5 - Modern ELF Edition
 [+] Mounting NeoDOS FS...
 [✓] FS: Superblock loaded. Blocks: 2560, Inodes: 256
 [+] NeoDOS FS mounted
-[+] Configuring User Mode Memory...
-Making memory accessible to user: 0x400000 - 0x800000
+[+] Initializing custom Page Tables...
+[+] Custom Page Tables loaded! 4GB identity mapped.
+[+] Starting NeoDOS Shell...
+NeoDOS v0.5 - Shell Started
+Type HELP for a list of commands.
 
-!!! KERNEL PANIC !!!
-Location: src/arch/x64/idt.rs:162
+C:\> dir
+ Directory of C:\
+
+  readme.txt
+  test.bat
+  SYSTEM
+C:\> dir
+ Directory of C:\
+
+  readme.txt
+  test.bat
+  SYSTEM
+C:\> dircd syscd hola
+C:\hola> dir
+ Directory of C:\hola
+
+  readme.txt
+  test.bat
+  SYSTEM
+C:\hola> cd ..
+C:\> dir
+ Directory of C:\
+
+  readme.txt
+  test.bat
+  SYSTEM
+C:\> cd system
+C:\system> dir
+ Directory of C:\system
+
+  readme.txt
+  test.bat
+  SYSTEM
+C:\system> type configg.sys
+File not found
+C:\system> 

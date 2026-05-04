@@ -93,13 +93,12 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     }
 
     // ============================================
-    // PHASE 6: Configure User Mode Memory
+    // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
     // ============================================
-    serial_println!("[+] Configuring User Mode Memory...");
     unsafe {
-        // Map 4MB at 0x400000 with USER_ACCESSIBLE flags (standard location for DOS ELF binaries)
-        arch::x64::paging::make_user_accessible(0x400000, 4 * 1024 * 1024);
+        arch::x64::paging::init_custom_page_tables();
     }
+
 
     // ============================================
     // PHASE 4: Start DOS Shell

@@ -104,11 +104,22 @@ impl<'a> DosShell<'a> {
         }
     }
 
-    fn cmd_dir(&mut self, _args: &[&str]) {
-        // For now, always list root since CD logic is minimal
-        println!(" Directory of C:\\");
+    fn cmd_dir(&mut self, args: &[&str]) {
+        let dir_inode = if args.is_empty() {
+            // List current directory
+            self.current_dir_inode
+        } else {
+            // List specified directory - for now, just support current dir
+            // TODO: Support relative paths like "DIR SUBDIR" or absolute paths
+            self.current_dir_inode
+        };
+        
+        // Display the path
+        let path_str = core::str::from_utf8(&self.current_dir[..self.current_dir_len]).unwrap_or("\\");
+        println!(" Directory of C:{}", path_str);
         println!();
-        if let Err(e) = self.fs.list_root(self.cache, self.ata) {
+        
+        if let Err(e) = self.fs.list_directory(dir_inode, self.cache, self.ata) {
             println!("Error reading directory: {:?}", e);
         }
     }
@@ -141,6 +152,7 @@ impl<'a> DosShell<'a> {
         if path == "\\" {
             self.current_dir_len = 1;
             self.current_dir[0] = b'\\';
+            self.current_dir_inode = 0;  // Root inode is always 0
         } else if path == ".." {
             if self.current_dir_len > 1 {
                 // Find last backslash
@@ -151,6 +163,7 @@ impl<'a> DosShell<'a> {
                     }
                 }
                 self.current_dir_len = if last_bs == 0 { 1 } else { last_bs };
+                self.current_dir_inode = 0;  // Go back to root for now (simplified)
             }
         } else {
             // Very basic CD: just append for now, no validation
@@ -162,6 +175,7 @@ impl<'a> DosShell<'a> {
             let to_copy = if bytes.len() > (128 - self.current_dir_len) { 128 - self.current_dir_len } else { bytes.len() };
             self.current_dir[self.current_dir_len..self.current_dir_len+to_copy].copy_from_slice(&bytes[..to_copy]);
             self.current_dir_len += to_copy;
+            // TODO: Validate directory exists and get its inode
         }
     }
 

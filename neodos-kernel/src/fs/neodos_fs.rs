@@ -182,6 +182,55 @@ impl NeoDosFs {
         Ok(())
     }
 
+    pub fn list_directory(&mut self, inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) 
+        -> Result<(), FsError> 
+    {
+        let inode = self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
+        let mode = inode.mode;
+        let size = inode.size;
+        
+        if (mode & MODE_DIR) == 0 {
+            return Err(FsError::NotADirectory);
+        }
+        
+        let mut bytes_to_read = size as usize;
+        let direct_blocks = inode.direct_blocks;
+        for &block_ptr in &direct_blocks {
+            if bytes_to_read == 0 { break; }
+            
+            let current_block = block_ptr;
+            let block_sector = 200 + (current_block * 8);
+            let to_read_in_block = if bytes_to_read > BLOCK_SIZE { BLOCK_SIZE } else { bytes_to_read };
+            
+            for sector_offset in 0..8 {
+                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                
+                for entry_offset in (0..512).step_by(256) {
+                    let entry: DirectoryEntry = unsafe {
+                        core::ptr::read_unaligned(
+                            sector_data.as_ptr().add(entry_offset) as *const _
+                        )
+                    };
+                    
+                    if entry.inode_num != 0 {
+                        let inode_num = entry.inode_num;
+                        let name_len = entry.name_len;
+                        let name_slice = &entry.name[..name_len as usize];
+                        if let Ok(name) = core::str::from_utf8(name_slice) {
+                            crate::vga::print_str("  ");
+                            crate::vga::print_str(name);
+                            crate::vga::print_str("\r\n");
+                            crate::serial_println!("  {}", name);
+                        }
+                    }
+                }
+            }
+            bytes_to_read -= to_read_in_block;
+        }
+        
+        Ok(())
+    }
+
     pub fn find_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
