@@ -166,7 +166,7 @@ impl<'a> DosShell<'a> {
     }
 
     pub fn run(&mut self) -> ! {
-        println!("NeoDOS v0.5 - Shell Started");
+        println!("NeoDOS v0.6 - FS Started");
         println!("Type HELP for a list of commands.");
         println!();
 
@@ -188,14 +188,7 @@ impl<'a> DosShell<'a> {
                     crate::vga::draw_cursor(cursor_visible);
                 }
 
-                if let Some(scancode) = crate::drivers::keyboard::KeyboardDriver::read_scancode() {
-                    if let Some(ascii) =
-                        crate::drivers::keyboard::KeyboardDriver::scancode_to_ascii(scancode)
-                    {
-                        input::push_byte(ascii);
-                    }
-                }
-
+                // Input comes from IRQ1 keyboard handler which fills the buffer
                 if let Some(byte) = input::pop_byte() {
                     crate::vga::draw_cursor(false);
                     cursor_visible = false;

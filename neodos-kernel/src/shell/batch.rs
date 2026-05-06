@@ -12,7 +12,7 @@ impl<'a> DosShell<'a> {
             }
             
             // Very basic support for simple commands in batch
-            println!("Executing: {}", trimmed);
+            //println!("Executing: {}", trimmed);
             self.execute_line(trimmed);
         }
     }

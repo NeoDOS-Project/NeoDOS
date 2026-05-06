@@ -8,6 +8,7 @@ use uefi::proto::media::file::{File, FileAttribute, FileMode};
 use uefi::proto::media::fs::SimpleFileSystem;
 use uefi::proto::console::gop::GraphicsOutput;
 use uefi::boot::{MemoryType, AllocateType};
+use uefi::mem::memory_map::MemoryMap;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -22,6 +23,10 @@ pub struct FramebufferInfo {
 #[repr(C)]
 pub struct BootInfo {
     pub fb_info: FramebufferInfo,
+    pub memory_map_addr: u64,
+    pub memory_map_size: u64,
+    pub memory_map_desc_size: u64,
+    pub memory_map_desc_version: u32,
 }
 
 #[uefi::entry]
@@ -29,7 +34,7 @@ fn efi_main() -> Status {
     uefi::helpers::init().expect("Failed to initialize UEFI services");
 
     log::info!("========================================");
-    log::info!("NeoDOS Bootloader v0.5 (GOP + ELF)");
+    log::info!("NeoDOS Bootloader v0.6");
     log::info!("========================================");
 
     // 1. Get GOP Framebuffer
@@ -59,11 +64,20 @@ fn efi_main() -> Status {
     // 4. Prepare BootInfo
     // We'll place BootInfo at a fixed address for simplicity, 
     // or just pass it to the kernel entry point.
-    let boot_info = BootInfo { fb_info };
-
     // 5. Exit boot services
     log::info!("[+] Exiting boot services...");
-    let _mmap = unsafe { uefi::boot::exit_boot_services(None) };
+    let mmap = unsafe { uefi::boot::exit_boot_services(None) };
+    let meta = mmap.meta();
+    let mmap_buf = mmap.buffer();
+
+    let boot_info = BootInfo {
+        fb_info,
+        memory_map_addr: mmap_buf.as_ptr() as u64,
+        memory_map_size: meta.map_size as u64,
+        memory_map_desc_size: meta.desc_size as u64,
+        memory_map_desc_version: meta.desc_version,
+    };
+    core::mem::forget(mmap);
 
     // 6. Jump to kernel
     unsafe {

@@ -3,6 +3,15 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 
 const MAX_PROCESSES: usize = 4;
+const IDLE_STACK_SIZE: usize = 4096;
+
+static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
+
+fn idle_task() -> ! {
+    loop {
+        unsafe { core::arch::asm!("hlt") };
+    }
+}
 
 #[repr(C)]
 #[derive(Clone)]
@@ -92,12 +101,28 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
-        Scheduler {
+        let mut scheduler = Scheduler {
             processes: [None, None, None, None],
             current_pid: 0,
             next_pid: 1,
             timer_ticks: 0,
-        }
+        };
+        
+        // Create idle process (PID 0) that can always be scheduled
+        // This prevents panic when timer fires before any processes are added
+        let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
+        let idle_rsp = init_interrupt_stack_frame(idle_stack_top, idle_task as u64);
+
+        scheduler.processes[0] = Some(Process::new(0, idle_task as u64, idle_rsp));
+        
+        scheduler
+    }
+
+    pub fn has_non_idle_processes(&self) -> bool {
+        self.processes
+            .iter()
+            .skip(1)
+            .any(|p| p.as_ref().is_some_and(|proc| proc.state != ProcessState::Terminated))
     }
 
     pub fn add_process(&mut self, entry: u64, stack_base: u64) -> u32 {
@@ -108,24 +133,7 @@ impl Scheduler {
                 
                 // Initialize stack frame for context switch
                 // The stack should look like it was interrupted
-                let mut stack_ptr = stack_base;
-                unsafe {
-                    let stack = stack_ptr as *mut u64;
-                    
-                    // Hardware frame (SS, RSP, RFLAGS, CS, RIP)
-                    stack.offset(-1).write(0x10);        // SS
-                    stack.offset(-2).write(stack_base);   // RSP
-                    stack.offset(-3).write(0x202);       // RFLAGS (Interrupts enabled)
-                    stack.offset(-4).write(0x08);        // CS
-                    stack.offset(-5).write(entry);       // RIP
-                    
-                    // Software frame (RAX to RBP, 15 registers)
-                    for j in 6..21 {
-                        stack.offset(-j).write(0);
-                    }
-                    
-                    stack_ptr -= 20 * 8; // Point to RAX
-                }
+                let stack_ptr = init_interrupt_stack_frame(stack_base, entry);
 
                 self.processes[i] = Some(Process::new(pid, entry, stack_ptr));
                 return pid;
@@ -134,29 +142,53 @@ impl Scheduler {
         panic!("Process table full");
     }
 
+    pub fn current_process_mut(&mut self) -> Option<&mut Process> {
+        let pid = self.current_pid;
+        let idx = self.processes.iter().position(|p| p.as_ref().is_some_and(|proc| proc.pid == pid))?;
+        self.processes[idx].as_mut()
+    }
+
     pub fn current_process(&mut self) -> &mut Process {
-        for proc in self.processes.iter_mut() {
-            if let Some(p) = proc {
-                if p.pid == self.current_pid {
-                    return p;
-                }
-            }
+        let pid = self.current_pid;
+        if let Some(idx) = self
+            .processes
+            .iter()
+            .position(|p| p.as_ref().is_some_and(|proc| proc.pid == pid))
+        {
+            return self.processes[idx].as_mut().unwrap();
         }
-        panic!("Current process not found: {}", self.current_pid);
+
+        // Fallback to idle process if the current PID is stale/corrupted.
+        self.current_pid = 0;
+        self.processes[0]
+            .as_mut()
+            .expect("Idle process missing from scheduler")
     }
 
     pub fn schedule(&mut self) -> *mut Process {
-        // Simple round-robin: next Ready process
+        // Round-robin scheduling with fallback to idle process (PID 0)
         let mut count = 0;
+        let max_attempts = (self.next_pid as usize) + 10;
+        
         loop {
-            self.current_pid += 1;
-            if self.current_pid >= self.next_pid {
-                self.current_pid = 1;
+            count += 1;
+            
+            // Prevent infinite loop - after many attempts, fall back to idle process
+            if count > max_attempts {
+                // Fallback to PID 0 (idle process) if no other process is ready
+                if let Some(idle) = &mut self.processes[0] {
+                    if idle.pid == 0 && idle.state != ProcessState::Terminated {
+                        self.current_pid = 0;
+                        idle.state = ProcessState::Running;
+                        return idle as *mut Process;
+                    }
+                }
+                panic!("No ready processes and idle process is unavailable");
             }
             
-            count += 1;
-            if count > 10 {
-                panic!("No ready processes");
+            self.current_pid += 1;
+            if self.current_pid >= self.next_pid {
+                self.current_pid = 0;  // Wrap to idle process
             }
 
             for proc in self.processes.iter_mut() {
@@ -213,4 +245,28 @@ pub fn init() {
 
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
+}
+
+fn init_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
+    // Timer ISR saves 15 registers (RAX..RBP) and ends with IRETQ.
+    // We pre-build a compatible stack so the first "restore + iretq" lands at `entry`.
+    let mut stack_ptr = stack_top & !0xF;
+    unsafe {
+        let stack = stack_ptr as *mut u64;
+
+        // Interrupt frame pushed by CPU on entry (no privilege change in ring0):
+        // RIP, CS, RFLAGS
+        stack.offset(-1).write(0x202); // RFLAGS
+        stack.offset(-2).write(0x08);  // CS
+        stack.offset(-3).write(entry); // RIP
+
+        // Software-saved regs by timer_handler_asm (15 pushes)
+        for j in 4..19 {
+            stack.offset(-(j as isize)).write(0);
+        }
+
+        // Point to saved RAX (top of software frame)
+        stack_ptr -= 18 * 8;
+    }
+    stack_ptr
 }

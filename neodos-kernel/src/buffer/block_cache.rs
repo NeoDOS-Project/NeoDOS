@@ -4,6 +4,7 @@ use crate::drivers::ata::{AtaDriver, AtaError};
 
 const CACHE_SIZE: usize = 64; // Small cache for now
 
+#[derive(Copy, Clone)]
 struct CacheEntry {
     lba: u32,
     data: [u8; 512],
@@ -19,23 +20,17 @@ pub struct BlockCache {
 
 impl BlockCache {
     pub fn new() -> Self {
-        // Initialize with default values
-        let entries = unsafe {
-            let mut entries: [CacheEntry; CACHE_SIZE] = core::mem::MaybeUninit::uninit().assume_init();
-            for entry in entries.iter_mut() {
-                core::ptr::write(entry, CacheEntry {
-                    lba: 0,
-                    data: [0u8; 512],
-                    valid: false,
-                    dirty: false,
-                    last_access: 0,
-                });
-            }
-            entries
+        // Use const initialization to avoid unsafe code
+        const EMPTY_ENTRY: CacheEntry = CacheEntry {
+            lba: 0,
+            data: [0u8; 512],
+            valid: false,
+            dirty: false,
+            last_access: 0,
         };
-
+        
         BlockCache {
-            entries,
+            entries: [EMPTY_ENTRY; CACHE_SIZE],
             counter: 0,
         }
     }

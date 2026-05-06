@@ -188,13 +188,27 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::tsr::dispatch_interrupt(0x1C);
 
     scheduler.on_timer_tick();
+
+    // If the kernel hasn't created any runnable processes yet, don't attempt a context switch.
+    // Switching to the idle task is safe, but switching away from the current stack while the
+    // rest of the kernel isn't prepared for multitasking tends to be noisy (and can reboot).
+    if !scheduler.has_non_idle_processes() {
+        unsafe {
+            PICS.lock().notify_end_of_interrupt(32);
+        }
+        return current_rsp;
+    }
     
     // Save current process state
     let pid = scheduler.current_pid;
     if pid > 0 {
-        let current = scheduler.current_process();
-        current.rsp = current_rsp;
-        current.state = ProcessState::Ready;
+        if let Some(current) = scheduler.current_process_mut() {
+            current.rsp = current_rsp;
+            current.state = ProcessState::Ready;
+        } else {
+            // Current PID is stale; fall back to idle.
+            scheduler.current_pid = 0;
+        }
     }
     
     // Switch to next process
@@ -210,14 +224,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     use crate::arch::x64::pic::PICS;
+    use crate::drivers::keyboard::KeyboardDriver;
     
-    // Call TSRs for INT 0x21 (DOS Call hook simulation)
-    crate::tsr::dispatch_interrupt(0x21);
-
-    // Minimal keyboard handler: just read and ignore for now
     unsafe {
-        let mut port = x86_64::instructions::port::Port::<u8>::new(0x60);
-        let _scancode = port.read();
+        // Read scancode from keyboard port
+        if let Some(scancode) = KeyboardDriver::read_scancode() {
+            // Convert to ASCII if possible
+            if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
+                // Push to input buffer (synchronized with Mutex)
+                crate::input::push_byte(ascii);
+            }
+        }
         PICS.lock().notify_end_of_interrupt(33);
     }
 }
