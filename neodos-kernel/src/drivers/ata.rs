@@ -56,7 +56,10 @@ impl AtaDriver {
 
     pub fn write_sector(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
         if lba > 0x0FFFFFFF { return Err(()); }
+        self.write_sector_inner(lba, data)
+    }
 
+    fn write_sector_inner(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
         unsafe {
             self.wait_not_busy_simple()?;
             
@@ -118,6 +121,10 @@ impl AtaDriver {
     }
 
     pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        self.read_sector_inner(lba)
+    }
+
+    fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
         self.wait_not_busy()?;
 
         unsafe {

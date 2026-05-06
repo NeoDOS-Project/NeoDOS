@@ -17,6 +17,7 @@ mod shell;
 mod graphics;
 mod font;
 mod tsr;
+mod memory;
 pub mod usermode;
 
 use drivers::ata::AtaDriver;
@@ -30,6 +31,9 @@ const KERNEL_VERSION: &str = "NeoDOS Kernel v0.5 - Modern ELF Edition";
 pub struct BootInfo {
     pub fb_info: FramebufferInfo,
     pub memory_map_addr: u64,
+    pub memory_map_size: u64,
+    pub memory_map_desc_size: u64,
+    pub memory_map_desc_version: u32,
 }
 
 static mut ATA_DRIVER: Option<AtaDriver> = None;
@@ -65,6 +69,11 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     
     serial_println!("[+] Initializing PIC...");
     arch::x64::init_pic();
+
+    // ============================================
+    // PHASE 2.5: Physical memory map / allocator
+    // ============================================
+    memory::init(boot_info);
 
     // ============================================
     // PHASE 3: Storage stack

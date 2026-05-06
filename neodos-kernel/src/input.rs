@@ -1,5 +1,7 @@
 // src/input.rs
 
+use spin::Mutex;
+
 pub struct InputBuffer {
     buffer: [u8; 256],
     head: usize,
@@ -39,16 +41,21 @@ impl InputBuffer {
     }
 }
 
-pub static mut INPUT_BUFFER: InputBuffer = InputBuffer::new();
+pub static INPUT_BUFFER: Mutex<InputBuffer> = Mutex::new(InputBuffer::new());
 
+/// Push byte from IRQ context (interrupts already disabled by hardware during handler)
 pub fn push_byte(byte: u8) {
-    unsafe {
-        let _ = INPUT_BUFFER.push(byte);
-    }
+    let mut buffer = INPUT_BUFFER.lock();
+    let _ = buffer.push(byte);
 }
 
+/// Pop byte from main context (disable interrupts to avoid race with IRQ1)
 pub fn pop_byte() -> Option<u8> {
-    unsafe {
-        INPUT_BUFFER.pop()
-    }
+    crate::arch::x64::disable_interrupts();
+    let result = {
+        let mut buffer = INPUT_BUFFER.lock();
+        buffer.pop()
+    };
+    crate::arch::x64::enable_interrupts();
+    result
 }

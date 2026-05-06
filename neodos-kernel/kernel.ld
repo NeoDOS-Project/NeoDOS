@@ -2,6 +2,7 @@ ENTRY(_start)
 SECTIONS
 {
     . = 0x200000;
+    __kernel_start = .;
     
     .text : {
         *(.text.entry)
@@ -17,4 +18,6 @@ SECTIONS
         *(.bss*)
         *(COMMON)
     }
+
+    __kernel_end = .;
 }
