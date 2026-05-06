@@ -9,7 +9,7 @@ BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x
 [ INFO]:  src/main.rs@062: [✓] Kernel loaded. Entry: 0x200000
 [ INFO]:  src/main.rs@068: [+] Exiting boot services...
 ========================================
-NeoDOS Kernel v0.5 - Modern ELF Edition
+NeoDOS Kernel v0.6 - The Rusty DOS Revival
 ========================================
 [+] Graphics initialized: 1280x800
 [+] Initializing GDT...
@@ -27,36 +27,4 @@ NeoDOS Kernel v0.5 - Modern ELF Edition
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
-C:\> mem
-Physical max: 0x100000000
-Total:    525968 KiB
-Usable:   516996 KiB
-Free:     515928 KiB
-Used:     1068 KiB
-Reserved: 8972 KiB
-C:\> help
-Built-in commands:
-  HELP    - Show this help
-  CLS     - Clear screen
-  DIR     - List directory
-  TYPE    - Display file contents
-  COPY    - Copy file (COPY SRC DST)
-  MD      - Make directory (MD DIRNAME)
-  VOL     - Volume label (VOL [d:])
-  DRIVES  - List mounted drive letters
-  DEL     - Delete file
-  REN     - Rename file
-  SYNC    - Flush disk cache
-  TSR     - Load TSR (TSR FILE INT)
-  DEVICES - List TSRs
-  ECHO    - Print text
-  SET     - Set environment variables
-  CD      - Change directory / switch drive (CD d:)
-  CPUINFO - Show CPU vendor/brand
-  MEM     - Show memory usage
-  VER     - Show version
-  EXIT    - Sync and halt
-C:\> cpuinfo
-CPU Vendor: GenuineIntel
-CPU Brand:  QEMU Virtual CPU version 2.5+
-C:\> ca
+C:\> 

@@ -25,7 +25,7 @@ use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
 
-const KERNEL_VERSION: &str = "NeoDOS Kernel v0.5 - Modern ELF Edition";
+const KERNEL_VERSION: &str = "NeoDOS Kernel v0.6 - The Rusty DOS Revival";
 
 #[repr(C)]
 pub struct BootInfo {
