@@ -33,33 +33,13 @@ C:\> dir
   readme.txt
   test.bat
   SYSTEM
+C:\> quevcopy readme.txt readme.bak
+1024 bytes copied
 C:\> dir
  Directory of C:\
 
   readme.txt
   test.bat
   SYSTEM
-C:\> dircd syscd hola
-C:\hola> dir
- Directory of C:\hola
-
-  readme.txt
-  test.bat
-  SYSTEM
-C:\hola> cd ..
-C:\> dir
- Directory of C:\
-
-  readme.txt
-  test.bat
-  SYSTEM
-C:\> cd system
-C:\system> dir
- Directory of C:\system
-
-  readme.txt
-  test.bat
-  SYSTEM
-C:\system> type configg.sys
-File not found
-C:\system> 
+  readme.bak
+C:\> 

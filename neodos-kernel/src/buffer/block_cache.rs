@@ -66,10 +66,11 @@ impl BlockCache {
             }
         }
 
-        // 3. If LRU entry is dirty, write it back first
+        // 3. If LRU entry is dirty, write it back first (must succeed or we lose metadata)
         if self.entries[lru_idx].valid && self.entries[lru_idx].dirty {
-            // We ignore error here for simplicity in this phase, but should handle it
-            let _ = ata.write_sector(self.entries[lru_idx].lba, &self.entries[lru_idx].data);
+            ata
+                .write_sector(self.entries[lru_idx].lba, &self.entries[lru_idx].data)
+                .map_err(|_| AtaError::Error)?;
         }
 
         // 4. Read from disk
