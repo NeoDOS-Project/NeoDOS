@@ -5,6 +5,8 @@ import sys
 BLOCK_SIZE = 4096
 SECTOR_SIZE = 512
 SUPERBLOCK_MAGIC = 0x4F444F4E  # "NEOD"
+DATA_START_SECTOR = 200
+ROOT_DIR_BLOCK = 0
 
 def create_superblock():
     """Crear superbloque (512 bytes)"""
@@ -92,8 +94,9 @@ def main():
     # 2. Inode table @ sectors 1-63 (125 inodes max)
     print("[*] Writing inode table...")
     
-    # Inode 0: root directory (points to block 0)
-    root_inode = create_inode(0, 0x40, 512, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    # Inode 0: root directory (block 0 is valid and reserved for root directory data)
+    # Directory logical size must cover all directory entries (3 × 256 = 768; use full block).
+    root_inode = create_inode(0, 0x40, BLOCK_SIZE, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512:512+256] = root_inode
     
     # Inode 1: readme.txt (points to block 1)
@@ -116,9 +119,9 @@ def main():
     autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1280:512+1536] = autoexec_inode
     
-    # 3. Root directory block (Block 0) @ sector 200
+    # 3. Root directory block (block 0) @ first data sector
     print("[*] Writing root directory...")
-    offset = 200 * 512
+    offset = (DATA_START_SECTOR + ROOT_DIR_BLOCK * 8) * 512
     
     # Entry 0: readme.txt
     entry = create_dir_entry(1, 1, "readme.txt")  # type=1 (file)

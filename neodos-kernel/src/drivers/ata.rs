@@ -15,6 +15,11 @@ const ATA_PRIMARY_STATUS: u16 = 0x1F7;
 
 const ATA_CMD_READ_PIO: u8 = 0x20;
 
+/// LBA drive-select base (bits 7–4). Must be identical for read and write:
+/// QEMU maps `-drive index=0` to IDE master (`0xE0`) and `index=1` to slave (`0xF0`).
+/// Mismatching read/write caused writes to land on the ESP disk while reads used NeoDOS.
+const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0;
+
 pub struct AtaDriver {
     data_port: Port<u16>,
     _error_port: Port<u8>,
@@ -60,7 +65,7 @@ impl AtaDriver {
             self.lba_mid_port.write(((lba >> 8) & 0xFF) as u8);
             self.lba_high_port.write(((lba >> 16) & 0xFF) as u8);
             
-            let drive_byte = 0xE0 | ((lba >> 24) & 0x0F) as u8;
+            let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8;
             self.drive_sel_port.write(drive_byte);
             
             self.command_port.write(0x30); // WRITE SECTORS
@@ -117,7 +122,7 @@ impl AtaDriver {
 
         unsafe {
             // Select drive (Slave) and LBA high bits
-            self.drive_sel_port.write(0xF0 | ((lba >> 24) & 0x0F) as u8);
+            self.drive_sel_port.write(ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8);
             
             // Set sector count to 1
             self.sector_count_port.write(1);
