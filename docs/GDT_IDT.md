@@ -1,5 +1,7 @@
 # NeoDOS GDT & IDT
 
+This document summarizes the segmentation/interrupt setup as implemented under `neodos-kernel/src/arch/x64/`.
+
 ## Global Descriptor Table (GDT)
 NeoDOS implements a 64-bit GDT with support for Ring 0 (Kernel) and Ring 3 (User) segments.
 

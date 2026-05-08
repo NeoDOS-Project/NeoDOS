@@ -57,6 +57,8 @@ echo ""
 
 qemu-system-x86_64 \
   -machine pc,accel=kvm:tcg \
+  -monitor telnet:127.0.0.1:4444,server,nowait \
+  -gdb tcp::1234 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   -drive format=raw,file="$DISK_IMAGE",index=0,media=disk \

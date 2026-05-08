@@ -1,7 +1,6 @@
 // src/shell/batch.rs
 
 use crate::shell::shell::DosShell;
-use crate::println;
 
 impl<'a> DosShell<'a> {
     pub fn execute_batch(&mut self, content: &str) {

@@ -1,6 +1,6 @@
 # NeoDOS - Minimal x86-64 OS in Rust
 
-A minimal operating system kernel built in Rust with a UEFI bootloader and comprehensive debugging support.
+A minimal operating system written in Rust with a UEFI bootloader, a simple filesystem-backed DOS-like shell, and QEMU/GDB debugging support.
 
 ## Quick Start
 
@@ -16,21 +16,18 @@ This compiles:
 - 64-bit kernel (x86_64-unknown-none)
 - FAT32 disk image with ESP
 
-### Run with Debugging
+### Run (QEMU)
 
-**Terminal 1: Start QEMU**
 ```bash
 bash scripts/qemu-debug.sh
 ```
 
-**Terminal 2: Connect GDB**
+This launches QEMU with serial output redirected to your terminal and saves the full log to `neodos/qemu_output.log`.
+
+### Debug (GDB)
+
 ```bash
 gdb -x .gdbinit
-```
-
-**Terminal 3: View VNC**
-```bash
-vncviewer localhost:5900
 ```
 
 ## Project Structure
@@ -39,10 +36,7 @@ vncviewer localhost:5900
 neodos/
 ├── neodos-bootloader/          # UEFI bootloader
 │   ├── src/
-│   │   ├── main.rs             # efi_main() entry
-│   │   ├── memory.rs           # Memory queries
-│   │   ├── file.rs             # Kernel loader
-│   │   └── panic.rs            # Error handling
+│   │   └── main.rs             # efi_main(), loads kernel ELF and passes memory map
 │   └── Cargo.toml
 │
 ├── neodos-kernel/              # 64-bit kernel
@@ -50,7 +44,9 @@ neodos/
 │   │   ├── main.rs             # _start() entry
 │   │   ├── arch/               # CPU intrinsics
 │   │   ├── vga.rs              # VGA text output
-│   │   └── cpu.rs              # CPUID info
+│   │   ├── cpu.rs              # CPUID info (vendor/brand)
+│   │   ├── memory.rs           # Physical memory stats (for MEM command)
+│   │   └── shell/              # DOS-like shell + commands
 │   ├── kernel.ld               # Linker script
 │   ├── .cargo/config.toml      # Build config
 │   └── Cargo.toml
@@ -61,30 +57,30 @@ neodos/
 │
 ├── .gdbinit                    # GDB configuration
 │
-├── PHASE1.md                   # Phase 1 overview
-├── BOOTLOADER.md               # Bootloader detailed spec
-├── KERNEL.md                   # Kernel detailed spec
-├── DEBUG.md                    # Complete debug guide
-├── ARCHITECTURE.md             # System architecture
+├── docs/                       # Design notes + specs
+│   ├── PHASE1.md               # Phase 1 overview
+│   ├── BOOTLOADER.md           # Bootloader spec
+│   ├── KERNEL.md               # Kernel spec
+│   ├── DEBUG.md                # Debugging guide
+│   └── ARCHITECTURE.md         # System architecture
 └── README.md                   # This file
 ```
 
 ## Features
 
 ✅ **UEFI Bootloader**
-- Loads kernel binary from ESP
-- Displays memory information
-- Transitions to 64-bit mode
+- Loads kernel ELF from the ESP
+- Exits boot services and passes the final UEFI memory map to the kernel
 
 ✅ **64-bit Kernel**
-- VGA text output (80×25 characters)
-- CPU identification (CPUID)
-- Paging state display (CR3, CR4)
+- VGA text output + serial logging
+- CPU identification via `CPUID` (`CPUINFO` shell command)
+- Basic physical memory accounting from the UEFI memory map (`MEM` shell command)
+- DOS-like shell with basic filesystem operations
 
 ✅ **Debugging**
 - GDB breakpoints and inspection
 - QEMU Monitor for machine state
-- VNC GUI output
 - Serial console logging
 
 ✅ **Automated Build**
@@ -94,11 +90,11 @@ neodos/
 
 ## Documentation
 
-- [PHASE1.md](PHASE1.md) - Project overview
-- [BOOTLOADER.md](BOOTLOADER.md) - Bootloader specs
-- [KERNEL.md](KERNEL.md) - Kernel specs
-- [DEBUG.md](DEBUG.md) - Debugging guide
-- [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
+- [`docs/PHASE1.md`](docs/PHASE1.md) - Project overview
+- [`docs/BOOTLOADER.md`](docs/BOOTLOADER.md) - Bootloader spec
+- [`docs/KERNEL.md`](docs/KERNEL.md) - Kernel spec
+- [`docs/DEBUG.md`](docs/DEBUG.md) - Debugging guide
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - System architecture
 
 ## System Requirements
 
@@ -133,7 +129,7 @@ After `bash scripts/build.sh`:
 
 ```
 bootloader.efi     - UEFI application
-kernel.bin         - Kernel binary with magic header
+kernel.bin         - Kernel binary (built from kernel ELF)
 disk_image.img     - FAT32 booteable disk
 qemu_output.log    - Debug log (after running)
 ```
@@ -143,49 +139,27 @@ qemu_output.log    - Debug log (after running)
 ### Bootloader (Serial Console)
 ```
 ========================================
-NeoDOS Bootloader v0.1
+NeoDOS Bootloader v0.6
 ========================================
 
-[+] Fetching memory map...
-    Total memory: 512.00 MB
-    Available:    491.00 MB
-
-[+] Loading kernel binary...
-    Kernel loaded: 4096 bytes
-    Kernel magic: 0xneodkrn
-    Magic verified ✓
-
-[+] Copying kernel to 0x200000...
-    Kernel copied ✓
-
+[+] Initializing GOP...
+[✓] Graphics: 1280x800 @ 0x80000000
+[+] Loading kernel ELF...
+[✓] Kernel loaded. Entry: 0x200000
 [+] Exiting boot services...
-[+] Jumping to kernel @ 0x200000...
 ```
 
-### Kernel (VGA Screen)
+### Kernel (Serial Console)
 ```
 ========================================
-NeoDOS Kernel v0.1
+NeoDOS Kernel v0.5 - Modern ELF Edition
 ========================================
 
-[+] Kernel Entry Point
-    Load address:     0x200000
-    Magic:            0xneodkrn
+[+] Starting NeoDOS Shell...
+NeoDOS v0.6 - FS Started
+Type HELP for a list of commands.
 
-[+] CPU Information
-    Vendor:           Intel
-    Brand:            Intel(R) Core(TM) i7-8700K CPU @ 3.70GHz
-
-[+] Paging & CPU State
-    CR3 (Page root):  0x0000000000000000
-    CR4 (Features):   0x00000000000b0671
-
-[+] Stack Information
-    RSP:              0x0000000080000000
-
-========================================
-NeoDOS Kernel Ready
-========================================
+C:\>
 ```
 
 ## Architecture
@@ -196,21 +170,21 @@ UEFI Firmware (OVMF)
     ↓
 Bootloader @ 0x100000
     ├─ Init UEFI services
-    ├─ Get memory info
-    ├─ Load kernel binary
+    ├─ Load kernel ELF
+    ├─ Exit boot services + capture memory map
     └─ Jump to 0x200000
          ↓
 Kernel @ 0x200000
-    ├─ Setup VGA
-    ├─ Print CPU info
-    └─ Halt system
+    ├─ Init CPU tables (GDT/IDT/PIC)
+    ├─ Init memory stats from UEFI memory map
+    ├─ Mount NeoDOS FS
+    └─ Run shell
 ```
 
-**Memory Layout:**
+**Memory Notes:**
 ```
-0x200000 - 0x3FFFFF    Kernel code/data (2MB)
-0x100000 - 0x101FFF    Bootloader
-0xB8000  - 0xC0000     VGA text buffer
+- Kernel link address starts at 0x200000 (see `neodos-kernel/kernel.ld`).
+- Current paging setup identity-maps the first 4 GiB; memory stats reflect that.
 ```
 
 ## Debugging
@@ -234,6 +208,14 @@ Kernel @ 0x200000
 (monitor) info tlb           # TLB entries
 ```
 
+## Shell Commands
+
+At the `C:\>` prompt:
+
+- `HELP` shows built-in commands.
+- `CPUINFO` prints CPU vendor/brand string from `CPUID`.
+- `MEM` prints total/usable/free memory derived from the UEFI memory map.
+
 ## Troubleshooting
 
 **Build fails: "target not found"**
@@ -247,18 +229,17 @@ sudo apt install ovmf
 ```
 
 **No output from kernel**
-- Check VNC connection (port 5900)
-- Check GDB is connected (port 1234)
+- Check GDB is connected (port 1234) if you are debugging
 - Check QEMU Monitor for CPU state
 
-See [DEBUG.md](DEBUG.md) for detailed troubleshooting.
+See [`docs/DEBUG.md`](docs/DEBUG.md) for detailed troubleshooting.
 
 ## Phases
 
 **Phase 1** (Current)
 - UEFI bootloader
 - Kernel entry point
-- VGA output + CPU info
+- Serial/VGA output + CPU info
 - Debugging infrastructure
 
 **Phase 2** (Planned)
@@ -288,4 +269,4 @@ Developed as a learning project for x86-64 OS development in Rust.
 
 ---
 
-**Next:** Read [PHASE1.md](PHASE1.md) for detailed documentation.
+**Next:** Read [`docs/PHASE1.md`](docs/PHASE1.md) for detailed documentation.
