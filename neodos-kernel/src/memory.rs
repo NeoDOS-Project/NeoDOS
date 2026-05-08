@@ -1,3 +1,19 @@
+//! Physical memory accounting and a simple frame allocator.
+//!
+//! This module is used by the `MEM` shell command and provides basic
+//! *total/usable/free* statistics derived from the UEFI memory map.
+//!
+//! ## Current limitations
+//! - Only tracks the first 4 GiB (`MAX_PHYS_ADDR`) because the kernel currently
+//!   identity-maps 4 GiB in its custom page tables.
+//! - Treats `CONVENTIONAL` and `BOOT_SERVICES_*` as usable after ExitBootServices.
+//! - Reserves:
+//!   - the first 1 MiB,
+//!   - the kernel image (`__kernel_start..__kernel_end`),
+//!   - the framebuffer range.
+//!
+//! The bitmap format is: `1 = used`, `0 = free`.
+
 use core::mem::size_of;
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -135,6 +151,8 @@ pub fn init(boot_info: &crate::BootInfo) {
     let mmap_size = boot_info.memory_map_size as usize;
     let desc_size = boot_info.memory_map_desc_size as usize;
 
+    // Note: `desc_size` comes from UEFI and must be used instead of
+    // `size_of::<MemoryDescriptorV1>()` when stepping the raw buffer.
     if desc_size < size_of::<MemoryDescriptorV1>() || desc_size == 0 || mmap_size == 0 {
         return;
     }
@@ -199,4 +217,3 @@ pub fn init(boot_info: &crate::BootInfo) {
 pub fn stats() -> MemoryStats {
     *STATS.lock()
 }
-

@@ -1,4 +1,13 @@
-// src/shell/commands/mod.rs
+//! Built-in DOS shell commands.
+//!
+//! Commands are split into individual files in this directory (one command per
+//! file) to keep compile units small and changes localized.
+//!
+//! To add a new command:
+//! 1) create `src/shell/commands/<name>.rs` with an `impl DosShell` method
+//! 2) add `mod <name>;` here
+//! 3) add a match arm in [`DosShell::dispatch_command`]
+//! 4) (optional) add it to `HELP`
 
 mod call;
 mod cd;
@@ -53,4 +62,3 @@ impl<'a> DosShell<'a> {
         }
     }
 }
-

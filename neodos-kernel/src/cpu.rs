@@ -1,4 +1,11 @@
-// CPU identification via CPUID instruction
+//! CPU identification via the `CPUID` instruction.
+//!
+//! We read:
+//! - the vendor string (`CPUID(0)`),
+//! - the brand string (`CPUID(0x8000_0002..=0x8000_0004)`) when supported.
+//!
+//! Note: On some toolchains/targets LLVM may reserve `RBX` (e.g. PIC codegen),
+//! so the low-level `cpuid()` wrapper saves/restores `rbx` manually.
 
 pub struct CpuInfo {
     pub vendor_id: [u8; 12],

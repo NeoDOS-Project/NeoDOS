@@ -61,10 +61,11 @@ fn efi_main() -> Status {
     let entry_point = load_elf(&kernel_data).expect("Failed to load ELF segments");
     log::info!("[✓] Kernel loaded. Entry: 0x{:x}", entry_point);
 
-    // 4. Prepare BootInfo
-    // We'll place BootInfo at a fixed address for simplicity, 
-    // or just pass it to the kernel entry point.
-    // 5. Exit boot services
+    // 4/5. Exit boot services and capture the final UEFI memory map.
+    //
+    // The map buffer is allocated from UEFI pool (typically LOADER_DATA). After
+    // ExitBootServices the pool allocator is unavailable, so we *leak* the map
+    // (via `forget`) and pass its raw pointer + metadata to the kernel.
     log::info!("[+] Exiting boot services...");
     let mmap = unsafe { uefi::boot::exit_boot_services(None) };
     let meta = mmap.meta();
