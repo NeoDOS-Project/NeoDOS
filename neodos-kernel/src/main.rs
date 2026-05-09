@@ -22,6 +22,7 @@ pub mod usermode;
 mod testing;
 
 use drivers::ata::AtaDriver;
+use drivers::fat32::Fat32Driver;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
@@ -100,6 +101,19 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
             serial_println!("[+] NeoDOS FS mounted");
         },
         Err(_) => panic!("Failed to mount filesystem"),
+    }
+
+    // ============================================
+    // FAT32: Read boot partition
+    // ============================================
+    serial_println!("[+] Initializing FAT32 driver...");
+    match Fat32Driver::new(ata) {
+        Ok(_fat32) => {
+            // FAT32 driver ready - can read boot partition
+        },
+        Err(e) => {
+            serial_println!("[!] FAT32 init: {:?}", e);
+        }
     }
 
     // ============================================

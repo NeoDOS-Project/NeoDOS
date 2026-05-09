@@ -21,12 +21,22 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 [+] Mounting NeoDOS FS...
 [✓] FS: Superblock loaded. Blocks: 2560, Inodes: 256
 [+] NeoDOS FS mounted
+[+] Initializing FAT32 driver...
+[FAT32] Boot partition ready
+  Clusters: 1 sectors, FAT: 1576 sectors
+  Root cluster: 2
 [+] Initializing custom Page Tables...
 [+] Custom Page Tables loaded! 4GB identity mapped.
 [+] Starting NeoDOS Shell...
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
+C:\> dir
+ Directory of C:\
+
+  readme.txt
+  test.bat
+  SYSTEM
 C:\> test
 Running NeoDOS self-tests...
 
@@ -38,4 +48,6 @@ Running NeoDOS self-tests...
   TEST env_multiple_vars ... PASS
 
 All 6 tests passed.
-C:\> [idle]
+C:\> exit
+Shutting down...
+S

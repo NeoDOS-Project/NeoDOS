@@ -11,9 +11,11 @@ impl<'a> DosShell<'a> {
         println!("  COPY    - Copy file (COPY SRC DST)");
         println!("  MD      - Make directory (MD DIRNAME)");
         println!("  VOL     - Volume label (VOL [d:])");
+        println!("  LABEL   - Set volume label");
         println!("  DRIVES  - List mounted drive letters");
         println!("  DEL     - Delete file");
         println!("  REN     - Rename file");
+        println!("  RD      - Remove directory");
         println!("  SYNC    - Flush disk cache");
         println!("  TSR     - Load TSR (TSR FILE INT)");
         println!("  DEVICES - List TSRs");

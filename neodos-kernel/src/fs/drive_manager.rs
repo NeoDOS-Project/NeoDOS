@@ -149,6 +149,35 @@ impl DriveManager {
         Ok(())
     }
 
+    pub fn set_primary(&mut self, letter: char) -> Result<(), DriveManagerError> {
+        let idx = Self::letter_index(letter)?;
+        
+        let drive = match self.slots[idx] {
+            Some(d) => d,
+            None => {
+                self.slots[idx] = Some(Drive {
+                    letter: b'A' + idx as u8,
+                    fs: FsInstanceId::PRIMARY,
+                });
+                return Ok(());
+            }
+        };
+        
+        for i in 0..Self::LETTER_COUNT {
+            if let Some(d) = &mut self.slots[i] {
+                if d.fs == FsInstanceId::PRIMARY {
+                    d.fs = drive.fs;
+                    break;
+                }
+            }
+        }
+        self.slots[idx] = Some(Drive {
+            letter: drive.letter,
+            fs: FsInstanceId::PRIMARY,
+        });
+        Ok(())
+    }
+
     pub fn get(&self, letter: char) -> Option<Drive> {
         let idx = Self::letter_index(letter).ok()?;
         self.slots[idx]

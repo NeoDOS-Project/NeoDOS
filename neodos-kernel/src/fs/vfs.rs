@@ -159,6 +159,12 @@ impl NeoDosFs {
                 let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
                 
                 for entry_offset in (0..512).step_by(256) {
+                    // Skip deleted entries (first byte 0xE5)
+                    let first_byte = sector_data[entry_offset];
+                    if first_byte == 0xE5 {
+                        continue;
+                    }
+                    
                     let entry: crate::fs::neodos_fs::DirectoryEntry = unsafe {
                         core::ptr::read_unaligned(
                             sector_data.as_ptr().add(entry_offset) as *const _
@@ -191,11 +197,11 @@ impl NeoDosFs {
     pub fn find_file_in_directory(&mut self, dir_inode_num: u32, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
-        let (inode_num, _entry_type) = self.find_entry_in_directory(dir_inode_num, filename, cache, ata)?;
+        let (inode_num, entry_type) = self.find_entry_in_directory(dir_inode_num, filename, cache, ata)?;
         
-        // Validate it's a file
-        let inode = self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
-        if (inode.mode & MODE_FILE) == 0 {
+        // Validate it's a file using entry_type from directory (1 = file, 2 = dir)
+        if entry_type != 1 {
+            crate::serial_println!("[VFS] find_file_in_directory: entry_type={} not a file", entry_type);
             return Err(FsError::NotAFile);
         }
         
@@ -206,11 +212,10 @@ impl NeoDosFs {
     pub fn find_directory_in_directory(&mut self, dir_inode_num: u32, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
-        let (inode_num, _) = self.find_entry_in_directory(dir_inode_num, dirname, cache, ata)?;
+        let (inode_num, entry_type) = self.find_entry_in_directory(dir_inode_num, dirname, cache, ata)?;
         
-        // Validate it's a directory
-        let inode = self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
-        if (inode.mode & MODE_DIR) == 0 {
+        // Validate it's a directory using entry_type from directory (1 = file, 2 = dir)
+        if entry_type != 2 {
             return Err(FsError::NotADirectory);
         }
         

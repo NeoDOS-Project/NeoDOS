@@ -2,8 +2,10 @@
 
 use spin::Mutex;
 
+const INPUT_BUFFER_SIZE: usize = 1024;
+
 pub struct InputBuffer {
-    buffer: [u8; 256],
+    buffer: [u8; INPUT_BUFFER_SIZE],
     head: usize,
     tail: usize,
 }
@@ -11,14 +13,14 @@ pub struct InputBuffer {
 impl InputBuffer {
     pub const fn new() -> Self {
         InputBuffer {
-            buffer: [0; 256],
+            buffer: [0; INPUT_BUFFER_SIZE],
             head: 0,
             tail: 0,
         }
     }
     
     pub fn push(&mut self, byte: u8) -> Result<(), ()> {
-        let next = (self.tail + 1) % 256;
+        let next = (self.tail + 1) % INPUT_BUFFER_SIZE;
         if next == self.head {
             return Err(());  // Buffer full
         }
@@ -32,7 +34,7 @@ impl InputBuffer {
             return None;
         }
         let byte = self.buffer[self.head];
-        self.head = (self.head + 1) % 256;
+        self.head = (self.head + 1) % INPUT_BUFFER_SIZE;
         Some(byte)
     }
     
@@ -58,4 +60,25 @@ pub fn pop_byte() -> Option<u8> {
     };
     crate::arch::x64::enable_interrupts();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_buffer_capacity() {
+        let mut buf = InputBuffer::new();
+        
+        // Fill buffer to capacity
+        let mut count = 0;
+        while buf.push(count as u8).is_ok() {
+            count += 1;
+        }
+        
+        // With 1024 size, we should be able to push at least 900+ bytes
+        // (accounting for circular buffer overhead)
+        assert!(count > 900, "Buffer should hold at least 900 bytes, got {}", count);
+        crate::serial_println!("[TEST] Input buffer capacity: {} bytes", count);
+    }
 }

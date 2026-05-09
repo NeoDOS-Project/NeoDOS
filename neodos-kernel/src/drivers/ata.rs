@@ -20,6 +20,9 @@ const ATA_CMD_READ_PIO: u8 = 0x20;
 /// The NeoDOS FS is on index=1 (the data disk), so we target the slave drive.
 const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0;
 
+/// Master drive (boot disk) - used for FAT32 partition
+const ATA_DRIVE_SELECT_MASTER: u8 = 0xE0;
+
 pub struct AtaDriver {
     data_port: Port<u16>,
     _error_port: Port<u8>,
@@ -122,6 +125,34 @@ impl AtaDriver {
 
     pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
         self.read_sector_inner(lba)
+    }
+
+    pub fn read_sector_master(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        self.read_sector_master_inner(lba)
+    }
+
+    fn read_sector_master_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        self.wait_not_busy()?;
+
+        unsafe {
+            self.drive_sel_port.write(ATA_DRIVE_SELECT_MASTER | ((lba >> 24) & 0x0F) as u8);
+            self.sector_count_port.write(1);
+            self.lba_low_port.write(lba as u8);
+            self.lba_mid_port.write((lba >> 8) as u8);
+            self.lba_high_port.write((lba >> 16) as u8);
+            self.command_port.write(ATA_CMD_READ_PIO);
+        }
+
+        self.wait_data_ready()?;
+
+        let mut buffer = [0u8; 512];
+        for i in 0..256 {
+            let word = unsafe { self.data_port.read() };
+            buffer[i * 2] = word as u8;
+            buffer[i * 2 + 1] = (word >> 8) as u8;
+        }
+
+        Ok(buffer)
     }
 
     fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {

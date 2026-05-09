@@ -2,7 +2,7 @@
 
 use crate::drivers::ata::{AtaDriver, AtaError};
 
-const CACHE_SIZE: usize = 64; // Small cache for now
+const CACHE_SIZE: usize = 256; // 256 entries = 128 KB (was 64 = 32 KB)
 
 #[derive(Copy, Clone)]
 struct CacheEntry {

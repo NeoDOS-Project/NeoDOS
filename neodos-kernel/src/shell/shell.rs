@@ -172,6 +172,7 @@ impl<'a> DosShell<'a> {
         println!();
 
         self.check_config_sys();
+        self.init_boot_drive_from_config();
         self.check_autoexec();
 
         let mut idle_hits: u64 = 0;
@@ -278,15 +279,11 @@ impl<'a> DosShell<'a> {
         }
     }
 
-    fn print_prompt(&mut self, idle_hits: u64) {
+    fn print_prompt(&mut self, _idle_hits: u64) {
         if let Ok(dir) = core::str::from_utf8(&self.current_dir[..self.current_dir_len]) {
             print!("{}:{}> ", self.current_drive as char, dir);
         } else {
             print!("{}:\\> ", self.current_drive as char);
-        }
-        if idle_hits > 0 {
-            crate::vga::print_str("[idle]");
-            crate::serial_print!("[idle]");
         }
     }
 
@@ -331,7 +328,12 @@ impl<'a> DosShell<'a> {
     }
 
     pub fn check_config_sys(&mut self) {
-        match self.fs.find_file("CONFIG.SYS", self.cache, self.ata) {
+        self.try_load_config("CONFIG.SYS");
+        self.try_load_config("SYSTEM\\CONFIG.SYS");
+    }
+
+    fn try_load_config(&mut self, path: &str) {
+        match self.resolve_file_inode(path) {
             Ok(inode_num) => {
                 let mut buf = [0u8; 4096];
                 if let Ok(read) = self.fs.read_file_to_buf(inode_num, &mut buf, self.cache, self.ata) {
@@ -399,6 +401,21 @@ impl<'a> DosShell<'a> {
         self.fs
             .resolve_directory_path(base_inode, base_path, base_len, s, self.cache, self.ata)
             .map(|(inode, _, _)| inode)
+    }
+
+    fn init_boot_drive_from_config(&mut self) {
+        if let Some(boot_drive) = self.environment.get("BOOTDRIVE") {
+            let drive_char = boot_drive.chars().next().map(|c| c.to_ascii_uppercase());
+            if let Some(drive) = drive_char {
+                if drive >= 'A' && drive <= 'Z' {
+                    if drive as u8 != self.current_drive {
+                        if self.drive_manager.set_primary(drive).is_ok() {
+                            self.current_drive = drive as u8;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

@@ -8,7 +8,7 @@ SUPERBLOCK_MAGIC = 0x4F444F4E  # "NEOD"
 DATA_START_SECTOR = 200
 ROOT_DIR_BLOCK = 0
 
-def create_superblock():
+def create_superblock(volume_label=""):
     """Crear superbloque (512 bytes)"""
     data = bytearray(512)
     
@@ -26,6 +26,14 @@ def create_superblock():
     
     # Created timestamp
     data[16:24] = struct.pack('<Q', 0)
+    
+    # Volume label
+    label_bytes = volume_label.encode('utf-8')[:11]
+    data[24] = len(label_bytes)
+    data[25:25+len(label_bytes)] = label_bytes
+    # Fill rest with spaces
+    for i in range(25+len(label_bytes), 36):
+        data[i] = ord(' ')
     
     return bytes(data)
 
@@ -63,7 +71,7 @@ def create_inode(inode_num, mode, size, direct_blocks):
     
     return bytes(data)
 
-def create_dir_entry(inode_num, entry_type, name):
+def create_dir_entry(inode_num, entry_type, name, attributes=0):
     """Crear directory entry (256 bytes)"""
     data = bytearray(256)
     
@@ -76,8 +84,13 @@ def create_dir_entry(inode_num, entry_type, name):
     # Entry type (1=file, 2=dir)
     data[5] = entry_type
     
-    # Name
-    data[6:6+len(name)] = name.encode('utf-8')
+    # Attributes (default: Archive for files, Dir for dirs)
+    if attributes == 0:
+        attributes = 0x10 if entry_type == 2 else 0x20  # DIR or ARCHIVE
+    data[6] = attributes
+    
+    # Name (starts at offset 7)
+    data[7:7+len(name)] = name.encode('utf-8')
     
     return bytes(data)
 
@@ -88,7 +101,7 @@ def main():
     
     # 1. Superbloque @ sector 0
     print("[*] Writing superblock...")
-    superblock = create_superblock()
+    superblock = create_superblock("NEO-DISK")
     image[0:512] = superblock
     
     # 2. Inode table @ sectors 1-63 (125 inodes max)
@@ -115,7 +128,7 @@ def main():
     config_inode = create_inode(4, 0x80, 512, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1024:512+1280] = config_inode
 
-    # Inode 5: AUTOEXEC.BAT (points to block 5)
+    # Inode 5: AUTOEXEC.BAT (root) (points to block 5)
     autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1280:512+1536] = autoexec_inode
     
