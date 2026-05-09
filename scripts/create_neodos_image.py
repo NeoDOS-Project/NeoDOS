@@ -111,7 +111,7 @@ def main():
     system_dir_inode = create_inode(3, 0x40, 512, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+768:512+1024] = system_dir_inode
 
-    # Inode 4: CONFIG.SYS (points to block 4)
+    # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
     config_inode = create_inode(4, 0x80, 512, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1024:512+1280] = config_inode
 
@@ -173,6 +173,7 @@ ECHO Done.
     config_content = b"""FILES=20
 BUFFERS=10
 COUNTRY=034
+CURSOR=10
 """
     image[offset:offset+len(config_content)] = config_content
 

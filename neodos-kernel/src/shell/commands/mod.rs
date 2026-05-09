@@ -23,6 +23,7 @@ mod md;
 mod mem;
 mod set;
 mod shutdown;
+mod test;
 mod tsr;
 mod r#type;
 mod vol;
@@ -59,6 +60,7 @@ impl<'a> DosShell<'a> {
             "VER" => println!("NeoDOS v0.6"),
             "TSR" => self.cmd_tsr(args),
             "DEVICES" => self.cmd_devices(),
+            "TEST" => self.cmd_test(args),
             _ => println!("Bad command or file name"),
         }
     }

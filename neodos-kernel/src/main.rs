@@ -19,6 +19,7 @@ mod font;
 mod tsr;
 mod memory;
 pub mod usermode;
+mod testing;
 
 use drivers::ata::AtaDriver;
 use buffer::block_cache::BlockCache;
@@ -113,6 +114,8 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     // PHASE 4: Start DOS Shell
     // ============================================
     serial_println!("[+] Starting NeoDOS Shell...");
+
+    testing::register_tests();
     
     let mut shell = shell::DosShell::new(
         NEODOS_FS.as_mut().unwrap(),

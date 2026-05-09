@@ -1,4 +1,5 @@
 use core::fmt;
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 
@@ -246,6 +247,11 @@ pub fn init() {
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
 }
+
+/// Global tick counter incremented by the PIT timer (IRQ0, ~18.2 Hz).
+/// Read from any context without locking — use for timing that tolerates
+/// the tiny delay between increment and visibility.
+pub static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
 
 fn init_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
     // Timer ISR saves 15 registers (RAX..RBP) and ends with IRETQ.

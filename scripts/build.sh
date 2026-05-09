@@ -4,7 +4,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "[*] NeoDOS Fase 1 Build"
+BUILD_NEODOS_IMAGE=false
+
+for arg in "$@"; do
+    case "$arg" in
+        --neodos-image|-n) BUILD_NEODOS_IMAGE=true ;;
+    esac
+done
+
+echo "[*] NeoDOS Build"
 echo ""
 
 # Check required tools
@@ -94,6 +102,22 @@ if command -v mkfs.fat >/dev/null 2>&1; then
 else
     echo "[!] mkfs.fat not found; disk image created but not formatted"
     echo "    Install: sudo apt install dosfstools"
+fi
+
+# ============================================
+# 4. Generate NeoDOS FS image (optional)
+# ============================================
+if [ "$BUILD_NEODOS_IMAGE" = true ]; then
+    echo ""
+    echo "[+] Generating NeoDOS FS image..."
+    if command -v python3 >/dev/null 2>&1; then
+        cd "$SCRIPT_DIR"
+        python3 create_neodos_image.py
+        cd "$PROJECT_ROOT"
+        echo "[✓] NeoDOS FS image: $SCRIPT_DIR/neodos_image.img"
+    else
+        echo "[!] python3 not found; skipping NeoDOS FS image"
+    fi
 fi
 
 echo ""
