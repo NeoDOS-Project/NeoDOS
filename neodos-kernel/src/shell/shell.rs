@@ -90,6 +90,7 @@ impl<'a> DosShell<'a> {
         shell.current_dir[0] = b'\\';
         shell.environment.set("PATH", "\\BIN;\\SYSTEM");
         shell.environment.set("PROMPT", "$P$G");
+        shell.environment.set("CURSOR", "18");
         shell
     }
 
@@ -170,23 +171,33 @@ impl<'a> DosShell<'a> {
         println!("Type HELP for a list of commands.");
         println!();
 
+        self.check_config_sys();
         self.check_autoexec();
 
+        let mut idle_hits: u64 = 0;
+
         while self.running {
-            self.print_prompt();
+            self.print_prompt(idle_hits);
+            idle_hits = 0;
             let mut line_buffer = [0u8; 128];
             let mut line_len = 0;
 
-            let mut blink_counter = 0;
+            let mut blink_ticks = 0u64;
             let mut cursor_visible = false;
 
             let mut utf8_rem = 0usize;
             let mut utf8_cp = 0u32;
 
+            let cursor_interval: u64 = self
+                .environment
+                .get("CURSOR")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(18);
+
             loop {
-                blink_counter += 1;
-                if blink_counter > 100000 {
-                    blink_counter = 0;
+                let ticks = crate::scheduler::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed);
+                if ticks - blink_ticks >= cursor_interval {
+                    blink_ticks = ticks;
                     cursor_visible = !cursor_visible;
                     crate::vga::draw_cursor(cursor_visible);
                 }
@@ -249,6 +260,9 @@ impl<'a> DosShell<'a> {
                         }
                         _ => { utf8_rem = 0; }
                     }
+                } else {
+                    unsafe { core::arch::asm!("hlt") };
+                    idle_hits += 1;
                 }
             }
 
@@ -264,11 +278,15 @@ impl<'a> DosShell<'a> {
         }
     }
 
-    fn print_prompt(&mut self) {
+    fn print_prompt(&mut self, idle_hits: u64) {
         if let Ok(dir) = core::str::from_utf8(&self.current_dir[..self.current_dir_len]) {
             print!("{}:{}> ", self.current_drive as char, dir);
         } else {
             print!("{}:\\> ", self.current_drive as char);
+        }
+        if idle_hits > 0 {
+            crate::vga::print_str("[idle]");
+            crate::serial_print!("[idle]");
         }
     }
 
@@ -310,6 +328,32 @@ impl<'a> DosShell<'a> {
         }
 
         self.dispatch_command(cmd, &args_buf[..arg_count]);
+    }
+
+    pub fn check_config_sys(&mut self) {
+        match self.fs.find_file("CONFIG.SYS", self.cache, self.ata) {
+            Ok(inode_num) => {
+                let mut buf = [0u8; 4096];
+                if let Ok(read) = self.fs.read_file_to_buf(inode_num, &mut buf, self.cache, self.ata) {
+                    if let Ok(content) = core::str::from_utf8(&buf[..read]) {
+                        for line in content.lines() {
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() || trimmed.starts_with(';') || trimmed.starts_with('#') {
+                                continue;
+                            }
+                            if let Some(eq) = trimmed.find('=') {
+                                let key = trimmed[..eq].trim();
+                                let value = trimmed[eq + 1..].trim();
+                                if !key.is_empty() && !value.is_empty() {
+                                    self.environment.set(key, value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
     }
 
     pub fn check_autoexec(&mut self) {

@@ -17,6 +17,7 @@ impl<'a> DosShell<'a> {
         println!("  SYNC    - Flush disk cache");
         println!("  TSR     - Load TSR (TSR FILE INT)");
         println!("  DEVICES - List TSRs");
+        println!("  TEST    - Run self-tests");
         println!("  ECHO    - Print text");
         println!("  SET     - Set environment variables");
         println!("  CD      - Change directory / switch drive (CD d:)");

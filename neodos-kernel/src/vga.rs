@@ -68,11 +68,9 @@ pub fn write_char(c: u8) {
         }
 
         if ROW >= VGA_HEIGHT {
-            // No scrolling for now, just reset
-            ROW = 0;
-            if let Some(ref r) = RENDERER {
-                r.clear(0x000000);
-            }
+            scroll();
+            ROW = VGA_HEIGHT - 1;
+            COL = 0;
         }
     }
 }
@@ -81,6 +79,31 @@ fn draw_char_at(c: u8, row: usize, col: usize, color: u32) {
     let x = col * font::FONT_WIDTH;
     let y = row * font::FONT_HEIGHT;
     font::draw_char(c, x, y, color);
+}
+
+fn scroll() {
+    unsafe {
+        if let Some(ref r) = RENDERER {
+            let fb = r.fb.base_address as *mut u32;
+            let stride = r.fb.stride;
+            let row_h = font::FONT_HEIGHT;
+            let rows_total = VGA_HEIGHT * row_h;
+            let cols = VGA_WIDTH * font::FONT_WIDTH;
+
+            // Shift all pixel rows up by one character row
+            core::ptr::copy(
+                fb.add(row_h * stride),
+                fb,
+                (rows_total - row_h) * stride,
+            );
+
+            // Clear last character row
+            let last = fb.add((rows_total - row_h) * stride);
+            for x in 0..(row_h * cols) {
+                core::ptr::write_volatile(last.add(x), 0x000000);
+            }
+        }
+    }
 }
 
 pub fn print_decimal(value: u64) {

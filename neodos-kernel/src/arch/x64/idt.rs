@@ -181,6 +181,8 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
 
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
+    crate::scheduler::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
     

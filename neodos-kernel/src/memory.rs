@@ -130,6 +130,30 @@ impl FrameAllocator {
         }
         self.free_frames = free;
     }
+
+    fn allocate_frame(&mut self) -> Option<u64> {
+        let max_frames = MAX_PHYS_ADDR / PAGE_SIZE;
+        for word_idx in 0..self.bitmap.len() {
+            let w = self.bitmap[word_idx];
+            if w == u64::MAX {
+                continue; // All bits set = all used
+            }
+            let base_frame = (word_idx as u64) * 64;
+            if base_frame >= max_frames {
+                break;
+            }
+            // Find first zero bit
+            let free_bit = w.trailing_ones() as usize;
+            let frame = base_frame + free_bit as u64;
+            if frame >= max_frames {
+                break;
+            }
+            self.set_bit(frame as usize);
+            self.free_frames -= 1;
+            return Some(frame * PAGE_SIZE);
+        }
+        None
+    }
 }
 
 lazy_static! {
@@ -216,4 +240,8 @@ pub fn init(boot_info: &crate::BootInfo) {
 
 pub fn stats() -> MemoryStats {
     *STATS.lock()
+}
+
+pub fn allocate_frame() -> Option<u64> {
+    ALLOCATOR.lock().allocate_frame()
 }

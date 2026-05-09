@@ -17,7 +17,7 @@ const ATA_CMD_READ_PIO: u8 = 0x20;
 
 /// LBA drive-select base (bits 7–4). Must be identical for read and write:
 /// QEMU maps `-drive index=0` to IDE master (`0xE0`) and `index=1` to slave (`0xF0`).
-/// Mismatching read/write caused writes to land on the ESP disk while reads used NeoDOS.
+/// The NeoDOS FS is on index=1 (the data disk), so we target the slave drive.
 const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0;
 
 pub struct AtaDriver {

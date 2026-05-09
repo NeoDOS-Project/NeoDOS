@@ -27,6 +27,15 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
-C:\> powerto  off
-Shutting down...
-S
+C:\> test
+Running NeoDOS self-tests...
+
+  TEST env_set_get ... PASS
+  TEST env_overwrite ... PASS
+  TEST env_missing_key ... PASS
+  TEST env_empty_value ... PASS
+  TEST env_case_sensitive ... PASS
+  TEST env_multiple_vars ... PASS
+
+All 6 tests passed.
+C:\> [idle]
