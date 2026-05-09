@@ -22,8 +22,8 @@ impl<'a> DosShell<'a> {
         println!("  CD      - Change directory / switch drive (CD d:)");
         println!("  CPUINFO - Show CPU vendor/brand");
         println!("  MEM     - Show memory usage");
+        println!("  KEYB    - Change keyboard layout (KEYB US|SP)");
         println!("  VER     - Show version");
         println!("  EXIT    - Sync and halt");
     }
 }
-

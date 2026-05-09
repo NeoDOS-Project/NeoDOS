@@ -14,11 +14,22 @@ pub struct VgaWriter;
 
 impl Write for VgaWriter {
     fn write_str(&mut self, s: &str) -> Result {
-        for byte in s.bytes() {
-            write_char(byte);
+        for c in s.chars() {
+            write_codepoint(c as u32);
         }
         Ok(())
     }
+}
+
+pub fn write_codepoint(cp: u32) {
+    let index: u8 = if cp <= 0xFF {
+        cp as u8
+    } else if cp == 0x20AC {
+        0x80
+    } else {
+        0x81
+    };
+    write_char(index);
 }
 
 pub fn _print(args: Arguments) {
@@ -69,7 +80,7 @@ pub fn write_char(c: u8) {
 fn draw_char_at(c: u8, row: usize, col: usize, color: u32) {
     let x = col * font::FONT_WIDTH;
     let y = row * font::FONT_HEIGHT;
-    font::draw_char(c as char, x, y, color);
+    font::draw_char(c, x, y, color);
 }
 
 pub fn print_decimal(value: u64) {

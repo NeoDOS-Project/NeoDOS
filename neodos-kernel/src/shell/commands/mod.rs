@@ -18,9 +18,11 @@ mod dir;
 mod drives;
 mod echo;
 mod help;
+mod keyb;
 mod md;
 mod mem;
 mod set;
+mod shutdown;
 mod tsr;
 mod r#type;
 mod vol;
@@ -37,12 +39,11 @@ impl<'a> DosShell<'a> {
             "TYPE" => self.cmd_type(args),
             "ECHO" => self.cmd_echo(args),
             "SET" => self.cmd_set(args),
+            "KEYB" => self.cmd_keyb(args),
             "CPUINFO" => self.cmd_cpuinfo(),
             "MEM" => self.cmd_mem(),
-            "EXIT" => {
-                let _ = self.fs.sync(self.cache, self.ata);
-                self.running = false;
-            }
+            "EXIT" => self.cmd_shutdown(),
+            "SHUTDOWN" | "POWEROFF" => self.cmd_shutdown(),
             "CD" => self.cmd_cd(args),
             "CALL" => self.cmd_call(args),
             "COPY" => self.cmd_copy(args),
