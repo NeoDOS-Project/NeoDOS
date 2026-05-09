@@ -7,7 +7,7 @@ BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK QM00001 " from PciRoot(0x0)/Pci(0x
 [ INFO]:  src/main.rs@054: [✓] Graphics: 1280x800 @ 0x80000000
 [ INFO]:  src/main.rs@057: [+] Loading kernel ELF...
 [ INFO]:  src/main.rs@062: [✓] Kernel loaded. Entry: 0x200000
-[ INFO]:  src/main.rs@068: [+] Exiting boot services...
+[ INFO]:  src/main.rs@069: [+] Exiting boot services...
 ========================================
 NeoDOS Kernel v0.6 - The Rusty DOS Revival
 ========================================
@@ -27,4 +27,6 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
-C:\> 
+C:\> powerto  off
+Shutting down...
+S

@@ -180,6 +180,9 @@ impl<'a> DosShell<'a> {
             let mut blink_counter = 0;
             let mut cursor_visible = false;
 
+            let mut utf8_rem = 0usize;
+            let mut utf8_cp = 0u32;
+
             loop {
                 blink_counter += 1;
                 if blink_counter > 100000 {
@@ -195,29 +198,63 @@ impl<'a> DosShell<'a> {
 
                     match byte {
                         b'\n' => {
+                            utf8_rem = 0;
                             println!();
                             break;
                         }
                         b'\x08' => {
+                            utf8_rem = 0;
                             if line_len > 0 {
-                                line_len -= 1;
-                                print!("\x08");
+                                let mut n = 1;
+                                while n < line_len && (line_buffer[line_len - n] & 0xC0) == 0x80 {
+                                    n += 1;
+                                }
+                                line_len -= n;
+                                crate::vga::write_char(b'\x08');
+                                crate::serial_print!("\x08 \x08");
                             }
                         }
-                        c if line_len < 127 => {
-                            line_buffer[line_len] = c;
-                            line_len += 1;
-                            print!("{}", c as char);
+                        _ if line_len + 4 < 128 => {
+                            if utf8_rem == 0 {
+                                if byte < 0x80 {
+                                    line_buffer[line_len] = byte;
+                                    line_len += 1;
+                                    crate::vga::write_char(byte);
+                                    crate::serial_print!("{}", byte as char);
+                                } else if byte >= 0xC2 && byte <= 0xDF {
+                                    utf8_rem = 1;
+                                    utf8_cp = (byte & 0x1F) as u32;
+                                    line_buffer[line_len] = byte;
+                                    line_len += 1;
+                                } else if byte >= 0xE0 && byte <= 0xEF {
+                                    utf8_rem = 2;
+                                    utf8_cp = (byte & 0x0F) as u32;
+                                    line_buffer[line_len] = byte;
+                                    line_len += 1;
+                                }
+                            } else if (byte & 0xC0) == 0x80 {
+                                utf8_cp = (utf8_cp << 6) | (byte & 0x3F) as u32;
+                                utf8_rem -= 1;
+                                line_buffer[line_len] = byte;
+                                line_len += 1;
+                                if utf8_rem == 0 {
+                                    crate::vga::write_codepoint(utf8_cp);
+                                    if let Some(ch) = core::char::from_u32(utf8_cp) {
+                                        crate::serial_print!("{}", ch);
+                                    }
+                                }
+                            } else {
+                                utf8_rem = 0;
+                            }
                         }
-                        _ => {}
+                        _ => { utf8_rem = 0; }
                     }
                 }
             }
 
             if line_len > 0 {
-                if let Ok(line) = core::str::from_utf8(&line_buffer[..line_len]) {
-                    self.execute_line(line);
-                }
+                let line = unsafe { core::str::from_utf8_unchecked(&line_buffer[..line_len]) };
+                self.execute_line(line);
             }
         }
 
@@ -320,3 +357,4 @@ impl<'a> DosShell<'a> {
             .map(|(inode, _, _)| inode)
     }
 }
+
