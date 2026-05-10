@@ -146,6 +146,19 @@ def main():
 
     hello_inode = create_inode(6, 0x80, len(hello_bin_data), [6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1536:512+1792] = hello_inode
+
+    # Inode 7: SYSTEST.BIN — syscall test binary
+    systest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'systest.bin')
+    systest_bin_data = b''
+    if os.path.exists(systest_bin_path):
+        with open(systest_bin_path, 'rb') as sf:
+            systest_bin_data = sf.read()
+        print(f"[*] Including systest.bin ({len(systest_bin_data)} bytes)")
+    else:
+        print("[!] systest.bin not found — skipping (run 'python3 userbin/generate_systest.py')")
+
+    systest_inode = create_inode(7, 0x80, len(systest_bin_data), [7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    image[512+1792:512+2048] = systest_inode
     
     # 3. Root directory block (block 0) @ first data sector
     print("[*] Writing root directory...")
@@ -166,6 +179,10 @@ def main():
     # Entry 3: HELLO.BIN (user-mode binary)
     entry = create_dir_entry(6, 1, "HELLO.BIN")
     image[offset+768:offset+1024] = entry
+
+    # Entry 4: SYSTEST.BIN (syscall test binary)
+    entry = create_dir_entry(7, 1, "SYSTEST.BIN")
+    image[offset+1024:offset+1280] = entry
     
     # 4. Data blocks
     # Block 1 = sector 208 (readme.txt)
@@ -223,6 +240,12 @@ VER
         print("[*] Writing HELLO.BIN content...")
         offset = (200 + 48) * 512
         image[offset:offset+len(hello_bin_data)] = hello_bin_data
+
+    # Block 7 = sector 256 (SYSTEST.BIN — syscall test binary)
+    if systest_bin_data:
+        print("[*] Writing SYSTEST.BIN content...")
+        offset = (200 + 56) * 512
+        image[offset:offset+len(systest_bin_data)] = systest_bin_data
 
     
     # Escribir imagen a disco

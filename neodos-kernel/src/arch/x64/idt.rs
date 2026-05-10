@@ -55,25 +55,17 @@ core::arch::global_asm!(
 
 // INT 0x80 syscall trampolín.
 //
-// After the iretq we place a small halt loop that sys_exit redirects to,
-// preventing the CPU from returning to stale Ring-3 code.
-//
-// Mirrors timer_handler_asm: saves all GP registers, extracts the syscall
-// arguments from the saved frame, calls the Rust dispatcher, puts the return
-// value back in the saved RAX slot, restores everything, and returns to Ring 3
-// via IRETQ.
-//
-// Calling convention seen from user space (INT 0x80):
-//   RAX = syscall number
-//   RBX = arg0
-//   RCX = arg1
-//   RDX = arg2
-// Return value: RAX on return.
+// Mirrors timer_handler_asm: saves all GP registers, calls syscall_dispatch,
+// then checks NEED_RESCHED flag. If set, calls syscall_try_resched(current_rsp)
+// to switch stacks, similar to the timer preemption path.
 core::arch::global_asm!(
     ".extern syscall_dispatch",
+    ".extern syscall_try_resched",
+    ".extern NEED_RESCHED",
+    ".extern clear_need_resched",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
-    // Save all GP registers (same order as timer trampolín so we can index them)
+    // Save all GP registers (same order as timer trampolín)
     "push rbp",
     "push r15",
     "push r14",
@@ -85,33 +77,47 @@ core::arch::global_asm!(
     "push r8",
     "push rdi",
     "push rsi",
-    "push rdx",   // arg2  (RDX offset from RSP: 2*8 = 16)
-    "push rcx",   // arg1  (RCX offset: 3*8 = 24)
-    "push rbx",   // arg0  (RBX offset: 4*8 = 32)
-    "push rax",   // syscall number  (RAX offset: 5*8 = 40  ← top of saved-reg frame)
+    "push rdx",
+    "push rcx",
+    "push rbx",
+    "push rax",
     // Save syscall number in r15 before dispatch clobbers RAX
     "mov r15, [rsp]",
-    // syscall_dispatch(rax, rbx, rcx, rdx) — System V AMD64 ABI
-    "mov rdi, [rsp + 0]",     // saved RAX → syscall number
-    "mov rsi, [rsp + 8]",     // saved RBX → arg0
-    "mov rdx, [rsp + 16]",    // saved RCX → arg1
-    "mov rcx, [rsp + 24]",    // saved RDX → arg2
+    // syscall_dispatch(rax, rbx, rcx, rdx)
+    "mov rdi, [rsp + 0]",
+    "mov rsi, [rsp + 8]",
+    "mov rdx, [rsp + 16]",
+    "mov rcx, [rsp + 24]",
     "call syscall_dispatch",
-    // Write return value back into saved-RAX slot
     "mov [rsp + 0], rax",
-    // If original syscall was sys_exit (0), check if we should return to shell
+    // Check if original syscall was sys_exit (0) for shell return
     "test r15, r15",
-    "jnz 2f",
-    // ---- sys_exit path ----
+    "jnz 1f",
     ".extern EXIT_NOW",
     "cmp byte ptr [rip + EXIT_NOW], 0",
-    "jz 2f",
-    // Clear flag and return to shell
+    "jz 1f",
     "mov byte ptr [rip + EXIT_NOW], 0",
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
-    // ---- Normal return path ----
-    "2: pop rax",
+    // Check NEED_RESCHED for voluntary context switch (sys_yield, sys_waitpid, sys_read)
+    "1:",
+    "mov rdi, rsp",  // Save current RSP for possible resched
+    "push rdi",      // Preserve across call
+    "call clear_need_resched",
+    "pop rdi",
+    "test al, al",
+    "jz 3f",
+    // ---- Reschedule requested ----
+    "push rdi",              // Current RSP = arg0
+    "mov rsi, [rsp + 8]",    // saved RAX (return value)
+    "push rsi",              // Save return value
+    "call syscall_try_resched",
+    "mov rsp, rax",           // Switch to new stack
+    "pop rsi",                // Restore return value (on new stack)
+    "mov [rsp + 0], rsi",     // Put it back in RAX slot
+    "3:",
+    // ---- Normal restore ----
+    "pop rax",
     "pop rbx",
     "pop rcx",
     "pop rdx",
@@ -260,7 +266,16 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
 
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
-    crate::scheduler::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let current_tick = crate::scheduler::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+
+    // Check if periodic cache flush is needed (set flag, actual flush happens in safe context)
+    {
+        use core::sync::atomic::Ordering;
+        let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
+        if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
+            crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
+        }
+    }
 
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
@@ -308,12 +323,10 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     use crate::drivers::keyboard::KeyboardDriver;
     
     unsafe {
-        // Read scancode from keyboard port
         if let Some(scancode) = KeyboardDriver::read_scancode() {
-            // Convert to ASCII if possible
             if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
-                // Push to input buffer (synchronized with Mutex)
                 crate::input::push_byte(ascii);
+                crate::syscall::wake_blocked_readers();
             }
         }
         PICS.lock().notify_end_of_interrupt(33);

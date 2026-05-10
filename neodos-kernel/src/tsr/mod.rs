@@ -6,6 +6,10 @@ use crate::fs::neodos_fs::NeoDosFs;
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ata::AtaDriver;
 
+const MAX_TSR_SIZE: usize = 65536;
+
+static mut TSR_LOAD_BUF: [u8; MAX_TSR_SIZE] = [0u8; MAX_TSR_SIZE];
+
 #[derive(Clone, Copy)]
 pub struct TsrInfo {
     pub name: [u8; 16],
@@ -29,8 +33,8 @@ lazy_static! {
 pub fn install_tsr(filename: &str, interrupt_num: u8, fs: &mut NeoDosFs, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<u64, ()> {
     match fs.find_file(filename, cache, ata) {
         Ok(inode_num) => {
-            let mut buf = [0u8; 65536]; // Max 64KB TSR
-            match fs.read_file_to_buf(inode_num, &mut buf, cache, ata) {
+            let buf = unsafe { &mut TSR_LOAD_BUF };
+            match fs.read_file_to_buf(inode_num, buf, cache, ata) {
                 Ok(read) => {
                     let mut registry = TSR_REGISTRY.lock();
                     let addr = registry.next_address;

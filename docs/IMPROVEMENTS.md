@@ -1,6 +1,8 @@
-# NeoDOS — Propuestas de mejora
+# NeoDOS — Propuestas de mejora pendientes
 
-> Priorizadas por impacto. Revisado: Mayo 2026
+> Versión: 0.9.0 | Actualizado: Mayo 2026
+> 
+> Items ya implementados han sido removidos. Ver `AGENTS.md` para funcionalidad existente.
 
 ---
 
@@ -40,16 +42,6 @@ unsafe {
 Para encontrar el siguiente bloque libre, recorre todos los inodos (256) y sus punteros directos (12). En el peor caso: 3072 iteraciones por cada bloque escrito.
 
 **Propuesta:** Implementar bitmap de bloques libres en el superbloque (o en un bloque dedicado). O(1) por asignación.
-
----
-
-### 8. ATA PIO sin DMA
-
-**Archivo:** `drivers/ata.rs`
-
-Toda transferencia es PIO (Programmed I/O): la CPU espera activamente a que el disco esté listo y mueve cada palabra de 16 bits con `insw`. Durante una lectura de sector, la CPU no puede hacer otra cosa.
-
-**Propuesta:** Implementar bus-master DMA usando el controlador IDE de la PCI. Las transferencias las maneja el hardware mientras la CPU sigue ejecutando código.
 
 ---
 
@@ -113,44 +105,6 @@ Accesibles desde cualquier contexto sin locks, compilador emite warnings de UB.
 Repartidos por todo el kernel. Cualquier fallo (disco corrupto, DMA malformado, etc.) tira el sistema.
 
 **Propuesta:** Reemplazar con `?` y propagar errores. Al menos en las rutas no críticas (shell commands), mostrar mensaje de error en vez de paniquear.
-
----
-
-### 11. `from_utf8_unchecked` en input del shell
-
-**Archivo:** `shell/shell.rs:264`
-
-```rust
-let line = unsafe { core::str::from_utf8_unchecked(&line_buffer[..line_len]) };
-```
-
-Aunque el decodificador UTF-8 de arriba debería garantizar validez, un bug dejaría el sistema en estado indefinido.
-
-**Propuesta:** Usar `from_utf8` y saltar el comando si falla.
-
----
-
-### 12. TSR: buffer de 64 KB en el stack
-
-**Archivo:** `tsr/mod.rs:32`
-
-```rust
-let mut buffer = [0u8; 65536];
-```
-
-El stack del kernel es limitado. Un array de 64 KB en el stack puede desbordarlo y causar corrupción de memoria.
-
-**Propuesta:** Usar un buffer en BSS (`static mut`) o heap.
-
----
-
-### 13. Cache dirty no persiste periódicamente
-
-**Archivo:** `buffer/block_cache.rs`
-
-Los bloques marcados como `dirty` solo se escriben al disco cuando son víctimas de evicción LRU. Si el sistema se apaga inesperadamente, se pierden.
-
-**Propuesta:** `flush()` periódico desde el timer tick.
 
 ---
 
@@ -246,20 +200,6 @@ El `Inode` tiene campos de owner_uid/gid pero no se usan.
 
 ## 🆕 Funcionalidades
 
-### 15. Heap allocator
-
-Actualmente el kernel no tiene heap. No se puede usar `alloc` (`Box`, `Vec`, `String`). Todo es con buffers estáticos de tamaño fijo.
-
-**Propuesta:** Integrar `linked_list_allocator` o un page allocator simple sobre el frame allocator.
-
----
-
-### 16. FAT32 driver para el ESP
-
-El kernel arranca desde una partición FAT32 (el ESP), pero no puede leerla. Solo entiende el FS propio NeoDOS.
-
-**Propuesta:** Implementar un driver FAT32 mínimo (lectura) para poder leer archivos del ESP en runtime.
-
 ---
 
 ### 17. `DIR /W`, `DIR /P`
@@ -325,6 +265,8 @@ El parser actual no maneja comillas correctamente.
 
 ## 🏗️ Arquitectura
 
+---
+
 ### 20. Interrupts habilitados/deshabilitados en cada `pop_byte()`
 
 **Archivo:** `input.rs:52-61`
@@ -380,6 +322,8 @@ Cada `put_pixel` escribe directamente al framebuffer, causando flicker en animac
 
 ## 📦 Herramientas
 
+---
+
 ### 24. Gap entre inode table y data blocks
 
 **Archivo:** `scripts/create_neodos_image.py`
@@ -414,7 +358,6 @@ Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
 
 | Prioridad | Items |
 |-----------|-------|
-| Crítica | #1 (VGA scroll), #25 (input buffer), #27 (TSR conflicts), #34 (graceful shutdown) |
-| Alta | #6 (clear píxel a píxel), #7 (allocate block), #8 (ATA DMA), #9 (static mut), #28 (cache size), #31 (hardcoded C:), #35 (max processes), #41 (PATH resolution) |
-| Media | #10 (unwrap), #11 (from_utf8), #12 (TSR stack), #13 (dirty flush), #15 (heap), #16 (FAT32), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
+| Alta | #6 (clear píxel a píxel), #7 (allocate block), #9 (static mut), #28 (cache size), #31 (hardcoded C:), #35 (max processes), #41 (PATH resolution) |
+| Media | #10 (unwrap), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
 | Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #44 (multi-disk), #45 (double buffer), #47 (version check), #48 (deps) |

@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 
-const MAX_PROCESSES: usize = 16;
+pub const MAX_PROCESSES: usize = 16;
 const IDLE_STACK_SIZE: usize = 4096;
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];

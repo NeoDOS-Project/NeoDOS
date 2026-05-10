@@ -1,9 +1,13 @@
 #![no_std]
 #![no_main]
 #![feature(abi_x86_interrupt)]
+#![feature(alloc_error_handler)]
+
+extern crate alloc;
 
 use core::panic::PanicInfo;
 
+mod allocator;
 mod arch;
 mod console;
 mod cpu;
@@ -18,6 +22,7 @@ mod graphics;
 mod font;
 mod tsr;
 mod memory;
+mod globals;
 pub mod usermode;
 pub mod syscall;
 mod testing;
@@ -39,11 +44,6 @@ pub struct BootInfo {
     pub memory_map_desc_size: u64,
     pub memory_map_desc_version: u32,
 }
-
-static mut ATA_DRIVER: Option<AtaDriver> = None;
-static mut BLOCK_CACHE: Option<BlockCache> = None;
-static mut NEODOS_FS: Option<NeoDosFs> = None;
-static mut FAT32_DRIVER: Option<Fat32Driver> = None;
 
 #[no_mangle]
 #[link_section = ".text.entry"]
@@ -87,25 +87,30 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     memory::init(boot_info);
 
     // ============================================
+    // PHASE 2.75: Heap allocator (uses identity map)
+    // ============================================
+    allocator::init();
+
+    // ============================================
     // PHASE 3: Storage stack
     // ============================================
     serial_println!("[+] Initializing ATA driver...");
-    ATA_DRIVER = Some(AtaDriver::new());
+    globals::ATA_DRIVER = Some(AtaDriver::new());
 
     serial_println!("[+] Scanning PCI for IDE bus-master DMA...");
     if let Some(ide) = pci::find_ide_controller() {
         pci::enable_bus_master(&ide);
-        ATA_DRIVER.as_mut().unwrap().init_dma(ide.bus_master_base);
+        globals::ATA_DRIVER.as_mut().unwrap().init_dma(ide.bus_master_base);
         serial_println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
     } else {
         serial_println!("[!] No IDE bus-master controller found, using PIO");
     }
 
-    let ata = ATA_DRIVER.as_mut().unwrap();
+    let ata = globals::ATA_DRIVER.as_mut().unwrap();
 
     serial_println!("[+] Initializing Block Cache...");
-    BLOCK_CACHE = Some(BlockCache::new());
-    let cache = BLOCK_CACHE.as_mut().unwrap();
+    globals::BLOCK_CACHE = Some(BlockCache::new());
+    let cache = globals::BLOCK_CACHE.as_mut().unwrap();
 
     serial_println!("[+] Reading Superblock...");
     let sb_data = match ata.read_sector(0) {
@@ -116,9 +121,9 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     serial_println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
         Ok(fs) => {
-            NEODOS_FS = Some(fs);
+            globals::NEODOS_FS = Some(fs);
             serial_println!("[+] NeoDOS FS mounted");
-    let _ = NEODOS_FS.as_mut().unwrap().rebuild_bitmap(cache, ata);
+    let _ = globals::NEODOS_FS.as_mut().unwrap().rebuild_bitmap(cache, ata);
     serial_println!("[+] Block bitmap rebuilt");
         },
         Err(_) => panic!("Failed to mount filesystem"),
@@ -128,7 +133,7 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     // FAT32: Read boot partition
     // ============================================
     serial_println!("[+] Initializing FAT32 driver...");
-    FAT32_DRIVER = Fat32Driver::new(ata).ok();
+    globals::FAT32_DRIVER = Fat32Driver::new(ata).ok();
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
@@ -146,10 +151,10 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     testing::register_tests();
     
     let mut shell = shell::DosShell::new(
-        NEODOS_FS.as_mut().unwrap(),
-        BLOCK_CACHE.as_mut().unwrap(),
-        ATA_DRIVER.as_mut().unwrap(),
-        FAT32_DRIVER.take()
+        globals::NEODOS_FS.as_mut().unwrap(),
+        globals::BLOCK_CACHE.as_mut().unwrap(),
+        globals::ATA_DRIVER.as_mut().unwrap(),
+        globals::FAT32_DRIVER.take()
     );
     
     shell.run();

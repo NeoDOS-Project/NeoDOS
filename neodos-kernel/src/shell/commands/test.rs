@@ -10,7 +10,11 @@ impl<'a> DosShell<'a> {
         let (passed, failed) = crate::testing::run_all();
         println!();
         if failed == 0 {
-            println!("All {} tests passed.", passed);
+            println!("All {} kernel tests passed.", passed);
+            println!();
+            println!("Running user-mode syscall tests (SYSTEST.BIN)...");
+            println!();
+            self.cmd_run(&["SYSTEST.BIN"]);
         } else {
             print!("{} passed, {} failed.", passed, failed);
             if failed > 0 {

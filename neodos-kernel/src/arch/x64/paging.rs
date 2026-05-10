@@ -8,12 +8,6 @@ struct AlignedPageTable(PageTable);
 
 static mut PML4: AlignedPageTable = AlignedPageTable(PageTable::new());
 static mut PDPT: AlignedPageTable = AlignedPageTable(PageTable::new());
-static mut PD: [AlignedPageTable; 4] = [
-    AlignedPageTable(PageTable::new()),
-    AlignedPageTable(PageTable::new()),
-    AlignedPageTable(PageTable::new()),
-    AlignedPageTable(PageTable::new()),
-];
 
 /// Base address of the user-accessible memory window.
 /// Must stay inside the 4 GiB identity-mapped range.
@@ -62,7 +56,16 @@ pub fn free_user_slot(slot_idx: u8) {
 }
 
 /// Size of one 2 MB huge page used by the PD entries.
-const HUGE_PAGE_SIZE: u64 = 0x200000;
+pub const HUGE_PAGE_SIZE: u64 = 0x200000;
+
+/// Page Directory tables (for identity-mapped 4 GiB).
+/// Public because heap/alloc initialization needs to update flags.
+pub static mut PD: [AlignedPageTable; 4] = [
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+];
 
 /// Set up the kernel's own page tables (replaces the UEFI-provided ones).
 ///

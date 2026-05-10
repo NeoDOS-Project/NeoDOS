@@ -74,6 +74,17 @@ macro_rules! test_ne {
     };
 }
 
+#[macro_export]
+macro_rules! test_true {
+    ($cond:expr $(,)?) => {
+        if !($cond) {
+            return Err(concat!(
+                "assertion failed: expected true: ", stringify!($cond)
+            ));
+        }
+    };
+}
+
 // ===== Environment tests =====
 
 pub fn register_env_tests() {
@@ -316,9 +327,168 @@ pub fn register_drive_tests() {
     });
 }
 
+pub fn register_process_tests() {
+    use crate::scheduler::{Process, ProcessState};
+
+    test_case!("process_new_initial_state", {
+        let p = Process::new(1, 0x400000, 0x800000);
+        test_eq!(p.pid, 1);
+        test_eq!(p.rip, 0x400000);
+        test_eq!(p.rsp, 0x800000);
+        test_eq!(p.state, ProcessState::Ready);
+        test_eq!(p.cpu_ticks, 0);
+        test_eq!(p.user_slot, None);
+        test_eq!(p.waiting_for, None);
+    });
+
+    test_case!("process_state_debug", {
+        let mut p = Process::new(1, 0x400000, 0x800000);
+        test_eq!(p.state, ProcessState::Ready);
+        p.state = ProcessState::Running;
+        test_eq!(p.state, ProcessState::Running);
+        p.state = ProcessState::Blocked { waiting_for: 42 };
+        test_eq!(p.state, ProcessState::Blocked { waiting_for: 42 });
+        p.state = ProcessState::Terminated;
+        test_eq!(p.state, ProcessState::Terminated);
+    });
+
+    test_case!("process_state_partial_eq", {
+        let s1 = ProcessState::Ready;
+        let s2 = ProcessState::Ready;
+        test_eq!(s1, s2);
+        test_ne!(ProcessState::Ready, ProcessState::Running);
+        test_ne!(ProcessState::Blocked { waiting_for: 1 }, ProcessState::Blocked { waiting_for: 2 });
+    });
+}
+
+pub fn register_utf8_tests() {
+    test_case!("utf8_valid_ascii", {
+        let data = b"Hello World!";
+        test_eq!(core::str::from_utf8(data), Ok("Hello World!"));
+    });
+
+    test_case!("utf8_valid_2byte", {
+        let data = [0xC3, 0xA1];
+        test_eq!(core::str::from_utf8(&data), Ok("á"));
+    });
+
+    test_case!("utf8_valid_3byte", {
+        let data = [0xE2, 0x82, 0xAC];
+        test_eq!(core::str::from_utf8(&data), Ok("€"));
+    });
+
+    test_case!("utf8_invalid_incomplete_seq", {
+        let data = [0xC3];
+        test_true!(core::str::from_utf8(&data).is_err());
+    });
+
+    test_case!("utf8_invalid_continuation", {
+        let data = [0xC3, 0x00];
+        test_true!(core::str::from_utf8(&data).is_err());
+    });
+
+    test_case!("utf8_empty", {
+        test_eq!(core::str::from_utf8(b""), Ok(""));
+    });
+}
+
+pub fn register_alloc_tests() {
+    extern crate alloc;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use alloc::string::String;
+
+    test_case!("alloc_box_u64", {
+        let b = Box::new(42u64);
+        test_eq!(*b, 42);
+    });
+
+    test_case!("alloc_box_mutation", {
+        let mut b = Box::new(100i32);
+        *b = 200;
+        test_eq!(*b, 200);
+    });
+
+    test_case!("alloc_vec_push", {
+        let mut v = Vec::new();
+        v.push(1);
+        v.push(2);
+        v.push(3);
+        test_eq!(v.len(), 3);
+        test_eq!(v[0], 1);
+        test_eq!(v[1], 2);
+        test_eq!(v[2], 3);
+    });
+
+    test_case!("alloc_vec_with_capacity", {
+        let v: Vec<u8> = Vec::with_capacity(100);
+        test_eq!(v.capacity(), 100);
+        test_eq!(v.len(), 0);
+    });
+
+    test_case!("alloc_string_from", {
+        let s = String::from("hello");
+        test_eq!(s.as_str(), "hello");
+        test_eq!(s.len(), 5);
+    });
+
+    test_case!("alloc_string_push_str", {
+        let mut s = String::from("foo");
+        s.push_str("bar");
+        test_eq!(s.as_str(), "foobar");
+    });
+
+    test_case!("alloc_string_format", {
+        let s = alloc::format!("Answer: {}", 42);
+        test_eq!(s.as_str(), "Answer: 42");
+    });
+
+    test_case!("alloc_vec_iter", {
+        let v = alloc::vec![10, 20, 30];
+        let mut sum = 0;
+        for &n in &v {
+            sum += n;
+        }
+        test_eq!(sum, 60);
+    });
+}
+
+pub fn register_sync_tests() {
+    use crate::syscall::{NEED_RESCHED, set_need_resched, clear_need_resched};
+    use core::sync::atomic::Ordering;
+
+    test_case!("need_resched_init_false", {
+        NEED_RESCHED.store(false, Ordering::SeqCst);
+        test_eq!(NEED_RESCHED.load(Ordering::SeqCst), false);
+    });
+
+    test_case!("need_resched_set", {
+        NEED_RESCHED.store(false, Ordering::SeqCst);
+        set_need_resched();
+        test_eq!(NEED_RESCHED.load(Ordering::SeqCst), true);
+    });
+
+    test_case!("need_resched_clear", {
+        NEED_RESCHED.store(true, Ordering::SeqCst);
+        let prev = clear_need_resched();
+        test_eq!(prev, true);
+        test_eq!(NEED_RESCHED.load(Ordering::SeqCst), false);
+    });
+
+    test_case!("need_resched_clear_returns_prev", {
+        NEED_RESCHED.store(false, Ordering::SeqCst);
+        let prev = clear_need_resched();
+        test_eq!(prev, false);
+    });
+}
+
 pub fn register_tests() {
     register_env_tests();
     register_input_tests();
     register_keyboard_tests();
     register_drive_tests();
+    register_process_tests();
+    register_utf8_tests();
+    register_alloc_tests();
+    register_sync_tests();
 }

@@ -270,14 +270,17 @@ impl<'a> DosShell<'a> {
                         _ => { utf8_rem = 0; }
                     }
                 } else {
+                    crate::globals::flush_cache_if_needed();
                     unsafe { core::arch::asm!("hlt") };
                     idle_hits += 1;
                 }
             }
 
             if line_len > 0 {
-                let line = unsafe { core::str::from_utf8_unchecked(&line_buffer[..line_len]) };
-                self.execute_line(line);
+                match core::str::from_utf8(&line_buffer[..line_len]) {
+                    Ok(line) => self.execute_line(line),
+                    Err(_) => println!("?Invalid UTF-8 in command line"),
+                }
             }
         }
 
