@@ -4,80 +4,7 @@
 
 ---
 
-## 🐛 Críticos / Bugs
-
-### 1. Sin scrolling en consola VGA
-
-**Archivo:** `vga.rs:71`
-
-Al llegar a la fila 50, el shell resetea el cursor a (0,0) y limpia toda la pantalla en lugar de hacer scroll. Se pierde todo el historial.
-
-**Propuesta:** Implementar scroll real:
-- Copiar las filas 1..N a 0..N-1 pixel a pixel (o con `memcpy` del framebuffer)
-- Limpiar solo la última fila
-- Alternativa más simple: buffer circular con offset de scroll
-
----
-
-### 2. ATA drive select: master vs slave
-
-**Archivo:** `ata.rs:14`
-
-```rust
-const ATA_DRIVE_SELECT_LBA_BASE: u16 = 0xF0; // 0xF0 = slave
-```
-
-El disco de arranque en QEMU se pasa como master (index=0), pero el driver lo trata como slave. El log muestra que lee correctamente, pero en hardware real o con distinta configuración de QEMU fallaría.
-
-**Propuesta:** Cambiar a `0xE0` (master), o mejor, detectar el drive en inicialización.
-
----
-
-### 3. `execute_batch()` no existe
-
-**Archivos:** `shell/commands/call.rs`, `shell/shell.rs`
-
-`call.rs` y `check_autoexec()` invocan `self.execute_batch(content)` pero el método no está definido en `DosShell`. El código no compilaría si se usara.
-
-**Propuesta:** Implementar `execute_batch(&mut self, content: &str)` que parsea líneas y llama a `execute_line()`.
-
----
-
-### 4. Frame allocator sin asignación
-
-**Archivo:** `memory.rs`
-
-El `FrameAllocator` tiene `mark_free_region()` y `mark_used_region()` pero **no hay `allocate_frame()`**. El allocator solo sirve para estadísticas. Cualquier intento de asignar memoria física falla.
-
-**Propuesta:** Implementar `allocate_frame()` con búsqueda de primer bit libre en el bitmap, y `free_frame()`.
-
----
-
 ## ⚡ Rendimiento
-
-### 5. Shell busy-wait 100% CPU
-
-**Archivo:** `shell/shell.rs:177`
-
-```rust
-while self.running {
-    // busy loop sin hlt
-}
-```
-
-El shell consume una CPU completa al 100% en idle. En portátiles y máquinas reales esto calienta y consume batería.
-
-**Propuesta:** Insertar `hlt` cuando no hay input:
-
-```rust
-if input::pop_byte().is_none() {
-    core::arch::asm!("hlt");
-}
-```
-
-O mejor: usar una waitqueue / IRQ-driven wakeup.
-
----
 
 ### 6. `Renderer::clear()` píxel a píxel
 
@@ -94,12 +21,11 @@ for y in 0..self.fb.height {
 En 1920×1080 son ~2 millones de iteraciones con llamada a función volátil cada una.
 
 **Propuesta:** Usar `memset` o `rep stosd`:
-
 ```rust
 unsafe {
     core::ptr::write_bytes(
         self.fb.base_address as *mut u8,
-        color as u8,  // o manejarlo como u32
+        color as u8,
         self.fb.size,
     );
 }
@@ -127,7 +53,43 @@ Toda transferencia es PIO (Programmed I/O): la CPU espera activamente a que el d
 
 ---
 
+### 28. Block cache: solo 64 entradas
+
+**Archivo:** `buffer/block_cache.rs:5`
+
+```rust
+const CACHE_SIZE: usize = 64;
+```
+
+64 entradas = 32 KB de cache. Para un FS de múltiples MB, es muy pequeño.
+
+**Propuesta:** Aumentar a 256 o 512 entradas (128-256 KB).
+
+---
+
+### 29. Paging: Page tables recreadas en cada boot
+
+**Archivo:** `arch/x64/paging.rs`
+
+Las page tables se crean desde cero en cada arranque. No hay reutilización de páginas del bootloader.
+
+**Propuesta:** Reusar páginas del bootloader antes de crear nuevas.
+
+---
+
+### 30. Inode cache: sin escritura diferida
+
+**Archivo:** `fs/neodos_fs.rs:72-108`
+
+El `InodeCache` carga inodos pero nunca los escribe de vuelta cuando se modifican.
+
+**Propuesta:** Implementar dirty flag y escritura diferida para inodos.
+
+---
+
 ## 🧹 Calidad de código
+
+---
 
 ### 9. `static mut` global sin sincronización
 
@@ -192,20 +154,97 @@ Los bloques marcados como `dirty` solo se escriben al disco cuando son víctimas
 
 ---
 
-## 🆕 Funcionalidades
+### 31. Hardcoded 'C' drive en inicialización
 
-### 14. DEL y REN (stubs)
-
-**Archivo:** `shell/commands/mod.rs:57-58`
+**Archivo:** `shell/shell.rs:76`
 
 ```rust
-"DEL" => println!("DEL not yet implemented"),
-"REN" => println!("REN not yet implemented"),
+let _ = drive_manager.mount('C', FsInstanceId::PRIMARY);
 ```
 
-**Propuesta:** Implementar borrado de archivos (marcar inodo como libre) y rename.
+Solo se monta la unidad C. No hay soporte para A:, B:, D:, etc.
+
+**Propuesta:** Hacer configurable el drive primario o auto-detectar.
 
 ---
+
+### 32. Sin validación de tamaño de archivo en COPY
+
+**Archivo:** `shell/commands/copy.rs:16`
+
+```rust
+let mut buf = [0u8; 16384];
+```
+
+Buffer fijo de 16 KB. Archivos más grandes no se pueden copiar completamente.
+
+**Propuesta:** Implementar lectura/escritura en chunks o usar heap dinámico.
+
+---
+
+### 33. Serial output mezclado con output VGA
+
+**Archivo:** `console.rs` y `serial.rs`
+
+Las macros `print!` y `println!` escriben tanto a VGA como a serial, pero el código serie incluye caracteres de control del framebuffer.
+
+**Propuesta:** Separar en macros distintas o sanitizar output serie.
+
+---
+
+### 35. Scheduler: solo 4 procesos máximos
+
+**Archivo:** `scheduler.rs:6`
+
+```rust
+const MAX_PROCESSES: usize = 4;
+```
+
+Límite muy bajo para cualquier uso práctico.
+
+**Propuesta:** Aumentar a 16 o 32 procesos.
+
+---
+
+### 36. Scheduler: round-robin sin quantum configurable
+
+**Archivo:** `scheduler.rs:209-210`
+
+```rust
+// Every 100 ticks (10ms), switch process
+if self.timer_ticks % 100 == 0 {
+```
+
+El quantum de 100 ticks (10ms) está hardcoded.
+
+**Propuesta:** Hacer configurable vía environment variable.
+
+---
+
+### 37. No hay verificación de integridad del FS
+
+**Archivo:** `fs/neodos_fs.rs`
+
+No hay funcionalidad `fsck`. Un FS corrupto pasa desapercibido.
+
+**Propuesta:** Implementar verificación de:
+- Magic number del superblock
+- Link counts de inodos
+- Referencia circular en directorios
+
+---
+
+### 38. Sin soporte para atributos extendidos
+
+**Archivo:** `fs/neodos_fs.rs:24-37`
+
+El `Inode` tiene campos de owner_uid/gid pero no se usan.
+
+**Propuesta:** Implementar permisos básicos o atributos como hidden/system.
+
+---
+
+## 🆕 Funcionalidades
 
 ### 15. Heap allocator
 
@@ -241,11 +280,46 @@ No hay forma de recuperar comandos anteriores. Cada línea hay que tipearla de n
 
 ---
 
-### 19. Test infrastructure
+### 40. PROMPT command
 
-No hay tests. Cero cobertura.
+No hay forma de cambiar el prompt dinámicamente (más allá de SET PROMPT).
 
-**Propuesta:** Añadir `#[cfg(test)] mod tests` donde tenga sentido (parser de paths, environment, keyboard compose table, etc.). Para integración, test en QEMU con `expect`.
+**Propuesta:** Soporte completo de variables en prompt ($P, $G, $T, etc).
+
+---
+
+### 41. Environment: sin PATH resolution completa
+
+**Archivo:** `shell/shell.rs`
+
+Cuando se ejecuta un comando, no se busca en PATH si no existe en el directorio actual.
+
+**Propuesta:** Implementar búsqueda en PATH para comandos no built-in.
+
+---
+
+### 42. Sin redirección de output
+
+```bash
+DIR > FILE.TXT
+TYPE FILE.TXT | MORE
+```
+
+No soportado.
+
+**Propuesta:** Implementar parser de pipes y redirección.
+
+---
+
+### 43. Sin soporte de argumentos con comillas
+
+```bash
+echo "Hello World"
+```
+
+El parser actual no maneja comillas correctamente.
+
+**Propuesta:** Mejorar el parser de argumentos.
 
 ---
 
@@ -264,17 +338,9 @@ pub fn pop_byte() -> Option<u8> {
 }
 ```
 
-Se deshabilitan/habilitan las interrupciones en cada iteración del shell. El shell llama a `pop_byte()` en un loop cerrado, causando miles de cambios de estado de IF por segundo.
+Se deshabilitan/habilitan las interrupciones en cada iteración del shell.
 
-**Propuesta:** Usar `Mutex` sin cli/sti (el Mutex ya es seguro en single-core si las IRQs no lo toman), o usar un `AtomicU8` para head/tail y evitar el lock completamente.
-
----
-
-### 21. Nombre engañoso: `vga.rs`
-
-No usa VGA real — es una consola sobre framebuffer. El nombre confunde.
-
-**Propuesta:** Renombrar a `console.rs` o `fbcon.rs`.
+**Propuesta:** Usar `Mutex` sin cli/sti, o usar un `AtomicU8` para head/tail y evitar el lock completamente.
 
 ---
 
@@ -288,15 +354,31 @@ No usa VGA real — es una consola sobre framebuffer. El nombre confunde.
 
 ---
 
-## 📦 Herramientas
+### 44. drivers/ata.rs: Sin soporte para múltiples discos
 
-### 23. `neodos_image.img` no se genera en `build.sh`
+**Archivo:** `ata.rs:21`
 
-`build.sh` crea `disk_image.img` (FAT32 para UEFI) pero NO genera `scripts/neodos_image.img` (el FS NeoDOS). Hay que acordarse de ejecutar `python3 create_neodos_image.py` aparte.
+```rust
+const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0; // Slave only
+```
 
-**Propuesta:** Integrar la generación de `neodos_image.img` en `build.sh`.
+Solo funciona con el disco slave (index=1 en QEMU).
+
+**Propuesta:** Auto-detección o configuración en tiempo de build.
 
 ---
+
+### 45. graphics: Sin double buffering
+
+**Archivo:** `graphics.rs`
+
+Cada `put_pixel` escribe directamente al framebuffer, causando flicker en animaciones.
+
+**Propuesta:** Implementar double buffer y swap al final del frame.
+
+---
+
+## 📦 Herramientas
 
 ### 24. Gap entre inode table y data blocks
 
@@ -309,3 +391,30 @@ DATA_START_SECTOR = 200
 Inodes ocupan sectores 1-63. Sectores 64-199 (68 KB) no se usan para nada.
 
 **Propuesta:** Mover `DATA_START_SECTOR` a 64 o 128.
+
+---
+
+### 47. No hay version checking
+
+No hay verificación de que las versiones del bootloader y kernel sean compatibles.
+
+**Propuesta:** Agregar magic number o versión en ambos extremos.
+
+---
+
+### 48. Dependencias no versionadas
+
+Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
+
+**Propuesta:** Usar `cargo lock` y revisar cambios.
+
+---
+
+## Resumen por prioridad
+
+| Prioridad | Items |
+|-----------|-------|
+| Crítica | #1 (VGA scroll), #25 (input buffer), #27 (TSR conflicts), #34 (graceful shutdown) |
+| Alta | #6 (clear píxel a píxel), #7 (allocate block), #8 (ATA DMA), #9 (static mut), #28 (cache size), #31 (hardcoded C:), #35 (max processes), #41 (PATH resolution) |
+| Media | #10 (unwrap), #11 (from_utf8), #12 (TSR stack), #13 (dirty flush), #15 (heap), #16 (FAT32), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
+| Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #44 (multi-disk), #45 (double buffer), #47 (version check), #48 (deps) |

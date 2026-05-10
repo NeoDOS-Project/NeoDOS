@@ -88,7 +88,6 @@ fn scroll() {
             let stride = r.fb.stride;
             let row_h = font::FONT_HEIGHT;
             let rows_total = VGA_HEIGHT * row_h;
-            let cols = VGA_WIDTH * font::FONT_WIDTH;
 
             // Shift all pixel rows up by one character row
             core::ptr::copy(
@@ -99,9 +98,7 @@ fn scroll() {
 
             // Clear last character row
             let last = fb.add((rows_total - row_h) * stride);
-            for x in 0..(row_h * cols) {
-                core::ptr::write_volatile(last.add(x), 0x000000);
-            }
+            core::ptr::write_bytes(last, 0, row_h * stride * 4);
         }
     }
 }
@@ -145,7 +142,7 @@ pub fn clear_screen() {
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {
-        $crate::vga::_print(format_args!($($arg)*))
+        $crate::console::_print(format_args!($($arg)*))
     };
 }
 

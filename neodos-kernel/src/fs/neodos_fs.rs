@@ -20,6 +20,48 @@ pub struct Superblock {
 pub const SUPERBLOCK_MAGIC: u32 = 0x4F444F4E;  // "NEOD"
 pub const BLOCK_SIZE: usize = 4096;
 pub const ROOT_INODE: u32 = 0;
+pub const BLOCK_BITMAP_BYTES: usize = 320;
+
+pub struct BlockBitmap {
+    bits: [u8; BLOCK_BITMAP_BYTES],
+}
+
+impl BlockBitmap {
+    pub fn new() -> Self {
+        BlockBitmap { bits: [0; BLOCK_BITMAP_BYTES] }
+    }
+
+    pub fn alloc(&mut self) -> Option<u32> {
+        for (i, byte) in self.bits.iter_mut().enumerate() {
+            if *byte != 0xFF {
+                for bit in 0..8 {
+                    let mask = 1u8 << bit;
+                    if *byte & mask == 0 {
+                        *byte |= mask;
+                        return Some((i * 8 + bit) as u32);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn free(&mut self, block: u32) {
+        let idx = block as usize / 8;
+        let bit = block as usize % 8;
+        if idx < BLOCK_BITMAP_BYTES {
+            self.bits[idx] &= !(1u8 << bit);
+        }
+    }
+
+    pub fn mark_used(&mut self, block: u32) {
+        let idx = block as usize / 8;
+        let bit = block as usize % 8;
+        if idx < BLOCK_BITMAP_BYTES {
+            self.bits[idx] |= 1u8 << bit;
+        }
+    }
+}
 
 #[repr(packed)]
 #[derive(Debug, Clone, Copy)]
@@ -81,7 +123,7 @@ impl From<AtaError> for FsError {
 }
 
 pub struct InodeCache {
-    inodes: [Option<Inode>; 256],
+    pub(crate) inodes: [Option<Inode>; 256],
 }
 
 impl InodeCache {
@@ -121,6 +163,7 @@ impl InodeCache {
 pub struct NeoDosFs {
     pub superblock: Superblock,
     pub inode_cache: InodeCache,
+    pub block_bitmap: BlockBitmap,
 }
 
 impl NeoDosFs {
@@ -139,6 +182,47 @@ impl NeoDosFs {
             }
         }
         span
+    }
+
+    /// Static version of inode_data_block_count — usable without &self.
+    pub fn inode_block_count(inode: &Inode) -> usize {
+        let span = if (inode.mode & MODE_DIR) != 0 {
+            let mut s = inode.size as usize;
+            for i in 0..12 {
+                let b = inode.direct_blocks[i];
+                let has = b != 0 || ((inode.mode & MODE_DIR) != 0 && i == 0 && inode.size > 0);
+                if has { s = s.max((i + 1) * BLOCK_SIZE); }
+            }
+            s
+        } else {
+            inode.size as usize
+        };
+        if span == 0 { 0 } else { ((span + BLOCK_SIZE - 1) / BLOCK_SIZE).min(12) }
+    }
+
+    pub fn rebuild_bitmap(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+        self.block_bitmap = BlockBitmap::new();
+        // Mark system blocks (before data start) as used so they're never allocated
+        // Superblock (sector 0) + inode table (sectors 1-128) + gap up to sector 200
+        // Data blocks start at sector 200, so system "blocks" are conceptually -25..0
+        // We just mark data blocks that correspond to in-use files
+        for i in 0..256 {
+            let inode = *self.inode_cache.load_inode(i, cache, ata)?;
+            if inode.inode_num != 0 || i == 0 {
+                let num_blocks = Self::inode_block_count(&inode);
+                for j in 0..num_blocks.min(12) {
+                    let b = inode.direct_blocks[j];
+                    if b != 0 && self.is_valid_data_block(b) {
+                        self.block_bitmap.mark_used(b);
+                    }
+                    // Special case: root dir with content may have ptr=0 for block 0
+                    if b == 0 && (inode.mode & MODE_DIR) != 0 && inode.size > 0 && j == 0 {
+                        self.block_bitmap.mark_used(0);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn is_valid_data_block(&self, block_ptr: u32) -> bool {
@@ -201,6 +285,7 @@ impl NeoDosFs {
         Ok(NeoDosFs {
             superblock,
             inode_cache: InodeCache::new(),
+            block_bitmap: BlockBitmap::new(),
         })
     }
     
@@ -253,9 +338,9 @@ impl NeoDosFs {
                             if entry.attributes & ATTR_VOLUME != 0 {
                                 continue;
                             }
-                            crate::vga::print_str("  ");
-                            crate::vga::print_str(name);
-                            crate::vga::print_str("\r\n");
+                            crate::console::print_str("  ");
+                            crate::console::print_str(name);
+                            crate::console::print_str("\r\n");
                             crate::serial_println!("  {}", name);
                         }
                     }
@@ -312,9 +397,9 @@ impl NeoDosFs {
                         }
                         let name_slice = &entry.name[..name_len as usize];
                         if let Ok(name) = core::str::from_utf8(name_slice) {
-                            crate::vga::print_str("  ");
-                            crate::vga::print_str(name);
-                            crate::vga::print_str("\r\n");
+                            crate::console::print_str("  ");
+                            crate::console::print_str(name);
+                            crate::console::print_str("\r\n");
                             crate::serial_println!("  {}", name);
                         }
                     }
@@ -467,7 +552,7 @@ impl NeoDosFs {
                 
                 // Print directly to VGA and Serial
                 if let Ok(text) = core::str::from_utf8(&sector_data[..to_copy]) {
-                    crate::vga::print_str(text);
+                    crate::console::print_str(text);
                     crate::serial_print!("{}", text);
                 }
                 
@@ -544,32 +629,23 @@ impl NeoDosFs {
     }
 
     pub fn allocate_block(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<u32, FsError> {
-        // Simple scanner: scan all inodes to see which blocks are used
-        let mut max_block = 0;
-        for i in 0..256 {
-            let inode = self.inode_cache.load_inode(i, cache, ata)?;
-            if inode.inode_num != 0 || i == 0 {
-                let num_valid_blocks = (inode.size as usize + BLOCK_SIZE - 1) / BLOCK_SIZE;
-                let blocks = inode.direct_blocks; 
-                for j in 0..num_valid_blocks.min(12) {
-                    let b = blocks[j];
-                    if b > max_block { 
-                        max_block = b; 
-                    }
+        match self.block_bitmap.alloc() {
+            Some(block) => {
+                if block >= self.superblock.num_blocks {
+                    serial_println!("[!] FS: No block available. bitmap gave: {}, total: {}", block, self.superblock.num_blocks);
+                    return Err(FsError::NoBlockAvailable);
                 }
+                Ok(block)
+            }
+            None => {
+                serial_println!("[!] FS: Block bitmap exhausted ({} blocks)", self.superblock.num_blocks);
+                Err(FsError::NoBlockAvailable)
             }
         }
-        
-        // If max_block is 0, it means only root is used (block 0), or nothing.
-        // The first data block is typically block 1 (if root uses block 0).
-        let next_block = if max_block == 0 { 1 } else { max_block + 1 };
+    }
 
-        if next_block >= self.superblock.num_blocks {
-            serial_println!("[!] FS: No block available. next: {}, total: {}", next_block, self.superblock.num_blocks);
-            return Err(FsError::NoBlockAvailable);
-        }
-        
-        Ok(next_block)
+    pub fn free_block(&mut self, block: u32) {
+        self.block_bitmap.free(block);
     }
 
     pub fn create_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
@@ -743,9 +819,30 @@ impl NeoDosFs {
     }
 
     pub fn delete_file_by_inode(&mut self, parent_inode: u32, _filename: &str, file_inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+        // Free the file's data blocks – copy pointers first to avoid borrow conflict
+        let mut blocks_to_free = [0u32; 12];
+        {
+            let file_inode = *self.inode_cache.load_inode(file_inode_num as usize, cache, ata)?;
+            let num_blocks = Self::inode_block_count(&file_inode);
+            for j in 0..num_blocks.min(12) {
+                let b = file_inode.direct_blocks[j];
+                if b != 0 && b < self.superblock.num_blocks {
+                    blocks_to_free[j] = b;
+                }
+            }
+        }
+        for &b in blocks_to_free.iter() {
+            if b != 0 {
+                self.free_block(b);
+            }
+        }
+        // Mark the file's inode as free in the cache
+        self.inode_cache.inodes[file_inode_num as usize] = None;
+
+        // Now remove the directory entry
         let mut dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
         
-let num_blocks = self.inode_data_block_count(&dir_inode);
+        let num_blocks = self.inode_data_block_count(&dir_inode);
         
         for block_idx in 0..num_blocks {
             let actual_block = match self.get_inode_block_ptr(&dir_inode, block_idx) {

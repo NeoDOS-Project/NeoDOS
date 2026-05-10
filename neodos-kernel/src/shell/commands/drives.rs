@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_drives(&mut self) {
+    pub fn cmd_drives(&mut self) {
         println!("Mounted drives:");
         let mut any = false;
         for i in 0..26u8 {

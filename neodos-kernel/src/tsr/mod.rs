@@ -44,6 +44,15 @@ pub fn install_tsr(filename: &str, interrupt_num: u8, fs: &mut NeoDosFs, cache: 
                         core::ptr::copy_nonoverlapping(buf.as_ptr(), addr as *mut u8, read);
                     }
 
+                    // Check vector conflict
+                    for existing in &registry.programs {
+                        if let Some(info) = existing {
+                            if info.interrupt_num == interrupt_num {
+                                return Err(()); // Vector already claimed
+                            }
+                        }
+                    }
+
                     // Register
                     for i in 0..16 {
                         if registry.programs[i].is_none() {

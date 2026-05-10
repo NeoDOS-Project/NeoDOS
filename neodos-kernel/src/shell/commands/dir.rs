@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_dir(&mut self, args: &[&str]) {
+    pub fn cmd_dir(&mut self, args: &[&str]) {
         let path_arg = args.first().copied();
         let (dir_inode, dir_path, dir_path_len) = if args.is_empty() {
             let mut path = [0u8; 128];

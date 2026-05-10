@@ -200,12 +200,12 @@ impl<'a> DosShell<'a> {
                 if ticks - blink_ticks >= cursor_interval {
                     blink_ticks = ticks;
                     cursor_visible = !cursor_visible;
-                    crate::vga::draw_cursor(cursor_visible);
+                    crate::console::draw_cursor(cursor_visible);
                 }
 
                 // Input comes from IRQ1 keyboard handler which fills the buffer
                 if let Some(byte) = input::pop_byte() {
-                    crate::vga::draw_cursor(false);
+                    crate::console::draw_cursor(false);
                     cursor_visible = false;
 
                     match byte {
@@ -222,7 +222,7 @@ impl<'a> DosShell<'a> {
                                     n += 1;
                                 }
                                 line_len -= n;
-                                crate::vga::write_char(b'\x08');
+                                crate::console::write_char(b'\x08');
                                 crate::serial_print!("\x08 \x08");
                             }
                         }
@@ -231,7 +231,7 @@ impl<'a> DosShell<'a> {
                                 if byte < 0x80 {
                                     line_buffer[line_len] = byte;
                                     line_len += 1;
-                                    crate::vga::write_char(byte);
+                                    crate::console::write_char(byte);
                                     crate::serial_print!("{}", byte as char);
                                 } else if byte >= 0xC2 && byte <= 0xDF {
                                     utf8_rem = 1;
@@ -250,7 +250,7 @@ impl<'a> DosShell<'a> {
                                 line_buffer[line_len] = byte;
                                 line_len += 1;
                                 if utf8_rem == 0 {
-                                    crate::vga::write_codepoint(utf8_cp);
+                                    crate::console::write_codepoint(utf8_cp);
                                     if let Some(ch) = core::char::from_u32(utf8_cp) {
                                         crate::serial_print!("{}", ch);
                                     }

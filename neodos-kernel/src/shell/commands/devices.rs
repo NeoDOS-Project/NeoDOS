@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_devices(&mut self) {
+    pub fn cmd_devices(&mut self) {
         println!("Installed TSRs:");
         let registry = crate::tsr::TSR_REGISTRY.lock();
         let mut found = false;

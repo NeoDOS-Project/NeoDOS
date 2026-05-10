@@ -36,7 +36,7 @@ pub enum DriveManagerError {
 }
 
 /// Normalized path inside the filesystem (leading `'/'`, backslashes converted).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct InternalPath {
     buf: [u8; InternalPath::CAPACITY],
     len: usize,

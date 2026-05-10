@@ -17,11 +17,14 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 [+] Initializing PIC...
 [+] Enabling interrupts...
 [+] Initializing ATA driver...
+[+] Scanning PCI for IDE bus-master DMA...
+[+] ATA bus-master DMA enabled at BMBA 0xC040
 [+] Initializing Block Cache...
 [+] Reading Superblock...
 [+] Mounting NeoDOS FS...
 [✓] FS: Superblock loaded. Blocks: 2560, Inodes: 256
 [+] NeoDOS FS mounted
+[+] Block bitmap rebuilt
 [+] Initializing FAT32 driver...
 [FAT32] Boot partition ready
   Clusters: 1 sectors, FAT: 1576 sectors
@@ -32,107 +35,4 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> 
-C:\> dir
- Directory of C:\
-
-  readme.txt
-  test.bat
-  SYSTEM
-C:\> cls
-C:\> exit
-Shutting down...
-[SHUTDOWN] Syncing block cache...
-[SHUTDOWN] Syncing filesystem...
-[SHUTDOWN] Power off...
+C:\> qemu-system-x86_64: terminating on signal 15 from pid 684264 (timeout)
