@@ -105,20 +105,10 @@ impl<'a> DosShell<'a> {
         println!("Launching '{}' ({} bytes) in Ring 3...", filename, bin_size);
 
         // ── 4. Enter Ring 3 via IRETQ ──
-        // execute_usermode does not return; the only exit path is sys_exit (INT 0x80
-        // with RAX=0), which marks the scheduler slot as Terminated. Because we
-        // are currently running in the shell (kernel task, not a scheduler slot),
-        // the simplest approach for v0.7 is to spin-wait until the process exits.
-        //
-        // A proper implementation would add the process to the scheduler and block
-        // the shell until a "child exited" event. That is left for v0.8.
+        // execute_usermode saves the kernel stack/return context before the IRETQ,
+        // and sys_exit (INT 0x80, RAX=0) restores it, effectively "returning" here.
         crate::usermode::execute_usermode(USER_ENTRY, USER_STACK_TOP);
 
-        // execute_usermode is `options(noreturn)` — if we reach here something went
-        // very wrong; the panic handler will halt the system.
-        #[allow(unreachable_code)]
-        {
-            println!("Returned from Ring 3 (unexpected).");
-        }
+        println!("Process '{}' exited.", filename);
     }
 }

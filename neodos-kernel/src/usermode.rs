@@ -1,37 +1,49 @@
 use core::arch::asm;
 use crate::arch::x64::gdt::get_selectors;
 
+#[no_mangle]
+static mut EXIT_RSP: u64 = 0;
+#[no_mangle]
+static mut EXIT_RIP: u64 = 0;
+
+core::arch::global_asm!(
+    ".global execute_usermode_asm",
+    "execute_usermode_asm:",
+    // RDI = entry_point, RSI = stack_pointer, RDX = user_code, RCX = user_data
+    // Save return context so sys_exit can longjmp back here
+    "lea rax, [rip + 1f]",
+    "mov [rip + EXIT_RIP], rax",
+    "mov [rip + EXIT_RSP], rsp",
+    // Push Ring-3 frame
+    "push rcx",
+    "push rsi",
+    "push 0x200",
+    "push rdx",
+    "push rdi",
+    "iretq",
+    "1:",
+    "ret",
+
+    ".global exit_to_kernel",
+    "exit_to_kernel:",
+    "mov rsp, [rip + EXIT_RSP]",
+    "push [rip + EXIT_RIP]",
+    "ret",
+);
+
+extern "C" {
+    fn execute_usermode_asm(entry: u64, stack: u64, cs: u64, ss: u64);
+    fn exit_to_kernel();
+}
+
 pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     let selectors = get_selectors();
-    
-    // The trick to entering Ring 3 is to "return" from an interrupt.
-    // The IRETQ instruction expects 5 values on the stack:
-    // 1. SS (User Data Segment)
-    // 2. RSP (User Stack Pointer)
-    // 3. RFLAGS
-    // 4. CS (User Code Segment)
-    // 5. RIP (User Entry Point)
-    
     unsafe {
-        asm!(
-            // Push SS (User Data Segment)
-            "push {ss}",
-            // Push RSP (User Stack Pointer)
-            "push {rsp}",
-            // Push RFLAGS (Interrupts enabled: 0x200)
-            "push 0x200",
-            // Push CS (User Code Segment)
-            "push {cs}",
-            // Push RIP (User Entry Point)
-            "push {rip}",
-            // Execute IRETQ to drop privileges and jump!
-            "iretq",
-            
-            ss = in(reg) selectors.user_data.0,
-            rsp = in(reg) stack_pointer,
-            cs = in(reg) selectors.user_code.0,
-            rip = in(reg) entry_point,
-            options(noreturn)
+        execute_usermode_asm(
+            entry_point,
+            stack_pointer,
+            selectors.user_code.0 as u64,
+            selectors.user_data.0 as u64,
         );
     }
 }

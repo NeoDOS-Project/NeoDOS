@@ -102,12 +102,9 @@ core::arch::global_asm!(
     // If original syscall was sys_exit (0), halt instead of returning to Ring 3
     "test r15, r15",
     "jnz 2f",
-    // ---- sys_exit path: abandon stack and halt ----
-    // Discard saved GP regs (15 × 8 = 120) + INT frame (RIP/CS/RFLAGS/RSP/SS = 40)
-    "add rsp, 160",
-    "sti",
-    "1: hlt",
-    "jmp 1b",
+    // ---- sys_exit path: restore kernel stack and return to execute_usermode ----
+    ".extern exit_to_kernel",
+    "jmp exit_to_kernel",
     // ---- Normal return path ----
     "2: pop rax",
     "pop rbx",
