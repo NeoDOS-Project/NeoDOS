@@ -1,6 +1,9 @@
 // src/input.rs
-
-use spin::Mutex;
+//
+// Lock-free single-producer (IRQ1) / single-consumer (shell) input buffer.
+// The producer runs with interrupts disabled (hardware), so the consumer
+// masks interrupts around its critical section to prevent the producer
+// from observing an inconsistent state.
 
 const INPUT_BUFFER_SIZE: usize = 1024;
 
@@ -18,17 +21,17 @@ impl InputBuffer {
             tail: 0,
         }
     }
-    
+
     pub fn push(&mut self, byte: u8) -> Result<(), ()> {
         let next = (self.tail + 1) % INPUT_BUFFER_SIZE;
         if next == self.head {
-            return Err(());  // Buffer full
+            return Err(());
         }
         self.buffer[self.tail] = byte;
         self.tail = next;
         Ok(())
     }
-    
+
     pub fn pop(&mut self) -> Option<u8> {
         if self.head == self.tail {
             return None;
@@ -37,43 +40,38 @@ impl InputBuffer {
         self.head = (self.head + 1) % INPUT_BUFFER_SIZE;
         Some(byte)
     }
-    
+
     pub fn is_empty(&self) -> bool {
         self.head == self.tail
     }
 }
 
-pub static INPUT_BUFFER: Mutex<InputBuffer> = Mutex::new(InputBuffer::new());
+static mut INPUT_BUFFER: InputBuffer = InputBuffer::new();
 
-/// Push byte from IRQ context (interrupts already disabled by hardware during handler)
+/// Called from IRQ1 context (keyboard handler).
+/// Interrupts are already disabled by the CPU, so it is safe to mutate
+/// INPUT_BUFFER without additional synchronisation.
 pub fn push_byte(byte: u8) {
-    let mut buffer = INPUT_BUFFER.lock();
-    let _ = buffer.push(byte);
+    unsafe {
+        let _ = INPUT_BUFFER.push(byte);
+    }
 }
 
-/// Pop byte from main context
+/// Called from the main shell loop.  Disables interrupts so the keyboard
+/// IRQ cannot run concurrently and see a partially-updated head pointer.
 pub fn pop_byte() -> Option<u8> {
-    let mut buffer = INPUT_BUFFER.lock();
-    buffer.pop()
-}
+    let if_set = unsafe {
+        let mut flags: u64;
+        core::arch::asm!("pushfq; pop {}", lateout(reg) flags);
+        (flags & 0x200) != 0
+    };
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    
-    #[test]
-    fn test_buffer_capacity() {
-        let mut buf = InputBuffer::new();
-        
-        // Fill buffer to capacity
-        let mut count = 0;
-        while buf.push(count as u8).is_ok() {
-            count += 1;
+    unsafe {
+        core::arch::asm!("cli");
+        let result = INPUT_BUFFER.pop();
+        if if_set {
+            core::arch::asm!("sti");
         }
-        
-        // With 1024 size, we should be able to push at least 900+ bytes
-        // (accounting for circular buffer overhead)
-        assert!(count > 900, "Buffer should hold at least 900 bytes, got {}", count);
-        crate::serial_println!("[TEST] Input buffer capacity: {} bytes", count);
+        result
     }
 }

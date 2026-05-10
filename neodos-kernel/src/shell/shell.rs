@@ -2,6 +2,7 @@
 
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ata::AtaDriver;
+use crate::drivers::fat32::Fat32Driver;
 use crate::fs::drive_manager::{DriveManager, DriveManagerError, FsInstanceId, InternalPath};
 use crate::fs::neodos_fs::{FsError, NeoDosFs, ROOT_INODE};
 use crate::input;
@@ -24,35 +25,24 @@ impl VfsPath<'_> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ShellPathError {
-    Drive(DriveManagerError),
-    UnsupportedVolume,
-}
-
 /// Normalize user input using only [`DriveManager`] (no `&mut` shell), so callers can
 /// run VFS operations afterward without borrow conflicts.
 pub(crate) fn vfs_path_from_drive_manager<'a>(
     drive_manager: &DriveManager,
     path: &'a str,
-) -> Result<VfsPath<'a>, ShellPathError> {
+) -> Result<(FsInstanceId, VfsPath<'a>), DriveManagerError> {
     let bytes = path.as_bytes();
     if bytes.len() >= 2 && bytes[1] == b':' {
         let Some(&letter_byte) = bytes.first() else {
-            return Err(ShellPathError::Drive(DriveManagerError::InvalidPath));
+            return Err(DriveManagerError::InvalidPath);
         };
         if !letter_byte.is_ascii_alphabetic() {
-            return Err(ShellPathError::Drive(DriveManagerError::InvalidDriveLetter));
+            return Err(DriveManagerError::InvalidDriveLetter);
         }
-        let (fs_id, internal) = drive_manager
-            .resolve_dos_path(path)
-            .map_err(ShellPathError::Drive)?;
-        if fs_id != FsInstanceId::PRIMARY {
-            return Err(ShellPathError::UnsupportedVolume);
-        }
-        Ok(VfsPath::Internal(internal))
+        let (fs_id, internal) = drive_manager.resolve_dos_path(path)?;
+        Ok((fs_id, VfsPath::Internal(internal)))
     } else {
-        Ok(VfsPath::Borrowed(path))
+        Ok((FsInstanceId::PRIMARY, VfsPath::Borrowed(path)))
     }
 }
 
@@ -67,13 +57,22 @@ pub struct DosShell<'a> {
     pub fs: &'a mut NeoDosFs,
     pub cache: &'a mut BlockCache,
     pub ata: &'a mut AtaDriver,
+    pub fat32: Option<Fat32Driver>,
     pub running: bool,
 }
 
 impl<'a> DosShell<'a> {
-    pub fn new(fs: &'a mut NeoDosFs, cache: &'a mut BlockCache, ata: &'a mut AtaDriver) -> Self {
+    pub fn new(
+        fs: &'a mut NeoDosFs,
+        cache: &'a mut BlockCache,
+        ata: &'a mut AtaDriver,
+        fat32: Option<Fat32Driver>,
+    ) -> Self {
         let mut drive_manager = DriveManager::new();
         let _ = drive_manager.mount('C', FsInstanceId::PRIMARY);
+        if fat32.is_some() {
+            let _ = drive_manager.mount('A', FsInstanceId::FAT32_ESP);
+        }
 
         let mut shell = DosShell {
             current_dir: [0; 128],
@@ -85,6 +84,7 @@ impl<'a> DosShell<'a> {
             fs,
             cache,
             ata,
+            fat32,
             running: true,
         };
         shell.current_dir[0] = b'\\';
@@ -121,12 +121,17 @@ impl<'a> DosShell<'a> {
         )
     }
 
+    /// Resolve a path for NeoDosFs only. Returns error for FAT32 ESP paths.
     pub(crate) fn resolve_directory_arg(
         &mut self,
         path: &str,
     ) -> Result<(u32, [u8; 128], usize), FsError> {
         let dm = self.drive_manager;
-        let vfs = vfs_path_from_drive_manager(&dm, path).map_err(|_| FsError::FileNotFound)?;
+        let (fs_id, vfs) = vfs_path_from_drive_manager(&dm, path)
+            .map_err(|_| FsError::FileNotFound)?;
+        if fs_id != FsInstanceId::PRIMARY {
+            return Err(FsError::FileNotFound);
+        }
         self.resolve_directory_arg_from_vfs(vfs)
     }
 
@@ -140,8 +145,11 @@ impl<'a> DosShell<'a> {
             self.current_dir_inode
         } else {
             let dm = self.drive_manager;
-            let parent_vfs =
-                vfs_path_from_drive_manager(&dm, parent_path).map_err(|_| FsError::FileNotFound)?;
+            let (fs_id, parent_vfs) = vfs_path_from_drive_manager(&dm, parent_path)
+                .map_err(|_| FsError::FileNotFound)?;
+            if fs_id != FsInstanceId::PRIMARY {
+                return Err(FsError::FileNotFound);
+            }
             self.resolve_directory_arg_from_vfs(parent_vfs)?.0
         };
         self.fs
@@ -167,7 +175,7 @@ impl<'a> DosShell<'a> {
     }
 
     pub fn run(&mut self) -> ! {
-        println!("NeoDOS v0.6 - FS Started");
+        println!("NeoDOS v{} - FS Started", env!("CARGO_PKG_VERSION"));
         println!("Type HELP for a list of commands.");
         println!();
 
@@ -379,7 +387,11 @@ impl<'a> DosShell<'a> {
 
     pub fn navigate_to_path(&mut self, path: &str) -> Result<u32, FsError> {
         let dm = self.drive_manager;
-        let vfs = vfs_path_from_drive_manager(&dm, path).map_err(|_| FsError::FileNotFound)?;
+        let (fs_id, vfs) = vfs_path_from_drive_manager(&dm, path)
+            .map_err(|_| FsError::FileNotFound)?;
+        if fs_id != FsInstanceId::PRIMARY {
+            return Err(FsError::FileNotFound);
+        }
         let s = vfs.as_str().map_err(|_| FsError::FileNotFound)?;
         let base_inode = if s.starts_with('\\') || s.starts_with('/') {
             ROOT_INODE

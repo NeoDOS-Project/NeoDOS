@@ -1,9 +1,38 @@
 use crate::println;
-use crate::shell::shell::DosShell;
+use crate::shell::shell::{vfs_path_from_drive_manager, DosShell};
+use crate::fs::drive_manager::FsInstanceId;
 
 impl<'a> DosShell<'a> {
     pub fn cmd_dir(&mut self, args: &[&str]) {
         let path_arg = args.first().copied();
+
+        let (fs_id, vfs_opt) = match path_arg {
+            Some(p) => match vfs_path_from_drive_manager(&self.drive_manager, p) {
+                Ok((id, vfs)) => (id, Some(vfs)),
+                Err(_) => (FsInstanceId::PRIMARY, None),
+            },
+            None => (FsInstanceId::PRIMARY, None),
+        };
+
+        if fs_id == FsInstanceId::FAT32_ESP {
+            if let Some(vfs) = vfs_opt {
+                let path_str = vfs.as_str().unwrap_or("/");
+                let drive_letter = self.dir_display_drive(path_arg);
+                println!(" Directory of {}:{}", drive_letter, path_str);
+                println!();
+
+                match &mut self.fat32 {
+                    Some(fat) => {
+                        if let Err(e) = fat.list_directory(self.ata, path_str) {
+                            println!("Error reading directory: {:?}", e);
+                        }
+                    }
+                    None => println!("Drive A: not available"),
+                }
+            }
+            return;
+        }
+
         let (dir_inode, dir_path, dir_path_len) = if args.is_empty() {
             let mut path = [0u8; 128];
             path[..self.current_dir_len].copy_from_slice(&self.current_dir[..self.current_dir_len]);
@@ -28,4 +57,3 @@ impl<'a> DosShell<'a> {
         }
     }
 }
-

@@ -19,6 +19,7 @@ mod font;
 mod tsr;
 mod memory;
 pub mod usermode;
+pub mod syscall;
 mod testing;
 
 use drivers::ata::AtaDriver;
@@ -28,7 +29,7 @@ use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
 
-const KERNEL_VERSION: &str = "NeoDOS Kernel v0.6 - The Rusty DOS Revival";
+const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
 #[repr(C)]
 pub struct BootInfo {
@@ -42,6 +43,7 @@ pub struct BootInfo {
 static mut ATA_DRIVER: Option<AtaDriver> = None;
 static mut BLOCK_CACHE: Option<BlockCache> = None;
 static mut NEODOS_FS: Option<NeoDosFs> = None;
+static mut FAT32_DRIVER: Option<Fat32Driver> = None;
 
 #[no_mangle]
 #[link_section = ".text.entry"]
@@ -72,6 +74,9 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     
     serial_println!("[+] Initializing PIC...");
     arch::x64::init_pic();
+
+    serial_println!("[+] Initializing PS/2 controller...");
+    drivers::keyboard::init_ps2();
 
     serial_println!("[+] Enabling interrupts...");
     arch::x64::enable_interrupts();
@@ -123,14 +128,7 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     // FAT32: Read boot partition
     // ============================================
     serial_println!("[+] Initializing FAT32 driver...");
-    match Fat32Driver::new(ata) {
-        Ok(_fat32) => {
-            // FAT32 driver ready - can read boot partition
-        },
-        Err(e) => {
-            serial_println!("[!] FAT32 init: {:?}", e);
-        }
-    }
+    FAT32_DRIVER = Fat32Driver::new(ata).ok();
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
@@ -150,7 +148,8 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     let mut shell = shell::DosShell::new(
         NEODOS_FS.as_mut().unwrap(),
         BLOCK_CACHE.as_mut().unwrap(),
-        ATA_DRIVER.as_mut().unwrap()
+        ATA_DRIVER.as_mut().unwrap(),
+        FAT32_DRIVER.take()
     );
     
     shell.run();

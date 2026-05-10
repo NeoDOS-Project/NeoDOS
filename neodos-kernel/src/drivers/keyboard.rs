@@ -13,6 +13,102 @@ static EXTENDED: AtomicU8 = AtomicU8::new(0);
 static DEAD_KEY: AtomicU8 = AtomicU8::new(0);
 static OUTPUT_PENDING: [AtomicU8; 2] = [AtomicU8::new(0), AtomicU8::new(0)];
 
+const PS2_TIMEOUT: u32 = 100_000;
+
+/// Wait for the PS/2 controller input buffer to be empty (bit 1 of status = 0).
+/// This means the controller is ready to accept a command.
+/// Returns false if the controller didn't become ready before the timeout.
+fn ps2_wait_input() -> bool {
+    let mut status = Port::new(0x64u16);
+    for _ in 0..PS2_TIMEOUT {
+        unsafe {
+            let s: u8 = status.read();
+            if (s & 0x02) == 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Wait for the PS/2 controller output buffer to be full (bit 0 = 1).
+/// Returns false if the controller didn't produce data before the timeout.
+fn ps2_wait_output() -> bool {
+    let mut status = Port::new(0x64u16);
+    for _ in 0..PS2_TIMEOUT {
+        unsafe {
+            let s: u8 = status.read();
+            if (s & 0x01) != 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Flush any stale data from the PS/2 output buffer.
+fn ps2_flush_output() {
+    let mut status = Port::new(0x64u16);
+    let mut data = Port::new(0x60u16);
+    for _ in 0..PS2_TIMEOUT {
+        unsafe {
+            let s: u8 = status.read();
+            if (s & 0x01) == 0 {
+                break;
+            }
+            let _: u8 = data.read();
+        }
+    }
+}
+
+/// Initialize the PS/2 controller (8042) for keyboard operation.
+///
+/// Must be called **before** enabling interrupts so the keyboard
+/// is ready to assert IRQ1.
+pub fn init_ps2() {
+    let mut cmd = Port::new(0x64u16);
+    let mut data = Port::new(0x60u16);
+
+    unsafe {
+        // 1. Disable keyboard port
+        if !ps2_wait_input() { return; }
+        cmd.write(0xADu8);
+
+        // 2. Flush any stale data
+        ps2_flush_output();
+
+        // 3. Read configuration byte
+        if !ps2_wait_input() { return; }
+        cmd.write(0x20u8);
+        if !ps2_wait_output() { return; }
+        let config: u8 = data.read();
+
+        // 4. Set bit 0  = enable keyboard interrupt
+        //    Clear bit 4 = enable keyboard clock (don't inhibit)
+        let new_config = (config | 0x01) & !0x10;
+
+        // 5. Write configuration byte
+        if !ps2_wait_input() { return; }
+        cmd.write(0x60u8);
+        if !ps2_wait_input() { return; }
+        data.write(new_config);
+
+        // 6. Enable keyboard port
+        if !ps2_wait_input() { return; }
+        cmd.write(0xAEu8);
+
+        // 7. Send "Enable Scanning" command (0xF4) to the keyboard
+        if !ps2_wait_input() { return; }
+        data.write(0xF4u8);
+
+        // 8. Read ACK (0xFA) — optional; keyboard will send it on success.
+        //    Timeout prevents hang if no PS/2 keyboard is connected.
+        if ps2_wait_output() {
+            let _ack: u8 = data.read();
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum KeyboardLayout {

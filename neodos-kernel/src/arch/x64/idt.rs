@@ -53,8 +53,72 @@ core::arch::global_asm!(
     "iretq"
 );
 
+// INT 0x80 syscall trampolín.
+//
+// Mirrors timer_handler_asm: saves all GP registers, extracts the syscall
+// arguments from the saved frame, calls the Rust dispatcher, puts the return
+// value back in the saved RAX slot, restores everything, and returns to Ring 3
+// via IRETQ.
+//
+// Calling convention seen from user space (INT 0x80):
+//   RAX = syscall number
+//   RBX = arg0
+//   RCX = arg1
+//   RDX = arg2
+// Return value: RAX on return.
+core::arch::global_asm!(
+    ".extern syscall_dispatch",
+    ".global syscall_handler_asm",
+    "syscall_handler_asm:",
+    // Save all GP registers (same order as timer trampolín so we can index them)
+    "push rbp",
+    "push r15",
+    "push r14",
+    "push r13",
+    "push r12",
+    "push r11",
+    "push r10",
+    "push r9",
+    "push r8",
+    "push rdi",
+    "push rsi",
+    "push rdx",   // arg2  (RDX offset from RSP: 2*8 = 16)
+    "push rcx",   // arg1  (RCX offset: 3*8 = 24)
+    "push rbx",   // arg0  (RBX offset: 4*8 = 32)
+    "push rax",   // syscall number  (RAX offset: 5*8 = 40  ← top of saved-reg frame)
+    // syscall_dispatch(rax, rbx, rcx, rdx) — System V AMD64 ABI
+    // Arguments go in RDI, RSI, RDX, RCX.
+    // We saved the originals on the stack; load from there to avoid clobbering.
+    "mov rdi, [rsp + 0]",     // saved RAX → syscall number
+    "mov rsi, [rsp + 8]",     // saved RBX → arg0
+    "mov rdx, [rsp + 16]",    // saved RCX → arg1  (note: RCX was pushed after RBX)
+    "mov rcx, [rsp + 24]",    // saved RDX → arg2
+    "call syscall_dispatch",
+    // Return value (RAX) → write back into the saved-RAX slot so it lands in
+    // the user's RAX when we restore.
+    "mov [rsp + 0], rax",
+    // Restore all GP registers
+    "pop rax",
+    "pop rbx",
+    "pop rcx",
+    "pop rdx",
+    "pop rsi",
+    "pop rdi",
+    "pop r8",
+    "pop r9",
+    "pop r10",
+    "pop r11",
+    "pop r12",
+    "pop r13",
+    "pop r14",
+    "pop r15",
+    "pop rbp",
+    "iretq"
+);
+
 extern "C" {
     fn timer_handler_asm();
+    fn syscall_handler_asm();
 }
 
 lazy_static! {
@@ -90,10 +154,12 @@ lazy_static! {
         }
         idt[33].set_handler_fn(keyboard_handler);   // IRQ1
         
-        // Syscall (INT 0x80)
-        idt[0x80]
-            .set_handler_fn(syscall_handler)
-            .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
+        // Syscall (INT 0x80) — trampolín real, accesible desde Ring 3
+        unsafe {
+            idt[0x80]
+                .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as u64))
+                .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
+        }
         
         idt
     };
@@ -245,8 +311,5 @@ pub fn init() {
     IDT.load();
 }
 
-extern "x86-interrupt" fn syscall_handler(stack_frame: InterruptStackFrame) {
-    // Basic syscall handler for Phase 6
-    serial_println!("Syscall invoked from Ring 3!");
-    // Later we will read RAX for the syscall number
-}
+// syscall_handler_asm is defined in the global_asm! block above.
+// syscall_dispatch lives in src/syscall.rs and is linked by name.
