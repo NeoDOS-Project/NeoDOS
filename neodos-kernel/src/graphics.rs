@@ -30,10 +30,15 @@ impl Renderer {
     }
 
     pub fn clear(&self, color: u32) {
-        for y in 0..self.fb.height {
-            for x in 0..self.fb.width {
-                self.put_pixel(x, y, color);
-            }
+        let count = self.fb.size / 4;
+        unsafe {
+            core::arch::asm!(
+                "rep stosd",
+                inout("rcx") count => _,
+                inout("rdi") self.fb.base_address as *mut u32 => _,
+                in("eax") color,
+                options(nostack, preserves_flags)
+            );
         }
     }
 }

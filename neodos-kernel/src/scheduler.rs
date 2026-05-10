@@ -94,7 +94,7 @@ impl Process {
 }
 
 pub struct Scheduler {
-    processes: [Option<Process>; MAX_PROCESSES],
+    pub processes: [Option<Process>; MAX_PROCESSES],
     pub current_pid: u32,
     next_pid: u32,
     timer_ticks: u64,
@@ -224,15 +224,15 @@ impl Scheduler {
     }
 
     pub fn print_processes(&self) {
-        crate::vga::print_str("[");
+        crate::console::print_str("[");
         for proc in self.processes.iter() {
             if let Some(p) = proc {
-                crate::vga::print_str("P");
-                crate::vga::print_decimal(p.pid as u64);
-                crate::vga::print_str("] ");
+                crate::console::print_str("P");
+                crate::console::print_decimal(p.pid as u64);
+                crate::console::print_str("] ");
             }
         }
-        crate::vga::print_str("\r\n");
+        crate::console::print_str("\r\n");
     }
 }
 

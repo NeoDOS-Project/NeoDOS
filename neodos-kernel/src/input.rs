@@ -51,15 +51,10 @@ pub fn push_byte(byte: u8) {
     let _ = buffer.push(byte);
 }
 
-/// Pop byte from main context (disable interrupts to avoid race with IRQ1)
+/// Pop byte from main context
 pub fn pop_byte() -> Option<u8> {
-    crate::arch::x64::disable_interrupts();
-    let result = {
-        let mut buffer = INPUT_BUFFER.lock();
-        buffer.pop()
-    };
-    crate::arch::x64::enable_interrupts();
-    result
+    let mut buffer = INPUT_BUFFER.lock();
+    buffer.pop()
 }
 
 #[cfg(test)]

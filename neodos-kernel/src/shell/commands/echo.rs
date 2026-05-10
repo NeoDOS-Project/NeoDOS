@@ -3,7 +3,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_echo(&mut self, args: &[&str]) {
+    pub fn cmd_echo(&mut self, args: &[&str]) {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
                 print!(" ");

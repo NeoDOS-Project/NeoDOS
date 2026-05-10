@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_type(&mut self, args: &[&str]) {
+    pub fn cmd_type(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!("Usage: TYPE FILENAME");
             return;

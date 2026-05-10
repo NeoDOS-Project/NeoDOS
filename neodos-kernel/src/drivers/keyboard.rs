@@ -59,7 +59,7 @@ impl KeyboardDriver {
         }
     }
 
-    fn codepoint_to_utf8(cp: u32) -> [u8; 3] {
+    pub fn codepoint_to_utf8(cp: u32) -> [u8; 3] {
         if cp < 0x80 {
             [cp as u8, 0, 0]
         } else if cp < 0x800 {
@@ -216,7 +216,7 @@ impl KeyboardDriver {
         Some(utf8[0])
     }
 
-    fn lookup_compose(layout: u8, dead: u8, base: u8) -> Option<u8> {
+    pub fn lookup_compose(layout: u8, dead: u8, base: u8) -> Option<u8> {
         let (dead_arr, base_arr, result_arr) = match layout {
             x if x == KeyboardLayout::Us as u8 => (
                 &klc_layout::KBDUS_COMPOSE_DEAD[..],

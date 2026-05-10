@@ -3,7 +3,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_keyb(&mut self, args: &[&str]) {
+    pub fn cmd_keyb(&mut self, args: &[&str]) {
         if args.is_empty() {
             let current = match KeyboardDriver::layout() {
                 KeyboardLayout::Us => "US",

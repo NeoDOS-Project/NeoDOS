@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::{vfs_path_from_drive_manager, DosShell, ShellPathError};
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_cd(&mut self, args: &[&str]) {
+    pub fn cmd_cd(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!(
                 "{}",

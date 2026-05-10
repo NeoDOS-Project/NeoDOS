@@ -15,6 +15,7 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 [+] Initializing GDT...
 [+] Initializing IDT...
 [+] Initializing PIC...
+[+] Enabling interrupts...
 [+] Initializing ATA driver...
 [+] Initializing Block Cache...
 [+] Reading Superblock...
@@ -31,23 +32,107 @@ NeoDOS Kernel v0.6 - The Rusty DOS Revival
 NeoDOS v0.6 - FS Started
 Type HELP for a list of commands.
 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
+C:\> 
 C:\> dir
  Directory of C:\
 
   readme.txt
   test.bat
   SYSTEM
-C:\> test
-Running NeoDOS self-tests...
-
-  TEST env_set_get ... PASS
-  TEST env_overwrite ... PASS
-  TEST env_missing_key ... PASS
-  TEST env_empty_value ... PASS
-  TEST env_case_sensitive ... PASS
-  TEST env_multiple_vars ... PASS
-
-All 6 tests passed.
+C:\> cls
 C:\> exit
 Shutting down...
-S
+[SHUTDOWN] Syncing block cache...
+[SHUTDOWN] Syncing filesystem...
+[SHUTDOWN] Power off...

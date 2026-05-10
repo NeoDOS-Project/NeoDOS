@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_copy(&mut self, args: &[&str]) {
+    pub fn cmd_copy(&mut self, args: &[&str]) {
         if args.len() < 2 {
             println!("Usage: COPY SRC DST");
             return;

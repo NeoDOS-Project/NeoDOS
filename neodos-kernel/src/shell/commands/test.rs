@@ -4,7 +4,7 @@ use crate::serial_println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_test(&mut self, _args: &[&str]) {
+    pub fn cmd_test(&mut self, _args: &[&str]) {
         println!("Running NeoDOS self-tests...");
         println!();
         let (passed, failed) = crate::testing::run_all();

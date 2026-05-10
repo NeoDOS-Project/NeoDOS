@@ -2,7 +2,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub(super) fn cmd_vol(&mut self, args: &[&str]) {
+    pub fn cmd_vol(&mut self, args: &[&str]) {
         let drive_char = if args.is_empty() {
             self.current_drive as char
         } else {

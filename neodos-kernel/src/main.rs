@@ -5,7 +5,7 @@
 use core::panic::PanicInfo;
 
 mod arch;
-mod vga;
+mod console;
 mod cpu;
 mod scheduler;
 mod processes;
@@ -23,6 +23,7 @@ mod testing;
 
 use drivers::ata::AtaDriver;
 use drivers::fat32::Fat32Driver;
+use drivers::pci;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
@@ -58,7 +59,7 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     serial_println!("[+] Graphics initialized: {}x{}", boot_info.fb_info.width, boot_info.fb_info.height);
 
     // 4. Initialize legacy VGA as backup (might not work, but keeps code compatible)
-    vga::init();
+    console::init();
 
     // ============================================
     // PHASE 2: Initialize CPU structures
@@ -72,6 +73,9 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     serial_println!("[+] Initializing PIC...");
     arch::x64::init_pic();
 
+    serial_println!("[+] Enabling interrupts...");
+    arch::x64::enable_interrupts();
+
     // ============================================
     // PHASE 2.5: Physical memory map / allocator
     // ============================================
@@ -82,6 +86,16 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     // ============================================
     serial_println!("[+] Initializing ATA driver...");
     ATA_DRIVER = Some(AtaDriver::new());
+
+    serial_println!("[+] Scanning PCI for IDE bus-master DMA...");
+    if let Some(ide) = pci::find_ide_controller() {
+        pci::enable_bus_master(&ide);
+        ATA_DRIVER.as_mut().unwrap().init_dma(ide.bus_master_base);
+        serial_println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
+    } else {
+        serial_println!("[!] No IDE bus-master controller found, using PIO");
+    }
+
     let ata = ATA_DRIVER.as_mut().unwrap();
 
     serial_println!("[+] Initializing Block Cache...");
@@ -99,6 +113,8 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
         Ok(fs) => {
             NEODOS_FS = Some(fs);
             serial_println!("[+] NeoDOS FS mounted");
+    let _ = NEODOS_FS.as_mut().unwrap().rebuild_bitmap(cache, ata);
+    serial_println!("[+] Block bitmap rebuilt");
         },
         Err(_) => panic!("Failed to mount filesystem"),
     }
