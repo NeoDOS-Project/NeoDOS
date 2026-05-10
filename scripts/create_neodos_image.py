@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import struct
 import sys
+import os
 
 BLOCK_SIZE = 4096
 SECTOR_SIZE = 512
@@ -131,6 +132,20 @@ def main():
     # Inode 5: AUTOEXEC.BAT (root) (points to block 5)
     autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1280:512+1536] = autoexec_inode
+
+    # Inode 6: HELLO.BIN — user-mode test binary (flat, loaded at 0x400000)
+    # Size is determined at build time; default to 64 KB slot (1 block = 4KB is enough)
+    hello_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'hello.bin')
+    hello_bin_data = b''
+    if os.path.exists(hello_bin_path):
+        with open(hello_bin_path, 'rb') as hf:
+            hello_bin_data = hf.read()
+        print(f"[*] Including hello.bin ({len(hello_bin_data)} bytes)")
+    else:
+        print("[!] hello.bin not found — skipping (run 'nasm -f bin -o userbin/hello.bin userbin/hello.asm')")
+
+    hello_inode = create_inode(6, 0x80, len(hello_bin_data), [6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    image[512+1536:512+1792] = hello_inode
     
     # 3. Root directory block (block 0) @ first data sector
     print("[*] Writing root directory...")
@@ -147,6 +162,10 @@ def main():
     # Entry 2: SYSTEM dir
     entry = create_dir_entry(3, 2, "SYSTEM") # type=2 (dir)
     image[offset+512:offset+768] = entry
+
+    # Entry 3: HELLO.BIN (user-mode binary)
+    entry = create_dir_entry(6, 1, "HELLO.BIN")
+    image[offset+768:offset+1024] = entry
     
     # 4. Data blocks
     # Block 1 = sector 208 (readme.txt)
@@ -193,11 +212,17 @@ CURSOR=10
     # Block 5 = sector 240 (AUTOEXEC.BAT)
     print("[*] Writing AUTOEXEC.BAT...")
     offset = (200 + 40) * 512
-    autoexec_content = b"""ECHO Welcome to NeoDOS 0.5
+    autoexec_content = b"""ECHO Welcome to NeoDOS 0.7
 ECHO System Configuration Loaded.
 VER
 """
     image[offset:offset+len(autoexec_content)] = autoexec_content
+
+    # Block 6 = sector 248 (HELLO.BIN — user-mode flat binary)
+    if hello_bin_data:
+        print("[*] Writing HELLO.BIN content...")
+        offset = (200 + 48) * 512
+        image[offset:offset+len(hello_bin_data)] = hello_bin_data
 
     
     # Escribir imagen a disco

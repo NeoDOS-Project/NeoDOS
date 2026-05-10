@@ -100,7 +100,7 @@ pub fn cmd_sync(shell: &mut DosShell, _args: &[&str]) {
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
 pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
 pub fn cmd_rd(shell: &mut DosShell, args: &[&str]) { shell.cmd_rd(args); }
-pub fn cmd_ver(shell: &mut DosShell, _args: &[&str]) { crate::println!("NeoDOS v0.6"); }
+pub fn cmd_ver(_shell: &mut DosShell, _args: &[&str]) { crate::println!("NeoDOS v{}", env!("CARGO_PKG_VERSION")); }
 pub fn cmd_tsr(shell: &mut DosShell, args: &[&str]) { shell.cmd_tsr(args); }
 pub fn cmd_devices(shell: &mut DosShell, _args: &[&str]) { shell.cmd_devices(); }
 pub fn cmd_test(shell: &mut DosShell, args: &[&str]) { shell.cmd_test(args); }
@@ -109,6 +109,7 @@ pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
 pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_cls(shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
+pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_exit(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
 pub fn cmd_shutdown(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
 
@@ -143,6 +144,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR (TSR FILE INT)", },
     CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs", },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests", },
+    CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)", },
     CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt", },
     CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },
     CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },

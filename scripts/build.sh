@@ -5,10 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BUILD_NEODOS_IMAGE=false
+BUILD_USERBIN=false
 
 for arg in "$@"; do
     case "$arg" in
-        --neodos-image|-n) BUILD_NEODOS_IMAGE=true ;;
+        --neodos-image|-n) BUILD_NEODOS_IMAGE=true; BUILD_USERBIN=true ;;
+        --userbin|-u)      BUILD_USERBIN=true ;;
     esac
 done
 
@@ -102,6 +104,31 @@ if command -v mkfs.fat >/dev/null 2>&1; then
 else
     echo "[!] mkfs.fat not found; disk image created but not formatted"
     echo "    Install: sudo apt install dosfstools"
+fi
+
+# ============================================
+# 3b. Compile user-mode binaries
+# ============================================
+if [ "$BUILD_USERBIN" = true ]; then
+    echo ""
+    echo "[+] Compiling user-mode binaries..."
+    USERBIN_DIR="$PROJECT_ROOT/userbin"
+
+    # Prefer Python generators (no external dep) — always run them first
+    for gen in "$USERBIN_DIR"/generate_*.py; do
+        [ -f "$gen" ] || continue
+        python3 "$gen" && echo "[\u2713] $(basename "$gen") run OK"
+    done
+
+    # Also compile any .asm files if nasm is available
+    if command -v nasm >/dev/null 2>&1; then
+        for asm_file in "$USERBIN_DIR"/*.asm; do
+            [ -f "$asm_file" ] || continue
+            bin_file="${asm_file%.asm}.bin"
+            nasm -f bin -o "$bin_file" "$asm_file"
+            echo "[\u2713] nasm: $(basename "$asm_file") -> $(basename "$bin_file") ($(wc -c < "$bin_file") bytes)"
+        done
+    fi
 fi
 
 # ============================================

@@ -34,6 +34,7 @@ mod r#type;
 mod vol;
 mod attrib;
 mod ps;
+mod run;
 
 use crate::shell::handler::COMMANDS;
 use crate::shell::shell::DosShell;

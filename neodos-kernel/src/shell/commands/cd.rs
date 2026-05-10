@@ -1,5 +1,6 @@
 use crate::println;
-use crate::shell::shell::{vfs_path_from_drive_manager, DosShell, ShellPathError};
+use crate::shell::shell::{vfs_path_from_drive_manager, DosShell};
+use crate::fs::drive_manager::FsInstanceId;
 
 impl<'a> DosShell<'a> {
     pub fn cmd_cd(&mut self, args: &[&str]) {
@@ -32,17 +33,18 @@ impl<'a> DosShell<'a> {
         }
 
         let dm = self.drive_manager;
-        let vfs = match vfs_path_from_drive_manager(&dm, path) {
-            Err(ShellPathError::UnsupportedVolume) => {
-                println!("Drive not ready");
-                return;
-            }
+        let (fs_id, vfs) = match vfs_path_from_drive_manager(&dm, path) {
             Err(_) => {
                 println!("Invalid path");
                 return;
             }
-            Ok(v) => v,
+            Ok(r) => r,
         };
+
+        if fs_id != FsInstanceId::PRIMARY {
+            println!("Drive not ready");
+            return;
+        }
 
         match self.resolve_directory_arg_from_vfs(vfs) {
             Ok((new_inode, new_path, new_path_len)) => {
