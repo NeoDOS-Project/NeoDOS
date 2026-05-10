@@ -22,6 +22,8 @@ core::arch::global_asm!(
     "push rdi",
     "iretq",
     "1:",
+    // Re-enable interrupts (INT 0x80 entry disables them)
+    "sti",
     "ret",
 
     ".global exit_to_kernel",
