@@ -22,15 +22,18 @@ use crate::serial_println;
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
     match rax {
         // ---- sys_exit(code: u64) ----
-        // Marks the calling process as Terminated so the scheduler skips it.
+        // The syscall_handler_asm trampoline checks for RAX==0 after dispatch
+        // and halts the CPU instead of returning to Ring 3.
         0 => {
             serial_println!("[syscall] sys_exit({})", rbx);
-            let scheduler_mutex = crate::scheduler::current_scheduler();
-            let mut scheduler = scheduler_mutex.lock();
+            // Mark process as Terminated so the scheduler skips it.
+            let s = crate::scheduler::current_scheduler();
+            let mut scheduler = s.lock();
             let pid = scheduler.current_pid;
-            if let Some(proc) = scheduler.current_process_mut() {
-                proc.state = crate::scheduler::ProcessState::Terminated;
-                serial_println!("[syscall] PID {} terminated", pid);
+            if pid > 0 {
+                if let Some(proc) = scheduler.current_process_mut() {
+                    proc.state = crate::scheduler::ProcessState::Terminated;
+                }
             }
             0
         }
@@ -84,3 +87,5 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         }
     }
 }
+
+
