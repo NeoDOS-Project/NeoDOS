@@ -55,6 +55,9 @@ core::arch::global_asm!(
 
 // INT 0x80 syscall trampolín.
 //
+// After the iretq we place a small halt loop that sys_exit redirects to,
+// preventing the CPU from returning to stale Ring-3 code.
+//
 // Mirrors timer_handler_asm: saves all GP registers, extracts the syscall
 // arguments from the saved frame, calls the Rust dispatcher, puts the return
 // value back in the saved RAX slot, restores everything, and returns to Ring 3
@@ -86,19 +89,27 @@ core::arch::global_asm!(
     "push rcx",   // arg1  (RCX offset: 3*8 = 24)
     "push rbx",   // arg0  (RBX offset: 4*8 = 32)
     "push rax",   // syscall number  (RAX offset: 5*8 = 40  ← top of saved-reg frame)
+    // Save syscall number in r15 before dispatch clobbers RAX
+    "mov r15, [rsp]",
     // syscall_dispatch(rax, rbx, rcx, rdx) — System V AMD64 ABI
-    // Arguments go in RDI, RSI, RDX, RCX.
-    // We saved the originals on the stack; load from there to avoid clobbering.
     "mov rdi, [rsp + 0]",     // saved RAX → syscall number
     "mov rsi, [rsp + 8]",     // saved RBX → arg0
-    "mov rdx, [rsp + 16]",    // saved RCX → arg1  (note: RCX was pushed after RBX)
+    "mov rdx, [rsp + 16]",    // saved RCX → arg1
     "mov rcx, [rsp + 24]",    // saved RDX → arg2
     "call syscall_dispatch",
-    // Return value (RAX) → write back into the saved-RAX slot so it lands in
-    // the user's RAX when we restore.
+    // Write return value back into saved-RAX slot
     "mov [rsp + 0], rax",
-    // Restore all GP registers
-    "pop rax",
+    // If original syscall was sys_exit (0), halt instead of returning to Ring 3
+    "test r15, r15",
+    "jnz 2f",
+    // ---- sys_exit path: abandon stack and halt ----
+    // Discard saved GP regs (15 × 8 = 120) + INT frame (RIP/CS/RFLAGS/RSP/SS = 40)
+    "add rsp, 160",
+    "sti",
+    "1: hlt",
+    "jmp 1b",
+    // ---- Normal return path ----
+    "2: pop rax",
     "pop rbx",
     "pop rcx",
     "pop rdx",

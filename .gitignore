@@ -1,1 +1,12 @@
 .aider*
+
+# Rust build artifacts
+target/
+neodos-bootloader/target/
+neodos-kernel/target/
+
+# Generated build outputs
+*.elf
+*.bin
+disk_image.img
+qemu_output.log
