@@ -99,10 +99,15 @@ core::arch::global_asm!(
     "call syscall_dispatch",
     // Write return value back into saved-RAX slot
     "mov [rsp + 0], rax",
-    // If original syscall was sys_exit (0), halt instead of returning to Ring 3
+    // If original syscall was sys_exit (0), check if we should return to shell
     "test r15, r15",
     "jnz 2f",
-    // ---- sys_exit path: restore kernel stack and return to execute_usermode ----
+    // ---- sys_exit path ----
+    ".extern EXIT_NOW",
+    "cmp byte ptr [rip + EXIT_NOW], 0",
+    "jz 2f",
+    // Clear flag and return to shell
+    "mov byte ptr [rip + EXIT_NOW], 0",
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
     // ---- Normal return path ----

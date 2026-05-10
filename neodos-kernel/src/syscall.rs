@@ -15,6 +15,7 @@
 //!   3  sys_getpid — return current PID
 
 use crate::serial_println;
+use crate::scheduler::ProcessState;
 
 /// Called from the syscall trampolín in idt.rs with raw register values.
 /// Returns the value that will be placed back in RAX when returning to user space.
@@ -22,38 +23,47 @@ use crate::serial_println;
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
     match rax {
         // ---- sys_exit(code: u64) ----
-        // The syscall_handler_asm trampoline checks for RAX==0 after dispatch
-        // and halts the CPU instead of returning to Ring 3.
         0 => {
-            serial_println!("[syscall] sys_exit({})", rbx);
-            // Mark process as Terminated so the scheduler skips it.
+            let code = rbx;
+            serial_println!("[syscall] sys_exit({})", code);
+
             let s = crate::scheduler::current_scheduler();
             let mut scheduler = s.lock();
             let pid = scheduler.current_pid;
+
             if pid > 0 {
                 if let Some(proc) = scheduler.current_process_mut() {
-                    proc.state = crate::scheduler::ProcessState::Terminated;
+                    proc.state = ProcessState::Terminated;
+
+                    // Free the user memory slot
+                    if let Some(slot) = proc.user_slot.take() {
+                        crate::arch::x64::paging::free_user_slot(slot);
+                    }
                 }
             }
+
+            // Wake any process waiting on this PID
+            scheduler.wake_waiters(pid);
+
+            // If the shell is waiting for this PID, signal exit_to_kernel
+            if pid > 0 && pid == crate::usermode::current_wait_pid() {
+                crate::usermode::request_exit_to_kernel();
+            }
+
             0
         }
 
         // ---- sys_write(ptr: *const u8, len: usize) ----
-        // Writes `len` bytes from user-space pointer `ptr` to the kernel console.
-        // We trust the pointer is within the USER_ACCESSIBLE range (0x400000-0x800000).
         1 => {
             let ptr = rbx as *const u8;
             let len = rcx as usize;
 
-            // Bounds-check: only allow reads from the user memory area.
-            // The identity-mapped window exposed to Ring 3 is 0x400000..0x800000.
             let addr = rbx;
             if addr < 0x400000 || addr.saturating_add(len as u64) > 0x800000 || len > 4096 {
                 serial_println!("[syscall] sys_write: bad address 0x{:x} len {}", addr, len);
-                return u64::MAX; // -1
+                return u64::MAX;
             }
 
-            // SAFETY: Validated above; user space is identity-mapped.
             let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
             if let Ok(s) = core::str::from_utf8(slice) {
                 crate::console::print_str(s);
@@ -63,18 +73,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         }
 
         // ---- sys_yield() ----
-        // Forces an immediate preemption by temporarily marking the current process
-        // as Ready, letting the next tick pick someone else.
         2 => {
             serial_println!("[syscall] sys_yield");
-            // The scheduler will pick the next process on the next timer tick.
-            // Nothing to do here — returning from the syscall already restores the
-            // user context; the timer IRQ will preempt normally.
             0
         }
 
         // ---- sys_getpid() ----
-        // Returns the PID of the currently running process.
         3 => {
             let pid = crate::scheduler::current_scheduler().lock().current_pid;
             serial_println!("[syscall] sys_getpid -> {}", pid);
@@ -83,9 +87,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
         _ => {
             serial_println!("[syscall] unknown syscall RAX={}", rax);
-            u64::MAX // -1 / ENOSYS
+            u64::MAX
         }
     }
 }
-
-

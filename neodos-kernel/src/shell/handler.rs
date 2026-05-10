@@ -108,6 +108,7 @@ pub fn cmd_date(shell: &mut DosShell, args: &[&str]) { shell.cmd_date(args); }
 pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
 pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
+pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_exit(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
@@ -145,6 +146,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs", },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests", },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)", },
+    CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID", },
     CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt", },
     CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },
     CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },
