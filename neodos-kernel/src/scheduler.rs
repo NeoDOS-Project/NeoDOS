@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 
-const MAX_PROCESSES: usize = 4;
+const MAX_PROCESSES: usize = 16;
 const IDLE_STACK_SIZE: usize = 4096;
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
@@ -43,13 +43,15 @@ pub struct Process {
     pub pid: u32,
     pub state: ProcessState,
     pub cpu_ticks: u64,
+    pub user_slot: Option<u8>,
+    pub waiting_for: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProcessState {
     Ready,
     Running,
-    Blocked,
+    Blocked { waiting_for: u32 },
     Terminated,
 }
 
@@ -68,27 +70,18 @@ impl fmt::Debug for Process {
 impl Process {
     pub fn new(pid: u32, entry: u64, stack_ptr: u64) -> Self {
         Process {
-            rax: 0,
-            rbx: 0,
-            rcx: 0,
-            rdx: 0,
-            rsi: 0,
-            rdi: 0,
-            r8: 0,
-            r9: 0,
-            r10: 0,
-            r11: 0,
-            r12: 0,
-            r13: 0,
-            r14: 0,
-            r15: 0,
-            rbp: 0,
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, r8: 0, r9: 0,
+            r10: 0, r11: 0, r12: 0, r13: 0,
+            r14: 0, r15: 0, rbp: 0,
             rsp: stack_ptr,
             rip: entry,
-            rflags: 0x202,  // IF bit set (interrupts enabled)
+            rflags: 0x202,
             pid,
             state: ProcessState::Ready,
             cpu_ticks: 0,
+            user_slot: None,
+            waiting_for: None,
         }
     }
 }
@@ -102,8 +95,9 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new() -> Self {
+        const NONE: Option<Process> = None;
         let mut scheduler = Scheduler {
-            processes: [None, None, None, None],
+            processes: [NONE; MAX_PROCESSES],
             current_pid: 0,
             next_pid: 1,
             timer_ticks: 0,
@@ -131,16 +125,62 @@ impl Scheduler {
             if self.processes[i].is_none() {
                 let pid = self.next_pid;
                 self.next_pid += 1;
-                
-                // Initialize stack frame for context switch
-                // The stack should look like it was interrupted
                 let stack_ptr = init_interrupt_stack_frame(stack_base, entry);
-
-                self.processes[i] = Some(Process::new(pid, entry, stack_ptr));
+                let mut proc = Process::new(pid, entry, stack_ptr);
+                self.processes[i] = Some(proc);
                 return pid;
             }
         }
         panic!("Process table full");
+    }
+
+    pub fn add_ring3_process(
+        &mut self,
+        entry: u64,
+        stack_top: u64,
+        slot_idx: u8,
+    ) -> u32 {
+        for i in 0..MAX_PROCESSES {
+            if self.processes[i].is_none() {
+                let pid = self.next_pid;
+                self.next_pid += 1;
+                let stack_ptr = init_ring3_interrupt_stack_frame(stack_top, entry);
+                let mut proc = Process::new(pid, entry, stack_ptr);
+                proc.user_slot = Some(slot_idx);
+                self.processes[i] = Some(proc);
+                return pid;
+            }
+        }
+        panic!("Process table full");
+    }
+
+    pub fn kill_pid(&mut self, pid: u32) -> bool {
+        for proc in self.processes.iter_mut() {
+            if let Some(p) = proc {
+                if p.pid == pid && pid > 0 {
+                    p.state = ProcessState::Terminated;
+                    if let Some(slot) = p.user_slot {
+                        crate::arch::x64::paging::free_user_slot(slot);
+                        p.user_slot = None;
+                    }
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn wake_waiters(&mut self, pid: u32) {
+        for proc in self.processes.iter_mut() {
+            if let Some(p) = proc {
+                if p.waiting_for == Some(pid) {
+                    p.waiting_for = None;
+                    if matches!(p.state, ProcessState::Blocked { .. }) {
+                        p.state = ProcessState::Ready;
+                    }
+                }
+            }
+        }
     }
 
     pub fn current_process_mut(&mut self) -> Option<&mut Process> {
@@ -205,7 +245,8 @@ impl Scheduler {
 
     pub fn on_timer_tick(&mut self) {
         self.timer_ticks += 1;
-        
+
+        // Wake sleeping processes (for future sys_sleep support)
         // Every 100 ticks (10ms), switch process
         if self.timer_ticks % 100 == 0 {
             if let Some(current) = self.processes.iter_mut().find(|p| {
@@ -217,7 +258,9 @@ impl Scheduler {
             }) {
                 if let Some(proc) = current {
                     proc.cpu_ticks += 1;
-                    proc.state = ProcessState::Ready;
+                    if proc.state == ProcessState::Running {
+                        proc.state = ProcessState::Ready;
+                    }
                 }
             }
         }
@@ -260,19 +303,41 @@ fn init_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
     unsafe {
         let stack = stack_ptr as *mut u64;
 
-        // Interrupt frame pushed by CPU on entry (no privilege change in ring0):
-        // RIP, CS, RFLAGS
         stack.offset(-1).write(0x202); // RFLAGS
         stack.offset(-2).write(0x08);  // CS
         stack.offset(-3).write(entry); // RIP
 
-        // Software-saved regs by timer_handler_asm (15 pushes)
         for j in 4..19 {
             stack.offset(-(j as isize)).write(0);
         }
 
-        // Point to saved RAX (top of software frame)
         stack_ptr -= 18 * 8;
+    }
+    stack_ptr
+}
+
+/// Like `init_interrupt_stack_frame` but sets CS/SS for Ring-3 return.
+/// The CPU interrupt frame includes SS+RSP because IRETQ to Ring 3
+/// involves a privilege-level change.
+pub fn init_ring3_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
+    let mut stack_ptr = stack_top & !0xF;
+    unsafe {
+        let stack = stack_ptr as *mut u64;
+
+        // Full interrupt frame for Ring 3→Ring 0 transition:
+        // SS, RSP, RFLAGS, CS, RIP (5 values)
+        stack.offset(-1).write(0x23);   // SS  = user data segment
+        stack.offset(-2).write(stack_top); // RSP (reset to top on each entry)
+        stack.offset(-3).write(0x202);  // RFLAGS (IF=1)
+        stack.offset(-4).write(0x1B);   // CS  = user code segment
+        stack.offset(-5).write(entry);  // RIP
+
+        // Software-saved regs by timer_handler_asm (15 pushes)
+        for j in 6..21 {
+            stack.offset(-(j as isize)).write(0);
+        }
+
+        stack_ptr -= 20 * 8;
     }
     stack_ptr
 }

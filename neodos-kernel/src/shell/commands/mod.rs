@@ -21,6 +21,7 @@ mod drives;
 mod echo;
 mod help;
 mod keyb;
+mod kill;
 mod label;
 mod md;
 mod mem;

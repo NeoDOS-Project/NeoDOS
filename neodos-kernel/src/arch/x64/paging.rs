@@ -20,6 +20,47 @@ static mut PD: [AlignedPageTable; 4] = [
 pub const USER_BASE:  u64 = 0x0040_0000; // 4 MB
 pub const USER_LIMIT: u64 = 0x0080_0000; // 8 MB  (4 MB window)
 
+/// Per-process slot constants
+const MAX_BIN_SIZE: u64 = 64 * 1024;      // 64 KB  (mirrors run.rs)
+const USER_STACK_SIZE: u64 = 64 * 1024;   // 64 KB
+const USER_SLOT_SIZE: u64 = MAX_BIN_SIZE + USER_STACK_SIZE; // 128 KB
+pub const USER_SLOT_COUNT: u64 = (USER_LIMIT - USER_BASE) / USER_SLOT_SIZE; // 32
+
+pub struct UserSlot {
+    pub code_base: u64,
+    pub stack_top: u64,
+    pub slot_idx: u8,
+}
+
+static mut SLOT_USED: [bool; USER_SLOT_COUNT as usize] = [false; USER_SLOT_COUNT as usize];
+
+/// Allocate a free user slot, returning its base addresses.
+/// Returns `None` if all slots are in use.
+pub fn alloc_user_slot() -> Option<UserSlot> {
+    for i in 0..USER_SLOT_COUNT as usize {
+        unsafe {
+            if !SLOT_USED[i] {
+                SLOT_USED[i] = true;
+                let base = USER_BASE + i as u64 * USER_SLOT_SIZE;
+                return Some(UserSlot {
+                    code_base: base,
+                    stack_top: base + MAX_BIN_SIZE + USER_STACK_SIZE,
+                    slot_idx: i as u8,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// Free a previously allocated user slot by index.
+pub fn free_user_slot(slot_idx: u8) {
+    let idx = slot_idx as usize;
+    if idx < USER_SLOT_COUNT as usize {
+        unsafe { SLOT_USED[idx] = false; }
+    }
+}
+
 /// Size of one 2 MB huge page used by the PD entries.
 const HUGE_PAGE_SIZE: u64 = 0x200000;
 

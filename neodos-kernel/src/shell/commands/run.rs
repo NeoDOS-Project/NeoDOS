@@ -2,43 +2,16 @@
 //
 // RUN <filename>
 //
-// Loads a flat binary from NeoDOS FS into the user-accessible memory window
-// (USER_BASE) and transfers control to it via IRETQ (Ring 3).
-//
-// Binary format: raw flat binary loaded at 0x400000.
-// The binary can issue INT 0x80 syscalls:
-//   RAX=0              sys_exit(code)
-//   RAX=1, RBX=ptr, RCX=len   sys_write(buf, len)
-//   RAX=2              sys_yield
-//   RAX=3              sys_getpid → RAX
-//
-// Stack: 64 KB allocated at USER_BASE + 64 KB, growing down.
-//
-// Limitations (v0.7):
-//   - Max binary size: 64 KB (fits inside the 4 MB user window with room for stack)
-//   - No ELF loading — plain flat binary only (nasm -f bin, or similar)
-//   - Single-threaded foreground execution (the shell blocks until sys_exit)
+// Loads a flat binary from NeoDOS FS into a per-process user slot,
+// spawns it as a scheduler-managed Ring-3 process, and waits
+// for it to complete.
 
 use crate::println;
 use crate::serial_println;
 use crate::shell::shell::DosShell;
-use crate::arch::x64::paging::{USER_BASE, USER_LIMIT};
+use crate::arch::x64::paging::{USER_BASE, USER_LIMIT, alloc_user_slot};
 
-/// Maximum size (bytes) of a user binary.
-/// Must leave room for stack inside the user window.
-const MAX_BIN_SIZE: usize = 64 * 1024; // 64 KB
-
-/// Stack size allocated for the user process.
-const USER_STACK_SIZE: u64 = 64 * 1024; // 64 KB
-
-/// Entry point of the user binary (loaded at USER_BASE).
-const USER_ENTRY: u64 = USER_BASE;
-
-/// Top of the user stack: just above the binary, page-aligned down.
-/// Layout inside the user window:
-///   USER_BASE ─── binary code/data (up to MAX_BIN_SIZE)
-///   USER_BASE + MAX_BIN_SIZE ─── stack grows downward (USER_STACK_SIZE)
-const USER_STACK_TOP: u64 = USER_BASE + MAX_BIN_SIZE as u64 + USER_STACK_SIZE;
+const MAX_BIN_SIZE: usize = 64 * 1024;
 
 impl<'a> DosShell<'a> {
     pub fn cmd_run(&mut self, args: &[&str]) {
@@ -50,11 +23,18 @@ impl<'a> DosShell<'a> {
 
         let filename = args[0];
 
-        // ── 1. Sanity-check the user window is inside our 4 GB identity map ──
-        if USER_STACK_TOP > USER_LIMIT {
-            println!("Error: User window too small for binary + stack.");
-            println!("  USER_BASE=0x{:x}  USER_LIMIT=0x{:x}  stack_top=0x{:x}",
-                USER_BASE, USER_LIMIT, USER_STACK_TOP);
+        // ── 1. Allocate a per-process user slot ──
+        let slot = match alloc_user_slot() {
+            Some(s) => s,
+            None => {
+                println!("Error: No free user memory slots.");
+                return;
+            }
+        };
+
+        if slot.stack_top > USER_LIMIT {
+            println!("Error: User slot exceeds memory window.");
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
             return;
         }
 
@@ -63,22 +43,21 @@ impl<'a> DosShell<'a> {
             Ok(i) => i,
             Err(_) => {
                 println!("File not found: {}", filename);
+                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
                 return;
             }
         };
 
-        // Temporary heap-sized buffer on the kernel stack would overflow; use
-        // a static buffer instead (single-task system, no re-entrancy issue).
         static mut BIN_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
 
         let bin_size = unsafe {
-            // Use raw pointer to avoid the mutable-ref-to-mutable-static lint.
             let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(BIN_BUF);
             (*buf_ptr).fill(0);
             match self.fs.read_file_to_buf(inode, &mut *buf_ptr, self.cache, self.ata) {
                 Ok(n) => n,
                 Err(e) => {
                     println!("Error reading '{}': {:?}", filename, e);
+                    crate::arch::x64::paging::free_user_slot(slot.slot_idx);
                     return;
                 }
             }
@@ -86,29 +65,30 @@ impl<'a> DosShell<'a> {
 
         if bin_size == 0 {
             println!("Error: '{}' is empty.", filename);
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
             return;
         }
 
-        serial_println!("[RUN] '{}' -> {} bytes, loading to 0x{:x}", filename, bin_size, USER_ENTRY);
+        serial_println!("[RUN] '{}' -> {} bytes, slot 0x{:x}..0x{:x}",
+            filename, bin_size, slot.code_base, slot.stack_top);
 
-        // ── 3. Copy binary to user-accessible memory ──
-        // USER_BASE..USER_LIMIT is marked USER_ACCESSIBLE during paging init.
+        // ── 3. Copy binary to the slot's code area ──
         unsafe {
-            let dst = USER_ENTRY as *mut u8;
+            let dst = slot.code_base as *mut u8;
             let src = core::ptr::addr_of!(BIN_BUF) as *const u8;
             core::ptr::copy_nonoverlapping(src, dst, bin_size);
         }
 
-        serial_println!("[RUN] Binary copied. Entering Ring 3 @ 0x{:x}, RSP=0x{:x}",
-            USER_ENTRY, USER_STACK_TOP);
+        // ── 4. Spawn as scheduler process ──
+        let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx);
 
-        println!("Launching '{}' ({} bytes) in Ring 3...", filename, bin_size);
+        serial_println!("[RUN] Spawned PID {}, slot_idx={}", pid, slot.slot_idx);
+        println!("Launching '{}' ({} bytes) in Ring 3 (PID {})...", filename, bin_size, pid);
 
-        // ── 4. Enter Ring 3 via IRETQ ──
-        // execute_usermode saves the kernel stack/return context before the IRETQ,
-        // and sys_exit (INT 0x80, RAX=0) restores it, effectively "returning" here.
-        crate::usermode::execute_usermode(USER_ENTRY, USER_STACK_TOP);
+        // ── 5. Wait for the process to complete ──
+        crate::usermode::wait_for_process(pid);
 
-        println!("Process '{}' exited.", filename);
+        crate::usermode::clear_wait_pid();
+        println!("Process '{}' (PID {}) exited.", filename, pid);
     }
 }
