@@ -8,5 +8,8 @@ neodos-kernel/target/
 # Generated build outputs
 *.elf
 *.bin
+*.efi
 disk_image.img
+*.vdi
 qemu_output.log
+vbox_serial.log
