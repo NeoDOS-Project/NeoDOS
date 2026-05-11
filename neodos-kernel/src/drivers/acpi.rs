@@ -89,16 +89,20 @@ fn read_fadt_field(fadt: *const SdtHeader, offset: usize) -> u32 {
     unsafe { ((fadt as *const u8).add(offset) as *const u32).read_unaligned() }
 }
 
+unsafe fn find_fadt() -> Option<*const SdtHeader> {
+    let rsdp = find_rsdp()?;
+    if (*rsdp).revision >= 2 && (*rsdp).xsdt_addr != 0 {
+        find_fadt_in_xsdt((*rsdp).xsdt_addr)
+    } else {
+        find_fadt_in_rsdt((*rsdp).rsdt_addr)
+    }
+}
+
 /// Returns the ACPI PM1a_CNT_BLK target (I/O port or MMIO address) by parsing
 /// ACPI tables. Scans memory for RSDP -> RSDT/XSDT -> FADT -> PM1a_CNT_BLK.
 pub fn find_pm1a_cnt_target() -> Option<Pm1aCntTarget> {
     unsafe {
-        let rsdp = find_rsdp()?;
-        let fadt = if (*rsdp).revision >= 2 && (*rsdp).xsdt_addr != 0 {
-            find_fadt_in_xsdt((*rsdp).xsdt_addr)?
-        } else {
-            find_fadt_in_rsdt((*rsdp).rsdt_addr)?
-        };
+        let fadt = find_fadt()?;
 
         // Extract X_PM1a_CNT_BLK (GAS at offset 0xAA, ACPI 2.0+)
         if (*fadt).length >= 0xB6 {
