@@ -6,12 +6,12 @@ This document describes the *current* NeoDOS boot/runtime architecture as implem
 
 ```
 UEFI Firmware (OVMF)
-  └─ loads `bootloader.efi` from the ESP
+  └─ parses GPT → finds ESP → loads `bootloader.efi` from `/EFI/BOOT/BOOTX64.EFI`
        ↓
 NeoDOS Bootloader (UEFI application)
   - initializes UEFI services + logging
   - initializes GOP framebuffer info
-  - loads `kernel.elf` from the ESP
+  - loads `kernel.elf` from the ESP (FAT32 partition)
   - loads ELF PT_LOAD segments into memory
   - calls ExitBootServices and captures the final UEFI memory map
   - calls the kernel entry point as: extern "sysv64" fn(&BootInfo) -> !
@@ -20,10 +20,44 @@ NeoDOS Kernel (x86_64-unknown-none)
   - initializes graphics + serial + VGA fallback
   - initializes CPU structures (GDT/IDT) and PIC
   - initializes physical memory stats from the UEFI memory map (first 4 GiB)
-  - initializes ATA + block cache + mounts NeoDOS FS
+  - parses GPT → finds NeoDOS partition → sets base_lba on ATA driver
+  - initializes block cache + mounts NeoDOS FS
   - loads custom page tables (4 GiB identity map)
   - starts the DOS-like shell
 ```
+
+## Disco único GPT
+
+Todo el sistema cabe en una sola imagen de disco con tabla de particiones GUID (GPT):
+
+```
+┌──────────────────────────────┐
+│  LBA 0:  Protective MBR     │
+│  LBA 1:  GPT Header         │
+│  LBA 2–33: Partition Table  │
+│  LBA 34–2047: (alignment)   │
+│  LBA 2048–206847: ESP/FAT32 │  ← bootloader.efi + kernel.elf
+│  LBA 206848–227327: NeoDOS  │  ← Sistema de archivos NeoDOS
+│  ... backup GPT ...         │
+└──────────────────────────────┘
+```
+
+La imagen se genera con `scripts/create_gpt_image.py`, que utiliza `sfdisk` (util-linux)
+para crear la tabla GPT y luego copia los datos de cada partición en su offset correcto.
+El kernel incluye `drivers/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
+por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
+
+## ATA y base_lba
+
+El driver ATA (`drivers/ata.rs`) expone dos familias de lecturas:
+
+- **`read_sector` / `write_sector` / `read_dma` / etc.** — usan `base_lba` (offset de partición).
+  El NeoDOS FS las invoca con LBAs relativos a la partición, y el driver suma `base_lba`
+  antes de enviar el comando al disco.
+- **`read_sector_master`** — lee LBAs absolutos (sin `base_lba`). El driver FAT32 la usa para
+  leer el sector de arranque en LBA 0 o 2048.
+
+`base_lba` se configura en `main.rs` después de parsear la GPT, antes de montar el FS.
 
 ## Boot ABI (`BootInfo`)
 

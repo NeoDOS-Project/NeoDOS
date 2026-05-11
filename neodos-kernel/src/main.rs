@@ -29,6 +29,7 @@ mod testing;
 
 use drivers::ata::AtaDriver;
 use drivers::fat32::Fat32Driver;
+use drivers::gpt;
 use drivers::pci;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
@@ -107,6 +108,15 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     }
 
     let ata = globals::ATA_DRIVER.as_mut().unwrap();
+
+    serial_println!("[+] Parsing GPT for NeoDOS partition...");
+    if let Some(part) = gpt::find_neodos_partition(ata) {
+        serial_println!("[+] NeoDOS partition found: LBA {}..{}",
+            part.start_lba, part.end_lba);
+        ata.set_base_lba(part.start_lba as u32);
+    } else {
+        serial_println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
+    }
 
     serial_println!("[+] Initializing Block Cache...");
     globals::BLOCK_CACHE = Some(BlockCache::new());

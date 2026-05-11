@@ -21,13 +21,11 @@ def run_test():
     print("[*] NeoDOS Automatic Test Runner")
     print()
     
-    # Check required files
     disk_image = os.path.join(PROJECT_ROOT, "disk_image.img")
-    neodos_image = os.path.join(PROJECT_ROOT, "scripts", "neodos_image.img")
     ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
     ovmf_vars_template = "/usr/share/OVMF/OVMF_VARS.fd"
     
-    for f in [disk_image, neodos_image, ovmf_code, ovmf_vars_template]:
+    for f in [disk_image, ovmf_code, ovmf_vars_template]:
         if not os.path.exists(f):
             print(f"[!] Missing: {f}")
             return 1
@@ -36,22 +34,20 @@ def run_test():
     ovmf_vars = f"/tmp/OVMF_VARS_auto_{os.getpid()}.fd"
     subprocess.run(["cp", ovmf_vars_template, ovmf_vars], check=True)
     
-    # Check KVM
-    kvm_args = []
-    if os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK):
-        kvm_args = ["-enable-kvm"]
-        print("[+] KVM enabled")
+    accel = os.environ.get("QEMU_ACCEL", "tcg")
+    if accel == "kvm" and not (os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)):
+        print("[!] QEMU_ACCEL=kvm but /dev/kvm not available; falling back to tcg")
+        accel = "tcg"
+    print(f"[+] QEMU accelerator: {accel}")
     
-    # Build QEMU command
     cmd = [
         "qemu-system-x86_64",
-        "-machine", "pc,accel=kvm:tcg",
+        "-machine", f"pc,accel={accel}",
         "-monitor", "telnet:127.0.0.1:4446,server,nowait",
         "-display", "none",
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
         "-drive", f"format=raw,file={disk_image},index=0,media=disk",
-        "-drive", f"format=raw,file={neodos_image},index=1,media=disk",
         "-m", "512M",
         "-serial", "stdio",
     ] + kvm_args

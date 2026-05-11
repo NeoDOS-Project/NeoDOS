@@ -1,6 +1,6 @@
 # NeoDOS — Propuestas de mejora pendientes
 
-> Versión: 0.9.0 | Actualizado: Mayo 2026
+> Versión: 0.10.0 | Actualizado: Mayo 2026
 > 
 > Items ya implementados han sido removidos. Ver `AGENTS.md` para funcionalidad existente.
 
@@ -296,20 +296,6 @@ Se deshabilitan/habilitan las interrupciones en cada iteración del shell.
 
 ---
 
-### 44. drivers/ata.rs: Sin soporte para múltiples discos
-
-**Archivo:** `ata.rs:21`
-
-```rust
-const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0; // Slave only
-```
-
-Solo funciona con el disco slave (index=1 en QEMU).
-
-**Propuesta:** Auto-detección o configuración en tiempo de build.
-
----
-
 ### 45. graphics: Sin double buffering
 
 **Archivo:** `graphics.rs`
@@ -360,4 +346,4 @@ Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
 |-----------|-------|
 | Alta | #6 (clear píxel a píxel), #7 (allocate block), #9 (static mut), #28 (cache size), #31 (hardcoded C:), #35 (max processes), #41 (PATH resolution) |
 | Media | #10 (unwrap), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
-| Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #44 (multi-disk), #45 (double buffer), #47 (version check), #48 (deps) |
+| Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #45 (double buffer), #47 (version check), #48 (deps) |

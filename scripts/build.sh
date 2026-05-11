@@ -72,37 +72,34 @@ echo "[✓] Kernel ELF: $PROJECT_ROOT/kernel.elf"
 echo ""
 
 # ============================================
-# 3. Create ESP disk image (FAT32)
+# 3. Create ESP partition image (FAT32)
 # ============================================
-echo "[+] Creating ESP disk image..."
+echo "[+] Creating ESP partition image..."
 
-DISK_IMAGE="$PROJECT_ROOT/disk_image.img"
-DISK_SIZE_MB=100
+ESP_IMAGE="$PROJECT_ROOT/tmp_esp.img"
+ESP_SIZE_MB=100
 
-# Create empty disk
-dd if=/dev/zero of="$DISK_IMAGE" bs=1M count=$DISK_SIZE_MB 2>/dev/null
-echo "[✓] Created empty disk (${DISK_SIZE_MB}MB)"
+dd if=/dev/zero of="$ESP_IMAGE" bs=1M count=$ESP_SIZE_MB 2>/dev/null
+echo "[✓] Created empty ESP image (${ESP_SIZE_MB}MB)"
 
-# Format as FAT32
 if command -v mkfs.fat >/dev/null 2>&1; then
-    mkfs.fat -F 32 "$DISK_IMAGE" >/dev/null 2>&1
+    mkfs.fat -F 32 "$ESP_IMAGE" >/dev/null 2>&1
     echo "[✓] Formatted as FAT32"
-    
-    # Mount and copy files using mtools or direct write
+
     if command -v mmd >/dev/null 2>&1; then
-        mmd -i "$DISK_IMAGE" /EFI 2>/dev/null || true
-        mmd -i "$DISK_IMAGE" /EFI/BOOT 2>/dev/null || true
-        mmd -i "$DISK_IMAGE" /EFI/NeoDOS 2>/dev/null || true
-        mcopy -i "$DISK_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/BOOT/BOOTX64.EFI
-        mcopy -i "$DISK_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/NeoDOS/bootloader.efi
-        mcopy -i "$DISK_IMAGE" "$PROJECT_ROOT/kernel.elf" ::/EFI/NeoDOS/kernel.elf
+        mmd -i "$ESP_IMAGE" /EFI 2>/dev/null || true
+        mmd -i "$ESP_IMAGE" /EFI/BOOT 2>/dev/null || true
+        mmd -i "$ESP_IMAGE" /EFI/NeoDOS 2>/dev/null || true
+        mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/BOOT/BOOTX64.EFI
+        mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/NeoDOS/bootloader.efi
+        mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/kernel.elf" ::/EFI/NeoDOS/kernel.elf
         echo "[✓] Copied files to ESP"
     else
         echo "[!] mtools not found; files not copied to image"
         echo "    Install: sudo apt install mtools"
     fi
 else
-    echo "[!] mkfs.fat not found; disk image created but not formatted"
+    echo "[!] mkfs.fat not found; ESP image not formatted"
     echo "    Install: sudo apt install dosfstools"
 fi
 
@@ -134,6 +131,7 @@ fi
 # ============================================
 # 4. Generate NeoDOS FS image (optional)
 # ============================================
+NEODOS_IMAGE="$SCRIPT_DIR/neodos_image.img"
 if [ "$BUILD_NEODOS_IMAGE" = true ]; then
     echo ""
     echo "[+] Generating NeoDOS FS image..."
@@ -141,17 +139,39 @@ if [ "$BUILD_NEODOS_IMAGE" = true ]; then
         cd "$SCRIPT_DIR"
         python3 create_neodos_image.py
         cd "$PROJECT_ROOT"
-        echo "[✓] NeoDOS FS image: $SCRIPT_DIR/neodos_image.img"
+        echo "[✓] NeoDOS FS image: $NEODOS_IMAGE"
     else
         echo "[!] python3 not found; skipping NeoDOS FS image"
     fi
 fi
+
+# ============================================
+# 5. Create unified GPT disk image
+# ============================================
+echo ""
+echo "[+] Creating unified GPT disk image..."
+
+DISK_IMAGE="$PROJECT_ROOT/disk_image.img"
+
+if [ -f "$NEODOS_IMAGE" ] && command -v python3 >/dev/null 2>&1; then
+    python3 "$SCRIPT_DIR/create_gpt_image.py" \
+        --esp "$ESP_IMAGE" \
+        --neodos "$NEODOS_IMAGE" \
+        --output "$DISK_IMAGE"
+    echo "[✓] Unified GPT disk image: $DISK_IMAGE"
+else
+    echo "[!] NeoDOS image missing; creating FAT32-only image"
+    mv "$ESP_IMAGE" "$DISK_IMAGE"
+fi
+
+# Cleanup temp files
+rm -f "$ESP_IMAGE" 2>/dev/null || true
 
 echo ""
 echo "[✓] Build Complete!"
 echo ""
 echo "    Bootloader: $PROJECT_ROOT/bootloader.efi"
 echo "    Kernel:     $PROJECT_ROOT/kernel.bin"
-echo "    Disk image: $DISK_IMAGE"
+echo "    Disk image: $DISK_IMAGE (GPT: ESP + NeoDOS FS)"
 echo ""
 echo "Next: bash scripts/qemu-debug.sh"

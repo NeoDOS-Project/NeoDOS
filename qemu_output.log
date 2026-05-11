@@ -22,6 +22,8 @@ NeoDOS Kernel v0.9.0 - The Rusty DOS Revival
 [+] Initializing ATA driver...
 [+] Scanning PCI for IDE bus-master DMA...
 [+] ATA bus-master DMA enabled at BMBA 0xC040
+[+] Parsing GPT for NeoDOS partition...
+[+] NeoDOS partition found: LBA 206848..227327
 [+] Initializing Block Cache...
 [+] Reading Superblock...
 [+] Mounting NeoDOS FS...
@@ -38,29 +40,14 @@ NeoDOS Kernel v0.9.0 - The Rusty DOS Revival
 NeoDOS v0.9.0 - FS Started
 Type HELP for a list of commands.
 
-C:\> run t stst   ystest.bin
-[RUN] 'systest.bin' -> 247 bytes, slot 0x400000..0x420000
-[RUN] Spawned PID 1, slot_idx=0
-Launching 'systest.bin' (247 bytes) in Ring 3 (PID 1)...
-[user] === NeoDOS v0.9 Syscall Test ===
-
-[syscall] sys_getpid -> 1
-[user] sys_getpid: OK
-
-[syscall] sys_yield
-[syscall] sys_yield
-[syscall] sys_yield
-[user] sys_yield (3x): OK
-
-[user] All tests passed. Calling sys_exit...
-
-[syscall] sys_exit(0)
-Process 'systest.bin' (PID 0) exited.
-C:\> vols
-Bad command or file name
 C:\> vol
  Volume in drive C is NEODOS
  NeoDOS filesystem
+C:\> device
+Bad command or file name
+C:\> ve  devices
+Installed TSRs:
+  None
 C:\> dir
  Directory of C:\
 
@@ -126,15 +113,4 @@ C:\> drives
 Mounted drives:
   A:  FsInstance 1
   C:  FsInstance 0
-C:\> aÑ :
-Bad command or file name
-C:\> cd a:
-A:\> dir
- Directory of A:\
-
-  readme.txt
-  test.bat
-  SYSTEM
-  HELLO.BIN
-  SYSTEST.BIN
-A:\> 
+C:\> 

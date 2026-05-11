@@ -1,18 +1,25 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.9.0
+v0.10.0
 
 ## Build & Run
 
-All commands from `neodos/`. Dependencies: `rustup`, `qemu-system-x86`, `ovmf`, `gdb`, `mtools`, `dosfstools`.
+All commands from `neodos/`. Dependencies: `rustup`, `qemu-system-x86`, `ovmf`, `gdb`, `mtools`, `dosfstools`, `util-linux` (sfdisk).
 
 ```bash
-bash scripts/build.sh                  # bootloader + kernel + FAT32 disk image
-bash scripts/build.sh --neodos-image   # + regenera NeoDOS FS image + user binaries
+bash scripts/build.sh                  # bootloader + kernel + GPT disk image
+bash scripts/build.sh --neodos-image   # + NeoDOS FS image + user binaries
 bash scripts/qemu-debug.sh             # QEMU + OVMF, serial to stdout, GDB :1234
 gdb -x .gdbinit                         # from neodos/, connects to QEMU
 python3 scripts/auto_test.py            # Automated headless test runner
+```
+
+El acelerador de QEMU se configura con la variable `QEMU_ACCEL`. Por defecto usa **TCG** (software). Si el host soporta KVM, se puede habilitar con:
+
+```bash
+QEMU_ACCEL=kvm bash scripts/qemu-debug.sh
+QEMU_ACCEL=kvm python3 scripts/auto_test.py
 ```
 
 ## Two packages, no workspace
@@ -45,11 +52,28 @@ Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map lea
 2. Add `mod <name>;` to `src/shell/commands/mod.rs`.
 3. Add a `CommandEntry` to `handler::COMMANDS` in `handler.rs`. Help text is automatic.
 
-## ATA bus-master DMA
+## Disco unificado GPT
+
+El sistema usa una **sola imagen de disco con tabla GPT** que contiene dos particiones:
+
+| Partición | Tipo | LBA | Contenido |
+|-----------|------|-----|-----------|
+| 1 | ESP (FAT32) | 2048–206847 | bootloader.efi + kernel.elf |
+| 2 | NeoDOS FS | 206848–227327 | Sistema de archivos NeoDOS |
+
+El kernel parsea la GPT al arrancar mediante `drivers/gpt.rs`, busca la partición de tipo
+`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`, y ajusta `base_lba` en el driver ATA para que
+el FS vea el superbloque en LBA 0 relativo a la partición.
+
+### ATA bus-master DMA
 
 Kernel scans PCI bus 0 at boot for the IDE controller (class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). `drivers/pci.rs` uses I/O ports 0xCF8/0xCFC.
 
 BAR4 gives the bus-master I/O base. Bus-master bit enabled in PCI command register. Two page-aligned (4KB) static buffers for PRDT + DMA data. Polling-based (no IRQ). Methods `read_dma()`/`write_dma()` support up to 8 sectors (4 KB) per call. Existing PIO methods unchanged.
+
+The ATA driver adds `base_lba` to all logical LBAs before sending them to the disk, so the
+NeoDOS FS code never needs to know about partition offsets. The FAT32 driver reads from
+the master drive using absolute LBAs (no `base_lba`).
 
 ## User-mode process lifecycle
 
@@ -116,9 +140,10 @@ Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por priori
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.9.0 |
-| Kernel ELF | `neodos/kernel.elf` | v0.9.0 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.0 |
+| Kernel ELF | `neodos/kernel.elf` | v0.10.0 |
 | Kernel bin | `neodos/kernel.bin` | ELF → bin |
-| ESP image (FAT32) | `neodos/disk_image.img` | 100 MB |
-| NeoDOS FS image | `neodos/scripts/neodos_image.img` | 10 MB |
+| Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
+| NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
+| GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

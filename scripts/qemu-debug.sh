@@ -44,25 +44,21 @@ echo "Close the QEMU window to exit"
 echo "=========================================="
 echo ""
 
-# Check if KVM is available
-KVM_ENABLE=""
-if [ -c /dev/kvm ] 2>/dev/null && [ -r /dev/kvm ] 2>/dev/null; then
-    KVM_ENABLE="-enable-kvm"
-    echo "[+] KVM enabled"
-else
-    echo "[*] KVM not available; using software emulation (slow)"
+ACCEL="${QEMU_ACCEL:-tcg}"
+if [ "$ACCEL" = "kvm" ] && [ ! -c /dev/kvm ]; then
+    echo "[!] KVM requested but /dev/kvm not available; falling back to TCG"
+    ACCEL="tcg"
 fi
-
+echo "[+] QEMU accelerator: $ACCEL"
 echo ""
 
 qemu-system-x86_64 \
-  -machine pc,accel=kvm:tcg \
+  -machine pc,accel=$ACCEL \
   -monitor telnet:127.0.0.1:4444,server,nowait \
   -gdb tcp::1234 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   -drive format=raw,file="$DISK_IMAGE",index=0,media=disk \
-  -drive format=raw,file="$PROJECT_ROOT/scripts/neodos_image.img",index=1,media=disk \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 

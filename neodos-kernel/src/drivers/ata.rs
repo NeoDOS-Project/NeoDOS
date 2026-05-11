@@ -46,12 +46,11 @@ struct DmaAligned([u8; 4096]);
 static mut PRDT: DmaAligned = DmaAligned([0u8; 4096]);
 static mut DMA_DATA: DmaAligned = DmaAligned([0u8; 4096]);
 
-/// LBA drive-select base (bits 7–4). Must be identical for read and write:
-/// QEMU maps `-drive index=0` to IDE master (`0xE0`) and `index=1` to slave (`0xF0`).
-/// The NeoDOS FS is on index=1 (the data disk), so we target the slave drive.
-const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xF0;
+/// LBA drive-select base (bits 7–4). With the unified GPT disk, both NeoDOS FS
+/// and FAT32 ESP are on the same physical drive (master, index=0).
+const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xE0;
 
-/// Master drive (boot disk) - used for FAT32 partition
+/// Master drive — used by the FAT32 driver for absolute-LBA reads.
 const ATA_DRIVE_SELECT_MASTER: u8 = 0xE0;
 
 pub struct AtaDriver {
@@ -65,6 +64,7 @@ pub struct AtaDriver {
     command_port: Port<u8>,
     status_port: Port<u8>,
     bmba: Option<u16>,
+    base_lba: u32,
 }
 
 #[derive(Debug)]
@@ -87,24 +87,31 @@ impl AtaDriver {
             command_port: Port::new(ATA_PRIMARY_COMMAND),
             status_port: Port::new(ATA_PRIMARY_STATUS),
             bmba: None,
+            base_lba: 0,
         }
     }
 
+    pub fn set_base_lba(&mut self, lba: u32) {
+        self.base_lba = lba;
+    }
+
     pub fn write_sector(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
-        if lba > 0x0FFFFFFF { return Err(()); }
+        let abs_lba = self.base_lba.wrapping_add(lba);
+        if abs_lba > 0x0FFFFFFF { return Err(()); }
         self.write_sector_inner(lba, data)
     }
 
     fn write_sector_inner(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         unsafe {
             self.wait_not_busy_simple()?;
             
             self.sector_count_port.write(1);
-            self.lba_low_port.write((lba & 0xFF) as u8);
-            self.lba_mid_port.write(((lba >> 8) & 0xFF) as u8);
-            self.lba_high_port.write(((lba >> 16) & 0xFF) as u8);
+            self.lba_low_port.write((abs_lba & 0xFF) as u8);
+            self.lba_mid_port.write(((abs_lba >> 8) & 0xFF) as u8);
+            self.lba_high_port.write(((abs_lba >> 16) & 0xFF) as u8);
             
-            let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8;
+            let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8;
             self.drive_sel_port.write(drive_byte);
             
             self.command_port.write(0x30); // WRITE SECTORS
@@ -189,21 +196,18 @@ impl AtaDriver {
     }
 
     fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         self.wait_not_busy()?;
 
         unsafe {
-            // Select drive (Slave) and LBA high bits
-            self.drive_sel_port.write(ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8);
+            self.drive_sel_port.write(ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
             
-            // Set sector count to 1
             self.sector_count_port.write(1);
             
-            // Set LBA bits
-            self.lba_low_port.write(lba as u8);
-            self.lba_mid_port.write((lba >> 8) as u8);
-            self.lba_high_port.write((lba >> 16) as u8);
+            self.lba_low_port.write(abs_lba as u8);
+            self.lba_mid_port.write((abs_lba >> 8) as u8);
+            self.lba_high_port.write((abs_lba >> 16) as u8);
             
-            // Send read command
             self.command_port.write(ATA_CMD_READ_PIO);
         }
 
@@ -219,9 +223,8 @@ impl AtaDriver {
         Ok(buffer)
     }
 
-    /// Read up to 255 sectors in a single READ MULTIPLE command.
-    /// `count` must be between 1 and 255 inclusive.
     pub fn read_sectors(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), AtaError> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         let count = count.max(1);
         let total_bytes = (count as usize) * 512;
         if buf.len() < total_bytes {
@@ -229,11 +232,11 @@ impl AtaDriver {
         }
         self.wait_not_busy()?;
         unsafe {
-            self.drive_sel_port.write(ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8);
+            self.drive_sel_port.write(ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
             self.sector_count_port.write(count);
-            self.lba_low_port.write(lba as u8);
-            self.lba_mid_port.write((lba >> 8) as u8);
-            self.lba_high_port.write((lba >> 16) as u8);
+            self.lba_low_port.write(abs_lba as u8);
+            self.lba_mid_port.write((abs_lba >> 8) as u8);
+            self.lba_high_port.write((abs_lba >> 16) as u8);
             self.command_port.write(ATA_CMD_READ_MULTIPLE);
         }
         for s in 0..count as usize {
@@ -252,8 +255,8 @@ impl AtaDriver {
         self.bmba = Some(base);
     }
 
-    /// Read sectors using bus-master DMA. Up to 8 sectors (4 KB) per call.
     pub fn read_dma(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), AtaError> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         let bmba = self.bmba.ok_or(AtaError::Error)?;
         let count = count.max(1).min(8);
         let total_bytes = (count as usize) * 512;
@@ -288,11 +291,11 @@ impl AtaDriver {
 
             self.wait_not_busy()?;
             self.drive_sel_port
-                .write(ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8);
+                .write(ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
             self.sector_count_port.write(count);
-            self.lba_low_port.write(lba as u8);
-            self.lba_mid_port.write((lba >> 8) as u8);
-            self.lba_high_port.write((lba >> 16) as u8);
+            self.lba_low_port.write(abs_lba as u8);
+            self.lba_mid_port.write((abs_lba >> 8) as u8);
+            self.lba_high_port.write((abs_lba >> 16) as u8);
             self.command_port.write(ATA_CMD_READ_DMA);
 
             bm_cmd.write(BM_CMD_START);
@@ -315,8 +318,8 @@ impl AtaDriver {
         Err(AtaError::Timeout)
     }
 
-    /// Write sectors using bus-master DMA. Up to 8 sectors (4 KB) per call.
     pub fn write_dma(&mut self, lba: u32, count: u8, data: &[u8]) -> Result<(), AtaError> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         let bmba = self.bmba.ok_or(AtaError::Error)?;
         let count = count.max(1).min(8);
         let total_bytes = (count as usize) * 512;
@@ -353,11 +356,11 @@ impl AtaDriver {
 
             self.wait_not_busy()?;
             self.drive_sel_port
-                .write(ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8);
+                .write(ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
             self.sector_count_port.write(count);
-            self.lba_low_port.write((lba & 0xFF) as u8);
-            self.lba_mid_port.write(((lba >> 8) & 0xFF) as u8);
-            self.lba_high_port.write(((lba >> 16) & 0xFF) as u8);
+            self.lba_low_port.write((abs_lba & 0xFF) as u8);
+            self.lba_mid_port.write(((abs_lba >> 8) & 0xFF) as u8);
+            self.lba_high_port.write(((abs_lba >> 16) & 0xFF) as u8);
             self.command_port.write(ATA_CMD_WRITE_DMA);
 
             bm_cmd.write(BM_CMD_START | BM_CMD_WRITE);
@@ -375,19 +378,19 @@ impl AtaDriver {
         Err(AtaError::Timeout)
     }
 
-    /// Write up to 255 sectors in a single WRITE MULTIPLE command.
     pub fn write_sectors(&mut self, lba: u32, count: u8, data: &[u8]) -> Result<(), ()> {
+        let abs_lba = self.base_lba.wrapping_add(lba);
         let count = count.max(1);
-        if lba > 0x0FFFFFFF { return Err(()); }
+        if abs_lba > 0x0FFFFFFF { return Err(()); }
         let total_bytes = (count as usize) * 512;
         if data.len() < total_bytes { return Err(()); }
         unsafe {
             self.wait_not_busy_simple()?;
             self.sector_count_port.write(count);
-            self.lba_low_port.write((lba & 0xFF) as u8);
-            self.lba_mid_port.write(((lba >> 8) & 0xFF) as u8);
-            self.lba_high_port.write(((lba >> 16) & 0xFF) as u8);
-            let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((lba >> 24) & 0x0F) as u8;
+            self.lba_low_port.write((abs_lba & 0xFF) as u8);
+            self.lba_mid_port.write(((abs_lba >> 8) & 0xFF) as u8);
+            self.lba_high_port.write(((abs_lba >> 16) & 0xFF) as u8);
+            let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8;
             self.drive_sel_port.write(drive_byte);
             self.command_port.write(ATA_CMD_WRITE_MULTIPLE);
             self.wait_not_busy_simple()?;
