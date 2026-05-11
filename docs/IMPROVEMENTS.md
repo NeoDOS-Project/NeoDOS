@@ -332,6 +332,8 @@ No hay verificación de que las versiones del bootloader y kernel sean compatibl
 
 **Propuesta:** Agregar magic number o versión en ambos extremos.
 
+> **IMPLEMENTADO (v0.10.2):** Añadido magic number `0x4E444F53` ("NDOS") y verificación de versión en BootInfo. El kernel comprueba compatibilidad al iniciar.
+
 ---
 
 ### 48. Dependencias no versionadas

@@ -20,8 +20,13 @@ pub struct FramebufferInfo {
     pub stride: usize,
 }
 
+const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
+const BOOT_VERSION: u32 = ((0 * 256) + 10) << 8 | 1; // major.minor.patch -> 0x000A01 = v0.10.1
+
 #[repr(C)]
 pub struct BootInfo {
+    pub magic: u32,           // must be 0x4E444F53
+    pub version: u32,         // bootloader version (0x00MMmmPP: major, minor, patch)
     pub fb_info: FramebufferInfo,
     pub memory_map_addr: u64,
     pub memory_map_size: u64,
@@ -72,6 +77,8 @@ fn efi_main() -> Status {
     let mmap_buf = mmap.buffer();
 
     let boot_info = BootInfo {
+        magic: BOOTINFO_MAGIC,
+        version: BOOT_VERSION,
         fb_info,
         memory_map_addr: mmap_buf.as_ptr() as u64,
         memory_map_size: meta.map_size as u64,

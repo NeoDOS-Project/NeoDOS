@@ -38,8 +38,13 @@ use graphics::FramebufferInfo;
 
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
+const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
+const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 1; // v0.10.1
+
 #[repr(C)]
 pub struct BootInfo {
+    pub magic: u32,           // must be 0x4E444F53
+    pub version: u32,         // bootloader version (0x00MMmmPP: major, minor, patch)
     pub fb_info: FramebufferInfo,
     pub memory_map_addr: u64,
     pub memory_map_size: u64,
@@ -50,6 +55,12 @@ pub struct BootInfo {
 #[no_mangle]
 #[link_section = ".text.entry"]
 pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
+    // 0. Verify boot info magic and version
+    if boot_info.magic != BOOTINFO_MAGIC {
+        // Can't use println yet, serial not initialized
+        loop {}
+    }
+
     // 1. Initialize Graphics Renderer
     graphics::init(boot_info.fb_info.clone());
     
@@ -60,6 +71,15 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     serial_println!("========================================");
     serial_println!("{}", KERNEL_VERSION);
     serial_println!("========================================");
+
+    // Check bootloader version compatibility
+    let bootloader_version = boot_info.version;
+    if bootloader_version != KERNEL_VERSION_CODE {
+        serial_println!("[!] Version mismatch: bootloader v{:x}, kernel v{:x}", bootloader_version, KERNEL_VERSION_CODE);
+    } else {
+        serial_println!("[+] Bootloader version: v0.10.1 (compatible)");
+    }
+
     serial_println!("[+] Graphics initialized: {}x{}", boot_info.fb_info.width, boot_info.fb_info.height);
 
     // 4. Initialize legacy VGA as backup (might not work, but keeps code compatible)
