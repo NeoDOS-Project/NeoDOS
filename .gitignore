@@ -9,7 +9,6 @@ neodos-kernel/target/
 *.elf
 *.bin
 *.efi
-disk_image.img
+*.img
 *.vdi
-qemu_output.log
-vbox_serial.log
+*.log
