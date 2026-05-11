@@ -32,6 +32,7 @@ impl Pic {
         core::arch::asm!("out dx, al", in("dx") self.data_port, in("al") data, options(nomem, nostack, preserves_flags));
     }
 
+    #[allow(dead_code)]
     pub unsafe fn read_data(&mut self) -> u8 {
         let value: u8;
         core::arch::asm!("in al, dx", out("al") value, in("dx") self.data_port, options(nomem, nostack, preserves_flags));
@@ -54,7 +55,7 @@ impl ChainedPics {
     }
 
     pub unsafe fn initialize(&mut self) {
-        let mut wait = || {
+        let wait = || {
             core::arch::asm!("out dx, al", in("dx") 0x80u16, in("al") 0u8, options(nomem, nostack, preserves_flags));
         };
 

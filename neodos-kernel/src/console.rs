@@ -103,11 +103,13 @@ fn scroll() {
     }
 }
 
+#[allow(dead_code)]
 pub fn print_decimal(value: u64) {
     let mut writer = VgaWriter;
     let _ = write!(writer, "{}", value);
 }
 
+#[allow(dead_code)]
 pub fn print_hex(value: u64) {
     let mut writer = VgaWriter;
     let _ = write!(writer, "0x{:x}", value);

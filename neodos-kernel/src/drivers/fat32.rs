@@ -1,5 +1,7 @@
 // src/drivers/fat32.rs - Minimal FAT32 driver for boot partition (read-only)
 
+#![allow(dead_code)]
+
 use crate::drivers::ata::AtaDriver;
 
 #[derive(Debug)]

@@ -2,6 +2,7 @@ use core::sync::atomic::{AtomicU8, Ordering};
 use x86_64::instructions::port::Port;
 
 mod klc_layout {
+    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/kbd_layout.rs"));
 }
 

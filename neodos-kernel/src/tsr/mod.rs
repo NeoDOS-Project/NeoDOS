@@ -14,6 +14,7 @@ static mut TSR_LOAD_BUF: [u8; MAX_TSR_SIZE] = [0u8; MAX_TSR_SIZE];
 pub struct TsrInfo {
     pub name: [u8; 16],
     pub base_address: u64,
+    #[allow(dead_code)]
     pub size: usize,
     pub interrupt_num: u8,
 }

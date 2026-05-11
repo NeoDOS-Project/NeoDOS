@@ -218,7 +218,6 @@ impl<'a> DosShell<'a> {
 
                     match byte {
                         b'\n' => {
-                            utf8_rem = 0;
                             println!();
                             break;
                         }
@@ -388,6 +387,7 @@ impl<'a> DosShell<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn navigate_to_path(&mut self, path: &str) -> Result<u32, FsError> {
         let dm = self.drive_manager;
         let (fs_id, vfs) = vfs_path_from_drive_manager(&dm, path)

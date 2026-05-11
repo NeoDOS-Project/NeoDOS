@@ -1,4 +1,3 @@
-use core::arch::asm;
 use crate::arch::x64::gdt::get_selectors;
 use crate::scheduler;
 
@@ -33,6 +32,7 @@ core::arch::global_asm!(
     "ret",
 );
 
+#[allow(dead_code)]
 extern "C" {
     fn execute_usermode_asm(entry: u64, stack: u64, cs: u64, ss: u64);
     fn exit_to_kernel();

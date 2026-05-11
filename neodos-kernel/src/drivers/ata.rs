@@ -1,5 +1,7 @@
 // src/drivers/ata.rs
 
+#![allow(dead_code)]
+
 use x86_64::instructions::port::Port;
 
 const ATA_PRIMARY_DATA: u16 = 0x1F0;

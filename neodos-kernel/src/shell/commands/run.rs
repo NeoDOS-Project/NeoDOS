@@ -9,7 +9,7 @@
 use crate::println;
 use crate::serial_println;
 use crate::shell::shell::DosShell;
-use crate::arch::x64::paging::{USER_BASE, USER_LIMIT, alloc_user_slot};
+use crate::arch::x64::paging::{USER_LIMIT, alloc_user_slot};
 
 const MAX_BIN_SIZE: usize = 64 * 1024;
 

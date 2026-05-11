@@ -51,7 +51,7 @@ impl<'a> DosShell<'a> {
         
         // Find the file
         match self.resolve_file_inode(filename) {
-            Ok(inode_num) => {
+            Ok(_inode_num) => {
                 // Get current attributes by reading directory entry
                 let (parent_path, leaf) = self.split_parent_and_leaf(filename);
                 let parent_inode = if parent_path.is_empty() {

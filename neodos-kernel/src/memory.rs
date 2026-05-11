@@ -108,6 +108,7 @@ impl FrameAllocator {
         self.bitmap[word] &= !(1u64 << bit);
     }
 
+    #[allow(dead_code)]
     fn is_free(&self, frame: usize) -> bool {
         let word = frame / 64;
         let bit = frame % 64;
@@ -131,6 +132,7 @@ impl FrameAllocator {
         self.free_frames = free;
     }
 
+    #[allow(dead_code)]
     fn allocate_frame(&mut self) -> Option<u64> {
         let max_frames = MAX_PHYS_ADDR / PAGE_SIZE;
         for word_idx in 0..self.bitmap.len() {
@@ -242,6 +244,7 @@ pub fn stats() -> MemoryStats {
     *STATS.lock()
 }
 
+#[allow(dead_code)]
 pub fn allocate_frame() -> Option<u64> {
     ALLOCATOR.lock().allocate_frame()
 }

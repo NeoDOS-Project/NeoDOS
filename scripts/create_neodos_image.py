@@ -159,6 +159,32 @@ def main():
 
     systest_inode = create_inode(7, 0x80, len(systest_bin_data), [7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     image[512+1792:512+2048] = systest_inode
+
+    # Inode 8: FILETEST.BIN — file I/O test binary
+    filetest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'filetest.bin')
+    filetest_bin_data = b''
+    if os.path.exists(filetest_bin_path):
+        with open(filetest_bin_path, 'rb') as ff:
+            filetest_bin_data = ff.read()
+        print(f"[*] Including filetest.bin ({len(filetest_bin_data)} bytes)")
+    else:
+        print("[!] filetest.bin not found — skipping (run 'python3 userbin/generate_filetest.py')")
+
+    filetest_inode = create_inode(8, 0x80, len(filetest_bin_data), [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    image[512+2048:512+2304] = filetest_inode
+
+    # Inode 9: DRIVER.NDM — demo driver
+    driver_ndm_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'driver.ndm')
+    driver_ndm_data = b''
+    if os.path.exists(driver_ndm_path):
+        with open(driver_ndm_path, 'rb') as df:
+            driver_ndm_data = df.read()
+        print(f"[*] Including driver.ndm ({len(driver_ndm_data)} bytes)")
+    else:
+        print("[!] driver.ndm not found — skipping")
+
+    driver_inode = create_inode(9, 0x80, len(driver_ndm_data), [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+    image[512+2304:512+2560] = driver_inode
     
     # 3. Root directory block (block 0) @ first data sector
     print("[*] Writing root directory...")
@@ -183,6 +209,14 @@ def main():
     # Entry 4: SYSTEST.BIN (syscall test binary)
     entry = create_dir_entry(7, 1, "SYSTEST.BIN")
     image[offset+1024:offset+1280] = entry
+
+    # Entry 5: FILETEST.BIN (file I/O test binary)
+    entry = create_dir_entry(8, 1, "FILETEST.BIN")
+    image[offset+1280:offset+1536] = entry
+
+    # Entry 6: DRIVER.NDM (demo driver)
+    entry = create_dir_entry(9, 1, "DRIVER.NDM")
+    image[offset+1536:offset+1792] = entry
     
     # 4. Data blocks
     # Block 1 = sector 208 (readme.txt)
@@ -246,6 +280,18 @@ VER
         print("[*] Writing SYSTEST.BIN content...")
         offset = (200 + 56) * 512
         image[offset:offset+len(systest_bin_data)] = systest_bin_data
+
+    # Block 8 = sector 264 (FILETEST.BIN — file I/O test binary)
+    if filetest_bin_data:
+        print("[*] Writing FILETEST.BIN content...")
+        offset = (200 + 64) * 512
+        image[offset:offset+len(filetest_bin_data)] = filetest_bin_data
+
+    # Block 9 = sector 272 (DRIVER.NDM — demo driver)
+    if driver_ndm_data:
+        print("[*] Writing DRIVER.NDM content...")
+        offset = (200 + 72) * 512
+        image[offset:offset+len(driver_ndm_data)] = driver_ndm_data
 
     
     # Escribir imagen a disco

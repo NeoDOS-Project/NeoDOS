@@ -1,5 +1,5 @@
 use core::fmt;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::AtomicU64;
 use spin::Mutex;
 use lazy_static::lazy_static;
 
@@ -106,9 +106,9 @@ impl Scheduler {
         // Create idle process (PID 0) that can always be scheduled
         // This prevents panic when timer fires before any processes are added
         let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
-        let idle_rsp = init_interrupt_stack_frame(idle_stack_top, idle_task as u64);
+        let idle_rsp = init_interrupt_stack_frame(idle_stack_top, idle_task as *const () as u64);
 
-        scheduler.processes[0] = Some(Process::new(0, idle_task as u64, idle_rsp));
+        scheduler.processes[0] = Some(Process::new(0, idle_task as *const () as u64, idle_rsp));
         
         scheduler
     }
@@ -120,13 +120,14 @@ impl Scheduler {
             .any(|p| p.as_ref().is_some_and(|proc| proc.state != ProcessState::Terminated))
     }
 
+    #[allow(dead_code)]
     pub fn add_process(&mut self, entry: u64, stack_base: u64) -> u32 {
         for i in 0..MAX_PROCESSES {
             if self.processes[i].is_none() {
                 let pid = self.next_pid;
                 self.next_pid += 1;
                 let stack_ptr = init_interrupt_stack_frame(stack_base, entry);
-                let mut proc = Process::new(pid, entry, stack_ptr);
+                let proc = Process::new(pid, entry, stack_ptr);
                 self.processes[i] = Some(proc);
                 return pid;
             }
@@ -189,6 +190,7 @@ impl Scheduler {
         self.processes[idx].as_mut()
     }
 
+    #[allow(dead_code)]
     pub fn current_process(&mut self) -> &mut Process {
         let pid = self.current_pid;
         if let Some(idx) = self
@@ -266,6 +268,7 @@ impl Scheduler {
         }
     }
 
+    #[allow(dead_code)]
     pub fn print_processes(&self) {
         crate::console::print_str("[");
         for proc in self.processes.iter() {
@@ -283,6 +286,7 @@ lazy_static! {
     static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
 }
 
+#[allow(dead_code)]
 pub fn init() {
     // Scheduler is initialized via lazy_static
 }

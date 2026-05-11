@@ -1,6 +1,5 @@
 use crate::print;
 use crate::println;
-use crate::serial_println;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {

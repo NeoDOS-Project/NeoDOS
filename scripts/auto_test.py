@@ -50,7 +50,7 @@ def run_test():
         "-drive", f"format=raw,file={disk_image},index=0,media=disk",
         "-m", "512M",
         "-serial", "stdio",
-    ] + kvm_args
+    ]
     
     timeout = 120  # 2 minute timeout
     start_time = time.time()

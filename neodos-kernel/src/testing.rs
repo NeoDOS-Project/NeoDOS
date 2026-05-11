@@ -378,13 +378,13 @@ pub fn register_utf8_tests() {
     });
 
     test_case!("utf8_invalid_incomplete_seq", {
-        let data = [0xC3];
-        test_true!(core::str::from_utf8(&data).is_err());
+        let data = &[0xC3][..];
+        test_true!(core::str::from_utf8(data).is_err());
     });
 
     test_case!("utf8_invalid_continuation", {
-        let data = [0xC3, 0x00];
-        test_true!(core::str::from_utf8(&data).is_err());
+        let data = &[0xC3, 0x00][..];
+        test_true!(core::str::from_utf8(data).is_err());
     });
 
     test_case!("utf8_empty", {

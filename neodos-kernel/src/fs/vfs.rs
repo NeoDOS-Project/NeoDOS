@@ -3,7 +3,7 @@
 
 use crate::drivers::ata::AtaDriver;
 use crate::buffer::block_cache::BlockCache;
-use crate::fs::neodos_fs::{NeoDosFs, FsError, MODE_DIR, MODE_FILE, ROOT_INODE};
+use crate::fs::neodos_fs::{NeoDosFs, FsError, MODE_DIR, ROOT_INODE};
 
 impl NeoDosFs {
     pub fn resolve_directory_path(

@@ -31,7 +31,7 @@ pub fn find_neodos_partition(ata: &mut AtaDriver) -> Option<GptPartition> {
     let entry_size = entry_size.max(128) as u64;
 
     let entries_per_sector = 512 / entry_size;
-    let num_sectors = (num_entries as u64 + entries_per_sector - 1) / entries_per_sector;
+    let _num_sectors = (num_entries as u64 + entries_per_sector - 1) / entries_per_sector;
 
     for i in 0..num_entries {
         let sector_idx = i as u64 / entries_per_sector;

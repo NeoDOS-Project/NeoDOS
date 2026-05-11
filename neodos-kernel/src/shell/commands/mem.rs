@@ -1,4 +1,3 @@
-use crate::print;
 use crate::println;
 use crate::shell::shell::DosShell;
 

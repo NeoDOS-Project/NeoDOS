@@ -4,7 +4,7 @@ use x86_64::PhysAddr;
 use crate::serial_println;
 
 #[repr(align(4096))]
-struct AlignedPageTable(PageTable);
+pub struct AlignedPageTable(PageTable);
 
 static mut PML4: AlignedPageTable = AlignedPageTable(PageTable::new());
 static mut PDPT: AlignedPageTable = AlignedPageTable(PageTable::new());
@@ -142,6 +142,7 @@ fn is_user_range(addr: u64) -> bool {
 /// # Safety
 /// Must be called while paging is active (after `init_custom_page_tables`).
 /// The caller must ensure no other CPU is running.
+#[allow(dead_code)]
 pub unsafe fn map_user_range(base: u64, size: u64) {
     let end = base.saturating_add(size);
     if end > 0x1_0000_0000 {

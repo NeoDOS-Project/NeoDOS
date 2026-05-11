@@ -13,6 +13,7 @@ pub static NEED_CACHE_FLUSH: AtomicBool = AtomicBool::new(false);
 pub static LAST_FLUSH_TICK: AtomicU64 = AtomicU64::new(0);
 pub const FLUSH_INTERVAL_TICKS: u64 = 180;
 
+#[allow(dead_code)]
 pub fn with_ata<F, R>(f: F) -> R 
 where
     F: FnOnce(&mut AtaDriver) -> R
@@ -23,6 +24,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn with_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut BlockCache) -> R
@@ -33,6 +35,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn with_fs<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs) -> R
@@ -43,6 +46,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn with_fs_and_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs, &mut BlockCache) -> R
@@ -54,6 +58,7 @@ where
     }
 }
 
+#[allow(dead_code)]
 pub fn with_all<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs, &mut BlockCache, &mut AtaDriver) -> R

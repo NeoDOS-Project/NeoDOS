@@ -169,14 +169,14 @@ lazy_static! {
         
         // IRQs
         unsafe {
-            idt[32].set_handler_addr(x86_64::VirtAddr::new(timer_handler_asm as u64));
+            idt[32].set_handler_addr(x86_64::VirtAddr::new(timer_handler_asm as *const () as u64));
         }
         idt[33].set_handler_fn(keyboard_handler);   // IRQ1
         
         // Syscall (INT 0x80) — trampolín real, accesible desde Ring 3
         unsafe {
             idt[0x80]
-                .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as u64))
+                .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as *const () as u64))
                 .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
         }
         
@@ -234,6 +234,14 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 }
 
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    use crate::serial_println;
+    serial_println!(
+        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x}",
+        error_code,
+        stack_frame.instruction_pointer.as_u64(),
+        stack_frame.code_segment,
+        stack_frame.cpu_flags,
+    );
     panic!("General protection fault: {:#?}, error: {}", stack_frame, error_code);
 }
 

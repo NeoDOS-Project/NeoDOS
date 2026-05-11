@@ -61,10 +61,12 @@ impl InternalPath {
         core::str::from_utf8(self.as_bytes()).map_err(|_| DriveManagerError::InvalidPath)
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.len
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -141,6 +143,7 @@ impl DriveManager {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn unmount(&mut self, letter: char) -> Result<(), DriveManagerError> {
         let idx = Self::letter_index(letter)?;
         if self.slots[idx].is_none() {

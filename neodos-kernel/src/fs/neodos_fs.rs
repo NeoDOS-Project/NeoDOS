@@ -65,6 +65,7 @@ impl BlockBitmap {
 
 #[repr(packed)]
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
 pub struct Inode {
     pub inode_num: u32,          // 0-255
     pub mode: u16,               // File type + permissions (0x40 = dir, 0x80 = file)
@@ -87,6 +88,7 @@ pub const MODE_FILE: u16 = 0x80;
 pub const ATTR_READONLY: u8 = 0x01;
 pub const ATTR_HIDDEN: u8   = 0x02;
 pub const ATTR_SYSTEM: u8   = 0x04;
+#[allow(dead_code)]
 pub const ATTR_VOLUME: u8   = 0x08;
 pub const ATTR_DIR: u8      = 0x10;
 pub const ATTR_ARCHIVE: u8  = 0x20;
@@ -97,6 +99,7 @@ pub struct DirectoryEntry {
     pub inode_num: u32,
     pub name_len: u8,
     pub entry_type: u8,          // 1=file, 2=dir
+    #[allow(dead_code)]
     pub attributes: u8,          // DOS attributes (R=1, H=2, S=4, A=16)
     pub name: [u8; 249],         // Adjusted to fit 256 bytes total
 }
@@ -110,9 +113,11 @@ pub enum FsError {
     NotADirectory,
     NotAFile,
     FileNotFound,
+    #[allow(dead_code)]
     BlockReadError,
     NoInodeAvailable,
     NoBlockAvailable,
+    #[allow(dead_code)]
     Ata(AtaError),
 }
 
@@ -289,6 +294,7 @@ impl NeoDosFs {
         })
     }
     
+    #[allow(dead_code)]
     pub fn list_root(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<(), FsError> 
     {
@@ -419,6 +425,7 @@ impl NeoDosFs {
         self.find_file_in_directory(ROOT_INODE, filename, cache, ata)
     }
 
+    #[allow(dead_code)]
     pub fn find_directory(&mut self, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
@@ -628,7 +635,7 @@ impl NeoDosFs {
         Err(FsError::NoInodeAvailable)
     }
 
-    pub fn allocate_block(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<u32, FsError> {
+    pub fn allocate_block(&mut self, _cache: &mut BlockCache, _ata: &mut AtaDriver) -> Result<u32, FsError> {
         match self.block_bitmap.alloc() {
             Some(block) => {
                 if block >= self.superblock.num_blocks {
@@ -648,12 +655,14 @@ impl NeoDosFs {
         self.block_bitmap.free(block);
     }
 
+    #[allow(dead_code)]
     pub fn create_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
         self.create_file_at(ROOT_INODE, filename, cache, ata)
     }
 
+    #[allow(dead_code)]
     pub fn create_file_at(&mut self, parent_inode_num: u32, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
@@ -813,11 +822,13 @@ impl NeoDosFs {
         Ok(written)
     }
 
+    #[allow(dead_code)]
     pub fn delete_file(&mut self, parent_inode: u32, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
         let file_inode = self.find_file_in_directory(parent_inode, filename, cache, ata)?;
         self.delete_file_by_inode(parent_inode, filename, file_inode, cache, ata)
     }
 
+    #[allow(dead_code)]
     pub fn delete_file_by_inode(&mut self, parent_inode: u32, _filename: &str, file_inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
         // Free the file's data blocks – copy pointers first to avoid borrow conflict
         let mut blocks_to_free = [0u32; 12];
@@ -839,8 +850,8 @@ impl NeoDosFs {
         // Mark the file's inode as free in the cache
         self.inode_cache.inodes[file_inode_num as usize] = None;
 
-        // Now remove the directory entry
-        let mut dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
+        
+        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
         
         let num_blocks = self.inode_data_block_count(&dir_inode);
         
@@ -894,7 +905,7 @@ impl NeoDosFs {
     pub fn rename_file(&mut self, parent_inode: u32, old_name: &str, new_name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
         let _file_inode = self.find_file_in_directory(parent_inode, old_name, cache, ata)?;
         
-        let mut dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
+        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
         
         let num_blocks = self.inode_data_block_count(&dir_inode);
         

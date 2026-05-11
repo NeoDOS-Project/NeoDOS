@@ -10,6 +10,7 @@ pub struct IdeController {
     pub device: u8,
     pub func: u8,
     pub bus_master_base: u16,
+    #[allow(dead_code)]
     pub prog_if: u8,
 }
 

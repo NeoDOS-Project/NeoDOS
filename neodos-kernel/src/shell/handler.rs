@@ -29,7 +29,7 @@ impl CommandRegistry {
     pub fn print_help(&self) {
         use crate::println;
 
-        let mut categories: [(&str, &str); 8] = [
+        let categories: [(&str, &str); 8] = [
             ("FILE",     "FILE MANAGEMENT"),
             ("DISK",     "NAVIGATION & DISKS"),
             ("INFO",     "SYSTEM INFO"),
@@ -109,8 +109,10 @@ pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
 pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
-pub fn cmd_cls(shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
+pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
+pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
+pub fn cmd_devicesend(shell: &mut DosShell, args: &[&str]) { shell.cmd_devicesend(args); }
 pub fn cmd_exit(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
 pub fn cmd_shutdown(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
 
@@ -146,6 +148,8 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs", },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests", },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)", },
+    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load driver module (LOAD FILE.BIN)", },
+    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send cmd to device (DEVICESEND id cmd)", },
     CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID", },
     CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt", },
     CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },

@@ -19,12 +19,41 @@
 //!  11  sys_readfile  — read from file
 //!  12  sys_writefile — write to file
 //!  13  sys_close     — close file
+//!  14  sys_ioctl     — device I/O control
 
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::serial_println;
 use crate::scheduler::{self, ProcessState};
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
+
+// Device handler registry - max 8 devices
+const MAX_DEVICES: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct DeviceHandler {
+    pub device_id: u32,
+    pub owner_pid: u32,
+}
+
+static mut DEVICE_HANDLERS: [Option<DeviceHandler>; MAX_DEVICES] = [None; MAX_DEVICES];
+
+pub fn register_device(device_id: u32, owner_pid: u32) -> bool {
+    if device_id as usize >= MAX_DEVICES {
+        return false;
+    }
+    unsafe {
+        DEVICE_HANDLERS[device_id as usize] = Some(DeviceHandler { device_id, owner_pid });
+    }
+    true
+}
+
+pub fn get_device_handler(device_id: u32) -> Option<DeviceHandler> {
+    if device_id as usize >= MAX_DEVICES {
+        return None;
+    }
+    unsafe { DEVICE_HANDLERS[device_id as usize] }
+}
 
 pub fn set_need_resched() {
     NEED_RESCHED.store(true, Ordering::SeqCst);
@@ -184,7 +213,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
             {
                 let s = crate::scheduler::current_scheduler();
-                let mut scheduler = s.lock();
+                let scheduler = s.lock();
                 
                 let mut already_terminated = false;
                 for proc in scheduler.processes.iter() {
@@ -199,7 +228,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 if !already_terminated {
                     loop {
                         let s2 = crate::scheduler::current_scheduler();
-                        let mut scheduler2 = s2.lock();
+                        let scheduler2 = s2.lock();
                         
                         let mut is_terminated = false;
                         for proc in scheduler2.processes.iter() {
@@ -398,6 +427,74 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         13 => {
             serial_println!("[syscall] sys_close({})", rbx);
             0
+        }
+
+        // ---- sys_ioctl(device_id, cmd, buf, count) ----
+        // Convention: rbx=device_id, rcx=cmd, rdx=buf, (no 4th arg - count is derived from buf validation)
+        14 => {
+            let device_id = rbx as u32;
+            let cmd = rcx as u32;
+            let buf_ptr = _rdx as *mut u8;
+            let count = 4; // default count for now
+
+            serial_println!("[syscall] sys_ioctl(dev={}, cmd={}, buf=0x{:x}", device_id, cmd, buf_ptr as u64);
+
+            // Check if device has a registered handler
+            let handler = get_device_handler(device_id);
+            match handler {
+                Some(h) => {
+                    let addr = buf_ptr as u64;
+
+                    // Allow buf=0 for polling (check if there are pending events)
+                    if addr == 0 {
+                        // Poll mode - check if driver has pending commands
+                        let pending = unsafe { crate::drivers::DEVICE_EVENTS[device_id as usize].pending.load(core::sync::atomic::Ordering::Relaxed) };
+                        if pending {
+                            // Clear pending flag and return success
+                            unsafe { crate::drivers::DEVICE_EVENTS[device_id as usize].pending.store(false, core::sync::atomic::Ordering::Relaxed) };
+                            serial_println!("[syscall] sys_ioctl: poll -> pending event!");
+                            return 1; // 1 means there was a pending event
+                        }
+                        serial_println!("[syscall] sys_ioctl: poll -> no events");
+                        return 0; // No pending events
+                    }
+
+                    // Validate buffer address
+                    if addr < 0x400000 || addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
+                        serial_println!("[syscall] sys_ioctl: bad buffer 0x{:x} len {}", addr, count);
+                        return u64::MAX;
+                    }
+
+                    // Copy data to user buffer
+                    let data = [cmd as u8, (cmd >> 8) as u8, (cmd >> 16) as u8, (cmd >> 24) as u8];
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr, count);
+                    }
+
+                    serial_println!("[syscall] sys_ioctl: forwarded to PID {}", h.owner_pid);
+                    count as u64
+                }
+                None => {
+                    serial_println!("[syscall] sys_ioctl: no handler for device {}", device_id);
+                    u64::MAX
+                }
+            }
+        }
+
+        // ---- sys_register_device(device_id) ----
+        15 => {
+            let device_id = rbx as u32;
+            let current_pid = crate::scheduler::current_scheduler().lock().current_pid;
+
+            serial_println!("[syscall] sys_register_device(dev={}) for PID {}", device_id, current_pid);
+
+            if register_device(device_id, current_pid) {
+                serial_println!("[syscall] sys_register_device: OK");
+                0
+            } else {
+                serial_println!("[syscall] sys_register_device: failed");
+                u64::MAX
+            }
         }
 
         _ => {
