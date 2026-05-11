@@ -81,14 +81,63 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
   - kernel image (`__kernel_start..__kernel_end`)
   - framebuffer range
 
+## Driver Infrastructure (v0.10.0)
+
+NeoDOS supports modular drivers loaded as user-mode processes:
+
+### Driver Registry
+- `DEVICE_HANDLERS` array in `syscall.rs` (max 8 devices)
+- Each entry: `{ device_id, owner_pid, registered }`
+
+### Device Events
+- `DEVICE_EVENTS` array in `drivers/mod.rs` (atomic flags)
+- `signal_device_event(id)` sets pending flag
+- Drivers poll with `sys_ioctl(buf=0)` to check for events
+
+### Syscalls
+| # | Name | Args | Description |
+|---|------|------|-------------|
+| 14 | sys_ioctl | RBX=device_id, RCX=cmd, RDX=buf | Device I/O control; buf=0 for poll mode |
+| 15 | sys_register_device | RBX=device_id | Register current PID as device handler |
+
+### Shell Commands
+- `LOAD <filename>` — Load .ndm driver module and spawn as process
+- `DEVICESEND <device_id> <cmd>` — Signal device event from shell
+
+### Driver Format (.ndm)
+- Flat binary loaded at `0x400000` (user window)
+- Uses INT 0x80 for syscalls
+- Calls `sys_register_device(device_id)` to become handler
+- Polls with `sys_ioctl(device_id, 0, 0, 0)` for events
+
 ## Kernel Subsystems (High-Level)
 
 - **arch/x64**: GDT, IDT, PIC, paging, interrupt handlers
-- **drivers**: ATA + keyboard input
+- **drivers**: ATA + keyboard + device event infrastructure
 - **buffer**: block cache
 - **fs**: NeoDOS filesystem + minimal VFS helpers + drive letter manager
-- **shell**: DOS-like shell and built-in commands (`HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `CPUINFO`, `MEM`, …)
+- **shell**: DOS-like shell and built-in commands (`HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `CPUINFO`, `MEM`, `LOAD`, `DEVICESEND`, …)
 - **scheduler**: round-robin scheduler used by the timer ISR when processes exist; idle process is always available
+- **usermode**: Ring 3 execution support for drivers and user binaries
+
+## Syscall Table (INT 0x80)
+
+Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
+
+| # | Syscall | Args | Description |
+|---|---------|------|-------------|
+| 0 | sys_exit | RBX=code | Terminate process |
+| 1 | sys_write | RBX=ptr, RCX=len | Write to console |
+| 2 | sys_yield | — | Yield CPU |
+| 3 | sys_getpid | — | Return current PID |
+| 4 | sys_read | RBX=fd, RCX=buf, RDX=count | Read from stdin |
+| 9 | sys_waitpid | RBX=pid | Wait for child process |
+| 10 | sys_open | RBX=path_ptr, RCX=flags | Open file → inode |
+| 11 | sys_readfile | RBX=inode, RCX=buf, RDX=count | Read from file |
+| 12 | sys_writefile | RBX=inode, RCX=buf, RDX=count | Write to file |
+| 13 | sys_close | RBX=fd | Close (no-op) |
+| 14 | sys_ioctl | RBX=device_id, RCX=cmd, RDX=buf | Device I/O control |
+| 15 | sys_register_device | RBX=device_id | Register as device handler |
 
 ## Debug Interfaces
 
