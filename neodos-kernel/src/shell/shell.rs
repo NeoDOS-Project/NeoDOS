@@ -69,7 +69,19 @@ impl<'a> DosShell<'a> {
         fat32: Option<Fat32Driver>,
     ) -> Self {
         let mut drive_manager = DriveManager::new();
-        let _ = drive_manager.mount('C', FsInstanceId::PRIMARY);
+
+        let mut system_drive = b'C';
+        let mut environment = Environment::new();
+
+        if let Some(drive_letter) = environment.get("SYSTEMDRIVE") {
+            if let Some(first_char) = drive_letter.chars().next() {
+                if first_char.is_ascii_uppercase() {
+                    system_drive = first_char as u8;
+                }
+            }
+        }
+
+        let _ = drive_manager.mount(system_drive as char, FsInstanceId::PRIMARY);
         if fat32.is_some() {
             let _ = drive_manager.mount('A', FsInstanceId::FAT32_ESP);
         }
@@ -78,9 +90,9 @@ impl<'a> DosShell<'a> {
             current_dir: [0; 128],
             current_dir_len: 1,
             current_dir_inode: 0,
-            current_drive: b'C',
+            current_drive: system_drive,
             drive_manager,
-            environment: Environment::new(),
+            environment,
             fs,
             cache,
             ata,
@@ -90,6 +102,9 @@ impl<'a> DosShell<'a> {
         shell.current_dir[0] = b'\\';
         shell.environment.set("PATH", "\\BIN;\\SYSTEM");
         shell.environment.set("PROMPT", "$P$G");
+        if !shell.environment.get("SYSTEMDRIVE").is_some() {
+            shell.environment.set("SYSTEMDRIVE", "C");
+        }
         shell.environment.set("CURSOR", "18");
         shell
     }

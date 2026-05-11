@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.0
+v0.10.1
 
 ## Build & Run
 
@@ -140,8 +140,8 @@ Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por priori
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.0 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.0 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.1 |
+| Kernel ELF | `neodos/kernel.elf` | v0.10.1 |
 | Kernel bin | `neodos/kernel.bin` | ELF → bin |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |

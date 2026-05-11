@@ -120,6 +120,8 @@ Solo se monta la unidad C. No hay soporte para A:, B:, D:, etc.
 
 **Propuesta:** Hacer configurable el drive primario o auto-detectar.
 
+> **IMPLEMENTADO (v0.10.1):** Ahora lee variable de entorno `SYSTEMDRIVE` para configurar el drive primario. Por defecto es `C`. Se inicializa automáticamente si no existe.
+
 ---
 
 ### 32. Sin validación de tamaño de archivo en COPY
