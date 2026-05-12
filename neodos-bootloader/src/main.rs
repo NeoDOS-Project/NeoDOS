@@ -21,7 +21,7 @@ pub struct FramebufferInfo {
 }
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const BOOT_VERSION: u32 = ((0 * 256) + 10) << 8 | 1; // major.minor.patch -> 0x000A01 = v0.10.1
+const BOOT_VERSION: u32 = ((0 * 256) + 10) << 8 | 3; // major.minor.patch -> 0x000A03 = v0.10.3
 
 #[repr(C)]
 pub struct BootInfo {

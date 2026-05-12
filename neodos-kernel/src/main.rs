@@ -39,7 +39,7 @@ use graphics::FramebufferInfo;
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 1; // v0.10.1
+const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 3; // v0.10.3
 
 #[repr(C)]
 pub struct BootInfo {
@@ -99,6 +99,9 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
 
     serial_println!("[+] Initializing PS/2 controller...");
     drivers::keyboard::init_ps2();
+
+    serial_println!("[+] Scanning for USB HID keyboards...");
+    drivers::usb_hid::init_usb_keyboard();
 
     serial_println!("[+] Enabling interrupts...");
     arch::x64::enable_interrupts();

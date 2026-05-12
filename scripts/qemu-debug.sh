@@ -59,6 +59,8 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   -drive format=raw,file="$DISK_IMAGE",index=0,media=disk \
+  -device piix3-usb-uhci \
+  -device usb-kbd \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 

@@ -54,6 +54,28 @@ impl SerialPort {
             );
         }
     }
+    
+    fn data_ready(&self) -> bool {
+        unsafe { self.read_reg(5) & 1 != 0 }
+    }
+    
+    pub fn recv(&self) -> Option<u8> {
+        let lsr: u8 = unsafe { self.read_reg(5) };
+        if lsr & 1 != 0 {
+            let byte: u8;
+            unsafe {
+                core::arch::asm!(
+                    "in al, dx",
+                    out("al") byte,
+                    in("dx") self.port,
+                    options(nomem, nostack, preserves_flags)
+                );
+            }
+            Some(byte)
+        } else {
+            None
+        }
+    }
 }
 
 impl fmt::Write for SerialPort {

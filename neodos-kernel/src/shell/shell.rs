@@ -3,6 +3,7 @@
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ata::AtaDriver;
 use crate::drivers::fat32::Fat32Driver;
+use crate::drivers::usb_hid;
 use crate::fs::drive_manager::{DriveManager, DriveManagerError, FsInstanceId, InternalPath};
 use crate::fs::neodos_fs::{FsError, NeoDosFs, ROOT_INODE};
 use crate::input;
@@ -71,7 +72,7 @@ impl<'a> DosShell<'a> {
         let mut drive_manager = DriveManager::new();
 
         let mut system_drive = b'C';
-        let mut environment = Environment::new();
+        let environment = Environment::new();
 
         if let Some(drive_letter) = environment.get("SYSTEMDRIVE") {
             if let Some(first_char) = drive_letter.chars().next() {
@@ -192,7 +193,6 @@ impl<'a> DosShell<'a> {
     pub fn run(&mut self) -> ! {
         println!("NeoDOS v{} - FS Started", env!("CARGO_PKG_VERSION"));
         println!("Type HELP for a list of commands.");
-        println!();
 
         self.check_config_sys();
         self.init_boot_drive_from_config();
@@ -224,6 +224,11 @@ impl<'a> DosShell<'a> {
                     blink_ticks = ticks;
                     cursor_visible = !cursor_visible;
                     crate::console::draw_cursor(cursor_visible);
+                }
+
+                // Poll USB keyboard if available
+                if usb_hid::has_usb_keyboard() {
+                    usb_hid::poll_usb_keyboard();
                 }
 
                 // Input comes from IRQ1 keyboard handler which fills the buffer
@@ -306,8 +311,10 @@ impl<'a> DosShell<'a> {
 
     fn print_prompt(&mut self, _idle_hits: u64) {
         if let Ok(dir) = core::str::from_utf8(&self.current_dir[..self.current_dir_len]) {
+            crate::serial_print!("{}:{}> ", self.current_drive as char, dir);
             print!("{}:{}> ", self.current_drive as char, dir);
         } else {
+            crate::serial_print!("{}:\\> ", self.current_drive as char);
             print!("{}:\\> ", self.current_drive as char);
         }
     }

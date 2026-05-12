@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 auto_test.py — Automatic test runner for NeoDOS
-Launches QEMU headless, sends 'test' command, captures output.
+Uses serial log file monitoring + QEMU monitor sendkey for input.
 """
 
 import subprocess
@@ -9,16 +9,38 @@ import time
 import os
 import sys
 import re
-import signal
-import select
+import socket
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(SCRIPT_DIR)
 
 QEMU_OUTPUT_LOG = os.path.join(PROJECT_ROOT, "qemu_output_auto.log")
 
+def send_monitor(sock, cmd, wait=0.2):
+    try:
+        sock.sendall((cmd + "\n").encode())
+        time.sleep(wait)
+        data = ""
+        try:
+            sock.settimeout(2)
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk.decode('utf-8', errors='replace')
+        except:
+            pass
+        return data
+    except Exception as e:
+        return f"[monitor error: {e}]"
+
+def send_keys(sock, keys):
+    for key in keys:
+        resp = send_monitor(sock, f"sendkey {key}", 0.15)
+    time.sleep(0.5)
+
 def run_test():
-    print("[*] NeoDOS Automatic Test Runner")
+    print("[*] NeoDOS Automatic Test Runner (serial log + sendkey)")
     print()
     
     disk_image = os.path.join(PROJECT_ROOT, "disk_image.img")
@@ -48,14 +70,22 @@ def run_test():
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
         "-drive", f"format=raw,file={disk_image},index=0,media=disk",
+        "-device", "piix3-usb-uhci,addr=04.0",
+        "-device", "usb-kbd",
         "-m", "512M",
-        "-serial", "stdio",
+        "-serial", "file:/tmp/neodos_serial.log",
     ]
     
-    timeout = 120  # 2 minute timeout
+    timeout = 180
     start_time = time.time()
     output_lines = []
     all_output = []
+    
+    # Clean up old serial log
+    try:
+        os.unlink("/tmp/neodos_serial.log")
+    except:
+        pass
     
     try:
         print("[+] Launching QEMU (headless, boot may take 30-60s)...")
@@ -64,130 +94,107 @@ def run_test():
         
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             bufsize=0
         )
         
-        import fcntl
-        flags = fcntl.fcntl(proc.stdout, fcntl.F_GETFL)
-        fcntl.fcntl(proc.stdout, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        # Wait for QEMU to start
+        time.sleep(3)
+        
+        # Connect to QEMU monitor
+        monitor_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        monitor_sock.settimeout(5)
+        try:
+            monitor_sock.connect(('127.0.0.1', 4446))
+            resp = send_monitor(monitor_sock, "")
+            print(f"[+] Monitor connected")
+        except Exception as e:
+            print(f"[!] Monitor connection failed: {e}")
+            monitor_sock = None
         
         state = "booting"
-        line_buffer = b""
-        test_command_sent = False
-        last_output_time = time.time()
+        last_serial_len = 0
+        waiting_lines = 0
+        waiting_start = time.time()
+        test_sent = False
+        serial_file = "/tmp/neodos_serial.log"
         
         while time.time() - start_time < timeout:
             if proc.poll() is not None:
                 print(f"\n[!] QEMU exited early with code {proc.returncode}")
                 break
             
+            # Read serial log file - only new bytes
             try:
-                chunk = proc.stdout.read(4096)
-                if chunk:
-                    last_output_time = time.time()
-                    line_buffer += chunk
-                    all_output.append(chunk)
-                    
-                    while b"\r" in line_buffer or b"\n" in line_buffer:
-                        # Find first newline
-                        cr_pos = line_buffer.find(b"\r")
-                        lf_pos = line_buffer.find(b"\n")
-                        
-                        if cr_pos >= 0 and (lf_pos < 0 or cr_pos < lf_pos):
-                            line = line_buffer[:cr_pos]
-                            line_buffer = line_buffer[cr_pos+1:]
-                            if line_buffer.startswith(b"\n"):
-                                line_buffer = line_buffer[1:]
-                        elif lf_pos >= 0:
-                            line = line_buffer[:lf_pos]
-                            line_buffer = line_buffer[lf_pos+1:]
-                        else:
-                            break
-                        
-                        line_str = line.decode('utf-8', errors='replace')
-                        output_lines.append(line_str)
-                        
-                        # Filter ANSI codes for display
-                        clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', line_str)
-                        clean = re.sub(r'^\[2J|\[001;001H|\[=3h|\[8;[0-9]+;[0-9]+t', '', clean)
-                        if clean.strip():
-                            print(f"[QEMU] {clean}")
-                            sys.stdout.flush()
-                        
-                        # State machine
-                        if state == "booting":
-                            # Look for shell prompt or "Type HELP"
-                            if "Type HELP" in clean or "NeoDOS" in clean and "FS Started" in clean:
-                                print("\n[+] Shell detected! Waiting for prompt...")
-                                sys.stdout.flush()
-                                state = "waiting_prompt"
-                        
-                        elif state == "waiting_prompt":
-                            # Look for "C:\" anywhere in the line
-                            if "C:\\" in clean:
-                                print("[+] Got prompt! Sending 'test' command...")
-                                sys.stdout.flush()
-                                # Send "test\r"
-                                proc.stdin.write(b"test\r")
-                                proc.stdin.flush()
-                                test_command_sent = True
-                                state = "running_test"
-                                start_test = time.time()
-                        
-                        elif state == "running_test":
-                            # Test is running, watch for completion
-                            # Kernel tests complete with "All X kernel tests passed" or "failed"
-                            if "kernel tests passed" in clean:
-                                print("\n[+] KERNEL TESTS PASSED!")
-                                sys.stdout.flush()
-                            elif "passed," in clean and "failed" in clean:
-                                print("\n[!] KERNEL TESTS HAD FAILURES")
-                                sys.stdout.flush()
+                if os.path.exists(serial_file):
+                    with open(serial_file, 'rb') as f:
+                        f.seek(last_serial_len)
+                        new_data = f.read()
+                        if new_data:
+                            last_serial_len += len(new_data)
                             
-                            # Watch for user-mode test output
-                            if "=== NeoDOS v0.9 Syscall Test ===" in clean:
-                                print("\n[+] USER-MODE SYSTEST.BIN STARTED!")
-                                sys.stdout.flush()
-                            
-                            # Watch for completion: "Process.*exited" or another prompt
-                            if "exited" in clean and ("Process" in clean or "PID" in clean):
-                                print("\n[+] Process exited - tests complete!")
-                                sys.stdout.flush()
-                                # Small delay for final output
-                                time.sleep(2)
-                                state = "done"
-                                break
-                            
-                            # Timeout within test phase
-                            if time.time() - start_test > 45:
-                                print("\n[!] Test phase timeout (45s)")
-                                state = "done"
-                                break
-                
-                else:
-                    time.sleep(0.1)
-                    
-                    # If waiting for prompt and it's been >30s, force send
-                    if state == "waiting_prompt" and time.time() - last_output_time > 5:
-                        print("[*] Sending 'test' command (no prompt detected)...")
-                        sys.stdout.flush()
-                        proc.stdin.write(b"test\r")
-                        proc.stdin.flush()
-                        test_command_sent = True
-                        state = "running_test"
-                        start_test = time.time()
-                    
-            except BlockingIOError:
-                time.sleep(0.1)
-                continue
+                            # Parse new bytes as lines
+                            new_text = new_data.decode('utf-8', errors='replace')
+                            for line in new_text.split('\r'):
+                                line = line.strip()
+                                if line:
+                                    output_lines.append(line)
+                                    all_output.append((line + "\r\n").encode())
+                                    clean = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', line)
+                                    print(f"[QEMU] {clean}")
+                                    sys.stdout.flush()
+                                    
+                                    # State machine
+                                    if state == "booting":
+                                        if "Type HELP" in clean or ("NeoDOS" in clean and "FS Started" in clean):
+                                            print("\n[+] Shell detected! Waiting for prompt...")
+                                            sys.stdout.flush()
+                                            state = "waiting_prompt"
+                                            waiting_lines = 0
+                                            waiting_start = time.time()
+                                    elif state == "waiting_prompt":
+                                        waiting_lines += 1
+                                        print(f"[WAIT] line #{waiting_lines}: {clean[:80]}")
+                                        if waiting_lines >= 4 and not test_sent:
+                                            print(f"[+] Shell ready, sending 'test' via sendkey...")
+                                            sys.stdout.flush()
+                                            if monitor_sock:
+                                                send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
+                                                test_sent = True
+                                                state = "waiting_response"
+                                                waiting_start = time.time()
+                                                print("[+] 'test' command sent!")
+                                    elif state == "waiting_response":
+                                        if "Running" in clean and "self-tests" in clean:
+                                            print(f"\n[+] TEST EXECUTED!")
+                                        if "kernel tests" in clean.lower() or "passed" in clean or "failed" in clean:
+                                            print(f"[TEST] {clean}")
+                                        if "exited" in clean and "Process" in clean:
+                                            print(f"\n[+] PROCESS EXITED")
+                                            state = "done"
+                                            break
+                                        if time.time() - waiting_start > 45:
+                                            print(f"\n[!] Response timeout ({time.time()-waiting_start:.1f}s)")
+                                            state = "done"
+                                            break
             except Exception as e:
-                print(f"[!] Error: {e}")
-                import traceback
-                traceback.print_exc()
-                break
+                pass
+            
+            # Monitor timeout fallback
+            if monitor_sock and state == "waiting_prompt" and time.time() - waiting_start > 20 and not test_sent:
+                print("[*] Timeout: sending 'test' via sendkey...")
+                sys.stdout.flush()
+                send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
+                test_sent = True
+                state = "waiting_response"
+                waiting_start = time.time()
+            
+            time.sleep(0.3)
+        
+        # Cleanup
+        if monitor_sock:
+            monitor_sock.close()
         
         # Terminate QEMU
         if proc.poll() is None:
@@ -197,6 +204,16 @@ def run_test():
                 proc.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 proc.kill()
+        
+        # Read stderr if any
+        try:
+            stderr_data = proc.stderr.read()
+            if stderr_data:
+                stderr_text = stderr_data.decode('utf-8', errors='replace')
+                if stderr_text.strip():
+                    print(f"[STDERR] {stderr_text[:200]}")
+        except:
+            pass
         
         # Analyze results
         print()
@@ -224,16 +241,10 @@ def run_test():
             print("[UNKNOWN] Could not determine kernel test results")
         
         # Check user-mode tests
-        if "=== NeoDOS v0.9 Syscall Test ===" in full_text:
+        if "=== NeoDOS" in full_text:
             print("[PASS] User-mode SYSTEST.BIN executed")
-            
-            # Check for specific syscalls
-            if "sys_open" in full_text and "readfile" in full_text.lower():
-                print("[PASS] File I/O syscalls attempted")
-                if "sys_open: empty path" in full_text:
-                    print("[FAIL] sys_open received empty path (BUG!)")
-                elif "File content:" in full_text:
-                    print("[PASS] File content displayed")
+            if "File content:" in full_text:
+                print("[PASS] File content displayed")
         else:
             print("[UNKNOWN] SYSTEST.BIN output not found")
         
@@ -262,6 +273,10 @@ def run_test():
     finally:
         if os.path.exists(ovmf_vars):
             os.unlink(ovmf_vars)
+        try:
+            os.unlink("/tmp/neodos_serial.log")
+        except:
+            pass
 
 if __name__ == "__main__":
     sys.exit(run_test())

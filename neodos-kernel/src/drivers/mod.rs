@@ -5,11 +5,13 @@ pub mod gpt;
 pub mod keyboard;
 pub mod pci;
 pub mod rtc;
+pub mod usb_hid;
 
 use core::sync::atomic::AtomicBool;
 
 pub struct DeviceEvent {
     pub pending: AtomicBool,
+    #[allow(dead_code)]
     pub cmd: AtomicBool,
 }
 
