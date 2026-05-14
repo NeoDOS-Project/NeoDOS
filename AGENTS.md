@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.3
+v0.10.4
 
 ## Build & Run
 
@@ -15,12 +15,23 @@ gdb -x .gdbinit                         # from neodos/, connects to QEMU
 python3 scripts/auto_test.py            # Automated headless test runner
 ```
 
-El acelerador de QEMU se configura con la variable `QEMU_ACCEL`. Por defecto usa **TCG** (software). Si el host soporta KVM, se puede habilitar con:
-
+QEMU accelerator via `QEMU_ACCEL` env var (default: TCG):
 ```bash
 QEMU_ACCEL=kvm bash scripts/qemu-debug.sh
 QEMU_ACCEL=kvm python3 scripts/auto_test.py
 ```
+
+## Git workflow (testing primero)
+
+**IMPORTANTE: nunca subir código sin testear antes.**
+
+1. `cargo build` en `neodos-kernel/` — comprueba que compila
+2. `python3 scripts/auto_test.py` — 52 kernel tests + SYSTEST.BIN user-mode
+3. Verificar test Q35 con AHCI: `QEMU_ACCEL=tcg timeout 120 python3 -c "
+import subprocess, time, os, socket, re
+...
+"`
+4. Solo si todo pasa: `git commit && git push`
 
 ## Two packages, no workspace
 
@@ -48,13 +59,7 @@ Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map lea
 
 ## Input system
 
-Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, productor = IRQ1, consumidor = shell loop.
-
-Hay un driver UHCI para teclado USB (`drivers/usb_hid/`) pero **no funcional en PIIX3**:
-el registro FLBASEADD no acepta escrituras (se queda en `0xFF7F:FF7F`), por lo que el
-controlador nunca inicia. Pendiente de debug (posiblemente requiere MMIO en vez de I/O).
-
-No se añaden dispositivos USB a QEMU (`piix3-usb-uhci`, `usb-kbd`) — solo PS/2.
+Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, productor = IRQ1, consumidor = shell loop. Driver UHCI para USB no funcional en PIIX3.
 
 ## Adding a shell command
 
@@ -62,7 +67,17 @@ No se añaden dispositivos USB a QEMU (`piix3-usb-uhci`, `usb-kbd`) — solo PS/
 2. Add `mod <name>;` to `src/shell/commands/mod.rs`.
 3. Add a `CommandEntry` to `handler::COMMANDS` in `handler.rs`. Help text is automatic.
 
-## Disco unificado GPT
+## AHCI Driver
+
+- **DMA polling** por puerto, buffers estáticos separados por puerto lógico
+- **ATA**: READ/WRITE DMA EXT (0x25/0x35), multi-sector hasta 8 sectores (4KB)
+- **ATAPI**: PACKET command (0xA0) con DMA, READ_10 CDB, sectores de 2048 bytes
+- **Por puerto**: DeviceType::Ata / DeviceType::Atapi
+- **Port reset**: ciclo DET vía SCTL para recuperación de errores
+- **PRDT**: hasta 8 entradas scatter-gather
+- Per-port buffers: `PORT_CMD_LIST[]`, `PORT_RECV_FIS[]`, `PORT_CMD_TABLE[]`, `PORT_DMA_BUF[]`
+
+## Un disco GPT unificado
 
 El sistema usa una **sola imagen de disco con tabla GPT** que contiene dos particiones:
 
@@ -119,7 +134,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `hello.bin` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
-| `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.3 |
+| `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.4 |
 
 User window: `0x400000` .. `0x800000`. Binarios flat cargados en `0x400000`.
 
@@ -150,8 +165,8 @@ Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por priori
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.3 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.3 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.4 |
+| Kernel ELF | `neodos/kernel.elf` | v0.10.4 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
