@@ -338,42 +338,19 @@ No hay verificación de que las versiones del bootloader y kernel sean compatibl
 
 ### 48. AHCI `read_sectors` returns only 1 sector
 
-**Archivo:** `drivers/ahci.rs:194-203`
-
-```rust
-fn ata_dma(&mut self, port: u8, lba: u64, count: u8) -> Result<[u8; 512], ()> {
-    // ... sends count sectors via DMA into DMA_BUF (4096 bytes) ...
-    let mut buf = [0u8; 512];
-    buf.copy_from_slice(&DMA_BUF[..512]);  // <-- always copies 512 bytes!
-    Ok(buf)
-}
-```
-
-`read_sectors()` calls `ata_dma(count)` but only gets 512 bytes back, then tries to copy `count*512` bytes into the output buffer — panics if count > 1.
-
-**Propuesta:** Have `ata_dma` return `Result<(), ()>` and let `read_sectors` directly consume from `DMA_BUF`.
+> **IMPLEMENTADO (v0.10.4):** Refactor completa del driver AHCI. `ata_dma` reemplazada por `dma_xfer()` que retorna `Result<(), ()>`. Los callers leen directamente de `PORT_DMA_BUF[port]`, soportando hasta 8 sectores por llamada.
 
 ---
 
 ### 49. AHCI multi-port uses shared static buffers
 
-**Archivo:** `drivers/ahci.rs:97-117`
-
-`CMD_LIST`, `RECV_FIS`, `CMD_TABLE`, `DMA_BUF` are single static instances shared by all AHCI ports. Only one port can be active at a time (fine for single-core polling), but if IRQ-driven DMA is added later, buffers would collide.
-
-**Propuesta:** Allocate per-port buffers or use a pool.
+> **IMPLEMENTADO (v0.10.4):** Cada puerto tiene su propio juego de buffers (`PORT_CMD_LIST`, `PORT_RECV_FIS`, `PORT_CMD_TABLE`, `PORT_DMA_BUF`) como arrays estáticos indexados por puerto lógico.
 
 ---
 
 ### 50. Q35: ATA driver ports don't exist
 
-On Q35 (`-machine q35`), legacy PIO ports 0x1F0/0x170 are not present. The `AtaDriver` for both channels still initialises and attempts PIO. The `ahci_fallback` flag transparently delegates to AHCI, but:
-
-- `write_sector()`/`write_sectors()`: AHCI write is stubbed to `Err(())` — writes to Q35 disks fail silently.
-- DMA (BMBA) is disabled (`No IDE bus-master controller found`).
-- The secondary ATA channel driver (`is_secondary=true`) routes to AHCI port 1 (second disk).
-
-**Propuesta:** Implement AHCI write path, or detect at init time that PIO ports are missing and skip initialisation.
+> **IMPLEMENTADO (v0.10.4):** Implementados `write_sector()` y `write_sectors()` vía DMA con comando `WRITE_DMA_EXT`. Los datos se copian al `PORT_DMA_BUF` del puerto correspondiente antes de iniciar la transferencia.
 
 ---
 
@@ -389,6 +366,6 @@ Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
 
 | Prioridad | Items |
 |-----------|-------|
-| Alta | #6 (clear píxel a píxel), #7 (allocate block), #9 (static mut), #28 (cache size), #35 (max processes), #41 (PATH resolution), **#50 (Q35 AHCI write stub)** |
-| Media | #10 (unwrap), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes), **#48 (AHCI read_sectors bug)**, **#49 (shared AHCI buffers)** |
+| Alta | #6 (clear píxel a píxel), #7 (allocate block), #9 (static mut), #28 (cache size), #35 (max processes), #41 (PATH resolution) |
+| Media | #10 (unwrap), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
 | Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #45 (double buffer), #47 (version check), #51 (deps) |
