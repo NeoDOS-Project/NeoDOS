@@ -1,19 +1,35 @@
 use crate::buffer::block_cache::BlockCache;
+use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
 use crate::drivers::fat32::Fat32Driver;
 use crate::fs::neodos_fs::NeoDosFs;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 pub static mut ATA_DRIVER: Option<AtaDriver> = None;
+pub static mut ATA_DRIVER_SECONDARY: Option<AtaDriver> = None;
+pub static mut AHCI_DRIVER: Option<AhciDriver> = None;
 pub static mut BLOCK_CACHE: Option<BlockCache> = None;
 pub static mut NEODOS_FS: Option<NeoDosFs> = None;
 pub static mut FAT32_DRIVER: Option<Fat32Driver> = None;
+pub static mut RAM_DISK_BASE: u64 = 0;
+pub static mut RAM_DISK_SIZE: u64 = 0;
+
+pub fn ram_disk_buf() -> Option<&'static [u8]> {
+    unsafe {
+        let base = RAM_DISK_BASE;
+        let size = RAM_DISK_SIZE as usize;
+        if base != 0 && size >= 512 {
+            Some(core::slice::from_raw_parts(base as *const u8, size))
+        } else {
+            None
+        }
+    }
+}
 
 pub static NEED_CACHE_FLUSH: AtomicBool = AtomicBool::new(false);
 pub static LAST_FLUSH_TICK: AtomicU64 = AtomicU64::new(0);
 pub const FLUSH_INTERVAL_TICKS: u64 = 180;
 
-#[allow(dead_code)]
 pub fn with_ata<F, R>(f: F) -> R 
 where
     F: FnOnce(&mut AtaDriver) -> R
@@ -24,7 +40,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn with_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut BlockCache) -> R
@@ -35,7 +50,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn with_fs<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs) -> R
@@ -46,7 +60,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn with_fs_and_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs, &mut BlockCache) -> R
@@ -58,7 +71,6 @@ where
     }
 }
 
-#[allow(dead_code)]
 pub fn with_all<F, R>(f: F) -> R
 where
     F: FnOnce(&mut NeoDosFs, &mut BlockCache, &mut AtaDriver) -> R

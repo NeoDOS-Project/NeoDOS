@@ -1,7 +1,8 @@
+use crate::fs::drive_manager::FsInstanceId;
+use crate::fs::neodos_fs::ROOT_INODE;
 use crate::print;
 use crate::println;
 use crate::shell::shell::{vfs_path_from_drive_manager, DosShell};
-use crate::fs::drive_manager::FsInstanceId;
 
 impl<'a> DosShell<'a> {
     pub fn cmd_type(&mut self, args: &[&str]) {
@@ -37,6 +38,22 @@ impl<'a> DosShell<'a> {
                     }
                     None => println!("Drive A: not available"),
                 }
+                return;
+            }
+
+            if fs_id.0 >= 1 && fs_id.0 <= 3 {
+                let path_str = match vfs.as_str() {
+                    Ok(s) => s,
+                    Err(_) => {
+                        println!("File not found");
+                        return;
+                    }
+                };
+                let _ = self.with_volume(fs_id, |fs, cache, ata| {
+                    let inode = fs.find_file_in_directory(ROOT_INODE, path_str, cache, ata)?;
+                    fs.read_file(inode, cache, ata)
+                });
+                println!();
                 return;
             }
         }

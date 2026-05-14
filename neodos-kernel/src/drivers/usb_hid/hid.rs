@@ -67,17 +67,36 @@ pub fn hid_key_to_ascii(hid_code: u8) -> Option<u8> {
     }
 }
 
+static mut PREV_REPORT: [u8; 8] = [0; 8];
+
 /// Parse a USB HID keyboard report (8 bytes) and push keystrokes
 pub fn parse_hid_report(report: &[u8; 8]) {
-    if report[0] == 0 && report[1] == 0 && report[2] == 0 {
-        return; // Empty report
-    }
+    // Basic debounce/repeat check: only process if different from last report
+    unsafe {
+        if report == &PREV_REPORT {
+            return;
+        }
 
-    for i in 2..8 {
-        if report[i] != 0 {
-            if let Some(ascii) = hid_key_to_ascii(report[i]) {
-                super::usb_push_byte(ascii);
+        // Check for new keys in the current report that weren't in the previous one
+        for i in 2..8 {
+            let key = report[i];
+            if key == 0 || key == 0x01 || key == 0x02 || key == 0x03 { continue; } // Skip empty/reserved
+            
+            let mut already_pressed = false;
+            for j in 2..8 {
+                if PREV_REPORT[j] == key {
+                    already_pressed = true;
+                    break;
+                }
+            }
+
+            if !already_pressed {
+                if let Some(ascii) = hid_key_to_ascii(key) {
+                    super::usb_push_byte(ascii);
+                }
             }
         }
+        
+        PREV_REPORT.copy_from_slice(report);
     }
 }

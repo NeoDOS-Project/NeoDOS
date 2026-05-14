@@ -71,30 +71,44 @@ pub fn init_ps2() {
     let mut data = Port::new(0x60u16);
 
     unsafe {
-        // 1. Disable keyboard port
+        // 1. Disable both keyboard and mouse ports
         if !ps2_wait_input() { return; }
-        cmd.write(0xADu8);
+        cmd.write(0xADu8); // Disable keyboard (channel 1)
+        if !ps2_wait_input() { return; }
+        cmd.write(0xA7u8); // Disable mouse/aux (channel 2)
 
         // 2. Flush any stale data
         ps2_flush_output();
 
-        // 3. Read configuration byte
+        // 3. Mask IRQ12 (mouse) in slave PIC as extra safety
+        let slave_mask: u8;
+        core::arch::asm!("in al, dx", out("al") slave_mask, in("dx") 0xA1u16, options(nomem, nostack, preserves_flags));
+        let slave_mask = slave_mask | 0x10; // set bit 4 (IRQ12)
+        core::arch::asm!("out dx, al", in("dx") 0xA1u16, in("al") slave_mask, options(nomem, nostack, preserves_flags));
+
+        // 4. Read PS/2 configuration byte
         if !ps2_wait_input() { return; }
         cmd.write(0x20u8);
         if !ps2_wait_output() { return; }
         let config: u8 = data.read();
 
-        // 4. Set bit 0  = enable keyboard interrupt
-        //    Clear bit 4 = enable keyboard clock (don't inhibit)
-        let new_config = (config | 0x01) & !0x10;
+        // 5. Keep only keyboard interrupt + clock enabled.
+        //    Bit 0 = enable keyboard interrupt
+        //    Bit 4 = keyboard clock (0 = enabled, 1 = inhibited)
+        //    Clear bit 1 = disable mouse interrupt
+        //    Set   bit 5 = inhibit mouse clock
+        let new_config = config | 0x01;      // enable keyboard interrupt
+        let new_config = new_config & !0x10; // enable keyboard clock
+        let new_config = new_config & !0x02; // disable mouse interrupt
+        let new_config = new_config | 0x20;  // inhibit mouse clock
 
-        // 5. Write configuration byte
+        // 6. Write configuration byte
         if !ps2_wait_input() { return; }
         cmd.write(0x60u8);
         if !ps2_wait_input() { return; }
         data.write(new_config);
 
-        // 6. Enable keyboard port
+        // 7. Enable keyboard port only (mouse stays disabled)
         if !ps2_wait_input() { return; }
         cmd.write(0xAEu8);
 
@@ -368,4 +382,36 @@ impl KeyboardDriver {
             }
         }
     }
+
+    /// Check if the given scancode is Del (0x53) with both Ctrl+Alt held.
+    /// Must be called AFTER `scancode_to_ascii` has processed this scancode
+    /// (so that modifiers and the extended flag are already updated).
+    pub fn ctrl_alt_del_pressed(scancode: u8) -> bool {
+        let released = (scancode & 0x80) != 0;
+        if released {
+            return false;
+        }
+        let code = scancode & 0x7F;
+        if code != 0x53 {
+            return false;
+        }
+        let mods = MODS.load(Ordering::Relaxed);
+        (mods & (Self::MOD_CTRL | Self::MOD_ALT)) == (Self::MOD_CTRL | Self::MOD_ALT)
+    }
+}
+
+/// Set keyboard LEDs (Scroll Lock, Num Lock, Caps Lock).
+///
+/// `leds` bits: bit 0 = Scroll Lock, bit 1 = Num Lock, bit 2 = Caps Lock.
+/// Uses PS/2 port I/O. Returns `true` on success.
+pub fn set_leds(leds: u8) -> bool {
+    use x86_64::instructions::port::PortGeneric;
+    unsafe {
+        if !ps2_wait_input() { return false; }
+        let mut data: PortGeneric<u8, _> = Port::new(0x60u16);
+        data.write(0xEDu8);
+        if !ps2_wait_input() { return false; }
+        data.write(leds & 0x07);
+    }
+    true
 }

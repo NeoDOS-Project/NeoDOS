@@ -1,11 +1,12 @@
 // src/shell/shell.rs
 
 use crate::buffer::block_cache::BlockCache;
-use crate::drivers::ata::AtaDriver;
+use crate::drivers::ata::{AtaChannel, AtaDriver};
 use crate::drivers::fat32::Fat32Driver;
 use crate::drivers::usb_hid;
 use crate::fs::drive_manager::{DriveManager, DriveManagerError, FsInstanceId, InternalPath};
 use crate::fs::neodos_fs::{FsError, NeoDosFs, ROOT_INODE};
+use crate::fs::volume::Volume;
 use crate::input;
 use crate::print;
 use crate::println;
@@ -58,7 +59,9 @@ pub struct DosShell<'a> {
     pub fs: &'a mut NeoDosFs,
     pub cache: &'a mut BlockCache,
     pub ata: &'a mut AtaDriver,
+    pub ata_secondary: &'a mut AtaDriver,
     pub fat32: Option<Fat32Driver>,
+    pub extra_volumes: [Option<Volume>; 3],
     pub running: bool,
 }
 
@@ -67,7 +70,9 @@ impl<'a> DosShell<'a> {
         fs: &'a mut NeoDosFs,
         cache: &'a mut BlockCache,
         ata: &'a mut AtaDriver,
+        ata_secondary: &'a mut AtaDriver,
         fat32: Option<Fat32Driver>,
+        extra_volumes: [Option<Volume>; 3],
     ) -> Self {
         let mut drive_manager = DriveManager::new();
 
@@ -87,6 +92,15 @@ impl<'a> DosShell<'a> {
             let _ = drive_manager.mount('A', FsInstanceId::FAT32_ESP);
         }
 
+        // Mount extra volumes as D:, E:, F:
+        let extra_ids = [FsInstanceId::VOLUME_1, FsInstanceId::VOLUME_2, FsInstanceId::VOLUME_3];
+        for (i, vol) in extra_volumes.iter().enumerate() {
+            if vol.is_some() {
+                let letter = (b'D' + i as u8) as char;
+                let _ = drive_manager.mount(letter, extra_ids[i]);
+            }
+        }
+
         let mut shell = DosShell {
             current_dir: [0; 128],
             current_dir_len: 1,
@@ -97,7 +111,9 @@ impl<'a> DosShell<'a> {
             fs,
             cache,
             ata,
+            ata_secondary,
             fat32,
+            extra_volumes,
             running: true,
         };
         shell.current_dir[0] = b'\\';
@@ -438,6 +454,38 @@ impl<'a> DosShell<'a> {
         self.fs
             .resolve_directory_path(base_inode, base_path, base_len, s, self.cache, self.ata)
             .map(|(inode, _, _)| inode)
+    }
+
+    /// Execute a closure on the filesystem identified by `fs_id`.
+    /// Temporarily sets ATA base_lba to the volume's partition and restores it after.
+    /// Selects the correct ATA driver based on the volume's physical channel.
+    pub(crate) fn with_volume<R>(
+        &mut self,
+        fs_id: FsInstanceId,
+        f: impl FnOnce(&mut NeoDosFs, &mut BlockCache, &mut AtaDriver) -> R,
+    ) -> Result<R, FsError> {
+        match fs_id {
+            FsInstanceId::PRIMARY => Ok(f(self.fs, self.cache, self.ata)),
+            FsInstanceId::VOLUME_1 | FsInstanceId::VOLUME_2 | FsInstanceId::VOLUME_3 => {
+                let idx = match fs_id {
+                    FsInstanceId::VOLUME_1 => 0,
+                    FsInstanceId::VOLUME_2 => 1,
+                    FsInstanceId::VOLUME_3 => 2,
+                    _ => unreachable!(),
+                };
+                let vol = self.extra_volumes[idx].as_mut().ok_or(FsError::FileNotFound)?;
+                let ata = match vol.channel {
+                    AtaChannel::Primary => &mut *self.ata,
+                    AtaChannel::Secondary => &mut *self.ata_secondary,
+                };
+                let saved_base = ata.base_lba();
+                ata.set_base_lba(vol.base_lba);
+                let result = f(&mut vol.fs, &mut vol.cache, ata);
+                ata.set_base_lba(saved_base);
+                Ok(result)
+            }
+            _ => Err(FsError::FileNotFound),
+        }
     }
 
     fn init_boot_drive_from_config(&mut self) {

@@ -17,7 +17,10 @@ pub struct FsInstanceId(pub u8);
 
 impl FsInstanceId {
     pub const PRIMARY: FsInstanceId = FsInstanceId(0);
-    pub const FAT32_ESP: FsInstanceId = FsInstanceId(1);
+    pub const VOLUME_1: FsInstanceId = FsInstanceId(1);
+    pub const VOLUME_2: FsInstanceId = FsInstanceId(2);
+    pub const VOLUME_3: FsInstanceId = FsInstanceId(3);
+    pub const FAT32_ESP: FsInstanceId = FsInstanceId(10);
 }
 
 /// One drive letter assignment to a filesystem instance.

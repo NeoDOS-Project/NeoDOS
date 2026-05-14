@@ -99,7 +99,7 @@ pub fn find_acpi_pm1_cnt_port() -> Option<u16> {
     None
 }
 
-fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+pub fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let addr = 0x8000_0000u32
         | ((bus as u32) << 16)
         | ((dev as u32) << 11)
@@ -114,13 +114,13 @@ fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
-fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
+pub fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
     let aligned = offset & 0xFC;
     let dword = pci_config_read_dword(bus, dev, func, aligned);
     ((dword >> ((offset & 3) * 8)) & 0xFFFF) as u16
 }
 
-fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+pub fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     let addr = 0x8000_0000u32
         | ((bus as u32) << 16)
         | ((dev as u32) << 11)
@@ -135,7 +135,7 @@ fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     }
 }
 
-fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
+pub fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
     let aligned = offset & 0xFC;
     let dword = pci_config_read_dword(bus, dev, func, aligned);
     let shift = (offset & 3) * 8;

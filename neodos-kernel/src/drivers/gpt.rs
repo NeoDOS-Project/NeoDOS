@@ -5,53 +5,94 @@ const PART_TYPE_NEODOS: [u8; 16] = [
     0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
     0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
 ];
+pub const MAX_NEODOS_PARTITIONS: usize = 4;
 
+#[derive(Clone, Copy)]
 pub struct GptPartition {
     pub start_lba: u64,
     pub end_lba: u64,
 }
 
+fn read_u64_le(buf: &[u8], offset: usize) -> Option<u64> {
+    let arr: [u8; 8] = buf[offset..offset + 8].try_into().ok()?;
+    Some(u64::from_le_bytes(arr))
+}
+
+fn read_u32_le(buf: &[u8], offset: usize) -> Option<u32> {
+    let arr: [u8; 4] = buf[offset..offset + 4].try_into().ok()?;
+    Some(u32::from_le_bytes(arr))
+}
+
 pub fn find_neodos_partition(ata: &mut AtaDriver) -> Option<GptPartition> {
-    let gpt_header = ata.read_sector_master(1).ok()?;
+    let mut partitions = find_all_neodos_partitions(ata);
+    partitions[0].take()
+}
+
+fn read_sector_from_ata(ata: &mut AtaDriver, lba: u32) -> Result<[u8; 512], ()> {
+    ata.read_sector_master(lba).map_err(|_| ())
+}
+
+fn parse_gpt<F>(mut read_sector: F) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS]
+where
+    F: FnMut(u32) -> Result<[u8; 512], ()>,
+{
+    let mut result = [None; MAX_NEODOS_PARTITIONS];
+
+    let gpt_header = match read_sector(1) {
+        Ok(h) => h,
+        Err(_) => return result,
+    };
     if &gpt_header[0..8] != GPT_SIGNATURE {
-        return None;
+        return result;
     }
 
-    let part_entry_lba = u64::from_le_bytes(
-        gpt_header[72..80].try_into().ok()?,
-    );
-    let num_entries = u32::from_le_bytes(
-        gpt_header[80..84].try_into().ok()?,
-    );
-    let entry_size = u32::from_le_bytes(
-        gpt_header[84..88].try_into().ok()?,
-    );
-
-    let num_entries = num_entries.min(128);
-    let entry_size = entry_size.max(128) as u64;
+    let part_entry_lba = match read_u64_le(&gpt_header, 72) {
+        Some(lba) => lba,
+        None => return result,
+    };
+    let num_entries = match read_u32_le(&gpt_header, 80) {
+        Some(n) => n.min(128),
+        None => return result,
+    };
+    let entry_size = match read_u32_le(&gpt_header, 84) {
+        Some(s) => s.max(128) as u64,
+        None => return result,
+    };
 
     let entries_per_sector = 512 / entry_size;
-    let _num_sectors = (num_entries as u64 + entries_per_sector - 1) / entries_per_sector;
+    let mut found = 0usize;
 
     for i in 0..num_entries {
+        if found >= MAX_NEODOS_PARTITIONS {
+            break;
+        }
         let sector_idx = i as u64 / entries_per_sector;
         let offset_in_sector = (i as u64 % entries_per_sector) * entry_size;
         let lba = part_entry_lba + sector_idx;
 
-        let sector = ata.read_sector_master(lba as u32).ok()?;
+        let sector = match read_sector(lba as u32) {
+            Ok(s) => s,
+            Err(_) => return result,
+        };
         let entry_offset = offset_in_sector as usize;
 
-        let type_guid = &sector[entry_offset..entry_offset + 16];
-        if type_guid == PART_TYPE_NEODOS {
-            let start_lba = u64::from_le_bytes(
-                sector[entry_offset + 32..entry_offset + 40].try_into().ok()?,
-            );
-            let end_lba = u64::from_le_bytes(
-                sector[entry_offset + 40..entry_offset + 48].try_into().ok()?,
-            );
-            return Some(GptPartition { start_lba, end_lba });
+        if &sector[entry_offset..entry_offset + 16] == PART_TYPE_NEODOS {
+            let start_lba = match read_u64_le(&sector, entry_offset + 32) {
+                Some(v) => v,
+                None => return result,
+            };
+            let end_lba = match read_u64_le(&sector, entry_offset + 40) {
+                Some(v) => v,
+                None => return result,
+            };
+            result[found] = Some(GptPartition { start_lba, end_lba });
+            found += 1;
         }
     }
 
-    None
+    result
+}
+
+pub fn find_all_neodos_partitions(ata: &mut AtaDriver) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS] {
+    parse_gpt(|lba| read_sector_from_ata(ata, lba))
 }

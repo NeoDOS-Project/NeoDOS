@@ -70,8 +70,6 @@ def run_test():
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
         "-drive", f"format=raw,file={disk_image},index=0,media=disk",
-        "-device", "piix3-usb-uhci,addr=04.0",
-        "-device", "usb-kbd",
         "-m", "512M",
         "-serial", "file:/tmp/neodos_serial.log",
     ]

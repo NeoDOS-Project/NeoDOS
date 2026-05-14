@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.2
+v0.10.3
 
 ## Build & Run
 
@@ -45,6 +45,16 @@ Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map lea
 ## Code generation
 
 `neodos-kernel/build.rs` parses `KBDUS.klc`/`KBDSP.klc` (UTF-16LE keyboard layouts) at build time into `$OUT_DIR/kbd_layout.rs` with scan code → ASCII tables. `src/drivers/keyboard.rs` includes it via `include!`. Two layouts: US (index 0), SP (index 1, default).
+
+## Input system
+
+Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, productor = IRQ1, consumidor = shell loop.
+
+Hay un driver UHCI para teclado USB (`drivers/usb_hid/`) pero **no funcional en PIIX3**:
+el registro FLBASEADD no acepta escrituras (se queda en `0xFF7F:FF7F`), por lo que el
+controlador nunca inicia. Pendiente de debug (posiblemente requiere MMIO en vez de I/O).
+
+No se añaden dispositivos USB a QEMU (`piix3-usb-uhci`, `usb-kbd`) — solo PS/2.
 
 ## Adding a shell command
 
@@ -109,7 +119,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `hello.bin` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
-| `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.9 |
+| `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.3 |
 
 User window: `0x400000` .. `0x800000`. Binarios flat cargados en `0x400000`.
 
@@ -140,9 +150,8 @@ Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por priori
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.2 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.2 |
-| Kernel bin | `neodos/kernel.bin` | ELF → bin |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.3 |
+| Kernel ELF | `neodos/kernel.elf` | v0.10.3 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |

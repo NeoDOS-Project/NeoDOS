@@ -7,6 +7,9 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_NEODOS_IMAGE=false
 BUILD_USERBIN=false
 
+NEODOS_IMAGE="$SCRIPT_DIR/neodos_image.img"
+NEODOS_IMAGE2="$SCRIPT_DIR/neodos_image2.img"
+
 for arg in "$@"; do
     case "$arg" in
         --neodos-image|-n) BUILD_NEODOS_IMAGE=true; BUILD_USERBIN=true ;;
@@ -72,7 +75,33 @@ echo "[✓] Kernel ELF: $PROJECT_ROOT/kernel.elf"
 echo ""
 
 # ============================================
-# 3. Create ESP partition image (FAT32)
+# 3. Generate NeoDOS FS image (optional, before ESP)
+# ============================================
+if [ "$BUILD_NEODOS_IMAGE" = true ]; then
+    echo "[+] Generating NeoDOS FS images..."
+    if command -v python3 >/dev/null 2>&1; then
+        cd "$SCRIPT_DIR"
+        python3 create_neodos_image.py \
+            --label "NEODOS" \
+            --output "neodos_image.img" \
+            --readme "Welcome to NeoDOS!
+This is the PRIMARY disk (C:).
+Built with NeoDOS FS v1.0.
+"
+        python3 create_neodos_image.py \
+            --label "NEODOS2" \
+            --output "neodos_image2.img" \
+            --minimal
+        cd "$PROJECT_ROOT"
+        echo "[✓] NeoDOS FS images: $NEODOS_IMAGE, $NEODOS_IMAGE2"
+    else
+        echo "[!] python3 not found; skipping NeoDOS FS image"
+    fi
+fi
+echo ""
+
+# ============================================
+# 4. Create ESP partition image (FAT32)
 # ============================================
 echo "[+] Creating ESP partition image..."
 
@@ -93,6 +122,10 @@ if command -v mkfs.fat >/dev/null 2>&1; then
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/BOOT/BOOTX64.EFI
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/NeoDOS/bootloader.efi
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/kernel.elf" ::/EFI/NeoDOS/kernel.elf
+        if [ -f "$NEODOS_IMAGE" ]; then
+            mcopy -i "$ESP_IMAGE" "$NEODOS_IMAGE" ::/EFI/NeoDOS/neodos.fs
+            echo "[✓] Copied NeoDOS FS to ESP"
+        fi
         echo "[✓] Copied files to ESP"
     else
         echo "[!] mtools not found; files not copied to image"
@@ -104,7 +137,7 @@ else
 fi
 
 # ============================================
-# 3b. Compile user-mode binaries
+# 5. Compile user-mode binaries
 # ============================================
 if [ "$BUILD_USERBIN" = true ]; then
     echo ""
@@ -129,24 +162,7 @@ if [ "$BUILD_USERBIN" = true ]; then
 fi
 
 # ============================================
-# 4. Generate NeoDOS FS image (optional)
-# ============================================
-NEODOS_IMAGE="$SCRIPT_DIR/neodos_image.img"
-if [ "$BUILD_NEODOS_IMAGE" = true ]; then
-    echo ""
-    echo "[+] Generating NeoDOS FS image..."
-    if command -v python3 >/dev/null 2>&1; then
-        cd "$SCRIPT_DIR"
-        python3 create_neodos_image.py
-        cd "$PROJECT_ROOT"
-        echo "[✓] NeoDOS FS image: $NEODOS_IMAGE"
-    else
-        echo "[!] python3 not found; skipping NeoDOS FS image"
-    fi
-fi
-
-# ============================================
-# 5. Create unified GPT disk image
+# 6. Create unified GPT disk image
 # ============================================
 echo ""
 echo "[+] Creating unified GPT disk image..."

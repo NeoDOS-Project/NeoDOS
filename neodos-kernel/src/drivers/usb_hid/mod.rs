@@ -1,6 +1,9 @@
 // src/drivers/usb_hid/mod.rs
 //
 // USB HID driver for keyboard support (polling mode).
+// NOT CURRENTLY FUNCTIONAL — PIIX3 doesn't accept FLBASEADD writes.
+
+#![allow(dead_code)]
 
 pub mod uhci;
 pub mod hid;
@@ -62,7 +65,14 @@ pub fn usb_push_byte(byte: u8) {
     USB_INPUT_BUFFER.lock().push(byte);
 }
 
+fn delay_ms(ms: u32) {
+    for _ in 0..(ms * 1000 * 1000) {
+        unsafe { core::arch::asm!("nop"); }
+    }
+}
+
 pub fn has_usb_keyboard() -> bool {
+
     uhci::has_keyboard()
 }
 
@@ -181,11 +191,22 @@ fn scan_pci_for_usb() -> Option<UsbController> {
                             }
                             crate::serial_println!("[USB]   {:04X}:{:04X} BAR{} -> I/O 0x{:04X} (intr={}, prog_if=0x{:02X})",
                                 vendor, device, bar_offset >> 2, io_base, intr_line, prog_if);
+                            
+                            // Disable Legacy Support (USBLEGSUP at 0xC0)
+                            // Bit 15 is A20/BIOS ownership. MUST BE CLEARED.
+                            // Bit 13 is HC OS Owned. SET IT.
+                            pci_write_word(config_addr, config_data, bus, dev, func, 0xC0, 0x2000);
+                            delay_ms(10);
+                            let legsup = pci_read_word(config_addr, config_data, bus, dev, func, 0xC0);
+                            crate::serial_println!("[USB]   Legacy Support (0xC0) = 0x{:04X}", legsup);
+
+
                             return Some(UsbController {
                                 io_base: Some(io_base),
                                 mmio_base: None,
                                 prog_if,
                             });
+
                         }
                         if !is_io && mmio_base != 0 && mmio_base < 0xFFFF_FFFF {
                             crate::serial_println!("[USB]   {:04X}:{:04X} BAR{} -> MMIO 0x{:08X} (intr={}, prog_if=0x{:02X})",

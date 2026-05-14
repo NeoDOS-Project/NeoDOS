@@ -9,6 +9,15 @@ pub struct AlignedPageTable(PageTable);
 static mut PML4: AlignedPageTable = AlignedPageTable(PageTable::new());
 static mut PDPT: AlignedPageTable = AlignedPageTable(PageTable::new());
 
+// Extra PDPT + PDs for physical memory above 4 GiB (framebuffer, etc.)
+static mut PDPT_HIGH: AlignedPageTable = AlignedPageTable(PageTable::new());
+static mut PD_HIGH: [AlignedPageTable; 4] = [
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+    AlignedPageTable(PageTable::new()),
+];
+
 /// Base address of the user-accessible memory window.
 /// Must stay inside the 4 GiB identity-mapped range.
 pub const USER_BASE:  u64 = 0x0040_0000; // 4 MB
@@ -92,8 +101,6 @@ pub unsafe fn init_custom_page_tables() {
     }
 
     // 3. Identity-map 0..4 GiB with 2 MB huge pages.
-    //    Pages inside USER_BASE..USER_LIMIT get USER_ACCESSIBLE so Ring 3 can
-    //    use them.  Every other page is kernel-only.
     for i in 0..4usize {
         for j in 0..512usize {
             let addr = (i * 512 + j) as u64 * HUGE_PAGE_SIZE;
@@ -107,7 +114,46 @@ pub unsafe fn init_custom_page_tables() {
         }
     }
 
-    // 4. Load our PML4 into CR3.
+    // 3.5. Mark framebuffer page(s) as uncacheable (UC-).
+    //      The CPU cache is incoherent with the display controller — writes
+    //      to a Write-Back framebuffer stay in the cache while the scanout
+    //      reads directly from physical DRAM, causing a "slow sweep" as
+    //      dirty lines are gradually evicted.
+    if let Some(ref renderer) = crate::graphics::RENDERER {
+        let fb_start = renderer.fb.base_address;
+        let fb_size = renderer.fb.size;
+        if fb_size > 0 && fb_start < 0x1_0000_0000 {
+            let start_idx = (fb_start / HUGE_PAGE_SIZE) as usize;
+            let end_idx = ((fb_start + fb_size as u64 - 1) / HUGE_PAGE_SIZE) as usize;
+            for page_idx in start_idx..=end_idx.min(2047) {
+                let pd_idx = page_idx / 512;
+                let entry_idx = page_idx % 512;
+                if pd_idx < 4 {
+                    let phys = PD[pd_idx].0[entry_idx].addr();
+                    let flags = PD[pd_idx].0[entry_idx].flags() | PageTableFlags::NO_CACHE;
+                    PD[pd_idx].0[entry_idx].set_addr(phys, flags);
+                }
+            }
+            serial_println!(
+                "[paging] FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
+                fb_start, fb_start + fb_size as u64,
+                end_idx - start_idx + 1
+            );
+        }
+    }
+
+    // 4. Map framebuffer if it's above 4 GiB.
+    //    This is common on real hardware with discrete GPUs.
+    if let Some(ref renderer) = crate::graphics::RENDERER {
+        let fb_start = renderer.fb.base_address;
+        let fb_size = renderer.fb.size as u64;
+        if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
+            serial_println!("[paging] Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
+            map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
+        }
+    }
+
+    // 5. Load our PML4 into CR3.
     let pml4_addr = PhysAddr::new(&PML4 as *const _ as u64);
     match x86_64::structures::paging::PhysFrame::from_start_address(pml4_addr) {
         Ok(frame) => {
@@ -119,6 +165,31 @@ pub unsafe fn init_custom_page_tables() {
             );
         }
         Err(_) => panic!("PML4 address 0x{:x} not 4 KB-aligned", pml4_addr.as_u64()),
+    }
+}
+
+/// Map a physical range above 4 GiB using PML4[1] → PDPT_HIGH → PD_HIGH.
+/// Range must be 2 MiB-aligned and within 4..8 GiB.
+unsafe fn map_phys_range_above_4g(start: u64, end: u64, flags: PageTableFlags) {
+    let dir_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
+    let pdpt_addr = PhysAddr::new(&PDPT_HIGH as *const _ as u64);
+    PML4.0[1].set_addr(pdpt_addr, dir_flags);
+
+    let start_aligned = start & !(HUGE_PAGE_SIZE - 1);
+    let end_aligned = (end + HUGE_PAGE_SIZE - 1) & !(HUGE_PAGE_SIZE - 1);
+
+    for addr in (start_aligned..end_aligned).step_by(HUGE_PAGE_SIZE as usize) {
+        // 4..8 GiB → PML4[1], PDPT entry = (addr-4GiB) / 1GiB
+        let pml4_idx = 1;
+        let pdpt_idx = ((addr - 0x1_0000_0000) / (512 * HUGE_PAGE_SIZE)) as usize;
+        let pd_idx = ((addr - 0x1_0000_0000) / HUGE_PAGE_SIZE as u64 % 512) as usize;
+
+        if pdpt_idx < 4 {
+            // Link PDPT_HIGH[pdpt_idx] → PD_HIGH[pdpt_idx]
+            let pd_addr = PhysAddr::new(&PD_HIGH[pdpt_idx] as *const _ as u64);
+            PDPT_HIGH.0[pdpt_idx].set_addr(pd_addr, dir_flags);
+            PD_HIGH[pdpt_idx].0[pd_idx].set_addr(PhysAddr::new(addr), flags);
+        }
     }
 }
 

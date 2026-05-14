@@ -1,5 +1,7 @@
 pub mod acpi;
+pub mod ahci;
 pub mod ata;
+pub mod block;
 pub mod fat32;
 pub mod gpt;
 pub mod keyboard;

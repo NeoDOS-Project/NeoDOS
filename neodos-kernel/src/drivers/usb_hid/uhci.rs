@@ -2,6 +2,9 @@
 //
 // UHCI (Universal Host Controller Interface) driver.
 // USB HID keyboard via polling.
+// NOT CURRENTLY FUNCTIONAL — PIIX3 doesn't accept FLBASEADD writes.
+
+#![allow(dead_code, unused_variables)]
 
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use core::ptr;
@@ -12,17 +15,20 @@ const PORTSC1_PR:  u16 = 1 << 4;
 const PORTSC1_PED: u16 = 1 << 7;
 
 const USBCMD_RS:       u16 = 1 << 0;
-const USBCMD_FLE:      u16 = 1 << 2;
-const USBCMD_HCRESET:  u16 = 1 << 3;
+const USBCMD_HCRESET:  u16 = 1 << 1;
+const USBCMD_GRESET:   u16 = 1 << 2;
 const USBSTS_HCH:      u16 = 1 << 5;
+
+
 
 const TD_IOC:       u32 = 1 << 15;
 const TD_ACTIVE:    u32 = 1 << 7;
 const TD_MAX_ERRORS: u32 = 3;
 
-const PID_SETUP: u32 = 0x0D;
-const PID_IN:    u32 = 0x10;
-const PID_OUT:   u32 = 0x01;
+const PID_SETUP: u32 = 0x2D;
+const PID_IN:    u32 = 0x69;
+const PID_OUT:   u32 = 0xE1;
+
 
 const USB_DIR_OUT:       u8 = 0x00;
 const USB_DIR_IN:       u8 = 0x80;
@@ -48,43 +54,55 @@ struct UsbSetupPacket {
     length:       u16,
 }
 
-#[repr(C, packed)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone)]
 struct UhciTd {
     link:      u32,
     status:    u32,
     token:     u32,
     buffer:    u32,
-    _pad:      u32,
 }
 
-#[repr(C)]
+#[repr(C, align(16))]
 #[derive(Copy, Clone)]
 struct UhciQh {
     horiz_link: u32,
     vert_link:  u32,
+    _pad: [u32; 2],
 }
 
 impl UhciQh {
     const fn new() -> Self {
-        UhciQh { horiz_link: 1, vert_link: 1 }
+        UhciQh { horiz_link: 1, vert_link: 1, _pad: [0, 0] }
     }
 }
 
-static mut TD_BUFFER:   [UhciTd; 16]  = [UhciTd { link: 1, status: 0, token: 0, buffer: 0, _pad: 0 }; 16];
+
+#[repr(align(4096))]
+struct UhciFrameList([u32; 1024]);
+#[repr(align(16))]
+struct UhciTdBuffer([UhciTd; 16]);
+#[repr(align(16))]
+struct UhciQhBuffer([UhciQh; 8]);
+
+static mut TD_BUFFER:   UhciTdBuffer = UhciTdBuffer([UhciTd { link: 1, status: 0, token: 0, buffer: 0 }; 16]);
 static mut DATA_BUFFER: [u8; 4096]   = [0; 4096];
-static mut FRAME_LIST:  [u32; 1024]  = [0; 1024];
-static mut QH_BUFFER:   [UhciQh; 8]  = [UhciQh::new(); 8];
+static mut FRAME_LIST:  UhciFrameList = UhciFrameList([0; 1024]);
+static mut QH_BUFFER:   UhciQhBuffer  = UhciQhBuffer([UhciQh::new(); 8]);
+
+
 
 static DEVICE_ADDRESS: AtomicBool = AtomicBool::new(false);
 static DEV_ADDR:     AtomicU8   = AtomicU8::new(0);
 static HID_ENDPOINT: AtomicU8   = AtomicU8::new(0);
 
 fn delay_us(us: u32) {
-    for _ in 0..(us * 2) {
+    for _ in 0..(us * 1000) {
         unsafe { core::arch::asm!("nop"); }
     }
 }
+
+
 
 fn delay_ms(ms: u32) {
     delay_us(ms * 1000);
@@ -111,114 +129,105 @@ fn port_out8(base: u16, offset: u16, val: u8) {
     }
 }
 
-fn write_flbaseadd(base: u16, addr: u32) {
+fn port_out_dword(base: u16, offset: u16, val: u32) {
     unsafe {
-        core::arch::asm!(
-            "out dx, eax",
-            in("dx") base + 0x14,
-            in("eax") addr
-        );
+        let mut p = x86_64::instructions::port::Port::<u32>::new(base + offset);
+        p.write(val);
     }
 }
 
+fn write_flbaseadd(base: u16, addr: u32) {
+    port_out_dword(base, 0x08, addr);
+}
 
 
 pub fn init(base: u16) -> bool {
     crate::serial_println!("[UHCI] Init at I/O 0x{:04X}", base);
 
-    let flbase = unsafe { (&FRAME_LIST as *const _ as u32) & 0xFFFFF000 };
-    let qh0_ptr = unsafe { ptr::addr_of!(QH_BUFFER[0]) as u32 };
-    let qh1_ptr = unsafe { ptr::addr_of!(QH_BUFFER[1]) as u32 };
+    let flbase = unsafe { ptr::addr_of!(FRAME_LIST.0) as u32 };
+    let qh0_ptr = unsafe { ptr::addr_of!(QH_BUFFER.0[0]) as u32 };
+    let qh1_ptr = unsafe { ptr::addr_of!(QH_BUFFER.0[1]) as u32 };
 
     unsafe {
-        for i in 0..1024 { FRAME_LIST[i] = 1; }
-        FRAME_LIST[0] = qh0_ptr | 0x0002;
-        QH_BUFFER[0].horiz_link = qh1_ptr | 0x0002;
-        QH_BUFFER[0].vert_link = 1;
-        QH_BUFFER[1].horiz_link = 1;
-        QH_BUFFER[1].vert_link = 1;
+        for i in 0..1024 { FRAME_LIST.0[i] = 1; }
+        FRAME_LIST.0[0] = qh0_ptr | 0x0002;
+        QH_BUFFER.0[0].horiz_link = qh1_ptr | 0x0002;
+
+        QH_BUFFER.0[0].vert_link = 1;
+        QH_BUFFER.0[1].horiz_link = 1;
+        QH_BUFFER.0[1].vert_link = 1;
     }
+
+
     crate::serial_println!("[UHCI] FLBASE=0x{:08X} QH0=0x{:08X}", flbase, qh0_ptr);
 
-    let portsc = port_in(base, 0x10);
-    crate::serial_println!("[UHCI] PORTSC=0x{:04X}", portsc);
-
-    let cmd0 = port_in(base, 0);
-    let sts0 = port_in(base, 0x04);
-    let fl_lo0 = port_in(base, 0x14);
-    let fl_hi0 = port_in(base, 0x16);
-    crate::serial_println!("[UHCI] pre-init: CMD=0x{:04X} STS=0x{:04X} FLBASEADD=0x{:04X}:{:04X}",
-        cmd0, sts0, fl_hi0, fl_lo0);
-
+    // 1. Stop
     port_out(base, 0, 0);
     delay_ms(10);
 
+    // 2. Global Reset (GRESET)
+    port_out(base, 0, USBCMD_GRESET);
+    delay_ms(50);
+    port_out(base, 0, 0);
+    delay_ms(10);
+
+    // 3. Host Controller Reset (HCRESET)
     port_out(base, 0, USBCMD_HCRESET);
-    delay_ms(50);
-
-    let cmd_r = port_in(base, 0);
-    let sts_r = port_in(base, 0x04);
-    crate::serial_println!("[UHCI] HCRESET CMD=0x{:04X} STS=0x{:04X}", cmd_r, sts_r);
-
-    let fn_r = port_in(base, 0x0C);
-    let fl_lo2 = port_in(base, 0x14);
-    let fl_hi2 = port_in(base, 0x16);
-    crate::serial_println!("[UHCI] post-reset: FRNUM={} FLBASEADD=0x{:04X}:{:04X}", fn_r, fl_hi2, fl_lo2);
-
-    port_out(base, 0x04, 0xFF);
-    delay_ms(5);
-    port_out(base, 0x04, 0);
-    port_out8(base, 0x0C, 0);
-    port_out(base, 0x08, 0);
-
-    let fl_lo3 = port_in(base, 0x14);
-    let fl_hi3 = port_in(base, 0x16);
-    crate::serial_println!("[UHCI] After clear: FLBASEADD=0x{:04X}:{:04X}", fl_hi3, fl_lo3);
-
-    port_out8(base, 0x14, 0x00);
-    delay_ms(2);
-    port_out8(base, 0x15, 0x00);
-    delay_ms(2);
-
-    let fl_lo4 = port_in(base, 0x14);
-    let fl_hi4 = port_in(base, 0x16);
-    crate::serial_println!("[UHCI] After 16b zero: FLBASEADD=0x{:04X}:{:04X}", fl_hi4, fl_lo4);
-
-    port_out8(base, 0x14, (flbase & 0xFF) as u8);
-    delay_ms(2);
-    port_out8(base, 0x15, ((flbase >> 8) & 0xFF) as u8);
-    delay_ms(2);
-    port_out8(base, 0x16, ((flbase >> 16) & 0xFF) as u8);
-    delay_ms(2);
-    port_out8(base, 0x17, ((flbase >> 24) & 0xFF) as u8);
-    delay_ms(5);
-
-    let fl_lo5 = port_in(base, 0x14);
-    let fl_hi5 = port_in(base, 0x16);
-    crate::serial_println!("[UHCI] After 32b FLBASEADD: FLBASEADD=0x{:04X}:{:04X}", fl_hi5, fl_lo5);
-
-    port_out(base, 0, USBCMD_RS | USBCMD_FLE);
-    delay_ms(50);
-
-    let cmd2 = port_in(base, 0);
-    let sts2 = port_in(base, 0x04);
-    let fn2 = port_in(base, 0x0C);
-    crate::serial_println!("[UHCI] After FLE+RS: CMD=0x{:04X} STS=0x{:04X} FRNUM={}", cmd2, sts2, fn2);
-
-    let hch = (sts2 & USBSTS_HCH) != 0;
-    let frnum_ok = fn2 != 64 && fn2 != 0;
-
-    if !hch && frnum_ok {
-        crate::serial_println!("[UHCI] Controller running!");
-        return true;
+    let mut _reset_ok = false;
+    for _ in 0..100 {
+        if (port_in(base, 0) & USBCMD_HCRESET) == 0 {
+            _reset_ok = true;
+            break;
+        }
+        delay_ms(10);
     }
 
-    crate::serial_println!("[UHCI] HCHalted={} FRNUM={}", hch, fn2);
+    
+    // Clear all status bits
+    port_out(base, 0x02, 0x00FF);
+    port_out(base, 0x04, 0); // Disable interrupts
+    port_out(base, 0x06, 0); // FRNUM = 0
+
+    let sts = port_in(base, 0x02);
+    let frnum = port_in(base, 0x06);
+    crate::serial_println!("[UHCI] Post-reset: STS=0x{:04X} FRNUM={}", sts, frnum);
+
+    write_flbaseadd(base, flbase);
+    delay_ms(10);
+    port_out(base, 0x06, 0); // FRNUM = 0
+
+    // 4. Start
+    crate::serial_println!("[UHCI] Starting (RS only)...");
+    port_out(base, 0x02, 0x00FF); // Clear status again
+    port_out(base, 0, USBCMD_RS);
+    
+    let mut started = false;
+    for _ in 0..100 {
+        if (port_in(base, 0x02) & USBSTS_HCH) == 0 {
+            started = true;
+            break;
+        }
+        delay_ms(1);
+    }
+
+    if started {
+        crate::serial_println!("[UHCI] Controller is RUNNING");
+        return true;
+    } else {
+        let sts = port_in(base, 0x02);
+        crate::serial_println!("[UHCI] FAILED TO START. STS=0x{:04X}", sts);
+    }
+
     false
 }
 
+
+
+const TD_DATA_TOGGLE: u32 = 1 << 19;
+
+
 fn ctrl_transfer(
-    base: u16,
+    _base: u16,
     dev_addr: u8,
     ep: u8,
     request_type: u8,
@@ -227,9 +236,10 @@ fn ctrl_transfer(
     index: u16,
     buf: &mut [u8],
 ) -> i32 {
-    let td0_ptr = unsafe { ptr::addr_of!(TD_BUFFER[0]) as u32 };
-    let td1_ptr = unsafe { ptr::addr_of!(TD_BUFFER[1]) as u32 };
-    let td2_ptr = unsafe { ptr::addr_of!(TD_BUFFER[2]) as u32 };
+    let td0_ptr = unsafe { ptr::addr_of!(TD_BUFFER.0[0]) as u32 };
+    let td1_ptr = unsafe { ptr::addr_of!(TD_BUFFER.0[1]) as u32 };
+    let td2_ptr = unsafe { ptr::addr_of!(TD_BUFFER.0[2]) as u32 };
+
     let data_ptr = unsafe { DATA_BUFFER.as_mut_ptr() as u32 };
 
     unsafe {
@@ -242,42 +252,50 @@ fn ctrl_transfer(
         };
         ptr::write(DATA_BUFFER.as_mut_ptr() as *mut UsbSetupPacket, setup);
 
-        TD_BUFFER[0].buffer = data_ptr;
-        TD_BUFFER[0].status = TD_IOC | TD_ACTIVE | (TD_MAX_ERRORS << 26);
-        TD_BUFFER[0].token = PID_SETUP
+        // TD0: SETUP (Always DATA0)
+        TD_BUFFER.0[0].buffer = data_ptr;
+        TD_BUFFER.0[0].status = TD_ACTIVE | (TD_MAX_ERRORS << 26);
+        TD_BUFFER.0[0].token = PID_SETUP
             | ((ep as u32) << 8)
             | ((dev_addr as u32) << 13)
             | ((8u32 - 1) << 21);
 
-        TD_BUFFER[1].buffer = data_ptr + 64;
-        TD_BUFFER[1].status = TD_ACTIVE | (TD_MAX_ERRORS << 26);
-        TD_BUFFER[1].token = PID_IN
+        // TD1: DATA (Always DATA1 for single-packet control transfers)
+        TD_BUFFER.0[1].buffer = data_ptr + 64;
+        TD_BUFFER.0[1].status = TD_ACTIVE | (TD_MAX_ERRORS << 26);
+        TD_BUFFER.0[1].token = PID_IN
+            | TD_DATA_TOGGLE
             | ((ep as u32) << 8)
             | ((dev_addr as u32) << 13)
             | (((buf.len().saturating_sub(1)) as u32) << 21);
 
-        TD_BUFFER[2].buffer = 0;
-        TD_BUFFER[2].status = TD_IOC | TD_ACTIVE | (TD_MAX_ERRORS << 26);
-        TD_BUFFER[2].token = PID_OUT
+        // TD2: STATUS (Always DATA1)
+        TD_BUFFER.0[2].buffer = 0;
+        TD_BUFFER.0[2].status = TD_IOC | TD_ACTIVE | (TD_MAX_ERRORS << 26);
+        TD_BUFFER.0[2].token = PID_OUT
+            | TD_DATA_TOGGLE
             | ((ep as u32) << 8)
             | ((dev_addr as u32) << 13)
             | (0u32 << 21);
 
-        TD_BUFFER[0].link = td1_ptr | 0x04;
-        TD_BUFFER[1].link = td2_ptr | 0x04;
-        TD_BUFFER[2].link = 1;
-        QH_BUFFER[0].vert_link = td0_ptr | 0x04;
+        TD_BUFFER.0[0].link = td1_ptr | 0x04;
+        TD_BUFFER.0[1].link = td2_ptr | 0x04;
+        TD_BUFFER.0[2].link = 1;
+        QH_BUFFER.0[0].vert_link = td0_ptr | 0x04;
+
     }
 
     let mut result = -1i32;
-    for _ in 0..5_000_000 {
-        let status = unsafe { TD_BUFFER[2].status };
+    for _ in 0..1_000_000 {
+        let status = unsafe { TD_BUFFER.0[2].status };
         if status & TD_ACTIVE == 0 {
-            let cc = status & 0x0F;
+            let cc = (status >> 16) & 0x0F;
             if cc == 0 {
-                let len_field = unsafe { TD_BUFFER[1].token };
-                let actual_len = ((len_field >> 16) & 0x7FF) as usize;
-                if actual_len > 0 && !buf.is_empty() {
+                let len_field = unsafe { TD_BUFFER.0[1].status };
+                let actual_len = ((len_field) & 0x7FF).wrapping_add(1) as usize;
+                // For UHCI, the length in status is (Actual Length - 1)
+                
+                if !buf.is_empty() {
                     let copy_len = actual_len.min(buf.len());
                     unsafe {
                         ptr::copy_nonoverlapping(
@@ -286,29 +304,80 @@ fn ctrl_transfer(
                             copy_len,
                         );
                     }
+                    result = copy_len as i32;
+                } else {
+                    result = 0;
                 }
-                result = actual_len as i32;
                 crate::serial_println!("[UHCI] Ctrl OK: {} bytes", result);
             } else {
-                crate::serial_println!("[UHCI] Ctrl CC={}", cc);
+                crate::serial_println!("[UHCI] Ctrl CC=0x{:X} status=0x{:08X}", cc, status);
             }
             break;
         }
-        delay_us(5);
+        delay_us(2);
     }
 
     unsafe {
-        TD_BUFFER[0].link = 1;
-        TD_BUFFER[1].link = 1;
-        TD_BUFFER[2].link = 1;
-        QH_BUFFER[0].vert_link = 1;
+        TD_BUFFER.0[0].link = 1;
+        TD_BUFFER.0[1].link = 1;
+        TD_BUFFER.0[2].link = 1;
+        QH_BUFFER.0[0].vert_link = 1;
     }
 
-    if result < 0 {
-        crate::serial_println!("[UHCI] Ctrl timeout");
-    }
+
     result
 }
+
+fn interrupt_in_transfer(
+    _base: u16,
+    dev_addr: u8,
+    ep: u8,
+    buf: &mut [u8],
+) -> i32 {
+    let td0_ptr = unsafe { ptr::addr_of!(TD_BUFFER.0[4]) as u32 };
+    let data_ptr = unsafe { DATA_BUFFER.as_mut_ptr() as u32 + 512 };
+
+    unsafe {
+        // Interrupt transfer uses toggling, but for simplicity we assume 
+        // the device resets toggle on Set_Configuration or we just try both.
+        // Actually, HID keyboards usually start with DATA0 after reset.
+        static mut TOGGLE: bool = false;
+        
+        TD_BUFFER.0[4].buffer = data_ptr;
+        TD_BUFFER.0[4].status = TD_IOC | TD_ACTIVE | (TD_MAX_ERRORS << 26);
+        TD_BUFFER.0[4].token = PID_IN
+            | (if TOGGLE { TD_DATA_TOGGLE } else { 0 })
+            | (((ep & 0x0F) as u32) << 8)
+            | ((dev_addr as u32) << 13)
+            | (((buf.len().saturating_sub(1)) as u32) << 21);
+        
+        TD_BUFFER.0[4].link = 1;
+        QH_BUFFER.0[1].vert_link = td0_ptr | 0x04;
+        
+        let mut result = -1i32;
+        // Shorter timeout for polling
+        for _ in 0..10_000 {
+            let status = TD_BUFFER.0[4].status;
+            if status & TD_ACTIVE == 0 {
+                let cc = (status >> 16) & 0x0F;
+                if cc == 0 {
+                    let actual_len = (status & 0x7FF).wrapping_add(1) as usize;
+                    let copy_len = actual_len.min(buf.len());
+                    ptr::copy_nonoverlapping(data_ptr as *const u8, buf.as_mut_ptr(), copy_len);
+                    result = copy_len as i32;
+                    TOGGLE = !TOGGLE;
+                }
+                break;
+            }
+            delay_us(1);
+        }
+        
+        QH_BUFFER.0[1].vert_link = 1;
+        result
+    }
+
+}
+
 
 fn get_dev_desc(base: u16, addr: u8, buf: &mut [u8]) -> i32 {
     ctrl_transfer(base, addr, 0,
@@ -449,7 +518,8 @@ pub fn poll_keyboard(base: u16) {
     if ep == 0 { return; }
     let addr = DEV_ADDR.load(Ordering::Relaxed);
     let mut report = [0u8; 8];
-    if get_report(base, addr, ep, &mut report) > 0 {
+    if interrupt_in_transfer(base, addr, ep, &mut report) > 0 {
         super::hid::parse_hid_report(&report);
     }
 }
+

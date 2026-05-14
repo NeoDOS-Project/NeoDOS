@@ -4,7 +4,7 @@
 //! file) to keep compile units small and changes localized.
 //!
 //! To add a new command:
-//! 1) create `src/shell/commands/<name>.rs` with an `impl DosShell` method
+//! 1) create `src/shell/commands/<name>.rs` with an `impl<'a> DosShell<'a>` method
 //! 2) add `mod <name>;` here
 //! 3) add a `CommandEntry` to `handler::COMMANDS` in handler.rs
 //!    Help is automatic — the entry's `category` and `description` appear in HELP.

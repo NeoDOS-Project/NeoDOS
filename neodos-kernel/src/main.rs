@@ -28,12 +28,13 @@ pub mod usermode;
 pub mod syscall;
 mod testing;
 
-use drivers::ata::AtaDriver;
+use drivers::ata::{AtaChannel, AtaDriver};
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
 use drivers::pci;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
+use fs::volume::Volume;
 use graphics::FramebufferInfo;
 
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
@@ -50,11 +51,13 @@ pub struct BootInfo {
     pub memory_map_size: u64,
     pub memory_map_desc_size: u64,
     pub memory_map_desc_version: u32,
+    pub fs_image_addr: u64,
+    pub fs_image_size: u64,
 }
 
 #[no_mangle]
 #[link_section = ".text.entry"]
-pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
+pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // 0. Verify boot info magic and version
     if boot_info.magic != BOOTINFO_MAGIC {
         // Can't use println yet, serial not initialized
@@ -63,14 +66,14 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
 
     // 1. Initialize Graphics Renderer
     graphics::init(boot_info.fb_info.clone());
-    
+    drivers::keyboard::set_leds(0b100); // Caps Lock ON = kernel entry
+
+    // 1b. Set up RAM disk from bootloader-loaded FS image
+    globals::RAM_DISK_BASE = boot_info.fs_image_addr;
+    globals::RAM_DISK_SIZE = boot_info.fs_image_size;
+
     // 2. Setup Serial for output
     arch::x64::init_serial();
-
-    // 3. Print kernel banner to serial
-    serial_println!("========================================");
-    serial_println!("{}", KERNEL_VERSION);
-    serial_println!("========================================");
 
     // Check bootloader version compatibility
     let bootloader_version = boot_info.version;
@@ -84,26 +87,31 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
 
     // 4. Initialize legacy VGA as backup (might not work, but keeps code compatible)
     console::init();
+    drivers::keyboard::set_leds(0b110); // Caps Lock + Num Lock ON = console ready
+
+    println!("========================================");
+    println!("{}", KERNEL_VERSION);
+    println!("========================================");
 
     // ============================================
     // PHASE 2: Initialize CPU structures
     // ============================================
-    serial_println!("[+] Initializing GDT...");
+    println!("[+] Initializing GDT...");
     arch::x64::init_gdt();
     
-    serial_println!("[+] Initializing IDT...");
+    println!("[+] Initializing IDT...");
     arch::x64::init_idt();
     
-    serial_println!("[+] Initializing PIC...");
+    println!("[+] Initializing PIC...");
     arch::x64::init_pic();
 
-    serial_println!("[+] Initializing PS/2 controller...");
+    println!("[+] Initializing PS/2 controller...");
     drivers::keyboard::init_ps2();
 
-    serial_println!("[+] Scanning for USB HID keyboards...");
+    println!("[+] Scanning for USB HID keyboards...");
     drivers::usb_hid::init_usb_keyboard();
 
-    serial_println!("[+] Enabling interrupts...");
+    println!("[+] Enabling interrupts...");
     arch::x64::enable_interrupts();
 
     // ============================================
@@ -119,54 +127,113 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 3: Storage stack
     // ============================================
-    serial_println!("[+] Initializing ATA driver...");
-    globals::ATA_DRIVER = Some(AtaDriver::new());
+    println!("[+] Initializing ATA drivers...");
+    globals::ATA_DRIVER = Some(AtaDriver::new(AtaChannel::Primary));
+    globals::ATA_DRIVER_SECONDARY = Some(AtaDriver::new(AtaChannel::Secondary));
 
-    serial_println!("[+] Scanning PCI for IDE bus-master DMA...");
+    println!("[+] Scanning PCI for IDE bus-master DMA...");
     if let Some(ide) = pci::find_ide_controller() {
         pci::enable_bus_master(&ide);
         globals::ATA_DRIVER.as_mut().unwrap().init_dma(ide.bus_master_base);
-        serial_println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
+        globals::ATA_DRIVER_SECONDARY.as_mut().unwrap().init_dma(ide.bus_master_base + 8);
+        println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
     } else {
-        serial_println!("[!] No IDE bus-master controller found, using PIO");
+        println!("[!] No IDE bus-master controller found, using PIO");
+    }
+
+    println!("[+] Probing for AHCI controller...");
+    let mut ahci_results = drivers::ahci::AhciDriver::probe_all();
+    if let Some(ahci) = ahci_results[0].take() {
+        let port_count = ahci.port_count;
+        globals::AHCI_DRIVER = Some(ahci);
+        globals::ATA_DRIVER.as_mut().unwrap().ahci_fallback = true;
+        if port_count >= 2 {
+            globals::ATA_DRIVER_SECONDARY.as_mut().unwrap().ahci_fallback = true;
+            println!("[+] AHCI: {} ports — fallback enabled for both ATA channels", port_count);
+        } else {
+            println!("[+] AHCI: 1 port — fallback enabled for primary ATA only");
+        }
+    } else {
+        println!("[-] No AHCI controller found");
     }
 
     let ata = globals::ATA_DRIVER.as_mut().unwrap();
+    let ata2 = globals::ATA_DRIVER_SECONDARY.as_mut().unwrap();
 
-    serial_println!("[+] Parsing GPT for NeoDOS partition...");
-    if let Some(part) = gpt::find_neodos_partition(ata) {
-        serial_println!("[+] NeoDOS partition found: LBA {}..{}",
+    // Scan GPT on both physical disks
+    println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
+    let disk0_parts = gpt::find_all_neodos_partitions(ata);
+    println!("[+] Scanning GPT for NeoDOS partitions (disk 1)...");
+    let disk1_parts = gpt::find_all_neodos_partitions(ata2);
+
+    if let Some(part) = &disk0_parts[0] {
+        println!("[+] Primary NeoDOS partition: LBA {}..{}",
             part.start_lba, part.end_lba);
         ata.set_base_lba(part.start_lba as u32);
     } else {
-        serial_println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
+        println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
     }
 
-    serial_println!("[+] Initializing Block Cache...");
+    println!("[+] Initializing Block Cache...");
     globals::BLOCK_CACHE = Some(BlockCache::new());
     let cache = globals::BLOCK_CACHE.as_mut().unwrap();
 
-    serial_println!("[+] Reading Superblock...");
+    println!("[+] Reading Superblock...");
     let sb_data = match ata.read_sector(0) {
         Ok(data) => data,
         Err(_) => panic!("Failed to read superblock"),
     };
 
-    serial_println!("[+] Mounting NeoDOS FS...");
+    println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
         Ok(fs) => {
             globals::NEODOS_FS = Some(fs);
-            serial_println!("[+] NeoDOS FS mounted");
+            println!("[+] NeoDOS FS mounted");
     let _ = globals::NEODOS_FS.as_mut().unwrap().rebuild_bitmap(cache, ata);
-    serial_println!("[+] Block bitmap rebuilt");
+    println!("[+] Block bitmap rebuilt");
         },
         Err(_) => panic!("Failed to mount filesystem"),
+    }
+
+    // Collect extra volumes: extra disk0 partitions + all disk1 partitions
+    let mut extra_volumes: [Option<Volume>; 3] = [None, None, None];
+    let mut vol_idx = 0;
+
+    for i in 1..gpt::MAX_NEODOS_PARTITIONS {
+        if vol_idx >= 3 { break; }
+        if let Some(part) = &disk0_parts[i] {
+            println!("[+] Extra disk0 volume at LBA {}..{}",
+                part.start_lba, part.end_lba);
+            if let Ok(vol) = Volume::from_partition(ata, part.start_lba as u32) {
+                extra_volumes[vol_idx] = Some(vol);
+                println!("[+] Extra volume {} mounted", vol_idx);
+                vol_idx += 1;
+            }
+        }
+    }
+
+    for i in 0..gpt::MAX_NEODOS_PARTITIONS {
+        if vol_idx >= 3 { break; }
+        if let Some(part) = &disk1_parts[i] {
+            println!("[+] Disk1 volume at LBA {}..{}",
+                part.start_lba, part.end_lba);
+            if let Ok(vol) = Volume::from_partition(ata2, part.start_lba as u32) {
+                extra_volumes[vol_idx] = Some(vol);
+                println!("[+] Extra volume {} mounted (disk 1)", vol_idx);
+                vol_idx += 1;
+            }
+        }
+    }
+
+    // Restore ATA base_lba to primary partition on primary disk
+    if let Some(part) = &disk0_parts[0] {
+        ata.set_base_lba(part.start_lba as u32);
     }
 
     // ============================================
     // FAT32: Read boot partition
     // ============================================
-    serial_println!("[+] Initializing FAT32 driver...");
+    println!("[+] Initializing FAT32 driver...");
     globals::FAT32_DRIVER = Fat32Driver::new(ata).ok();
 
     // ============================================
@@ -177,10 +244,12 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
     }
 
 
+    drivers::keyboard::set_leds(0b111); // All ON = storage ready
+
     // ============================================
     // PHASE 4: Start DOS Shell
     // ============================================
-    serial_println!("[+] Starting NeoDOS Shell...");
+    println!("[+] Starting NeoDOS Shell...");
 
     testing::register_tests();
     
@@ -188,7 +257,9 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
         globals::NEODOS_FS.as_mut().unwrap(),
         globals::BLOCK_CACHE.as_mut().unwrap(),
         globals::ATA_DRIVER.as_mut().unwrap(),
-        globals::FAT32_DRIVER.take()
+        globals::ATA_DRIVER_SECONDARY.as_mut().unwrap(),
+        globals::FAT32_DRIVER.take(),
+        extra_volumes
     );
     
     shell.run();
@@ -197,10 +268,11 @@ pub unsafe extern "sysv64" fn _start(boot_info: &BootInfo) -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     arch::disable_interrupts();
-    serial_println!("\r\n!!! KERNEL PANIC !!!");
+    println!("\r\n!!! KERNEL PANIC !!!");
     if let Some(location) = info.location() {
-        serial_println!("Location: {}:{}", location.file(), location.line());
+        println!("Location: {}:{}", location.file(), location.line());
     }
+    println!("Message: {}", info.message());
 
     arch::halt();
 }

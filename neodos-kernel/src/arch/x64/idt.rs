@@ -336,6 +336,12 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
                 crate::input::push_byte(ascii);
                 crate::syscall::wake_blocked_readers();
             }
+            // Check Ctrl+Alt+Del after modifiers are updated by scancode_to_ascii
+            if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
+                crate::serial_println!("[Ctrl+Alt+Del] Powering off...");
+                PICS.lock().notify_end_of_interrupt(33);
+                crate::arch::x64::poweroff();
+            }
         }
         PICS.lock().notify_end_of_interrupt(33);
     }

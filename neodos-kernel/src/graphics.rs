@@ -47,6 +47,12 @@ pub static mut RENDERER: Option<Renderer> = None;
 
 pub fn init(fb: FramebufferInfo) {
     unsafe {
+        if fb.base_address == 0 || fb.size == 0 {
+            // No valid framebuffer — don't initialise the renderer.
+            // draw_char() checks RENDERER.is_some() and will skip all screen output.
+            // Serial output still works via serial_print! / println!.
+            return;
+        }
         let renderer = Renderer::new(fb);
         renderer.clear(0x000000); // Black
         RENDERER = Some(renderer);

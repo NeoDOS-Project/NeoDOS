@@ -40,60 +40,26 @@ impl InputBuffer {
         self.head = (self.head + 1) % INPUT_BUFFER_SIZE;
         Some(byte)
     }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.head == self.tail
-    }
 }
 
 static mut INPUT_BUFFER: InputBuffer = InputBuffer::new();
 
-/// Called from IRQ1 context (keyboard handler).
-/// Interrupts are already disabled by the CPU, so it is safe to mutate
-/// INPUT_BUFFER without additional synchronisation.
 pub fn push_byte(byte: u8) {
     unsafe {
         let _ = INPUT_BUFFER.push(byte);
     }
 }
 
-/// Called from the main shell loop.  Disables interrupts so the keyboard
-/// IRQ cannot run concurrently and see a partially-updated head pointer.
 pub fn pop_byte() -> Option<u8> {
-    let mut if_set = false;
     unsafe {
         let mut flags: u64;
         core::arch::asm!("pushfq; pop {}", lateout(reg) flags);
-        if_set = (flags & 0x200) != 0;
+        let if_set = (flags & 0x200) != 0;
         core::arch::asm!("cli");
-        
-        if let Some(byte) = INPUT_BUFFER.pop() {
-            if if_set { core::arch::asm!("sti"); }
-            return Some(byte);
-        }
-        
-        let lsr: u8;
-        core::arch::asm!(
-            "in al, dx",
-            out("al") lsr,
-            in("dx") 0x3F8 + 5,
-            options(nomem, nostack, preserves_flags)
-        );
-        if lsr & 1 != 0 {
-            let byte: u8;
-            core::arch::asm!(
-                "in al, dx",
-                out("al") byte,
-                in("dx") 0x3F8,
-                options(nomem, nostack, preserves_flags)
-            );
-            if if_set { core::arch::asm!("sti"); }
-            crate::serial_println!("[INPUT] serial read: 0x{:02X}", byte);
-            return Some(byte);
-        }
-        
+
+        let byte = INPUT_BUFFER.pop();
+
         if if_set { core::arch::asm!("sti"); }
-        None
+        byte
     }
 }

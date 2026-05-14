@@ -15,6 +15,17 @@ const ATA_PRIMARY_DRIVE_SEL: u16 = 0x1F6;
 const ATA_PRIMARY_COMMAND: u16 = 0x1F7;
 const ATA_PRIMARY_STATUS: u16 = 0x1F7;
 
+const ATA_SECONDARY_DATA: u16 = 0x170;
+const ATA_SECONDARY_ERROR: u16 = 0x171;
+const ATA_SECONDARY_FEATURES: u16 = 0x171;
+const ATA_SECONDARY_SECTOR_COUNT: u16 = 0x172;
+const ATA_SECONDARY_LBA_LOW: u16 = 0x173;
+const ATA_SECONDARY_LBA_MID: u16 = 0x174;
+const ATA_SECONDARY_LBA_HIGH: u16 = 0x175;
+const ATA_SECONDARY_DRIVE_SEL: u16 = 0x176;
+const ATA_SECONDARY_COMMAND: u16 = 0x177;
+const ATA_SECONDARY_STATUS: u16 = 0x177;
+
 const ATA_CMD_READ_PIO: u8 = 0x20;
 const ATA_CMD_READ_MULTIPLE: u8 = 0xC4;
 const ATA_CMD_WRITE_MULTIPLE: u8 = 0xC5;
@@ -55,6 +66,12 @@ const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xE0;
 /// Master drive — used by the FAT32 driver for absolute-LBA reads.
 const ATA_DRIVE_SELECT_MASTER: u8 = 0xE0;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AtaChannel {
+    Primary,
+    Secondary,
+}
+
 pub struct AtaDriver {
     data_port: Port<u16>,
     _error_port: Port<u8>,
@@ -67,6 +84,9 @@ pub struct AtaDriver {
     status_port: Port<u8>,
     bmba: Option<u16>,
     base_lba: u32,
+    channel: AtaChannel,
+    pub ahci_fallback: bool,
+    is_secondary: bool,
 }
 
 #[derive(Debug)]
@@ -77,24 +97,50 @@ pub enum AtaError {
 }
 
 impl AtaDriver {
-    pub fn new() -> Self {
+    pub fn new(channel: AtaChannel) -> Self {
+        let (data, err, sc, lba_lo, lba_mid, lba_hi, drv_sel, cmd, sts) = match channel {
+            AtaChannel::Primary => (
+                ATA_PRIMARY_DATA, ATA_PRIMARY_ERROR,
+                ATA_PRIMARY_SECTOR_COUNT, ATA_PRIMARY_LBA_LOW,
+                ATA_PRIMARY_LBA_MID, ATA_PRIMARY_LBA_HIGH,
+                ATA_PRIMARY_DRIVE_SEL, ATA_PRIMARY_COMMAND, ATA_PRIMARY_STATUS,
+            ),
+            AtaChannel::Secondary => (
+                ATA_SECONDARY_DATA, ATA_SECONDARY_ERROR,
+                ATA_SECONDARY_SECTOR_COUNT, ATA_SECONDARY_LBA_LOW,
+                ATA_SECONDARY_LBA_MID, ATA_SECONDARY_LBA_HIGH,
+                ATA_SECONDARY_DRIVE_SEL, ATA_SECONDARY_COMMAND, ATA_SECONDARY_STATUS,
+            ),
+        };
+        let is_secondary = channel == AtaChannel::Secondary;
         AtaDriver {
-            data_port: Port::new(ATA_PRIMARY_DATA),
-            _error_port: Port::new(ATA_PRIMARY_ERROR),
-            sector_count_port: Port::new(ATA_PRIMARY_SECTOR_COUNT),
-            lba_low_port: Port::new(ATA_PRIMARY_LBA_LOW),
-            lba_mid_port: Port::new(ATA_PRIMARY_LBA_MID),
-            lba_high_port: Port::new(ATA_PRIMARY_LBA_HIGH),
-            drive_sel_port: Port::new(ATA_PRIMARY_DRIVE_SEL),
-            command_port: Port::new(ATA_PRIMARY_COMMAND),
-            status_port: Port::new(ATA_PRIMARY_STATUS),
+            data_port: Port::new(data),
+            _error_port: Port::new(err),
+            sector_count_port: Port::new(sc),
+            lba_low_port: Port::new(lba_lo),
+            lba_mid_port: Port::new(lba_mid),
+            lba_high_port: Port::new(lba_hi),
+            drive_sel_port: Port::new(drv_sel),
+            command_port: Port::new(cmd),
+            status_port: Port::new(sts),
             bmba: None,
             base_lba: 0,
+            channel,
+            ahci_fallback: false,
+            is_secondary,
         }
     }
 
     pub fn set_base_lba(&mut self, lba: u32) {
         self.base_lba = lba;
+    }
+
+    pub fn base_lba(&self) -> u32 {
+        self.base_lba
+    }
+
+    pub fn channel(&self) -> AtaChannel {
+        self.channel
     }
 
     pub fn write_sector(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
@@ -105,6 +151,17 @@ impl AtaDriver {
 
     fn write_sector_inner(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
         let abs_lba = self.base_lba.wrapping_add(lba);
+
+        if self.ahci_fallback {
+            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
+                return if self.is_secondary {
+                    ahci.write_sector(abs_lba, data)
+                } else {
+                    ahci.write_sector(abs_lba, data)
+                };
+            }
+        }
+
         unsafe {
             self.wait_not_busy_simple()?;
             
@@ -166,6 +223,16 @@ impl AtaDriver {
     }
 
     pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        // Check RAM disk (loaded by bootloader from ESP).
+        // RAM disk data is partition-relative (LBA 0 = partition start).
+        if let Some(buf) = crate::globals::ram_disk_buf() {
+            let offset = lba as usize * 512;
+            if offset + 512 <= buf.len() {
+                let mut data = [0u8; 512];
+                data.copy_from_slice(&buf[offset..offset + 512]);
+                return Ok(data);
+            }
+        }
         self.read_sector_inner(lba)
     }
 
@@ -174,6 +241,16 @@ impl AtaDriver {
     }
 
     fn read_sector_master_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+        if self.ahci_fallback {
+            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
+                return if self.is_secondary {
+                    ahci.read_sector_secondary_master(lba)
+                } else {
+                    ahci.read_sector_master(lba)
+                }.map_err(|_| AtaError::Error);
+            }
+        }
+
         self.wait_not_busy()?;
 
         unsafe {
@@ -199,6 +276,17 @@ impl AtaDriver {
 
     fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
         let abs_lba = self.base_lba.wrapping_add(lba);
+
+        if self.ahci_fallback {
+            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
+                return if self.is_secondary {
+                    ahci.read_sector_secondary(abs_lba)
+                } else {
+                    ahci.read_sector(abs_lba)
+                }.map_err(|_| AtaError::Error);
+            }
+        }
+
         self.wait_not_busy()?;
 
         unsafe {
@@ -231,6 +319,15 @@ impl AtaDriver {
         let total_bytes = (count as usize) * 512;
         if buf.len() < total_bytes {
             return Err(AtaError::Error);
+        }
+        if self.ahci_fallback {
+            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
+                return if self.is_secondary {
+                    ahci.read_secondary_sectors(lba, count, buf)
+                } else {
+                    ahci.read_sectors(lba, count, buf)
+                }.map_err(|_| AtaError::Error);
+            }
         }
         self.wait_not_busy()?;
         unsafe {

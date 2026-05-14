@@ -1,36 +1,23 @@
 #!/bin/bash
+# NeoDOS QEMU Debug Session (v0.10.3)
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-
-DISK_IMAGE="$PROJECT_ROOT/disk_image.img"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE.fd"
-OVMF_VARS_TEMPLATE="/usr/share/OVMF/OVMF_VARS.fd"
-OVMF_VARS="/tmp/OVMF_VARS_$$.fd"
+OVMF_VARS_TMPL="/usr/share/OVMF/OVMF_VARS.fd"
+DISK_IMAGE="$PROJECT_ROOT/disk_image.img"
+
+if [ ! -f "$DISK_IMAGE" ]; then
+    echo "[!] Disk image not found: $DISK_IMAGE"
+    echo "[!] Run bash scripts/build.sh first."
+    exit 1
+fi
 
 echo "[*] NeoDOS QEMU Debug Session"
 echo ""
 
-# Check required files
-if [ ! -f "$DISK_IMAGE" ]; then
-    echo "[!] Disk image not found: $DISK_IMAGE"
-    echo "    Run: bash scripts/build.sh"
-    exit 1
-fi
-
-if [ ! -f "$OVMF_CODE" ]; then
-    echo "[!] OVMF firmware not found: $OVMF_CODE"
-    echo "    Install: sudo apt install ovmf"
-    exit 1
-fi
-
-if [ ! -f "$OVMF_VARS_TEMPLATE" ]; then
-    echo "[!] OVMF VARS template not found: $OVMF_VARS_TEMPLATE"
-    exit 1
-fi
-
-# Create temporary OVMF_VARS
-cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+# Create a temporary copy of OVMF_VARS to avoid permission issues and keep state clean
+OVMF_VARS="/tmp/OVMF_VARS_$RANDOM.fd"
+cp "$OVMF_VARS_TMPL" "$OVMF_VARS"
 echo "[+] Created temporary OVMF_VARS: $OVMF_VARS"
 
 echo ""
@@ -53,14 +40,12 @@ echo "[+] QEMU accelerator: $ACCEL"
 echo ""
 
 qemu-system-x86_64 \
-  -machine pc,accel=$ACCEL \
+  -machine q35,accel=$ACCEL \
   -monitor telnet:127.0.0.1:4444,server,nowait \
   -gdb tcp::1234 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   -drive format=raw,file="$DISK_IMAGE",index=0,media=disk \
-  -device piix3-usb-uhci \
-  -device usb-kbd \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 
@@ -74,5 +59,3 @@ echo ""
 
 # Cleanup
 rm -f "$OVMF_VARS" 2>/dev/null || true
-
-exit $EXIT_CODE

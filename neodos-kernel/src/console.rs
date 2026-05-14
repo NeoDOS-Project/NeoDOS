@@ -42,6 +42,17 @@ pub fn init() {
     // Legacy VGA init could go here, but we are using GOP
 }
 
+fn console_max_row() -> usize {
+    unsafe {
+        if let Some(ref r) = RENDERER {
+            let max_rows = r.fb.height / font::FONT_HEIGHT;
+            max_rows.min(VGA_HEIGHT).max(1)
+        } else {
+            VGA_HEIGHT
+        }
+    }
+}
+
 pub fn write_char(c: u8) {
     unsafe {
         match c {
@@ -57,19 +68,22 @@ pub fn write_char(c: u8) {
                 draw_char_at(b' ', ROW, COL, 0x000000);
             }
             c => {
-                draw_char_at(c, ROW, COL, 0xFFFFFF); // White text
+                draw_char_at(c, ROW, COL, 0xFFFFFF);
                 COL += 1;
             }
         }
 
-        if COL >= VGA_WIDTH {
+        let max_row = console_max_row();
+        let max_col = console_width();
+
+        if COL >= max_col {
             COL = 0;
             ROW += 1;
         }
 
-        if ROW >= VGA_HEIGHT {
+        if ROW >= max_row {
             scroll();
-            ROW = VGA_HEIGHT - 1;
+            ROW = max_row - 1;
             COL = 0;
         }
     }
@@ -87,7 +101,10 @@ fn scroll() {
             let fb = r.fb.base_address as *mut u32;
             let stride = r.fb.stride;
             let row_h = font::FONT_HEIGHT;
-            let rows_total = VGA_HEIGHT * row_h;
+            let fb_height_pixels = r.fb.height;
+            let visible_rows = fb_height_pixels / row_h;
+            if visible_rows < 2 { return; }
+            let rows_total = visible_rows * row_h;
 
             // Shift all pixel rows up by one character row
             core::ptr::copy(
@@ -123,10 +140,14 @@ pub fn print_str(s: &str) {
 
 pub fn draw_cursor(visible: bool) {
     unsafe {
+        let max_row = console_max_row();
+        let max_col = console_width();
+        let r = ROW.min(max_row - 1);
+        let c = COL.min(max_col - 1);
         if visible {
-            draw_char_at(b'_', ROW, COL, 0xFFFFFF);
+            draw_char_at(b'_', r, c, 0xFFFFFF);
         } else {
-            draw_char_at(b' ', ROW, COL, 0x000000);
+            draw_char_at(b' ', r, c, 0x000000);
         }
     }
 }
@@ -137,6 +158,16 @@ pub fn clear_screen() {
         COL = 0;
         if let Some(ref r) = RENDERER {
             r.clear(0x000000);
+        }
+    }
+}
+
+fn console_width() -> usize {
+    unsafe {
+        if let Some(ref r) = RENDERER {
+            (r.fb.width / font::FONT_WIDTH).min(VGA_WIDTH).max(1)
+        } else {
+            VGA_WIDTH
         }
     }
 }
