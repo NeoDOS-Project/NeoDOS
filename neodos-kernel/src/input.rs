@@ -5,61 +5,69 @@
 // masks interrupts around its critical section to prevent the producer
 // from observing an inconsistent state.
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 const INPUT_BUFFER_SIZE: usize = 1024;
 
 pub struct InputBuffer {
     buffer: [u8; INPUT_BUFFER_SIZE],
-    head: usize,
-    tail: usize,
+    head: AtomicUsize,
+    tail: AtomicUsize,
 }
 
 impl InputBuffer {
     pub const fn new() -> Self {
         InputBuffer {
             buffer: [0; INPUT_BUFFER_SIZE],
-            head: 0,
-            tail: 0,
+            head: AtomicUsize::new(0),
+            tail: AtomicUsize::new(0),
         }
     }
 
-    pub fn push(&mut self, byte: u8) -> Result<(), ()> {
-        let next = (self.tail + 1) % INPUT_BUFFER_SIZE;
-        if next == self.head {
+    pub fn push(&self, byte: u8) -> Result<(), ()> {
+        let head = self.head.load(Ordering::Acquire);
+        let tail = self.tail.load(Ordering::Relaxed);
+        
+        let next = (tail + 1) % INPUT_BUFFER_SIZE;
+        if next == head {
             return Err(());
         }
-        self.buffer[self.tail] = byte;
-        self.tail = next;
+
+        unsafe {
+            let ptr = self.buffer.as_ptr() as *mut u8;
+            ptr.add(tail).write(byte);
+        }
+        
+        self.tail.store(next, Ordering::Release);
         Ok(())
     }
 
-    pub fn pop(&mut self) -> Option<u8> {
-        if self.head == self.tail {
+    pub fn pop(&self) -> Option<u8> {
+        let tail = self.tail.load(Ordering::Acquire);
+        let head = self.head.load(Ordering::Relaxed);
+        
+        if head == tail {
             return None;
         }
-        let byte = self.buffer[self.head];
-        self.head = (self.head + 1) % INPUT_BUFFER_SIZE;
+
+        let byte = unsafe {
+            let ptr = self.buffer.as_ptr();
+            ptr.add(head).read()
+        };
+        
+        let next = (head + 1) % INPUT_BUFFER_SIZE;
+        self.head.store(next, Ordering::Release);
+        
         Some(byte)
     }
 }
 
-static mut INPUT_BUFFER: InputBuffer = InputBuffer::new();
+static INPUT_BUFFER: InputBuffer = InputBuffer::new();
 
 pub fn push_byte(byte: u8) {
-    unsafe {
-        let _ = INPUT_BUFFER.push(byte);
-    }
+    let _ = INPUT_BUFFER.push(byte);
 }
 
 pub fn pop_byte() -> Option<u8> {
-    unsafe {
-        let mut flags: u64;
-        core::arch::asm!("pushfq; pop {}", lateout(reg) flags);
-        let if_set = (flags & 0x200) != 0;
-        core::arch::asm!("cli");
-
-        let byte = INPUT_BUFFER.pop();
-
-        if if_set { core::arch::asm!("sti"); }
-        byte
-    }
+    INPUT_BUFFER.pop()
 }

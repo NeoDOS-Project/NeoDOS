@@ -119,7 +119,7 @@ pub unsafe fn init_custom_page_tables() {
     //      to a Write-Back framebuffer stay in the cache while the scanout
     //      reads directly from physical DRAM, causing a "slow sweep" as
     //      dirty lines are gradually evicted.
-    if let Some(ref renderer) = crate::graphics::RENDERER {
+    if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
         let fb_start = renderer.fb.base_address;
         let fb_size = renderer.fb.size;
         if fb_size > 0 && fb_start < 0x1_0000_0000 {
@@ -144,7 +144,7 @@ pub unsafe fn init_custom_page_tables() {
 
     // 4. Map framebuffer if it's above 4 GiB.
     //    This is common on real hardware with discrete GPUs.
-    if let Some(ref renderer) = crate::graphics::RENDERER {
+    if let Some(ref renderer) = *crate::graphics::RENDERER.lock() {
         let fb_start = renderer.fb.base_address;
         let fb_size = renderer.fb.size as u64;
         if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {

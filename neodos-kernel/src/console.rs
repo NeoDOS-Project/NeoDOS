@@ -7,8 +7,11 @@ use crate::font;
 const VGA_WIDTH: usize = 160;
 const VGA_HEIGHT: usize = 50;
 
-static mut ROW: usize = 0;
-static mut COL: usize = 0;
+use core::sync::atomic::{AtomicUsize, Ordering};
+use spin::Mutex;
+
+static ROW: AtomicUsize = AtomicUsize::new(0);
+static COL: AtomicUsize = AtomicUsize::new(0);
 
 pub struct VgaWriter;
 
@@ -43,50 +46,52 @@ pub fn init() {
 }
 
 fn console_max_row() -> usize {
-    unsafe {
-        if let Some(ref r) = RENDERER {
-            let max_rows = r.fb.height / font::FONT_HEIGHT;
-            max_rows.min(VGA_HEIGHT).max(1)
-        } else {
-            VGA_HEIGHT
-        }
+    if let Some(ref r) = *RENDERER.lock() {
+        let max_rows = r.fb.height / font::FONT_HEIGHT;
+        max_rows.min(VGA_HEIGHT).max(1)
+    } else {
+        VGA_HEIGHT
     }
 }
 
 pub fn write_char(c: u8) {
-    unsafe {
-        match c {
-            b'\n' => {
-                ROW += 1;
-                COL = 0;
-            }
-            b'\r' => {
-                COL = 0;
-            }
-            b'\x08' => {
-                if COL > 0 { COL -= 1; }
-                draw_char_at(b' ', ROW, COL, 0x000000);
-            }
-            c => {
-                draw_char_at(c, ROW, COL, 0xFFFFFF);
-                COL += 1;
-            }
+    let mut r = ROW.load(Ordering::SeqCst);
+    let mut col = COL.load(Ordering::SeqCst);
+
+    match c {
+        b'\n' => {
+            r += 1;
+            col = 0;
         }
-
-        let max_row = console_max_row();
-        let max_col = console_width();
-
-        if COL >= max_col {
-            COL = 0;
-            ROW += 1;
+        b'\r' => {
+            col = 0;
         }
-
-        if ROW >= max_row {
-            scroll();
-            ROW = max_row - 1;
-            COL = 0;
+        b'\x08' => {
+            if col > 0 { col -= 1; }
+            draw_char_at(b' ', r, col, 0x000000);
+        }
+        c => {
+            draw_char_at(c, r, col, 0xFFFFFF);
+            col += 1;
         }
     }
+
+    let max_row = console_max_row();
+    let max_col = console_width();
+
+    if col >= max_col {
+        col = 0;
+        r += 1;
+    }
+
+    if r >= max_row {
+        scroll();
+        r = max_row - 1;
+        col = 0;
+    }
+
+    ROW.store(r, Ordering::SeqCst);
+    COL.store(col, Ordering::SeqCst);
 }
 
 fn draw_char_at(c: u8, row: usize, col: usize, color: u32) {
@@ -96,17 +101,17 @@ fn draw_char_at(c: u8, row: usize, col: usize, color: u32) {
 }
 
 fn scroll() {
-    unsafe {
-        if let Some(ref r) = RENDERER {
-            let fb = r.fb.base_address as *mut u32;
-            let stride = r.fb.stride;
-            let row_h = font::FONT_HEIGHT;
-            let fb_height_pixels = r.fb.height;
-            let visible_rows = fb_height_pixels / row_h;
-            if visible_rows < 2 { return; }
-            let rows_total = visible_rows * row_h;
+    if let Some(ref r) = *RENDERER.lock() {
+        let fb = r.fb.base_address as *mut u32;
+        let stride = r.fb.stride;
+        let row_h = font::FONT_HEIGHT;
+        let fb_height_pixels = r.fb.height;
+        let visible_rows = fb_height_pixels / row_h;
+        if visible_rows < 2 { return; }
+        let rows_total = visible_rows * row_h;
 
-            // Shift all pixel rows up by one character row
+        // Shift all pixel rows up by one character row
+        unsafe {
             core::ptr::copy(
                 fb.add(row_h * stride),
                 fb,
@@ -139,36 +144,30 @@ pub fn print_str(s: &str) {
 }
 
 pub fn draw_cursor(visible: bool) {
-    unsafe {
-        let max_row = console_max_row();
-        let max_col = console_width();
-        let r = ROW.min(max_row - 1);
-        let c = COL.min(max_col - 1);
-        if visible {
-            draw_char_at(b'_', r, c, 0xFFFFFF);
-        } else {
-            draw_char_at(b' ', r, c, 0x000000);
-        }
+    let max_row = console_max_row();
+    let max_col = console_width();
+    let r = ROW.load(Ordering::SeqCst).min(max_row - 1);
+    let c = COL.load(Ordering::SeqCst).min(max_col - 1);
+    if visible {
+        draw_char_at(b'_', r, c, 0xFFFFFF);
+    } else {
+        draw_char_at(b' ', r, c, 0x000000);
     }
 }
 
 pub fn clear_screen() {
-    unsafe {
-        ROW = 0;
-        COL = 0;
-        if let Some(ref r) = RENDERER {
-            r.clear(0x000000);
-        }
+    ROW.store(0, Ordering::SeqCst);
+    COL.store(0, Ordering::SeqCst);
+    if let Some(ref r) = *RENDERER.lock() {
+        r.clear(0x000000);
     }
 }
 
 fn console_width() -> usize {
-    unsafe {
-        if let Some(ref r) = RENDERER {
-            (r.fb.width / font::FONT_WIDTH).min(VGA_WIDTH).max(1)
-        } else {
-            VGA_WIDTH
-        }
+    if let Some(ref r) = *RENDERER.lock() {
+        (r.fb.width / font::FONT_WIDTH).min(VGA_WIDTH).max(1)
+    } else {
+        VGA_WIDTH
     }
 }
 

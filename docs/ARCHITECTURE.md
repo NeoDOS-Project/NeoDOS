@@ -111,14 +111,20 @@ NeoDOS supports modular drivers loaded as user-mode processes:
 - Polls with `sys_ioctl(device_id, 0, 0, 0)` for events
 
 ## Kernel Subsystems (High-Level)
-
 - **arch/x64**: GDT, IDT, PIC, paging, interrupt handlers
-- **drivers**: ATA + keyboard + device event infrastructure
+- **drivers**: ATA, AHCI, keyboard, device event infrastructure
 - **buffer**: block cache
-- **fs**: NeoDOS filesystem + minimal VFS helpers + drive letter manager
-- **shell**: DOS-like shell and built-in commands (`HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `CPUINFO`, `MEM`, `LOAD`, `DEVICESEND`, …)
-- **scheduler**: round-robin scheduler used by the timer ISR when processes exist; idle process is always available
-- **usermode**: Ring 3 execution support for drivers and user binaries
+- **fs**: NeoDOS filesystem, FAT32 driver, minimal VFS helpers, drive letter manager
+- **shell**: DOS-like shell and built-in commands
+- **scheduler**: round-robin scheduler used by the timer ISR
+- **usermode**: Ring 3 execution support
+
+## Kernel Safety and Synchronization (v0.10.4+)
+The kernel architecture prioritizes memory safety and reentrancy:
+- **Global State**: Managed via `spin::Mutex<Option<T>>`. Access is performed through synchronized helpers (e.g., `with_fs`, `with_ata`).
+- **Atomic State**: Console cursor positions (`ROW`/`COL`), timer ticks, and flags use atomic types (`AtomicUsize`, `AtomicBool`).
+- **Reentrancy**: This model prevents data races and undefined behavior when interrupts (like the timer) occur during syscall execution.
+- **Input Buffer**: Implements a lock-free Single-Producer/Single-Consumer ring buffer using atomic head/tail indices.
 
 ## Syscall Table (INT 0x80)
 

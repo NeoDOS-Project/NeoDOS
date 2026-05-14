@@ -89,6 +89,9 @@ pub struct AtaDriver {
     is_secondary: bool,
 }
 
+unsafe impl Send for AtaDriver {}
+unsafe impl Sync for AtaDriver {}
+
 #[derive(Debug)]
 pub enum AtaError {
     Busy,
@@ -153,12 +156,14 @@ impl AtaDriver {
         let abs_lba = self.base_lba.wrapping_add(lba);
 
         if self.ahci_fallback {
-            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
-                return if self.is_secondary {
-                    ahci.write_sector(abs_lba, data)
-                } else {
-                    ahci.write_sector(abs_lba, data)
-                };
+            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
+                if let Some(ahci) = ahci_lock.as_mut() {
+                    return if self.is_secondary {
+                        ahci.write_sector(abs_lba, data)
+                    } else {
+                        ahci.write_sector(abs_lba, data)
+                    };
+                }
             }
         }
 
@@ -242,12 +247,14 @@ impl AtaDriver {
 
     fn read_sector_master_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
         if self.ahci_fallback {
-            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
-                return if self.is_secondary {
-                    ahci.read_sector_secondary_master(lba)
-                } else {
-                    ahci.read_sector_master(lba)
-                }.map_err(|_| AtaError::Error);
+            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
+                if let Some(ahci) = ahci_lock.as_mut() {
+                    return if self.is_secondary {
+                        ahci.read_sector_secondary_master(lba)
+                    } else {
+                        ahci.read_sector_master(lba)
+                    }.map_err(|_| AtaError::Error);
+                }
             }
         }
 
@@ -278,12 +285,14 @@ impl AtaDriver {
         let abs_lba = self.base_lba.wrapping_add(lba);
 
         if self.ahci_fallback {
-            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
-                return if self.is_secondary {
-                    ahci.read_sector_secondary(abs_lba)
-                } else {
-                    ahci.read_sector(abs_lba)
-                }.map_err(|_| AtaError::Error);
+            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
+                if let Some(ahci) = ahci_lock.as_mut() {
+                    return if self.is_secondary {
+                        ahci.read_sector_secondary(abs_lba)
+                    } else {
+                        ahci.read_sector(abs_lba)
+                    }.map_err(|_| AtaError::Error);
+                }
             }
         }
 
@@ -321,12 +330,14 @@ impl AtaDriver {
             return Err(AtaError::Error);
         }
         if self.ahci_fallback {
-            if let Some(ahci) = unsafe { crate::globals::AHCI_DRIVER.as_mut() } {
-                return if self.is_secondary {
-                    ahci.read_secondary_sectors(lba, count, buf)
-                } else {
-                    ahci.read_sectors(lba, count, buf)
-                }.map_err(|_| AtaError::Error);
+            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
+                if let Some(ahci) = ahci_lock.as_mut() {
+                    return if self.is_secondary {
+                        ahci.read_secondary_sectors(lba, count, buf)
+                    } else {
+                        ahci.read_sectors(lba, count, buf)
+                    }.map_err(|_| AtaError::Error);
+                }
             }
         }
         self.wait_not_busy()?;

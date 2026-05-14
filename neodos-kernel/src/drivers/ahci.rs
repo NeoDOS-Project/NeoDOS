@@ -159,6 +159,10 @@ pub struct AhciDriver {
     caps: u32,
 }
 
+unsafe impl Send for AhciDriver {}
+unsafe impl Sync for AhciDriver {}
+
+
 pub struct AhciInfo {
     pub bus: u8,
     pub device: u8,

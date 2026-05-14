@@ -226,16 +226,14 @@ pub const FONT: [[u8; 16]; 256] = {
 use crate::graphics::RENDERER;
 
 pub fn draw_char(c: u8, x: usize, y: usize, color: u32) {
-    unsafe {
-        if let Some(ref r) = RENDERER {
-            let font_char = FONT[c as usize];
-            for (row, byte) in font_char.iter().enumerate() {
-                for col in 0..8 {
-                    if (byte & (0x80 >> col)) != 0 {
-                        r.put_pixel(x + col, y + row, color);
-                    } else {
-                        r.put_pixel(x + col, y + row, 0x000000);
-                    }
+    if let Some(ref r) = *RENDERER.lock() {
+        let font_char = FONT[c as usize];
+        for (row, byte) in font_char.iter().enumerate() {
+            for col in 0..8 {
+                if (byte & (0x80 >> col)) != 0 {
+                    r.put_pixel(x + col, y + row, color);
+                } else {
+                    r.put_pixel(x + col, y + row, 0x000000);
                 }
             }
         }

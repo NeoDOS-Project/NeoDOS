@@ -69,8 +69,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::keyboard::set_leds(0b100); // Caps Lock ON = kernel entry
 
     // 1b. Set up RAM disk from bootloader-loaded FS image
-    globals::RAM_DISK_BASE = boot_info.fs_image_addr;
-    globals::RAM_DISK_SIZE = boot_info.fs_image_size;
+    globals::RAM_DISK_BASE.store(boot_info.fs_image_addr, core::sync::atomic::Ordering::Relaxed);
+    globals::RAM_DISK_SIZE.store(boot_info.fs_image_size, core::sync::atomic::Ordering::Relaxed);
 
     // 2. Setup Serial for output
     arch::x64::init_serial();
@@ -128,14 +128,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 3: Storage stack
     // ============================================
     println!("[+] Initializing ATA drivers...");
-    globals::ATA_DRIVER = Some(AtaDriver::new(AtaChannel::Primary));
-    globals::ATA_DRIVER_SECONDARY = Some(AtaDriver::new(AtaChannel::Secondary));
+    *globals::ATA_DRIVER.lock() = Some(AtaDriver::new(AtaChannel::Primary));
+    *globals::ATA_DRIVER_SECONDARY.lock() = Some(AtaDriver::new(AtaChannel::Secondary));
 
     println!("[+] Scanning PCI for IDE bus-master DMA...");
     if let Some(ide) = pci::find_ide_controller() {
         pci::enable_bus_master(&ide);
-        globals::ATA_DRIVER.as_mut().unwrap().init_dma(ide.bus_master_base);
-        globals::ATA_DRIVER_SECONDARY.as_mut().unwrap().init_dma(ide.bus_master_base + 8);
+        globals::ATA_DRIVER.lock().as_mut().unwrap().init_dma(ide.bus_master_base);
+        globals::ATA_DRIVER_SECONDARY.lock().as_mut().unwrap().init_dma(ide.bus_master_base + 8);
         println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
     } else {
         println!("[!] No IDE bus-master controller found, using PIO");
@@ -145,10 +145,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let mut ahci_results = drivers::ahci::AhciDriver::probe_all();
     if let Some(ahci) = ahci_results[0].take() {
         let port_count = ahci.port_count;
-        globals::AHCI_DRIVER = Some(ahci);
-        globals::ATA_DRIVER.as_mut().unwrap().ahci_fallback = true;
+        *globals::AHCI_DRIVER.lock() = Some(ahci);
+        globals::ATA_DRIVER.lock().as_mut().unwrap().ahci_fallback = true;
         if port_count >= 2 {
-            globals::ATA_DRIVER_SECONDARY.as_mut().unwrap().ahci_fallback = true;
+            globals::ATA_DRIVER_SECONDARY.lock().as_mut().unwrap().ahci_fallback = true;
             println!("[+] AHCI: {} ports — fallback enabled for both ATA channels", port_count);
         } else {
             println!("[+] AHCI: 1 port — fallback enabled for primary ATA only");
@@ -157,8 +157,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[-] No AHCI controller found");
     }
 
-    let ata = globals::ATA_DRIVER.as_mut().unwrap();
-    let ata2 = globals::ATA_DRIVER_SECONDARY.as_mut().unwrap();
+    let mut ata_lock = globals::ATA_DRIVER.lock();
+    let mut ata2_lock = globals::ATA_DRIVER_SECONDARY.lock();
+    let ata = ata_lock.as_mut().unwrap();
+    let ata2 = ata2_lock.as_mut().unwrap();
 
     // Scan GPT on both physical disks
     println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
@@ -175,8 +177,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     println!("[+] Initializing Block Cache...");
-    globals::BLOCK_CACHE = Some(BlockCache::new());
-    let cache = globals::BLOCK_CACHE.as_mut().unwrap();
+    *globals::BLOCK_CACHE.lock() = Some(BlockCache::new());
+    let mut cache_lock = globals::BLOCK_CACHE.lock();
+    let cache = cache_lock.as_mut().unwrap();
 
     println!("[+] Reading Superblock...");
     let sb_data = match ata.read_sector(0) {
@@ -187,10 +190,12 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
         Ok(fs) => {
-            globals::NEODOS_FS = Some(fs);
+            *globals::NEODOS_FS.lock() = Some(fs);
             println!("[+] NeoDOS FS mounted");
-    let _ = globals::NEODOS_FS.as_mut().unwrap().rebuild_bitmap(cache, ata);
-    println!("[+] Block bitmap rebuilt");
+            let mut fs_lock = globals::NEODOS_FS.lock();
+            let _ = fs_lock.as_mut().unwrap().rebuild_bitmap(cache, ata);
+            println!("[+] Block bitmap rebuilt");
+            core::mem::drop(fs_lock);
         },
         Err(_) => panic!("Failed to mount filesystem"),
     }
@@ -230,11 +235,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         ata.set_base_lba(part.start_lba as u32);
     }
 
+    // Explicitly drop locks before FAT32 and Shell
+    core::mem::drop(cache_lock);
+    core::mem::drop(ata_lock);
+    core::mem::drop(ata2_lock);
+
     // ============================================
     // FAT32: Read boot partition
     // ============================================
     println!("[+] Initializing FAT32 driver...");
-    globals::FAT32_DRIVER = Fat32Driver::new(ata).ok();
+    *globals::FAT32_DRIVER.lock() = Fat32Driver::new(globals::ATA_DRIVER.lock().as_mut().unwrap()).ok();
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
@@ -249,16 +259,20 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 4: Start DOS Shell
     // ============================================
-    println!("[+] Starting NeoDOS Shell...");
-
     testing::register_tests();
     
+    let mut fs_lock = globals::NEODOS_FS.lock();
+    let mut cache_lock = globals::BLOCK_CACHE.lock();
+    let mut ata_lock = globals::ATA_DRIVER.lock();
+    let mut ata2_lock = globals::ATA_DRIVER_SECONDARY.lock();
+    let mut fat32_lock = globals::FAT32_DRIVER.lock();
+
     let mut shell = shell::DosShell::new(
-        globals::NEODOS_FS.as_mut().unwrap(),
-        globals::BLOCK_CACHE.as_mut().unwrap(),
-        globals::ATA_DRIVER.as_mut().unwrap(),
-        globals::ATA_DRIVER_SECONDARY.as_mut().unwrap(),
-        globals::FAT32_DRIVER.take(),
+        fs_lock.as_mut().unwrap(),
+        cache_lock.as_mut().unwrap(),
+        ata_lock.as_mut().unwrap(),
+        ata2_lock.as_mut().unwrap(),
+        fat32_lock.take(),
         extra_volumes
     );
     

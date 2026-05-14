@@ -293,22 +293,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
             serial_println!("[syscall] sys_open('{}')", path);
 
-            let result = unsafe {
-                let fs = match crate::globals::NEODOS_FS.as_mut() {
-                    Some(fs) => fs,
-                    None => return u64::MAX,
-                };
-                let cache = match crate::globals::BLOCK_CACHE.as_mut() {
-                    Some(c) => c,
-                    None => return u64::MAX,
-                };
-                let ata = match crate::globals::ATA_DRIVER.as_mut() {
-                    Some(a) => a,
-                    None => return u64::MAX,
-                };
-
+            let result = crate::globals::with_all(|fs, cache, ata| {
                 fs.find_file_in_directory(0, path, cache, ata)
-            };
+            });
 
             match result {
                 Ok(inode_num) => {
@@ -340,22 +327,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
 
-            let result = unsafe {
-                let fs = match crate::globals::NEODOS_FS.as_mut() {
-                    Some(fs) => fs,
-                    None => return u64::MAX,
-                };
-                let cache = match crate::globals::BLOCK_CACHE.as_mut() {
-                    Some(c) => c,
-                    None => return u64::MAX,
-                };
-                let ata = match crate::globals::ATA_DRIVER.as_mut() {
-                    Some(a) => a,
-                    None => return u64::MAX,
-                };
-
+            let result = crate::globals::with_all(|fs, cache, ata| {
                 fs.read_file_to_buf(inode_num, &mut temp_buf, cache, ata)
-            };
+            });
 
             match result {
                 Ok(bytes_read) => {
@@ -394,22 +368,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 core::ptr::copy_nonoverlapping(buf_ptr, temp_buf.as_mut_ptr(), count);
             }
 
-            let result = unsafe {
-                let fs = match crate::globals::NEODOS_FS.as_mut() {
-                    Some(fs) => fs,
-                    None => return u64::MAX,
-                };
-                let cache = match crate::globals::BLOCK_CACHE.as_mut() {
-                    Some(c) => c,
-                    None => return u64::MAX,
-                };
-                let ata = match crate::globals::ATA_DRIVER.as_mut() {
-                    Some(a) => a,
-                    None => return u64::MAX,
-                };
-
+            let result = crate::globals::with_all(|fs, cache, ata| {
                 fs.write_file(inode_num, &temp_buf, cache, ata)
-            };
+            });
 
             match result {
                 Ok(bytes_written) => {
