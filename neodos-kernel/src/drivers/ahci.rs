@@ -40,6 +40,7 @@ const CMD_CR: u32 = 0x8000;
 const CMD_FR: u32 = 0x4000;
 
 const SATA_SIG_ATA: u32 = 0x0000_0101;
+const SATA_SIG_ATAPI: u32 = 0xEB14_0101;
 const SATA_DET_PRESENT: u32 = 0x03;
 const SATA_IPM_ACTIVE: u32 = 0x01;
 
@@ -49,8 +50,14 @@ const TFD_ERR: u32 = 0x01;
 
 const CMD_ATA: u16 = 0x0000;
 const CFLAG_C: u16 = 1 << 15;
+const CFLAG_P: u16 = 1 << 6;
+const CFLAG_A: u16 = 1 << 13;
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
+const ATA_CMD_PACKET: u8 = 0xA0;
+const ATAPI_FEAT_DMA: u8 = 0x01;
+
+pub const ATAPI_SECTOR_SIZE: usize = 2048;
 
 #[derive(Copy, Clone)]
 #[repr(C, packed)]
@@ -137,9 +144,16 @@ static mut PORT_DMA_BUF: [[u8; DMA_BUF_SIZE]; MAX_PORTS] = [
     [0; DMA_BUF_SIZE],
 ];
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DeviceType {
+    Ata,
+    Atapi,
+}
+
 pub struct AhciDriver {
     hba: *mut u32,
     ports: [u8; MAX_PORTS],
+    port_types: [DeviceType; MAX_PORTS],
     pub port_count: usize,
     base_lba: u32,
     caps: u32,
@@ -225,25 +239,36 @@ impl AhciDriver {
                 if det != SATA_DET_PRESENT || ipm != SATA_IPM_ACTIVE {
                     continue;
                 }
-                if sig != SATA_SIG_ATA {
-                    serial_println!("[AHCI] Port {}: non-ATA sig=0x{:08x}, skipping", p, sig);
-                    continue;
-                }
 
-                serial_println!("[AHCI] Port {}: ATA device detected (SSTS=0x{:08x})", p, ssts);
+                let dev_type = if sig == SATA_SIG_ATA {
+                    DeviceType::Ata
+                } else if sig == SATA_SIG_ATAPI {
+                    DeviceType::Atapi
+                } else {
+                    serial_println!("[AHCI] Port {}: unknown sig=0x{:08x}, skipping", p, sig);
+                    continue;
+                };
+
+                serial_println!(
+                    "[AHCI] Port {}: {:?} detected (SSTS=0x{:08x})",
+                    p, dev_type, ssts
+                );
 
                 let mut ports = [0u8; MAX_PORTS];
                 ports[found] = p as u8;
+                let mut port_types = [DeviceType::Ata; MAX_PORTS];
+                port_types[found] = dev_type;
 
                 if found == 0 {
                     let mut driver = AhciDriver {
-                        hba, ports, port_count: 1, base_lba: 0, caps,
+                        hba, ports, port_types, port_count: 1, base_lba: 0, caps,
                     };
                     driver.port_init(0);
                     result[0] = Some(driver);
                 } else {
                     let driver = result[0].as_mut().unwrap();
                     driver.ports[found] = p as u8;
+                    driver.port_types[found] = dev_type;
                     driver.port_count = found + 1;
                     driver.port_init(found);
                 }
@@ -392,6 +417,170 @@ impl AhciDriver {
         self.dma_xfer(self.ports[0] as usize, abs_lba, cnt, true)
     }
 
+    pub fn port_type(&self, idx: usize) -> Option<DeviceType> {
+        if idx >= self.port_count { return None; }
+        Some(self.port_types[idx])
+    }
+
+    pub fn read_atapi_sector(&mut self, lba: u32) -> Result<[u8; ATAPI_SECTOR_SIZE], ()> {
+        if self.port_count < 1 || self.port_types[0] != DeviceType::Atapi {
+            return Err(());
+        }
+        let count = (DMA_BUF_SIZE / ATAPI_SECTOR_SIZE).min(1) as u8;
+        self.dma_packet(self.ports[0] as usize, lba, count, false)?;
+        let mut buf = [0u8; ATAPI_SECTOR_SIZE];
+        unsafe { buf.copy_from_slice(&PORT_DMA_BUF[0][..ATAPI_SECTOR_SIZE]); }
+        Ok(buf)
+    }
+
+    pub fn read_atapi_sectors(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), ()> {
+        if self.port_count < 1 || self.port_types[0] != DeviceType::Atapi {
+            return Err(());
+        }
+        let cnt = count.max(1).min((DMA_BUF_SIZE / ATAPI_SECTOR_SIZE) as u8);
+        let n = (cnt as usize) * ATAPI_SECTOR_SIZE;
+        if buf.len() < n { return Err(()); }
+        self.dma_packet(self.ports[0] as usize, lba, cnt, false)?;
+        unsafe { buf[..n].copy_from_slice(&PORT_DMA_BUF[0][..n]); }
+        Ok(())
+    }
+
+    pub fn read_atapi_sector_secondary(&mut self, lba: u32) -> Result<[u8; ATAPI_SECTOR_SIZE], ()> {
+        if self.port_count < 2 || self.port_types[1] != DeviceType::Atapi {
+            return Err(());
+        }
+        let count = (DMA_BUF_SIZE / ATAPI_SECTOR_SIZE).min(1) as u8;
+        self.dma_packet(self.ports[1] as usize, lba, count, false)?;
+        let mut buf = [0u8; ATAPI_SECTOR_SIZE];
+        unsafe { buf.copy_from_slice(&PORT_DMA_BUF[1][..ATAPI_SECTOR_SIZE]); }
+        Ok(buf)
+    }
+
+    pub fn read_atapi_sectors_secondary(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), ()> {
+        if self.port_count < 2 || self.port_types[1] != DeviceType::Atapi {
+            return Err(());
+        }
+        let cnt = count.max(1).min((DMA_BUF_SIZE / ATAPI_SECTOR_SIZE) as u8);
+        let n = (cnt as usize) * ATAPI_SECTOR_SIZE;
+        if buf.len() < n { return Err(()); }
+        self.dma_packet(self.ports[1] as usize, lba, cnt, false)?;
+        unsafe { buf[..n].copy_from_slice(&PORT_DMA_BUF[1][..n]); }
+        Ok(())
+    }
+
+    fn build_read10_cdb(lba: u32, count: u8) -> [u8; 12] {
+        [
+            0x28,
+            0x00,
+            (lba >> 24) as u8,
+            (lba >> 16) as u8,
+            (lba >> 8) as u8,
+            lba as u8,
+            0x00,
+            0x00,
+            count,
+            0x00,
+            0x00,
+            0x00,
+        ]
+    }
+
+    fn dma_packet(&mut self, port: usize, lba: u32, count: u8, _is_write: bool) -> Result<(), ()> {
+        let pi = self.ports.iter().position(|&p| p as usize == port).ok_or(())?;
+        let total = (count as usize) * ATAPI_SECTOR_SIZE;
+        let prd_used = ((total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
+
+        unsafe {
+            let p = port_reg(self.hba, port, 0);
+            let table = &mut PORT_CMD_TABLE[pi].0;
+
+            table.cfis = [0u8; 64];
+            table.acmd = [0u8; 16];
+            table.reserved = [0u8; 48];
+
+            let fis = FisRegH2D {
+                fis_type: 0x27,
+                pmport: 0x80,
+                command: ATA_CMD_PACKET,
+                features: ATAPI_FEAT_DMA,
+                lba0: 0,
+                lba1: 0,
+                lba2: 0,
+                device: 0x00,
+                lba3: 0,
+                lba4: 0,
+                lba5: 0,
+                features_exp: 0,
+                sector_count: count,
+                sector_count_exp: 0,
+                _res: 0,
+                control: 0,
+            };
+            let fis_bytes = &fis as *const FisRegH2D as *const u8;
+            for i in 0..64 { table.cfis[i] = fis_bytes.add(i).read(); }
+
+            let cdb = Self::build_read10_cdb(lba, count);
+            for i in 0..12 { table.acmd[i] = cdb[i]; }
+
+            for e in table.prdt.iter_mut() {
+                *e = EMPTY_PRD;
+            }
+            for i in 0..prd_used {
+                let off = i * DMA_BUF_SIZE;
+                let remain = total.saturating_sub(off);
+                let chunk = remain.min(DMA_BUF_SIZE);
+                let dma_phys = (&PORT_DMA_BUF[pi][off] as *const u8) as u32;
+                table.prdt[i].data_base = dma_phys;
+                table.prdt[i].data_base_hi = 0;
+                table.prdt[i].count = (chunk as u32 - 1) | 0x8000_0000;
+            }
+
+            fence(Ordering::Release);
+
+            let ctba = &PORT_CMD_TABLE[pi] as *const _ as u32;
+            let cl = &mut PORT_CMD_LIST[pi].0;
+            cl[0].opts = CMD_ATA | CFLAG_C | CFLAG_P | CFLAG_A;
+            cl[0].prdtl = prd_used as u16;
+            cl[0].prdbc = 0;
+            cl[0].ctba = ctba;
+            cl[0].ctba_hi = 0;
+            cl[1..].fill(EMPTY_CMD_HEADER);
+
+            p.add(PORT_IE / 4).write_volatile(0);
+            p.add(PORT_IS / 4).write_volatile(0xFFFFFFFF);
+
+            p.add(PORT_CI / 4).write_volatile(1);
+
+            for _ in 0..1000000 {
+                let ci = p.add(PORT_CI / 4).read_volatile();
+                if (ci & 1) == 0 { break; }
+            }
+
+            p.add(PORT_IE / 4).write_volatile(0);
+
+            if (p.add(PORT_CI / 4).read_volatile() & 1) != 0 {
+                serial_println!("[AHCI] PACKET timeout port={} lba={}", port, lba);
+                self.port_reset(pi);
+                return Err(());
+            }
+
+            let tfd = p.add(PORT_TFD / 4).read_volatile();
+            if (tfd & TFD_ERR) != 0 || (tfd & TFD_BSY) != 0 {
+                let serr = p.add(PORT_SERR / 4).read_volatile();
+                serial_println!(
+                    "[AHCI] PACKET error port={} lba={} TFD=0x{:02x} SERR=0x{:08x}",
+                    port, lba, tfd, serr
+                );
+                p.add(PORT_SERR / 4).write_volatile(serr);
+                self.port_reset(pi);
+                return Err(());
+            }
+
+            fence(Ordering::Acquire);
+            Ok(())
+        }
+    }
+
     fn dma_xfer(&mut self, port: usize, lba: u64, count: u8, is_write: bool) -> Result<(), ()> {
         let pi = self.ports.iter().position(|&p| p as usize == port).ok_or(())?;
         let total = (count as usize) * 512;
@@ -444,7 +633,7 @@ impl AhciDriver {
 
             let ctba = &PORT_CMD_TABLE[pi] as *const _ as u32;
             let cl = &mut PORT_CMD_LIST[pi].0;
-            cl[0].opts = CMD_ATA | CFLAG_C;
+            cl[0].opts = CMD_ATA | CFLAG_C | CFLAG_P;
             cl[0].prdtl = prd_used as u16;
             cl[0].prdbc = 0;
             cl[0].ctba = ctba;
