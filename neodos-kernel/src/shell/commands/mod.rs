@@ -43,7 +43,7 @@ use crate::shell::handler::COMMANDS;
 use crate::shell::shell::DosShell;
 
 impl<'a> DosShell<'a> {
-    pub fn dispatch_command(&mut self, cmd: &str, args: &[&str]) {
-        COMMANDS.dispatch(cmd, args, self);
+    pub fn dispatch_command(&mut self, cmd: &str, args: &[&str]) -> bool {
+        COMMANDS.dispatch(cmd, args, self)
     }
 }

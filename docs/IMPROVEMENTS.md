@@ -10,52 +10,19 @@
 
 ### 6. `Renderer::clear()` píxel a píxel
 
-**Archivo:** `graphics.rs:25`
-
-```rust
-for y in 0..self.fb.height {
-    for x in 0..self.fb.width {
-        self.put_pixel(x, y, color);
-    }
-}
-```
-
-En 1920×1080 son ~2 millones de iteraciones con llamada a función volátil cada una.
-
-**Propuesta:** Usar `memset` o `rep stosd`:
-```rust
-unsafe {
-    core::ptr::write_bytes(
-        self.fb.base_address as *mut u8,
-        color as u8,
-        self.fb.size,
-    );
-}
-```
+> **IMPLEMENTADO (v0.10.4):** Ya usa `rep stosd` en `graphics.rs:35-41`.
 
 ---
 
 ### 7. Asignación de bloques O(256×12)
 
-**Archivo:** `fs/neodos_fs.rs:allocate_block()`
-
-Para encontrar el siguiente bloque libre, recorre todos los inodos (256) y sus punteros directos (12). En el peor caso: 3072 iteraciones por cada bloque escrito.
-
-**Propuesta:** Implementar bitmap de bloques libres en el superbloque (o en un bloque dedicado). O(1) por asignación.
+> **IMPLEMENTADO (v0.10.4):** `BlockBitmap` con `alloc()` O(n) sobre 320 bytes (2560 bits) y `free()` O(1). `rebuild_bitmap()` escanea inodos solo al montar.
 
 ---
 
 ### 28. Block cache: solo 64 entradas
 
-**Archivo:** `buffer/block_cache.rs:5`
-
-```rust
-const CACHE_SIZE: usize = 64;
-```
-
-64 entradas = 32 KB de cache. Para un FS de múltiples MB, es muy pequeño.
-
-**Propuesta:** Aumentar a 256 o 512 entradas (128-256 KB).
+> **IMPLEMENTADO (v0.10.4):** Aumentado a 256 entradas = 128 KB. El comentario en `block_cache.rs:5` indica el cambio.
 
 ---
 
@@ -150,15 +117,7 @@ Las macros `print!` y `println!` escriben tanto a VGA como a serial, pero el có
 
 ### 35. Scheduler: solo 4 procesos máximos
 
-**Archivo:** `scheduler.rs:6`
-
-```rust
-const MAX_PROCESSES: usize = 4;
-```
-
-Límite muy bajo para cualquier uso práctico.
-
-**Propuesta:** Aumentar a 16 o 32 procesos.
+> **IMPLEMENTADO (v0.10.4):** Aumentado a 16 en `scheduler.rs:6`.
 
 ---
 
@@ -366,6 +325,6 @@ Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
 
 | Prioridad | Items |
 |-----------|-------|
-| Alta | #6 (clear píxel a píxel), #7 (allocate block), #9 (static mut), #28 (cache size), #35 (max processes), #41 (PATH resolution) |
+| Alta | #9 (static mut), #41 (PATH resolution) |
 | Media | #10 (unwrap), #17 (DIR /W), #18 (history), #20 (pop_byte cli/sti), #32 (COPY buffer), #33 (serial/VGA), #36 (quantum), #37 (FS integrity), #42 (redirection), #43 (quotes) |
-| Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #45 (double buffer), #47 (version check), #51 (deps) |
+| Baja | #22 (print macro), #24 (gap), #29 (paging), #30 (inode cache), #38 (extended attributes), #40 (PROMPT), #45 (double buffer), #51 (deps) |

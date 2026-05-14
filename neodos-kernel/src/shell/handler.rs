@@ -16,14 +16,14 @@ impl CommandRegistry {
         Self { commands }
     }
 
-    pub fn dispatch(&self, cmd: &str, args: &[&str], shell: &mut DosShell) {
+    pub fn dispatch(&self, cmd: &str, args: &[&str], shell: &mut DosShell) -> bool {
         for entry in self.commands {
             if cmd.eq_ignore_ascii_case(entry.name) {
                 (entry.handler)(shell, args);
-                return;
+                return true;
             }
         }
-        crate::println!("Bad command or file name");
+        false
     }
 
     pub fn print_help(&self) {

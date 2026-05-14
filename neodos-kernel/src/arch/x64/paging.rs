@@ -180,7 +180,7 @@ unsafe fn map_phys_range_above_4g(start: u64, end: u64, flags: PageTableFlags) {
 
     for addr in (start_aligned..end_aligned).step_by(HUGE_PAGE_SIZE as usize) {
         // 4..8 GiB → PML4[1], PDPT entry = (addr-4GiB) / 1GiB
-        let pml4_idx = 1;
+        let _pml4_idx = 1;
         let pdpt_idx = ((addr - 0x1_0000_0000) / (512 * HUGE_PAGE_SIZE)) as usize;
         let pd_idx = ((addr - 0x1_0000_0000) / HUGE_PAGE_SIZE as u64 % 512) as usize;
 

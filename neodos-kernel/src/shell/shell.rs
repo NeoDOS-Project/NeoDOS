@@ -11,6 +11,7 @@ use crate::input;
 use crate::print;
 use crate::println;
 use crate::shell::environment::Environment;
+use alloc::string::String;
 
 /// Logical path passed to [`NeoDosFs::resolve_directory_path`] (no `X:` prefix).
 pub(crate) enum VfsPath<'a> {
@@ -372,7 +373,67 @@ impl<'a> DosShell<'a> {
             }
         }
 
-        self.dispatch_command(cmd, &args_buf[..arg_count]);
+        if !self.dispatch_command(cmd, &args_buf[..arg_count]) {
+            self.run_path_command(cmd_raw, &args_buf[..arg_count]);
+        }
+    }
+
+    pub fn run_path_command(&mut self, cmd_raw: &str, _args: &[&str]) {
+        let path = self.environment.get("PATH").map(String::from).unwrap_or_default();
+        if path.is_empty() {
+            crate::println!("Bad command or file name");
+            return;
+        }
+
+        if cmd_raw.contains('\\') || cmd_raw.contains('/') || cmd_raw.contains('.') {
+            let run_args = [cmd_raw];
+            if cmd_raw.len() > 4 && cmd_raw[cmd_raw.len()-4..].eq_ignore_ascii_case(".BAT")
+            {
+                self.cmd_call(&run_args);
+            } else {
+                self.cmd_run(&run_args);
+            }
+            return;
+        }
+
+        let mut path_buf = [0u8; 260];
+        let cmd_upper = cmd_raw.to_ascii_uppercase();
+        let cmd_bytes = cmd_upper.as_bytes();
+        let extensions: &[&[u8]] = &[b"BIN", b"BAT"];
+
+        for dir in path.split(';') {
+            let dir = dir.trim();
+            if dir.is_empty() { continue; }
+            let dir_bytes = dir.as_bytes();
+
+            for &ext in extensions {
+                let mut pos = 0;
+                path_buf[pos..pos + dir_bytes.len()].copy_from_slice(dir_bytes);
+                pos += dir_bytes.len();
+                if dir_bytes.last() != Some(&b'\\') {
+                    path_buf[pos] = b'\\';
+                    pos += 1;
+                }
+                path_buf[pos..pos + cmd_bytes.len()].copy_from_slice(cmd_bytes);
+                pos += cmd_bytes.len();
+                path_buf[pos] = b'.';
+                pos += 1;
+                path_buf[pos..pos + 3].copy_from_slice(ext);
+                pos += 3;
+
+                let full_path = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
+                if self.resolve_file_inode(full_path).is_ok() {
+                    let run_args = [full_path];
+                    if ext == b"BAT" {
+                        self.cmd_call(&run_args);
+                    } else {
+                        self.cmd_run(&run_args);
+                    }
+                    return;
+                }
+            }
+        }
+        crate::println!("Bad command or file name");
     }
 
     pub fn check_config_sys(&mut self) {
