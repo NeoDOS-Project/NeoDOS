@@ -1,123 +1,42 @@
 // src/shell/shell.rs
 
-use crate::buffer::block_cache::BlockCache;
-use crate::drivers::ata::{AtaChannel, AtaDriver};
-use crate::drivers::fat32::Fat32Driver;
 use crate::drivers::usb_hid;
-use crate::fs::drive_manager::{DriveManager, DriveManagerError, FsInstanceId, InternalPath};
-use crate::fs::neodos_fs::{FsError, NeoDosFs, ROOT_INODE};
-use crate::fs::volume::Volume;
 use crate::input;
 use crate::print;
 use crate::println;
 use crate::shell::environment::Environment;
 use alloc::string::String;
+use alloc::vec::Vec;
 
-/// Logical path passed to [`NeoDosFs::resolve_directory_path`] (no `X:` prefix).
-pub(crate) enum VfsPath<'a> {
-    Borrowed(&'a str),
-    Internal(InternalPath),
-}
-
-impl VfsPath<'_> {
-    pub(crate) fn as_str(&self) -> Result<&str, DriveManagerError> {
-        match self {
-            VfsPath::Borrowed(s) => Ok(s),
-            VfsPath::Internal(p) => p.as_str(),
-        }
-    }
-}
-
-/// Normalize user input using only [`DriveManager`] (no `&mut` shell), so callers can
-/// run VFS operations afterward without borrow conflicts.
-pub(crate) fn vfs_path_from_drive_manager<'a>(
-    drive_manager: &DriveManager,
-    path: &'a str,
-) -> Result<(FsInstanceId, VfsPath<'a>), DriveManagerError> {
-    let bytes = path.as_bytes();
-    if bytes.len() >= 2 && bytes[1] == b':' {
-        let Some(&letter_byte) = bytes.first() else {
-            return Err(DriveManagerError::InvalidPath);
-        };
-        if !letter_byte.is_ascii_alphabetic() {
-            return Err(DriveManagerError::InvalidDriveLetter);
-        }
-        let (fs_id, internal) = drive_manager.resolve_dos_path(path)?;
-        Ok((fs_id, VfsPath::Internal(internal)))
-    } else {
-        Ok((FsInstanceId::PRIMARY, VfsPath::Borrowed(path)))
-    }
-}
-
-pub struct DosShell<'a> {
-    pub current_dir: [u8; 128],
-    pub current_dir_len: usize,
+pub struct DosShell {
+    pub current_dir: String,
     pub current_dir_inode: u32,
-    /// Active DOS drive letter (`b'A'`..=b'Z'`).
-    pub current_drive: u8,
-    pub drive_manager: DriveManager,
+    /// Active DOS drive letter ('A'..='Z').
+    pub current_drive: char,
     pub environment: Environment,
-    pub fs: &'a mut NeoDosFs,
-    pub cache: &'a mut BlockCache,
-    pub ata: &'a mut AtaDriver,
-    pub ata_secondary: &'a mut AtaDriver,
-    pub fat32: Option<Fat32Driver>,
-    pub extra_volumes: [Option<Volume>; 3],
     pub running: bool,
 }
 
-impl<'a> DosShell<'a> {
-    pub fn new(
-        fs: &'a mut NeoDosFs,
-        cache: &'a mut BlockCache,
-        ata: &'a mut AtaDriver,
-        ata_secondary: &'a mut AtaDriver,
-        fat32: Option<Fat32Driver>,
-        extra_volumes: [Option<Volume>; 3],
-    ) -> Self {
-        let mut drive_manager = DriveManager::new();
-
-        let mut system_drive = b'C';
+impl DosShell {
+    pub fn new() -> Self {
+        let mut system_drive = 'C';
         let environment = Environment::new();
 
         if let Some(drive_letter) = environment.get("SYSTEMDRIVE") {
             if let Some(first_char) = drive_letter.chars().next() {
                 if first_char.is_ascii_uppercase() {
-                    system_drive = first_char as u8;
+                    system_drive = first_char;
                 }
             }
         }
 
-        let _ = drive_manager.mount(system_drive as char, FsInstanceId::PRIMARY);
-        if fat32.is_some() {
-            let _ = drive_manager.mount('A', FsInstanceId::FAT32_ESP);
-        }
-
-        // Mount extra volumes as D:, E:, F:
-        let extra_ids = [FsInstanceId::VOLUME_1, FsInstanceId::VOLUME_2, FsInstanceId::VOLUME_3];
-        for (i, vol) in extra_volumes.iter().enumerate() {
-            if vol.is_some() {
-                let letter = (b'D' + i as u8) as char;
-                let _ = drive_manager.mount(letter, extra_ids[i]);
-            }
-        }
-
         let mut shell = DosShell {
-            current_dir: [0; 128],
-            current_dir_len: 1,
+            current_dir: String::from("\\"),
             current_dir_inode: 0,
             current_drive: system_drive,
-            drive_manager,
             environment,
-            fs,
-            cache,
-            ata,
-            ata_secondary,
-            fat32,
-            extra_volumes,
             running: true,
         };
-        shell.current_dir[0] = b'\\';
         shell.environment.set("PATH", "\\BIN;\\SYSTEM");
         shell.environment.set("PROMPT", "$P$G");
         if !shell.environment.get("SYSTEMDRIVE").is_some() {
@@ -127,93 +46,11 @@ impl<'a> DosShell<'a> {
         shell
     }
 
-    pub(crate) fn split_parent_and_leaf<'b>(&self, path: &'b str) -> (&'b str, &'b str) {
-        if let Some(idx) = path
-            .as_bytes()
-            .iter()
-            .rposition(|b| *b == b'\\' || *b == b'/')
-        {
-            (&path[..idx], &path[idx + 1..])
-        } else {
-            ("", path)
-        }
-    }
-
-    pub(crate) fn resolve_directory_arg_from_vfs(
-        &mut self,
-        vfs: VfsPath<'_>,
-    ) -> Result<(u32, [u8; 128], usize), FsError> {
-        let s = vfs.as_str().map_err(|_| FsError::FileNotFound)?;
-        self.fs.resolve_directory_path(
-            self.current_dir_inode,
-            &self.current_dir[..self.current_dir_len],
-            self.current_dir_len,
-            s,
-            self.cache,
-            self.ata,
-        )
-    }
-
-    /// Resolve a path for NeoDosFs only. Returns error for FAT32 ESP paths.
-    pub(crate) fn resolve_directory_arg(
-        &mut self,
-        path: &str,
-    ) -> Result<(u32, [u8; 128], usize), FsError> {
-        let dm = self.drive_manager;
-        let (fs_id, vfs) = vfs_path_from_drive_manager(&dm, path)
-            .map_err(|_| FsError::FileNotFound)?;
-        if fs_id != FsInstanceId::PRIMARY {
-            return Err(FsError::FileNotFound);
-        }
-        self.resolve_directory_arg_from_vfs(vfs)
-    }
-
-    pub(crate) fn resolve_file_inode(&mut self, path: &str) -> Result<u32, FsError> {
-        let (parent_path, leaf) = self.split_parent_and_leaf(path);
-        if leaf.is_empty() || leaf == "." || leaf == ".." {
-            return Err(FsError::FileNotFound);
-        }
-
-        let parent_inode = if parent_path.is_empty() {
-            self.current_dir_inode
-        } else {
-            let dm = self.drive_manager;
-            let (fs_id, parent_vfs) = vfs_path_from_drive_manager(&dm, parent_path)
-                .map_err(|_| FsError::FileNotFound)?;
-            if fs_id != FsInstanceId::PRIMARY {
-                return Err(FsError::FileNotFound);
-            }
-            self.resolve_directory_arg_from_vfs(parent_vfs)?.0
-        };
-        self.fs
-            .find_file_in_directory(parent_inode, leaf, self.cache, self.ata)
-    }
-
-    /// Drive letter to show in `DIR` header when user passes a drive-qualified path.
-    pub(crate) fn dir_display_drive(&self, path_arg: Option<&str>) -> char {
-        match path_arg {
-            Some(p) => {
-                let b = p.as_bytes();
-                if b.len() >= 2 && b[1] == b':' {
-                    p.chars()
-                        .next()
-                        .map(|c| c.to_ascii_uppercase())
-                        .unwrap_or(self.current_drive as char)
-                } else {
-                    self.current_drive as char
-                }
-            }
-            None => self.current_drive as char,
-        }
-    }
-
     pub fn run(&mut self) -> ! {
-        println!("NeoDOS v{} - FS Started", env!("CARGO_PKG_VERSION"));
+        println!("NeoDOS v{} - VFS Active", env!("CARGO_PKG_VERSION"));
         println!("Type HELP for a list of commands.");
 
         self.check_config_sys();
-        self.init_boot_drive_from_config();
-        self.check_autoexec();
 
         let mut idle_hits: u64 = 0;
 
@@ -243,12 +80,10 @@ impl<'a> DosShell<'a> {
                     crate::console::draw_cursor(cursor_visible);
                 }
 
-                // Poll USB keyboard if available
                 if usb_hid::has_usb_keyboard() {
                     usb_hid::poll_usb_keyboard();
                 }
 
-                // Input comes from IRQ1 keyboard handler which fills the buffer
                 if let Some(byte) = input::pop_byte() {
                     crate::console::draw_cursor(false);
                     cursor_visible = false;
@@ -327,22 +162,32 @@ impl<'a> DosShell<'a> {
     }
 
     fn print_prompt(&mut self, _idle_hits: u64) {
-        if let Ok(dir) = core::str::from_utf8(&self.current_dir[..self.current_dir_len]) {
-            crate::serial_print!("{}:{}> ", self.current_drive as char, dir);
-            print!("{}:{}> ", self.current_drive as char, dir);
-        } else {
-            crate::serial_print!("{}:\\> ", self.current_drive as char);
-            print!("{}:\\> ", self.current_drive as char);
-        }
-    }
-
-    pub(crate) fn volume_label(&self) -> &'static str {
-        "NEODOS"
+        print!("{}:{}> ", self.current_drive, self.current_dir);
+        crate::serial_print!("{}:{}> ", self.current_drive, self.current_dir);
     }
 
     pub fn execute_line(&mut self, line: &str) {
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            return;
+        }
+
+        // Handle drive change (e.g., "A:")
+        if trimmed.len() == 2 && trimmed.ends_with(':') {
+            let drive = trimmed.chars().next().unwrap().to_ascii_uppercase();
+            crate::globals::with_vfs(|vfs| {
+                if let Some(idx) = crate::fs::vfs::Vfs::drive_index(drive) {
+                    if vfs.drives[idx].is_some() {
+                        self.current_drive = drive;
+                        self.current_dir = String::from("\\");
+                        self.current_dir_inode = 0;
+                    } else {
+                        println!("Invalid drive");
+                    }
+                } else {
+                    println!("Invalid drive");
+                }
+            });
             return;
         }
 
@@ -374,78 +219,33 @@ impl<'a> DosShell<'a> {
         }
 
         if !self.dispatch_command(cmd, &args_buf[..arg_count]) {
-            self.run_path_command(cmd_raw, &args_buf[..arg_count]);
+            println!("Bad command or file name");
         }
     }
 
-    pub fn run_path_command(&mut self, cmd_raw: &str, _args: &[&str]) {
-        let path = self.environment.get("PATH").map(String::from).unwrap_or_default();
-        if path.is_empty() {
-            crate::println!("Bad command or file name");
-            return;
+    #[allow(dead_code)]
+    pub(crate) fn split_parent_and_leaf<'b>(&self, path: &'b str) -> (&'b str, &'b str) {
+        if let Some(idx) = path
+            .as_bytes()
+            .iter()
+            .rposition(|b| *b == b'\\' || *b == b'/')
+        {
+            (&path[..idx], &path[idx + 1..])
+        } else {
+            ("", path)
         }
-
-        if cmd_raw.contains('\\') || cmd_raw.contains('/') || cmd_raw.contains('.') {
-            let run_args = [cmd_raw];
-            if cmd_raw.len() > 4 && cmd_raw[cmd_raw.len()-4..].eq_ignore_ascii_case(".BAT")
-            {
-                self.cmd_call(&run_args);
-            } else {
-                self.cmd_run(&run_args);
-            }
-            return;
-        }
-
-        let mut path_buf = [0u8; 260];
-        let cmd_upper = cmd_raw.to_ascii_uppercase();
-        let cmd_bytes = cmd_upper.as_bytes();
-        let extensions: &[&[u8]] = &[b"BIN", b"BAT"];
-
-        for dir in path.split(';') {
-            let dir = dir.trim();
-            if dir.is_empty() { continue; }
-            let dir_bytes = dir.as_bytes();
-
-            for &ext in extensions {
-                let mut pos = 0;
-                path_buf[pos..pos + dir_bytes.len()].copy_from_slice(dir_bytes);
-                pos += dir_bytes.len();
-                if dir_bytes.last() != Some(&b'\\') {
-                    path_buf[pos] = b'\\';
-                    pos += 1;
-                }
-                path_buf[pos..pos + cmd_bytes.len()].copy_from_slice(cmd_bytes);
-                pos += cmd_bytes.len();
-                path_buf[pos] = b'.';
-                pos += 1;
-                path_buf[pos..pos + 3].copy_from_slice(ext);
-                pos += 3;
-
-                let full_path = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
-                if self.resolve_file_inode(full_path).is_ok() {
-                    let run_args = [full_path];
-                    if ext == b"BAT" {
-                        self.cmd_call(&run_args);
-                    } else {
-                        self.cmd_run(&run_args);
-                    }
-                    return;
-                }
-            }
-        }
-        crate::println!("Bad command or file name");
     }
 
     pub fn check_config_sys(&mut self) {
-        self.try_load_config("CONFIG.SYS");
-        self.try_load_config("SYSTEM\\CONFIG.SYS");
+        self.try_load_config("C:\\CONFIG.SYS");
+        self.try_load_config("C:\\SYSTEM\\CONFIG.SYS");
     }
 
     fn try_load_config(&mut self, path: &str) {
-        match self.resolve_file_inode(path) {
-            Ok(inode_num) => {
+        crate::globals::with_vfs(|vfs| {
+            if let Ok((drive_idx, node)) = vfs.resolve_path(path) {
                 let mut buf = [0u8; 4096];
-                if let Ok(read) = self.fs.read_file_to_buf(inode_num, &mut buf, self.cache, self.ata) {
+                if let Ok(read) = vfs.read(drive_idx, node.inode, 0, &mut buf) {
                     if let Ok(content) = core::str::from_utf8(&buf[..read]) {
                         for line in content.lines() {
                             let trimmed = line.trim();
@@ -463,105 +263,66 @@ impl<'a> DosShell<'a> {
                     }
                 }
             }
-            Err(_) => {}
-        }
-    }
-
-    pub fn check_autoexec(&mut self) {
-        match self.fs.find_file("AUTOEXEC.BAT", self.cache, self.ata) {
-            Ok(inode_num) => {
-                let mut buf = [0u8; 4096];
-                match self.fs.read_file_to_buf(inode_num, &mut buf, self.cache, self.ata) {
-                    Ok(read) => {
-                        if let Ok(content) = core::str::from_utf8(&buf[..read]) {
-                            println!("Executing AUTOEXEC.BAT...");
-                            self.execute_batch(content);
-                            println!();
-                        }
-                    }
-                    Err(_) => {}
-                }
-            }
-            Err(_) => {}
-        }
+        });
     }
 
     #[allow(dead_code)]
-    pub fn navigate_to_path(&mut self, path: &str) -> Result<u32, FsError> {
-        let dm = self.drive_manager;
-        let (fs_id, vfs) = vfs_path_from_drive_manager(&dm, path)
-            .map_err(|_| FsError::FileNotFound)?;
-        if fs_id != FsInstanceId::PRIMARY {
-            return Err(FsError::FileNotFound);
-        }
-        let s = vfs.as_str().map_err(|_| FsError::FileNotFound)?;
-        let base_inode = if s.starts_with('\\') || s.starts_with('/') {
-            ROOT_INODE
-        } else {
-            self.current_dir_inode
-        };
-
-        let base_len = if base_inode == ROOT_INODE {
-            1
-        } else {
-            self.current_dir_len
-        };
-        let base_path = if base_inode == ROOT_INODE {
-            &self.current_dir[..1]
-        } else {
-            &self.current_dir[..self.current_dir_len]
-        };
-
-        self.fs
-            .resolve_directory_path(base_inode, base_path, base_len, s, self.cache, self.ata)
-            .map(|(inode, _, _)| inode)
+    pub fn check_autoexec(&mut self) {
+        // Placeholder
     }
 
-    /// Execute a closure on the filesystem identified by `fs_id`.
-    /// Temporarily sets ATA base_lba to the volume's partition and restores it after.
-    /// Selects the correct ATA driver based on the volume's physical channel.
-    pub(crate) fn with_volume<R>(
-        &mut self,
-        fs_id: FsInstanceId,
-        f: impl FnOnce(&mut NeoDosFs, &mut BlockCache, &mut AtaDriver) -> R,
-    ) -> Result<R, FsError> {
-        match fs_id {
-            FsInstanceId::PRIMARY => Ok(f(self.fs, self.cache, self.ata)),
-            FsInstanceId::VOLUME_1 | FsInstanceId::VOLUME_2 | FsInstanceId::VOLUME_3 => {
-                let idx = match fs_id {
-                    FsInstanceId::VOLUME_1 => 0,
-                    FsInstanceId::VOLUME_2 => 1,
-                    FsInstanceId::VOLUME_3 => 2,
-                    _ => unreachable!(),
-                };
-                let vol = self.extra_volumes[idx].as_mut().ok_or(FsError::FileNotFound)?;
-                let ata = match vol.channel {
-                    AtaChannel::Primary => &mut *self.ata,
-                    AtaChannel::Secondary => &mut *self.ata_secondary,
-                };
-                let saved_base = ata.base_lba();
-                ata.set_base_lba(vol.base_lba);
-                let result = f(&mut vol.fs, &mut vol.cache, ata);
-                ata.set_base_lba(saved_base);
-                Ok(result)
+    pub fn execute_batch(&mut self, content: &str) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with(':') || trimmed.starts_with('@') {
+                continue;
             }
-            _ => Err(FsError::FileNotFound),
+            if trimmed.eq_ignore_ascii_case("pause") {
+                println!("Press any key to continue . . .");
+                crate::drivers::keyboard::wait_for_key();
+                continue;
+            }
+            self.execute_line(trimmed);
         }
     }
 
-    fn init_boot_drive_from_config(&mut self) {
-        if let Some(boot_drive) = self.environment.get("BOOTDRIVE") {
-            let drive_char = boot_drive.chars().next().map(|c| c.to_ascii_uppercase());
-            if let Some(drive) = drive_char {
-                if drive >= 'A' && drive <= 'Z' {
-                    if drive as u8 != self.current_drive {
-                        if self.drive_manager.set_primary(drive).is_ok() {
-                            self.current_drive = drive as u8;
-                        }
-                    }
+    pub(crate) fn resolve_absolute_path(&self, path: &str) -> String {
+        let mut drive = self.current_drive;
+        let rest = if path.starts_with('\\') || path.starts_with('/') {
+            path
+        } else if path.contains(':') {
+            drive = path.chars().next().unwrap_or(self.current_drive).to_ascii_uppercase();
+            &path[2..]
+        } else {
+            path
+        };
+
+        let mut parts: Vec<&str> = Vec::new();
+        if !rest.starts_with('\\') && !rest.starts_with('/') {
+            for part in self.current_dir.split(|c| c == '\\' || c == '/') {
+                if !part.is_empty() {
+                    parts.push(part);
                 }
             }
         }
+
+        for part in rest.split(|c| c == '\\' || c == '/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop();
+                }
+                _ => parts.push(part),
+            }
+        }
+
+        let mut abs = alloc::format!("{}:\\", drive);
+        for (idx, part) in parts.iter().enumerate() {
+            if idx > 0 {
+                abs.push('\\');
+            }
+            abs.push_str(part);
+        }
+        abs
     }
 }
-

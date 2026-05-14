@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::serial_println;
 use core::sync::atomic::{fence, Ordering};
 

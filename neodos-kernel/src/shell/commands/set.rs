@@ -1,7 +1,7 @@
 use crate::println;
 use crate::shell::shell::DosShell;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_set(&mut self, args: &[&str]) {
         if args.is_empty() {
             for i in 0..self.environment.count {

@@ -137,19 +137,19 @@ pub fn register_input_tests() {
     use crate::input::InputBuffer;
 
     test_case!("input_empty_pop", {
-        let mut buf = InputBuffer::new();
+        let buf = InputBuffer::new();
         test_eq!(buf.pop(), None);
     });
 
     test_case!("input_push_pop_one", {
-        let mut buf = InputBuffer::new();
+        let buf = InputBuffer::new();
         test_eq!(buf.push(42), Ok(()));
         test_eq!(buf.pop(), Some(42));
         test_eq!(buf.pop(), None);
     });
 
     test_case!("input_buffer_capacity", {
-        let mut buf = InputBuffer::new();
+        let buf = InputBuffer::new();
         let mut count = 0;
         while buf.push(count as u8).is_ok() {
             count += 1;
@@ -159,7 +159,7 @@ pub fn register_input_tests() {
     });
 
     test_case!("input_wrap_around", {
-        let mut buf = InputBuffer::new();
+        let buf = InputBuffer::new();
         for i in 0..100 { let _ = buf.push(i); }
         for i in 0..50 { test_eq!(buf.pop(), Some(i)); }
         for i in 100..150 { let _ = buf.push(i); }
@@ -169,7 +169,7 @@ pub fn register_input_tests() {
     });
 
     test_case!("input_full_then_drain", {
-        let mut buf = InputBuffer::new();
+        let buf = InputBuffer::new();
         while buf.push(0xFF).is_ok() {}
         let mut count = 0;
         while buf.pop().is_some() {

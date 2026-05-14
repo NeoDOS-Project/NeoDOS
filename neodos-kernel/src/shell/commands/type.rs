@@ -1,71 +1,48 @@
-use crate::fs::drive_manager::FsInstanceId;
-use crate::fs::neodos_fs::ROOT_INODE;
-use crate::print;
 use crate::println;
-use crate::shell::shell::{vfs_path_from_drive_manager, DosShell};
+use crate::print;
+use crate::shell::shell::DosShell;
+use crate::fs::vfs::MODE_FILE;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_type(&mut self, args: &[&str]) {
         if args.is_empty() {
-            println!("Usage: TYPE FILENAME");
+            println!("Usage: TYPE [drive:][path]filename");
             return;
         }
 
-        let filename = args[0];
+        let full_path = self.resolve_absolute_path(args[0]);
 
-        let dm = self.drive_manager;
-        if let Ok((fs_id, vfs)) = vfs_path_from_drive_manager(&dm, filename) {
-            if fs_id == FsInstanceId::FAT32_ESP {
-                let path_str = match vfs.as_str() {
-                    Ok(s) => s,
-                    Err(_) => {
-                        println!("File not found");
+        crate::globals::with_vfs(|vfs| {
+            match vfs.resolve_path(&full_path) {
+                Ok((drive_idx, node)) => {
+                    if (node.mode & MODE_FILE) == 0 {
+                        println!("Not a file");
                         return;
                     }
-                };
-                match &mut self.fat32 {
-                    Some(fat) => {
-                        let mut buf = [0u8; 4096];
-                        match fat.read_file_by_path(self.ata, path_str, &mut buf) {
-                            Ok(size) => {
-                                if let Ok(s) = core::str::from_utf8(&buf[..size]) {
+
+                    let mut offset = 0;
+                    let mut buf = [0u8; 512];
+                    loop {
+                        match vfs.read(drive_idx, node.inode, offset, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                if let Ok(s) = core::str::from_utf8(&buf[..n]) {
                                     print!("{}", s);
                                 }
-                                println!();
+                                offset += n as u64;
                             }
-                            Err(_) => println!("File not found"),
+                            Err(e) => {
+                                println!("\nError reading file: {:?}", e);
+                                break;
+                            }
                         }
                     }
-                    None => println!("Drive A: not available"),
+                    println!();
                 }
-                return;
-            }
-
-            if fs_id.0 >= 1 && fs_id.0 <= 3 {
-                let path_str = match vfs.as_str() {
-                    Ok(s) => s,
-                    Err(_) => {
-                        println!("File not found");
-                        return;
-                    }
-                };
-                let _ = self.with_volume(fs_id, |fs, cache, ata| {
-                    let inode = fs.find_file_in_directory(ROOT_INODE, path_str, cache, ata)?;
-                    fs.read_file(inode, cache, ata)
-                });
-                println!();
-                return;
-            }
-        }
-
-        match self.resolve_file_inode(filename) {
-            Ok(inode_num) => {
-                if let Err(e) = self.fs.read_file(inode_num, self.cache, self.ata) {
-                    println!("Error reading file: {:?}", e);
+                Err(_) => {
+                    println!("File not found");
                 }
-                println!();
             }
-            Err(_) => println!("File not found"),
-        }
+        });
     }
 }

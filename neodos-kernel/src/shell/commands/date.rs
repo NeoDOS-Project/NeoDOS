@@ -3,7 +3,7 @@ use crate::println;
 use crate::shell::shell::DosShell;
 use crate::drivers::rtc::Rtc;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_date(&mut self, _args: &[&str]) {
         let mut rtc = Rtc::new();
         let dt = rtc.get_datetime();

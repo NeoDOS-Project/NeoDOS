@@ -1,7 +1,7 @@
 use crate::println;
 use crate::shell::shell::DosShell;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_md(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!("Usage: MD DIRNAME");
@@ -9,31 +9,13 @@ impl<'a> DosShell<'a> {
         }
 
         let dirname = args[0];
-        let (parent_path, leaf) = self.split_parent_and_leaf(dirname);
-        if leaf.is_empty() || leaf == "." || leaf == ".." {
-            println!("Invalid directory name");
-            return;
-        }
+        let full_path = self.resolve_absolute_path(dirname);
 
-        let parent_inode = if parent_path.is_empty() {
-            self.current_dir_inode
-        } else {
-            match self.resolve_directory_arg(parent_path) {
-                Ok((inode, _, _)) => inode,
-                Err(_) => {
-                    println!("The system cannot find the path specified");
-                    return;
-                }
+        crate::globals::with_vfs(|vfs| {
+            match vfs.mkdir(&full_path) {
+                Ok(_) => println!("Directory created"),
+                Err(e) => println!("Error creating directory: {:?}", e),
             }
-        };
-
-        match self
-            .fs
-            .create_directory_at(parent_inode, leaf, self.cache, self.ata)
-        {
-            Ok(_) => println!("Directory created"),
-            Err(e) => println!("Error creating directory: {:?}", e),
-        }
+        });
     }
 }
-

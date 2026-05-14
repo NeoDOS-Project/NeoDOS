@@ -21,6 +21,7 @@ pub struct BootSector {
     pub num_fats: u8,
     pub sectors_per_fat: u32,
     pub root_cluster: u32,
+    pub volume_label: [u8; 11],
 }
 
 impl BootSector {
@@ -46,6 +47,7 @@ impl BootSector {
             num_fats: data[16],
             sectors_per_fat: u32::from_le_bytes([data[36], data[37], data[38], data[39]]),
             root_cluster: u32::from_le_bytes([data[44], data[45], data[46], data[47]]),
+            volume_label: data[71..82].try_into().ok()?,
         })
     }
 
@@ -64,6 +66,7 @@ pub struct DirEntry {
 
 pub struct Fat32Driver {
     pub boot_sector: BootSector,
+    base_lba: u32,
 }
 
 impl Fat32Driver {
@@ -73,15 +76,15 @@ impl Fat32Driver {
             Err(_) => return Err(Fat32Error::NotFound),
         };
 
-        let boot_sector = match BootSector::from_bytes(&boot_sector_bytes) {
-            Some(bs) => bs,
+        let (boot_sector, base_lba) = match BootSector::from_bytes(&boot_sector_bytes) {
+            Some(bs) => (bs, 0),
             None => {
                 let bs = match ata.read_sector_master(2048) {
                     Ok(b) => b,
                     Err(_) => return Err(Fat32Error::NotFound),
                 };
                 match BootSector::from_bytes(&bs) {
-                    Some(bs) => bs,
+                    Some(bs) => (bs, 2048),
                     None => return Err(Fat32Error::NotFat32),
                 }
             }
@@ -92,11 +95,11 @@ impl Fat32Driver {
             boot_sector.sectors_per_cluster, boot_sector.sectors_per_fat);
         crate::serial_println!("  Root cluster: {}", boot_sector.root_cluster);
 
-        Ok(Fat32Driver { boot_sector })
+        Ok(Fat32Driver { boot_sector, base_lba })
     }
 
     fn read_sector(&self, ata: &mut AtaDriver, lba: u32) -> Result<[u8; 512], Fat32Error> {
-        ata.read_sector_master(lba).map_err(|_| Fat32Error::NotFound)
+        ata.read_sector_master(self.base_lba + lba).map_err(|_| Fat32Error::NotFound)
     }
 
     fn read_fat_entry(&self, ata: &mut AtaDriver, cluster: u32) -> Result<u32, Fat32Error> {
@@ -146,16 +149,9 @@ impl Fat32Driver {
         }
 
         let mut name = [0x20u8; 11];
-        let mut name_len = 0;
-        for i in 0..11 {
-            if entry[i] == 0x20 {
-                break;
-            }
-            name[i] = entry[i];
-            name_len = i + 1;
-        }
+        name.copy_from_slice(&entry[..11]);
 
-        if name_len == 0 {
+        if name[0] == 0x20 {
             return None;
         }
 
@@ -166,7 +162,7 @@ impl Fat32Driver {
 
         Some(DirEntry {
             name,
-            name_len,
+            name_len: 11,
             is_directory: (attrs & 0x10) != 0,
             cluster,
             size,
@@ -379,5 +375,159 @@ impl Fat32Driver {
             return Err(Fat32Error::IsDirectory);
         }
         self.read_file_by_cluster(ata, entry.cluster, buf)
+    }
+}
+
+use crate::fs::vfs::{FileSystem, VfsError, VfsNode, DirEntry as VfsDirEntry, MODE_DIR, MODE_FILE};
+
+impl From<Fat32Error> for VfsError {
+    fn from(err: Fat32Error) -> Self {
+        match err {
+            Fat32Error::NotFound => VfsError::NotFound,
+            Fat32Error::IsDirectory => VfsError::NotAFile,
+            Fat32Error::NotDirectory => VfsError::NotADirectory,
+            _ => VfsError::IOError,
+        }
+    }
+}
+
+impl FileSystem for Fat32Driver {
+    fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
+        temp_buf.resize(buf.len() + offset as usize, 0);
+        
+        let read = self.read_file_by_cluster(ata, inode, &mut temp_buf)?;
+        
+        if offset as usize >= read {
+            return Ok(0);
+        }
+        
+        let available = read - offset as usize;
+        let to_copy = available.min(buf.len());
+        buf[..to_copy].copy_from_slice(&temp_buf[offset as usize..offset as usize + to_copy]);
+        
+        Ok(to_copy)
+    }
+
+    fn write(&mut self, _inode: u32, _offset: u64, _buf: &[u8]) -> Result<usize, VfsError> {
+        Err(VfsError::PermissionDenied) 
+    }
+
+    fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let name_11 = Self::name_to_11byte(name.as_bytes());
+        let entry = self.find_entry_in_directory(ata, dir_inode, &name_11)?;
+        
+        Ok(VfsNode {
+            inode: entry.cluster,
+            mode: if entry.is_directory { MODE_DIR } else { MODE_FILE },
+            size: entry.size,
+        })
+    }
+
+    fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let data_start = self.boot_sector.data_start();
+        let sectors_per_cluster = self.boot_sector.sectors_per_cluster as u32;
+        let mut cluster = dir_inode;
+        let mut current_idx = 0;
+
+        loop {
+            let lba = data_start + (cluster - 2) * sectors_per_cluster;
+
+            for i in 0..sectors_per_cluster {
+                let sector = self.read_sector(ata, lba + i)?;
+
+                for entry_off in (0..512).step_by(32) {
+                    let array: &[u8; 32] = match sector[entry_off..entry_off + 32].try_into() {
+                        Ok(a) => a,
+                        Err(_) => continue,
+                    };
+                    let Some(entry) = Self::parse_entry(array) else {
+                        if sector[entry_off] == 0x00 {
+                            return Ok(None);
+                        }
+                        continue;
+                    };
+
+                    if current_idx == index {
+                        let mut name = alloc::string::String::new();
+                        for j in 0..8 {
+                            if entry.name[j] == 0x20 { break; }
+                            name.push(entry.name[j] as char);
+                        }
+                        let has_ext = entry.name[8..11].iter().any(|b| *b != 0x20);
+                        if !entry.is_directory && has_ext {
+                            name.push('.');
+                            for j in 0..3 {
+                                if entry.name[8 + j] == 0x20 { break; }
+                                name.push(entry.name[8 + j] as char);
+                            }
+                        }
+
+                        return Ok(Some(VfsDirEntry {
+                            name,
+                            node: VfsNode {
+                                inode: entry.cluster,
+                                mode: if entry.is_directory { MODE_DIR } else { MODE_FILE },
+                                size: entry.size,
+                            }
+                        }));
+                    }
+                    current_idx += 1;
+                }
+            }
+
+            let next = self.read_fat_entry(ata, cluster)?;
+            if next >= 0x0FFFFFF8 {
+                break;
+            }
+            cluster = next;
+        }
+
+        Ok(None)
+    }
+
+    fn mkdir(&mut self, _dir_inode: u32, _name: &str) -> Result<VfsNode, VfsError> {
+        Err(VfsError::PermissionDenied)
+    }
+
+    fn create(&mut self, _dir_inode: u32, _name: &str) -> Result<VfsNode, VfsError> {
+        Err(VfsError::PermissionDenied)
+    }
+
+    fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError> {
+        if inode == 0 || inode == self.boot_sector.root_cluster {
+            return Ok(VfsNode {
+                inode: self.boot_sector.root_cluster,
+                mode: MODE_DIR,
+                size: 0,
+            });
+        }
+        Ok(VfsNode {
+            inode,
+            mode: MODE_FILE, 
+            size: 0,
+        })
+    }
+
+    fn volume_label(&self) -> Result<alloc::string::String, VfsError> {
+        let len = self
+            .boot_sector
+            .volume_label
+            .iter()
+            .rposition(|b| *b != b' ')
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        let label = core::str::from_utf8(&self.boot_sector.volume_label[..len])
+            .unwrap_or("");
+        Ok(alloc::string::String::from(label))
     }
 }

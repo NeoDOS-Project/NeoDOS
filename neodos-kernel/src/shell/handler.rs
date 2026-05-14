@@ -93,9 +93,10 @@ pub fn cmd_md(shell: &mut DosShell, args: &[&str]) { shell.cmd_md(args); }
 pub fn cmd_vol(shell: &mut DosShell, args: &[&str]) { shell.cmd_vol(args); }
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
 pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
-pub fn cmd_sync(shell: &mut DosShell, _args: &[&str]) {
+pub fn cmd_sync(_shell: &mut DosShell, _args: &[&str]) {
     crate::println!("Syncing disk...");
-    let _ = shell.fs.sync(shell.cache, shell.ata);
+    crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
+    crate::globals::flush_cache_if_needed();
 }
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
 pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
@@ -113,8 +114,8 @@ pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_sc
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
 pub fn cmd_devicesend(shell: &mut DosShell, args: &[&str]) { shell.cmd_devicesend(args); }
-pub fn cmd_exit(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
-pub fn cmd_shutdown(shell: &mut DosShell, _args: &[&str]) { shell.cmd_shutdown(); }
+pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
+pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help", },

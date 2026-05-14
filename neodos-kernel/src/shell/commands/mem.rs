@@ -11,7 +11,7 @@ fn format_kb(kib: u64) -> (u64, &'static str) {
     }
 }
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_mem(&mut self, args: &[&str]) {
         let s = crate::memory::stats();
         

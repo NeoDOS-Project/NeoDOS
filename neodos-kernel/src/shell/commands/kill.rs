@@ -2,7 +2,7 @@ use crate::println;
 use crate::scheduler::current_scheduler;
 use crate::shell::shell::DosShell;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_kill(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!("Usage: KILL <pid>");

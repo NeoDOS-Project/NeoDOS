@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -37,8 +37,7 @@ cd "$PROJECT_ROOT/neodos-bootloader"
 
 cargo build \
     --target x86_64-unknown-uefi \
-    --release \
-    2>&1 | grep -E "Compiling|Finished|error" || true
+    --release
 
 if [ ! -f "target/x86_64-unknown-uefi/release/neodos_bootloader.efi" ]; then
     echo "[!] Bootloader build failed!"
@@ -57,8 +56,7 @@ cd "$PROJECT_ROOT/neodos-kernel"
 
 cargo build \
     --target x86_64-unknown-none \
-    --release \
-    2>&1 | grep -E "Compiling|Finished|error" || true
+    --release
 
 if [ ! -f "target/x86_64-unknown-none/release/neodos_kernel" ]; then
     echo "[!] Kernel build failed!"

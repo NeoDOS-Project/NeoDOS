@@ -1,20 +1,20 @@
 use crate::println;
 use crate::shell::shell::DosShell;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_drives(&mut self) {
         println!("Mounted drives:");
-        let mut any = false;
-        for i in 0..26u8 {
-            let c = (b'A' + i) as char;
-            if let Some(d) = self.drive_manager.get(c) {
-                println!("  {}:  FsInstance {}", d.letter as char, d.fs.0);
-                any = true;
+        crate::globals::with_vfs(|vfs| {
+            for i in 0..26 {
+                if vfs.drives[i].is_some() {
+                    let drive = (b'A' + i as u8) as char;
+                    match vfs.volume_label(drive) {
+                        Ok(label) if !label.is_empty() => println!("  {}:  {}", drive, label),
+                        Ok(_) => println!("  {}:  (no label)", drive),
+                        Err(_) => println!("  {}:  (label unavailable)", drive),
+                    }
+                }
             }
-        }
-        if !any {
-            println!("  (none)");
-        }
+        });
     }
 }
-

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
 

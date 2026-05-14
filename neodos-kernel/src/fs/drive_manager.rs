@@ -11,6 +11,8 @@
 //! let (fs_id, path) = dm.resolve_dos_path("C:\\SYSTEM\\CONFIG.SYS")?;
 //! // Dispatch to NeoDosFs instance for fs_id using `path` as UNIX-like logical path.
 //! ```
+#![allow(dead_code)]
+
 /// Kernel-owned identifier for a mounted filesystem backend (ATA volume, RAM disk, …).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct FsInstanceId(pub u8);

@@ -34,7 +34,6 @@ use drivers::gpt;
 use drivers::pci;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
-use fs::volume::Volume;
 use graphics::FramebufferInfo;
 
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
@@ -166,7 +165,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
     let disk0_parts = gpt::find_all_neodos_partitions(ata);
     println!("[+] Scanning GPT for NeoDOS partitions (disk 1)...");
-    let disk1_parts = gpt::find_all_neodos_partitions(ata2);
+    let _disk1_parts = gpt::find_all_neodos_partitions(ata2);
 
     if let Some(part) = &disk0_parts[0] {
         println!("[+] Primary NeoDOS partition: LBA {}..{}",
@@ -189,45 +188,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
-        Ok(fs) => {
-            *globals::NEODOS_FS.lock() = Some(fs);
-            println!("[+] NeoDOS FS mounted");
-            let mut fs_lock = globals::NEODOS_FS.lock();
-            let _ = fs_lock.as_mut().unwrap().rebuild_bitmap(cache, ata);
-            println!("[+] Block bitmap rebuilt");
-            core::mem::drop(fs_lock);
+        Ok(mut fs) => {
+            let _ = fs.rebuild_bitmap(cache, ata);
+            crate::globals::with_vfs(|vfs| {
+                vfs.mount('C', alloc::boxed::Box::new(fs)).unwrap();
+            });
+            println!("[+] NeoDOS FS mounted on C:");
         },
         Err(_) => panic!("Failed to mount filesystem"),
-    }
-
-    // Collect extra volumes: extra disk0 partitions + all disk1 partitions
-    let mut extra_volumes: [Option<Volume>; 3] = [None, None, None];
-    let mut vol_idx = 0;
-
-    for i in 1..gpt::MAX_NEODOS_PARTITIONS {
-        if vol_idx >= 3 { break; }
-        if let Some(part) = &disk0_parts[i] {
-            println!("[+] Extra disk0 volume at LBA {}..{}",
-                part.start_lba, part.end_lba);
-            if let Ok(vol) = Volume::from_partition(ata, part.start_lba as u32) {
-                extra_volumes[vol_idx] = Some(vol);
-                println!("[+] Extra volume {} mounted", vol_idx);
-                vol_idx += 1;
-            }
-        }
-    }
-
-    for i in 0..gpt::MAX_NEODOS_PARTITIONS {
-        if vol_idx >= 3 { break; }
-        if let Some(part) = &disk1_parts[i] {
-            println!("[+] Disk1 volume at LBA {}..{}",
-                part.start_lba, part.end_lba);
-            if let Ok(vol) = Volume::from_partition(ata2, part.start_lba as u32) {
-                extra_volumes[vol_idx] = Some(vol);
-                println!("[+] Extra volume {} mounted (disk 1)", vol_idx);
-                vol_idx += 1;
-            }
-        }
     }
 
     // Restore ATA base_lba to primary partition on primary disk
@@ -244,7 +212,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // FAT32: Read boot partition
     // ============================================
     println!("[+] Initializing FAT32 driver...");
-    *globals::FAT32_DRIVER.lock() = Fat32Driver::new(globals::ATA_DRIVER.lock().as_mut().unwrap()).ok();
+    if let Some(mut ata_lock) = globals::ATA_DRIVER.try_lock() {
+        if let Some(ata) = ata_lock.as_mut() {
+            if let Ok(fat32) = Fat32Driver::new(ata) {
+                crate::globals::with_vfs(|vfs| {
+                    let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
+                });
+                println!("[+] FAT32 ESP mounted on A:");
+            }
+        }
+    }
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
@@ -261,21 +238,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     testing::register_tests();
     
-    let mut fs_lock = globals::NEODOS_FS.lock();
-    let mut cache_lock = globals::BLOCK_CACHE.lock();
-    let mut ata_lock = globals::ATA_DRIVER.lock();
-    let mut ata2_lock = globals::ATA_DRIVER_SECONDARY.lock();
-    let mut fat32_lock = globals::FAT32_DRIVER.lock();
-
-    let mut shell = shell::DosShell::new(
-        fs_lock.as_mut().unwrap(),
-        cache_lock.as_mut().unwrap(),
-        ata_lock.as_mut().unwrap(),
-        ata2_lock.as_mut().unwrap(),
-        fat32_lock.take(),
-        extra_volumes
-    );
-    
+    let mut shell = shell::DosShell::new();
     shell.run();
 }
 

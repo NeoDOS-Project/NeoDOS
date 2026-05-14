@@ -1,5 +1,7 @@
 // src/drivers/pci.rs
 
+#![allow(dead_code)]
+
 use x86_64::instructions::port::Port;
 
 const CONFIG_ADDRESS: u16 = 0xCF8;

@@ -293,14 +293,21 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
             serial_println!("[syscall] sys_open('{}')", path);
 
-            let result = crate::globals::with_all(|fs, cache, ata| {
-                fs.find_file_in_directory(0, path, cache, ata)
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.resolve_path(path)
             });
 
             match result {
-                Ok(inode_num) => {
-                    serial_println!("[syscall] sys_open -> inode {}", inode_num);
-                    inode_num as u64
+                Ok((drive_idx, node)) => {
+                    if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
+                        serial_println!("[syscall] sys_open -> Not a file");
+                        return u64::MAX;
+                    }
+                    // For now, we encode (drive_idx << 24 | inode) as the "handle"
+                    // Real systems use a file descriptor table per process.
+                    let handle = ((drive_idx as u64) << 32) | (node.inode as u64);
+                    serial_println!("[syscall] sys_open -> handle 0x{:x}", handle);
+                    handle
                 }
                 Err(_) => {
                     serial_println!("[syscall] sys_open -> File not found");
@@ -309,9 +316,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             }
         }
 
-        // ---- sys_readfile(inode: u64, buf: *mut u8, count: usize) -> bytes_read ----
+        // ---- sys_readfile(handle: u64, buf: *mut u8, count: usize) -> bytes_read ----
         11 => {
-            let inode_num = rbx as u32;
+            let handle = rbx;
+            let drive_idx = (handle >> 32) as usize;
+            let inode_num = (handle & 0xFFFFFFFF) as u32;
             let buf_ptr = rcx as *mut u8;
             let count = _rdx as usize;
 
@@ -321,14 +330,14 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            serial_println!("[syscall] sys_readfile(inode={}, count={})", inode_num, count);
+            serial_println!("[syscall] sys_readfile(handle=0x{:x}, count={})", handle, count);
 
             use alloc::vec::Vec;
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
 
-            let result = crate::globals::with_all(|fs, cache, ata| {
-                fs.read_file_to_buf(inode_num, &mut temp_buf, cache, ata)
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.read(drive_idx, inode_num, 0, &mut temp_buf)
             });
 
             match result {
@@ -346,9 +355,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             }
         }
 
-        // ---- sys_writefile(inode: u64, buf: *const u8, count: usize) -> bytes_written ----
+        // ---- sys_writefile(handle: u64, buf: *const u8, count: usize) -> bytes_written ----
         12 => {
-            let inode_num = rbx as u32;
+            let handle = rbx;
+            let drive_idx = (handle >> 32) as usize;
+            let inode_num = (handle & 0xFFFFFFFF) as u32;
             let buf_ptr = rcx as *const u8;
             let count = _rdx as usize;
 
@@ -358,7 +369,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            serial_println!("[syscall] sys_writefile(inode={}, count={})", inode_num, count);
+            serial_println!("[syscall] sys_writefile(handle=0x{:x}, count={})", handle, count);
 
             use alloc::vec::Vec;
             let mut temp_buf = Vec::with_capacity(count);
@@ -368,8 +379,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 core::ptr::copy_nonoverlapping(buf_ptr, temp_buf.as_mut_ptr(), count);
             }
 
-            let result = crate::globals::with_all(|fs, cache, ata| {
-                fs.write_file(inode_num, &temp_buf, cache, ata)
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.write(drive_idx, inode_num, 0, &temp_buf)
             });
 
             match result {

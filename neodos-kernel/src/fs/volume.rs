@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ata::{AtaChannel, AtaDriver};
 use crate::fs::neodos_fs::{FsError, NeoDosFs};

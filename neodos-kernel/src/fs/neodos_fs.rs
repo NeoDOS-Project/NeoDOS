@@ -1,5 +1,7 @@
 // src/fs/neodos_fs.rs
 
+#![allow(dead_code)]
+
 use crate::drivers::ata::{AtaDriver, AtaError};
 use crate::buffer::block_cache::BlockCache;
 use crate::serial_println;
@@ -417,8 +419,56 @@ impl NeoDosFs {
         Ok(())
     }
 
+    pub fn find_entry_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+        -> Result<(u32, u8), FsError> 
+    {
+        let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, ata)?;
+        if (dir_inode.mode & MODE_DIR) == 0 {
+            return Err(FsError::NotADirectory);
+        }
+
+        let num_blocks = self.inode_data_block_count(&dir_inode);
+        for block_idx in 0..num_blocks {
+            let actual_block = match self.get_inode_block_ptr(&dir_inode, block_idx) {
+                Some(b) => b,
+                None => continue,
+            };
+            
+            let block_sector = 200 + (actual_block * 8);
+            for sector_offset in 0..8 {
+                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                for entry_off in (0..512).step_by(256) {
+                    let first_byte = sector_data[entry_off];
+                    if first_byte == 0xE5 || first_byte == 0 {
+                        continue;
+                    }
+                    
+                    let entry: DirectoryEntry = unsafe {
+                        core::ptr::read_unaligned(sector_data.as_ptr().add(entry_off) as *const _)
+                    };
+                    
+                    let entry_name = core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("");
+                    if entry_name.eq_ignore_ascii_case(name) {
+                        return Ok((entry.inode_num, entry.entry_type));
+                    }
+                }
+            }
+        }
+        Err(FsError::FileNotFound)
+    }
+
+    pub fn find_file_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+        -> Result<u32, FsError> 
+    {
+        let (inode, entry_type) = self.find_entry_in_directory(dir_inode_num, name, cache, ata)?;
+        if entry_type == 1 {
+            Ok(inode)
+        } else {
+            Err(FsError::NotAFile)
+        }
+    }
+
     // Backward compatibility: find in root only
-    // Now delegated to VFS layer via find_entry_in_directory
     pub fn find_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
@@ -429,7 +479,12 @@ impl NeoDosFs {
     pub fn find_directory(&mut self, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
         -> Result<u32, FsError> 
     {
-        self.find_dir_in_dir(ROOT_INODE, dirname, cache, ata)
+        let (inode, entry_type) = self.find_entry_in_directory(ROOT_INODE, dirname, cache, ata)?;
+        if entry_type == 2 {
+            Ok(inode)
+        } else {
+            Err(FsError::NotADirectory)
+        }
     }
 
     pub fn find_dir_in_dir(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
@@ -795,7 +850,7 @@ impl NeoDosFs {
         while written < data.len() && block_idx < 12 {
             if block_idx * BLOCK_SIZE >= inode.size as usize {
                 inode.direct_blocks[block_idx] = self.allocate_block(cache, ata)?;
-                inode.size = (block_idx * BLOCK_SIZE) as u32 + BLOCK_SIZE as u32; // Temporary size to ensure allocation works
+                inode.size = (block_idx * BLOCK_SIZE) as u32 + BLOCK_SIZE as u32; 
             }
             
             let block_ptr = inode.direct_blocks[block_idx];
@@ -804,28 +859,23 @@ impl NeoDosFs {
             for sector_offset in 0..8 {
                 if written >= data.len() { break; }
                 
-                let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector_mut(sector_lba, ata)?;
-                
+                let sector_data = cache.get_sector_mut(block_sector + sector_offset, ata)?;
                 let to_copy = (data.len() - written).min(512);
+                
                 sector_data[..to_copy].copy_from_slice(&data[written..written + to_copy]);
+                cache.mark_dirty(block_sector + sector_offset);
                 
                 written += to_copy;
-                cache.mark_dirty(sector_lba);
             }
             block_idx += 1;
         }
         
-        inode.size = written as u32;
+        if written > inode.size as usize {
+            inode.size = written as u32;
+        }
         self.write_inode(inode_num as usize, &inode, cache, ata)?;
         
         Ok(written)
-    }
-
-    #[allow(dead_code)]
-    pub fn delete_file(&mut self, parent_inode: u32, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
-        let file_inode = self.find_file_in_directory(parent_inode, filename, cache, ata)?;
-        self.delete_file_by_inode(parent_inode, filename, file_inode, cache, ata)
     }
 
     #[allow(dead_code)]
@@ -1008,5 +1058,181 @@ impl NeoDosFs {
         
         // Use same logic as delete_file_by_inode to remove the entry
         self.delete_file_by_inode(parent_inode, dirname, dir_inode_num, cache, ata)
+    }
+}
+
+use crate::fs::vfs::{FileSystem, VfsError, VfsNode, DirEntry as VfsDirEntry};
+
+impl From<FsError> for VfsError {
+    fn from(err: FsError) -> Self {
+        match err {
+            FsError::FileNotFound => VfsError::NotFound,
+            FsError::NotADirectory => VfsError::NotADirectory,
+            FsError::NotAFile => VfsError::NotAFile,
+            FsError::NoInodeAvailable => VfsError::IOError,
+            FsError::NoBlockAvailable => VfsError::IOError,
+            _ => VfsError::IOError,
+        }
+    }
+}
+
+impl From<AtaError> for VfsError {
+    fn from(_err: AtaError) -> Self {
+        VfsError::IOError
+    }
+}
+
+impl FileSystem for NeoDosFs {
+    fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
+        temp_buf.resize(buf.len() + offset as usize, 0);
+        
+        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, ata)?;
+        
+        if offset as usize >= read {
+            return Ok(0);
+        }
+        
+        let available = read - offset as usize;
+        let to_copy = available.min(buf.len());
+        buf[..to_copy].copy_from_slice(&temp_buf[offset as usize..offset as usize + to_copy]);
+        
+        Ok(to_copy)
+    }
+
+    fn write(&mut self, inode: u32, _offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        Ok(self.write_file(inode, buf, cache, ata)?)
+    }
+
+    fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let (inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, ata)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        
+        Ok(VfsNode {
+            inode,
+            mode: inode_data.mode,
+            size: inode_data.size,
+        })
+    }
+
+    fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let inode = *self.inode_cache.load_inode(dir_inode as usize, cache, ata)?;
+        if (inode.mode & MODE_DIR) == 0 {
+            return Err(VfsError::NotADirectory);
+        }
+
+        let mut current_idx = 0;
+        let mut bytes_to_read = Self::directory_byte_span(&inode);
+        for block_idx in 0..self.inode_data_block_count(&inode) {
+            if bytes_to_read == 0 { break; }
+            let Some(current_block) = self.get_inode_block_ptr(&inode, block_idx) else { continue; };
+            let block_sector = 200 + (current_block * 8);
+            
+            for sector_offset in 0..8 {
+                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                for entry_offset in (0..512).step_by(256) {
+                    let first_byte = sector_data[entry_offset];
+                    if first_byte == 0xE5 || first_byte == 0 { continue; }
+                    
+                    if current_idx == index {
+                        let entry: DirectoryEntry = unsafe {
+                            core::ptr::read_unaligned(sector_data.as_ptr().add(entry_offset) as *const _)
+                        };
+                        let name = core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("?").into();
+                        let inode_data = self.inode_cache.load_inode(entry.inode_num as usize, cache, ata)?;
+                        return Ok(Some(VfsDirEntry {
+                            name,
+                            node: VfsNode {
+                                inode: entry.inode_num,
+                                mode: inode_data.mode,
+                                size: inode_data.size,
+                            }
+                        }));
+                    }
+                    current_idx += 1;
+                }
+            }
+            bytes_to_read -= BLOCK_SIZE.min(bytes_to_read);
+        }
+
+        Ok(None)
+    }
+
+    fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let inode = self.create_directory_at(dir_inode, name, cache, ata)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        Ok(VfsNode {
+            inode,
+            mode: inode_data.mode,
+            size: inode_data.size,
+        })
+    }
+
+    fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let inode = self.create_file_at(dir_inode, name, cache, ata)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        Ok(VfsNode {
+            inode,
+            mode: inode_data.mode,
+            size: inode_data.size,
+        })
+    }
+
+    fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        Ok(VfsNode {
+            inode,
+            mode: inode_data.mode,
+            size: inode_data.size,
+        })
+    }
+
+    fn volume_label(&self) -> Result<alloc::string::String, VfsError> {
+        Ok(alloc::string::String::from(self.get_volume_label()))
+    }
+
+    fn set_volume_label(&mut self, label: &str) -> Result<(), VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        self.set_volume_label(label, cache, ata)?;
+        Ok(())
     }
 }

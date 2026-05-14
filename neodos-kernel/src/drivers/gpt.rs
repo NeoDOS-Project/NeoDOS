@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use crate::drivers::ata::AtaDriver;
 
 const GPT_SIGNATURE: [u8; 8] = *b"EFI PART";

@@ -1,5 +1,7 @@
 // src/tsr/mod.rs
 
+#![allow(dead_code)]
+
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::fs::neodos_fs::NeoDosFs;

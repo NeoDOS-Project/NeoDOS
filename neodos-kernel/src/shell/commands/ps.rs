@@ -12,7 +12,7 @@ struct ProcSnap {
     cpu_ticks: u64,
 }
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_ps(&mut self) {
         let mut snap = [None; MAX_PROCESSES];
 

@@ -415,3 +415,10 @@ pub fn set_leds(leds: u8) -> bool {
     }
     true
 }
+pub fn wait_for_key() {
+    loop {
+        if KeyboardDriver::read_scancode().is_some() {
+            break;
+        }
+    }
+}

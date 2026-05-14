@@ -8,7 +8,7 @@ use crate::println;
 use crate::drivers::signal_device_event;
 use crate::shell::shell::DosShell;
 
-impl<'a> DosShell<'a> {
+impl DosShell {
     pub fn cmd_devicesend(&mut self, args: &[&str]) {
         if args.len() < 2 {
             println!("Usage: DEVICESEND <device_id> <command>");

@@ -8,7 +8,6 @@ const VGA_WIDTH: usize = 160;
 const VGA_HEIGHT: usize = 50;
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use spin::Mutex;
 
 static ROW: AtomicUsize = AtomicUsize::new(0);
 static COL: AtomicUsize = AtomicUsize::new(0);
