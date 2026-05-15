@@ -16,7 +16,7 @@ MSG_OPEN = b"sys_open: OK\r\n"
 MSG_READ = b"sys_read: OK\r\n"
 MSG_WRITE = b"sys_write: OK\r\n"
 MSG_DONE = b"File test complete!\r\n"
-FILENAME = b"readme.txt"
+FILENAME = b"C:\\readme.txt"
 WRITE_DATA = b"Hola FILETEST!"
 
 # Sizes - actual computed lengths
@@ -25,7 +25,7 @@ S_OPEN = 14    # sys_open: OK + \r\n
 S_READ = 14    # sys_read: OK + \r\n
 S_WRITE = 15   # sys_write: OK + \r\n
 S_DONE = 21    # File test complete! + \r\n
-S_FILE = 10    # readme.txt
+S_FILE = 13    # C:\readme.txt
 S_DATA = 14    # Hola FILETEST!
 
 # Code (one build with correct addresses from start)

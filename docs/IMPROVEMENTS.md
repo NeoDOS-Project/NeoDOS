@@ -197,14 +197,6 @@ Los tests se corren manualmente con `auto_test.py`.
 
 ---
 
-## Resumen por prioridad (Actualizado v0.10.4)
-
-| Prioridad | Items |
-|-----------|-------|
-| Alta | #9 (static mut), #56 (VFS Layer), #53 (Block Device Abstraction) |
-| Media | #10 (unwrap), #18 (history), #20 (lock-free input), #54 (libneodos), #55 (ELF loader), #57 (event-driven input) |
-| Baja | #17 (DIR /W), #29 (paging), #30 (inode cache), #33 (log sinks), #42 (redirection), #52 (DMA pool), #58 (USB HID fix) |
-
 ---
 
 ### 24. Gap entre inode table y data blocks
@@ -293,15 +285,6 @@ NeoDOS solo tiene una interfaz de línea de comandos sobre un framebuffer gráfi
 
 ---
 
-### 66. Estabilidad de Syscalls y API de Usuario (v1.0)
-
-**Archivo:** `syscall.rs`
-
-La tabla de syscalls puede cambiar entre versiones menores.
-
-**Propuesta:** Definir y congelar la ABI de NeoDOS 1.0. Documentar cada syscall (RAX, registros de argumentos, valores de retorno) para que desarrolladores externos puedan escribir software compatible a largo plazo.
-
----
 
 ### 67. Pila de Red (TCP/IP) Mínima
 
@@ -309,9 +292,6 @@ La tabla de syscalls puede cambiar entre versiones menores.
 
 ---
 
-### 68. Gestión de Energía (ACPI)
-
-**Propuesta:** Implementar soporte básico de ACPI para permitir los comandos `SHUTDOWN` y `REBOOT` desde el shell.
 
 ---
 
@@ -565,8 +545,8 @@ Actualmente el sistema usa una fuente bitmap de 8x16.
 
 | Prioridad | Items |
 |-----------|-------|
-| **Bloqueante (v1.0)** | #56 (VFS), #60 (Dynamic Memory), #66 (Syscall Stability), #87 (Setup) |
-| **Completado** | #9 (static mut) |
+| **Bloqueante (v1.0)** | #56 (VFS), #60 (Dynamic Memory), #87 (Setup) |
+| **Completado** | #9 (static mut), #66 (Syscall Stability) |
 | **Alta** | #53 (Block Abstraction), #61 (IPC Pipes), #62 (FAT32 Write), #69 (Loadable Drivers), #76 (SDK), #80 (NeoEdit), #89 (Help) |
 | **Media** | #63 (Batch), #64 (RTC), #68 (ACPI), #72 (TAB), #77 (Journaling), #78 (KEYB), #82 (Defrag), #90 (VT), #95 (Pkg) |
 | **Baja** | #65 (GUI), #67 (Network), #70 (Sound), #71 (ISO9660), #74 (SMP), #79 (VirtIO), #81 (TTF), #91 (Floppy), #96 (COM) |

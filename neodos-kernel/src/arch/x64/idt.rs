@@ -101,20 +101,13 @@ core::arch::global_asm!(
     "jmp exit_to_kernel",
     // Check NEED_RESCHED for voluntary context switch (sys_yield, sys_waitpid, sys_read)
     "1:",
-    "mov rdi, rsp",  // Save current RSP for possible resched
-    "push rdi",      // Preserve across call
     "call clear_need_resched",
-    "pop rdi",
     "test al, al",
     "jz 3f",
     // ---- Reschedule requested ----
-    "push rdi",              // Current RSP = arg0
-    "mov rsi, [rsp + 8]",    // saved RAX (return value)
-    "push rsi",              // Save return value
+    "mov rdi, rsp",
     "call syscall_try_resched",
-    "mov rsp, rax",           // Switch to new stack
-    "pop rsi",                // Restore return value (on new stack)
-    "mov [rsp + 0], rsi",     // Put it back in RAX slot
+    "mov rsp, rax",
     "3:",
     // ---- Normal restore ----
     "pop rax",

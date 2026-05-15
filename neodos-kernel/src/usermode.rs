@@ -55,8 +55,10 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 /// Add a user-space process to the scheduler and return its PID.
 /// The process will get its own user-memory slot.
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8) -> u32 {
-    let mut s = scheduler::current_scheduler().lock();
-    s.add_ring3_process(entry, stack_top, slot_idx)
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let mut s = scheduler::current_scheduler().lock();
+        s.add_ring3_process(entry, stack_top, slot_idx)
+    })
 }
 
 /// Execute a specific process (by PID) in Ring 3 and block the shell
@@ -64,7 +66,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8) -> u32 {
 pub fn wait_for_process(pid: u32) {
     unsafe { WAIT_PID = pid; }
 
-    let (entry, user_stack_top) = {
+    let (entry, user_stack_top) = x86_64::instructions::interrupts::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
         let mut entry = 0u64;
         let mut sp = 0u64;
@@ -89,16 +91,16 @@ pub fn wait_for_process(pid: u32) {
             }
         }
         (entry, sp)
-    };
+    });
 
     // Tell the scheduler this process is running
-    {
+    x86_64::instructions::interrupts::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.current_pid = pid;
         if let Some(proc) = s.current_process_mut() {
             proc.state = scheduler::ProcessState::Running;
         }
-    }
+    });
 
     execute_usermode(entry, user_stack_top);
 }

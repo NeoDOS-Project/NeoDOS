@@ -67,27 +67,35 @@ pub extern "C" fn clear_need_resched() -> bool {
 
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
-    let s = scheduler::current_scheduler();
-    let mut scheduler = s.lock();
+    let (has_non_idle, current_pid) = x86_64::instructions::interrupts::without_interrupts(|| {
+        let scheduler = scheduler::current_scheduler().lock();
+        (scheduler.has_non_idle_processes(), scheduler.current_pid)
+    });
 
-    if !scheduler.has_non_idle_processes() {
+    if !has_non_idle {
         return current_rsp;
     }
 
-    let pid = scheduler.current_pid;
-    if pid > 0 {
-        if let Some(current) = scheduler.current_process_mut() {
-            current.rsp = current_rsp;
-            if current.state == ProcessState::Running {
-                current.state = ProcessState::Ready;
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut scheduler = s.lock();
+
+        let pid = scheduler.current_pid;
+        if pid > 0 {
+            if let Some(current) = scheduler.current_process_mut() {
+                current.rsp = current_rsp;
+                if current.state == ProcessState::Running {
+                    current.state = ProcessState::Ready;
+                }
             }
         }
-    }
 
-    let next = scheduler.schedule();
-
-    unsafe { (*next).rsp }
+        let next = scheduler.schedule();
+        unsafe { (*next).rsp }
+    })
 }
+
+
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
@@ -97,21 +105,24 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let code = rbx;
             serial_println!("[syscall] sys_exit({})", code);
 
-            let s = crate::scheduler::current_scheduler();
-            let mut scheduler = s.lock();
-            let pid = scheduler.current_pid;
+            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut scheduler = s.lock();
+                let pid = scheduler.current_pid;
 
-            if pid > 0 {
-                if let Some(proc) = scheduler.current_process_mut() {
-                    proc.state = ProcessState::Terminated;
+                if pid > 0 {
+                    if let Some(proc) = scheduler.current_process_mut() {
+                        proc.state = ProcessState::Terminated;
 
-                    if let Some(slot) = proc.user_slot.take() {
-                        crate::arch::x64::paging::free_user_slot(slot);
+                        if let Some(slot) = proc.user_slot.take() {
+                            crate::arch::x64::paging::free_user_slot(slot);
+                        }
                     }
                 }
-            }
 
-            scheduler.wake_waiters(pid);
+                scheduler.wake_waiters(pid);
+                pid
+            });
 
             if pid > 0 && pid == crate::usermode::current_wait_pid() {
                 crate::usermode::request_exit_to_kernel();
@@ -147,7 +158,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
         // ---- sys_getpid() ----
         3 => {
-            let pid = crate::scheduler::current_scheduler().lock().current_pid;
+            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid
+            });
             serial_println!("[syscall] sys_getpid -> {}", pid);
             pid as u64
         }
@@ -212,39 +225,44 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             serial_println!("[syscall] sys_waitpid({})", wait_pid);
 
             {
-                let s = crate::scheduler::current_scheduler();
-                let scheduler = s.lock();
-                
-                let mut already_terminated = false;
-                for proc in scheduler.processes.iter() {
-                    if let Some(p) = proc {
-                        if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                            already_terminated = true;
-                            break;
+                let already_terminated = x86_64::instructions::interrupts::without_interrupts(|| {
+                    let s = crate::scheduler::current_scheduler();
+                    let scheduler = s.lock();
+                    
+                    let mut terminated = false;
+                    for proc in scheduler.processes.iter() {
+                        if let Some(p) = proc {
+                            if p.pid == wait_pid && p.state == ProcessState::Terminated {
+                                terminated = true;
+                                break;
+                            }
                         }
                     }
-                }
+                    terminated
+                });
                 
                 if !already_terminated {
                     loop {
-                        let s2 = crate::scheduler::current_scheduler();
-                        let scheduler2 = s2.lock();
-                        
-                        let mut is_terminated = false;
-                        for proc in scheduler2.processes.iter() {
-                            if let Some(p) = proc {
-                                if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                                    is_terminated = true;
-                                    break;
+                        let is_terminated = x86_64::instructions::interrupts::without_interrupts(|| {
+                            let s2 = crate::scheduler::current_scheduler();
+                            let scheduler2 = s2.lock();
+                            
+                            let mut terminated = false;
+                            for proc in scheduler2.processes.iter() {
+                                if let Some(p) = proc {
+                                    if p.pid == wait_pid && p.state == ProcessState::Terminated {
+                                        terminated = true;
+                                        break;
+                                    }
                                 }
                             }
-                        }
+                            terminated
+                        });
                         
                         if is_terminated {
                             break;
                         }
                         
-                        drop(scheduler2);
                         unsafe { core::arch::asm!("hlt") };
                     }
                 }
@@ -324,6 +342,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let buf_ptr = rcx as *mut u8;
             let count = _rdx as usize;
 
+            if drive_idx >= 26 || handle == u64::MAX {
+                serial_println!("[syscall] sys_readfile: invalid handle 0x{:x}", handle);
+                return u64::MAX;
+            }
+
             let buf_addr = rcx;
             if buf_addr < 0x400000 || buf_addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
                 serial_println!("[syscall] sys_readfile: bad buffer 0x{:x} len {}", buf_addr, count);
@@ -362,6 +385,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let inode_num = (handle & 0xFFFFFFFF) as u32;
             let buf_ptr = rcx as *const u8;
             let count = _rdx as usize;
+
+            if drive_idx >= 26 || handle == u64::MAX {
+                serial_println!("[syscall] sys_writefile: invalid handle 0x{:x}", handle);
+                return u64::MAX;
+            }
 
             let buf_addr = rcx;
             if buf_addr < 0x400000 || buf_addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
@@ -456,7 +484,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         // ---- sys_register_device(device_id) ----
         15 => {
             let device_id = rbx as u32;
-            let current_pid = crate::scheduler::current_scheduler().lock().current_pid;
+            let current_pid = x86_64::instructions::interrupts::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid
+            });
 
             serial_println!("[syscall] sys_register_device(dev={}) for PID {}", device_id, current_pid);
 
@@ -477,16 +507,18 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 }
 
 pub fn wake_blocked_readers() {
-    let s = crate::scheduler::current_scheduler();
-    let mut scheduler = s.lock();
-    
-    for proc in scheduler.processes.iter_mut() {
-        if let Some(p) = proc {
-            if matches!(p.state, ProcessState::Blocked { waiting_for: 0xFFFFFFFF }) {
-                p.state = ProcessState::Ready;
-                p.waiting_for = None;
-                set_need_resched();
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut scheduler = s.lock();
+        
+        for proc in scheduler.processes.iter_mut() {
+            if let Some(p) = proc {
+                if matches!(p.state, ProcessState::Blocked { waiting_for: 0xFFFFFFFF }) {
+                    p.state = ProcessState::Ready;
+                    p.waiting_for = None;
+                    set_need_resched();
+                }
             }
         }
-    }
+    });
 }
