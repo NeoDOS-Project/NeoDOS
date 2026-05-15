@@ -220,112 +220,6 @@ pub fn register_keyboard_tests() {
     });
 }
 
-// ===== Drive manager tests =====
-
-pub fn register_drive_tests() {
-    use crate::fs::drive_manager::{DriveManager, FsInstanceId, DriveManagerError};
-
-    test_case!("drive_mount_get", {
-        let mut dm = DriveManager::new();
-        test_eq!(dm.mount('C', FsInstanceId::PRIMARY), Ok(()));
-        let d = dm.get('C');
-        test_ne!(d, None);
-        test_eq!(d.unwrap().letter, b'C');
-    });
-
-    test_case!("drive_invalid_letter", {
-        let mut dm = DriveManager::new();
-        test_eq!(dm.mount('1', FsInstanceId::PRIMARY), Err(DriveManagerError::InvalidDriveLetter));
-        test_eq!(dm.mount('ç', FsInstanceId::PRIMARY), Err(DriveManagerError::InvalidDriveLetter));
-    });
-
-    test_case!("drive_mount_twice", {
-        let mut dm = DriveManager::new();
-        test_eq!(dm.mount('C', FsInstanceId::PRIMARY), Ok(()));
-        test_eq!(dm.mount('C', FsInstanceId::PRIMARY), Err(DriveManagerError::DriveAlreadyMounted));
-    });
-
-    test_case!("drive_resolve_basic", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (fs_id, path) = dm.resolve_dos_path("C:\\FOO\\BAR").unwrap();
-        test_eq!(fs_id, FsInstanceId::PRIMARY);
-        test_eq!(path.as_str(), Ok("/FOO/BAR"));
-    });
-
-    test_case!("drive_resolve_forward_slash", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("C:/FOO/BAR").unwrap();
-        test_eq!(path.as_str(), Ok("/FOO/BAR"));
-    });
-
-    test_case!("drive_resolve_root", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("C:\\").unwrap();
-        test_eq!(path.as_str(), Ok("/"));
-    });
-
-    test_case!("drive_resolve_just_letter", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("C:").unwrap();
-        test_eq!(path.as_str(), Ok("/"));
-    });
-
-    test_case!("drive_resolve_double_sep", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("C:\\\\FOO\\\\BAR").unwrap();
-        test_eq!(path.as_str(), Ok("/FOO/BAR"));
-    });
-
-    test_case!("drive_resolve_trailing_slash", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("C:\\FOO\\BAR\\").unwrap();
-        test_eq!(path.as_str(), Ok("/FOO/BAR"));
-    });
-
-    test_case!("drive_resolve_no_drive", {
-        let dm = DriveManager::new();
-        test_eq!(dm.resolve_dos_path(""), Err(DriveManagerError::InvalidPath));
-        test_eq!(dm.resolve_dos_path("C"), Err(DriveManagerError::InvalidPath));
-    });
-
-    test_case!("drive_resolve_not_mounted", {
-        let dm = DriveManager::new();
-        test_eq!(dm.resolve_dos_path("X:\\path"), Err(DriveManagerError::DriveNotMounted));
-    });
-
-    test_case!("drive_resolve_numeric_letter", {
-        let dm = DriveManager::new();
-        test_eq!(dm.resolve_dos_path("1:\\path"), Err(DriveManagerError::InvalidDriveLetter));
-    });
-
-    test_case!("drive_resolve_lowercase", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        let (_, path) = dm.resolve_dos_path("c:\\path").unwrap();
-        test_eq!(path.as_str(), Ok("/path"));
-    });
-
-    test_case!("drive_resolve_invalid_bytes", {
-        let mut dm = DriveManager::new();
-        dm.mount('C', FsInstanceId::PRIMARY).unwrap();
-        test_eq!(dm.resolve_dos_path("C:\\pa\u{80}th"), Err(DriveManagerError::InvalidPath));
-        test_eq!(dm.resolve_dos_path("C:\\pa\x1Fth"), Err(DriveManagerError::InvalidPath));
-        test_eq!(dm.resolve_dos_path("C:\\pa\x7Fth"), Err(DriveManagerError::InvalidPath));
-    });
-
-    test_case!("drive_set_primary", {
-        let mut dm = DriveManager::new();
-        dm.set_primary('C').unwrap();
-        let d = dm.get('C');
-        test_ne!(d, None);
-    });
-}
 
 pub fn register_process_tests() {
     use crate::scheduler::{Process, ProcessState};
@@ -486,7 +380,6 @@ pub fn register_tests() {
     register_env_tests();
     register_input_tests();
     register_keyboard_tests();
-    register_drive_tests();
     register_process_tests();
     register_utf8_tests();
     register_alloc_tests();

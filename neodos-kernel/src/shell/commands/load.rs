@@ -74,7 +74,8 @@ impl DosShell {
             filename, bin_size, slot.code_base, slot.stack_top);
 
         // ── 4. Spawn as scheduler process ──
-        let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx);
+        let cwd_drive = self.current_drive as u8 - b'A';
+        let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
 
         serial_println!("[LOAD] Spawned Driver PID {}, slot_idx={}", pid, slot.slot_idx);
         println!("Loading driver '{}' (PID {}) in Ring 3...", filename, pid);

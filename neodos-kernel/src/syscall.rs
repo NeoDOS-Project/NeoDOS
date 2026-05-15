@@ -20,7 +20,12 @@
 //!  12  sys_writefile — write to file
 //!  13  sys_close     — close file
 //!  14  sys_ioctl     — device I/O control
+//!  15  sys_register_device — register device handler
+//!  16  sys_chdir     — change current working directory
+//!  17  sys_getcwd    — get current working directory
 
+use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::serial_println;
 use crate::scheduler::{self, ProcessState};
@@ -95,7 +100,67 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
     })
 }
 
+/// Normalize a DOS path: resolve `.`/`..`, collapse separators.
+fn normalize_dos_path(path: &str) -> String {
+    let mut drive_prefix = [0u8; 2];
+    let rest = if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        drive_prefix[0] = path.as_bytes()[0].to_ascii_uppercase();
+        drive_prefix[1] = b':';
+        &path[2..]
+    } else {
+        path
+    };
 
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split(|c| c == '\\' || c == '/') {
+        match part {
+            "" | "." => {}
+            ".." => { parts.pop(); }
+            _ => parts.push(part),
+        }
+    }
+
+    let mut result = String::new();
+    if drive_prefix[0] != 0 {
+        result.push(drive_prefix[0] as char);
+        result.push(':');
+    }
+    result.push('\\');
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 { result.push('\\'); }
+        result.push_str(part);
+    }
+    result
+}
+
+/// Check if `[ptr, ptr+len)` is a valid user-accessible address range.
+/// Valid ranges: the standard user slot window (4–8 MB) or the current
+/// process's heap region.
+fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
+    if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
+        return true;
+    }
+    let (heap_base, heap_break) = crate::scheduler::current_process_heap_range();
+    heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break
+}
+
+/// Copy a null-terminated string from user space (up to 255 bytes).
+fn copy_user_string(ptr: u64) -> Result<String, ()> {
+    if !is_user_ptr_valid(ptr, 1) {
+        return Err(());
+    }
+    let mut buf = [0u8; 256];
+    let mut len = 0usize;
+    unsafe {
+        while len < 255 {
+            let byte = (ptr as *const u8).add(len).read();
+            if byte == 0 { break; }
+            buf[len] = byte;
+            len += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..len]).map(|s| s.to_string()).map_err(|_| ())
+}
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
@@ -117,6 +182,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                         if let Some(slot) = proc.user_slot.take() {
                             crate::arch::x64::paging::free_user_slot(slot);
                         }
+                        if proc.heap_base != 0 {
+                            unsafe {
+                                crate::arch::x64::paging::unmap_user_range(
+                                    proc.heap_base,
+                                    crate::arch::x64::paging::PROCESS_HEAP_SIZE,
+                                );
+                            }
+                            let idx = ((proc.heap_base
+                                - crate::arch::x64::paging::PROCESS_HEAP_BASE)
+                                / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+                            crate::arch::x64::paging::free_heap_slot(idx);
+                            proc.heap_base = 0;
+                            proc.heap_break = 0;
+                        }
                     }
                 }
 
@@ -136,9 +215,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let ptr = rbx as *const u8;
             let len = rcx as usize;
 
-            let addr = rbx;
-            if addr < 0x400000 || addr.saturating_add(len as u64) > 0x800000 || len > 4096 {
-                serial_println!("[syscall] sys_write: bad address 0x{:x} len {}", addr, len);
+            if !is_user_ptr_valid(rbx, len as u64) || len > 4096 {
+                serial_println!("[syscall] sys_write: bad address 0x{:x} len {}", rbx, len);
                 return u64::MAX;
             }
 
@@ -176,9 +254,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            let addr = rcx;
-            if addr < 0x400000 || addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
-                serial_println!("[syscall] sys_read: bad address 0x{:x} len {}", addr, count);
+            if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
+                serial_println!("[syscall] sys_read: bad address 0x{:x} len {}", rcx, count);
                 return u64::MAX;
             }
 
@@ -276,9 +353,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let path_ptr = rbx as *const u8;
             let _flags = rcx;
 
-            let addr = rbx;
-            if addr < 0x400000 || addr > 0x800000 {
-                serial_println!("[syscall] sys_open: bad path address 0x{:x}", addr);
+            if !is_user_ptr_valid(rbx, 1) {
+                serial_println!("[syscall] sys_open: bad path address 0x{:x}", rbx);
                 return u64::MAX;
             }
 
@@ -312,7 +388,16 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             serial_println!("[syscall] sys_open('{}')", path);
 
             let result = crate::globals::with_vfs(|vfs| {
-                vfs.resolve_path(path)
+                let has_drive = path.contains(':');
+                let starts_with_sep = path.starts_with('\\') || path.starts_with('/');
+                if has_drive || starts_with_sep {
+                    vfs.resolve_path(path)
+                } else {
+                    let (drive, cwd_path) = crate::scheduler::get_current_cwd();
+                    let drive_char = (b'A' + drive) as char;
+                    let abs = alloc::format!("{}:{}\\{}", drive_char, cwd_path, path);
+                    vfs.resolve_path(&abs)
+                }
             });
 
             match result {
@@ -321,8 +406,6 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                         serial_println!("[syscall] sys_open -> Not a file");
                         return u64::MAX;
                     }
-                    // For now, we encode (drive_idx << 24 | inode) as the "handle"
-                    // Real systems use a file descriptor table per process.
                     let handle = ((drive_idx as u64) << 32) | (node.inode as u64);
                     serial_println!("[syscall] sys_open -> handle 0x{:x}", handle);
                     handle
@@ -347,15 +430,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            let buf_addr = rcx;
-            if buf_addr < 0x400000 || buf_addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
-                serial_println!("[syscall] sys_readfile: bad buffer 0x{:x} len {}", buf_addr, count);
+            if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
+                serial_println!("[syscall] sys_readfile: bad buffer 0x{:x} len {}", rcx, count);
                 return u64::MAX;
             }
 
             serial_println!("[syscall] sys_readfile(handle=0x{:x}, count={})", handle, count);
 
-            use alloc::vec::Vec;
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
 
@@ -391,15 +472,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            let buf_addr = rcx;
-            if buf_addr < 0x400000 || buf_addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
-                serial_println!("[syscall] sys_writefile: bad buffer 0x{:x} len {}", buf_addr, count);
+            if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
+                serial_println!("[syscall] sys_writefile: bad buffer 0x{:x} len {}", rcx, count);
                 return u64::MAX;
             }
 
             serial_println!("[syscall] sys_writefile(handle=0x{:x}, count={})", handle, count);
 
-            use alloc::vec::Vec;
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
 
@@ -460,7 +539,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                     }
 
                     // Validate buffer address
-                    if addr < 0x400000 || addr.saturating_add(count as u64) > 0x800000 || count > 4096 {
+                    if !is_user_ptr_valid(addr, count as u64) || count > 4096 {
                         serial_println!("[syscall] sys_ioctl: bad buffer 0x{:x} len {}", addr, count);
                         return u64::MAX;
                     }
@@ -497,6 +576,128 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 serial_println!("[syscall] sys_register_device: failed");
                 u64::MAX
             }
+        }
+
+        // ---- sys_chdir(path: *const u8) ----
+        16 => {
+            let path_str = match copy_user_string(rbx) {
+                Ok(s) => s,
+                Err(_) => {
+                    serial_println!("[syscall] sys_chdir: bad path");
+                    return u64::MAX;
+                }
+            };
+
+            serial_println!("[syscall] sys_chdir('{}')", path_str);
+
+            let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
+
+            let is_absolute = path_str.contains(':')
+                || path_str.starts_with('\\')
+                || path_str.starts_with('/');
+
+            let raw = if is_absolute {
+                path_str
+            } else {
+                alloc::format!("{}\\{}", cwd_path, path_str)
+            };
+
+            let normalized = normalize_dos_path(&raw);
+
+            let (new_drive, new_cwd_path) = if normalized.contains(':') {
+                let colon = normalized.find(':').unwrap();
+                let dl = normalized[..colon].chars().next().unwrap().to_ascii_uppercase();
+                let idx = crate::fs::vfs::Vfs::drive_index(dl).unwrap() as u8;
+                (idx, normalized[colon + 1..].to_string())
+            } else {
+                (cwd_drive, normalized)
+            };
+
+            let vfs_path = alloc::format!("{}:{}", (b'A' + new_drive) as char, &new_cwd_path);
+            let result = crate::globals::with_vfs(|vfs| {
+                let (_, node) = vfs.resolve_path(&vfs_path)?;
+                if node.mode != crate::fs::vfs::MODE_DIR {
+                    return Err(crate::fs::vfs::VfsError::NotADirectory);
+                }
+                Ok(())
+            });
+
+            match result {
+                Ok(()) => {
+                    crate::scheduler::set_current_cwd(new_drive, &new_cwd_path);
+                    serial_println!("[syscall] sys_chdir -> OK");
+                    0
+                }
+                Err(e) => {
+                    serial_println!("[syscall] sys_chdir: {:?}", e);
+                    u64::MAX
+                }
+            }
+        }
+
+        // ---- sys_getcwd(buf: *mut u8, len: usize) ----
+        17 => {
+            let buf_ptr = rbx as *mut u8;
+            let buf_len = rcx as usize;
+
+            if !is_user_ptr_valid(rbx, buf_len as u64) || buf_len > 4096 {
+                serial_println!("[syscall] sys_getcwd: bad buffer 0x{:x} len {}", rbx, buf_len);
+                return u64::MAX;
+            }
+
+            let (drive, path) = crate::scheduler::get_current_cwd();
+            let full = alloc::format!("{}:{}", (b'A' + drive) as char, path);
+
+            let bytes = full.as_bytes();
+            let to_copy = core::cmp::min(bytes.len(), buf_len.saturating_sub(1));
+
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, to_copy);
+                buf_ptr.add(to_copy).write(0);
+            }
+
+            serial_println!("[syscall] sys_getcwd -> '{}'", full);
+            to_copy as u64
+        }
+
+        // ---- sys_brk(new_break: u64) -> u64 ----
+        // Adjust program break. Returns current/updated break, or u64::MAX on error.
+        // RBX = 0 → query only (return current break)
+        // RBX < heap_base or > heap_limit → error
+        18 => {
+            let new_break = rbx;
+            let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
+
+            if heap_base == 0 {
+                serial_println!("[syscall] sys_brk: no heap allocated");
+                return u64::MAX;
+            }
+
+            if new_break == 0 {
+                return current_break;
+            }
+
+            let heap_limit = heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE;
+
+            if new_break < heap_base || new_break > heap_limit {
+                serial_println!("[syscall] sys_brk: 0x{:x} out of range [0x{:x}..0x{:x})",
+                    new_break, heap_base, heap_limit);
+                return u64::MAX;
+            }
+
+            // Zero-fill newly allocated pages when growing the break.
+            if new_break > current_break {
+                unsafe {
+                    let start = current_break;
+                    let end = new_break;
+                    core::ptr::write_bytes(start as *mut u8, 0, (end - start) as usize);
+                }
+            }
+
+            crate::scheduler::set_current_heap_break(new_break);
+
+            serial_println!("[syscall] sys_brk(0x{:x}) -> 0x{:x}", new_break, new_break);
+            new_break
         }
 
         _ => {

@@ -1,3 +1,4 @@
+use alloc::string::{String, ToString};
 use core::fmt;
 use core::sync::atomic::AtomicU64;
 use spin::Mutex;
@@ -45,6 +46,14 @@ pub struct Process {
     pub cpu_ticks: u64,
     pub user_slot: Option<u8>,
     pub waiting_for: Option<u32>,
+
+    // Current working directory (used by Ring 3 processes)
+    pub cwd_drive: u8,
+    pub cwd_path: String,
+
+    // Per-process heap (used by Ring 3 processes via sys_brk)
+    pub heap_base: u64,   // 0 if no heap allocated
+    pub heap_break: u64,  // current program break
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -82,6 +91,10 @@ impl Process {
             cpu_ticks: 0,
             user_slot: None,
             waiting_for: None,
+            cwd_drive: 2,
+            cwd_path: String::from("\\"),
+            heap_base: 0,
+            heap_break: 0,
         }
     }
 }
@@ -140,6 +153,8 @@ impl Scheduler {
         entry: u64,
         stack_top: u64,
         slot_idx: u8,
+        cwd_drive: u8,
+        cwd_path: &str,
     ) -> u32 {
         for i in 0..MAX_PROCESSES {
             if self.processes[i].is_none() {
@@ -148,6 +163,8 @@ impl Scheduler {
                 let stack_ptr = init_ring3_interrupt_stack_frame(stack_top, entry);
                 let mut proc = Process::new(pid, entry, stack_ptr);
                 proc.user_slot = Some(slot_idx);
+                proc.cwd_drive = cwd_drive;
+                proc.cwd_path = cwd_path.to_string();
                 self.processes[i] = Some(proc);
                 return pid;
             }
@@ -293,6 +310,39 @@ pub fn init() {
 
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
+}
+
+pub fn get_current_cwd() -> (u8, String) {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        (proc.cwd_drive, proc.cwd_path.clone())
+    } else {
+        (2, String::from("\\"))
+    }
+}
+
+pub fn set_current_cwd(drive: u8, path: &str) {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        proc.cwd_drive = drive;
+        proc.cwd_path = path.to_string();
+    }
+}
+
+pub fn current_process_heap_range() -> (u64, u64) {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        (proc.heap_base, proc.heap_break)
+    } else {
+        (0, 0)
+    }
+}
+
+pub fn set_current_heap_break(new_break: u64) {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        proc.heap_break = new_break;
+    }
 }
 
 /// Global tick counter incremented by the PIT timer (IRQ0, ~18.2 Hz).

@@ -6,7 +6,6 @@ use crate::print;
 use crate::println;
 use crate::shell::environment::Environment;
 use alloc::string::String;
-use alloc::vec::Vec;
 
 pub struct DosShell {
     pub current_dir: String,
@@ -297,31 +296,15 @@ impl DosShell {
             path
         };
 
-        let mut parts: Vec<&str> = Vec::new();
-        if !rest.starts_with('\\') && !rest.starts_with('/') {
-            for part in self.current_dir.split(|c| c == '\\' || c == '/') {
-                if !part.is_empty() {
-                    parts.push(part);
-                }
-            }
-        }
-
-        for part in rest.split(|c| c == '\\' || c == '/') {
-            match part {
-                "" | "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                _ => parts.push(part),
-            }
-        }
-
-        let mut abs = alloc::format!("{}:\\", drive);
-        for (idx, part) in parts.iter().enumerate() {
-            if idx > 0 {
+        let mut abs = alloc::format!("{}:", drive);
+        if rest.starts_with('\\') || rest.starts_with('/') {
+            abs.push_str(rest);
+        } else {
+            abs.push_str(&self.current_dir);
+            if !self.current_dir.ends_with('\\') && !self.current_dir.ends_with('/') {
                 abs.push('\\');
             }
-            abs.push_str(part);
+            abs.push_str(rest);
         }
         abs
     }

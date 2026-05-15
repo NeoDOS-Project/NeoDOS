@@ -53,11 +53,38 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 }
 
 /// Add a user-space process to the scheduler and return its PID.
-/// The process will get its own user-memory slot.
-pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8) -> u32 {
+/// The process will get its own user-memory slot, a 2 MB heap region,
+/// and inherit the shell's cwd.
+pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str) -> u32 {
+    // Allocate a 2 MB heap slot and mark it USER_ACCESSIBLE.
+    let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
+    let (heap_base, _heap_idx) = match heap_slot {
+        Some(slot) => {
+            unsafe {
+                crate::arch::x64::paging::map_user_range(slot.base, crate::arch::x64::paging::PROCESS_HEAP_SIZE);
+            }
+            (slot.base, Some(slot.index))
+        }
+        None => {
+            crate::serial_println!("[spawn_usermode] WARNING: no free heap slots, process will have no heap");
+            (0, None)
+        }
+    };
+
     x86_64::instructions::interrupts::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        s.add_ring3_process(entry, stack_top, slot_idx)
+        let pid = s.add_ring3_process(entry, stack_top, slot_idx, cwd_drive, cwd_path);
+        // Set heap fields on the just-added process.
+        for proc in s.processes.iter_mut() {
+            if let Some(p) = proc {
+                if p.pid == pid {
+                    p.heap_base = heap_base;
+                    p.heap_break = heap_base;
+                    break;
+                }
+            }
+        }
+        pid
     })
 }
 

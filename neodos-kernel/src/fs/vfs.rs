@@ -1,11 +1,8 @@
-// src/fs/vfs.rs - Virtual File System Layer
-//
-// This module provides a unified interface for all filesystem operations,
-// abstracting away the differences between NeoDOS FS, FAT32, etc.
-
 #![allow(dead_code)]
 
+use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,6 +15,9 @@ pub enum VfsError {
     InvalidPath,
     PermissionDenied,
     NotImplemented,
+    MountTableFull,
+    AlreadyMounted,
+    NotMounted,
 }
 
 impl fmt::Display for VfsError {
@@ -41,7 +41,6 @@ pub struct DirEntry {
     pub node: VfsNode,
 }
 
-/// The FileSystem trait defines the interface that all filesystem drivers must implement.
 pub trait FileSystem: Send {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError>;
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError>;
@@ -58,19 +57,40 @@ pub trait FileSystem: Send {
     }
 }
 
-/// The Virtual File System (VFS) manager.
+const MAX_MOUNTS: usize = 8;
+
+#[derive(Debug, Clone, Copy)]
+struct Mount {
+    parent_drive: usize,
+    parent_inode: u32,
+    mounted_drive: usize,
+}
+
 pub struct Vfs {
-    pub drives: [Option<alloc::boxed::Box<dyn FileSystem>>; 26],
+    pub drives: [Option<Box<dyn FileSystem>>; 26],
+    mounts: [Option<Mount>; MAX_MOUNTS],
+    mount_count: usize,
 }
 
 impl Vfs {
+    fn find_mount(mounts: &[Option<Mount>], mount_count: usize, drive_idx: usize, inode: u32) -> Option<usize> {
+        for i in 0..mount_count {
+            if let Some(ref m) = mounts[i] {
+                if m.parent_drive == drive_idx && m.parent_inode == inode {
+                    return Some(m.mounted_drive);
+                }
+            }
+        }
+        None
+    }
+
     pub const fn new() -> Self {
-        // We can't initialize an array of Options with Box in a const context easily
-        // but we can use a placeholder if we use a different structure.
-        // For now, let's use a simpler way.
-        const NONE: Option<alloc::boxed::Box<dyn FileSystem>> = None;
+        const NONE_DRIVE: Option<Box<dyn FileSystem>> = None;
+        const NONE_MOUNT: Option<Mount> = None;
         Vfs {
-            drives: [NONE; 26],
+            drives: [NONE_DRIVE; 26],
+            mounts: [NONE_MOUNT; MAX_MOUNTS],
+            mount_count: 0,
         }
     }
 
@@ -83,7 +103,7 @@ impl Vfs {
         }
     }
 
-    pub fn mount(&mut self, letter: char, fs: alloc::boxed::Box<dyn FileSystem>) -> Result<(), VfsError> {
+    pub fn mount(&mut self, letter: char, fs: Box<dyn FileSystem>) -> Result<(), VfsError> {
         let idx = Self::drive_index(letter).ok_or(VfsError::InvalidPath)?;
         self.drives[idx] = Some(fs);
         Ok(())
@@ -92,27 +112,73 @@ impl Vfs {
     pub fn unmount(&mut self, letter: char) -> Result<(), VfsError> {
         let idx = Self::drive_index(letter).ok_or(VfsError::InvalidPath)?;
         self.drives[idx] = None;
+        let mut kept = 0;
+        for i in 0..self.mount_count {
+            if let Some(ref m) = self.mounts[i] {
+                if m.mounted_drive == idx || m.parent_drive == idx {
+                    continue;
+                }
+                self.mounts[kept] = self.mounts[i];
+                kept += 1;
+            }
+        }
+        self.mount_count = kept;
         Ok(())
     }
 
-    /// Resolves a full path like "C:\WINDOWS\SYSTEM.INI"
+    fn walk_components(&mut self, mut drive_idx: usize, mut inode: u32, components: &[&str]) -> Result<(usize, u32), VfsError> {
+        let mut stack: Vec<(usize, u32)> = Vec::new();
+
+        if let Some(mounted) = Self::find_mount(&self.mounts, self.mount_count, drive_idx, inode) {
+            drive_idx = mounted;
+        }
+        stack.push((drive_idx, inode));
+
+        for &comp in components {
+            match comp {
+                "" | "." => continue,
+                ".." => {
+                    if stack.len() > 1 {
+                        stack.pop();
+                        let (d, i) = stack[stack.len() - 1];
+                        drive_idx = d;
+                        inode = i;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+
+            let node = {
+                let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+                fs.lookup(inode, comp)?
+            };
+            inode = node.inode;
+            stack.push((drive_idx, inode));
+
+            if let Some(mounted) = Self::find_mount(&self.mounts, self.mount_count, drive_idx, inode) {
+                drive_idx = mounted;
+                inode = 0;
+                stack.push((drive_idx, inode));
+            }
+        }
+
+        Ok((drive_idx, inode))
+    }
+
     pub fn resolve_path(&mut self, path: &str) -> Result<(usize, VfsNode), VfsError> {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
-        
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
-        
-        let mut current_node = fs.stat(0)?; // Root is usually 0
-        
-        let components = rest
+
+        let components: Vec<&str> = rest
             .split(|c| c == '\\' || c == '/')
-            .filter(|s| !s.is_empty() && *s != ".");
-        
-        for comp in components {
-            current_node = fs.lookup(current_node.inode, comp)?;
-        }
-        
-        Ok((drive_idx, current_node))
+            .collect();
+
+        let (drive_idx, inode) = self.walk_components(drive_idx, 0, &components)?;
+
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        let node = fs.stat(inode)?;
+        Ok((drive_idx, node))
     }
 
     pub fn split_drive(path: &str) -> Result<(char, &str), VfsError> {
@@ -151,57 +217,111 @@ impl Vfs {
         fs.set_volume_label(label)
     }
 
-    pub fn mkdir(&mut self, path: &str) -> Result<VfsNode, VfsError> {
+    pub fn mount_at_path(&mut self, path: &str, mounted_drive: char) -> Result<(), VfsError> {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
-        
-        let (parent_path, leaf) = if let Some(idx) = rest.rfind('\\') {
-            (&rest[..idx], &rest[idx+1..])
-        } else if let Some(idx) = rest.rfind('/') {
-            (&rest[..idx], &rest[idx+1..])
-        } else {
-            ("", rest)
-        };
+        let mounted_idx = Self::drive_index(mounted_drive).ok_or(VfsError::InvalidPath)?;
 
-        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
-        
-        let mut current_inode = 0;
-        if !parent_path.is_empty() {
-            let components = parent_path
-                .split(|c| c == '\\' || c == '/')
-                .filter(|s| !s.is_empty() && *s != ".");
-            for comp in components {
-                current_inode = fs.lookup(current_inode, comp)?.inode;
+        let components: Vec<&str> = rest
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
+
+        {
+            let fs = self.drives[resolved_drive].as_mut().ok_or(VfsError::NotFound)?;
+            let node = fs.stat(resolved_inode)?;
+            if node.mode != MODE_DIR {
+                return Err(VfsError::NotADirectory);
             }
         }
 
-        fs.mkdir(current_inode, leaf)
+        if self.drives[mounted_idx].is_none() {
+            return Err(VfsError::NotFound);
+        }
+
+        for i in 0..self.mount_count {
+            if let Some(ref m) = self.mounts[i] {
+                if m.parent_drive == resolved_drive && m.parent_inode == resolved_inode {
+                    return Err(VfsError::AlreadyMounted);
+                }
+            }
+        }
+
+        if self.mount_count >= MAX_MOUNTS {
+            return Err(VfsError::MountTableFull);
+        }
+
+        self.mounts[self.mount_count] = Some(Mount {
+            parent_drive: resolved_drive,
+            parent_inode: resolved_inode,
+            mounted_drive: mounted_idx,
+        });
+        self.mount_count += 1;
+        Ok(())
+    }
+
+    pub fn unmount_path(&mut self, path: &str) -> Result<(), VfsError> {
+        let (drive_letter, rest) = Self::split_drive(path)?;
+        let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
+
+        let components: Vec<&str> = rest
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
+
+        for i in 0..self.mount_count {
+            if let Some(ref m) = self.mounts[i] {
+                if m.parent_drive == resolved_drive && m.parent_inode == resolved_inode {
+                    self.mounts[i] = None;
+                    for j in i + 1..self.mount_count {
+                        self.mounts[j - 1] = self.mounts[j];
+                    }
+                    self.mount_count -= 1;
+                    return Ok(());
+                }
+            }
+        }
+        Err(VfsError::NotMounted)
+    }
+
+    fn split_parent_leaf(rest: &str) -> (&str, &str) {
+        match rest.rfind(|c| c == '\\' || c == '/') {
+            Some(idx) => (&rest[..idx], &rest[idx + 1..]),
+            None => ("", rest),
+        }
+    }
+
+    pub fn mkdir(&mut self, path: &str) -> Result<VfsNode, VfsError> {
+        let (drive_letter, rest) = Self::split_drive(path)?;
+        let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
+
+        let (parent_path, leaf) = Self::split_parent_leaf(rest);
+
+        let parent_components: Vec<&str> = parent_path
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.mkdir(parent_inode, leaf)
     }
 
     pub fn create(&mut self, path: &str) -> Result<VfsNode, VfsError> {
         let (drive_letter, rest) = Self::split_drive(path)?;
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
-        
-        let (parent_path, leaf) = if let Some(idx) = rest.rfind('\\') {
-            (&rest[..idx], &rest[idx+1..])
-        } else if let Some(idx) = rest.rfind('/') {
-            (&rest[..idx], &rest[idx+1..])
-        } else {
-            ("", rest)
-        };
+
+        let (parent_path, leaf) = Self::split_parent_leaf(rest);
+
+        let parent_components: Vec<&str> = parent_path
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
-
-        let mut current_inode = 0;
-        if !parent_path.is_empty() {
-            let components = parent_path
-                .split(|c| c == '\\' || c == '/')
-                .filter(|s| !s.is_empty() && *s != ".");
-            for comp in components {
-                current_inode = fs.lookup(current_inode, comp)?.inode;
-            }
-        }
-
-        fs.create(current_inode, leaf)
+        fs.create(parent_inode, leaf)
     }
 }

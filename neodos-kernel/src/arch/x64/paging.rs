@@ -37,6 +37,39 @@ pub struct UserSlot {
 
 static mut SLOT_USED: [bool; USER_SLOT_COUNT as usize] = [false; USER_SLOT_COUNT as usize];
 
+/// Per-process heap region: each Ring 3 process gets a 2 MB heap.
+/// Region starts at 256 MB to stay clear of kernel heap and image.
+pub const PROCESS_HEAP_BASE: u64 = 0x1000_0000;   // 256 MB
+pub const PROCESS_HEAP_SIZE: u64 = 0x20_0000;     // 2 MB per process
+pub const MAX_HEAP_SLOTS: usize = 16;
+
+static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
+
+pub struct HeapSlot {
+    pub base: u64,
+    pub index: u8,
+}
+
+pub fn alloc_heap_slot() -> Option<HeapSlot> {
+    for i in 0..MAX_HEAP_SLOTS {
+        unsafe {
+            if !HEAP_SLOT_USED[i] {
+                HEAP_SLOT_USED[i] = true;
+                let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
+                return Some(HeapSlot { base, index: i as u8 });
+            }
+        }
+    }
+    None
+}
+
+pub fn free_heap_slot(index: u8) {
+    let idx = index as usize;
+    if idx < MAX_HEAP_SLOTS {
+        unsafe { HEAP_SLOT_USED[idx] = false; }
+    }
+}
+
 /// Allocate a free user slot, returning its base addresses.
 /// Returns `None` if all slots are in use.
 pub fn alloc_user_slot() -> Option<UserSlot> {
@@ -249,5 +282,42 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
     serial_println!(
         "[paging] map_user_range: 0x{:x}..0x{:x} ({} MB) -> USER_ACCESSIBLE",
         base_aligned, end_aligned, mapped / (1024 * 1024)
+    );
+}
+
+/// Remove the `USER_ACCESSIBLE` flag from a 2 MB-aligned range.
+/// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
+/// Used when a Ring 3 process exits to revoke its heap.
+///
+/// # Safety
+/// Must be called while paging is active (after `init_custom_page_tables`).
+pub unsafe fn unmap_user_range(base: u64, size: u64) {
+    let end = base.saturating_add(size).min(0x1_0000_0000);
+
+    let base_aligned = base & !(HUGE_PAGE_SIZE - 1);
+    let end_aligned = (end + HUGE_PAGE_SIZE - 1) & !(HUGE_PAGE_SIZE - 1);
+
+    let mut unmapped = 0u64;
+    let mut addr = base_aligned;
+    while addr < end_aligned {
+        let pd_idx = (addr / HUGE_PAGE_SIZE) as usize / 512;
+        let entry_idx = ((addr / HUGE_PAGE_SIZE) as usize) % 512;
+
+        if pd_idx < 4 {
+            let entry = &mut PD[pd_idx].0[entry_idx];
+            let flags = entry.flags() & !PageTableFlags::USER_ACCESSIBLE;
+            let phys = entry.addr();
+            entry.set_addr(phys, flags);
+            unmapped += HUGE_PAGE_SIZE;
+        }
+        addr += HUGE_PAGE_SIZE;
+    }
+
+    let (frame, flags) = Cr3::read();
+    Cr3::write(frame, flags);
+
+    serial_println!(
+        "[paging] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",
+        base_aligned, end_aligned, unmapped / (1024 * 1024)
     );
 }
