@@ -361,14 +361,6 @@ NeoDOS solo usa el core de arranque (BSP).
 
 ---
 
-### 75. USB Mass Storage (Pendrives)
-
-**Archivo:** `drivers/usb/`
-
-**Propuesta:** Una vez estabilizado el driver UHCI/EHCI, implementar la clase de dispositivo USB Mass Storage para poder montar pendrives como unidades de disco adicionales (D:, E:, etc.).
-
----
-
 ### 76. NeoDOS SDK (Toolchain externa)
 
 **Propuesta:** Desarrollar un SDK basado en LLVM que permita compilar aplicaciones en C y Rust para NeoDOS desde un sistema host (Linux/Windows), automatizando la generación de binarios compatibles con las syscalls de NeoDOS.

@@ -72,9 +72,9 @@ pub extern "C" fn clear_need_resched() -> bool {
 
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
-    let (has_non_idle, current_pid) = x86_64::instructions::interrupts::without_interrupts(|| {
+    let has_non_idle = x86_64::instructions::interrupts::without_interrupts(|| {
         let scheduler = scheduler::current_scheduler().lock();
-        (scheduler.has_non_idle_processes(), scheduler.current_pid)
+        scheduler.has_non_idle_processes()
     });
 
     if !has_non_idle {
@@ -88,8 +88,8 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let pid = scheduler.current_pid;
         if pid > 0 {
             if let Some(current) = scheduler.current_process_mut() {
-                current.rsp = current_rsp;
                 if current.state == ProcessState::Running {
+                    current.rsp = current_rsp;
                     current.state = ProcessState::Ready;
                 }
             }

@@ -39,7 +39,7 @@ use graphics::FramebufferInfo;
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 3; // v0.10.3
+const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 4; // v0.10.4
 
 #[repr(C)]
 pub struct BootInfo {
@@ -110,11 +110,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Scanning for USB HID keyboards...");
     drivers::usb_hid::init_usb_keyboard();
 
-    println!("[+] Enabling interrupts...");
-    arch::x64::enable_interrupts();
-
     // ============================================
     // PHASE 2.5: Physical memory map / allocator
+    // (must complete before enabling interrupts —
+    //  timer IRQ0 can fire immediately after STI)
     // ============================================
     memory::init(boot_info);
 
@@ -122,6 +121,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.75: Heap allocator (uses identity map)
     // ============================================
     allocator::init();
+
+    println!("[+] Enabling interrupts...");
+    arch::x64::enable_interrupts();
 
     // ============================================
     // PHASE 3: Storage stack

@@ -147,7 +147,11 @@ lazy_static! {
         idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
         idt.device_not_available.set_handler_fn(device_not_available_handler);
         
-        idt.double_fault.set_handler_fn(double_fault_handler);
+        unsafe {
+            idt.double_fault
+                .set_handler_fn(double_fault_handler)
+                .set_stack_index(crate::arch::x64::gdt::DOUBLE_FAULT_IST_INDEX);
+        }
         
         idt.invalid_tss.set_handler_fn(invalid_tss_handler);
         idt.segment_not_present.set_handler_fn(segment_not_present_handler);
@@ -296,16 +300,29 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         return current_rsp;
     }
     
-    // Save current process state
+    // Save current process state (only if it's still alive)
     let pid = scheduler.current_pid;
+    let mut current_terminated = false;
     if pid > 0 {
         if let Some(current) = scheduler.current_process_mut() {
-            current.rsp = current_rsp;
-            current.state = ProcessState::Ready;
+            if current.state != ProcessState::Terminated {
+                current.rsp = current_rsp;
+                current.state = ProcessState::Ready;
+            } else {
+                current_terminated = true;
+            }
         } else {
             // Current PID is stale; fall back to idle.
             scheduler.current_pid = 0;
         }
+    }
+    
+    // If the current process was Terminated, don't try to save its context
+    // or switch to another process — the shell is running in Ring 0 outside
+    // the scheduler, and we'd switch away from it prematurely.
+    if current_terminated {
+        unsafe { PICS.lock().notify_end_of_interrupt(32); }
+        return current_rsp;
     }
     
     // Switch to next process

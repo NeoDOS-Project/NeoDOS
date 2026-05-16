@@ -26,6 +26,19 @@ impl CommandRegistry {
         false
     }
 
+    pub fn names_starting_with(&self, prefix: &str) -> alloc::vec::Vec<&'static str> {
+        let mut result = alloc::vec::Vec::new();
+        for entry in self.commands {
+            if entry.name.len() >= prefix.len()
+                && entry.name[..prefix.len()].eq_ignore_ascii_case(prefix)
+                && !result.contains(&entry.name)
+            {
+                result.push(entry.name);
+            }
+        }
+        result
+    }
+
     pub fn print_help(&self) {
         use crate::println;
 

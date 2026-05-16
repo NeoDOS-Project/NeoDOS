@@ -5,8 +5,10 @@ use crate::scheduler;
 static mut EXIT_RSP: u64 = 0;
 #[no_mangle]
 static mut EXIT_RIP: u64 = 0;
+use core::sync::atomic::{AtomicU8, Ordering};
+
 #[no_mangle]
-static mut EXIT_NOW: u8 = 0;
+static EXIT_NOW: AtomicU8 = AtomicU8::new(0);
 static mut WAIT_PID: u32 = 0;
 
 core::arch::global_asm!(
@@ -135,7 +137,7 @@ pub fn wait_for_process(pid: u32) {
 /// Called from syscall_dispatch on RAX=0 — signals the asm trampoline
 /// to return to the shell via exit_to_kernel.
 pub fn request_exit_to_kernel() {
-    unsafe { EXIT_NOW = 1; }
+    EXIT_NOW.store(1, Ordering::SeqCst);
 }
 
 /// Returns the PID the shell is currently waiting for.

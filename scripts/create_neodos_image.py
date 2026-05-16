@@ -218,6 +218,19 @@ Happy hacking!
 
         driver_inode = create_inode(9, 0x80, len(driver_ndm_data), [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+2304:512+2560] = driver_inode
+
+        # Inode 10: ALLTEST.BIN — comprehensive syscall test
+        alltest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'alltest.bin')
+        alltest_bin_data = b''
+        if os.path.exists(alltest_bin_path):
+            with open(alltest_bin_path, 'rb') as af:
+                alltest_bin_data = af.read()
+            print(f"[*] Including alltest.bin ({len(alltest_bin_data)} bytes)")
+        else:
+            print("[!] alltest.bin not found — skipping")
+
+        alltest_inode = create_inode(10, 0x80, len(alltest_bin_data), [10, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+2560:512+2816] = alltest_inode
         
         # 3. Root directory block (block 0) @ first data sector
         print("[*] Writing root directory...")
@@ -250,6 +263,10 @@ Happy hacking!
         # Entry 6: DRIVER.NDM (demo driver)
         entry = create_dir_entry(9, 1, "DRIVER.NDM")
         image[offset+1536:offset+1792] = entry
+
+        # Entry 7: ALLTEST.BIN (comprehensive syscall test)
+        entry = create_dir_entry(10, 1, "ALLTEST.BIN")
+        image[offset+1792:offset+2048] = entry
         
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
@@ -320,6 +337,12 @@ VER
             print("[*] Writing DRIVER.NDM content...")
             offset = (200 + 72) * 512
             image[offset:offset+len(driver_ndm_data)] = driver_ndm_data
+
+        # Block 10 = sector 280 (ALLTEST.BIN — comprehensive syscall test)
+        if alltest_bin_data:
+            print("[*] Writing ALLTEST.BIN content...")
+            offset = (200 + 80) * 512
+            image[offset:offset+len(alltest_bin_data)] = alltest_bin_data
 
     
     # Escribir imagen a disco

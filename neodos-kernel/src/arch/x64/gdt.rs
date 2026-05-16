@@ -3,12 +3,13 @@ use x86_64::structures::gdt::{GlobalDescriptorTable, Descriptor, SegmentSelector
 use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 
-const DOUBLE_FAULT_IST_INDEX: u16 = 0;
+// IST number for double fault handler (1-7).  TSS array index = IST - 1.
+pub const DOUBLE_FAULT_IST_INDEX: u16 = 1;
 
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
-        tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
+        tss.interrupt_stack_table[(DOUBLE_FAULT_IST_INDEX - 1) as usize] = {
             const STACK_SIZE: usize = 4096 * 5;
             static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
             VirtAddr::from_ptr(unsafe { &STACK }) + STACK_SIZE as u64

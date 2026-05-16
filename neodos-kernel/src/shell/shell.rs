@@ -6,6 +6,8 @@ use crate::print;
 use crate::println;
 use crate::shell::environment::Environment;
 use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 pub struct DosShell {
     pub current_dir: String,
@@ -102,6 +104,22 @@ impl DosShell {
                                 line_len -= n;
                                 crate::console::write_char(b'\x08');
                                 crate::serial_print!("\x08 \x08");
+                            }
+                        }
+                        b'\t' => {
+                            if line_len > 0 {
+                                crate::console::draw_cursor(false);
+                                cursor_visible = false;
+                                let line_owned = {
+                                    let s = core::str::from_utf8(&line_buffer[..line_len]);
+                                    match s {
+                                        Ok(s) => Some(alloc::string::String::from(s)),
+                                        Err(_) => None,
+                                    }
+                                };
+                                if let Some(ref line_str) = line_owned {
+                                    self.try_complete(line_str, &mut line_buffer[..], &mut line_len);
+                                }
                             }
                         }
                         _ if line_len + 4 < 128 => {
@@ -307,5 +325,173 @@ impl DosShell {
             abs.push_str(rest);
         }
         abs
+    }
+
+    pub fn try_complete(&mut self, line: &str, line_buffer: &mut [u8], line_len: &mut usize) {
+        let trimmed = line.trim_start();
+        let leading_ws = line.len() - trimmed.len();
+
+        let word_start = trimmed
+            .rfind(|c: char| c.is_whitespace())
+            .map(|i| leading_ws + i + 1)
+            .unwrap_or(leading_ws);
+
+        let prefix = &line[word_start..];
+        if prefix.is_empty() {
+            return;
+        }
+
+        let is_first_word = line[..word_start].trim().is_empty();
+        let mut matches: Vec<String> = Vec::new();
+
+        if is_first_word {
+            for name in crate::shell::handler::COMMANDS.names_starting_with(prefix) {
+                matches.push(name.to_string());
+            }
+
+            if let Some(path) = self.environment.get("PATH") {
+                let path_owned = alloc::string::String::from(path);
+                for dir in path_owned.split(';') {
+                    if dir.is_empty() {
+                        continue;
+                    }
+                    let full_dir = if dir.starts_with('\\') || dir.starts_with('/') {
+                        alloc::format!("{}:{}", self.current_drive, dir)
+                    } else {
+                        alloc::format!("{}:\\{}", self.current_drive, dir)
+                    };
+
+                    crate::globals::with_vfs(|vfs| {
+                        if let Ok((drive_idx, node)) = vfs.resolve_path(&full_dir) {
+                            let mut i = 0;
+                            loop {
+                                match vfs.readdir(drive_idx, node.inode, i) {
+                                    Ok(Some(entry)) => {
+                                        let name_upper = entry.name.to_ascii_uppercase();
+                                        let p_upper = prefix.to_ascii_uppercase();
+                                        if name_upper.starts_with(&p_upper)
+                                            && (name_upper.ends_with(".BIN")
+                                                || !entry.name.contains('.'))
+                                        {
+                                            let display_name = if name_upper.ends_with(".BIN") {
+                                                entry.name[..entry.name.len() - 4].to_string()
+                                            } else {
+                                                entry.name.clone()
+                                            };
+                                            if !matches.contains(&display_name) {
+                                                matches.push(display_name);
+                                            }
+                                        }
+                                        i += 1;
+                                    }
+                                    Ok(None) => break,
+                                    Err(_) => break,
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        } else {
+            let (search_dir, file_prefix) =
+                if let Some(sep_idx) = prefix.rfind(|c| c == '\\' || c == '/') {
+                    let dir_part = &prefix[..=sep_idx];
+                    let file_part = &prefix[sep_idx + 1..];
+                    let full_dir = self.resolve_absolute_path(dir_part);
+                    (Some(full_dir), file_part)
+                } else {
+                    (None, prefix)
+                };
+
+            if file_prefix.is_empty() {
+                return;
+            }
+
+            let cwd = if self.current_dir == "\\" {
+                alloc::format!("{}:\\", self.current_drive)
+            } else {
+                alloc::format!("{}:{}", self.current_drive, self.current_dir)
+            };
+            let search = search_dir.unwrap_or(cwd);
+
+            crate::globals::with_vfs(|vfs| {
+                if let Ok((drive_idx, node)) = vfs.resolve_path(&search) {
+                    let mut i = 0;
+                    loop {
+                        match vfs.readdir(drive_idx, node.inode, i) {
+                            Ok(Some(entry)) => {
+                                if entry.name.len() >= file_prefix.len()
+                                    && entry.name[..file_prefix.len()]
+                                        .eq_ignore_ascii_case(file_prefix)
+                                {
+                                    if !matches.contains(&entry.name) {
+                                        matches.push(entry.name.clone());
+                                    }
+                                }
+                                i += 1;
+                            }
+                            Ok(None) => break,
+                            Err(_) => break,
+                        }
+                    }
+                }
+            });
+        }
+
+        if matches.is_empty() {
+            return;
+        }
+
+        matches.sort();
+
+        if matches.len() == 1 {
+            let completion = &matches[0];
+
+            let erase_len = *line_len - word_start;
+            for _ in 0..erase_len {
+                crate::console::write_char(b'\x08');
+                crate::serial_print!("\x08 \x08");
+            }
+
+            *line_len = word_start;
+            for b in completion.bytes() {
+                if *line_len < 128 {
+                    line_buffer[*line_len] = b;
+                    *line_len += 1;
+                }
+                crate::console::write_char(b);
+                crate::serial_print!("{}", b as char);
+            }
+
+            if is_first_word {
+                if *line_len < 128 {
+                    line_buffer[*line_len] = b' ';
+                    *line_len += 1;
+                }
+                crate::console::write_char(b' ');
+                crate::serial_print!(" ");
+            }
+        } else {
+            println!();
+            let mut col = 0usize;
+            for m in &matches {
+                if col + m.len() + 2 > 70 {
+                    println!();
+                    col = 0;
+                }
+                print!("{}  ", m);
+                col += m.len() + 2;
+            }
+            println!();
+            self.print_prompt(0);
+            if *line_len > 0 {
+                if let Ok(line_str) = core::str::from_utf8(&line_buffer[..*line_len]) {
+                    for ch in line_str.chars() {
+                        crate::console::write_codepoint(ch as u32);
+                    }
+                    crate::serial_print!("{}", line_str);
+                }
+            }
+        }
     }
 }
