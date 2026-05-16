@@ -33,6 +33,11 @@ import subprocess, time, os, socket, re
 "`
 4. Solo si todo pasa: `git commit && git push`
 
+**Cada vez que se complete una tarea:**
+- Actualizar `docs/IMPROVEMENTS.md` (mover item a Completado)
+- Actualizar `AGENTS.md` si es necesario (nuevas secciones)
+- `git add -A && git commit -m "feat: ..." && git push`
+
 ## Two packages, no workspace
 
 - `neodos-bootloader/` — UEFI app, target `x86_64-unknown-uefi`, produces `bootloader.efi`
