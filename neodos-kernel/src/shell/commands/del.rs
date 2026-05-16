@@ -11,6 +11,11 @@ impl DosShell {
         let filename = args[0];
         let full_path = self.resolve_absolute_path(filename);
 
-        println!("DELETE not implemented in VFS yet: {}", full_path);
+        crate::globals::with_vfs(|vfs| {
+            match vfs.remove_file(&full_path) {
+                Ok(_) => {},
+                Err(e) => println!("  Error: {:?}", e),
+            }
+        });
     }
 }

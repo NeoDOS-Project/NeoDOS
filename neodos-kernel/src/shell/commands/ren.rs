@@ -7,6 +7,15 @@ impl DosShell {
             println!("Usage: REN oldname newname");
             return;
         }
-        println!("RENAME not implemented in VFS yet");
+
+        let old_path = self.resolve_absolute_path(args[0]);
+        let new_name = args[1];
+
+        crate::globals::with_vfs(|vfs| {
+            match vfs.rename(&old_path, new_name) {
+                Ok(_) => {},
+                Err(e) => println!("  Error: {:?}", e),
+            }
+        });
     }
 }

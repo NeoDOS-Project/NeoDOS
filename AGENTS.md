@@ -110,6 +110,27 @@ On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the process `Terminate
 
 Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking).
 
+## Shell: TAB autocomplete
+
+El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
+- **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.BIN` del PATH
+- **Argumentos**: completa nombres de archivo/directorio desde el directorio actual
+- **Rutas**: soporta rutas con separador (`DIR \\BIN\\TE` → `\\BIN\\TEST`)
+- Match único: reemplaza y añade espacio (comandos)
+- Múltiples matches: lista todos y redibuja prompt + línea
+
+## Shell: DEL, REN, RD
+
+Comandos de gestión de archivos que operan via VFS (`vfs.rs`):
+
+| Comando | Descripción | VFS method |
+|---------|-------------|------------|
+| `DEL file` | Elimina archivo (libera bloques, inodo, marca entry 0xE5) | `vfs.remove_file()` |
+| `REN old new` | Renombra archivo en el mismo directorio | `vfs.rename()` |
+| `RD dir` | Elimina directorio vacío | `vfs.remove_dir()` |
+
+Métodos del trait `FileSystem`: `remove_file()`, `remove_dir()`, `rename()` — con default `NotImplemented`.
+
 ## Syscall Table (INT 0x80)
 
 Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.

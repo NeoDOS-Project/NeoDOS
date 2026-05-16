@@ -18,6 +18,7 @@ pub enum VfsError {
     MountTableFull,
     AlreadyMounted,
     NotMounted,
+    DirectoryNotEmpty,
 }
 
 impl fmt::Display for VfsError {
@@ -49,6 +50,15 @@ pub trait FileSystem: Send {
     fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError>;
     fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError>;
+    fn remove_file(&mut self, _dir_inode: u32, _name: &str) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+    fn remove_dir(&mut self, _dir_inode: u32, _name: &str) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+    fn rename(&mut self, _dir_inode: u32, _old_name: &str, _new_name: &str) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
     fn volume_label(&self) -> Result<String, VfsError> {
         Err(VfsError::NotImplemented)
     }
@@ -323,5 +333,53 @@ impl Vfs {
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.create(parent_inode, leaf)
+    }
+
+    pub fn remove_file(&mut self, path: &str) -> Result<(), VfsError> {
+        let (drive_letter, rest) = Self::split_drive(path)?;
+        let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
+
+        let (parent_path, leaf) = Self::split_parent_leaf(rest);
+
+        let parent_components: Vec<&str> = parent_path
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.remove_file(parent_inode, leaf)
+    }
+
+    pub fn remove_dir(&mut self, path: &str) -> Result<(), VfsError> {
+        let (drive_letter, rest) = Self::split_drive(path)?;
+        let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
+
+        let (parent_path, leaf) = Self::split_parent_leaf(rest);
+
+        let parent_components: Vec<&str> = parent_path
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.remove_dir(parent_inode, leaf)
+    }
+
+    pub fn rename(&mut self, path: &str, new_name: &str) -> Result<(), VfsError> {
+        let (drive_letter, rest) = Self::split_drive(path)?;
+        let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
+
+        let (parent_path, leaf) = Self::split_parent_leaf(rest);
+
+        let parent_components: Vec<&str> = parent_path
+            .split(|c| c == '\\' || c == '/')
+            .collect();
+
+        let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
+
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.rename(parent_inode, leaf, new_name)
     }
 }

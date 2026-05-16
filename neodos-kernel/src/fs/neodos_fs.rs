@@ -121,6 +121,7 @@ pub enum FsError {
     NoBlockAvailable,
     #[allow(dead_code)]
     Ata(AtaError),
+    DirectoryNotEmpty,
 }
 
 impl From<AtaError> for FsError {
@@ -1053,7 +1054,7 @@ impl NeoDosFs {
         
         // Check if directory is empty
         if !self.is_directory_empty(dir_inode_num, cache, ata)? {
-            return Err(FsError::FileNotFound);
+            return Err(FsError::DirectoryNotEmpty);
         }
         
         // Use same logic as delete_file_by_inode to remove the entry
@@ -1071,6 +1072,7 @@ impl From<FsError> for VfsError {
             FsError::NotAFile => VfsError::NotAFile,
             FsError::NoInodeAvailable => VfsError::IOError,
             FsError::NoBlockAvailable => VfsError::IOError,
+            FsError::DirectoryNotEmpty => VfsError::DirectoryNotEmpty,
             _ => VfsError::IOError,
         }
     }
@@ -1191,6 +1193,41 @@ impl FileSystem for NeoDosFs {
             mode: inode_data.mode,
             size: inode_data.size,
         })
+    }
+
+    fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        let (file_inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, ata)?;
+        let inode_data = self.inode_cache.load_inode(file_inode as usize, cache, ata)?;
+        if (inode_data.mode & MODE_DIR) != 0 {
+            return Err(VfsError::NotAFile);
+        }
+        self.delete_file_by_inode(dir_inode, name, file_inode, cache, ata)?;
+        Ok(())
+    }
+
+    fn remove_dir(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        self.delete_directory(dir_inode, name, cache, ata)?;
+        Ok(())
+    }
+
+    fn rename(&mut self, dir_inode: u32, old_name: &str, new_name: &str) -> Result<(), VfsError> {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
+        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+
+        self.rename_file(dir_inode, old_name, new_name, cache, ata)?;
+        Ok(())
     }
 
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
