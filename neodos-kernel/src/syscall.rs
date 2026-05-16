@@ -23,6 +23,8 @@
 //!  15  sys_register_device — register device handler
 //!  16  sys_chdir     — change current working directory
 //!  17  sys_getcwd    — get current working directory
+//!  18  sys_brk       — adjust program break (demand-paged)
+//!  19  sys_mmap      — allocate zero-filled memory
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -183,12 +185,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                             crate::arch::x64::paging::free_user_slot(slot);
                         }
                         if proc.heap_base != 0 {
-                            unsafe {
-                                crate::arch::x64::paging::unmap_user_range(
-                                    proc.heap_base,
-                                    crate::arch::x64::paging::PROCESS_HEAP_SIZE,
-                                );
-                            }
+                            // Free all physically allocated heap pages
+                            crate::arch::x64::paging::heap_free_range(
+                                proc.heap_base,
+                                proc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
+                            );
                             let idx = ((proc.heap_base
                                 - crate::arch::x64::paging::PROCESS_HEAP_BASE)
                                 / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
@@ -664,6 +665,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         // Adjust program break. Returns current/updated break, or u64::MAX on error.
         // RBX = 0 → query only (return current break)
         // RBX < heap_base or > heap_limit → error
+        //
+        // Physical pages are allocated on demand by the page fault handler.
+        // This syscall only adjusts the break pointer and zeroes new pages.
         18 => {
             let new_break = rbx;
             let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
@@ -685,12 +689,35 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 return u64::MAX;
             }
 
-            // Zero-fill newly allocated pages when growing the break.
+            // When growing, zero-fill new pages (page faults will handle allocation).
             if new_break > current_break {
+                let start_page = (current_break + 0xFFF) & !0xFFF;
+                let end_page = new_break & !0xFFF;
+                if end_page > start_page {
+                    // Touch each new page to trigger demand allocation
+                    let mut page = start_page;
+                    while page < end_page {
+                        unsafe {
+                            core::ptr::write_volatile(page as *mut u8, 0);
+                        }
+                        page += crate::arch::x64::paging::PAGE_4K;
+                    }
+                }
+                // Zero-fill the remainder
                 unsafe {
-                    let start = current_break;
-                    let end = new_break;
-                    core::ptr::write_bytes(start as *mut u8, 0, (end - start) as usize);
+                    core::ptr::write_bytes(current_break as *mut u8, 0, (new_break - current_break) as usize);
+                }
+            } else if new_break < current_break {
+                // When shrinking, free pages that are no longer in range
+                let shrink_start = new_break;
+                let shrink_end = current_break;
+                let start_page = (shrink_start + crate::arch::x64::paging::PAGE_4K - 1)
+                    & !(crate::arch::x64::paging::PAGE_4K - 1);
+                let end_page = shrink_end & !(crate::arch::x64::paging::PAGE_4K - 1);
+                let mut page = start_page;
+                while page < end_page {
+                    crate::arch::x64::paging::heap_free_page(page);
+                    page += crate::arch::x64::paging::PAGE_4K;
                 }
             }
 
@@ -698,6 +725,57 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
             serial_println!("[syscall] sys_brk(0x{:x}) -> 0x{:x}", new_break, new_break);
             new_break
+        }
+
+        // ---- sys_mmap(size: u64) -> u64 ----
+        // Allocate 'size' bytes of zero-filled memory, return virtual address.
+        // Uses the frame allocator directly. Only for user-mode processes.
+        // RBX = size (will be rounded up to page boundary).
+        // Returns virtual address, or u64::MAX on error.
+        19 => {
+            let size = rbx;
+            if size == 0 || size > 0x100000 { // max 1 MB per call
+                serial_println!("[syscall] sys_mmap: invalid size {}", size);
+                return u64::MAX;
+            }
+
+            let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
+            if heap_base == 0 {
+                serial_println!("[syscall] sys_mmap: no heap allocated");
+                return u64::MAX;
+            }
+
+            let heap_limit = heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE;
+            let alloc_size = (size + 0xFFF) & !0xFFF;
+            let new_break = current_break + alloc_size;
+
+            if new_break > heap_limit {
+                serial_println!("[syscall] sys_mmap: out of heap space (break 0x{:x} > limit 0x{:x})",
+                    new_break, heap_limit);
+                return u64::MAX;
+            }
+
+            // Allocate physical pages and map them
+            let mut page = current_break;
+            while page < new_break {
+                if let Some(_phys) = crate::arch::x64::paging::heap_alloc_page(page) {
+                    unsafe {
+                        core::ptr::write_volatile(page as *mut u8, 0);
+                    }
+                } else {
+                    // Free partial allocation
+                    crate::arch::x64::paging::heap_free_range(current_break, page);
+                    crate::scheduler::set_current_heap_break(current_break);
+                    serial_println!("[syscall] sys_mmap: OOM at 0x{:x}", page);
+                    return u64::MAX;
+                }
+                page += crate::arch::x64::paging::PAGE_4K;
+            }
+
+            crate::scheduler::set_current_heap_break(new_break);
+
+            serial_println!("[syscall] sys_mmap({}) -> 0x{:x}", size, current_break);
+            current_break
         }
 
         _ => {

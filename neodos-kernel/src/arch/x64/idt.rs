@@ -1,4 +1,5 @@
 use lazy_static::lazy_static;
+use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::serial_println;
 use crate::scheduler::{current_scheduler, ProcessState};
@@ -246,7 +247,26 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
-    panic!("Page fault: {:#?}, error: {:?}", stack_frame, error_code);
+    let virt = Cr2::read().as_u64();
+    let is_user = error_code.contains(PageFaultErrorCode::USER_MODE);
+    let is_write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
+    let is_not_present = !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION);
+
+    // On-demand heap page allocation for user-mode accesses
+    if is_user && is_not_present {
+        if crate::arch::x64::paging::handle_heap_page_fault(virt, true, is_write) {
+            return; // Instruction re-executed
+        }
+    }
+
+    panic!(
+        "Page fault @ 0x{:x} (user={}, write={}, np={}) — rip={:#x}",
+        virt,
+        is_user,
+        is_write,
+        is_not_present,
+        stack_frame.instruction_pointer.as_u64(),
+    );
 }
 
 extern "x86-interrupt" fn x87_handler(stack_frame: InterruptStackFrame) {

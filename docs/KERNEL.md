@@ -14,25 +14,24 @@ The bootloader calls it using the System V AMD64 ABI, so `boot_info` is passed i
 
 ## Boot Sequence (Current)
 
-The kernel boot flow in `neodos-kernel/src/main.rs` is roughly:
+The kernel boot flow in `neodos-kernel/src/main.rs` is:
 
-1. Initialize graphics (GOP framebuffer renderer)
-2. Initialize serial output and print banner
-3. Initialize VGA text mode as a fallback output
-4. Initialize CPU tables:
-   - GDT
-   - IDT (exception handlers + IRQ handlers)
-   - PIC remap/enable
-5. Initialize physical memory stats from the UEFI memory map (`memory::init`)
-6. Initialize storage stack:
-   - ATA driver
-   - Parse GPT (`drivers::gpt::find_neodos_partition`) to locate NeoDOS partition
-   - Set `base_lba` on ATA driver so NeoDOS FS sees relative LBAs
-   - Initialize block cache
-   - Mount NeoDOS filesystem (reads superblock at `base_lba + 0`)
-   - Initialize FAT32 driver (reads absolute LBA 0/2048 for boot sector)
-7. Initialize custom page tables (currently identity-maps 4 GiB)
-8. Start the DOS-like shell
+0. **Verify boot info** — check magic (`0x4E444F53` = "NDOS") and bootloader version
+1. **Graphics + RAM disk** — init GOP framebuffer renderer, set Caps Lock LED, store RAM disk base/size from bootloader
+2. **Serial** — init serial output, print bootloader version (compatibility check)
+3. **Console** — init VGA text mode fallback, set Caps+Num Lock LEDs, print kernel banner
+4. **CPU structures** — GDT, IDT (exception + IRQ handlers + INT 0x80 trampoline), PIC remap/enable
+5. **Input** — init PS/2 controller, init USB HID keyboard
+6. **Physical memory** — parse UEFI memory map, init frame allocator bitmap (`memory::init`)
+7. **Kernel heap** — init `linked_list_allocator` (`allocator::init`) — enables `Box`/`Vec`/`String`
+8. **Enable interrupts** — STI (timer IRQ0 can fire immediately)
+9. **Storage — ATA** — init primary + secondary ATA drivers, scan PCI for IDE bus-master DMA, probe AHCI controller, set AHCI fallback on ATA driver
+10. **Storage — GPT** — scan GPT on disk 0 (and disk 1), find NeoDOS partition, set `base_lba` on ATA driver
+11. **Storage — NeoDOS FS** — init block cache, read superblock from LBA 0 (relative), mount NeoDOS FS on `C:` via VFS
+12. **Storage — FAT32** — init FAT32 driver from ESP partition (absolute LBA), mount on `A:` via VFS
+13. **Page tables** — init custom 4-level page tables: 4 GiB identity-map via 2 MB huge pages, user window (`0x400000..0x800000`) marked `USER_ACCESSIBLE`, framebuffer marked uncacheable (`NO_CACHE`), map framebuffer >4 GiB if needed
+14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
+15. **Shell** — set all keyboard LEDs ON, register kernel tests (37), create and run `DosShell`
 
 ### GPT Layout (single disk)
 

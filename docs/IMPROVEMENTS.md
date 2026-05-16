@@ -153,13 +153,25 @@ Actualmente solo soporta binarios planos (.BIN) cargados en una dirección fija.
 
 ---
 
-### 56. Capa VFS (Virtual File System)
+### 56. [COMPLETADO] Capa VFS (Virtual File System)
 
-**Carpeta:** `fs/`
+**Archivos:** `fs/vfs.rs` (385 líneas), `fs/neodos_fs.rs` (impl FileSystem), `drivers/fat32.rs` (impl FileSystem), `globals.rs` (VFS global)
 
-La lógica de unidades (C:, A:) está mezclada en el shell y `DriveManager`.
-
-**Propuesta:** Implementar un VFS real que abstraiga el acceso a archivos, permitiendo montar diferentes FS en cualquier punto y unificando el acceso a archivos de usuario y kernel.
+**Implementado:**
+- Trait `FileSystem` con read/write/lookup/readdir/mkdir/create/stat/remove/rename
+- `Vfs` struct con array de 26 unidades (A-Z), tabla de montaje (8 entries)
+- `mount()` / `unmount()` — montar FS en letra de unidad
+- `mount_at_path()` / `unmount_path()` — montar FS en cualquier punto del árbol
+- `resolve_path()` — parsea `C:\PATH\FILE` en (drive_idx, node)
+- `walk_components()` — navegación con `.`, `..`, cruce automático de mount points
+- `mounted_drive` en `CONFIG.SYS` (ej. `SYSTEMDRIVE=D`)
+- `NeoDosFs` y `Fat32Driver` implementan `FileSystem`
+- Shell monta `C:` (NeoDOS FS) y `A:` (FAT32 ESP) al arrancar
+- Todos los comandos del shell usan VFS vía `with_vfs()`
+- Syscalls (open/readfile/writefile) usan VFS
+- TAB completion usa VFS vía `readdir()`
+- Drive switching (`A:`, `C:`) vía VFS
+- Comandos DEL/REN/RD implementados sobre VFS
 
 ---
 
@@ -225,13 +237,24 @@ Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
 
 ## 🚀 Camino a v1.0
 
-### 60. Gestión Dinámica de Memoria (v1.0)
+### 60. [COMPLETADO] Gestión Dinámica de Memoria (v1.0)
 
-**Archivo:** `memory.rs`, `arch/x64/paging.rs`
+**Archivos:** `memory.rs`, `arch/x64/paging.rs`, `syscall.rs`, `usermode.rs`, `arch/x64/idt.rs`
 
-Actualmente los procesos usan "slots" fijos de 128 KB. Esto es ineficiente y limitante.
-
-**Propuesta:** Implementar un gestor de memoria virtual que asigne páginas físicas bajo demanda. Permitir que los procesos crezcan (heap dinámico en Ring 3) mediante syscalls como `sys_brk` o `sys_mmap`.
+**Implementado:**
+- `memory.allocate_frame()` / `memory.free_frame()` — asignación/liberación de marcos físicos de 4 KB vía bitmap (1048576 frames en 4 GiB)
+- `split_2mb_page()` — divide un página enorme de 2 MB en 512 entradas de 4 KB en una Page Table recién asignada
+- `walk_ptes_4k()` — recorre PML4 → PDPT → PD → PT para obtener el PTE de una dirección virtual
+- `set_page_user_accessible()` — concede/revoca acceso USER_ACCESSIBLE en páginas de 4 KB
+- `heap_alloc_page()` / `heap_free_page()` — asigna/libera páginas de 4 KB en el heap del proceso bajo demanda
+- `heap_free_range()` — libera todas las páginas del heap al salir del proceso
+- `handle_heap_page_fault()` — manejador de page faults que asigna una página física cuando un proceso usuario accede a una dirección del heap no mapeada todavía
+- `init_heap_demand_paging()` — divide todas las páginas enormes de los 16 slots de heap (0x10000000..0x12000000) en Page Tables de 4 KB durante el arranque
+- `sys_brk` (#18) actualizado: en crecimiento, escribe a cada nueva página para disparar el page fault y la asignación bajo demanda; en decrecimiento, libera las páginas físicas
+- `sys_mmap` (#19) nuevo: asigna `size` bytes de memoria contigua en el heap, devuelve la dirección virtual
+- `usermode.spawn_usermode()` ya no pre-mapea el slot de heap (el page fault lo asigna bajo demanda)
+- `sys_exit` libera todas las páginas del heap mediante `heap_free_range()` en lugar de `unmap_user_range()`
+- Page fault handler en `idt.rs` redirigido a `handle_heap_page_fault()` para paginación bajo demanda
 
 ---
 
@@ -537,8 +560,8 @@ Actualmente el sistema usa una fuente bitmap de 8x16.
 
 | Prioridad | Items |
 |-----------|-------|
-| **Bloqueante (v1.0)** | #56 (VFS), #60 (Dynamic Memory), #87 (Setup) |
-| **Completado** | #9 (static mut), #66 (Syscall Stability), #72 (TAB), DEL/REN/RD (VFS remove/rename) |
+| **Bloqueante (v1.0)** | #87 (Setup) |
+| **Completado** | #9 (static mut), #56 (VFS), #60 (Dynamic Memory), #66 (Syscall Stability), #72 (TAB), DEL/REN/RD (VFS remove/rename) |
 | **Alta** | #53 (Block Abstraction), #61 (IPC Pipes), #62 (FAT32 Write), #69 (Loadable Drivers), #76 (SDK), #80 (NeoEdit), #89 (Help) |
 | **Media** | #10 (unwrap/expect), #18 (history ↑/↓), #42 (redirection >), #63 (Batch), #64 (RTC), #68 (ACPI), #77 (Journaling), #78 (KEYB), #82 (Defrag), #90 (VT), #95 (Pkg) |
 | **Baja** | #65 (GUI), #67 (Network), #70 (Sound), #71 (ISO9660), #74 (SMP), #79 (VirtIO), #81 (TTF), #91 (Floppy), #96 (COM) |

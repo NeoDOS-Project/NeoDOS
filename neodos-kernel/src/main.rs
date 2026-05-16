@@ -232,6 +232,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         arch::x64::paging::init_custom_page_tables();
     }
 
+    // Split heap region huge pages into 4 KB PTs for demand paging
+    arch::x64::paging::init_heap_demand_paging();
 
     drivers::keyboard::set_leds(0b111); // All ON = storage ready
 

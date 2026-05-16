@@ -34,8 +34,11 @@ import subprocess, time, os, socket, re
 4. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
-- Actualizar `docs/IMPROVEMENTS.md` (mover item a Completado)
-- Actualizar `AGENTS.md` si es necesario (nuevas secciones)
+- Actualizar `docs/IMPROVEMENTS.md` (mover item a Completado con descripción)
+- Actualizar `AGENTS.md` si es necesario (nuevas secciones, tablas de syscalls, comandos, etc.)
+- Actualizar `docs/ARCHITECTURE.md`, `docs/KERNEL.md` u otros doc si la feature afecta al diseño
+- Si se añade una syscall nueva: actualizar tabla de syscalls en `AGENTS.md` y `src/syscall.rs`
+- Si se añade un comando del shell: actualizar `AGENTS.md` en la sección de comandos
 - `git add -A && git commit -m "feat: ..." && git push`
 
 ## Two packages, no workspace
@@ -105,6 +108,37 @@ The ATA driver adds `base_lba` to all logical LBAs before sending them to the di
 NeoDOS FS code never needs to know about partition offsets. The FAT32 driver reads from
 the master drive using absolute LBAs (no `base_lba`).
 
+## Demand Paging (heap 4 KB)
+
+**Archivos:** `arch/x64/paging.rs` (split_2mb_page, walk_ptes_4k, heap_alloc_page, heap_free_page), `memory.rs` (allocate_frame, free_frame), `arch/x64/idt.rs` (page_fault_handler → handle_heap_page_fault)
+
+El kernel identity-maps 4 GiB con páginas enormes de 2 MB. Para el heap de usuario (0x10000000..0x12000000) se **dividen** esas páginas enormes en Page Tables de 4 KB durante el arranque (`init_heap_demand_paging`).
+
+- **Frame allocator** (`memory.rs`): bitmap de 1048576 frames (4 GiB / 4 KB), `allocate_frame()`/`free_frame()`
+- **split_2mb_page()**: asigna un marco físico para una Page Table, rellena 512 entradas con mapeo identidad, actualiza el PD entry
+- **walk_ptes_4k()**: recorre PML4 → PDPT → PD → PT para obtener el PTE de una dirección virtual
+- **heap_alloc_page()**: asigna un marco físico vía `allocate_frame()` y lo mapea como USER_ACCESSIBLE en la PT
+- **heap_free_page()**: libera el marco físico y marca el PTE como not-present
+- **heap_free_range()**: libera todas las páginas del heap de un proceso al salir (`sys_exit`)
+- **Page fault handler** (`idt.rs:page_fault_handler`): si es un fault de usuario en rango heap, llama a `handle_heap_page_fault()` que asigna una página bajo demanda
+
+### Flujo de crecimiento del heap
+```
+sys_brk(new_break)           # proceso pide más heap
+  → escribe a cada nueva página 4 KB
+  → si la página no está mapeada → page fault
+  → page_fault_handler → handle_heap_page_fault
+  → heap_alloc_page → allocate_frame() + map USER_ACCESSIBLE
+  → se re-ejecuta la instrucción (escritura ok)
+```
+
+### Flujo de destrucción
+```
+sys_exit
+  → heap_free_range(heap_base, heap_base + PROCESS_HEAP_SIZE)
+  → por cada página presente con phys != virt: free_frame() + set_unused()
+```
+
 ## User-mode process lifecycle
 
 `cmd_run` in `shell/commands/run.rs` loads a flat binary to `USER_BASE` (0x400000) and calls `execute_usermode()`.
@@ -152,6 +186,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Re
 | 11 | `sys_readfile` | RBX=inode, RCX=buf, RDX=count | Lee desde archivo |
 | 12 | `sys_writefile` | RBX=inode, RCX=buf, RDX=count | Escribe a archivo |
 | 13 | `sys_close` | RBX=fd | No-op (placeholder) |
+| 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
+| 19 | `sys_mmap` | RBX=size | Asigna memoria contigua zero-filled en heap |
 
 ## User-mode binaries
 
@@ -162,30 +198,42 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `hello.bin` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
 | `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.4 |
 
-User window: `0x400000` .. `0x800000`. Binarios flat cargados en `0x400000`.
+User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
+User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
+Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-52 tests en 8 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+37 tests en 7 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
-| Environment | 7 | Variables de entorno |
-| Input | 6 | Input buffer (ring buffer) |
+| Environment | 6 | Variables de entorno |
+| Input | 5 | Input buffer (ring buffer) |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
-| Drive | 14 | Drive manager, path resolution |
 | Process | 3 | Process struct, state transitions |
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (52 tests kernel)
+1. Ejecuta `testing::run_all()` (37 tests kernel)
 2. Si pasan, automáticamente ejecuta `run SYSTEST.BIN` (user-mode)
 
 ## Mejoras pendientes
 
 Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por prioridad.
+
+## Changelog
+
+Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
+```markdown
+## [v0.10.5] - YYYY-MM-DD
+### Added
+- sys_brk/ sys_mmap: ...
+### Changed
+- ...
+```
 
 ## Artifacts generados
 

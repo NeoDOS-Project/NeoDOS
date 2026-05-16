@@ -89,3 +89,24 @@ Performs device-specific I/O control operations.
 Registers the current process as the handler for a specific hardware device.
 - **Arg0 (`RBX`)**: Device ID to register (`u32`).
 - **Returns (`RAX`)**: `0` on success, or `u64::MAX` if registration fails.
+
+### 16 - `sys_chdir`
+Changes the current working directory of the calling process.
+- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
+- **Returns (`RAX`)**: `0` on success, or `u64::MAX` if the path does not exist or is not a directory.
+
+### 17 - `sys_getcwd`
+Returns the absolute path of the current working directory.
+- **Arg0 (`RBX`)**: Pointer to the output buffer (`*mut u8`).
+- **Arg1 (`RCX`)**: Buffer size (`usize`).
+- **Returns (`RAX`)**: Number of bytes written (including null terminator), or `u64::MAX` on error.
+
+### 18 - `sys_brk`
+Adjusts the program break (end of the data segment). Physical pages are allocated on demand by the page fault handler — this syscall only moves the break pointer and zeroes memory as needed.
+- **Arg0 (`RBX`)**: New program break address. Pass `0` to query the current break.
+- **Returns (`RAX`)**: The new (or current) program break on success, or `u64::MAX` if out of range or no heap allocated.
+
+### 19 - `sys_mmap`
+Allocates a contiguous region of zero-filled memory in the process heap. Physical pages are allocated immediately (not on-demand).
+- **Arg0 (`RBX`)**: Size in bytes (max 1 MB per call).
+- **Returns (`RAX`)**: Virtual address of the allocated region, or `u64::MAX` on error (OOM, no heap, exceeds heap limit).

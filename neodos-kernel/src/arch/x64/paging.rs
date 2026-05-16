@@ -1,4 +1,5 @@
 use x86_64::registers::control::{Cr3, Cr3Flags};
+use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::structures::paging::{PageTable, PageTableFlags};
 use x86_64::PhysAddr;
 use crate::serial_println;
@@ -47,6 +48,7 @@ static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
 
 pub struct HeapSlot {
     pub base: u64,
+    #[allow(dead_code)]
     pub index: u8,
 }
 
@@ -285,13 +287,223 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
     );
 }
 
+// ─────────────────────────────────────────────────────────
+// 4 KB page-level heap management (on-demand paging)
+// ─────────────────────────────────────────────────────────
+//
+// The heap region (PROCESS_HEAP_BASE .. +MAX_HEAP_SLOTS*PROCESS_HEAP_SIZE)
+// is initially identity-mapped via 2 MB huge pages.
+// We split those huge pages into 4 KB page tables so we can
+// grant/revoke USER_ACCESSIBLE on individual pages.
+
+pub const PAGE_4K: u64 = 4096;
+
+/// Walk the active page tables to find the 4 KB PTE for `virt`.
+/// Returns `None` if the page is covered by a huge page (must be split first).
+fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry> {
+    let (pml4_frame, _) = Cr3::read();
+    let pml4_base = pml4_frame.start_address().as_u64();
+
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
+
+    unsafe {
+        let pml4 = &mut *(pml4_base as *mut PageTable);
+        let pdpt = &mut *(pml4[pml4_idx].addr().as_u64() as *mut PageTable);
+        let pd   = &mut *(pdpt[pdpt_idx].addr().as_u64() as *mut PageTable);
+
+        let pde = &pd[pd_idx];
+        if pde.flags().contains(PageTableFlags::HUGE_PAGE) {
+            return None; // Must split first
+        }
+        if !pde.flags().contains(PageTableFlags::PRESENT) {
+            return None;
+        }
+        let pt = &mut *(pde.addr().as_u64() as *mut PageTable);
+        Some(&mut pt[pt_idx])
+    }
+}
+
+/// Split a 2 MB huge page at `virt` into 512 × 4 KB page table entries.
+/// Allocates a physical page for the new PT from the frame allocator.
+pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
+    let (pml4_frame, _) = Cr3::read();
+    let pml4_base = pml4_frame.start_address().as_u64();
+
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+
+    unsafe {
+        let pml4 = &mut *(pml4_base as *mut PageTable);
+        let pdpt = &mut *(pml4[pml4_idx].addr().as_u64() as *mut PageTable);
+        let pd   = &mut *(pdpt[pdpt_idx].addr().as_u64() as *mut PageTable);
+
+        let pde = &pd[pd_idx];
+        if !pde.flags().contains(PageTableFlags::HUGE_PAGE) {
+            return Ok(()); // Already split
+        }
+        if !pde.flags().contains(PageTableFlags::PRESENT) {
+            return Err(()); // Not present
+        }
+
+        let huge_base = pde.addr().as_u64();
+        let huge_flags = pde.flags();
+
+        // Allocate a 4 KB frame for the new page table
+        let pt_phys = crate::memory::allocate_frame().ok_or(())?;
+        let pt = &mut *(pt_phys as *mut PageTable);
+        *pt = PageTable::new();
+
+        // Fill PT with identity-mapped 4 KB entries
+        for i in 0..512u64 {
+            let entry_phys = huge_base + i * PAGE_4K;
+            // Inherit flags from the huge-page entry, but strip HUGE_PAGE
+            let mut entry_flags = huge_flags;
+            entry_flags.remove(PageTableFlags::HUGE_PAGE);
+            pt[i as usize].set_addr(PhysAddr::new(entry_phys), entry_flags);
+        }
+
+        // Replace PD entry: point to PT, clear HUGE_PAGE
+        let new_flags = huge_flags
+            | PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE;
+        pd[pd_idx].set_addr(PhysAddr::new(pt_phys), new_flags);
+    }
+
+    flush_tlb_entry(virt);
+    serial_println!("[paging] split 2MB page @ 0x{:x}", virt);
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
+    let entry = walk_ptes_4k(virt).ok_or(())?;
+    let phys = entry.addr();
+    let mut flags = entry.flags();
+    if user {
+        flags |= PageTableFlags::USER_ACCESSIBLE;
+    } else {
+        flags.remove(PageTableFlags::USER_ACCESSIBLE);
+    }
+    entry.set_addr(phys, flags);
+    flush_tlb_entry(virt);
+    Ok(())
+}
+
+/// Flush the TLB for a single virtual address.
+fn flush_tlb_entry(virt: u64) {
+    unsafe {
+        core::arch::asm!("invlpg [{}]", in(reg) virt, options(nostack, nomem));
+    }
+}
+
+/// Check if a virtual address falls within any process's heap range.
+pub fn is_heap_virtual_addr(virt: u64) -> bool {
+    virt >= PROCESS_HEAP_BASE
+        && virt < PROCESS_HEAP_BASE + MAX_HEAP_SLOTS as u64 * PROCESS_HEAP_SIZE
+}
+
+/// Initialize the heap region for on-demand 4 KB paging:
+/// split all 2 MB huge pages covering the heap slots.
+pub fn init_heap_demand_paging() {
+    for i in 0..MAX_HEAP_SLOTS {
+        let virt = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
+        if let Err(_) = split_2mb_page(virt) {
+            serial_println!("[paging] split heap slot {} @ 0x{:x} FAILED", i, virt);
+        }
+    }
+    serial_println!("[paging] heap {} slots split for 4 KB demand paging", MAX_HEAP_SLOTS);
+}
+
+/// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
+/// `virt` must be in the heap range and 4 KB-aligned.
+/// Returns the physical address mapped, or `None` on OOM.
+pub fn heap_alloc_page(virt: u64) -> Option<u64> {
+    if !is_heap_virtual_addr(virt) || virt & 0xFFF != 0 {
+        return None;
+    }
+    let phys = crate::memory::allocate_frame()?;
+    let entry = walk_ptes_4k(virt)?;
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
+    entry.set_addr(PhysAddr::new(phys), flags);
+    flush_tlb_entry(virt);
+    Some(phys)
+}
+
+/// Free a 4 KB heap page: clear its PTE and release the physical frame.
+pub fn heap_free_page(virt: u64) {
+    if !is_heap_virtual_addr(virt) || virt & 0xFFF != 0 {
+        return;
+    }
+    let Some(entry) = walk_ptes_4k(virt) else { return };
+    let phys = entry.addr().as_u64();
+    entry.set_unused();
+    crate::memory::free_frame(phys);
+    flush_tlb_entry(virt);
+}
+
+/// Free all heap pages in the range `[start, end)`.
+pub fn heap_free_range(start: u64, end: u64) {
+    let s = start.max(PROCESS_HEAP_BASE);
+    let e = end.min(PROCESS_HEAP_BASE + MAX_HEAP_SLOTS as u64 * PROCESS_HEAP_SIZE);
+    let mut addr = s & !(PAGE_4K - 1);
+    while addr < e {
+        if let Some(entry) = walk_ptes_4k(addr) {
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                let phys = entry.addr().as_u64();
+                if phys != addr {
+                    entry.set_unused();
+                    crate::memory::free_frame(phys);
+                    flush_tlb_entry(addr);
+                }
+            }
+        }
+        addr += PAGE_4K;
+    }
+}
+
+/// Handle a page fault for on-demand heap allocation.
+/// Called from the page fault handler.
+/// Returns true if the fault was handled (instruction will be re-executed).
+pub fn handle_heap_page_fault(virt: u64, user: bool, write: bool) -> bool {
+    if !is_heap_virtual_addr(virt) {
+        return false;
+    }
+    // Only handle user-mode page-not-present faults in the heap range
+    if !user {
+        return false;
+    }
+
+    let aligned = virt & !(PAGE_4K - 1);
+
+    // Check if the PT entry exists (page table split)
+    if walk_ptes_4k(aligned).is_none() {
+        // Try to split the 2 MB page on demand
+        if split_2mb_page(aligned).is_err() {
+            return false;
+        }
+    }
+
+    // Allocate a physical page and map it
+    match heap_alloc_page(aligned) {
+        Some(phys) => {
+            serial_println!(
+                "[paging] demand-alloc 4K @ 0x{:x} → phys 0x{:x} (write={})",
+                aligned, phys, write
+            );
+            true
+        }
+        None => false,
+    }
+}
+
 /// Remove the `USER_ACCESSIBLE` flag from a 2 MB-aligned range.
 /// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
-/// Used when a Ring 3 process exits to revoke its heap.
-///
-/// # Safety
-/// Must be called while paging is active (after `init_custom_page_tables`).
-pub unsafe fn unmap_user_range(base: u64, size: u64) {
+#[allow(dead_code)]
+pub fn unmap_user_range(base: u64, size: u64) {
     let end = base.saturating_add(size).min(0x1_0000_0000);
 
     let base_aligned = base & !(HUGE_PAGE_SIZE - 1);
@@ -304,17 +516,19 @@ pub unsafe fn unmap_user_range(base: u64, size: u64) {
         let entry_idx = ((addr / HUGE_PAGE_SIZE) as usize) % 512;
 
         if pd_idx < 4 {
-            let entry = &mut PD[pd_idx].0[entry_idx];
-            let flags = entry.flags() & !PageTableFlags::USER_ACCESSIBLE;
-            let phys = entry.addr();
-            entry.set_addr(phys, flags);
+            unsafe {
+                let entry = &mut PD[pd_idx].0[entry_idx];
+                let flags = entry.flags() & !PageTableFlags::USER_ACCESSIBLE;
+                let phys = entry.addr();
+                entry.set_addr(phys, flags);
+            }
             unmapped += HUGE_PAGE_SIZE;
         }
         addr += HUGE_PAGE_SIZE;
     }
 
     let (frame, flags) = Cr3::read();
-    Cr3::write(frame, flags);
+    unsafe { Cr3::write(frame, flags); }
 
     serial_println!(
         "[paging] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",

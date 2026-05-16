@@ -58,18 +58,16 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 /// The process will get its own user-memory slot, a 2 MB heap region,
 /// and inherit the shell's cwd.
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str) -> u32 {
-    // Allocate a 2 MB heap slot and mark it USER_ACCESSIBLE.
+    // Allocate a 2 MB virtual heap slot (no physical pages mapped yet).
     let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
-    let (heap_base, _heap_idx) = match heap_slot {
+    let heap_base = match heap_slot {
         Some(slot) => {
-            unsafe {
-                crate::arch::x64::paging::map_user_range(slot.base, crate::arch::x64::paging::PROCESS_HEAP_SIZE);
-            }
-            (slot.base, Some(slot.index))
+            // Do NOT map the slot — page faults will allocate 4 KB pages on demand.
+            slot.base
         }
         None => {
             crate::serial_println!("[spawn_usermode] WARNING: no free heap slots, process will have no heap");
-            (0, None)
+            0
         }
     };
 

@@ -132,19 +132,17 @@ impl FrameAllocator {
         self.free_frames = free;
     }
 
-    #[allow(dead_code)]
     fn allocate_frame(&mut self) -> Option<u64> {
         let max_frames = MAX_PHYS_ADDR / PAGE_SIZE;
         for word_idx in 0..self.bitmap.len() {
             let w = self.bitmap[word_idx];
             if w == u64::MAX {
-                continue; // All bits set = all used
+                continue;
             }
             let base_frame = (word_idx as u64) * 64;
             if base_frame >= max_frames {
                 break;
             }
-            // Find first zero bit
             let free_bit = w.trailing_ones() as usize;
             let frame = base_frame + free_bit as u64;
             if frame >= max_frames {
@@ -155,6 +153,15 @@ impl FrameAllocator {
             return Some(frame * PAGE_SIZE);
         }
         None
+    }
+
+    fn free_frame(&mut self, phys: u64) {
+        let frame = phys / PAGE_SIZE;
+        if frame >= MAX_PHYS_ADDR / PAGE_SIZE {
+            return;
+        }
+        self.clear_bit(frame as usize);
+        self.free_frames += 1;
     }
 }
 
@@ -244,7 +251,23 @@ pub fn stats() -> MemoryStats {
     *STATS.lock()
 }
 
-#[allow(dead_code)]
 pub fn allocate_frame() -> Option<u64> {
     ALLOCATOR.lock().allocate_frame()
+}
+
+pub fn free_frame(phys: u64) {
+    if phys & 0xFFF != 0 || phys >= MAX_PHYS_ADDR {
+        return;
+    }
+    ALLOCATOR.lock().free_frame(phys);
+}
+
+#[allow(dead_code)]
+pub fn page_size() -> u64 {
+    PAGE_SIZE
+}
+
+#[allow(dead_code)]
+pub fn max_phys_addr() -> u64 {
+    MAX_PHYS_ADDR
 }
