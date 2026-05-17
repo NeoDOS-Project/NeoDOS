@@ -6,7 +6,7 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::fs::neodos_fs::NeoDosFs;
 use crate::buffer::block_cache::BlockCache;
-use crate::drivers::ata::AtaDriver;
+use crate::drivers::block::BlockDevice;
 
 const MAX_TSR_SIZE: usize = 65536;
 
@@ -33,11 +33,11 @@ lazy_static! {
     });
 }
 
-pub fn install_tsr(filename: &str, interrupt_num: u8, fs: &mut NeoDosFs, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<u64, ()> {
-    match fs.find_file(filename, cache, ata) {
+pub fn install_tsr(filename: &str, interrupt_num: u8, fs: &mut NeoDosFs, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<u64, ()> {
+    match fs.find_file(filename, cache, dev) {
         Ok(inode_num) => {
             let buf = unsafe { &mut TSR_LOAD_BUF };
-            match fs.read_file_to_buf(inode_num, buf, cache, ata) {
+            match fs.read_file_to_buf(inode_num, buf, cache, dev) {
                 Ok(read) => {
                     let mut registry = TSR_REGISTRY.lock();
                     let addr = registry.next_address;

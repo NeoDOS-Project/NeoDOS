@@ -29,6 +29,7 @@ pub mod syscall;
 mod testing;
 
 use drivers::ata::{AtaChannel, AtaDriver};
+use drivers::block::BlockDevice;
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
 use drivers::pci;
@@ -162,17 +163,19 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let mut ata2_lock = globals::ATA_DRIVER_SECONDARY.lock();
     let ata = ata_lock.as_mut().unwrap();
     let ata2 = ata2_lock.as_mut().unwrap();
+    let dev: &mut dyn BlockDevice = ata;
+    let _dev2: &mut dyn BlockDevice = ata2;
 
     // Scan GPT on both physical disks
     println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
-    let disk0_parts = gpt::find_all_neodos_partitions(ata);
+    let disk0_parts = gpt::find_all_neodos_partitions(dev);
     println!("[+] Scanning GPT for NeoDOS partitions (disk 1)...");
-    let _disk1_parts = gpt::find_all_neodos_partitions(ata2);
+    let _disk1_parts = gpt::find_all_neodos_partitions(_dev2);
 
     if let Some(part) = &disk0_parts[0] {
         println!("[+] Primary NeoDOS partition: LBA {}..{}",
             part.start_lba, part.end_lba);
-        ata.set_base_lba(part.start_lba as u32);
+        dev.set_base_lba(part.start_lba);
     } else {
         println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
     }
@@ -183,7 +186,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let cache = cache_lock.as_mut().unwrap();
 
     println!("[+] Reading Superblock...");
-    let sb_data = match ata.read_sector(0) {
+    let sb_data = match dev.read_sector(0) {
         Ok(data) => data,
         Err(_) => panic!("Failed to read superblock"),
     };
@@ -191,7 +194,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
         Ok(mut fs) => {
-            let _ = fs.rebuild_bitmap(cache, ata);
+            let _ = fs.rebuild_bitmap(cache, dev);
             crate::globals::with_vfs(|vfs| {
                 vfs.mount('C', alloc::boxed::Box::new(fs)).unwrap();
             });
@@ -202,7 +205,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // Restore ATA base_lba to primary partition on primary disk
     if let Some(part) = &disk0_parts[0] {
-        ata.set_base_lba(part.start_lba as u32);
+        dev.set_base_lba(part.start_lba);
     }
 
     // Explicitly drop locks before FAT32 and Shell
@@ -216,7 +219,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Initializing FAT32 driver...");
     if let Some(mut ata_lock) = globals::ATA_DRIVER.try_lock() {
         if let Some(ata) = ata_lock.as_mut() {
-            if let Ok(fat32) = Fat32Driver::new(ata) {
+            let dev: &mut dyn BlockDevice = ata;
+            if let Ok(fat32) = Fat32Driver::new(dev) {
                 crate::globals::with_vfs(|vfs| {
                     let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
                 });

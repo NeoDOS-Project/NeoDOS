@@ -27,6 +27,12 @@ impl fmt::Display for VfsError {
     }
 }
 
+impl From<()> for VfsError {
+    fn from(_: ()) -> Self {
+        VfsError::IOError
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VfsNode {
     pub inode: u32,

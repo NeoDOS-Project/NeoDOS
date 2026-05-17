@@ -2,8 +2,8 @@
 
 #![allow(dead_code)]
 
-use crate::drivers::ata::{AtaDriver, AtaError};
 use crate::buffer::block_cache::BlockCache;
+use crate::drivers::block::BlockDevice;
 use crate::serial_println;
 
 #[repr(C)]
@@ -119,14 +119,13 @@ pub enum FsError {
     BlockReadError,
     NoInodeAvailable,
     NoBlockAvailable,
-    #[allow(dead_code)]
-    Ata(AtaError),
+    BlockDeviceError,
     DirectoryNotEmpty,
 }
 
-impl From<AtaError> for FsError {
-    fn from(err: AtaError) -> Self {
-        FsError::Ata(err)
+impl From<()> for FsError {
+    fn from(_: ()) -> Self {
+        FsError::BlockDeviceError
     }
 }
 
@@ -141,7 +140,7 @@ impl InodeCache {
         }
     }
     
-    pub fn load_inode(&mut self, inode_num: usize, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn load_inode(&mut self, inode_num: usize, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<&Inode, FsError> 
     {
         if inode_num >= 256 {
@@ -156,7 +155,7 @@ impl InodeCache {
         let inode_sector = 1 + (inode_num as u32 / 2);
         let offset_in_sector = (inode_num % 2) * 256;
         
-        let sector_data = cache.get_sector(inode_sector, ata)?;
+        let sector_data = cache.get_sector(inode_sector, dev)?;
         let inode: Inode = unsafe {
             core::ptr::read_unaligned(
                 sector_data.as_ptr().add(offset_in_sector) as *const _
@@ -208,14 +207,14 @@ impl NeoDosFs {
         if span == 0 { 0 } else { ((span + BLOCK_SIZE - 1) / BLOCK_SIZE).min(12) }
     }
 
-    pub fn rebuild_bitmap(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+    pub fn rebuild_bitmap(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         self.block_bitmap = BlockBitmap::new();
         // Mark system blocks (before data start) as used so they're never allocated
         // Superblock (sector 0) + inode table (sectors 1-128) + gap up to sector 200
         // Data blocks start at sector 200, so system "blocks" are conceptually -25..0
         // We just mark data blocks that correspond to in-use files
         for i in 0..256 {
-            let inode = *self.inode_cache.load_inode(i, cache, ata)?;
+            let inode = *self.inode_cache.load_inode(i, cache, dev)?;
             if inode.inode_num != 0 || i == 0 {
                 let num_blocks = Self::inode_block_count(&inode);
                 for j in 0..num_blocks.min(12) {
@@ -298,10 +297,10 @@ impl NeoDosFs {
     }
     
     #[allow(dead_code)]
-    pub fn list_root(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn list_root(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
-        let root_inode = *self.inode_cache.load_inode(ROOT_INODE as usize, cache, ata)?;
+        let root_inode = *self.inode_cache.load_inode(ROOT_INODE as usize, cache, dev)?;
         let mode = root_inode.mode;
         
         if (mode & MODE_DIR) == 0 {
@@ -321,7 +320,7 @@ impl NeoDosFs {
             let to_read_in_block = if bytes_to_read > BLOCK_SIZE { BLOCK_SIZE } else { bytes_to_read };
             
             for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 
                 for entry_offset in (0..512).step_by(256) {
                     // Skip deleted entries (first byte 0xE5)
@@ -361,10 +360,10 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn list_directory(&mut self, inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn list_directory(&mut self, inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
-        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
+        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
         let mode = inode.mode;
         
         if (mode & MODE_DIR) == 0 {
@@ -384,7 +383,7 @@ impl NeoDosFs {
             let to_read_in_block = if bytes_to_read > BLOCK_SIZE { BLOCK_SIZE } else { bytes_to_read };
             
             for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 
                 for entry_offset in (0..512).step_by(256) {
                     // Skip deleted entries (first byte 0xE5)
@@ -420,10 +419,10 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn find_entry_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn find_entry_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(u32, u8), FsError> 
     {
-        let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, ata)?;
+        let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, dev)?;
         if (dir_inode.mode & MODE_DIR) == 0 {
             return Err(FsError::NotADirectory);
         }
@@ -437,7 +436,7 @@ impl NeoDosFs {
             
             let block_sector = 200 + (actual_block * 8);
             for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 for entry_off in (0..512).step_by(256) {
                     let first_byte = sector_data[entry_off];
                     if first_byte == 0xE5 || first_byte == 0 {
@@ -458,10 +457,10 @@ impl NeoDosFs {
         Err(FsError::FileNotFound)
     }
 
-    pub fn find_file_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn find_file_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
-        let (inode, entry_type) = self.find_entry_in_directory(dir_inode_num, name, cache, ata)?;
+        let (inode, entry_type) = self.find_entry_in_directory(dir_inode_num, name, cache, dev)?;
         if entry_type == 1 {
             Ok(inode)
         } else {
@@ -470,17 +469,17 @@ impl NeoDosFs {
     }
 
     // Backward compatibility: find in root only
-    pub fn find_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn find_file(&mut self, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
-        self.find_file_in_directory(ROOT_INODE, filename, cache, ata)
+        self.find_file_in_directory(ROOT_INODE, filename, cache, dev)
     }
 
     #[allow(dead_code)]
-    pub fn find_directory(&mut self, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn find_directory(&mut self, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
-        let (inode, entry_type) = self.find_entry_in_directory(ROOT_INODE, dirname, cache, ata)?;
+        let (inode, entry_type) = self.find_entry_in_directory(ROOT_INODE, dirname, cache, dev)?;
         if entry_type == 2 {
             Ok(inode)
         } else {
@@ -488,10 +487,10 @@ impl NeoDosFs {
         }
     }
 
-    pub fn find_dir_in_dir(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn find_dir_in_dir(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
-        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
+        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, dev)?;
         
         if (dir_inode.mode & MODE_DIR) == 0 {
             return Err(FsError::NotADirectory);
@@ -508,7 +507,7 @@ impl NeoDosFs {
             let block_sector = 200 + (actual_block * 8);
             for sector_offset in 0..8 {
                 let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector(sector_lba, ata)?;
+                let sector_data = cache.get_sector(sector_lba, dev)?;
                 
                 for entry_off in (0..512).step_by(DIR_ENTRY_SIZE) {
                     let first_byte = sector_data[entry_off];
@@ -550,10 +549,10 @@ impl NeoDosFs {
         Err(FsError::FileNotFound)
     }
 
-    pub fn read_file_to_buf(&mut self, inode_num: u32, buf: &mut [u8], cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn read_file_to_buf(&mut self, inode_num: u32, buf: &mut [u8], cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<usize, FsError> 
     {
-        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
+        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
         let mode = inode.mode;
         let size = inode.size;
         if (mode & MODE_FILE) == 0 {
@@ -573,7 +572,7 @@ impl NeoDosFs {
             for sector_offset in 0..8 {
                 if bytes_left == 0 || total_read >= buf.len() { break; }
                 
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 let to_copy = if bytes_left > 512 { 512 } else { bytes_left };
                 let to_copy = if total_read + to_copy > buf.len() { buf.len() - total_read } else { to_copy };
                 
@@ -587,10 +586,10 @@ impl NeoDosFs {
         Ok(total_read)
     }
 
-    pub fn read_file(&mut self, inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn read_file(&mut self, inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
-        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
+        let inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
         
         let mode = inode.mode;
         let size = inode.size;
@@ -610,7 +609,7 @@ impl NeoDosFs {
             for sector_offset in 0..8 {
                 if bytes_left == 0 { break; }
                 
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 let to_copy = if bytes_left > 512 { 512 } else { bytes_left };
                 
                 // Print directly to VGA and Serial
@@ -626,8 +625,8 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn sync(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
-        cache.flush(ata).map_err(FsError::Ata)
+    pub fn sync(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
+        cache.flush(dev).map_err(|_| FsError::BlockDeviceError)
     }
 
     pub fn get_volume_label(&self) -> &str {
@@ -638,7 +637,7 @@ impl NeoDosFs {
         core::str::from_utf8(&self.superblock.label[..label_len]).unwrap_or("")
     }
 
-    pub fn set_volume_label(&mut self, label: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+    pub fn set_volume_label(&mut self, label: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         let label_bytes = label.as_bytes();
         let len = label_bytes.len().min(11);
         
@@ -650,7 +649,7 @@ impl NeoDosFs {
         }
         
         // Write superblock back
-        let sb_data = cache.get_sector_mut(0, ata)?;
+        let sb_data = cache.get_sector_mut(0, dev)?;
         unsafe {
             core::ptr::write_unaligned(sb_data.as_mut_ptr() as *mut Superblock, self.superblock);
         }
@@ -659,13 +658,13 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn write_inode(&mut self, inode_num: usize, inode: &Inode, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn write_inode(&mut self, inode_num: usize, inode: &Inode, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
         let inode_sector = 1 + (inode_num as u32 / 2);
         let offset_in_sector = (inode_num % 2) * 256;
         
-        let sector_data = cache.get_sector_mut(inode_sector, ata)?;
+        let sector_data = cache.get_sector_mut(inode_sector, dev)?;
         unsafe {
             core::ptr::write_unaligned(
                 sector_data.as_mut_ptr().add(offset_in_sector) as *mut Inode,
@@ -680,9 +679,9 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn find_free_inode(&mut self, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<u32, FsError> {
+    pub fn find_free_inode(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<u32, FsError> {
         for i in 1..256 { // Start from 1, 0 is root
-            let inode = self.inode_cache.load_inode(i, cache, ata)?;
+            let inode = self.inode_cache.load_inode(i, cache, dev)?;
             // Unused inode table slots are zeroed; avoid recycling if metadata looks partially set.
             if inode.inode_num == 0 && inode.mode == 0 {
                 return Ok(i as u32);
@@ -691,7 +690,7 @@ impl NeoDosFs {
         Err(FsError::NoInodeAvailable)
     }
 
-    pub fn allocate_block(&mut self, _cache: &mut BlockCache, _ata: &mut AtaDriver) -> Result<u32, FsError> {
+    pub fn allocate_block(&mut self, _cache: &mut BlockCache, _dev: &mut dyn BlockDevice) -> Result<u32, FsError> {
         match self.block_bitmap.alloc() {
             Some(block) => {
                 if block >= self.superblock.num_blocks {
@@ -712,18 +711,18 @@ impl NeoDosFs {
     }
 
     #[allow(dead_code)]
-    pub fn create_file(&mut self, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn create_file(&mut self, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
-        self.create_file_at(ROOT_INODE, filename, cache, ata)
+        self.create_file_at(ROOT_INODE, filename, cache, dev)
     }
 
     #[allow(dead_code)]
-    pub fn create_file_at(&mut self, parent_inode_num: u32, filename: &str, cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn create_file_at(&mut self, parent_inode_num: u32, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
         // 1. Find free inode
-        let new_inode_num = self.find_free_inode(cache, ata)?;
+        let new_inode_num = self.find_free_inode(cache, dev)?;
         
         // 2. Create inode
         let new_inode = Inode {
@@ -739,18 +738,18 @@ impl NeoDosFs {
         };
         
         // 3. Write inode
-        self.write_inode(new_inode_num as usize, &new_inode, cache, ata)?;
+        self.write_inode(new_inode_num as usize, &new_inode, cache, dev)?;
         
         // 4. Add to requested parent directory
-        self.add_directory_entry(parent_inode_num, filename, new_inode_num, 1, cache, ata)?;
+        self.add_directory_entry(parent_inode_num, filename, new_inode_num, 1, cache, dev)?;
         
         Ok(new_inode_num)
     }
 
-    pub fn create_directory_at(&mut self, parent_inode_num: u32, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver)
+    pub fn create_directory_at(&mut self, parent_inode_num: u32, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice)
         -> Result<u32, FsError>
     {
-        let new_inode_num = self.find_free_inode(cache, ata)?;
+        let new_inode_num = self.find_free_inode(cache, dev)?;
         let new_inode = Inode {
             inode_num: new_inode_num,
             mode: MODE_DIR,
@@ -763,31 +762,31 @@ impl NeoDosFs {
             padding: [0; 160],
         };
 
-        self.write_inode(new_inode_num as usize, &new_inode, cache, ata)?;
-        self.add_directory_entry(parent_inode_num, dirname, new_inode_num, 2, cache, ata)?;
+        self.write_inode(new_inode_num as usize, &new_inode, cache, dev)?;
+        self.add_directory_entry(parent_inode_num, dirname, new_inode_num, 2, cache, dev)?;
         Ok(new_inode_num)
     }
 
     pub fn add_directory_entry(&mut self, dir_inode_num: u32, filename: &str, inode_num: u32, entry_type: u8,
-                               cache: &mut BlockCache, ata: &mut AtaDriver) 
+                               cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
-        let mut dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, ata)?;
+        let mut dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, dev)?;
         
         // Search for a free slot in existing blocks
         for block_idx in 0..12 {
             let mut block_ptr = dir_inode.direct_blocks[block_idx];
             if block_idx * BLOCK_SIZE >= dir_inode.size as usize {
                 // Need to allocate a new block for the directory
-                let new_block = self.allocate_block(cache, ata)?;
+                let new_block = self.allocate_block(cache, dev)?;
                 dir_inode.direct_blocks[block_idx] = new_block;
                 // Update directory size
                 dir_inode.size += BLOCK_SIZE as u32;
-                self.write_inode(dir_inode_num as usize, &dir_inode, cache, ata)?;
+                self.write_inode(dir_inode_num as usize, &dir_inode, cache, dev)?;
                 
                 // Clear the new block
                 for s in 0..8 {
-                    let sector_data = cache.get_sector_mut(200 + new_block * 8 + s, ata)?;
+                    let sector_data = cache.get_sector_mut(200 + new_block * 8 + s, dev)?;
                     sector_data.fill(0);
                 }
                 block_ptr = new_block;
@@ -796,7 +795,7 @@ impl NeoDosFs {
             let block_sector = 200 + (block_ptr * 8);
             for sector_offset in 0..8 {
                 let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector_mut(sector_lba, ata)?;
+                let sector_data = cache.get_sector_mut(sector_lba, dev)?;
                 
                 for entry_offset in (0..512).step_by(256) {
                     let entry_ptr = unsafe { sector_data.as_mut_ptr().add(entry_offset) as *mut DirectoryEntry };
@@ -829,7 +828,7 @@ impl NeoDosFs {
                             + DIR_ENTRY_SIZE;
                         if entry_end > dir_inode.size as usize {
                             dir_inode.size = entry_end as u32;
-                            self.write_inode(dir_inode_num as usize, &dir_inode, cache, ata)?;
+                            self.write_inode(dir_inode_num as usize, &dir_inode, cache, dev)?;
                         }
                         return Ok(());
                     }
@@ -840,17 +839,17 @@ impl NeoDosFs {
         Err(FsError::NoBlockAvailable) // Directory full
     }
 
-    pub fn write_file(&mut self, inode_num: u32, data: &[u8], cache: &mut BlockCache, ata: &mut AtaDriver) 
+    pub fn write_file(&mut self, inode_num: u32, data: &[u8], cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<usize, FsError> 
     {
-        let mut inode = *self.inode_cache.load_inode(inode_num as usize, cache, ata)?;
+        let mut inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
         
         let mut written = 0;
         let mut block_idx = 0;
         
         while written < data.len() && block_idx < 12 {
             if block_idx * BLOCK_SIZE >= inode.size as usize {
-                inode.direct_blocks[block_idx] = self.allocate_block(cache, ata)?;
+                inode.direct_blocks[block_idx] = self.allocate_block(cache, dev)?;
                 inode.size = (block_idx * BLOCK_SIZE) as u32 + BLOCK_SIZE as u32; 
             }
             
@@ -860,7 +859,7 @@ impl NeoDosFs {
             for sector_offset in 0..8 {
                 if written >= data.len() { break; }
                 
-                let sector_data = cache.get_sector_mut(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector_mut(block_sector + sector_offset, dev)?;
                 let to_copy = (data.len() - written).min(512);
                 
                 sector_data[..to_copy].copy_from_slice(&data[written..written + to_copy]);
@@ -874,17 +873,17 @@ impl NeoDosFs {
         if written > inode.size as usize {
             inode.size = written as u32;
         }
-        self.write_inode(inode_num as usize, &inode, cache, ata)?;
+        self.write_inode(inode_num as usize, &inode, cache, dev)?;
         
         Ok(written)
     }
 
     #[allow(dead_code)]
-    pub fn delete_file_by_inode(&mut self, parent_inode: u32, _filename: &str, file_inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+    pub fn delete_file_by_inode(&mut self, parent_inode: u32, _filename: &str, file_inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         // Free the file's data blocks – copy pointers first to avoid borrow conflict
         let mut blocks_to_free = [0u32; 12];
         {
-            let file_inode = *self.inode_cache.load_inode(file_inode_num as usize, cache, ata)?;
+            let file_inode = *self.inode_cache.load_inode(file_inode_num as usize, cache, dev)?;
             let num_blocks = Self::inode_block_count(&file_inode);
             for j in 0..num_blocks.min(12) {
                 let b = file_inode.direct_blocks[j];
@@ -902,7 +901,7 @@ impl NeoDosFs {
         self.inode_cache.inodes[file_inode_num as usize] = None;
 
         
-        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
+        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, dev)?;
         
         let num_blocks = self.inode_data_block_count(&dir_inode);
         
@@ -916,7 +915,7 @@ impl NeoDosFs {
             
             for sector_offset in 0..8 {
                 let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector_mut(sector_lba, ata)?;
+                let sector_data = cache.get_sector_mut(sector_lba, dev)?;
                 
                 for entry_offset in (0..512).step_by(DIR_ENTRY_SIZE) {
                     let entry_inode = u32::from_le_bytes([
@@ -953,10 +952,10 @@ impl NeoDosFs {
         Err(FsError::FileNotFound)
     }
 
-    pub fn rename_file(&mut self, parent_inode: u32, old_name: &str, new_name: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
-        let _file_inode = self.find_file_in_directory(parent_inode, old_name, cache, ata)?;
+    pub fn rename_file(&mut self, parent_inode: u32, old_name: &str, new_name: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
+        let _file_inode = self.find_file_in_directory(parent_inode, old_name, cache, dev)?;
         
-        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, ata)?;
+        let dir_inode = *self.inode_cache.load_inode(parent_inode as usize, cache, dev)?;
         
         let num_blocks = self.inode_data_block_count(&dir_inode);
         
@@ -969,7 +968,7 @@ impl NeoDosFs {
             let block_sector = 200 + (actual_block * 8);
             for sector_offset in 0..8 {
                 let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector_mut(sector_lba, ata)?;
+                let sector_data = cache.get_sector_mut(sector_lba, dev)?;
                 
                 for entry_off in (0..512).step_by(DIR_ENTRY_SIZE) {
                     let first_byte = sector_data[entry_off];
@@ -1000,8 +999,8 @@ impl NeoDosFs {
         Err(FsError::FileNotFound)
     }
 
-    pub fn is_directory_empty(&mut self, dir_inode_num: u32, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<bool, FsError> {
-        let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, ata)?;
+    pub fn is_directory_empty(&mut self, dir_inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<bool, FsError> {
+        let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, dev)?;
         
         let num_blocks = self.inode_data_block_count(&dir_inode);
         
@@ -1014,7 +1013,7 @@ impl NeoDosFs {
             let block_sector = 200 + (actual_block * 8);
             for sector_offset in 0..8 {
                 let sector_lba = block_sector + sector_offset;
-                let sector_data = cache.get_sector(sector_lba, ata)?;
+                let sector_data = cache.get_sector(sector_lba, dev)?;
                 
                 for entry_off in (0..512).step_by(DIR_ENTRY_SIZE) {
                     let first_byte = sector_data[entry_off];
@@ -1048,17 +1047,17 @@ impl NeoDosFs {
         Ok(true)
     }
 
-    pub fn delete_directory(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, ata: &mut AtaDriver) -> Result<(), FsError> {
+    pub fn delete_directory(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         // Find the directory inode
-        let dir_inode_num = self.find_dir_in_dir(parent_inode, dirname, cache, ata)?;
+        let dir_inode_num = self.find_dir_in_dir(parent_inode, dirname, cache, dev)?;
         
         // Check if directory is empty
-        if !self.is_directory_empty(dir_inode_num, cache, ata)? {
+        if !self.is_directory_empty(dir_inode_num, cache, dev)? {
             return Err(FsError::DirectoryNotEmpty);
         }
         
         // Use same logic as delete_file_by_inode to remove the entry
-        self.delete_file_by_inode(parent_inode, dirname, dir_inode_num, cache, ata)
+        self.delete_file_by_inode(parent_inode, dirname, dir_inode_num, cache, dev)
     }
 }
 
@@ -1078,23 +1077,17 @@ impl From<FsError> for VfsError {
     }
 }
 
-impl From<AtaError> for VfsError {
-    fn from(_err: AtaError) -> Self {
-        VfsError::IOError
-    }
-}
-
 impl FileSystem for NeoDosFs {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
         let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
         temp_buf.resize(buf.len() + offset as usize, 0);
         
-        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, ata)?;
+        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, dev)?;
         
         if offset as usize >= read {
             return Ok(0);
@@ -1109,21 +1102,21 @@ impl FileSystem for NeoDosFs {
 
     fn write(&mut self, inode: u32, _offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        Ok(self.write_file(inode, buf, cache, ata)?)
+        Ok(self.write_file(inode, buf, cache, dev)?)
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let (inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, ata)?;
-        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        let (inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, dev)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
         
         Ok(VfsNode {
             inode,
@@ -1134,11 +1127,11 @@ impl FileSystem for NeoDosFs {
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let inode = *self.inode_cache.load_inode(dir_inode as usize, cache, ata)?;
+        let inode = *self.inode_cache.load_inode(dir_inode as usize, cache, dev)?;
         if (inode.mode & MODE_DIR) == 0 {
             return Err(VfsError::NotADirectory);
         }
@@ -1151,7 +1144,7 @@ impl FileSystem for NeoDosFs {
             let block_sector = 200 + (current_block * 8);
             
             for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(block_sector + sector_offset, ata)?;
+                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 for entry_offset in (0..512).step_by(256) {
                     let first_byte = sector_data[entry_offset];
                     if first_byte == 0xE5 || first_byte == 0 { continue; }
@@ -1161,7 +1154,7 @@ impl FileSystem for NeoDosFs {
                             core::ptr::read_unaligned(sector_data.as_ptr().add(entry_offset) as *const _)
                         };
                         let name = core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("?").into();
-                        let inode_data = self.inode_cache.load_inode(entry.inode_num as usize, cache, ata)?;
+                        let inode_data = self.inode_cache.load_inode(entry.inode_num as usize, cache, dev)?;
                         return Ok(Some(VfsDirEntry {
                             name,
                             node: VfsNode {
@@ -1182,12 +1175,12 @@ impl FileSystem for NeoDosFs {
 
     fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let inode = self.create_directory_at(dir_inode, name, cache, ata)?;
-        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        let inode = self.create_directory_at(dir_inode, name, cache, dev)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
         Ok(VfsNode {
             inode,
             mode: inode_data.mode,
@@ -1197,47 +1190,47 @@ impl FileSystem for NeoDosFs {
 
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let (file_inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, ata)?;
-        let inode_data = self.inode_cache.load_inode(file_inode as usize, cache, ata)?;
+        let (file_inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, dev)?;
+        let inode_data = self.inode_cache.load_inode(file_inode as usize, cache, dev)?;
         if (inode_data.mode & MODE_DIR) != 0 {
             return Err(VfsError::NotAFile);
         }
-        self.delete_file_by_inode(dir_inode, name, file_inode, cache, ata)?;
+        self.delete_file_by_inode(dir_inode, name, file_inode, cache, dev)?;
         Ok(())
     }
 
     fn remove_dir(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        self.delete_directory(dir_inode, name, cache, ata)?;
+        self.delete_directory(dir_inode, name, cache, dev)?;
         Ok(())
     }
 
     fn rename(&mut self, dir_inode: u32, old_name: &str, new_name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        self.rename_file(dir_inode, old_name, new_name, cache, ata)?;
+        self.rename_file(dir_inode, old_name, new_name, cache, dev)?;
         Ok(())
     }
 
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let inode = self.create_file_at(dir_inode, name, cache, ata)?;
-        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        let inode = self.create_file_at(dir_inode, name, cache, dev)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
         Ok(VfsNode {
             inode,
             mode: inode_data.mode,
@@ -1247,11 +1240,11 @@ impl FileSystem for NeoDosFs {
 
     fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        let inode_data = self.inode_cache.load_inode(inode as usize, cache, ata)?;
+        let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
         Ok(VfsNode {
             inode,
             mode: inode_data.mode,
@@ -1265,11 +1258,11 @@ impl FileSystem for NeoDosFs {
 
     fn set_volume_label(&mut self, label: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
-        self.set_volume_label(label, cache, ata)?;
+        self.set_volume_label(label, cache, dev)?;
         Ok(())
     }
 }

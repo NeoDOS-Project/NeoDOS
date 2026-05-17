@@ -1,8 +1,6 @@
-// src/drivers/fat32.rs - Minimal FAT32 driver for boot partition (read-only)
-
 #![allow(dead_code)]
 
-use crate::drivers::ata::AtaDriver;
+use crate::drivers::block::BlockDevice;
 
 #[derive(Debug)]
 pub enum Fat32Error {
@@ -70,25 +68,37 @@ pub struct Fat32Driver {
 }
 
 impl Fat32Driver {
-    pub fn new(ata: &mut AtaDriver) -> Result<Self, Fat32Error> {
-        let boot_sector_bytes = match ata.read_sector_master(0) {
+    pub fn new(dev: &mut dyn BlockDevice) -> Result<Self, Fat32Error> {
+        let saved_base = dev.base_lba();
+        dev.set_base_lba(0);
+        let boot_sector_bytes = match dev.read_sector(0) {
             Ok(b) => b,
-            Err(_) => return Err(Fat32Error::NotFound),
+            Err(_) => {
+                dev.set_base_lba(saved_base);
+                return Err(Fat32Error::NotFound);
+            }
         };
 
         let (boot_sector, base_lba) = match BootSector::from_bytes(&boot_sector_bytes) {
             Some(bs) => (bs, 0),
             None => {
-                let bs = match ata.read_sector_master(2048) {
+                let bs = match dev.read_sector(2048) {
                     Ok(b) => b,
-                    Err(_) => return Err(Fat32Error::NotFound),
+                    Err(_) => {
+                        dev.set_base_lba(saved_base);
+                        return Err(Fat32Error::NotFound);
+                    }
                 };
                 match BootSector::from_bytes(&bs) {
                     Some(bs) => (bs, 2048),
-                    None => return Err(Fat32Error::NotFat32),
+                    None => {
+                        dev.set_base_lba(saved_base);
+                        return Err(Fat32Error::NotFat32);
+                    }
                 }
             }
         };
+        dev.set_base_lba(saved_base);
 
         crate::serial_println!("[FAT32] Boot partition ready");
         crate::serial_println!("  Clusters: {} sectors, FAT: {} sectors",
@@ -98,17 +108,21 @@ impl Fat32Driver {
         Ok(Fat32Driver { boot_sector, base_lba })
     }
 
-    fn read_sector(&self, ata: &mut AtaDriver, lba: u32) -> Result<[u8; 512], Fat32Error> {
-        ata.read_sector_master(self.base_lba + lba).map_err(|_| Fat32Error::NotFound)
+    fn read_sector(&self, dev: &mut dyn BlockDevice, lba: u32) -> Result<[u8; 512], Fat32Error> {
+        let saved_base = dev.base_lba();
+        dev.set_base_lba(0);
+        let result = dev.read_sector((self.base_lba + lba) as u64).map_err(|_| Fat32Error::NotFound);
+        dev.set_base_lba(saved_base);
+        result
     }
 
-    fn read_fat_entry(&self, ata: &mut AtaDriver, cluster: u32) -> Result<u32, Fat32Error> {
+    fn read_fat_entry(&self, dev: &mut dyn BlockDevice, cluster: u32) -> Result<u32, Fat32Error> {
         let fat_start = self.boot_sector.reserved_sectors;
         let entry_offset = cluster * 4;
         let sector_idx = entry_offset / 512;
         let offset_in_sector = (entry_offset % 512) as usize;
 
-        let sector = self.read_sector(ata, fat_start + sector_idx)?;
+        let sector = self.read_sector(dev, fat_start + sector_idx)?;
 
         let val = u32::from_le_bytes([
             sector[offset_in_sector],
@@ -171,7 +185,7 @@ impl Fat32Driver {
 
     fn find_entry_in_directory(
         &self,
-        ata: &mut AtaDriver,
+        dev: &mut dyn BlockDevice,
         dir_cluster: u32,
         name_11: &[u8; 11],
     ) -> Result<DirEntry, Fat32Error> {
@@ -183,7 +197,7 @@ impl Fat32Driver {
             let lba = data_start + (cluster - 2) * sectors_per_cluster;
 
             for i in 0..sectors_per_cluster {
-                let sector = self.read_sector(ata, lba + i)?;
+                let sector = self.read_sector(dev, lba + i)?;
 
                 for entry_off in (0..512).step_by(32) {
                     let array: &[u8; 32] = match sector[entry_off..entry_off + 32].try_into() {
@@ -203,7 +217,7 @@ impl Fat32Driver {
                 }
             }
 
-            let next = self.read_fat_entry(ata, cluster)?;
+            let next = self.read_fat_entry(dev, cluster)?;
             if next >= 0x0FFFFFF8 {
                 break;
             }
@@ -213,7 +227,7 @@ impl Fat32Driver {
         Err(Fat32Error::NotFound)
     }
 
-    pub fn resolve_path(&self, ata: &mut AtaDriver, path: &str) -> Result<DirEntry, Fat32Error> {
+    pub fn resolve_path(&self, dev: &mut dyn BlockDevice, path: &str) -> Result<DirEntry, Fat32Error> {
         let bytes = path.as_bytes();
         if bytes.is_empty() || bytes == b"/" || bytes == b"\\" {
             return Ok(DirEntry {
@@ -238,7 +252,7 @@ impl Fat32Driver {
         for i in 0..part_count {
             let segment = part_buf[i];
             let name_11 = Self::name_to_11byte(segment.as_bytes());
-            let entry = self.find_entry_in_directory(ata, current_cluster, &name_11)?;
+            let entry = self.find_entry_in_directory(dev, current_cluster, &name_11)?;
             if !entry.is_directory || i == part_count - 1 {
                 return Ok(entry);
             }
@@ -254,8 +268,8 @@ impl Fat32Driver {
         })
     }
 
-    pub fn list_directory(&self, ata: &mut AtaDriver, path: &str) -> Result<(), Fat32Error> {
-        let dir_entry = self.resolve_path(ata, path)?;
+    pub fn list_directory(&self, dev: &mut dyn BlockDevice, path: &str) -> Result<(), Fat32Error> {
+        let dir_entry = self.resolve_path(dev, path)?;
         if !dir_entry.is_directory {
             return Err(Fat32Error::NotDirectory);
         }
@@ -268,7 +282,7 @@ impl Fat32Driver {
             let lba = data_start + (cluster - 2) * sectors_per_cluster;
 
             for i in 0..sectors_per_cluster {
-                let sector = self.read_sector(ata, lba + i)?;
+                let sector = self.read_sector(dev, lba + i)?;
 
                 for entry_off in (0..512).step_by(32) {
                     let array: &[u8; 32] = match sector[entry_off..entry_off + 32].try_into() {
@@ -312,7 +326,7 @@ impl Fat32Driver {
                 }
             }
 
-            let next = self.read_fat_entry(ata, cluster)?;
+            let next = self.read_fat_entry(dev, cluster)?;
             if next >= 0x0FFFFFF8 {
                 break;
             }
@@ -324,7 +338,7 @@ impl Fat32Driver {
 
     pub fn read_file_by_cluster(
         &self,
-        ata: &mut AtaDriver,
+        dev: &mut dyn BlockDevice,
         start_cluster: u32,
         buf: &mut [u8],
     ) -> Result<usize, Fat32Error> {
@@ -340,13 +354,13 @@ impl Fat32Driver {
                 if offset >= buf.len() {
                     return Ok(offset);
                 }
-                let sector = self.read_sector(ata, lba + i)?;
+                let sector = self.read_sector(dev, lba + i)?;
                 let copy_len = 512.min(buf.len() - offset);
                 buf[offset..offset + copy_len].copy_from_slice(&sector[..copy_len]);
                 offset += copy_len;
             }
 
-            let next = self.read_fat_entry(ata, cluster)?;
+            let next = self.read_fat_entry(dev, cluster)?;
             if next >= 0x0FFFFFF8 {
                 break;
             }
@@ -356,25 +370,25 @@ impl Fat32Driver {
         Ok(offset)
     }
 
-    pub fn find_file(&self, ata: &mut AtaDriver, filename: &[u8]) -> Result<DirEntry, Fat32Error> {
+    pub fn find_file(&self, dev: &mut dyn BlockDevice, filename: &[u8]) -> Result<DirEntry, Fat32Error> {
         let name_11 = Self::name_to_11byte(filename);
-        self.find_entry_in_directory(ata, self.boot_sector.root_cluster, &name_11)
+        self.find_entry_in_directory(dev, self.boot_sector.root_cluster, &name_11)
     }
 
-    pub fn read_file(&self, ata: &mut AtaDriver, filename: &[u8], buf: &mut [u8]) -> Result<usize, Fat32Error> {
-        let entry = self.find_file(ata, filename)?;
+    pub fn read_file(&self, dev: &mut dyn BlockDevice, filename: &[u8], buf: &mut [u8]) -> Result<usize, Fat32Error> {
+        let entry = self.find_file(dev, filename)?;
         if entry.is_directory {
             return Err(Fat32Error::IsDirectory);
         }
-        self.read_file_by_cluster(ata, entry.cluster, buf)
+        self.read_file_by_cluster(dev, entry.cluster, buf)
     }
 
-    pub fn read_file_by_path(&self, ata: &mut AtaDriver, path: &str, buf: &mut [u8]) -> Result<usize, Fat32Error> {
-        let entry = self.resolve_path(ata, path)?;
+    pub fn read_file_by_path(&self, dev: &mut dyn BlockDevice, path: &str, buf: &mut [u8]) -> Result<usize, Fat32Error> {
+        let entry = self.resolve_path(dev, path)?;
         if entry.is_directory {
             return Err(Fat32Error::IsDirectory);
         }
-        self.read_file_by_cluster(ata, entry.cluster, buf)
+        self.read_file_by_cluster(dev, entry.cluster, buf)
     }
 }
 
@@ -393,13 +407,13 @@ impl From<Fat32Error> for VfsError {
 
 impl FileSystem for Fat32Driver {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
         let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
         temp_buf.resize(buf.len() + offset as usize, 0);
         
-        let read = self.read_file_by_cluster(ata, inode, &mut temp_buf)?;
+        let read = self.read_file_by_cluster(dev, inode, &mut temp_buf)?;
         
         if offset as usize >= read {
             return Ok(0);
@@ -417,11 +431,11 @@ impl FileSystem for Fat32Driver {
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
         let name_11 = Self::name_to_11byte(name.as_bytes());
-        let entry = self.find_entry_in_directory(ata, dir_inode, &name_11)?;
+        let entry = self.find_entry_in_directory(dev, dir_inode, &name_11)?;
         
         Ok(VfsNode {
             inode: entry.cluster,
@@ -431,8 +445,8 @@ impl FileSystem for Fat32Driver {
     }
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
-        let mut ata_lock = crate::globals::ATA_DRIVER.lock();
-        let ata = ata_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
+        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
 
         let data_start = self.boot_sector.data_start();
         let sectors_per_cluster = self.boot_sector.sectors_per_cluster as u32;
@@ -443,7 +457,7 @@ impl FileSystem for Fat32Driver {
             let lba = data_start + (cluster - 2) * sectors_per_cluster;
 
             for i in 0..sectors_per_cluster {
-                let sector = self.read_sector(ata, lba + i)?;
+                let sector = self.read_sector(dev, lba + i)?;
 
                 for entry_off in (0..512).step_by(32) {
                     let array: &[u8; 32] = match sector[entry_off..entry_off + 32].try_into() {
@@ -485,7 +499,7 @@ impl FileSystem for Fat32Driver {
                 }
             }
 
-            let next = self.read_fat_entry(ata, cluster)?;
+            let next = self.read_fat_entry(dev, cluster)?;
             if next >= 0x0FFFFFF8 {
                 break;
             }

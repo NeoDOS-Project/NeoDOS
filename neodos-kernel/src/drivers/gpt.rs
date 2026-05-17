@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::drivers::ata::AtaDriver;
+use crate::drivers::block::BlockDevice;
 
 const GPT_SIGNATURE: [u8; 8] = *b"EFI PART";
 const PART_TYPE_NEODOS: [u8; 16] = [
@@ -25,13 +25,17 @@ fn read_u32_le(buf: &[u8], offset: usize) -> Option<u32> {
     Some(u32::from_le_bytes(arr))
 }
 
-pub fn find_neodos_partition(ata: &mut AtaDriver) -> Option<GptPartition> {
-    let mut partitions = find_all_neodos_partitions(ata);
+pub fn find_neodos_partition(dev: &mut dyn BlockDevice) -> Option<GptPartition> {
+    let mut partitions = find_all_neodos_partitions(dev);
     partitions[0].take()
 }
 
-fn read_sector_from_ata(ata: &mut AtaDriver, lba: u32) -> Result<[u8; 512], ()> {
-    ata.read_sector_master(lba).map_err(|_| ())
+fn read_sector_from_dev(dev: &mut dyn BlockDevice, lba: u32) -> Result<[u8; 512], ()> {
+    let saved_base = dev.base_lba();
+    dev.set_base_lba(0);
+    let result = dev.read_sector(lba as u64);
+    dev.set_base_lba(saved_base);
+    result
 }
 
 fn parse_gpt<F>(mut read_sector: F) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS]
@@ -95,6 +99,6 @@ where
     result
 }
 
-pub fn find_all_neodos_partitions(ata: &mut AtaDriver) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS] {
-    parse_gpt(|lba| read_sector_from_ata(ata, lba))
+pub fn find_all_neodos_partitions(dev: &mut dyn BlockDevice) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS] {
+    parse_gpt(|lba| read_sector_from_dev(dev, lba))
 }

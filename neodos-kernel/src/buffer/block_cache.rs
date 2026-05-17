@@ -1,6 +1,4 @@
-// src/buffer/block_cache.rs
-
-use crate::drivers::ata::{AtaDriver, AtaError};
+use crate::drivers::block::BlockDevice;
 
 const CACHE_SIZE: usize = 256; // 256 entries = 128 KB (was 64 = 32 KB)
 
@@ -35,7 +33,7 @@ impl BlockCache {
         }
     }
 
-    pub fn get_sector(&mut self, lba: u32, ata: &mut AtaDriver) -> Result<&[u8; 512], AtaError> {
+    pub fn get_sector(&mut self, lba: u32, dev: &mut dyn BlockDevice) -> Result<&[u8; 512], ()> {
         self.counter += 1;
 
         // 1. Check if in cache
@@ -63,13 +61,13 @@ impl BlockCache {
 
         // 3. If LRU entry is dirty, write it back first (must succeed or we lose metadata)
         if self.entries[lru_idx].valid && self.entries[lru_idx].dirty {
-            ata
-                .write_sector(self.entries[lru_idx].lba, &self.entries[lru_idx].data)
-                .map_err(|_| AtaError::Error)?;
+            dev
+                .write_sector(self.entries[lru_idx].lba.into(), &self.entries[lru_idx].data)
+                .map_err(|_| ())?;
         }
 
         // 4. Read from disk
-        let data = ata.read_sector(lba)?;
+        let data = dev.read_sector(lba.into())?;
         
         // 5. Update cache
         self.entries[lru_idx] = CacheEntry {
@@ -92,19 +90,19 @@ impl BlockCache {
         }
     }
 
-    pub fn flush(&mut self, ata: &mut AtaDriver) -> Result<(), AtaError> {
+    pub fn flush(&mut self, dev: &mut dyn BlockDevice) -> Result<(), ()> {
         for entry in &mut self.entries {
             if entry.valid && entry.dirty {
-                ata.write_sector(entry.lba, &entry.data).map_err(|_| AtaError::Error)?;
+                dev.write_sector(entry.lba.into(), &entry.data).map_err(|_| ())?;
                 entry.dirty = false;
             }
         }
         Ok(())
     }
 
-    pub fn get_sector_mut(&mut self, lba: u32, ata: &mut AtaDriver) -> Result<&mut [u8; 512], AtaError> {
+    pub fn get_sector_mut(&mut self, lba: u32, dev: &mut dyn BlockDevice) -> Result<&mut [u8; 512], ()> {
         // Ensure it's in cache
-        let _ = self.get_sector(lba, ata)?;
+        let _ = self.get_sector(lba, dev)?;
         
         // Find it and return mut ref
         for entry in &mut self.entries {
@@ -113,6 +111,6 @@ impl BlockCache {
                 return Ok(&mut entry.data);
             }
         }
-        Err(AtaError::Error)
+        Err(())
     }
 }

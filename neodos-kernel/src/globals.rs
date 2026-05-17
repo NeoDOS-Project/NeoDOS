@@ -3,6 +3,7 @@
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
+use crate::drivers::block::BlockDevice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 
@@ -46,6 +47,15 @@ where
     f(ata)
 }
 
+pub fn with_block_device<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut dyn BlockDevice) -> R
+{
+    let mut lock = ATA_DRIVER.lock();
+    let ata = lock.as_mut().expect("ATA_DRIVER not initialized");
+    f(ata as &mut dyn BlockDevice)
+}
+
 pub fn with_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut BlockCache) -> R
@@ -57,9 +67,9 @@ where
 
 pub fn flush_cache_if_needed() {
     if NEED_CACHE_FLUSH.swap(false, Ordering::Relaxed) {
-        if let (Some(mut cache_lock), Some(mut ata_lock)) = (BLOCK_CACHE.try_lock(), ATA_DRIVER.try_lock()) {
-            if let (Some(cache), Some(ata)) = (cache_lock.as_mut(), ata_lock.as_mut()) {
-                let _ = cache.flush(ata);
+        if let (Some(mut cache_lock), Some(mut dev_lock)) = (BLOCK_CACHE.try_lock(), ATA_DRIVER.try_lock()) {
+            if let (Some(cache), Some(dev)) = (cache_lock.as_mut(), dev_lock.as_mut()) {
+                let _ = cache.flush(dev as &mut dyn BlockDevice);
             }
         }
         let current = crate::scheduler::TIMER_TICKS.load(Ordering::Relaxed);
