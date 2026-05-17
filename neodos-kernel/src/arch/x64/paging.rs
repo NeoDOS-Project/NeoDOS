@@ -367,9 +367,13 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         }
 
         // Replace PD entry: point to PT, clear HUGE_PAGE
-        let new_flags = huge_flags
-            | PageTableFlags::PRESENT
-            | PageTableFlags::WRITABLE;
+        let mut new_flags = huge_flags;
+        new_flags.remove(PageTableFlags::HUGE_PAGE);
+        // Ensure USER_ACCESSIBLE for heap pages (the identity-map setup may not set it
+        // for addresses above USER_BASE+MAX_BIN+MAX_STACK, but user-mode processes need it)
+        if is_heap_virtual_addr(virt) {
+            new_flags |= PageTableFlags::USER_ACCESSIBLE;
+        }
         pd[pd_idx].set_addr(PhysAddr::new(pt_phys), new_flags);
     }
 

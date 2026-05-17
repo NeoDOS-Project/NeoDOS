@@ -6,19 +6,26 @@ use x86_64::VirtAddr;
 // IST number for double fault handler (1-7).  TSS array index = IST - 1.
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 1;
 
+    // 16-byte alignment for all TSS stacks is critical: the CPU pushes 5×8 bytes and
+    // the asm handlers push 15×8 bytes (= 160 = 0 mod 16) before calling Rust code.
+    // Without this alignment, SSE instructions (movaps/movdqa) in the compiled kernel
+    // will #GP fault, causing syscall instability.
+    #[repr(align(16))]
+    struct AlignedStack([u8; 4096 * 8]); // 32 KB
+
 lazy_static! {
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
         tss.interrupt_stack_table[(DOUBLE_FAULT_IST_INDEX - 1) as usize] = {
-            const STACK_SIZE: usize = 4096 * 5;
-            static mut STACK: [u8; STACK_SIZE] = [0; STACK_SIZE];
-            VirtAddr::from_ptr(unsafe { &STACK }) + STACK_SIZE as u64
+            static mut STACK: AlignedStack = AlignedStack([0; 4096 * 8]);
+            let ptr = unsafe { STACK.0.as_ptr() };
+            VirtAddr::from_ptr(ptr) + (4096 * 8) as u64
         };
         // Ring 0 stack for interrupts originating from Ring 3
         tss.privilege_stack_table[0] = {
-            const RSP0_SIZE: usize = 4096 * 5;
-            static mut RSP0_STACK: [u8; RSP0_SIZE] = [0; RSP0_SIZE];
-            VirtAddr::from_ptr(unsafe { &RSP0_STACK }) + RSP0_SIZE as u64
+            static mut RSP0_STACK: AlignedStack = AlignedStack([0; 4096 * 8]);
+            let ptr = unsafe { RSP0_STACK.0.as_ptr() };
+            VirtAddr::from_ptr(ptr) + (4096 * 8) as u64
         };
         tss
     };

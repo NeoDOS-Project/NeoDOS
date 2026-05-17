@@ -171,11 +171,14 @@ lazy_static! {
         }
         idt[33].set_handler_fn(keyboard_handler);   // IRQ1
         
-        // Syscall (INT 0x80) — trampolín real, accesible desde Ring 3
+        // Syscall (INT 0x80) — interrupt gate from Ring 3
+        // Interrupt gate (IF=0) prevents timer preemption during syscall handling,
+        // which can corrupt the shared TSS.RSP0 kernel stack frames.
         unsafe {
             idt[0x80]
                 .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as *const () as u64))
-                .set_privilege_level(x86_64::PrivilegeLevel::Ring3);
+                .set_privilege_level(x86_64::PrivilegeLevel::Ring3)
+                .disable_interrupts(true);
         }
         
         idt
@@ -232,15 +235,16 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 }
 
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
-    use crate::serial_println;
     serial_println!(
-        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x}",
+        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
         error_code,
         stack_frame.instruction_pointer.as_u64(),
         stack_frame.code_segment,
         stack_frame.cpu_flags,
+        stack_frame.stack_pointer.as_u64(),
+        crate::scheduler::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed),
     );
-    panic!("General protection fault: {:#?}, error: {}", stack_frame, error_code);
+    panic!("General protection fault: {:?}, error: {}", stack_frame, error_code);
 }
 
 extern "x86-interrupt" fn page_fault_handler(
@@ -302,28 +306,51 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         }
     }
 
-    let scheduler_mutex = current_scheduler();
-    let mut scheduler = scheduler_mutex.lock();
-    
     // Call TSRs for INT 0x1C (Timer Hook)
     crate::tsr::dispatch_interrupt(0x1C);
 
+    let scheduler_mutex = current_scheduler();
+    let mut scheduler = scheduler_mutex.lock();
+
     scheduler.on_timer_tick();
 
-    // If the kernel hasn't created any runnable processes yet, don't attempt a context switch.
-    // Switching to the idle task is safe, but switching away from the current stack while the
-    // rest of the kernel isn't prepared for multitasking tends to be noisy (and can reboot).
-    if !scheduler.has_non_idle_processes() {
-        unsafe {
-            PICS.lock().notify_end_of_interrupt(32);
-        }
-        return current_rsp;
-    }
-    
-    // Save current process state (only if it's still alive)
     let pid = scheduler.current_pid;
-    let mut current_terminated = false;
-    if pid > 0 {
+
+    // ── Idle process (PID 0) ───────────────────────────────────────
+    // Idle uses its private IDLE_STACK, so the timer handler's pushes
+    // go to that private stack, NOT to the global TSS.RSP0.  It is
+    // therefore safe to context-switch away from idle in the timer
+    // handler — the next process's saved frame on TSS.RSP0 will not
+    // be overwritten.
+    if pid == 0 {
+        if !scheduler.has_non_idle_processes() {
+            unsafe { PICS.lock().notify_end_of_interrupt(32); }
+            return current_rsp;
+        }
+        // Save idle's own RSP (on idle stack) and find next ready
+        // process.  The returned RSP points to the user process's
+        // saved frame (on TSS.RSP0, set during that process's timer
+        // tick or by init_ring3_interrupt_stack_frame).
+        let next = scheduler.schedule();
+        unsafe { PICS.lock().notify_end_of_interrupt(32); }
+        return unsafe { (*next).rsp };
+    }
+
+    // ── Ring-3 process (PID > 0) ──────────────────────────────────
+    // The timer handler's register pushes are on the GLOBAL TSS.RSP0
+    // stack.  If we context-switched here, the returned RSP would
+    // point to another process's saved frame — also on TSS.RSP0 — and
+    // the next Ring-3→Ring-0 timer interrupt would reload TSS.RSP0
+    // fresh, overwriting that saved frame with the new process's data.
+    //
+    // Instead: save the stack-pointer only, set NEED_RESCHED, and
+    // return the SAME RSP so the interrupt returns to the current
+    // process.  The actual context switch happens in the syscall-
+    // return path (syscall_handler_asm → syscall_try_resched), which
+    // runs with IF=0 (interrupt gate on INT 0x80), so no timer can
+    // fire mid-switch.
+    {
+        let mut current_terminated = false;
         if let Some(current) = scheduler.current_process_mut() {
             if current.state != ProcessState::Terminated {
                 current.rsp = current_rsp;
@@ -332,28 +359,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 current_terminated = true;
             }
         } else {
-            // Current PID is stale; fall back to idle.
             scheduler.current_pid = 0;
         }
+        if current_terminated {
+            unsafe { PICS.lock().notify_end_of_interrupt(32); }
+            return current_rsp;
+        }
+        crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
-    
-    // If the current process was Terminated, don't try to save its context
-    // or switch to another process — the shell is running in Ring 0 outside
-    // the scheduler, and we'd switch away from it prematurely.
-    if current_terminated {
-        unsafe { PICS.lock().notify_end_of_interrupt(32); }
-        return current_rsp;
-    }
-    
-    // Switch to next process
-    let next = scheduler.schedule();
-    
-    // ACK the interrupt
-    unsafe {
-        PICS.lock().notify_end_of_interrupt(32);
-    }
-    
-    unsafe { (*next).rsp }
+
+    unsafe { PICS.lock().notify_end_of_interrupt(32); }
+    current_rsp
 }
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {

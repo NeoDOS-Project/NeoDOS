@@ -1,567 +1,1989 @@
-# NeoDOS — Propuestas de mejora pendientes
+# NeoDOS — Roadmap Estratégico y Arquitectural
 
-> Versión: 0.10.4 | Actualizado: Mayo 2026
-
-> Items ya implementados han sido removidos. Ver `AGENTS.md` para funcionalidad existente.
-
----
-
-## ⚡ Rendimiento
-
-### 29. Paging: Page tables recreadas en cada boot
-
-**Archivo:** `arch/x64/paging.rs`
-
-Las page tables se crean desde cero en cada arranque. No hay reutilización de páginas del bootloader.
-
-**Propuesta:** Reusar páginas del bootloader antes de crear nuevas o implementar un sistema de mapeo bajo demanda (on-demand paging) para el espacio de usuario.
+> Documento maestro de evolución técnica
+> Formato: Markdown (.md)
+> Objetivo: Consolidar la transición de NeoDOS desde kernel experimental hacia sistema operativo modular estable.
+>
+> Rama objetivo: v0.20
+> Base actual: v0.10.x
+> Estado: Arquitectura activa
+>
+> Última revisión: Mayo 2026
 
 ---
 
-### 30. Inode cache: sin escritura diferida
+# 1. Visión General
 
-**Archivo:** `fs/neodos_fs.rs:72-108`
+NeoDOS ha superado la fase de "toy OS".
 
-El `InodeCache` carga inodos pero nunca los escribe de vuelta cuando se modifican hasta que se hace un sync manual.
+Actualmente el proyecto ya dispone de:
 
-**Propuesta:** Implementar dirty flag y escritura diferida para inodos.
+* kernel x86_64 funcional
+* modo protegido / long mode
+* GDT / IDT / paging
+* VFS operativo
+* multitarea básica
+* syscalls funcionales
+* memoria dinámica
+* soporte ATA/AHCI
+* filesystem propio (NeoFS)
+* carga de módulos inicial (.NDM)
+* shell funcional
+* soporte GPT + EFI
+
+El principal objetivo ya NO es añadir funcionalidades rápidamente.
+
+El objetivo real ahora es:
+
+1. estabilizar arquitectura
+2. congelar interfaces críticas
+3. desacoplar subsistemas
+4. reducir deuda técnica
+5. consolidar userland
+6. preparar extensibilidad real
 
 ---
 
-### 52. DMA: Uso de buffers estáticos limitados
+# 2. Objetivo Estratégico v0.20
 
-**Archivo:** `drivers/ahci.rs`, `drivers/ata.rs`
+NeoDOS v0.20 debe convertirse en:
 
-Los buffers de DMA son estáticos y de tamaño fijo (4KB/8 sectores). Esto limita el rendimiento en transferencias grandes.
+> un sistema operativo modular, extensible y relativamente estable
 
-**Propuesta:** Implementar un pool de páginas para DMA o permitir transferencias multi-bloque más grandes usando scatter-gather (PRDT) de forma dinámica.
+con:
+
+* ABI de syscalls congelada
+* drivers desacoplados
+* BlockDevice abstraction
+* ELF userland
+* módulos cargables
+* IPC funcional
+* tooling básico
+* FS estable y verificable
+* entorno de desarrollo externo
+
+La meta NO es competir con Linux o BSD.
+
+La meta es construir:
+
+* una arquitectura coherente
+* un kernel mantenible
+* una base técnica extensible
+* una plataforma experimental seria
 
 ---
 
-## 🧹 Calidad de código
+# 3. Filosofía Arquitectural
 
-### 9. [COMPLETADO] `static mut` global sin sincronización (Riesgo de Reentrancia)
+> Versión objetivo: 0.20
+> Estado actual base: 0.10.x
+> Documento de prioridades arquitecturales y estabilización
 
-**Archivos:** `globals.rs`, `main.rs`
+---
+
+# Filosofía del Proyecto
+
+NeoDOS ya no está en fase de "toy OS".
+
+El objetivo actual NO es añadir funcionalidades rápidamente.
+El objetivo real es:
+
+* estabilizar arquitectura
+* congelar interfaces críticas
+* reducir deuda técnica
+* consolidar capas internas
+* preparar extensibilidad real
+
+---
+
+# Objetivo Estratégico v0.20
+
+Convertir NeoDOS en:
+
+> un sistema operativo modular, estable y extensible
+
+con:
+
+* ABI de syscalls estable
+* VFS consolidado
+* drivers desacoplados
+* userland usable
+* módulos cargables reales
+* herramientas de sistema mínimas
+
+---
+
+# PRIORIDAD S — CRÍTICO ABSOLUTO
+
+Estas tareas desbloquean todo el roadmap futuro.
+
+---
+
+## S1. Estabilización de Syscalls
+
+### Estado
+
+Parcialmente funcional.
+
+### Objetivo
+
+Congelar ABI v0.
+
+### Requisitos
+
+* eliminar `unwrap()/expect()` en rutas críticas
+* validar ABI userland ↔ kernel
+* asegurar stack alignment correcto
+* revisar `open/read/write/close`
+* asegurar propagación de errores mediante `Result`
+
+### Impacto
+
+Desbloquea:
+
+* ELF
+* libneodos
+* pipes
+* redirección
+* shell avanzado
+* userland real
+
+---
+
+## S2. BlockDevice Abstraction (#53)
+
+### Estado
+
+ATA/AHCI parcialmente desacoplados.
+
+### Objetivo
+
+Crear capa unificada:
 
 ```rust
-pub static mut ATA_DRIVER: Option<AtaDriver> = None;
-pub static mut BLOCK_CACHE: Option<BlockCache> = None;
-pub static mut NEODOS_FS: Option<NeoDosFs> = None;
+trait BlockDevice {
+    fn read_blocks(...);
+    fn write_blocks(...);
+    fn flush(...);
+}
 ```
 
-**Problema:** Actualmente se accede a estas estructuras mediante `static mut` sin ningún mecanismo de bloqueo. Aunque el sistema es mononúcleo, el planificador (scheduler) puede interrumpir una syscall en medio de una operación crítica (ej. modificando el bitmap del FS) y cambiar a otro proceso que realice otra syscall sobre el mismo objeto. Esto provocaría corrupción de datos difícil de depurar.
+### Requisitos
 
-**Propuesta:** 
-1. Envolver todos los drivers y el FS en `spin::Mutex<Option<T>>`.
-2. Usar `lazy_static!` o `OnceLock` (si estuviera disponible) para la inicialización.
-3. Asegurar que las secciones críticas deshabiliten interrupciones si es necesario para evitar deadlocks con los manejadores de IRQ.
+* desacoplar FS de drivers
+* registrar dispositivos dinámicamente
+* soporte uniforme ATA/AHCI/RAMDisk/VirtIO
 
----
+### Impacto
 
-### 10. ~30 `unwrap()`/`expect()` que paniquean
+Desbloquea:
 
-Repartidos por todo el kernel. Cualquier fallo (disco corrupto, DMA malformado, etc.) tira el sistema.
-
-**Propuesta:** Reemplazar con `?` y propagar errores. Implementar un sistema de logging (`log` crate compatible con `no_std`) en lugar de `println!` para errores.
-
----
-
-### 33. Serial output mezclado con output VGA
-
-**Archivo:** `console.rs` y `serial.rs`
-
-Las macros `print!` y `println!` escriben tanto a VGA como a serial.
-
-**Propuesta:** Implementar un sistema de "Log Sinks" donde se pueda registrar dónde va el output (VGA, Serial, Archivo).
+* USB storage
+* swap
+* journaling
+* FSCK
+* cifrado
+* instalación
+* ISO9660
+* VirtIO
+* defrag
 
 ---
 
-### 53. Unificación de Drivers de Bloque
+## S3. Module ABI v0 (.NDM / .SYS)
 
-**Archivo:** `main.rs`, `drivers/mod.rs`
+### Estado
 
-Actualmente `AtaDriver` y `AhciDriver` se manejan de forma algo separada con fallbacks manuales.
+Loader funcional.
 
-**Propuesta:** Crear un trait `BlockDevice` y un sistema de registro de dispositivos para que el FS no dependa de si el disco es ATA, AHCI o un RAM disk.
+### Objetivo
 
----
+Congelar ABI modular.
 
-## 🆕 Funcionalidades
+### Requisitos
 
-### 17. `DIR /W`, `DIR /P`
+* `#[repr(C)]`
+* versionado obligatorio
+* export table controlada
+* tipos de módulo
+* validación de compatibilidad
 
-**Archivo:** `shell/commands/dir.rs`
+### Impacto
 
-Solo listado vertical simple.
+Desbloquea:
 
-**Propuesta:** Añadir `DIR /W` (wide, columnas) y `DIR /P` (pausa cada pantalla).
-
----
-
-### 18. Historial de comandos
-
-No hay forma de recuperar comandos anteriores.
-
-**Propuesta:** Buffer circular de ~16 comandos, navegación con ↑/↓ (scan codes 0x48/0x50).
-
----
-
-### 41. Environment: sin PATH resolution completa
-
-**Archivo:** `shell/shell.rs`
-
-**Propuesta:** Implementar búsqueda en PATH para comandos no built-in de forma recursiva o siguiendo el estándar DOS.
+* drivers dinámicos
+* FS cargables
+* modularidad real
+* builds independientes
 
 ---
 
-### 42. Sin redirección de output
+## S4. Eliminación de Panic Paths (#10)
+
+### Estado
+
+~30 unwrap/expect.
+
+### Objetivo
+
+Kernel fail-safe.
+
+### Requisitos
+
+* reemplazar `unwrap()`
+* introducir logging estructurado
+* error propagation
+* rutas críticas sin panic
+
+### Impacto
+
+Estabilidad general del sistema.
+
+---
+
+# PRIORIDAD A — INFRAESTRUCTURA MAYOR
+
+Estas tareas convierten NeoDOS en un sistema operativo extensible.
+
+---
+
+## A1. libneodos (#54)
+
+### Objetivo
+
+Crear standard library oficial para userland.
+
+### Funcionalidades
+
+* wrappers de syscalls
+* macros seguras
+* IO
+* FS API
+* memoria
+
+### Impacto
+
+* simplifica desarrollo
+* desacopla userland del ABI crudo
+* prepara SDK
+
+---
+
+## A2. ELF Loader (#55)
+
+### Objetivo
+
+Abandonar binarios planos.
+
+### Requisitos
+
+* ELF parsing
+* relocalización básica
+* segmentos múltiples
+* memoria dinámica por proceso
+
+### Impacto
+
+* ejecutables reales
+* toolchains modernas
+* Rust/C userland serio
+
+---
+
+## A3. IPC / Pipes (#61)
+
+### Objetivo
+
+Pipes reales entre procesos.
+
+### Requisitos
+
+* pipe buffers
+* stdin/stdout redirect
+* blocking reads
+* scheduler integration
+
+### Impacto
+
+* shell moderno
+* multitarea usable
+* pipelines
+
+---
+
+## A4. FSCK Utility (#37)
+
+### Objetivo
+
+Verificación y reparación de NeoFS.
+
+### Requisitos
+
+* inode validation
+* block bitmap validation
+* orphan detection
+* repair mode
+
+### Impacto
+
+* seguridad de datos
+* debugging FS
+* recuperación
+
+---
+
+## A5. FAT32 Write Support (#62)
+
+### Objetivo
+
+Escritura real en FAT32.
+
+### Impacto
+
+* interoperabilidad
+* instalación dual
+* intercambio de archivos
+
+---
+
+## A6. Loadable Drivers (#69)
+
+### Objetivo
+
+Drivers cargables reales.
+
+### Requisitos
+
+* integración con Module ABI
+* registro dinámico
+* lifecycle control
+* validación de compatibilidad
+
+---
+
+# PRIORIDAD B — USERLAND Y UX
+
+Estas tareas mejoran usabilidad y tooling.
+
+---
+
+## B1. Historial de comandos (#18)
+
+* buffer circular
+* navegación ↑/↓
+
+---
+
+## B2. Redirección de Output (#42)
 
 ```bash
 DIR > FILE.TXT
 ```
 
-**Propuesta:** Implementar redirección básica de `stdout` a archivos en el shell.
+---
+
+## B3. PATH Resolution (#41)
+
+* búsqueda automática
+* ejecución recursiva
 
 ---
 
-### 54. Standard Library para User-mode (`libneodos`)
+## B4. Sistema HELP (#89)
 
-**Carpeta:** `userbin/`
-
-Las aplicaciones de usuario llaman a `int 0x80` directamente.
-
-**Propuesta:** Crear un crate `libneodos` que proporcione una interfaz segura y "Rústica" para las syscalls (ej. `neodos::println!`, `neodos::fs::open`).
+* `HELP`
+* `/?`
+* documentación integrada
 
 ---
 
-### 55. Soporte para ejecutables ELF en User-mode
+## B5. NeoEdit (#80)
 
-Actualmente solo soporta binarios planos (.BIN) cargados en una dirección fija.
-
-**Propuesta:** Implementar un cargador ELF básico que soporte relocalización estática.
+Editor de texto integrado.
 
 ---
 
-## 🏗️ Arquitectura
+## B6. Batch avanzado (#63)
 
-### 20. Interrupts habilitados/deshabilitados en cada `pop_byte()`
-
-**Archivo:** `input.rs:52-61`
-
-**Propuesta:** Usar un ring buffer lock-free (AtomicU8 para head/tail) para evitar deshabilitar interrupciones globalmente.
-
----
-
-### 56. [COMPLETADO] Capa VFS (Virtual File System)
-
-**Archivos:** `fs/vfs.rs` (385 líneas), `fs/neodos_fs.rs` (impl FileSystem), `drivers/fat32.rs` (impl FileSystem), `globals.rs` (VFS global)
-
-**Implementado:**
-- Trait `FileSystem` con read/write/lookup/readdir/mkdir/create/stat/remove/rename
-- `Vfs` struct con array de 26 unidades (A-Z), tabla de montaje (8 entries)
-- `mount()` / `unmount()` — montar FS en letra de unidad
-- `mount_at_path()` / `unmount_path()` — montar FS en cualquier punto del árbol
-- `resolve_path()` — parsea `C:\PATH\FILE` en (drive_idx, node)
-- `walk_components()` — navegación con `.`, `..`, cruce automático de mount points
-- `mounted_drive` en `CONFIG.SYS` (ej. `SYSTEMDRIVE=D`)
-- `NeoDosFs` y `Fat32Driver` implementan `FileSystem`
-- Shell monta `C:` (NeoDOS FS) y `A:` (FAT32 ESP) al arrancar
-- Todos los comandos del shell usan VFS vía `with_vfs()`
-- Syscalls (open/readfile/writefile) usan VFS
-- TAB completion usa VFS vía `readdir()`
-- Drive switching (`A:`, `C:`) vía VFS
-- Comandos DEL/REN/RD implementados sobre VFS
+* IF
+* GOTO
+* variables
+* wildcards
 
 ---
 
-### 57. Sistema de Eventos/Mensajería para Input
+## B7. RTC + timestamps (#64)
 
-El shell hace pooling de `input::pop_byte()`.
-
-**Propuesta:** Cambiar a un modelo basado en eventos o bloqueante (`sys_read` sobre stdin que bloquee el proceso hasta que haya datos).
-
----
-
-### 58. USB HID: Soporte funcional
-
-**Archivo:** `drivers/usb_hid/mod.rs`
-
-Actualmente no funcional.
-
-**Propuesta:** Corregir la inicialización de UHCI (especialmente alineación de Frame List y manejo de BARs) para soportar teclados USB en hardware real/QEMU PIIX3.
+* `ctime`
+* `mtime`
 
 ---
 
-## 📦 Herramientas
+## B8. Terminales virtuales (#90)
 
-### 37. No hay verificación de integridad del FS
-
-**Propuesta:** Crear utilidad `FSCK.BIN` para verificar y reparar el NeoDOS FS.
-
----
-
-### 59. Tests de integración en CI
-
-Los tests se corren manualmente con `auto_test.py`.
-
-**Propuesta:** Configurar GitHub Actions para ejecutar `auto_test.py` en cada push.
+* Alt+F1..F4
+* múltiples sesiones
 
 ---
 
----
-
-### 24. Gap entre inode table y data blocks
-
-**Archivo:** `scripts/create_neodos_image.py`
-
-```
-DATA_START_SECTOR = 200
-```
-
-Inodes ocupan sectores 1-63. Sectores 64-199 (68 KB) no se usan para nada.
-
-**Propuesta:** Mover `DATA_START_SECTOR` a 64 o 128.
+# PRIORIDAD C — HARDWARE Y RENDIMIENTO
 
 ---
 
----
+## C1. DMA dinámico (#52)
 
-### 51. Dependencias no versionadas
+### Objetivo
 
-Los crates en `Cargo.toml` no tienen versiones fijas, puede haber breakages.
+Eliminar buffers estáticos.
 
-**Propuesta:** Usar `cargo lock` y revisar cambios.
+### Requisitos
 
----
-
-## 🚀 Camino a v1.0
-
-### 60. [COMPLETADO] Gestión Dinámica de Memoria (v1.0)
-
-**Archivos:** `memory.rs`, `arch/x64/paging.rs`, `syscall.rs`, `usermode.rs`, `arch/x64/idt.rs`
-
-**Implementado:**
-- `memory.allocate_frame()` / `memory.free_frame()` — asignación/liberación de marcos físicos de 4 KB vía bitmap (1048576 frames en 4 GiB)
-- `split_2mb_page()` — divide un página enorme de 2 MB en 512 entradas de 4 KB en una Page Table recién asignada
-- `walk_ptes_4k()` — recorre PML4 → PDPT → PD → PT para obtener el PTE de una dirección virtual
-- `set_page_user_accessible()` — concede/revoca acceso USER_ACCESSIBLE en páginas de 4 KB
-- `heap_alloc_page()` / `heap_free_page()` — asigna/libera páginas de 4 KB en el heap del proceso bajo demanda
-- `heap_free_range()` — libera todas las páginas del heap al salir del proceso
-- `handle_heap_page_fault()` — manejador de page faults que asigna una página física cuando un proceso usuario accede a una dirección del heap no mapeada todavía
-- `init_heap_demand_paging()` — divide todas las páginas enormes de los 16 slots de heap (0x10000000..0x12000000) en Page Tables de 4 KB durante el arranque
-- `sys_brk` (#18) actualizado: en crecimiento, escribe a cada nueva página para disparar el page fault y la asignación bajo demanda; en decrecimiento, libera las páginas físicas
-- `sys_mmap` (#19) nuevo: asigna `size` bytes de memoria contigua en el heap, devuelve la dirección virtual
-- `usermode.spawn_usermode()` ya no pre-mapea el slot de heap (el page fault lo asigna bajo demanda)
-- `sys_exit` libera todas las páginas del heap mediante `heap_free_range()` en lugar de `unmap_user_range()`
-- Page fault handler en `idt.rs` redirigido a `handle_heap_page_fault()` para paginación bajo demanda
+* PRDT dinámico
+* multi-block DMA
+* page pools
 
 ---
 
-### 61. IPC: Pipes y Redirección Real (v1.0)
+## C2. Paging optimizado (#29)
 
-**Archivo:** `syscall.rs`, `shell/shell.rs`
+### Objetivo
 
-El shell no soporta tuberías (`|`) entre procesos independientes.
-
-**Propuesta:** Implementar un sistema de tuberías anónimas en el kernel. Redirigir el `stdout` de un proceso al `stdin` de otro, permitiendo comandos complejos como `DIR | SORT | MORE`.
+Reutilización de page tables.
 
 ---
 
-### 62. Soporte Completo de FAT32 (Escritura)
+## C3. Input lock-free (#20)
 
-**Archivo:** `drivers/fat32.rs`
+### Objetivo
 
-Actualmente el driver de FAT32 es mayoritariamente de lectura (usado para el ESP).
-
-**Propuesta:** Implementar creación, escritura y borrado de archivos en particiones FAT32. Esto permitirá que NeoDOS interactúe mejor con otros sistemas operativos.
+Eliminar enable/disable interrupts frecuentes.
 
 ---
 
-### 63. Scripting Avanzado en Batch
+## C4. VirtIO Drivers (#79)
 
-**Archivo:** `shell/batch.rs`
+### Objetivo
 
-Los archivos `.BAT` son muy limitados (secuenciales simples).
-
-**Propuesta:** Añadir soporte para variables de entorno locales, etiquetas y saltos (`GOTO`), condicionales (`IF`) y bucles simples (`FOR`). Implementar expansión de wildcards (`*`, `?`) en todos los comandos de archivo.
+Optimización VM.
 
 ---
 
-### 64. Integración de RTC y Timestamps
+## C5. USB HID estable (#58)
 
-**Archivo:** `drivers/rtc.rs`, `fs/neodos_fs.rs`
+### Objetivo
 
-El RTC se inicializa pero no se usa para marcar la fecha/hora de los archivos.
-
-**Propuesta:** Usar la hora del RTC en las funciones `create_file` y `write_file` para mantener actualizados los campos `ctime` y `mtime` de los inodos.
+Teclados USB reales.
 
 ---
 
-### 65. Interfaz Gráfica de Usuario (GUI) Básica
+## C6. USB Mass Storage (#75)
 
-**Carpeta:** `graphics/`
+### Objetivo
 
-NeoDOS solo tiene una interfaz de línea de comandos sobre un framebuffer gráfico.
-
-**Propuesta:** Implementar un gestor de ventanas básico (estilo Windows 1.x/3.x) que soporte ventanas solapadas, dibujo de primitivas (rectángulos, líneas) y soporte para ratón PS/2.
+Pendrives.
 
 ---
 
+## C7. ACPI (#68)
 
-### 67. Pila de Red (TCP/IP) Mínima
+### Objetivo
 
-**Propuesta:** Implementar drivers para E1000 (Intel) y una pila de red básica (ARP, IP, ICMP, UDP) para permitir funcionalidades como `PING` o transferencia de archivos por red (estilo TFTP).
-
----
-
+Shutdown/Reboot reales.
 
 ---
 
-### 68. Gestión de Energía (ACPI)
+# PRIORIDAD D — FEATURES AVANZADAS
 
-**Propuesta:** Implementar soporte básico de ACPI para permitir los comandos `SHUTDOWN` y `REBOOT` desde el shell.
-
----
-
-### 69. Drivers Cargables Dinámicamente (.SYS)
-
-**Archivo:** `drivers/mod.rs`, `config.rs`
-
-Actualmente todos los drivers están compilados estáticamente en el kernel.
-
-**Propuesta:** Implementar soporte para cargar drivers en tiempo de ejecución (archivos `.SYS` o `.DRV`). Definir una interfaz estándar para que el kernel pueda llamar a funciones de inicialización y manejo de interrupciones de drivers externos.
+NO recomendadas antes de v1.0.
 
 ---
 
-### 70. Soporte de Sonido (PC Speaker / SB16)
+## D1. Journaling (#77)
 
-**Carpeta:** `drivers/audio/`
+### Riesgo
 
-**Propuesta:** Implementar un driver básico para el PC Speaker (frecuencias cuadradas) y soporte inicial para SoundBlaster 16 (DMA de audio) para permitir la reproducción de archivos `.WAV` simples.
-
----
-
-### 71. Soporte de CD-ROM (ISO9660)
-
-**Archivo:** `drivers/atapi.rs`
-
-**Propuesta:** Implementar el sistema de archivos ISO9660 para permitir la lectura de discos compactos (CD-ROM) a través de la interfaz ATAPI del driver IDE/SATA.
+Muy alta complejidad.
 
 ---
 
-### 72. Autocompletado con TAB en el Shell
+## D2. Swap (#84)
 
-**Archivo:** `shell/shell.rs`
+### Riesgo
 
-**Propuesta:** Mejorar la experiencia de usuario en el shell permitiendo completar nombres de archivos y comandos mediante la tecla TAB, escaneando el directorio actual y el PATH.
-
----
-
-### 73. Monitor de Sistema/Kernel (KMonitor)
-
-**Propuesta:** Implementar un monitor integrado (accesible mediante una combinación de teclas) que permita inspeccionar registros de la CPU, volcar memoria física, ver el estado de la tabla de procesos y realizar debugging básico sin depender de GDB externo.
+Interacción MMU + FS + scheduler.
 
 ---
 
-### 74. Soporte SMP (Multi-core) Inicial
+## D3. Network Stack (#67)
 
-**Archivo:** `arch/x64/cpu.rs`
+### Riesgo
 
-NeoDOS solo usa el core de arranque (BSP).
-
-**Propuesta:** Usar el APIC local y el I/O APIC para despertar cores secundarios (APs) y permitir la ejecución de tareas en paralelo, mejorando la respuesta del sistema bajo carga.
+Multiplica complejidad global.
 
 ---
 
-### 75. USB Mass Storage (Pendrives)
+## D4. SMP (#74)
 
-**Archivo:** `drivers/usb/`
+### Riesgo
 
-**Propuesta:** Una vez estabilizado el driver UHCI/EHCI, implementar la clase de dispositivo USB Mass Storage para poder montar pendrives como unidades de disco adicionales (D:, E:, etc.).
+Rompe supuestos actuales del kernel.
+
+---
+
+## D5. GUI (#65)
+
+### Riesgo
+
+Consumo enorme de tiempo.
+
+---
+
+## D6. Encryption (#85)
+
+### Riesgo
+
+Persistencia + recovery + boot.
+
+---
+
+# PRIORIDAD E — ECOSISTEMA
+
+---
+
+## E1. SDK externo (#76)
+
+### Objetivo
+
+Toolchain oficial.
+
+---
+
+## E2. Setup Installer (#87)
+
+### Objetivo
+
+Instalación automatizada.
+
+---
+
+## E3. Package Manager (#95)
+
+### Objetivo
+
+Distribución de software.
+
+---
+
+## E4. CI Integration (#59)
+
+### Objetivo
+
+Testing automático.
+
+---
+
+## E5. Documentation Master Manual (#100)
+
+### Objetivo
+
+Manual oficial.
+
+---
+
+# ROADMAP RECOMENDADO
+
+---
+
+# v0.11 — Stabilization Phase
+
+## Objetivos
+
+* eliminar panic paths
+* limpiar warnings críticos
+* estabilizar syscalls
+* congelar ABI base
+
+---
+
+# v0.12 — Storage Abstraction
+
+## Objetivos
+
+* BlockDevice trait
+* desacoplar FS/drivers
+* limpieza ATA/AHCI
+
+---
+
+# v0.13 — Modular Kernel
+
+## Objetivos
+
+* Module ABI v0
+* drivers cargables
+* validación de módulos
+
+---
+
+# v0.14 — Userland Foundation
+
+## Objetivos
+
+* libneodos
+* ELF básico
+* mejoras shell
+
+---
+
+# v0.15 — IPC & Shell
+
+## Objetivos
+
+* pipes
+* redirección
+* batch avanzado
+
+---
+
+# v0.16 — Filesystem Reliability
+
+## Objetivos
+
+* FSCK
+* FAT32 write
+* timestamps
+
+---
+
+# v0.17 — Hardware Expansion
+
+## Objetivos
+
+* USB HID
+* VirtIO
+* ACPI
+
+---
+
+# v0.18 — Ecosystem
+
+## Objetivos
+
+* SDK
+* NeoEdit
+* HELP
+* CI
+
+---
+
+# v0.19 — Real Hardware Preparation
+
+## Objetivos
+
+* USB storage
+* installer
+* recovery tooling
+
+---
+
+# v0.20 — Extensible OS Milestone
+
+## Resultado esperado
+
+NeoDOS debe ser:
+
+* modular
+* estable
+* extensible
+* con userland usable
+* con ABI relativamente congelada
+* con tooling mínimo funcional
+
+---
+
+# NO RECOMENDADO ANTES DE v1.0
+
+* GUI avanzada
+* SMP
+* journaling
+* swap
+* network stack completo
+* encryption
+* TTF
+* sound stack
+
+---
+
+# Funcionalidades Propuestas Futuras
+
+---
+
+# Subsistema de Seguridad
+
+## Secure Boot Experimental
+
+### Objetivo
+
+Permitir validación criptográfica básica de módulos y kernel.
+
+### Propuesta
+
+* hashes SHA-256 para módulos `.NDM`
+* firma opcional de drivers
+* validación durante carga
+* modo developer bypass
+
+### Impacto
+
+* integridad del sistema
+* prevención de corrupción accidental
+* base para NeoPKG seguro
+
+---
+
+## Sistema de Permisos Básico
+
+### Objetivo
+
+Introducir separación inicial entre procesos y archivos.
+
+### Propuesta
+
+* flags READ/WRITE/EXECUTE
+* atributos de archivo
+* ownership básico
+* permisos mínimos por proceso
+
+### Impacto
+
+* mejora seguridad
+* prepara multiusuario futuro
+
+---
+
+# Subsistema de Memoria
+
+## Memory-Mapped Files
+
+### Objetivo
+
+Permitir mapear archivos directamente en memoria.
+
+### Propuesta
+
+* `mmap()` sobre archivos
+* lazy loading
+* integración con paging
+
+### Impacto
+
+* carga ELF más eficiente
+* cache FS avanzada
+* optimización IO
+
+---
+
+## Kernel Slab Allocator
+
+### Objetivo
+
+Reducir fragmentación del heap kernel.
+
+### Propuesta
+
+* caches por tamaño
+* alloc/free rápidos
+* slabs para inodos y estructuras FS
+
+### Impacto
+
+* mejor rendimiento
+* menor fragmentación
+* menor presión sobre allocator general
+
+---
+
+# Subsistema de Procesos
+
+## Scheduler Prioritario
+
+### Objetivo
+
+Mejorar respuesta bajo carga.
+
+### Propuesta
+
+* prioridades por proceso
+* time slices dinámicos
+* idle task dedicada
+
+### Impacto
+
+* shell más fluido
+* multitarea más usable
+
+---
+
+## Señales Userland
+
+### Objetivo
+
+Manejo controlado de excepciones y eventos.
+
+### Propuesta
+
+* SIGSEGV
+* SIGTERM
+* SIGINT
+* handlers userland
+
+### Impacto
+
+* procesos más robustos
+* debugging avanzado
+
+---
+
+# Subsistema de Archivos
+
+## Hard Links y Symbolic Links
+
+### Objetivo
+
+Mejorar flexibilidad del filesystem.
+
+### Propuesta
+
+* enlaces duros
+* enlaces simbólicos
+* resolución VFS transparente
+
+### Impacto
+
+* estructura UNIX-like opcional
+* compatibilidad futura
+
+---
+
+## Compresión Transparente de Archivos
+
+### Objetivo
+
+Reducir consumo de disco.
+
+### Propuesta
+
+* bloques comprimidos opcionales
+* DEFLATE/LZ4
+* flags por archivo
+
+### Impacto
+
+* imágenes más pequeñas
+* mejor aprovechamiento almacenamiento
+
+---
+
+# Subsistema de Desarrollo
+
+## Kernel Debugger Integrado
+
+### Objetivo
+
+Debugging sin GDB externo.
+
+### Propuesta
+
+* breakpoints
+* stack traces
+* dump de memoria
+* inspección de procesos
+
+### Impacto
+
+* debugging más rápido
+* menos dependencia externa
+
+---
+
+## Crash Dump System
+
+### Objetivo
+
+Persistir información tras kernel panic.
+
+### Propuesta
+
+* panic dumps
+* stack snapshots
+* registros CPU
+* volcados opcionales a disco
+
+### Impacto
+
+* análisis post-mortem
+* reducción de bugs difíciles
+
+---
+
+# Subsistema Gráfico
+
+## Compositor 2D Básico
+
+### Objetivo
+
+Preparar GUI futura.
+
+### Propuesta
+
+* ventanas en memoria
+* doble buffering
+* clipping básico
+* redraw parcial
+
+### Impacto
+
+* base para GUI estable
+* rendimiento gráfico mejorado
+
+---
+
+## Driver GPU Lineal
+
+### Objetivo
+
+Abstracción simple de framebuffer.
+
+### Propuesta
+
+* backend GOP/VBE
+* primitivas aceleradas simples
+* surfaces
+
+### Impacto
+
+* simplifica rendering
+* desacopla GUI del hardware
+
+---
+
+# Subsistema de Red
+
+## Socket API Básica
+
+### Objetivo
+
+Preparar networking moderno.
+
+### Propuesta
+
+* sockets UDP/TCP
+* bind/listen/connect
+* integración syscall
+
+### Impacto
+
+* servicios de red
+* transferencia de archivos
+* terminal remota
+
+---
+
+## Cliente DHCP
+
+### Objetivo
+
+Configuración automática de red.
+
+### Propuesta
+
+* DHCP discover/request
+* configuración IP dinámica
+
+### Impacto
+
+* networking usable automáticamente
+
+---
+
+# Virtualización
+
+## Guest Additions NeoDOS
+
+### Objetivo
+
+Mejor experiencia en VM.
+
+### Propuesta
+
+* sincronización de ratón
+* shared clipboard
+* shared folders
+
+### Impacto
+
+* desarrollo más cómodo
+
+---
+
+## Snapshot Awareness
+
+### Objetivo
+
+Detectar restauraciones de VM.
+
+### Propuesta
+
+* UUID boot session
+* invalidación cache
+* detección rollback
+
+### Impacto
+
+* debugging más fiable
+
+---
+
+# Herramientas Avanzadas
+
+## NeoTOP
+
+### Objetivo
+
+Monitor de procesos y memoria.
+
+### Propuesta
+
+* CPU usage
+* memoria
+* IO
+* scheduler stats
+
+### Impacto
+
+* profiling básico
+* debugging runtime
+
+---
+
+## NeoTrace
+
+### Objetivo
+
+Tracing de syscalls.
+
+### Propuesta
+
+* hooks syscall
+* logs por proceso
+* tracing filtros
+
+### Impacto
+
+* debugging userland
+* profiling
+
+---
+
+## NeoPkg Repository Server
+
+### Objetivo
+
+Backend oficial de paquetes.
+
+### Propuesta
+
+* índices firmados
+* mirrors
+* dependencias
+
+### Impacto
+
+* ecosistema real
+
+---
+
+# Compatibilidad y Portabilidad
+
+## ARM64 Backend
+
+### Objetivo
+
+Portabilidad multi-arquitectura.
+
+### Propuesta
+
+* backend limpio arch/
+* MMU ARM64
+* exception vectors
+* timer ARM generic
+
+### Impacto
+
+* Raspberry Pi
+* hardware ARM moderno
+
+---
+
+## RISC-V Experimental
+
+### Objetivo
+
+Arquitectura abierta experimental.
+
+### Propuesta
+
+* boot RV64
+* paging Sv39
+* SBI support
+
+### Impacto
+
+* investigación kernel
+* portabilidad extrema
+
+---
+
+# Calidad y Tooling
+
+## Build Profiles Avanzados
+
+### Objetivo
+
+Separar builds debug/release.
+
+### Propuesta
+
+* debug kernel
+* tracing builds
+* minimal builds
+* testing builds
+
+### Impacto
+
+* desarrollo más rápido
+* testing más fiable
+
+---
+
+## Sistema de Benchmarks
+
+### Objetivo
+
+Medir regresiones de rendimiento.
+
+### Propuesta
+
+* IO benchmarks
+* syscall latency
+* scheduler benchmarks
+* FS stress tests
+
+### Impacto
+
+* optimización real
+* control de regresiones
+
+---
+
+# Funcionalidades Futuras Experimentales
+
+---
+
+# Inteligencia del Sistema
+
+## Servicio de Telemetría Kernel Interna
+
+### Objetivo
+
+Recopilar métricas internas para debugging avanzado.
+
+### Propuesta
+
+* estadísticas scheduler
+* page faults
+* uso de memoria
+* latencias de syscalls
+* rendimiento de drivers
+
+### Impacto
+
+* profiling real
+* detección de regresiones
+* tuning del kernel
+
+---
+
+## Auto-Recovery de Kernel Panic
+
+### Objetivo
+
+Intentar recuperación parcial tras fallos no críticos.
+
+### Propuesta
+
+* reinicio aislado de drivers
+* remount read-only
+* recuperación shell mínima
+* modo rescue automático
+
+### Impacto
+
+* mayor robustez
+* menos pérdida de datos
+
+---
+
+# Subsistema de Almacenamiento
+
+## RAID Software Experimental
+
+### Objetivo
+
+Soporte multidisco básico.
+
+### Propuesta
+
+* RAID0 striping
+* RAID1 mirror
+* metadata propia
+* rebuild simple
+
+### Impacto
+
+* rendimiento
+* redundancia
+* preparación storage avanzado
+
+---
+
+## NVMe Driver
+
+### Objetivo
+
+Soporte moderno de almacenamiento.
+
+### Propuesta
+
+* queues NVMe
+* MSI/MSI-X
+* async completions
+
+### Impacto
+
+* rendimiento extremo
+* hardware moderno
+
+---
+
+## Cache Global de Bloques
+
+### Objetivo
+
+Reducir IO redundante.
+
+### Propuesta
+
+* LRU cache
+* write-back opcional
+* dirty tracking
+* flush scheduler
+
+### Impacto
+
+* FS más rápido
+* menor desgaste SSD
+
+---
+
+# Subsistema de Drivers
+
+## Driver Framework Oficial
+
+### Objetivo
+
+API consistente para drivers.
+
+### Propuesta
+
+* lifecycle estándar
+* init/shutdown
+* IRQ handlers
+* registro dinámico
+* descriptor de capacidades
+
+### Impacto
+
+* drivers mantenibles
+* ABI estable
+
+---
+
+## Driver Sandboxing Experimental
+
+### Objetivo
+
+Reducir impacto de drivers defectuosos.
+
+### Propuesta
+
+* memoria aislada parcial
+* validación de acceso
+* watchdog drivers
+
+### Impacto
+
+* menos kernel panics
+* debugging más seguro
+
+---
+
+# Subsistema Shell
+
+## Alias y Configuración Persistente
+
+### Objetivo
+
+Customización del entorno.
+
+### Propuesta
+
+* alias
+* variables persistentes
+* perfiles shell
+* autoexec avanzado
+
+### Impacto
+
+* UX mejorada
+* scripting flexible
+
+---
+
+## Shell Multilínea
+
+### Objetivo
+
+Comandos complejos.
+
+### Propuesta
+
+* continuaciones `^`
+* edición multilinea
+* historial persistente
+
+### Impacto
+
+* scripting más potente
+
+---
+
+## NeoShell Script Language
+
+### Objetivo
+
+Lenguaje propio de automatización.
+
+### Propuesta
+
+* parser dedicado
+* variables
+* funciones
+* loops
+* arrays simples
+
+### Impacto
+
+* automatización avanzada
+* tooling interno
+
+---
+
+# Subsistema Multimedia
+
+## BMP/PNG Viewer
+
+### Objetivo
+
+Visualización básica de imágenes.
+
+### Propuesta
+
+* BMP decoder
+* PNG decoder ligero
+* framebuffer rendering
+
+### Impacto
+
+* tooling gráfico inicial
+
+---
+
+## WAV/PCM Audio Stack
+
+### Objetivo
+
+Audio userland básico.
+
+### Propuesta
+
+* mixer simple
+* PCM playback
+* streaming buffer
+
+### Impacto
+
+* multimedia básica
+
+---
+
+# Compatibilidad
+
+## POSIX Compatibility Layer
+
+### Objetivo
+
+Portabilidad parcial de software UNIX.
+
+### Propuesta
+
+* wrappers POSIX
+* open/read/write compatibles
+* estructura tipo libc
+
+### Impacto
+
+* facilitar porting
+* tooling externo
+
+---
+
+## Linux Syscall Translation Experimental
+
+### Objetivo
+
+Ejecutar binarios Linux simples.
+
+### Propuesta
+
+* capa syscall translation
+* ELF Linux subset
+* runtime compatibility
+
+### Impacto
+
+* ecosistema experimental
+
+---
+
+# Subsistema de Tiempo
+
+## High Resolution Timers
+
+### Objetivo
+
+Timers precisos.
+
+### Propuesta
+
+* HPET
+* APIC timers
+* nanosecond timing
+
+### Impacto
+
+* scheduler mejorado
+* multimedia
+* networking
+
+---
+
+## NTP Client
+
+### Objetivo
+
+Sincronización horaria.
+
+### Propuesta
+
+* UDP NTP
+* sync RTC
+* drift correction
+
+### Impacto
+
+* timestamps fiables
+
+---
+
+# Subsistema de Consola
+
+## ANSI Escape Support
+
+### Objetivo
+
+Terminal moderna.
+
+### Propuesta
+
+* colores ANSI
+* cursor control
+* clear screen
+* VT100 subset
+
+### Impacto
+
+* tooling moderno
+* mejor UX
+
+---
+
+## Scrollback Buffer
+
+### Objetivo
+
+Historial visual de terminal.
+
+### Propuesta
+
+* buffer circular VGA
+* navegación scroll
+* búsqueda futura
+
+### Impacto
+
+* debugging más cómodo
+
+---
+
+# Subsistema de Kernel
+
+## Live Kernel Reload Experimental
+
+### Objetivo
+
+Recargar partes del kernel sin reboot.
+
+### Propuesta
+
+* módulos hot-reload
+* reinicio parcial subsistemas
+* invalidación segura
+
+### Impacto
+
+* desarrollo rapidísimo
+
+---
+
+## Capability-Based Security
+
+### Objetivo
+
+Permisos granulares.
+
+### Propuesta
+
+* capabilities por proceso
+* acceso restringido a drivers
+* permisos syscall
+
+### Impacto
+
+* seguridad moderna
+
+---
+
+## Async Kernel Tasks
+
+### Objetivo
+
+Operaciones no bloqueantes.
+
+### Propuesta
+
+* async IO
+* deferred work queues
+* background flushers
+
+### Impacto
+
+* mejor rendimiento IO
+
+---
+
+# Subsistema Distribuido
+
+## Remote Shell
+
+### Objetivo
+
+Administración remota.
+
+### Propuesta
+
+* terminal TCP
+* autenticación básica
+* consola remota
+
+### Impacto
+
+* gestión headless
+
+---
+
+## Cluster Experimental
+
+### Objetivo
+
+Comunicación entre NeoDOS hosts.
+
+### Propuesta
+
+* mensajes nodo ↔ nodo
+* jobs distribuidos
+* FS compartido experimental
+
+### Impacto
+
+* investigación distribuida
+
+---
+
+# Herramientas de Desarrollo
+
+## NeoProfiler
+
+### Objetivo
+
+Profiler kernel/userland.
+
+### Propuesta
+
+* CPU hotspots
+* syscall profiling
+* frame timing
+
+### Impacto
+
+* optimización seria
+
+---
+
+## NeoCoverage
+
+### Objetivo
+
+Cobertura de tests.
+
+### Propuesta
+
+* instrumentación kernel
+* reports automáticos
+* integración CI
+
+### Impacto
+
+* calidad del código
+
+---
+
+## Kernel Fuzzing
+
+### Objetivo
+
+Detección automática de bugs.
+
+### Propuesta
+
+* syscall fuzzing
+* FS fuzzing
+* malformed ELF fuzzing
+
+### Impacto
+
+* estabilidad extrema
+
+---
+
+# Subsistema Experimental Futuro
+
+## Hypervisor NeoDOS
+
+### Objetivo
+
+Virtualización propia.
+
+### Propuesta
+
+* VT-x / AMD-V
+* guest execution
+* minimal VM monitor
+
+### Impacto
+
+* investigación avanzada
+
+---
+
+## Microkernel Research Branch
+
+### Objetivo
+
+Explorar arquitectura híbrida.
+
+### Propuesta
+
+* mover drivers userland
+* IPC avanzado
+* servicios aislados
+
+### Impacto
+
+* laboratorio arquitectural
+
+---
+
+## NeoAI Service Layer
+
+### Objetivo
+
+Automatización inteligente interna.
+
+### Propuesta
+
+* shell assistant
+* diagnóstico automático
+* análisis logs
+* scripting inteligente
+
+### Impacto
+
+* tooling futurista
+
+---
+
+# Resumen Estratégico
+
+## Prioridad máxima real
+
+1. Syscalls
+2. BlockDevice abstraction
+3. Module ABI
+4. Panic elimination
+5. libneodos
+6. ELF
+7. IPC
+8. FSCK
+
+---
+
+# Meta realista
+
+Si NeoDOS alcanza:
+
+* ABI estable
+* drivers modulares
+* ELF
+* pipes
+* SDK
+* FS estable
+
+entonces ya deja definitivamente la categoría de "proyecto experimental" y entra en:
+
+> sistema operativo extensible real
+
+# Guía de Desarrollo: Qué hacer antes de cada nueva función
+
+Antes de implementar cualquier nueva funcionalidad en NeoDOS, se debe seguir este protocolo obligatorio para mantener estabilidad arquitectural.
+
+---
+
+## 1. Evaluación de impacto
+
+Antes de escribir código:
+
+* ¿Afecta al kernel core?
+* ¿Afecta a syscalls?
+* ¿Afecta a VFS o FS?
+* ¿Afecta a drivers o hardware?
+* ¿Afecta a ABI o estructuras compartidas?
+
+Si la respuesta es sí en cualquiera de estos:
+👉 requiere diseño previo obligatorio
+
+---
+
+## 2. Clasificación de la función
+
+Toda nueva función debe clasificarse como:
+
+* 🟢 Infraestructura (kernel base)
+* 🟡 Sistema (drivers / FS / scheduler)
+* 🔵 Userland (shell / tools)
+* 🟣 Experimental (no estable)
+
+Esto define el nivel de revisión requerido.
+
+---
+
+## 3. Diseño previo obligatorio (PRE-DESIGN)
+
+Antes de implementar:
+
+* definir inputs/outputs
+* definir structs implicados
+* definir errores (`Result<T, E>`)
+* definir interacción con syscalls
+* definir impacto en memoria
+
+Si no se puede explicar en pseudocódigo:
+👉 no se implementa aún
+
+---
+
+## 4. Revisión de dependencias
+
+Cada función debe verificar:
+
+* dependencias de otros módulos
+* acoplamiento con drivers
+* uso de `unsafe`
+* uso de global state
+
+Regla:
+
+> si depende de más de 2 subsistemas → probablemente mal diseñada
+
+---
+
+## 5. Regla de aislamiento
+
+Toda nueva función debe intentar cumplir:
+
+* mínimo acceso global
+* no depender de `static mut`
+* no modificar estado global sin lock
+* no romper ABI
+
+---
+
+## 6. Validación de seguridad
+
+Antes de integrar:
+
+* ¿puede causar panic?
+* ¿puede causar undefined behavior?
+* ¿puede corromper FS?
+* ¿puede romper scheduler?
+
+Si sí → requiere sandbox o revisión manual
+
+---
+
+## 7. Test mental obligatorio (dry-run)
+
+Simular ejecución:
+
+* caso normal
+* caso error
+* caso edge (disk full, null pointer, IRQ interrupt)
+
+Si falla en simulación mental:
+👉 no implementar todavía
+
+---
+
+## 8. Compatibilidad ABI
+
+Toda función nueva debe respetar:
+
+* calling conventions
+* struct alignment (`repr(C)` si aplica)
+* syscall contract
+* module ABI versioning
+
+---
+
+## 9. Revisión de rendimiento
+
+Antes de implementar:
+
+* coste en syscalls
+* coste en memoria
+* coste en IO
+* posibles bloqueos
+
+Optimización prematura está prohibida,
+pero regresiones graves deben evitarse.
+
+---
+
+## 10. Integración progresiva
+
+Ninguna función debe integrarse directamente en producción kernel:
+
+* primero stub
+* luego implementación parcial
+* luego integración completa
+* luego optimización
 
 ---
 
 ---
 
-### 76. NeoDOS SDK (Toolchain externa)
+# Prioridad 0 — Bugs Activos
 
-**Propuesta:** Desarrollar un SDK basado en LLVM que permita compilar aplicaciones en C y Rust para NeoDOS desde un sistema host (Linux/Windows), automatizando la generación de binarios compatibles con las syscalls de NeoDOS.
+## GPF intermitente en syscall_handler_asm → iretq (#GPF)
 
----
+### Síntomas
 
-### 77. Journaling en NeoDOS FS (v2.0)
+GPF consistente en `syscall_handler_asm` → `iretq` (RIP `0x2000ad7` aprox), error code `0xff00`.
+Frecuencia: ~0-10 % de las ejecuciones de la test suite completa (4 user binaries + 37 kernel tests).
 
-**Archivo:** `fs/neodos_fs.rs`
+### Causa diagnosticada
 
-El sistema de archivos actual es vulnerable a la corrupción en caso de apagado inesperado.
+El kernel usa una única pila Ring‑0 (TSS.RSP0, 32 KB compartida) para todas las transiciones Ring 3→Ring 0.
+Cuando el timer handler salva `current.rsp` apuntando a TSS.RSP0 y schedule() selecciona otro proceso,
+el siguiente timer interrupt (cargando TSS.RSP0 fresco) **sobrescribe** el frame del proceso anterior.
 
-**Propuesta:** Implementar un diario (journal) para las operaciones de metadatos. Esto garantizaría la integridad del sistema de archivos incluso tras un fallo de alimentación o un kernel panic.
+### Mitigación actual (v0.10.4)
 
----
+1. **Context switch exclusivo desde idle** (`arch/x64/idt.rs`): el timer handler **solo** cambia de contexto
+   si el PID actual es 0 (idle). Para procesos Ring‑3 salva RSP, marca `NEED_RESCHED`, y retorna el mismo
+   RSP (no cambia de pila). El cambio real se difiere al syscall return path (`syscall_handler_asm` →
+   `syscall_try_resched`), que ejecuta con IF=0 (interrupt gate), impidiendo que un timer interrumpa
+   el frame a medio restaurar.
 
-### 78. Configuración Dinámica de Teclado (KEYB)
+2. **syscall_try_resched siempre salva el frame actual** (`syscall.rs`): incluso si el timer handler
+   ya cambió el estado a Ready, la función syscall_try_resched sobreescribe `current.rsp` con el RSP
+   del syscall handler (que está en la misma dirección TSS.RSP0 pero tiene datos más recientes).
 
-**Archivo:** `drivers/keyboard.rs`
+3. **INT 0x80 como interrupt gate** (`idt.rs`): `disable_interrupts(true)` evita anidamiento del timer
+   durante el handling de syscalls.
 
-Actualmente los layouts (US/SP) se eligen en tiempo de compilación.
+4. **split_2mb_page** (`paging.rs`): la corrección de HUGE_PAGE previene el panic por OOM que ocurría
+   al dividir páginas de 2 MB para demand paging.
 
-**Propuesta:** Implementar el comando `KEYB` para cambiar el mapeo del teclado en tiempo de ejecución, cargando tablas de escaneo desde archivos de configuración en el disco.
+### Estado
 
----
+Reducción de ~30 % a ~0-10 %. Pendiente de solución definitiva.
 
-### 79. Drivers VirtIO (Optimización en VM)
+### Solución definitiva propuesta
 
-**Archivo:** `drivers/virtio/`
+Asignar una **pila Ring‑0 privada por proceso** en lugar de compartir TSS.RSP0 global.
+Cada proceso necesitaría su propio `AlignedStack` de ~16 KB, y el TSS.RSP0 se actualizaría
+en cada context switch. Esto eliminaría por completo la raza.
 
-**Propuesta:** Implementar drivers `virtio-blk`, `virtio-net` y `virtio-gpu` para obtener el máximo rendimiento cuando NeoDOS se ejecuta como invitado en QEMU/KVM.
+### Impacto
 
----
-
-### 80. NeoEdit: Editor de Texto Integrado
-
-**Propuesta:** Desarrollar un editor de texto básico basado en consola (similar al `EDIT.COM` de MS-DOS) para permitir la creación y modificación de archivos `.BAT` y `.SYS` directamente desde el sistema.
-
----
-
-### 81. Soporte de Fuentes Vectoriales (TTF/OTF)
-
-**Archivo:** `graphics/font.rs`
-
-Actualmente el sistema usa una fuente bitmap de 8x16.
-
-**Propuesta:** Implementar un rasterizador de fuentes básico para soportar fuentes TrueType o OpenType, mejorando drásticamente la legibilidad en el modo GUI.
-
----
-
----
-
-### 82. Defragmentador de Disco (NEODEFRAG)
-
-**Propuesta:** Debido a que el NeoDOS FS usa bloques directos, la fragmentación puede afectar al rendimiento. Implementar una utilidad que reorganice los bloques de los archivos de forma contigua en el disco.
+* estabilidad 100 % en tests
+* elimina la necesidad de la mitigación de idle‑only
+* permite preempción real entre procesos Ring‑3 en el timer handler
 
 ---
 
-### 83. Manejo de Excepciones en User-Mode (Signals)
+# Regla final
 
-**Archivo:** `arch/x64/interrupts.rs`
-
-**Propuesta:** Permitir que los procesos de Ring 3 capturen excepciones de la CPU (como división por cero o fallos de página) mediante el registro de manejadores de señales, evitando la terminación abrupta del proceso.
-
----
-
-### 84. Soporte de Swap (Memoria Virtual en Disco)
-
-**Propuesta:** Implementar un mecanismo de swapping que use un archivo oculto (`NEOSWAP.SYS`) para volcar páginas de memoria inactivas al disco, permitiendo ejecutar aplicaciones que requieran más RAM de la físicamente disponible.
-
----
-
-### 85. Cifrado de Disco (NeoCrypt)
-
-**Propuesta:** Añadir soporte para particiones cifradas (AES-XTS) en el NeoDOS FS, integrando la solicitud de contraseña durante el proceso de arranque (boot sequence).
-
----
-
-### 86. Cambio Dinámico de Resolución (VBE/GOP)
-
-**Archivo:** `graphics/mod.rs`
-
-**Propuesta:** Permitir cambiar la resolución y profundidad de color del framebuffer en tiempo de ejecución sin necesidad de reiniciar el sistema, mediante llamadas al driver de video.
-
----
-
-### 87. Instalador Automatizado (SETUP.EXE)
-
-**Propuesta:** Crear un programa de instalación que automatice el particionamiento (GPT), formateo y copia de los archivos base del sistema a un disco nuevo, facilitando la instalación en hardware real.
-
----
-
-### 88. Soporte de Scroll en Ratón PS/2
-
-**Propuesta:** Extender el driver de ratón para soportar el protocolo de 4 bytes (IntelliMouse), permitiendo usar la rueda de desplazamiento en aplicaciones y en el shell futuro.
-
----
-
-### 89. Sistema de Ayuda Contextual (HELP /?)
-
-**Propuesta:** Implementar una base de datos de ayuda comprimida y un motor de visualización que permita consultar la sintaxis de cualquier comando mediante `HELP <comando>` o el parámetro `/?`.
-
----
-
-### 90. Terminales Virtuales (Alt+F1..F4)
-
-**Archivo:** `console.rs`
-
-**Propuesta:** Implementar múltiples buffers de consola independientes para permitir que el usuario alterne entre diferentes sesiones de terminal activas mediante combinaciones de teclas.
-
----
-
-### 91. Driver de Disquetera (FDC 1.44MB)
-
-**Propuesta:** Implementar el driver para el controlador de disquetera clásico (Intel 82077A) para permitir el acceso a discos de 3.5 pulgadas en hardware antiguo o emulado.
-
----
-
-### 92. Utilidad de Compresión Nativa (NeoZip)
-
-**Propuesta:** Desarrollar una utilidad integrada en el sistema para comprimir y descomprimir archivos en formato ZIP o DEFLATE, facilitando la distribución de software.
-
----
-
-### 93. Carga de Microcódigo de CPU
-
-**Propuesta:** Implementar la capacidad de cargar actualizaciones de microcódigo de Intel/AMD durante la fase temprana del arranque para corregir erratas del procesador.
-
----
-
-### 94. Subsistema de Impresión (LPT/USB-Print)
-
-**Propuesta:** Implementar drivers básicos para el puerto paralelo (LPT) y la clase de impresión USB para permitir el envío de texto plano a impresoras matriciales o láser.
-
----
-
-### 95. Gestor de Paquetes (NEOPKG)
-
-**Propuesta:** Desarrollar una herramienta que, mediante la pila de red, permita buscar, descargar e instalar software desde repositorios oficiales de NeoDOS.
-
----
-
-### 96. Emulación de Binarios .COM (Legacy Mode)
-
-**Propuesta:** Integrar un pequeño emulador de modo real de 16 bits que permita ejecutar utilidades clásicas de MS-DOS (archivos .COM) dentro del entorno protegido de NeoDOS.
-
----
-
-### 97. Redirección Serial de Consola
-
-**Propuesta:** Añadir una opción en `CONFIG.SYS` para redirigir toda la entrada y salida del shell al puerto COM1, permitiendo controlar NeoDOS desde una terminal serie externa.
-
----
-
-### 98. Registro de Auditoría (Audit Log)
-
-**Propuesta:** Implementar un sistema de logging persistente que registre eventos críticos como errores de hardware, intentos de acceso fallidos y cambios en la configuración del sistema.
-
----
-
-### 99. Protector de Pantalla (NeoSaver)
-
-**Propuesta:** Un protector de pantalla gráfico simple (estilo "Starfield" o "Marquee") que se active tras un periodo de inactividad para proteger monitores CRT.
-
----
-
-### 100. Manual de Usuario "Anniversary Edition"
-
-**Propuesta:** Compilar toda la documentación técnica, guía de comandos y tutoriales en un único manual maestro en formato PDF/Markdown para la versión 1.0.
-
----
-
-## Resumen por prioridad (Actualizado Final 100 Items)
-
-| Prioridad | Items |
-|-----------|-------|
-| **Bloqueante (v1.0)** | #87 (Setup) |
-| **Completado** | #9 (static mut), #56 (VFS), #60 (Dynamic Memory), #66 (Syscall Stability), #72 (TAB), DEL/REN/RD (VFS remove/rename) |
-| **Alta** | #53 (Block Abstraction), #61 (IPC Pipes), #62 (FAT32 Write), #69 (Loadable Drivers), #76 (SDK), #80 (NeoEdit), #89 (Help) |
-| **Media** | #10 (unwrap/expect), #18 (history ↑/↓), #42 (redirection >), #63 (Batch), #64 (RTC), #68 (ACPI), #77 (Journaling), #78 (KEYB), #82 (Defrag), #90 (VT), #95 (Pkg) |
-| **Baja** | #65 (GUI), #67 (Network), #70 (Sound), #71 (ISO9660), #74 (SMP), #79 (VirtIO), #81 (TTF), #91 (Floppy), #96 (COM) |
+> Si una función no puede ser explicada, aislada y simulada antes de implementarse, no pertenece todavía al kernel.

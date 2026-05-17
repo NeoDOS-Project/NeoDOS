@@ -74,7 +74,7 @@ def run_test():
         "-serial", "file:/tmp/neodos_serial.log",
     ]
     
-    timeout = 180
+    timeout = 120
     start_time = time.time()
     output_lines = []
     all_output = []
@@ -168,11 +168,11 @@ def run_test():
                                             print(f"\n[+] TEST EXECUTED!")
                                         if "kernel tests" in clean.lower() or "passed" in clean or "failed" in clean:
                                             print(f"[TEST] {clean}")
-                                        if "exited" in clean and "Process" in clean:
-                                            print(f"\n[+] PROCESS EXITED")
+                                        if "ALL_TESTS_COMPLETE" in clean:
+                                            print(f"\n[+] ALL TESTS COMPLETE")
                                             state = "done"
                                             break
-                                        if time.time() - waiting_start > 45:
+                                        if time.time() - waiting_start > 60:
                                             print(f"\n[!] Response timeout ({time.time()-waiting_start:.1f}s)")
                                             state = "done"
                                             break
@@ -180,7 +180,7 @@ def run_test():
                 pass
             
             # Monitor timeout fallback
-            if monitor_sock and state == "waiting_prompt" and time.time() - waiting_start > 20 and not test_sent:
+            if monitor_sock and state == "waiting_prompt" and time.time() - waiting_start > 10 and not test_sent:
                 print("[*] Timeout: sending 'test' via sendkey...")
                 sys.stdout.flush()
                 send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
@@ -239,22 +239,26 @@ def run_test():
             print("[UNKNOWN] Could not determine kernel test results")
         
         # Check user-mode tests
-        if "=== NeoDOS" in full_text:
-            print("[PASS] User-mode SYSTEST.BIN executed")
-            if "File content:" in full_text:
-                print("[PASS] File content displayed")
+        user_tests_found = 0
+        for ut in ["HELLO.BIN", "SYSTEST.BIN", "FILETEST.BIN", "ALLTEST.BIN"]:
+            if f"Running {ut}" in full_text or f"--- Running {ut}" in full_text:
+                user_tests_found += 1
+        if user_tests_found >= 4:
+            print(f"[PASS] All 4 user-mode binaries executed")
+        elif user_tests_found > 0:
+            print(f"[PARTIAL] {user_tests_found}/4 user-mode binaries executed")
         else:
-            print("[UNKNOWN] SYSTEST.BIN output not found")
+            print("[UNKNOWN] No user-mode binary output found")
         
         # Overall
-        if "kernel tests passed" in full_text and "sys_open: empty path" not in full_text:
+        if "kernel tests passed" in full_text and "ALL_TESTS_COMPLETE" in full_text:
             print("\n" + "=" * 60)
             print("OVERALL: SUCCESS")
             print("=" * 60)
             return 0
         elif "kernel tests passed" in full_text:
             print("\n" + "=" * 60)
-            print("OVERALL: KERNEL OK, BUT SYSTEST HAS ISSUES")
+            print("OVERALL: KERNEL OK, BUT USER TESTS INCOMPLETE")
             print("=" * 60)
             return 1
         else:

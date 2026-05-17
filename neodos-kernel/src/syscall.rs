@@ -87,13 +87,15 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
+        // Always save the current frame — the timer handler may have already set
+        // the process state to Ready (and saved its RSP), but the SYSCALL frame
+        // at the same TSS.RSP0 address may differ from the timer frame.  Saving
+        // ensures we restore the most recent register snapshot.
         let pid = scheduler.current_pid;
         if pid > 0 {
             if let Some(current) = scheduler.current_process_mut() {
-                if current.state == ProcessState::Running {
-                    current.rsp = current_rsp;
-                    current.state = ProcessState::Ready;
-                }
+                current.rsp = current_rsp;
+                current.state = ProcessState::Ready;
             }
         }
 
@@ -606,9 +608,27 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let normalized = normalize_dos_path(&raw);
 
             let (new_drive, new_cwd_path) = if normalized.contains(':') {
-                let colon = normalized.find(':').unwrap();
-                let dl = normalized[..colon].chars().next().unwrap().to_ascii_uppercase();
-                let idx = crate::fs::vfs::Vfs::drive_index(dl).unwrap() as u8;
+                let colon = match normalized.find(':') {
+                    Some(c) => c,
+                    None => {
+                        serial_println!("[syscall] sys_chdir: malformed path");
+                        return u64::MAX;
+                    }
+                };
+                let dl = match normalized[..colon].chars().next() {
+                    Some(c) => c.to_ascii_uppercase(),
+                    None => {
+                        serial_println!("[syscall] sys_chdir: empty drive letter");
+                        return u64::MAX;
+                    }
+                };
+                let idx = match crate::fs::vfs::Vfs::drive_index(dl) {
+                    Some(i) => i as u8,
+                    None => {
+                        serial_println!("[syscall] sys_chdir: invalid drive '{}'", dl);
+                        return u64::MAX;
+                    }
+                };
                 (idx, normalized[colon + 1..].to_string())
             } else {
                 (cwd_drive, normalized)
@@ -668,7 +688,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         //
         // Physical pages are allocated on demand by the page fault handler.
         // This syscall only adjusts the break pointer and zeroes new pages.
-        18 => {
+         18 => {
             let new_break = rbx;
             let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
 
@@ -694,11 +714,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 let start_page = (current_break + 0xFFF) & !0xFFF;
                 let end_page = new_break & !0xFFF;
                 if end_page > start_page {
-                    // Touch each new page to trigger demand allocation
                     let mut page = start_page;
                     while page < end_page {
-                        unsafe {
-                            core::ptr::write_volatile(page as *mut u8, 0);
+                        match crate::arch::x64::paging::heap_alloc_page(page) {
+                            Some(_) => {
+                                unsafe {
+                                    core::ptr::write_volatile(page as *mut u8, 0);
+                                }
+                            }
+                            None => {
+                                crate::arch::x64::paging::heap_free_range(start_page, page);
+                                crate::scheduler::set_current_heap_break(current_break);
+                                serial_println!("[syscall] sys_brk: OOM at 0x{:x}", page);
+                                return u64::MAX;
+                            }
                         }
                         page += crate::arch::x64::paging::PAGE_4K;
                     }

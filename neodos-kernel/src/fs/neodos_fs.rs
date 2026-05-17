@@ -148,8 +148,8 @@ impl InodeCache {
             return Err(FsError::FileNotFound);
         }
 
-        if self.inodes[inode_num].is_some() {
-            return Ok(self.inodes[inode_num].as_ref().unwrap());
+        if let Some(ref cached) = self.inodes[inode_num] {
+            return Ok(cached);
         }
         
         // Inode table @ sector 1, 256 bytes per inode = 2 inodes per sector
@@ -164,7 +164,7 @@ impl InodeCache {
         };
         
         self.inodes[inode_num] = Some(inode);
-        Ok(self.inodes[inode_num].as_ref().unwrap())
+        Ok(self.inodes[inode_num].as_ref().ok_or(FsError::FileNotFound)?)
     }
 }
 
