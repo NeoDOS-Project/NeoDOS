@@ -10,6 +10,11 @@ lazy_static = { version = "1.4", features = ["spin_no_std"] }
 spin = "0.9"
 linked_list_allocator = "0.10"
 
+[features]
+default = []
+validation = []   # Extra runtime invariant checks + trace logging
+stress = ["validation"]  # Stress test harness active during boot
+
 [profile.release]
 opt-level = 3
 lto = true

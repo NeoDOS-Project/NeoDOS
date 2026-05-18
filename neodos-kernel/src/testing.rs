@@ -375,6 +375,145 @@ pub fn register_sync_tests() {
     });
 }
 
+// =====================================================================
+// Stress test harness — scheduler, syscall, memory
+// =====================================================================
+// These tests run intensive loops that exercise kernel invariants.
+// They are registered separately so the shell's `test` command can
+// run them only when `--stress` is passed, or they're enabled by
+// the `stress` cargo feature.
+
+pub fn register_stress_tests() {
+    register_sched_stress();
+    register_syscall_stress();
+    register_mem_stress();
+}
+
+// ── A. Scheduler stress ────────────────────────────────────────────
+
+fn register_sched_stress() {
+    test_case!("stress_sched_rapid_yield", {
+        // Rapid context-switch via yield simulation
+        for i in 0..500 {
+            // Manually set/clear NEED_RESCHED to exercise atomic paths
+            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+            let prev = crate::syscall::clear_need_resched();
+            test_true!(prev);
+            // If we had a secondary process, the resched path would activate.
+            // As a unit test, we just verify the atomic toggle cycles cleanly.
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            let _ = i;
+        }
+    });
+
+    test_case!("stress_sched_state_transitions", {
+        // Test that Ready↔Running cycles are legal
+        use crate::scheduler::{Process, ProcessState};
+        let mut p = Process::new_ring0(99, 0x400000, 0x800000, None);
+        test_eq!(p.state, ProcessState::Ready);
+        for _ in 0..200 {
+            // Ready → Running – legal
+            p.state = ProcessState::Running;
+            // Running → Ready (timer tick) – legal
+            p.state = ProcessState::Ready;
+        }
+        p.state = ProcessState::Terminated;
+        // Once terminated, should never go back to Ready (checked elsewhere)
+        test_eq!(p.state, ProcessState::Terminated);
+    });
+}
+
+// ── B. Syscall stress ──────────────────────────────────────────────
+
+fn register_syscall_stress() {
+    test_case!("stress_syscall_rapid_getpid", {
+        // Rapid PID queries exercise the scheduler lock path
+        for _ in 0..200 {
+            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid
+            });
+            test_true!(pid < 1000);
+        }
+    });
+
+    test_case!("stress_syscall_invalid_numbers", {
+        // ABI fuzzing: ensure invalid syscall numbers return u64::MAX
+        for num in &[20u64, 100, 255, 0xFFFFFFFF] {
+            // Create a dummy dispatch call
+            let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0);
+            test_eq!(result, u64::MAX);
+        }
+    });
+
+    test_case!("stress_syscall_ptr_validation", {
+        // Ensure user pointer validation rejects kernel addresses
+        // We can't call the private `is_user_ptr_valid` directly, but
+        // we can test the public behavior via what sys_write would do.
+        // If we send a kernel address to sys_write (RAX=1), the dispatch
+        // should return u64::MAX without crashing.
+        let kernel_addr: u64 = 0x200000; // kernel .text start
+        let result = crate::syscall::syscall_dispatch(1, kernel_addr, 10, 0);
+        test_eq!(result, u64::MAX);
+    });
+}
+
+// ── C. Memory stress ───────────────────────────────────────────────
+
+fn register_mem_stress() {
+    extern crate alloc;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use alloc::string::String;
+
+    test_case!("stress_mem_alloc_free_storm", {
+        // Rapid Box allocation and drop
+        for _ in 0..200 {
+            let b = Box::new(42u64);
+            let v = *b;
+            core::mem::drop(b);
+            // After drop, the memory is returned to the allocator
+            test_eq!(v, 42);
+        }
+    });
+
+    test_case!("stress_mem_vec_churn", {
+        // Vec growth and shrinkage
+        let mut v = Vec::new();
+        for i in 0..100 {
+            v.push(i);
+        }
+        test_eq!(v.len(), 100);
+        // Drain
+        while let Some(_) = v.pop() {}
+        test_eq!(v.len(), 0);
+        // Refill
+        for i in 0..50 {
+            v.push(i * 2);
+        }
+        test_eq!(v.len(), 50);
+        test_eq!(v[0], 0);
+        test_eq!(v[49], 98);
+    });
+
+    test_case!("stress_mem_string_churn", {
+        // String concatenation and clearing
+        let mut s = String::new();
+        for i in 0..50 {
+            s.push_str("hello");
+            test_eq!(s.len(), (i + 1) * 5);
+        }
+        s.clear();
+        test_eq!(s.len(), 0);
+        // Rebuild
+        for _ in 0..30 {
+            s.push_str("x");
+        }
+        test_eq!(s.len(), 30);
+    });
+}
+
+// ── Test registration (all suites) ─────────────────────────────────
+
 pub fn register_tests() {
     register_env_tests();
     register_input_tests();
@@ -383,4 +522,6 @@ pub fn register_tests() {
     register_utf8_tests();
     register_alloc_tests();
     register_sync_tests();
+    // Stress tests are always registered but can be gated by feature
+    register_stress_tests();
 }

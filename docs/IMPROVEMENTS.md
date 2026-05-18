@@ -219,6 +219,31 @@ Desbloquea:
 
 ---
 
+## S4. Validation & Regression Infrastructure
+
+### Estado
+
+**COMPLETADO (v0.10.5).** Ver `docs/KERNEL_VALIDATION.md`.
+
+### Componentes
+
+* **Trace ring buffer** (`src/trace.rs`): 1024 entradas lock-free, eventos de context switch/syscall/IRQ/scheduler, dump en panic.
+* **Panic classification** (`src/panic_classification.rs`): 14 categorías con clasificación por vector+RIP+error code, dump forense (trace + scheduler state).
+* **Runtime invariants** (`src/invariants.rs`): IRQ nesting counter, timer-IRQ context switch guard, stack alignment check, macros `kern_assert!` (cfg-gated).
+* **Stress harness** (`src/testing.rs`): 8 nuevos tests (scheduler yield/state, syscall rapid getpid/fuzzing/ptr validation, memory alloc/vec/string churn).
+* **Regression runner** (`scripts/regression_runner.py`): 100+ iteraciones, detección de panics, informe estructurado con panic signatures.
+* **ABI validation**: syscall numbers >19 → u64::MAX; layout assertions compile-time para `NdModuleHeader` y `KernelServiceTableV1`.
+* **Build profiles**: `validation` y `stress` features en Cargo.toml.
+
+### Pendiente
+
+* Replay de trace: volcado a NeoDOS FS para análisis offline.
+* Stress de IRQ: generación de interrupciones rápidas desde software.
+* Cobertura de invariantes: page table corruption, TSS consistency.
+* 1000+ iteraciones continuas sin fallo.
+
+---
+
 ## S4. Eliminación de Panic Paths (#10)
 
 ### Estado

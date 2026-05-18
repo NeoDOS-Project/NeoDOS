@@ -29,6 +29,22 @@
 
 - **Añadido**: `scripts/check_deps.py` — validador de dependencias entre subsistemas. Detecta imports prohibidos (ej: scheduler → drivers, VFS → arch).
 
+### Validation & Regression Infrastructure
+
+- **Añadido**: `src/trace.rs` — Ring-buffer de eventos lock-free (1024 entradas) para reconstrucción post-mortem. Eventos: context switch, syscall enter/exit, IRQ timer tick, scheduler decisions, panic. Dump automático en panic.
+- **Añadido**: `src/panic_classification.rs` — Sistema de clasificación de panics con 14 categorías (STACK_CORRUPTION, INVALID_IRETQ, IRQ_REENTRANCY, ABI_MISMATCH, etc.). Clasificación por vector de excepción + RIP + error code. Dump forense con trace buffer + estado del scheduler.
+- **Añadido**: `src/invariants.rs` — Capa de validación de invariantes en runtime: contador de nesting IRQ, guarda de context switch desde timer IRQ, verificación de alineación de stack, macros `kern_assert!` (solo con feature `validation`).
+- **Añadido**: `docs/KERNEL_VALIDATION.md` — Filosofía de validación, 25 invariantes documentadas (scheduler, IRQ, syscall, memoria, block device), política de regresión zero-tolerance, formato de dump forense.
+- **Añadido**: `scripts/regression_runner.py` — Test runner determinista de 100+ iteraciones con detección de fallos intermitentes, clasificación de panics, informe estructurado (pass/fail, crash frequency, panic signatures).
+- **Añadido**: `userbin/ndm_builder.py` — Biblioteca Python compartida para generar headers NDM v1.
+- **Ampliado**: `src/testing.rs` — 8 nuevos tests de stress (scheduler: rapid yield, state transitions; syscall: rapid getpid, invalid number fuzzing, pointer validation; memory: alloc/free storm, vec churn, string churn). Total: 45 tests.
+- **Ampliado**: `src/arch/x64/idt.rs` — Todos los exception handlers clasifican panics antes de llamar a `panic!()`. Timer handler integra trace events + invariant checks (IRQ nesting, contexto válido).
+- **Ampliado**: `src/syscall.rs` — `syscall_dispatch` valida ABI (rechaza números de syscall > 19 con u64::MAX). `syscall_try_resched` con invariantes (no llamar desde timer IRQ, verificar Running state). Trace points en dispatch y context switch.
+- **Ampliado**: `src/scheduler.rs` — Trace points en `schedule()`, `add_ring3_process()`, `kill_pid()`. Invariant: no llamar `schedule()` desde timer IRQ context.
+- **Ampliado**: `src/main.rs` — Panic handler mejorado: muestra clase de panic, dump forense (trace buffer + scheduler state) a serial.
+- **Añadido**: `Cargo.toml` features `validation` y `stress` — perfiles de build con aserciones extra (cfg-gated).
+- **Actualizado**: `src/module_abi.rs` — Assertions de layout en compile-time (`NdModuleHeader` = 64 bytes, `KernelServiceTableV1` = 168 bytes).
+
 ## v0.10.4 — 2026-05-16
 
 ### Procesos en Ring 3

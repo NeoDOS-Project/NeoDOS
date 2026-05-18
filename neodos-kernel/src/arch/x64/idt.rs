@@ -4,6 +4,8 @@ use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, Pag
 use crate::serial_println;
 use crate::scheduler::{current_scheduler, ProcessState};
 use crate::arch::x64::pic::PICS;
+use crate::panic_classification::PanicClass;
+use crate::trace::TraceEvent;
 
 core::arch::global_asm!(
     ".extern timer_handler_inner",
@@ -159,8 +161,17 @@ lazy_static! {
     };
 }
 
+macro_rules! panic_classified {
+    ($class:expr, $($arg:tt)*) => {{
+        crate::panic_classification::set_panic_class($class);
+        panic!($($arg)*);
+    }};
+}
+
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
-    panic!("Divide by zero: {:#?}", stack_frame);
+    crate::trace_event!(TraceEvent::Panic, 0, 0, 0, 0);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Divide error: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
@@ -168,56 +179,86 @@ extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn nmi_handler(_: InterruptStackFrame) {
-    panic!("Non-maskable interrupt");
+    crate::trace_event!(TraceEvent::Panic, 1, 0, 0, 0);
+    panic_classified!(PanicClass::UnknownCpuException, "Non-maskable interrupt");
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    serial_println!("Breakpoint: {:#?}", stack_frame);
+    serial_println!("Breakpoint: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-    panic!("Overflow: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Overflow: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn bounds_handler(stack_frame: InterruptStackFrame) {
-    panic!("Bound range exceeded: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Bound range: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
-    panic!("Invalid opcode: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Invalid opcode: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
-    panic!("Device not available: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Device not available: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
-    panic!("Double fault: {:#?}, error: {}", stack_frame, error_code);
+    crate::trace_event!(TraceEvent::Panic, 2, error_code, 0, 0);
+    panic_classified!(PanicClass::DoubleFault,
+        "Double fault: rip={:#x} rsp={:#x} error={:#x}",
+        stack_frame.instruction_pointer.as_u64(),
+        stack_frame.stack_pointer.as_u64(),
+        error_code);
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, error_code: u64) {
-    panic!("Invalid TSS: {:#?}, error: {}", stack_frame, error_code);
+    panic_classified!(PanicClass::InvalidContextSwitch,
+        "Invalid TSS: rip={:#x} rsp={:#x} error={:#x}",
+        stack_frame.instruction_pointer.as_u64(),
+        stack_frame.stack_pointer.as_u64(),
+        error_code);
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(stack_frame: InterruptStackFrame, error_code: u64) {
-    panic!("Segment not present: {:#?}, error: {}", stack_frame, error_code);
+    panic_classified!(PanicClass::MemoryCorruption,
+        "Segment not present: rip={:#x} error={:#x}",
+        stack_frame.instruction_pointer.as_u64(), error_code);
 }
 
 extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) {
-    panic!("Stack segment fault: {:#?}, error: {}", stack_frame, error_code);
+    panic_classified!(PanicClass::StackCorruption,
+        "Stack segment fault: rip={:#x} rsp={:#x} error={:#x}",
+        stack_frame.instruction_pointer.as_u64(),
+        stack_frame.stack_pointer.as_u64(),
+        error_code);
 }
 
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
     serial_println!(
         "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
-        error_code,
-        stack_frame.instruction_pointer.as_u64(),
+        error_code, rip,
         stack_frame.code_segment,
-        stack_frame.cpu_flags,
-        stack_frame.stack_pointer.as_u64(),
+        stack_frame.cpu_flags, rsp,
         crate::scheduler::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed),
     );
-    panic!("General protection fault: {:?}, error: {}", stack_frame, error_code);
+    let class = if error_code == 0x15c {
+        PanicClass::InvalidIretq
+    } else if rsp & 0xFFF < 0x100 || rsp & 0xFFF > 0xF00 {
+        // RSP near page boundary — possible stack overflow
+        PanicClass::StackCorruption
+    } else {
+        PanicClass::Gpf
+    };
+    crate::trace_event!(TraceEvent::Panic, 3, error_code, rip, rsp);
+    panic_classified!(class,
+        "GPF: error={:#x} rip={:#x}", error_code, rip);
 }
 
 extern "x86-interrupt" fn page_fault_handler(
@@ -235,41 +276,54 @@ extern "x86-interrupt" fn page_fault_handler(
         }
     }
 
-    panic!(
-        "Page fault @ 0x{:x} (user={}, write={}, np={}) — rip={:#x}",
-        virt,
-        is_user,
-        is_write,
-        is_not_present,
-        stack_frame.instruction_pointer.as_u64(),
-    );
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let class = if !is_not_present {
+        PanicClass::PageTableCorruption
+    } else {
+        PanicClass::PageFault
+    };
+    crate::trace_event!(TraceEvent::Panic, 4, virt, rip, is_write as u64);
+    panic_classified!(class,
+        "Page fault @ {:#x} (user={}, write={}, np={}) rip={:#x}",
+        virt, is_user, is_write, is_not_present, rip);
 }
 
 extern "x86-interrupt" fn x87_handler(stack_frame: InterruptStackFrame) {
-    panic!("x87 floating point: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "x87 FP: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, error_code: u64) {
-    panic!("Alignment check: {:#?}, error: {}", stack_frame, error_code);
+    panic_classified!(PanicClass::MemoryCorruption,
+        "Alignment check: rip={:#x} error={:#x}",
+        stack_frame.instruction_pointer.as_u64(), error_code);
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
-    panic!("Machine check: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Machine check: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn simd_handler(stack_frame: InterruptStackFrame) {
-    panic!("SIMD floating point: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "SIMD FP: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFrame) {
-    panic!("Virtualization: {:#?}", stack_frame);
+    panic_classified!(PanicClass::UnknownCpuException,
+        "Virtualization: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
+    crate::invariants::timer_irq_enter();
+    crate::invariants::irq_enter_check(32);
+
     let current_tick = crate::scheduler::TIMER_TICKS
         .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
         .wrapping_add(1);
+
+    crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
 
     {
         use core::sync::atomic::Ordering;
@@ -300,6 +354,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         if alive {
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             unsafe { PICS.lock().notify_end_of_interrupt(32); }
+            crate::invariants::timer_irq_exit();
+            crate::invariants::irq_exit_clear();
             return current_rsp;
         }
         // Process is dead or missing — fall through to idle
@@ -307,15 +363,12 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     }
 
     // ── Idle process (PID 0) ─────────────────────────────────────
-    // Idle uses its own private static stack.  Because idle doesn't
-    // make syscalls, NEED_RESCHED would never be checked otherwise.
-    // We still avoid context-switching here to keep EXIT_RSP/RIP
-    // in sync — the actual switch happens in wait_for_process
-    // (first launch) or in the syscall return path (subsequent).
     if scheduler.has_non_idle_processes() {
         crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
     unsafe { PICS.lock().notify_end_of_interrupt(32); }
+    crate::invariants::timer_irq_exit();
+    crate::invariants::irq_exit_clear();
     current_rsp
 }
 

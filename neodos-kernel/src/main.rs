@@ -28,6 +28,9 @@ pub mod usermode;
 pub mod syscall;
 mod testing;
 mod module_abi;
+pub mod trace;
+pub mod invariants;
+pub mod panic_classification;
 
 use drivers::ata::{AtaChannel, AtaDriver};
 use drivers::block::BlockDevice;
@@ -251,11 +254,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     arch::disable_interrupts();
-    println!("\r\n!!! KERNEL PANIC !!!");
+
+    let class = crate::panic_classification::current_panic_class();
+    println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
     if let Some(location) = info.location() {
         println!("Location: {}:{}", location.file(), location.line());
     }
     println!("Message: {}", info.message());
+
+    // Dump forensic info to serial (println may fail if framebuffer is corrupt)
+    crate::panic_classification::dump_forensic_info();
 
     arch::halt();
 }

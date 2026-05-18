@@ -1,4 +1,17 @@
 use crate::drivers::block::BlockDevice;
+use core::mem;
+
+// ── ABI layout validation (compile-time assertions) ────────────────
+
+/// Assert that a `#[repr(C)]` type has a specific size at compile time.
+macro_rules! assert_layout_size {
+    ($ty:ty, $expected:expr) => {
+        const _: [(); $expected] = [(); mem::size_of::<$ty>()];
+    };
+}
+
+assert_layout_size!(NdModuleHeader, 64);
+assert_layout_size!(KernelServiceTableV1, 168); // 8 (magic+version) + 12*8 (ptrs) + 8*8 (reserved)
 
 // ── NDM header (v1) ──────────────────────────────────────────────────
 

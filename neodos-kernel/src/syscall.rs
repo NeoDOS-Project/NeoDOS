@@ -74,6 +74,11 @@ pub extern "C" fn clear_need_resched() -> bool {
 
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
+    // Invariant: must not be called from inside timer IRQ handler
+    if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
+        crate::serial_println!("[SYSCALL] resched called from timer IRQ context!");
+    }
+
     let has_non_idle = x86_64::instructions::interrupts::without_interrupts(|| {
         let scheduler = scheduler::current_scheduler().lock();
         scheduler.has_non_idle_processes()
@@ -91,6 +96,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         if pid > 0 {
             if let Some(current) = scheduler.current_process_mut() {
                 current.rsp = current_rsp;
+                // Invariant: state must be Running before yielding
+                if cfg!(feature = "validation") && current.state != ProcessState::Running {
+                    crate::serial_println!("[SYSCALL] Context switch from non-Running state: {:?}", current.state);
+                }
                 current.state = ProcessState::Ready;
             }
         }
@@ -98,11 +107,12 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let next = scheduler.schedule();
 
         // Update TSS.RSP0 to the next process's private kernel stack
-        // This ensures the next Ring 3→Ring 0 transition uses the correct stack.
         let next_ks_top = unsafe { (*next).kernel_stack_top };
         crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
 
-        unsafe { (*next).rsp }
+        let next_rsp = unsafe { (*next).rsp };
+        crate::trace_cswitch!(pid, unsafe { (*next).pid } as u64);
+        next_rsp
     })
 }
 
@@ -170,6 +180,14 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
+    crate::trace_syscall!(rax, rbx, rcx, _rdx);
+
+    // ABI validation: reject unknown syscall numbers
+    if rax > 19 {
+        serial_println!("[syscall] INVALID syscall number: {}", rax);
+        return u64::MAX;
+    }
+
     match rax {
         // ---- sys_exit(code: u64) ----
         0 => {

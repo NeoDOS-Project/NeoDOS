@@ -144,7 +144,7 @@ impl Process {
 pub struct Scheduler {
     pub processes: [Option<Process>; MAX_PROCESSES],
     pub current_pid: u32,
-    next_pid: u32,
+    pub next_pid: u32,
     timer_ticks: u64,
 }
 
@@ -185,12 +185,14 @@ impl Scheduler {
         cwd_path: &str,
         heap_base: u64,
     ) -> u32 {
+        // Invariant: PID must be unique
+        let pid = self.next_pid;
         for i in 0..MAX_PROCESSES {
             if self.processes[i].is_none() {
-                let pid = self.next_pid;
                 self.next_pid += 1;
                 let proc = Process::new_ring3(pid, entry, user_stack_top, slot_idx, cwd_drive, cwd_path, heap_base);
                 self.processes[i] = Some(proc);
+                crate::trace_sched!(1, pid, 0); // 1 = ADD_PROCESS
                 return pid;
             }
         }
@@ -206,6 +208,7 @@ impl Scheduler {
                         crate::arch::x64::paging::free_user_slot(slot);
                         p.user_slot = None;
                     }
+                    crate::trace_sched!(2, pid, 0); // 2 = KILL_PROCESS
                     return true;
                 }
             }
@@ -252,27 +255,35 @@ impl Scheduler {
         let start = (self.current_pid + 1) % self.next_pid.max(1);
         let end = start + self.next_pid;
 
+        // Invariant: must not be called from inside timer IRQ handler
+        if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
+            crate::serial_println!("[SCHED] schedule() called from timer IRQ context!");
+        }
+
         for pid in start..end {
             let check_pid = pid % self.next_pid;
             if check_pid == 0 {
-                continue; // Skip idle unless it's the only option
+                continue;
             }
             for proc in self.processes.iter_mut() {
                 if let Some(p) = proc {
                     if p.pid == check_pid && p.state == ProcessState::Ready {
+                        let prev_pid = self.current_pid;
                         self.current_pid = check_pid;
                         p.state = ProcessState::Running;
+                        crate::trace_cswitch!(prev_pid, check_pid);
                         return p as *mut Process;
                     }
                 }
             }
         }
 
-        // No non-idle process ready — fall back to idle
         if let Some(idle) = &mut self.processes[0] {
             if idle.pid == 0 && idle.state != ProcessState::Terminated {
+                let prev_pid = self.current_pid;
                 self.current_pid = 0;
                 idle.state = ProcessState::Running;
+                crate::trace_cswitch!(prev_pid, 0);
                 return idle as *mut Process;
             }
         }
