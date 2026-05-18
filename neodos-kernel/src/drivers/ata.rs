@@ -85,8 +85,6 @@ pub struct AtaDriver {
     bmba: Option<u16>,
     base_lba: u32,
     channel: AtaChannel,
-    pub ahci_fallback: bool,
-    is_secondary: bool,
 }
 
 unsafe impl Send for AtaDriver {}
@@ -115,7 +113,6 @@ impl AtaDriver {
                 ATA_SECONDARY_DRIVE_SEL, ATA_SECONDARY_COMMAND, ATA_SECONDARY_STATUS,
             ),
         };
-        let is_secondary = channel == AtaChannel::Secondary;
         AtaDriver {
             data_port: Port::new(data),
             _error_port: Port::new(err),
@@ -129,8 +126,6 @@ impl AtaDriver {
             bmba: None,
             base_lba: 0,
             channel,
-            ahci_fallback: false,
-            is_secondary,
         }
     }
 
@@ -154,19 +149,6 @@ impl AtaDriver {
 
     fn write_sector_inner(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
         let abs_lba = self.base_lba.wrapping_add(lba);
-
-        if self.ahci_fallback {
-            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
-                if let Some(ahci) = ahci_lock.as_mut() {
-                    return if self.is_secondary {
-                        ahci.write_sector(abs_lba, data)
-                    } else {
-                        ahci.write_sector(abs_lba, data)
-                    };
-                }
-            }
-        }
-
         unsafe {
             self.wait_not_busy_simple()?;
             
@@ -178,7 +160,7 @@ impl AtaDriver {
             let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8;
             self.drive_sel_port.write(drive_byte);
             
-            self.command_port.write(0x30); // WRITE SECTORS
+            self.command_port.write(0x30);
 
             self.wait_not_busy_simple()?;
 
@@ -187,7 +169,6 @@ impl AtaDriver {
                 self.data_port.write(word);
             }
             
-            // Wait for disk to finish writing
             self.wait_not_busy_simple()?;
         }
         Ok(())
@@ -228,16 +209,6 @@ impl AtaDriver {
     }
 
     pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
-        // Check RAM disk (loaded by bootloader from ESP).
-        // RAM disk data is partition-relative (LBA 0 = partition start).
-        if let Some(buf) = crate::globals::ram_disk_buf() {
-            let offset = lba as usize * 512;
-            if offset + 512 <= buf.len() {
-                let mut data = [0u8; 512];
-                data.copy_from_slice(&buf[offset..offset + 512]);
-                return Ok(data);
-            }
-        }
         self.read_sector_inner(lba)
     }
 
@@ -246,18 +217,6 @@ impl AtaDriver {
     }
 
     fn read_sector_master_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
-        if self.ahci_fallback {
-            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
-                if let Some(ahci) = ahci_lock.as_mut() {
-                    return if self.is_secondary {
-                        ahci.read_sector_secondary_master(lba)
-                    } else {
-                        ahci.read_sector_master(lba)
-                    }.map_err(|_| AtaError::Error);
-                }
-            }
-        }
-
         self.wait_not_busy()?;
 
         unsafe {
@@ -283,18 +242,6 @@ impl AtaDriver {
 
     fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
         let abs_lba = self.base_lba.wrapping_add(lba);
-
-        if self.ahci_fallback {
-            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
-                if let Some(ahci) = ahci_lock.as_mut() {
-                    return if self.is_secondary {
-                        ahci.read_sector_secondary(abs_lba)
-                    } else {
-                        ahci.read_sector(abs_lba)
-                    }.map_err(|_| AtaError::Error);
-                }
-            }
-        }
 
         self.wait_not_busy()?;
 
@@ -328,17 +275,6 @@ impl AtaDriver {
         let total_bytes = (count as usize) * 512;
         if buf.len() < total_bytes {
             return Err(AtaError::Error);
-        }
-        if self.ahci_fallback {
-            if let Some(mut ahci_lock) = crate::globals::AHCI_DRIVER.try_lock() {
-                if let Some(ahci) = ahci_lock.as_mut() {
-                    return if self.is_secondary {
-                        ahci.read_secondary_sectors(lba, count, buf)
-                    } else {
-                        ahci.read_sectors(lba, count, buf)
-                    }.map_err(|_| AtaError::Error);
-                }
-            }
         }
         self.wait_not_busy()?;
         unsafe {

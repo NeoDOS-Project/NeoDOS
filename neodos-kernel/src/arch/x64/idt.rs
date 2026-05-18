@@ -9,7 +9,6 @@ core::arch::global_asm!(
     ".extern timer_handler_inner",
     ".global timer_handler_asm",
     "timer_handler_asm:",
-    // Save all registers
     "push rbp",
     "push r15",
     "push r14",
@@ -25,15 +24,9 @@ core::arch::global_asm!(
     "push rcx",
     "push rbx",
     "push rax",
-    
-    // Call the Rust handler
-    "mov rdi, rsp", // Pass current RSP as first argument
+    "mov rdi, rsp",
     "call timer_handler_inner",
-    
-    // The Rust handler returns the NEW RSP in RAX
     "mov rsp, rax",
-    
-    // Restore all registers from the new stack
     "pop rax",
     "pop rbx",
     "pop rcx",
@@ -49,16 +42,9 @@ core::arch::global_asm!(
     "pop r14",
     "pop r15",
     "pop rbp",
-    
-    // IRETQ
     "iretq"
 );
 
-// INT 0x80 syscall trampolín.
-//
-// Mirrors timer_handler_asm: saves all GP registers, calls syscall_dispatch,
-// then checks NEED_RESCHED flag. If set, calls syscall_try_resched(current_rsp)
-// to switch stacks, similar to the timer preemption path.
 core::arch::global_asm!(
     ".extern syscall_dispatch",
     ".extern syscall_try_resched",
@@ -66,7 +52,6 @@ core::arch::global_asm!(
     ".extern clear_need_resched",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
-    // Save all GP registers (same order as timer trampolín)
     "push rbp",
     "push r15",
     "push r14",
@@ -82,16 +67,13 @@ core::arch::global_asm!(
     "push rcx",
     "push rbx",
     "push rax",
-    // Save syscall number in r15 before dispatch clobbers RAX
     "mov r15, [rsp]",
-    // syscall_dispatch(rax, rbx, rcx, rdx)
     "mov rdi, [rsp + 0]",
     "mov rsi, [rsp + 8]",
     "mov rdx, [rsp + 16]",
     "mov rcx, [rsp + 24]",
     "call syscall_dispatch",
     "mov [rsp + 0], rax",
-    // Check if original syscall was sys_exit (0) for shell return
     "test r15, r15",
     "jnz 1f",
     ".extern EXIT_NOW",
@@ -100,17 +82,14 @@ core::arch::global_asm!(
     "mov byte ptr [rip + EXIT_NOW], 0",
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
-    // Check NEED_RESCHED for voluntary context switch (sys_yield, sys_waitpid, sys_read)
     "1:",
     "call clear_need_resched",
     "test al, al",
     "jz 3f",
-    // ---- Reschedule requested ----
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
     "3:",
-    // ---- Normal restore ----
     "pop rax",
     "pop rbx",
     "pop rcx",
@@ -137,8 +116,7 @@ extern "C" {
 lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
-        
-        // Exceptions
+
         idt.divide_error.set_handler_fn(divide_error_handler);
         idt.debug.set_handler_fn(debug_handler);
         idt.non_maskable_interrupt.set_handler_fn(nmi_handler);
@@ -147,13 +125,13 @@ lazy_static! {
         idt.bound_range_exceeded.set_handler_fn(bounds_handler);
         idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
         idt.device_not_available.set_handler_fn(device_not_available_handler);
-        
+
         unsafe {
             idt.double_fault
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(crate::arch::x64::gdt::DOUBLE_FAULT_IST_INDEX);
         }
-        
+
         idt.invalid_tss.set_handler_fn(invalid_tss_handler);
         idt.segment_not_present.set_handler_fn(segment_not_present_handler);
         idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
@@ -164,28 +142,23 @@ lazy_static! {
         idt.machine_check.set_handler_fn(machine_check_handler);
         idt.simd_floating_point.set_handler_fn(simd_handler);
         idt.virtualization.set_handler_fn(virtualization_handler);
-        
-        // IRQs
+
         unsafe {
             idt[32].set_handler_addr(x86_64::VirtAddr::new(timer_handler_asm as *const () as u64));
         }
-        idt[33].set_handler_fn(keyboard_handler);   // IRQ1
-        
-        // Syscall (INT 0x80) — interrupt gate from Ring 3
-        // Interrupt gate (IF=0) prevents timer preemption during syscall handling,
-        // which can corrupt the shared TSS.RSP0 kernel stack frames.
+        idt[33].set_handler_fn(keyboard_handler);
+
         unsafe {
             idt[0x80]
                 .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as *const () as u64))
                 .set_privilege_level(x86_64::PrivilegeLevel::Ring3)
                 .disable_interrupts(true);
         }
-        
+
         idt
     };
 }
 
-// Exception handlers
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
     panic!("Divide by zero: {:#?}", stack_frame);
 }
@@ -256,10 +229,9 @@ extern "x86-interrupt" fn page_fault_handler(
     let is_write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
     let is_not_present = !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION);
 
-    // On-demand heap page allocation for user-mode accesses
     if is_user && is_not_present {
         if crate::arch::x64::paging::handle_heap_page_fault(virt, true, is_write) {
-            return; // Instruction re-executed
+            return;
         }
     }
 
@@ -295,9 +267,10 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
 
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
-    let current_tick = crate::scheduler::TIMER_TICKS.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+    let current_tick = crate::scheduler::TIMER_TICKS
+        .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+        .wrapping_add(1);
 
-    // Check if periodic cache flush is needed (set flag, actual flush happens in safe context)
     {
         use core::sync::atomic::Ordering;
         let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
@@ -306,7 +279,6 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         }
     }
 
-    // Call TSRs for INT 0x1C (Timer Hook)
     crate::tsr::dispatch_interrupt(0x1C);
 
     let scheduler_mutex = current_scheduler();
@@ -316,58 +288,33 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let pid = scheduler.current_pid;
 
-    // ── Idle process (PID 0) ───────────────────────────────────────
-    // Idle uses its private IDLE_STACK, so the timer handler's pushes
-    // go to that private stack, NOT to the global TSS.RSP0.  It is
-    // therefore safe to context-switch away from idle in the timer
-    // handler — the next process's saved frame on TSS.RSP0 will not
-    // be overwritten.
-    if pid == 0 {
-        if !scheduler.has_non_idle_processes() {
+    // ── User process (PID > 0) ───────────────────────────────────
+    // NEVER save current.rsp here — the timer may have fired during
+    // Ring 0 execution (e.g., while the kernel was processing a
+    // syscall), producing a 3-item iretq frame.  Only
+    // syscall_try_resched saves RSP because INT 0x80 always comes
+    // from Ring 3 with a full 5-item iretq frame.
+    if pid > 0 {
+        let alive = scheduler.current_process_mut()
+            .is_some_and(|p| p.state != ProcessState::Terminated);
+        if alive {
+            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             unsafe { PICS.lock().notify_end_of_interrupt(32); }
             return current_rsp;
         }
-        // Save idle's own RSP (on idle stack) and find next ready
-        // process.  The returned RSP points to the user process's
-        // saved frame (on TSS.RSP0, set during that process's timer
-        // tick or by init_ring3_interrupt_stack_frame).
-        let next = scheduler.schedule();
-        unsafe { PICS.lock().notify_end_of_interrupt(32); }
-        return unsafe { (*next).rsp };
+        // Process is dead or missing — fall through to idle
+        scheduler.current_pid = 0;
     }
 
-    // ── Ring-3 process (PID > 0) ──────────────────────────────────
-    // The timer handler's register pushes are on the GLOBAL TSS.RSP0
-    // stack.  If we context-switched here, the returned RSP would
-    // point to another process's saved frame — also on TSS.RSP0 — and
-    // the next Ring-3→Ring-0 timer interrupt would reload TSS.RSP0
-    // fresh, overwriting that saved frame with the new process's data.
-    //
-    // Instead: save the stack-pointer only, set NEED_RESCHED, and
-    // return the SAME RSP so the interrupt returns to the current
-    // process.  The actual context switch happens in the syscall-
-    // return path (syscall_handler_asm → syscall_try_resched), which
-    // runs with IF=0 (interrupt gate on INT 0x80), so no timer can
-    // fire mid-switch.
-    {
-        let mut current_terminated = false;
-        if let Some(current) = scheduler.current_process_mut() {
-            if current.state != ProcessState::Terminated {
-                current.rsp = current_rsp;
-                current.state = ProcessState::Ready;
-            } else {
-                current_terminated = true;
-            }
-        } else {
-            scheduler.current_pid = 0;
-        }
-        if current_terminated {
-            unsafe { PICS.lock().notify_end_of_interrupt(32); }
-            return current_rsp;
-        }
+    // ── Idle process (PID 0) ─────────────────────────────────────
+    // Idle uses its own private static stack.  Because idle doesn't
+    // make syscalls, NEED_RESCHED would never be checked otherwise.
+    // We still avoid context-switching here to keep EXIT_RSP/RIP
+    // in sync — the actual switch happens in wait_for_process
+    // (first launch) or in the syscall return path (subsequent).
+    if scheduler.has_non_idle_processes() {
         crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
-
     unsafe { PICS.lock().notify_end_of_interrupt(32); }
     current_rsp
 }
@@ -375,14 +322,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     use crate::arch::x64::pic::PICS;
     use crate::drivers::keyboard::KeyboardDriver;
-    
+
     unsafe {
         if let Some(scancode) = KeyboardDriver::read_scancode() {
             if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
                 crate::input::push_byte(ascii);
                 crate::syscall::wake_blocked_readers();
             }
-            // Check Ctrl+Alt+Del after modifiers are updated by scancode_to_ascii
             if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
                 crate::serial_println!("[Ctrl+Alt+Del] Powering off...");
                 PICS.lock().notify_end_of_interrupt(33);
@@ -396,6 +342,3 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
 pub fn init() {
     IDT.load();
 }
-
-// syscall_handler_asm is defined in the global_asm! block above.
-// syscall_dispatch lives in src/syscall.rs and is linked by name.

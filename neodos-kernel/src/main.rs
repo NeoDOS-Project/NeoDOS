@@ -27,6 +27,7 @@ mod globals;
 pub mod usermode;
 pub mod syscall;
 mod testing;
+mod module_abi;
 
 use drivers::ata::{AtaChannel, AtaDriver};
 use drivers::block::BlockDevice;
@@ -40,7 +41,7 @@ use graphics::FramebufferInfo;
 const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 4; // v0.10.4
+const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 5; // v0.10.5
 
 #[repr(C)]
 pub struct BootInfo {
@@ -69,8 +70,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::keyboard::set_leds(0b100); // Caps Lock ON = kernel entry
 
     // 1b. Set up RAM disk from bootloader-loaded FS image
-    globals::RAM_DISK_BASE.store(boot_info.fs_image_addr, core::sync::atomic::Ordering::Relaxed);
-    globals::RAM_DISK_SIZE.store(boot_info.fs_image_size, core::sync::atomic::Ordering::Relaxed);
+    drivers::block::set_ram_disk(boot_info.fs_image_addr, boot_info.fs_image_size);
 
     // 2. Setup Serial for output
     arch::x64::init_serial();
@@ -126,6 +126,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Enabling interrupts...");
     arch::x64::enable_interrupts();
 
+    // Initialize kernel service table for Ring-0 modules
+    module_abi::init_kernel_service_table();
+    println!("[+] Kernel service table @ 0x{:x}", module_abi::KERNEL_SERVICE_TABLE_ADDR);
+
     // ============================================
     // PHASE 3: Storage stack
     // ============================================
@@ -145,16 +149,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     println!("[+] Probing for AHCI controller...");
     let mut ahci_results = drivers::ahci::AhciDriver::probe_all();
+    let ahci_port_count = ahci_results[0].as_ref().map(|a| a.port_count).unwrap_or(0);
     if let Some(ahci) = ahci_results[0].take() {
-        let port_count = ahci.port_count;
         *globals::AHCI_DRIVER.lock() = Some(ahci);
-        globals::ATA_DRIVER.lock().as_mut().unwrap().ahci_fallback = true;
-        if port_count >= 2 {
-            globals::ATA_DRIVER_SECONDARY.lock().as_mut().unwrap().ahci_fallback = true;
-            println!("[+] AHCI: {} ports — fallback enabled for both ATA channels", port_count);
-        } else {
-            println!("[+] AHCI: 1 port — fallback enabled for primary ATA only");
-        }
+        println!("[+] AHCI: {} ports — available for BlockDevice fallback", ahci_port_count);
     } else {
         println!("[-] No AHCI controller found");
     }

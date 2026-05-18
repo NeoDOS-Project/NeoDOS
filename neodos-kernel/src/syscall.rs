@@ -87,10 +87,6 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
-        // Always save the current frame — the timer handler may have already set
-        // the process state to Ready (and saved its RSP), but the SYSCALL frame
-        // at the same TSS.RSP0 address may differ from the timer frame.  Saving
-        // ensures we restore the most recent register snapshot.
         let pid = scheduler.current_pid;
         if pid > 0 {
             if let Some(current) = scheduler.current_process_mut() {
@@ -100,6 +96,12 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         }
 
         let next = scheduler.schedule();
+
+        // Update TSS.RSP0 to the next process's private kernel stack
+        // This ensures the next Ring 3→Ring 0 transition uses the correct stack.
+        let next_ks_top = unsafe { (*next).kernel_stack_top };
+        crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+
         unsafe { (*next).rsp }
     })
 }

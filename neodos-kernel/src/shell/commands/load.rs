@@ -4,6 +4,7 @@ use crate::println;
 use crate::serial_println;
 use crate::shell::shell::DosShell;
 use crate::arch::x64::paging::{USER_LIMIT, alloc_user_slot};
+use crate::module_abi::{NdModuleHeader, NDM_ABI_VERSION};
 
 const MAX_BIN_SIZE: usize = 64 * 1024;
 
@@ -18,13 +19,9 @@ impl DosShell {
         let filename = args[0];
         let full_path = self.resolve_absolute_path(filename);
 
-        // ── 1. Allocate a per-process user slot ──
         let slot = match alloc_user_slot() {
             Some(s) => s,
-            None => {
-                println!("Error: No free user memory slots.");
-                return;
-            }
+            None => { println!("Error: No free user memory slots."); return; }
         };
 
         if slot.stack_top > USER_LIMIT {
@@ -33,51 +30,62 @@ impl DosShell {
             return;
         }
 
-        // ── 2. Find and read the binary ──
-        let mut bin_size = 0;
-        
-        crate::globals::with_vfs(|vfs| {
+        let mut entry = slot.code_base;
+
+        let ok = crate::globals::with_vfs(|vfs| {
             match vfs.resolve_path(&full_path) {
                 Ok((drive_idx, node)) => {
                     static mut BIN_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
                     unsafe {
                         let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(BIN_BUF);
-                        (*buf_ptr).fill(0);
-                        match vfs.read(drive_idx, node.inode, 0, &mut *buf_ptr) {
-                            Ok(n) => {
-                                bin_size = n;
-                                if bin_size > 0 {
-                                    // ── 3. Copy binary to the slot's code area ──
+                        core::ptr::write_bytes(buf_ptr as *mut u8, 0, MAX_BIN_SIZE);
+                        match vfs.read(drive_idx, node.inode, 0, core::slice::from_raw_parts_mut(buf_ptr as *mut u8, MAX_BIN_SIZE)) {
+                            Ok(n) if n > 0 => {
+                                let data = core::slice::from_raw_parts((*buf_ptr).as_ptr(), n);
+                                if let Some(parsed) = NdModuleHeader::from_bytes(data) {
+                                    serial_println!("[LOAD] NDM v{} {} '{}' ({}B code + {}B data)",
+                                        NDM_ABI_VERSION, parsed.module_type.to_str(),
+                                        parsed.name, parsed.code_slice.len(), parsed.data_slice.len());
+
+                                    let slot_code = slot.code_base as *mut u8;
+                                    let slot_data = slot.code_base.wrapping_add(parsed.code_slice.len() as u64) as *mut u8;
+
+                                    core::ptr::copy_nonoverlapping(parsed.code_slice.as_ptr(), slot_code, parsed.code_slice.len());
+                                    if !parsed.data_slice.is_empty() {
+                                        core::ptr::copy_nonoverlapping(parsed.data_slice.as_ptr(), slot_data, parsed.data_slice.len());
+                                    }
+
+                                    let code_file_off = parsed.code_file_offset;
+                                    let entry_file_off = parsed.entry_point_offset;
+                                    entry = slot.code_base + (entry_file_off - code_file_off) as u64;
+                                    true
+                                } else {
+                                    serial_println!("[LOAD] No NDM header, loading raw {} bytes", n);
                                     let dst = slot.code_base as *mut u8;
-                                    let src = core::ptr::addr_of!(BIN_BUF) as *const u8;
-                                    core::ptr::copy_nonoverlapping(src, dst, bin_size);
+                                    core::ptr::copy_nonoverlapping((*buf_ptr).as_ptr(), dst, n);
+                                    entry = slot.code_base;
+                                    true
                                 }
                             }
-                            Err(e) => {
-                                println!("Error reading '{}': {:?}", filename, e);
-                            }
+                            Ok(_) => false,
+                            Err(e) => { println!("Error reading '{}': {:?}", filename, e); false }
                         }
                     }
                 }
-                Err(_) => {
-                    println!("File not found: {}", filename);
-                }
+                Err(_) => { println!("File not found: {}", filename); false }
             }
         });
 
-        if bin_size == 0 {
+        if !ok {
             crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+            println!("Error: Failed to load '{}'", filename);
             return;
         }
 
-        serial_println!("[LOAD] Driver '{}' -> {} bytes, slot 0x{:x}..0x{:x}",
-            filename, bin_size, slot.code_base, slot.stack_top);
-
-        // ── 4. Spawn as scheduler process ──
         let cwd_drive = self.current_drive as u8 - b'A';
-        let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
+        let pid = crate::usermode::spawn_usermode(
+            entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
 
-        serial_println!("[LOAD] Spawned Driver PID {}, slot_idx={}", pid, slot.slot_idx);
-        println!("Loading driver '{}' (PID {}) in Ring 3...", filename, pid);
+        println!("Loaded module '{}' (PID {}) in Ring 3", filename, pid);
     }
 }

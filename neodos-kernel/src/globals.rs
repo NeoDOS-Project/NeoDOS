@@ -1,30 +1,17 @@
 #![allow(dead_code)]
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use spin::Mutex;
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
 use crate::drivers::block::BlockDevice;
-use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use spin::Mutex;
 
 pub static ATA_DRIVER: Mutex<Option<AtaDriver>> = Mutex::new(None);
 pub static ATA_DRIVER_SECONDARY: Mutex<Option<AtaDriver>> = Mutex::new(None);
 pub static AHCI_DRIVER: Mutex<Option<AhciDriver>> = Mutex::new(None);
 pub static BLOCK_CACHE: Mutex<Option<BlockCache>> = Mutex::new(None);
 pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new());
-
-pub static RAM_DISK_BASE: AtomicU64 = AtomicU64::new(0);
-pub static RAM_DISK_SIZE: AtomicU64 = AtomicU64::new(0);
-
-pub fn ram_disk_buf() -> Option<&'static [u8]> {
-    let base = RAM_DISK_BASE.load(Ordering::Relaxed);
-    let size = RAM_DISK_SIZE.load(Ordering::Relaxed) as usize;
-    if base != 0 && size >= 512 {
-        unsafe { Some(core::slice::from_raw_parts(base as *const u8, size)) }
-    } else {
-        None
-    }
-}
 
 pub static NEED_CACHE_FLUSH: AtomicBool = AtomicBool::new(false);
 pub static LAST_FLUSH_TICK: AtomicU64 = AtomicU64::new(0);
@@ -36,24 +23,6 @@ where
 {
     let mut lock = VFS.lock();
     f(&mut lock)
-}
-
-pub fn with_ata<F, R>(f: F) -> R 
-where
-    F: FnOnce(&mut AtaDriver) -> R
-{
-    let mut lock = ATA_DRIVER.lock();
-    let ata = lock.as_mut().expect("ATA_DRIVER not initialized");
-    f(ata)
-}
-
-pub fn with_block_device<F, R>(f: F) -> R
-where
-    F: FnOnce(&mut dyn BlockDevice) -> R
-{
-    let mut lock = ATA_DRIVER.lock();
-    let ata = lock.as_mut().expect("ATA_DRIVER not initialized");
-    f(ata as &mut dyn BlockDevice)
 }
 
 pub fn with_cache<F, R>(f: F) -> R

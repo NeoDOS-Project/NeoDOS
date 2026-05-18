@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.4
+v0.10.5
 
 ## Build & Run
 
@@ -220,6 +220,36 @@ Comando `test`:
 1. Ejecuta `testing::run_all()` (37 tests kernel)
 2. Si pasan, automáticamente ejecuta `run SYSTEST.BIN` (user-mode)
 
+## Dependencias
+
+```bash
+python3 scripts/check_deps.py        # Validate subsystem dependency rules
+```
+
+Ver `docs/KERNEL_SUBSYSTEMS.md` para la arquitectura completa de subsistemas.
+
+## Arquitectura (subsystem boundaries)
+
+La kernel está organizada en 16 subsistemas explícitos. Cada subsistema:
+- Tiene responsabilidades definidas y prohibidas
+- Expone APIs públicas e internas
+- Tiene dependencias controladas
+- Tiene reglas de sincronización
+
+### Reglas de acoplamiento (forbidden dependencies)
+
+| Subsistema | No puede depender de |
+|-----------|---------------------|
+| Scheduler | VFS, drivers de bloque, AHCI/ATA |
+| IRQ handler | `schedule()`, VFS, heap allocation |
+| ATA driver | AHCI, RAM disk, scheduler |
+| BlockDevice trait | scheduler, filesystems |
+| Shell | AHCI, ATA, syscall dispatch |
+| Console | scheduler, filesystems, drivers |
+| Memory/frame allocator | scheduler, filesystems, drivers |
+
+Ver `docs/KERNEL_SUBSYSTEMS.md` para la especificación completa.
+
 ## Mejoras pendientes
 
 Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por prioridad.
@@ -235,13 +265,24 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 - ...
 ```
 
+## NDM Module ABI v1
+
+The kernel supports loadable `.ndm` modules with a 64-byte header (magic `"NDM\0"`, version 1). The `LOAD` command parses the header, extracts code+data sections, and spawns the module as a Ring 3 process.
+
+- **Header parser**: `src/module_abi.rs` — `NdModuleHeader::from_bytes()` validates magic, version, api_version, section bounds, no overlap.
+- **Fallback**: raw `.bin` files (no header) are still supported for legacy compatibility.
+- **Service table**: `KernelServiceTableV1` at `0x4FFFF00` provides console, serial, frame allocator, I/O port, and block device functions to Ring-0 modules. Initialized during boot Phase 2.75.
+- **Spec**: `docs/MODULE_ABI.md`
+
 ## Artifacts generados
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.4 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.4 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.5 |
+| Kernel ELF | `neodos/kernel.elf` | v0.10.5 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
+| Module ABI spec | `neodos/docs/MODULE_ABI.md` | Formato `.ndm`, service table, lifecycle |
+| Driver module | `neodos/userbin/driver.ndm` | NDM v1 demo (357 bytes, name=DRIVER) |

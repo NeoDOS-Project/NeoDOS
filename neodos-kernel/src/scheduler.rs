@@ -1,3 +1,4 @@
+use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use core::fmt;
 use core::sync::atomic::AtomicU64;
@@ -5,7 +6,11 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 
 pub const MAX_PROCESSES: usize = 16;
+pub const KERNEL_STACK_SIZE: usize = 16384;
 const IDLE_STACK_SIZE: usize = 4096;
+
+#[repr(align(16))]
+pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
@@ -16,44 +21,18 @@ fn idle_task() -> ! {
 }
 
 #[repr(C)]
-#[derive(Clone)]
 pub struct Process {
-    // Saved registers from context switch
-    pub rax: u64,
-    pub rbx: u64,
-    pub rcx: u64,
-    pub rdx: u64,
-    pub rsi: u64,
-    pub rdi: u64,
-    pub r8: u64,
-    pub r9: u64,
-    pub r10: u64,
-    pub r11: u64,
-    pub r12: u64,
-    pub r13: u64,
-    pub r14: u64,
-    pub r15: u64,
-    pub rbp: u64,
-    
-    // Control registers
-    pub rsp: u64,
-    pub rip: u64,
-    pub rflags: u64,
-    
-    // Metadata
-    pub pid: u32,
-    pub state: ProcessState,
-    pub cpu_ticks: u64,
-    pub user_slot: Option<u8>,
-    pub waiting_for: Option<u32>,
-
-    // Current working directory (used by Ring 3 processes)
-    pub cwd_drive: u8,
-    pub cwd_path: String,
-
-    // Per-process heap (used by Ring 3 processes via sys_brk)
-    pub heap_base: u64,   // 0 if no heap allocated
-    pub heap_break: u64,  // current program break
+    pub rax: u64,  rbx: u64,  rcx: u64,  rdx: u64,
+    pub rsi: u64,  rdi: u64,  r8: u64,   r9: u64,
+    pub r10: u64,  r11: u64,  r12: u64,  r13: u64,
+    pub r14: u64,  r15: u64,  rbp: u64,
+    pub rsp: u64,  pub rip: u64,  pub rflags: u64,
+    pub pid: u32,  pub state: ProcessState,  pub cpu_ticks: u64,
+    pub user_slot: Option<u8>,  pub waiting_for: Option<u32>,
+    pub cwd_drive: u8,  pub cwd_path: String,
+    pub heap_base: u64,  pub heap_break: u64,
+    pub kernel_stack_top: u64,
+    kernel_stack: Option<Box<AlignedKStack>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -72,18 +51,52 @@ impl fmt::Debug for Process {
             .field("rsp", &self.rsp)
             .field("state", &self.state)
             .field("cpu_ticks", &self.cpu_ticks)
+            .field("kernel_stack_top", &self.kernel_stack_top)
             .finish()
     }
 }
 
+fn init_ring0_frame(kernel_stack_top: u64, entry: u64) -> u64 {
+    let mut sp = kernel_stack_top & !0xF;
+    unsafe {
+        let stack = sp as *mut u64;
+        stack.offset(-1).write(0x202);
+        stack.offset(-2).write(0x08);
+        stack.offset(-3).write(entry);
+        for j in 4..19 {
+            stack.offset(-(j as isize)).write(0);
+        }
+        sp -= 18 * 8;
+    }
+    sp
+}
+
+pub fn init_ring3_frame(kernel_stack_top: u64, entry: u64, user_stack_top: u64) -> u64 {
+    let mut sp = kernel_stack_top & !0xF;
+    unsafe {
+        let stack = sp as *mut u64;
+        stack.offset(-1).write(0x23);
+        stack.offset(-2).write(user_stack_top);
+        stack.offset(-3).write(0x202);
+        stack.offset(-4).write(0x1B);
+        stack.offset(-5).write(entry);
+        for j in 6..21 {
+            stack.offset(-(j as isize)).write(0);
+        }
+        sp -= 20 * 8;
+    }
+    sp
+}
+
 impl Process {
-    pub fn new(pid: u32, entry: u64, stack_ptr: u64) -> Self {
+    pub fn new_ring0(pid: u32, entry: u64, stack_top: u64, stack: Option<Box<AlignedKStack>>) -> Self {
+        let rsp = init_ring0_frame(stack_top, entry);
         Process {
             rax: 0, rbx: 0, rcx: 0, rdx: 0,
             rsi: 0, rdi: 0, r8: 0, r9: 0,
             r10: 0, r11: 0, r12: 0, r13: 0,
             r14: 0, r15: 0, rbp: 0,
-            rsp: stack_ptr,
+            rsp,
             rip: entry,
             rflags: 0x202,
             pid,
@@ -95,6 +108,35 @@ impl Process {
             cwd_path: String::from("\\"),
             heap_base: 0,
             heap_break: 0,
+            kernel_stack_top: stack_top,
+            kernel_stack: stack,
+        }
+    }
+
+    pub fn new_ring3(pid: u32, entry: u64, user_stack_top: u64, slot_idx: u8,
+                     cwd_drive: u8, cwd_path: &str, heap_base: u64) -> Self {
+        let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        let kernel_stack_top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let rsp = init_ring3_frame(kernel_stack_top, entry, user_stack_top);
+        Process {
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, r8: 0, r9: 0,
+            r10: 0, r11: 0, r12: 0, r13: 0,
+            r14: 0, r15: 0, rbp: 0,
+            rsp,
+            rip: entry,
+            rflags: 0x202,
+            pid,
+            state: ProcessState::Ready,
+            cpu_ticks: 0,
+            user_slot: Some(slot_idx),
+            waiting_for: None,
+            cwd_drive,
+            cwd_path: cwd_path.to_string(),
+            heap_base,
+            heap_break: heap_base,
+            kernel_stack_top,
+            kernel_stack: Some(stack),
         }
     }
 }
@@ -115,14 +157,15 @@ impl Scheduler {
             next_pid: 1,
             timer_ticks: 0,
         };
-        
-        // Create idle process (PID 0) that can always be scheduled
-        // This prevents panic when timer fires before any processes are added
-        let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
-        let idle_rsp = init_interrupt_stack_frame(idle_stack_top, idle_task as *const () as u64);
 
-        scheduler.processes[0] = Some(Process::new(0, idle_task as *const () as u64, idle_rsp));
-        
+        let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
+        scheduler.processes[0] = Some(Process::new_ring0(
+            0,
+            idle_task as *const () as u64,
+            idle_stack_top,
+            None,
+        ));
+
         scheduler
     }
 
@@ -133,38 +176,20 @@ impl Scheduler {
             .any(|p| p.as_ref().is_some_and(|proc| proc.state != ProcessState::Terminated))
     }
 
-    #[allow(dead_code)]
-    pub fn add_process(&mut self, entry: u64, stack_base: u64) -> u32 {
-        for i in 0..MAX_PROCESSES {
-            if self.processes[i].is_none() {
-                let pid = self.next_pid;
-                self.next_pid += 1;
-                let stack_ptr = init_interrupt_stack_frame(stack_base, entry);
-                let proc = Process::new(pid, entry, stack_ptr);
-                self.processes[i] = Some(proc);
-                return pid;
-            }
-        }
-        panic!("Process table full");
-    }
-
     pub fn add_ring3_process(
         &mut self,
         entry: u64,
-        stack_top: u64,
+        user_stack_top: u64,
         slot_idx: u8,
         cwd_drive: u8,
         cwd_path: &str,
+        heap_base: u64,
     ) -> u32 {
         for i in 0..MAX_PROCESSES {
             if self.processes[i].is_none() {
                 let pid = self.next_pid;
                 self.next_pid += 1;
-                let stack_ptr = init_ring3_interrupt_stack_frame(stack_top, entry);
-                let mut proc = Process::new(pid, entry, stack_ptr);
-                proc.user_slot = Some(slot_idx);
-                proc.cwd_drive = cwd_drive;
-                proc.cwd_path = cwd_path.to_string();
+                let proc = Process::new_ring3(pid, entry, user_stack_top, slot_idx, cwd_drive, cwd_path, heap_base);
                 self.processes[i] = Some(proc);
                 return pid;
             }
@@ -217,8 +242,6 @@ impl Scheduler {
         {
             return self.processes[idx].as_mut().unwrap();
         }
-
-        // Fallback to idle process if the current PID is stale/corrupted.
         self.current_pid = 0;
         self.processes[0]
             .as_mut()
@@ -226,47 +249,38 @@ impl Scheduler {
     }
 
     pub fn schedule(&mut self) -> *mut Process {
-        // Round-robin scheduling with fallback to idle process (PID 0)
-        let mut count = 0;
-        let max_attempts = (self.next_pid as usize) + 10;
-        
-        loop {
-            count += 1;
-            
-            // Prevent infinite loop - after many attempts, fall back to idle process
-            if count > max_attempts {
-                // Fallback to PID 0 (idle process) if no other process is ready
-                if let Some(idle) = &mut self.processes[0] {
-                    if idle.pid == 0 && idle.state != ProcessState::Terminated {
-                        self.current_pid = 0;
-                        idle.state = ProcessState::Running;
-                        return idle as *mut Process;
-                    }
-                }
-                panic!("No ready processes and idle process is unavailable");
-            }
-            
-            self.current_pid += 1;
-            if self.current_pid >= self.next_pid {
-                self.current_pid = 0;  // Wrap to idle process
-            }
+        let start = (self.current_pid + 1) % self.next_pid.max(1);
+        let end = start + self.next_pid;
 
+        for pid in start..end {
+            let check_pid = pid % self.next_pid;
+            if check_pid == 0 {
+                continue; // Skip idle unless it's the only option
+            }
             for proc in self.processes.iter_mut() {
                 if let Some(p) = proc {
-                    if p.pid == self.current_pid && p.state == ProcessState::Ready {
+                    if p.pid == check_pid && p.state == ProcessState::Ready {
+                        self.current_pid = check_pid;
                         p.state = ProcessState::Running;
                         return p as *mut Process;
                     }
                 }
             }
         }
+
+        // No non-idle process ready — fall back to idle
+        if let Some(idle) = &mut self.processes[0] {
+            if idle.pid == 0 && idle.state != ProcessState::Terminated {
+                self.current_pid = 0;
+                idle.state = ProcessState::Running;
+                return idle as *mut Process;
+            }
+        }
+        panic!("No ready processes and idle process is unavailable");
     }
 
     pub fn on_timer_tick(&mut self) {
         self.timer_ticks += 1;
-
-        // Wake sleeping processes (for future sys_sleep support)
-        // Every 100 ticks (10ms), switch process
         if self.timer_ticks % 100 == 0 {
             if let Some(current) = self.processes.iter_mut().find(|p| {
                 if let Some(proc) = p {
@@ -284,28 +298,10 @@ impl Scheduler {
             }
         }
     }
-
-    #[allow(dead_code)]
-    pub fn print_processes(&self) {
-        crate::console::print_str("[");
-        for proc in self.processes.iter() {
-            if let Some(p) = proc {
-                crate::console::print_str("P");
-                crate::console::print_decimal(p.pid as u64);
-                crate::console::print_str("] ");
-            }
-        }
-        crate::console::print_str("\r\n");
-    }
 }
 
 lazy_static! {
     static ref SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
-}
-
-#[allow(dead_code)]
-pub fn init() {
-    // Scheduler is initialized via lazy_static
 }
 
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
@@ -345,53 +341,4 @@ pub fn set_current_heap_break(new_break: u64) {
     }
 }
 
-/// Global tick counter incremented by the PIT timer (IRQ0, ~18.2 Hz).
-/// Read from any context without locking — use for timing that tolerates
-/// the tiny delay between increment and visibility.
 pub static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
-
-fn init_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
-    // Timer ISR saves 15 registers (RAX..RBP) and ends with IRETQ.
-    // We pre-build a compatible stack so the first "restore + iretq" lands at `entry`.
-    let mut stack_ptr = stack_top & !0xF;
-    unsafe {
-        let stack = stack_ptr as *mut u64;
-
-        stack.offset(-1).write(0x202); // RFLAGS
-        stack.offset(-2).write(0x08);  // CS
-        stack.offset(-3).write(entry); // RIP
-
-        for j in 4..19 {
-            stack.offset(-(j as isize)).write(0);
-        }
-
-        stack_ptr -= 18 * 8;
-    }
-    stack_ptr
-}
-
-/// Like `init_interrupt_stack_frame` but sets CS/SS for Ring-3 return.
-/// The CPU interrupt frame includes SS+RSP because IRETQ to Ring 3
-/// involves a privilege-level change.
-pub fn init_ring3_interrupt_stack_frame(stack_top: u64, entry: u64) -> u64 {
-    let mut stack_ptr = stack_top & !0xF;
-    unsafe {
-        let stack = stack_ptr as *mut u64;
-
-        // Full interrupt frame for Ring 3→Ring 0 transition:
-        // SS, RSP, RFLAGS, CS, RIP (5 values)
-        stack.offset(-1).write(0x23);   // SS  = user data segment
-        stack.offset(-2).write(stack_top); // RSP (reset to top on each entry)
-        stack.offset(-3).write(0x202);  // RFLAGS (IF=1)
-        stack.offset(-4).write(0x1B);   // CS  = user code segment
-        stack.offset(-5).write(entry);  // RIP
-
-        // Software-saved regs by timer_handler_asm (15 pushes)
-        for j in 6..21 {
-            stack.offset(-(j as isize)).write(0);
-        }
-
-        stack_ptr -= 20 * 8;
-    }
-    stack_ptr
-}

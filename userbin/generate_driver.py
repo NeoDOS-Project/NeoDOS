@@ -1,116 +1,148 @@
 #!/usr/bin/env python3
 """
-generate_driver.py - Demo driver que se registra como handler de device 0
+generate_driver.py - Demo driver NDM v1 module.
+
+Produces driver.ndm with:
+  [NDM header (64 bytes)]
+  [code section (x86-64, Ring 3)]
+  [data section (string constants)]
+
+The module registers as device handler 0, then polls for ioctl commands.
 """
 
 import struct
 
-BASE = 0x400000
+BASE = 0x400000  # code is loaded at user slot base
+
+# ── helper: x86-64 instruction encoding ──────────────────────────────
 
 def mov_eax(v): return b'\xB8' + struct.pack('<I', v)
 def mov_rbx(v): return b'\x48\xBB' + struct.pack('<Q', v)
 def mov_rcx(v): return b'\x48\xB9' + struct.pack('<Q', v)
 def mov_rdx(v): return b'\x48\xBA' + struct.pack('<Q', v)
-def int80(): return b'\xCD\x80'
+def int80():    return b'\xCD\x80'
 
-# Messages
-MSG_INIT = b"[Driver] Initializing...\r\n"
-MSG_REG = b"[Driver] Registered as device handler\r\n"
-MSG_WAIT = b"[Driver] Waiting for ioctl...\r\n"
-MSG_CMD = b"[Driver] Got command: \r\n"
+# ── data section (NUL-terminated strings) ─────────────────────────────
 
-S_INIT = len(MSG_INIT)   # 24
-S_REG = len(MSG_REG)    # 28
-S_WAIT = len(MSG_WAIT)   # 24
-S_CMD = len(MSG_CMD)     # 23
+MSG_INIT  = b"[Driver] Initializing...\r\n\0"
+MSG_REG   = b"[Driver] Registered as device handler\r\n\0"
+MSG_WAIT  = b"[Driver] Waiting for ioctl...\r\n\0"
+MSG_CMD   = b"[Driver] Got command: \r\n\0"
 
-# Build code with placeholders - we'll fix them after knowing code size
-CODE = b''
+# ── code section (placeholders for RBX/RCX) ──────────────────────────
 
-# Syscall 1: sys_write(MSG_INIT) - placeholders
-CODE += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+code = b''
 
-# Syscall 2: sys_register_device(0) 
-CODE += mov_eax(15) + mov_rbx(0) + int80()
+# sys_write(MSG_INIT)    — eax=1, rbx=ptr, rcx=len
+code += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# sys_register_device(0) — eax=15, rbx=device_num
+code += mov_eax(15) + mov_rbx(0) + int80()
+# sys_write(MSG_REG)
+code += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# sys_write(MSG_WAIT)
+code += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# sys_ioctl(0,0,0,0)    — eax=14, rbx=device, rcx=cmd, rdx=buf
+code += mov_eax(14) + mov_rbx(0) + mov_rcx(0) + mov_rdx(0) + int80()
+# sys_write(MSG_CMD)
+code += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# sys_exit(0)            — eax=0
+code += mov_eax(0) + int80()
 
-# Syscall 3: sys_write(MSG_REG)
-CODE += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+CODE_SIZE = len(code)
+assert CODE_SIZE < 64 * 1024, "code too large"
 
-# Syscall 4: sys_write(MSG_WAIT)
-CODE += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# ── layout ────────────────────────────────────────────────────────────
+# The module is loaded at slot.code_base (BASE + slot_idx * 0x20000).
+# code section goes first, then data section immediately after.
 
-# Syscall 5: sys_ioctl(0, 0, 0, 0)
-CODE += mov_eax(14) + mov_rbx(0) + mov_rcx(0) + mov_rdx(0) + int80()
+HEADER_SIZE = 64
+DATA_OFFSET = HEADER_SIZE + CODE_SIZE
+DATA_SIZE   = len(MSG_INIT) + len(MSG_REG) + len(MSG_WAIT) + len(MSG_CMD)
 
-# Syscall 6: sys_write(MSG_CMD)
-CODE += mov_eax(1) + mov_rbx(0) + mov_rcx(0) + int80()
+# Build data section
+data  = MSG_INIT
+data += MSG_REG
+data += MSG_WAIT
+data += MSG_CMD
 
-# Syscall 7: sys_exit(0)
-CODE += mov_eax(0) + int80()
+# ── patch code with calculated addresses ─────────────────────────────
 
-print(f"Code: {len(CODE)} bytes")
+# Strings are at known offsets within the data section:
+OFF_INIT = DATA_OFFSET
+OFF_REG  = DATA_OFFSET + len(MSG_INIT)
+OFF_WAIT = DATA_OFFSET + len(MSG_INIT) + len(MSG_REG)
+OFF_CMD  = DATA_OFFSET + len(MSG_INIT) + len(MSG_REG) + len(MSG_WAIT)
 
-# Calculate data addresses
-CODE_SIZE = len(CODE)
-DATA_BASE = BASE + CODE_SIZE
+# Code layout: each syscall has a specific pattern of mov_rbx / mov_rcx
+# mov_rbx occurs before every syscall except sys_exit.
+# mov_rcx occurs only before sys_write calls.
+# We find them by scanning for the opcode bytes.
 
-print(f"DATA_BASE = 0x{DATA_BASE:x}")
-print(f"S_INIT = {S_INIT}, S_REG = {S_REG}, S_WAIT = {S_WAIT}, S_CMD = {S_CMD}")
+def find_offsets(blob, opcode_2bytes):
+    """Return list of file-offsets of the 8-byte immediate after `opcode_2bytes`."""
+    results = []
+    i = 0
+    while i < len(blob) - 9:
+        if blob[i] == opcode_2bytes[0] and blob[i+1] == opcode_2bytes[1]:
+            results.append(i + 2)  # skip opcode, point to imm64
+            i += 10
+        else:
+            i += 1
+    return results
 
-# Find all mov_rbx and mov_rcx positions in the code
-code_list = bytearray(CODE)
-rbx_addrs = []
-rcx_lens = []
+rbx_offsets = find_offsets(code, (0x48, 0xBB))
+rcx_offsets = find_offsets(code, (0x48, 0xB9))
 
-i = 0
-while i < len(code_list) - 2:
-    if code_list[i] == 0x48 and code_list[i+1] == 0xbb:
-        # Found mov_rbx - imm64 at offset+2
-        rbx_addrs.append(i + 2)
-        i += 10  # 48 bb + 8 bytes = 10
-    elif code_list[i] == 0x48 and code_list[i+1] == 0xb9:
-        # Found mov_rcx - imm64 at offset+2
-        rcx_lens.append(i + 2)
-        i += 10  # 48 b9 + 8 bytes = 10
-    else:
-        i += 1
+def patch_imm64(blob, offset, value):
+    for j in range(8):
+        blob[offset + j] = struct.pack('<Q', value)[j]
 
-print(f"Found {len(rbx_addrs)} mov_rbx at {rbx_addrs}")
-print(f"Found {len(rcx_lens)} mov_rcx at {rcx_lens}")
+code_arr = bytearray(code)
 
-# Now fix them in order
-# Positions: RBX[0]=sys_write1, RBX[1]=sys_register, RBX[2]=sys_write2, RBX[3]=sys_write3,
-#            RBX[4]=sys_ioctl, RBX[5]=sys_write4
-# RCX[0]=sys_write1, RCX[1]=sys_write2, RCX[2]=sys_write3, RCX[3]=sys_ioctl, RCX[4]=sys_write4
+# sys_write RBX: msg ptrs
+patch_imm64(code_arr, rbx_offsets[0], BASE + OFF_INIT)   # MSG_INIT
+patch_imm64(code_arr, rbx_offsets[2], BASE + OFF_REG)    # MSG_REG
+patch_imm64(code_arr, rbx_offsets[3], BASE + OFF_WAIT)   # MSG_WAIT
+patch_imm64(code_arr, rbx_offsets[5], BASE + OFF_CMD)    # MSG_CMD
 
-# sys_write(MSG_INIT) - RBX[0], RCX[0]
-for j in range(8):
-    code_list[rbx_addrs[0] + j] = (struct.pack('<Q', DATA_BASE))[j]
-for j in range(8):
-    code_list[rcx_lens[0] + j] = (struct.pack('<Q', S_INIT))[j]
+# sys_write RCX: msg lengths (excluding NUL terminator)
+patch_imm64(code_arr, rcx_offsets[0], len(MSG_INIT) - 1)  # MSG_INIT
+patch_imm64(code_arr, rcx_offsets[1], len(MSG_REG) - 1)   # MSG_REG
+patch_imm64(code_arr, rcx_offsets[2], len(MSG_WAIT) - 1)  # MSG_WAIT
+patch_imm64(code_arr, rcx_offsets[4], len(MSG_CMD) - 1)   # MSG_CMD
 
-# sys_write(MSG_REG) - RBX[2], RCX[1]
-for j in range(8):
-    code_list[rbx_addrs[2] + j] = (struct.pack('<Q', DATA_BASE + S_INIT))[j]
-for j in range(8):
-    code_list[rcx_lens[1] + j] = (struct.pack('<Q', S_REG))[j]
+# ── NDM v1 header ────────────────────────────────────────────────────
 
-# sys_write(MSG_WAIT) - RBX[3], RCX[2]
-for j in range(8):
-    code_list[rbx_addrs[3] + j] = (struct.pack('<Q', DATA_BASE + S_INIT + S_REG))[j]
-for j in range(8):
-    code_list[rcx_lens[2] + j] = (struct.pack('<Q', S_WAIT))[j]
+NAME = b"DRIVER  "
+assert len(NAME) <= 15
 
-# sys_write(MSG_CMD) - RBX[5], RCX[4]
-for j in range(8):
-    code_list[rbx_addrs[5] + j] = (struct.pack('<Q', DATA_BASE + S_INIT + S_REG + S_WAIT))[j]
-for j in range(8):
-    code_list[rcx_lens[4] + j] = (struct.pack('<Q', S_CMD))[j]
+hdr = struct.pack('<I', 0x004D444E)       # magic          "NDM\0"
+hdr += struct.pack('<I', 1)                # version        NDM_ABI_VERSION
+hdr += struct.pack('<B', 0)                # module_type    Driver
+hdr += struct.pack('<B', 0)                # reserved1
+hdr += struct.pack('<H', HEADER_SIZE)      # header_size    64
+hdr += struct.pack('<I', HEADER_SIZE)      # entry_offset   = code_offset (start of code = entry)
+hdr += struct.pack('<I', HEADER_SIZE)      # code_offset    right after header
+hdr += struct.pack('<I', CODE_SIZE)        # code_size
+hdr += struct.pack('<I', DATA_OFFSET)      # data_offset
+hdr += struct.pack('<I', DATA_SIZE)        # data_size
+hdr += struct.pack('<I', 1)                # api_version
+hdr += struct.pack('<I', 0)                # _reserved2
+hdr += NAME.ljust(16, b'\x00')[:16]        # name
+hdr += struct.pack('<B', 0)                # compat_flags
+hdr += b'\x00' * 7                        # _padding
 
-# Build binary
-BIN = bytes(code_list) + MSG_INIT + MSG_REG + MSG_WAIT + MSG_CMD
+assert len(hdr) == HEADER_SIZE, f"header size: {len(hdr)} != {HEADER_SIZE}"
+
+# ── write binary ─────────────────────────────────────────────────────
+
+bin_data = hdr + bytes(code_arr) + data
 
 with open('driver.ndm', 'wb') as f:
-    f.write(BIN)
+    f.write(bin_data)
 
-print(f"driver.ndm: {len(BIN)} bytes")
+print(f"driver.ndm: {len(bin_data)} bytes")
+print(f"  header: {len(hdr)} bytes")
+print(f"  code:   {CODE_SIZE} bytes @ offset {HEADER_SIZE}")
+print(f"  data:   {DATA_SIZE} bytes @ offset {DATA_OFFSET}")
+print(f"  name:   {NAME.decode()}")

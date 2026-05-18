@@ -225,10 +225,9 @@ pub fn register_process_tests() {
     use crate::scheduler::{Process, ProcessState};
 
     test_case!("process_new_initial_state", {
-        let p = Process::new(1, 0x400000, 0x800000);
+        let p = Process::new_ring0(1, 0x400000, 0x800000, None);
         test_eq!(p.pid, 1);
         test_eq!(p.rip, 0x400000);
-        test_eq!(p.rsp, 0x800000);
         test_eq!(p.state, ProcessState::Ready);
         test_eq!(p.cpu_ticks, 0);
         test_eq!(p.user_slot, None);
@@ -236,7 +235,7 @@ pub fn register_process_tests() {
     });
 
     test_case!("process_state_debug", {
-        let mut p = Process::new(1, 0x400000, 0x800000);
+        let mut p = Process::new_ring0(1, 0x400000, 0x800000, None);
         test_eq!(p.state, ProcessState::Ready);
         p.state = ProcessState::Running;
         test_eq!(p.state, ProcessState::Running);

@@ -302,7 +302,7 @@ impl FileSystem for Iso9660Driver {
         }
 
         dev.set_base_lba(saved);
-        Ok(result)
+        Ok(None)
     }
 
     fn mkdir(&mut self, _dir_inode: u32, _name: &str) -> Result<VfsNode, VfsError> {

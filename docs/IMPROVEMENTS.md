@@ -194,28 +194,28 @@ Desbloquea:
 
 ### Estado
 
-Loader funcional.
+**COMPLETADO (v0.10.5).** Header NDM v1 (64 bytes) con magic, version, code/data sections, entry point, api_version, name. Kernel service table (`KernelServiceTableV1`) en `0x4FFFF00` con 12 funciones (console, serial, frame alloc, I/O ports, block I/O). `LOAD` command valida header o cae a raw binary. `generate_driver.py` produce NDM v1. Especificación completa en `docs/MODULE_ABI.md`.
 
 ### Objetivo
 
-Congelar ABI modular.
+Congelar ABI modular — **OK**.
 
 ### Requisitos
 
-* `#[repr(C)]`
-* versionado obligatorio
-* export table controlada
-* tipos de módulo
-* validación de compatibilidad
+* `#[repr(C)]` — **OK** (`NdModuleHeader`, `KernelServiceTableV1`)
+* versionado obligatorio — **OK** (`NDM_ABI_VERSION = 1`, verificado en `from_bytes`)
+* export table controlada — **OK** (`KernelServiceTableV1` con function pointers)
+* tipos de módulo — **OK** (`ModuleType::Driver/FileSystem/ShellExtension`)
+* validación de compatibilidad — **OK** (magic, version, api_version, bounds, overlap)
 
 ### Impacto
 
 Desbloquea:
 
-* drivers dinámicos
-* FS cargables
-* modularidad real
-* builds independientes
+* drivers dinámicos — **habilitado** (demo `driver.ndm` se registra como device handler)
+* FS cargables — **pendiente** (necesita registro en VFS)
+* modularidad real — **habilitado**
+* builds independientes — **habilitado** (contrato binario estable)
 
 ---
 
@@ -1770,7 +1770,7 @@ Automatización inteligente interna.
 
 1. Syscalls
 2. BlockDevice abstraction
-3. Module ABI
+3. Module ABI **✓ v0.10.5**
 4. Panic elimination
 5. libneodos
 6. ELF
