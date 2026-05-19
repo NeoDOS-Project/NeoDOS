@@ -79,7 +79,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         crate::serial_println!("[SYS] resched called from timer IRQ context!");
     }
 
-    let has_non_idle = x86_64::instructions::interrupts::without_interrupts(|| {
+    let has_non_idle = crate::hal::without_interrupts(|| {
         let scheduler = scheduler::current_scheduler().lock();
         scheduler.has_non_idle_processes()
     });
@@ -88,7 +88,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         return current_rsp;
     }
 
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
@@ -194,7 +194,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let code = rbx;
             serial_println!("[SYS] sys_exit({})", code);
 
-            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+            let pid = crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut scheduler = s.lock();
                 let pid = scheduler.current_pid;
@@ -259,7 +259,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 
         // ---- sys_getpid() ----
         3 => {
-            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+            let pid = crate::hal::without_interrupts(|| {
                 crate::scheduler::current_scheduler().lock().current_pid
             });
             serial_println!("[SYS] sys_getpid -> {}", pid);
@@ -309,7 +309,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                                 bytes_read += 1;
                                 break;
                             }
-                            unsafe { core::arch::asm!("hlt") };
+                            crate::hal::hlt_once();
                         }
                     }
                 }
@@ -325,7 +325,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             serial_println!("[SYS] sys_waitpid({})", wait_pid);
 
             {
-                let already_terminated = x86_64::instructions::interrupts::without_interrupts(|| {
+                let already_terminated = crate::hal::without_interrupts(|| {
                     let s = crate::scheduler::current_scheduler();
                     let scheduler = s.lock();
                     
@@ -343,7 +343,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 
                 if !already_terminated {
                     loop {
-                        let is_terminated = x86_64::instructions::interrupts::without_interrupts(|| {
+                        let is_terminated = crate::hal::without_interrupts(|| {
                             let s2 = crate::scheduler::current_scheduler();
                             let scheduler2 = s2.lock();
                             
@@ -363,7 +363,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                             break;
                         }
                         
-                        unsafe { core::arch::asm!("hlt") };
+                        crate::hal::hlt_once();
                     }
                 }
             }
@@ -586,7 +586,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         // ---- sys_register_device(device_id) ----
         15 => {
             let device_id = rbx as u32;
-            let current_pid = x86_64::instructions::interrupts::without_interrupts(|| {
+            let current_pid = crate::hal::without_interrupts(|| {
                 crate::scheduler::current_scheduler().lock().current_pid
             });
 
@@ -835,7 +835,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
 }
 
 pub fn wake_blocked_readers() {
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         

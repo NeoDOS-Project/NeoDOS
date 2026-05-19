@@ -1,18 +1,19 @@
-# HAL ABI v0.2 — Formal Specification
+# HAL ABI v0.3 — Formal Specification
 
-> **Status**: Locked. This document describes the existing HAL ABI v0.2 as implemented
-> in `src/hal/`. No function may be added, removed, renamed, or reordered within this version.
+> **Status**: Active. This document describes HAL ABI v0.3 as implemented
+> in `src/hal/`. Extends v0.2 with wide I/O, CR register access, TLB flush,
+> and interrupt query primitives.
 >
 > **Source of truth**: `src/hal/x64/<module>.rs`. This document is derivative — it formalises
 > what already exists; it does not define new behaviour.
 
 ---
 
-## 1. Existing ABI v0.2 (Immutable)
+## 1. ABI v0.3
 
-The following 14 functions constitute the HAL ABI v0.2. They are exported with `extern "C"`
-calling convention from `src/hal/`. One additional function (`cpu_info`) is part of the HAL
-module but is NOT `extern "C"` and is therefore **outside** the ABI contract.
+The following 23 extern "C" functions constitute the HAL ABI v0.3, exported from `src/hal/`.
+Additional non-ABI helpers (`cpu_info`, `walk_ptes_4k`, `without_interrupts`) are part of the
+HAL module but are NOT `extern "C"` and are therefore **outside** the binary ABI contract.
 
 ### 1.1 CPU Control — `hal/x64/cpu.rs`
 
@@ -21,6 +22,12 @@ pub extern "C" fn enable_interrupts();
 pub extern "C" fn disable_interrupts();
 pub extern "C" fn halt() -> !;
 pub extern "C" fn poweroff() -> !;
+pub extern "C" fn read_cr2() -> u64;
+pub extern "C" fn read_cr3() -> u64;
+pub extern "C" fn write_cr3(val: u64);
+pub extern "C" fn flush_tlb(virt: u64);
+pub extern "C" fn interrupts_enabled() -> bool;
+pub extern "C" fn hlt_once();
 pub fn cpu_info() -> CpuInfo;                    // NOT extern "C" — kernel-internal only
 ```
 
@@ -29,6 +36,10 @@ pub fn cpu_info() -> CpuInfo;                    // NOT extern "C" — kernel-in
 ```rust
 pub extern "C" fn inb(port: u16) -> u8;
 pub extern "C" fn outb(port: u16, val: u8);
+pub extern "C" fn inw(port: u16) -> u16;
+pub extern "C" fn outw(port: u16, val: u16);
+pub extern "C" fn inl(port: u16) -> u32;
+pub extern "C" fn outl(port: u16, val: u32);
 ```
 
 ### 1.3 Page Memory — `hal/x64/mem.rs`
@@ -41,6 +52,7 @@ pub extern "C" fn free_page(ptr: *mut u8);
 pub extern "C" fn map_page(phys: u64, virt: u64, flags: u64) -> i32;
 pub extern "C" fn unmap_page(virt: u64) -> i32;
 pub extern "C" fn memory_barrier();
+pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry>;  // NOT extern "C"
 ```
 
 ### 1.4 Interrupt Management — `hal/x64/irq.rs`
@@ -56,14 +68,21 @@ pub extern "C" fn ack_irq(vector: u8);
 
 ```rust
 pub extern "C" fn get_ticks() -> u64;
+pub extern "C" fn increment_ticks();
 pub extern "C" fn sleep_hint(us: u32);
+```
+
+### 1.6 Convenience — `hal/x64/mod.rs`
+
+```rust
+pub fn without_interrupts<F, R>(f: F) -> R;     // NOT extern "C" — generic closure helper
 ```
 
 ---
 
 ## 2. Formalisation Layer
 
-### 2.1 Type Sizes (Fixed for v0.2)
+### 2.1 Type Sizes (Fixed for v0.3)
 
 | Rust type      | ABI type   | Size (bits) | Alignment |
 |----------------|------------|-------------|-----------|
@@ -75,6 +94,7 @@ pub extern "C" fn sleep_hint(us: u32);
 | `*mut u8`      | `void*`    | 64          | 8         |
 | `usize`        | `uintptr_t`| 64          | 8         |
 | `fn()` pointer | `void(*)()`| 64          | 8         |
+| `bool`         | `uint8_t`  | 8           | 1         |
 
 ### 2.2 Calling Convention: `extern "C"` (System V AMD64)
 
@@ -122,7 +142,7 @@ is covered by a 2 MB huge page that cannot be split (implementation-specific).
 
 ---
 
-## 3. Function Table (Locked)
+## 3. Function Table
 
 | #  | ABI name            | Inputs                                          | Return    | Binary constraints |
 |----|---------------------|-------------------------------------------------|-----------|--------------------|
@@ -132,20 +152,31 @@ is covered by a 2 MB huge page that cannot be split (implementation-specific).
 | 4  | `poweroff`          | —                                               | `noreturn`| Sequence of port writes, then halt |
 | 5  | `inb`               | `rdi`=`port: u16` (zero-extended to 64 bit)     | `rax`=`u8`| 8-bit port read |
 | 6  | `outb`              | `rdi`=`port: u16`, `rsi`=`val: u8`              | `void`    | 8-bit port write |
-| 7  | `alloc_page`        | —                                               | `rax`=`*mut u8` | Null on OOM |
-| 8  | `free_page`         | `rdi`=`ptr: *mut u8`                            | `void`    | Undefined if `ptr` not from `alloc_page` |
-| 9  | `map_page`          | `rdi`=`phys: u64`, `rsi`=`virt: u64`, `rdx`=`flags: u64` | `rax`=`i32` | 0=ok, -1=fail |
-| 10 | `unmap_page`        | `rdi`=`virt: u64`                               | `rax`=`i32` | 0=ok, -1=fail |
-| 11 | `register_irq`      | `rdi`=`vector: u8`, `rsi`=`handler: IrqHandler`  | `rax`=`i32` | Always returns -1 (stub — see §5.4) |
-| 12 | `ack_irq`           | `rdi`=`vector: u8`                              | `void`    | Port writes to PIC. Safe for vectors 32–47 |
-| 13 | `get_ticks`         | —                                               | `rax`=`u64` | Atomic relaxed load |
-| 14 | `memory_barrier`    | —                                               | `void`    | `atomic_thread_fence(seq_cst)` |
-| —  | `sleep_hint`        | `rdi`=`us: u32`                                 | `void`    | Busy-wait: ~1 port-0x80 stall per unit |
+| 7  | `inw`               | `rdi`=`port: u16`                               | `rax`=`u16`| 16-bit port read |
+| 8  | `outw`              | `rdi`=`port: u16`, `rsi`=`val: u16`              | `void`    | 16-bit port write |
+| 9  | `inl`               | `rdi`=`port: u16`                               | `rax`=`u32`| 32-bit port read |
+| 10 | `outl`              | `rdi`=`port: u16`, `rsi`=`val: u32`              | `void`    | 32-bit port write |
+| 11 | `read_cr2`          | —                                               | `rax`=`u64`| Page-fault linear address |
+| 12 | `read_cr3`          | —                                               | `rax`=`u64`| Current PML4 physical address |
+| 13 | `write_cr3`         | `rdi`=`val: u64`                                | `void`    | Reloads page tables, flushes TLB |
+| 14 | `flush_tlb`         | `rdi`=`virt: u64`                               | `void`    | `invlpg` instruction |
+| 15 | `interrupts_enabled`| —                                               | `rax`=`bool`| Reads RFLAGS.IF via pushfq |
+| 16 | `hlt_once`          | —                                               | `void`    | Single HLT, returns after next IRQ |
+| 17 | `alloc_page`        | —                                               | `rax`=`*mut u8` | Null on OOM |
+| 18 | `free_page`         | `rdi`=`ptr: *mut u8`                            | `void`    | Undefined if `ptr` not from `alloc_page` |
+| 19 | `map_page`          | `rdi`=`phys: u64`, `rsi`=`virt: u64`, `rdx`=`flags: u64` | `rax`=`i32` | 0=ok, -1=fail |
+| 20 | `unmap_page`        | `rdi`=`virt: u64`                               | `rax`=`i32` | 0=ok, -1=fail |
+| 21 | `register_irq`      | `rdi`=`vector: u8`, `rsi`=`handler: IrqHandler`  | `rax`=`i32` | Always returns -1 (stub — see §5.4) |
+| 22 | `ack_irq`           | `rdi`=`vector: u8`                              | `void`    | Port writes to PIC. Safe for vectors 32–47 |
+| 23 | `get_ticks`         | —                                               | `rax`=`u64` | Atomic relaxed load |
+| 24 | `increment_ticks`   | —                                               | `void`    | Atomic relaxed increment |
+| 25 | `memory_barrier`    | —                                               | `void`    | `atomic_thread_fence(seq_cst)` |
+| 26 | `sleep_hint`        | `rdi`=`us: u32`                                 | `void`    | Busy-wait: ~1 port-0x80 stall per unit |
 
 ### 3.1 ABI identity
 
 The ABI is identified by the **function symbol name** at link time. There is no dispatch
-table in v0.2. A future v0.3 may introduce a dispatch table; the symbol-based ABI
+table in v0.3. A future v0.4 may introduce a dispatch table; the symbol-based ABI
 remains valid.
 
 ---
@@ -225,26 +256,37 @@ A binary that claims HAL ABI v0.2 compliance MUST:
 
 ### 5.3 Symbol naming
 
-Symbol names follow the Rust `extern "C"` mangling rules: for `pub extern "C" fn foo()`,
+Symbol names follow the Rust `extern "C"` naming rules: for `#[no_mangle] pub extern "C" fn foo()`,
 the linker symbol is exactly `foo`.
 
-| Symbol            | Mandatory |
-|-------------------|-----------|
-| `enable_interrupts` | Yes |
-| `disable_interrupts`| Yes |
-| `halt`              | Yes |
-| `poweroff`          | Yes |
-| `inb`               | Yes |
-| `outb`              | Yes |
-| `alloc_page`        | Yes |
-| `free_page`         | Yes |
-| `map_page`          | Yes |
-| `unmap_page`        | Yes |
-| `register_irq`      | Yes (may be stub) |
-| `ack_irq`           | Yes |
-| `get_ticks`         | Yes |
-| `memory_barrier`    | Yes |
-| `sleep_hint`        | Yes |
+| Symbol               | Mandatory | Since |
+|----------------------|-----------|-------|
+| `enable_interrupts`  | Yes       | v0.2  |
+| `disable_interrupts` | Yes       | v0.2  |
+| `halt`               | Yes       | v0.2  |
+| `poweroff`           | Yes       | v0.2  |
+| `inb`                | Yes       | v0.2  |
+| `outb`               | Yes       | v0.2  |
+| `inw`                | Yes       | v0.3  |
+| `outw`               | Yes       | v0.3  |
+| `inl`                | Yes       | v0.3  |
+| `outl`               | Yes       | v0.3  |
+| `read_cr2`           | Yes       | v0.3  |
+| `read_cr3`           | Yes       | v0.3  |
+| `write_cr3`          | Yes       | v0.3  |
+| `flush_tlb`          | Yes       | v0.3  |
+| `interrupts_enabled` | Yes       | v0.3  |
+| `hlt_once`           | Yes       | v0.3  |
+| `alloc_page`         | Yes       | v0.2  |
+| `free_page`          | Yes       | v0.2  |
+| `map_page`           | Yes       | v0.2  |
+| `unmap_page`         | Yes       | v0.2  |
+| `register_irq`       | Yes (stub)| v0.2  |
+| `ack_irq`            | Yes       | v0.2  |
+| `get_ticks`          | Yes       | v0.2  |
+| `increment_ticks`    | Yes       | v0.3  |
+| `memory_barrier`     | Yes       | v0.2  |
+| `sleep_hint`         | Yes       | v0.2  |
 
 ### 5.4 `register_irq` stub contract
 
@@ -252,7 +294,7 @@ The current implementation of `register_irq` returns `-1` unconditionally. This 
 
 - The function symbol **must** be exported (for future ABI compatibility).
 - The return value signals "not implemented" — callers MUST check the return code.
-- A future implementation (v0.3 or later patch) may make it functional. The ABI call
+- A future implementation (v0.4 or later) may make it functional. The ABI call
   pattern `(vector: u8, handler: IrqHandler) -> i32` is locked and must not change.
 
 ### 5.5 `ack_irq` vector range
@@ -272,14 +314,22 @@ per unit). The exact timing depends on the platform bus speed. It is a **hint**,
 precise microsecond delay. Callers that require precise timing MUST NOT rely on this
 function.
 
+### 5.7 `increment_ticks` contract
+
+`increment_ticks` performs an atomic `fetch_add(1, Relaxed)` on the global tick counter.
+It is designed for the timer IRQ handler. Must not block, must not fault.
+
+### 5.8 `without_interrupts` contract (non-ABI helper)
+
+`without_interrupts` saves RFLAGS via `pushfq`, disables interrupts via `disable_interrupts()`,
+executes the closure, then restores the saved IF bit via `enable_interrupts()`.
+It is a Rust generic function, NOT `extern "C"`, and is not part of the binary ABI.
+
 ---
 
-## 6. Optional Extensions — v0.3 (Non-Binding Proposal)
+## 6. Future Extensions (Non-Binding)
 
-The following are proposed as *optional* additions to a future ABI v0.3. They are NOT
-part of v0.2 and are NOT required for compliance.
-
-### 6.1 Proposed additions
+### 6.1 Proposed additions for later versions
 
 | Proposed function     | Signature                                        | Rationale |
 |-----------------------|--------------------------------------------------|-----------|
@@ -287,22 +337,23 @@ part of v0.2 and are NOT required for compliance.
 | `set_timer_freq`      | `(hz: u32) -> i32`                               | Reprogram PIT/APIC timer frequency |
 | `get_cpu_count`       | `() -> u32`                                      | Return number of online CPUs |
 | `irq_enable` / `irq_disable` | `(vector: u8) -> i32`                    | Per-IRQ mask/unmask via IMR |
+| `increment_ticks`     | `() -> void`                                     | v0.3 added this; listed for completeness |
 
-### 6.2 Proposed dispatch table (v0.3+)
+### 6.2 Proposed dispatch table
 
 A future revision MAY introduce a fixed-address dispatch table for dynamic HAL lookups:
 
 ```c
 typedef struct {
     uint64_t magic;           // "HALv03\0\0"
-    uint32_t version;         // 0x00030002
+    uint32_t version;         // 0x00030003
     uint32_t entry_count;     // number of function pointers
     void*    entries[];       // function pointers indexed by ABI ID (§3)
 } hal_dispatch_v03;
 ```
 
 If implemented, the dispatch table MUST be placed at a well-known fixed address
-(reserved by the linker, e.g. `0x4FFFF00`). The symbol-based ABI v0.2 functions
+(reserved by the linker, e.g. `0x4FFFF00`). The symbol-based ABI v0.3 functions
 MUST remain present for link-time resolution.
 
 ---
@@ -323,7 +374,7 @@ All functions that return `i32` use:
 - `0`  = success
 - `-1` = generic failure
 
-No other error codes are defined in v0.2. A future version may assign specific
+No other error codes are defined in v0.3. A future version may assign specific
 negative codes to individual functions.
 
 ---

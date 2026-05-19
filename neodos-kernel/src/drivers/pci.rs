@@ -2,8 +2,6 @@
 
 #![allow(dead_code)]
 
-use x86_64::instructions::port::Port;
-
 const CONFIG_ADDRESS: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
 
@@ -108,12 +106,8 @@ pub fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
         | ((func as u32) << 8)
         | (offset as u32 & 0xFC);
 
-    unsafe {
-        let mut addr_port: Port<u32> = Port::new(CONFIG_ADDRESS);
-        let mut data_port: Port<u32> = Port::new(CONFIG_DATA);
-        addr_port.write(addr);
-        data_port.read()
-    }
+    crate::hal::outl(CONFIG_ADDRESS, addr);
+    crate::hal::inl(CONFIG_DATA)
 }
 
 pub fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
@@ -129,12 +123,8 @@ pub fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32
         | ((func as u32) << 8)
         | (offset as u32 & 0xFC);
 
-    unsafe {
-        let mut addr_port: Port<u32> = Port::new(CONFIG_ADDRESS);
-        let mut data_port: Port<u32> = Port::new(CONFIG_DATA);
-        addr_port.write(addr);
-        data_port.write(value);
-    }
+    crate::hal::outl(CONFIG_ADDRESS, addr);
+    crate::hal::outl(CONFIG_DATA, value);
 }
 
 pub fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {

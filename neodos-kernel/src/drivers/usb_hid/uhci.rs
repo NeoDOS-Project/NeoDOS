@@ -109,31 +109,19 @@ fn delay_ms(ms: u32) {
 }
 
 fn port_in(base: u16, offset: u16) -> u16 {
-    unsafe {
-        let mut p = x86_64::instructions::port::Port::<u16>::new(base + offset);
-        p.read()
-    }
+    crate::hal::inw(base + offset)
 }
 
 fn port_out(base: u16, offset: u16, val: u16) {
-    unsafe {
-        let mut p = x86_64::instructions::port::Port::<u16>::new(base + offset);
-        p.write(val);
-    }
+    crate::hal::outw(base + offset, val);
 }
 
 fn port_out8(base: u16, offset: u16, val: u8) {
-    unsafe {
-        let mut p = x86_64::instructions::port::Port::<u8>::new(base + offset);
-        p.write(val);
-    }
+    crate::hal::outb(base + offset, val);
 }
 
 fn port_out_dword(base: u16, offset: u16, val: u32) {
-    unsafe {
-        let mut p = x86_64::instructions::port::Port::<u32>::new(base + offset);
-        p.write(val);
-    }
+    crate::hal::outl(base + offset, val);
 }
 
 fn write_flbaseadd(base: u16, addr: u32) {

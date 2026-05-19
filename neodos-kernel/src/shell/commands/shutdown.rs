@@ -9,7 +9,7 @@ impl DosShell {
         // ACPI shutdown or just hlt
         println!("System halted.");
         loop {
-            unsafe { core::arch::asm!("hlt") };
+            crate::hal::hlt_once();
         }
     }
 }

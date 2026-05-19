@@ -1,5 +1,3 @@
-use x86_64::registers::control::{Cr3, Cr3Flags};
-use x86_64::structures::paging::page_table::PageTableEntry;
 use x86_64::structures::paging::{PageTable, PageTableFlags};
 use x86_64::PhysAddr;
 use crate::serial_println;
@@ -189,18 +187,16 @@ pub unsafe fn init_custom_page_tables() {
     }
 
     // 5. Load our PML4 into CR3.
-    let pml4_addr = PhysAddr::new(&PML4 as *const _ as u64);
-    match x86_64::structures::paging::PhysFrame::from_start_address(pml4_addr) {
-        Ok(frame) => {
-            Cr3::write(frame, Cr3Flags::empty());
-            serial_println!(
-                "[+] Custom Page Tables loaded: 4 GiB identity-mapped, \
-                 user window 0x{:x}..0x{:x}",
-                USER_BASE, USER_LIMIT
-            );
-        }
-        Err(_) => panic!("PML4 address 0x{:x} not 4 KB-aligned", pml4_addr.as_u64()),
+    let pml4_addr = &PML4 as *const _ as u64;
+    if pml4_addr & 0xFFF != 0 {
+        panic!("PML4 address 0x{:x} not 4 KB-aligned", pml4_addr);
     }
+    crate::hal::write_cr3(pml4_addr);
+    serial_println!(
+        "[+] Custom Page Tables loaded: 4 GiB identity-mapped, \
+         user window 0x{:x}..0x{:x}",
+        USER_BASE, USER_LIMIT
+    );
 }
 
 /// Map a physical range above 4 GiB using PML4[1] → PDPT_HIGH → PD_HIGH.
@@ -278,8 +274,8 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
     }
 
     // Flush TLB: reload CR3 with the same value.
-    let (frame, flags) = Cr3::read();
-    Cr3::write(frame, flags);
+    let cr3 = crate::hal::read_cr3();
+    crate::hal::write_cr3(cr3);
 
     serial_println!(
         "[PAG] map_user_range: 0x{:x}..0x{:x} ({} MB) -> USER_ACCESSIBLE",
@@ -298,39 +294,10 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
 
 pub const PAGE_4K: u64 = 4096;
 
-/// Walk the active page tables to find the 4 KB PTE for `virt`.
-/// Returns `None` if the page is covered by a huge page (must be split first).
-pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry> {
-    let (pml4_frame, _) = Cr3::read();
-    let pml4_base = pml4_frame.start_address().as_u64();
-
-    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
-    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
-    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
-    let pt_idx   = ((virt >> 12) & 0x1FF) as usize;
-
-    unsafe {
-        let pml4 = &mut *(pml4_base as *mut PageTable);
-        let pdpt = &mut *(pml4[pml4_idx].addr().as_u64() as *mut PageTable);
-        let pd   = &mut *(pdpt[pdpt_idx].addr().as_u64() as *mut PageTable);
-
-        let pde = &pd[pd_idx];
-        if pde.flags().contains(PageTableFlags::HUGE_PAGE) {
-            return None; // Must split first
-        }
-        if !pde.flags().contains(PageTableFlags::PRESENT) {
-            return None;
-        }
-        let pt = &mut *(pde.addr().as_u64() as *mut PageTable);
-        Some(&mut pt[pt_idx])
-    }
-}
-
 /// Split a 2 MB huge page at `virt` into 512 × 4 KB page table entries.
 /// Allocates a physical page for the new PT from the frame allocator.
 pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
-    let (pml4_frame, _) = Cr3::read();
-    let pml4_base = pml4_frame.start_address().as_u64();
+    let pml4_base = crate::hal::read_cr3() & !0xFFF;
 
     let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
     let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
@@ -353,14 +320,14 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         let huge_flags = pde.flags();
 
         // Allocate a 4 KB frame for the new page table
-        let pt_phys = crate::memory::allocate_frame().ok_or(())?;
+        let pt_phys = crate::hal::alloc_page();
+        if pt_phys.is_null() { return Err(()); }
         let pt = &mut *(pt_phys as *mut PageTable);
         *pt = PageTable::new();
 
         // Fill PT with identity-mapped 4 KB entries
         for i in 0..512u64 {
             let entry_phys = huge_base + i * PAGE_4K;
-            // Inherit flags from the huge-page entry, but strip HUGE_PAGE
             let mut entry_flags = huge_flags;
             entry_flags.remove(PageTableFlags::HUGE_PAGE);
             pt[i as usize].set_addr(PhysAddr::new(entry_phys), entry_flags);
@@ -369,22 +336,20 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         // Replace PD entry: point to PT, clear HUGE_PAGE
         let mut new_flags = huge_flags;
         new_flags.remove(PageTableFlags::HUGE_PAGE);
-        // Ensure USER_ACCESSIBLE for heap pages (the identity-map setup may not set it
-        // for addresses above USER_BASE+MAX_BIN+MAX_STACK, but user-mode processes need it)
         if is_heap_virtual_addr(virt) {
             new_flags |= PageTableFlags::USER_ACCESSIBLE;
         }
-        pd[pd_idx].set_addr(PhysAddr::new(pt_phys), new_flags);
+        pd[pd_idx].set_addr(PhysAddr::new(pt_phys as u64), new_flags);
     }
 
-    flush_tlb_entry(virt);
+    crate::hal::flush_tlb(virt);
     serial_println!("[PAG] split 2MB page @ 0x{:x}", virt);
     Ok(())
 }
 
 #[allow(dead_code)]
 pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
-    let entry = walk_ptes_4k(virt).ok_or(())?;
+    let entry = crate::hal::walk_ptes_4k(virt).ok_or(())?;
     let phys = entry.addr();
     let mut flags = entry.flags();
     if user {
@@ -393,15 +358,8 @@ pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
         flags.remove(PageTableFlags::USER_ACCESSIBLE);
     }
     entry.set_addr(phys, flags);
-    flush_tlb_entry(virt);
+    crate::hal::flush_tlb(virt);
     Ok(())
-}
-
-/// Flush the TLB for a single virtual address.
-fn flush_tlb_entry(virt: u64) {
-    unsafe {
-        core::arch::asm!("invlpg [{}]", in(reg) virt, options(nostack, nomem));
-    }
 }
 
 /// Check if a virtual address falls within any process's heap range.
@@ -429,12 +387,11 @@ pub fn heap_alloc_page(virt: u64) -> Option<u64> {
     if !is_heap_virtual_addr(virt) || virt & 0xFFF != 0 {
         return None;
     }
-    let phys = crate::memory::allocate_frame()?;
-    let entry = walk_ptes_4k(virt)?;
-    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
-    entry.set_addr(PhysAddr::new(phys), flags);
-    flush_tlb_entry(virt);
-    Some(phys)
+    let phys = crate::hal::alloc_page();
+    if phys.is_null() { return None; }
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    if rc != 0 { return None; }
+    Some(phys as u64)
 }
 
 /// Free a 4 KB heap page: clear its PTE and release the physical frame.
@@ -442,11 +399,11 @@ pub fn heap_free_page(virt: u64) {
     if !is_heap_virtual_addr(virt) || virt & 0xFFF != 0 {
         return;
     }
-    let Some(entry) = walk_ptes_4k(virt) else { return };
+    let entry = crate::hal::walk_ptes_4k(virt);
+    let Some(entry) = entry else { return };
     let phys = entry.addr().as_u64();
-    entry.set_unused();
-    crate::memory::free_frame(phys);
-    flush_tlb_entry(virt);
+    let _ = crate::hal::unmap_page(virt);
+    crate::hal::free_page(phys as *mut u8);
 }
 
 /// Free all heap pages in the range `[start, end)`.
@@ -455,13 +412,12 @@ pub fn heap_free_range(start: u64, end: u64) {
     let e = end.min(PROCESS_HEAP_BASE + MAX_HEAP_SLOTS as u64 * PROCESS_HEAP_SIZE);
     let mut addr = s & !(PAGE_4K - 1);
     while addr < e {
-        if let Some(entry) = walk_ptes_4k(addr) {
+        if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let phys = entry.addr().as_u64();
                 if phys != addr {
-                    entry.set_unused();
-                    crate::memory::free_frame(phys);
-                    flush_tlb_entry(addr);
+                    let _ = crate::hal::unmap_page(addr);
+                    crate::hal::free_page(phys as *mut u8);
                 }
             }
         }
@@ -484,7 +440,7 @@ pub fn handle_heap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     let aligned = virt & !(PAGE_4K - 1);
 
     // Check if the PT entry exists (page table split)
-    if walk_ptes_4k(aligned).is_none() {
+    if crate::hal::walk_ptes_4k(aligned).is_none() {
         // Try to split the 2 MB page on demand
         if split_2mb_page(aligned).is_err() {
             return false;
@@ -531,8 +487,8 @@ pub fn unmap_user_range(base: u64, size: u64) {
         addr += HUGE_PAGE_SIZE;
     }
 
-    let (frame, flags) = Cr3::read();
-    unsafe { Cr3::write(frame, flags); }
+    let cr3 = crate::hal::read_cr3();
+    crate::hal::write_cr3(cr3);
 
     serial_println!(
         "[PAG] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",

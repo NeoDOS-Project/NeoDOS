@@ -20,23 +20,11 @@ impl SerialPort {
     }
 
     unsafe fn write_reg(&self, reg: u16, value: u8) {
-        core::arch::asm!(
-            "out dx, al",
-            in("dx") self.port + reg,
-            in("al") value,
-            options(nomem, nostack, preserves_flags)
-        );
+        crate::hal::outb(self.port + reg, value);
     }
 
     unsafe fn read_reg(&self, reg: u16) -> u8 {
-        let value: u8;
-        core::arch::asm!(
-            "in al, dx",
-            out("al") value,
-            in("dx") self.port + reg,
-            options(nomem, nostack, preserves_flags)
-        );
-        value
+        crate::hal::inb(self.port + reg)
     }
 
     fn line_status(&self) -> u8 {
@@ -45,14 +33,7 @@ impl SerialPort {
 
     pub fn send(&self, data: u8) {
         while (self.line_status() & 0x20) == 0 {}
-        unsafe {
-            core::arch::asm!(
-                "out dx, al",
-                in("dx") self.port,
-                in("al") data,
-                options(nomem, nostack, preserves_flags)
-            );
-        }
+        crate::hal::outb(self.port, data);
     }
     
     #[allow(dead_code)]
@@ -64,16 +45,7 @@ impl SerialPort {
     pub fn recv(&self) -> Option<u8> {
         let lsr: u8 = unsafe { self.read_reg(5) };
         if lsr & 1 != 0 {
-            let byte: u8;
-            unsafe {
-                core::arch::asm!(
-                    "in al, dx",
-                    out("al") byte,
-                    in("dx") self.port,
-                    options(nomem, nostack, preserves_flags)
-                );
-            }
-            Some(byte)
+            Some(crate::hal::inb(self.port))
         } else {
             None
         }

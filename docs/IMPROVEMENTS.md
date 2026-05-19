@@ -5,7 +5,7 @@
 > Objetivo: Consolidar la transición de NeoDOS desde kernel experimental hacia sistema operativo modular estable.
 >
 > Rama objetivo: v0.20
-> Base actual: v0.10.x
+> Base actual: v0.14.0
 > Estado: Arquitectura activa
 >
 > Última revisión: Mayo 2026

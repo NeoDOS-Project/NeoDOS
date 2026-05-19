@@ -26,18 +26,16 @@ impl Pic {
     }
 
     pub unsafe fn write_command(&mut self, cmd: u8) {
-        core::arch::asm!("out dx, al", in("dx") self.command_port, in("al") cmd, options(nomem, nostack, preserves_flags));
+        crate::hal::outb(self.command_port, cmd);
     }
 
     pub unsafe fn write_data(&mut self, data: u8) {
-        core::arch::asm!("out dx, al", in("dx") self.data_port, in("al") data, options(nomem, nostack, preserves_flags));
+        crate::hal::outb(self.data_port, data);
     }
 
     #[allow(dead_code)]
     pub unsafe fn read_data(&mut self) -> u8 {
-        let value: u8;
-        core::arch::asm!("in al, dx", out("al") value, in("dx") self.data_port, options(nomem, nostack, preserves_flags));
-        value
+        crate::hal::inb(self.data_port)
     }
 }
 
@@ -58,7 +56,7 @@ impl ChainedPics {
 
     pub unsafe fn initialize(&mut self) {
         let wait = || {
-            core::arch::asm!("out dx, al", in("dx") 0x80u16, in("al") 0u8, options(nomem, nostack, preserves_flags));
+            crate::hal::outb(0x80, 0);
         };
 
         // ICW1: Start initialization in cascade mode

@@ -244,12 +244,8 @@ fn pci_read_dword(addr_port: u16, data_port: u16, bus: u8, dev: u8, func: u8, of
         | ((func as u32) << 8)
         | ((offset as u32) & 0xFC);
 
-    unsafe {
-        let mut addr = x86_64::instructions::port::Port::<u32>::new(addr_port);
-        let mut data = x86_64::instructions::port::Port::<u32>::new(data_port);
-        addr.write(address);
-        data.read()
-    }
+    crate::hal::outl(addr_port, address);
+    crate::hal::inl(data_port)
 }
 
 fn pci_read_byte(addr_port: u16, data_port: u16, bus: u8, dev: u8, func: u8, offset: u8) -> u8 {
@@ -277,10 +273,6 @@ fn pci_write_word(addr_port: u16, data_port: u16, bus: u8, dev: u8, func: u8, of
         | ((func as u32) << 8)
         | ((aligned as u32) & 0xFC);
 
-    unsafe {
-        let mut addr = x86_64::instructions::port::Port::<u32>::new(addr_port);
-        let mut data = x86_64::instructions::port::Port::<u32>::new(data_port);
-        addr.write(address);
-        data.write(new_dword);
-    }
+    crate::hal::outl(addr_port, address);
+    crate::hal::outl(data_port, new_dword);
 }

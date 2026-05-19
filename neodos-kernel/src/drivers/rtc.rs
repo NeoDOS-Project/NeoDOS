@@ -1,10 +1,8 @@
 // src/drivers/rtc.rs
 
-use x86_64::instructions::port::Port;
-
 pub struct Rtc {
-    addr_port: Port<u8>,
-    data_port: Port<u8>,
+    addr_port: u16,
+    data_port: u16,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -20,16 +18,14 @@ pub struct DateTime {
 impl Rtc {
     pub fn new() -> Self {
         Rtc {
-            addr_port: Port::new(0x70),
-            data_port: Port::new(0x71),
+            addr_port: 0x70,
+            data_port: 0x71,
         }
     }
 
     fn read_register(&mut self, reg: u8) -> u8 {
-        unsafe {
-            self.addr_port.write(reg);
-            self.data_port.read()
-        }
+        crate::hal::outb(self.addr_port, reg);
+        crate::hal::inb(self.data_port)
     }
 
     pub fn get_datetime(&mut self) -> DateTime {

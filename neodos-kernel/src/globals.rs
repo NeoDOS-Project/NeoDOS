@@ -47,7 +47,7 @@ pub fn flush_cache_if_needed() {
                 }
             }
         }
-        let current = crate::scheduler::TIMER_TICKS.load(Ordering::Relaxed);
+        let current = crate::hal::get_ticks();
         LAST_FLUSH_TICK.store(current, Ordering::Relaxed);
     }
 }

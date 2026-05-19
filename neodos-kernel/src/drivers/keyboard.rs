@@ -1,5 +1,4 @@
 use core::sync::atomic::{AtomicU8, Ordering};
-use x86_64::instructions::port::Port;
 
 mod klc_layout {
     #![allow(dead_code)]
@@ -20,13 +19,10 @@ const PS2_TIMEOUT: u32 = 100_000;
 /// This means the controller is ready to accept a command.
 /// Returns false if the controller didn't become ready before the timeout.
 fn ps2_wait_input() -> bool {
-    let mut status = Port::new(0x64u16);
     for _ in 0..PS2_TIMEOUT {
-        unsafe {
-            let s: u8 = status.read();
-            if (s & 0x02) == 0 {
-                return true;
-            }
+        let s: u8 = crate::hal::inb(0x64);
+        if (s & 0x02) == 0 {
+            return true;
         }
     }
     false
@@ -35,13 +31,10 @@ fn ps2_wait_input() -> bool {
 /// Wait for the PS/2 controller output buffer to be full (bit 0 = 1).
 /// Returns false if the controller didn't produce data before the timeout.
 fn ps2_wait_output() -> bool {
-    let mut status = Port::new(0x64u16);
     for _ in 0..PS2_TIMEOUT {
-        unsafe {
-            let s: u8 = status.read();
-            if (s & 0x01) != 0 {
-                return true;
-            }
+        let s: u8 = crate::hal::inb(0x64);
+        if (s & 0x01) != 0 {
+            return true;
         }
     }
     false
@@ -49,16 +42,12 @@ fn ps2_wait_output() -> bool {
 
 /// Flush any stale data from the PS/2 output buffer.
 fn ps2_flush_output() {
-    let mut status = Port::new(0x64u16);
-    let mut data = Port::new(0x60u16);
     for _ in 0..PS2_TIMEOUT {
-        unsafe {
-            let s: u8 = status.read();
-            if (s & 0x01) == 0 {
-                break;
-            }
-            let _: u8 = data.read();
+        let s: u8 = crate::hal::inb(0x64);
+        if (s & 0x01) == 0 {
+            break;
         }
+        let _: u8 = crate::hal::inb(0x60);
     }
 }
 
@@ -67,60 +56,54 @@ fn ps2_flush_output() {
 /// Must be called **before** enabling interrupts so the keyboard
 /// is ready to assert IRQ1.
 pub fn init_ps2() {
-    let mut cmd = Port::new(0x64u16);
-    let mut data = Port::new(0x60u16);
+    // 1. Disable both keyboard and mouse ports
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x64, 0xADu8); // Disable keyboard (channel 1)
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x64, 0xA7u8); // Disable mouse/aux (channel 2)
 
-    unsafe {
-        // 1. Disable both keyboard and mouse ports
-        if !ps2_wait_input() { return; }
-        cmd.write(0xADu8); // Disable keyboard (channel 1)
-        if !ps2_wait_input() { return; }
-        cmd.write(0xA7u8); // Disable mouse/aux (channel 2)
+    // 2. Flush any stale data
+    ps2_flush_output();
 
-        // 2. Flush any stale data
-        ps2_flush_output();
+    // 3. Mask IRQ12 (mouse) in slave PIC as extra safety
+    let slave_mask = crate::hal::inb(0xA1);
+    let slave_mask = slave_mask | 0x10; // set bit 4 (IRQ12)
+    crate::hal::outb(0xA1, slave_mask);
 
-        // 3. Mask IRQ12 (mouse) in slave PIC as extra safety
-        let slave_mask: u8;
-        core::arch::asm!("in al, dx", out("al") slave_mask, in("dx") 0xA1u16, options(nomem, nostack, preserves_flags));
-        let slave_mask = slave_mask | 0x10; // set bit 4 (IRQ12)
-        core::arch::asm!("out dx, al", in("dx") 0xA1u16, in("al") slave_mask, options(nomem, nostack, preserves_flags));
+    // 4. Read PS/2 configuration byte
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x64, 0x20u8);
+    if !ps2_wait_output() { return; }
+    let config: u8 = crate::hal::inb(0x60);
 
-        // 4. Read PS/2 configuration byte
-        if !ps2_wait_input() { return; }
-        cmd.write(0x20u8);
-        if !ps2_wait_output() { return; }
-        let config: u8 = data.read();
+    // 5. Keep only keyboard interrupt + clock enabled.
+    //    Bit 0 = enable keyboard interrupt
+    //    Bit 4 = keyboard clock (0 = enabled, 1 = inhibited)
+    //    Clear bit 1 = disable mouse interrupt
+    //    Set   bit 5 = inhibit mouse clock
+    let new_config = config | 0x01;      // enable keyboard interrupt
+    let new_config = new_config & !0x10; // enable keyboard clock
+    let new_config = new_config & !0x02; // disable mouse interrupt
+    let new_config = new_config | 0x20;  // inhibit mouse clock
 
-        // 5. Keep only keyboard interrupt + clock enabled.
-        //    Bit 0 = enable keyboard interrupt
-        //    Bit 4 = keyboard clock (0 = enabled, 1 = inhibited)
-        //    Clear bit 1 = disable mouse interrupt
-        //    Set   bit 5 = inhibit mouse clock
-        let new_config = config | 0x01;      // enable keyboard interrupt
-        let new_config = new_config & !0x10; // enable keyboard clock
-        let new_config = new_config & !0x02; // disable mouse interrupt
-        let new_config = new_config | 0x20;  // inhibit mouse clock
+    // 6. Write configuration byte
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x64, 0x60u8);
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x60, new_config);
 
-        // 6. Write configuration byte
-        if !ps2_wait_input() { return; }
-        cmd.write(0x60u8);
-        if !ps2_wait_input() { return; }
-        data.write(new_config);
+    // 7. Enable keyboard port only (mouse stays disabled)
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x64, 0xAEu8);
 
-        // 7. Enable keyboard port only (mouse stays disabled)
-        if !ps2_wait_input() { return; }
-        cmd.write(0xAEu8);
+    // 7. Send "Enable Scanning" command (0xF4) to the keyboard
+    if !ps2_wait_input() { return; }
+    crate::hal::outb(0x60, 0xF4u8);
 
-        // 7. Send "Enable Scanning" command (0xF4) to the keyboard
-        if !ps2_wait_input() { return; }
-        data.write(0xF4u8);
-
-        // 8. Read ACK (0xFA) — optional; keyboard will send it on success.
-        //    Timeout prevents hang if no PS/2 keyboard is connected.
-        if ps2_wait_output() {
-            let _ack: u8 = data.read();
-        }
+    // 8. Read ACK (0xFA) — optional; keyboard will send it on success.
+    //    Timeout prevents hang if no PS/2 keyboard is connected.
+    if ps2_wait_output() {
+        let _ack: u8 = crate::hal::inb(0x60);
     }
 }
 
@@ -139,14 +122,10 @@ impl KeyboardDriver {
     const MOD_NUMLOCK: u8 = 1 << 4;
 
     pub fn read_scancode() -> Option<u8> {
-        let mut status_port = Port::new(0x64u16);
-        let mut data_port = Port::new(0x60u16);
-        unsafe {
-            let status: u8 = status_port.read();
-            if (status & 0x01) != 0 {
-                let scancode: u8 = data_port.read();
-                return Some(scancode);
-            }
+        let status: u8 = crate::hal::inb(0x64);
+        if (status & 0x01) != 0 {
+            let scancode: u8 = crate::hal::inb(0x60);
+            return Some(scancode);
         }
         None
     }
@@ -405,14 +384,10 @@ impl KeyboardDriver {
 /// `leds` bits: bit 0 = Scroll Lock, bit 1 = Num Lock, bit 2 = Caps Lock.
 /// Uses PS/2 port I/O. Returns `true` on success.
 pub fn set_leds(leds: u8) -> bool {
-    use x86_64::instructions::port::PortGeneric;
-    unsafe {
-        if !ps2_wait_input() { return false; }
-        let mut data: PortGeneric<u8, _> = Port::new(0x60u16);
-        data.write(0xEDu8);
-        if !ps2_wait_input() { return false; }
-        data.write(leds & 0x07);
-    }
+    if !ps2_wait_input() { return false; }
+    crate::hal::outb(0x60, 0xEDu8);
+    if !ps2_wait_input() { return false; }
+    crate::hal::outb(0x60, leds & 0x07);
     true
 }
 pub fn wait_for_key() {

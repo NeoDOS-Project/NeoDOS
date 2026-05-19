@@ -74,7 +74,7 @@ impl DosShell {
                 .unwrap_or(18);
 
             loop {
-                let ticks = crate::scheduler::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed);
+                let ticks = crate::hal::get_ticks();
                 if ticks - blink_ticks >= cursor_interval {
                     blink_ticks = ticks;
                     cursor_visible = !cursor_visible;
@@ -159,7 +159,7 @@ impl DosShell {
                     }
                 } else {
                     crate::globals::flush_cache_if_needed();
-                    unsafe { core::arch::asm!("hlt") };
+                    crate::hal::hlt_once();
                     idle_hits += 1;
                 }
             }
@@ -174,7 +174,7 @@ impl DosShell {
 
         println!("Returning to BIOS...");
         loop {
-            unsafe { core::arch::asm!("hlt") };
+            crate::hal::hlt_once();
         }
     }
 

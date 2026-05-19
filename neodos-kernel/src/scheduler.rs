@@ -1,7 +1,6 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use core::fmt;
-use core::sync::atomic::AtomicU64;
 use spin::Mutex;
 use lazy_static::lazy_static;
 
@@ -16,7 +15,7 @@ static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
 fn idle_task() -> ! {
     loop {
-        unsafe { core::arch::asm!("hlt") };
+        crate::hal::hlt_once();
     }
 }
 
@@ -353,4 +352,4 @@ pub fn set_current_heap_break(new_break: u64) {
     }
 }
 
-pub static TIMER_TICKS: AtomicU64 = AtomicU64::new(0);
+

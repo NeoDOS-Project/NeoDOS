@@ -66,7 +66,7 @@ pub fn dump_forensic_info() {
     crate::trace::TRACE.dump(crate::trace::TRACE_DUMP_COUNT, &mut w);
 
     let _ = write!(w, "--- Scheduler state ---\n");
-    let ticks = crate::scheduler::TIMER_TICKS.load(Ordering::Relaxed);
+    let ticks = crate::hal::get_ticks();
     let _ = write!(w, "  Timer ticks: {}\n", ticks);
     if let Some(sched) = crate::scheduler::current_scheduler().try_lock() {
         let _ = write!(w, "  Current PID: {}  Next PID: {}\n", sched.current_pid, sched.next_pid);

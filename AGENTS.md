@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.13.0
+v0.14.0
 
 ## Build & Run
 
@@ -265,25 +265,57 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 - ...
 ```
 
-## HAL v0 (Hardware Abstraction Layer)
+## HAL v0.3 (Hardware Abstraction Layer)
 
-`src/hal/` implements ABI v0.2 — a minimal, pure hardware abstraction. HAL is the lowest layer; kernel depends on HAL, never the reverse.
+`src/hal/` implements ABI v0.3 — a minimal, pure hardware abstraction. HAL is the lowest layer; kernel depends on HAL, never the reverse.
 
-**14 primitives** as `extern "C"` functions:
+**26 primitives** (extern "C"):
+
+### CPU Control
 | Function | Description |
 |----------|-------------|
-| `enable_interrupts()` | STI (x86) |
-| `disable_interrupts()` | CLI (x86) |
-| `halt()` | HLT loop |
-| `poweroff()` | QEMU debug port + PS/2 reset |
-| `inb(port)` / `outb(port, val)` | I/O port 8-bit access |
+| `enable_interrupts()` / `disable_interrupts()` | STI / CLI (x86) |
+| `halt()` | HLT loop (`-> !`) |
+| `poweroff()` | QEMU debug port + PS/2 reset (`-> !`) |
+| `read_cr2()` | Page-fault linear address |
+| `read_cr3()` / `write_cr3(val)` | Page table base register |
+| `flush_tlb(virt)` | `invlpg` instruction |
+| `interrupts_enabled()` | Read RFLAGS.IF |
+| `hlt_once()` | Single HLT (returns after next IRQ) |
+
+### Port I/O
+| Function | Description |
+|----------|-------------|
+| `inb(port)` / `outb(port, val)` | 8-bit port I/O |
+| `inw(port)` / `outw(port, val)` | 16-bit port I/O |
+| `inl(port)` / `outl(port, val)` | 32-bit port I/O |
+
+### Page Memory
+| Function | Description |
+|----------|-------------|
 | `alloc_page()` / `free_page(ptr)` | Physical frame alloc/free |
 | `map_page(phys, virt, flags)` / `unmap_page(virt)` | 4K page table manipulation |
-| `register_irq(vector, handler)` | IDT entry setup (stub — not yet dynamic) |
-| `ack_irq(vector)` | PIC EOI via direct port I/O |
-| `get_ticks()` | Read global timer tick counter |
-| `sleep_hint(us)` | Busy-wait delay |
 | `memory_barrier()` | SeqCst fence |
+
+### Interrupt Management
+| Function | Description |
+|----------|-------------|
+| `register_irq(vector, handler)` | IDT entry setup (stub — not yet dynamic) |
+| `ack_irq(vector)` | PIC EOI via port I/O |
+
+### Timing
+| Function | Description |
+|----------|-------------|
+| `get_ticks()` | Read global timer tick counter |
+| `increment_ticks()` | Atomic increment (timer IRQ) |
+| `sleep_hint(us)` | Busy-wait delay |
+
+### Non-ABI helpers (Rust ABI, not extern "C")
+| Function | Description |
+|----------|-------------|
+| `without_interrupts(|| { ... })` | Save+disable+run+restore interrupts |
+| `walk_ptes_4k(virt)` | Walk active page tables to find 4K PTE |
+| `cpu_info()` | CPU brand string / features |
 
 **Backend**: `hal/x64/` implements all primitives for x86_64. A future `hal/aarch64/` would provide the same API for ARM.
 **Init code** stays in `arch/x64/` (GDT, IDT, PIC, paging init, entry point, serial) — these are architecture-specific and not part of the HAL contract.
@@ -292,10 +324,10 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.13.0 |
-| Kernel ELF | `neodos/kernel.elf` | v0.13.0 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.14.0 |
+| Kernel ELF | `neodos/kernel.elf` | v0.14.0 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
-| HAL ABI v0.2 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
+| HAL ABI v0.3 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

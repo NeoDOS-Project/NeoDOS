@@ -63,7 +63,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         }
     };
 
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.add_ring3_process(entry, stack_top, slot_idx, cwd_drive, cwd_path, heap_base)
     })
@@ -72,7 +72,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
 pub fn wait_for_process(pid: u32) {
     unsafe { WAIT_PID = pid; }
 
-    let (entry, user_stack_top, kernel_stack_top) = x86_64::instructions::interrupts::without_interrupts(|| {
+    let (entry, user_stack_top, kernel_stack_top) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
         let mut entry = 0u64;
         let mut sp = 0u64;
@@ -103,7 +103,7 @@ pub fn wait_for_process(pid: u32) {
     // This ensures the first IRQ or syscall from user mode loads the correct stack.
     gdt::set_kernel_stack(kernel_stack_top);
 
-    x86_64::instructions::interrupts::without_interrupts(|| {
+    crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.current_pid = pid;
         if let Some(proc) = s.current_process_mut() {

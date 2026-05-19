@@ -429,7 +429,7 @@ fn register_syscall_stress() {
     test_case!("stress_syscall_rapid_getpid", {
         // Rapid PID queries exercise the scheduler lock path
         for _ in 0..200 {
-            let pid = x86_64::instructions::interrupts::without_interrupts(|| {
+            let pid = crate::hal::without_interrupts(|| {
                 crate::scheduler::current_scheduler().lock().current_pid
             });
             test_true!(pid < 1000);

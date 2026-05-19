@@ -52,7 +52,7 @@ impl TraceBuffer {
     /// Write one trace entry (lock-free, interrupt-safe).
     pub fn write(&self, event: TraceEvent, arg0: u64, arg1: u64, arg2: u64, arg3: u64) {
         let idx = self.head.fetch_add(1, Ordering::Relaxed) as usize % TRACE_CAPACITY;
-        let tick = crate::scheduler::TIMER_TICKS.load(Ordering::Relaxed);
+        let tick = crate::hal::get_ticks();
         let ptr = &self.entries[idx] as *const TraceEntry as *mut TraceEntry;
         unsafe {
             (*ptr).tick = tick;

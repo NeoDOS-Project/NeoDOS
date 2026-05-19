@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.14.0 — 2026-05-19
+
+### HAL ABI v0.3 — KCR Compliance Fix
+
+- **Añadido** (HAL): `inw`/`outw`/`inl`/`outl` — I/O de 16 y 32 bits para ATA, PCI, UHCI
+- **Añadido** (HAL): `read_cr2`/`read_cr3`/`write_cr3` — registros de control de x86_64
+- **Añadido** (HAL): `flush_tlb(virt)` — invlpg público
+- **Añadido** (HAL): `interrupts_enabled()` — lectura de RFLAGS.IF vía pushfq
+- **Añadido** (HAL): `hlt_once()` — HLT individual (retorna tras la próxima IRQ)
+- **Añadido** (HAL): `increment_ticks()` — incremento atómico del contador de ticks
+- **Añadido** (HAL): `without_interrupts(||{})` — helper con save/restore de IF
+- **Movido**: `walk_ptes_4k` de `arch/x64/paging.rs` a `hal/x64/mem.rs` — elimina dependencia circular HAL→arch
+- **Eliminada**: dependencia de HAL en `crate::arch::x64::paging::walk_ptes_4k` — HAL es self-contained
+- **Eliminado**: código duplicado `flush_tlb_entry` en `paging.rs` — usa `hal::flush_tlb`
+- **Migrado**: 8 drivers (ATA, PCI, keyboard, RTC, UHCI, USB HID, serial, PIC) de `x86_64::Port`/`asm!()` a `hal::inb/outb/inw/outw/inl/outl`
+- **Migrado**: 12 usos de `without_interrupts()` del crate `x86_64` a `hal::without_interrupts()`
+- **Migrado**: 5 `asm!("hlt")` a `hal::hlt_once()` en shell, scheduler, syscall, shutdown
+- **Migrado**: 5 accesos directos a `TIMER_TICKS` a `hal::get_ticks()`, escritura a `hal::increment_ticks()`
+- **Migrado**: frame allocator en `paging.rs` usa `hal::alloc_page/free_page`
+- **Migrado**: page table ops en `paging.rs` usa `hal::map_page/unmap_page`
+- **Migrado**: CR accesos en `idt.rs`/`paging.rs` a `hal::read_cr2/read_cr3/write_cr3`
+- **Actualizado**: `docs/HAL_ABI.md` a v0.3 (26 funciones extern "C")
+- **Actualizado**: `docs/KCR_COMPLIANCE.md` — FAIL→PASS, verificación completa
+- **Validado**: 45 tests kernel + 4 user-mode PASS, nm con 26 símbolos T globales
+
 ## v0.13.0 — 2026-05-19
 
 ### HAL v0 + NDM Removal

@@ -1,5 +1,4 @@
 use lazy_static::lazy_static;
-use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::serial_println;
 use crate::scheduler::{current_scheduler, ProcessState};
@@ -245,8 +244,8 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
         error_code, rip,
         stack_frame.code_segment,
         stack_frame.cpu_flags, rsp,
-        crate::scheduler::TIMER_TICKS.load(core::sync::atomic::Ordering::Relaxed),
-    );
+crate::hal::get_ticks(),
+        );
     let class = if error_code == 0x15c {
         PanicClass::InvalidIretq
     } else if rsp & 0xFFF < 0x100 || rsp & 0xFFF > 0xF00 {
@@ -264,7 +263,7 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
-    let virt = Cr2::read().as_u64();
+    let virt = crate::hal::read_cr2();
     let is_user = error_code.contains(PageFaultErrorCode::USER_MODE);
     let is_write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);
     let is_not_present = !error_code.contains(PageFaultErrorCode::PROTECTION_VIOLATION);
@@ -318,9 +317,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_enter();
     crate::invariants::irq_enter_check(32);
 
-    let current_tick = crate::scheduler::TIMER_TICKS
-        .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
-        .wrapping_add(1);
+    crate::hal::increment_ticks();
+    let current_tick = crate::hal::get_ticks();
 
     crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
 
