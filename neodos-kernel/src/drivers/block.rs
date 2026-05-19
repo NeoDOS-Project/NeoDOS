@@ -1,8 +1,50 @@
 #![allow(dead_code)]
 
+use alloc::boxed::Box;
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
 use core::sync::atomic::{AtomicU64, Ordering};
+
+pub const MAX_BLOCK_DEVICES: usize = 8;
+
+pub struct BlockDeviceManager {
+    devices: [Option<Box<dyn BlockDevice>>; MAX_BLOCK_DEVICES],
+    count: usize,
+}
+
+impl BlockDeviceManager {
+    pub fn new() -> Self {
+        let devices: [Option<Box<dyn BlockDevice>>; MAX_BLOCK_DEVICES] = Default::default();
+        BlockDeviceManager { devices, count: 0 }
+    }
+
+    pub fn register(&mut self, dev: Box<dyn BlockDevice>) -> Option<usize> {
+        if self.count >= MAX_BLOCK_DEVICES {
+            return None;
+        }
+        let idx = self.count;
+        self.devices[idx] = Some(dev);
+        self.count += 1;
+        Some(idx)
+    }
+
+    pub fn get(&mut self, idx: usize) -> Option<&mut (dyn BlockDevice + '_)> {
+        if let Some(slot) = self.devices.get_mut(idx) {
+            if let Some(ref mut dev) = slot {
+                return Some(&mut **dev);
+            }
+        }
+        None
+    }
+
+    pub fn swap(&mut self, idx: usize, dev: Box<dyn BlockDevice>) -> Option<Box<dyn BlockDevice>> {
+        self.devices.get_mut(idx)?.replace(dev)
+    }
+
+    pub fn count(&self) -> usize {
+        self.count
+    }
+}
 
 pub trait BlockDevice: Send {
     fn num_sectors(&self) -> Option<u64> { None }

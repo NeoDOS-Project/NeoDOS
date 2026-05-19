@@ -272,7 +272,10 @@ impl AhciDriver {
                     driver.port_init(0);
                     result[0] = Some(driver);
                 } else {
-                    let driver = result[0].as_mut().unwrap();
+                    let driver = match result[0].as_mut() {
+                        Some(d) => d,
+                        None => continue,
+                    };
                     driver.ports[found] = p as u8;
                     driver.port_types[found] = dev_type;
                     driver.port_count = found + 1;

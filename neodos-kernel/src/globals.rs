@@ -2,14 +2,17 @@
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
+use lazy_static::lazy_static;
 use crate::buffer::block_cache::BlockCache;
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
-use crate::drivers::block::BlockDevice;
 
 pub static ATA_DRIVER: Mutex<Option<AtaDriver>> = Mutex::new(None);
 pub static ATA_DRIVER_SECONDARY: Mutex<Option<AtaDriver>> = Mutex::new(None);
 pub static AHCI_DRIVER: Mutex<Option<AhciDriver>> = Mutex::new(None);
+lazy_static! {
+    pub static ref BLOCK_DEVICES: Mutex<crate::drivers::block::BlockDeviceManager> = Mutex::new(crate::drivers::block::BlockDeviceManager::new());
+}
 pub static BLOCK_CACHE: Mutex<Option<BlockCache>> = Mutex::new(None);
 pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new());
 
@@ -36,9 +39,12 @@ where
 
 pub fn flush_cache_if_needed() {
     if NEED_CACHE_FLUSH.swap(false, Ordering::Relaxed) {
-        if let (Some(mut cache_lock), Some(mut dev_lock)) = (BLOCK_CACHE.try_lock(), ATA_DRIVER.try_lock()) {
-            if let (Some(cache), Some(dev)) = (cache_lock.as_mut(), dev_lock.as_mut()) {
-                let _ = cache.flush(dev as &mut dyn BlockDevice);
+        if let Some(mut cache_lock) = BLOCK_CACHE.try_lock() {
+            if let Some(cache) = cache_lock.as_mut() {
+                let mut bdev_lock = BLOCK_DEVICES.lock();
+                if let Some(dev) = bdev_lock.get(0) {
+                    let _ = cache.flush(dev);
+                }
             }
         }
         let current = crate::scheduler::TIMER_TICKS.load(Ordering::Relaxed);

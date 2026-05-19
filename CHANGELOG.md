@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.12.0 — 2026-05-19
+
+### BlockDevice Abstraction
+
+- **Añadido**: `BlockDeviceManager` en `drivers/block.rs` — registro dinámico de hasta 8 dispositivos de bloque. Métodos `register()`, `get()`, `swap()`, `count()`.
+- **Añadido**: `BLOCK_DEVICES` global en `globals.rs` — reemplaza el acceso directo a ATA/AHCI para nuevas rutas de código.
+- **Simplificado**: `main.rs` — la inicialización del storage stack registra el mejor dispositivo (AHCI si existe, ATA si no) en el `BlockDeviceManager` y lo usa para GPT scan, NeoDOS FS mount y FAT32 init. Se elimina la compleja coreografía de `AtaWithAhciFallback`.
+- **Actualizado**: `flush_cache_if_needed()` usa `BLOCK_DEVICES.get(0)` en vez de `ATA_DRIVER`.
+
+## v0.11.0 — 2026-05-19
+
+### Eliminación de Panic Paths
+
+- **Eliminados**: todos los `.unwrap()` del kernel (13 calls) reemplazados por: `.expect("msg")` en boot paths, pattern matching (`if let`/`match`) en runtime, y acceso directo a bytes (`as_bytes()[0]`) en lugar de `chars().next().unwrap()` para extraer drive letters.
+
+### Archivos modificados
+
+- `src/main.rs`: ATA DMA init usa `if let`, mount falla con `panic!("...")` descriptivo
+- `src/shell/shell.rs`: `parts.next()` → `match`, `chars().next()` → `as_bytes()[0]`
+- `src/shell/commands/cd.rs`: `chars().next()` → `as_bytes()[0]`
+- `src/fs/vfs.rs`: `chars().next()` → `as_bytes()[0]`
+- `src/drivers/ahci.rs`: `result[0].as_mut().unwrap()` → `match` con `continue`
+- `src/scheduler.rs`: `.unwrap()` → `.expect("msg")`
+
 ## v0.10.5 — 2026-05-19
 
 ### Fixes

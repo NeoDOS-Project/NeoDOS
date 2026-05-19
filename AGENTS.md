@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.5
+v0.12.0
 
 ## Build & Run
 
@@ -258,7 +258,7 @@ Ver `docs/IMPROVEMENTS.md` para la lista completa de items pendientes por priori
 
 Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 ```markdown
-## [v0.10.5] - YYYY-MM-DD
+## [v0.12.0] - YYYY-MM-DD
 ### Added
 - sys_brk/ sys_mmap: ...
 ### Changed
@@ -278,8 +278,8 @@ The kernel supports loadable `.ndm` modules with a 64-byte header (magic `"NDM\0
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.5 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.5 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.12.0 |
+| Kernel ELF | `neodos/kernel.elf` | v0.12.0 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |

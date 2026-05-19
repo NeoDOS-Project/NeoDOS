@@ -6,6 +6,7 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use core::panic::PanicInfo;
 
 mod allocator;
@@ -33,7 +34,7 @@ pub mod invariants;
 pub mod panic_classification;
 
 use drivers::ata::{AtaChannel, AtaDriver};
-use drivers::block::{BlockDevice, AtaWithAhciFallback};
+use drivers::block::BlockDevice;
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
 use drivers::pci;
@@ -143,8 +144,12 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Scanning PCI for IDE bus-master DMA...");
     if let Some(ide) = pci::find_ide_controller() {
         pci::enable_bus_master(&ide);
-        globals::ATA_DRIVER.lock().as_mut().unwrap().init_dma(ide.bus_master_base);
-        globals::ATA_DRIVER_SECONDARY.lock().as_mut().unwrap().init_dma(ide.bus_master_base + 8);
+        if let Some(ata) = globals::ATA_DRIVER.lock().as_mut() {
+            ata.init_dma(ide.bus_master_base);
+        }
+        if let Some(ata2) = globals::ATA_DRIVER_SECONDARY.lock().as_mut() {
+            ata2.init_dma(ide.bus_master_base + 8);
+        }
         println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
     } else {
         println!("[!] No IDE bus-master controller found, using PIO");
@@ -160,72 +165,87 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[-] No AHCI controller found");
     }
 
-    // Build AtaWithAhciFallback: tries AHCI first (Q35), falls back to ATA (PIIX3)
-    let primary_ata = globals::ATA_DRIVER.lock().take().unwrap();
-    let ahci_opt = globals::AHCI_DRIVER.lock().take();
-    let mut fallback = AtaWithAhciFallback {
-        ahci: ahci_opt,
-        ata: primary_ata,
+    // Register primary block device: AHCI on Q35, ATA fallback on PIIX3
+    let primary_dev: Box<dyn BlockDevice> = {
+        let ahci = globals::AHCI_DRIVER.lock().take();
+        let ata = globals::ATA_DRIVER.lock().take()
+            .expect("ATA_DRIVER not initialized");
+        if let Some(ahci) = ahci {
+            println!("[+] Using AHCI as primary block device");
+            Box::new(ahci)
+        } else {
+            println!("[+] Using ATA (PIO/DMA) as primary block device");
+            Box::new(ata)
+        }
     };
-    let mut secondary_ata = globals::ATA_DRIVER_SECONDARY.lock().take().unwrap();
+    let mut bdevs = globals::BLOCK_DEVICES.lock();
+    let primary_idx = bdevs.register(primary_dev)
+        .expect("Failed to register primary block device");
 
-    // Scan GPT on both physical disks
-    println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
-    let disk0_parts = gpt::find_all_neodos_partitions(&mut fallback);
-    println!("[+] Scanning GPT for NeoDOS partitions (disk 1)...");
-    let _disk1_parts = gpt::find_all_neodos_partitions(&mut secondary_ata);
+    // Re-store ATA in legacy globals (AHCI was moved into Box above)
+    core::mem::drop(bdevs);
+    *globals::ATA_DRIVER.lock() = Some(AtaDriver::new(AtaChannel::Primary));
 
-    if let Some(part) = &disk0_parts[0] {
-        println!("[+] Primary NeoDOS partition: LBA {}..{}",
-            part.start_lba, part.end_lba);
-        fallback.set_base_lba(part.start_lba);
-    } else {
-        println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
-    }
-
+    // ── NeoDOS FS via BlockDeviceManager ──
     println!("[+] Initializing Block Cache...");
     *globals::BLOCK_CACHE.lock() = Some(BlockCache::new());
-    let mut cache_lock = globals::BLOCK_CACHE.lock();
-    let cache = cache_lock.as_mut().unwrap();
 
-    println!("[+] Reading Superblock...");
-    let sb_data = match fallback.read_sector(0) {
-        Ok(data) => data,
-        Err(_) => panic!("Failed to read superblock"),
-    };
+    {
+        let mut bdevs = globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(primary_idx)
+            .expect("Primary block device vanished");
 
-    println!("[+] Mounting NeoDOS FS...");
-    match NeoDosFs::new(&sb_data) {
-        Ok(mut fs) => {
-            let _ = fs.rebuild_bitmap(cache, &mut fallback);
-            crate::globals::with_vfs(|vfs| {
-                vfs.mount('C', alloc::boxed::Box::new(fs)).unwrap();
-            });
-            println!("[+] NeoDOS FS mounted on C:");
-        },
-        Err(_) => panic!("Failed to mount filesystem"),
+        // Scan GPT on primary disk
+        println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
+        let disk0_parts = gpt::find_all_neodos_partitions(dev);
+
+        if let Some(part) = &disk0_parts[0] {
+            println!("[+] Primary NeoDOS partition: LBA {}..{}",
+                part.start_lba, part.end_lba);
+            dev.set_base_lba(part.start_lba);
+        } else {
+            println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
+        }
+
+        let mut cache_lock = globals::BLOCK_CACHE.lock();
+        let cache = cache_lock.as_mut().expect("BlockCache not initialized");
+
+        println!("[+] Reading Superblock...");
+        let sb_data = match dev.read_sector(0) {
+            Ok(data) => data,
+            Err(_) => panic!("Failed to read superblock"),
+        };
+
+        println!("[+] Mounting NeoDOS FS...");
+        match NeoDosFs::new(&sb_data) {
+            Ok(mut fs) => {
+                let _ = fs.rebuild_bitmap(cache, dev);
+                crate::globals::with_vfs(|vfs| {
+                    if let Err(e) = vfs.mount('C', alloc::boxed::Box::new(fs)) {
+                        panic!("Failed to mount C: {:?}", e);
+                    }
+                });
+                println!("[+] NeoDOS FS mounted on C:");
+            },
+            Err(_) => panic!("Failed to mount filesystem"),
+        }
+
+        // Restore base_lba to primary partition
+        if let Some(part) = &disk0_parts[0] {
+            dev.set_base_lba(part.start_lba);
+        }
+
+        core::mem::drop(cache_lock);
     }
-
-    // Restore base_lba to primary partition on primary disk
-    if let Some(part) = &disk0_parts[0] {
-        fallback.set_base_lba(part.start_lba);
-    }
-
-    // Put drivers back in globals for later use
-    core::mem::drop(cache_lock);
-    *globals::ATA_DRIVER.lock() = Some(fallback.ata);
-    *globals::AHCI_DRIVER.lock() = fallback.ahci;
-    *globals::ATA_DRIVER_SECONDARY.lock() = Some(secondary_ata);
 
     // ============================================
-    // FAT32: Read boot partition (via AHCI if available)
+    // FAT32: via BlockDeviceManager (with ATA fallback)
     // ============================================
     println!("[+] Initializing FAT32 driver...");
     let mut fat32_mounted = false;
     {
-        let mut ahci_lock = globals::AHCI_DRIVER.lock();
-        if let Some(ahci) = ahci_lock.as_mut() {
-            let dev: &mut dyn BlockDevice = ahci;
+        let mut bdevs = globals::BLOCK_DEVICES.lock();
+        if let Some(dev) = bdevs.get(0) {
             if let Ok(fat32) = Fat32Driver::new(dev) {
                 crate::globals::with_vfs(|vfs| {
                     let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));

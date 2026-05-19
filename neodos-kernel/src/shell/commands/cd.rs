@@ -14,7 +14,7 @@ impl DosShell {
         
         // Handle drive change (e.g., "A:")
         if arg.len() == 2 && arg.ends_with(':') {
-            let drive = arg.chars().next().unwrap().to_ascii_uppercase();
+            let drive = (arg.as_bytes()[0] as char).to_ascii_uppercase();
             crate::globals::with_vfs(|vfs| {
                 match vfs.resolve_path(&alloc::format!("{}:\\", drive)) {
                     Ok(_) => {
@@ -44,7 +44,7 @@ impl DosShell {
                     // We need to parse the path to normalize it (handle .. etc)
                     // For now, let's just use the full path but we should ideally normalize it.
                     if let Some(colon_idx) = full_path.find(':') {
-                        self.current_drive = full_path.chars().next().unwrap().to_ascii_uppercase();
+                        self.current_drive = (full_path.as_bytes()[0] as char).to_ascii_uppercase();
                         self.current_dir = String::from(&full_path[colon_idx + 1..]);
                         self.current_dir_inode = node.inode;
                     }

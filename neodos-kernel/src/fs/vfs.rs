@@ -199,7 +199,7 @@ impl Vfs {
 
     pub fn split_drive(path: &str) -> Result<(char, &str), VfsError> {
         if path.len() >= 2 && path.as_bytes()[1] == b':' {
-            let drive = path.chars().next().unwrap();
+            let drive = path.as_bytes()[0] as char;
             Ok((drive, &path[2..]))
         } else {
             Err(VfsError::InvalidPath)

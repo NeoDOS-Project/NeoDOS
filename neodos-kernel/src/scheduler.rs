@@ -243,7 +243,8 @@ impl Scheduler {
             .iter()
             .position(|p| p.as_ref().is_some_and(|proc| proc.pid == pid))
         {
-            return self.processes[idx].as_mut().unwrap();
+            return self.processes[idx].as_mut()
+                .expect("Scheduler: process vanished after position check");
         }
         self.current_pid = 0;
         self.processes[0]

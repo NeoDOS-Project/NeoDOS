@@ -191,7 +191,7 @@ impl DosShell {
 
         // Handle drive change (e.g., "A:")
         if trimmed.len() == 2 && trimmed.ends_with(':') {
-            let drive = trimmed.chars().next().unwrap().to_ascii_uppercase();
+            let drive = (trimmed.as_bytes()[0] as char).to_ascii_uppercase();
             crate::globals::with_vfs(|vfs| {
                 if let Some(idx) = crate::fs::vfs::Vfs::drive_index(drive) {
                     if vfs.drives[idx].is_some() {
@@ -209,7 +209,10 @@ impl DosShell {
         }
 
         let mut parts = trimmed.split_whitespace();
-        let cmd_raw = parts.next().unwrap();
+        let cmd_raw = match parts.next() {
+            Some(c) => c,
+            None => return,
+        };
 
         let mut cmd_buf = [0u8; 32];
         let mut cmd_len = 0;
