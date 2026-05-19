@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.13.0 — 2026-05-19
+
+### HAL v0 + NDM Removal
+
+- **Añadido**: `src/hal/` — Hardware Abstraction Layer v0 con ABI v0.2. 14 primitivas: enable/disable_interrupts, halt, poweroff, inb/outb, alloc_page/free_page, map_page/unmap_page, register_irq, ack_irq, get_ticks, sleep_hint, memory_barrier. Implementación x86_64 en `hal/x64/`.
+- **Eliminado**: `src/module_abi.rs` (NDM). Se elimina todo el sistema de módulos `.ndm`: header parser, KernelServiceTableV1, init_kernel_service_table(), driver.ndm, generate_driver.py, ndm_builder.py, docs/MODULE_ABI.md.
+- **Migrado**: kernel code ahora usa `hal::enable_interrupts()`, `hal::halt()`, `hal::ack_irq()`, `hal::poweroff()` en vez de `arch::x64::*`.
+- **Simplificado**: `arch/mod.rs` pierde el trait `Platform` (reemplazado por HAL). `arch/x64/` queda solo para init (GDT, IDT, PIC, serial, paging) y policy (user slots, heap pages).
+- **Refactorizado**: PIC EOI reemplazado por `hal::ack_irq()` (port I/O directo en vez de `PICS.lock()`).
+
 ## v0.12.0 — 2026-05-19
 
 ### BlockDevice Abstraction

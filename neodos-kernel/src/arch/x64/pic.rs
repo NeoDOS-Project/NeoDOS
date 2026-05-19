@@ -1,6 +1,7 @@
 use spin::Mutex;
 use lazy_static::lazy_static;
 
+#[allow(dead_code)]
 pub struct Pic {
     offset: u8,
     command_port: u16,
@@ -44,6 +45,7 @@ pub struct ChainedPics {
     pics: [Pic; 2],
 }
 
+#[allow(dead_code)]
 impl ChainedPics {
     pub const fn new(offset1: u8, offset2: u8) -> Self {
         ChainedPics {

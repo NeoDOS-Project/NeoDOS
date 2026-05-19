@@ -3,7 +3,6 @@ use x86_64::registers::control::Cr2;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::serial_println;
 use crate::scheduler::{current_scheduler, ProcessState};
-use crate::arch::x64::pic::PICS;
 use crate::panic_classification::PanicClass;
 use crate::trace::TraceEvent;
 
@@ -353,7 +352,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             .is_some_and(|p| p.state != ProcessState::Terminated);
         if alive {
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
-            unsafe { PICS.lock().notify_end_of_interrupt(32); }
+            crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
             return current_rsp;
@@ -366,30 +365,27 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     if scheduler.has_non_idle_processes() {
         crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
-    unsafe { PICS.lock().notify_end_of_interrupt(32); }
+    crate::hal::ack_irq(32);
     crate::invariants::timer_irq_exit();
     crate::invariants::irq_exit_clear();
     current_rsp
 }
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
-    use crate::arch::x64::pic::PICS;
     use crate::drivers::keyboard::KeyboardDriver;
 
-    unsafe {
-        if let Some(scancode) = KeyboardDriver::read_scancode() {
-            if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
-                crate::input::push_byte(ascii);
-                crate::syscall::wake_blocked_readers();
-            }
-            if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
-                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
-                PICS.lock().notify_end_of_interrupt(33);
-                crate::arch::x64::poweroff();
-            }
+    if let Some(scancode) = KeyboardDriver::read_scancode() {
+        if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
+            crate::input::push_byte(ascii);
+            crate::syscall::wake_blocked_readers();
         }
-        PICS.lock().notify_end_of_interrupt(33);
+        if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
+            crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
+            crate::hal::ack_irq(33);
+            crate::hal::poweroff();
+        }
     }
+    crate::hal::ack_irq(33);
 }
 
 pub fn init() {

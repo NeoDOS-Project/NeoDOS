@@ -300,7 +300,7 @@ pub const PAGE_4K: u64 = 4096;
 
 /// Walk the active page tables to find the 4 KB PTE for `virt`.
 /// Returns `None` if the page is covered by a huge page (must be split first).
-fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry> {
+pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry> {
     let (pml4_frame, _) = Cr3::read();
     let pml4_base = pml4_frame.start_address().as_u64();
 

@@ -11,6 +11,7 @@ use core::panic::PanicInfo;
 
 mod allocator;
 mod arch;
+mod hal;
 mod console;
 mod cpu;
 mod scheduler;
@@ -28,7 +29,6 @@ mod globals;
 pub mod usermode;
 pub mod syscall;
 mod testing;
-mod module_abi;
 pub mod trace;
 pub mod invariants;
 pub mod panic_classification;
@@ -128,11 +128,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     allocator::init();
 
     println!("[+] Enabling interrupts...");
-    arch::x64::enable_interrupts();
-
-    // Initialize kernel service table for Ring-0 modules
-    module_abi::init_kernel_service_table();
-    println!("[+] Kernel service table @ 0x{:x}", module_abi::KERNEL_SERVICE_TABLE_ADDR);
+    hal::enable_interrupts();
 
     // ============================================
     // PHASE 3: Storage stack
@@ -294,7 +290,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    arch::disable_interrupts();
+    hal::disable_interrupts();
 
     let class = crate::panic_classification::current_panic_class();
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
@@ -306,5 +302,5 @@ fn panic(info: &PanicInfo) -> ! {
     // Dump forensic info to serial (println may fail if framebuffer is corrupt)
     crate::panic_classification::dump_forensic_info();
 
-    arch::halt();
+    hal::halt();
 }

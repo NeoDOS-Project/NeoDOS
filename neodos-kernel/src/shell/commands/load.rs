@@ -1,10 +1,7 @@
-// src/shell/commands/load.rs
-
 use crate::println;
 use crate::serial_println;
 use crate::shell::shell::DosShell;
 use crate::arch::x64::paging::{USER_LIMIT, alloc_user_slot};
-use crate::module_abi::{NdModuleHeader, NDM_ABI_VERSION};
 
 const MAX_BIN_SIZE: usize = 64 * 1024;
 
@@ -12,7 +9,7 @@ impl DosShell {
     pub fn cmd_load(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!("Usage: LOAD <filename>");
-            println!("  Loads a driver module (.ndm) and executes it in Ring 3.");
+            println!("  Loads a flat binary and executes it in Ring 3.");
             return;
         }
 
@@ -42,30 +39,11 @@ impl DosShell {
                         match vfs.read(drive_idx, node.inode, 0, core::slice::from_raw_parts_mut(buf_ptr as *mut u8, MAX_BIN_SIZE)) {
                             Ok(n) if n > 0 => {
                                 let data = core::slice::from_raw_parts((*buf_ptr).as_ptr(), n);
-                                if let Some(parsed) = NdModuleHeader::from_bytes(data) {
-                                    serial_println!("[SHELL] NDM v{} {} '{}' ({}B code + {}B data)",
-                                        NDM_ABI_VERSION, parsed.module_type.to_str(),
-                                        parsed.name, parsed.code_slice.len(), parsed.data_slice.len());
-
-                                    let slot_code = slot.code_base as *mut u8;
-                                    let slot_data = slot.code_base.wrapping_add(parsed.code_slice.len() as u64) as *mut u8;
-
-                                    core::ptr::copy_nonoverlapping(parsed.code_slice.as_ptr(), slot_code, parsed.code_slice.len());
-                                    if !parsed.data_slice.is_empty() {
-                                        core::ptr::copy_nonoverlapping(parsed.data_slice.as_ptr(), slot_data, parsed.data_slice.len());
-                                    }
-
-                                    let code_file_off = parsed.code_file_offset;
-                                    let entry_file_off = parsed.entry_point_offset;
-                                    entry = slot.code_base + (entry_file_off - code_file_off) as u64;
-                                    true
-                                } else {
-                                    serial_println!("[SHELL] No NDM header, loading raw {} bytes", n);
-                                    let dst = slot.code_base as *mut u8;
-                                    core::ptr::copy_nonoverlapping((*buf_ptr).as_ptr(), dst, n);
-                                    entry = slot.code_base;
-                                    true
-                                }
+                                serial_println!("[SHELL] Loading raw {} bytes", n);
+                                let dst = slot.code_base as *mut u8;
+                                core::ptr::copy_nonoverlapping(data.as_ptr(), dst, n);
+                                entry = slot.code_base;
+                                true
                             }
                             Ok(_) => false,
                             Err(e) => { println!("Error reading '{}': {:?}", filename, e); false }

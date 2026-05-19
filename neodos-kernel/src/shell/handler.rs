@@ -162,7 +162,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs", },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests", },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)", },
-    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load driver module (LOAD FILE.BIN)", },
+    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary (LOAD FILE.BIN)", },
     CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send cmd to device (DEVICESEND id cmd)", },
     CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID", },
     CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt", },

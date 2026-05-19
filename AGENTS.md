@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.12.0
+v0.13.0
 
 ## Build & Run
 
@@ -265,24 +265,37 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 - ...
 ```
 
-## NDM Module ABI v1
+## HAL v0 (Hardware Abstraction Layer)
 
-The kernel supports loadable `.ndm` modules with a 64-byte header (magic `"NDM\0"`, version 1). The `LOAD` command parses the header, extracts code+data sections, and spawns the module as a Ring 3 process.
+`src/hal/` implements ABI v0.2 — a minimal, pure hardware abstraction. HAL is the lowest layer; kernel depends on HAL, never the reverse.
 
-- **Header parser**: `src/module_abi.rs` — `NdModuleHeader::from_bytes()` validates magic, version, api_version, section bounds, no overlap.
-- **Fallback**: raw `.bin` files (no header) are still supported for legacy compatibility.
-- **Service table**: `KernelServiceTableV1` at `0x4FFFF00` provides console, serial, frame allocator, I/O port, and block device functions to Ring-0 modules. Initialized during boot Phase 2.75.
-- **Spec**: `docs/MODULE_ABI.md`
+**14 primitives** as `extern "C"` functions:
+| Function | Description |
+|----------|-------------|
+| `enable_interrupts()` | STI (x86) |
+| `disable_interrupts()` | CLI (x86) |
+| `halt()` | HLT loop |
+| `poweroff()` | QEMU debug port + PS/2 reset |
+| `inb(port)` / `outb(port, val)` | I/O port 8-bit access |
+| `alloc_page()` / `free_page(ptr)` | Physical frame alloc/free |
+| `map_page(phys, virt, flags)` / `unmap_page(virt)` | 4K page table manipulation |
+| `register_irq(vector, handler)` | IDT entry setup (stub — not yet dynamic) |
+| `ack_irq(vector)` | PIC EOI via direct port I/O |
+| `get_ticks()` | Read global timer tick counter |
+| `sleep_hint(us)` | Busy-wait delay |
+| `memory_barrier()` | SeqCst fence |
+
+**Backend**: `hal/x64/` implements all primitives for x86_64. A future `hal/aarch64/` would provide the same API for ARM.
+**Init code** stays in `arch/x64/` (GDT, IDT, PIC, paging init, entry point, serial) — these are architecture-specific and not part of the HAL contract.
 
 ## Artifacts generados
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.12.0 |
-| Kernel ELF | `neodos/kernel.elf` | v0.12.0 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.13.0 |
+| Kernel ELF | `neodos/kernel.elf` | v0.13.0 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
+| HAL ABI v0.2 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
-| Module ABI spec | `neodos/docs/MODULE_ABI.md` | Formato `.ndm`, service table, lifecycle |
-| Driver module | `neodos/userbin/driver.ndm` | NDM v1 demo (357 bytes, name=DRIVER) |
