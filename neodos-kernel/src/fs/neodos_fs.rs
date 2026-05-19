@@ -1080,9 +1080,9 @@ impl From<FsError> for VfsError {
 impl FileSystem for NeoDosFs {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
         temp_buf.resize(buf.len() + offset as usize, 0);
@@ -1102,18 +1102,18 @@ impl FileSystem for NeoDosFs {
 
     fn write(&mut self, inode: u32, _offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         Ok(self.write_file(inode, buf, cache, dev)?)
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let (inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, dev)?;
         let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
@@ -1127,9 +1127,9 @@ impl FileSystem for NeoDosFs {
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let inode = *self.inode_cache.load_inode(dir_inode as usize, cache, dev)?;
         if (inode.mode & MODE_DIR) == 0 {
@@ -1175,9 +1175,9 @@ impl FileSystem for NeoDosFs {
 
     fn mkdir(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let inode = self.create_directory_at(dir_inode, name, cache, dev)?;
         let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
@@ -1190,9 +1190,9 @@ impl FileSystem for NeoDosFs {
 
     fn remove_file(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let (file_inode, _entry_type) = self.find_entry_in_directory(dir_inode, name, cache, dev)?;
         let inode_data = self.inode_cache.load_inode(file_inode as usize, cache, dev)?;
@@ -1205,9 +1205,9 @@ impl FileSystem for NeoDosFs {
 
     fn remove_dir(&mut self, dir_inode: u32, name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         self.delete_directory(dir_inode, name, cache, dev)?;
         Ok(())
@@ -1215,9 +1215,9 @@ impl FileSystem for NeoDosFs {
 
     fn rename(&mut self, dir_inode: u32, old_name: &str, new_name: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         self.rename_file(dir_inode, old_name, new_name, cache, dev)?;
         Ok(())
@@ -1225,9 +1225,9 @@ impl FileSystem for NeoDosFs {
 
     fn create(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let inode = self.create_file_at(dir_inode, name, cache, dev)?;
         let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
@@ -1240,9 +1240,9 @@ impl FileSystem for NeoDosFs {
 
     fn stat(&mut self, inode: u32) -> Result<VfsNode, VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         let inode_data = self.inode_cache.load_inode(inode as usize, cache, dev)?;
         Ok(VfsNode {
@@ -1258,9 +1258,9 @@ impl FileSystem for NeoDosFs {
 
     fn set_volume_label(&mut self, label: &str) -> Result<(), VfsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
         self.set_volume_label(label, cache, dev)?;
         Ok(())
