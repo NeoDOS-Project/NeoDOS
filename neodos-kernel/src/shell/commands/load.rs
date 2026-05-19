@@ -43,7 +43,7 @@ impl DosShell {
                             Ok(n) if n > 0 => {
                                 let data = core::slice::from_raw_parts((*buf_ptr).as_ptr(), n);
                                 if let Some(parsed) = NdModuleHeader::from_bytes(data) {
-                                    serial_println!("[LOAD] NDM v{} {} '{}' ({}B code + {}B data)",
+                                    serial_println!("[SHELL] NDM v{} {} '{}' ({}B code + {}B data)",
                                         NDM_ABI_VERSION, parsed.module_type.to_str(),
                                         parsed.name, parsed.code_slice.len(), parsed.data_slice.len());
 
@@ -60,7 +60,7 @@ impl DosShell {
                                     entry = slot.code_base + (entry_file_off - code_file_off) as u64;
                                     true
                                 } else {
-                                    serial_println!("[LOAD] No NDM header, loading raw {} bytes", n);
+                                    serial_println!("[SHELL] No NDM header, loading raw {} bytes", n);
                                     let dst = slot.code_base as *mut u8;
                                     core::ptr::copy_nonoverlapping((*buf_ptr).as_ptr(), dst, n);
                                     entry = slot.code_base;

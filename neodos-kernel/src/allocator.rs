@@ -8,14 +8,14 @@ pub const HEAP_SIZE: u64 = 0x0100_0000; // 16 MB heap (16-32 MB)
 static ALLOCATOR: LockedHeap = LockedHeap::empty();
 
 pub fn init() {
-    serial_println!("[+] Initializing heap allocator ({} MB @ 0x{:x})", 
+    serial_println!("[MEM] [+] Initializing heap allocator ({} MB @ 0x{:x})", 
                     HEAP_SIZE / 1024 / 1024, HEAP_START);
 
     unsafe {
         ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE as usize);
     }
 
-    serial_println!("[+] Heap allocator ready");
+    serial_println!("[MEM] [+] Heap allocator ready");
 }
 
 #[alloc_error_handler]

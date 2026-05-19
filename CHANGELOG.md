@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.10.5 — 2026-05-19
+
+### Fixes
+
+- **Corregido**: Version mismatch bootloader/kernel — bootloader actualizado de v0.10.3 a v0.10.5 (`Cargo.toml` + `BOOT_VERSION`).
+- **Corregido**: Kernel panic "Failed to read superblock" en Q35 (AHCI) — el kernel usaba ATA PIO para leer el disco ignorando el driver AHCI. Se reemplazó el `BlockDevice` directo por `AtaWithAhciFallback`, que prueba AHCI primero (Q35) y cae a ATA (PIIX3). También se aplicó el mismo fallback a la inicialización FAT32.
+- **Corregido**: FAT32 también usaba ATA PIO en vez de AHCI cuando estaba disponible.
+
 ## v0.10.5 — 2026-05-18
 
 ### Architecture refactoring (subsystem decoupling)

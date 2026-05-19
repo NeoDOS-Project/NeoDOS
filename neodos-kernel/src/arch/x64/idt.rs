@@ -175,7 +175,7 @@ extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame)
 }
 
 extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
-    serial_println!("Debug exception");
+    serial_println!("[IRQ] Debug exception");
 }
 
 extern "x86-interrupt" fn nmi_handler(_: InterruptStackFrame) {
@@ -184,7 +184,7 @@ extern "x86-interrupt" fn nmi_handler(_: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    serial_println!("Breakpoint: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    serial_println!("[IRQ] Breakpoint: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
@@ -242,7 +242,7 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
     serial_println!(
-        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
+        "[IRQ] GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
         error_code, rip,
         stack_frame.code_segment,
         stack_frame.cpu_flags, rsp,
@@ -383,7 +383,7 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
                 crate::syscall::wake_blocked_readers();
             }
             if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
-                crate::serial_println!("[Ctrl+Alt+Del] Powering off...");
+                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
                 PICS.lock().notify_end_of_interrupt(33);
                 crate::arch::x64::poweroff();
             }

@@ -58,7 +58,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
     let heap_base = match heap_slot {
         Some(slot) => slot.base,
         None => {
-            crate::serial_println!("[spawn_usermode] WARNING: no free heap slots, process will have no heap");
+            crate::serial_println!("[USER] WARNING: no free heap slots, process will have no heap");
             0
         }
     };

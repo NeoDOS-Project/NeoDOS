@@ -33,7 +33,7 @@ pub mod invariants;
 pub mod panic_classification;
 
 use drivers::ata::{AtaChannel, AtaDriver};
-use drivers::block::BlockDevice;
+use drivers::block::{BlockDevice, AtaWithAhciFallback};
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
 use drivers::pci;
@@ -155,28 +155,30 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let ahci_port_count = ahci_results[0].as_ref().map(|a| a.port_count).unwrap_or(0);
     if let Some(ahci) = ahci_results[0].take() {
         *globals::AHCI_DRIVER.lock() = Some(ahci);
-        println!("[+] AHCI: {} ports — available for BlockDevice fallback", ahci_port_count);
+        println!("[+] AHCI: {} ports — available for BlockDevice", ahci_port_count);
     } else {
         println!("[-] No AHCI controller found");
     }
 
-    let mut ata_lock = globals::ATA_DRIVER.lock();
-    let mut ata2_lock = globals::ATA_DRIVER_SECONDARY.lock();
-    let ata = ata_lock.as_mut().unwrap();
-    let ata2 = ata2_lock.as_mut().unwrap();
-    let dev: &mut dyn BlockDevice = ata;
-    let _dev2: &mut dyn BlockDevice = ata2;
+    // Build AtaWithAhciFallback: tries AHCI first (Q35), falls back to ATA (PIIX3)
+    let primary_ata = globals::ATA_DRIVER.lock().take().unwrap();
+    let ahci_opt = globals::AHCI_DRIVER.lock().take();
+    let mut fallback = AtaWithAhciFallback {
+        ahci: ahci_opt,
+        ata: primary_ata,
+    };
+    let mut secondary_ata = globals::ATA_DRIVER_SECONDARY.lock().take().unwrap();
 
     // Scan GPT on both physical disks
     println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
-    let disk0_parts = gpt::find_all_neodos_partitions(dev);
+    let disk0_parts = gpt::find_all_neodos_partitions(&mut fallback);
     println!("[+] Scanning GPT for NeoDOS partitions (disk 1)...");
-    let _disk1_parts = gpt::find_all_neodos_partitions(_dev2);
+    let _disk1_parts = gpt::find_all_neodos_partitions(&mut secondary_ata);
 
     if let Some(part) = &disk0_parts[0] {
         println!("[+] Primary NeoDOS partition: LBA {}..{}",
             part.start_lba, part.end_lba);
-        dev.set_base_lba(part.start_lba);
+        fallback.set_base_lba(part.start_lba);
     } else {
         println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
     }
@@ -187,7 +189,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let cache = cache_lock.as_mut().unwrap();
 
     println!("[+] Reading Superblock...");
-    let sb_data = match dev.read_sector(0) {
+    let sb_data = match fallback.read_sector(0) {
         Ok(data) => data,
         Err(_) => panic!("Failed to read superblock"),
     };
@@ -195,7 +197,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Mounting NeoDOS FS...");
     match NeoDosFs::new(&sb_data) {
         Ok(mut fs) => {
-            let _ = fs.rebuild_bitmap(cache, dev);
+            let _ = fs.rebuild_bitmap(cache, &mut fallback);
             crate::globals::with_vfs(|vfs| {
                 vfs.mount('C', alloc::boxed::Box::new(fs)).unwrap();
             });
@@ -204,30 +206,49 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         Err(_) => panic!("Failed to mount filesystem"),
     }
 
-    // Restore ATA base_lba to primary partition on primary disk
+    // Restore base_lba to primary partition on primary disk
     if let Some(part) = &disk0_parts[0] {
-        dev.set_base_lba(part.start_lba);
+        fallback.set_base_lba(part.start_lba);
     }
 
-    // Explicitly drop locks before FAT32 and Shell
+    // Put drivers back in globals for later use
     core::mem::drop(cache_lock);
-    core::mem::drop(ata_lock);
-    core::mem::drop(ata2_lock);
+    *globals::ATA_DRIVER.lock() = Some(fallback.ata);
+    *globals::AHCI_DRIVER.lock() = fallback.ahci;
+    *globals::ATA_DRIVER_SECONDARY.lock() = Some(secondary_ata);
 
     // ============================================
-    // FAT32: Read boot partition
+    // FAT32: Read boot partition (via AHCI if available)
     // ============================================
     println!("[+] Initializing FAT32 driver...");
-    if let Some(mut ata_lock) = globals::ATA_DRIVER.try_lock() {
-        if let Some(ata) = ata_lock.as_mut() {
-            let dev: &mut dyn BlockDevice = ata;
+    let mut fat32_mounted = false;
+    {
+        let mut ahci_lock = globals::AHCI_DRIVER.lock();
+        if let Some(ahci) = ahci_lock.as_mut() {
+            let dev: &mut dyn BlockDevice = ahci;
             if let Ok(fat32) = Fat32Driver::new(dev) {
                 crate::globals::with_vfs(|vfs| {
                     let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
                 });
-                println!("[+] FAT32 ESP mounted on A:");
+                fat32_mounted = true;
             }
         }
+    }
+    if !fat32_mounted {
+        if let Some(mut ata_lock) = globals::ATA_DRIVER.try_lock() {
+            if let Some(ata) = ata_lock.as_mut() {
+                let dev: &mut dyn BlockDevice = ata;
+                if let Ok(fat32) = Fat32Driver::new(dev) {
+                    crate::globals::with_vfs(|vfs| {
+                        let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
+                    });
+                    fat32_mounted = true;
+                }
+            }
+        }
+    }
+    if fat32_mounted {
+        println!("[+] FAT32 ESP mounted on A:");
     }
 
     // ============================================

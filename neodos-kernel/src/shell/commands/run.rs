@@ -70,14 +70,14 @@ impl DosShell {
             return;
         }
 
-        serial_println!("[RUN] '{}' -> {} bytes, slot 0x{:x}..0x{:x}",
+        serial_println!("[SHELL] '{}' -> {} bytes, slot 0x{:x}..0x{:x}",
             filename, bin_size, slot.code_base, slot.stack_top);
 
         // ── 4. Spawn as scheduler process (inherit shell's cwd) ──
         let cwd_drive = self.current_drive as u8 - b'A';
         let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
 
-        serial_println!("[RUN] Spawned PID {}, slot_idx={}", pid, slot.slot_idx);
+        serial_println!("[SHELL] Spawned PID {}, slot_idx={}", pid, slot.slot_idx);
         println!("Launching '{}' ({} bytes) in Ring 3 (PID {})...", filename, bin_size, pid);
 
         // ── 5. Wait for the process to complete ──

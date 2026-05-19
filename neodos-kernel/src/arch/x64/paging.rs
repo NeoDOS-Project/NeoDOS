@@ -170,7 +170,7 @@ pub unsafe fn init_custom_page_tables() {
                 }
             }
             serial_println!(
-                "[paging] FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
+                "[PAG] FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
                 fb_start, fb_start + fb_size as u64,
                 end_idx - start_idx + 1
             );
@@ -183,7 +183,7 @@ pub unsafe fn init_custom_page_tables() {
         let fb_start = renderer.fb.base_address;
         let fb_size = renderer.fb.size as u64;
         if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
-            serial_println!("[paging] Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
+            serial_println!("[PAG] Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
             map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
         }
     }
@@ -282,7 +282,7 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
     Cr3::write(frame, flags);
 
     serial_println!(
-        "[paging] map_user_range: 0x{:x}..0x{:x} ({} MB) -> USER_ACCESSIBLE",
+        "[PAG] map_user_range: 0x{:x}..0x{:x} ({} MB) -> USER_ACCESSIBLE",
         base_aligned, end_aligned, mapped / (1024 * 1024)
     );
 }
@@ -378,7 +378,7 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
     }
 
     flush_tlb_entry(virt);
-    serial_println!("[paging] split 2MB page @ 0x{:x}", virt);
+    serial_println!("[PAG] split 2MB page @ 0x{:x}", virt);
     Ok(())
 }
 
@@ -416,10 +416,10 @@ pub fn init_heap_demand_paging() {
     for i in 0..MAX_HEAP_SLOTS {
         let virt = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
         if let Err(_) = split_2mb_page(virt) {
-            serial_println!("[paging] split heap slot {} @ 0x{:x} FAILED", i, virt);
+            serial_println!("[PAG] split heap slot {} @ 0x{:x} FAILED", i, virt);
         }
     }
-    serial_println!("[paging] heap {} slots split for 4 KB demand paging", MAX_HEAP_SLOTS);
+    serial_println!("[PAG] heap {} slots split for 4 KB demand paging", MAX_HEAP_SLOTS);
 }
 
 /// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
@@ -495,7 +495,7 @@ pub fn handle_heap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     match heap_alloc_page(aligned) {
         Some(phys) => {
             serial_println!(
-                "[paging] demand-alloc 4K @ 0x{:x} → phys 0x{:x} (write={})",
+                "[PAG] demand-alloc 4K @ 0x{:x} → phys 0x{:x} (write={})",
                 aligned, phys, write
             );
             true
@@ -535,7 +535,7 @@ pub fn unmap_user_range(base: u64, size: u64) {
     unsafe { Cr3::write(frame, flags); }
 
     serial_println!(
-        "[paging] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",
+        "[PAG] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",
         base_aligned, end_aligned, unmapped / (1024 * 1024)
     );
 }
