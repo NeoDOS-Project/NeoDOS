@@ -40,57 +40,82 @@ impl DosShell {
     }
 
     fn ndreg_list(&mut self, args: &[&str]) {
-        let path_arg = args.first().copied().unwrap_or("C:\\SYSTEM\\DRIVERS");
-        let full_path = self.resolve_absolute_path(path_arg);
+        let has_path = !args.is_empty();
+        let search_dirs: &[&str] = if has_path {
+            &[args[0]]
+        } else {
+            &["C:\\SYSTEM\\DRIVERS\\TEST", "C:\\SYSTEM\\DRIVERS"]
+        };
 
-        println!(" Driver Registry: {}", full_path);
-        println!();
-        println!(" {:<18} {:>6} {:>4} {:>5} {:>5} {:>6}", "NAME", "TYPE", "ABI", "FLAGS", "STATE", "SIZE");
-        println!(" {} {} {} {} {} {}", 
-            str::repeat("-", 18), 
-            str::repeat("-", 6), 
-            str::repeat("-", 4), 
-            str::repeat("-", 5), 
-            str::repeat("-", 5),
-            str::repeat("-", 6));
+        for dir in search_dirs {
+            let full_path = self.resolve_absolute_path(dir);
 
-        crate::globals::with_vfs(|vfs| {
-            match vfs.resolve_path(&full_path) {
-                Ok((drive_idx, node)) => {
-                    if (node.mode & MODE_DIR) == 0 {
-                        println!("  Not a directory");
-                        return;
-                    }
+            println!(" Driver Registry: {}", full_path);
+            println!();
+            println!(" {:<18} {:>6} {:>4} {:>5} {:>5} {:>6}", "NAME", "TYPE", "ABI", "FLAGS", "STATE", "SIZE");
+            println!(" {} {} {} {} {} {}",
+                str::repeat("-", 18),
+                str::repeat("-", 6),
+                str::repeat("-", 4),
+                str::repeat("-", 5),
+                str::repeat("-", 5),
+                str::repeat("-", 6));
 
-                    let mut i = 0;
-                    loop {
-                        match vfs.readdir(drive_idx, node.inode, i) {
-                            Ok(Some(entry)) => {
-                                let name = entry.name.to_ascii_uppercase();
-                                if !name.ends_with(".NEM") {
+            let mut nem_files: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
+
+            crate::globals::with_vfs(|vfs| {
+                match vfs.resolve_path(&full_path) {
+                    Ok((drive_idx, node)) => {
+                        if (node.mode & MODE_DIR) == 0 {
+                            if !has_path { return; }
+                            println!("  Not a directory");
+                            return;
+                        }
+
+                        let mut i = 0;
+                        loop {
+                            match vfs.readdir(drive_idx, node.inode, i) {
+                                Ok(Some(entry)) => {
+                                    let name = entry.name.to_ascii_uppercase();
+                                    if !name.ends_with(".NEM") {
+                                        i += 1;
+                                        continue;
+                                    }
+
+                                    if (entry.node.mode & MODE_DIR) != 0 {
+                                        i += 1;
+                                        continue;
+                                    }
+
+                                    let full_file = alloc::format!("{}\\{}", full_path.trim_end_matches('\\'), name);
+                                    nem_files.push(full_file);
                                     i += 1;
-                                    continue;
                                 }
-
-                                if (entry.node.mode & MODE_DIR) != 0 {
-                                    i += 1;
-                                    continue;
-                                }
-
-                                let full_file = alloc::format!("{}\\{}", full_path.trim_end_matches('\\'), name);
-                                self.ndreg_print_entry(full_file.as_str());
-                                i += 1;
+                                Ok(None) => break,
+                                Err(_) => break,
                             }
-                            Ok(None) => break,
-                            Err(_) => break,
                         }
                     }
+                    Err(_) => {
+                        if !has_path {
+                            return;
+                        }
+                        println!("  Path not found: {}", full_path);
+                    }
                 }
-                Err(_) => {
-                    println!("  Path not found: {}", full_path);
-                }
+            });
+
+            for f in &nem_files {
+                self.ndreg_print_entry(f);
             }
-        });
+
+            if nem_files.is_empty() && !has_path {
+                continue;
+            }
+            if !has_path {
+                println!();
+            }
+        }
     }
 
     fn ndreg_print_entry(&self, full_path: &str) {
