@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.15.3 — 2026-05-20
+
+### NeoFS Test Expansion + Bugfixes
+
+- **Añadido**: 21 nuevos tests NeoFS (75 total): permission rendering (7), all 32 5-bit combinations, upper-bit isolation, timestamp boundaries/independence, DirectoryEntry max name/all attrs/inode_num edge cases, Inode all-fields-max/mixed, corruption byte-flip (Inode + DirectoryEntry), deterministic LCG serialization stress (500 iter each), mode field full u16 cycle
+- **Añadido**: `PERM_R/W/X/S/D` constantes públicas en `neodos_fs.rs` (test-local copies eliminadas)
+- **Añadido**: Comando `DIR` muestra permisos `RWXSD` vía `fmt_perms()` en `dir.rs`
+- **Añadido**: `normalize_path()` en `cd.rs` — resuelve `..`, `.`, separadores duplicados
+- **Corregido**: `neofs_dirent_all_attribute_bits` — `copy_from_slice` con 3-byte source en slice de 4 bytes
+- **Corregido**: `neofs_perm_render_with_file_mode` — esperaba `--XSD` pero no incluía `PERM_D`
+- **Corregido**: `neofs_corrupt_inode_flip_byte` — flip en byte 2 corrompía `inode_num`, cambiado a padding
+- **Corregido**: `0..65536u16` → `0..=65535u16` (u16 overflow)
+- **Total**: 120 tests kernel + 4 user-mode binaries
+
 ## v0.15.2 — 2026-05-20
 
 ### DIR permissions display + NeoFS test constants públicas

@@ -1251,9 +1251,274 @@ pub fn register_neofs_tests() {
             test_eq!(inode.ctime, (i * 3) as u64);
         }
     });
+
+    // ── Permission rendering (matches the format used by DIR) ──
+    fn render_perms(mode: u16) -> [u8; 5] {
+        let mut p = [b'-'; 5];
+        if mode & PERM_R != 0 { p[0] = b'R'; }
+        if mode & PERM_W != 0 { p[1] = b'W'; }
+        if mode & PERM_X != 0 { p[2] = b'X'; }
+        if mode & PERM_S != 0 { p[3] = b'S'; }
+        if mode & PERM_D != 0 { p[4] = b'D'; }
+        p
+    }
+
+    test_case!("neofs_perm_render_all_set", {
+        let p = render_perms(PERM_ALL);
+        test_eq!(core::str::from_utf8(&p), Ok("RWXSD"));
+    });
+    test_case!("neofs_perm_render_none", {
+        let p = render_perms(0);
+        test_eq!(core::str::from_utf8(&p), Ok("-----"));
+    });
+    test_case!("neofs_perm_render_r_only", {
+        let p = render_perms(PERM_R);
+        test_eq!(core::str::from_utf8(&p), Ok("R----"));
+    });
+    test_case!("neofs_perm_render_sd_only", {
+        let p = render_perms(PERM_S | PERM_D);
+        test_eq!(core::str::from_utf8(&p), Ok("---SD"));
+    });
+    test_case!("neofs_perm_render_with_dir_mode", {
+        let p = render_perms(PERM_R | PERM_W | MODE_DIR);
+        test_eq!(core::str::from_utf8(&p), Ok("RW---"));
+    });
+    test_case!("neofs_perm_render_with_file_mode", {
+        let p = render_perms(PERM_X | PERM_S | PERM_D | MODE_FILE);
+        test_eq!(core::str::from_utf8(&p), Ok("--XSD"));
+    });
+    test_case!("neofs_perm_render_with_file_mode_xs_only", {
+        let p = render_perms(PERM_X | PERM_S | MODE_FILE);
+        test_eq!(core::str::from_utf8(&p), Ok("--XS-"));
+    });
+    test_case!("neofs_perm_all_32_combinations", {
+        for bits in 0..32u16 {
+            let mode = bits;
+            let p = render_perms(mode);
+            for i in 0..5 {
+                let expected = if (mode >> i) & 1 != 0 {
+                    match i { 0 => b'R', 1 => b'W', 2 => b'X', 3 => b'S', _ => b'D' }
+                } else { b'-' };
+                test_eq!(p[i], expected);
+            }
+        }
+    });
+    test_case!("neofs_perm_mode_upper_bits_isolated", {
+        for upper in [0x0100, 0x0200, 0x8000, 0xFF00].iter() {
+            let mode = PERM_ALL | upper;
+            let p = render_perms(mode);
+            test_eq!(core::str::from_utf8(&p), Ok("RWXSD"));
+        }
+        let mode = MODE_DIR | MODE_FILE | PERM_ALL;
+        let p = render_perms(mode);
+        test_eq!(core::str::from_utf8(&p), Ok("RWXSD"));
+    });
+
+    // ── Timestamp edge cases ───────────────────────────────────
+    test_case!("neofs_timestamp_near_boundaries", {
+        for ts in [0u64, 1, u64::MAX - 1, u64::MAX].iter() {
+            let raw = ts.to_le_bytes();
+            let recovered = u64::from_le_bytes(raw);
+            test_eq!(recovered, *ts);
+        }
+    });
+    test_case!("neofs_timestamp_independence", {
+        let mut inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 0, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        inode.atime = 0x1111_2222_3333_4444;
+        inode.mtime = 0x4444_3333_2222_1111;
+        inode.ctime = 0xDEAD_BEEF_CAFE_BABE;
+        test_eq!(inode.atime, 0x1111_2222_3333_4444);
+        test_eq!(inode.mtime, 0x4444_3333_2222_1111);
+        test_eq!(inode.ctime, 0xDEAD_BEEF_CAFE_BABE);
+    });
+
+    // ── DirectoryEntry edge cases ──────────────────────────────
+    test_case!("neofs_dirent_name_max_length", {
+        let mut name = [0u8; 249];
+        for i in 0..249 { name[i] = b'A' + (i % 26) as u8; }
+        let entry = DirectoryEntry {
+            inode_num: 42, name_len: 249, entry_type: 1, attributes: 0, name,
+        };
+        test_eq!(entry.inode_num, 42);
+        test_eq!(entry.name_len, 249);
+        test_eq!(entry.entry_type, 1);
+        for i in 0..249 {
+            test_eq!(entry.name[i], b'A' + (i % 26) as u8);
+        }
+    });
+    test_case!("neofs_dirent_all_attribute_bits", {
+        let entry = DirectoryEntry {
+            inode_num: 1, name_len: 4, entry_type: 1, attributes: 0xFF,
+            name: { let mut n = [0u8; 249]; n[..4].copy_from_slice(b"ALL\0"); n },
+        };
+        test_eq!(entry.attributes, 0xFF);
+        test_ne!(entry.attributes & ATTR_READONLY, 0);
+        test_ne!(entry.attributes & ATTR_HIDDEN, 0);
+        test_ne!(entry.attributes & ATTR_SYSTEM, 0);
+        test_ne!(entry.attributes & ATTR_VOLUME, 0);
+        test_ne!(entry.attributes & ATTR_DIR, 0);
+        test_ne!(entry.attributes & ATTR_ARCHIVE, 0);
+    });
+    test_case!("neofs_dirent_inode_num_zero_and_max", {
+        for inum in [0u32, u32::MAX].iter() {
+            let entry = DirectoryEntry {
+                inode_num: *inum, name_len: 3, entry_type: 1, attributes: 0,
+                name: { let mut n = [0u8; 249]; n[..3].copy_from_slice(b"ZMX"); n },
+            };
+            test_eq!(entry.inode_num, *inum);
+        }
+    });
+
+    // ── Inode field boundaries ─────────────────────────────────
+    test_case!("neofs_inode_all_fields_max", {
+        let inode = Inode {
+            inode_num: u32::MAX, mode: u16::MAX, size: u32::MAX,
+            atime: u64::MAX, mtime: u64::MAX, ctime: u64::MAX,
+            link_count: u16::MAX, owner_uid: u32::MAX, owner_gid: u32::MAX,
+            direct_blocks: [u32::MAX; 12], indirect_block: u32::MAX,
+            padding: [0xFFu8; 160],
+        };
+        test_eq!(inode.inode_num, u32::MAX);
+        test_eq!(inode.mode, u16::MAX);
+        test_eq!(inode.size, u32::MAX);
+        test_eq!(inode.atime, u64::MAX);
+        test_eq!(inode.mtime, u64::MAX);
+        test_eq!(inode.ctime, u64::MAX);
+        test_eq!(inode.link_count, u16::MAX);
+        test_eq!(inode.owner_uid, u32::MAX);
+        test_eq!(inode.owner_gid, u32::MAX);
+    });
+    test_case!("neofs_inode_mixed_zero_max_fields", {
+        let inode = Inode {
+            inode_num: 0, mode: u16::MAX, size: 0,
+            atime: u64::MAX, mtime: 0, ctime: u64::MAX,
+            link_count: u16::MAX, owner_uid: 0, owner_gid: u32::MAX,
+            direct_blocks: [0; 12], indirect_block: u32::MAX,
+            padding: [0u8; 160],
+        };
+        test_eq!(inode.inode_num, 0);
+        test_eq!(inode.mode, u16::MAX);
+        test_eq!(inode.size, 0);
+        test_eq!(inode.atime, u64::MAX);
+        test_eq!(inode.mtime, 0);
+        test_eq!(inode.ctime, u64::MAX);
+        test_eq!(inode.link_count, u16::MAX);
+        test_eq!(inode.owner_uid, 0);
+        test_eq!(inode.owner_gid, u32::MAX);
+    });
+
+    // ── Corruption / byte-flip tests ───────────────────────────
+    test_case!("neofs_corrupt_inode_flip_byte", {
+        let inode = Inode {
+            inode_num: 42, mode: MODE_FILE | PERM_R | PERM_W, size: 4096,
+            atime: 1000, mtime: 2000, ctime: 3000,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [10, 11, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            indirect_block: 0, padding: [0u8; 160],
+        };
+        let raw = unsafe {
+            core::slice::from_raw_parts(&inode as *const _ as *const u8, core::mem::size_of::<Inode>())
+        };
+        let mut bytes = [0u8; 256];
+        bytes[..raw.len()].copy_from_slice(raw);
+        bytes[200] ^= 0xFF;
+        let corrupted: Inode = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const _) };
+        test_eq!(corrupted.inode_num, 42);
+        // verify corruption affected padding, not meaningful fields
+        test_ne!(corrupted.padding[104], 0);
+    });
+    test_case!("neofs_corrupt_dirent_flip_byte", {
+        let entry = DirectoryEntry {
+            inode_num: 7, name_len: 3, entry_type: 1, attributes: 0,
+            name: { let mut n = [0u8; 249]; n[..3].copy_from_slice(b"FOO"); n },
+        };
+        let raw = unsafe {
+            core::slice::from_raw_parts(&entry as *const _ as *const u8, core::mem::size_of::<DirectoryEntry>())
+        };
+        let mut bytes = [0u8; 256];
+        bytes[..raw.len()].copy_from_slice(raw);
+        bytes[8] ^= 0xAA;
+        let corrupted: DirectoryEntry = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const _) };
+        test_eq!(corrupted.inode_num, 7);
+    });
+
+    // ── Serialization stress ───────────────────────────────────
+    test_case!("neofs_stress_inode_deterministic_serialize", {
+        let mut state: u64 = 42;
+        let mut lcg = || { state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); state };
+        for _ in 0..500 {
+            let inode = Inode {
+                inode_num: (lcg() % 10000) as u32, mode: lcg() as u16, size: (lcg() % (u32::MAX as u64 + 1)) as u32,
+                atime: lcg(), mtime: lcg(), ctime: lcg(),
+                link_count: lcg() as u16, owner_uid: (lcg() % (u32::MAX as u64 + 1)) as u32, owner_gid: (lcg() % (u32::MAX as u64 + 1)) as u32,
+                direct_blocks: [lcg() as u32 % 100000, lcg() as u32 % 100000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                indirect_block: 0, padding: [0u8; 160],
+            };
+            let raw = unsafe {
+                core::slice::from_raw_parts(&inode as *const _ as *const u8, core::mem::size_of::<Inode>())
+            };
+            let mut buf = [0u8; 256];
+            buf[..raw.len()].copy_from_slice(raw);
+            let recovered: Inode = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const _) };
+            test_eq!(recovered.inode_num, inode.inode_num);
+            test_eq!(recovered.mode, inode.mode);
+            test_eq!(recovered.size, inode.size);
+            test_eq!(recovered.atime, inode.atime);
+            test_eq!(recovered.mtime, inode.mtime);
+            test_eq!(recovered.ctime, inode.ctime);
+            test_eq!(recovered.link_count, inode.link_count);
+            test_eq!(recovered.owner_uid, inode.owner_uid);
+            test_eq!(recovered.owner_gid, inode.owner_gid);
+        }
+    });
+    test_case!("neofs_stress_dirent_deterministic_serialize", {
+        let mut state: u64 = 99;
+        let mut lcg = || { state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); state };
+        for _ in 0..500 {
+            let nlen = ((lcg() % 200) + 1) as usize;
+            let mut name = [0u8; 249];
+            for i in 0..nlen.min(249) { name[i] = b'A' + (lcg() % 26) as u8; }
+            let entry = DirectoryEntry {
+                inode_num: (lcg() % 1000) as u32, name_len: nlen as u8,
+                entry_type: (lcg() % 3) as u8, attributes: (lcg() % 256) as u8, name,
+            };
+            let raw = unsafe {
+                core::slice::from_raw_parts(&entry as *const _ as *const u8, core::mem::size_of::<DirectoryEntry>())
+            };
+            let mut buf = [0u8; 256];
+            buf[..raw.len()].copy_from_slice(raw);
+            let recovered: DirectoryEntry = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const _) };
+            test_eq!(recovered.inode_num, entry.inode_num);
+            test_eq!(recovered.name_len, entry.name_len);
+            test_eq!(recovered.entry_type, entry.entry_type);
+            test_eq!(recovered.attributes, entry.attributes);
+        }
+    });
+    test_case!("neofs_stress_mode_field_cycle", {
+        let mut inode = Inode {
+            inode_num: 1, mode: 0, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 0, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        for i in 0..=65535u16 {
+            inode.mode = i;
+            test_eq!(inode.mode, i);
+        }
+        test_eq!(inode.mode, 0xFFFF);
+    });
 }
 
 // ── Test registration (all suites) ─────────────────────────────────
+
+
 
 pub fn register_tests() {
     register_env_tests();

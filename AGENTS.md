@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.15.2
+v0.15.3
 
 ## Build & Run
 
@@ -200,7 +200,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-99 tests en 12 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+120 tests en 12 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -211,11 +211,11 @@ Binarios flat cargados en `0x400000`.
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
-| NeoFS | 54 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress |
+| NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (99 tests kernel)
+1. Ejecuta `testing::run_all()` (120 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Dependencias
@@ -323,7 +323,7 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | Archivo | Path | Descripción |
 |---------|------|-------------|
 | Bootloader UEFI | `neodos/bootloader.efi` | v0.10.5 |
-| Kernel ELF | `neodos/kernel.elf` | v0.15.2 |
+| Kernel ELF | `neodos/kernel.elf` | v0.15.3 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
