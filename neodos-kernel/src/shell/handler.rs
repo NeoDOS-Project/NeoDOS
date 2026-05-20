@@ -4,6 +4,7 @@ pub struct CommandEntry {
     pub name: &'static str,
     pub category: &'static str,
     pub description: &'static str,
+    pub usage: &'static str,
     pub handler: fn(&mut DosShell, &[&str]),
 }
 
@@ -19,7 +20,21 @@ impl CommandRegistry {
     pub fn dispatch(&self, cmd: &str, args: &[&str], shell: &mut DosShell) -> bool {
         for entry in self.commands {
             if cmd.eq_ignore_ascii_case(entry.name) {
-                (entry.handler)(shell, args);
+                if !args.is_empty() && (args[0] == "/?" || args[0] == "-h" || args[0] == "--help") {
+                    crate::println!("{}", entry.usage);
+                } else {
+                    (entry.handler)(shell, args);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn print_command_help(&self, name: &str) -> bool {
+        for entry in self.commands {
+            if name.eq_ignore_ascii_case(entry.name) {
+                crate::println!("{}", entry.usage);
                 return true;
             }
         }
@@ -91,7 +106,7 @@ impl CommandRegistry {
 }
 
 // Command shims
-pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(); }
+pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
 pub fn cmd_dir(shell: &mut DosShell, args: &[&str]) { shell.cmd_dir(args); }
 pub fn cmd_type(shell: &mut DosShell, args: &[&str]) { shell.cmd_type(args); }
 pub fn cmd_echo(shell: &mut DosShell, args: &[&str]) { shell.cmd_echo(args); }
@@ -131,41 +146,78 @@ pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args);
 pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
-    CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help", },
-    CommandEntry { name: "CLS",      category: "CTRL",     handler: cmd_cls,     description: "Clear screen", },
-    CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "List directory contents", },
-    CommandEntry { name: "TYPE",     category: "FILE",     handler: cmd_type,    description: "Display file contents", },
-    CommandEntry { name: "ECHO",     category: "CONFIG",   handler: cmd_echo,    description: "Print text with %VAR% expansion", },
-    CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables", },
-    CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change layout (KEYB US|SP)", },
-    CommandEntry { name: "CPUINFO",  category: "INFO",     handler: cmd_cpuinfo, description: "Show CPU vendor and brand", },
-    CommandEntry { name: "MEM",      category: "INFO",     handler: cmd_mem,     description: "Show memory usage", },
-    CommandEntry { name: "PS",       category: "INFO",     handler: cmd_ps,      description: "Show process list", },
-    CommandEntry { name: "DATE",     category: "INFO",     handler: cmd_date,    description: "Display current date", },
-    CommandEntry { name: "TIME",     category: "INFO",     handler: cmd_time,    description: "Display current time", },
-    CommandEntry { name: "VER",      category: "INFO",     handler: cmd_ver,     description: "Show kernel version", },
-    CommandEntry { name: "CD",       category: "DISK",     handler: cmd_cd,      description: "Change directory / switch drive", },
-    CommandEntry { name: "VOL",      category: "DISK",     handler: cmd_vol,     description: "Show volume label", },
-    CommandEntry { name: "LABEL",    category: "DISK",     handler: cmd_label,   description: "Display or set volume label", },
-    CommandEntry { name: "DRIVES",   category: "DISK",     handler: cmd_drives,  description: "List mounted drive letters", },
-    CommandEntry { name: "CALL",     category: "CTRL",     handler: cmd_call,    description: "Execute a .BAT batch file", },
-    CommandEntry { name: "COPY",     category: "FILE",     handler: cmd_copy,    description: "Copy file (COPY SRC DST)", },
-    CommandEntry { name: "MD",       category: "FILE",     handler: cmd_md,      description: "Create directory", },
-    CommandEntry { name: "DEL",      category: "FILE",     handler: cmd_del,     description: "Delete file", },
-    CommandEntry { name: "REN",      category: "FILE",     handler: cmd_ren,     description: "Rename file", },
-    CommandEntry { name: "RENAME",   category: "FILE",     handler: cmd_ren,     description: "Rename file", },
-    CommandEntry { name: "RD",       category: "FILE",     handler: cmd_rd,      description: "Remove empty directory", },
-    CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory", },
-    CommandEntry { name: "ATTRIB",   category: "FILE",     handler: cmd_attrib,  description: "Display/modify file attributes", },
-    CommandEntry { name: "SYNC",     category: "CTRL",     handler: cmd_sync,    description: "Flush disk cache to disk", },
-    CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR (TSR FILE INT)", },
-    CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs", },
-    CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests", },
-    CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)", },
-    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary (LOAD FILE.BIN)", },
-    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send cmd to device (DEVICESEND id cmd)", },
-    CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID", },
-    CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt", },
-    CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },
-    CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system", },
+    CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
+        usage: "HELP [command]\r\n  Show general help or detailed help for a specific command.\r\n  HELP DIR   shows detailed help for DIR.", },
+    CommandEntry { name: "CLS",      category: "CTRL",     handler: cmd_cls,     description: "Clear screen",
+        usage: "CLS\r\n  Clear the screen.", },
+    CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "List directory contents",
+        usage: "DIR [path]\r\n  List files and directories. Shows name, size, attributes, permissions, and timestamps.\r\n  DIR  C:\\BIN   lists contents of C:\\BIN.", },
+    CommandEntry { name: "TYPE",     category: "FILE",     handler: cmd_type,    description: "Display file contents",
+        usage: "TYPE [drive:][path]filename\r\n  Display the contents of a text file.", },
+    CommandEntry { name: "ECHO",     category: "CONFIG",   handler: cmd_echo,    description: "Print text with %VAR% expansion",
+        usage: "ECHO [text]\r\n  Print text, expanding %VAR% environment variables.\r\n  ECHO %PATH%  shows the current PATH.", },
+    CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
+        usage: "SET [var[=value]]\r\n  SET              lists all variables.\r\n  SET PATH=C:\\BIN  sets PATH to C:\\BIN.\r\n  SET PATH=        removes PATH.", },
+    CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change layout (KEYB US|SP)",
+        usage: "KEYB US|SP\r\n  Change keyboard layout. US = English US, SP = Spanish.", },
+    CommandEntry { name: "CPUINFO",  category: "INFO",     handler: cmd_cpuinfo, description: "Show CPU vendor and brand",
+        usage: "CPUINFO\r\n  Show CPU vendor string and brand name from CPUID.", },
+    CommandEntry { name: "MEM",      category: "INFO",     handler: cmd_mem,     description: "Show memory usage",
+        usage: "MEM [/H]\r\n  Show memory usage. /H shows human-readable sizes (KB/MB).", },
+    CommandEntry { name: "PS",       category: "INFO",     handler: cmd_ps,      description: "Show process list",
+        usage: "PS\r\n  List all processes with PID, state, and name.", },
+    CommandEntry { name: "DATE",     category: "INFO",     handler: cmd_date,    description: "Display current date",
+        usage: "DATE [YYYY-MM-DD]\r\n  Display or set the current date.", },
+    CommandEntry { name: "TIME",     category: "INFO",     handler: cmd_time,    description: "Display current time",
+        usage: "TIME [HH:MM:SS]\r\n  Display or set the current time.", },
+    CommandEntry { name: "VER",      category: "INFO",     handler: cmd_ver,     description: "Show kernel version",
+        usage: "VER\r\n  Show the NeoDOS kernel version.", },
+    CommandEntry { name: "CD",       category: "DISK",     handler: cmd_cd,      description: "Change directory / switch drive",
+        usage: "CD [path]\r\n  CD C:\\BIN    changes to C:\\BIN.\r\n  CD ..        goes up one level.\r\n  CD           shows current directory.", },
+    CommandEntry { name: "VOL",      category: "DISK",     handler: cmd_vol,     description: "Show volume label",
+        usage: "VOL [drive:]\r\n  Show the volume label of the specified or current drive.", },
+    CommandEntry { name: "LABEL",    category: "DISK",     handler: cmd_label,   description: "Display or set volume label",
+        usage: "LABEL [drive:][label]\r\n  Display or change the volume label.", },
+    CommandEntry { name: "DRIVES",   category: "DISK",     handler: cmd_drives,  description: "List mounted drive letters",
+        usage: "DRIVES\r\n  List all mounted drives and their filesystem types.", },
+    CommandEntry { name: "CALL",     category: "CTRL",     handler: cmd_call,    description: "Execute a .BAT batch file",
+        usage: "CALL file.bat [args]\r\n  Execute a batch file from within another batch file.", },
+    CommandEntry { name: "COPY",     category: "FILE",     handler: cmd_copy,    description: "Copy file (COPY SRC DST)",
+        usage: "COPY source destination\r\n  COPY C:\\readme.txt A:\\readme.txt", },
+    CommandEntry { name: "MD",       category: "FILE",     handler: cmd_md,      description: "Create directory",
+        usage: "MD directory\r\n  Create a new directory.\r\n  MD C:\\DATA  creates C:\\DATA.", },
+    CommandEntry { name: "DEL",      category: "FILE",     handler: cmd_del,     description: "Delete file",
+        usage: "DEL file\r\n  Delete a file.\r\n  DEL C:\\TEMP\\OLD.TXT", },
+    CommandEntry { name: "REN",      category: "FILE",     handler: cmd_ren,     description: "Rename file",
+        usage: "REN oldname newname\r\n  Rename a file.", },
+    CommandEntry { name: "RENAME",   category: "FILE",     handler: cmd_ren,     description: "Rename file",
+        usage: "RENAME oldname newname\r\n  Alias for REN.", },
+    CommandEntry { name: "RD",       category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
+        usage: "RD directory\r\n  Remove an empty directory.", },
+    CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
+        usage: "RMDIR directory\r\n  Alias for RD.", },
+    CommandEntry { name: "ATTRIB",   category: "FILE",     handler: cmd_attrib,  description: "Display/modify file attributes",
+        usage: "ATTRIB [file]\r\n  Display or modify file attributes (R, H, S, A).", },
+    CommandEntry { name: "SYNC",     category: "CTRL",     handler: cmd_sync,    description: "Flush disk cache to disk",
+        usage: "SYNC\r\n  Flush all disk caches to physical media.", },
+    CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR (TSR FILE INT)",
+        usage: "TSR file intnum\r\n  Load a terminate-and-stay-resident module.\r\n  TSR DRIVER.NDM 0x60", },
+    CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs",
+        usage: "DEVICES\r\n  List all installed TSR modules.", },
+    CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
+        usage: "TEST\r\n  Run all kernel self-tests (120 tests across 12 suites).\r\n  Then runs HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN.", },
+    CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)",
+        usage: "RUN file.bin\r\n  Load and execute a flat binary in user mode (Ring 3).", },
+    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary (LOAD FILE.BIN)",
+        usage: "LOAD file.bin [args]\r\n  Load and execute a flat binary. Accepts arguments.", },
+    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send cmd to device (DEVICESEND id cmd)",
+        usage: "DEVICESEND id command\r\n  Send a command to a loaded TSR device.", },
+    CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID",
+        usage: "KILL pid\r\n  Terminate a running process by its PID number.", },
+    CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt",
+        usage: "EXIT\r\n  Sync disk cache and halt the system.", },
+    CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
+        usage: "SHUTDOWN\r\n  Power off the system.", },
+    CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
+        usage: "POWEROFF\r\n  Alias for SHUTDOWN.", },
 ]);

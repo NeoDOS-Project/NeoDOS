@@ -2,8 +2,11 @@
 
 ## v0.15.3 — 2026-05-20
 
-### NeoFS Test Expansion + Bugfixes
+### HELP system mejorado + NeoFS Test Expansion + Bugfixes
 
+- **Añadido**: `usage` field en `CommandEntry` con texto detallado por comando
+- **Añadido**: `HELP <comando>` muestra ayuda detallada (ej: `HELP DIR`)
+- **Añadido**: `DIR /?`, `TYPE -h`, `CD --help` etc. — `/?, -h, --help` funciona en todos los comandos automáticamente
 - **Añadido**: 21 nuevos tests NeoFS (75 total): permission rendering (7), all 32 5-bit combinations, upper-bit isolation, timestamp boundaries/independence, DirectoryEntry max name/all attrs/inode_num edge cases, Inode all-fields-max/mixed, corruption byte-flip (Inode + DirectoryEntry), deterministic LCG serialization stress (500 iter each), mode field full u16 cycle
 - **Añadido**: `PERM_R/W/X/S/D` constantes públicas en `neodos_fs.rs` (test-local copies eliminadas)
 - **Añadido**: Comando `DIR` muestra permisos `RWXSD` vía `fmt_perms()` en `dir.rs`
