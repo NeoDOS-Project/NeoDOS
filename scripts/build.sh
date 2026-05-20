@@ -157,6 +157,11 @@ if [ "$BUILD_USERBIN" = true ]; then
             echo "[\u2713] nasm: $(basename "$asm_file") -> $(basename "$bin_file") ($(wc -c < "$bin_file") bytes)"
         done
     fi
+
+    # Generate NEM test driver binaries
+    NEM_DIR="/tmp/nem_drivers_$$"
+    python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
+    export NEM_DIR
 fi
 
 # ============================================

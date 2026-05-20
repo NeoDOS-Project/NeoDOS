@@ -22,6 +22,7 @@ mod shell;
 mod graphics;
 mod font;
 mod tsr;
+mod nem;
 mod memory;
 mod globals;
 pub mod usermode;

@@ -27,6 +27,7 @@ mod label;
 mod load;
 mod md;
 mod mem;
+mod ndreg;
 mod ren;
 mod rd;
 mod set;

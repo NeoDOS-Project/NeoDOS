@@ -154,6 +154,7 @@ pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
 pub fn cmd_devicesend(shell: &mut DosShell, args: &[&str]) { shell.cmd_devicesend(args); }
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
+pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
@@ -306,4 +307,14 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
         usage: concat!("Syntax:  POWEROFF\n",
                        "  Alias for SHUTDOWN."), },
+    CommandEntry { name: "NDREG",    category: "INFO",     handler: cmd_ndreg,   description: "Driver Registry CLI",
+        usage: concat!("Syntax:  NDREG <subcommand> [args]\n",
+                       "  NeoDOS Driver Registry — inspect driver metadata.\n",
+                       "  Subcommands:\n",
+                       "    NDREG LIST [path]     List drivers with parsed metadata\n",
+                       "    NDREG SHOW <name>     Show full driver details\n",
+                       "    NDREG QUERY            Summarize driver registry\n",
+                       "    NDREG RUNTIME          Show runtime state snapshot\n",
+                       "    NDREG HEALTH           Validate driver metadata integrity\n",
+                       "  All data is read-only from NeoFS + runtime registry."), },
 ]);

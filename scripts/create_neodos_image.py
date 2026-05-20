@@ -124,6 +124,9 @@ Happy hacking!
     # 2. Inode table @ sectors 1-63 (125 inodes max)
     print("[*] Writing inode table...")
 
+    # .nem test driver files
+    nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers')
+
     if args.minimal:
         # --- Minimal disk: only test.txt ---
         root_inode = create_inode(0, 0x40, 256, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -155,7 +158,7 @@ Happy hacking!
         image[512+512:512+768] = testbat_inode
         
         # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, 0x40, 512, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        system_dir_inode = create_inode(3, 0x40, 768, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+768:512+1024] = system_dir_inode
 
         # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
@@ -218,7 +221,36 @@ Happy hacking!
 
         alltest_inode = create_inode(9, 0x80, len(alltest_bin_data), [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+2304:512+2560] = alltest_inode
-        
+
+        # Inode 10-14: NEM test driver binaries
+        nem_files = [
+            (10, "null.nem", 10),
+            (11, "echo.nem", 11),
+            (12, "stress_lifecycle.nem", 12),
+            (13, "fault.nem", 13),
+            (14, "burst.nem", 14),
+        ]
+        nem_data = {}
+        for inum, fname, block in nem_files:
+            fpath = os.path.join(nem_dir, fname)
+            data = b''
+            if os.path.exists(fpath):
+                with open(fpath, 'rb') as nf:
+                    data = nf.read()
+                print(f"[*] Including {fname} ({len(data)} bytes)")
+            nem_data[inum] = data
+            inode = create_inode(inum, 0x80, len(data), [block, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            offset = 512 + inum * 256
+            image[offset:offset+256] = inode
+
+        # Inode 15: DRIVERS directory (under SYSTEM)
+        drivers_inode = create_inode(15, 0x40, 512, [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+3840:512+4096] = drivers_inode
+
+        # Inode 16: TEST directory (under DRIVERS)
+        test_inode = create_inode(16, 0x40, 512 * 3, [16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # 3 entries
+        image[512+4096:512+4352] = test_inode
+
         # 3. Root directory block (block 0) @ first data sector
         print("[*] Writing root directory...")
         offset = (DATA_START_SECTOR + ROOT_DIR_BLOCK * 8) * 512
@@ -277,6 +309,9 @@ ECHO Done.
         image[offset:offset+256] = entry1
         entry2 = create_dir_entry(5, 1, "AUTOEXEC.BAT")
         image[offset+256:offset+512] = entry2
+        # Entry 3: DRIVERS subdirectory
+        entry3 = create_dir_entry(15, 2, "DRIVERS")
+        image[offset+512:offset+768] = entry3
 
         # Block 4 = sector 232 (CONFIG.SYS)
         print("[*] Writing CONFIG.SYS...")
@@ -320,6 +355,34 @@ VER
             print("[*] Writing ALLTEST.BIN content...")
             offset = (200 + 72) * 512
             image[offset:offset+len(alltest_bin_data)] = alltest_bin_data
+
+        # NEM test driver data blocks (blocks 10-14)
+        nem_blocks = [10, 11, 12, 13, 14]
+        for (inum, fname, block), data in zip(nem_files, [nem_data[i] for i in [10, 11, 12, 13, 14]]):
+            if data:
+                offset = (200 + block * 8) * 512
+                image[offset:offset+len(data)] = data
+                print(f"[*] Writing {fname} content...")
+
+        # Block 15 = sector 320 (DRIVERS directory)
+        print("[*] Writing DRIVERS directory...")
+        offset = (200 + 120) * 512
+        entry_test = create_dir_entry(16, 2, "TEST")
+        image[offset:offset+256] = entry_test
+
+        # Block 16 = sector 328 (TEST directory)
+        print("[*] Writing TEST directory...")
+        offset = (200 + 128) * 512
+        entry_null = create_dir_entry(10, 1, "null.nem")
+        image[offset:offset+256] = entry_null
+        entry_echo = create_dir_entry(11, 1, "echo.nem")
+        image[offset+256:offset+512] = entry_echo
+        entry_stress = create_dir_entry(12, 1, "stress_lifecycle.nem")
+        image[offset+512:offset+768] = entry_stress
+        entry_fault = create_dir_entry(13, 1, "fault.nem")
+        image[offset+768:offset+1024] = entry_fault
+        entry_burst = create_dir_entry(14, 1, "burst.nem")
+        image[offset+1024:offset+1280] = entry_burst
 
     
     # Escribir imagen a disco
