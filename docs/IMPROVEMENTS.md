@@ -244,26 +244,11 @@ Desbloquea:
 
 ---
 
-## S4. Eliminación de Panic Paths (#10)
+## ~~S4. Eliminación de Panic Paths (#10)~~
 
 ### Estado
 
-~30 unwrap/expect.
-
-### Objetivo
-
-Kernel fail-safe.
-
-### Requisitos
-
-* reemplazar `unwrap()`
-* introducir logging estructurado
-* error propagation
-* rutas críticas sin panic
-
-### Impacto
-
-Estabilidad general del sistema.
+**COMPLETADO (v0.11.0).** Cero `.unwrap()` en el kernel. Solo 6 `.expect()` en boot paths (serial, block device init, scheduler init) — todos en código de arranque donde el fallo es necesariamente fatal.
 
 ---
 
