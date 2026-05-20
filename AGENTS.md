@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.10.4
+v0.15.2
 
 ## Build & Run
 
@@ -26,12 +26,8 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 52 kernel tests + SYSTEST.BIN user-mode
-3. Verificar test Q35 con AHCI: `QEMU_ACCEL=tcg timeout 120 python3 -c "
-import subprocess, time, os, socket, re
-...
-"`
-4. Solo si todo pasa: `git commit && git push`
+2. `python3 scripts/auto_test.py` — 99 kernel tests + 4 user-mode binaries
+3. Solo si todo pasa: `git commit && git push`
 
 ## Two packages, no workspace
 
@@ -102,29 +98,30 @@ RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
 
 ## In-Kernel Test Framework
 
-52 tests en 8 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+99 tests en 11 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
-| Environment | 7 | Variables de entorno |
-| Input | 6 | Input buffer (ring buffer) |
+| Environment | 6 | Variables de entorno |
+| Input | 5 | Input buffer (ring buffer) |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
-| Drive | 14 | Drive manager, path resolution |
 | Process | 3 | Process struct, state transitions |
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
+| NeoFS | 36 | Inode metadata, timestamps, block count, attrs, serialización |
+| Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (52 tests kernel)
-2. Si pasan, ejecuta `run SYSTEST.BIN` (user-mode)
+1. Ejecuta `testing::run_all()` (99 tests kernel)
+2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Artifacts generados
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
-| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.4 |
-| Kernel ELF | `neodos/kernel.elf` | v0.10.4 |
+| Bootloader UEFI | `neodos/bootloader.efi` | v0.10.5 |
+| Kernel ELF | `neodos/kernel.elf` | v0.15.2 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image | `neodos/scripts/neodos_image.img` | 10 MB |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
