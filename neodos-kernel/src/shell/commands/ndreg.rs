@@ -75,20 +75,21 @@ impl DosShell {
                         let mut i = 0;
                         loop {
                             match vfs.readdir(drive_idx, node.inode, i) {
-                                Ok(Some(entry)) => {
-                                    let name = entry.name.to_ascii_uppercase();
-                                    if !name.ends_with(".NEM") {
-                                        i += 1;
-                                        continue;
-                                    }
+                            Ok(Some(entry)) => {
+                                let name = entry.name.to_ascii_uppercase();
+                                if !name.ends_with(".NEM") {
+                                    i += 1;
+                                    continue;
+                                }
 
-                                    if (entry.node.mode & MODE_DIR) != 0 {
-                                        i += 1;
-                                        continue;
-                                    }
+                                if (entry.node.mode & MODE_DIR) != 0 {
+                                    i += 1;
+                                    continue;
+                                }
 
-                                    let full_file = alloc::format!("{}\\{}", full_path.trim_end_matches('\\'), name);
-                                    nem_files.push(full_file);
+                                let full_file = alloc::format!("{}\\{}", full_path.trim_end_matches('\\'), name);
+                                let lc_file = full_file.to_ascii_lowercase();
+                                nem_files.push(lc_file);
                                     i += 1;
                                 }
                                 Ok(None) => break,
@@ -163,9 +164,10 @@ impl DosShell {
             return;
         }
 
+        let lc_name = name.to_ascii_lowercase();
         let search_paths = [
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\TEST\\{}", name),
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\{}", name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\TEST\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\{}", lc_name),
         ];
 
         for full_path in &search_paths {
