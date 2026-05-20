@@ -68,7 +68,9 @@ pub struct Fat32Driver {
 }
 
 impl Fat32Driver {
-    pub fn new(dev: &mut dyn BlockDevice) -> Result<Self, Fat32Error> {
+    pub fn new() -> Result<Self, Fat32Error> {
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(Fat32Error::NotFound)?;
         let saved_base = dev.base_lba();
         dev.set_base_lba(0);
         let boot_sector_bytes = match dev.read_sector(0) {
@@ -407,8 +409,8 @@ impl From<Fat32Error> for VfsError {
 
 impl FileSystem for Fat32Driver {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
 
         let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
         temp_buf.resize(buf.len() + offset as usize, 0);
@@ -431,8 +433,8 @@ impl FileSystem for Fat32Driver {
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
 
         let name_11 = Self::name_to_11byte(name.as_bytes());
         let entry = self.find_entry_in_directory(dev, dir_inode, &name_11)?;
@@ -445,8 +447,8 @@ impl FileSystem for Fat32Driver {
     }
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
 
         let data_start = self.boot_sector.data_start();
         let sectors_per_cluster = self.boot_sector.sectors_per_cluster as u32;

@@ -154,7 +154,7 @@ Desbloquea:
 
 ### Estado
 
-ATA/AHCI parcialmente desacoplados.
+**COMPLETADO (v0.15.0).** `BlockDevice` trait en `drivers/block.rs`. `StorageManager` (`drivers/storage_manager.rs`) orquesta init: crea ATA, escanea PCI DMA, prueba AHCI, registra el mejor dispositivo en `BlockDeviceManager`. FAT32 e ISO9660 ya no dependen de globals legacy (`ATA_DRIVER`), usan `BLOCK_DEVICES.get(0)`. Globals legacy eliminados.
 
 ### Objetivo
 
@@ -661,13 +661,13 @@ Manual oficial.
 
 ---
 
-# v0.15 — IPC & Shell
+# v0.15 — Storage Manager
 
 ## Objetivos
 
-* pipes
-* redirección
-* batch avanzado
+* StorageManager: discovery PCI + init ATA/AHCI unificado  **✓**
+* Eliminar globals legacy (ATA_DRIVER, AHCI_DRIVER)  **✓**
+* FAT32/ISO9660 migrados a BlockDeviceManager  **✓**
 
 ---
 

@@ -4,12 +4,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::buffer::block_cache::BlockCache;
-use crate::drivers::ahci::AhciDriver;
-use crate::drivers::ata::AtaDriver;
 
-pub static ATA_DRIVER: Mutex<Option<AtaDriver>> = Mutex::new(None);
-pub static ATA_DRIVER_SECONDARY: Mutex<Option<AtaDriver>> = Mutex::new(None);
-pub static AHCI_DRIVER: Mutex<Option<AhciDriver>> = Mutex::new(None);
 lazy_static! {
     pub static ref BLOCK_DEVICES: Mutex<crate::drivers::block::BlockDeviceManager> = Mutex::new(crate::drivers::block::BlockDeviceManager::new());
 }

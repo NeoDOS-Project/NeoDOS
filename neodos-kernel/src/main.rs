@@ -5,8 +5,6 @@
 #![allow(static_mut_refs)]
 
 extern crate alloc;
-
-use alloc::boxed::Box;
 use core::panic::PanicInfo;
 
 mod allocator;
@@ -33,11 +31,8 @@ pub mod trace;
 pub mod invariants;
 pub mod panic_classification;
 
-use drivers::ata::{AtaChannel, AtaDriver};
-use drivers::block::BlockDevice;
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
-use drivers::pci;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
@@ -133,54 +128,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 3: Storage stack
     // ============================================
-    println!("[+] Initializing ATA drivers...");
-    *globals::ATA_DRIVER.lock() = Some(AtaDriver::new(AtaChannel::Primary));
-    *globals::ATA_DRIVER_SECONDARY.lock() = Some(AtaDriver::new(AtaChannel::Secondary));
-
-    println!("[+] Scanning PCI for IDE bus-master DMA...");
-    if let Some(ide) = pci::find_ide_controller() {
-        pci::enable_bus_master(&ide);
-        if let Some(ata) = globals::ATA_DRIVER.lock().as_mut() {
-            ata.init_dma(ide.bus_master_base);
-        }
-        if let Some(ata2) = globals::ATA_DRIVER_SECONDARY.lock().as_mut() {
-            ata2.init_dma(ide.bus_master_base + 8);
-        }
-        println!("[+] ATA bus-master DMA enabled at BMBA 0x{:04X}", ide.bus_master_base);
-    } else {
-        println!("[!] No IDE bus-master controller found, using PIO");
-    }
-
-    println!("[+] Probing for AHCI controller...");
-    let mut ahci_results = drivers::ahci::AhciDriver::probe_all();
-    let ahci_port_count = ahci_results[0].as_ref().map(|a| a.port_count).unwrap_or(0);
-    if let Some(ahci) = ahci_results[0].take() {
-        *globals::AHCI_DRIVER.lock() = Some(ahci);
-        println!("[+] AHCI: {} ports — available for BlockDevice", ahci_port_count);
-    } else {
-        println!("[-] No AHCI controller found");
-    }
-
-    // Register primary block device: AHCI on Q35, ATA fallback on PIIX3
-    let primary_dev: Box<dyn BlockDevice> = {
-        let ahci = globals::AHCI_DRIVER.lock().take();
-        let ata = globals::ATA_DRIVER.lock().take()
-            .expect("ATA_DRIVER not initialized");
-        if let Some(ahci) = ahci {
-            println!("[+] Using AHCI as primary block device");
-            Box::new(ahci)
-        } else {
-            println!("[+] Using ATA (PIO/DMA) as primary block device");
-            Box::new(ata)
-        }
-    };
-    let mut bdevs = globals::BLOCK_DEVICES.lock();
-    let primary_idx = bdevs.register(primary_dev)
-        .expect("Failed to register primary block device");
-
-    // Re-store ATA in legacy globals (AHCI was moved into Box above)
-    core::mem::drop(bdevs);
-    *globals::ATA_DRIVER.lock() = Some(AtaDriver::new(AtaChannel::Primary));
+    drivers::storage_manager::init_storage();
+    let primary_idx = 0;
 
     // ── NeoDOS FS via BlockDeviceManager ──
     println!("[+] Initializing Block Cache...");
@@ -238,31 +187,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // FAT32: via BlockDeviceManager (with ATA fallback)
     // ============================================
     println!("[+] Initializing FAT32 driver...");
-    let mut fat32_mounted = false;
-    {
-        let mut bdevs = globals::BLOCK_DEVICES.lock();
-        if let Some(dev) = bdevs.get(0) {
-            if let Ok(fat32) = Fat32Driver::new(dev) {
-                crate::globals::with_vfs(|vfs| {
-                    let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
-                });
-                fat32_mounted = true;
-            }
-        }
-    }
-    if !fat32_mounted {
-        if let Some(mut ata_lock) = globals::ATA_DRIVER.try_lock() {
-            if let Some(ata) = ata_lock.as_mut() {
-                let dev: &mut dyn BlockDevice = ata;
-                if let Ok(fat32) = Fat32Driver::new(dev) {
-                    crate::globals::with_vfs(|vfs| {
-                        let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
-                    });
-                    fat32_mounted = true;
-                }
-            }
-        }
-    }
+    let fat32_mounted = if let Ok(fat32) = Fat32Driver::new() {
+        crate::globals::with_vfs(|vfs| {
+            let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
+        });
+        true
+    } else {
+        false
+    };
     if fat32_mounted {
         println!("[+] FAT32 ESP mounted on A:");
     }

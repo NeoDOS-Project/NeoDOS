@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.15.0 — 2026-05-20
+
+### Storage Manager — init estructurado + limpieza de globals legacy
+
+- **Añadido**: `drivers/storage_manager.rs` — orquestador de inicialización de almacenamiento
+- **Refactorizado**: `main.rs` init de ATA/AHCI/PCI reemplazado por `storage_manager::init_storage()`
+- **Migrado**: `iso9660.rs` de `ATA_DRIVER.lock()` → `BLOCK_DEVICES.lock().get(0)`
+- **Migrado**: `fat32.rs` de `ATA_DRIVER.lock()` → `BLOCK_DEVICES.lock().get(0)`
+- **Eliminado**: `globals::ATA_DRIVER`, `globals::ATA_DRIVER_SECONDARY`, `globals::AHCI_DRIVER` (legacy)
+- **Eliminada**: dependencia directa de FAT32/ISO9660 en globals legacy
+
 ## v0.14.0 — 2026-05-19
 
 ### HAL ABI v0.3 — KCR Compliance Fix

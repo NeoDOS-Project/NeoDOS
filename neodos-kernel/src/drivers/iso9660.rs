@@ -55,7 +55,9 @@ pub struct Iso9660Driver {
 }
 
 impl Iso9660Driver {
-    pub fn new(dev: &mut dyn BlockDevice) -> Result<Self, Iso9660Error> {
+    pub fn new() -> Result<Self, Iso9660Error> {
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(Iso9660Error::IOError)?;
         let saved = dev.base_lba();
         dev.set_base_lba(0);
 
@@ -235,8 +237,8 @@ impl From<Iso9660Error> for VfsError {
 
 impl FileSystem for Iso9660Driver {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
         let saved = dev.base_lba();
         dev.set_base_lba(0);
 
@@ -252,8 +254,8 @@ impl FileSystem for Iso9660Driver {
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
         let saved = dev.base_lba();
         dev.set_base_lba(0);
 
@@ -269,8 +271,8 @@ impl FileSystem for Iso9660Driver {
     }
 
     fn readdir(&mut self, dir_inode: u32, index: usize) -> Result<Option<VfsDirEntry>, VfsError> {
-        let mut dev_lock = crate::globals::ATA_DRIVER.lock();
-        let dev: &mut dyn BlockDevice = dev_lock.as_mut().ok_or(VfsError::IOError)?;
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        let dev = bdevs.get(0).ok_or(VfsError::IOError)?;
         let saved = dev.base_lba();
         dev.set_base_lba(0);
 

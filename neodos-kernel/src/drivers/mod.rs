@@ -8,6 +8,7 @@ pub mod iso9660;
 pub mod keyboard;
 pub mod pci;
 pub mod rtc;
+pub mod storage_manager;
 pub mod usb_hid;
 
 use core::sync::atomic::AtomicBool;
