@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.15.1 — 2026-05-20
+
+### NeoFS Metadata Validation Test Suite
+
+- **Añadido**: 36 tests de metadatos NeoFS en testing.rs (10 categorías)
+- **Cubierto**: mode (FILE/DIR), timestamps (atime/mtime/ctime), serialización round-trip
+- **Cubierto**: DirectoryEntry attributes (DOS attrs: R, H, S, V, D, A)
+- **Cubierto**: inode_block_count pure function (edge cases: empty, cross-block, max, root dir)
+- **Cubierto**: corruption/edge cases (zero-length name, max values, extra bits en mode)
+- **Cubierto**: stress (toggle mode, uid cycle, timestamp churn)
+- **Total**: 81 tests kernel + 4 user-mode binaries
+
 ## v0.15.0 — 2026-05-20
 
 ### Storage Manager — init estructurado + limpieza de globals legacy

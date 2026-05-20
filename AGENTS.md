@@ -204,7 +204,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-37 tests en 7 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+81 tests en 11 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -215,9 +215,10 @@ Binarios flat cargados en `0x400000`.
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
+| NeoFS | 36 | Inode metadata, timestamps, block count, attrs, serialization |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (37 tests kernel)
+1. Ejecuta `testing::run_all()` (81 tests kernel)
 2. Si pasan, automáticamente ejecuta `run SYSTEST.BIN` (user-mode)
 
 ## Dependencias
