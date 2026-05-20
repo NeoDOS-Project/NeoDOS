@@ -1958,46 +1958,15 @@ Ninguna función debe integrarse directamente en producción kernel:
 
 ---
 
-# Prioridad 0 — Bugs Activos
+# Bugs — Histórico
 
-## GPF intermitente en syscall_handler_asm → iretq (#GPF)
-
-### Síntomas
-
-GPF consistente en `syscall_handler_asm` → `iretq` (RIP `0x2000ad7` aprox), error code `0xff00`.
-Frecuencia: ~0-10 % de las ejecuciones de la test suite completa (4 user binaries + 37 kernel tests).
-
-### Causa diagnosticada
-
-El kernel usa una única pila Ring‑0 (TSS.RSP0, 32 KB compartida) para todas las transiciones Ring 3→Ring 0.
-Cuando el timer handler salva `current.rsp` apuntando a TSS.RSP0 y schedule() selecciona otro proceso,
-el siguiente timer interrupt (cargando TSS.RSP0 fresco) **sobrescribe** el frame del proceso anterior.
-
-### Mitigación actual (v0.10.4)
-
-1. **Context switch exclusivo desde idle** (`arch/x64/idt.rs`): el timer handler **solo** cambia de contexto
-   si el PID actual es 0 (idle). Para procesos Ring‑3 salva RSP, marca `NEED_RESCHED`, y retorna el mismo
-   RSP (no cambia de pila). El cambio real se difiere al syscall return path (`syscall_handler_asm` →
-   `syscall_try_resched`), que ejecuta con IF=0 (interrupt gate), impidiendo que un timer interrumpa
-   el frame a medio restaurar.
-
-2. **syscall_try_resched siempre salva el frame actual** (`syscall.rs`): incluso si el timer handler
-   ya cambió el estado a Ready, la función syscall_try_resched sobreescribe `current.rsp` con el RSP
-   del syscall handler (que está en la misma dirección TSS.RSP0 pero tiene datos más recientes).
-
-3. **INT 0x80 como interrupt gate** (`idt.rs`): `disable_interrupts(true)` evita anidamiento del timer
-   durante el handling de syscalls.
-
-4. **split_2mb_page** (`paging.rs`): la corrección de HUGE_PAGE previene el panic por OOM que ocurría
-   al dividir páginas de 2 MB para demand paging.
+## ~~GPF intermitente en syscall_handler_asm → iretq (#GPF)~~
 
 ### Estado
 
-Reducción de ~30 % a ~0-10 %. Pendiente de solución definitiva.
-
-### Solución definitiva propuesta
-
-Asignar una **pila Ring‑0 privada por proceso** en lugar de compartir TSS.RSP0 global.
+**RESUELTO.** Cada proceso tiene su propia pila Ring‑0 privada (`Process.kernel_stack_top`).
+`TSS.RSP0` se actualiza en cada context switch (`syscall.rs:109`) y al lanzar un proceso
+(`usermode.rs:102`), eliminando la sobrescritura de frames entre procesos.
 Cada proceso necesitaría su propio `AlignedStack` de ~16 KB, y el TSS.RSP0 se actualizaría
 en cada context switch. Esto eliminaría por completo la raza.
 
