@@ -16,6 +16,8 @@ pub struct DosShell {
     pub current_drive: char,
     pub environment: Environment,
     pub running: bool,
+    history: Vec<String>,
+    history_pos: usize,
 }
 
 impl DosShell {
@@ -37,6 +39,8 @@ impl DosShell {
             current_drive: system_drive,
             environment,
             running: true,
+            history: Vec::new(),
+            history_pos: 0,
         };
         shell.environment.set("PATH", "\\BIN;\\SYSTEM");
         shell.environment.set("PROMPT", "$P$G");
@@ -122,6 +126,50 @@ impl DosShell {
                                 }
                             }
                         }
+                        0x01 => {
+                            // Up arrow — navigate history back
+                            if !self.history.is_empty() && self.history_pos < self.history.len() {
+                                self.history_pos += 1;
+                                let entry = &self.history[self.history.len() - self.history_pos];
+                                for _ in 0..line_len {
+                                    crate::console::write_char(b'\x08');
+                                    crate::serial_print!("\x08 \x08");
+                                }
+                                line_len = 0;
+                                for b in entry.bytes() {
+                                    if line_len < 128 {
+                                        line_buffer[line_len] = b;
+                                        line_len += 1;
+                                    }
+                                    crate::console::write_char(b);
+                                    crate::serial_print!("{}", b as char);
+                                }
+                                utf8_rem = 0;
+                            }
+                        }
+                        0x02 => {
+                            // Down arrow — navigate history forward
+                            if self.history_pos > 0 {
+                                self.history_pos -= 1;
+                                for _ in 0..line_len {
+                                    crate::console::write_char(b'\x08');
+                                    crate::serial_print!("\x08 \x08");
+                                }
+                                line_len = 0;
+                                if self.history_pos > 0 {
+                                    let entry = &self.history[self.history.len() - self.history_pos];
+                                    for b in entry.bytes() {
+                                        if line_len < 128 {
+                                            line_buffer[line_len] = b;
+                                            line_len += 1;
+                                        }
+                                        crate::console::write_char(b);
+                                        crate::serial_print!("{}", b as char);
+                                    }
+                                }
+                                utf8_rem = 0;
+                            }
+                        }
                         _ if line_len + 4 < 128 => {
                             if utf8_rem == 0 {
                                 if byte < 0x80 {
@@ -188,6 +236,12 @@ impl DosShell {
         if trimmed.is_empty() {
             return;
         }
+
+        self.history.push(String::from(trimmed));
+        if self.history.len() > 32 {
+            self.history.remove(0);
+        }
+        self.history_pos = 0;
 
         // Handle drive change (e.g., "A:")
         if trimmed.len() == 2 && trimmed.ends_with(':') {

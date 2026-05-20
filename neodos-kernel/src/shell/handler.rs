@@ -1,3 +1,4 @@
+use crate::println;
 use crate::shell::shell::DosShell;
 
 pub struct CommandEntry {
@@ -21,7 +22,7 @@ impl CommandRegistry {
         for entry in self.commands {
             if cmd.eq_ignore_ascii_case(entry.name) {
                 if !args.is_empty() && (args[0] == "/?" || args[0] == "-h" || args[0] == "--help") {
-                    crate::println!("{}", entry.usage);
+                    print_usage(entry);
                 } else {
                     (entry.handler)(shell, args);
                 }
@@ -34,7 +35,7 @@ impl CommandRegistry {
     pub fn print_command_help(&self, name: &str) -> bool {
         for entry in self.commands {
             if name.eq_ignore_ascii_case(entry.name) {
-                crate::println!("{}", entry.usage);
+                print_usage(entry);
                 return true;
             }
         }
@@ -55,7 +56,12 @@ impl CommandRegistry {
     }
 
     pub fn print_help(&self) {
-        use crate::println;
+        println!("========================================");
+        println!("         N e o D O S  H E L P");
+        println!("========================================");
+        println!("  HELP <command>  or  <command> /?");
+        println!("  for detailed help on a specific command.");
+        println!();
 
         let categories: [(&str, &str); 8] = [
             ("FILE",     "FILE MANAGEMENT"),
@@ -67,10 +73,6 @@ impl CommandRegistry {
             ("MISC",     "MISC"),
             ("",         ""),
         ];
-
-        println!("========================================");
-        println!("         N e o D O S  H E L P");
-        println!("========================================\r\n");
 
         for (cat_key, cat_title) in &categories {
             if cat_key.is_empty() {
@@ -90,8 +92,8 @@ impl CommandRegistry {
             println!("  == {} ==", cat_title);
             for e in self.commands {
                 if e.category == *cat_key {
-                    if let Some(pad) = 8usize.checked_sub(e.name.len()) {
-                        let spaces = "                ";
+                    if let Some(pad) = 9usize.checked_sub(e.name.len()) {
+                        let spaces = "                 ";
                         println!("  {} {} {}", e.name, &spaces[..pad], e.description);
                     } else {
                         println!("  {}  {}", e.name, e.description);
@@ -103,6 +105,14 @@ impl CommandRegistry {
 
         println!("========================================");
     }
+}
+
+fn print_usage(entry: &CommandEntry) {
+    println!("========================================");
+    println!("  {} — {}", entry.name, entry.description);
+    println!("========================================");
+    println!("{}", entry.usage);
+    println!();
 }
 
 // Command shims
@@ -147,77 +157,153 @@ pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(ar
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
-        usage: "HELP [command]\r\n  Show general help or detailed help for a specific command.\r\n  HELP DIR   shows detailed help for DIR.", },
+        usage: concat!("Syntax:  HELP [command]\n",
+                       "  Show general help listing or detailed help for a\n",
+                       "  specific command.\n",
+                       "  HELP DIR     shows detailed help for DIR."), },
     CommandEntry { name: "CLS",      category: "CTRL",     handler: cmd_cls,     description: "Clear screen",
-        usage: "CLS\r\n  Clear the screen.", },
+        usage: "Syntax:  CLS\n  Clear the screen and reset cursor to top-left.", },
     CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "List directory contents",
-        usage: "DIR [path]\r\n  List files and directories. Shows name, size, attributes, permissions, and timestamps.\r\n  DIR  C:\\BIN   lists contents of C:\\BIN.", },
+        usage: concat!("Syntax:  DIR [path]\n",
+                       "  List files and directories. Shows name, size in bytes,\n",
+                       "  DOS attributes (RHS), permissions (RWXSD), and timestamps.\n",
+                       "  DIR C:\\BIN   lists the contents of C:\\BIN."), },
     CommandEntry { name: "TYPE",     category: "FILE",     handler: cmd_type,    description: "Display file contents",
-        usage: "TYPE [drive:][path]filename\r\n  Display the contents of a text file.", },
+        usage: concat!("Syntax:  TYPE [drive:][path]filename\n",
+                       "  Display the contents of a text file on screen."), },
     CommandEntry { name: "ECHO",     category: "CONFIG",   handler: cmd_echo,    description: "Print text with %VAR% expansion",
-        usage: "ECHO [text]\r\n  Print text, expanding %VAR% environment variables.\r\n  ECHO %PATH%  shows the current PATH.", },
+        usage: concat!("Syntax:  ECHO [text]\n",
+                       "  Print text, expanding %VAR% environment variables.\n",
+                       "  ECHO               prints a blank line.\n",
+                       "  ECHO %PATH%        shows the current PATH variable.\n",
+                       "  ECHO Hello world   prints \"Hello world\"."), },
     CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
-        usage: "SET [var[=value]]\r\n  SET              lists all variables.\r\n  SET PATH=C:\\BIN  sets PATH to C:\\BIN.\r\n  SET PATH=        removes PATH.", },
-    CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change layout (KEYB US|SP)",
-        usage: "KEYB US|SP\r\n  Change keyboard layout. US = English US, SP = Spanish.", },
+        usage: concat!("Syntax:  SET [var[=value]]\n",
+                       "  SET                lists all environment variables.\n",
+                       "  SET PATH=C:\\BIN    sets PATH to C:\\BIN.\n",
+                       "  SET PATH=          removes the PATH variable."), },
+    CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change keyboard layout",
+        usage: concat!("Syntax:  KEYB US|SP\n",
+                       "  Change the active keyboard layout.\n",
+                       "  US = English (United States)\n",
+                       "  SP = Spanish"), },
     CommandEntry { name: "CPUINFO",  category: "INFO",     handler: cmd_cpuinfo, description: "Show CPU vendor and brand",
-        usage: "CPUINFO\r\n  Show CPU vendor string and brand name from CPUID.", },
+        usage: "Syntax:  CPUINFO\n  Show CPU vendor string and brand name from the CPUID instruction.", },
     CommandEntry { name: "MEM",      category: "INFO",     handler: cmd_mem,     description: "Show memory usage",
-        usage: "MEM [/H]\r\n  Show memory usage. /H shows human-readable sizes (KB/MB).", },
+        usage: concat!("Syntax:  MEM [/H]\n",
+                       "  Show memory usage. /H shows human-readable sizes (KB/MB).\n",
+                       "  Displays total, used, and free heap memory."), },
     CommandEntry { name: "PS",       category: "INFO",     handler: cmd_ps,      description: "Show process list",
-        usage: "PS\r\n  List all processes with PID, state, and name.", },
+        usage: concat!("Syntax:  PS\n",
+                       "  List all running processes with PID, current state,\n",
+                       "  and name. States: Running, Ready, Blocked, Terminated."), },
     CommandEntry { name: "DATE",     category: "INFO",     handler: cmd_date,    description: "Display current date",
-        usage: "DATE [YYYY-MM-DD]\r\n  Display or set the current date.", },
+        usage: concat!("Syntax:  DATE [YYYY-MM-DD]\n",
+                       "  Display the current date, or set a new date.\n",
+                       "  DATE              shows current date.\n",
+                       "  DATE 2026-12-25   sets the date to December 25, 2026."), },
     CommandEntry { name: "TIME",     category: "INFO",     handler: cmd_time,    description: "Display current time",
-        usage: "TIME [HH:MM:SS]\r\n  Display or set the current time.", },
+        usage: concat!("Syntax:  TIME [HH:MM:SS]\n",
+                       "  Display the current time, or set a new time.\n",
+                       "  TIME               shows current time.\n",
+                       "  TIME 14:30:00      sets the time to 14:30:00."), },
     CommandEntry { name: "VER",      category: "INFO",     handler: cmd_ver,     description: "Show kernel version",
-        usage: "VER\r\n  Show the NeoDOS kernel version.", },
+        usage: "Syntax:  VER\n  Show the NeoDOS kernel version string.", },
     CommandEntry { name: "CD",       category: "DISK",     handler: cmd_cd,      description: "Change directory / switch drive",
-        usage: "CD [path]\r\n  CD C:\\BIN    changes to C:\\BIN.\r\n  CD ..        goes up one level.\r\n  CD           shows current directory.", },
+        usage: concat!("Syntax:  CD [path]\n",
+                       "  CD C:\\BIN      changes to C:\\BIN.\n",
+                       "  CD ..          goes up one directory level.\n",
+                       "  CD             displays the current directory path."), },
     CommandEntry { name: "VOL",      category: "DISK",     handler: cmd_vol,     description: "Show volume label",
-        usage: "VOL [drive:]\r\n  Show the volume label of the specified or current drive.", },
+        usage: concat!("Syntax:  VOL [drive:]\n",
+                       "  Show the volume label of the specified drive,\n",
+                       "  or the current drive if none given."), },
     CommandEntry { name: "LABEL",    category: "DISK",     handler: cmd_label,   description: "Display or set volume label",
-        usage: "LABEL [drive:][label]\r\n  Display or change the volume label.", },
+        usage: concat!("Syntax:  LABEL [drive:][label]\n",
+                       "  Display or change the volume label of a drive.\n",
+                       "  LABEL C:MYDISK   sets C: label to MYDISK."), },
     CommandEntry { name: "DRIVES",   category: "DISK",     handler: cmd_drives,  description: "List mounted drive letters",
-        usage: "DRIVES\r\n  List all mounted drives and their filesystem types.", },
+        usage: concat!("Syntax:  DRIVES\n",
+                       "  List all mounted drives, their letters, filesystem types,\n",
+                       "  and volume labels."), },
     CommandEntry { name: "CALL",     category: "CTRL",     handler: cmd_call,    description: "Execute a .BAT batch file",
-        usage: "CALL file.bat [args]\r\n  Execute a batch file from within another batch file.", },
-    CommandEntry { name: "COPY",     category: "FILE",     handler: cmd_copy,    description: "Copy file (COPY SRC DST)",
-        usage: "COPY source destination\r\n  COPY C:\\readme.txt A:\\readme.txt", },
-    CommandEntry { name: "MD",       category: "FILE",     handler: cmd_md,      description: "Create directory",
-        usage: "MD directory\r\n  Create a new directory.\r\n  MD C:\\DATA  creates C:\\DATA.", },
-    CommandEntry { name: "DEL",      category: "FILE",     handler: cmd_del,     description: "Delete file",
-        usage: "DEL file\r\n  Delete a file.\r\n  DEL C:\\TEMP\\OLD.TXT", },
-    CommandEntry { name: "REN",      category: "FILE",     handler: cmd_ren,     description: "Rename file",
-        usage: "REN oldname newname\r\n  Rename a file.", },
-    CommandEntry { name: "RENAME",   category: "FILE",     handler: cmd_ren,     description: "Rename file",
-        usage: "RENAME oldname newname\r\n  Alias for REN.", },
+        usage: concat!("Syntax:  CALL file.bat [args]\n",
+                       "  Execute a batch file from within another batch file.\n",
+                       "  Returns control to the caller when the batch completes."), },
+    CommandEntry { name: "COPY",     category: "FILE",     handler: cmd_copy,    description: "Copy a file",
+        usage: concat!("Syntax:  COPY source destination\n",
+                       "  Copy a file from source path to destination path.\n",
+                       "  COPY C:\\readme.txt A:\\readme.txt"), },
+    CommandEntry { name: "MD",       category: "FILE",     handler: cmd_md,      description: "Create a directory",
+        usage: concat!("Syntax:  MD directory\n",
+                       "  Create a new directory.\n",
+                       "  MD C:\\DATA   creates the C:\\DATA directory."), },
+    CommandEntry { name: "DEL",      category: "FILE",     handler: cmd_del,     description: "Delete a file",
+        usage: concat!("Syntax:  DEL file\n",
+                       "  Delete a file.\n",
+                       "  DEL C:\\TEMP\\OLD.TXT   deletes the file."), },
+    CommandEntry { name: "REN",      category: "FILE",     handler: cmd_ren,     description: "Rename a file",
+        usage: concat!("Syntax:  REN oldname newname\n",
+                       "  Rename a file. Both names are relative to the same\n",
+                       "  directory (REN does not move files across directories).\n",
+                       "  REN report.txt report_old.txt"), },
+    CommandEntry { name: "RENAME",   category: "FILE",     handler: cmd_ren,     description: "Rename a file",
+        usage: concat!("Syntax:  RENAME oldname newname\n",
+                       "  Alias for REN."), },
     CommandEntry { name: "RD",       category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
-        usage: "RD directory\r\n  Remove an empty directory.", },
+        usage: concat!("Syntax:  RD directory\n",
+                       "  Remove an empty directory.\n",
+                       "  RD C:\\EMPTYDIR   removes the directory."), },
     CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
-        usage: "RMDIR directory\r\n  Alias for RD.", },
+        usage: concat!("Syntax:  RMDIR directory\n",
+                       "  Alias for RD."), },
     CommandEntry { name: "ATTRIB",   category: "FILE",     handler: cmd_attrib,  description: "Display/modify file attributes",
-        usage: "ATTRIB [file]\r\n  Display or modify file attributes (R, H, S, A).", },
+        usage: concat!("Syntax:  ATTRIB [file]\n",
+                       "  Display or modify file attributes:\n",
+                       "  R = Read-only, H = Hidden, S = System, A = Archive\n",
+                       "  ATTRIB C:\\FILE.TXT   shows attributes."), },
     CommandEntry { name: "SYNC",     category: "CTRL",     handler: cmd_sync,    description: "Flush disk cache to disk",
-        usage: "SYNC\r\n  Flush all disk caches to physical media.", },
-    CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR (TSR FILE INT)",
-        usage: "TSR file intnum\r\n  Load a terminate-and-stay-resident module.\r\n  TSR DRIVER.NDM 0x60", },
+        usage: concat!("Syntax:  SYNC\n",
+                       "  Flush all pending disk writes from the block cache\n",
+                       "  to the physical disk."), },
+    CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR module",
+        usage: concat!("Syntax:  TSR file intnum\n",
+                       "  Load a Terminate-and-Stay-Resident module.\n",
+                       "  TSR DRIVER.NDM 0x60   loads driver.NDM at INT 0x60"), },
     CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs",
-        usage: "DEVICES\r\n  List all installed TSR modules.", },
+        usage: concat!("Syntax:  DEVICES\n",
+                       "  List all installed TSR (Terminate-and-Stay-Resident)\n",
+                       "  modules and their interrupt numbers."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
-        usage: "TEST\r\n  Run all kernel self-tests (120 tests across 12 suites).\r\n  Then runs HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN.", },
-    CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3 (RUN FILE.BIN)",
-        usage: "RUN file.bin\r\n  Load and execute a flat binary in user mode (Ring 3).", },
-    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary (LOAD FILE.BIN)",
-        usage: "LOAD file.bin [args]\r\n  Load and execute a flat binary. Accepts arguments.", },
-    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send cmd to device (DEVICESEND id cmd)",
-        usage: "DEVICESEND id command\r\n  Send a command to a loaded TSR device.", },
+        usage: concat!("Syntax:  TEST\n",
+                       "  Run all kernel self-tests (120 tests across 12 suites).\n",
+                       "  If all pass, runs 4 user-mode binaries:\n",
+                       "  HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN"), },
+    CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3",
+        usage: concat!("Syntax:  RUN file.bin\n",
+                       "  Load and execute a flat binary in user mode (Ring 3).\n",
+                       "  RUN HELLO.BIN   runs the hello binary."), },
+    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary",
+        usage: concat!("Syntax:  LOAD file.bin [args]\n",
+                       "  Load and execute a flat binary. Accepts optional\n",
+                       "  command-line arguments passed to the program."), },
+    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send command to device",
+        usage: concat!("Syntax:  DEVICESEND id command\n",
+                       "  Send a command string to a loaded TSR device.\n",
+                       "  DEVICESEND 0 STATUS   queries device 0."), },
     CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID",
-        usage: "KILL pid\r\n  Terminate a running process by its PID number.", },
+        usage: concat!("Syntax:  KILL pid\n",
+                       "  Terminate a running process by its PID number.\n",
+                       "  Use PS to list running processes and their PIDs."), },
     CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt",
-        usage: "EXIT\r\n  Sync disk cache and halt the system.", },
+        usage: concat!("Syntax:  EXIT\n",
+                       "  Sync disk cache and halt the system.\n",
+                       "  Equivalent to SYNC followed by HLT."), },
     CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
-        usage: "SHUTDOWN\r\n  Power off the system.", },
+        usage: concat!("Syntax:  SHUTDOWN\n",
+                       "  Power off the system. Uses QEMU debug port.\n",
+                       "  Falls back to HLT if power-off is unavailable."), },
     CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
-        usage: "POWEROFF\r\n  Alias for SHUTDOWN.", },
+        usage: concat!("Syntax:  POWEROFF\n",
+                       "  Alias for SHUTDOWN."), },
 ]);

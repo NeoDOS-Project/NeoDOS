@@ -215,6 +215,8 @@ impl KeyboardDriver {
             match code as u8 {
                 0x35 => return Some(b'/'),
                 0x1C => return Some(b'\n'),
+                0x48 => return Some(0x01), // Up arrow → history up
+                0x50 => return Some(0x02), // Down arrow → history down
                 0x37 | 0x47..=0x53 => return None,
                 _ => {}
             }
