@@ -21,9 +21,9 @@ impl DosShell {
     pub fn cmd_ndreg(&mut self, args: &[&str]) {
         let subcommand = args.first().copied().unwrap_or("list");
         match subcommand.to_ascii_lowercase().as_str() {
-            "list" => self.ndreg_list(&args[1..]),
+            "list" => self.ndreg_list(args.get(1..).unwrap_or(&[])),
             "show" => self.ndreg_show(args.get(1).copied().unwrap_or("")),
-            "query" => self.ndreg_query(&args[1..]),
+            "query" => self.ndreg_query(args.get(1..).unwrap_or(&[])),
             "runtime" => self.ndreg_runtime(),
             "health" => self.ndreg_health(),
             _ => {
