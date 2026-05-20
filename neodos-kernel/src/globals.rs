@@ -7,6 +7,7 @@ use crate::buffer::block_cache::BlockCache;
 
 lazy_static! {
     pub static ref BLOCK_DEVICES: Mutex<crate::drivers::block::BlockDeviceManager> = Mutex::new(crate::drivers::block::BlockDeviceManager::new());
+    pub static ref DEVICE_REGISTRY: Mutex<crate::devices::DeviceRegistry> = Mutex::new(crate::devices::DeviceRegistry::new());
 }
 pub static BLOCK_CACHE: Mutex<Option<BlockCache>> = Mutex::new(None);
 pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new());

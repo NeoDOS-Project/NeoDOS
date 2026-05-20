@@ -3,7 +3,10 @@ use crate::shell::shell::DosShell;
 
 impl DosShell {
     pub fn cmd_devices(&mut self) {
-        println!("Installed TSRs:");
+        println!("--- Hardware Device Model ---");
+        crate::devices::list();
+        println!();
+        println!("--- TSR Modules ---");
         let registry = crate::tsr::TSR_REGISTRY.lock();
         let mut found = false;
         for prog in &registry.programs {

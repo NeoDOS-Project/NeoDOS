@@ -23,6 +23,7 @@ mod graphics;
 mod font;
 mod tsr;
 mod nem;
+mod devices;
 mod memory;
 mod globals;
 pub mod usermode;
@@ -211,6 +212,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     arch::x64::paging::init_heap_demand_paging();
 
     drivers::keyboard::set_leds(0b111); // All ON = storage ready
+
+    // ============================================
+    // PHASE 3.5: Device Model + HAL Binding Layer
+    // ============================================
+    devices::register_boot_devices();
 
     // ============================================
     // PHASE 4: Start DOS Shell
