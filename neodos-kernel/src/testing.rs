@@ -518,10 +518,214 @@ pub fn register_neofs_tests() {
     use crate::fs::neodos_fs::{Inode, DirectoryEntry, NeoDosFs, MODE_DIR, MODE_FILE};
     use crate::fs::neodos_fs::{
         ATTR_READONLY, ATTR_HIDDEN, ATTR_SYSTEM, ATTR_VOLUME, ATTR_DIR, ATTR_ARCHIVE,
+        PERM_R, PERM_W, PERM_X, PERM_S, PERM_D,
     };
     use crate::fs::neodos_fs::BLOCK_SIZE;
 
-    // ── 1. Inode mode / type tests ───────────────────────────────────
+    const PERM_ALL: u16 = PERM_R | PERM_W | PERM_X | PERM_S | PERM_D;
+
+    // ── 1. Permission flag tests (R, W, X, S, D) ─────────────────────
+
+    test_case!("neofs_perm_r_individual", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_R, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_R) != 0);
+        test_eq!(inode.mode & PERM_W, 0);
+        test_eq!(inode.mode & PERM_X, 0);
+        test_eq!(inode.mode & PERM_S, 0);
+        test_eq!(inode.mode & PERM_D, 0);
+    });
+
+    test_case!("neofs_perm_w_individual", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_W, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_W) != 0);
+        test_eq!(inode.mode & (PERM_R | PERM_X | PERM_S | PERM_D), 0);
+    });
+
+    test_case!("neofs_perm_x_individual", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_X, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_X) != 0);
+        test_eq!(inode.mode & (PERM_R | PERM_W | PERM_S | PERM_D), 0);
+    });
+
+    test_case!("neofs_perm_s_individual", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_S, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_S) != 0);
+        test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X | PERM_D), 0);
+    });
+
+    test_case!("neofs_perm_d_individual", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_D, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_D) != 0);
+        test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X | PERM_S), 0);
+    });
+
+    test_case!("neofs_perm_bit_positions", {
+        // Each flag occupies a distinct bit
+        test_eq!(PERM_R, 0x0001);
+        test_eq!(PERM_W, 0x0002);
+        test_eq!(PERM_X, 0x0004);
+        test_eq!(PERM_S, 0x0008);
+        test_eq!(PERM_D, 0x0010);
+        // No overlaps
+        test_eq!(PERM_ALL, 0x001F);
+        test_eq!(PERM_ALL & MODE_DIR, 0);
+        test_eq!(PERM_ALL & MODE_FILE, 0);
+    });
+
+    test_case!("neofs_perm_combined_flags", {
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_R | PERM_W | PERM_X | PERM_S | PERM_D, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_eq!(inode.mode & PERM_ALL, PERM_ALL);
+    });
+
+    test_case!("neofs_perm_subset_flags", {
+        // Only R and X set, verify W/S/D are clear
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE | PERM_R | PERM_X, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & PERM_R) != 0);
+        test_true!((inode.mode & PERM_X) != 0);
+        test_eq!(inode.mode & (PERM_W | PERM_S | PERM_D), 0);
+    });
+
+    test_case!("neofs_perm_zero_perms", {
+        // MODE_FILE with zero permission bits
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_eq!(inode.mode & PERM_ALL, 0);
+    });
+
+    test_case!("neofs_perm_max_bitmask", {
+        // All 16 bits set — permission + type bits all coexist
+        let inode = Inode {
+            inode_num: 1, mode: 0xFFFF, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_eq!(inode.mode & PERM_ALL, PERM_ALL);
+        test_true!((inode.mode & MODE_DIR) != 0);
+        test_true!((inode.mode & MODE_FILE) != 0);
+    });
+
+    test_case!("neofs_perm_with_file_mode", {
+        // Permission flags coexist with MODE_FILE
+        let mode = MODE_FILE | PERM_R | PERM_W | PERM_X;
+        let inode = Inode {
+            inode_num: 1, mode, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & MODE_FILE) != 0);
+        test_true!((inode.mode & PERM_R) != 0);
+        test_true!((inode.mode & PERM_W) != 0);
+        test_true!((inode.mode & PERM_X) != 0);
+        test_eq!(inode.mode & MODE_DIR, 0);
+    });
+
+    test_case!("neofs_perm_with_dir_mode", {
+        // Permission flags coexist with MODE_DIR
+        let mode = MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_S | PERM_D;
+        let inode = Inode {
+            inode_num: 1, mode, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        test_true!((inode.mode & MODE_DIR) != 0);
+        test_eq!(inode.mode & PERM_ALL, PERM_ALL);
+        test_eq!(inode.mode & MODE_FILE, 0);
+    });
+
+    test_case!("neofs_perm_serialize_roundtrip", {
+        // R|W|X|S|D + MODE_DIR through raw byte serialization
+        let original = Inode {
+            inode_num: 7,
+            mode: MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_S | PERM_D,
+            size: 4096,
+            atime: 1111, mtime: 2222, ctime: 3333,
+            link_count: 3, owner_uid: 500, owner_gid: 50,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        let mut raw = [0u8; 256];
+        unsafe { core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original); }
+        let restored: Inode = unsafe { core::ptr::read_unaligned(raw.as_ptr() as *const Inode) };
+        test_true!((restored.mode & MODE_DIR) != 0);
+        test_eq!(restored.mode & PERM_ALL, PERM_ALL);
+        test_eq!(restored.mode & MODE_FILE, 0);
+        test_eq!(restored.size, 4096);
+        test_eq!(restored.owner_uid, 500);
+    });
+
+    test_case!("neofs_perm_all_3bit_combinations", {
+        // Exhaustively test all 8 combinations of R/W/X bits
+        let perms = [PERM_R, PERM_W, PERM_X];
+        for mask in 0..8u16 {
+            let mut flags = 0u16;
+            for b in 0..3 {
+                if mask & (1 << b) != 0 { flags |= perms[b as usize]; }
+            }
+            let inode = Inode {
+                inode_num: 1, mode: flags, size: 0,
+                atime: 0, mtime: 0, ctime: 0,
+                link_count: 0, owner_uid: 0, owner_gid: 0,
+                direct_blocks: [0; 12], indirect_block: 0,
+                padding: [0; 160],
+            };
+            test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X), flags);
+        }
+    });
+
+    // ── 2. Inode mode / type tests ───────────────────────────────────
 
     test_case!("neofs_inode_file_mode", {
         let inode = Inode {
@@ -548,7 +752,6 @@ pub fn register_neofs_tests() {
     });
 
     test_case!("neofs_inode_mode_mutual_exclusive", {
-        // MODE_DIR and MODE_FILE are distinct bits
         test_eq!(MODE_DIR & MODE_FILE, 0);
     });
 
@@ -572,14 +775,13 @@ pub fn register_neofs_tests() {
             direct_blocks: [0xFFFFFFFF; 12], indirect_block: u32::MAX,
             padding: [0xFF; 160],
         };
-        // Max values should not corrupt anything — just verify they're stored
         test_eq!(inode.inode_num, 255);
         test_eq!(inode.mode, 0xFFFF);
         test_eq!(inode.size, u32::MAX);
         test_eq!(inode.atime, u64::MAX);
     });
 
-    // ── 2. Timestamp tests ───────────────────────────────────────────
+    // ── 3. Timestamp tests ───────────────────────────────────────────
 
     test_case!("neofs_timestamp_zero", {
         let inode = Inode {
@@ -619,7 +821,23 @@ pub fn register_neofs_tests() {
         test_true!(inode.mtime <= inode.ctime);
     });
 
-    // ── 3. Inode serialisation round-trip ────────────────────────────
+    test_case!("neofs_timestamp_serialize", {
+        let original = Inode {
+            inode_num: 5, mode: MODE_FILE, size: 0,
+            atime: 999888777666, mtime: 555444333222, ctime: 111222333444,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        let mut raw = [0u8; 256];
+        unsafe { core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original); }
+        let restored: Inode = unsafe { core::ptr::read_unaligned(raw.as_ptr() as *const Inode) };
+        test_eq!(restored.atime, 999888777666);
+        test_eq!(restored.mtime, 555444333222);
+        test_eq!(restored.ctime, 111222333444);
+    });
+
+    // ── 4. Inode serialisation round-trip ────────────────────────────
 
     test_case!("neofs_inode_serialize_roundtrip", {
         let original = Inode {
@@ -636,15 +854,10 @@ pub fn register_neofs_tests() {
             indirect_block: 0,
             padding: [0; 160],
         };
-        // Serialise to raw bytes (same method as write_inode)
         let mut raw = [0u8; 256];
         unsafe {
-            core::ptr::write_unaligned(
-                raw.as_mut_ptr() as *mut Inode,
-                original
-            );
+            core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original);
         }
-        // Deserialise from raw bytes (same method as load_inode)
         let restored: Inode = unsafe {
             core::ptr::read_unaligned(raw.as_ptr() as *const Inode)
         };
@@ -678,14 +891,13 @@ pub fn register_neofs_tests() {
         test_eq!(restored.size, 0);
         test_eq!(restored.atime, 0);
         test_eq!(restored.link_count, 0);
-        // Copy field before iterating (packed struct — avoid misaligned refs)
         let blocks = restored.direct_blocks;
         for &b in blocks.iter() {
             test_eq!(b, 0);
         }
     });
 
-    // ── 4. Inode block count tests (pure function) ───────────────────
+    // ── 5. Inode block count tests (pure function) ───────────────────
 
     test_case!("neofs_inode_block_count_empty", {
         let inode = Inode {
@@ -743,12 +955,10 @@ pub fn register_neofs_tests() {
             indirect_block: 0,
             padding: [0; 160],
         };
-        // Capped at 12 direct blocks
         test_eq!(NeoDosFs::inode_block_count(&inode), 12);
     });
 
     test_case!("neofs_inode_block_count_dir_root", {
-        // Root dir with first block ptr=0 should still count as 1 block
         let inode = Inode {
             inode_num: 0, mode: MODE_DIR, size: 100,
             atime: 0, mtime: 0, ctime: 0,
@@ -760,7 +970,7 @@ pub fn register_neofs_tests() {
         test_eq!(NeoDosFs::inode_block_count(&inode), 1);
     });
 
-    // ── 5. DirectoryEntry attribute tests ────────────────────────────
+    // ── 6. DirectoryEntry DOS attribute tests ────────────────────────
 
     test_case!("neofs_dirent_no_attributes", {
         let entry = DirectoryEntry {
@@ -844,7 +1054,7 @@ pub fn register_neofs_tests() {
         test_eq!(ATTR_ARCHIVE,  0x20);
     });
 
-    // ── 6. DirectoryEntry serialisation ──────────────────────────────
+    // ── 7. DirectoryEntry serialisation ──────────────────────────────
 
     test_case!("neofs_dirent_serialize_roundtrip", {
         let mut name_buf = [0u8; 249];
@@ -872,21 +1082,54 @@ pub fn register_neofs_tests() {
         test_eq!(restored.name, expected_name);
     });
 
-    // ── 7. Edge cases: invalid/corrupted metadata ────────────────────
+    // ── 8. Edge cases: invalid/corrupted metadata ────────────────────
 
     test_case!("neofs_dirent_zero_len_name", {
         let entry = DirectoryEntry {
             inode_num: 0, name_len: 0, entry_type: 1, attributes: 0,
             name: [0u8; 249],
         };
-        // A zero-length name entry should be treated as empty/skip
-        // (the FS listing code in list_root continues when name_len==0)
         test_eq!(entry.name_len, 0);
         test_eq!(entry.inode_num, 0);
     });
 
+    test_case!("neofs_dirent_overflow_name_len", {
+        // name_len > 249 should be handled gracefully by the FS skip logic
+        let entry = DirectoryEntry {
+            inode_num: 5, name_len: 250, entry_type: 1, attributes: 0,
+            name: [0u8; 249],
+        };
+        test_eq!(entry.name_len, 250);
+        test_eq!(entry.inode_num, 5);
+    });
+
+    test_case!("neofs_dirent_invalid_entry_type", {
+        let entry = DirectoryEntry {
+            inode_num: 1, name_len: 3, entry_type: 0xFF, attributes: 0,
+            name: {
+                let mut n = [0u8; 249];
+                n[..3].copy_from_slice(b"BAD");
+                n
+            },
+        };
+        test_eq!(entry.entry_type, 0xFF);
+    });
+
+    test_case!("neofs_dirent_max_attributes", {
+        let entry = DirectoryEntry {
+            inode_num: 1, name_len: 4, entry_type: 1, attributes: 0xFF,
+            name: [0u8; 249],
+        };
+        test_eq!(entry.attributes, 0xFF);
+        // Verify all known bits survive
+        test_true!((entry.attributes & ATTR_READONLY) != 0);
+        test_true!((entry.attributes & ATTR_HIDDEN) != 0);
+        test_true!((entry.attributes & ATTR_SYSTEM) != 0);
+        test_true!((entry.attributes & ATTR_DIR) != 0);
+        test_true!((entry.attributes & ATTR_ARCHIVE) != 0);
+    });
+
     test_case!("neofs_inode_negative_block_count", {
-        // size=0 with no blocks — block_count must be 0
         let inode = Inode {
             inode_num: 0, mode: 0, size: 0,
             atime: 0, mtime: 0, ctime: 0,
@@ -894,9 +1137,10 @@ pub fn register_neofs_tests() {
             direct_blocks: [0; 12], indirect_block: 0,
             padding: [0; 160],
         };
-        // Neither file nor dir — block count should be 0
         test_eq!(NeoDosFs::inode_block_count(&inode), 0);
     });
+
+    // ── 9. Owner / link metadata ─────────────────────────────────────
 
     test_case!("neofs_owner_uid", {
         let inode = Inode {
@@ -910,8 +1154,6 @@ pub fn register_neofs_tests() {
         test_eq!(inode.owner_gid, 0);
         test_eq!(inode.link_count, 1);
     });
-
-    // ── 8. Link count and ownership ──────────────────────────────────
 
     test_case!("neofs_link_count_no_links", {
         let inode = Inode {
@@ -947,26 +1189,9 @@ pub fn register_neofs_tests() {
         test_eq!(inode.owner_gid, 65535);
     });
 
-    // ── 9. Mode bit manipulation ─────────────────────────────────────
-
-    test_case!("neofs_mode_preserves_extra_bits", {
-        // Mode field may have bits beyond 0x40/0x80 set.
-        // The FS must not crash on unknown bits.
-        let inode = Inode {
-            inode_num: 1, mode: MODE_FILE | 0x0F00, size: 0,
-            atime: 0, mtime: 0, ctime: 0,
-            link_count: 0, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
-        };
-        test_true!((inode.mode & MODE_FILE) != 0);
-        test_true!((inode.mode & 0x0F00) != 0);
-    });
-
     // ── 10. Stress: repeated inode manipulation ──────────────────────
 
     test_case!("neofs_stress_inode_toggle_mode", {
-        // Rapidly toggle between MODE_FILE and MODE_DIR
         let mut inode = Inode {
             inode_num: 1, mode: MODE_FILE, size: 0,
             atime: 0, mtime: 0, ctime: 0,
@@ -980,8 +1205,22 @@ pub fn register_neofs_tests() {
         }
     });
 
+    test_case!("neofs_stress_perm_cycle", {
+        // Cycle through all R/W/X/S/D combinations
+        let mut inode = Inode {
+            inode_num: 1, mode: 0, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 0, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            padding: [0; 160],
+        };
+        for i in 0..32u16 {
+            inode.mode = MODE_FILE | ((i * 0x1111) & PERM_ALL);
+            test_eq!(inode.mode & PERM_ALL, (i * 0x1111) & PERM_ALL);
+        }
+    });
+
     test_case!("neofs_stress_inode_uid_cycle", {
-        // Cycle owner_uid through a range, verify no overflow/truncation
         let mut inode = Inode {
             inode_num: 1, mode: MODE_FILE, size: 0,
             atime: 0, mtime: 0, ctime: 0,
@@ -996,7 +1235,6 @@ pub fn register_neofs_tests() {
     });
 
     test_case!("neofs_stress_timestamp_churn", {
-        // Write and check timestamps repeatedly
         let mut inode = Inode {
             inode_num: 1, mode: MODE_FILE, size: 0,
             atime: 0, mtime: 0, ctime: 0,

@@ -86,6 +86,13 @@ pub struct Inode {
 pub const MODE_DIR: u16 = 0x40;
 pub const MODE_FILE: u16 = 0x80;
 
+// Permission flags (stored in mode bits 0-4, coexist with MODE_DIR/MODE_FILE)
+pub const PERM_R: u16 = 0x0001;
+pub const PERM_W: u16 = 0x0002;
+pub const PERM_X: u16 = 0x0004;
+pub const PERM_S: u16 = 0x0008;
+pub const PERM_D: u16 = 0x0010;
+
 // DOS file attributes
 pub const ATTR_READONLY: u8 = 0x01;
 pub const ATTR_HIDDEN: u8   = 0x02;

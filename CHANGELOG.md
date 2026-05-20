@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.15.2 — 2026-05-20
+
+### DIR permissions display + NeoFS test constants públicas
+
+- **Añadido**: Constantes `PERM_R`/`PERM_W`/`PERM_X`/`PERM_S`/`PERM_D` en `neodos_fs.rs` (bits 0-4 del campo `mode`, coexisten con MODE_DIR/MODE_FILE)
+- **Añadido**: El comando `DIR` muestra permisos en formato `RWXSD` (guión por permiso ausente)
+- **Migrado**: Tests de permisos NeoFS usan las constantes públicas de `neodos_fs.rs` en vez de locales
+- **Corregido**: Test `neofs_dirent_invalid_entry_type` — `copy_from_slice` fallaba por mismatch de longitud (3-byte "BAD" en slice de 4 bytes)
+- **Total**: 99 tests kernel + 4 user-mode binaries
+
 ## v0.15.1 — 2026-05-20
 
 ### NeoFS Metadata Validation Test Suite
