@@ -2,8 +2,9 @@
 
 ## v0.15.3 — 2026-05-20
 
-### HELP system mejorado + NeoFS Test Expansion + Bugfixes
+### Command history + HELP system + NeoFS tests + Bugfixes
 
+- **Añadido**: Historial de comandos — ↑/↓ navegan historial circular (32 entradas). Flechas emitidas como 0x01/0x02 desde el driver PS/2
 - **Añadido**: `usage` field en `CommandEntry` con texto detallado por comando
 - **Añadido**: `HELP <comando>` muestra ayuda detallada (ej: `HELP DIR`)
 - **Añadido**: `DIR /?`, `TYPE -h`, `CD --help` etc. — `/?, -h, --help` funciona en todos los comandos automáticamente

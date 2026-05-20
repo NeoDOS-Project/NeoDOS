@@ -145,7 +145,7 @@ On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the process `Terminate
 
 Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking).
 
-## Shell: TAB autocomplete
+## Shell: TAB autocomplete + history
 
 El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
 - **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.BIN` del PATH
@@ -153,6 +153,11 @@ El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
 - **Rutas**: soporta rutas con separador (`DIR \\BIN\\TE` → `\\BIN\\TEST`)
 - Match único: reemplaza y añade espacio (comandos)
 - Múltiples matches: lista todos y redibuja prompt + línea
+
+El shell tiene historial de comandos con **↑/↓** (`shell.rs`, `keyboard.rs`):
+- Buffer circular de 32 entradas
+- Las flechas se emiten como bytes sentinela 0x01 (up) / 0x02 (down) desde el driver PS/2
+- `history` se almacena como `Vec<String>` en `DosShell`, se inicializa en `new()`
 
 ## Shell: DEL, REN, RD
 

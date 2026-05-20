@@ -378,10 +378,9 @@ Estas tareas mejoran usabilidad y tooling.
 
 ---
 
-## B1. Historial de comandos (#18)
+## ~~B1. Historial de comandos (#18)~~
 
-* buffer circular
-* navegación ↑/↓
+**COMPLETADO (v0.15.3).** Buffer circular de 32 entradas, navegación ↑/↓ en el shell. Driver PS/2 emite 0x01 (up) / 0x02 (down) desde `keyboard.rs`.
 
 ---
 
