@@ -2,6 +2,25 @@ use crate::println;
 use crate::shell::shell::DosShell;
 use crate::fs::vfs::MODE_DIR;
 use alloc::string::String;
+use alloc::vec::Vec;
+
+fn normalize_path(path: &str) -> String {
+    let mut comps: Vec<&str> = Vec::new();
+    for comp in path.split('\\') {
+        match comp {
+            "" | "." => continue,
+            ".." => { comps.pop(); }
+            c => comps.push(c),
+        }
+    }
+    if comps.is_empty() {
+        String::from("\\")
+    } else {
+        let mut result = String::from("\\");
+        result.push_str(&comps.join("\\"));
+        result
+    }
+}
 
 impl DosShell {
     pub fn cmd_cd(&mut self, args: &[&str]) {
@@ -40,12 +59,10 @@ impl DosShell {
                         return;
                     }
                     
-                    // Update shell state
-                    // We need to parse the path to normalize it (handle .. etc)
-                    // For now, let's just use the full path but we should ideally normalize it.
                     if let Some(colon_idx) = full_path.find(':') {
                         self.current_drive = (full_path.as_bytes()[0] as char).to_ascii_uppercase();
-                        self.current_dir = String::from(&full_path[colon_idx + 1..]);
+                        let raw = &full_path[colon_idx + 1..];
+                        self.current_dir = normalize_path(raw);
                         self.current_dir_inode = node.inode;
                     }
                 }
