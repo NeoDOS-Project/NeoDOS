@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 
 ## Versión Actual
-v0.15.3
+v0.15.4
 
 ## Build & Run
 
@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 99 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 143 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 ## Two packages, no workspace
@@ -98,7 +98,7 @@ RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
 
 ## In-Kernel Test Framework
 
-134 tests en 13 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+143 tests en 14 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -114,7 +114,7 @@ RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (134 tests kernel)
+1. Ejecuta `testing::run_all()` (143 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## NEM Module
@@ -157,12 +157,36 @@ All data is read-only from NeoFS + runtime registry. No driver execution.
 
 Rules: drivers never touch hardware directly. All access goes through `driver → HAL Binding Layer → HAL ABI v0.3 → hardware`. No raw port I/O, MMIO, or IRQ vector manipulation allowed.
 
+## Event Bus v1
+
+`src/eventbus/mod.rs` — Centralized event routing layer. Transforms raw IRQs into normalized events for driver dispatch.
+
+| Concept | Description |
+|---------|-------------|
+| **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` |
+| **Event types** | 11 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, USER(0x1000+) |
+| **Sources** | SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND |
+| **Queue** | Lock-free SPSC ring buffer (64 slots) — pushed from IRQ context, popped from scheduler context |
+| **Callbacks** | `register_handler(event_type, callback, name)` — max 32 handlers, dispatched outside IRQ context |
+| **Dispatch** | `dispatch_pending()` called from idle loop (scheduler integration) |
+| **IRQ integration** | TimerTick pushed from PIT IRQ0, KeyboardInput pushed from PS/2 IRQ1 |
+| **Isolation** | No driver execution in IRQ context. No recursive dispatch. Events immutable after enqueue |
+
+## Test Suites
+
+143 kernel tests + 4 user-mode binaries
+
+| Suite | Tests | Description |
+|-------|-------|-------------|
+| ... (existing) ... | ... | ... |
+| Event Bus | 9 | Event creation, push/pop, ordering, overflow, monotonic IDs, handler dispatch, type filter, unregister, empty queue |
+
 ## Artifacts generados
 
 | Archivo | Path | Descripción |
 |---------|------|-------------|
 | Bootloader UEFI | `neodos/bootloader.efi` | v0.10.5 |
-| Kernel ELF | `neodos/kernel.elf` | v0.15.3 |
+| Kernel ELF | `neodos/kernel.elf` | v0.14.0 |
 | Disco GPT unificado | `neodos/disk_image.img` | 112 MB (ESP + NeoDOS FS) |
 | NeoDOS FS image | `neodos/scripts/neodos_image.img` | 10 MB |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
