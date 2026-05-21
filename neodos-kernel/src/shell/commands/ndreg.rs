@@ -39,6 +39,20 @@ impl DosShell {
         }
     }
 
+    pub fn cmd_loadnem(&mut self, args: &[&str]) {
+        let path = args.first().copied().unwrap_or("");
+        if path.is_empty() {
+            println!("LOADNEM <path>");
+            println!("  Load a .nem driver file from NeoFS.");
+            return;
+        }
+        crate::drivers::driver_loader::cmd_loadnem(path);
+    }
+
+    pub fn cmd_nemlist(&mut self) {
+        crate::drivers::driver_loader::cmd_nemlist();
+    }
+
     fn ndreg_list(&mut self, args: &[&str]) {
         let has_path = !args.is_empty();
         let search_dirs: &[&str] = if has_path {
@@ -306,16 +320,42 @@ impl DosShell {
 
     fn ndreg_runtime(&mut self) {
         println!("========================================");
-        println!("  NeoDOS Runtime Driver State");
+        println!("  NeoDOS Driver Runtime State");
         println!("========================================");
-        println!("  Driver Loader:    NOT ACTIVE");
-        println!("  Loaded Drivers:   0");
-        println!("  Active Drivers:   0");
-        println!("  Failed Loads:     0");
-        println!("  Quarantined:      0");
-        println!("  Last Error:       None");
+
+        let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
+        let count = runtime.count();
+        let active = runtime.active_count();
+        let next_id = runtime.next_driver_id();
+        let timer_tick = crate::hal::get_ticks();
+        drop(runtime);
+
+        println!("  Timer Tick:       {}", timer_tick);
+        println!("  Next Driver ID:   {}", next_id);
+        println!("  Loaded Drivers:   {}", count);
+        println!("  Active Drivers:   {}", active);
+        println!("  Event Bus Queue:  {} avail", crate::eventbus::EVENT_BUS.queue_available());
+        println!("  Event Bus Hdlrs:  {}", crate::eventbus::EVENT_BUS.handler_count());
+        println!("  Next Event ID:    {}", crate::eventbus::EVENT_BUS.next_event_id());
         println!();
-        println!("  (Runtime loader not yet implemented)");
+
+        let names = crate::drivers::driver_runtime::driver_names();
+        if names.is_empty() {
+            println!("  No drivers loaded.");
+        } else {
+            println!("  ID  NAME                  STATE       EVENTS  TICKS");
+            println!("  --- --------------------  ----------  ------  -----");
+            let r = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
+            for (name, id, state) in &names {
+                if let Some(drv) = r.get(*id) {
+                    println!(
+                        "  {:>3}  {:20}  {:10}  {:>6}  {:>5}",
+                        id, name, state.to_str(),
+                        drv.events_received, drv.tick_count
+                    );
+                }
+            }
+        }
     }
 
     fn ndreg_health(&mut self) {

@@ -437,23 +437,21 @@ fn register_syscall_stress() {
     });
 
     test_case!("stress_syscall_invalid_numbers", {
-        // ABI fuzzing: ensure invalid syscall numbers return u64::MAX
+        // ABI fuzzing: ensure invalid syscall numbers return -ENOSYS
+        let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::NoSys);
         for num in &[20u64, 100, 255, 0xFFFFFFFF] {
-            // Create a dummy dispatch call
             let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0);
-            test_eq!(result, u64::MAX);
+            test_eq!(result, expected);
         }
     });
 
     test_case!("stress_syscall_ptr_validation", {
         // Ensure user pointer validation rejects kernel addresses
-        // We can't call the private `is_user_ptr_valid` directly, but
-        // we can test the public behavior via what sys_write would do.
-        // If we send a kernel address to sys_write (RAX=1), the dispatch
-        // should return u64::MAX without crashing.
+        // Syscall with bad address should return -EFAULT
+        let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::Fault);
         let kernel_addr: u64 = 0x200000; // kernel .text start
         let result = crate::syscall::syscall_dispatch(1, kernel_addr, 10, 0);
-        test_eq!(result, u64::MAX);
+        test_eq!(result, expected);
     });
 }
 
@@ -1530,6 +1528,7 @@ pub fn register_tests() {
     register_sync_tests();
     register_neofs_tests();
     crate::nem::register_nem_tests();
+    crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();

@@ -1,36 +1,155 @@
 //! Syscall dispatch table — INT 0x80
 //!
+//! # ABI v0 (STABLE)
+//!
 //! Calling convention (Ring 3 → kernel):
-//!   RAX = syscall number
+//!   RAX = syscall number  (see `SyscallNum`)
 //!   RBX = arg0
 //!   RCX = arg1
 //!   RDX = arg2
 //!
-//! Return value in RAX (passed back from this function to the asm trampolín).
+//! Return value in RAX:
+//!   Non-negative (≥ 0)  → success, value is the result
+//!   Negative (< 0)       → error, value is `-(SyscallError)`.
+//!     User code checks for error with `cmp rax, -1` / `jl error` or
+//!     compares against `SYSERR_*` constants.
 //!
-//! Syscall numbers:
-//!   0  sys_exit      — terminate current process
-//!   1  sys_write     — write bytes to the console
-//!   2  sys_yield     — voluntarily give up the CPU
-//!   3  sys_getpid    — return current PID
-//!   4  sys_read      — read from stdin (keyboard)
-//!   9  sys_waitpid   — wait for process to terminate
-//!  10  sys_open      — open file
-//!  11  sys_readfile  — read from file
-//!  12  sys_writefile — write to file
-//!  13  sys_close     — close file
-//!  14  sys_ioctl     — device I/O control
-//!  15  sys_register_device — register device handler
-//!  16  sys_chdir     — change current working directory
-//!  17  sys_getcwd    — get current working directory
-//!  18  sys_brk       — adjust program break (demand-paged)
-//!  19  sys_mmap      — allocate zero-filled memory
+//! Error codes are returned as `u64` containing the twos-complement
+//! representation of the negative error.  Example:
+//!   `SYSERR_NOENT = 2`  → RAX = `0xFFFF_FFFF_FFFF_FFFE` (= -2 as i64).
+//!
+//! Legacy: syscalls that never fail (sys_getpid, sys_yield, sys_exit)
+//! return 0 on success.  New code should treat 0 as success.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::serial_println;
 use crate::scheduler::{self, ProcessState};
+
+// ── Syscall Number Constants (frozen ABI) ──
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u64)]
+pub enum SyscallNum {
+    Exit = 0,
+    Write = 1,
+    Yield = 2,
+    GetPid = 3,
+    Read = 4,
+
+    WaitPid = 9,
+    Open = 10,
+    ReadFile = 11,
+    WriteFile = 12,
+    Close = 13,
+    Ioctl = 14,
+    RegisterDevice = 15,
+    ChDir = 16,
+    GetCwd = 17,
+    Brk = 18,
+    Mmap = 19,
+}
+
+impl SyscallNum {
+    pub const MAX_VALID: u64 = 19;
+
+    pub fn from_u64(n: u64) -> Option<Self> {
+        match n {
+            0 => Some(Self::Exit),
+            1 => Some(Self::Write),
+            2 => Some(Self::Yield),
+            3 => Some(Self::GetPid),
+            4 => Some(Self::Read),
+            9 => Some(Self::WaitPid),
+            10 => Some(Self::Open),
+            11 => Some(Self::ReadFile),
+            12 => Some(Self::WriteFile),
+            13 => Some(Self::Close),
+            14 => Some(Self::Ioctl),
+            15 => Some(Self::RegisterDevice),
+            16 => Some(Self::ChDir),
+            17 => Some(Self::GetCwd),
+            18 => Some(Self::Brk),
+            19 => Some(Self::Mmap),
+            _ => None,
+        }
+    }
+}
+
+// ── Standard Error Codes ──
+//
+// Returned as negative u64: `err_to_u64(SyscallError::NoEnt)` → 0xFFFF_FFFF_FFFF_FFFE.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum SyscallError {
+    /// Invalid argument
+    Inval = 1,
+    /// No such file or directory
+    NoEnt = 2,
+    /// Out of memory
+    NoMem = 3,
+    /// Permission denied
+    Acces = 4,
+    /// Bad file descriptor / handle
+    BadF = 5,
+    /// Bad address
+    Fault = 6,
+    /// Function not implemented
+    NoSys = 7,
+    /// Resource temporarily unavailable
+    Again = 8,
+    /// Broken pipe
+    Pipe = 9,
+    /// File exists
+    Exist = 10,
+    /// Not a directory
+    NotDir = 11,
+    /// Is a directory
+    IsDir = 12,
+    /// I/O error
+    Io = 13,
+    /// No such device
+    NoDev = 14,
+    /// Device or resource busy
+    Busy = 15,
+}
+
+/// Convert a `SyscallError` into the `u64` return value convention
+/// (negative encoding: `NoEnt=2` → RAX = `0xFFFF_FFFF_FFFF_FFFE` = -2 as i64).
+pub fn err_to_u64(e: SyscallError) -> u64 {
+    (-(e as i64)) as u64
+}
+
+/// Shortcut: return an error from a syscall handler.
+macro_rules! syserr {
+    ($e:ident) => { return crate::syscall::err_to_u64(crate::syscall::SyscallError::$e) };
+}
+
+// ── ABI validation ──
+
+/// Validate syscall ABI assumptions at boot time.
+/// Called once during kernel init.
+pub fn validate_abi() {
+    // SyscallError values must fit in a negative i64 when cast to u64
+    assert!((err_to_u64(SyscallError::Inval) as i64) < 0);
+    assert!((err_to_u64(SyscallError::NoEnt) as i64) < 0);
+    assert!((err_to_u64(SyscallError::NoMem) as i64) < 0);
+
+    // Syscall numbers must not overlap or exceed max
+    assert_eq!(SyscallNum::MAX_VALID, 19);
+    for n in 0..=SyscallNum::MAX_VALID {
+        if n == 5 || n == 6 || n == 7 || n == 8 {
+            assert!(SyscallNum::from_u64(n).is_none(), "reserved hole {} must stay free", n);
+        } else {
+            assert!(SyscallNum::from_u64(n).is_some(), "syscall {} must be assigned", n);
+        }
+    }
+
+    crate::serial_println!("[SYS] ABI v0 validated ({} syscalls, {} error codes)",
+        SyscallNum::MAX_VALID + 1, 16);
+}
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
 
@@ -183,16 +302,17 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
     crate::trace_syscall!(rax, rbx, rcx, _rdx);
 
     // ABI validation: reject unknown syscall numbers
-    if rax > 19 {
-        serial_println!("[SYS] INVALID syscall number: {}", rax);
-        return u64::MAX;
-    }
+    let num = match SyscallNum::from_u64(rax) {
+        Some(n) => n,
+        None => {
+            serial_println!("[SYS] INVALID syscall number: {}", rax);
+            return err_to_u64(SyscallError::NoSys);
+        }
+    };
 
-    match rax {
-        // ---- sys_exit(code: u64) ----
-        0 => {
+    match num {
+        SyscallNum::Exit => {
             let code = rbx;
-            serial_println!("[SYS] sys_exit({})", code);
 
             let pid = crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
@@ -207,7 +327,6 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                             crate::arch::x64::paging::free_user_slot(slot);
                         }
                         if proc.heap_base != 0 {
-                            // Free all physically allocated heap pages
                             crate::arch::x64::paging::heap_free_range(
                                 proc.heap_base,
                                 proc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
@@ -230,68 +349,56 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 crate::usermode::request_exit_to_kernel();
             }
 
-            0
+            code
         }
 
-        // ---- sys_write(ptr: *const u8, len: usize) ----
-        1 => {
+        SyscallNum::Write => {
             let ptr = rbx as *const u8;
             let len = rcx as usize;
 
             if !is_user_ptr_valid(rbx, len as u64) || len > 4096 {
                 serial_println!("[SYS] sys_write: bad address 0x{:x} len {}", rbx, len);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
 
             let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
             if let Ok(s) = core::str::from_utf8(slice) {
                 crate::console::print_str(s);
-                serial_println!("[user] {}", s);
             }
             len as u64
         }
 
-        // ---- sys_yield() ----
-        2 => {
-            serial_println!("[SYS] sys_yield");
+        SyscallNum::Yield => {
             0
         }
 
-        // ---- sys_getpid() ----
-        3 => {
+        SyscallNum::GetPid => {
             let pid = crate::hal::without_interrupts(|| {
                 crate::scheduler::current_scheduler().lock().current_pid
             });
-            serial_println!("[SYS] sys_getpid -> {}", pid);
             pid as u64
         }
 
-        // ---- sys_read(fd: u64, buf: *mut u8, count: usize) ----
-        4 => {
+        SyscallNum::Read => {
             let fd = rbx;
             let buf_ptr = rcx as *mut u8;
             let count = _rdx as usize;
 
             if fd != 0 {
-                serial_println!("[SYS] sys_read: unsupported fd {}", fd);
-                return u64::MAX;
+                return err_to_u64(SyscallError::BadF);
             }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
-                serial_println!("[SYS] sys_read: bad address 0x{:x} len {}", rcx, count);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
 
             let mut bytes_read = 0usize;
-            
+
             while bytes_read < count {
                 match crate::input::pop_byte() {
                     Some(byte) => {
-                        unsafe {
-                            buf_ptr.add(bytes_read).write(byte);
-                        }
+                        unsafe { buf_ptr.add(bytes_read).write(byte); }
                         bytes_read += 1;
-                        
                         if byte == b'\r' || byte == b'\n' {
                             break;
                         }
@@ -300,12 +407,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                         if bytes_read > 0 {
                             break;
                         }
-                        
                         loop {
                             if let Some(b) = crate::input::pop_byte() {
-                                unsafe {
-                                    buf_ptr.add(bytes_read).write(b);
-                                }
+                                unsafe { buf_ptr.add(bytes_read).write(b); }
                                 bytes_read += 1;
                                 break;
                             }
@@ -315,70 +419,58 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 }
             }
 
-            serial_println!("[SYS] sys_read -> {} bytes", bytes_read);
             bytes_read as u64
         }
 
-        // ---- sys_waitpid(pid: u32) -> exit_code ----
-        9 => {
+        SyscallNum::WaitPid => {
             let wait_pid = rbx as u32;
-            serial_println!("[SYS] sys_waitpid({})", wait_pid);
 
-            {
-                let already_terminated = crate::hal::without_interrupts(|| {
-                    let s = crate::scheduler::current_scheduler();
-                    let scheduler = s.lock();
-                    
-                    let mut terminated = false;
-                    for proc in scheduler.processes.iter() {
-                        if let Some(p) = proc {
-                            if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                                terminated = true;
-                                break;
-                            }
-                        }
-                    }
-                    terminated
-                });
-                
-                if !already_terminated {
-                    loop {
-                        let is_terminated = crate::hal::without_interrupts(|| {
-                            let s2 = crate::scheduler::current_scheduler();
-                            let scheduler2 = s2.lock();
-                            
-                            let mut terminated = false;
-                            for proc in scheduler2.processes.iter() {
-                                if let Some(p) = proc {
-                                    if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                                        terminated = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            terminated
-                        });
-                        
-                        if is_terminated {
+            let already_terminated = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let scheduler = s.lock();
+                let mut terminated = false;
+                for proc in scheduler.processes.iter() {
+                    if let Some(p) = proc {
+                        if p.pid == wait_pid && p.state == ProcessState::Terminated {
+                            terminated = true;
                             break;
                         }
-                        
-                        crate::hal::hlt_once();
                     }
+                }
+                terminated
+            });
+
+            if !already_terminated {
+                loop {
+                    let is_terminated = crate::hal::without_interrupts(|| {
+                        let s2 = crate::scheduler::current_scheduler();
+                        let scheduler2 = s2.lock();
+                        let mut terminated = false;
+                        for proc in scheduler2.processes.iter() {
+                            if let Some(p) = proc {
+                                if p.pid == wait_pid && p.state == ProcessState::Terminated {
+                                    terminated = true;
+                                    break;
+                                }
+                            }
+                        }
+                        terminated
+                    });
+
+                    if is_terminated { break; }
+                    crate::hal::hlt_once();
                 }
             }
 
             0
         }
 
-        // ---- sys_open(path: *const u8, flags: u64) -> inode_num / u64::MAX ----
-        10 => {
+        SyscallNum::Open => {
             let path_ptr = rbx as *const u8;
             let _flags = rcx;
 
             if !is_user_ptr_valid(rbx, 1) {
-                serial_println!("[SYS] sys_open: bad path address 0x{:x}", rbx);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
 
             let mut path_bytes = [0u8; 256];
@@ -387,28 +479,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             unsafe {
                 while path_len < 255 {
                     let byte = path_ptr.add(path_len).read();
-                    if byte == 0 {
-                        break;
-                    }
+                    if byte == 0 { break; }
                     path_bytes[path_len] = byte;
                     path_len += 1;
                 }
             }
 
             if path_len == 0 {
-                serial_println!("[SYS] sys_open: empty path");
-                return u64::MAX;
+                return err_to_u64(SyscallError::NoEnt);
             }
 
             let path = match core::str::from_utf8(&path_bytes[..path_len]) {
                 Ok(s) => s,
-                Err(_) => {
-                    serial_println!("[SYS] sys_open: invalid UTF-8");
-                    return u64::MAX;
-                }
+                Err(_) => return err_to_u64(SyscallError::Inval),
             };
-
-            serial_println!("[SYS] sys_open('{}')", path);
 
             let result = crate::globals::with_vfs(|vfs| {
                 let has_drive = path.contains(':');
@@ -426,22 +510,16 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             match result {
                 Ok((drive_idx, node)) => {
                     if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
-                        serial_println!("[SYS] sys_open -> Not a file");
-                        return u64::MAX;
+                        return err_to_u64(SyscallError::IsDir);
                     }
                     let handle = ((drive_idx as u64) << 32) | (node.inode as u64);
-                    serial_println!("[SYS] sys_open -> handle 0x{:x}", handle);
                     handle
                 }
-                Err(_) => {
-                    serial_println!("[SYS] sys_open -> File not found");
-                    u64::MAX
-                }
+                Err(_) => err_to_u64(SyscallError::NoEnt),
             }
         }
 
-        // ---- sys_readfile(handle: u64, buf: *mut u8, count: usize) -> bytes_read ----
-        11 => {
+        SyscallNum::ReadFile => {
             let handle = rbx;
             let drive_idx = (handle >> 32) as usize;
             let inode_num = (handle & 0xFFFFFFFF) as u32;
@@ -449,16 +527,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let count = _rdx as usize;
 
             if drive_idx >= 26 || handle == u64::MAX {
-                serial_println!("[SYS] sys_readfile: invalid handle 0x{:x}", handle);
-                return u64::MAX;
+                return err_to_u64(SyscallError::BadF);
             }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
-                serial_println!("[SYS] sys_readfile: bad buffer 0x{:x} len {}", rcx, count);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
-
-            serial_println!("[SYS] sys_readfile(handle=0x{:x}, count={})", handle, count);
 
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
@@ -472,18 +546,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                     unsafe {
                         core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, bytes_read);
                     }
-                    serial_println!("[SYS] sys_readfile -> {} bytes", bytes_read);
                     bytes_read as u64
                 }
-                Err(_) => {
-                    serial_println!("[SYS] sys_readfile -> error");
-                    u64::MAX
-                }
+                Err(_) => err_to_u64(SyscallError::Io),
             }
         }
 
-        // ---- sys_writefile(handle: u64, buf: *const u8, count: usize) -> bytes_written ----
-        12 => {
+        SyscallNum::WriteFile => {
             let handle = rbx;
             let drive_idx = (handle >> 32) as usize;
             let inode_num = (handle & 0xFFFFFFFF) as u32;
@@ -491,20 +560,15 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let count = _rdx as usize;
 
             if drive_idx >= 26 || handle == u64::MAX {
-                serial_println!("[SYS] sys_writefile: invalid handle 0x{:x}", handle);
-                return u64::MAX;
+                return err_to_u64(SyscallError::BadF);
             }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
-                serial_println!("[SYS] sys_writefile: bad buffer 0x{:x} len {}", rcx, count);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
-
-            serial_println!("[SYS] sys_writefile(handle=0x{:x}, count={})", handle, count);
 
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
-
             unsafe {
                 core::ptr::copy_nonoverlapping(buf_ptr, temp_buf.as_mut_ptr(), count);
             }
@@ -514,104 +578,77 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             });
 
             match result {
-                Ok(bytes_written) => {
-                    serial_println!("[SYS] sys_writefile -> {} bytes", bytes_written);
-                    bytes_written as u64
-                }
-                Err(_) => {
-                    serial_println!("[SYS] sys_writefile -> error");
-                    u64::MAX
-                }
+                Ok(bytes_written) => bytes_written as u64,
+                Err(_) => err_to_u64(SyscallError::Io),
             }
         }
 
-        // ---- sys_close(fd: u64) ----
-        13 => {
-            serial_println!("[SYS] sys_close({})", rbx);
+        SyscallNum::Close => {
+            // No-op (placeholder)
             0
         }
 
-        // ---- sys_ioctl(device_id, cmd, buf, count) ----
-        // Convention: rbx=device_id, rcx=cmd, rdx=buf, (no 4th arg - count is derived from buf validation)
-        14 => {
+        SyscallNum::Ioctl => {
             let device_id = rbx as u32;
             let cmd = rcx as u32;
             let buf_ptr = _rdx as *mut u8;
-            let count = 4; // default count for now
+            let count = 4;
 
-            serial_println!("[SYS] sys_ioctl(dev={}, cmd={}, buf=0x{:x}", device_id, cmd, buf_ptr as u64);
-
-            // Check if device has a registered handler
             let handler = get_device_handler(device_id);
             match handler {
-                Some(h) => {
+                Some(_h) => {
                     let addr = buf_ptr as u64;
 
-                    // Allow buf=0 for polling (check if there are pending events)
                     if addr == 0 {
-                        // Poll mode - check if driver has pending commands
-                        let pending = unsafe { crate::drivers::DEVICE_EVENTS[device_id as usize].pending.load(core::sync::atomic::Ordering::Relaxed) };
+                        let pending = unsafe {
+                            crate::drivers::DEVICE_EVENTS[device_id as usize]
+                                .pending
+                                .load(core::sync::atomic::Ordering::Relaxed)
+                        };
                         if pending {
-                            // Clear pending flag and return success
-                            unsafe { crate::drivers::DEVICE_EVENTS[device_id as usize].pending.store(false, core::sync::atomic::Ordering::Relaxed) };
-                            serial_println!("[SYS] sys_ioctl: poll -> pending event!");
-                            return 1; // 1 means there was a pending event
+                            unsafe {
+                                crate::drivers::DEVICE_EVENTS[device_id as usize]
+                                    .pending
+                                    .store(false, core::sync::atomic::Ordering::Relaxed)
+                            };
+                            return 1;
                         }
-                        serial_println!("[SYS] sys_ioctl: poll -> no events");
-                        return 0; // No pending events
+                        return 0;
                     }
 
-                    // Validate buffer address
                     if !is_user_ptr_valid(addr, count as u64) || count > 4096 {
-                        serial_println!("[SYS] sys_ioctl: bad buffer 0x{:x} len {}", addr, count);
-                        return u64::MAX;
+                        return err_to_u64(SyscallError::Fault);
                     }
 
-                    // Copy data to user buffer
-                    let data = [cmd as u8, (cmd >> 8) as u8, (cmd >> 16) as u8, (cmd >> 24) as u8];
+                    let data = [cmd as u8, (cmd >> 8) as u8,
+                                (cmd >> 16) as u8, (cmd >> 24) as u8];
                     unsafe {
                         core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr, count);
                     }
-
-                    serial_println!("[SYS] sys_ioctl: forwarded to PID {}", h.owner_pid);
                     count as u64
                 }
-                None => {
-                    serial_println!("[SYS] sys_ioctl: no handler for device {}", device_id);
-                    u64::MAX
-                }
+                None => err_to_u64(SyscallError::NoDev),
             }
         }
 
-        // ---- sys_register_device(device_id) ----
-        15 => {
+        SyscallNum::RegisterDevice => {
             let device_id = rbx as u32;
             let current_pid = crate::hal::without_interrupts(|| {
                 crate::scheduler::current_scheduler().lock().current_pid
             });
 
-            serial_println!("[SYS] sys_register_device(dev={}) for PID {}", device_id, current_pid);
-
             if register_device(device_id, current_pid) {
-                serial_println!("[SYS] sys_register_device: OK");
                 0
             } else {
-                serial_println!("[SYS] sys_register_device: failed");
-                u64::MAX
+                err_to_u64(SyscallError::Busy)
             }
         }
 
-        // ---- sys_chdir(path: *const u8) ----
-        16 => {
+        SyscallNum::ChDir => {
             let path_str = match copy_user_string(rbx) {
                 Ok(s) => s,
-                Err(_) => {
-                    serial_println!("[SYS] sys_chdir: bad path");
-                    return u64::MAX;
-                }
+                Err(_) => return err_to_u64(SyscallError::Fault),
             };
-
-            serial_println!("[SYS] sys_chdir('{}')", path_str);
 
             let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
 
@@ -630,24 +667,15 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let (new_drive, new_cwd_path) = if normalized.contains(':') {
                 let colon = match normalized.find(':') {
                     Some(c) => c,
-                    None => {
-                        serial_println!("[SYS] sys_chdir: malformed path");
-                        return u64::MAX;
-                    }
+                    None => return err_to_u64(SyscallError::Inval),
                 };
                 let dl = match normalized[..colon].chars().next() {
                     Some(c) => c.to_ascii_uppercase(),
-                    None => {
-                        serial_println!("[SYS] sys_chdir: empty drive letter");
-                        return u64::MAX;
-                    }
+                    None => return err_to_u64(SyscallError::Inval),
                 };
                 let idx = match crate::fs::vfs::Vfs::drive_index(dl) {
                     Some(i) => i as u8,
-                    None => {
-                        serial_println!("[SYS] sys_chdir: invalid drive '{}'", dl);
-                        return u64::MAX;
-                    }
+                    None => return err_to_u64(SyscallError::NoEnt),
                 };
                 (idx, normalized[colon + 1..].to_string())
             } else {
@@ -666,24 +694,18 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             match result {
                 Ok(()) => {
                     crate::scheduler::set_current_cwd(new_drive, &new_cwd_path);
-                    serial_println!("[SYS] sys_chdir -> OK");
                     0
                 }
-                Err(e) => {
-                    serial_println!("[SYS] sys_chdir: {:?}", e);
-                    u64::MAX
-                }
+                Err(_) => err_to_u64(SyscallError::NoEnt),
             }
         }
 
-        // ---- sys_getcwd(buf: *mut u8, len: usize) ----
-        17 => {
+        SyscallNum::GetCwd => {
             let buf_ptr = rbx as *mut u8;
             let buf_len = rcx as usize;
 
             if !is_user_ptr_valid(rbx, buf_len as u64) || buf_len > 4096 {
-                serial_println!("[SYS] sys_getcwd: bad buffer 0x{:x} len {}", rbx, buf_len);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Fault);
             }
 
             let (drive, path) = crate::scheduler::get_current_cwd();
@@ -697,24 +719,15 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                 buf_ptr.add(to_copy).write(0);
             }
 
-            serial_println!("[SYS] sys_getcwd -> '{}'", full);
             to_copy as u64
         }
 
-        // ---- sys_brk(new_break: u64) -> u64 ----
-        // Adjust program break. Returns current/updated break, or u64::MAX on error.
-        // RBX = 0 → query only (return current break)
-        // RBX < heap_base or > heap_limit → error
-        //
-        // Physical pages are allocated on demand by the page fault handler.
-        // This syscall only adjusts the break pointer and zeroes new pages.
-         18 => {
+        SyscallNum::Brk => {
             let new_break = rbx;
             let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
 
             if heap_base == 0 {
-                serial_println!("[SYS] sys_brk: no heap allocated");
-                return u64::MAX;
+                return err_to_u64(SyscallError::NoMem);
             }
 
             if new_break == 0 {
@@ -724,12 +737,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let heap_limit = heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE;
 
             if new_break < heap_base || new_break > heap_limit {
-                serial_println!("[SYS] sys_brk: 0x{:x} out of range [0x{:x}..0x{:x})",
-                    new_break, heap_base, heap_limit);
-                return u64::MAX;
+                return err_to_u64(SyscallError::Inval);
             }
 
-            // When growing, zero-fill new pages (page faults will handle allocation).
             if new_break > current_break {
                 let start_page = (current_break + 0xFFF) & !0xFFF;
                 let end_page = new_break & !0xFFF;
@@ -738,26 +748,22 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                     while page < end_page {
                         match crate::arch::x64::paging::heap_alloc_page(page) {
                             Some(_) => {
-                                unsafe {
-                                    core::ptr::write_volatile(page as *mut u8, 0);
-                                }
+                                unsafe { core::ptr::write_volatile(page as *mut u8, 0); }
                             }
                             None => {
                                 crate::arch::x64::paging::heap_free_range(start_page, page);
                                 crate::scheduler::set_current_heap_break(current_break);
-                                serial_println!("[SYS] sys_brk: OOM at 0x{:x}", page);
-                                return u64::MAX;
+                                return err_to_u64(SyscallError::NoMem);
                             }
                         }
                         page += crate::arch::x64::paging::PAGE_4K;
                     }
                 }
-                // Zero-fill the remainder
                 unsafe {
-                    core::ptr::write_bytes(current_break as *mut u8, 0, (new_break - current_break) as usize);
+                    core::ptr::write_bytes(current_break as *mut u8, 0,
+                        (new_break - current_break) as usize);
                 }
             } else if new_break < current_break {
-                // When shrinking, free pages that are no longer in range
                 let shrink_start = new_break;
                 let shrink_end = current_break;
                 let start_page = (shrink_start + crate::arch::x64::paging::PAGE_4K - 1)
@@ -771,27 +777,18 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             }
 
             crate::scheduler::set_current_heap_break(new_break);
-
-            serial_println!("[SYS] sys_brk(0x{:x}) -> 0x{:x}", new_break, new_break);
             new_break
         }
 
-        // ---- sys_mmap(size: u64) -> u64 ----
-        // Allocate 'size' bytes of zero-filled memory, return virtual address.
-        // Uses the frame allocator directly. Only for user-mode processes.
-        // RBX = size (will be rounded up to page boundary).
-        // Returns virtual address, or u64::MAX on error.
-        19 => {
+        SyscallNum::Mmap => {
             let size = rbx;
-            if size == 0 || size > 0x100000 { // max 1 MB per call
-                serial_println!("[SYS] sys_mmap: invalid size {}", size);
-                return u64::MAX;
+            if size == 0 || size > 0x100000 {
+                return err_to_u64(SyscallError::Inval);
             }
 
             let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
             if heap_base == 0 {
-                serial_println!("[SYS] sys_mmap: no heap allocated");
-                return u64::MAX;
+                return err_to_u64(SyscallError::NoMem);
             }
 
             let heap_limit = heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE;
@@ -799,37 +796,23 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let new_break = current_break + alloc_size;
 
             if new_break > heap_limit {
-                serial_println!("[SYS] sys_mmap: out of heap space (break 0x{:x} > limit 0x{:x})",
-                    new_break, heap_limit);
-                return u64::MAX;
+                return err_to_u64(SyscallError::NoMem);
             }
 
-            // Allocate physical pages and map them
             let mut page = current_break;
             while page < new_break {
                 if let Some(_phys) = crate::arch::x64::paging::heap_alloc_page(page) {
-                    unsafe {
-                        core::ptr::write_volatile(page as *mut u8, 0);
-                    }
+                    unsafe { core::ptr::write_volatile(page as *mut u8, 0); }
                 } else {
-                    // Free partial allocation
                     crate::arch::x64::paging::heap_free_range(current_break, page);
                     crate::scheduler::set_current_heap_break(current_break);
-                    serial_println!("[SYS] sys_mmap: OOM at 0x{:x}", page);
-                    return u64::MAX;
+                    return err_to_u64(SyscallError::NoMem);
                 }
                 page += crate::arch::x64::paging::PAGE_4K;
             }
 
             crate::scheduler::set_current_heap_break(new_break);
-
-            serial_println!("[SYS] sys_mmap({}) -> 0x{:x}", size, current_break);
             current_break
-        }
-
-        _ => {
-            serial_println!("[SYS] unknown syscall RAX={}", rax);
-            u64::MAX
         }
     }
 }

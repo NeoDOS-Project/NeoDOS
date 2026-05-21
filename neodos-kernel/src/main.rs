@@ -23,6 +23,7 @@ mod graphics;
 mod font;
 mod tsr;
 mod nem;
+mod elf;
 mod devices;
 mod eventbus;
 mod memory;
@@ -218,6 +219,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 3.5: Device Model + HAL Binding Layer
     // ============================================
     devices::register_boot_devices();
+
+    // ============================================
+    // PHASE 3.75: Driver Runtime + Built-in Drivers
+    // ============================================
+    drivers::builtin_drivers::init();
+
+    // ============================================
+    // PHASE 3.9: Validate syscall ABI
+    // ============================================
+    println!("[+] Validating syscall ABI...");
+    syscall::validate_abi();
 
     // ============================================
     // PHASE 4: Start DOS Shell

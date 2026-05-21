@@ -282,6 +282,10 @@ Happy hacking!
         # Entry 6: ALLTEST.BIN (comprehensive syscall test)
         entry = create_dir_entry(9, 1, "ALLTEST.BIN")
         image[offset+1536:offset+1792] = entry
+
+        # Entry 7: HELLO.ELF (ELF64 user-mode binary)
+        entry = create_dir_entry(17, 1, "HELLO.ELF")
+        image[offset+1792:offset+2048] = entry
         
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
@@ -355,6 +359,22 @@ VER
             print("[*] Writing ALLTEST.BIN content...")
             offset = (200 + 72) * 512
             image[offset:offset+len(alltest_bin_data)] = alltest_bin_data
+
+        # Block 17 = sector 336 (HELLO.ELF — ELF64 user-mode test binary)
+        hello_elf_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'hello.elf')
+        hello_elf_data = b''
+        if os.path.exists(hello_elf_path):
+            with open(hello_elf_path, 'rb') as hf:
+                hello_elf_data = hf.read()
+            print(f"[*] Including hello.elf ({len(hello_elf_data)} bytes)")
+        else:
+            print("[!] hello.elf not found — skipping")
+        hello_elf_inode = create_inode(17, 0x80, len(hello_elf_data), [17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+4352:512+4608] = hello_elf_inode
+        if hello_elf_data:
+            print("[*] Writing HELLO.ELF content...")
+            offset = (200 + 136) * 512
+            image[offset:offset+len(hello_elf_data)] = hello_elf_data
 
         # NEM test driver data blocks (blocks 10-14)
         nem_blocks = [10, 11, 12, 13, 14]

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.15.0 — 2026-05-21
+
+### ELF64 Loader — Añadido
+- **Añadido**: `src/elf.rs` — ELF64 loader (header validation, PT_LOAD segment loading, .bss zero-fill)
+- **Añadido**: Auto-detección ELF vs flat binary en `cmd_run` (por magic `\x7fELF`)
+- **Añadido**: 7 tests ELF64 (header validation, invalid magic/class/machine, truncated header, segment loading, bad phentsize)
+- **Añadido**: `userbin/generate_hello_elf.py` — genera `hello.elf` (ELF64 equivalente a `hello.bin`)
+- **Añadido**: `hello.elf` incluido en imagen NeoDOS FS
+- **Total**: 150 tests kernel + 4 user-mode binaries
+
+### Syscall ABI Stabilization (S1)
+- **Añadido**: `SyscallNum` enum con `from_u64()` — mapeo declarativo de números a syscalls
+- **Añadido**: `SyscallError` enum (16 códigos: Inval, NoEnt, NoMem, Acces, BadF, Fault, NoSys, Again, Pipe, Exist, NotDir, IsDir, Io, NoDev, Busy)
+- **Añadido**: `err_to_u64()` — codifica errores como u64 negativo (NoEnt→`0xFFFF_FFFF_FFFF_FFFE`)
+- **Añadido**: `syserr!` macro — retorno limpio de errores desde handlers
+- **Añadido**: `validate_abi()` — assert boot-time de todos los números y codificaciones
+- **Modificado**: `syscall_dispatch` reescrito como `match num { SyscallNum::Xxx => ...}` en lugar de `match rax`
+- **Modificado**: `sys_read` usa `input::pop_byte()` en vez del buffer interno del teclado
+- **Eliminado**: `[SYS]` debug logs redundantes de paths exitosos
+- **Eliminado**: doble-print (`[user]` prefix) en sys_write
+- **Total**: 150 tests kernel + 4 user-mode binaries
+
 ## v0.14.0 — 2026-05-21
 
 ### Event Bus v1 + 9 tests + 143 total

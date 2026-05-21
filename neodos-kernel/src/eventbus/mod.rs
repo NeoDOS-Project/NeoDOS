@@ -21,6 +21,7 @@ pub const EVENT_DRIVER_CRASH: EventType = 6;
 pub const EVENT_POLICY_VIOLATION: EventType = 7;
 pub const EVENT_FS_MOUNTED: EventType = 8;
 pub const EVENT_USER: EventType = 0x1000;
+pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 
 pub const SOURCE_HAL: EventSource = 0;
 pub const SOURCE_DRIVER: EventSource = 1;
@@ -198,6 +199,7 @@ impl EventBus {
         for h in handlers.iter().flatten() {
             if h.event_type == event.event_type
                 || h.event_type == EVENT_USER
+                || h.event_type == EVENT_WILDCARD
             {
                 (h.callback)(&event);
             }

@@ -11,7 +11,7 @@ impl DosShell {
     pub fn cmd_run(&mut self, args: &[&str]) {
         if args.is_empty() {
             println!("Usage: RUN <filename>");
-            println!("  Loads a flat binary and executes it in Ring 3.");
+            println!("  Loads a binary (ELF64 or flat) and executes it in Ring 3.");
             return;
         }
 
@@ -35,7 +35,8 @@ impl DosShell {
 
         // ── 2. Find and read the binary ──
         let mut bin_size = 0;
-        
+        let mut entry = slot.code_base;
+
         crate::globals::with_vfs(|vfs| {
             match vfs.resolve_path(&full_path) {
                 Ok((drive_idx, node)) => {
@@ -47,10 +48,34 @@ impl DosShell {
                             Ok(n) => {
                                 bin_size = n;
                                 if bin_size > 0 {
-                                    // ── 3. Copy binary to the slot's code area ──
-                                    let dst = slot.code_base as *mut u8;
-                                    let src = core::ptr::addr_of!(BIN_BUF) as *const u8;
-                                    core::ptr::copy_nonoverlapping(src, dst, bin_size);
+                                    // ── 3. Detect format: ELF or flat binary ──
+                                    let is_elf = bin_size >= 4
+                                        && (*buf_ptr)[0] == 0x7f
+                                        && (*buf_ptr)[1] == b'E'
+                                        && (*buf_ptr)[2] == b'L'
+                                        && (*buf_ptr)[3] == b'F';
+                                    if is_elf {
+                                        // ELF64 binary
+                                        let data = core::slice::from_raw_parts(
+                                            core::ptr::addr_of!(*buf_ptr) as *const u8,
+                                            bin_size,
+                                        );
+                                        match crate::elf::load_elf(data) {
+                                            Some(result) => {
+                                                entry = result.entry;
+                                                serial_println!("[SHELL] ELF64: entry=0x{:x}", entry);
+                                            }
+                                            None => {
+                                                println!("Error: Invalid or unsupported ELF binary.");
+                                                bin_size = 0;
+                                            }
+                                        }
+                                    } else {
+                                        // Flat binary: copy raw to slot
+                                        let dst = slot.code_base as *mut u8;
+                                        let src = core::ptr::addr_of!(BIN_BUF) as *const u8;
+                                        core::ptr::copy_nonoverlapping(src, dst, bin_size);
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -70,12 +95,12 @@ impl DosShell {
             return;
         }
 
-        serial_println!("[SHELL] '{}' -> {} bytes, slot 0x{:x}..0x{:x}",
-            filename, bin_size, slot.code_base, slot.stack_top);
+        serial_println!("[SHELL] '{}' -> {} bytes, entry=0x{:x}",
+            filename, bin_size, entry);
 
         // ── 4. Spawn as scheduler process (inherit shell's cwd) ──
         let cwd_drive = self.current_drive as u8 - b'A';
-        let pid = crate::usermode::spawn_usermode(slot.code_base, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
+        let pid = crate::usermode::spawn_usermode(entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
 
         serial_println!("[SHELL] Spawned PID {}, slot_idx={}", pid, slot.slot_idx);
         println!("Launching '{}' ({} bytes) in Ring 3 (PID {})...", filename, bin_size, pid);

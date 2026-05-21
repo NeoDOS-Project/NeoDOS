@@ -155,6 +155,8 @@ pub fn cmd_devicesend(shell: &mut DosShell, args: &[&str]) { shell.cmd_devicesen
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
+pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
+pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
@@ -317,4 +319,15 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "    NDREG RUNTIME          Show runtime state snapshot\n",
                        "    NDREG HEALTH           Validate driver metadata integrity\n",
                        "  All data is read-only from NeoFS + runtime registry."), },
+    CommandEntry { name: "LOADNEM", category: "CTRL",     handler: cmd_loadnem, description: "Load a .nem driver",
+        usage: concat!("Syntax:  LOADNEM <path>\n",
+                       "  Load and register a .nem driver from the filesystem.\n",
+                       "  Validates NEM header, ABI version, and registers with\n",
+                       "  the Driver Runtime. The built-in dispatcher handles\n",
+                       "  event delivery to the loaded driver.\n",
+                       "  LOADNEM C:\\SYSTEM\\DRIVERS\\TEST\\null.nem"), },
+    CommandEntry { name: "NEMLIST",  category: "INFO",     handler: cmd_nemlist, description: "List loaded .nem drivers",
+        usage: concat!("Syntax:  NEMLIST\n",
+                       "  List all currently loaded .nem drivers with their\n",
+                       "  IDs, names, states, event counts, and tick counts."), },
 ]);
