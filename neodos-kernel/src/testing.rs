@@ -1530,6 +1530,7 @@ pub fn register_tests() {
     register_sync_tests();
     register_neofs_tests();
     crate::nem::register_nem_tests();
+    crate::eventbus::register_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }

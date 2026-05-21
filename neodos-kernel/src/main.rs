@@ -24,6 +24,7 @@ mod font;
 mod tsr;
 mod nem;
 mod devices;
+mod eventbus;
 mod memory;
 mod globals;
 pub mod usermode;

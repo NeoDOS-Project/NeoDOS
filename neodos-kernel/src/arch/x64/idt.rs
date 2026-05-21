@@ -366,6 +366,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::hal::ack_irq(32);
     crate::invariants::timer_irq_exit();
     crate::invariants::irq_exit_clear();
+
+    // Push TimerTick event (lock‑free, IRQ‑safe)
+    let _ = crate::eventbus::EVENT_BUS.push_event(
+        crate::eventbus::EVENT_TIMER_TICK,
+        crate::eventbus::SOURCE_HAL,
+        1,   // pit device_id
+        current_tick,
+        0,
+        0,
+    );
+
     current_rsp
 }
 
@@ -382,6 +393,16 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
             crate::hal::ack_irq(33);
             crate::hal::poweroff();
         }
+
+        // Push KeyboardInput event (lock‑free, IRQ‑safe)
+        let _ = crate::eventbus::EVENT_BUS.push_event(
+            crate::eventbus::EVENT_KEYBOARD_INPUT,
+            crate::eventbus::SOURCE_HAL,
+            3,   // ps2kbd device_id
+            scancode as u64,
+            0,
+            0,
+        );
     }
     crate::hal::ack_irq(33);
 }

@@ -126,6 +126,7 @@ NeoDOS supports modular drivers loaded as user-mode processes (`.BIN` flat binar
 - `DEVICE_EVENTS` array in `drivers/mod.rs`: `[DeviceEvent; 8]`, each with `pending: AtomicBool`
 - `signal_device_event(id)` — sets `pending` flag (from ISR or kernel code)
 - Drivers poll with `sys_ioctl(dev, 0, buf=0)` = 0 → returns 1 if pending, 0 if none
+- **New**: `src/eventbus/mod.rs` — centralized Event Bus v1 replaces ad-hoc device events for IRQ normalization and driver callback dispatch (lock-free SPSC queue, monotonic IDs, 11 event types, scheduler-controlled dispatch)
 
 ### Syscalls
 | # | Name | Args | Description |

@@ -15,6 +15,7 @@ static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
 fn idle_task() -> ! {
     loop {
+        crate::eventbus::EVENT_BUS.dispatch_pending();
         crate::hal::hlt_once();
     }
 }

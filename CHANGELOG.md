@@ -1,6 +1,19 @@
 # Changelog
 
-## v0.15.3 — 2026-05-20
+## v0.14.0 — 2026-05-21
+
+### Event Bus v1 + 9 tests + 143 total
+- **Añadido**: `src/eventbus/mod.rs` — Event Bus v1 subsystem
+- **Añadido**: `Event` structure (`#[repr(C)]`, event_id, type, source, timestamp, device_id, data0/data1, flags) — 56 bytes, monotonic ID
+- **Añadido**: Lock-free SPSC ring buffer (64 slots) for IRQ-safe event injection
+- **Añadido**: 11 event types (TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, USER)
+- **Añadido**: 4 event sources (HAL, DRIVER, KERNEL, USERLAND)
+- **Añadido**: `register_handler()` / `unregister_handler()` — driver callback registration (max 32)
+- **Añadido**: `dispatch_one()` / `dispatch_pending()` — scheduler-controlled dispatch
+- **Añadido**: `push_event()` in IRQ handlers (TimerTick→PIT IRQ, KeyboardInput→PS/2 IRQ)
+- **Añadido**: `EVENT_BUS.dispatch_pending()` in idle loop (scheduler integration)
+- **Añadido**: 9 Event Bus tests: create, push/pop, ordering, overflow, monotonic ID, handler register/dispatch, type filter, unregister, empty queue
+- **Total**: 143 tests kernel + 4 user-mode binaries
 
 ### Command history + HELP system + NeoFS tests + Bugfixes
 
