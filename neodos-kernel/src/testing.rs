@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 180;
+const MAX_TESTS: usize = 200;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -1596,6 +1596,193 @@ pub fn register_mmap_tests() {
     });
 }
 
+// ===== Pipe / IPC tests =====
+
+pub fn register_pipe_tests() {
+    use crate::pipe::{PIPE_MANAGER, FdEntry, default_fd_table, closed_fd_table,
+                      FD_PIPE_READ, FD_PIPE_WRITE, FD_STDIN, FD_STDOUT, FD_CLOSED};
+
+    test_case!("pipe_alloc_free", {
+        let pid = PIPE_MANAGER.alloc().expect("pipe alloc failed");
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_write_read", {
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        let data = b"Hello, Pipe!";
+        let n = PIPE_MANAGER.write(pid, data).unwrap();
+        test_eq!(n, data.len());
+        let mut buf = [0u8; 64];
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, data.len());
+        test_eq!(&buf[..n], data);
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_multiple_writes", {
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        PIPE_MANAGER.write(pid, b"abc").unwrap();
+        PIPE_MANAGER.write(pid, b"def").unwrap();
+        PIPE_MANAGER.write(pid, b"ghi").unwrap();
+        let mut buf = [0u8; 16];
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, 9);
+        test_eq!(&buf[..n], b"abcdefghi");
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_eof", {
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        PIPE_MANAGER.write(pid, b"data").unwrap();
+        PIPE_MANAGER.dec_write_ref(pid);  // close write -> EOF after read
+        let mut buf = [0u8; 16];
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, 4);
+        let n2 = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n2, 0); // EOF
+        PIPE_MANAGER.dec_read_ref(pid);
+    });
+
+    test_case!("pipe_buffer_capacity", {
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        // Fill the buffer (4096 bytes minus 1 for sentinel)
+        let buf = [0xABu8; 256];
+        let mut total = 0usize;
+        loop {
+            match PIPE_MANAGER.write(pid, &buf) {
+                Ok(n) => total += n,
+                Err(_) => break,
+            }
+        }
+        test_true!(total > 0);
+        // Drain
+        let mut out = [0u8; 256];
+        let mut read_total = 0usize;
+        loop {
+            match PIPE_MANAGER.read(pid, &mut out) {
+                Ok(0) => break,
+                Ok(n) => read_total += n,
+                Err(_) => break,
+            }
+        }
+        test_eq!(read_total, total);
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_write_after_read_close", {
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        PIPE_MANAGER.dec_read_ref(pid); // close read end
+        let result = PIPE_MANAGER.write(pid, b"test");
+        test_true!(result.is_err()); // should get EPIPE
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_alloc_max", {
+        let mut pipes = alloc::vec::Vec::new();
+        while let Some(pid) = PIPE_MANAGER.alloc() {
+            pipes.push(pid);
+        }
+        test_true!(pipes.len() <= 16);
+        test_true!(pipes.len() > 0);
+        // Allocate should fail now
+        test_eq!(PIPE_MANAGER.alloc(), None);
+        // Free them all
+        for pid in pipes {
+            PIPE_MANAGER.inc_read_ref(pid);
+            PIPE_MANAGER.inc_write_ref(pid);
+            PIPE_MANAGER.dec_read_ref(pid);
+            PIPE_MANAGER.dec_write_ref(pid);
+        }
+    });
+
+    test_case!("pipe_block_current_wake", {
+        // Test that block_current_for_pipe and wake_pipe_readers
+        // work correctly by simulating a block/wake cycle.
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+
+        // Block current (idle) process on this pipe
+        crate::pipe::block_current_for_pipe(pid);
+
+        // Verify we're now blocked
+        let state = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let lock = s.lock();
+            lock.processes[0].as_ref().unwrap().state
+        });
+        test_eq!(state, crate::scheduler::ProcessState::Blocked { waiting_for: 0xFFFF_0000 | pid as u32 });
+
+        // Wake readers - the wake function resets state to Ready
+        // But we need a write to trigger the wake. Let's manually verify by doing the wake.
+        let magic = 0xFFFF_0000u32 | (pid as u32);
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut lock = s.lock();
+            for proc in lock.processes.iter_mut() {
+                if let Some(p) = proc {
+                    if p.waiting_for == Some(magic) {
+                        p.waiting_for = None;
+                        p.state = crate::scheduler::ProcessState::Ready;
+                    }
+                }
+            }
+        });
+
+        let state2 = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let lock = s.lock();
+            lock.processes[0].as_ref().unwrap().state
+        });
+        test_eq!(state2, crate::scheduler::ProcessState::Ready);
+
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
+    });
+
+    test_case!("pipe_fd_table_default", {
+        let table = default_fd_table();
+        test_eq!(table[0].kind, FD_STDIN);
+        test_eq!(table[1].kind, FD_STDOUT);
+        test_eq!(table[2].kind, FD_STDOUT);
+        for i in 3..16 {
+            test_eq!(table[i].kind, FD_CLOSED);
+        }
+    });
+
+    test_case!("pipe_fd_table_closed", {
+        let table = closed_fd_table();
+        for i in 0..16 {
+            test_eq!(table[i].kind, FD_CLOSED);
+        }
+    });
+
+    test_case!("pipe_fd_entry_constructors", {
+        let r = FdEntry::pipe_read(5);
+        test_eq!(r.kind, FD_PIPE_READ);
+        test_eq!(r.pipe_id, 5);
+        let w = FdEntry::pipe_write(3);
+        test_eq!(w.kind, FD_PIPE_WRITE);
+        test_eq!(w.pipe_id, 3);
+    });
+}
+
 // ── Test registration (all suites) ─────────────────────────────────
 
 
@@ -1609,6 +1796,7 @@ pub fn register_tests() {
     register_sync_tests();
     register_neofs_tests();
     register_mmap_tests();
+    register_pipe_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();

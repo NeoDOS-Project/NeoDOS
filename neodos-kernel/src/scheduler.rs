@@ -4,6 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::pipe::{FdTable, closed_fd_table, default_fd_table};
 
 pub const MAX_PROCESSES: usize = 16;
 pub const KERNEL_STACK_SIZE: usize = 16384;
@@ -48,6 +49,7 @@ pub struct Process {
     kernel_stack: Option<Box<AlignedKStack>>,
     pub mmap_regions: Vec<MmapRegion>,
     pub mmap_next: u64,
+    pub fd_table: FdTable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -127,6 +129,7 @@ impl Process {
             kernel_stack: stack,
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
+            fd_table: closed_fd_table(),
         }
     }
 
@@ -156,6 +159,7 @@ impl Process {
             kernel_stack: Some(stack),
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
+            fd_table: default_fd_table(),
         }
     }
 }

@@ -1,6 +1,6 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.16.1 (177 tests, 4 user-mode binaries, ELF64 loader, mmap lazy).
+> Versión actual: v0.16.2 (190 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
@@ -41,6 +41,7 @@
 26. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
 41. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
 42. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
+43. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `fd_table[16]` con FdEntry (stdin/stdout/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, fd table.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -62,11 +63,10 @@
 
 ---
 
-## PRIORIDAD S — CRÍTICO (10 items)
+## PRIORIDAD S — CRÍTICO (9 items)
 
 Estos items desbloquean todo el roadmap futuro.
 
-40. **S2. IPC / Pipes** — pipe buffers en kernel, stdin→stdout redirection, blocking reads, scheduler integration.
 42. **S3. Shell output redirection** — `DIR > FILE.TXT`, `ECHO >> FILE.TXT`, `CMD > FILE`.
 43. **S4. FAT32 write** — escritura real en FAT32: directorios, archivos, clusters.
 44. **S5. FSCK utility** — verificación inodos, block bitmap, orphan detection, repair mode.

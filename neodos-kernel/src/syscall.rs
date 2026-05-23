@@ -37,6 +37,8 @@ pub enum SyscallNum {
     Yield = 2,
     GetPid = 3,
     Read = 4,
+    Pipe = 5,
+    Dup2 = 6,
 
     WaitPid = 9,
     Open = 10,
@@ -62,6 +64,8 @@ impl SyscallNum {
             2 => Some(Self::Yield),
             3 => Some(Self::GetPid),
             4 => Some(Self::Read),
+            5 => Some(Self::Pipe),
+            6 => Some(Self::Dup2),
             9 => Some(Self::WaitPid),
             10 => Some(Self::Open),
             11 => Some(Self::ReadFile),
@@ -72,8 +76,8 @@ impl SyscallNum {
             16 => Some(Self::ChDir),
             17 => Some(Self::GetCwd),
             18 => Some(Self::Brk),
-             19 => Some(Self::Mmap),
-             20 => Some(Self::Munmap),
+            19 => Some(Self::Mmap),
+            20 => Some(Self::Munmap),
             _ => None,
         }
     }
@@ -142,7 +146,7 @@ pub fn validate_abi() {
     // Syscall numbers must not overlap or exceed max
     assert_eq!(SyscallNum::MAX_VALID, 20);
     for n in 0..=SyscallNum::MAX_VALID {
-        if n == 5 || n == 6 || n == 7 || n == 8 {
+        if n == 7 || n == 8 {
             assert!(SyscallNum::from_u64(n).is_none(), "reserved hole {} must stay free", n);
         } else {
             assert!(SyscallNum::from_u64(n).is_some(), "syscall {} must be assigned", n);
@@ -217,11 +221,14 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         if pid > 0 {
             if let Some(current) = scheduler.current_process_mut() {
                 current.rsp = current_rsp;
-                // Invariant: state must be Running before yielding
-                if cfg!(feature = "validation") && current.state != ProcessState::Running {
+                // Only transition from Running → Ready.
+                // Blocked processes (pipe reads, etc.) stay Blocked
+                // so the scheduler skips them.
+                if current.state == ProcessState::Running {
+                    current.state = ProcessState::Ready;
+                } else if cfg!(feature = "validation") {
                     crate::serial_println!("[SYS] Context switch from non-Running state: {:?}", current.state);
                 }
-                current.state = ProcessState::Ready;
             }
         }
 
@@ -356,6 +363,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                         }
                         proc.mmap_regions.clear();
                         proc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
+
+                        // Close all pipe fds
+                        for fd_entry in proc.fd_table.iter_mut() {
+                            match fd_entry.kind {
+                                crate::pipe::FD_PIPE_READ => {
+                                    crate::pipe::PIPE_MANAGER.dec_read_ref(fd_entry.pipe_id);
+                                }
+                                crate::pipe::FD_PIPE_WRITE => {
+                                    crate::pipe::PIPE_MANAGER.dec_write_ref(fd_entry.pipe_id);
+                                }
+                                _ => {}
+                            }
+                            *fd_entry = crate::pipe::FdEntry::closed();
+                        }
                     }
                 }
 
@@ -371,19 +392,38 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         }
 
         SyscallNum::Write => {
-            let ptr = rbx as *const u8;
-            let len = rcx as usize;
+            let fd = rbx as u8;
+            let ptr = rcx as *const u8;
+            let len = rdx as usize;
 
-            if !is_user_ptr_valid(rbx, len as u64) || len > 4096 {
-                serial_println!("[SYS] sys_write: bad address 0x{:x} len {}", rbx, len);
-                return err_to_u64(SyscallError::Fault);
-            }
+            // fd 1 = stdout (console), fd 2 = stderr (console)
+            let entry = current_fd_entry(fd);
 
-            let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-            if let Ok(s) = core::str::from_utf8(slice) {
-                crate::console::print_str(s);
+            match entry.kind {
+                crate::pipe::FD_STDOUT => {
+                    if !is_user_ptr_valid(rcx, len as u64) || len > 4096 {
+                        return err_to_u64(SyscallError::Fault);
+                    }
+                    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+                    if let Ok(s) = core::str::from_utf8(slice) {
+                        crate::console::print_str(s);
+                    }
+                    len as u64
+                }
+                crate::pipe::FD_PIPE_WRITE => {
+                    if !is_user_ptr_valid(rcx, len as u64) || len > 4096 {
+                        return err_to_u64(SyscallError::Fault);
+                    }
+                    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+                    match crate::pipe::PIPE_MANAGER.write(entry.pipe_id, slice) {
+                        Ok(n) => n as u64,
+                        Err(_) => err_to_u64(SyscallError::Pipe), // Broken pipe
+                    }
+                }
+                _ => {
+                    err_to_u64(SyscallError::BadF)
+                }
             }
-            len as u64
         }
 
         SyscallNum::Yield => {
@@ -398,46 +438,180 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         }
 
         SyscallNum::Read => {
-            let fd = rbx;
+            let fd = rbx as u8;
             let buf_ptr = rcx as *mut u8;
             let count = rdx as usize;
-
-            if fd != 0 {
-                return err_to_u64(SyscallError::BadF);
-            }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
                 return err_to_u64(SyscallError::Fault);
             }
 
-            let mut bytes_read = 0usize;
+            let entry = current_fd_entry(fd);
 
-            while bytes_read < count {
-                match crate::input::pop_byte() {
-                    Some(byte) => {
-                        unsafe { buf_ptr.add(bytes_read).write(byte); }
-                        bytes_read += 1;
-                        if byte == b'\r' || byte == b'\n' {
-                            break;
+            match entry.kind {
+                crate::pipe::FD_STDIN => {
+                    let mut bytes_read = 0usize;
+                    while bytes_read < count {
+                        match crate::input::pop_byte() {
+                            Some(byte) => {
+                                unsafe { buf_ptr.add(bytes_read).write(byte); }
+                                bytes_read += 1;
+                                if byte == b'\r' || byte == b'\n' {
+                                    break;
+                                }
+                            }
+                            None => {
+                                if bytes_read > 0 {
+                                    break;
+                                }
+                                loop {
+                                    if let Some(b) = crate::input::pop_byte() {
+                                        unsafe { buf_ptr.add(bytes_read).write(b); }
+                                        bytes_read += 1;
+                                        break;
+                                    }
+                                    crate::hal::hlt_once();
+                                }
+                            }
                         }
                     }
-                    None => {
-                        if bytes_read > 0 {
-                            break;
-                        }
-                        loop {
-                            if let Some(b) = crate::input::pop_byte() {
-                                unsafe { buf_ptr.add(bytes_read).write(b); }
-                                bytes_read += 1;
-                                break;
+                    bytes_read as u64
+                }
+                crate::pipe::FD_PIPE_READ => {
+                    let pipe_id = entry.pipe_id;
+                    // Read loop: try to read, block if empty
+                    let mut temp_buf = alloc::vec::Vec::with_capacity(count);
+                    temp_buf.resize(count, 0u8);
+                    loop {
+                        match crate::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
+                            Ok(0) => {
+                                // EOF — write end closed
+                                return 0;
                             }
-                            crate::hal::hlt_once();
+                            Ok(n) => {
+                                unsafe {
+                                    core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
+                                }
+                                return n as u64;
+                            }
+                            Err(()) => {
+                                // No data yet — block and resched
+                                crate::pipe::block_current_for_pipe(pipe_id);
+                                // After wake-up: continue loop to retry read
+                                // The return from block_current_for_pipe means
+                                // NEED_RESCHED is set; the assembly will handle
+                                // the context switch. When we resume and return
+                                // to user space, the process can call read again.
+                                return err_to_u64(SyscallError::Again);
+                            }
                         }
                     }
                 }
+                _ => {
+                    err_to_u64(SyscallError::BadF)
+                }
+            }
+        }
+
+        SyscallNum::Pipe => {
+            let fds_ptr = rbx as *mut u64;
+            // Validate user output buffer (2 u64s = read_fd, write_fd)
+            if !is_user_ptr_valid(rbx, 16) {
+                return err_to_u64(SyscallError::Fault);
             }
 
-            bytes_read as u64
+            // Allocate a pipe
+            let pipe_id = match crate::pipe::PIPE_MANAGER.alloc() {
+                Some(pid) => pid,
+                None => return err_to_u64(SyscallError::NoMem),
+            };
+
+            // Find two free fds (lowest available)
+            let mut read_fd: Option<u8> = None;
+            let mut write_fd: Option<u8> = None;
+
+            crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(proc) = lock.current_process_mut() {
+                    for i in 3..(crate::pipe::MAX_FDS as u8) {
+                        if proc.fd_table[i as usize].kind == crate::pipe::FD_CLOSED {
+                            if read_fd.is_none() {
+                                read_fd = Some(i);
+                            } else if write_fd.is_none() {
+                                write_fd = Some(i);
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+
+            let (rfd, wfd) = match (read_fd, write_fd) {
+                (Some(r), Some(w)) => (r, w),
+                _ => {
+                    crate::pipe::PIPE_MANAGER.dec_read_ref(pipe_id);
+                    crate::pipe::PIPE_MANAGER.dec_write_ref(pipe_id);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
+
+            // Assign fds
+            crate::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
+            crate::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
+            set_current_fd(rfd, crate::pipe::FdEntry::pipe_read(pipe_id));
+            set_current_fd(wfd, crate::pipe::FdEntry::pipe_write(pipe_id));
+
+            // Write [read_fd, write_fd] to user buffer
+            unsafe {
+                fds_ptr.write(rfd as u64);
+                fds_ptr.add(1).write(wfd as u64);
+            }
+            0
+        }
+
+        SyscallNum::Dup2 => {
+            let old_fd = rbx as u8;
+            let new_fd = rcx as u8;
+
+            if new_fd as usize >= crate::pipe::MAX_FDS {
+                return err_to_u64(SyscallError::BadF);
+            }
+            if old_fd as usize >= crate::pipe::MAX_FDS {
+                return err_to_u64(SyscallError::BadF);
+            }
+
+            // Get the source entry
+            let src_entry = current_fd_entry(old_fd);
+            if src_entry.kind == crate::pipe::FD_CLOSED {
+                return err_to_u64(SyscallError::BadF);
+            }
+
+            // If new_fd is already open, close it first
+            let dst_entry = current_fd_entry(new_fd);
+            match dst_entry.kind {
+                crate::pipe::FD_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.pipe_id);
+                }
+                crate::pipe::FD_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.pipe_id);
+                }
+                _ => {}
+            }
+
+            // Increment ref for the duplicated fd
+            match src_entry.kind {
+                crate::pipe::FD_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.pipe_id);
+                }
+                crate::pipe::FD_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.pipe_id);
+                }
+                _ => {}
+            }
+
+            set_current_fd(new_fd, src_entry);
+            new_fd as u64
         }
 
         SyscallNum::WaitPid => {
@@ -602,7 +776,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         }
 
         SyscallNum::Close => {
-            // No-op (placeholder)
+            let fd = rbx as u8;
+            let entry = current_fd_entry(fd);
+            match entry.kind {
+                crate::pipe::FD_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.dec_read_ref(entry.pipe_id);
+                }
+                crate::pipe::FD_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.dec_write_ref(entry.pipe_id);
+                }
+                _ => {
+                    // stdin/stdout/stderr: just ignore close
+                }
+            }
+            set_current_fd(fd, crate::pipe::FdEntry::closed());
             0
         }
 
@@ -890,6 +1077,33 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
     }
+}
+
+// ── FD table helpers ──
+
+fn current_fd_entry(fd: u8) -> crate::pipe::FdEntry {
+    crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(proc) = lock.current_process_mut() {
+            if (fd as usize) < crate::pipe::MAX_FDS {
+                return proc.fd_table[fd as usize];
+            }
+        }
+        crate::pipe::FdEntry::closed()
+    })
+}
+
+fn set_current_fd(fd: u8, entry: crate::pipe::FdEntry) {
+    crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(proc) = lock.current_process_mut() {
+            if (fd as usize) < crate::pipe::MAX_FDS {
+                proc.fd_table[fd as usize] = entry;
+            }
+        }
+    });
 }
 
 pub fn wake_blocked_readers() {

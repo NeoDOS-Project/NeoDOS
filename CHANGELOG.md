@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.16.2 — 2026-05-23
+
+### IPC / Pipes (S2) — Añadido
+- **Añadido**: `src/pipe.rs` — PipeManager con 16 buffers de 4 KB + refcounting automático
+- **Añadido**: Per-process `fd_table[16]` en Process, con FdEntry (stdin/stdout/pipe reader/pipe writer)
+- **Añadido**: `sys_pipe` (RAX=5) — crea pipe, devuelve [read_fd, write_fd]
+- **Añadido**: `sys_dup2` (RAX=6) — duplica fd para redirección stdin/stdout
+- **Modificado**: `sys_read` (RAX=4) — soporta pipe reader fds, bloquea con -EAGAIN vía scheduler
+- **Modificado**: `sys_write` (RAX=1) — soporta pipe writer fds y fd como primer argumento
+- **Modificado**: `sys_close` (RAX=13) — cierra pipe fds (decrementa refcount, libera pipe si refs=0)
+- **Modificado**: `syscall_try_resched` — ya no sobreescribe estado Blocked
+- **Añadido**: 13 pipe tests: alloc/free, write/read, EOF, EPIPE, blocking, fd table
+- **Total**: 190 tests kernel + 4 user-mode binaries
+
 ## v0.16.1 — 2026-05-23
 
 ### Memory-mapped files (A4) — Añadido

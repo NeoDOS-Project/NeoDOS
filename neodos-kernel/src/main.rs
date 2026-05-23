@@ -24,6 +24,7 @@ mod font;
 mod tsr;
 mod nem;
 mod elf;
+mod pipe;
 mod devices;
 mod eventbus;
 mod memory;

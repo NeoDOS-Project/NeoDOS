@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 177 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 190 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -201,18 +201,62 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | RAX | Syscall | Args | Descripción |
 |-----|---------|------|-------------|
 | 0 | `sys_exit` | RBX=code | Termina proceso |
-| 1 | `sys_write` | RBX=ptr, RCX=len | Escribe a consola |
+| 1 | `sys_write` | RBX=fd, RCX=ptr, RDX=len | Escribe a fd (1=consola, pipe writer) |
 | 2 | `sys_yield` | — | Cede CPU |
 | 3 | `sys_getpid` | — | Retorna PID actual |
-| 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de stdin |
+| 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de fd (0=stdin, pipe reader); bloquea con -EAGAIN |
+| 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr |
+| 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) |
 | 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo |
 | 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → inode |
 | 11 | `sys_readfile` | RBX=inode, RCX=buf, RDX=count | Lee desde archivo |
 | 12 | `sys_writefile` | RBX=inode, RCX=buf, RDX=count | Escribe a archivo |
-| 13 | `sys_close` | RBX=fd | No-op (placeholder) |
+| 13 | `sys_close` | RBX=fd | Cierra fd (pipe fd decrementa refcount) |
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
 | 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=handle | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, handle) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
+
+## IPC / Pipes
+
+`src/pipe.rs` — Pipe IPC implementation for inter-process communication.
+
+### Pipe Manager
+- **16 static pipe buffers** of 4 KB each, protected by `spin::Mutex`
+- Reference-counted: auto-freed when all reader/writer fds are closed
+- `sys_pipe` allocates a pipe, returns two fds (reader + writer)
+- `sys_close` on a pipe fd decrements refcount; pipe freed when refs reach 0
+- `sys_dup2` copies an fd to another slot (increments refcount for pipe fds)
+
+### Per-Process FD Table
+- `Process.fd_table: [FdEntry; 16]` — fixed-size array indexed by fd number
+- `FdEntry` types: `Closed`, `Stdin`, `Stdout`, `PipeReader(u8)`, `PipeWriter(u8)`
+- fd 0 = stdin (keyboard), fd 1 = stdout (console), fd 2 = stderr (console)
+- fds 3–15 available for pipes/files
+- Default table for Ring 3 processes; `closed_fd_table()` for Ring 0
+- `sys_exit` iterates fd table and decrements all pipe refcounts
+
+### Blocking Reads
+- When a process reads from an empty pipe with write end open:
+  1. Process state set to `Blocked { waiting_for: 0xFFFF_0000 | pipe_id }`
+  2. `NEED_RESCHED` flag set
+  3. `syscall_dispatch` returns `-EAGAIN` to user space
+  4. Assembly resched picks a different process
+- On pipe write: `wake_pipe_readers()` scans scheduler processes, sets Blocked→Ready
+- When woken process runs: user code retries `read()` syscall (handles -EAGAIN)
+
+### Syscall Changes
+| RAX | Syscall | Cambio |
+|-----|---------|--------|
+| 1 | `sys_write` | RBX=fd (antes RBX=ptr). Soporta fd 1 (stdout) y pipe writer fds |
+| 4 | `sys_read` | Soporta fd 0 (stdin) y pipe reader fds |
+| 5 | `sys_pipe` | Nuevo: crea pipe, devuelve [read_fd, write_fd] |
+| 6 | `sys_dup2` | Nuevo: duplica fd (redirección) |
+| 13 | `sys_close` | Ahora cierra pipe fds correctamente (decrementa refcount) |
+
+### Scheduler Integration
+- `syscall_try_resched` modified: only transitions `Running → Ready` (does not override `Blocked`)
+- `wake_pipe_readers()` in `pipe.rs` iterates scheduler processes via `Scheduler::processes`
+- `block_current_for_pipe()` sets current process to `Blocked` + sets `NEED_RESCHED`
 
 ## ELF64 Loader
 
@@ -241,7 +285,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-177 tests en 17 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+190 tests en 18 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -257,6 +301,7 @@ Binarios flat cargados en `0x400000`.
 | ELF | 7 | ELF64 loader: header validation, segment loading, edge cases |
 | Event Bus | 9 | Event: creation, push/pop, ordering, overflow, IDs, handler register/dispatch, type filter, unregister, empty queue |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
+| Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | Stress | 8 | Stress: sched, syscall, mem |
 
