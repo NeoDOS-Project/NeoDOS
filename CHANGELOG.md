@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.16.1 — 2026-05-23
+
+### Memory-mapped files (A4) — Añadido
+- **Añadido**: `MmapRegion` struct + VMA list per-process en `scheduler.rs`
+- **Añadido**: `sys_mmap` (RAX=19) — lazy mapping: solo registra VMA, páginas al page fault
+- **Añadido**: `sys_munmap` (RAX=20) — libera páginas físicas y elimina VMA
+- **Añadido**: Región mmap dedicada 0x20000000..0x22000000 (32 MB) con demand paging
+- **Añadido**: Soportes: anónimo (zero-filled lazy) y file-backed (lazy loading desde NeoFS)
+- **Añadido**: `handle_mmap_page_fault()` en page fault handler para resolución on-demand
+- **Añadido**: `Vfs::stat()` wrapper público, `Vfs` ahora exporta `stat(drive, inode)`
+- **Añadido**: `is_user_ptr_valid()` extendido para cubrir regiones mmap
+- **Añadido**: 6 tests mmap: estructura, flags, direcciones, VMA add/remove
+- **Añadido**: sys_exit ahora libera todas las regiones mmap del proceso
+- **Modificado**: syscall trampoline pasa R8/R9 como arg4/arg5 (nuevos parámetros mmap)
+- **Modificado**: `syscall_dispatch` firma: 6 argumentos (rax, rbx, rcx, rdx, r8, r9)
+- **Total**: 177 tests kernel + 4 user-mode binaries
+
 ## v0.16.0 — 2026-05-23
 
 ### Driver Certification Pipeline v1

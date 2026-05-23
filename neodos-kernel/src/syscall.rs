@@ -49,10 +49,11 @@ pub enum SyscallNum {
     GetCwd = 17,
     Brk = 18,
     Mmap = 19,
+    Munmap = 20,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 19;
+    pub const MAX_VALID: u64 = 20;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -71,7 +72,8 @@ impl SyscallNum {
             16 => Some(Self::ChDir),
             17 => Some(Self::GetCwd),
             18 => Some(Self::Brk),
-            19 => Some(Self::Mmap),
+             19 => Some(Self::Mmap),
+             20 => Some(Self::Munmap),
             _ => None,
         }
     }
@@ -138,7 +140,7 @@ pub fn validate_abi() {
     assert!((err_to_u64(SyscallError::NoMem) as i64) < 0);
 
     // Syscall numbers must not overlap or exceed max
-    assert_eq!(SyscallNum::MAX_VALID, 19);
+    assert_eq!(SyscallNum::MAX_VALID, 20);
     for n in 0..=SyscallNum::MAX_VALID {
         if n == 5 || n == 6 || n == 7 || n == 8 {
             assert!(SyscallNum::from_u64(n).is_none(), "reserved hole {} must stay free", n);
@@ -269,14 +271,24 @@ fn normalize_dos_path(path: &str) -> String {
 }
 
 /// Check if `[ptr, ptr+len)` is a valid user-accessible address range.
-/// Valid ranges: the standard user slot window (4–8 MB) or the current
-/// process's heap region.
+/// Valid ranges: the standard user slot window (4–8 MB), the current
+/// process's heap region, or any active mmap region.
 fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
         return true;
     }
     let (heap_base, heap_break) = crate::scheduler::current_process_heap_range();
-    heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break
+    if heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break {
+        return true;
+    }
+    // Check mmap regions
+    let regions = crate::scheduler::current_process_mmap_regions();
+    for r in &regions {
+        if ptr >= r.base && ptr.saturating_add(len) <= r.base + r.len {
+            return true;
+        }
+    }
+    false
 }
 
 /// Copy a null-terminated string from user space (up to 255 bytes).
@@ -298,8 +310,8 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 }
 
 #[no_mangle]
-pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u64 {
-    crate::trace_syscall!(rax, rbx, rcx, _rdx);
+pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u64, r9: u64) -> u64 {
+    crate::trace_syscall!(rax, rbx, rcx, rdx);
 
     // ABI validation: reject unknown syscall numbers
     let num = match SyscallNum::from_u64(rax) {
@@ -338,6 +350,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
                             proc.heap_base = 0;
                             proc.heap_break = 0;
                         }
+                        // Free all mmap regions
+                        for r in proc.mmap_regions.iter() {
+                            crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
+                        }
+                        proc.mmap_regions.clear();
+                        proc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
                     }
                 }
 
@@ -382,7 +400,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         SyscallNum::Read => {
             let fd = rbx;
             let buf_ptr = rcx as *mut u8;
-            let count = _rdx as usize;
+            let count = rdx as usize;
 
             if fd != 0 {
                 return err_to_u64(SyscallError::BadF);
@@ -524,7 +542,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let drive_idx = (handle >> 32) as usize;
             let inode_num = (handle & 0xFFFFFFFF) as u32;
             let buf_ptr = rcx as *mut u8;
-            let count = _rdx as usize;
+            let count = rdx as usize;
 
             if drive_idx >= 26 || handle == u64::MAX {
                 return err_to_u64(SyscallError::BadF);
@@ -557,7 +575,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
             let drive_idx = (handle >> 32) as usize;
             let inode_num = (handle & 0xFFFFFFFF) as u32;
             let buf_ptr = rcx as *const u8;
-            let count = _rdx as usize;
+            let count = rdx as usize;
 
             if drive_idx >= 26 || handle == u64::MAX {
                 return err_to_u64(SyscallError::BadF);
@@ -591,7 +609,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         SyscallNum::Ioctl => {
             let device_id = rbx as u32;
             let cmd = rcx as u32;
-            let buf_ptr = _rdx as *mut u8;
+            let buf_ptr = rdx as *mut u8;
             let count = 4;
 
             let handler = get_device_handler(device_id);
@@ -781,38 +799,95 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, _rdx: u64) -> u
         }
 
         SyscallNum::Mmap => {
-            let size = rbx;
-            if size == 0 || size > 0x100000 {
+            // RBX = addr_hint (0 = auto), RCX = length, RDX = prot
+            // R8 = flags (bit0=1 anonymous, bit1=1 shared), R9 = file_handle
+            let _addr_hint = rbx;
+            let length = rcx;
+            let prot = rdx as u16;
+            let flags = r8 as u16;
+            let file_handle = r9;
+
+            if length == 0 || length > 0x100000 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if prot & !3 != 0 {
                 return err_to_u64(SyscallError::Inval);
             }
 
-            let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
-            if heap_base == 0 {
-                return err_to_u64(SyscallError::NoMem);
-            }
+            let is_anon = (flags & 1) != 0;
 
-            let heap_limit = heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE;
-            let alloc_size = (size + 0xFFF) & !0xFFF;
-            let new_break = current_break + alloc_size;
-
-            if new_break > heap_limit {
-                return err_to_u64(SyscallError::NoMem);
-            }
-
-            let mut page = current_break;
-            while page < new_break {
-                if let Some(_phys) = crate::arch::x64::paging::heap_alloc_page(page) {
-                    unsafe { core::ptr::write_volatile(page as *mut u8, 0); }
-                } else {
-                    crate::arch::x64::paging::heap_free_range(current_break, page);
-                    crate::scheduler::set_current_heap_break(current_break);
-                    return err_to_u64(SyscallError::NoMem);
+            if is_anon {
+                // Anonymous mmap — lazy zero-filled pages
+                let alloc_size = (length + 0xFFF) & !0xFFF;
+                let region = crate::scheduler::MmapRegion {
+                    base: 0,
+                    len: alloc_size,
+                    prot,
+                    flags: 1, // anonymous
+                    drive: 0,
+                    inode: 0,
+                    file_size: 0,
+                };
+                match crate::scheduler::add_current_mmap_region(region) {
+                    Some(base) => base,
+                    None => err_to_u64(SyscallError::NoMem),
                 }
-                page += crate::arch::x64::paging::PAGE_4K;
+            } else {
+                // File-backed mmap — lazy loading from file
+                let drive_idx = (file_handle >> 32) as usize;
+                let inode_num = (file_handle & 0xFFFFFFFF) as u32;
+                if drive_idx >= 26 || file_handle == u64::MAX {
+                    return err_to_u64(SyscallError::BadF);
+                }
+
+                // Stat the file to get its size
+                let file_info = crate::globals::with_vfs(|vfs| {
+                    vfs.stat(drive_idx, inode_num)
+                });
+                let (file_size, file_mode) = match file_info {
+                    Ok(node) => (node.size, node.mode),
+                    Err(_) => return err_to_u64(SyscallError::NoEnt),
+                };
+                if (file_mode & crate::fs::vfs::MODE_FILE) == 0 {
+                    return err_to_u64(SyscallError::IsDir);
+                }
+
+                let alloc_size = (length + 0xFFF) & !0xFFF;
+                let region = crate::scheduler::MmapRegion {
+                    base: 0,
+                    len: alloc_size,
+                    prot,
+                    flags: 0, // file-backed
+                    drive: drive_idx as u8,
+                    inode: inode_num,
+                    file_size,
+                };
+                match crate::scheduler::add_current_mmap_region(region) {
+                    Some(base) => base,
+                    None => err_to_u64(SyscallError::NoMem),
+                }
+            }
+        }
+
+        SyscallNum::Munmap => {
+            // RBX = addr, RCX = length
+            let addr = rbx;
+            let length = rcx;
+
+            if length == 0 || addr & 0xFFF != 0 {
+                return err_to_u64(SyscallError::Inval);
             }
 
-            crate::scheduler::set_current_heap_break(new_break);
-            current_break
+            // Find and remove the VMA
+            let region = crate::scheduler::remove_current_mmap_region(addr);
+            match region {
+                Some(r) => {
+                    // Free all physical pages in the range
+                    crate::scheduler::free_current_mmap_pages(r.base, r.len);
+                    0
+                }
+                None => err_to_u64(SyscallError::Inval),
+            }
         }
     }
 }

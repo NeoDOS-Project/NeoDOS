@@ -72,6 +72,8 @@ core::arch::global_asm!(
     "mov rsi, [rsp + 8]",
     "mov rdx, [rsp + 16]",
     "mov rcx, [rsp + 24]",
+    "mov r8,  [rsp + 48]",
+    "mov r9,  [rsp + 56]",
     "call syscall_dispatch",
     "mov [rsp + 0], rax",
     "test r15, r15",
@@ -270,6 +272,9 @@ extern "x86-interrupt" fn page_fault_handler(
 
     if is_user && is_not_present {
         if crate::arch::x64::paging::handle_heap_page_fault(virt, true, is_write) {
+            return;
+        }
+        if crate::arch::x64::paging::handle_mmap_page_fault(virt, true, is_write) {
             return;
         }
     }

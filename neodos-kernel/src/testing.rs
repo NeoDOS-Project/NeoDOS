@@ -439,8 +439,8 @@ fn register_syscall_stress() {
     test_case!("stress_syscall_invalid_numbers", {
         // ABI fuzzing: ensure invalid syscall numbers return -ENOSYS
         let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::NoSys);
-        for num in &[20u64, 100, 255, 0xFFFFFFFF] {
-            let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0);
+        for num in &[21u64, 100, 255, 0xFFFFFFFF] {
+            let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0, 0, 0);
             test_eq!(result, expected);
         }
     });
@@ -450,7 +450,7 @@ fn register_syscall_stress() {
         // Syscall with bad address should return -EFAULT
         let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::Fault);
         let kernel_addr: u64 = 0x200000; // kernel .text start
-        let result = crate::syscall::syscall_dispatch(1, kernel_addr, 10, 0);
+        let result = crate::syscall::syscall_dispatch(1, kernel_addr, 10, 0, 0, 0);
         test_eq!(result, expected);
     });
 }
@@ -1514,8 +1514,89 @@ pub fn register_neofs_tests() {
     });
 }
 
-// ── Test registration (all suites) ─────────────────────────────────
+// ===== Mmap tests =====
 
+pub fn register_mmap_tests() {
+    use crate::scheduler::MmapRegion;
+
+    test_case!("mmap_region_create", {
+        let r = MmapRegion {
+            base: 0x20000000, len: 0x1000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_eq!(r.base, 0x20000000);
+        test_eq!(r.len, 0x1000);
+        test_eq!(r.prot, 3);
+        test_eq!(r.flags, 1);
+    });
+
+    test_case!("mmap_region_anonymous", {
+        let r = MmapRegion {
+            base: 0x20001000, len: 0x4000, prot: 1, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_true!((r.flags & 1) != 0); // anonymous
+        test_eq!(r.prot & 2, 0); // not writable
+        test_eq!(r.prot & 1, 1); // readable
+    });
+
+    test_case!("mmap_region_file_backed", {
+        let r = MmapRegion {
+            base: 0x20010000, len: 0x2000, prot: 3, flags: 0,
+            drive: 2, inode: 42, file_size: 8192,
+        };
+        test_eq!(r.flags & 1, 0); // file-backed
+        test_eq!(r.drive, 2);
+        test_eq!(r.inode, 42);
+        test_eq!(r.file_size, 8192);
+    });
+
+    test_case!("mmap_region_contains", {
+        let r = MmapRegion {
+            base: 0x20000000, len: 0x10000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_true!(0x20000000 >= r.base && 0x20000000 < r.base + r.len);
+        test_true!(0x2000FFF0 >= r.base && 0x2000FFF0 < r.base + r.len);
+        test_true!(!(0x20010000 >= r.base && 0x20010000 < r.base + r.len));
+    });
+
+    test_case!("mmap_is_mmap_virtual_addr", {
+        test_true!(crate::arch::x64::paging::is_mmap_virtual_addr(0x20000000));
+        test_true!(crate::arch::x64::paging::is_mmap_virtual_addr(0x21FFFFFF));
+        test_true!(!crate::arch::x64::paging::is_mmap_virtual_addr(0x1FFFFFFF));
+        test_true!(!crate::arch::x64::paging::is_mmap_virtual_addr(0x22000000));
+    });
+
+    test_case!("mmap_process_add_remove", {
+        use crate::scheduler::Process;
+        let mut p = Process::new_ring0(99, 0x400000, 0x800000, None);
+        test_eq!(p.mmap_regions.len(), 0);
+
+        let r1 = MmapRegion {
+            base: 0x20000000, len: 0x1000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        p.mmap_regions.push(r1);
+        test_eq!(p.mmap_regions.len(), 1);
+        test_eq!(p.mmap_regions[0].base, 0x20000000);
+
+        let r2 = MmapRegion {
+            base: 0x20001000, len: 0x2000, prot: 1, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        p.mmap_regions.push(r2);
+        test_eq!(p.mmap_regions.len(), 2);
+
+        let idx = p.mmap_regions.iter().position(|r| r.base == 0x20000000);
+        test_true!(idx.is_some());
+        p.mmap_regions.remove(idx.unwrap());
+        test_eq!(p.mmap_regions.len(), 1);
+        test_eq!(p.mmap_regions[0].base, 0x20001000);
+    });
+}
+
+// ── Test registration (all suites) ─────────────────────────────────
 
 
 pub fn register_tests() {
@@ -1527,6 +1608,7 @@ pub fn register_tests() {
     register_alloc_tests();
     register_sync_tests();
     register_neofs_tests();
+    register_mmap_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();

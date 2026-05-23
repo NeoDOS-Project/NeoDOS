@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.16.0 (171 tests, 4 user-mode binaries, ELF64 loader).
+> Versión actual: v0.16.1 (177 tests, 4 user-mode binaries, ELF64 loader, mmap lazy).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (41 items)
+## COMPLETED (42 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -40,6 +40,7 @@
 25. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
 26. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
 41. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
+42. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -82,16 +83,15 @@ Estos items desbloquean todo el roadmap futuro.
 50. **A1. Signals userland** — SIGSEGV/SIGTERM/SIGINT, handlers Ring 3, delivery vía IRETQ.
 51. **A2. Scheduler prioritario** — prioridades, time slices dinámicos, idle task dedicada.
 52. **A3. Kernel slab allocator** — caches por tamaño (inodos, PCB, buffers FS).
-53. **A4. Memory-mapped files** — mmap() sobre archivos, lazy loading, integración paging.
-54. **A5. DMA dinámico** — PRDT dinámico, multi-block DMA, page pools.
-55. **A6. Cache global de bloques** — LRU entre FS, write-back opcional, dirty tracking.
-56. **A7. Hard links + symlinks** — enlaces duros NeoFS, symlinks vía VFS.
-57. **A8. Compresión transparente** — bloques DEFLATE/LZ4, flags por archivo.
-58. **A9. VirtIO block driver** — PCI VirtIO, multi-queue, paravirtualización.
-59. **A10. NVMe driver** — queues NVMe, MSI/MSI-X, async completions.
-60. **A11. PCIe enumeration** — escaneo completo buses PCIe (no solo bus 0).
-61. **A12. MSI/MSI-X** — interrupciones basadas en mensajes, reemplazar PIC.
-62. **A13. Ramdisk driver** — dispositivo de bloque en memoria para archivos temporales.
+53. **A4. DMA dinámico** — PRDT dinámico, multi-block DMA, page pools.
+54. **A5. Cache global de bloques** — LRU entre FS, write-back opcional, dirty tracking.
+55. **A6. Hard links + symlinks** — enlaces duros NeoFS, symlinks vía VFS.
+56. **A7. Compresión transparente** — bloques DEFLATE/LZ4, flags por archivo.
+57. **A8. VirtIO block driver** — PCI VirtIO, multi-queue, paravirtualización.
+58. **A9. NVMe driver** — queues NVMe, MSI/MSI-X, async completions.
+59. **A10. PCIe enumeration** — escaneo completo buses PCIe (no solo bus 0).
+60. **A11. MSI/MSI-X** — interrupciones basadas en mensajes, reemplazar PIC.
+61. **A12. Ramdisk driver** — dispositivo de bloque en memoria para archivos temporales.
 
 ---
 
@@ -157,9 +157,9 @@ Estos items desbloquean todo el roadmap futuro.
 
 | Estado | Items | Prioridades |
 |--------|-------|-------------|
-| COMPLETED | 40 | — |
+| COMPLETED | 42 | — |
 | S — Crítico | 9 | Pipes, Redirection, FAT32 write, FSCK, libneodos, cleanup, PATH, pipe operator, batch |
-| A — Infraestructura | 13 | Signals, scheduler, slab, mmap, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
+| A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
 | B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
 | C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |
 | D — Ecosistema | 10 | SDK, CI, benchmarks, debugger, crash dump, NTP, DHCP, sockets, POSIX |

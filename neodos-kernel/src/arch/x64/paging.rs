@@ -1,6 +1,7 @@
 use x86_64::structures::paging::{PageTable, PageTableFlags};
 use x86_64::PhysAddr;
 use crate::serial_println;
+use crate::scheduler::MmapRegion;
 
 #[repr(align(4096))]
 pub struct AlignedPageTable(PageTable);
@@ -294,6 +295,179 @@ pub unsafe fn map_user_range(base: u64, size: u64) {
 
 pub const PAGE_4K: u64 = 4096;
 
+// ─────────────────────────────────────────────────────────
+// mmap region (file-backed + anonymous lazy mapping)
+// ─────────────────────────────────────────────────────────
+// Region: 0x2000_0000 .. 0x2200_0000 (32 MB)
+// Above heap (0x1000_0000..0x1200_0000), within identity-mapped 4 GiB.
+
+pub const MMAP_BASE: u64 = 0x2000_0000;
+pub const MMAP_TOTAL_SIZE: u64 = 0x200_0000; // 32 MB
+
+/// Check if a virtual address falls within the mmap region.
+pub fn is_mmap_virtual_addr(virt: u64) -> bool {
+    virt >= MMAP_BASE && virt < MMAP_BASE + MMAP_TOTAL_SIZE
+}
+
+/// Split all 2 MB huge pages in the mmap region for 4 KB demand paging.
+pub fn init_mmap_demand_paging() {
+    let mut count = 0;
+    let end = MMAP_BASE + MMAP_TOTAL_SIZE;
+    let mut addr = MMAP_BASE;
+    while addr < end {
+        if let Err(_) = split_2mb_page(addr) {
+            serial_println!("[PAG] mmap split @ 0x{:x} FAILED", addr);
+        } else {
+            count += 1;
+        }
+        addr += HUGE_PAGE_SIZE;
+    }
+    serial_println!("[PAG] mmap region: {} huge pages split for 4 KB demand paging", count);
+}
+
+/// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
+/// `virt` must be in the mmap range and 4 KB-aligned.
+pub fn mmap_alloc_page(virt: u64) -> Option<u64> {
+    if !is_mmap_virtual_addr(virt) || virt & 0xFFF != 0 {
+        return None;
+    }
+    let phys = crate::hal::alloc_page();
+    if phys.is_null() { return None; }
+    let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
+    if rc != 0 { return None; }
+    Some(phys as u64)
+}
+
+/// Free a single 4 KB mmap page.
+pub fn mmap_free_page(virt: u64) {
+    if !is_mmap_virtual_addr(virt) || virt & 0xFFF != 0 {
+        return;
+    }
+    if let Some(entry) = crate::hal::walk_ptes_4k(virt) {
+        if entry.flags().contains(PageTableFlags::PRESENT) {
+            let phys = entry.addr().as_u64();
+            let _ = crate::hal::unmap_page(virt);
+            crate::hal::free_page(phys as *mut u8);
+        }
+    }
+}
+
+/// Free all mmap pages in the range `[start, end)`.
+pub fn mmap_free_range(start: u64, end: u64) {
+    let s = start.max(MMAP_BASE);
+    let e = end.min(MMAP_BASE + MMAP_TOTAL_SIZE);
+    let mut addr = s & !(PAGE_4K - 1);
+    while addr < e {
+        if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                let phys = entry.addr().as_u64();
+                if phys != addr {
+                    let _ = crate::hal::unmap_page(addr);
+                    crate::hal::free_page(phys as *mut u8);
+                }
+            }
+        }
+        addr += PAGE_4K;
+    }
+}
+
+/// Handle a page fault for on-demand mmap page allocation (anonymous + file-backed).
+/// Called from the page fault handler.
+pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
+    if !user { return false; }
+    if !is_mmap_virtual_addr(virt) { return false; }
+
+    let aligned = virt & !(PAGE_4K - 1);
+
+    // Look up the VMA for this address
+    let region = crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut scheduler = s.lock();
+        if let Some(proc) = scheduler.current_process_mut() {
+            for r in &proc.mmap_regions {
+                if aligned >= r.base && aligned < r.base + r.len {
+                    return Some(*r);
+                }
+            }
+        }
+        None
+    });
+
+    let region = match region {
+        Some(r) => r,
+        None => return false,
+    };
+
+    // Check write protection
+    if write && region.prot & 2 == 0 {
+        serial_println!("[MMAP] write fault on read-only page @ 0x{:x}", aligned);
+        return false;
+    }
+
+    // Split 2 MB page if needed (PTE doesn't exist yet)
+    if crate::hal::walk_ptes_4k(aligned).is_none() {
+        if split_2mb_page(aligned).is_err() {
+            return false;
+        }
+    }
+
+    if region.flags & 1 != 0 {
+        // Anonymous: allocate zero-filled page
+        match mmap_alloc_page(aligned) {
+            Some(phys) => {
+                serial_println!("[MMAP] demand-alloc anon 4K @ 0x{:x} → phys 0x{:x}", aligned, phys);
+                true
+            }
+            None => false,
+        }
+    } else {
+        // File-backed: load the relevant block from disk
+        load_file_mmap_page(aligned, &region)
+    }
+}
+
+/// Load a single 4 KB page from a file-backed mmap region.
+fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
+    let offset_in_file = (virt - region.base) as usize;
+    let file_size = region.file_size as usize;
+
+    let phys = crate::hal::alloc_page();
+    if phys.is_null() { return false; }
+    let phys_addr = phys as u64;
+
+    // Zero the page (identity-mapped)
+    unsafe { core::ptr::write_bytes(phys_addr as *mut u8, 0, 4096); }
+
+    let bytes_to_read = core::cmp::min(4096, file_size.saturating_sub(offset_in_file));
+
+    if bytes_to_read > 0 {
+        let dest_slice =
+            unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, bytes_to_read) };
+
+        let result = crate::globals::with_vfs(|vfs| {
+            vfs.read(region.drive as usize, region.inode, offset_in_file as u64, dest_slice)
+        });
+
+        if result.is_err() {
+            crate::hal::free_page(phys);
+            return false;
+        }
+    }
+
+    // Map at user address (PRESENT | WRITABLE | USER_ACCESSIBLE)
+    let rc = crate::hal::map_page(phys_addr, virt, 0x7);
+    if rc != 0 {
+        crate::hal::free_page(phys);
+        return false;
+    }
+
+    serial_println!(
+        "[MMAP] demand-load file 4K @ 0x{:x} (inode={}, offset={})",
+        virt, region.inode, offset_in_file
+    );
+    true
+}
+
 /// Split a 2 MB huge page at `virt` into 512 × 4 KB page table entries.
 /// Allocates a physical page for the new PT from the frame allocator.
 pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
@@ -336,7 +510,7 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         // Replace PD entry: point to PT, clear HUGE_PAGE
         let mut new_flags = huge_flags;
         new_flags.remove(PageTableFlags::HUGE_PAGE);
-        if is_heap_virtual_addr(virt) {
+        if is_heap_virtual_addr(virt) || is_mmap_virtual_addr(virt) {
             new_flags |= PageTableFlags::USER_ACCESSIBLE;
         }
         pd[pd_idx].set_addr(PhysAddr::new(pt_phys as u64), new_flags);

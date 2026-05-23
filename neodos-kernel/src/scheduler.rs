@@ -1,5 +1,6 @@
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -21,6 +22,18 @@ fn idle_task() -> ! {
 }
 
 #[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MmapRegion {
+    pub base: u64,
+    pub len: u64,
+    pub prot: u16,      // 1=R, 2=W, 3=RW
+    pub flags: u16,     // bit 0: 1=anonymous, 0=file-backed
+    pub drive: u8,      // file-backed: drive index
+    pub inode: u32,     // file-backed: inode number
+    pub file_size: u32, // file-backed: total file size
+}
+
+#[repr(C)]
 pub struct Process {
     pub rax: u64,  rbx: u64,  rcx: u64,  rdx: u64,
     pub rsi: u64,  rdi: u64,  r8: u64,   r9: u64,
@@ -33,6 +46,8 @@ pub struct Process {
     pub heap_base: u64,  pub heap_break: u64,
     pub kernel_stack_top: u64,
     kernel_stack: Option<Box<AlignedKStack>>,
+    pub mmap_regions: Vec<MmapRegion>,
+    pub mmap_next: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -110,6 +125,8 @@ impl Process {
             heap_break: 0,
             kernel_stack_top: stack_top,
             kernel_stack: stack,
+            mmap_regions: Vec::new(),
+            mmap_next: crate::arch::x64::paging::MMAP_BASE,
         }
     }
 
@@ -137,6 +154,8 @@ impl Process {
             heap_break: heap_base,
             kernel_stack_top,
             kernel_stack: Some(stack),
+            mmap_regions: Vec::new(),
+            mmap_next: crate::arch::x64::paging::MMAP_BASE,
         }
     }
 }
@@ -351,6 +370,41 @@ pub fn set_current_heap_break(new_break: u64) {
     if let Some(proc) = lock.current_process_mut() {
         proc.heap_break = new_break;
     }
+}
+
+pub fn current_process_mmap_regions() -> Vec<MmapRegion> {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        proc.mmap_regions.clone()
+    } else {
+        Vec::new()
+    }
+}
+
+pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        proc.mmap_regions.push(region);
+        proc.mmap_next = region.base + region.len;
+        Some(region.base)
+    } else {
+        None
+    }
+}
+
+pub fn remove_current_mmap_region(base: u64) -> Option<MmapRegion> {
+    let mut lock = SCHEDULER.lock();
+    if let Some(proc) = lock.current_process_mut() {
+        let idx = proc.mmap_regions.iter().position(|r| r.base == base);
+        idx.map(|i| proc.mmap_regions.remove(i))
+    } else {
+        None
+    }
+}
+
+pub fn free_current_mmap_pages(base: u64, len: u64) {
+    use crate::arch::x64::paging::mmap_free_range;
+    mmap_free_range(base, base + len);
 }
 
 

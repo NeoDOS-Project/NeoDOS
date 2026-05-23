@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 99 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 177 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -133,7 +133,22 @@ sys_brk(new_break)           # proceso pide más heap
 sys_exit
   → heap_free_range(heap_base, heap_base + PROCESS_HEAP_SIZE)
   → por cada página presente con phys != virt: free_frame() + set_unused()
+  → mmap_free_range por cada mmap_region registrada
 ```
+
+## mmap Lazy (anonymous + file-backed)
+
+**Archivos:** `arch/x64/paging.rs` (mmap_alloc_page, mmap_free_range, handle_mmap_page_fault, load_file_mmap_page), `scheduler.rs` (MmapRegion, VMA list per-process), `syscall.rs` (sys_mmap/sys_munmap dispatch), `arch/x64/idt.rs` (page_fault_handler → handle_mmap_page_fault)
+
+Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB durante el arranque (`init_mmap_demand_paging`).
+
+- **MmapRegion**: base, len, prot (1=R, 2=W), flags (bit0=1 anonymous, 0=file-backed), drive, inode, file_size
+- **sys_mmap (RAX=19)**: RBX=hint, RCX=len, RDX=prot, R8=flags, R9=file_handle — solo registra VMA, no aloca páginas
+- **sys_munmap (RAX=20)**: RBX=addr, RCX=len — libera páginas y elimina VMA
+- **Anonymous**: page fault → allocate_frame() + map USER_ACCESSIBLE
+- **File-backed**: page fault → with_vfs → vfs.read() a frame identity-mapped → map USER_ACCESSIBLE
+- **is_user_ptr_valid()**: extendido para cubrir regiones mmap
+- **sys_exit**: libera todas las regiones mmap del proceso
 
 ## User-mode process lifecycle
 
@@ -181,7 +196,7 @@ Métodos del trait `FileSystem`: `remove_file()`, `remove_dir()`, `rename()` —
 - `validate_abi()` — called at boot from `main.rs`, asserts all syscall numbers have handlers and error encoding is correct
 - Return convention: `≥ 0` success, `< 0` error (user checks `cmp rax, -1`)
 
-Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
+Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8 = arg3, R9 = arg4. Return in RAX.
 
 | RAX | Syscall | Args | Descripción |
 |-----|---------|------|-------------|
@@ -196,7 +211,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Re
 | 12 | `sys_writefile` | RBX=inode, RCX=buf, RDX=count | Escribe a archivo |
 | 13 | `sys_close` | RBX=fd | No-op (placeholder) |
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
-| 19 | `sys_mmap` | RBX=size | Asigna memoria contigua zero-filled en heap |
+| 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=handle | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, handle) |
+| 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
 
 ## ELF64 Loader
 
@@ -225,7 +241,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-171 tests en 16 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+177 tests en 17 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -241,10 +257,11 @@ Binarios flat cargados en `0x400000`.
 | ELF | 7 | ELF64 loader: header validation, segment loading, edge cases |
 | Event Bus | 9 | Event: creation, push/pop, ordering, overflow, IDs, handler register/dispatch, type filter, unregister, empty queue |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
+| Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (171 tests kernel)
+1. Ejecuta `testing::run_all()` (177 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## NEM Module

@@ -138,6 +138,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // Split heap region huge pages into 4 KB PTs for demand paging
     arch::x64::paging::init_heap_demand_paging();
+    // Split mmap region huge pages for lazy file/anonymous mapping
+    arch::x64::paging::init_mmap_demand_paging();
 
     // ============================================
     // PHASE 3 (after custom page tables): Storage stack
