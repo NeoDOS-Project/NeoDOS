@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.16.0 — 2026-05-23
+
+### Driver Certification Pipeline v1
+- **Añadido**: State machine de 7 estados: Loaded → Initialized → Registered → Bound → Active + Faulted + Unloaded
+- **Añadido**: `try_transition()` con validación estricta — solo transiciones secuenciales permitidas
+- **Añadido**: `certify_and_activate()` — solo activa driver si completó todas las 5 etapas
+- **Añadido**: `last_error: u32` + `certification_step: u8` en `DriverInstance` (9 códigos de error)
+- **Añadido**: `inactive_reason()` — diagnóstico humano de por qué un driver no es ACTIVE
+- **Añadido**: `pipeline_progress()` — array de 5 bools mostrando progreso del pipeline
+- **Añadido**: `PipelineStep` enum — tracking de qué etapa falló (LOAD/INIT/REGISTER/BIND/CERTIFY)
+- **Añadido**: `state_counts()`, `loaded_count()`, `faulted_count()` — desglose por estado
+- **Modificado**: `active_count()` ahora solo cuenta ACTIVE (no "not Unloaded")
+- **Modificado**: `drivers/nem/loader.rs` — pipeline completo con transiciones en cada etapa
+- **Modificado**: `drivers/driver_loader.rs` — legacy loader deja driver en LOADED (no init)
+- **Añadido**: `NDREG DEBUG <name>` — checklist de 5 pasos diagnósticos LOADED≠ACTIVE
+- **Añadido**: Pipeline visual `█████` en NDREG LIST/RUNTIME (progreso L-I-R-B-A)
+- **Añadido**: 21 tests de state machine: transiciones válidas/inválidas, certify, error tracking, counts, pipeline_progress
+- **Total**: 171 tests kernel + 4 user-mode binaries
+
 ## v0.15.0 — 2026-05-21
 
 ### ELF64 Loader — Añadido

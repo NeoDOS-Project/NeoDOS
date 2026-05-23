@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 160;
+const MAX_TESTS: usize = 180;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -1530,6 +1530,7 @@ pub fn register_tests() {
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
+    crate::drivers::driver_runtime::register_driver_certification_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }

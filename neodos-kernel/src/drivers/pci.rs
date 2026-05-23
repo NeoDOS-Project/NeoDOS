@@ -99,6 +99,53 @@ pub fn find_acpi_pm1_cnt_port() -> Option<u16> {
     None
 }
 
+pub struct NvmeInfo {
+    pub bus: u8,
+    pub device: u8,
+    pub func: u8,
+    pub bar0_phys: u64,
+}
+
+/// Find an NVMe controller on PCI bus 0.
+/// Class 0x01 (Mass Storage), Subclass 0x08 (NVM), Prog-if 0x02 (NVMe).
+pub fn find_nvme_controller() -> Option<NvmeInfo> {
+    for bus in 0..=0 {
+        for dev in 0..32 {
+            for func in 0..8 {
+                let vendor = pci_config_read_word(bus, dev, func, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    if func == 0 { break; }
+                    continue;
+                }
+
+                let class_rev = pci_config_read_dword(bus, dev, func, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                let prog_if = ((class_rev >> 8) & 0xFF) as u8;
+
+                if class == 0x01 && subclass == 0x08 && prog_if == 0x02 {
+                    let bar0 = pci_config_read_dword(bus, dev, func, 0x10);
+                    let bar_is_64bit = (bar0 & 0x06) == 0x04;
+                    let bar0_phys = if bar_is_64bit {
+                        let bar1 = pci_config_read_dword(bus, dev, func, 0x14);
+                        ((bar1 as u64) << 32) | (bar0 as u64 & 0xFFFF_FFF0)
+                    } else {
+                        (bar0 & 0xFFFF_FFF0) as u64
+                    };
+                    return Some(NvmeInfo { bus, device: dev, func, bar0_phys });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Enable bus mastering and memory space for an NVMe controller.
+pub fn nvme_enable(nvme: &NvmeInfo) {
+    let cmd = pci_config_read_word(nvme.bus, nvme.device, nvme.func, 0x04);
+    pci_config_write_word(nvme.bus, nvme.device, nvme.func, 0x04, cmd | 0x06);
+}
+
 pub fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let addr = 0x8000_0000u32
         | ((bus as u32) << 16)

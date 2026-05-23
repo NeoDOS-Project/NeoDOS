@@ -9,6 +9,8 @@ pub mod fat32;
 pub mod gpt;
 pub mod iso9660;
 pub mod keyboard;
+pub mod nem;
+pub mod nvme;
 pub mod pci;
 pub mod rtc;
 pub mod storage_manager;

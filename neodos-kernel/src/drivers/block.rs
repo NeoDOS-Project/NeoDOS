@@ -3,6 +3,7 @@
 use alloc::boxed::Box;
 use crate::drivers::ahci::AhciDriver;
 use crate::drivers::ata::AtaDriver;
+use crate::drivers::nvme::NvmeDriver;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -230,5 +231,31 @@ impl BlockDevice for AhciDriver {
 
     fn write_sector(&mut self, lba: u64, data: &[u8; 512]) -> Result<(), ()> {
         AhciDriver::write_sector(self, lba as u32, data)
+    }
+}
+
+impl BlockDevice for NvmeDriver {
+    fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
+        self.read_sectors(lba, count, buf)
+    }
+
+    fn write_blocks(&mut self, lba: u64, count: u8, buf: &[u8]) -> Result<(), ()> {
+        self.write_sectors(lba, count, buf)
+    }
+
+    fn set_base_lba(&mut self, lba: u64) {
+        NvmeDriver::set_base_lba(self, lba as u32);
+    }
+
+    fn base_lba(&self) -> u64 {
+        NvmeDriver::base_lba(self) as u64
+    }
+
+    fn read_sector(&mut self, lba: u64) -> Result<[u8; 512], ()> {
+        NvmeDriver::read_sector(self, lba as u32)
+    }
+
+    fn write_sector(&mut self, lba: u64, data: &[u8; 512]) -> Result<(), ()> {
+        NvmeDriver::write_sector(self, lba as u32, data)
     }
 }

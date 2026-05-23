@@ -130,7 +130,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     hal::enable_interrupts();
 
     // ============================================
-    // PHASE 3: Storage stack
+    // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
+    // ============================================
+    unsafe {
+        arch::x64::paging::init_custom_page_tables();
+    }
+
+    // Split heap region huge pages into 4 KB PTs for demand paging
+    arch::x64::paging::init_heap_demand_paging();
+
+    // ============================================
+    // PHASE 3 (after custom page tables): Storage stack
     // ============================================
     drivers::storage_manager::init_storage();
     let primary_idx = 0;
@@ -202,16 +212,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     if fat32_mounted {
         println!("[+] FAT32 ESP mounted on A:");
     }
-
-    // ============================================
-    // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
-    // ============================================
-    unsafe {
-        arch::x64::paging::init_custom_page_tables();
-    }
-
-    // Split heap region huge pages into 4 KB PTs for demand paging
-    arch::x64::paging::init_heap_demand_paging();
 
     drivers::keyboard::set_leds(0b111); // All ON = storage ready
 

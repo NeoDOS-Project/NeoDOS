@@ -3,6 +3,7 @@ use crate::serial_println;
 use crate::shell::shell::DosShell;
 use crate::fs::vfs::MODE_DIR;
 use crate::nem::{self, NemDriverType};
+use crate::drivers::driver_runtime::{self, DriverState};
 
 const NEM_BUF_SIZE: usize = 4096;
 
@@ -17,24 +18,60 @@ fn driver_type_char(dt: NemDriverType) -> u8 {
     }
 }
 
+fn pipeline_indicator(state: DriverState) -> &'static str {
+    // Show pipeline progress as a 5-char visual: L I R B A
+    // Each position is filled if the driver has reached that stage
+    let loaded = '*';
+    let init = if state as u8 >= DriverState::Initialized as u8 { '*' } else { '-' };
+    let reg = if state as u8 >= DriverState::Registered as u8 { '*' } else { '-' };
+    let bound = if state as u8 >= DriverState::Bound as u8 { '*' } else { '-' };
+    let active = if state as u8 >= DriverState::Active as u8 { '*' } else { '-' };
+    // Return as &str using a static buffer trick
+    match (loaded, init, reg, bound, active) {
+        ('*', '*', '*', '*', '*') => "█████",
+        ('*', '*', '*', '*', '-') => "████ ",
+        ('*', '*', '*', '-', '-') => "███  ",
+        ('*', '*', '-', '-', '-') => "██   ",
+        ('*', '-', '-', '-', '-') => "█    ",
+        _ => "?????",
+    }
+}
+
 impl DosShell {
     pub fn cmd_ndreg(&mut self, args: &[&str]) {
-        let subcommand = args.first().copied().unwrap_or("list");
-        match subcommand.to_ascii_lowercase().as_str() {
-            "list" => self.ndreg_list(args.get(1..).unwrap_or(&[])),
-            "show" => self.ndreg_show(args.get(1).copied().unwrap_or("")),
-            "query" => self.ndreg_query(args.get(1..).unwrap_or(&[])),
-            "runtime" => self.ndreg_runtime(),
-            "health" => self.ndreg_health(),
+        let subcommand = args.first().copied().unwrap_or("list").to_ascii_uppercase();
+        let path = args.get(1).copied().unwrap_or("");
+        match subcommand.as_str() {
+            "LIST" => self.ndreg_list(args.get(1..).unwrap_or(&[])),
+            "SHOW" => self.ndreg_show(path),
+            "QUERY" => self.ndreg_query(args.get(1..).unwrap_or(&[])),
+            "RUNTIME" => self.ndreg_runtime(),
+            "HEALTH" => self.ndreg_health(),
+            "DEBUG" => self.ndreg_debug(path),
+            "LOAD" => {
+                if path.is_empty() {
+                    println!("Usage: NDREG LOAD <path>");
+                    return;
+                }
+                let full_path = self.resolve_absolute_path(path);
+                match crate::drivers::nem::load_nem_driver(&full_path) {
+                    Ok(id) => println!("Driver loaded successfully with ID {}", id),
+                    Err(e) => println!("Failed to load driver: {:?}", e),
+                }
+            }
             _ => {
-                println!("NDREG — NeoDOS Driver Registry");
+                println!("NDREG — NeoDOS Driver Registry v1 (Certification Pipeline)");
+                println!();
+                println!("Pipeline: Loaded → Initialized → Registered → Bound → Active");
                 println!();
                 println!("Subcommands:");
-                println!("  NDREG LIST [path]     List drivers with metadata");
-                println!("  NDREG SHOW <name>     Show full driver details");
-                println!("  NDREG QUERY [filters] Filter drivers");
-                println!("  NDREG RUNTIME         Show runtime state snapshot");
+                println!("  NDREG LIST [path]     List drivers with metadata + state");
+                println!("  NDREG SHOW <name>     Show full driver details + errors");
+                println!("  NDREG QUERY [filters] Driver count by state");
+                println!("  NDREG RUNTIME         Runtime state snapshot");
                 println!("  NDREG HEALTH          Validate driver metadata");
+                println!("  NDREG DEBUG <name>    Diagnose why driver is NOT active");
+                println!("  NDREG LOAD <path>     Load a driver via certification pipeline");
             }
         }
     }
@@ -66,14 +103,17 @@ impl DosShell {
 
             println!(" Driver Registry: {}", full_path);
             println!();
-            println!(" {:<18} {:>6} {:>4} {:>5} {:>5} {:>6}", "NAME", "TYPE", "ABI", "FLAGS", "STATE", "SIZE");
-            println!(" {} {} {} {} {} {}",
+            println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}", 
+                "NAME", "TYPE", "ABI", "FLAGS", "STATE", "ERR", "SIZE", "PIPELINE");
+            println!(" {} {} {} {} {} {} {} {}",
                 str::repeat("-", 18),
                 str::repeat("-", 6),
                 str::repeat("-", 4),
                 str::repeat("-", 5),
+                str::repeat("-", 7),
                 str::repeat("-", 5),
-                str::repeat("-", 6));
+                str::repeat("-", 6),
+                str::repeat("-", 8));
 
             let mut nem_files: alloc::vec::Vec<alloc::string::String> = alloc::vec::Vec::new();
 
@@ -149,16 +189,29 @@ impl DosShell {
                                 match nem::parse_nem(data) {
                                     Some(parsed) => {
                                         let dt_char = driver_type_char(parsed.driver_type) as char;
-                                        let state = "UNLOADED";
+                                        
+                                        // Look up runtime state + error from registry
+                                        let mut state = DriverState::Unloaded;
+                                        let mut last_error = driver_runtime::ERR_NONE;
+                                        if let Some(drv) = crate::drivers::driver_runtime::get_driver_by_name(parsed.name) {
+                                            state = drv.state;
+                                            last_error = drv.last_error;
+                                        }
+
                                         let mode_str = if parsed.compat_flags & 1 != 0 { "RWD" } else { "R--" };
-                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>5} {:>6}",
+                                        let err_str = driver_runtime::err_to_str(last_error);
+                                        let pipeline = pipeline_indicator(state);
+                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
                                             parsed.name, dt_char,
-                                            "v0.3", mode_str, state,
-                                            parsed.code.len());
+                                            "v0.3", mode_str,
+                                            state.to_str(),
+                                            if last_error == 0 { "." } else { err_str },
+                                            parsed.code.len(),
+                                            pipeline);
                                     }
                                     None => {
-                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>5} {:>6}",
-                                            "?", "?", "?", "?", "INVALID", 0);
+                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
+                                            "?", "?", "?", "?", "INVALID", "?", 0, "?????");
                                     }
                                 }
                             }
@@ -210,8 +263,20 @@ impl DosShell {
                                 match nem::parse_nem(data) {
                                     Some(parsed) => {
                                         found = true;
+
+                                        // Look up runtime state from registry
+                                        let mut drv_state = DriverState::Unloaded;
+                                        let mut last_error = driver_runtime::ERR_NONE;
+                                        let mut cert_step = 0u8;
+                                        if let Some(drv) = crate::drivers::driver_runtime::get_driver_by_name(parsed.name) {
+                                            drv_state = drv.state;
+                                            last_error = drv.last_error;
+                                            cert_step = drv.certification_step;
+                                        }
+
                                         println!("========================================");
-                                        println!("  NeoDOS Driver Registry");
+                                        println!("  NeoDOS Driver Registry v1");
+                                        println!("  Certification Pipeline");
                                         println!("========================================");
                                         println!("  Driver Name:     {}", parsed.name);
                                         println!("  Path:            {}", full_path);
@@ -223,13 +288,53 @@ impl DosShell {
                                         println!("  Code Size:       {} bytes", parsed.code.len());
                                         println!("  Entry Offset:    0x{:04X}", parsed.entry_offset);
                                         println!("  Compat Flags:    0x{:04X}", parsed.compat_flags);
-                                        println!("  Runtime State:   UNLOADED");
                                         println!("  Driver Category: TEST");
                                         println!("  Permissions:     R--");
                                         println!();
-                                        serial_println!("[NDREG] Show '{}': type={}, code={}B, flags=0x{:04X}",
+                                        println!(" ── Lifecycle State ──");
+                                        println!("  Runtime State:   {} ({})", drv_state.to_str(), drv_state as u8);
+                                        println!("  Pipeline:        {} L-I-R-B-A", pipeline_indicator(drv_state));
+                                        println!("  Last Error:      {} ({})", 
+                                            driver_runtime::err_to_str(last_error), last_error);
+                                        println!("  Pipeline Step:   {} ({})",
+                                            if cert_step == 0 { "NONE" } else {
+                                                match cert_step {
+                                                    1 => "LOAD",
+                                                    2 => "INIT",
+                                                    3 => "REGISTER",
+                                                    4 => "BIND",
+                                                    5 => "CERTIFY",
+                                                    _ => "UNKNOWN",
+                                                }
+                                            }, cert_step);
+                                        println!();
+                                        println!(" ── Certification Check ──");
+                                        if drv_state == DriverState::Active {
+                                            println!("  ✓ FULLY CERTIFIED — Driver is ACTIVE");
+                                        } else {
+                                            println!("  ✗ NOT ACTIVE — {}", match drv_state {
+                                                DriverState::Loaded => "Stuck at LOADED (not initialized)",
+                                                DriverState::Initialized => "Stuck at INIT (not registered)",
+                                                DriverState::Registered => "Stuck at REGISTERED (not bound)",
+                                                DriverState::Bound => "Stuck at BOUND (certification pending)",
+                                                DriverState::Faulted => "FAULTED — see error code",
+                                                DriverState::Unloaded => "Terminated",
+                                                _ => "Unknown state",
+                                            });
+                                            if last_error != 0 {
+                                                println!("  Cause: {} ({})", driver_runtime::err_to_str(last_error), last_error);
+                                            }
+                                            if cert_step != 0 {
+                                                println!("  Failed at pipeline step: {}", match cert_step {
+                                                    1 => "LOAD", 2 => "INIT", 3 => "REGISTER", 
+                                                    4 => "BIND", 5 => "CERTIFY", _ => "?",
+                                                });
+                                            }
+                                        }
+                                        println!();
+                                        serial_println!("[NDREG] Show '{}': type={}, code={}B, flags=0x{:04X}, state={:?}",
                                             parsed.name, parsed.driver_type.to_str(),
-                                            parsed.code.len(), parsed.compat_flags);
+                                            parsed.code.len(), parsed.compat_flags, drv_state);
                                     }
                                     None => {
                                         println!("  Invalid NEM driver: {}", full_path);
@@ -261,7 +366,7 @@ impl DosShell {
         let mut total = 0u32;
         let mut invalid = 0u32;
 
-        println!(" Driver Registry Query");
+        println!(" Driver Registry Query — Certification Pipeline v1");
         println!();
 
         static mut BUF: [u8; NEM_BUF_SIZE] = [0u8; NEM_BUF_SIZE];
@@ -312,28 +417,55 @@ impl DosShell {
             });
         }
 
-        println!("  Total drivers:    {}", total);
-        println!("  Loaded:           0");
-        println!("  Invalid/Unknown:  {}", invalid);
-        println!("  Quarantined:      0");
+        // Query runtime state breakdown
+        let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
+        let state_breakdown = runtime.state_counts();
+        let total_loaded = runtime.count();
+        let active = runtime.active_count();
+        let loaded_non_active = runtime.loaded_count();
+        let faulted = runtime.faulted_count();
+        drop(runtime);
+
+        println!("  File system NEM binaries:");
+        println!("    Total drivers:    {}", total);
+        println!("    Invalid/Unknown:  {}", invalid);
+        println!("    Quarantined:      0");
+        println!();
+        println!("  Runtime state (registry):");
+        println!("    Total in registry: {}", total_loaded);
+        println!("    ACTIVE:            {}", active);
+        println!("    NOT active:        {}", loaded_non_active);
+        println!("    FAULTED:           {}", faulted);
+        if !state_breakdown.is_empty() {
+            println!();
+            println!("  Per-state breakdown:");
+            for (state, count) in &state_breakdown {
+                println!("    {:12} {}", state.to_str(), count);
+            }
+        }
     }
 
     fn ndreg_runtime(&mut self) {
         println!("========================================");
-        println!("  NeoDOS Driver Runtime State");
+        println!("  NeoDOS Driver Runtime State v1");
+        println!("  Certification Pipeline Snapshot");
         println!("========================================");
 
         let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
         let count = runtime.count();
         let active = runtime.active_count();
+        let loaded_non_active = runtime.loaded_count();
+        let faulted = runtime.faulted_count();
         let next_id = runtime.next_driver_id();
         let timer_tick = crate::hal::get_ticks();
         drop(runtime);
 
         println!("  Timer Tick:       {}", timer_tick);
         println!("  Next Driver ID:   {}", next_id);
-        println!("  Loaded Drivers:   {}", count);
-        println!("  Active Drivers:   {}", active);
+        println!("  Total in Registry: {}", count);
+        println!("  ACTIVE Drivers:   {}", active);
+        println!("  NOT Active:       {}", loaded_non_active);
+        println!("  FAULTED:          {}", faulted);
         println!("  Event Bus Queue:  {} avail", crate::eventbus::EVENT_BUS.queue_available());
         println!("  Event Bus Hdlrs:  {}", crate::eventbus::EVENT_BUS.handler_count());
         println!("  Next Event ID:    {}", crate::eventbus::EVENT_BUS.next_event_id());
@@ -343,18 +475,181 @@ impl DosShell {
         if names.is_empty() {
             println!("  No drivers loaded.");
         } else {
-            println!("  ID  NAME                  STATE       EVENTS  TICKS");
-            println!("  --- --------------------  ----------  ------  -----");
+            println!("  ID  NAME                  STATE       ERR    EVENTS  TICKS  PIPELINE");
+            println!("  --- --------------------  ----------  -----  ------  -----  --------");
             let r = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             for (name, id, state) in &names {
                 if let Some(drv) = r.get(*id) {
+                    let err_str = driver_runtime::err_to_str(drv.last_error);
+                    let pipe = pipeline_indicator(drv.state);
                     println!(
-                        "  {:>3}  {:20}  {:10}  {:>6}  {:>5}",
+                        "  {:>3}  {:20}  {:10}  {:>5}  {:>6}  {:>5}  {:>8}",
                         id, name, state.to_str(),
-                        drv.events_received, drv.tick_count
+                        if drv.last_error == 0 { "." } else { err_str },
+                        drv.events_received, drv.tick_count,
+                        pipe
                     );
                 }
             }
+        }
+    }
+
+    /// DEBUG subcommand: diagnose why a driver is NOT active.
+    /// Checks all 5 pipeline stages and reports which one is blocking activation.
+    fn ndreg_debug(&mut self, name: &str) {
+        if name.is_empty() {
+            println!("Usage: NDREG DEBUG <driver_name>");
+            println!();
+            println!("Diagnoses why a loaded driver is NOT showing as ACTIVE.");
+            println!("Checks: registry, init, event bus binding, sandbox, certification.");
+            return;
+        }
+
+        let lc_name = name.to_ascii_lowercase();
+        let search_paths = [
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\TEST\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\{}", lc_name),
+        ];
+
+        // Find the driver in the runtime registry
+        let drv_instance = crate::drivers::driver_runtime::get_driver_by_name(name);
+        let drv = match drv_instance {
+            Some(d) => d,
+            None => {
+                // Check if the .nem file exists even if not loaded
+                let mut file_exists = false;
+                for p in &search_paths {
+                    crate::globals::with_vfs(|vfs| {
+                        if vfs.resolve_path(p).is_ok() {
+                            file_exists = true;
+                        }
+                    });
+                }
+                if file_exists {
+                    println!("========================================");
+                    println!("  NDREG DEBUG: {}", name);
+                    println!("========================================");
+                    println!();
+                    println!("  ✗ Driver binary found but NOT loaded in registry.");
+                    println!();
+                    println!("  Possible causes:");
+                    println!("    1. Driver was never loaded via NDREG LOAD or LOADNEM.");
+                    println!("    2. Driver was loaded but later removed/unloaded.");
+                    println!("    3. Driver name mismatch between file and registry.");
+                    println!();
+                    println!("  To load: NDREG LOAD C:\\SYSTEM\\DRIVERS\\TEST\\{}.nem", lc_name);
+                } else {
+                    println!("Driver '{}' not found in registry or filesystem.", name);
+                }
+                return;
+            }
+        };
+
+        println!("========================================");
+        println!("  NDREG DEBUG: {}", name);
+        println!("  Driver ID:    {}", drv.id);
+        println!("========================================");
+        println!();
+        println!(" ── Current State ──");
+        println!("  State:        {} ({})", drv.state.to_str(), drv.state as u8);
+        println!("  Last Error:   {} ({})", driver_runtime::err_to_str(drv.last_error), drv.last_error);
+        println!("  Pipeline Step: {}", if drv.certification_step == 0 { "NONE (no failure)" } else {
+            match drv.certification_step {
+                1 => "LOAD", 2 => "INIT", 3 => "REGISTER", 4 => "BIND", 5 => "CERTIFY", _ => "?",
+            }
+        });
+        println!("  Pipeline:     {} L-I-R-B-A", pipeline_indicator(drv.state));
+        println!();
+
+        // ── Diagnostic checklist ──
+        println!(" ── Certification Pipeline Diagnostic ──");
+        println!();
+
+        // Check 1: Is state at least Loaded?
+        println!("  [1/5] LOAD:   Binary loaded and parsed?");
+        if drv.state as u8 >= DriverState::Loaded as u8 {
+            println!("    ✓ PASS — Driver is in registry (state >= LOADED)");
+        } else {
+            println!("    ✗ FAIL — Driver not in Loaded state");
+            println!("    → Load the driver first: NDREG LOAD <path>");
+            println!();
+            return;
+        }
+
+        // Check 2: Is state at least Initialized?
+        println!("  [2/5] INIT:   driver_init() executed?");
+        if drv.state as u8 >= DriverState::Initialized as u8 {
+            println!("    ✓ PASS — Driver is initialized (state >= INIT)");
+        } else {
+            println!("    ✗ FAIL — Driver not initialized");
+            println!("    → Legacy loader used (stays in LOADED). Use NDREG LOAD instead of LOADNEM.");
+            if drv.last_error == driver_runtime::ERR_INIT_FAILED {
+                println!("    → Init failed: OUT_OF_MEMORY or SLOT_OUT_OF_BOUNDS");
+            }
+            println!();
+            return;
+        }
+
+        // Check 3: Is state at least Registered?
+        println!("  [3/5] REG:    Registry + Event Bus updated?");
+        if drv.state as u8 >= DriverState::Registered as u8 {
+            println!("    ✓ PASS — Driver is registered (state >= REGISTERED)");
+        } else {
+            println!("    ✗ FAIL — Registry commit missing");
+            println!("    → The driver was initialized but the registry was never updated.");
+            println!("    → Check if driver_init() returned success and called back.");
+            if drv.last_error == driver_runtime::ERR_REGISTRATION_FAILED {
+                println!("    → Registration specifically failed.");
+            }
+            println!();
+            return;
+        }
+
+        // Check 4: Is state at least Bound?
+        println!("  [4/5] BIND:   Event Bus binding completed?");
+        if drv.state as u8 >= DriverState::Bound as u8 {
+            println!("    ✓ PASS — Driver is bound (state >= BOUND)");
+        } else {
+            println!("    ✗ FAIL — Event Bus binding missing");
+            println!("    → Driver registered but never bound to Event Bus.");
+            println!("    → Check if driver registered event handlers via register_event().");
+            if drv.last_error == driver_runtime::ERR_BIND_FAILED {
+                println!("    → Binding specifically failed.");
+            }
+            println!();
+            return;
+        }
+
+        // Check 5: Is state Active?
+        println!("  [5/5] ACTIVE: Certification complete?");
+        if drv.state == DriverState::Active {
+            println!("    ✓ FULLY CERTIFIED — Driver is ACTIVE and operational!");
+        } else if drv.state == DriverState::Bound {
+            println!("    ✗ NOT ACTIVE — Stuck at BOUND (certification pending)");
+            println!("    → All pipeline stages passed but certification step failed.");
+            if drv.last_error == driver_runtime::ERR_CERTIFICATION_FAILED {
+                println!("    → Certification check failed:");
+                println!("      - Check sandbox validation");
+                println!("      - Check no fault flags set");
+                println!("      - Check scheduler activation task ran");
+            } else {
+                println!("    → Last error: {} ({})", 
+                    driver_runtime::err_to_str(drv.last_error), drv.last_error);
+            }
+        } else if drv.state == DriverState::Faulted {
+            println!("    ✗ FAULTED — Driver faulted during operation");
+            println!("    → Error code: {} ({})", 
+                driver_runtime::err_to_str(drv.last_error), drv.last_error);
+        }
+        println!();
+
+        // Summary
+        println!(" ── Summary ──");
+        if drv.state == DriverState::Active {
+            println!("  Driver is fully certified and ACTIVE.");
+        } else {
+            println!("  Driver is in state {} — NOT ACTIVE.", drv.state.to_str());
+            println!("  {}", drv.inactive_reason());
         }
     }
 

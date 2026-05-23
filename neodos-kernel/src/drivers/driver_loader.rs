@@ -16,17 +16,19 @@ pub fn load_nem(path: &str) -> Result<(DriverId, NemDriverType), &'static str> {
 
     // (parse_nem already validates magic, version, header_size, api_version)
 
-    // 3. Register with runtime
+    // 3. Register with runtime — state = Loaded (pipeline stage 1)
     let id = driver_runtime::register_driver(
         parsed.name,
         parsed.driver_type,
         nem::NEM_API_VERSION,
         parsed.compat_flags,
     )?;
-    // 4. Set state to Registered
-    driver_runtime::DRIVER_RUNTIME.lock().set_state(id, driver_runtime::DriverState::Registered);
+    // NOTE: Legacy loader does NOT initialize or spawn the driver.
+    // It stays in Loaded state. The driver will NOT appear as ACTIVE.
+    // This is correct — loading without initialization cannot produce
+    // a fully operational driver.
 
-    // 5. Push DRIVER_LOADED event
+    // 4. Push DRIVER_LOADED event
     let _ = eventbus::EVENT_BUS.push_event(
         EVENT_DRIVER_LOADED,
         SOURCE_KERNEL,
@@ -36,9 +38,9 @@ pub fn load_nem(path: &str) -> Result<(DriverId, NemDriverType), &'static str> {
         0,
     );
 
-    // 6. Log
+    // 5. Log
     crate::serial_println!(
-        "[NEM] Loaded: {} (type={}, id={})",
+        "[NEM] Legacy Loaded: {} (type={}, id={}) — NOT active, no init",
         parsed.name,
         parsed.driver_type.to_str(),
         id,

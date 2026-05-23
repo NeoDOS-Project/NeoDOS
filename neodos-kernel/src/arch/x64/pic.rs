@@ -83,9 +83,12 @@ impl ChainedPics {
         self.pics[1].write_data(0x01);
         wait();
 
-        // Unmask all interrupts
-        self.pics[0].write_data(0x00);
-        self.pics[1].write_data(0x00);
+        // Mask all interrupts except IRQ0 (timer), IRQ1 (keyboard), IRQ2 (cascade)
+        // Bit = 1 means masked, bit = 0 means unmasked
+        // Master mask: keep 0,1,2; mask 3-7
+        self.pics[0].write_data(0xF8);
+        // Slave mask: mask all (8-15)
+        self.pics[1].write_data(0xFF);
     }
 
     pub fn handles_interrupt(&self, interrupt_id: u8) -> bool {

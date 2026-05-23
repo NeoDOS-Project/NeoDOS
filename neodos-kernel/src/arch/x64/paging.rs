@@ -460,6 +460,24 @@ pub fn handle_heap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     }
 }
 
+/// Map a physical MMIO region at a chosen virtual address within 0..4 GiB.
+/// The virtual address must be 4 KB-aligned and the range must fit within one
+/// 2 MB huge page (the caller must split it first via `split_2mb_page`).
+/// Each 4 KB page gets `flags` (e.g. PRESENT|WRITABLE|NO_CACHE for MMIO).
+pub fn map_mmio_4k(virt: u64, phys: u64, size: u64, flags: PageTableFlags) -> bool {
+    for off in (0..size).step_by(PAGE_4K as usize) {
+        let v = virt + off;
+        let p = phys + off;
+        let pte = match crate::hal::walk_ptes_4k(v) {
+            Some(e) => e,
+            None => return false,
+        };
+        pte.set_addr(PhysAddr::new(p), flags);
+        crate::hal::flush_tlb(v);
+    }
+    true
+}
+
 /// Remove the `USER_ACCESSIBLE` flag from a 2 MB-aligned range.
 /// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
 #[allow(dead_code)]

@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.15.4 (150 tests, 4 user-mode binaries, ELF64 loader).
+> Versión actual: v0.16.0 (171 tests, 4 user-mode binaries, ELF64 loader).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (40 items)
+## COMPLETED (41 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -39,6 +39,7 @@
 24. **Event Bus v1** — SPSC 64 slots, 11 event types, callbacks max 32, 9 tests.
 25. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
 26. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
+41. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
