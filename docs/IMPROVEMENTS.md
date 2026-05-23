@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.16.2 (190 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes).
+> Versión actual: v0.16.2 (186 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes, full process cleanup).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (42 items)
+## COMPLETED (43 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -42,6 +42,7 @@
 41. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
 42. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
 43. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `fd_table[16]` con FdEntry (stdin/stdout/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, fd table.
+44. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot scheduler y liberan `Box<AlignedKStack>` (kernel stack) al salir. `kill_pid()` reescrito: libera heap, mmap, pipes, user slot, kernel stack y recicla slot inmediatamente. En waitpid desde Ring 3, el slot del proceso esperado se recicla automáticamente tras detectar Terminated. 3 ficheros modificados: `scheduler.rs`, `run.rs`, `syscall.rs`.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -63,7 +64,7 @@
 
 ---
 
-## PRIORIDAD S — CRÍTICO (9 items)
+## PRIORIDAD S — CRÍTICO (8 items)
 
 Estos items desbloquean todo el roadmap futuro.
 
@@ -71,10 +72,9 @@ Estos items desbloquean todo el roadmap futuro.
 43. **S4. FAT32 write** — escritura real en FAT32: directorios, archivos, clusters.
 44. **S5. FSCK utility** — verificación inodos, block bitmap, orphan detection, repair mode.
 45. **S6. libneodos** — standard library: wrappers syscall, IO, FS, memoria, macros seguras.
-46. **S7. Process exit: full cleanup** — liberar kernel stack (Box<AlignedKStack>), reciclar slots del scheduler, tabla de archivos abiertos.
-47. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
-48. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
-49. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
+46. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
+47. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
+48. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
 
 ---
 
@@ -157,8 +157,8 @@ Estos items desbloquean todo el roadmap futuro.
 
 | Estado | Items | Prioridades |
 |--------|-------|-------------|
-| COMPLETED | 42 | — |
-| S — Crítico | 9 | Pipes, Redirection, FAT32 write, FSCK, libneodos, cleanup, PATH, pipe operator, batch |
+| COMPLETED | 43 | — |
+| S — Crítico | 8 | Redirection, FAT32 write, FSCK, libneodos, PATH, pipe operator, batch |
 | A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
 | B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
 | C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |

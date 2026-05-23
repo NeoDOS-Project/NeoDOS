@@ -156,9 +156,9 @@ Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB du
 
 `execute_usermode()` in `usermode.rs` saves the kernel RSP/RIP into `EXIT_RSP`/`EXIT_RIP` statics, then IRETQs to Ring 3. The function is **not** `options(noreturn)` — it can return.
 
-On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the process `Terminated` in the scheduler, then the `syscall_handler_asm` trampoline detects RAX==0 and jumps to `exit_to_kernel`, which restores `EXIT_RSP`/`EXIT_RIP`. Control returns to `execute_usermode`'s caller (`cmd_run`), which prints "Process exited." and shows the shell prompt.
+On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` frees all external resources (user slot, heap pages, mmap regions, pipe refcounts) and marks the process `Terminated` in the scheduler, then the `syscall_handler_asm` trampoline detects RAX==0 and jumps to `exit_to_kernel`, which restores `EXIT_RSP`/`EXIT_RIP`. Control returns to `execute_usermode`'s caller (`cmd_run`), which calls `scheduler::cleanup_terminated_process(pid)` to recycle the scheduler slot and free the kernel stack (`Box<AlignedKStack>`). The `KILL` command (`kill_pid()`) does full cleanup (heap, mmap, pipes, user slot, kernel stack) and recycles the slot immediately. The `sys_waitpid` syscall recycles the waited-for process's slot after detecting it is `Terminated`.
 
-Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking).
+Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking), `scheduler.rs` (recycle_terminated, cleanup_terminated_process, kill_pid).
 
 ## Shell: TAB autocomplete + history
 

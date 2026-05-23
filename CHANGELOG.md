@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.16.3 — 2026-05-23
+
+### Process exit full cleanup (S7) — Modificado
+- **Añadido**: `Process::take_kernel_stack()` — método público para tomar y liberar `Box<AlignedKStack>`
+- **Añadido**: `Scheduler::recycle_terminated(pid)` — remueve proceso Terminated de la tabla, liberando kernel stack, cwd_path y demás owned resources
+- **Añadido**: `scheduler::cleanup_terminated_process(pid)` — wrapper público con `without_interrupts`
+- **Modificado**: `kill_pid()` — ahora libera heap, mmap, pipes, user slot y kernel stack, y recicla el slot inmediatamente
+- **Modificado**: `cmd_run()` — llama a `cleanup_terminated_process()` tras `wait_for_process()` para reciclar slot y kernel stack al salir
+- **Modificado**: `sys_waitpid` — recicla slot del proceso esperado tras detectar Terminated
+- **Total**: 186 tests kernel + 4 user-mode binaries
+
 ## v0.16.2 — 2026-05-23
 
 ### IPC / Pipes (S2) — Añadido

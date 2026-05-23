@@ -133,6 +133,10 @@ impl Process {
         }
     }
 
+    pub fn take_kernel_stack(&mut self) -> Option<Box<AlignedKStack>> {
+        self.kernel_stack.take()
+    }
+
     pub fn new_ring3(pid: u32, entry: u64, user_stack_top: u64, slot_idx: u8,
                      cwd_drive: u8, cwd_path: &str, heap_base: u64) -> Self {
         let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
@@ -223,20 +227,68 @@ impl Scheduler {
     }
 
     pub fn kill_pid(&mut self, pid: u32) -> bool {
-        for proc in self.processes.iter_mut() {
-            if let Some(p) = proc {
-                if p.pid == pid && pid > 0 {
-                    p.state = ProcessState::Terminated;
-                    if let Some(slot) = p.user_slot {
-                        crate::arch::x64::paging::free_user_slot(slot);
-                        p.user_slot = None;
-                    }
-                    crate::trace_sched!(2, pid, 0); // 2 = KILL_PROCESS
-                    return true;
+        let idx = self.processes.iter().position(|p| {
+            p.as_ref().is_some_and(|proc| proc.pid == pid && pid > 0)
+        });
+        if let Some(idx) = idx {
+            if let Some(mut proc) = self.processes[idx].take() {
+                // Free user slot (code+stack window)
+                if let Some(slot) = proc.user_slot.take() {
+                    crate::arch::x64::paging::free_user_slot(slot);
                 }
+                // Free heap pages + heap slot
+                if proc.heap_base != 0 {
+                    crate::arch::x64::paging::heap_free_range(
+                        proc.heap_base,
+                        proc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
+                    );
+                    let heap_idx = ((proc.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE)
+                        / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+                    crate::arch::x64::paging::free_heap_slot(heap_idx);
+                }
+                // Free mmap regions
+                for r in proc.mmap_regions.iter() {
+                    crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
+                }
+                // Close pipe fds
+                for fd_entry in proc.fd_table.iter_mut() {
+                    match fd_entry.kind {
+                        crate::pipe::FD_PIPE_READ => {
+                            crate::pipe::PIPE_MANAGER.dec_read_ref(fd_entry.pipe_id);
+                        }
+                        crate::pipe::FD_PIPE_WRITE => {
+                            crate::pipe::PIPE_MANAGER.dec_write_ref(fd_entry.pipe_id);
+                        }
+                        _ => {}
+                    }
+                    *fd_entry = crate::pipe::FdEntry::closed();
+                }
+                // proc dropped here: kernel_stack (Box<AlignedKStack>), cwd_path, etc. freed
+                crate::trace_sched!(2, pid, 0); // 2 = KILL_PROCESS
+                return true;
             }
         }
         false
+    }
+
+    /// Remove a terminated process from the scheduler table.
+    /// Drops the process, freeing its kernel stack, cwd path, and other owned resources.
+    /// External resources (user slot, heap, mmap, pipes) must already be freed.
+    /// Returns true if the process was found and removed.
+    pub fn recycle_terminated(&mut self, pid: u32) -> bool {
+        if pid == 0 {
+            return false;
+        }
+        let idx = self.processes.iter().position(|p| {
+            p.as_ref().is_some_and(|proc| proc.pid == pid)
+        });
+        if let Some(idx) = idx {
+            self.processes[idx] = None;
+            crate::trace_sched!(3, pid, 0); // 3 = RECYCLE_SLOT
+            true
+        } else {
+            false
+        }
     }
 
     pub fn wake_waiters(&mut self, pid: u32) {
@@ -341,6 +393,20 @@ lazy_static! {
 
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
+}
+
+/// Remove a terminated process from the scheduler table.
+/// The process's kernel stack (Box<AlignedKStack>) is freed, its slot is recycled,
+/// and all owned memory (cwd_path, mmap_regions Vec, fd_table) is released.
+///
+/// External resources (user slot, heap pages, mmap pages, pipe refcounts) must
+/// already have been freed by the caller (e.g. syscall_dispatch for sys_exit).
+///
+/// Safe to call multiple times — second call is a no-op.
+pub fn cleanup_terminated_process(pid: u32) {
+    crate::hal::without_interrupts(|| {
+        current_scheduler().lock().recycle_terminated(pid);
+    });
 }
 
 pub fn get_current_cwd() -> (u8, String) {

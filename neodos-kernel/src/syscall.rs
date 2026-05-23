@@ -617,42 +617,21 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         SyscallNum::WaitPid => {
             let wait_pid = rbx as u32;
 
-            let already_terminated = crate::hal::without_interrupts(|| {
-                let s = crate::scheduler::current_scheduler();
-                let scheduler = s.lock();
-                let mut terminated = false;
-                for proc in scheduler.processes.iter() {
-                    if let Some(p) = proc {
-                        if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                            terminated = true;
-                            break;
-                        }
-                    }
-                }
-                terminated
-            });
+            loop {
+                let is_terminated = crate::hal::without_interrupts(|| {
+                    let s = crate::scheduler::current_scheduler();
+                    let scheduler = s.lock();
+                    scheduler.processes.iter().any(|p| {
+                        p.as_ref().is_some_and(|proc| proc.pid == wait_pid && proc.state == ProcessState::Terminated)
+                    })
+                });
 
-            if !already_terminated {
-                loop {
-                    let is_terminated = crate::hal::without_interrupts(|| {
-                        let s2 = crate::scheduler::current_scheduler();
-                        let scheduler2 = s2.lock();
-                        let mut terminated = false;
-                        for proc in scheduler2.processes.iter() {
-                            if let Some(p) = proc {
-                                if p.pid == wait_pid && p.state == ProcessState::Terminated {
-                                    terminated = true;
-                                    break;
-                                }
-                            }
-                        }
-                        terminated
-                    });
-
-                    if is_terminated { break; }
-                    crate::hal::hlt_once();
-                }
+                if is_terminated { break; }
+                crate::hal::hlt_once();
             }
+
+            // Recycle the slot and free kernel stack of the waited-for process
+            crate::scheduler::cleanup_terminated_process(wait_pid);
 
             0
         }

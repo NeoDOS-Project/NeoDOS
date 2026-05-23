@@ -109,6 +109,10 @@ impl DosShell {
         crate::usermode::wait_for_process(pid);
 
         crate::usermode::clear_wait_pid();
+
+        // ── 6. Recycle slot, free kernel stack, clean up remaining resources ──
+        crate::scheduler::cleanup_terminated_process(pid);
+
         println!("Process '{}' (PID {}) exited.", filename, pid);
     }
 }
