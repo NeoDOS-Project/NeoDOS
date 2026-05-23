@@ -157,6 +157,7 @@ pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(ar
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
+pub fn cmd_fsck(shell: &mut DosShell, args: &[&str]) { shell.cmd_fsck(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
@@ -330,4 +331,16 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  NEMLIST\n",
                        "  List all currently loaded .nem drivers with their\n",
                        "  IDs, names, states, event counts, and tick counts."), },
+    CommandEntry { name: "FSCK", category: "CTRL", handler: cmd_fsck, description: "Check filesystem integrity",
+        usage: concat!("Syntax:  FSCK [drive:] [/F]\n",
+                       "  Check filesystem integrity on a NeoDOS volume.\n",
+                       "  Without /F, only checks and reports errors.\n",
+                       "  With /F, attempts to repair detected issues.\n\n",
+                       "  Checks performed:\n",
+                       "    1. Superblock (magic, block_size, label)\n",
+                       "    2. Inode table (mode, block pointers, cross-links)\n",
+                       "    3. Directory tree walk (orphans, dangling entries)\n",
+                       "    4. Block allocation consistency\n",
+                       "  FSCK C:             check-only on C:\n",
+                       "  FSCK C: /F          check and repair C:"), },
 ]);

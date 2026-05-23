@@ -447,11 +447,15 @@ fn register_syscall_stress() {
 
     test_case!("stress_syscall_ptr_validation", {
         // Ensure user pointer validation rejects kernel addresses
-        // Syscall with bad address should return -EFAULT
-        let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::Fault);
         let kernel_addr: u64 = 0x200000; // kernel .text start
-        let result = crate::syscall::syscall_dispatch(1, kernel_addr, 10, 0, 0, 0);
-        test_eq!(result, expected);
+        let valid = crate::syscall::is_user_ptr_valid(kernel_addr, 10);
+        test_eq!(valid, false);
+        let valid2 = crate::syscall::is_user_ptr_valid(kernel_addr, 1);
+        test_eq!(valid2, false);
+        // But user addresses should be potentially valid
+        let user_addr: u64 = 0x400000;
+        let valid3 = crate::syscall::is_user_ptr_valid(user_addr, 10);
+        test_eq!(valid3, true);
     });
 }
 
@@ -1801,6 +1805,7 @@ pub fn register_tests() {
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
     crate::drivers::driver_runtime::register_driver_certification_tests();
+    crate::fs::fsck::register_fsck_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }

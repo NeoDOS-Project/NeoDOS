@@ -280,7 +280,7 @@ fn normalize_dos_path(path: &str) -> String {
 /// Check if `[ptr, ptr+len)` is a valid user-accessible address range.
 /// Valid ranges: the standard user slot window (4–8 MB), the current
 /// process's heap region, or any active mmap region.
-fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
+pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
         return true;
     }

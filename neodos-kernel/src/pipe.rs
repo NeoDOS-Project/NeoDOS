@@ -245,6 +245,7 @@ pub fn block_current_for_pipe(pipe_id: u8) {
         let mut scheduler = s.lock();
         if let Some(proc) = scheduler.current_process_mut() {
             proc.state = ProcessState::Blocked { waiting_for: magic };
+            proc.waiting_for = Some(magic);
         }
         crate::syscall::set_need_resched();
     });

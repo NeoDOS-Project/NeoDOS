@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.16.2 (186 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes, full process cleanup).
+> Versión actual: v0.16.2 (196 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes, full process cleanup, FSCK).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (43 items)
+## COMPLETED (44 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -43,6 +43,7 @@
 42. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
 43. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `fd_table[16]` con FdEntry (stdin/stdout/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, fd table.
 44. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot scheduler y liberan `Box<AlignedKStack>` (kernel stack) al salir. `kill_pid()` reescrito: libera heap, mmap, pipes, user slot, kernel stack y recicla slot inmediatamente. En waitpid desde Ring 3, el slot del proceso esperado se recicla automáticamente tras detectar Terminated. 3 ficheros modificados: `scheduler.rs`, `run.rs`, `syscall.rs`.
+45. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock validation (magic, block_size, num_blocks, num_inodes, label), inode table integrity check (mode bits, inode_num mismatch, block pointer bounds, cross-linked block detection), directory tree walk with cycle protection (MAX_DIR_DEPTH=32), orphan inode detection, dangling directory entry detection, entry-type vs inode-mode mismatch detection. Repair mode (`FSCK /F`): restores superblock fields, clears invalid modes, removes cross-linked block references, frees orphan inodes, deletes dangling entries, fixes entry type mismatches, flushes cache to disk. Shell command `FSCK` registered in handler table. 6 unit tests for validation helpers. All 196 kernel tests pass.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -64,17 +65,16 @@
 
 ---
 
-## PRIORIDAD S — CRÍTICO (8 items)
+## PRIORIDAD S — CRÍTICO (7 items)
 
 Estos items desbloquean todo el roadmap futuro.
 
 42. **S3. Shell output redirection** — `DIR > FILE.TXT`, `ECHO >> FILE.TXT`, `CMD > FILE`.
 43. **S4. FAT32 write** — escritura real en FAT32: directorios, archivos, clusters.
-44. **S5. FSCK utility** — verificación inodos, block bitmap, orphan detection, repair mode.
-45. **S6. libneodos** — standard library: wrappers syscall, IO, FS, memoria, macros seguras.
-46. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
-47. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
-48. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
+44. **S6. libneodos** — standard library: wrappers syscall, IO, FS, memoria, macros seguras.
+45. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
+46. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
+47. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
 
 ---
 

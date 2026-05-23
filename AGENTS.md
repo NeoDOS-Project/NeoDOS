@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.16.0
+v0.16.4
 
 ## Build & Run
 
@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 190 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 196 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -186,6 +186,16 @@ Comandos de gestión de archivos que operan via VFS (`vfs.rs`):
 
 Métodos del trait `FileSystem`: `remove_file()`, `remove_dir()`, `rename()` — con default `NotImplemented`.
 
+## Shell: FSCK
+
+Comando de verificación de integridad del sistema de archivos NeoDOS:
+
+| Comando | Descripción |
+|---------|-------------|
+| `FSCK [drive:] [/F]` | Verifica integridad del FS. Sin /F: solo comprueba. Con /F: repara errores |
+
+Checks: superblock (magic, block_size, num_blocks, label), inode table (mode, inode_num mismatch, block pointers, cross-links), directory tree walk (orphans, dangling entries, entry-type vs mode mismatches). 6 unit tests.
+
 ## Syscall Table (INT 0x80)
 
 ### Architecture
@@ -285,7 +295,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-190 tests en 18 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+196 tests en 19 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -303,10 +313,11 @@ Binarios flat cargados en `0x400000`.
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
 | Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
+| FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (177 tests kernel)
+1. Ejecuta `testing::run_all()` (196 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## NEM Module

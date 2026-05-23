@@ -20,6 +20,7 @@ mod devicesend;
 mod dir;
 mod drives;
 mod echo;
+mod fsck;
 mod help;
 mod keyb;
 mod kill;

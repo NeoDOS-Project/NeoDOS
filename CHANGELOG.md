@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.16.4 — 2026-05-23
+
+### FSCK utility (S5) — Añadido
+- **Añadido**: `src/fs/fsck.rs` — módulo de verificación de integridad NeoDOS
+- **Añadido**: Superblock validation (magic, block_size, num_blocks, num_inodes, label length)
+- **Añadido**: Inode table integrity checks (mode bits, inode_num mismatch, block pointer bounds)
+- **Añadido**: Cross-linked block detection via block ownership map
+- **Añadido**: Directory tree walk with cycle protection (MAX_DIR_DEPTH=32)
+- **Añadido**: Orphan inode detection (inodes not reachable from root)
+- **Añadido**: Dangling directory entry detection and entry-type vs mode mismatch
+- **Añadido**: Repair mode (`FSCK /F`) — restores superblock, clears invalid modes, removes cross-links, frees orphans, deletes dangling entries, flushes cache
+- **Añadido**: `cmd_fsck` — shell command `FSCK` with `[drive:]` and `/F` support
+- **Añadido**: 6 unit tests for validation helpers (mode, block ptr, block count, is_used, range)
+- **Total**: 196 tests kernel + 4 user-mode binaries
+
 ## v0.16.3 — 2026-05-23
 
 ### Process exit full cleanup (S7) — Modificado
@@ -9,7 +24,7 @@
 - **Modificado**: `kill_pid()` — ahora libera heap, mmap, pipes, user slot y kernel stack, y recicla el slot inmediatamente
 - **Modificado**: `cmd_run()` — llama a `cleanup_terminated_process()` tras `wait_for_process()` para reciclar slot y kernel stack al salir
 - **Modificado**: `sys_waitpid` — recicla slot del proceso esperado tras detectar Terminated
-- **Total**: 186 tests kernel + 4 user-mode binaries
+- **Total**: 190 tests kernel + 4 user-mode binaries
 
 ## v0.16.2 — 2026-05-23
 
