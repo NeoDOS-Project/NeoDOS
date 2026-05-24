@@ -4,7 +4,6 @@ pub mod event;
 pub mod policy;
 pub mod hst;
 pub mod runtime;
-pub mod drivers;
 pub mod v3loader;
 
 pub use loader::load_nem as load_nem_driver;

@@ -179,16 +179,6 @@ pub fn register_input_tests() {
     });
 }
 
-// ===== Keyboard tests (via ps2kbd NEM driver) =====
-
-pub fn register_keyboard_tests() {
-    // Keyboard translation is tested in the ps2kbd production driver's
-    // own test suite (register_prod_kbd_tests in drivers/nem/drivers/ps2kbd.rs).
-    // Legacy KeyboardDriver utility tests (codepoint_to_utf8, lookup_compose)
-    // were part of the removed in-kernel keyboard driver.
-}
-
-
 pub fn register_process_tests() {
     use crate::scheduler::{Process, ProcessState};
 
@@ -1761,7 +1751,6 @@ pub fn register_pipe_tests() {
 pub fn register_tests() {
     register_env_tests();
     register_input_tests();
-    register_keyboard_tests();
     register_process_tests();
     register_utf8_tests();
     register_alloc_tests();

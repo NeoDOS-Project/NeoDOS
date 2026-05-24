@@ -283,8 +283,8 @@ fn write_compose(out: &mut String, prefix: &str, entries: &[ComposeEntry]) {
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let us_path = manifest_dir.join("src/drivers/keyboard/KBDUS.klc");
-    let sp_path = manifest_dir.join("src/drivers/keyboard/KBDSP.klc");
+    let us_path = manifest_dir.join("./layouts/KBDUS.klc");
+    let sp_path = manifest_dir.join("./layouts/KBDSP.klc");
     println!("cargo:rerun-if-changed={}", us_path.display());
     println!("cargo:rerun-if-changed={}", sp_path.display());
 
@@ -313,4 +313,11 @@ fn main() {
     write_compose(&mut out, "KBDSP", &sp_compose);
 
     fs::write(&out_path, out).expect("write kbd_layout.rs");
+    
+    // Copiar a kernel para que lo use
+    let kernel_out = manifest_dir.parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.join("neodos-kernel/src/drivers/nem/drivers/kbd_layout.rs"))
+        .expect("kernel path");
+    fs::copy(&out_path, &kernel_out).expect("copy kbd_layout.rs to kernel");
 }

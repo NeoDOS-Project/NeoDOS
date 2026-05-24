@@ -335,10 +335,34 @@ pub fn parse_nem_v3(data: &[u8]) -> Option<ParsedNemV3<'_>> {
     let syms_end = syms_off + num_syms * NEM_SYMBOL_SIZE;
     if syms_end > strtab_off { return None; }
 
-    let strtab = &data[strtab_off..];
+    // Infer string table size from symbol name offsets and null terminators.
+    // NEM v3 header stores strtab_offset but not strtab_size.
+    let mut strtab_size = 0usize;
+    for i in 0..num_syms {
+        let sym_off = syms_off + i * NEM_SYMBOL_SIZE;
+        let name_off = u32::from_le_bytes([
+            data[sym_off],
+            data[sym_off + 1],
+            data[sym_off + 2],
+            data[sym_off + 3],
+        ]) as usize;
+        let name_abs = strtab_off.saturating_add(name_off);
+        if name_abs >= data.len() {
+            return None;
+        }
+        let rel_end = data[name_abs..].iter().position(|&b| b == 0)?;
+        let end = name_off + rel_end + 1; // include NUL
+        if end > strtab_size {
+            strtab_size = end;
+        }
+    }
+    let sec_data_start = strtab_off.saturating_add(strtab_size);
+    if sec_data_start > data.len() {
+        return None;
+    }
+    let strtab = &data[strtab_off..sec_data_start];
 
-    // Section data starts after strtab (no explicit offset stored)
-    let sec_data_start = strtab_off;
+    // Section data starts after strtab (size inferred from symbols)
     let text_end = sec_data_start + header.text_size as usize;
     let rodata_end = text_end + header.rodata_size as usize;
     let data_end = rodata_end + header.data_size as usize;

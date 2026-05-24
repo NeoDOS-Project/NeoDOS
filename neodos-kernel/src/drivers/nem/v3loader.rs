@@ -118,6 +118,7 @@ pub struct NemV3LoadResult {
     pub data_base: *mut u8,
     pub entry_init: Option<unsafe extern "C" fn() -> i32>,
     pub entry_event: Option<unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>,
+    pub entry_activate: Option<unsafe extern "C" fn() -> i32>,
     pub entry_fini: Option<unsafe extern "C" fn() -> i32>,
     pub name: Vec<u8>,
 }
@@ -153,15 +154,25 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
     let text_base = base;
     let rodata_base = unsafe { base.add(rodata_off) };
     let data_base = unsafe { base.add(data_off) };
+    let bss_base = unsafe { data_base.add(parsed.header.data_size as usize) };
 
     // Apply relocations
     for reloc in parsed.relocs {
-        apply_relocation(reloc, text_base, rodata_base, data_base, parsed.symbols, parsed.strtab)?;
+        apply_relocation(
+            reloc,
+            text_base,
+            rodata_base,
+            data_base,
+            bss_base,
+            parsed.symbols,
+            parsed.strtab,
+        )?;
     }
 
     // Find entry points (first by symbol name, fallback to header offset)
     let entry_init = find_entry_fn(parsed.symbols, parsed.strtab, "driver_init", text_base, parsed.header.entry_init);
     let entry_event = find_entry_event(parsed.symbols, parsed.strtab, "driver_on_event", text_base, parsed.header.entry_event);
+    let entry_activate = find_entry_fn(parsed.symbols, parsed.strtab, "driver_activate", text_base, 0);
     let entry_fini = find_entry_fn(parsed.symbols, parsed.strtab, "driver_fini", text_base, parsed.header.entry_fini);
 
     Ok(NemV3LoadResult {
@@ -172,6 +183,7 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
         data_base,
         entry_init,
         entry_event,
+        entry_activate,
         entry_fini,
         name: parsed.name.as_bytes().to_vec(),
     })
@@ -253,6 +265,7 @@ fn apply_relocation(
     text_base: *mut u8,
     rodata_base: *mut u8,
     data_base: *mut u8,
+    bss_base: *mut u8,
     symbols: &[NemSymbol],
     strtab: &[u8],
 ) -> Result<(), &'static str> {
@@ -260,6 +273,7 @@ fn apply_relocation(
         NEM_SECT_TEXT => text_base,
         NEM_SECT_RODATA => rodata_base,
         NEM_SECT_DATA => data_base,
+        crate::nem::NEM_SECT_BSS => bss_base,
         _ => return Err("Invalid relocation section"),
     };
 
@@ -278,6 +292,7 @@ fn apply_relocation(
                 NEM_SECT_TEXT => text_base,
                 NEM_SECT_RODATA => rodata_base,
                 NEM_SECT_DATA => data_base,
+                crate::nem::NEM_SECT_BSS => bss_base,
                 _ => return Err("Invalid symbol section"),
             };
             (unsafe { sym_section_base.add(sym.value as usize) } as u64, false)

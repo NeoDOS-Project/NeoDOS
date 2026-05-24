@@ -273,15 +273,19 @@ Happy hacking!
                     data = nf.read()
                 print(f"[*] Including BOOT/{fname} ({len(data)} bytes)")
             boot_nem_data[inum] = data
-            inode = create_inode(inum, 0x80, len(data), [block, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+            blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
+            block_list = [0] * 12
+            for bi in range(min(blocks_needed, 12)):
+                block_list[bi] = block + bi
+            inode = create_inode(inum, 0x80, len(data), block_list)
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
         # System .nem driver inodes (SYSTEM category)
         sys_nem_data = {}
         sys_nem_files = [
-            (22, "framebuf.nem", 22),
-            (23, "storage.nem", 23),
+            (22, "framebuf.nem", 24),
+            (23, "storage.nem", 25),
         ]
         for inum, fname, block in sys_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
@@ -472,8 +476,12 @@ VER
         for (inum, fname, block) in boot_nem_files:
             data = boot_nem_data.get(inum, b'')
             if data:
-                offset = (200 + block * 8) * 512
-                image[offset:offset+len(data)] = data
+                blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
+                for bi in range(blocks_needed):
+                    chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                    blk = block + bi
+                    offset = (200 + blk * 8) * 512
+                    image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing BOOT/{fname} content...")
 
         # System driver data blocks

@@ -21,7 +21,6 @@ use alloc::vec::Vec;
 use alloc::string::String;
 use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
 use crate::drivers::nem::{policy, runtime, v3loader};
-use crate::drivers::nem::drivers::ps2kbd;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::EVENT_KEYBOARD_INPUT;
 use crate::fs::vfs::MODE_FILE;
@@ -34,15 +33,10 @@ struct InlineEntry {
     fini: Option<runtime::DriverFiniFn>,
 }
 
-fn inline_drivers() -> [(&'static str, InlineEntry); 1] {
-    [(
-        "PS2KBD",
-        InlineEntry {
-            init: Some(ps2kbd::driver_init as runtime::DriverInitFn),
-            event: Some(ps2kbd::driver_on_event as runtime::DriverEventFn),
-            fini: Some(ps2kbd::driver_fini as runtime::DriverFiniFn),
-        },
-    )]
+fn inline_drivers() -> [(&'static str, InlineEntry); 0] {
+    // PS2KBD is now a standalone driver in neodos/drivers/ps2kbd/
+    // No inline drivers for now
+    []
 }
 
 pub fn boot_load_all() {
@@ -129,6 +123,22 @@ pub fn boot_load_all() {
                                 let _ = driver_runtime::DRIVER_RUNTIME.lock()
                                     .try_transition(id, DriverState::Bound);
                                 crate::serial_print!(" [BOUND]");
+
+                                // Driver-local activation hook (optional for v3).
+                                // ps2kbd.nem requires this to accept events.
+                                let activate_ok = match load_result.entry_activate {
+                                    Some(activate_fn) => unsafe { activate_fn() == 0 },
+                                    None => true,
+                                };
+
+                                if !activate_ok {
+                                    crate::serial_print!(" [ACT FAIL]");
+                                    total_faulted += 1;
+                                    driver_runtime::DRIVER_RUNTIME.lock()
+                                        .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
+                                    crate::serial_println!();
+                                    continue;
+                                }
 
                                 // Certify & activate
                                 if driver_runtime::DRIVER_RUNTIME.lock()

@@ -118,7 +118,7 @@ def parse_elf(data):
     text_sections = []
     rodata_sections = []
     data_sections = []
-    bss_size = 0
+    bss_sections = []
 
     for s in sections:
         if s['type'] == SHT_PROGBITS and s['flags'] & SHF_EXECINSTR:
@@ -128,7 +128,7 @@ def parse_elf(data):
         elif s['type'] == SHT_PROGBITS and s['flags'] & SHF_ALLOC and s['flags'] & SHF_WRITE:
             data_sections.append(s)
         elif s['type'] == SHT_NOBITS and s['flags'] & SHF_ALLOC and s['flags'] & SHF_WRITE:
-            bss_size += s['size']
+            bss_sections.append(s)
         elif s['type'] == SHT_SYMTAB:
             result['symtab'] = s
         elif s['type'] == SHT_STRTAB and s['name'] == '.strtab':
@@ -150,6 +150,11 @@ def parse_elf(data):
     result['text'] = {'data': text_data, 'name': '.text'}
     result['rodata'] = {'data': rodata_data, 'name': '.rodata'}
     result['data'] = {'data': data_data, 'name': '.data'}
+    bss_size = 0
+    bss_offsets = {}
+    for s in bss_sections:
+        bss_offsets[s['name']] = bss_size
+        bss_size += s['size']
     result['bss'] = {'size': bss_size}
 
     # Section index → section name lookup for symbol section mapping
@@ -173,6 +178,10 @@ def parse_elf(data):
         for oname, off in data_offsets.items():
             if name == oname:
                 return off + value, SECT_DATA
+        # Check bss sections
+        for oname, off in bss_offsets.items():
+            if name == oname:
+                return off + value, SECT_BSS
         # Also check .text (base match)
         if name in text_offsets:
             return text_offsets[name] + value, SECT_TEXT
@@ -180,6 +189,8 @@ def parse_elf(data):
             return rodata_offsets[name] + value, SECT_RODATA
         if name in data_offsets:
             return data_offsets[name] + value, SECT_DATA
+        if name in bss_offsets:
+            return bss_offsets[name] + value, SECT_BSS
         return None, None
 
     # Parse symbols
@@ -304,36 +315,39 @@ def build_nem_v3(driver_name, elf, flags=0, abi_min=1, abi_target=1, abi_max=2,
 
     # Build string table + symbol table
     strtab = b''
-    sym_entries = []
-    undef_entries = []
+    nem_syms = []
+    elf_to_nem_idx = {}
 
-    for sym in symbols:
-        if not sym['name']: continue
-        if sym['shndx'] == 0:
-            # Undefined symbol
-            name_off = len(strtab)
-            strtab += sym['name'].encode('ascii') + b'\x00'
-            undef_entries.append({
-                'name_off': name_off, 'value': 0,
-                'section': 0xFFFF, 'info': 0x10, 'size': 0
-            })
-        elif sym.get('nem_section', 0xFFFF) != 0xFFFF:
-            name_off = len(strtab)
-            strtab += sym['name'].encode('ascii') + b'\x00'
-            ns = sym['nem_section']
+    for elf_idx, sym in enumerate(symbols):
+        is_undef = sym['shndx'] == 0
+        has_mappable_section = sym.get('nem_section', 0xFFFF) != 0xFFFF
+        if not is_undef and not has_mappable_section:
+            continue
+
+        # Keep unnamed local/section symbols too, because relocations may target them.
+        sym_name = sym['name'] if sym['name'] else f"@{elf_idx}"
+        name_off = len(strtab)
+        strtab += sym_name.encode('ascii', errors='replace') + b'\x00'
+
+        if is_undef:
+            ns = {
+                'name_off': name_off,
+                'value': 0,
+                'section': 0xFFFF,
+                'info': 0x10,
+                'size': 0,
+            }
+        else:
             info = 0x12 if sym['type'] == 2 else 0x10  # FUNC or OBJECT
-            sym_entries.append({
-                'name_off': name_off, 'value': sym['value'],
-                'section': ns, 'info': info, 'size': 0
-            })
-
-    # Build index: name -> nem_symbol_index
-    nem_syms = sym_entries + undef_entries
-    name_to_idx = {}
-    for i, ns in enumerate(nem_syms):
-        end = strtab.index(b'\x00', ns['name_off'])
-        name = strtab[ns['name_off']:end].decode('ascii')
-        name_to_idx[name] = i
+            ns = {
+                'name_off': name_off,
+                'value': sym['value'],
+                'section': sym['nem_section'],
+                'info': info,
+                'size': 0,
+            }
+        elf_to_nem_idx[elf_idx] = len(nem_syms)
+        nem_syms.append(ns)
 
     # Filter supported relocations only
     supported_relocs = []
@@ -347,11 +361,8 @@ def build_nem_v3(driver_name, elf, flags=0, abi_min=1, abi_target=1, abi_max=2,
     reloc_data = b''
     for rel in supported_relocs:
         sym_idx = 0xFF  # default: no symbol
-        sym = symbols[rel['sym']] if rel['sym'] < len(symbols) else None
-        if sym and sym['name'] in name_to_idx:
-            sym_idx = name_to_idx[sym['name']]
-        elif sym and not sym['name']:
-            sym_idx = 0xFF  # local/unnamed symbol
+        if rel['sym'] in elf_to_nem_idx:
+            sym_idx = elf_to_nem_idx[rel['sym']]
 
         addend_32 = rel['addend'] & 0xFFFFFFFF
         if addend_32 >= 0x80000000:

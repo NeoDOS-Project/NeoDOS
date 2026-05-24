@@ -34,10 +34,7 @@ pub fn echo_callback(event: &Event) {
     }
     drop(r);
 
-    crate::serial_println!(
-        "[DRIVER] echo event type={} id={} tick={}",
-        event.event_type, event.event_id, event.timestamp
-    );
+    // Keep runtime accounting for echo driver, but avoid serial spam.
 }
 
 // ── timer_listener driver callback ──
@@ -47,25 +44,17 @@ pub fn timer_listener_callback(event: &Event) {
         return;
     }
 
-    let should_log = {
+    let _ = {
         let mut r = DRIVER_RUNTIME.lock();
         let drv_id = r.get_by_driver_type(NemDriverType::Lifecycle).map(|d| d.id);
         if let Some(id) = drv_id {
             r.record_event(id, event.event_type, event.timestamp);
             r.increment_tick(id);
-            r.get(id).map(|d| d.tick_count).unwrap_or(0) % 50 == 0
+            r.get(id).map(|d| d.tick_count).unwrap_or(0)
         } else {
-            false
+            0
         }
     };
-
-    if should_log {
-        let tick = DRIVER_RUNTIME.lock()
-            .get_by_driver_type(NemDriverType::Lifecycle)
-            .map(|d| d.tick_count)
-            .unwrap_or(0);
-        crate::serial_println!("[DRIVER] timer_listener tick={}", tick);
-    }
 }
 
 // ── Boot-time init ──
@@ -82,5 +71,5 @@ pub fn init() {
     // timer_listener: receives TIMER_TICK
     let _ = eventbus::EVENT_BUS.register_handler(EVENT_TIMER_TICK, timer_listener_callback, "timer");
 
-    crate::serial_println!("[DRV] Built-in driver callbacks registered (null/echo/timer)");
+    crate::serial_println!("[DRV] Built-in driver callbacks registered");
 }
