@@ -84,8 +84,17 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
         [ -f "$gen" ] || continue
         python3 "$gen"
     done
-    echo "[+] Generating NEM driver binaries..."
+    echo "[+] Generating NEM driver binaries (v1/v2 test)..."
     python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
+
+    echo "[+] Compiling NEM v3 standalone driver (ps2kbd)..."
+    DRV_DIR="$PROJECT_ROOT/drivers/ps2kbd"
+    if [ -f "$DRV_DIR/build_nem.py" ]; then
+        python3 "$DRV_DIR/build_nem.py" "$NEM_DIR/BOOT"
+        echo "[✓] ps2kbd.nem compiled"
+    else
+        echo "[!] ps2kbd build script not found"
+    fi
     export NEM_DIR
 fi
 

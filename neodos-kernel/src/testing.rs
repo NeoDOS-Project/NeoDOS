@@ -1774,6 +1774,7 @@ pub fn register_tests() {
     crate::eventbus::register_tests();
     crate::drivers::driver_runtime::register_driver_certification_tests();
     crate::drivers::boot_loader::register_boot_loader_tests();
+    crate::drivers::nem::v3loader::register_v3_loader_tests();
     crate::drivers::reference::ps2kbd::register_ref_ps2kbd_tests();
     crate::drivers::reference::framebuffer::register_ref_framebuffer_tests();
     crate::drivers::reference::storage::register_ref_storage_tests();
