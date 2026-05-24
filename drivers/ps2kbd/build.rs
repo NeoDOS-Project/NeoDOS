@@ -283,8 +283,8 @@ fn write_compose(out: &mut String, prefix: &str, entries: &[ComposeEntry]) {
 
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    let us_path = manifest_dir.join("./layouts/KBDUS.klc");
-    let sp_path = manifest_dir.join("./layouts/KBDSP.klc");
+    let us_path = manifest_dir.join("layouts/KBDUS.klc");
+    let sp_path = manifest_dir.join("layouts/KBDSP.klc");
     println!("cargo:rerun-if-changed={}", us_path.display());
     println!("cargo:rerun-if-changed={}", sp_path.display());
 

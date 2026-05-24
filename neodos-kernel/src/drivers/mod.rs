@@ -13,7 +13,6 @@ pub mod ps2;
 pub mod nem;
 pub mod nvme;
 pub mod pci;
-pub mod reference;
 pub mod rtc;
 pub mod storage_manager;
 pub mod usb_hid;

@@ -222,35 +222,9 @@ Happy hacking!
         alltest_inode = create_inode(9, 0x80, len(alltest_bin_data), [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+2304:512+2560] = alltest_inode
 
-        # Inode 10-14: NEM test driver binaries
-        nem_files = [
-            (10, "null.nem", 10),
-            (11, "echo.nem", 11),
-            (12, "stress_lifecycle.nem", 12),
-            (13, "fault.nem", 13),
-            (14, "burst.nem", 14),
-            (18, "kbrdps2.nem", 18),
-        ]
-        nem_data = {}
-        for inum, fname, block in nem_files:
-            fpath = os.path.join(nem_dir, fname)
-            data = b''
-            if os.path.exists(fpath):
-                with open(fpath, 'rb') as nf:
-                    data = nf.read()
-                print(f"[*] Including {fname} ({len(data)} bytes)")
-            nem_data[inum] = data
-            inode = create_inode(inum, 0x80, len(data), [block, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-            offset = 512 + inum * 256
-            image[offset:offset+256] = inode
-
         # Inode 15: DRIVERS directory (under SYSTEM)
         drivers_inode = create_inode(15, 0x40, 512 * 3, [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # 3 entries: TEST, BOOT, SYSTEM
         image[512+3840:512+4096] = drivers_inode
-
-        # Inode 16: TEST directory (under DRIVERS)
-        test_inode = create_inode(16, 0x40, 512 * 4, [16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # 4 entries (incl. kbrdps2)
-        image[512+4096:512+4352] = test_inode
 
         # Inode 19: BOOT directory (under DRIVERS)
         boot_dir_inode = create_inode(19, 0x40, 256, [19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -278,24 +252,6 @@ Happy hacking!
             for bi in range(min(blocks_needed, 12)):
                 block_list[bi] = block + bi
             inode = create_inode(inum, 0x80, len(data), block_list)
-            offset = 512 + inum * 256
-            image[offset:offset+256] = inode
-
-        # System .nem driver inodes (SYSTEM category)
-        sys_nem_data = {}
-        sys_nem_files = [
-            (22, "framebuf.nem", 24),
-            (23, "storage.nem", 25),
-        ]
-        for inum, fname, block in sys_nem_files:
-            fpath = os.path.join(nem_dir, "SYSTEM", fname)
-            data = b''
-            if os.path.exists(fpath):
-                with open(fpath, 'rb') as nf:
-                    data = nf.read()
-                print(f"[*] Including SYSTEM/{fname} ({len(data)} bytes)")
-            sys_nem_data[inum] = data
-            inode = create_inode(inum, 0x80, len(data), [block, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
@@ -378,7 +334,7 @@ CURSOR=10
         # Block 5 = sector 240 (AUTOEXEC.BAT)
         print("[*] Writing AUTOEXEC.BAT...")
         offset = (200 + 40) * 512
-        autoexec_content = b"""ECHO Welcome to NeoDOS 0.7
+        autoexec_content = b"""ECHO Welcome to NeoDOS 0.16
 ECHO System Configuration Loaded.
 VER
 """
@@ -424,19 +380,9 @@ VER
             offset = (200 + 136) * 512
             image[offset:offset+len(hello_elf_data)] = hello_elf_data
 
-        # NEM test driver data blocks
-        for (inum, fname, block) in nem_files:
-            data = nem_data.get(inum, b'')
-            if data:
-                offset = (200 + block * 8) * 512
-                image[offset:offset+len(data)] = data
-                print(f"[*] Writing {fname} content...")
-
         # Block 15 = sector 320 (DRIVERS directory)
         print("[*] Writing DRIVERS directory...")
         offset = (200 + 120) * 512
-        entry_test = create_dir_entry(16, 2, "TEST")
-        image[offset:offset+256] = entry_test
         entry_boot = create_dir_entry(19, 2, "BOOT")
         image[offset+256:offset+512] = entry_boot
         entry_sys2 = create_dir_entry(20, 2, "SYSTEM")
@@ -455,22 +401,12 @@ VER
         image[offset+768:offset+1024] = entry_fault
         entry_burst = create_dir_entry(14, 1, "burst.nem")
         image[offset+1024:offset+1280] = entry_burst
-        entry_kbrdps2 = create_dir_entry(18, 1, "kbrdps2.nem")
-        image[offset+1280:offset+1536] = entry_kbrdps2
 
         # Block 19 = sector 352 (BOOT directory)
         print("[*] Writing BOOT directory...")
         offset = (200 + 152) * 512
         entry_ps2kbd = create_dir_entry(21, 1, "ps2kbd.nem")
         image[offset:offset+256] = entry_ps2kbd
-
-        # Block 20 = sector 360 (SYSTEM directory under DRIVERS)
-        print("[*] Writing SYSTEM (DRIVERS) directory...")
-        offset = (200 + 160) * 512
-        entry_fb = create_dir_entry(22, 1, "framebuf.nem")
-        image[offset:offset+256] = entry_fb
-        entry_stor = create_dir_entry(23, 1, "storage.nem")
-        image[offset+256:offset+512] = entry_stor
 
         # Boot driver data blocks
         for (inum, fname, block) in boot_nem_files:
@@ -483,15 +419,6 @@ VER
                     offset = (200 + blk * 8) * 512
                     image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing BOOT/{fname} content...")
-
-        # System driver data blocks
-        for (inum, fname, block) in sys_nem_files:
-            data = sys_nem_data.get(inum, b'')
-            if data:
-                offset = (200 + block * 8) * 512
-                image[offset:offset+len(data)] = data
-                print(f"[*] Writing SYSTEM/{fname} content...")
-
     
     # Escribir imagen a disco
     output_file = args.output

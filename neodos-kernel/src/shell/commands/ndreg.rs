@@ -95,7 +95,7 @@ impl DosShell {
         let search_dirs: &[&str] = if has_path {
             &[args[0]]
         } else {
-            &["C:\\SYSTEM\\DRIVERS\\TEST", "C:\\SYSTEM\\DRIVERS"]
+            &["C:\\SYSTEM\\DRIVERS\\BOOT", "C:\\SYSTEM\\DRIVERS\\SYSTEM"]
         };
 
         for dir in search_dirs {
@@ -241,8 +241,8 @@ impl DosShell {
 
         let lc_name = name.to_ascii_lowercase();
         let search_paths = [
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\TEST\\{}", lc_name),
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\BOOT\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\SYSTEM\\{}", lc_name),
         ];
 
         for full_path in &search_paths {
@@ -375,8 +375,8 @@ impl DosShell {
 
     fn ndreg_query(&mut self, _args: &[&str]) {
         let search_paths = [
-            "C:\\SYSTEM\\DRIVERS\\TEST",
-            "C:\\SYSTEM\\DRIVERS",
+            "C:\\SYSTEM\\DRIVERS\\BOOT",
+            "C:\\SYSTEM\\DRIVERS\\SYSTEM",
         ];
 
         let mut total = 0u32;
@@ -523,8 +523,8 @@ impl DosShell {
 
         let lc_name = name.to_ascii_lowercase();
         let search_paths = [
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\TEST\\{}", lc_name),
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\BOOT\\{}", lc_name),
+            alloc::format!("C:\\SYSTEM\\DRIVERS\\SYSTEM\\{}", lc_name),
         ];
 
         // Find the driver in the runtime registry
@@ -671,8 +671,8 @@ impl DosShell {
 
     fn ndreg_health(&mut self) {
         let search_paths = [
-            "C:\\SYSTEM\\DRIVERS\\TEST",
-            "C:\\SYSTEM\\DRIVERS",
+            "C:\\SYSTEM\\DRIVERS\\BOOT",
+            "C:\\SYSTEM\\DRIVERS\\SYSTEM",
         ];
 
         println!("========================================");
