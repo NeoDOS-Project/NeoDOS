@@ -4,6 +4,8 @@
 // A driver loaded here follows all pipeline stages synchronously. If any step
 // fails, the driver is left at its current state with a last_error code.
 // NDREG can then inspect the state to determine why the driver is not ACTIVE.
+//
+// Supports NEM v1 (basic drivers) and NEM v2 (ABI-validated, categorized drivers).
 
 use alloc::vec::Vec;
 use crate::nem;
@@ -19,15 +21,33 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
     // Parse the .nem binary, validate ABI, check policy
     let data = read_file(path).map_err(|_| "IO error")?;
     let parsed = nem::parse_nem(&data).ok_or("Invalid NEM header")?;
+
+    // Policy validation (driver type + v2 requirement)
     policy::validate_driver(&parsed)?;
 
-    // Register runtime entry — sets state to Loaded
-    let id = driver_runtime::register_driver(
-        parsed.name,
-        parsed.driver_type,
-        nem::NEM_API_VERSION,
-        parsed.compat_flags,
-    ).map_err(|_| "Failed to register driver")?;
+    // ABI validation (v2 drivers must have compatible ABI)
+    policy::validate_abi(&parsed)?;
+
+    // Register runtime entry — sets state to Loaded (with category + ABI fields for v2)
+    let id = if parsed.is_v2 {
+        driver_runtime::register_driver_ext(
+            parsed.name,
+            parsed.driver_type,
+            nem::NEM_API_VERSION,
+            parsed.compat_flags,
+            parsed.abi_min,
+            parsed.abi_target,
+            parsed.abi_max,
+            parsed.category,
+        )
+    } else {
+        driver_runtime::register_driver(
+            parsed.name,
+            parsed.driver_type,
+            nem::NEM_API_VERSION,
+            parsed.compat_flags,
+        )
+    }.map_err(|_| "Failed to register driver")?;
 
     // ── STAGE 2: INITIALIZE ──
     // Allocate user slot and copy driver code into memory
@@ -93,9 +113,6 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
     }
 
     // ── STAGE 4: BIND ──
-    // (No automatic device binding in this version — driver must register
-    // event handlers from user mode. For now we advance to Bound since the
-    // driver process has been spawned and the Event Bus is available.)
     if driver_runtime::DRIVER_RUNTIME.lock()
         .try_transition(id, DriverState::Bound).is_err()
     {
@@ -122,8 +139,8 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
     }
 }
 
-fn read_file(path: &str) -> Result<Vec<u8>, ()> {
-    // Reuse existing NeoFS helper (similar to driver_loader::read_file)
+/// Read a .nem file from NeoFS into a Vec<u8>.
+pub fn read_file(path: &str) -> Result<Vec<u8>, ()> {
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| ())?;
         if node.mode & crate::fs::vfs::MODE_FILE == 0 {

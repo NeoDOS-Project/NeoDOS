@@ -103,11 +103,12 @@ impl DosShell {
 
             println!(" Driver Registry: {}", full_path);
             println!();
-            println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}", 
-                "NAME", "TYPE", "ABI", "FLAGS", "STATE", "ERR", "SIZE", "PIPELINE");
-            println!(" {} {} {} {} {} {} {} {}",
+            println!(" {:<18} {:>6} {:>8} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}", 
+                "NAME", "TYPE", "CATEGORY", "ABI", "FLAGS", "STATE", "ERR", "SIZE", "PIPELINE");
+            println!(" {} {} {} {} {} {} {} {} {}",
                 str::repeat("-", 18),
                 str::repeat("-", 6),
+                str::repeat("-", 8),
                 str::repeat("-", 4),
                 str::repeat("-", 5),
                 str::repeat("-", 7),
@@ -201,17 +202,24 @@ impl DosShell {
                                         let mode_str = if parsed.compat_flags & 1 != 0 { "RWD" } else { "R--" };
                                         let err_str = driver_runtime::err_to_str(last_error);
                                         let pipeline = pipeline_indicator(state);
-                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
+                                        let abi_str = if parsed.is_v2 {
+                                            alloc::format!("{}.{}.{}",
+                                                (parsed.abi_min >> 8) as u8, parsed.abi_target, parsed.abi_max)
+                                        } else {
+                                            alloc::format!("{}", "v1")
+                                        };
+                                        println!(" {:<18} {:>6} {:>8} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
                                             parsed.name, dt_char,
-                                            "v0.3", mode_str,
+                                            parsed.category.to_str(),
+                                            &abi_str, mode_str,
                                             state.to_str(),
                                             if last_error == 0 { "." } else { err_str },
                                             parsed.code.len(),
                                             pipeline);
                                     }
                                     None => {
-                                        println!(" {:<18} {:>6} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
-                                            "?", "?", "?", "?", "INVALID", "?", 0, "?????");
+                                        println!(" {:<18} {:>6} {:>8} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
+                                            "?", "?", "?", "?", "?", "INVALID", "?", 0, "?????");
                                     }
                                 }
                             }
@@ -274,6 +282,7 @@ impl DosShell {
                                             cert_step = drv.certification_step;
                                         }
 
+                                        let fmt_ver = if parsed.is_v2 { "v2" } else { "v1" };
                                         println!("========================================");
                                         println!("  NeoDOS Driver Registry v1");
                                         println!("  Certification Pipeline");
@@ -282,13 +291,20 @@ impl DosShell {
                                         println!("  Path:            {}", full_path);
                                         println!("  Driver Type:     {} ({})", 
                                             parsed.driver_type.to_str(), parsed.driver_type as u8);
-                                        println!("  NEM Format:      v1");
-                                        println!("  ABI Version:     v0.3");
+                                        println!("  NEM Format:      {}", fmt_ver);
+                                        println!("  Driver Category: {}", parsed.category.to_str());
+                                        if parsed.is_v2 {
+                                            println!("  ABI Range:       v{}.{} < v{}.{} < v{}.{}",
+                                                (parsed.abi_min >> 8) as u8, parsed.abi_min as u8,
+                                                (parsed.abi_target >> 8) as u8, parsed.abi_target as u8,
+                                                (parsed.abi_max >> 8) as u8, parsed.abi_max as u8);
+                                        } else {
+                                            println!("  ABI:             v0.3 (legacy)");
+                                        }
                                         println!("  File Size:       {} bytes", node.size);
                                         println!("  Code Size:       {} bytes", parsed.code.len());
                                         println!("  Entry Offset:    0x{:04X}", parsed.entry_offset);
                                         println!("  Compat Flags:    0x{:04X}", parsed.compat_flags);
-                                        println!("  Driver Category: TEST");
                                         println!("  Permissions:     R--");
                                         println!();
                                         println!(" ── Lifecycle State ──");
@@ -475,16 +491,16 @@ impl DosShell {
         if names.is_empty() {
             println!("  No drivers loaded.");
         } else {
-            println!("  ID  NAME                  STATE       ERR    EVENTS  TICKS  PIPELINE");
-            println!("  --- --------------------  ----------  -----  ------  -----  --------");
+            println!("  ID  NAME                  CATEGORY  STATE       ERR    EVENTS  TICKS  PIPELINE");
+            println!("  --- --------------------  --------  ----------  -----  ------  -----  --------");
             let r = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             for (name, id, state) in &names {
                 if let Some(drv) = r.get(*id) {
                     let err_str = driver_runtime::err_to_str(drv.last_error);
                     let pipe = pipeline_indicator(drv.state);
                     println!(
-                        "  {:>3}  {:20}  {:10}  {:>5}  {:>6}  {:>5}  {:>8}",
-                        id, name, state.to_str(),
+                        "  {:>3}  {:20}  {:>8}  {:10}  {:>5}  {:>6}  {:>5}  {:>8}",
+                        id, name, drv.category.to_str(), state.to_str(),
                         if drv.last_error == 0 { "." } else { err_str },
                         drv.events_received, drv.tick_count,
                         pipe

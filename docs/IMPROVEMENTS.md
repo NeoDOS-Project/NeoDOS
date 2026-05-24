@@ -1,6 +1,6 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.16.2 (196 tests, 4 user-mode binaries, ELF64 loader, mmap lazy, IPC/Pipes, full process cleanup, FSCK).
+> Versión actual: v0.16.4 (245+ tests, NEM v2 ABI validation, Boot Driver Loader, Rust reference drivers).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
@@ -43,7 +43,13 @@
 42. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
 43. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `fd_table[16]` con FdEntry (stdin/stdout/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, fd table.
 44. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot scheduler y liberan `Box<AlignedKStack>` (kernel stack) al salir. `kill_pid()` reescrito: libera heap, mmap, pipes, user slot, kernel stack y recicla slot inmediatamente. En waitpid desde Ring 3, el slot del proceso esperado se recicla automáticamente tras detectar Terminated. 3 ficheros modificados: `scheduler.rs`, `run.rs`, `syscall.rs`.
-45. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock validation (magic, block_size, num_blocks, num_inodes, label), inode table integrity check (mode bits, inode_num mismatch, block pointer bounds, cross-linked block detection), directory tree walk with cycle protection (MAX_DIR_DEPTH=32), orphan inode detection, dangling directory entry detection, entry-type vs inode-mode mismatch detection. Repair mode (`FSCK /F`): restores superblock fields, clears invalid modes, removes cross-linked block references, frees orphan inodes, deletes dangling entries, fixes entry type mismatches, flushes cache to disk. Shell command `FSCK` registered in handler table. 6 unit tests for validation helpers. All 196 kernel tests pass.
+45. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock validation (magic, block_size, num_blocks, num_inodes, label), inode table integrity check (mode bits, inode_num mismatch, block pointer bounds, cross-linked block detection), directory tree walk with cycle protection (MAX_DIR_DEPTH=32), orphan inode detection, dangling directory entry detection, entry-type vs inode-mode mismatch detection. Repair mode (`FSCK /F`): restores superblock fields, clears invalid modes, removes cross-linked block references, frees orphan inodes, deletes dangling entries, fixes entry type mismatches, flushes cache to disk. Shell command `FSCK` registered in handler table. 6 unit tests for validation helpers.
+46. **BDL1. NEM v2 ABI fields** — `src/nem/mod.rs`: extended NEM format to v2 (48-byte header) with ABI validation fields (abi_min, abi_target, abi_max), driver category (Boot/System/Demand), 16-byte driver name. Backward-compatible with v1. ABI validation ensures driver/kernel compatibility window. 9 new tests for v2 parsing, categories, ABI constants.
+47. **BDL2. Boot Driver Loader System** — `src/drivers/boot_loader/mod.rs`: automatic boot-time scanning and loading of .nem drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\`. Implements `driver_scan()`, `driver_load()`, `driver_init()`, `driver_activate()`, `driver_unload()` API with full certification pipeline integration. Connected to boot sequence in `main.rs` as PHASE 3.85. 8 kernel tests for scan/load/unload/init/activate, category ordering.
+48. **BDL3. Driver Instance extended** — `src/drivers/driver_runtime.rs`: added `DriverCategory` field and ABI fields (abi_min, abi_target, abi_max) to `DriverInstance`. New `register_ext()` method for extended registration. `DriverCategory` enum (Boot=0, System=1, Demand=2) embedded in NEM v2 header.
+49. **BDL4. ABI Validation Policy** — `src/drivers/nem/policy.rs`: new `validate_abi()` function checks driver/kernel ABI compatibility window. Rejects drivers if `abi_min > ABI_MAX_VALID`, `abi_max < ABI_MIN_VALID`, or `abi_target` outside range. Boot/System drivers require v2 format.
+50. **BDL5. Rust reference .nem drivers** — `src/drivers/reference/`: three complete reference Rust driver implementations for PS/2 keyboard, framebuffer, and storage. Each demonstrates `extern "C"` entrypoint contract (`driver_init`, `driver_on_event`, `driver_fini`), event integration, lifecycle management, null-safety, and parameter validation. 32 kernel tests across all three reference drivers.
+51. **BDL6. NDREG updated** — `src/shell/commands/ndreg.rs`: LIST and SHOW subcommands now display driver category (BOOT/SYSTEM/DEMAND) and ABI range (v1/v2 format). RUNTIME snapshot shows category per driver.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -157,11 +163,11 @@ Estos items desbloquean todo el roadmap futuro.
 
 | Estado | Items | Prioridades |
 |--------|-------|-------------|
-| COMPLETED | 43 | — |
+| COMPLETED | 49 | — |
 | S — Crítico | 8 | Redirection, FAT32 write, FSCK, libneodos, PATH, pipe operator, batch |
 | A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
 | B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
 | C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |
 | D — Ecosistema | 10 | SDK, CI, benchmarks, debugger, crash dump, NTP, DHCP, sockets, POSIX |
 | E — Experimental | 7 | ARM64, SMP, network, GUI, secure boot, package manager, real hardware |
-| **Total** | **100** | |
+| **Total** | **106** | |

@@ -71,7 +71,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // 1. Initialize Graphics Renderer
     graphics::init(boot_info.fb_info.clone());
-    drivers::keyboard::set_leds(0b100); // Caps Lock ON = kernel entry
+    drivers::ps2::set_leds(0b100); // Caps Lock ON = kernel entry
 
     // 1b. Set up RAM disk from bootloader-loaded FS image
     drivers::block::set_ram_disk(boot_info.fs_image_addr, boot_info.fs_image_size);
@@ -91,7 +91,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // 4. Initialize legacy VGA as backup (might not work, but keeps code compatible)
     console::init();
-    drivers::keyboard::set_leds(0b110); // Caps Lock + Num Lock ON = console ready
+    drivers::ps2::set_leds(0b110); // Caps Lock + Num Lock ON = console ready
 
     println!("========================================");
     println!("{}", KERNEL_VERSION);
@@ -110,7 +110,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     arch::x64::init_pic();
 
     println!("[+] Initializing PS/2 controller...");
-    drivers::keyboard::init_ps2();
+    drivers::ps2::init_ps2();
 
     println!("[+] Scanning for USB HID keyboards...");
     drivers::usb_hid::init_usb_keyboard();
@@ -216,7 +216,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[+] FAT32 ESP mounted on A:");
     }
 
-    drivers::keyboard::set_leds(0b111); // All ON = storage ready
+    drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // ============================================
     // PHASE 3.5: Device Model + HAL Binding Layer
@@ -227,6 +227,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 3.75: Driver Runtime + Built-in Drivers
     // ============================================
     drivers::builtin_drivers::init();
+
+    // ============================================
+    // PHASE 3.85: Boot Driver Loader
+    // Auto-scan and load BOOT .nem drivers first,
+    // then SYSTEM .nem drivers.
+    // ============================================
+    println!("[+] Initializing Boot Driver Loader...");
+    drivers::boot_loader::boot_load_all();
 
     // ============================================
     // PHASE 3.9: Validate syscall ABI

@@ -386,20 +386,41 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 }
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
-    use crate::drivers::keyboard::KeyboardDriver;
+    // Read scancode directly from PS/2 controller
+    let status: u8 = crate::hal::inb(0x64);
+    let scancode = if (status & 0x01) != 0 {
+        Some(crate::hal::inb(0x60))
+    } else {
+        None
+    };
 
-    if let Some(scancode) = KeyboardDriver::read_scancode() {
-        if let Some(ascii) = KeyboardDriver::scancode_to_ascii(scancode) {
-            crate::input::push_byte(ascii);
-            crate::syscall::wake_blocked_readers();
-        }
-        if KeyboardDriver::ctrl_alt_del_pressed(scancode) {
-            crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
-            crate::hal::ack_irq(33);
-            crate::hal::poweroff();
+    if let Some(scancode) = scancode {
+        static mut CTRL_PRESSED: bool = false;
+        static mut ALT_PRESSED: bool = false;
+
+        // Track Ctrl and Alt for Ctrl+Alt+Del detection only
+        let released = (scancode & 0x80) != 0;
+        let code = scancode & 0x7F;
+        unsafe {
+            if code == 0x1D { CTRL_PRESSED = !released; }
+            if code == 0x38 { ALT_PRESSED = !released; }
         }
 
-        // Push KeyboardInput event (lock‑free, IRQ‑safe)
+        // Ctrl+Alt+Del → poweroff
+        let is_del = code == 0x53 && !released;
+        if is_del {
+            let ctrl; let alt;
+            unsafe { ctrl = CTRL_PRESSED; alt = ALT_PRESSED; }
+            if ctrl && alt {
+                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
+                crate::hal::ack_irq(33);
+                crate::hal::poweroff();
+            }
+        }
+
+        // Push KeyboardInput event — the NEM ps2kbd driver will
+        // translate the scancode and push the resulting byte(s)
+        // into the input ring buffer via HST push_input_byte.
         let _ = crate::eventbus::EVENT_BUS.push_event(
             crate::eventbus::EVENT_KEYBOARD_INPUT,
             crate::eventbus::SOURCE_HAL,

@@ -73,6 +73,23 @@ echo "[✓] Kernel ELF: $PROJECT_ROOT/kernel.elf"
 echo ""
 
 # ============================================
+# 2.5. Generate binaries needed by NeoDOS FS image (user binaries + NEM drivers)
+# ============================================
+USERBIN_DIR="$PROJECT_ROOT/userbin"
+NEM_DIR="/tmp/nem_drivers_$$"
+cd "$PROJECT_ROOT"
+if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
+    echo "[+] Generating user-mode binaries for FS image..."
+    for gen in "$USERBIN_DIR"/generate_*.py; do
+        [ -f "$gen" ] || continue
+        python3 "$gen"
+    done
+    echo "[+] Generating NEM driver binaries..."
+    python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
+    export NEM_DIR
+fi
+
+# ============================================
 # 3. Generate NeoDOS FS image (optional, before ESP)
 # ============================================
 if [ "$BUILD_NEODOS_IMAGE" = true ]; then
@@ -135,20 +152,13 @@ else
 fi
 
 # ============================================
-# 5. Compile user-mode binaries
+# 5. Compile user-mode binaries (nasm asm files only)
 # ============================================
 if [ "$BUILD_USERBIN" = true ]; then
     echo ""
-    echo "[+] Compiling user-mode binaries..."
-    USERBIN_DIR="$PROJECT_ROOT/userbin"
+    echo "[+] Compiling user-mode assembly binaries..."
 
-    # Prefer Python generators (no external dep) — always run them first
-    for gen in "$USERBIN_DIR"/generate_*.py; do
-        [ -f "$gen" ] || continue
-        python3 "$gen" && echo "[\u2713] $(basename "$gen") run OK"
-    done
-
-    # Also compile any .asm files if nasm is available
+    # Compile any .asm files if nasm is available
     if command -v nasm >/dev/null 2>&1; then
         for asm_file in "$USERBIN_DIR"/*.asm; do
             [ -f "$asm_file" ] || continue
@@ -157,11 +167,6 @@ if [ "$BUILD_USERBIN" = true ]; then
             echo "[\u2713] nasm: $(basename "$asm_file") -> $(basename "$bin_file") ($(wc -c < "$bin_file") bytes)"
         done
     fi
-
-    # Generate NEM test driver binaries
-    NEM_DIR="/tmp/nem_drivers_$$"
-    python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
-    export NEM_DIR
 fi
 
 # ============================================

@@ -1,9 +1,8 @@
-use core::sync::atomic::{AtomicU8, Ordering};
-
-mod klc_layout {
-    #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/kbd_layout.rs"));
-}
+// Legacy keyboard driver removed.
+// PS/2 keyboard input now handled by NEM production driver ps2kbd.nem
+// via src/drivers/nem/drivers/ps2kbd.rs
+//
+// PS/2 hardware init moved to src/drivers/ps2.rs
 
 pub struct KeyboardDriver;
 

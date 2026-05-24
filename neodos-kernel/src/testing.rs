@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 200;
+const MAX_TESTS: usize = 300;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -179,45 +179,13 @@ pub fn register_input_tests() {
     });
 }
 
-// ===== Keyboard tests =====
+// ===== Keyboard tests (via ps2kbd NEM driver) =====
 
 pub fn register_keyboard_tests() {
-    use crate::drivers::keyboard::KeyboardDriver;
-
-    test_case!("kbd_codepoint_1byte", {
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x0000), [0x00, 0x00, 0x00]);
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x0041), [0x41, 0x00, 0x00]); // 'A'
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x007F), [0x7F, 0x00, 0x00]);
-    });
-
-    test_case!("kbd_codepoint_2byte", {
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x0080), [0xC2, 0x80, 0x00]);
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x00E1), [0xC3, 0xA1, 0x00]); // 'á'
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x07FF), [0xDF, 0xBF, 0x00]);
-    });
-
-    test_case!("kbd_codepoint_3byte", {
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x0800), [0xE0, 0xA0, 0x80]);
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0x20AC), [0xE2, 0x82, 0xAC]); // '€'
-        test_eq!(KeyboardDriver::codepoint_to_utf8(0xFFFF), [0xEF, 0xBF, 0xBF]);
-    });
-
-    test_case!("kbd_lookup_compose_us", {
-        // US layout has no compose entries
-        test_eq!(KeyboardDriver::lookup_compose(0, 0x60, 0x61), None);
-        test_eq!(KeyboardDriver::lookup_compose(0, 0xB4, 0x61), None);
-    });
-
-    test_case!("kbd_lookup_compose_sp", {
-        // Spanish layout (index 1): grave + a = à (0xE0)
-        test_eq!(KeyboardDriver::lookup_compose(1, 0x60, 0x61), Some(0xE0));
-        // acute + a = á (0xE1)
-        test_eq!(KeyboardDriver::lookup_compose(1, 0xB4, 0x61), Some(0xE1));
-        // grave + space = standalone grave
-        test_eq!(KeyboardDriver::lookup_compose(1, 0x60, 0x20), Some(0x60));
-        // unknown pair: grave + z = None
-        test_eq!(KeyboardDriver::lookup_compose(1, 0x60, 0x7A), None);
-    });
+    // Keyboard translation is tested in the ps2kbd production driver's
+    // own test suite (register_prod_kbd_tests in drivers/nem/drivers/ps2kbd.rs).
+    // Legacy KeyboardDriver utility tests (codepoint_to_utf8, lookup_compose)
+    // were part of the removed in-kernel keyboard driver.
 }
 
 
@@ -1805,6 +1773,10 @@ pub fn register_tests() {
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
     crate::drivers::driver_runtime::register_driver_certification_tests();
+    crate::drivers::boot_loader::register_boot_loader_tests();
+    crate::drivers::reference::ps2kbd::register_ref_ps2kbd_tests();
+    crate::drivers::reference::framebuffer::register_ref_framebuffer_tests();
+    crate::drivers::reference::storage::register_ref_storage_tests();
     crate::fs::fsck::register_fsck_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();

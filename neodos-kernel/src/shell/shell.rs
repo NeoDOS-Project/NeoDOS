@@ -89,6 +89,10 @@ impl DosShell {
                     usb_hid::poll_usb_keyboard();
                 }
 
+                // Dispatch pending Event Bus events (e.g. keyboard →
+                // NEM ps2kbd driver → HST push_input_byte → input buffer)
+                crate::eventbus::EVENT_BUS.dispatch_pending();
+
                 if let Some(byte) = input::pop_byte() {
                     crate::console::draw_cursor(false);
                     cursor_visible = false;
@@ -353,7 +357,7 @@ impl DosShell {
             }
             if trimmed.eq_ignore_ascii_case("pause") {
                 println!("Press any key to continue . . .");
-                crate::drivers::keyboard::wait_for_key();
+                crate::drivers::ps2::wait_for_key();
                 continue;
             }
             self.execute_line(trimmed);

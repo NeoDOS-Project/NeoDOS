@@ -15,7 +15,7 @@
 
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::nem::NemDriverType;
+use crate::nem::{NemDriverType, DriverCategory};
 use crate::eventbus::EventType;
 
 // ── Constants ──
@@ -126,6 +126,10 @@ pub struct DriverInstance {
     pub state: DriverState,
     pub api_version: u16,
     pub compat_flags: u16,
+    pub abi_min: u16,
+    pub abi_target: u16,
+    pub abi_max: u16,
+    pub category: DriverCategory,
     pub events_received: u64,
     pub tick_count: u64,
     pub last_event_type: EventType,
@@ -144,6 +148,10 @@ impl Default for DriverInstance {
             state: DriverState::Unloaded,
             api_version: 0,
             compat_flags: 0,
+            abi_min: 0,
+            abi_target: 0,
+            abi_max: 0,
+            category: DriverCategory::Demand,
             events_received: 0,
             tick_count: 0,
             last_event_type: 0,
@@ -246,6 +254,21 @@ impl DriverRuntime {
         api_version: u16,
         compat_flags: u16,
     ) -> Result<DriverId, &'static str> {
+        self.register_ext(name, driver_type, api_version, compat_flags,
+            0, 0, 0, DriverCategory::Demand)
+    }
+
+    pub fn register_ext(
+        &mut self,
+        name: &str,
+        driver_type: NemDriverType,
+        api_version: u16,
+        compat_flags: u16,
+        abi_min: u16,
+        abi_target: u16,
+        abi_max: u16,
+        category: DriverCategory,
+    ) -> Result<DriverId, &'static str> {
         if self.count >= MAX_DRIVERS {
             return Err("Driver limit reached");
         }
@@ -264,6 +287,10 @@ impl DriverRuntime {
             state: DriverState::Loaded,
             api_version,
             compat_flags,
+            abi_min,
+            abi_target,
+            abi_max,
+            category,
             events_received: 0,
             tick_count: 0,
             last_event_type: 0,
@@ -517,6 +544,20 @@ pub fn register_driver(
     compat_flags: u16,
 ) -> Result<DriverId, &'static str> {
     DRIVER_RUNTIME.lock().register(name, driver_type, api_version, compat_flags)
+}
+
+pub fn register_driver_ext(
+    name: &str,
+    driver_type: NemDriverType,
+    api_version: u16,
+    compat_flags: u16,
+    abi_min: u16,
+    abi_target: u16,
+    abi_max: u16,
+    category: DriverCategory,
+) -> Result<DriverId, &'static str> {
+    DRIVER_RUNTIME.lock().register_ext(name, driver_type, api_version, compat_flags,
+        abi_min, abi_target, abi_max, category)
 }
 
 pub fn unregister_driver(id: DriverId) -> bool {
