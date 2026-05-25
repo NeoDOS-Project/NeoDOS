@@ -42,6 +42,8 @@ static DEAD_KEY: AtomicU8 = AtomicU8::new(0);
 static OUTPUT_PENDING0: AtomicU8 = AtomicU8::new(0);
 static OUTPUT_PENDING1: AtomicU8 = AtomicU8::new(0);
 
+const EVENT_KEYB_LAYOUT: u32 = 9;
+
 const MOD_SHIFT: u8 = 0x01;
 const MOD_CTRL: u8 = 0x02;
 const MOD_ALT: u8 = 0x04;
@@ -76,11 +78,17 @@ pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
         return -1;
     }
     let ev = unsafe { &*event };
-    if ev.event_type != 1 {
-        return 1;
+    match ev.event_type {
+        1 => {
+            process_scancode(ev.data0 as u8);
+            0
+        }
+        EVENT_KEYB_LAYOUT => {
+            LAYOUT.store(if ev.data0 == 0 { 0 } else { 1 }, Ordering::Relaxed);
+            0
+        }
+        _ => 1,
     }
-    process_scancode(ev.data0 as u8);
-    0
 }
 
 #[no_mangle]

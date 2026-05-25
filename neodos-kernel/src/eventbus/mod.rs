@@ -20,6 +20,7 @@ pub const EVENT_DRIVER_LOADED: EventType = 5;
 pub const EVENT_DRIVER_CRASH: EventType = 6;
 pub const EVENT_POLICY_VIOLATION: EventType = 7;
 pub const EVENT_FS_MOUNTED: EventType = 8;
+pub const EVENT_KEYB_LAYOUT: EventType = 9;
 pub const EVENT_USER: EventType = 0x1000;
 pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 

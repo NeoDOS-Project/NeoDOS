@@ -1,17 +1,30 @@
 use crate::println;
 use crate::shell::shell::DosShell;
+use crate::eventbus::{EVENT_KEYB_LAYOUT, SOURCE_KERNEL, EVENT_BUS};
 
 impl DosShell {
     pub fn cmd_keyb(&mut self, args: &[&str]) {
         if args.is_empty() {
-            println!("Keyboard layout switching is handled by the NEM ps2kbd driver.");
-            println!("Currently defaults to Spanish (SP) layout.");
-            println!("Usage: KEYB not yet implemented for NEM driver path.");
+            println!("Usage: KEYB US|SP");
+            println!("  US = English (United States)");
+            println!("  SP = Spanish");
             return;
         }
-        // TODO: route layout change through NEM ps2kbd driver's LAYOUT atomic
-        // via the Event Bus or a dedicated kernel interface.
-        println!("KEYB: NEM driver layout switch not yet wired.");
+
+        let layout = match args[0].to_uppercase().as_str() {
+            "US" => 0u64,
+            "SP" => 1u64,
+            _ => {
+                println!("Invalid layout. Use US or SP.");
+                return;
+            }
+        };
+
+        let name = if layout == 0 { "US" } else { "SP" };
+        match EVENT_BUS.push_event(EVENT_KEYB_LAYOUT, SOURCE_KERNEL, 3, layout, 0, 0) {
+            Ok(_) => println!("Keyboard layout changed to {} via Event Bus.", name),
+            Err(_) => println!("Error: Event Bus full, layout change deferred."),
+        }
     }
 }
 

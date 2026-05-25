@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.16.5 — 2026-05-25
+
+### KEYB command reimplemented — Modificado
+- **Modificado**: `src/shell/commands/keyb.rs` — `cmd_keyb()` ahora envía un evento `EVENT_KEYB_LAYOUT` (type=9) por el Event Bus al driver NEM ps2kbd
+- **Añadido**: `eventbus::EVENT_KEYB_LAYOUT` — nuevo tipo de evento para cambio de layout de teclado (data0=0 US, data0=1 SP)
+- **Modificado**: `drivers/ps2kbd/src/lib.rs` — `driver_on_event()` maneja `EVENT_KEYB_LAYOUT` y actualiza el atomic `LAYOUT`
+- **Total**: 195 tests kernel + 4 user-mode binaries
+
 ## v0.16.4 — 2026-05-23
 
 ### FSCK utility (S5) — Añadido

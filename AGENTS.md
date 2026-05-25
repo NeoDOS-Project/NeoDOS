@@ -59,7 +59,7 @@ Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map lea
 
 ## Code generation
 
-`neodos-kernel/build.rs` parses `KBDUS.klc`/`KBDSP.klc` (UTF-16LE keyboard layouts) at build time into `$OUT_DIR/kbd_layout.rs` with scan code → ASCII tables. `src/drivers/keyboard.rs` includes it via `include!`. Two layouts: US (index 0), SP (index 1, default).
+`neodos/drivers/ps2kbd/build.rs` parses `KBDUS.klc`/`KBDSP.klc` (UTF-16LE keyboard layouts) at build time into `$OUT_DIR/kbd_layout.rs` with scan code → ASCII tables. Copied to `neodos-kernel/src/drivers/nem/drivers/kbd_layout.rs` for reference. Two layouts: US (index 0), SP (index 1, default). Layout switching at runtime via Event Bus (`EVENT_KEYB_LAYOUT` type 9) sent from the `KEYB US|SP` shell command to the NEM ps2kbd driver.
 
 ## Input system
 
@@ -331,7 +331,7 @@ Comando `test`:
 | Concept | Description |
 |---------|-------------|
 | **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` |
-| **Event types** | 11 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, USER(0x1000+) |
+| **Event types** | 12 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, USER(0x1000+) |
 | **Event sources** | SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND |
 | **Queue** | Lock-free SPSC ring buffer (64 slots). Pushed from IRQ context, popped from scheduler context |
 | **Callbacks** | `register_handler(event_type, callback, name)` — max 32 handlers |

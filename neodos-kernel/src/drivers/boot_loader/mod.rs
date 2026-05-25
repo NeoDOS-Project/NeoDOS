@@ -18,6 +18,7 @@ use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID}
 use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::EVENT_KEYBOARD_INPUT;
+use crate::eventbus::EVENT_KEYB_LAYOUT;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
 
@@ -94,9 +95,14 @@ pub fn boot_load_all() {
                             crate::serial_print!(" [REG]");
 
                             // Event Bus binding (v3 bridge)
-                            if v3loader::register_v3_event_bus_handler(
+                            // Register for keyboard input + layout change events
+                            let ev_ok = v3loader::register_v3_event_bus_handler(
                                 load_result.entry_event, EVENT_KEYBOARD_INPUT
-                            ).is_err() {
+                            ).is_ok();
+                            let lay_ok = v3loader::register_v3_event_bus_handler(
+                                load_result.entry_event, EVENT_KEYB_LAYOUT
+                            ).is_ok();
+                            if !ev_ok || !lay_ok {
                                 crate::serial_print!(" [BIND FAIL]");
                                 total_faulted += 1;
                                 driver_runtime::DRIVER_RUNTIME.lock()
