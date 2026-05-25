@@ -79,11 +79,20 @@ USERBIN_DIR="$PROJECT_ROOT/userbin"
 NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
-    echo "[+] Generating user-mode binaries for FS image..."
-    for gen in "$USERBIN_DIR"/generate_*.py; do
-        [ -f "$gen" ] || continue
-        python3 "$gen"
+    echo "[+] Building Rust user-mode binaries for FS image..."
+    USERBIN_TARGET="/tmp/neodos_userbin_target_$$"
+    for pkg in hello systest filetest alltest; do
+        echo "    Building $pkg..."
+        CARGO_TARGET_DIR="$USERBIN_TARGET" cargo build \
+            --release \
+            --manifest-path "$USERBIN_DIR/$pkg/Cargo.toml" \
+            2>&1 || { echo "[!] Failed to build $pkg"; exit 1; }
+        cp "$USERBIN_TARGET/x86_64-unknown-none/release/$pkg" "$USERBIN_DIR/$pkg.bin"
+        echo "    -> $USERBIN_DIR/$pkg.bin"
     done
+    # Also produce hello.elf (same binary as hello.bin, but with .elf extension for ELF loader tests)
+    cp "$USERBIN_DIR/hello.bin" "$USERBIN_DIR/hello.elf"
+    echo "    -> $USERBIN_DIR/hello.elf"
     echo "[+] Generating NEM driver binaries (v1/v2 test)..."
     python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
 

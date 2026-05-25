@@ -107,8 +107,19 @@ pub fn sys_read(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
     ret(unsafe { syscall_3(4, fd as u64, ptr, len) }).map(|v| v as usize)
 }
 
+fn path_to_null_terminated(path: &str) -> Result<[u8; 256], i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 {
+        return Err(EINVAL);
+    }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    Ok(buf)
+}
+
 pub fn sys_open(path: &str) -> Result<u64, i64> {
-    let ptr = path.as_ptr() as u64;
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr() as u64;
     ret(unsafe { syscall_2(10, ptr, 0) })
 }
 
@@ -126,6 +137,18 @@ pub fn sys_writefile(handle: u64, buf: &[u8]) -> Result<usize, i64> {
 
 pub fn sys_close(fd: u8) -> Result<(), i64> {
     ret_unit(unsafe { syscall_1(13, fd as u64) })
+}
+
+pub fn sys_chdir(path: &str) -> Result<(), i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr() as u64;
+    ret_unit(unsafe { syscall_1(16, ptr) })
+}
+
+pub fn sys_getcwd(buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr() as u64;
+    let len = buf.len() as u64;
+    ret(unsafe { syscall_2(17, ptr, len) }).map(|v| v as usize)
 }
 
 pub fn sys_brk(new_break: u64) -> Result<u64, i64> {
