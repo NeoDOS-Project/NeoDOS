@@ -417,7 +417,7 @@ impl DriverRuntime {
     }
 
     pub fn get_by_name(&self, name: &str) -> Option<&DriverInstance> {
-        self.drivers.iter().flatten().find(|d| d.name_str() == name)
+        self.drivers.iter().flatten().find(|d| d.name_str().eq_ignore_ascii_case(name))
     }
 
     pub fn get_by_name_mut(&mut self, name: &str) -> Option<&mut DriverInstance> {

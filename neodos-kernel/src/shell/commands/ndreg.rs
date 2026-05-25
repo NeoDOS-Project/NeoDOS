@@ -5,7 +5,7 @@ use crate::fs::vfs::MODE_DIR;
 use crate::nem::{self, NemDriverType};
 use crate::drivers::driver_runtime::{self, DriverState};
 
-const NEM_BUF_SIZE: usize = 4096;
+const NEM_BUF_SIZE: usize = 16384;
 
 fn driver_type_char(dt: NemDriverType) -> u8 {
     match dt {
