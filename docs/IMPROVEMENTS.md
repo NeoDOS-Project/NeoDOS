@@ -6,7 +6,7 @@
 
 ---
 
-## COMPLETED (44 items)
+## COMPLETED (53 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -50,6 +50,8 @@
 49. **BDL4. ABI Validation Policy** — `src/drivers/nem/policy.rs`: new `validate_abi()` function checks driver/kernel ABI compatibility window. Rejects drivers if `abi_min > ABI_MAX_VALID`, `abi_max < ABI_MIN_VALID`, or `abi_target` outside range. Boot/System drivers require v2 format.
 50. **BDL5. Rust reference .nem drivers** — `src/drivers/reference/`: three complete reference Rust driver implementations for PS/2 keyboard, framebuffer, and storage. Each demonstrates `extern "C"` entrypoint contract (`driver_init`, `driver_on_event`, `driver_fini`), event integration, lifecycle management, null-safety, and parameter validation. 32 kernel tests across all three reference drivers.
 51. **BDL6. NDREG updated** — `src/shell/commands/ndreg.rs`: LIST and SHOW subcommands now display driver category (BOOT/SYSTEM/DEMAND) and ABI range (v1/v2 format). RUNTIME snapshot shows category per driver.
+52. **BDL7. NEM v3 standalone serial driver** — `drivers/serial/build_nem.py` compila `serial.nem` (SYSTEM category). driver_init() configura UART 16550A (38400, 8N1, FIFO, RDA IRQ). IRQ4 desenmascarado en PIC (mask 0xE8). IDT[36] serial_handler con while-loop draining + push EVENT_SERIAL_DATA. com1 device con CAP_IRQ + irq=36. Boot loader registra evento serial. **Bugfix**: V3_EVENT_FN reemplazado por tabla de dispatch por event_type para soportar múltiples drivers v3 simultáneamente (el bug causaba pérdida de eventos de teclado al cargar más de un driver v3).
+53. **BDL8. NEM ps2kbd layout switching** — KEYB US|SP command envía EVENT_KEYB_LAYOUT (type=9) via Event Bus. ps2kbd.nem driver_on_event() maneja EVENT_KEYB_LAYOUT y cambia layout atómico. Sin cambio en kernel export table.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -163,11 +165,11 @@ Estos items desbloquean todo el roadmap futuro.
 
 | Estado | Items | Prioridades |
 |--------|-------|-------------|
-| COMPLETED | 49 | — |
-| S — Crítico | 8 | Redirection, FAT32 write, FSCK, libneodos, PATH, pipe operator, batch |
+| COMPLETED | 53 | — |
+| S — Crítico | 6 | Redirection, FAT32 write, libneodos, pipe operator, batch |
 | A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
 | B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
 | C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |
 | D — Ecosistema | 10 | SDK, CI, benchmarks, debugger, crash dump, NTP, DHCP, sockets, POSIX |
 | E — Experimental | 7 | ARM64, SMP, network, GUI, secure boot, package manager, real hardware |
-| **Total** | **106** | |
+| **Total** | **109** | |

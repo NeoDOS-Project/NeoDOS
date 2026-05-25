@@ -238,6 +238,7 @@ Happy hacking!
         boot_nem_data = {}
         boot_nem_files = [
             (21, "ps2kbd.nem", 21),
+            (22, "serial.nem", 23),
         ]
         for inum, fname, block in boot_nem_files:
             fpath = os.path.join(nem_dir, "BOOT", fname)
@@ -247,6 +248,26 @@ Happy hacking!
                     data = nf.read()
                 print(f"[*] Including BOOT/{fname} ({len(data)} bytes)")
             boot_nem_data[inum] = data
+            blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
+            block_list = [0] * 12
+            for bi in range(min(blocks_needed, 12)):
+                block_list[bi] = block + bi
+            inode = create_inode(inum, 0x80, len(data), block_list)
+            offset = 512 + inum * 256
+            image[offset:offset+256] = inode
+
+        # System .nem driver inodes (SYSTEM category)
+        system_nem_data = {}
+        system_nem_files = [
+        ]
+        for inum, fname, block in system_nem_files:
+            fpath = os.path.join(nem_dir, "SYSTEM", fname)
+            data = b''
+            if os.path.exists(fpath):
+                with open(fpath, 'rb') as nf:
+                    data = nf.read()
+                print(f"[*] Including SYSTEM/{fname} ({len(data)} bytes)")
+            system_nem_data[inum] = data
             blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
             block_list = [0] * 12
             for bi in range(min(blocks_needed, 12)):
@@ -407,6 +428,8 @@ VER
         offset = (200 + 152) * 512
         entry_ps2kbd = create_dir_entry(21, 1, "ps2kbd.nem")
         image[offset:offset+256] = entry_ps2kbd
+        entry_serial = create_dir_entry(22, 1, "serial.nem")
+        image[offset+256:offset+512] = entry_serial
 
         # Boot driver data blocks
         for (inum, fname, block) in boot_nem_files:
@@ -419,6 +442,21 @@ VER
                     offset = (200 + blk * 8) * 512
                     image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing BOOT/{fname} content...")
+
+        # Block 20 = sector 360 (SYSTEM directory under DRIVERS) - currently empty
+        print("[*] Writing SYSTEM directory (DRIVERS) - empty...")
+
+        # System driver data blocks
+        for (inum, fname, block) in system_nem_files:
+            data = system_nem_data.get(inum, b'')
+            if data:
+                blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
+                for bi in range(blocks_needed):
+                    chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                    blk = block + bi
+                    offset = (200 + blk * 8) * 512
+                    image[offset:offset+len(chunk)] = chunk
+                print(f"[*] Writing SYSTEM/{fname} content...")
     
     # Escribir imagen a disco
     output_file = args.output

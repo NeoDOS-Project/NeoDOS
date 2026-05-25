@@ -83,10 +83,10 @@ impl ChainedPics {
         self.pics[1].write_data(0x01);
         wait();
 
-        // Mask all interrupts except IRQ0 (timer), IRQ1 (keyboard), IRQ2 (cascade)
+        // Mask all interrupts except IRQ0 (timer), IRQ1 (keyboard), IRQ2 (cascade), IRQ4 (serial)
         // Bit = 1 means masked, bit = 0 means unmasked
-        // Master mask: keep 0,1,2; mask 3-7
-        self.pics[0].write_data(0xF8);
+        // Master mask: keep 0,1,2,4; mask 3,5,6,7
+        self.pics[0].write_data(0xE8);
         // Slave mask: mask all (8-15)
         self.pics[1].write_data(0xFF);
     }

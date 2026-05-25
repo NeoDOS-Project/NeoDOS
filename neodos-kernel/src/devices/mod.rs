@@ -403,7 +403,7 @@ pub fn register_boot_devices() {
 
     // Serial port (COM1)
     register_device(DeviceType::Serial, DeviceClass::Communication, "com1",
-        "Serial Port COM1", CAP_READ | CAP_WRITE, None);
+        "Serial Port COM1", CAP_READ | CAP_WRITE | CAP_IRQ, Some(36));
 
     // PS/2 Keyboard
     register_device(DeviceType::Keyboard, DeviceClass::Input, "ps2kbd",

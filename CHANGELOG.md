@@ -1,11 +1,16 @@
 # Changelog
 
-## v0.16.5 — 2026-05-25
+## v0.16.6 — 2026-05-25
 
-### KEYB command reimplemented — Modificado
-- **Modificado**: `src/shell/commands/keyb.rs` — `cmd_keyb()` ahora envía un evento `EVENT_KEYB_LAYOUT` (type=9) por el Event Bus al driver NEM ps2kbd
-- **Añadido**: `eventbus::EVENT_KEYB_LAYOUT` — nuevo tipo de evento para cambio de layout de teclado (data0=0 US, data0=1 SP)
-- **Modificado**: `drivers/ps2kbd/src/lib.rs` — `driver_on_event()` maneja `EVENT_KEYB_LAYOUT` y actualiza el atomic `LAYOUT`
+### NEM v3 Serial Driver (COM1 IRQ4) — Añadido
+- **Añadido**: `drivers/serial/` — NEM v3 serial driver para COM1 con soporte IRQ4 (RX data vía Event Bus `EVENT_SERIAL_DATA`). driver_init() reconfigura UART 16550A (38400 baud, 8N1, FIFO 14 bytes, RDA interrupt habilitado). driver_on_event() recibe bytes seriales y hace loopback por THR.
+- **Añadido**: `scripts/build.sh` — compila serial driver a `SYSTEM/serial.nem` en el paso `--neodos-image`
+- **Añadido**: `scripts/create_neodos_image.py` — inodo 22 para serial.nem, data blocks en bloque 23+, entrada en directorio SYSTEM
+- **Modificado**: `arch/x64/pic.rs` — master PIC mask cambiado de 0xF8 a 0xE8 (IRQ4 desenmascarado)
+- **Modificado**: `arch/x64/idt.rs` — añadido `serial_handler` en IDT[36] (IRQ4) con while-loop que drena FIFO y envía `EVENT_SERIAL_DATA` al Event Bus. `ack_irq(36)` envía EOI al master PIC.
+- **Modificado**: `devices/mod.rs` — com1 registrado con `CAP_IRQ` y `irq=Some(36)`
+- **Modificado**: `drivers/boot_loader/mod.rs` — serial driver registrado en Event Bus para `EVENT_SERIAL_DATA` durante boot
+- **Corregido**: `drivers/nem/v3loader.rs` — **BUG CRÍTICO**: `V3_EVENT_FN` era un único AtomicUsize global sobrescrito al cargar el segundo driver v3 (serial), causando que todos los eventos de teclado se enrutaran al driver serial y se perdieran silenciosamente. Reemplazado por una tabla de dispatch (`V3_HANDLERS` con `MAX_V3_HANDLERS=8` entradas) que busca el handler correcto por `event_type`. El bug existía desde la implementación de v3 bridge (v0.16.0) pero era invisible con un solo driver.
 - **Total**: 195 tests kernel + 4 user-mode binaries
 
 ## v0.16.4 — 2026-05-23

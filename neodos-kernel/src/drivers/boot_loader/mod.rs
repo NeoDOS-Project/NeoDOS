@@ -94,15 +94,29 @@ pub fn boot_load_all() {
                                 .try_transition(id, DriverState::Registered);
                             crate::serial_print!(" [REG]");
 
-                            // Event Bus binding (v3 bridge)
-                            // Register for keyboard input + layout change events
-                            let ev_ok = v3loader::register_v3_event_bus_handler(
-                                load_result.entry_event, EVENT_KEYBOARD_INPUT
-                            ).is_ok();
-                            let lay_ok = v3loader::register_v3_event_bus_handler(
-                                load_result.entry_event, EVENT_KEYB_LAYOUT
-                            ).is_ok();
-                            if !ev_ok || !lay_ok {
+                            // Event Bus binding (v3 bridge) — register per-driver event types
+                            let bind_ok = match name_upper.as_str() {
+                                "PS2KBD" => {
+                                    let a = v3loader::register_v3_event_bus_handler(
+                                        load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                    ).is_ok();
+                                    let b = v3loader::register_v3_event_bus_handler(
+                                        load_result.entry_event, EVENT_KEYB_LAYOUT
+                                    ).is_ok();
+                                    a && b
+                                }
+                                "SERIAL" => {
+                                    v3loader::register_v3_event_bus_handler(
+                                        load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA
+                                    ).is_ok()
+                                }
+                                _ => {
+                                    v3loader::register_v3_event_bus_handler(
+                                        load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                    ).is_ok()
+                                }
+                            };
+                            if !bind_ok {
                                 crate::serial_print!(" [BIND FAIL]");
                                 total_faulted += 1;
                                 driver_runtime::DRIVER_RUNTIME.lock()

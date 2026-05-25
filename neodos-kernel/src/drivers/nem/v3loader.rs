@@ -330,22 +330,33 @@ fn apply_relocation(
 // Bridges the v3 driver's driver_on_event(*const NeoEvent) -> i32 calling
 // convention to the kernel event bus's fn(&Event) ABI.
 
-use core::sync::atomic::AtomicUsize;
-use core::sync::atomic::Ordering;
+const MAX_V3_HANDLERS: usize = 8;
 
-static V3_EVENT_FN: AtomicUsize = AtomicUsize::new(0);
+#[derive(Copy, Clone)]
+struct V3HandlerEntry {
+    event_type: u32,
+    fn_ptr: usize,
+}
+
+static V3_HANDLERS: spin::Mutex<[Option<V3HandlerEntry>; MAX_V3_HANDLERS]> =
+    spin::Mutex::new([None; MAX_V3_HANDLERS]);
 
 fn v3_event_bridge(event: &crate::eventbus::Event) {
-    let ptr = V3_EVENT_FN.load(Ordering::Relaxed);
-    if ptr != 0 {
-        let f: unsafe extern "C" fn(*const crate::eventbus::Event) -> i32 =
-            unsafe { core::mem::transmute(ptr) };
-        let _ = unsafe { f(event as *const _) };
+    let table = V3_HANDLERS.lock();
+    for entry in table.iter() {
+        if let Some(e) = entry {
+            if e.event_type == event.event_type {
+                let f: unsafe extern "C" fn(*const crate::eventbus::Event) -> i32 =
+                    unsafe { core::mem::transmute(e.fn_ptr) };
+                let _ = unsafe { f(event as *const _) };
+                return;
+            }
+        }
     }
 }
 
 /// Register a v3 driver's event handler with the kernel event bus.
-/// Stores the function pointer in a static so the bridge callback can call it.
+/// Dispatches to the correct driver via a per-event-type lookup table.
 pub fn register_v3_event_bus_handler(
     entry_event: Option<unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>,
     event_type: u32,
@@ -354,7 +365,18 @@ pub fn register_v3_event_bus_handler(
         Some(f) => f as usize,
         None => return Ok(()),
     };
-    V3_EVENT_FN.store(event_fn_ptr, Ordering::Relaxed);
+    {
+        let mut table = V3_HANDLERS.lock();
+        for slot in table.iter_mut() {
+            if slot.is_none() {
+                *slot = Some(V3HandlerEntry {
+                    event_type,
+                    fn_ptr: event_fn_ptr,
+                });
+                break;
+            }
+        }
+    }
     crate::eventbus::EVENT_BUS.register_handler(
         event_type,
         v3_event_bridge,

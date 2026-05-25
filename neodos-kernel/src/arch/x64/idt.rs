@@ -149,6 +149,7 @@ lazy_static! {
             idt[32].set_handler_addr(x86_64::VirtAddr::new(timer_handler_asm as *const () as u64));
         }
         idt[33].set_handler_fn(keyboard_handler);
+        idt[36].set_handler_fn(serial_handler);
 
         unsafe {
             idt[0x80]
@@ -431,6 +432,21 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
         );
     }
     crate::hal::ack_irq(33);
+}
+
+extern "x86-interrupt" fn serial_handler(_: InterruptStackFrame) {
+    while crate::hal::inb(0x3FD) & 1 != 0 {
+        let byte = crate::hal::inb(0x3F8);
+        let _ = crate::eventbus::EVENT_BUS.push_event(
+            crate::eventbus::EVENT_SERIAL_DATA,
+            crate::eventbus::SOURCE_HAL,
+            2,
+            byte as u64,
+            0,
+            0,
+        );
+    }
+    crate::hal::ack_irq(36);
 }
 
 pub fn init() {
