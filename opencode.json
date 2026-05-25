@@ -27,6 +27,10 @@
     "debug": {
       "template": "Connect GDB to a running QEMU instance (port :1234) with kernel symbols loaded. Run from neodos/ using gdb -x .gdbinit",
       "description": "Debug with GDB"
+    },
+    "github": {
+      "template": "Release the current state of the NeoDOS repository to GitHub. Run from the root directory with git installed and configured.",
+      "description": "Release to GitHub"
     }
   }
 }
