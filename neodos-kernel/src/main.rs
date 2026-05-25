@@ -3,6 +3,7 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![allow(static_mut_refs)]
+#![allow(dead_code)]
 
 extern crate alloc;
 use core::panic::PanicInfo;

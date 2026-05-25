@@ -1,16 +1,11 @@
 // src/drivers/boot_loader/mod.rs
-// Boot Driver Loader System v1
+// Boot Driver Loader System v3 Only
 //
-// Orchestrates automatic loading of .nem drivers at system startup.
+// Orchestrates automatic loading of NEM v3 standalone binary drivers at system startup.
 // Loading order: BOOT category → SYSTEM category
 //
-// Supports:
-//   - NEM v1/v2 inline drivers (Rust functions in kernel binary)
-//   - NEM v3 standalone binary drivers (loaded into kernel heap)
-//
 // A driver becomes ACTIVE only if:
-//   - Binary loaded
-//   AND - driver type/policy validated
+//   - Binary loaded and parsed
 //   AND - ABI validated (min/target/max)
 //   AND - driver_init() returns success
 //   AND - Event Bus binding succeeded
@@ -20,24 +15,11 @@
 use alloc::vec::Vec;
 use alloc::string::String;
 use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
-use crate::drivers::nem::{policy, runtime, v3loader};
+use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::EVENT_KEYBOARD_INPUT;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
-
-/// Name → entrypoint table for inline Rust drivers.
-struct InlineEntry {
-    init: Option<runtime::DriverInitFn>,
-    event: Option<runtime::DriverEventFn>,
-    fini: Option<runtime::DriverFiniFn>,
-}
-
-fn inline_drivers() -> [(&'static str, InlineEntry); 0] {
-    // PS2KBD is now a standalone driver in neodos/drivers/ps2kbd/
-    // No inline drivers for now
-    []
-}
 
 pub fn boot_load_all() {
     crate::serial_println!("[BOOT] === Boot Driver Loader v1 ===");
@@ -168,124 +150,13 @@ pub fn boot_load_all() {
                 }
                 continue; // v3 handled, skip v1/v2 path
             }
-
-            // ── NEM v1/v2 path ──
-            let parsed = match nem::parse_nem(&data) {
-                Some(p) => p,
-                None => { crate::serial_println!("FAIL (Invalid NEM header)"); continue; }
-            };
-
-            // Validate policy + ABI
-            if let Err(e) = policy::validate_driver(&parsed) {
-                crate::serial_println!("SKIP ({})", e); continue;
-            }
-            if let Err(e) = policy::validate_abi(&parsed) {
-                crate::serial_println!("SKIP ({})", e); continue;
-            }
-
-            // Normalise name
-            let name_upper = parsed.name.to_ascii_uppercase();
-
-            // Check for inline implementation
-            let inline = inline_drivers().into_iter()
-                .find(|(n, _)| *n == name_upper)
-                .map(|(_, e)| e);
-
-            if let Some(entry) = inline {
-                // ── Inline driver flow — no binary execution ──
-                let rt_id = if parsed.is_v2 {
-                    driver_runtime::register_driver_ext(
-                        parsed.name, parsed.driver_type,
-                        nem::NEM_API_VERSION, parsed.compat_flags,
-                        parsed.abi_min, parsed.abi_target, parsed.abi_max,
-                        parsed.category,
-                    )
-                } else {
-                    driver_runtime::register_driver(
-                        parsed.name, parsed.driver_type,
-                        nem::NEM_API_VERSION, parsed.compat_flags,
-                    )
-                };
-
-                match rt_id {
-                    Ok(id) => {
-                        crate::serial_print!("REG OK (id={})", id);
-                        total_loaded += 1;
-
-                        runtime::register_inline(id, &name_upper,
-                            entry.init, entry.event, entry.fini);
-                        crate::serial_print!(" [INLINE]");
-
-                        if runtime::call_init(id).is_ok() {
-                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                .try_transition(id, DriverState::Initialized);
-                            crate::serial_print!(" [INIT]");
-
-                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                .try_transition(id, DriverState::Registered);
-                            crate::serial_print!(" [REG]");
-
-                            if runtime::register_event_bus_handler(id, EVENT_KEYBOARD_INPUT).is_err() {
-                                crate::serial_print!(" [BIND FAIL]");
-                                total_faulted += 1;
-                                driver_runtime::DRIVER_RUNTIME.lock()
-                                    .set_error(id, driver_runtime::ERR_BIND_FAILED, true);
-                            } else {
-                                let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                    .try_transition(id, DriverState::Bound);
-                                crate::serial_print!(" [BOUND]");
-
-                                if driver_runtime::DRIVER_RUNTIME.lock()
-                                    .certify_and_activate(id).is_ok()
-                                {
-                                    crate::serial_print!(" [ACTIVE]");
-                                    total_active += 1;
-                                } else {
-                                    crate::serial_print!(" [CERT FAIL]");
-                                    total_faulted += 1;
-                                    driver_runtime::DRIVER_RUNTIME.lock()
-                                        .set_error(id, driver_runtime::ERR_CERTIFICATION_FAILED, true);
-                                }
-                            }
-                        } else {
-                            crate::serial_print!(" [INIT FAIL]");
-                            total_faulted += 1;
-                            driver_runtime::DRIVER_RUNTIME.lock()
-                                .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
-                        }
-                        crate::serial_println!();
-                    }
-                    Err(e) => {
-                        crate::serial_println!("REG FAIL ({})", e);
-                        continue;
-                    }
-                }
-            } else {
-                // ── Non-inline driver: fall through to standard loader ──
-                match crate::drivers::nem::loader::load_nem(f) {
-                    Ok(id) => {
-                        crate::serial_println!("NEM OK (id={})", id);
-                        total_loaded += 1;
-                        let cr = driver_runtime::DRIVER_RUNTIME.lock();
-                        if cr.get(id).map_or(false, |d| d.state == DriverState::Active) {
-                            total_active += 1;
-                        } else if cr.get(id).map_or(false, |d| d.state == DriverState::Faulted) {
-                            total_faulted += 1;
-                        }
-                    }
-                    Err(e) => {
-                        crate::serial_println!("NEM FAIL ({})", e);
-                        continue;
-                    }
-                }
-            }
         }
     }
 
     let rt = driver_runtime::DRIVER_RUNTIME.lock();
     let total = rt.count();
-    let active = rt.active_count();
-    let faulted = rt.faulted_count();
+    let _active = rt.active_count();
+    let _faulted = rt.faulted_count();
     drop(rt);
 
     crate::serial_println!("[BOOT] === Summary: {} total, {} loaded, {} active, {} faulted ===",

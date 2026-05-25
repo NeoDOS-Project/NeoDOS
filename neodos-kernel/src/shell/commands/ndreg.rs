@@ -187,7 +187,7 @@ impl DosShell {
                                     let ptr = core::ptr::addr_of!(BUF) as *const u8;
                                     core::slice::from_raw_parts(ptr, n)
                                 };
-                                match nem::parse_nem(data) {
+                                match nem::parse_nem_v3(data) {
                                     Some(parsed) => {
                                         let dt_char = driver_type_char(parsed.driver_type) as char;
                                         
@@ -199,22 +199,18 @@ impl DosShell {
                                             last_error = drv.last_error;
                                         }
 
-                                        let mode_str = if parsed.compat_flags & 1 != 0 { "RWD" } else { "R--" };
+                                        let mode_str = if parsed.header.flags & 1 != 0 { "RWD" } else { "R--" };
                                         let err_str = driver_runtime::err_to_str(last_error);
                                         let pipeline = pipeline_indicator(state);
-                                        let abi_str = if parsed.is_v2 {
-                                            alloc::format!("{}.{}.{}",
-                                                (parsed.abi_min >> 8) as u8, parsed.abi_target, parsed.abi_max)
-                                        } else {
-                                            alloc::format!("{}", "v1")
-                                        };
+                                        let abi_str = alloc::format!("{}.{}.{}",
+                                            parsed.header.abi_min, parsed.header.abi_target, parsed.header.abi_max);
                                         println!(" {:<18} {:>6} {:>8} {:>4} {:>5} {:>7} {:>5} {:>6} {:>8}",
                                             parsed.name, dt_char,
                                             parsed.category.to_str(),
                                             &abi_str, mode_str,
                                             state.to_str(),
                                             if last_error == 0 { "." } else { err_str },
-                                            parsed.code.len(),
+                                            parsed.text.len(),
                                             pipeline);
                                     }
                                     None => {
@@ -268,7 +264,7 @@ impl DosShell {
                                     let ptr = core::ptr::addr_of!(BUF) as *const u8;
                                     core::slice::from_raw_parts(ptr, n)
                                 };
-                                match nem::parse_nem(data) {
+                                match nem::parse_nem_v3(data) {
                                     Some(parsed) => {
                                         found = true;
 
@@ -282,7 +278,6 @@ impl DosShell {
                                             cert_step = drv.certification_step;
                                         }
 
-                                        let fmt_ver = if parsed.is_v2 { "v2" } else { "v1" };
                                         println!("========================================");
                                         println!("  NeoDOS Driver Registry v1");
                                         println!("  Certification Pipeline");
@@ -291,20 +286,14 @@ impl DosShell {
                                         println!("  Path:            {}", full_path);
                                         println!("  Driver Type:     {} ({})", 
                                             parsed.driver_type.to_str(), parsed.driver_type as u8);
-                                        println!("  NEM Format:      {}", fmt_ver);
+                                        println!("  NEM Format:      {}", "v3");
                                         println!("  Driver Category: {}", parsed.category.to_str());
-                                        if parsed.is_v2 {
-                                            println!("  ABI Range:       v{}.{} < v{}.{} < v{}.{}",
-                                                (parsed.abi_min >> 8) as u8, parsed.abi_min as u8,
-                                                (parsed.abi_target >> 8) as u8, parsed.abi_target as u8,
-                                                (parsed.abi_max >> 8) as u8, parsed.abi_max as u8);
-                                        } else {
-                                            println!("  ABI:             v0.3 (legacy)");
-                                        }
+                                        println!("  ABI Range:       {} ≤ {} ≤ {}",
+                                            parsed.header.abi_min, parsed.header.abi_target, parsed.header.abi_max);
                                         println!("  File Size:       {} bytes", node.size);
-                                        println!("  Code Size:       {} bytes", parsed.code.len());
-                                        println!("  Entry Offset:    0x{:04X}", parsed.entry_offset);
-                                        println!("  Compat Flags:    0x{:04X}", parsed.compat_flags);
+                                        println!("  Code Size:       {} bytes", parsed.header.text_size);
+                                        println!("  Entry Offset:    0x{:04X}", parsed.header.entry_init);
+                                        println!("  Compat Flags:    0x{:04X}", parsed.header.flags);
                                         println!("  Permissions:     R--");
                                         println!();
                                         println!(" ── Lifecycle State ──");
@@ -350,7 +339,7 @@ impl DosShell {
                                         println!();
                                         serial_println!("[NDREG] Show '{}': type={}, code={}B, flags=0x{:04X}, state={:?}",
                                             parsed.name, parsed.driver_type.to_str(),
-                                            parsed.code.len(), parsed.compat_flags, drv_state);
+                                            parsed.text.len(), parsed.header.flags, drv_state);
                                     }
                                     None => {
                                         println!("  Invalid NEM driver: {}", full_path);
@@ -412,7 +401,7 @@ impl DosShell {
                                     let ptr = core::ptr::addr_of!(BUF) as *const u8;
                                     core::slice::from_raw_parts(ptr, n)
                                 };
-                                                if nem::parse_nem(data).is_some() {
+                                                if nem::parse_nem_v3(data).is_some() {
                                                     total += 1;
                                                 } else {
                                                     invalid += 1;
@@ -710,10 +699,10 @@ impl DosShell {
                                     let ptr = core::ptr::addr_of!(BUF) as *const u8;
                                     core::slice::from_raw_parts(ptr, n)
                                 };
-                                                if let Some(parsed) = nem::parse_nem(data) {
+                                                if let Some(parsed) = nem::parse_nem_v3(data) {
                                                     let mut status = "OK";
                                                     let mut reason = "";
-                                                    if parsed.code.is_empty() {
+                                                    if parsed.text.is_empty() {
                                                         status = "FAIL";
                                                         reason = "empty code section";
                                                     } else if data.len() < 32 {

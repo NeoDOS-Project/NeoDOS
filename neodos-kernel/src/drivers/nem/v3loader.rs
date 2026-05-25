@@ -437,7 +437,7 @@ pub fn register_v3_loader_tests() {
         test_true!(result.is_ok());
         let r = result.unwrap();
         test_eq!(r.name.as_slice(), b"MINLOAD");
-        test_eq!(r.entry_init, None); // no symbols
+        test_true!(r.entry_init.is_none()); // no symbols
         unsafe { unload_nem_v3(&r); }
     });
 

@@ -1,5 +1,5 @@
 use super::hst::{HalServiceTable, build_hst};
-use crate::drivers::driver_runtime::{self, DriverId, DriverState, ERR_INIT_FAILED};
+use crate::drivers::driver_runtime::{self, DriverId, ERR_INIT_FAILED};
 use crate::eventbus;
 use alloc::vec::Vec;
 
@@ -72,7 +72,7 @@ pub fn call_fini(id: DriverId) {
     }
 }
 
-pub fn register_event_bus_handler(id: DriverId, event_type: u32) -> Result<(), ()> {
+pub fn register_event_bus_handler(_id: DriverId, event_type: u32) -> Result<(), ()> {
     fn dispatch_wrapper(event: &eventbus::Event) {
         let _ = call_event_by_id(
             event.driver_target as u32,

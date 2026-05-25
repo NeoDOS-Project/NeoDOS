@@ -30,6 +30,3 @@ macro_rules! register_event_handler {
         $driver.register_event_handler($event_type, $callback)
     }};
 }
-
-// Re‑export for external crates that may want to import it directly.
-pub use register_event_handler;

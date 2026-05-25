@@ -12,7 +12,7 @@ pub fn load_nem(path: &str) -> Result<(DriverId, NemDriverType), &'static str> {
     let data = read_file(path).map_err(|_| "Cannot read file")?;
 
     // 2. Parse NEM header
-    let parsed = nem::parse_nem(&data).ok_or("Invalid NEM format")?;
+    let parsed = nem::parse_nem_v3(&data).ok_or("Invalid NEM format")?;
 
     // (parse_nem already validates magic, version, header_size, api_version)
 
@@ -21,7 +21,7 @@ pub fn load_nem(path: &str) -> Result<(DriverId, NemDriverType), &'static str> {
         parsed.name,
         parsed.driver_type,
         nem::NEM_API_VERSION,
-        parsed.compat_flags,
+        parsed.header.flags as u16,
     )?;
     // NOTE: Legacy loader does NOT initialize or spawn the driver.
     // It stays in Loaded state. The driver will NOT appear as ACTIVE.

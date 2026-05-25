@@ -2,8 +2,7 @@
 //! Runtime representation of a loaded .nem driver and public registration API.
 
 use crate::eventbus::{self, Event, EventCallback, EventType};
-use crate::drivers::driver_runtime::{self, DriverId};
-use alloc::string::String;
+use crate::drivers::driver_runtime::{DriverId};
 use alloc::vec::Vec;
 use spin::Mutex;
 

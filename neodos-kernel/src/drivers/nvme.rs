@@ -206,8 +206,8 @@ impl NvmeDriver {
     }
 
     #[inline(never)]
-    fn admin_cmd_raw(asq: u64, acq: u64, sq_doorbell: *mut u32, acq_head: u16, acq_phase: bool,
-                     opcode: u8, nsid: u32, cdw10: u32, cdw11: u32, prp1: u64, timeout_ms: u32,
+    fn admin_cmd_raw(asq: u64, acq: u64, sq_doorbell: *mut u32, acq_head: u16, _acq_phase: bool,
+                     opcode: u8, nsid: u32, cdw10: u32, cdw11: u32, prp1: u64, _timeout_ms: u32,
                      asq_tail: &mut u16)
         -> Result<(u32, u16, u16, bool), u16>
     {
@@ -228,12 +228,12 @@ impl NvmeDriver {
             let cqe = acq + (acq_head as u64) * CQE_SIZE as u64;
             let cqe32 = cqe as *mut u32;
             for i in 0..100000000 {
-                let w3 = unsafe { cqe32.add(3).read_volatile() };
+                let w3 = cqe32.add(3).read_volatile();
                 let cq_cid = (w3 & 0xFFFF) as u16; // CID in DW3 bits 15:0 (QEMU NVMe convention)
                 if cq_cid == cid {
-                    let w0 = unsafe { cqe32.add(0).read_volatile() };
-                    let w1 = unsafe { cqe32.add(1).read_volatile() };
-                    let w2 = unsafe { cqe32.add(2).read_volatile() };
+                    let w0 = cqe32.add(0).read_volatile();
+                    let w1 = cqe32.add(1).read_volatile();
+                    let w2 = cqe32.add(2).read_volatile();
                     let status_field = (w3 >> 16) as u16;
                     let phase = (status_field & 0x1) != 0;
                     let status = (status_field >> 1) as u16;
@@ -244,16 +244,16 @@ impl NvmeDriver {
                 }
                 // Yield to QEMU via port 0x80 to let NVMe emulation run (TCG)
                 if i & 0x7FFF == 0 {
-                    unsafe { core::arch::asm!("out 0x80, al", in("al") 0u8, options(preserves_flags, nostack)) };
+                    core::arch::asm!("out 0x80, al", in("al") 0u8, options(preserves_flags, nostack));
                 }
             }
             let cqe = acq + (acq_head as u64) * CQE_SIZE as u64;
             let cqe32 = cqe as *mut u32;
             // Dump ACQ
-            let dump_w0 = unsafe { cqe32.add(0).read_volatile() };
-            let dump_w1 = unsafe { cqe32.add(1).read_volatile() };
-            let dump_w2 = unsafe { cqe32.add(2).read_volatile() };
-            let dump_w3 = unsafe { cqe32.add(3).read_volatile() };
+            let dump_w0 = cqe32.add(0).read_volatile();
+            let dump_w1 = cqe32.add(1).read_volatile();
+            let dump_w2 = cqe32.add(2).read_volatile();
+            let dump_w3 = cqe32.add(3).read_volatile();
             serial_println!("[NVMe] ACQ[0]: {:08x} {:08x} {:08x} {:08x}",
                 dump_w0, dump_w1, dump_w2, dump_w3);
             for acq_i in 0..4 {
@@ -261,42 +261,42 @@ impl NvmeDriver {
                 let off = acq_i * 4;
                 serial_println!("[NVMe] ACQ[{}]: {:08x} {:08x} {:08x} {:08x}",
                     acq_i,
-                    unsafe { acq_pos.add(off).read_volatile() },
-                    unsafe { acq_pos.add(off + 1).read_volatile() },
-                    unsafe { acq_pos.add(off + 2).read_volatile() },
-                    unsafe { acq_pos.add(off + 3).read_volatile() });
+                    acq_pos.add(off).read_volatile(),
+                    acq_pos.add(off + 1).read_volatile(),
+                    acq_pos.add(off + 2).read_volatile() ,
+                    acq_pos.add(off + 3).read_volatile());
             }
             // Dump ASQ entry 0 and 1
             let sqe = asq as *mut u32;
             serial_println!("[NVMe] ASQ[0]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                unsafe { sqe.add(0).read_volatile() }, unsafe { sqe.add(1).read_volatile() },
-                unsafe { sqe.add(2).read_volatile() }, unsafe { sqe.add(3).read_volatile() },
-                unsafe { sqe.add(4).read_volatile() }, unsafe { sqe.add(5).read_volatile() },
-                unsafe { sqe.add(6).read_volatile() }, unsafe { sqe.add(7).read_volatile() },
-                unsafe { sqe.add(8).read_volatile() }, unsafe { sqe.add(9).read_volatile() },
-                unsafe { sqe.add(10).read_volatile() }, unsafe { sqe.add(11).read_volatile() },
-                unsafe { sqe.add(12).read_volatile() }, unsafe { sqe.add(13).read_volatile() },
-                unsafe { sqe.add(14).read_volatile() }, unsafe { sqe.add(15).read_volatile() });
+                sqe.add(0).read_volatile(), sqe.add(1).read_volatile(),
+                sqe.add(2).read_volatile(), sqe.add(3).read_volatile(),
+                sqe.add(4).read_volatile(), sqe.add(5).read_volatile(),
+                sqe.add(6).read_volatile(), sqe.add(7).read_volatile(),
+                sqe.add(8).read_volatile(), sqe.add(9).read_volatile(),
+                sqe.add(10).read_volatile(), sqe.add(11).read_volatile(),
+                sqe.add(12).read_volatile(), sqe.add(13).read_volatile(),
+                sqe.add(14).read_volatile(), sqe.add(15).read_volatile());
             let sqe1 = (asq + 64) as *mut u32;
             serial_println!("[NVMe] ASQ[1]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                unsafe { sqe1.add(0).read_volatile() }, unsafe { sqe1.add(1).read_volatile() },
-                unsafe { sqe1.add(2).read_volatile() }, unsafe { sqe1.add(3).read_volatile() },
-                unsafe { sqe1.add(4).read_volatile() }, unsafe { sqe1.add(5).read_volatile() },
-                unsafe { sqe1.add(6).read_volatile() }, unsafe { sqe1.add(7).read_volatile() },
-                unsafe { sqe1.add(8).read_volatile() }, unsafe { sqe1.add(9).read_volatile() },
-                unsafe { sqe1.add(10).read_volatile() }, unsafe { sqe1.add(11).read_volatile() },
-                unsafe { sqe1.add(12).read_volatile() }, unsafe { sqe1.add(13).read_volatile() },
-                unsafe { sqe1.add(14).read_volatile() }, unsafe { sqe1.add(15).read_volatile() });
+                sqe1.add(0).read_volatile(), sqe1.add(1).read_volatile(),
+                sqe1.add(2).read_volatile(), sqe1.add(3).read_volatile(),
+                sqe1.add(4).read_volatile(), sqe1.add(5).read_volatile(),
+                sqe1.add(6).read_volatile(), sqe1.add(7).read_volatile(),
+                sqe1.add(8).read_volatile(), sqe1.add(9).read_volatile(),
+                sqe1.add(10).read_volatile(), sqe1.add(11).read_volatile(),
+                sqe1.add(12).read_volatile(), sqe1.add(13).read_volatile(),
+                sqe1.add(14).read_volatile(), sqe1.add(15).read_volatile());
             let sqe2 = (asq + 128) as *mut u32;
             serial_println!("[NVMe] ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                unsafe { sqe2.add(0).read_volatile() }, unsafe { sqe2.add(1).read_volatile() },
-                unsafe { sqe2.add(2).read_volatile() }, unsafe { sqe2.add(3).read_volatile() },
-                unsafe { sqe2.add(4).read_volatile() }, unsafe { sqe2.add(5).read_volatile() },
-                unsafe { sqe2.add(6).read_volatile() }, unsafe { sqe2.add(7).read_volatile() },
-                unsafe { sqe2.add(8).read_volatile() }, unsafe { sqe2.add(9).read_volatile() },
-                unsafe { sqe2.add(10).read_volatile() }, unsafe { sqe2.add(11).read_volatile() },
-                unsafe { sqe2.add(12).read_volatile() }, unsafe { sqe2.add(13).read_volatile() },
-                unsafe { sqe2.add(14).read_volatile() }, unsafe { sqe2.add(15).read_volatile() });
+                sqe2.add(0).read_volatile(), sqe2.add(1).read_volatile(),
+                sqe2.add(2).read_volatile(), sqe2.add(3).read_volatile(),
+                sqe2.add(4).read_volatile(), sqe2.add(5).read_volatile(),
+                sqe2.add(6).read_volatile(), sqe2.add(7).read_volatile(),
+                sqe2.add(8).read_volatile(), sqe2.add(9).read_volatile() ,
+                sqe2.add(10).read_volatile(), sqe2.add(11).read_volatile(),
+                sqe2.add(12).read_volatile(), sqe2.add(13).read_volatile(),
+                sqe2.add(14).read_volatile(), sqe2.add(15).read_volatile());
             Err(0xFFFF)
         }
     }
@@ -336,7 +336,7 @@ impl NvmeDriver {
         crate::drivers::pci::nvme_enable(&info);
         let bar0_phys = info.bar0_phys;
 
-        unsafe { crate::arch::x64::paging::split_2mb_page(NVME_MMIO_VIRT).ok(); }
+        crate::arch::x64::paging::split_2mb_page(NVME_MMIO_VIRT).ok();
         let bar_size = 0x2000u64 + 131072u64;
         use x86_64::structures::paging::PageTableFlags;
         let mmio_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;

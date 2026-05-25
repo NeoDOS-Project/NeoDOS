@@ -21,7 +21,7 @@ pub fn null_callback(event: &Event) {
 // ── echo driver callback ──
 
 pub fn echo_callback(event: &Event) {
-    let mut r = DRIVER_RUNTIME.lock();
+    let r = DRIVER_RUNTIME.lock();
     let drv_id = r.get_by_driver_type(NemDriverType::Echo).map(|d| d.id);
     drop(r);
 

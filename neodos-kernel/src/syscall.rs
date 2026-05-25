@@ -128,10 +128,7 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
     (-(e as i64)) as u64
 }
 
-/// Shortcut: return an error from a syscall handler.
-macro_rules! syserr {
-    ($e:ident) => { return crate::syscall::err_to_u64(crate::syscall::SyscallError::$e) };
-}
+
 
 // ── ABI validation ──
 
