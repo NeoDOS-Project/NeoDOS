@@ -29,7 +29,7 @@
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Release the current state of the NeoDOS repository to GitHub. Run from the root directory with git installed and configured.",
+      "template": "Review the changes and commit the code to GitHub with a descriptive message. Run from the root of the repository.",
       "description": "Release to GitHub"
     }
   }
