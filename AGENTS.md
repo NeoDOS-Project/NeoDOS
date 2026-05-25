@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.16.5
+v0.16.7
 
 ## Build & Run
 
@@ -37,12 +37,41 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 - Si se añade un comando del shell: actualizar `AGENTS.md` en la sección de comandos
 - `git add -A && git commit -m "feat: ..." && git push`
 
-## Two packages, no workspace
+## Three packages, no workspace
 
 - `neodos-bootloader/` — UEFI app, target `x86_64-unknown-uefi`, produces `bootloader.efi`
 - `neodos-kernel/` — freestanding kernel, target `x86_64-unknown-none`, produces `kernel.elf`
+- `libneodos/` — no_std user-mode library, target `x86_64-unknown-none`, syscall wrappers, IO, FS, mem, macros
 
 Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
+
+## libneodos — User-mode Standard Library
+
+`libneodos/` is a `no_std` library for Ring 3 user-mode processes written in Rust.
+
+| Module | File | Contents |
+|--------|------|----------|
+| Syscall | `src/syscall.rs` | Raw `int 0x80` wrappers (exit, write, read, open, readfile, writefile, close, yield, getpid, brk, mmap, munmap). Error constants (`EINVAL`, `ENOENT`, etc.). All return `Result<T, i64>` |
+| IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
+| FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
+| Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
+| Macros | `src/macros.rs` | `print!`, `println!`, `eprint!`, `eprintln!` with CRLF (`\r\n`) |
+
+### Using libneodos
+
+A user-mode binary project needs:
+1. Depend on `libneodos = { path = "../libneodos" }` in `Cargo.toml`
+2. Target `x86_64-unknown-none` with `relocation-model=static`, `link-arg=-Tuser.ld`
+3. A `user.ld` linker script placing code at `0x400000`
+4. `#![no_std]` + `#![no_main]` + `#[no_mangle] pub extern "C" fn _start() -> !`
+
+See `userbin/hello_lib/` for a complete working example. Compile:
+```bash
+cd userbin/hello_lib
+cargo build --release
+```
+
+The resulting ELF binary can be loaded by the kernel's `RUN` command.
 
 ## Kernel quirks
 

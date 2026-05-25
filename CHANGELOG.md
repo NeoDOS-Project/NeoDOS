@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.16.7 — 2026-05-25
+
+### libneodos (S6) — Añadido
+- **Añadido**: `libneodos/` — standard library para procesos Ring 3 en Rust
+- **Añadido**: `libneodos/src/syscall.rs` — wrappers seguros para todas las syscalls (exit, write, read, open, readfile, writefile, close, brk, mmap, munmap, yield, getpid) con inline asm `int 0x80`
+- **Añadido**: `libneodos/src/io.rs` — módulo IO con Stdout/Stdin/Stderr, implementación `core::fmt::Write` para formatted output, funciones `_print`/`_eprint` con buffer stack de 1024 bytes
+- **Añadido**: `libneodos/src/fs.rs` — módulo FS con `File::open()`, `File::read()`, `File::write()` sobre handles devueltos por sys_open
+- **Añadido**: `libneodos/src/mem.rs` — módulo memoria con `brk()`, `sbrk()`, `mmap()`, `munmap()`, constantes `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS`
+- **Añadido**: `libneodos/src/macros.rs` — macros `print!`, `println!`, `eprint!`, `eprintln!` con soporte CRLF
+- **Añadido**: `libneodos/src/lib.rs` — panic handler que llama `sys_exit(1)`
+- **Añadido**: `libneodos/user.ld` — linker script de referencia para compilar ELF64 a 0x400000
+- **Añadido**: `userbin/hello_lib/` — sample user binary en Rust que demuestra el uso de libneodos (print, getpid, yield, file read, sys_exit)
+- **Total**: 196 kernel tests + 4 user-mode binaries + libneodos compilado
+
 ## v0.16.6 — 2026-05-25
 
 ### NEM v3 Serial Driver (COM1 IRQ4) — Añadido

@@ -4,6 +4,8 @@
 target/
 neodos-bootloader/target/
 neodos-kernel/target/
+libneodos/target/
+userbin/hello_lib/target/
 
 # Generated build outputs
 *.elf

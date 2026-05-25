@@ -1,0 +1,19 @@
+[package]
+name = "libneodos"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS standard library — syscall wrappers, I/O, FS, memory, safe macros"
+
+[lib]
+name = "libneodos"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

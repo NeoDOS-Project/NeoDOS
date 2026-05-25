@@ -61,6 +61,7 @@
 31. **Kernel private stacks** — TSS.RSP0 por proceso, actualizado en cada context switch.
 32. **Syscall table (INT 0x80)** — 14 syscalls: exit, write, yield, getpid, read, waitpid, open, readfile, writefile, close, chdir, getcwd, brk, mmap.
 33. **Scheduler blocking** — ProcessState::Blocked, wake_waiters(), idle HLT.
+54. **S6. libneodos** — `libneodos/`: standard library para procesos Ring 3 en Rust. Syscall wrappers con `int 0x80` inline asm (sys_exit, sys_write, sys_read, sys_open, sys_readfile, sys_writefile, sys_brk, sys_mmap, sys_munmap, etc.). IO module con Stdout/Stdin/Stderr + `core::fmt::Write` impl. FS module (File::open/read/write). Memory module (sbrk, mmap, munmap). Safe macros (print!, println!, eprint!, eprintln!). Panic handler que llama sys_exit(1). Sample user binary `userbin/hello_lib/` with linker script `user.ld`.
 
 ### Shell & Testing
 34. **150 kernel self-tests** — 15 suites, comando `test`, 4 user-mode binaries.
@@ -73,16 +74,15 @@
 
 ---
 
-## PRIORIDAD S — CRÍTICO (7 items)
+## PRIORIDAD S — CRÍTICO (5 items)
 
 Estos items desbloquean todo el roadmap futuro.
 
 42. **S3. Shell output redirection** — `DIR > FILE.TXT`, `ECHO >> FILE.TXT`, `CMD > FILE`.
 43. **S4. FAT32 write** — escritura real en FAT32: directorios, archivos, clusters.
-44. **S6. libneodos** — standard library: wrappers syscall, IO, FS, memoria, macros seguras.
-45. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
-46. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
-47. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
+44. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
+45. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
+46. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
 
 ---
 
@@ -165,8 +165,8 @@ Estos items desbloquean todo el roadmap futuro.
 
 | Estado | Items | Prioridades |
 |--------|-------|-------------|
-| COMPLETED | 53 | — |
-| S — Crítico | 6 | Redirection, FAT32 write, libneodos, pipe operator, batch |
+| COMPLETED | 54 | — |
+| S — Crítico | 5 | Redirection, FAT32 write, pipe operator, batch |
 | A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
 | B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
 | C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |
