@@ -1,9 +1,11 @@
+pub mod abi;
 pub mod acpi;
 pub mod ahci;
 pub mod ata;
 pub mod block;
 pub mod boot_loader;
 pub mod builtin_drivers;
+pub mod dependency;
 pub mod driver_loader;
 pub mod driver_runtime;
 pub mod fat32;

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.17.0 — 2026-05-26
+
+### W1. ABI Negotiation Layer — Añadido
+- **Añadido**: `src/drivers/abi/mod.rs` — ABI version negotiation formalizada entre kernel y drivers NEM. `AbiVersion` struct, `NegotiationResult` enum (Compatible/CompatibleWithWarnings/Incompatible), `negotiate()` con overlap window check y niveles de warning.
+- **Integrado**: v3loader `validate_v3_abi()` ahora delega en `drivers::abi::negotiate_default()`.
+- **Tests**: 10 tests unitarios (válido, demasiado nuevo, demasiado antiguo, campos cero, out-of-order, warnings).
+
+### W4. Driver Dependency Resolver — Añadido
+- **Añadido**: `src/drivers/dependency/mod.rs` — Resolución automática de dependencias entre drivers NEM. `DependencyGraph` con topological sort DFS y detección de ciclos.
+- **Convención**: Drivers declaran dependencias mediante símbolos `__dep_DRIVERNAME` en la symbol table NEM. `resolve_nem_symbol_dependencies()` extrae deps automáticamente.
+- **Integrado**: Boot loader v2 escanea drivers, construye grafo de dependencias y carga en orden topológico por categoría.
+- **Tests**: 13 tests unitarios (empty, simple, chain, diamond, ciclo, missing dep, case insensitivity, multi-driver).
+
+### Boot Loader v2
+- **Actualizado**: `src/drivers/boot_loader/mod.rs` — `boot_load_all()` v2 usa `DependencyGraph` para ordenar carga dentro de cada categoría (BOOT/SYSTEM). ABI validation delegada al módulo ABI negotiation.
+- **Tests**: +2 tests (collect_driver_data_empty, build_dep_graph_empty).
+
+### Total
+- **Nuevos tests**: 25 (10 ABI + 13 dependency + 2 boot loader)
+- **Total**: 229 kernel tests + 4 user-mode binaries
+- **Bump**: v0.17.0
+
 ## v0.16.8 — 2026-05-26
 
 ### Kernel Slab Allocator (A3) — Añadido

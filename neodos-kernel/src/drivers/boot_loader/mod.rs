@@ -1,19 +1,6 @@
-// src/drivers/boot_loader/mod.rs
-// Boot Driver Loader System v3 Only
-//
-// Orchestrates automatic loading of NEM v3 standalone binary drivers at system startup.
-// Loading order: BOOT category → SYSTEM category
-//
-// A driver becomes ACTIVE only if:
-//   - Binary loaded and parsed
-//   AND - ABI validated (min/target/max)
-//   AND - driver_init() returns success
-//   AND - Event Bus binding succeeded
-//   AND - certification passed
-// Otherwise → remains in previous state (FAULTED if failed)
-
 use alloc::vec::Vec;
 use alloc::string::String;
+use alloc::collections::BTreeMap;
 use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
 use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
@@ -23,8 +10,44 @@ use crate::eventbus::EVENT_RTC_READ;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
 
+fn collect_driver_data(files: &[String]) -> Vec<(String, Vec<u8>)> {
+    let mut collected = Vec::new();
+    for f in files {
+        let data = match read_nem_file(f) {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        let name = nem::parse_nem_v3(&data)
+            .map(|p| p.name.to_ascii_uppercase())
+            .unwrap_or_else(|| {
+                let base = f.rsplit('\\').next().unwrap_or(f);
+                base.trim_end_matches(".NEM").to_ascii_uppercase()
+            });
+        collected.push((name, data));
+    }
+    collected
+}
+
+fn build_dependency_graph(drivers: &[(String, Vec<u8>)]) -> crate::drivers::dependency::DependencyGraph {
+    let mut graph = crate::drivers::dependency::DependencyGraph::new();
+    for (name, _) in drivers {
+        graph.add_driver(name);
+    }
+    for (name, data) in drivers {
+        if let Some(parsed) = nem::parse_nem_v3(data) {
+            let sym_deps = crate::drivers::dependency::resolve_nem_symbol_dependencies(
+                parsed.symbols, parsed.strtab
+            );
+            for dep in &sym_deps {
+                let _ = graph.add_dependency(name, dep);
+            }
+        }
+    }
+    graph
+}
+
 pub fn boot_load_all() {
-    crate::serial_println!("[BOOT] === Boot Driver Loader v1 ===");
+    crate::serial_println!("[BOOT] === Boot Driver Loader v2 (with dep resolver) ===");
     let mut total_loaded = 0u32;
     let mut total_active = 0u32;
     let mut total_faulted = 0u32;
@@ -35,154 +58,163 @@ pub fn boot_load_all() {
     ] {
         crate::serial_println!("[BOOT] Scanning {} drivers...", phase_name);
         let files = driver_scan(root);
-        for f in &files {
-            crate::serial_print!("[BOOT]   Loading {} ... ", f);
+        if files.is_empty() {
+            continue;
+        }
 
-            let data = match read_nem_file(f) {
-                Ok(d) => d,
-                Err(e) => { crate::serial_println!("FAIL ({})", e); continue; }
+        let collected = collect_driver_data(&files);
+
+        let graph = build_dependency_graph(&collected);
+        let sorted = match graph.resolve_order() {
+            Ok(order) => order,
+            Err(e) => {
+                crate::serial_println!("[BOOT]   Dependency resolution failed: {:?}", e);
+                crate::serial_println!("[BOOT]   Falling back to filesystem order");
+                collected.iter().map(|(n, _)| n.clone()).collect()
+            }
+        };
+
+        let name_to_data: BTreeMap<String, &(String, Vec<u8>)> =
+            collected.iter().map(|entry| (entry.0.clone(), entry)).collect();
+
+        for name in &sorted {
+            let entry = match name_to_data.get(name) {
+                Some(e) => e,
+                None => continue,
+            };
+            let data = &entry.1;
+            let parsed_v3 = match nem::parse_nem_v3(data) {
+                Some(p) => p,
+                None => continue,
             };
 
-            // Try NEM v3 standalone binary first
-            if let Some(parsed_v3) = nem::parse_nem_v3(&data) {
-                // Validate ABI
-                if parsed_v3.header.abi_min == 0 || parsed_v3.header.abi_min > ABI_MAX_VALID
-                    || parsed_v3.header.abi_max < ABI_MIN_VALID
-                    || parsed_v3.header.abi_target < ABI_MIN_VALID
-                    || parsed_v3.header.abi_target > ABI_MAX_VALID
-                {
-                    crate::serial_println!("SKIP (v3 ABI incompatible)");
+            let abi_result = crate::drivers::abi::negotiate_default(
+                parsed_v3.header.abi_min,
+                parsed_v3.header.abi_target,
+                parsed_v3.header.abi_max,
+            );
+            if !abi_result.is_compatible() {
+                crate::serial_println!("SKIP (v3 ABI: {})", abi_result.to_str());
+                continue;
+            }
+
+            crate::serial_print!("[BOOT]   Loading {} ... ", name);
+            let load_result = match v3loader::load_nem_v3(data) {
+                Ok(r) => r,
+                Err(e) => {
+                    crate::serial_println!("FAIL (v3 load: {})", e);
                     continue;
                 }
+            };
 
-                let load_result = match v3loader::load_nem_v3(&data) {
-                    Ok(r) => r,
-                    Err(e) => {
-                        crate::serial_println!("FAIL (v3 load: {})", e);
-                        continue;
-                    }
-                };
+            let name_str = String::from_utf8_lossy(&load_result.name);
+            let name_upper = name_str.to_ascii_uppercase();
 
-                let name_str = alloc::string::String::from_utf8_lossy(&load_result.name);
-                let name_upper = name_str.to_ascii_uppercase();
+            let rt_id = driver_runtime::register_driver(
+                &name_upper,
+                nem::NemDriverType::Lifecycle,
+                nem::NEM_API_VERSION,
+                0,
+            );
 
-                // Register in driver runtime
-                let rt_id = driver_runtime::register_driver(
-                    &name_upper,
-                    nem::NemDriverType::Lifecycle,
-                    nem::NEM_API_VERSION,
-                    0,
-                );
+            match rt_id {
+                Ok(id) => {
+                    crate::serial_print!("REG OK (id={})", id);
+                    total_loaded += 1;
 
-                match rt_id {
-                    Ok(id) => {
-                        crate::serial_print!("REG OK (id={})", id);
-                        total_loaded += 1;
+                    let init_ok = match load_result.entry_init {
+                        Some(init_fn) => unsafe { init_fn() == 0 },
+                        None => true,
+                    };
 
-                        // Init
-                        let init_ok = match load_result.entry_init {
-                            Some(init_fn) => unsafe { init_fn() == 0 },
-                            None => true,
-                        };
+                    if init_ok {
+                        let _ = driver_runtime::DRIVER_RUNTIME.lock()
+                            .try_transition(id, DriverState::Initialized);
+                        crate::serial_print!(" [INIT]");
 
-                        if init_ok {
-                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                .try_transition(id, DriverState::Initialized);
-                            crate::serial_print!(" [INIT]");
+                        let _ = driver_runtime::DRIVER_RUNTIME.lock()
+                            .try_transition(id, DriverState::Registered);
+                        crate::serial_print!(" [REG]");
 
-                            // Registered
-                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                .try_transition(id, DriverState::Registered);
-                            crate::serial_print!(" [REG]");
-
-                            // Event Bus binding (v3 bridge) — register per-driver event types
-                            let bind_ok = match name_upper.as_str() {
-                                "PS2KBD" => {
-                                    let a = v3loader::register_v3_event_bus_handler(
-                                        load_result.entry_event, EVENT_KEYBOARD_INPUT
-                                    ).is_ok();
-                                    let b = v3loader::register_v3_event_bus_handler(
-                                        load_result.entry_event, EVENT_KEYB_LAYOUT
-                                    ).is_ok();
-                                    a && b
-                                }
-                                "SERIAL" => {
-                                    v3loader::register_v3_event_bus_handler(
-                                        load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA
-                                    ).is_ok()
-                                }
-                                "RTC" => {
-                                    v3loader::register_v3_event_bus_handler(
-                                        load_result.entry_event, EVENT_RTC_READ
-                                    ).is_ok()
-                                }
-                                _ => {
-                                    v3loader::register_v3_event_bus_handler(
-                                        load_result.entry_event, EVENT_KEYBOARD_INPUT
-                                    ).is_ok()
-                                }
-                            };
-                            if !bind_ok {
-                                crate::serial_print!(" [BIND FAIL]");
-                                total_faulted += 1;
-                                driver_runtime::DRIVER_RUNTIME.lock()
-                                    .set_error(id, driver_runtime::ERR_BIND_FAILED, true);
-                            } else {
-                                let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                    .try_transition(id, DriverState::Bound);
-                                crate::serial_print!(" [BOUND]");
-
-                                // Driver-local activation hook (optional for v3).
-                                // ps2kbd.nem requires this to accept events.
-                                let activate_ok = match load_result.entry_activate {
-                                    Some(activate_fn) => unsafe { activate_fn() == 0 },
-                                    None => true,
-                                };
-
-                                if !activate_ok {
-                                    crate::serial_print!(" [ACT FAIL]");
-                                    total_faulted += 1;
-                                    driver_runtime::DRIVER_RUNTIME.lock()
-                                        .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
-                                    crate::serial_println!();
-                                    continue;
-                                }
-
-                                // Certify & activate
-                                if driver_runtime::DRIVER_RUNTIME.lock()
-                                    .certify_and_activate(id).is_ok()
-                                {
-                                    crate::serial_print!(" [ACTIVE]");
-                                    total_active += 1;
-                                } else {
-                                    crate::serial_print!(" [CERT FAIL]");
-                                    total_faulted += 1;
-                                    driver_runtime::DRIVER_RUNTIME.lock()
-                                        .set_error(id, driver_runtime::ERR_CERTIFICATION_FAILED, true);
-                                }
+                        let bind_ok = match name_upper.as_str() {
+                            "PS2KBD" => {
+                                let a = v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                ).is_ok();
+                                let b = v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, EVENT_KEYB_LAYOUT
+                                ).is_ok();
+                                a && b
                             }
-                        } else {
-                            crate::serial_print!(" [INIT FAIL]");
+                            "SERIAL" => {
+                                v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA
+                                ).is_ok()
+                            }
+                            "RTC" => {
+                                v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, EVENT_RTC_READ
+                                ).is_ok()
+                            }
+                            _ => {
+                                v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                ).is_ok()
+                            }
+                        };
+                        if !bind_ok {
+                            crate::serial_print!(" [BIND FAIL]");
                             total_faulted += 1;
                             driver_runtime::DRIVER_RUNTIME.lock()
-                                .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
+                                .set_error(id, driver_runtime::ERR_BIND_FAILED, true);
+                        } else {
+                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
+                                .try_transition(id, DriverState::Bound);
+                            crate::serial_print!(" [BOUND]");
+
+                            let activate_ok = match load_result.entry_activate {
+                                Some(activate_fn) => unsafe { activate_fn() == 0 },
+                                None => true,
+                            };
+
+                            if !activate_ok {
+                                crate::serial_print!(" [ACT FAIL]");
+                                total_faulted += 1;
+                                driver_runtime::DRIVER_RUNTIME.lock()
+                                    .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
+                                crate::serial_println!();
+                                continue;
+                            }
+
+                            if driver_runtime::DRIVER_RUNTIME.lock()
+                                .certify_and_activate(id).is_ok()
+                            {
+                                crate::serial_print!(" [ACTIVE]");
+                                total_active += 1;
+                            } else {
+                                crate::serial_print!(" [CERT FAIL]");
+                                total_faulted += 1;
+                                driver_runtime::DRIVER_RUNTIME.lock()
+                                    .set_error(id, driver_runtime::ERR_CERTIFICATION_FAILED, true);
+                            }
                         }
-                        crate::serial_println!();
+                    } else {
+                        crate::serial_print!(" [INIT FAIL]");
+                        total_faulted += 1;
+                        driver_runtime::DRIVER_RUNTIME.lock()
+                            .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
                     }
-                    Err(e) => {
-                        crate::serial_println!("REG FAIL ({})", e);
-                        continue;
-                    }
+                    crate::serial_println!();
                 }
-                continue; // v3 handled, skip v1/v2 path
+                Err(e) => {
+                    crate::serial_println!("REG FAIL ({})", e);
+                }
             }
         }
     }
 
     let rt = driver_runtime::DRIVER_RUNTIME.lock();
     let total = rt.count();
-    let _active = rt.active_count();
-    let _faulted = rt.faulted_count();
     drop(rt);
 
     crate::serial_println!("[BOOT] === Summary: {} total, {} loaded, {} active, {} faulted ===",
@@ -287,5 +319,15 @@ pub fn register_boot_loader_tests() {
         rt.try_transition(id, DriverState::Initialized).unwrap();
         let r = rt.certify_and_activate(id);
         test_true!(r.is_err());
+    });
+
+    test_case!("boot_collect_driver_data_empty", {
+        let collected = collect_driver_data(&[]);
+        test_eq!(collected.len(), 0);
+    });
+
+    test_case!("boot_build_dep_graph_empty", {
+        let graph = build_dependency_graph(&[]);
+        test_eq!(graph.driver_count(), 0);
     });
 }

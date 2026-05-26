@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.16.7
+v0.17.0
 
 ## Build & Run
 
@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 196 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 229 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -341,7 +341,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-204 tests en 25 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+229 tests en 27 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -362,13 +362,15 @@ Binarios flat cargados en `0x400000`.
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
 | Boot Loader | 8 | Boot driver loader: scan, load, init, activate, unload, category ordering |
+| ABI Negotiation | 10 | ABI version negotiation, window overlap, compatibility warnings, edge cases |
+| Dependency | 13 | Dependency graph, topological sort, cycle detection, symbol extraction, case-insensitive |
 | Storage Ref | 14 | Reference storage driver: entrypoints, lifecycle, R/W, geometry, error handling |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (245+ tests kernel)
+1. Ejecuta `testing::run_all()` (229 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Event Bus v1
@@ -445,14 +447,85 @@ Use `NDREG DEBUG <name>` to run a 5-stage checklist:
 
 Each stage shows a clear PASS/FAIL and explains the next step. The `inactive_reason()` method on `DriverInstance` returns a human-readable explanation.
 
+## ABI Negotiation Layer v1
+
+`src/drivers/abi/mod.rs` — Formalized ABI version negotiation between kernel and NEM drivers.
+
+### Core Types
+
+```rust
+pub struct AbiVersion { min: u16, target: u16, max: u16 }
+
+pub enum NegotiationResult {
+    Compatible,
+    CompatibleWithWarnings(&'static [&'static str]),
+    Incompatible(&'static str),
+}
+```
+
+### Negotiation Rules
+
+A driver is ABI-compatible iff:
+- `driver.min > 0 && driver.target > 0 && driver.max > 0` (valid fields)
+- `driver.min <= ABI_MAX_VALID` (driver not too new)
+- `driver.max >= ABI_MIN_VALID` (driver not too old)
+- `driver.target` within `[ABI_MIN_VALID, ABI_MAX_VALID]` (target in range)
+
+### Warning Levels
+
+- `CompatibleWithWarnings("Driver ABI predates kernel target...")` — driver.max < kernel.target
+- `CompatibleWithWarnings("Driver targets a newer ABI than kernel default...")` — driver.target > kernel.target
+
+### Integration
+
+The v3loader's `validate_v3_abi()` delegates to `drivers::abi::negotiate_default()` instead of inline checks. 10 unit tests cover valid/invalid/warning scenarios.
+
+## Driver Dependency Resolver v1
+
+`src/drivers/dependency/mod.rs` — Automatic dependency resolution between NEM drivers.
+
+### DependencyGraph
+
+```rust
+pub struct DependencyGraph { edges: BTreeMap<String, Vec<String>> }
+
+fn add_driver(name: &str)
+fn add_dependency(driver: &str, depends_on: &str) -> Result<(), DepError>
+fn resolve_order() -> Result<Vec<String>, DepError>
+fn has_cycle() -> bool
+```
+
+### Dependency Declaration Convention
+
+Drivers declare dependencies via special `__dep_DRIVERNAME` symbols in the NEM symbol table. The function `resolve_nem_symbol_dependencies()` scans symbols for the `__dep_` prefix and extracts dependency names.
+
+```rust
+pub fn resolve_nem_symbol_dependencies(
+    symbols: &[NemSymbol], strtab: &[u8]
+) -> Vec<String>
+```
+
+### Resolution Algorithm
+
+1. Build directed graph from driver declarations + `__dep_` symbols
+2. Run DFS-based topological sort (Kahn's algorithm alternative)
+3. Detect cycles via DFS in-stack tracking
+4. Return ordered list: dependencies before dependents
+
+### Boot Loader Integration
+
+`boot_load_all()` v2 scans drivers, builds a `DependencyGraph` per category, resolves load order, and loads in dependency-sorted sequence. Falls back to filesystem order on cycle detection. 13 unit tests.
+
 ## Boot Driver Loader System
 
-`src/drivers/boot_loader/mod.rs` — Automatic boot-time driver loading subsystem. Runs as PHASE 3.85 in `main.rs` boot sequence.
+`src/drivers/boot_loader/mod.rs` — Automatic boot-time driver loading subsystem (v2 with dependency resolver). Runs as PHASE 3.85 in `main.rs` boot sequence.
 
 ### Boot Order
 
 1. **BOOT drivers** — scanned from `C:\SYSTEM\DRIVERS\BOOT\` (required for system init)
 2. **SYSTEM drivers** — scanned from `C:\SYSTEM\DRIVERS\SYSTEM\` (standard kernel extension)
+
+Within each category, drivers are **dependency-sorted**: the boot loader scans `.nem` files, extracts `__dep_` symbol dependencies, builds a `DependencyGraph`, and loads drivers in topological order (dependencies before dependents).
 
 If any BOOT driver fails to load/initialize, the boot continues (no panic) the driver is marked FAULTED.
 

@@ -1857,6 +1857,8 @@ pub fn register_tests() {
     crate::drivers::driver_runtime::register_driver_certification_tests();
     crate::drivers::boot_loader::register_boot_loader_tests();
     crate::drivers::nem::v3loader::register_v3_loader_tests();
+    crate::drivers::abi::register_abi_tests();
+    crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();

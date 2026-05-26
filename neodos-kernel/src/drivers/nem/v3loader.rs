@@ -7,7 +7,7 @@
 
 use alloc::alloc::{alloc, dealloc, Layout};
 use alloc::vec::Vec;
-use crate::nem::{self, NemReloc, NemSymbol, ParsedNemV3, ABI_MIN_VALID, ABI_MAX_VALID};
+use crate::nem::{self, NemReloc, NemSymbol, ParsedNemV3};
 use crate::nem::{
     R_NEM_64, R_NEM_PC32, R_NEM_32, R_NEM_32S, R_NEM_PLT32,
     NEM_SECT_TEXT, NEM_SECT_RODATA, NEM_SECT_DATA, NEM_SECT_UNDEF,
@@ -197,20 +197,16 @@ pub unsafe fn unload_nem_v3(result: &NemV3LoadResult) {
 // ── ABI validation ──
 
 fn validate_v3_abi(parsed: &ParsedNemV3) -> Result<(), &'static str> {
-    let hdr = parsed.header;
-    if hdr.abi_min == 0 || hdr.abi_target == 0 || hdr.abi_max == 0 {
-        return Err("ABI fields cannot be zero");
+    let result = crate::drivers::abi::negotiate_default(
+        parsed.header.abi_min,
+        parsed.header.abi_target,
+        parsed.header.abi_max,
+    );
+    if result.is_compatible() {
+        Ok(())
+    } else {
+        Err(result.to_str())
     }
-    if hdr.abi_min > ABI_MAX_VALID {
-        return Err("Driver requires newer ABI than kernel supports");
-    }
-    if hdr.abi_max < ABI_MIN_VALID {
-        return Err("Driver ABI is too old for this kernel");
-    }
-    if hdr.abi_target < ABI_MIN_VALID || hdr.abi_target > ABI_MAX_VALID {
-        return Err("Driver ABI target outside range");
-    }
-    Ok(())
 }
 
 // ── Entry point resolution ──
