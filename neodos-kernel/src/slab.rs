@@ -1,0 +1,291 @@
+//! Kernel slab allocator — efficient fixed-size allocation.
+//!
+//! Manages 9 size classes (8B–2KB) backed by 4 KB slab pages with O(1)
+//! alloc/free via per-slot free lists. Larger allocations or alignments
+//! >16 bytes fall through to the linked-list fallback allocator.
+//!
+//! Each 4 KB slab page carries a 32-byte header with magic + free-list
+//! metadata; the remainder is divided into equal-sized slots.  Free
+//! slots are chained by storing the next-free index as a `u16` at the
+//! start of each slot.
+
+use core::alloc::{GlobalAlloc, Layout};
+use core::ptr;
+use linked_list_allocator::LockedHeap;
+use spin::Mutex;
+use crate::memory;
+use crate::serial_println;
+
+// ── Constants ────────────────────────────────────────────────────────────
+
+const SLAB_PAGE_SIZE: usize = 4096;
+const SLAB_MAGIC: u32 = 0x534C_4142; // "SLAB"
+
+/// Maximum object size handled by slab (larger → fallback).
+const MAX_SLAB_SIZE: usize = 2048;
+
+/// Minimum alignment guaranteed by slab allocations.
+pub const SLAB_ALIGN: usize = 16;
+
+/// Number of per-size caches.
+const NUM_CACHES: usize = 9;
+
+/// Size classes — power-of-two from 8 to 2048.
+const CACHE_SIZES: [usize; NUM_CACHES] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+
+// ── SlabPage: per-page header ────────────────────────────────────────────
+
+/// Header stored at offset 0 of every 4 KB slab page.
+///
+/// With `#[repr(C, align(16))]` the header is exactly 32 bytes:
+///
+/// | Offset | Size | Field       |
+/// |--------|------|-------------|
+/// | 0      | 4    | magic       |
+/// | 4      | 2    | slot_size   |
+/// | 6      | 2    | capacity    |
+/// | 8      | 2    | allocated   |
+/// | 10     | 2    | free_head   |
+/// | 12     | 4    | _alignment  |
+/// | 16     | 8    | next        |
+/// | 24     | 8    | _pad        |
+#[repr(C, align(16))]
+struct SlabPage {
+    magic: u32,            // SLAB_MAGIC
+    slot_size: u16,        // bytes per slot
+    capacity: u16,         // total slots in this page
+    allocated: u16,        // slots currently in use
+    free_head: u16,        // index of first free slot (0xFFFF = full)
+    next: *mut SlabPage,   // next page in the same cache
+    _pad: [u8; 8],         // pad to 32 bytes
+}
+
+const _: () = {
+    assert!(core::mem::size_of::<SlabPage>() == 32);
+};
+
+impl SlabPage {
+    fn slots_start(&self) -> usize {
+        (self as *const Self as usize) + core::mem::size_of::<SlabPage>()
+    }
+
+    fn slot_ptr(&self, idx: u16) -> *mut u8 {
+        (self.slots_start() + (idx as usize) * (self.slot_size as usize)) as *mut u8
+    }
+
+    fn init(&mut self, slot_size: usize) {
+        self.magic = SLAB_MAGIC;
+        self.slot_size = slot_size as u16;
+        let slots_start = core::mem::size_of::<SlabPage>();
+        let slots_avail = SLAB_PAGE_SIZE - slots_start;
+        self.capacity = (slots_avail / slot_size) as u16;
+        self.allocated = 0;
+        self.next = ptr::null_mut();
+
+        if self.capacity == 0 {
+            self.free_head = 0xFFFF;
+            return;
+        }
+
+        // Build the free list: each free slot stores the u16 index of the
+        // next free slot (0xFFFF = end of list).
+        self.free_head = 0;
+        for i in 0..self.capacity {
+            let next = if i + 1 < self.capacity { i + 1 } else { 0xFFFF };
+            unsafe { ptr::write_unaligned(self.slot_ptr(i) as *mut u16, next); }
+        }
+    }
+
+    fn alloc(&mut self) -> *mut u8 {
+        if self.free_head == 0xFFFF {
+            return ptr::null_mut();
+        }
+        let idx = self.free_head;
+        let slot = self.slot_ptr(idx);
+        unsafe { self.free_head = ptr::read_unaligned(slot as *const u16); }
+        self.allocated += 1;
+        slot
+    }
+
+    fn free(&mut self, ptr: *mut u8) -> bool {
+        let offset = (ptr as usize).wrapping_sub(self.slots_start());
+        let sz = self.slot_size as usize;
+        if offset > SLAB_PAGE_SIZE - sz || offset % sz != 0 {
+            return false;
+        }
+        let idx = (offset / sz) as u16;
+        if idx >= self.capacity {
+            return false;
+        }
+        unsafe { ptr::write_unaligned(ptr as *mut u16, self.free_head); }
+        self.free_head = idx;
+        self.allocated -= 1;
+        true
+    }
+
+    fn is_full(&self) -> bool {
+        self.free_head == 0xFFFF
+    }
+}
+
+// ── SlabCache: single size class ─────────────────────────────────────────
+
+struct SlabCache {
+    head: *mut SlabPage,
+    slot_size: usize,
+}
+
+impl SlabCache {
+    const fn new(slot_size: usize) -> Self {
+        SlabCache { head: ptr::null_mut(), slot_size }
+    }
+
+    fn alloc(&mut self) -> *mut u8 {
+        let mut curr = self.head;
+        while !curr.is_null() {
+            let page = unsafe { &mut *curr };
+            if !page.is_full() {
+                let slot = page.alloc();
+                if !slot.is_null() {
+                    return slot;
+                }
+            }
+            curr = page.next;
+        }
+
+        // No free slots — allocate a new 4 KB slab page.
+        let page_ptr = crate::hal::alloc_page();
+        if page_ptr.is_null() {
+            return ptr::null_mut();
+        }
+
+        let page = page_ptr as *mut SlabPage;
+        unsafe {
+            (*page).init(self.slot_size);
+            (*page).next = self.head;
+            self.head = page;
+        }
+        unsafe { (*page).alloc() }
+    }
+
+    fn free(&mut self, ptr: *mut u8) -> bool {
+        let page_base = (ptr as usize) & !(SLAB_PAGE_SIZE - 1);
+        if page_base == 0 {
+            return false;
+        }
+        let page = page_base as *mut SlabPage;
+        let slab = unsafe { &mut *page };
+        if slab.magic != SLAB_MAGIC || slab.slot_size as usize != self.slot_size {
+            return false;
+        }
+        slab.free(ptr);
+        true
+    }
+}
+
+// SAFETY: SlabCache is only ever accessed behind `spin::Mutex`,
+// so raw pointer fields are safe.
+unsafe impl Send for SlabCache {}
+unsafe impl Sync for SlabCache {}
+unsafe impl Send for SlabAllocatorInner {}
+unsafe impl Sync for SlabAllocatorInner {}
+
+// ── SlabAllocator ────────────────────────────────────────────────────────
+
+pub struct SlabAllocator {
+    inner: Mutex<SlabAllocatorInner>,
+    fallback: LockedHeap,
+}
+
+struct SlabAllocatorInner {
+    caches: [SlabCache; NUM_CACHES],
+}
+
+const fn new_inner() -> SlabAllocatorInner {
+    let c8  = SlabCache::new(8);
+    let c16 = SlabCache::new(16);
+    let c32 = SlabCache::new(32);
+    let c64 = SlabCache::new(64);
+    let c128 = SlabCache::new(128);
+    let c256 = SlabCache::new(256);
+    let c512 = SlabCache::new(512);
+    let c1024 = SlabCache::new(1024);
+    let c2048 = SlabCache::new(2048);
+    SlabAllocatorInner {
+        caches: [c8, c16, c32, c64, c128, c256, c512, c1024, c2048],
+    }
+}
+
+impl SlabAllocator {
+    pub const fn new() -> Self {
+        SlabAllocator {
+            inner: Mutex::new(new_inner()),
+            fallback: LockedHeap::empty(),
+        }
+    }
+
+    pub fn init(&self, heap_start: *mut u8, heap_size: usize) {
+        serial_println!("[SLAB] [+] Initializing slab allocator ({} caches)", NUM_CACHES);
+
+        // Reserve the fallback-heap region in the physical frame allocator
+        // so that slab pages (from hal::mem::alloc_page) never collide with
+        // the linked-list heap.
+        memory::reserve_range(heap_start as u64, heap_size as u64);
+
+        unsafe {
+            self.fallback.lock().init(heap_start, heap_size);
+        }
+
+        serial_println!("[SLAB] [+] Ready: {}B..{}B slab + {} KB fallback",
+                       CACHE_SIZES[0], CACHE_SIZES[NUM_CACHES - 1], heap_size / 1024);
+    }
+
+    fn cache_index(size: usize) -> Option<usize> {
+        let rounded = size.next_power_of_two().max(8);
+        if rounded > MAX_SLAB_SIZE {
+            return None;
+        }
+        Some((rounded.trailing_zeros() - 3) as usize)
+    }
+}
+
+unsafe impl GlobalAlloc for SlabAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if layout.size() <= MAX_SLAB_SIZE && layout.align() <= SLAB_ALIGN {
+            if let Some(idx) = Self::cache_index(layout.size()) {
+                let mut inner = self.inner.lock();
+                let ptr = inner.caches[idx].alloc();
+                if !ptr.is_null() {
+                    return ptr;
+                }
+                // Slab OOM — fall through to fallback.
+            }
+        }
+        self.fallback.alloc(layout)
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        if ptr.is_null() {
+            return;
+        }
+
+        // Check if the pointer is from a slab page by inspecting the
+        // page-aligned header magic.  This is safe because slab pages
+        // are always 4 KB aligned and the magic is immutable after init.
+        let page_base = (ptr as usize) & !(SLAB_PAGE_SIZE - 1);
+        if page_base != 0 {
+            let page = page_base as *const SlabPage;
+            if (*page).magic == SLAB_MAGIC {
+                let sz = (*page).slot_size as usize;
+                if let Some(idx) = Self::cache_index(sz) {
+                    let mut inner = self.inner.lock();
+                    if inner.caches[idx].free(ptr) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.fallback.dealloc(ptr, _layout);
+    }
+}

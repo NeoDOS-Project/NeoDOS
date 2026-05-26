@@ -78,7 +78,7 @@ The resulting ELF binary can be loaded by the kernel's `RUN` command.
 - **Nightly** pinned in `rust-toolchain.toml` (needs `abi_x86_interrupt`).
 - **Custom linker** via `kernel.ld` + `.cargo/config.toml`: `-Tkernel.ld`, `-melf_x86_64`, `-no-pie`, `relocation-model=static`, `rust-lld`.
 - **Entry**: `_start` in `.text.entry` at `0x200000`, called `extern "sysv64" fn(&BootInfo) -> !` (RDI = `&BootInfo`).
-- **Heap**: 16 MB @ `0x1000000`, uses `linked_list_allocator`. `Box`, `Vec`, `String` disponibles.
+- **Heap**: 16 MB @ `0x1000000`, uses kernel slab allocator (9 size classes 8B–2KB) with `linked_list_allocator` fallback for large objects. `Box`, `Vec`, `String` disponibles.
 - **Profiles**: release with `opt-level=3`, `lto=true`, `debug=true`, `panic="abort"`.
 - A shared `.cargo/config.toml` at `neodos/` adds extra linker flags (`-melf_x86_64`, `rust-lld`) for the kernel target only.
 
@@ -132,6 +132,23 @@ BAR4 gives the bus-master I/O base. Bus-master bit enabled in PCI command regist
 The ATA driver adds `base_lba` to all logical LBAs before sending them to the disk, so the
 NeoDOS FS code never needs to know about partition offsets. The FAT32 driver reads from
 the master drive using absolute LBAs (no `base_lba`).
+
+## Kernel Slab Allocator (A3)
+
+`src/slab.rs` — Efficient fixed-size allocation for kernel objects.
+
+| Concept | Description |
+|---------|-------------|
+| **Size classes** | 9 power-of-2 caches: 8, 16, 32, 64, 128, 256, 512, 1024, 2048 bytes |
+| **Slab pages** | 4 KB pages from `hal::alloc_page()` (physical frames) |
+| **Page header** | 32-byte `#[repr(C, align(16))]` header at offset 0: magic "SLAB" (u32), slot_size (u16), capacity (u16), allocated (u16), free_head (u16), next pointer |
+| **Free list** | Inline `u16` indices stored in each free slot — O(1) alloc and free |
+| **Alignment** | Minimum 16 bytes per slot (from header alignment) |
+| **Fallback** | `linked_list_allocator::LockedHeap` for objects >2048 bytes or alignment >16 |
+| **Isolation** | Heap region (0x01000000..0x02000000) reserved in frame bitmap to prevent slab/heap overlap |
+| **Global allocator** | `SlabAllocator` implements `GlobalAlloc`, set as `#[global_allocator]` in `allocator.rs` |
+| **Locking** | Single `spin::Mutex` protects all 9 caches; `LockedHeap` has its own internal Mutex |
+| **Tests** | 9 tests: per-size alloc/free, multi-page stress, mix sizes, large fallback, free-reuse |
 
 ## Demand Paging (heap 4 KB)
 
@@ -324,7 +341,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-245+ tests en 24 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+204 tests en 25 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -339,6 +356,7 @@ Binarios flat cargados en `0x400000`.
 | NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
 | ELF | 7 | ELF64 loader: header validation, segment loading, edge cases |
 | Event Bus | 9 | Event: creation, push/pop, ordering, overflow, IDs, handler register/dispatch, type filter, unregister, empty queue |
+| Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
 | Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |

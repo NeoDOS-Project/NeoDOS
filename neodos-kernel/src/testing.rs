@@ -304,6 +304,98 @@ pub fn register_alloc_tests() {
     });
 }
 
+// ── Slab allocator tests ────────────────────────────────
+
+pub fn register_slab_tests() {
+    extern crate alloc;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use alloc::string::String;
+
+    test_case!("slab_box_u8", {
+        let b = Box::new(42u8);
+        test_eq!(*b, 42);
+    });
+
+    test_case!("slab_box_u64", {
+        let b = Box::new(0xDEAD_BEEFu64);
+        test_eq!(*b, 0xDEAD_BEEF);
+    });
+
+    test_case!("slab_box_many_small", {
+        for _ in 0..512 {
+            let b = Box::new(0u8);
+            test_eq!(*b, 0);
+        }
+    });
+
+    test_case!("slab_box_many_64", {
+        let mut vec = Vec::new();
+        for i in 0..200 {
+            vec.push(Box::new(i as u64));
+        }
+        for (i, b) in vec.iter().enumerate() {
+            test_eq!(**b, i as u64);
+        }
+    });
+
+    test_case!("slab_box_large_fallback", {
+        // 4 KB object exceeds slab → goes to fallback
+        let mut b = Box::new([0u8; 4096]);
+        b[0] = 0xAA;
+        b[4095] = 0xBB;
+        test_eq!(b[0], 0xAA);
+        test_eq!(b[4095], 0xBB);
+    });
+
+    test_case!("slab_string_heap", {
+        let mut s = String::with_capacity(64);
+        s.push_str("slab allocator test");
+        test_eq!(s.as_str(), "slab allocator test");
+    });
+
+    test_case!("slab_vec_u32", {
+        let mut v = Vec::new();
+        for i in 0..500 {
+            v.push(i as u32);
+        }
+        test_eq!(v.len(), 500);
+        test_eq!(v[0], 0);
+        test_eq!(v[499], 499);
+    });
+
+    test_case!("slab_mix_sizes", {
+        let a = Box::new(1u8);
+        let b = Box::new(2u16);
+        let c = Box::new(3u32);
+        let d = Box::new(4u64);
+        let e = Box::new([5u8; 128]);
+        test_eq!(*a, 1);
+        test_eq!(*b, 2);
+        test_eq!(*c, 3);
+        test_eq!(*d, 4);
+        test_eq!(e[0], 5);
+        test_eq!(e[127], 5);
+    });
+
+    test_case!("slab_free_reuse", {
+        // Allocate many small objects, free them, then allocate again
+        // to verify slab page reuse.
+        let mut v: Vec<Box<u32>> = Vec::new();
+        for i in 0..100 {
+            v.push(Box::new(i));
+        }
+        core::mem::drop(v);
+        let mut v2: Vec<Box<u32>> = Vec::new();
+        for i in 0..100 {
+            v2.push(Box::new(i * 10));
+        }
+        for (i, b) in v2.iter().enumerate() {
+            test_eq!(**b, (i as u32) * 10);
+        }
+    });
+}
+
 pub fn register_sync_tests() {
     use crate::syscall::{NEED_RESCHED, set_need_resched, clear_need_resched};
     use core::sync::atomic::Ordering;
@@ -1754,6 +1846,7 @@ pub fn register_tests() {
     register_process_tests();
     register_utf8_tests();
     register_alloc_tests();
+    register_slab_tests();
     register_sync_tests();
     register_neofs_tests();
     register_mmap_tests();

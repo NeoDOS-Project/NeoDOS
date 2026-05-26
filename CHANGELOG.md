@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.16.8 — 2026-05-26
+
+### Kernel Slab Allocator (A3) — Añadido
+- **Añadido**: `src/slab.rs` — slab allocator con 9 size classes (8, 16, 32, 64, 128, 256, 512, 1024, 2048 bytes). O(1) alloc/free mediante free list de u16 indices dentro de páginas de 4 KB. Cada SlabPage tiene header de 32 bytes con magic "SLAB" + metadatos de lista libre.
+- **Añadido**: `allocator.rs` reescrito para usar `SlabAllocator` como `#[global_allocator]`, con `linked_list_allocator::LockedHeap` como fallback para objetos >2 KB o alineación >16 bytes.
+- **Añadido**: `memory::reserve_range()` — función pública para marcar rangos de frames como usados, evitando colisiones entre slab pages y el heap del fallback.
+- **Añadido**: 9 tests slab: `slab_box_u8`, `slab_box_u64`, `slab_box_many_small`, `slab_box_many_64`, `slab_box_large_fallback`, `slab_string_heap`, `slab_vec_u32`, `slab_mix_sizes`, `slab_free_reuse`.
+- **Total**: 204 kernel tests + 4 user-mode binaries
+
 ## v0.16.7 — 2026-05-25
 
 ### libneodos (S6) — Añadido

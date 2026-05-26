@@ -1,19 +1,17 @@
-use linked_list_allocator::LockedHeap;
 use crate::serial_println;
+use crate::slab::SlabAllocator;
 
 pub const HEAP_START: u64 = 0x0100_0000; // 16 MB
 pub const HEAP_SIZE: u64 = 0x0100_0000; // 16 MB heap (16-32 MB)
 
 #[global_allocator]
-static ALLOCATOR: LockedHeap = LockedHeap::empty();
+pub static ALLOCATOR: SlabAllocator = SlabAllocator::new();
 
 pub fn init() {
-    serial_println!("[MEM] [+] Initializing heap allocator ({} MB @ 0x{:x})", 
+    serial_println!("[MEM] [+] Initializing heap allocator ({} MB @ 0x{:x})",
                     HEAP_SIZE / 1024 / 1024, HEAP_START);
 
-    unsafe {
-        ALLOCATOR.lock().init(HEAP_START as *mut u8, HEAP_SIZE as usize);
-    }
+    ALLOCATOR.init(HEAP_START as *mut u8, HEAP_SIZE as usize);
 
     serial_println!("[MEM] [+] Heap allocator ready");
 }

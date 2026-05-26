@@ -6,14 +6,15 @@
 
 ---
 
-## COMPLETED (53 items)
+## COMPLETED (54 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
 2. **GDT/IDT/PIC** — segmentos Ring 0/3, IDT 256 entradas, PIC remapeado IRQ 32–47.
 3. **Identity paging 4 GiB** — páginas enormes 2 MB, identidad hasta 4 GB.
 4. **Heap allocator** — 16 MB @ 0x1000000, `linked_list_allocator`, Box/Vec/String.
-5. **PS/2 keyboard driver** — IRQ1, ring-buffer lock-free 1024 bytes.
+5. **A3. Kernel slab allocator** — 9 size classes (8B–2KB), O(1) alloc/free via per-slot free lists on 4 KB slab pages. Uses `hal::alloc_page()` for page allocation. Falls through to linked-list allocator for >2 KB or >16-byte alignment. 9 self-tests.
+6. **PS/2 keyboard driver** — IRQ1, ring-buffer lock-free 1024 bytes.
 6. **Serial console** — COM1, `serial_print!`/`serial_println!`.
 7. **Framebuffer console** — GOP 1280×800, font VGA 8×16, `println!`.
 
@@ -80,12 +81,7 @@ Versión: v0.20 → v1.0
 Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
 
 🧱 FASE 1 — KERNEL FOUNDATION (MEMORY + OBJECT MODEL)
-1. A3. Kernel slab allocator
-
-Sistema de allocación eficiente por tipos de objeto (PCB, inodos, buffers, drivers).
-Base de toda la gestión de memoria del kernel.
-
-2. X2. Unified handle table
+1. X2. Unified handle table
 
 Tabla de handles global por proceso para abstraer recursos (files, pipes, devices, events).
 Permite un modelo único de acceso a recursos del sistema.

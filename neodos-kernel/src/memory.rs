@@ -262,6 +262,10 @@ pub fn free_frame(phys: u64) {
     ALLOCATOR.lock().free_frame(phys);
 }
 
+pub fn reserve_range(start: u64, size: u64) {
+    ALLOCATOR.lock().mark_used_region(start, start.saturating_add(size));
+}
+
 #[allow(dead_code)]
 pub fn page_size() -> u64 {
     PAGE_SIZE

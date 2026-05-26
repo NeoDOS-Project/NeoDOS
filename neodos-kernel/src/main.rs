@@ -9,6 +9,7 @@ extern crate alloc;
 use core::panic::PanicInfo;
 
 mod allocator;
+mod slab;
 mod arch;
 mod hal;
 mod console;
