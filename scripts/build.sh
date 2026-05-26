@@ -115,6 +115,15 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     else
         echo "[!] serial build script not found"
     fi
+
+    echo "[+] Compiling NEM v3 standalone driver (rtc)..."
+    DRV_DIR="$PROJECT_ROOT/drivers/rtc"
+    if [ -f "$DRV_DIR/build_nem.py" ]; then
+        python3 "$DRV_DIR/build_nem.py" "$NEM_DIR/BOOT"
+        echo "[✓] rtc.nem compiled"
+    else
+        echo "[!] rtc build script not found"
+    fi
     export NEM_DIR
 fi
 

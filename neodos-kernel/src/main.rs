@@ -239,6 +239,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::boot_loader::boot_load_all();
 
     // ============================================
+    // PHASE 3.86: Initialise NEM driver bridges
+    // ============================================
+    drivers::rtc_bridge::init();
+
+    // ============================================
     // PHASE 3.9: Validate syscall ABI
     // ============================================
     println!("[+] Validating syscall ABI...");

@@ -19,6 +19,7 @@ use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::EVENT_KEYBOARD_INPUT;
 use crate::eventbus::EVENT_KEYB_LAYOUT;
+use crate::eventbus::EVENT_RTC_READ;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
 
@@ -108,6 +109,11 @@ pub fn boot_load_all() {
                                 "SERIAL" => {
                                     v3loader::register_v3_event_bus_handler(
                                         load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA
+                                    ).is_ok()
+                                }
+                                "RTC" => {
+                                    v3loader::register_v3_event_bus_handler(
+                                        load_result.entry_event, EVENT_RTC_READ
                                     ).is_ok()
                                 }
                                 _ => {

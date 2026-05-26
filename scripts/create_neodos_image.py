@@ -238,6 +238,7 @@ Happy hacking!
         boot_nem_files = [
             (21, "ps2kbd.nem"),
             (22, "serial.nem"),
+            (23, "rtc.nem"),
         ]
         for inum, fname in boot_nem_files:
             fpath = os.path.join(nem_dir, "BOOT", fname)
@@ -397,6 +398,8 @@ VER
                 image[offset:offset+256] = entry_ps2kbd
                 entry_serial = create_dir_entry(22, 1, "serial.nem")
                 image[offset+256:offset+512] = entry_serial
+                entry_rtc = create_dir_entry(23, 1, "rtc.nem")
+                image[offset+512:offset+768] = entry_rtc
 
         # Boot driver data blocks
         for (inum, fname) in boot_nem_files:
