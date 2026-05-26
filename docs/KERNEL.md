@@ -58,7 +58,6 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `VOL`, `DRIVES`, `SYNC`, `CALL`
 - `CPUINFO` (CPUID vendor/brand)
 - `MEM` (memory stats derived from UEFI memory map)
-- `TSR` / `DEVICES` (TSR registry integration)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 

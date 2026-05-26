@@ -23,11 +23,9 @@ mod input;
 mod shell;
 mod graphics;
 mod font;
-mod tsr;
 mod nem;
 mod elf;
 mod pipe;
-mod devices;
 mod eventbus;
 mod memory;
 mod globals;
@@ -219,11 +217,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     drivers::ps2::set_leds(0b111); // All ON = storage ready
-
-    // ============================================
-    // PHASE 3.5: Device Model + HAL Binding Layer
-    // ============================================
-    devices::register_boot_devices();
 
     // ============================================
     // PHASE 3.75: Driver Runtime + Built-in Drivers

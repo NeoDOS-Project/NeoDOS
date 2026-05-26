@@ -105,19 +105,13 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 
 ## Driver Architecture (v0.16+)
 
-NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → HAL Binding Layer → HAL ABI v0.3 → hardware`.
+NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → Event Bus → HAL ABI v0.3 → hardware`.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                    Drivers (NEM v3 / built-in)            │
 │   AHCI · ATA · PS/2 · FAT32 · RTC · PCI · NVMe · USB    │
 │   null · echo · timer_listener · reference drivers       │
-└─────────────────────────┬────────────────────────────────┘
-                          │ DeviceHandle (opaque, capability-limited)
-┌─────────────────────────▼────────────────────────────────┐
-│              Device Model + HAL Binding Layer             │
-│   src/devices/mod.rs — DeviceRegistry (32 slots)          │
-│   device_read/write/query/register_irq/ack_irq (stubs)    │
 └─────────────────────────┬────────────────────────────────┘
                           │ Event Bus v1 (56-byte Event struct)
 ┌─────────────────────────▼────────────────────────────────┐
@@ -159,46 +153,7 @@ CPU initialization code (GDT, IDT, PIC, paging) stays in `arch/x64/` — it is a
 
 ---
 
-### 2. Device Model (`src/devices/mod.rs`)
-
-**Controlled hardware exposure layer**. All driver hardware access MUST go through this layer.
-
-**Core types:**
-
-| Type | Values |
-|------|---------|
-| `DeviceClass` | `Input=0`, `Storage=1`, `Timer=2`, `Communication=3`, `Virtual=4`, `Unknown=5` |
-| `DeviceType` | `Keyboard=0`, `Disk=1`, `Timer=2`, `Serial=3`, `Framebuffer=4`, `PciController=5`, `AhciController=6`, `IdeController=7`, `UsbController=8`, `Generic=9` |
-| `DeviceState` | `Offline=0`, `Online=1`, `Error=2` |
-
-**Capabilities bitmap:** `CAP_READ=1`, `CAP_WRITE=2`, `CAP_IRQ=4`, `CAP_DMA=8`, `CAP_MMIO=16`
-
-**`DeviceRegistry`**: Thread-safe 32-slot registry with 16-slot binding table, protected by `spin::Mutex`.
-
-| Method | Description |
-|--------|-------------|
-| `register()` | Adds device in Online state |
-| `find_by_id()` / `find_by_name()` | Lookup |
-| `bind(driver, device_id) → DeviceHandle` | Creates capability-limited opaque handle |
-| `unbind()` / `is_bound()` | Binding management |
-| `set_state()` / `set_error()` | State control |
-
-**`DeviceHandle`**: `{ device_id: u32, capabilities: u32 }` — no raw hardware access.
-
-**Boot-time devices (5 registered in `register_boot_devices()`):**
-| Name | Type | IRQ | Caps |
-|--------|------|-----|------|
-| `pit` | Timer | 32 | R |
-| `com1` | Serial | — | RW |
-| `ps2kbd` | Keyboard | 33 | R·I |
-| `framebuffer` | Framebuffer | — | RW·M |
-| `pci` | PCI Config | — | RW |
-
-**HAL Binding Layer (stubs):** `device_read()`, `device_write()`, `device_register_irq()`, `device_ack_irq()` return `IoError` (pending implementation). `device_query_status()` works by querying the registry.
-
----
-
-### 3. Event Bus v1 (`src/eventbus/mod.rs`)
+### 2. Event Bus v1 (`src/eventbus/mod.rs`)
 
 **Centralized event routing layer**. Transforms raw IRQs into normalized events.
 
@@ -243,7 +198,7 @@ struct Event {
 
 ---
 
-### 4. NEM v3 — Driver Format (`src/nem/mod.rs`)
+### 3. NEM v3 — Driver Format (`src/nem/mod.rs`)
 
 NeoDOS Driver Format v3. 80-byte header + sections (text, rodata, data, bss) + relocation table + symbol table + string table.
 
@@ -295,7 +250,7 @@ ABI constants: `ABI_MIN_VALID=1`, `ABI_TARGET=1`, `ABI_MAX_VALID=2`
 
 ---
 
-### 5. NEM v3 Loader (`src/drivers/nem/v3loader.rs`)
+### 4. NEM v3 Loader (`src/drivers/nem/v3loader.rs`)
 
 Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, applies relocations, and resolves symbols against the **Kernel Export Table (KET)**.
 
@@ -324,7 +279,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 
 ---
 
-### 6. Driver Certification Pipeline (`src/drivers/driver_runtime.rs`)
+### 5. Driver Certification Pipeline (`src/drivers/driver_runtime.rs`)
 
 Strict **7-state state machine** for driver lifecycle management.
 
@@ -365,7 +320,7 @@ Any state → Faulted(5) | Unloaded(6)
 
 ---
 
-### 7. Boot Driver Loader (`src/drivers/boot_loader/mod.rs`)
+### 6. Boot Driver Loader (`src/drivers/boot_loader/mod.rs`)
 
 Automatic NEM v3 driver loading orchestrator at system startup (PHASE 3.85 in `main.rs`).
 
@@ -398,7 +353,7 @@ read_nem_file() → parse_nem_v3() → validate ABI → load_nem_v3()
 
 ---
 
-### 8. Built-in Drivers (`src/drivers/builtin_drivers.rs`)
+### 7. Built-in Drivers (`src/drivers/builtin_drivers.rs`)
 
 Drivers embedded in the kernel that register as Event Bus callbacks.
 
@@ -412,7 +367,7 @@ None execute external driver code — they only update `DriverRuntime` statistic
 
 ---
 
-### 9. Legacy: Driver Loader (`src/drivers/driver_loader.rs`)
+### 8. Legacy: Driver Loader (`src/drivers/driver_loader.rs`)
 
 Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init or certification — the driver stays in **Loaded** state (not Active).
 
@@ -425,7 +380,7 @@ Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init o
 
 ---
 
-### 10. NDREG — Registry CLI (`src/shell/commands/ndreg.rs`)
+### 9. NDREG — Registry CLI (`src/shell/commands/ndreg.rs`)
 
 A `regedit`-style tool for inspecting the driver registry.
 
@@ -443,17 +398,7 @@ A `regedit`-style tool for inspecting the driver registry.
 
 ---
 
-### 11. TSR Modules (`src/tsr/mod.rs`)
-
-Terminate-and-Stay-Resident: loads flat binaries into memory (0x430000+) and associates them with an interrupt vector. Up to 16 TSR programs, max 64 KB per program.
-
-- `install_tsr(filename, interrupt_num, fs, cache, dev)` — loads from NeoFS, copies to memory, registers
-- `dispatch_interrupt(interrupt_num)` — executes all registered TSRs for a given vector
-- Shell command `TSR <FILE> <INT>`
-
----
-
-### 12. Hardware Drivers (kernel-side)
+### 10. Hardware Drivers (kernel-side)
 
 Beyond the NEM driver framework, the kernel includes integrated hardware drivers:
 
@@ -474,9 +419,9 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ---
 
-### 13. Test Coverage
+### 11. Test Coverage
 
-The kernel testing framework includes **245+ tests** with suites dedicated to the driver architecture:
+The kernel testing framework includes **229 tests** with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -496,9 +441,9 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 
 ---
 
-### 14. Architecture Rules
+### 12. Architecture Rules
 
-- Drivers **never** touch hardware directly. All access via `device_read/write` or HAL ABI.
+- Drivers **never** touch hardware directly. All access via Event Bus or HAL ABI.
 - Drivers **never** execute in IRQ context. Events are queued and dispatched from the scheduler.
 - The certification pipeline is **strict**: states cannot be skipped.
 - A driver is **ACTIVE** only after Loaded → Initialized → Registered → Bound → Active.

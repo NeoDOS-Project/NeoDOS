@@ -140,8 +140,6 @@ pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
 pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
 pub fn cmd_rd(shell: &mut DosShell, args: &[&str]) { shell.cmd_rd(args); }
 pub fn cmd_ver(_shell: &mut DosShell, _args: &[&str]) { crate::println!("NeoDOS v{}", env!("CARGO_PKG_VERSION")); }
-pub fn cmd_tsr(shell: &mut DosShell, args: &[&str]) { shell.cmd_tsr(args); }
-pub fn cmd_devices(shell: &mut DosShell, _args: &[&str]) { shell.cmd_devices(); }
 pub fn cmd_test(shell: &mut DosShell, args: &[&str]) { shell.cmd_test(args); }
 pub fn cmd_date(shell: &mut DosShell, args: &[&str]) { shell.cmd_date(args); }
 pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
@@ -270,14 +268,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  SYNC\n",
                        "  Flush all pending disk writes from the block cache\n",
                        "  to the physical disk."), },
-    CommandEntry { name: "TSR",      category: "CTRL",     handler: cmd_tsr,     description: "Load TSR module",
-        usage: concat!("Syntax:  TSR file intnum\n",
-                       "  Load a Terminate-and-Stay-Resident module.\n",
-                       "  TSR DRIVER.NDM 0x60   loads driver.NDM at INT 0x60"), },
-    CommandEntry { name: "DEVICES",  category: "CTRL",     handler: cmd_devices, description: "List installed TSRs",
-        usage: concat!("Syntax:  DEVICES\n",
-                       "  List all installed TSR (Terminate-and-Stay-Resident)\n",
-                       "  modules and their interrupt numbers."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
         usage: concat!("Syntax:  TEST\n",
                        "  Run all kernel self-tests (120 tests across 12 suites).\n",

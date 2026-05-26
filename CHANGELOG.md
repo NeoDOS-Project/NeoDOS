@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.17.1 — 2026-05-26
+
+### Device Model + TSR Removal — Eliminado
+- **Eliminado**: `src/devices/mod.rs` — Device Model + HAL Binding Layer v0.3 (replaced by direct NEM v3 driver model + Event Bus + HAL ABI v0.3)
+- **Eliminado**: `src/tsr/mod.rs` — TSR (Terminate-and-Stay-Resident) module system (legacy, superseded by NEM v3 driver framework)
+- **Eliminado**: `src/shell/commands/devices.rs` — DEVICES shell command
+- **Eliminado**: `src/shell/commands/tsr.rs` — TSR shell command
+- **Modificado**: `globals.rs` — removed `DEVICE_REGISTRY` global
+- **Modificado**: `main.rs` — removed `devices::register_boot_devices()` call
+- **Modificado**: `handler.rs` — removed TSR and DEVICES command entries
+- **Modificado**: `idt.rs` — removed `tsr::dispatch_interrupt(0x1C)` from timer handler
+- **Total**: 229 kernel tests + 4 user-mode binaries (unchanged)
+
 ## v0.17.0 — 2026-05-26
 
 ### W1. ABI Negotiation Layer — Añadido

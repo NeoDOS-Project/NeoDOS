@@ -336,8 +336,6 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         }
     }
 
-    crate::tsr::dispatch_interrupt(0x1C);
-
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
