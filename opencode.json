@@ -29,7 +29,7 @@
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Review changes in both the root repo (main) and the neodos/ subdirectory (master). Commit and push both to GitHub with descriptive messages. Run from the root of the repository.",
+      "template": "Review changes in both the root repo (main) and the neodos/ subdirectory (master). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Commit and push both to GitHub with descriptive messages. Run from the root of the repository.",
       "description": "Release to GitHub"
     }
   }
