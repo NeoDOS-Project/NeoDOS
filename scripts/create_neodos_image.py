@@ -169,78 +169,77 @@ Happy hacking!
         autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+1280:512+1536] = autoexec_inode
 
-        # Inode 6: HELLO.BIN — user-mode test binary (flat, loaded at 0x400000)
-        # Size is determined at build time; default to 64 KB slot (1 block = 4KB is enough)
-        hello_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'hello.bin')
-        hello_bin_data = b''
-        if os.path.exists(hello_bin_path):
-            with open(hello_bin_path, 'rb') as hf:
-                hello_bin_data = hf.read()
-            print(f"[*] Including hello.bin ({len(hello_bin_data)} bytes)")
-        else:
-            print("[!] hello.bin not found — skipping (run 'nasm -f bin -o userbin/hello.bin userbin/hello.asm')")
+        # Read all user binary data
+        userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
+        bin_files = {}
+        for name in ['hello', 'systest', 'filetest', 'alltest']:
+            fpath = os.path.join(userbin_dir, f'{name}.bin')
+            data = b''
+            if os.path.exists(fpath):
+                with open(fpath, 'rb') as f:
+                    data = f.read()
+                print(f"[*] Including {name}.bin ({len(data)} bytes)")
+            else:
+                print(f"[!] {name}.bin not found — skipping")
+            bin_files[name] = data
 
-        hello_inode = create_inode(6, 0x80, len(hello_bin_data), [6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+1536:512+1792] = hello_inode
+        # Allocate data blocks dynamically from block 6 onwards
+        next_block = 6
+        block_allocs = {}  # inode_num -> list of block numbers
 
-        # Inode 7: SYSTEST.BIN — syscall test binary
-        systest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'systest.bin')
-        systest_bin_data = b''
-        if os.path.exists(systest_bin_path):
-            with open(systest_bin_path, 'rb') as sf:
-                systest_bin_data = sf.read()
-            print(f"[*] Including systest.bin ({len(systest_bin_data)} bytes)")
-        else:
-            print("[!] systest.bin not found — skipping (run 'python3 userbin/generate_systest.py')")
+        def alloc_blocks(inode_num, data_size):
+            nonlocal next_block
+            if data_size == 0:
+                block_allocs[inode_num] = []
+                return []
+            blocks_needed = max(1, (data_size + BLOCK_SIZE - 1) // BLOCK_SIZE)
+            if blocks_needed > 12:
+                print(f"[!] Warning: {inode_num} needs {blocks_needed} blocks (max 12)")
+                blocks_needed = 12
+            blks = list(range(next_block, next_block + blocks_needed))
+            next_block += blocks_needed
+            block_allocs[inode_num] = blks
+            return blks
 
-        systest_inode = create_inode(7, 0x80, len(systest_bin_data), [7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+1792:512+2048] = systest_inode
+        # Assign blocks for user binaries
+        hello_blocks = alloc_blocks(6, len(bin_files['hello']))
+        systest_blocks = alloc_blocks(7, len(bin_files['systest']))
+        filetest_blocks = alloc_blocks(8, len(bin_files['filetest']))
+        alltest_blocks = alloc_blocks(9, len(bin_files['alltest']))
+        dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
+        testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
+        bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
+        sys2dir_blocks = alloc_blocks(20, 512)      # SYSTEM dir (DRIVERS)
 
-        # Inode 8: FILETEST.BIN — file I/O test binary
-        filetest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'filetest.bin')
-        filetest_bin_data = b''
-        if os.path.exists(filetest_bin_path):
-            with open(filetest_bin_path, 'rb') as ff:
-                filetest_bin_data = ff.read()
-            print(f"[*] Including filetest.bin ({len(filetest_bin_data)} bytes)")
-        else:
-            print("[!] filetest.bin not found — skipping (run 'python3 userbin/generate_filetest.py')")
+        # Build inodes with correct block lists
+        def pad_blocks(blks):
+            """Pad block list to 12 entries with zeros."""
+            return (blks + [0] * 12)[:12]
 
-        filetest_inode = create_inode(8, 0x80, len(filetest_bin_data), [8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+2048:512+2304] = filetest_inode
+        inodes_data = {
+            6: (0x80, len(bin_files['hello']), pad_blocks(hello_blocks)),
+            7: (0x80, len(bin_files['systest']), pad_blocks(systest_blocks)),
+            8: (0x80, len(bin_files['filetest']), pad_blocks(filetest_blocks)),
+            9: (0x80, len(bin_files['alltest']), pad_blocks(alltest_blocks)),
+            15: (0x40, BLOCK_SIZE, pad_blocks(dir_blocks)),
+            16: (0x40, 256 * 5, pad_blocks(testdir_blocks)),
+            19: (0x40, 256 * 2, pad_blocks(bootdir_blocks)),
+            20: (0x40, 512, pad_blocks(sys2dir_blocks)),
+        }
 
-        # Inode 9: ALLTEST.BIN — comprehensive syscall test
-        alltest_bin_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'alltest.bin')
-        alltest_bin_data = b''
-        if os.path.exists(alltest_bin_path):
-            with open(alltest_bin_path, 'rb') as af:
-                alltest_bin_data = af.read()
-            print(f"[*] Including alltest.bin ({len(alltest_bin_data)} bytes)")
-        else:
-            print("[!] alltest.bin not found — skipping")
-
-        alltest_inode = create_inode(9, 0x80, len(alltest_bin_data), [9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+2304:512+2560] = alltest_inode
-
-        # Inode 15: DRIVERS directory (under SYSTEM)
-        drivers_inode = create_inode(15, 0x40, 512 * 3, [15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])  # 3 entries: TEST, BOOT, SYSTEM
-        image[512+3840:512+4096] = drivers_inode
-
-        # Inode 19: BOOT directory (under DRIVERS)
-        boot_dir_inode = create_inode(19, 0x40, 256, [19, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+4864:512+5120] = boot_dir_inode
-
-        # Inode 20: SYSTEM directory (under DRIVERS) — distinct from C:\SYSTEM
-        sys2_dir_inode = create_inode(20, 0x40, 512, [20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+5120:512+5376] = sys2_dir_inode
+        # Write inodes to inode table
+        for inum, (mode, size, blks) in inodes_data.items():
+            inode = create_inode(inum, mode, size, blks)
+            offset = 512 + inum * 256
+            image[offset:offset+256] = inode
 
         # Boot .nem driver inodes (BOOT category)
         boot_nem_data = {}
         boot_nem_files = [
-            (21, "ps2kbd.nem", 21),
-            (22, "serial.nem", 23),
+            (21, "ps2kbd.nem"),
+            (22, "serial.nem"),
         ]
-        for inum, fname, block in boot_nem_files:
+        for inum, fname in boot_nem_files:
             fpath = os.path.join(nem_dir, "BOOT", fname)
             data = b''
             if os.path.exists(fpath):
@@ -248,11 +247,8 @@ Happy hacking!
                     data = nf.read()
                 print(f"[*] Including BOOT/{fname} ({len(data)} bytes)")
             boot_nem_data[inum] = data
-            blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
-            block_list = [0] * 12
-            for bi in range(min(blocks_needed, 12)):
-                block_list[bi] = block + bi
-            inode = create_inode(inum, 0x80, len(data), block_list)
+            blks = alloc_blocks(inum, len(data))
+            inode = create_inode(inum, 0x80, len(data), pad_blocks(blks))
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
@@ -260,7 +256,7 @@ Happy hacking!
         system_nem_data = {}
         system_nem_files = [
         ]
-        for inum, fname, block in system_nem_files:
+        for inum, fname in system_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
             data = b''
             if os.path.exists(fpath):
@@ -268,11 +264,8 @@ Happy hacking!
                     data = nf.read()
                 print(f"[*] Including SYSTEM/{fname} ({len(data)} bytes)")
             system_nem_data[inum] = data
-            blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
-            block_list = [0] * 12
-            for bi in range(min(blocks_needed, 12)):
-                block_list[bi] = block + bi
-            inode = create_inode(inum, 0x80, len(data), block_list)
+            blks = alloc_blocks(inum, len(data))
+            inode = create_inode(inum, 0x80, len(data), pad_blocks(blks))
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
@@ -308,10 +301,6 @@ Happy hacking!
         entry = create_dir_entry(9, 1, "ALLTEST.BIN")
         image[offset+1536:offset+1792] = entry
 
-        # Entry 7: HELLO.ELF (ELF64 user-mode binary)
-        entry = create_dir_entry(17, 1, "HELLO.ELF")
-        image[offset+1792:offset+2048] = entry
-        
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
         print("[*] Writing readme.txt content...")
@@ -361,99 +350,75 @@ VER
 """
         image[offset:offset+len(autoexec_content)] = autoexec_content
 
-        # Block 6 = sector 248 (HELLO.BIN — user-mode flat binary)
-        if hello_bin_data:
-            print("[*] Writing HELLO.BIN content...")
-            offset = (200 + 48) * 512
-            image[offset:offset+len(hello_bin_data)] = hello_bin_data
+        # Write user binary data across their allocated blocks
+        bin_data_map = {
+            6: ('HELLO.BIN', bin_files['hello']),
+            7: ('SYSTEST.BIN', bin_files['systest']),
+            8: ('FILETEST.BIN', bin_files['filetest']),
+            9: ('ALLTEST.BIN', bin_files['alltest']),
+        }
+        for inum, (name, data) in bin_data_map.items():
+            if not data:
+                continue
+            blks = block_allocs.get(inum, [])
+            print(f"[*] Writing {name} content ({len(data)} bytes across {len(blks)} blocks)...")
+            for bi, blk in enumerate(blks):
+                chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
 
-        # Block 7 = sector 256 (SYSTEST.BIN — syscall test binary)
-        if systest_bin_data:
-            print("[*] Writing SYSTEST.BIN content...")
-            offset = (200 + 56) * 512
-            image[offset:offset+len(systest_bin_data)] = systest_bin_data
-
-        # Block 8 = sector 264 (FILETEST.BIN — file I/O test binary)
-        if filetest_bin_data:
-            print("[*] Writing FILETEST.BIN content...")
-            offset = (200 + 64) * 512
-            image[offset:offset+len(filetest_bin_data)] = filetest_bin_data
-
-        # Block 9 = sector 272 (ALLTEST.BIN — comprehensive syscall test)
-        if alltest_bin_data:
-            print("[*] Writing ALLTEST.BIN content...")
-            offset = (200 + 72) * 512
-            image[offset:offset+len(alltest_bin_data)] = alltest_bin_data
-
-        # Block 17 = sector 336 (HELLO.ELF — ELF64 user-mode test binary)
-        hello_elf_path = os.path.join(os.path.dirname(__file__), '..', 'userbin', 'hello.elf')
-        hello_elf_data = b''
-        if os.path.exists(hello_elf_path):
-            with open(hello_elf_path, 'rb') as hf:
-                hello_elf_data = hf.read()
-            print(f"[*] Including hello.elf ({len(hello_elf_data)} bytes)")
-        else:
-            print("[!] hello.elf not found — skipping")
-        hello_elf_inode = create_inode(17, 0x80, len(hello_elf_data), [17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+4352:512+4608] = hello_elf_inode
-        if hello_elf_data:
-            print("[*] Writing HELLO.ELF content...")
-            offset = (200 + 136) * 512
-            image[offset:offset+len(hello_elf_data)] = hello_elf_data
-
-        # Block 15 = sector 320 (DRIVERS directory)
+        # Write directory data blocks
         print("[*] Writing DRIVERS directory...")
-        offset = (200 + 120) * 512
+        off = (200 + dir_blocks[0] * 8) * 512
         entry_boot = create_dir_entry(19, 2, "BOOT")
-        image[offset+256:offset+512] = entry_boot
+        image[off+256:off+512] = entry_boot
         entry_sys2 = create_dir_entry(20, 2, "SYSTEM")
-        image[offset+512:offset+768] = entry_sys2
+        image[off+512:off+768] = entry_sys2
 
-        # Block 16 = sector 328 (TEST directory)
         print("[*] Writing TEST directory...")
-        offset = (200 + 128) * 512
+        off = (200 + testdir_blocks[0] * 8) * 512
         entry_null = create_dir_entry(10, 1, "null.nem")
-        image[offset:offset+256] = entry_null
+        image[off:off+256] = entry_null
         entry_echo = create_dir_entry(11, 1, "echo.nem")
-        image[offset+256:offset+512] = entry_echo
+        image[off+256:off+512] = entry_echo
         entry_stress = create_dir_entry(12, 1, "stress_lifecycle.nem")
-        image[offset+512:offset+768] = entry_stress
+        image[off+512:off+768] = entry_stress
         entry_fault = create_dir_entry(13, 1, "fault.nem")
-        image[offset+768:offset+1024] = entry_fault
+        image[off+768:off+1024] = entry_fault
         entry_burst = create_dir_entry(14, 1, "burst.nem")
-        image[offset+1024:offset+1280] = entry_burst
+        image[off+1024:off+1280] = entry_burst
 
-        # Block 19 = sector 352 (BOOT directory)
+        # BOOT directory (uses dynamically allocated blocks)
         print("[*] Writing BOOT directory...")
-        offset = (200 + 152) * 512
-        entry_ps2kbd = create_dir_entry(21, 1, "ps2kbd.nem")
-        image[offset:offset+256] = entry_ps2kbd
-        entry_serial = create_dir_entry(22, 1, "serial.nem")
-        image[offset+256:offset+512] = entry_serial
+        for bi, blk in enumerate(bootdir_blocks):
+            if bi == 0:
+                offset = (200 + blk * 8) * 512
+                entry_ps2kbd = create_dir_entry(21, 1, "ps2kbd.nem")
+                image[offset:offset+256] = entry_ps2kbd
+                entry_serial = create_dir_entry(22, 1, "serial.nem")
+                image[offset+256:offset+512] = entry_serial
 
         # Boot driver data blocks
-        for (inum, fname, block) in boot_nem_files:
+        for (inum, fname) in boot_nem_files:
             data = boot_nem_data.get(inum, b'')
             if data:
-                blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
-                for bi in range(blocks_needed):
+                blks = block_allocs.get(inum, [])
+                for bi, blk in enumerate(blks):
                     chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                    blk = block + bi
                     offset = (200 + blk * 8) * 512
                     image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing BOOT/{fname} content...")
 
-        # Block 20 = sector 360 (SYSTEM directory under DRIVERS) - currently empty
+        # SYSTEM directory (DRIVERS) - uses dynamically allocated block
         print("[*] Writing SYSTEM directory (DRIVERS) - empty...")
 
         # System driver data blocks
-        for (inum, fname, block) in system_nem_files:
+        for (inum, fname) in system_nem_files:
             data = system_nem_data.get(inum, b'')
             if data:
-                blocks_needed = max(1, (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE)
-                for bi in range(blocks_needed):
+                blks = block_allocs.get(inum, [])
+                for bi, blk in enumerate(blks):
                     chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                    blk = block + bi
                     offset = (200 + blk * 8) * 512
                     image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing SYSTEM/{fname} content...")

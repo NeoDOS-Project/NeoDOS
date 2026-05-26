@@ -74,102 +74,322 @@
 
 ---
 
-## PRIORIDAD S — CRÍTICO (5 items)
+NeoDOS — ORDERED IMPROVEMENTS (WITH DESCRIPTION)
 
-Estos items desbloquean todo el roadmap futuro.
+Versión: v0.20 → v1.0
+Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
 
-42. **S3. Shell output redirection** — `DIR > FILE.TXT`, `ECHO >> FILE.TXT`, `CMD > FILE`.
-43. **S4. FAT32 write** — escritura real en FAT32: directorios, archivos, clusters.
-44. **S8. PATH resolution** — búsqueda automática de ejecutables en C:\BIN, C:\SYSTEM, etc.
-45. **S9. Shell pipe operator** — `CMD1 | CMD2`, conectar stdout→stdin vía pipes.
-46. **S10. Batch IF/GOTO/FOR** — parser batch con IF/ELSE, GOTO, FOR, variables.
+🧱 FASE 1 — KERNEL FOUNDATION (MEMORY + OBJECT MODEL)
+1. A3. Kernel slab allocator
 
----
+Sistema de allocación eficiente por tipos de objeto (PCB, inodos, buffers, drivers).
+Base de toda la gestión de memoria del kernel.
 
-## PRIORIDAD A — INFRAESTRUCTURA (13 items)
+2. X2. Unified handle table
 
-50. **A1. Signals userland** — SIGSEGV/SIGTERM/SIGINT, handlers Ring 3, delivery vía IRETQ.
-51. **A2. Scheduler prioritario** — prioridades, time slices dinámicos, idle task dedicada.
-52. **A3. Kernel slab allocator** — caches por tamaño (inodos, PCB, buffers FS).
-53. **A4. DMA dinámico** — PRDT dinámico, multi-block DMA, page pools.
-54. **A5. Cache global de bloques** — LRU entre FS, write-back opcional, dirty tracking.
-55. **A6. Hard links + symlinks** — enlaces duros NeoFS, symlinks vía VFS.
-56. **A7. Compresión transparente** — bloques DEFLATE/LZ4, flags por archivo.
-57. **A8. VirtIO block driver** — PCI VirtIO, multi-queue, paravirtualización.
-58. **A9. NVMe driver** — queues NVMe, MSI/MSI-X, async completions.
-59. **A10. PCIe enumeration** — escaneo completo buses PCIe (no solo bus 0).
-60. **A11. MSI/MSI-X** — interrupciones basadas en mensajes, reemplazar PIC.
-61. **A12. Ramdisk driver** — dispositivo de bloque en memoria para archivos temporales.
+Tabla de handles global por proceso para abstraer recursos (files, pipes, devices, events).
+Permite un modelo único de acceso a recursos del sistema.
 
----
+3. X1. Kernel Object Manager (KOBJ)
 
-## PRIORIDAD B — USERLAND & UX (14 items)
+Sistema unificado de objetos kernel con refcount y metadata común.
+Convierte todo el kernel en objetos gestionables.
 
-63. **B1. Terminales virtuales** — Alt+F1..F4, shells independientes, TSS activo.
-64. **B2. ANSI escape** — colores 16, cursor control, clear, VT100 subset.
-65. **B3. Scrollback buffer** — buffer circular VGA, navegación Shift+↑/↓.
-66. **B4. Alias y configuración** — alias persistentes, perfil shell desde AUTOEXEC.BAT.
-67. **B5. Shell multilínea** — continuaciones `^`, historial persistente en disco.
-68. **B6. NeoEdit** — editor de texto integrado estilo edit.com.
-69. **B7. NeoTOP** — monitor procesos: CPU, memoria, scheduler stats.
-70. **B8. NeoTrace** — tracing syscalls por proceso, logs en NeoFS.
-71. **B9. BMP/PNG viewer** — visor de imágenes sobre framebuffer.
-72. **B10. WAV/PCM audio** — mixer simple, buffer ring, PC speaker / SB16.
-73. **B11. NeoShell script language** — parser propio: variables, funciones, loops, arrays.
-74. **B12. Compositor 2D** — ventanas en memoria, doble buffer, clipping.
-75. **B13. Driver GPU lineal** — abstracción framebuffer, primitivas aceleradas.
-76. **B14. Swap** — disco como memoria secundaria, page-out/page-in.
+4. A5. Global page cache (base)
 
----
+Caché central de páginas para filesystem, mmap e I/O.
+Reduce acceso a disco y unifica modelo de memoria.
 
-## PRIORIDAD C — HARDWARE (7 items)
+⚙️ FASE 2 — CONCURRENCY & EXECUTION MODEL
+5. A2. Scheduler prioritario
 
-77. **C1. USB HID funcional** — UHCI/EHCI, teclados USB reales (PIIX3 fix).
-78. **C2. USB mass storage** — pendrives vía UHCI/EHCI + SCSI.
-79. **C3. HPET / APIC timers** — alta precisión, reemplazar PIT.
-80. **C4. Paging optimizado** — reutilización page tables, TLB flush selectivo.
-81. **C5. Input lock-free** — eliminar cli/sti frecuentes en ring buffer.
-82. **C6. AHCI NCQ** — Native Command Queuing, múltiples comandos simultáneos.
-83. **C7. USB UHCI completo** — driver UHCI funcional (actualmente no escribe FLBASEADD).
+Planificador con prioridades y time-slicing dinámico.
+Permite multitarea real con control de CPU.
 
----
+6. X5. Deferred work queues
 
-## PRIORIDAD D — ECOSISTEMA (10 items)
+Sistema de bottom-half para mover trabajo fuera de IRQ context.
+Evita bloqueos en interrupciones y mejora estabilidad.
 
-84. **D1. SDK externo** — cargo-neodos, GCC cross, documentación ABI userland.
-85. **D2. CI Integration** — GitHub Actions: build + QEMU test + regression.
-86. **D3. Build profiles** — debug/release/minimal/test con features separadas.
-87. **D4. Benchmark system** — IOPS, syscall latency, scheduler, FS stress.
-88. **D5. Kernel debugger** — breakpoints, stack traces, dump memoria, inspect procesos.
-89. **D6. Crash dump** — persistir panic dumps a NeoFS, análisis post-mortem.
-90. **D7. NTP client** — sincronización horaria vía UDP.
-91. **D8. DHCP client** — configuración automática IP/gateway/DNS.
-92. **D9. Socket API** — UDP/TCP, bind/listen/connect, syscall integration.
-93. **D10. POSIX compatibility** — wrappers POSIX sobre syscalls NeoDOS.
+7. X7. Event Bus v2
 
----
+Sistema de eventos asíncrono con colas y dispatch controlado.
+Base de comunicación entre kernel, drivers y userland.
 
-## PRIORIDAD E — EXPERIMENTAL (7 items)
+🔁 FASE 3 — ASYNC I/O CORE
+8. X6. Async I/O (IRP system)
 
-94. **E1. ARM64 backend** — MMU ARM64, exception vectors, generic timer.
-95. **E2. SMP** — multi-CPU, IPIs, locking atómico, scheduler balanceado.
-96. **E3. Network stack** — TCP/IP completo, drivers NIC (e1000, RTL8139).
-97. **E4. GUI básica** — ventanas, ratón, iconos, barra de tareas.
-98. **E5. Secure boot** — módulos firmados, validación SHA-256, modo developer.
-99. **E6. Package manager** — repositorio, dependencias, instalación automatizada.
-100. **E7. Real hardware boot** — probar y corregir arranque en hardware real (no solo QEMU).
+Modelo unificado de peticiones I/O asincrónicas.
+Base para discos, red, USB y filesystem moderno.
 
----
+9. V1. Global page cache (advanced)
 
-## Resumen
+Evolución del cache con LRU, write-back y readahead.
+Optimiza rendimiento de almacenamiento y mmap.
 
-| Estado | Items | Prioridades |
-|--------|-------|-------------|
-| COMPLETED | 54 | — |
-| S — Crítico | 5 | Redirection, FAT32 write, pipe operator, batch |
-| A — Infraestructura | 12 | Signals, scheduler, slab, DMA, cache, links, compression, VirtIO, NVMe, PCIe, MSI, ramdisk |
-| B — Userland & UX | 14 | Virtual terminals, ANSI, scrollback, NeoEdit, NeoTOP, NeoShell, compositor, swap |
-| C — Hardware | 7 | USB HID, USB storage, HPET, paging, lock-free input, NCQ, UHCI |
-| D — Ecosistema | 10 | SDK, CI, benchmarks, debugger, crash dump, NTP, DHCP, sockets, POSIX |
-| E — Experimental | 7 | ARM64, SMP, network, GUI, secure boot, package manager, real hardware |
-| **Total** | **109** | |
+🧩 FASE 4 — DRIVER ARCHITECTURE SAFETY LAYER
+10. X3. Capability system
+
+Sistema de capacidades explícitas (IRQ, DMA, MMIO, etc).
+Controla qué puede hacer cada driver.
+
+11. X4. Driver isolation layer
+
+Aislamiento parcial de drivers con límites de memoria y acceso.
+Reduce riesgo de crash kernel por drivers defectuosos.
+
+12. W1. ABI negotiation layer
+
+Compatibilidad entre kernel y drivers mediante ABI versionado.
+Permite evolución sin romper drivers antiguos.
+
+13. W4. Driver dependency resolver
+
+Resuelve dependencias entre drivers automáticamente.
+Evita orden incorrecto de carga.
+
+14. W2. Hot reload drivers
+
+Carga y descarga de drivers en runtime sin reboot.
+Requiere ownership tracking y aislamiento estable.
+
+🧪 FASE 5 — OBSERVABILITY & DEBUGGING (CRÍTICO)
+15. Y1. Kernel tracing infrastructure
+
+Sistema de tracing de eventos del kernel en tiempo real.
+Base para debugging avanzado.
+
+16. Y4. Crash dump framework
+
+Captura de estado completo del sistema tras fallo.
+Permite análisis post-mortem.
+
+17. Y2. NeoTrace system
+
+Herramienta de visualización y análisis de trazas del kernel.
+Debugging estructurado del sistema.
+
+18. Y5. Kernel debugger
+
+Debugger interactivo para inspección de memoria, procesos y drivers.
+Permite depuración runtime.
+
+19. Y6. Watchdog subsystem
+
+Sistema de detección de bloqueos y hangs del kernel.
+Recuperación automática de fallos.
+
+🖥️ FASE 6 — MODERN HARDWARE LAYER
+20. A10. PCIe enumeration
+
+Escaneo completo de buses PCIe.
+Base para hardware moderno real.
+
+21. A11. MSI/MSI-X
+
+Sistema moderno de interrupciones basado en mensajes.
+Reemplaza PIC legacy.
+
+22. C3. HPET / APIC timers
+
+Timers de alta precisión y soporte SMP inicial.
+Base del scheduling moderno.
+
+⚡ FASE 7 — MODERN I/O DRIVERS
+23. A8. VirtIO driver
+
+Driver paravirtualizado para testing rápido y estable.
+Simplifica desarrollo en QEMU.
+
+24. A9. NVMe driver
+
+Soporte moderno de almacenamiento de alta velocidad.
+Requiere async I/O.
+
+25. C6. AHCI NCQ
+
+Soporte avanzado SATA con colas múltiples.
+Optimiza discos tradicionales.
+
+🔌 FASE 8 — INPUT & STORAGE DEVICES
+26. C1. USB HID
+
+Soporte para teclado y dispositivos HID USB reales.
+Reemplaza PS/2 legacy.
+
+27. C2. USB mass storage
+
+Soporte para pendrives y discos USB.
+Integra con async I/O.
+
+28. C7. USB UHCI fix
+
+Corrección y estabilización del driver USB legacy.
+Completa compatibilidad hardware antiguo.
+
+🧠 FASE 9 — SERVICE LAYER & SYSTEM CORE
+29. Z1. NeoInit service manager
+
+Sistema de servicios con dependencias y lifecycle.
+Base del userland moderno.
+
+30. Z6. System configuration registry
+
+Persistencia de configuración del sistema.
+Similar a registry moderno.
+
+31. Z2. Unified resource namespace
+
+Todo el sistema accesible como filesystem virtual.
+Unifica procesos, drivers y dispositivos.
+
+32. Z3. Virtual FS objects
+
+/proc-like system para introspección del kernel.
+Expone estado interno como archivos.
+
+🌐 FASE 10 — NETWORKING STACK
+33. D9. Socket API
+
+API de sockets unificada para userland.
+Base de networking moderno.
+
+34. E3. Network stack (TCP/IP)
+
+Stack completo de red.
+Requiere async I/O y scheduler estable.
+
+35. D8. DHCP client
+
+Configuración automática de red.
+Depende del stack TCP/IP.
+
+36. D7. NTP client
+
+Sincronización de tiempo del sistema.
+Depende de networking estable.
+
+🧑‍💻 FASE 11 — USERLAND USABLE SYSTEM
+37. S8. PATH resolution
+
+Ejecución de comandos desde múltiples directorios.
+Base de shell usable.
+
+38. S9. Shell pipes
+
+Conexión de procesos por streams.
+Permite composición de comandos.
+
+39. S3. Shell redirection
+
+Redirección de stdout/stderr a archivos.
+Base de scripting.
+
+40. B2. ANSI terminal
+
+Soporte de colores, cursor y control terminal.
+Mejora UX shell.
+
+41. B1. Virtual terminals
+
+Múltiples sesiones de consola.
+Separación de contextos de usuario.
+
+42. B6. NeoEdit
+
+Editor de texto del sistema.
+Primera herramienta real de usuario.
+
+43. B7. NeoTOP
+
+Monitor de procesos y recursos.
+Visibilidad del sistema.
+
+44. B11. NeoShell scripting
+
+Lenguaje de scripting del sistema.
+Automatización avanzada.
+
+45. B12. Compositor 2D
+
+Sistema gráfico básico de ventanas.
+Base GUI.
+
+🔐 FASE 12 — SECURITY HARDENING
+46. U1. Module signature validation
+
+Validación criptográfica de drivers.
+Evita código no confiable.
+
+47. U3. Driver permission enforcement
+
+Control granular de permisos de drivers.
+Reduce superficie de ataque.
+
+48. U4. Secure boot chain
+
+Cadena de arranque verificada.
+Protección del sistema completo.
+
+⚡ FASE 13 — PERFORMANCE & MEMORY EVOLUTION
+49. V2. Zero-copy pipes
+
+IPC sin copias de memoria.
+Reduce overhead.
+
+50. V3. Copy-on-write fork
+
+Fork eficiente por páginas compartidas.
+Optimiza procesos.
+
+51. X10. Per-CPU allocators
+
+Allocators por CPU.
+Escalabilidad SMP.
+
+🧱 FASE 14 — SMP ENABLEMENT
+52. X8. SMP-safe kernel refactor
+
+Soporte multi-core completo.
+Reescritura mínima del core.
+
+🧪 FASE 15 — EXPERIMENTAL FUTURE
+53. E4. Full GUI system
+
+Interfaz gráfica completa con ventanas.
+
+54. E5. Advanced secure boot
+
+Secure boot extendido con políticas avanzadas.
+
+55. E6. Package manager
+
+Sistema de paquetes y repositorios.
+
+56. T4. Time-travel debugging
+
+Reproducción determinista de ejecuciones.
+
+57. T5. Live kernel patching
+
+Parches en caliente del kernel.
+
+58. T2. Distributed NeoDOS nodes
+
+NeoDOS en red distribuida.
+
+🧭 RESUMEN FINAL
+1. Memory core (slab + handles + KOBJ + page cache)
+2. Concurrency (scheduler + events + work queues)
+3. Async I/O system
+4. Driver safety layer
+5. Observability & debugging
+6. Modern hardware (PCIe + MSI + APIC)
+7. Storage + USB drivers
+8. Service layer (NeoInit + namespace)
+9. Networking stack
+10. Userland usable system
+11. Security hardening
+12. Performance tuning
+13. SMP enablement
+14. Experimental features
