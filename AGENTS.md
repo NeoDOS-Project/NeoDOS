@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.17.2
+v0.18.0
 
 ## Build & Run
 
@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 229 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 237 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -342,7 +342,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-229 tests en 27 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+237 tests en 28 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -368,11 +368,31 @@ Binarios flat cargados en `0x400000`.
 | Storage Ref | 14 | Reference storage driver: entrypoints, lifecycle, R/W, geometry, error handling |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
+| KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (229 tests kernel)
+1. Ejecuta `testing::run_all()` (237 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
+
+## Kernel Object Manager (KOBJ) v1
+
+`src/kobj/mod.rs` — Unified kernel object system with reference counting and common metadata.
+
+| Concept | Description |
+|---------|-------------|
+| **KObjType** | Enum (u32 repr): Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion |
+| **KObjEntry** | Per-object metadata: KObjId (u64), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
+| **KObjRegistry** | 64-slot fixed-size registry protected by `spin::Mutex`. Global via `lazy_static!` |
+| **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
+| **Integration** | Processes (scheduler.rs), drivers (driver_runtime.rs), pipes (pipe.rs) — auto-register on create, auto-unregister on destroy |
+| **Shell** | `KOBJ` command — list all kernel objects with ID, type, name, refcount, native ID |
+
+### KOBJ Command
+
+| Subcommand | Description |
+|-----------|-------------|
+| `KOBJ` | List all kernel objects tracked by KOBJ. Shows ID, type, name, reference count, and native ID |
 
 ## Event Bus v1
 

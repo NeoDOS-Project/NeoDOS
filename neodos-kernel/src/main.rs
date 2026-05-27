@@ -28,6 +28,7 @@ mod elf;
 mod handle;
 mod pipe;
 mod eventbus;
+mod kobj;
 mod memory;
 mod globals;
 pub mod usermode;

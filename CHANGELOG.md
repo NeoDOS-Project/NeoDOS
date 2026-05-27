@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.18.0 — 2026-05-27
+
+### X1. Kernel Object Manager (KOBJ) — Añadido
+- **Añadido**: `src/kobj/mod.rs` — KOBJ core module. Unified kernel object system with reference counting, type identification, and metadata tracking.
+- **KObjType**: Enum with 9 types (Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion).
+- **KObjEntry**: Per-object metadata (KObjId, refcount, type, 24-byte name, flags, creation tick, native_id).
+- **KObjRegistry**: 64-slot thread-safe registry protected by `spin::Mutex`. Register, unregister, lookup, ref_inc, ref_dec, iteration.
+- **Public API**: `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()`.
+- **Integración**: Processes registered on creation (`scheduler.rs`), unregistered on kill/exit. Drivers registered on load (`driver_runtime.rs`), unregistered on remove. Pipes registered on alloc (`pipe.rs`), unregistered on free.
+- **Shell**: `KOBJ` command lists all registered kernel objects (ID, type, name, refcount, native ID).
+- **Tests**: 8 tests (register/unregister, refcount, type enum, entry name, registry full, lookup, double unregister, count).
+- **Total**: 237 kernel tests + 4 user-mode binaries.
+
 ## v0.17.2 — 2026-05-27
 
 ### X2. Unified Handle Table — Añadido

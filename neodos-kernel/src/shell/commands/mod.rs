@@ -23,6 +23,7 @@ mod fsck;
 mod help;
 mod keyb;
 mod kill;
+mod kobj;
 mod label;
 mod load;
 mod md;

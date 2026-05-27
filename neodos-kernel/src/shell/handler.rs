@@ -156,6 +156,7 @@ pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
 pub fn cmd_fsck(shell: &mut DosShell, args: &[&str]) { shell.cmd_fsck(args); }
+pub fn cmd_kobj(shell: &mut DosShell, _args: &[&str]) { shell.cmd_kobj(); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
@@ -321,6 +322,11 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  NEMLIST\n",
                        "  List all currently loaded .nem drivers with their\n",
                        "  IDs, names, states, event counts, and tick counts."), },
+    CommandEntry { name: "KOBJ", category: "INFO", handler: cmd_kobj, description: "List kernel objects",
+        usage: concat!("Syntax:  KOBJ\n",
+                       "  List all kernel objects tracked by the Kernel Object Manager.\n",
+                       "  Shows ID, type, name, reference count, and native ID for each\n",
+                       "  registered kernel object (processes, drivers, pipes, etc.)."), },
     CommandEntry { name: "FSCK", category: "CTRL", handler: cmd_fsck, description: "Check filesystem integrity",
         usage: concat!("Syntax:  FSCK [drive:] [/F]\n",
                        "  Check filesystem integrity on a NeoDOS volume.\n",

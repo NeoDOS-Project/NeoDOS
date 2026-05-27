@@ -1,5 +1,6 @@
 use spin::Mutex;
 use crate::scheduler::{self, ProcessState};
+use crate::kobj::{self, KObjType};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
 pub const MAX_PIPES: usize = 16;
@@ -68,15 +69,26 @@ impl PipeInner {
 
 pub struct PipeManager {
     pipes: [Mutex<PipeInner>; MAX_PIPES],
+    kobj_ids: Mutex<[Option<kobj::KObjId>; MAX_PIPES]>,
 }
 
 const PIPE_INIT: Mutex<PipeInner> = Mutex::new(PipeInner::new());
+const KOBJ_ID_NONE: Option<kobj::KObjId> = None;
 
 impl PipeManager {
     pub const fn new() -> Self {
         PipeManager {
             pipes: [PIPE_INIT; MAX_PIPES],
+            kobj_ids: Mutex::new([KOBJ_ID_NONE; MAX_PIPES]),
         }
+    }
+
+    fn set_kobj_id(&self, idx: usize, id: Option<kobj::KObjId>) {
+        self.kobj_ids.lock()[idx] = id;
+    }
+
+    fn get_kobj_id(&self, idx: usize) -> Option<kobj::KObjId> {
+        self.kobj_ids.lock()[idx]
     }
 
     pub fn alloc(&self) -> Option<u8> {
@@ -90,6 +102,11 @@ impl PipeManager {
                 pipe.read_closed = false;
                 pipe.read_refs = 0;
                 pipe.write_refs = 0;
+                drop(pipe);
+                let name = alloc::format!("pipe/{}", i);
+                if let Ok(kid) = kobj::kobj_register(KObjType::Pipe, &name, i as u64) {
+                    self.set_kobj_id(i, Some(kid));
+                }
                 return Some(i as u8);
             }
         }
@@ -119,6 +136,11 @@ impl PipeManager {
             pipe.read_closed = true;
             if pipe.read_refs == 0 && pipe.write_refs == 0 {
                 pipe.in_use = false;
+                let idx = pipe_id as usize;
+                if let Some(kid) = self.get_kobj_id(idx) {
+                    kobj::kobj_unregister(kid);
+                    self.set_kobj_id(idx, None);
+                }
             }
         }
     }
@@ -132,6 +154,11 @@ impl PipeManager {
             pipe.write_closed = true;
             if pipe.read_refs == 0 && pipe.write_refs == 0 {
                 pipe.in_use = false;
+                let idx = pipe_id as usize;
+                if let Some(kid) = self.get_kobj_id(idx) {
+                    kobj::kobj_unregister(kid);
+                    self.set_kobj_id(idx, None);
+                }
             }
         }
     }

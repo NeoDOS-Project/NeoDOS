@@ -135,6 +135,23 @@ NeoDOS implements a **layered driver architecture** with full hardware access me
 
 ---
 
+### 0. Kernel Object Manager — KOBJ (`src/kobj/mod.rs`)
+
+Unified kernel object system for tracking, referencing, and enumerating kernel objects.
+
+| Concept | Description |
+|---------|-------------|
+| **KObjType** | Enum (u32): Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion |
+| **KObjEntry** | Metadata per object: KObjId (u64, global sequential), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
+| **KObjRegistry** | 64-slot fixed-size array behind `spin::Mutex`, global via `lazy_static!` |
+| **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
+| **Integration** | Processes (`scheduler.rs`), drivers (`driver_runtime.rs`), pipes (`pipe.rs`) auto-register on creation and auto-unregister on destruction |
+| **CLI** | `KOBJ` shell command lists all live objects (ID, type, name, refcount, native_id) |
+
+The KOBJ registry is populated at boot by driver loading and at runtime by process/pipe creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close).
+
+---
+
 ### 1. HAL ABI v0.3 (`src/hal/x64/`)
 
 Lowest kernel layer. Provides **26 `extern "C` primitives** for pure hardware access:
@@ -451,15 +468,16 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 - `without_interrupts()` is used for critical sections that cannot be interrupted.
 
 ## Kernel Subsystems (High-Level)
+- **kobj**: `src/kobj/mod.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType), 24-byte names, and global registry (64 slots). Used by processes, drivers, and pipes for lifecycle tracking. `KOBJ` shell command lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO + bus-master DMA + AHCI fallback), AHCI, PS/2 keyboard, USB HID, PCI scanner, device event infrastructure
 - **buffer**: block cache (periodic flush via timer)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:)
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
-- **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`
+- **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `kobj_id` (optional KOBJ reference)
 - **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), max 16 processes, idle process (PID 0) always present. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.
-- **shell**: DOS-like shell with 29+ built-in commands, TAB autocomplete, environment variables
+- **shell**: DOS-like shell with 30+ built-in commands (including `KOBJ`), TAB autocomplete, environment variables
 
 ## Kernel Safety and Synchronization (v0.10.4+)
 The kernel architecture prioritizes memory safety and reentrancy:

@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.17.1 (229 tests, NEM v3 + ABI negotiation + dependency resolver, Device Model/TSR removed).
+> Versión actual: v0.18.0 (237 tests, KOBJ + NEM v3 + ABI negotiation + dependency resolver, Device Model/TSR removed).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (56 items)
+## COMPLETED (57 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -90,7 +90,7 @@ Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema comp
 Tabla de handles global por proceso para abstraer recursos (files, pipes, devices, events).
 Permite un modelo único de acceso a recursos del sistema.
 
-3. X1. Kernel Object Manager (KOBJ)
+3. **X1. Kernel Object Manager (KOBJ) — COMPLETED** (ver v0.18.0 en CHANGELOG)
 
 Sistema unificado de objetos kernel con refcount y metadata común.
 Convierte todo el kernel en objetos gestionables.

@@ -5,6 +5,7 @@ use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::handle::{HandleTable, closed_handle_table, default_handle_table};
+use crate::kobj::{self, KObjType};
 
 pub const MAX_PROCESSES: usize = 16;
 pub const KERNEL_STACK_SIZE: usize = 16384;
@@ -50,6 +51,7 @@ pub struct Process {
     pub mmap_regions: Vec<MmapRegion>,
     pub mmap_next: u64,
     pub handle_table: HandleTable,
+    pub kobj_id: Option<kobj::KObjId>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -69,6 +71,7 @@ impl fmt::Debug for Process {
             .field("state", &self.state)
             .field("cpu_ticks", &self.cpu_ticks)
             .field("kernel_stack_top", &self.kernel_stack_top)
+            .field("kobj_id", &self.kobj_id)
             .finish()
     }
 }
@@ -130,6 +133,7 @@ impl Process {
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
             handle_table: closed_handle_table(),
+            kobj_id: None,
         }
     }
 
@@ -164,6 +168,7 @@ impl Process {
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
             handle_table: default_handle_table(),
+            kobj_id: None,
         }
     }
 }
@@ -217,7 +222,11 @@ impl Scheduler {
         for i in 0..MAX_PROCESSES {
             if self.processes[i].is_none() {
                 self.next_pid += 1;
-                let proc = Process::new_ring3(pid, entry, user_stack_top, slot_idx, cwd_drive, cwd_path, heap_base);
+                let mut proc = Process::new_ring3(pid, entry, user_stack_top, slot_idx, cwd_drive, cwd_path, heap_base);
+                let name = alloc::format!("proc/{}", pid);
+                if let Ok(kid) = kobj::kobj_register(KObjType::Process, &name, pid as u64) {
+                    proc.kobj_id = Some(kid);
+                }
                 self.processes[i] = Some(proc);
                 crate::trace_sched!(1, pid, 0); // 1 = ADD_PROCESS
                 return pid;
@@ -227,6 +236,17 @@ impl Scheduler {
     }
 
     pub fn kill_pid(&mut self, pid: u32) -> bool {
+        // Unregister from KOBJ before freeing
+        for p in self.processes.iter() {
+            if let Some(proc) = p {
+                if proc.pid == pid {
+                    if let Some(kid) = proc.kobj_id {
+                        kobj::kobj_unregister(kid);
+                    }
+                    break;
+                }
+            }
+        }
         let idx = self.processes.iter().position(|p| {
             p.as_ref().is_some_and(|proc| proc.pid == pid && pid > 0)
         });
@@ -278,6 +298,17 @@ impl Scheduler {
     pub fn recycle_terminated(&mut self, pid: u32) -> bool {
         if pid == 0 {
             return false;
+        }
+        // Unregister from KOBJ before freeing
+        for p in self.processes.iter() {
+            if let Some(proc) = p {
+                if proc.pid == pid {
+                    if let Some(kid) = proc.kobj_id {
+                        kobj::kobj_unregister(kid);
+                    }
+                    break;
+                }
+            }
         }
         let idx = self.processes.iter().position(|p| {
             p.as_ref().is_some_and(|proc| proc.pid == pid)

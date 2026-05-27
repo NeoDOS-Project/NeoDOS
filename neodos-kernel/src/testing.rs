@@ -1867,6 +1867,7 @@ pub fn register_tests() {
     crate::drivers::abi::register_abi_tests();
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
+    crate::kobj::register_kobj_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }
