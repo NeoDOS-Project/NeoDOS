@@ -4,7 +4,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::pipe::{FdTable, closed_fd_table, default_fd_table};
+use crate::handle::{HandleTable, closed_handle_table, default_handle_table};
 
 pub const MAX_PROCESSES: usize = 16;
 pub const KERNEL_STACK_SIZE: usize = 16384;
@@ -49,7 +49,7 @@ pub struct Process {
     kernel_stack: Option<Box<AlignedKStack>>,
     pub mmap_regions: Vec<MmapRegion>,
     pub mmap_next: u64,
-    pub fd_table: FdTable,
+    pub handle_table: HandleTable,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,7 +129,7 @@ impl Process {
             kernel_stack: stack,
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
-            fd_table: closed_fd_table(),
+            handle_table: closed_handle_table(),
         }
     }
 
@@ -163,7 +163,7 @@ impl Process {
             kernel_stack: Some(stack),
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
-            fd_table: default_fd_table(),
+            handle_table: default_handle_table(),
         }
     }
 }
@@ -250,18 +250,18 @@ impl Scheduler {
                 for r in proc.mmap_regions.iter() {
                     crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
                 }
-                // Close pipe fds
-                for fd_entry in proc.fd_table.iter_mut() {
-                    match fd_entry.kind {
-                        crate::pipe::FD_PIPE_READ => {
-                            crate::pipe::PIPE_MANAGER.dec_read_ref(fd_entry.pipe_id);
+                // Close all handles (pipes, files, etc.)
+                for h in proc.handle_table.iter_mut() {
+                    match h.kind {
+                        crate::handle::HANDLE_PIPE_READ => {
+                            crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
                         }
-                        crate::pipe::FD_PIPE_WRITE => {
-                            crate::pipe::PIPE_MANAGER.dec_write_ref(fd_entry.pipe_id);
+                        crate::handle::HANDLE_PIPE_WRITE => {
+                            crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
                         }
                         _ => {}
                     }
-                    *fd_entry = crate::pipe::FdEntry::closed();
+                    *h = crate::handle::HandleEntry::closed();
                 }
                 // proc dropped here: kernel_stack (Box<AlignedKStack>), cwd_path, etc. freed
                 crate::trace_sched!(2, pid, 0); // 2 = KILL_PROCESS
@@ -397,7 +397,7 @@ pub fn current_scheduler() -> &'static Mutex<Scheduler> {
 
 /// Remove a terminated process from the scheduler table.
 /// The process's kernel stack (Box<AlignedKStack>) is freed, its slot is recycled,
-/// and all owned memory (cwd_path, mmap_regions Vec, fd_table) is released.
+/// and all owned memory (cwd_path, mmap_regions Vec, handle_table) is released.
 ///
 /// External resources (user slot, heap pages, mmap pages, pipe refcounts) must
 /// already have been freed by the caller (e.g. syscall_dispatch for sys_exit).

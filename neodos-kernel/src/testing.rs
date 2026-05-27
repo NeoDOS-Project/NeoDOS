@@ -1653,8 +1653,10 @@ pub fn register_mmap_tests() {
 // ===== Pipe / IPC tests =====
 
 pub fn register_pipe_tests() {
-    use crate::pipe::{PIPE_MANAGER, FdEntry, default_fd_table, closed_fd_table,
-                      FD_PIPE_READ, FD_PIPE_WRITE, FD_STDIN, FD_STDOUT, FD_CLOSED};
+    use crate::pipe::PIPE_MANAGER;
+    use crate::handle::{HandleEntry, default_handle_table, closed_handle_table,
+                        HANDLE_PIPE_READ, HANDLE_PIPE_WRITE, HANDLE_STDIN, HANDLE_STDOUT, HANDLE_STDERR,
+                        HANDLE_FILE, HANDLE_CLOSED};
 
     test_case!("pipe_alloc_free", {
         let pid = PIPE_MANAGER.alloc().expect("pipe alloc failed");
@@ -1810,30 +1812,35 @@ pub fn register_pipe_tests() {
         PIPE_MANAGER.dec_write_ref(pid);
     });
 
-    test_case!("pipe_fd_table_default", {
-        let table = default_fd_table();
-        test_eq!(table[0].kind, FD_STDIN);
-        test_eq!(table[1].kind, FD_STDOUT);
-        test_eq!(table[2].kind, FD_STDOUT);
+    test_case!("handle_table_default", {
+        let table = default_handle_table();
+        test_eq!(table[0].kind, HANDLE_STDIN);
+        test_eq!(table[1].kind, HANDLE_STDOUT);
+        test_eq!(table[2].kind, HANDLE_STDERR);
         for i in 3..16 {
-            test_eq!(table[i].kind, FD_CLOSED);
+            test_eq!(table[i].kind, HANDLE_CLOSED);
         }
     });
 
-    test_case!("pipe_fd_table_closed", {
-        let table = closed_fd_table();
+    test_case!("handle_table_closed", {
+        let table = closed_handle_table();
         for i in 0..16 {
-            test_eq!(table[i].kind, FD_CLOSED);
+            test_eq!(table[i].kind, HANDLE_CLOSED);
         }
     });
 
-    test_case!("pipe_fd_entry_constructors", {
-        let r = FdEntry::pipe_read(5);
-        test_eq!(r.kind, FD_PIPE_READ);
-        test_eq!(r.pipe_id, 5);
-        let w = FdEntry::pipe_write(3);
-        test_eq!(w.kind, FD_PIPE_WRITE);
-        test_eq!(w.pipe_id, 3);
+    test_case!("handle_entry_constructors", {
+        let r = HandleEntry::pipe_read(5);
+        test_eq!(r.kind, HANDLE_PIPE_READ);
+        test_eq!(r.id, 5);
+        let w = HandleEntry::pipe_write(3);
+        test_eq!(w.kind, HANDLE_PIPE_WRITE);
+        test_eq!(w.id, 3);
+        let f = HandleEntry::file(2, 42);
+        test_eq!(f.kind, HANDLE_FILE);
+        test_eq!(f.id, 42);
+        test_eq!(f.extra, 2);
+        test_eq!(f.offset, 0);
     });
 }
 

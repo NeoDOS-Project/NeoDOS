@@ -1,20 +1,24 @@
 use crate::syscall;
 
 pub struct File {
-    handle: u64,
+    fd: u8,
 }
 
 impl File {
     pub fn open(path: &str) -> Result<File, i64> {
-        let handle = syscall::sys_open(path)?;
-        Ok(File { handle })
+        let fd = syscall::sys_open(path)?;
+        Ok(File { fd })
     }
 
-    pub fn read(&self, buf: &mut [u8]) -> Result<usize, i64> {
-        syscall::sys_readfile(self.handle, buf)
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, i64> {
+        syscall::sys_readfile(self.fd, buf)
     }
 
-    pub fn write(&self, buf: &[u8]) -> Result<usize, i64> {
-        syscall::sys_writefile(self.handle, buf)
+    pub fn write(&mut self, buf: &[u8]) -> Result<usize, i64> {
+        syscall::sys_writefile(self.fd, buf)
+    }
+
+    pub fn fd(&self) -> u8 {
+        self.fd
     }
 }

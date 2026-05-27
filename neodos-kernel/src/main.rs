@@ -25,6 +25,7 @@ mod graphics;
 mod font;
 mod nem;
 mod elf;
+mod handle;
 mod pipe;
 mod eventbus;
 mod memory;

@@ -3,53 +3,6 @@ use crate::scheduler::{self, ProcessState};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
 pub const MAX_PIPES: usize = 16;
-pub const MAX_FDS: usize = 16;
-
-// ── File descriptor entry types ──
-
-pub const FD_CLOSED: u8 = 0;
-pub const FD_STDIN: u8 = 1;
-pub const FD_STDOUT: u8 = 2;
-pub const FD_PIPE_READ: u8 = 3;
-pub const FD_PIPE_WRITE: u8 = 4;
-
-#[derive(Debug, Clone, Copy)]
-pub struct FdEntry {
-    pub kind: u8,
-    pub pipe_id: u8,
-}
-
-impl FdEntry {
-    pub const fn closed() -> Self {
-        FdEntry { kind: FD_CLOSED, pipe_id: 0 }
-    }
-    pub const fn stdin() -> Self {
-        FdEntry { kind: FD_STDIN, pipe_id: 0 }
-    }
-    pub const fn stdout() -> Self {
-        FdEntry { kind: FD_STDOUT, pipe_id: 0 }
-    }
-    pub fn pipe_read(pid: u8) -> Self {
-        FdEntry { kind: FD_PIPE_READ, pipe_id: pid }
-    }
-    pub fn pipe_write(pid: u8) -> Self {
-        FdEntry { kind: FD_PIPE_WRITE, pipe_id: pid }
-    }
-}
-
-pub type FdTable = [FdEntry; MAX_FDS];
-
-pub fn default_fd_table() -> FdTable {
-    let mut table = [FdEntry::closed(); MAX_FDS];
-    table[0] = FdEntry::stdin();
-    table[1] = FdEntry::stdout();
-    table[2] = FdEntry::stdout();
-    table
-}
-
-pub fn closed_fd_table() -> FdTable {
-    [FdEntry::closed(); MAX_FDS]
-}
 
 // ── Pipe buffer ──
 

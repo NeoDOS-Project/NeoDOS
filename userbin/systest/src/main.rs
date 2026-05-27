@@ -18,9 +18,9 @@ pub extern "C" fn _start() -> ! {
 
     libneodos::print!("Testing file I/O (sys_open, sys_readfile)... ");
     match syscall::sys_open("readme.txt") {
-        Ok(inode) => {
+        Ok(fd) => {
             let mut buf = [0u8; 256];
-            match syscall::sys_readfile(inode, &mut buf) {
+            match syscall::sys_readfile(fd, &mut buf) {
                 Ok(n) => {
                     let s = core::str::from_utf8(&buf[..n]).unwrap_or("?");
                     libneodos::print!("File content: {}", s);

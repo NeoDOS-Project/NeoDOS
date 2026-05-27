@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.17.0
+v0.17.2
 
 ## Build & Run
 
@@ -264,12 +264,12 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr |
 | 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) |
 | 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo |
-| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → inode |
-| 11 | `sys_readfile` | RBX=inode, RCX=buf, RDX=count | Lee desde archivo |
-| 12 | `sys_writefile` | RBX=inode, RCX=buf, RDX=count | Escribe a archivo |
-| 13 | `sys_close` | RBX=fd | Cierra fd (pipe fd decrementa refcount) |
+| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle index 0-15) |
+| 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle) |
+| 12 | `sys_writefile` | RBX=fd, RCX=buf, RDX=count | Escribe a archivo (usa offset del handle) |
+| 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) |
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
-| 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=handle | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, handle) |
+| 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
 
 ## IPC / Pipes
@@ -283,13 +283,14 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - `sys_close` on a pipe fd decrements refcount; pipe freed when refs reach 0
 - `sys_dup2` copies an fd to another slot (increments refcount for pipe fds)
 
-### Per-Process FD Table
-- `Process.fd_table: [FdEntry; 16]` — fixed-size array indexed by fd number
-- `FdEntry` types: `Closed`, `Stdin`, `Stdout`, `PipeReader(u8)`, `PipeWriter(u8)`
+### Per-Process Handle Table
+- `Process.handle_table: [HandleEntry; 16]` — fixed-size array indexed by handle number
+- `HandleEntry` types: `Closed`, `Stdin`, `Stdout`, `Stderr`, `PipeReader(id)`, `PipeWriter(id)`, `File(drive, inode, offset)`, `Device(id)`, `Event(type)`
+- File handles carry a per-open `offset` cursor for independent read/write positioning
 - fd 0 = stdin (keyboard), fd 1 = stdout (console), fd 2 = stderr (console)
-- fds 3–15 available for pipes/files
-- Default table for Ring 3 processes; `closed_fd_table()` for Ring 0
-- `sys_exit` iterates fd table and decrements all pipe refcounts
+- fds 3–15 available for pipes/files/devices/events
+- Default table for Ring 3 processes; `closed_handle_table()` for Ring 0
+- `sys_exit` iterates handle table and cleans up all resource types (pipes decrement refcount, files closed cleanly)
 
 ### Blocking Reads
 - When a process reads from an empty pipe with write end open:

@@ -117,22 +117,22 @@ fn path_to_null_terminated(path: &str) -> Result<[u8; 256], i64> {
     Ok(buf)
 }
 
-pub fn sys_open(path: &str) -> Result<u64, i64> {
+pub fn sys_open(path: &str) -> Result<u8, i64> {
     let buf = path_to_null_terminated(path)?;
     let ptr = buf.as_ptr() as u64;
-    ret(unsafe { syscall_2(10, ptr, 0) })
+    ret(unsafe { syscall_2(10, ptr, 0) }).map(|v| v as u8)
 }
 
-pub fn sys_readfile(handle: u64, buf: &mut [u8]) -> Result<usize, i64> {
+pub fn sys_readfile(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
     let ptr = buf.as_mut_ptr() as u64;
     let len = buf.len() as u64;
-    ret(unsafe { syscall_3(11, handle, ptr, len) }).map(|v| v as usize)
+    ret(unsafe { syscall_3(11, fd as u64, ptr, len) }).map(|v| v as usize)
 }
 
-pub fn sys_writefile(handle: u64, buf: &[u8]) -> Result<usize, i64> {
+pub fn sys_writefile(fd: u8, buf: &[u8]) -> Result<usize, i64> {
     let ptr = buf.as_ptr() as u64;
     let len = buf.len() as u64;
-    ret(unsafe { syscall_3(12, handle, ptr, len) }).map(|v| v as usize)
+    ret(unsafe { syscall_3(12, fd as u64, ptr, len) }).map(|v| v as usize)
 }
 
 pub fn sys_close(fd: u8) -> Result<(), i64> {

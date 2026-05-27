@@ -37,7 +37,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // sys_open
-    let inode = check(
+    let fd = check(
         syscall::sys_open("C:\\HELLO.BIN"),
         "sys_open: OK",
         "sys_open: FAIL",
@@ -46,7 +46,7 @@ pub extern "C" fn _start() -> ! {
     // sys_readfile
     let mut buf = [0u8; 16];
     check(
-        syscall::sys_readfile(inode, &mut buf),
+        syscall::sys_readfile(fd, &mut buf),
         "sys_readfile: OK",
         "sys_readfile: FAIL",
     );

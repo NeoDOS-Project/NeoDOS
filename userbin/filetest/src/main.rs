@@ -9,13 +9,13 @@ pub extern "C" fn _start() -> ! {
     println!("=== NeoDOS File I/O Test ===");
 
     match syscall::sys_open("C:\\readme.txt") {
-        Ok(inode) => {
+        Ok(fd) => {
             let data = b"Hola FILETEST!";
-            let _ = syscall::sys_writefile(inode, data);
+            let _ = syscall::sys_writefile(fd, data);
             println!("sys_write: OK");
 
             let mut buf = [0u8; 64];
-            let _ = syscall::sys_readfile(inode, &mut buf);
+            let _ = syscall::sys_readfile(fd, &mut buf);
             println!("sys_read: OK");
         }
         Err(_) => {}

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.17.2 — 2026-05-27
+
+### X2. Unified Handle Table — Añadido
+- **Añadido**: `src/handle.rs` — Unified handle table module. Per-process resource abstraction replacing `FdEntry`/`FdTable`.
+- **Handle types**: CLOSED, STDIN, STDOUT, STDERR, PIPE_READ, PIPE_WRITE, FILE, DEVICE, EVENT.
+- **File handles**: store drive+inode+per-open offset cursor for independent read/write positioning.
+- **sys_open**: now returns a small integer fd (handle index) instead of packed `(drive<<32)|inode`.
+- **sys_readfile / sys_writefile**: take fd instead of packed handle; respect per-handle offset.
+- **sys_close**: handles all resource types (pipes, files, devices, events).
+- **sys_mmap** (file-backed): takes fd instead of packed handle.
+- **Modificado**: `scheduler.rs` — `Process.fd_table` → `Process.handle_table`.
+- **Modificado**: `pipe.rs` — removed `FdEntry`, `FdTable`, FD_* constants (moved to handle.rs).
+- **Modificado**: `libneodos` — `File` struct uses `u8` fd, `sys_open` returns `u8`.
+- **Modificado**: user binaries `filetest`, `systest`, `alltest` — use fd-based API.
+- **Total**: 233+ kernel tests + 4 user-mode binaries.
+
 ## v0.17.1 — 2026-05-26
 
 ### Device Model + TSR Removal — Eliminado

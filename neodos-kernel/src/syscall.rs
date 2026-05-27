@@ -361,18 +361,17 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                         proc.mmap_regions.clear();
                         proc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
 
-                        // Close all pipe fds
-                        for fd_entry in proc.fd_table.iter_mut() {
-                            match fd_entry.kind {
-                                crate::pipe::FD_PIPE_READ => {
-                                    crate::pipe::PIPE_MANAGER.dec_read_ref(fd_entry.pipe_id);
+                        for h in proc.handle_table.iter_mut() {
+                            match h.kind {
+                                crate::handle::HANDLE_PIPE_READ => {
+                                    crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
                                 }
-                                crate::pipe::FD_PIPE_WRITE => {
-                                    crate::pipe::PIPE_MANAGER.dec_write_ref(fd_entry.pipe_id);
+                                crate::handle::HANDLE_PIPE_WRITE => {
+                                    crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
                                 }
                                 _ => {}
                             }
-                            *fd_entry = crate::pipe::FdEntry::closed();
+                            *h = crate::handle::HandleEntry::closed();
                         }
                     }
                 }
@@ -393,11 +392,10 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let ptr = rcx as *const u8;
             let len = rdx as usize;
 
-            // fd 1 = stdout (console), fd 2 = stderr (console)
-            let entry = current_fd_entry(fd);
+            let entry = current_handle_entry(fd);
 
             match entry.kind {
-                crate::pipe::FD_STDOUT => {
+                crate::handle::HANDLE_STDOUT | crate::handle::HANDLE_STDERR => {
                     if !is_user_ptr_valid(rcx, len as u64) || len > 4096 {
                         return err_to_u64(SyscallError::Fault);
                     }
@@ -407,14 +405,14 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     }
                     len as u64
                 }
-                crate::pipe::FD_PIPE_WRITE => {
+                crate::handle::HANDLE_PIPE_WRITE => {
                     if !is_user_ptr_valid(rcx, len as u64) || len > 4096 {
                         return err_to_u64(SyscallError::Fault);
                     }
                     let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-                    match crate::pipe::PIPE_MANAGER.write(entry.pipe_id, slice) {
+                    match crate::pipe::PIPE_MANAGER.write(entry.id as u8, slice) {
                         Ok(n) => n as u64,
-                        Err(_) => err_to_u64(SyscallError::Pipe), // Broken pipe
+                        Err(_) => err_to_u64(SyscallError::Pipe),
                     }
                 }
                 _ => {
@@ -443,10 +441,10 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 return err_to_u64(SyscallError::Fault);
             }
 
-            let entry = current_fd_entry(fd);
+            let entry = current_handle_entry(fd);
 
             match entry.kind {
-                crate::pipe::FD_STDIN => {
+                crate::handle::HANDLE_STDIN => {
                     let mut bytes_read = 0usize;
                     while bytes_read < count {
                         match crate::input::pop_byte() {
@@ -474,15 +472,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     }
                     bytes_read as u64
                 }
-                crate::pipe::FD_PIPE_READ => {
-                    let pipe_id = entry.pipe_id;
-                    // Read loop: try to read, block if empty
+                crate::handle::HANDLE_PIPE_READ => {
+                    let pipe_id = entry.id as u8;
                     let mut temp_buf = alloc::vec::Vec::with_capacity(count);
                     temp_buf.resize(count, 0u8);
                     loop {
                         match crate::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
                             Ok(0) => {
-                                // EOF — write end closed
                                 return 0;
                             }
                             Ok(n) => {
@@ -492,13 +488,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                                 return n as u64;
                             }
                             Err(()) => {
-                                // No data yet — block and resched
                                 crate::pipe::block_current_for_pipe(pipe_id);
-                                // After wake-up: continue loop to retry read
-                                // The return from block_current_for_pipe means
-                                // NEED_RESCHED is set; the assembly will handle
-                                // the context switch. When we resume and return
-                                // to user space, the process can call read again.
                                 return err_to_u64(SyscallError::Again);
                             }
                         }
@@ -512,54 +502,42 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
 
         SyscallNum::Pipe => {
             let fds_ptr = rbx as *mut u64;
-            // Validate user output buffer (2 u64s = read_fd, write_fd)
             if !is_user_ptr_valid(rbx, 16) {
                 return err_to_u64(SyscallError::Fault);
             }
 
-            // Allocate a pipe
             let pipe_id = match crate::pipe::PIPE_MANAGER.alloc() {
                 Some(pid) => pid,
                 None => return err_to_u64(SyscallError::NoMem),
             };
 
-            // Find two free fds (lowest available)
-            let mut read_fd: Option<u8> = None;
-            let mut write_fd: Option<u8> = None;
-
-            crate::hal::without_interrupts(|| {
+            let handle_result = crate::hal::without_interrupts(|| -> Result<(u8, u8), ()> {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
                 if let Some(proc) = lock.current_process_mut() {
-                    for i in 3..(crate::pipe::MAX_FDS as u8) {
-                        if proc.fd_table[i as usize].kind == crate::pipe::FD_CLOSED {
-                            if read_fd.is_none() {
-                                read_fd = Some(i);
-                            } else if write_fd.is_none() {
-                                write_fd = Some(i);
-                                break;
-                            }
-                        }
+                    let read_entry = crate::handle::HandleEntry::pipe_read(pipe_id);
+                    let write_entry = crate::handle::HandleEntry::pipe_write(pipe_id);
+                    match crate::handle::alloc_two_handles(&mut proc.handle_table, read_entry, write_entry) {
+                        Some((r, w)) => Ok((r, w)),
+                        None => Err(()),
                     }
+                } else {
+                    Err(())
                 }
             });
 
-            let (rfd, wfd) = match (read_fd, write_fd) {
-                (Some(r), Some(w)) => (r, w),
-                _ => {
+            let (rfd, wfd) = match handle_result {
+                Ok(pair) => pair,
+                Err(_) => {
                     crate::pipe::PIPE_MANAGER.dec_read_ref(pipe_id);
                     crate::pipe::PIPE_MANAGER.dec_write_ref(pipe_id);
                     return err_to_u64(SyscallError::NoMem);
                 }
             };
 
-            // Assign fds
             crate::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
             crate::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
-            set_current_fd(rfd, crate::pipe::FdEntry::pipe_read(pipe_id));
-            set_current_fd(wfd, crate::pipe::FdEntry::pipe_write(pipe_id));
 
-            // Write [read_fd, write_fd] to user buffer
             unsafe {
                 fds_ptr.write(rfd as u64);
                 fds_ptr.add(1).write(wfd as u64);
@@ -571,43 +549,40 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let old_fd = rbx as u8;
             let new_fd = rcx as u8;
 
-            if new_fd as usize >= crate::pipe::MAX_FDS {
+            if new_fd as usize >= crate::handle::MAX_HANDLES {
                 return err_to_u64(SyscallError::BadF);
             }
-            if old_fd as usize >= crate::pipe::MAX_FDS {
-                return err_to_u64(SyscallError::BadF);
-            }
-
-            // Get the source entry
-            let src_entry = current_fd_entry(old_fd);
-            if src_entry.kind == crate::pipe::FD_CLOSED {
+            if old_fd as usize >= crate::handle::MAX_HANDLES {
                 return err_to_u64(SyscallError::BadF);
             }
 
-            // If new_fd is already open, close it first
-            let dst_entry = current_fd_entry(new_fd);
+            let src_entry = current_handle_entry(old_fd);
+            if src_entry.kind == crate::handle::HANDLE_CLOSED {
+                return err_to_u64(SyscallError::BadF);
+            }
+
+            let dst_entry = current_handle_entry(new_fd);
             match dst_entry.kind {
-                crate::pipe::FD_PIPE_READ => {
-                    crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.pipe_id);
+                crate::handle::HANDLE_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.id as u8);
                 }
-                crate::pipe::FD_PIPE_WRITE => {
-                    crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.pipe_id);
+                crate::handle::HANDLE_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.id as u8);
                 }
                 _ => {}
             }
 
-            // Increment ref for the duplicated fd
             match src_entry.kind {
-                crate::pipe::FD_PIPE_READ => {
-                    crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.pipe_id);
+                crate::handle::HANDLE_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.id as u8);
                 }
-                crate::pipe::FD_PIPE_WRITE => {
-                    crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.pipe_id);
+                crate::handle::HANDLE_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.id as u8);
                 }
                 _ => {}
             }
 
-            set_current_fd(new_fd, src_entry);
+            set_current_handle(new_fd, src_entry);
             new_fd as u64
         }
 
@@ -662,7 +637,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 Err(_) => return err_to_u64(SyscallError::Inval),
             };
 
-            let result = crate::globals::with_vfs(|vfs| {
+            let (drive_idx, node) = match crate::globals::with_vfs(|vfs| {
                 let has_drive = path.contains(':');
                 let starts_with_sep = path.starts_with('\\') || path.starts_with('/');
                 if has_drive || starts_with_sep {
@@ -673,28 +648,38 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     let abs = alloc::format!("{}:{}\\{}", drive_char, cwd_path, path);
                     vfs.resolve_path(&abs)
                 }
+            }) {
+                Ok(result) => result,
+                Err(_) => return err_to_u64(SyscallError::NoEnt),
+            };
+
+            if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
+                return err_to_u64(SyscallError::IsDir);
+            }
+
+            let entry = crate::handle::HandleEntry::file(drive_idx as u8, node.inode);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(proc) = lock.current_process_mut() {
+                    crate::handle::alloc_handle(&mut proc.handle_table, entry)
+                } else {
+                    None
+                }
             });
 
-            match result {
-                Ok((drive_idx, node)) => {
-                    if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
-                        return err_to_u64(SyscallError::IsDir);
-                    }
-                    let handle = ((drive_idx as u64) << 32) | (node.inode as u64);
-                    handle
-                }
-                Err(_) => err_to_u64(SyscallError::NoEnt),
+            match fd {
+                Some(fd) => fd as u64,
+                None => err_to_u64(SyscallError::NoMem),
             }
         }
 
         SyscallNum::ReadFile => {
-            let handle = rbx;
-            let drive_idx = (handle >> 32) as usize;
-            let inode_num = (handle & 0xFFFFFFFF) as u32;
+            let fd = rbx as u8;
             let buf_ptr = rcx as *mut u8;
             let count = rdx as usize;
 
-            if drive_idx >= 26 || handle == u64::MAX {
+            if fd as usize >= crate::handle::MAX_HANDLES {
                 return err_to_u64(SyscallError::BadF);
             }
 
@@ -702,11 +687,30 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 return err_to_u64(SyscallError::Fault);
             }
 
+            let (drive_idx, inode_num, offset) = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(proc) = lock.current_process_mut() {
+                    let entry = proc.handle_table[fd as usize];
+                    if entry.kind == crate::handle::HANDLE_FILE {
+                        (entry.extra as usize, entry.id, entry.offset)
+                    } else {
+                        return (usize::MAX, 0, 0);
+                    }
+                } else {
+                    (usize::MAX, 0, 0)
+                }
+            });
+
+            if drive_idx == usize::MAX {
+                return err_to_u64(SyscallError::BadF);
+            }
+
             let mut temp_buf = Vec::with_capacity(count);
             temp_buf.resize(count, 0u8);
 
             let result = crate::globals::with_vfs(|vfs| {
-                vfs.read(drive_idx, inode_num, 0, &mut temp_buf)
+                vfs.read(drive_idx, inode_num, offset, &mut temp_buf)
             });
 
             match result {
@@ -714,6 +718,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     unsafe {
                         core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, bytes_read);
                     }
+                    crate::hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(proc) = lock.current_process_mut() {
+                            proc.handle_table[fd as usize].offset += bytes_read as u64;
+                        }
+                    });
                     bytes_read as u64
                 }
                 Err(_) => err_to_u64(SyscallError::Io),
@@ -721,18 +732,35 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         }
 
         SyscallNum::WriteFile => {
-            let handle = rbx;
-            let drive_idx = (handle >> 32) as usize;
-            let inode_num = (handle & 0xFFFFFFFF) as u32;
+            let fd = rbx as u8;
             let buf_ptr = rcx as *const u8;
             let count = rdx as usize;
 
-            if drive_idx >= 26 || handle == u64::MAX {
+            if fd as usize >= crate::handle::MAX_HANDLES {
                 return err_to_u64(SyscallError::BadF);
             }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
                 return err_to_u64(SyscallError::Fault);
+            }
+
+            let (drive_idx, inode_num, offset) = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(proc) = lock.current_process_mut() {
+                    let entry = proc.handle_table[fd as usize];
+                    if entry.kind == crate::handle::HANDLE_FILE {
+                        (entry.extra as usize, entry.id, entry.offset)
+                    } else {
+                        return (usize::MAX, 0, 0);
+                    }
+                } else {
+                    (usize::MAX, 0, 0)
+                }
+            });
+
+            if drive_idx == usize::MAX {
+                return err_to_u64(SyscallError::BadF);
             }
 
             let mut temp_buf = Vec::with_capacity(count);
@@ -742,30 +770,40 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
 
             let result = crate::globals::with_vfs(|vfs| {
-                vfs.write(drive_idx, inode_num, 0, &temp_buf)
+                vfs.write(drive_idx, inode_num, offset, &temp_buf)
             });
 
             match result {
-                Ok(bytes_written) => bytes_written as u64,
+                Ok(bytes_written) => {
+                    crate::hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(proc) = lock.current_process_mut() {
+                            proc.handle_table[fd as usize].offset += bytes_written as u64;
+                        }
+                    });
+                    bytes_written as u64
+                }
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
 
         SyscallNum::Close => {
             let fd = rbx as u8;
-            let entry = current_fd_entry(fd);
+            let entry = current_handle_entry(fd);
             match entry.kind {
-                crate::pipe::FD_PIPE_READ => {
-                    crate::pipe::PIPE_MANAGER.dec_read_ref(entry.pipe_id);
+                crate::handle::HANDLE_PIPE_READ => {
+                    crate::pipe::PIPE_MANAGER.dec_read_ref(entry.id as u8);
                 }
-                crate::pipe::FD_PIPE_WRITE => {
-                    crate::pipe::PIPE_MANAGER.dec_write_ref(entry.pipe_id);
+                crate::handle::HANDLE_PIPE_WRITE => {
+                    crate::pipe::PIPE_MANAGER.dec_write_ref(entry.id as u8);
                 }
-                _ => {
-                    // stdin/stdout/stderr: just ignore close
+                crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT => {
+                    // Clean close: no extra resource release needed for files/devices/events
                 }
+                _ => {}
             }
-            set_current_fd(fd, crate::pipe::FdEntry::closed());
+            set_current_handle(fd, crate::handle::HandleEntry::closed());
             0
         }
 
@@ -963,12 +1001,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
 
         SyscallNum::Mmap => {
             // RBX = addr_hint (0 = auto), RCX = length, RDX = prot
-            // R8 = flags (bit0=1 anonymous, bit1=1 shared), R9 = file_handle
+            // R8 = flags (bit0=1 anonymous, bit1=1 shared), R9 = fd (for file-backed)
             let _addr_hint = rbx;
             let length = rcx;
             let prot = rdx as u16;
             let flags = r8 as u16;
-            let file_handle = r9;
+            let fd = r9 as u8;
 
             if length == 0 || length > 0x100000 {
                 return err_to_u64(SyscallError::Inval);
@@ -980,13 +1018,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let is_anon = (flags & 1) != 0;
 
             if is_anon {
-                // Anonymous mmap — lazy zero-filled pages
                 let alloc_size = (length + 0xFFF) & !0xFFF;
                 let region = crate::scheduler::MmapRegion {
                     base: 0,
                     len: alloc_size,
                     prot,
-                    flags: 1, // anonymous
+                    flags: 1,
                     drive: 0,
                     inode: 0,
                     file_size: 0,
@@ -996,14 +1033,24 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     None => err_to_u64(SyscallError::NoMem),
                 }
             } else {
-                // File-backed mmap — lazy loading from file
-                let drive_idx = (file_handle >> 32) as usize;
-                let inode_num = (file_handle & 0xFFFFFFFF) as u32;
-                if drive_idx >= 26 || file_handle == u64::MAX {
+                let (drive_idx, inode_num) = crate::hal::without_interrupts(|| {
+                    let s = scheduler::current_scheduler();
+                    let mut lock = s.lock();
+                    if let Some(proc) = lock.current_process_mut() {
+                        if (fd as usize) < crate::handle::MAX_HANDLES {
+                            let entry = proc.handle_table[fd as usize];
+                            if entry.kind == crate::handle::HANDLE_FILE {
+                                return (entry.extra as usize, entry.id);
+                            }
+                        }
+                    }
+                    (usize::MAX, 0)
+                });
+
+                if drive_idx == usize::MAX {
                     return err_to_u64(SyscallError::BadF);
                 }
 
-                // Stat the file to get its size
                 let file_info = crate::globals::with_vfs(|vfs| {
                     vfs.stat(drive_idx, inode_num)
                 });
@@ -1020,7 +1067,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     base: 0,
                     len: alloc_size,
                     prot,
-                    flags: 0, // file-backed
+                    flags: 0,
                     drive: drive_idx as u8,
                     inode: inode_num,
                     file_size,
@@ -1055,28 +1102,28 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
     }
 }
 
-// ── FD table helpers ──
+// ── Handle table helpers ──
 
-fn current_fd_entry(fd: u8) -> crate::pipe::FdEntry {
+fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(proc) = lock.current_process_mut() {
-            if (fd as usize) < crate::pipe::MAX_FDS {
-                return proc.fd_table[fd as usize];
+            if (fd as usize) < crate::handle::MAX_HANDLES {
+                return proc.handle_table[fd as usize];
             }
         }
-        crate::pipe::FdEntry::closed()
+        crate::handle::HandleEntry::closed()
     })
 }
 
-fn set_current_fd(fd: u8, entry: crate::pipe::FdEntry) {
+fn set_current_handle(fd: u8, entry: crate::handle::HandleEntry) {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(proc) = lock.current_process_mut() {
-            if (fd as usize) < crate::pipe::MAX_FDS {
-                proc.fd_table[fd as usize] = entry;
+            if (fd as usize) < crate::handle::MAX_HANDLES {
+                proc.handle_table[fd as usize] = entry;
             }
         }
     });
