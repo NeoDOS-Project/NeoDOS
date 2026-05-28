@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 245 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 248 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -342,7 +342,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-245 tests en 29 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+248 tests en 30 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -370,10 +370,11 @@ Binarios flat cargados en `0x400000`.
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
 | KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
 | Page Cache | 8 | Page cache: create, peek, mark_dirty, invalidate, entry/dirty counts, bounds |
+| PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (245 tests kernel)
+1. Ejecuta `testing::run_all()` (248 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

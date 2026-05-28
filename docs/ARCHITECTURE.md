@@ -438,7 +438,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **245 tests** with suites dedicated to the driver architecture:
+The kernel testing framework includes **248 tests** with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -454,6 +454,7 @@ The kernel testing framework includes **245 tests** with suites dedicated to the
 | Mmap | 6 | Memory mapping |
 | FSCK | 6 | Filesystem integrity |
 | Page Cache | 8 | Page cache: create, peek, mark_dirty, invalidate, counts, bounds |
+| PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.BIN`, `FILETEST.BIN`, `ALLTEST.BIN`).
 

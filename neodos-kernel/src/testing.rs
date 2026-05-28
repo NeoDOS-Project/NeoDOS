@@ -1911,6 +1911,101 @@ pub fn register_page_cache_tests() {
     });
 }
 
+// ===== PCI Enumeration tests =====
+
+pub fn register_pci_enum_tests() {
+    test_case!("pci_bus0_has_qemu_devices", {
+        use crate::drivers::pci;
+        let mut count = 0u16;
+        let mut found_isa = false;
+        let mut found_vga = false;
+        let mut found_ide = false;
+        let mut found_piix = false;
+        let mut found_net = false;
+        let mut bridge_count = 0u16;
+        for dev in 0..32 {
+            let vendor = pci::pci_config_read_word(0, dev, 0, 0);
+            if vendor == 0xFFFF || vendor == 0 {
+                continue;
+            }
+            let header_type = pci::pci_config_read_word(0, dev, 0, 0x0E);
+            let is_multi = (header_type & 0x80) != 0;
+            let max_func = if is_multi { 8 } else { 1 };
+            for func in 0..max_func {
+                let vendor = pci::pci_config_read_word(0, dev, func, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    continue;
+                }
+                let device = pci::pci_config_read_word(0, dev, func, 2);
+                let class_rev = pci::pci_config_read_dword(0, dev, func, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                // Check for well-known QEMU PIIX3 devices
+                if vendor == 0x8086 && device == 0x1237 { found_isa = true; }  // PIIX3 ISA bridge
+                if vendor == 0x8086 && device == 0x7000 { found_piix = true; } // PIIX3 IDE
+                if vendor == 0x1234 && device == 0x1111 { found_vga = true; }  // QEMU VGA
+                if vendor == 0x8086 && device == 0x7010 { found_ide = true; }  // PIIX3 IDE controller
+                if vendor == 0x8086 && device == 0x100E { found_net = true; }  // QEMU e1000
+                // Count PCI-to-PCI bridges
+                if class == 0x06 && subclass == 0x04 {
+                    bridge_count += 1;
+                }
+                count += 1;
+            }
+        }
+        test_true!(found_isa);
+        test_true!(found_vga);
+        test_true!(found_piix);
+        test_true!(found_ide);
+        test_true!(found_net);
+        test_eq!(bridge_count, 0);
+        test_true!(count >= 6);
+    });
+    test_case!("pci_bus1_empty", {
+        use crate::drivers::pci;
+        // Verify that bus 1 has no devices (only bus 0 on QEMU PIIX3)
+        let mut found = false;
+        for dev in 0..32 {
+            let vendor = pci::pci_config_read_word(1, dev, 0, 0);
+            if vendor != 0xFFFF && vendor != 0 {
+                found = true;
+                break;
+            }
+        }
+        test_true!(!found);
+    });
+    test_case!("pci_algo_no_false_bridges", {
+        use crate::drivers::pci;
+        // Verify bridge detection algorithm: scan all functions, count bridges
+        let mut bridges = 0u16;
+        let mut multi_devs = 0u16;
+        for dev in 0..32 {
+            let vendor = pci::pci_config_read_word(0, dev, 0, 0);
+            if vendor == 0xFFFF || vendor == 0 {
+                continue;
+            }
+            let header_type = pci::pci_config_read_word(0, dev, 0, 0x0E);
+            let is_multi = (header_type & 0x80) != 0;
+            if is_multi { multi_devs += 1; }
+            let max_func = if is_multi { 8usize } else { 1usize };
+            for func in 0..max_func {
+                let vendor = pci::pci_config_read_word(0, dev as u8, func as u8, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    continue;
+                }
+                let class_rev = pci::pci_config_read_dword(0, dev as u8, func as u8, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                if class == 0x06 && subclass == 0x04 {
+                    bridges += 1;
+                }
+            }
+        }
+        test_true!(bridges == 0);
+        test_true!(multi_devs >= 1);
+    });
+}
+
 // ── Test registration (all suites) ─────────────────────────────────
 
 
@@ -1926,6 +2021,7 @@ pub fn register_tests() {
     register_mmap_tests();
     register_pipe_tests();
     register_page_cache_tests();
+    register_pci_enum_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();

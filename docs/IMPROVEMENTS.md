@@ -1,6 +1,6 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.21.0 (245 tests, PCI NEM driver with full bus enumeration).
+> Versión actual: v0.21.0 (248 tests, PCI NEM driver with full bus enumeration).
 > Objetivo: v0.22 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
@@ -61,7 +61,7 @@
 58. **PS/2 double-character fix** — Boot loader `_` fallthrough arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`, creating a duplicate event bus handler. Every keyboard event dispatched `process_scancode` twice → all characters doubled. Fixed by changing `_` to `true` (bind without handler). Known drivers have explicit match arms.
 59. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event to ACPI driver, with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
 60. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category, Lifecycle type 2). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. `find_ide_controller()`/`enable_bus_master()` moved inline to `storage_manager.rs`. `find_nvme_controller()`/`nvme_enable()` moved inline to `nvme.rs`. Dead `find_acpi_pm1_cnt_port()` removed. 4947 bytes.
-61. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18, and enqueues them for scanning up to 256 buses. No kernel changes needed. QEMU PIIX3: 6 devices on bus 0 (no bridges). Total: 245 kernel tests + 4 user-mode binaries.
+61. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18, and enqueues them for scanning up to 256 buses. Added 3 kernel tests validating bus 0 devices, bus 1 emptiness, and bridge detection. QEMU PIIX3: 6 devices on bus 0 (no bridges). Total: 248 kernel tests + 4 user-mode binaries.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
