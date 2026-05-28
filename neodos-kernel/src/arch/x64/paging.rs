@@ -427,34 +427,45 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
 }
 
 /// Load a single 4 KB page from a file-backed mmap region.
+/// Checks the global PageCache first; on miss, reads via VFS (which populates the cache).
 fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
     let offset_in_file = (virt - region.base) as usize;
     let file_size = region.file_size as usize;
+    let block_num = offset_in_file / 4096;
 
     let phys = crate::hal::alloc_page();
     if phys.is_null() { return false; }
     let phys_addr = phys as u64;
 
-    // Zero the page (identity-mapped)
     unsafe { core::ptr::write_bytes(phys_addr as *mut u8, 0, 4096); }
 
     let bytes_to_read = core::cmp::min(4096, file_size.saturating_sub(offset_in_file));
+    let mut from_cache = false;
 
     if bytes_to_read > 0 {
         let dest_slice =
             unsafe { core::slice::from_raw_parts_mut(phys_addr as *mut u8, bytes_to_read) };
 
-        let result = crate::globals::with_vfs(|vfs| {
-            vfs.read(region.drive as usize, region.inode, offset_in_file as u64, dest_slice)
-        });
+        {
+            let pc_lock = crate::globals::PAGE_CACHE.lock();
+            if let Some(cached) = pc_lock.peek(region.inode, block_num as u32) {
+                let to_copy = bytes_to_read.min(4096);
+                dest_slice[..to_copy].copy_from_slice(&cached[..to_copy]);
+                from_cache = true;
+            }
+        }
 
-        if result.is_err() {
-            crate::hal::free_page(phys);
-            return false;
+        if !from_cache {
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.read(region.drive as usize, region.inode, offset_in_file as u64, dest_slice)
+            });
+            if result.is_err() {
+                crate::hal::free_page(phys);
+                return false;
+            }
         }
     }
 
-    // Map at user address (PRESENT | WRITABLE | USER_ACCESSIBLE)
     let rc = crate::hal::map_page(phys_addr, virt, 0x7);
     if rc != 0 {
         crate::hal::free_page(phys);
@@ -462,8 +473,8 @@ fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
     }
 
     serial_println!(
-        "[MMAP] demand-load file 4K @ 0x{:x} (inode={}, offset={})",
-        virt, region.inode, offset_in_file
+        "[MMAP] demand-load file 4K @ 0x{:x} (inode={}, offset={}, cache={})",
+        virt, region.inode, offset_in_file, from_cache
     );
     true
 }

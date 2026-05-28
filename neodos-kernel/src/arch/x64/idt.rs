@@ -333,6 +333,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
         if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
             crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
+            crate::globals::NEED_PAGE_CACHE_FLUSH.store(true, Ordering::Relaxed);
         }
     }
 

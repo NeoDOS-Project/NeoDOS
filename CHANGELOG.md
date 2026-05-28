@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.20.0 — 2026-05-28
+
+### A5. Global Page Cache — Añadido
+- **Añadido**: `src/buffer/page_cache.rs` — Central 4 KB page cache (512 entries × 4 KB = 2 MB) for filesystem file data I/O.
+- **LRU eviction**: `find_lru()` scans for oldest `last_access` entry; prefers invalid slots.
+- **Dirty write-back**: `flush()` writes all dirty pages via `dev.write_blocks()`. `flush_inode()` flushes one inode.
+- **Read/write integration**: NeoFS `read_file_to_buf()`, `read_file()`, and `write_file()` now take `&mut PageCache` and go through the cache (8 sectors at a time via `read_page()`/`get_page_mut()`).
+- **`with_page_cache()`**: Public accessor in `globals.rs` — `PAGE_CACHE` global behind `spin::Mutex`.
+- **Timer-driven flush**: `NEED_PAGE_CACHE_FLUSH` atomic set every 180 ticks in timer IRQ, flushed in `flush_cache_if_needed()` alongside existing `NEED_CACHE_FLUSH`.
+- **mmap integration**: `load_file_mmap_page()` checks PageCache first before falling back to VFS read.
+- **Optimización**: Hizo `PageCache::new()` un `const fn` para evitar un temporal de 2 MB en la pila de `rust_start`, que causaba un page fault al arrancar.
+- **Tests**: 8 unit tests (create_empty, peek_miss, mark_dirty, invalidate_noop, invalidate_multiple, entry_count_bounds, dirty_count, peek_returns_none).
+- **Total**: 245 kernel tests + 4 user-mode binaries.
+
 ## v0.19.0 — 2026-05-28
 
 ### ACPI Poweroff Driver — Añadido
@@ -10,7 +24,7 @@
 - **Añadido**: ACPI match arm in boot loader (`register_v3_event_bus_handler` for `EVENT_SHUTDOWN`).
 - **Modificado**: `shell/commands/shutdown.rs` — calls `hal::poweroff()` after event dispatch as final fallback (replaced bare HLT loop).
 - **Eliminado**: `neodos-kernel/src/drivers/acpi.rs` — legacy RSDP/RSDT/FADT parser (replaced by NEM driver PCI-based detection).
-- **Tests**: 237 kernel tests + 4 user-mode binaries.
+- **Tests**: 237 kernel tests + 4 user-mode binaries (previous count before v0.20.0).
 
 ### PS/2 Double-Character Fix — Corregido
 - **Corregido**: Boot loader fallthrough `_` arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`. This created a duplicate event bus handler that called `process_scancode` twice per keystroke → every character appeared doubled (e.g. `tteesstt`).

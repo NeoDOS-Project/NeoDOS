@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.19.0 (237 tests, ACPI NEM poweroff driver + EVENT_SHUTDOWN + HAL poweroff fallback, PS/2 double-character fix).
-> Objetivo: v0.20 — kernel modular, estable, extensible.
+> Versión actual: v0.20.0 (245 tests, A5 global page cache, LRU eviction, dirty write-back, NeoFS/mmap integration).
+> Objetivo: v0.21 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (59 items)
+## COMPLETED (60 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -14,6 +14,7 @@
 3. **Identity paging 4 GiB** — páginas enormes 2 MB, identidad hasta 4 GB.
 4. **Heap allocator** — 16 MB @ 0x1000000, `linked_list_allocator`, Box/Vec/String.
 5. **A3. Kernel slab allocator** — 9 size classes (8B–2KB), O(1) alloc/free via per-slot free lists on 4 KB slab pages. Uses `hal::alloc_page()` for page allocation. Falls through to linked-list allocator for >2 KB or >16-byte alignment. 9 self-tests.
+ 6. **A5. Global page cache (base)** — `buffer/page_cache.rs`: central 4 KB page cache (512 entries × 4 KB = 2 MB) for filesystem file data I/O and mmap file-backed pages. LRU eviction with dirty write-back. Indexed by `(inode, block_num)` with stored `data_lba` for safe flush. Integrated with NeoFS read/write paths (`read_file_to_buf`, `write_file`, `read_file`) to read/write 8 sectors at once through the cache. mmap `load_file_mmap_page` checks PageCache first before falling back to VFS read. Timer-driven flush via `NEED_PAGE_CACHE_FLUSH` alongside existing `NEED_CACHE_FLUSH`. 8 unit tests. Total: 245 tests.
 6. **PS/2 keyboard driver** — IRQ1, ring-buffer lock-free 1024 bytes.
 6. **Serial console** — COM1, `serial_print!`/`serial_println!`.
 7. **Framebuffer console** — GOP 1280×800, font VGA 8×16, `println!`.
@@ -92,18 +93,17 @@ Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema comp
 Tabla de handles global por proceso para abstraer recursos (files, pipes, devices, events).
 Permite un modelo único de acceso a recursos del sistema.
 
-3. **X1. Kernel Object Manager (KOBJ) — COMPLETED** (ver v0.18.0 en CHANGELOG)
+2. **X1. Kernel Object Manager (KOBJ) — COMPLETED** (ver v0.18.0 en CHANGELOG)
 
 Sistema unificado de objetos kernel con refcount y metadata común.
 Convierte todo el kernel en objetos gestionables.
 
-4. A5. Global page cache (base)
+3. **A5. Global page cache (base) — COMPLETED** (ver CHANGELOG)
 
 Caché central de páginas para filesystem, mmap e I/O.
 Reduce acceso a disco y unifica modelo de memoria.
 
-⚙️ FASE 2 — CONCURRENCY & EXECUTION MODEL
-5. A2. Scheduler prioritario
+4. A2. Scheduler prioritario
 
 Planificador con prioridades y time-slicing dinámico.
 Permite multitarea real con control de CPU.
@@ -381,7 +381,7 @@ Parches en caliente del kernel.
 NeoDOS en red distribuida.
 
 🧭 RESUMEN FINAL
-1. Memory core (slab + handles + KOBJ + page cache)
+1. Memory core (slab + handles + KOBJ + page cache ✅)
 2. Concurrency (scheduler + events + work queues)
 3. Async I/O system
 4. Driver safety layer

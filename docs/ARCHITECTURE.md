@@ -438,7 +438,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **229 tests** with suites dedicated to the driver architecture:
+The kernel testing framework includes **245 tests** with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -453,6 +453,7 @@ The kernel testing framework includes **229 tests** with suites dedicated to the
 | Pipe | 13 | IPC pipes |
 | Mmap | 6 | Memory mapping |
 | FSCK | 6 | Filesystem integrity |
+| Page Cache | 8 | Page cache: create, peek, mark_dirty, invalidate, counts, bounds |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.BIN`, `FILETEST.BIN`, `ALLTEST.BIN`).
 
@@ -471,7 +472,7 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 - **kobj**: `src/kobj/mod.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType), 24-byte names, and global registry (64 slots). Used by processes, drivers, and pipes for lifecycle tracking. `KOBJ` shell command lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO + bus-master DMA + AHCI fallback), AHCI, PS/2 keyboard, USB HID, PCI scanner, device event infrastructure
-- **buffer**: block cache (periodic flush via timer)
+- **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (512-entry, 2 MB LRU cache for file data I/O, dirty write-back, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:)
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `kobj_id` (optional KOBJ reference)

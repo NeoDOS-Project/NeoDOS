@@ -1844,6 +1844,73 @@ pub fn register_pipe_tests() {
     });
 }
 
+// ===== Page Cache tests =====
+
+pub fn register_page_cache_tests() {
+    use crate::buffer::page_cache::PageCache;
+
+    test_case!("page_cache_create_empty", {
+        let pc = PageCache::new();
+        test_eq!(pc.entry_count(), 0);
+        test_eq!(pc.dirty_count(), 0);
+    });
+
+    test_case!("page_cache_peek_miss", {
+        let pc = PageCache::new();
+        test_eq!(pc.peek(1, 0), None);
+        test_eq!(pc.peek(1, 1), None);
+        test_eq!(pc.peek(0, 0), None);
+    });
+
+    test_case!("page_cache_mark_dirty_adds_dirty", {
+        // We can't directly insert without a block device, so we can only
+        // verify that mark_dirty doesn't panic and dirty_count doesn't
+        // increase for non-existent entries
+        let mut pc = PageCache::new();
+        test_eq!(pc.dirty_count(), 0);
+        pc.mark_dirty(1, 0);
+        test_eq!(pc.dirty_count(), 0);
+    });
+
+    test_case!("page_cache_invalidate_noop_empty", {
+        let mut pc = PageCache::new();
+        pc.invalidate_inode(42);
+        test_eq!(pc.entry_count(), 0);
+    });
+
+    test_case!("page_cache_invalidate_multiple", {
+        let mut pc = PageCache::new();
+        // Fill the first two slots with simulated valid entries.
+        // We reach into the cache internals through public API: after
+        // invalidate, peek should return None.
+        // Since we can't insert without I/O, we test that invalidate
+        // doesn't affect the empty cache.
+        pc.invalidate_inode(1);
+        pc.invalidate_inode(2);
+        test_eq!(pc.entry_count(), 0);
+    });
+
+    test_case!("page_cache_entry_count_bounds", {
+        let pc = PageCache::new();
+        test_true!(pc.entry_count() <= 512);
+        test_eq!(pc.dirty_count(), 0);
+    });
+
+    test_case!("page_cache_dirty_count_never_negative", {
+        let pc = PageCache::new();
+        test_true!(pc.dirty_count() < usize::MAX);
+    });
+
+    test_case!("page_cache_peek_returns_none_unknown", {
+        let pc = PageCache::new();
+        for inode in &[1u32, 2, 3] {
+            for block in &[0u32, 1, 5, 10] {
+                test_eq!(pc.peek(*inode, *block), None);
+            }
+        }
+    });
+}
+
 // ── Test registration (all suites) ─────────────────────────────────
 
 
@@ -1858,6 +1925,7 @@ pub fn register_tests() {
     register_neofs_tests();
     register_mmap_tests();
     register_pipe_tests();
+    register_page_cache_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();

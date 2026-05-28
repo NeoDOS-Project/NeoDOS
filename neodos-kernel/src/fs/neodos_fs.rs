@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 use crate::buffer::block_cache::BlockCache;
+use crate::buffer::page_cache::PageCache;
 use crate::drivers::block::BlockDevice;
 use crate::serial_println;
 
@@ -556,7 +557,7 @@ impl NeoDosFs {
         Err(FsError::FileNotFound)
     }
 
-    pub fn read_file_to_buf(&mut self, inode_num: u32, buf: &mut [u8], cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
+    pub fn read_file_to_buf(&mut self, inode_num: u32, buf: &mut [u8], cache: &mut BlockCache, page_cache: &mut PageCache, dev: &mut dyn BlockDevice) 
         -> Result<usize, FsError> 
     {
         let inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
@@ -575,25 +576,18 @@ impl NeoDosFs {
             let Some(current_block) = self.get_inode_block_ptr(&inode, block_idx) else {
                 continue;
             };
-            let block_sector = 200 + (current_block * 8);
-            for sector_offset in 0..8 {
-                if bytes_left == 0 || total_read >= buf.len() { break; }
-                
-                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
-                let to_copy = if bytes_left > 512 { 512 } else { bytes_left };
-                let to_copy = if total_read + to_copy > buf.len() { buf.len() - total_read } else { to_copy };
-                
-                buf[total_read..total_read + to_copy].copy_from_slice(&sector_data[..to_copy]);
-                
-                total_read += to_copy;
-                bytes_left -= to_copy;
-            }
+            let block_lba = 200 + (current_block * 8);
+            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let to_copy = bytes_left.min(4096).min(buf.len() - total_read);
+            buf[total_read..total_read + to_copy].copy_from_slice(&page[..to_copy]);
+            total_read += to_copy;
+            bytes_left -= to_copy;
         }
         
         Ok(total_read)
     }
 
-    pub fn read_file(&mut self, inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
+    pub fn read_file(&mut self, inode_num: u32, cache: &mut BlockCache, page_cache: &mut PageCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
         let inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
@@ -612,21 +606,16 @@ impl NeoDosFs {
             let Some(current_block) = self.get_inode_block_ptr(&inode, block_idx) else {
                 continue;
             };
-            let block_sector = 200 + (current_block * 8);
-            for sector_offset in 0..8 {
-                if bytes_left == 0 { break; }
-                
-                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
-                let to_copy = if bytes_left > 512 { 512 } else { bytes_left };
-                
-                // Print directly to VGA and Serial
-                if let Ok(text) = core::str::from_utf8(&sector_data[..to_copy]) {
-                    crate::console::print_str(text);
-                    crate::serial_print!("{}", text);
-                }
-                
-                bytes_left -= to_copy;
+            let block_lba = 200 + (current_block * 8);
+            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let to_copy = bytes_left.min(4096);
+            
+            if let Ok(text) = core::str::from_utf8(&page[..to_copy]) {
+                crate::console::print_str(text);
+                crate::serial_print!("{}", text);
             }
+            
+            bytes_left -= to_copy;
         }
         
         Ok(())
@@ -846,7 +835,7 @@ impl NeoDosFs {
         Err(FsError::NoBlockAvailable) // Directory full
     }
 
-    pub fn write_file(&mut self, inode_num: u32, data: &[u8], cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
+    pub fn write_file(&mut self, inode_num: u32, data: &[u8], cache: &mut BlockCache, page_cache: &mut PageCache, dev: &mut dyn BlockDevice) 
         -> Result<usize, FsError> 
     {
         let mut inode = *self.inode_cache.load_inode(inode_num as usize, cache, dev)?;
@@ -861,19 +850,13 @@ impl NeoDosFs {
             }
             
             let block_ptr = inode.direct_blocks[block_idx];
-            let block_sector = 200 + (block_ptr * 8);
+            let block_lba = 200 + (block_ptr * 8);
             
-            for sector_offset in 0..8 {
-                if written >= data.len() { break; }
-                
-                let sector_data = cache.get_sector_mut(block_sector + sector_offset, dev)?;
-                let to_copy = (data.len() - written).min(512);
-                
-                sector_data[..to_copy].copy_from_slice(&data[written..written + to_copy]);
-                cache.mark_dirty(block_sector + sector_offset);
-                
-                written += to_copy;
-            }
+            let page = page_cache.get_page_mut(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let to_copy = (data.len() - written).min(4096);
+            page[..to_copy].copy_from_slice(&data[written..written + to_copy]);
+            written += to_copy;
+            
             block_idx += 1;
         }
         
@@ -1086,6 +1069,7 @@ impl From<FsError> for VfsError {
 
 impl FileSystem for NeoDosFs {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let mut pc_lock = crate::globals::PAGE_CACHE.lock();
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
@@ -1094,7 +1078,7 @@ impl FileSystem for NeoDosFs {
         let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
         temp_buf.resize(buf.len() + offset as usize, 0);
         
-        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, dev)?;
+        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, &mut *pc_lock, dev)?;
         
         if offset as usize >= read {
             return Ok(0);
@@ -1108,12 +1092,13 @@ impl FileSystem for NeoDosFs {
     }
 
     fn write(&mut self, inode: u32, _offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
+        let mut pc_lock = crate::globals::PAGE_CACHE.lock();
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
         let cache = cache_lock.as_mut().ok_or(VfsError::IOError)?;
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(0).ok_or(VfsError::IOError)?;
 
-        Ok(self.write_file(inode, buf, cache, dev)?)
+        Ok(self.write_file(inode, buf, cache, &mut *pc_lock, dev)?)
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
