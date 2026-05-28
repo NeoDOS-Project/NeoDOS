@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.21.0 (245 tests, PCI NEM standalone driver).
+> Versión actual: v0.21.0 (245 tests, PCI NEM driver with full bus enumeration).
 > Objetivo: v0.22 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (61 items)
+## COMPLETED (62 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -60,7 +60,8 @@
 57. **X2. Unified handle table** — `src/handle.rs`: unified handle table per-process replacing `FdEntry`/`FdTable`. Handle types: CLOSED, STDIN, STDOUT, STDERR, PIPE_READ, PIPE_WRITE, FILE, DEVICE, EVENT. File handles store drive+inode+offset cursor, enabling per-open file offset tracking. `sys_open` returns fd instead of packed `(drive<<32)|inode`. `sys_readfile`/`sys_writefile`/`sys_close` use fd. `sys_mmap` file-backed uses fd. All process lifecycle code (exit, kill) cleans up via handle table. `libneodos` and all user binaries updated. 229 kernel tests + 4 user-mode binaries.
 58. **PS/2 double-character fix** — Boot loader `_` fallthrough arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`, creating a duplicate event bus handler. Every keyboard event dispatched `process_scancode` twice → all characters doubled. Fixed by changing `_` to `true` (bind without handler). Known drivers have explicit match arms.
 59. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event to ACPI driver, with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
-60. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category, Lifecycle type 2). Scans PCI bus 0 at boot, logs all devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. `find_ide_controller()`/`enable_bus_master()` moved inline to `storage_manager.rs`. `find_nvme_controller()`/`nvme_enable()` moved inline to `nvme.rs`. Dead `find_acpi_pm1_cnt_port()` removed. 3251 bytes. Total: 245 kernel tests + 4 user-mode binaries.
+60. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category, Lifecycle type 2). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. `find_ide_controller()`/`enable_bus_master()` moved inline to `storage_manager.rs`. `find_nvme_controller()`/`nvme_enable()` moved inline to `nvme.rs`. Dead `find_acpi_pm1_cnt_port()` removed. 4947 bytes.
+61. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18, and enqueues them for scanning up to 256 buses. No kernel changes needed. QEMU PIIX3: 6 devices on bus 0 (no bridges). Total: 245 kernel tests + 4 user-mode binaries.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -183,11 +184,6 @@ Sistema de detección de bloqueos y hangs del kernel.
 Recuperación automática de fallos.
 
 🖥️ FASE 6 — MODERN HARDWARE LAYER
-20. A10. PCIe enumeration
-
-Escaneo completo de buses PCIe.
-Base para hardware moderno real.
-
 21. A11. MSI/MSI-X
 
 Sistema moderno de interrupciones basado en mensajes.

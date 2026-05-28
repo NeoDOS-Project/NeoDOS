@@ -125,7 +125,7 @@ el FS vea el superbloque en LBA 0 relativo a la partición.
 
 ### ATA bus-master DMA
 
-Kernel scans PCI bus 0 at boot for the IDE controller (class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). `src/drivers/pci.rs` uses I/O ports 0xCF8/0xCFC (4 primitives). PCI bus scan was moved to a standalone NEM driver (`drivers/pci/`, loaded as SYSTEM category).
+Kernel scans PCI bus 0 at boot for the IDE controller (class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). `src/drivers/pci.rs` uses I/O ports 0xCF8/0xCFC (4 primitives). PCI bus enumeration was moved to a standalone NEM driver (`drivers/pci/`, loaded as SYSTEM category) which traverses all buses via PCI-to-PCI bridge detection.
 
 BAR4 gives the bus-master I/O base. Bus-master bit enabled in PCI command register. Two page-aligned (4KB) static buffers for PRDT + DMA data. Polling-based (no IRQ). Methods `read_dma()`/`write_dma()` support up to 8 sectors (4 KB) per call. Existing PIO methods unchanged.
 
@@ -748,5 +748,5 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | NeoDOS FS image (temp) | `neodos/scripts/neodos_image.img` | 10 MB, regenerado en build |
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
 | HAL ABI v0.3 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
-| PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus scanner (SYSTEM) |
+| PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus enumerator (SYSTEM, full bus scan via bridge traversal) |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

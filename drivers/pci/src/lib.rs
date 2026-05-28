@@ -92,7 +92,7 @@ unsafe fn log_dev(bus: u8, dev: u8, func: u8,
     let h = hex_nibble;
     let prefix: &[u8] = &[
         b' ', b' ', b' ',
-        b'0', b'0',
+        h((bus >> 4) & 0xF), h(bus & 0xF),
         b':', h((dev >> 4) & 0xF), h(dev & 0xF),
         b'.', func + b'0',
         b' ', b'[',
@@ -110,12 +110,100 @@ unsafe fn log_dev(bus: u8, dev: u8, func: u8,
         b')', b' ', b'-', b' ',
     ];
     let mut buf = [0u8; 64];
-    buf[..prefix.len()].copy_from_slice(prefix);
-    core::ptr::copy_nonoverlapping(name, buf[prefix.len()..].as_mut_ptr(), name_len);
-    let total = prefix.len() + name_len;
-    buf[total] = b'\r';
-    buf[total + 1] = b'\n';
-    hst_log(2, buf.as_ptr(), total + 2);
+    let bp = buf.as_mut_ptr();
+    let mut pos = 0usize;
+    let pl = prefix.len();
+    while pos < pl {
+        unsafe { core::ptr::write(bp.add(pos), prefix.as_ptr().add(pos).read()) };
+        pos += 1;
+    }
+    let mut i = 0usize;
+    while i < name_len && pos < 62 {
+        unsafe { core::ptr::write(bp.add(pos), name.add(i).read()) };
+        pos += 1;
+        i += 1;
+    }
+    unsafe {
+        core::ptr::write(bp.add(pos), b'\r');
+        pos += 1;
+        core::ptr::write(bp.add(pos), b'\n');
+        pos += 1;
+        hst_log(2, bp, pos);
+    }
+}
+
+fn scan_bus(bus: u8, bus_list: *mut u8, bus_count: *mut u16) -> u16 {
+    let mut dev_count: u16 = 0;
+    let mut d = 0u8;
+    while d < 32 {
+        let vendor = pci_config_read_word(bus, d, 0, 0);
+        if vendor == 0xFFFF || vendor == 0 {
+            d += 1;
+            continue;
+        }
+        let header_type = pci_config_read_word(bus, d, 0, 0x0E);
+        let is_multi = (header_type & 0x80) != 0;
+        let max_func = if is_multi { 8u8 } else { 1u8 };
+        let mut func = 0u8;
+        while func < max_func {
+            let vendor = pci_config_read_word(bus, d, func, 0);
+            if vendor == 0xFFFF || vendor == 0 {
+                func += 1;
+                continue;
+            }
+            let device_id = pci_config_read_word(bus, d, func, 2);
+            let class_rev = pci_config_read_dword(bus, d, func, 0x08);
+            let class = ((class_rev >> 24) & 0xFF) as u8;
+            let subclass = ((class_rev >> 16) & 0xFF) as u8;
+            let prog_if = ((class_rev >> 8) & 0xFF) as u8;
+            let rev = (class_rev & 0xFF) as u8;
+            let cn: &[u8] = match class {
+                0x01 => b"Mass storage",
+                0x02 => b"Network",
+                0x03 => b"Display",
+                0x04 => b"Multimedia",
+                0x05 => b"Memory",
+                0x06 => b"Bridge",
+                0x07 => b"Comm",
+                0x08 => b"System",
+                0x09 => b"Input",
+                0x0C => b"Serial bus",
+                _ => b"Unknown",
+            };
+            unsafe {
+                log_dev(bus, d, func,
+                        vendor, device_id,
+                        class, subclass, prog_if, rev,
+                        cn.as_ptr(), cn.len());
+            }
+            dev_count += 1;
+            // PCI-to-PCI bridge → enqueue secondary bus
+            if class == 0x06 && subclass == 0x04 {
+                let sec_bus = ((pci_config_read_dword(bus, d, func, 0x18) >> 8) & 0xFF) as u8;
+                if sec_bus != 0 {
+                    let count = unsafe { *bus_count as usize };
+                    let mut already = false;
+                    let mut i = 0usize;
+                    while i < count {
+                        if unsafe { *bus_list.add(i) } == sec_bus {
+                            already = true;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    if !already && count < 256 {
+                        unsafe {
+                            *bus_list.add(count) = sec_bus;
+                            *bus_count += 1;
+                        }
+                    }
+                }
+            }
+            func += 1;
+        }
+        d += 1;
+    }
+    dev_count
 }
 
 #[no_mangle]
@@ -125,63 +213,56 @@ pub extern "C" fn driver_init() -> i32 {
     }
     INITIALIZED.store(1, Ordering::Release);
 
-    let msg = b"pci.nem: scanning PCI bus 0\r\n";
+    let msg = b"pci.nem: enumerating PCI buses\r\n";
     unsafe { hst_log(2, msg.as_ptr(), msg.len()) };
 
-    let mut dev_count: u8 = 0;
-    for bus in 0..=0 {
-        for dev in 0..32 {
-            for func in 0..8 {
-                let vendor = pci_config_read_word(bus, dev, func, 0);
-                if vendor == 0xFFFF || vendor == 0 {
-                    if func == 0 {
-                        break;
-                    }
-                    continue;
-                }
+    let mut bus_arr = [0u8; 256];
+    let bus_list = bus_arr.as_mut_ptr();
+    unsafe { *bus_list = 0; }
+    let mut bus_count: u16 = 1;
+    let mut bus_idx: u16 = 0;
+    let mut total_dev: u16 = 0;
 
-                let device_id = pci_config_read_word(bus, dev, func, 2);
-                let class_rev = pci_config_read_dword(bus, dev, func, 0x08);
-                let class = ((class_rev >> 24) & 0xFF) as u8;
-                let subclass = ((class_rev >> 16) & 0xFF) as u8;
-                let prog_if = ((class_rev >> 8) & 0xFF) as u8;
-                let rev = (class_rev & 0xFF) as u8;
-
-                let cn: &[u8] = match class {
-                    0x01 => b"Mass storage",
-                    0x02 => b"Network",
-                    0x03 => b"Display",
-                    0x04 => b"Multimedia",
-                    0x05 => b"Memory",
-                    0x06 => b"Bridge",
-                    0x07 => b"Comm",
-                    0x08 => b"System",
-                    0x09 => b"Input",
-                    0x0C => b"Serial bus",
-                    _ => b"Unknown",
-                };
-
-                unsafe {
-                    log_dev(bus as u8, dev as u8, func as u8,
-                            vendor, device_id,
-                            class, subclass, prog_if, rev,
-                            cn.as_ptr(), cn.len());
-                }
-
-                dev_count += 1;
-            }
-        }
+    while (bus_idx as usize) < 256 && bus_idx < bus_count {
+        let bus = unsafe { *bus_list.add(bus_idx as usize) };
+        bus_idx += 1;
+        total_dev += scan_bus(bus, bus_list, &mut bus_count as *mut u16);
     }
 
-    let dev_tens = dev_count / 10 + b'0';
-    let dev_ones = dev_count % 10 + b'0';
-    let summary = [
-        b'p', b'c', b'i', b'.', b'n', b'e', b'm', b':', b' ',
-        dev_tens, dev_ones,
-        b' ', b'd', b'e', b'v', b'i', b'c', b'e', b's', b' ',
-        b'f', b'o', b'u', b'n', b'd', b'\r', b'\n',
-    ];
-    unsafe { hst_log(2, summary.as_ptr(), summary.len()) };
+    // Format total_dev as decimal
+    let mut dec = [0u8; 5];
+    let dp = dec.as_mut_ptr();
+    let mut n = total_dev;
+    let mut len: usize = 0;
+    loop {
+        unsafe { *dp.add(len) = b'0' + (n % 10) as u8 };
+        len += 1;
+        n /= 10;
+        if n == 0 { break; }
+    }
+    // reverse
+    let mut i = 0usize;
+    while i < len / 2 {
+        let r = len - 1 - i;
+        let t = unsafe { *dp.add(i) };
+        unsafe {
+            *dp.add(i) = *dp.add(r);
+            *dp.add(r) = t;
+        }
+        i += 1;
+    }
+    let mut summary = [0u8; 48];
+    let sp = summary.as_mut_ptr();
+    let pref_bytes = b"pci.nem: " as *const u8;
+    let suff_bytes = b" devices found\r\n" as *const u8;
+    let mut pos: usize = 0;
+    let mut k = 0usize;
+    while k < 9 { unsafe { *sp.add(pos) = *pref_bytes.add(k) }; pos += 1; k += 1; }
+    k = 0;
+    while k < len { unsafe { *sp.add(pos) = *dp.add(k) }; pos += 1; k += 1; }
+    k = 0;
+    while k < 16 { unsafe { *sp.add(pos) = *suff_bytes.add(k) }; pos += 1; k += 1; }
+    unsafe { hst_log(2, sp, pos) };
 
     0
 }
