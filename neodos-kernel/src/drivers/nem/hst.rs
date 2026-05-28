@@ -49,9 +49,7 @@ unsafe extern "C" fn hst_get_ticks() -> u64 { hal::get_ticks() }
 unsafe extern "C" fn hst_ack_irq(vec: u8) { hal::ack_irq(vec); }
 unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
-    if level == 0 { log::error!("[DRV] {}", s); }
-    else if level == 1 { log::warn!("[DRV] {}", s); }
-    else { log::info!("[DRV] {}", s); }
+    crate::serial_println!("[DRV] {}", s);
 }
 
 pub fn build_hst() -> HalServiceTable {

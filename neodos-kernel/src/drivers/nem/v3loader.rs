@@ -46,9 +46,9 @@ unsafe extern "C" fn hst_push_input_byte(byte: u8) {
 unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     match level {
-        0 => log::error!("[DRV] {}", s),
-        1 => log::warn!("[DRV] {}", s),
-        _ => log::info!("[DRV] {}", s),
+        0 => crate::serial_println!("[DRV] {}", s),
+        1 => crate::serial_println!("[DRV] {}", s),
+        _ => crate::serial_println!("[DRV] {}", s),
     }
 }
 

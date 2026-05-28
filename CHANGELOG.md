@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.19.0 — 2026-05-28
+
+### ACPI Poweroff Driver — Añadido
+- **Añadido**: `drivers/acpi/` — NEM v3 standalone driver for ACPI S5 poweroff. Scans PCI for PIIX4 (0x7113) / ICH9 (0x2918/0x2916) LPC bridges, detects PM1a port via GPIO/ABASE registers, and writes `SLP_TYP_S5 | SLP_EN` to trigger soft-off.
+- **Añadido**: Fallback poweroff ports — QEMU Bochs (0x604, 0x2000) and PS/2 keyboard reset (0x64, 0xFE) in cascade after ACPI S5.
+- **Añadido**: `EVENT_SHUTDOWN = 12` to event bus constants. `POWEROFF`/`SHUTDOWN`/`EXIT` shell command pushes event → ACPI driver dispatches → HAL poweroff fallback.
+- **Añadido**: `-no-reboot` flag to `scripts/qemu-debug.sh` so QEMU exits on guest shutdown.
+- **Añadido**: ACPI match arm in boot loader (`register_v3_event_bus_handler` for `EVENT_SHUTDOWN`).
+- **Modificado**: `shell/commands/shutdown.rs` — calls `hal::poweroff()` after event dispatch as final fallback (replaced bare HLT loop).
+- **Eliminado**: `neodos-kernel/src/drivers/acpi.rs` — legacy RSDP/RSDT/FADT parser (replaced by NEM driver PCI-based detection).
+- **Tests**: 237 kernel tests + 4 user-mode binaries.
+
+### PS/2 Double-Character Fix — Corregido
+- **Corregido**: Boot loader fallthrough `_` arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`. This created a duplicate event bus handler that called `process_scancode` twice per keystroke → every character appeared doubled (e.g. `tteesstt`).
+- **Fix**: Changed `_` arm to `true` (bind without registering any handler). Known drivers (PS2KBD, SERIAL, RTC, ACPI) have explicit match arms.
+
 ## v0.18.0 — 2026-05-27
 
 ### X1. Kernel Object Manager (KOBJ) — Añadido

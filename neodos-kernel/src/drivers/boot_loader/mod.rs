@@ -7,6 +7,7 @@ use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::EVENT_KEYBOARD_INPUT;
 use crate::eventbus::EVENT_KEYB_LAYOUT;
 use crate::eventbus::EVENT_RTC_READ;
+use crate::eventbus::EVENT_SHUTDOWN;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
 
@@ -156,10 +157,18 @@ pub fn boot_load_all() {
                                     load_result.entry_event, EVENT_RTC_READ
                                 ).is_ok()
                             }
-                            _ => {
+                            "ACPI" => {
                                 v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                    load_result.entry_event, EVENT_SHUTDOWN
                                 ).is_ok()
+                            }
+                            _ => {
+                                // Unknown driver type – bind successfully without
+                                // registering any event bus handler.
+                                // DO NOT register for KEYBOARD_INPUT here: that would
+                                // create a duplicate handler that calls ps2kbd, causing
+                                // every keyboard event to be dispatched twice.
+                                true
                             }
                         };
                         if !bind_ok {

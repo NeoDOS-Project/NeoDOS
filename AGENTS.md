@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.18.0
+v0.19.0
 
 ## Build & Run
 
@@ -401,7 +401,7 @@ Comando `test`:
 | Concept | Description |
 |---------|-------------|
 | **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` |
-| **Event types** | 12 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, USER(0x1000+) |
+| **Event types** | 13 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, EVENT_SHUTDOWN, USER(0x1000+) |
 | **Event sources** | SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND |
 | **Queue** | Lock-free SPSC ring buffer (64 slots). Pushed from IRQ context, popped from scheduler context |
 | **Callbacks** | `register_handler(event_type, callback, name)` — max 32 handlers |

@@ -256,6 +256,7 @@ Happy hacking!
         # System .nem driver inodes (SYSTEM category)
         system_nem_data = {}
         system_nem_files = [
+            (24, "acpi.nem"),
         ]
         for inum, fname in system_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
@@ -401,6 +402,7 @@ VER
                 entry_rtc = create_dir_entry(23, 1, "rtc.nem")
                 image[offset+512:offset+768] = entry_rtc
 
+
         # Boot driver data blocks
         for (inum, fname) in boot_nem_files:
             data = boot_nem_data.get(inum, b'')
@@ -413,7 +415,12 @@ VER
                 print(f"[*] Writing BOOT/{fname} content...")
 
         # SYSTEM directory (DRIVERS) - uses dynamically allocated block
-        print("[*] Writing SYSTEM directory (DRIVERS) - empty...")
+        print("[*] Writing SYSTEM directory (DRIVERS)...")
+        for bi, blk in enumerate(sys2dir_blocks):
+            if bi == 0:
+                offset = (200 + blk * 8) * 512
+                entry_acpi = create_dir_entry(24, 1, "acpi.nem")
+                image[offset:offset+256] = entry_acpi
 
         # System driver data blocks
         for (inum, fname) in system_nem_files:

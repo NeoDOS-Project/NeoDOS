@@ -103,6 +103,7 @@ pub extern "C" fn driver_is_active() -> i32 {
 }
 
 fn process_scancode(scancode: u8) {
+    // Always flush any pending UTF‑8 continuation byte(s) first.
     let b0 = OUTPUT_PENDING0.swap(0, Ordering::Relaxed);
     if b0 != 0 {
         unsafe { hst_push_input_byte(b0) };
@@ -110,6 +111,12 @@ fn process_scancode(scancode: u8) {
         if b1 != 0 {
             unsafe { hst_push_input_byte(b1) };
         }
+        return;
+    }
+
+    // Break codes (key release) – update modifier state and discard.
+    if (scancode & 0x80) != 0 && scancode != 0xE0 {
+        update_mod(scancode & 0x7F, false);
         return;
     }
 

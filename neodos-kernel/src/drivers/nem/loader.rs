@@ -7,7 +7,7 @@
 use alloc::vec::Vec;
 use crate::nem::NemDriverType;
 use crate::drivers::driver_runtime::{self, DriverId};
-use log::info;
+
 
 /// Load a .nem v3 driver from a NeoFS path.
 /// 
@@ -34,7 +34,7 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
         0, // compat_flags
     ).map_err(|_| "Failed to register driver")?;
     
-    info!("[NEM] v3 driver loaded: {} (path={})", driver_name, path);
+    crate::serial_println!("[NEM] v3 driver loaded: {} (path={})", driver_name, path);
     Ok(id)
 }
 

@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.18.0 (237 tests, KOBJ + NEM v3 + ABI negotiation + dependency resolver, Device Model/TSR removed).
+> Versión actual: v0.19.0 (237 tests, ACPI NEM poweroff driver + EVENT_SHUTDOWN + HAL poweroff fallback, PS/2 double-character fix).
 > Objetivo: v0.20 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
 
-## COMPLETED (57 items)
+## COMPLETED (59 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -34,7 +34,7 @@
 18. **Module ABI v0 (.NDM)** — header 64 bytes, kernel service table, LOAD command.
 19. **NEM module** — NeoDOS Driver Format v1, 6 tipos, 14 tests parse.
 20. **RTC driver** — CMOS RTC, get_datetime(), usado por DATE/TIME.
-21. **ACPI driver** — RSDP scan, RSDT/XSDT, PM1a_CNT_BLK, usado por SHUTDOWN.
+21. **ACPI driver** — NEM v3 standalone ACPI poweroff driver (`drivers/acpi/`). Scans PCI for PIIX4/ICH9 LPC bridge, detects PM1a port, writes SLP_TYP_S5|SLP_EN. Legacy RSDP/RSDT/FADT parser (`neodos-kernel/src/drivers/acpi.rs`) deleted. Fallback QEMU Bochs port + PS/2 reset. `EVENT_SHUTDOWN` event bus constant. `POWEROFF`/`SHUTDOWN`/`EXIT` command pushes event → ACPI driver → HAL poweroff fallback.
 22. **HAL ABI v0.3** — 26 primitives `extern "C"` (CPU, port I/O, page mem, IRQ, timers).
 23. **Device Model + HAL Binding** — 32-slot registry, handles opacos, 5 boot devices.
 24. **Event Bus v1** — SPSC 64 slots, 11 event types, callbacks max 32, 9 tests.
@@ -57,6 +57,8 @@
 55. **W4. Driver dependency resolver** — `src/drivers/dependency/mod.rs`: automatic dependency resolution for NEM drivers. `DependencyGraph` with topological sort via DFS and cycle detection. Convention: `__dep_DRIVERNAME` symbols in NEM symbol table declare dependencies. Boot loader v2 uses dependency-resolved order within each category. 13 unit tests.
 56. **Device Model + TSR removal** — Removed legacy `src/devices/mod.rs` (Device Model v0.3) and `src/tsr/mod.rs` (TSR system). The device model was superseded by direct NEM v3 driver model + Event Bus v1 + HAL ABI v0.3. TSR system was legacy from the NDM era. Shell commands DEVICES and TSR removed. Reduces kernel code by ~530 lines.
 57. **X2. Unified handle table** — `src/handle.rs`: unified handle table per-process replacing `FdEntry`/`FdTable`. Handle types: CLOSED, STDIN, STDOUT, STDERR, PIPE_READ, PIPE_WRITE, FILE, DEVICE, EVENT. File handles store drive+inode+offset cursor, enabling per-open file offset tracking. `sys_open` returns fd instead of packed `(drive<<32)|inode`. `sys_readfile`/`sys_writefile`/`sys_close` use fd. `sys_mmap` file-backed uses fd. All process lifecycle code (exit, kill) cleans up via handle table. `libneodos` and all user binaries updated. 229 kernel tests + 4 user-mode binaries.
+58. **PS/2 double-character fix** — Boot loader `_` fallthrough arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`, creating a duplicate event bus handler. Every keyboard event dispatched `process_scancode` twice → all characters doubled. Fixed by changing `_` to `true` (bind without handler). Known drivers have explicit match arms.
+59. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event to ACPI driver, with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
