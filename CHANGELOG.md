@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.21.0 — 2026-05-28
+
+### PCI NEM Driver — Añadido
+- **Añadido**: `drivers/pci/` — NEM v3 standalone driver para configuración PCI. Escanea el bus 0 al iniciar y lista todos los dispositivos encontrados (vendor, device, clase, subclass, prog-if, revisión).
+- **Añadido**: Servicio Event Bus para otros drivers NEM: `EVENT_PCI_READ_CONFIG` (0x1000) y `EVENT_PCI_WRITE_CONFIG` (0x1001) con respuestas `EVENT_PCI_READ_RESULT` (0x1002) y `EVENT_PCI_WRITE_DONE` (0x1003).
+- **Modificado**: `drivers/pci.rs` (kernel) — reducido a solo 4 primitivas de acceso al espacio de configuración PCI (`pci_config_read/write_dword/word`).
+- **Modificado**: `storage_manager.rs` — `find_ide_controller()` y `enable_bus_master()` movidos inline desde el módulo PCI.
+- **Modificado**: `nvme.rs` — `find_nvme_controller()` y `nvme_enable()` movidos inline.
+- **Eliminado**: `pci::find_acpi_pm1_cnt_port()` — código muerto (ACPI NEM driver ya tiene su propia detección PCI).
+- **Categoría**: SYSTEM (cargado desde `C:\SYSTEM\DRIVERS\SYSTEM\`), Lifecycle type (2).
+- **Total**: 245 kernel tests + 4 user-mode binaries.
+
 ## v0.20.0 — 2026-05-28
 
 ### A5. Global Page Cache — Añadido

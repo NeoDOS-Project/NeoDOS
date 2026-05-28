@@ -3,6 +3,50 @@
 use crate::serial_println;
 use core::sync::atomic::{fence, Ordering};
 
+struct NvmeInfo {
+    bus: u8,
+    device: u8,
+    func: u8,
+    bar0_phys: u64,
+}
+
+fn find_nvme_controller() -> Option<NvmeInfo> {
+    for bus in 0..=0 {
+        for dev in 0..32 {
+            for func in 0..8 {
+                let vendor = crate::drivers::pci::pci_config_read_word(bus, dev, func, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    if func == 0 { break; }
+                    continue;
+                }
+
+                let class_rev = crate::drivers::pci::pci_config_read_dword(bus, dev, func, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                let prog_if = ((class_rev >> 8) & 0xFF) as u8;
+
+                if class == 0x01 && subclass == 0x08 && prog_if == 0x02 {
+                    let bar0 = crate::drivers::pci::pci_config_read_dword(bus, dev, func, 0x10);
+                    let bar_is_64bit = (bar0 & 0x06) == 0x04;
+                    let bar0_phys = if bar_is_64bit {
+                        let bar1 = crate::drivers::pci::pci_config_read_dword(bus, dev, func, 0x14);
+                        ((bar1 as u64) << 32) | (bar0 as u64 & 0xFFFF_FFF0)
+                    } else {
+                        (bar0 & 0xFFFF_FFF0) as u64
+                    };
+                    return Some(NvmeInfo { bus, device: dev, func, bar0_phys });
+                }
+            }
+        }
+    }
+    None
+}
+
+fn nvme_enable(nvme: &NvmeInfo) {
+    let cmd = crate::drivers::pci::pci_config_read_word(nvme.bus, nvme.device, nvme.func, 0x04);
+    crate::drivers::pci::pci_config_write_word(nvme.bus, nvme.device, nvme.func, 0x04, cmd | 0x06);
+}
+
 const NVME_CC: u64 = 0x0014;
 const NVME_CSTS: u64 = 0x001C;
 
@@ -327,13 +371,13 @@ impl NvmeDriver {
     }
 
     pub fn probe_all() -> [Option<NvmeDriver>; 1] {
-        let info = match crate::drivers::pci::find_nvme_controller() {
+        let info = match find_nvme_controller() {
             Some(i) => i,
             None => return [None,],
         };
 
         serial_println!("[NVMe] Controller found: bar0=0x{:016X}", info.bar0_phys);
-        crate::drivers::pci::nvme_enable(&info);
+        nvme_enable(&info);
         let bar0_phys = info.bar0_phys;
 
         crate::arch::x64::paging::split_2mb_page(NVME_MMIO_VIRT).ok();

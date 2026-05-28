@@ -257,6 +257,7 @@ Happy hacking!
         system_nem_data = {}
         system_nem_files = [
             (24, "acpi.nem"),
+            (25, "pci.nem"),
         ]
         for inum, fname in system_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
@@ -421,6 +422,8 @@ VER
                 offset = (200 + blk * 8) * 512
                 entry_acpi = create_dir_entry(24, 1, "acpi.nem")
                 image[offset:offset+256] = entry_acpi
+                entry_pci = create_dir_entry(25, 1, "pci.nem")
+                image[offset+256:offset+512] = entry_pci
 
         # System driver data blocks
         for (inum, fname) in system_nem_files:

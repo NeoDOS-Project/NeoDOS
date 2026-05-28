@@ -543,7 +543,7 @@ main.rs
 10. allocator::init()        — Heap allocator (linked_list_allocator)
 11. arch::enable_interrupts()— STI
 12. AtaDriver::new()         — ATA controllers
-13. pci::find_ide() + DMA    — PCI bus-master DMA init
+13. storage_manager::find_ide_controller() + DMA — PCI bus-master DMA init (inline from pci.rs)
 14. AhciDriver::probe()      — AHCI controller
 15. gpt::scan_partitions()   — GPT partition table
 16. BlockCache::new()        — Block cache singleton
