@@ -1,11 +1,8 @@
 .aider*
 
 # Rust build artifacts
-target/
-neodos-bootloader/target/
-neodos-kernel/target/
-libneodos/target/
-userbin/hello_lib/target/
+
+*/target/*
 
 # Generated build outputs
 *.elf
@@ -14,3 +11,4 @@ userbin/hello_lib/target/
 *.img
 *.vdi
 *.log
+*.fs
