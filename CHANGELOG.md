@@ -12,7 +12,12 @@
 - **Añadido**: 7 tests de scheduler: prioridad, round-robin, time-slice, aging.
 - **Modificado**: `Process` struct: nuevos campos `priority`, `time_slice_remaining`, `ticks_since_scheduled`.
 - **Modificado**: `Process::new_ring3()` asigna `PRIORITY_NORMAL` por defecto.
-- **Total**: 255 kernel tests + 4 user-mode binaries.
+- **Añadido**: `PRI` shell command — cambia la prioridad de un proceso en tiempo de ejecución.
+- **Añadido**: `sched_set_process_priority()` en `Scheduler` (validación de rango, reseteo de time slice).
+- **Añadido**: Columna `PRI` en salida de `PS` (H/AN/N/I para niveles de prioridad).
+- **Añadido**: `CPUTEST.BIN` — binary user-mode para tests de prioridad (CPU-bound, cuenta hasta 200M).
+- **Añadido**: Test `sched_set_process_priority` en suite de scheduler.
+- **Total**: 256 kernel tests + 4 user-mode binaries.
 
 ## v0.22.0 — 2026-05-29
 

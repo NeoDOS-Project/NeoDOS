@@ -390,6 +390,22 @@ impl Scheduler {
         }
     }
 
+    pub fn set_process_priority(&mut self, pid: u32, priority: u8) -> bool {
+        if priority >= PRIORITY_COUNT {
+            return false;
+        }
+        for proc in self.processes.iter_mut().flatten() {
+            if proc.pid == pid {
+                proc.priority = priority;
+                let idx = priority as usize;
+                proc.time_slice_remaining = TIME_SLICES[idx];
+                proc.ticks_since_scheduled = 0;
+                return true;
+            }
+        }
+        false
+    }
+
     /// Apply aging: boost priority of starved Ready processes.
     fn apply_aging(&mut self) {
         for proc in self.processes.iter_mut().flatten() {

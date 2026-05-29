@@ -10,6 +10,8 @@ struct ProcSnap {
     rip: u64,
     rsp: u64,
     cpu_ticks: u64,
+    priority: u8,
+    ticks_since_scheduled: u64,
 }
 
 impl DosShell {
@@ -27,6 +29,8 @@ impl DosShell {
                         rip: p.rip,
                         rsp: p.rsp,
                         cpu_ticks: p.cpu_ticks,
+                        priority: p.priority,
+                        ticks_since_scheduled: p.ticks_since_scheduled,
                     });
                 }
             }
@@ -38,18 +42,18 @@ impl DosShell {
             return;
         }
 
-        println!("PID  STATE       WAIT SLOT      RIP               RSP               TICKS");
+        println!("PID  STATE       WAIT SLOT  PRI      RIP               RSP               TICKS");
         for entry in snap.iter() {
             if let Some(p) = entry {
-                let (state_str, wait_str, slot_str) = format_proc_info(p);
-                println!("{:>3}  {:9}  {:>4} {:>4}  0x{:016x}  0x{:016x}  {}",
-                    p.pid, state_str, wait_str, slot_str, p.rip, p.rsp, p.cpu_ticks);
+                let (state_str, wait_str, slot_str, pri_str) = format_proc_info(p);
+                println!("{:>3}  {:9}  {:>4} {:>4}  {:>3}  0x{:016x}  0x{:016x}  {}",
+                    p.pid, state_str, wait_str, slot_str, pri_str, p.rip, p.rsp, p.cpu_ticks);
             }
         }
     }
 }
 
-fn format_proc_info(p: &ProcSnap) -> (&'static str, &'static str, &'static str) {
+fn format_proc_info(p: &ProcSnap) -> (&'static str, &'static str, &'static str, &'static str) {
     let state_str = match p.state {
         ProcessState::Ready => "Ready",
         ProcessState::Running => "Running",
@@ -67,5 +71,13 @@ fn format_proc_info(p: &ProcSnap) -> (&'static str, &'static str, &'static str) 
         None => "-",
     };
 
-    (state_str, wait_str, slot_str)
+    let pri_str = match p.priority {
+        0 => "H",
+        1 => "AN",
+        2 => "N",
+        3 => "I",
+        _ => "?",
+    };
+
+    (state_str, wait_str, slot_str, pri_str)
 }

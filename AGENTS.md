@@ -373,7 +373,7 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-255 tests en 31 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+256 tests en 31 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -426,6 +426,12 @@ Comando `test`:
 | Subcommand | Description |
 |-----------|-------------|
 | `KOBJ` | List all kernel objects tracked by KOBJ. Shows ID, type, name, reference count, and native ID |
+
+### PRI Command
+
+| Subcommand | Description |
+|-----------|-------------|
+| `PRI <pid> <priority>` | Set scheduling priority for a running process (0=HIGH, 1=ABOVE_NORMAL, 2=NORMAL, 3=IDLE) |
 
 ## Event Bus v1
 

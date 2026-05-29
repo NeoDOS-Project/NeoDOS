@@ -172,7 +172,7 @@ Happy hacking!
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         bin_files = {}
-        for name in ['hello', 'systest', 'filetest', 'alltest']:
+        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest']:
             fpath = os.path.join(userbin_dir, f'{name}.bin')
             data = b''
             if os.path.exists(fpath):
@@ -206,6 +206,7 @@ Happy hacking!
         systest_blocks = alloc_blocks(7, len(bin_files['systest']))
         filetest_blocks = alloc_blocks(8, len(bin_files['filetest']))
         alltest_blocks = alloc_blocks(9, len(bin_files['alltest']))
+        cputest_blocks = alloc_blocks(10, len(bin_files['cputest']))
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
         bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
@@ -221,6 +222,7 @@ Happy hacking!
             7: (0x80, len(bin_files['systest']), pad_blocks(systest_blocks)),
             8: (0x80, len(bin_files['filetest']), pad_blocks(filetest_blocks)),
             9: (0x80, len(bin_files['alltest']), pad_blocks(alltest_blocks)),
+            10: (0x80, len(bin_files['cputest']), pad_blocks(cputest_blocks)),
             15: (0x40, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (0x40, 256 * 5, pad_blocks(testdir_blocks)),
             19: (0x40, 256 * 2, pad_blocks(bootdir_blocks)),
@@ -305,6 +307,10 @@ Happy hacking!
         entry = create_dir_entry(9, 1, "ALLTEST.BIN")
         image[offset+1536:offset+1792] = entry
 
+        # Entry 7: CPUTEST.BIN (CPU-bound priority test)
+        entry = create_dir_entry(10, 1, "CPUTEST.BIN")
+        image[offset+1792:offset+2048] = entry
+
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
         print("[*] Writing readme.txt content...")
@@ -360,6 +366,7 @@ VER
             7: ('SYSTEST.BIN', bin_files['systest']),
             8: ('FILETEST.BIN', bin_files['filetest']),
             9: ('ALLTEST.BIN', bin_files['alltest']),
+            10: ('CPUTEST.BIN', bin_files['cputest']),
         }
         for inum, (name, data) in bin_data_map.items():
             if not data:

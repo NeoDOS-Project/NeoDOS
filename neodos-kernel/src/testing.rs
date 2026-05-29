@@ -353,6 +353,35 @@ pub fn register_sched_priority_tests() {
         // Priority should have been boosted from IDLE (3) to at least ABOVE_NORMAL (2)
         test_true!(boosted.priority < PRIORITY_IDLE);
     });
+
+    test_case!("sched_set_process_priority", {
+        let mut sched = Scheduler::new();
+        sched.next_pid = 2;
+
+        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p.state = ProcessState::Ready;
+        sched.processes[1] = Some(p);
+
+        // Set to HIGH
+        test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
+        let proc = sched.processes[1].as_ref().unwrap();
+        test_eq!(proc.priority, PRIORITY_HIGH);
+        test_eq!(proc.time_slice_remaining, TIME_SLICES[PRIORITY_HIGH as usize]);
+
+        // Set to IDLE
+        test_true!(sched.set_process_priority(1, PRIORITY_IDLE));
+        let proc = sched.processes[1].as_ref().unwrap();
+        test_eq!(proc.priority, PRIORITY_IDLE);
+        test_eq!(proc.time_slice_remaining, TIME_SLICES[PRIORITY_IDLE as usize]);
+
+        // Invalid priority
+        test_true!(!sched.set_process_priority(1, 99));
+        let proc = sched.processes[1].as_ref().unwrap();
+        test_eq!(proc.priority, PRIORITY_IDLE);
+
+        // Non-existent PID
+        test_true!(!sched.set_process_priority(999, PRIORITY_HIGH));
+    });
 }
 
 pub fn register_utf8_tests() {

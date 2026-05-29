@@ -145,6 +145,7 @@ pub fn cmd_date(shell: &mut DosShell, args: &[&str]) { shell.cmd_date(args); }
 pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
 pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
+pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
@@ -200,6 +201,15 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  PS\n",
                        "  List all running processes with PID, current state,\n",
                        "  and name. States: Running, Ready, Blocked, Terminated."), },
+    CommandEntry { name: "PRI",      category: "CTRL",     handler: cmd_pri,     description: "Set process priority",
+        usage: concat!("Syntax:  PRI <pid> <priority>\n",
+                       "  Set the scheduling priority of a running process.\n",
+                       "  Priority levels:\n",
+                       "    0 = HIGH (400 ticks)\n",
+                       "    1 = ABOVE_NORMAL (200 ticks)\n",
+                       "    2 = NORMAL (100 ticks) — default\n",
+                       "    3 = IDLE (50 ticks)\n",
+                       "  PRI 2 0   boosts PID 2 to HIGH priority."), },
     CommandEntry { name: "DATE",     category: "INFO",     handler: cmd_date,    description: "Display current date",
         usage: concat!("Syntax:  DATE [YYYY-MM-DD]\n",
                        "  Display the current date, or set a new date.\n",
@@ -271,7 +281,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  to the physical disk."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
         usage: concat!("Syntax:  TEST\n",
-                       "  Run all kernel self-tests (120 tests across 12 suites).\n",
+                       "  Run all kernel self-tests (256 tests across 31 suites).\n",
                        "  If all pass, runs 4 user-mode binaries:\n",
                        "  HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN"), },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3",
