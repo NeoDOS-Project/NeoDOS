@@ -6,7 +6,7 @@
 
 ---
 
-## COMPLETED (62 items)
+## COMPLETED (63 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -14,7 +14,8 @@
 3. **Identity paging 4 GiB** — páginas enormes 2 MB, identidad hasta 4 GB.
 4. **Heap allocator** — 16 MB @ 0x1000000, `linked_list_allocator`, Box/Vec/String.
 5. **A3. Kernel slab allocator** — 9 size classes (8B–2KB), O(1) alloc/free via per-slot free lists on 4 KB slab pages. Uses `hal::alloc_page()` for page allocation. Falls through to linked-list allocator for >2 KB or >16-byte alignment. 9 self-tests.
- 6. **A5. Global page cache (base)** — `buffer/page_cache.rs`: central 4 KB page cache (512 entries × 4 KB = 2 MB) for filesystem file data I/O and mmap file-backed pages. LRU eviction with dirty write-back. Indexed by `(inode, block_num)` with stored `data_lba` for safe flush. Integrated with NeoFS read/write paths (`read_file_to_buf`, `write_file`, `read_file`) to read/write 8 sectors at once through the cache. mmap `load_file_mmap_page` checks PageCache first before falling back to VFS read. Timer-driven flush via `NEED_PAGE_CACHE_FLUSH` alongside existing `NEED_CACHE_FLUSH`. 8 unit tests. Total: 245 tests.
+6. **A2. Scheduler prioritario** — 4 niveles de prioridad (HIGH/ABOVE_NORMAL/NORMAL/IDLE), time-slicing dinámico (400/200/100/50 ticks), preemption desde Ring 3, aging cada 100 ticks para evitar starvation. 7 tests. Total: 255 tests.
+6. **A5. Global page cache (base)** — `buffer/page_cache.rs`: central 4 KB page cache (512 entries × 4 KB = 2 MB) for filesystem file data I/O and mmap file-backed pages. LRU eviction with dirty write-back. Indexed by `(inode, block_num)` with stored `data_lba` for safe flush. Integrated with NeoFS read/write paths (`read_file_to_buf`, `write_file`, `read_file`) to read/write 8 sectors at once through the cache. mmap `load_file_mmap_page` checks PageCache first before falling back to VFS read. Timer-driven flush via `NEED_PAGE_CACHE_FLUSH` alongside existing `NEED_CACHE_FLUSH`. 8 unit tests. Total: 245 tests.
 6. **PS/2 keyboard driver** — IRQ1, ring-buffer lock-free 1024 bytes.
 6. **Serial console** — COM1, `serial_print!`/`serial_println!`.
 7. **Framebuffer console** — GOP 1280×800, font VGA 8×16, `println!`.
@@ -105,11 +106,6 @@ Convierte todo el kernel en objetos gestionables.
 
 Caché central de páginas para filesystem, mmap e I/O.
 Reduce acceso a disco y unifica modelo de memoria.
-
-4. A2. Scheduler prioritario
-
-Planificador con prioridades y time-slicing dinámico.
-Permite multitarea real con control de CPU.
 
 6. X5. Deferred work queues
 

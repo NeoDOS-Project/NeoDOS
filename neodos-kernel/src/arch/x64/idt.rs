@@ -318,6 +318,20 @@ extern "x86-interrupt" fn virtualization_handler(stack_frame: InterruptStackFram
         "Virtualization: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
+/// Read CS selector from the interrupt stack frame.
+/// The timer_handler_asm pushes 15 GPRs, then the iretq frame starts
+/// at current_rsp + 120 (= 15 * 8).  CS is at +128.
+/// 0x08 = Ring 0 (kernel), 0x1B = Ring 3 (user).
+unsafe fn read_cs_from_stack(current_rsp: u64) -> u16 {
+    ((current_rsp + 128) as *const u16).read()
+}
+
+/// Return true if the interrupted context was Ring 3 (user mode),
+/// meaning it is safe to preempt and context-switch.
+unsafe fn is_user_mode_interrupt(current_rsp: u64) -> bool {
+    read_cs_from_stack(current_rsp) == 0x1B
+}
+
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_enter();
@@ -337,6 +351,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         }
     }
 
+    let from_user = unsafe { is_user_mode_interrupt(current_rsp) };
+
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
@@ -344,12 +360,77 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let pid = scheduler.current_pid;
 
-    // ── User process (PID > 0) ───────────────────────────────────
-    // NEVER save current.rsp here — the timer may have fired during
-    // Ring 0 execution (e.g., while the kernel was processing a
-    // syscall), producing a 3-item iretq frame.  Only
-    // syscall_try_resched saves RSP because INT 0x80 always comes
-    // from Ring 3 with a full 5-item iretq frame.
+    // ── Preemptive context switch ──────────────────────────────
+    // Only when: we interrupted Ring 3 AND the current process's
+    // time slice expired (state was changed to Ready by on_timer_tick).
+    if pid > 0 && from_user {
+        let should_preempt = scheduler.current_process_mut()
+            .is_some_and(|p| p.state == ProcessState::Ready && p.pid == pid);
+
+        if should_preempt {
+            // Save the current process's RSP (points to saved GPRs)
+            if let Some(proc) = scheduler.current_process_mut() {
+                proc.rsp = current_rsp;
+            }
+
+            // Pick next process
+            let next = scheduler.schedule();
+
+            // Reset the NEXT process's time slice to its priority quantum
+            unsafe {
+                let np = &mut *next;
+                let idx = (np.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
+                np.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                np.ticks_since_scheduled = 0;
+            }
+
+            // Switch TSS.RSP0 to the new process's kernel stack
+            let next_ks_top = unsafe { (*next).kernel_stack_top };
+            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+
+            let next_rsp = unsafe { (*next).rsp };
+            crate::hal::ack_irq(32);
+            crate::invariants::timer_irq_exit();
+            crate::invariants::irq_exit_clear();
+
+            // Push TimerTick event
+            let _ = crate::eventbus::EVENT_BUS.push_event(
+                crate::eventbus::EVENT_TIMER_TICK,
+                crate::eventbus::SOURCE_HAL,
+                1,
+                current_tick,
+                0,
+                0,
+            );
+
+            crate::trace_cswitch!(pid, unsafe { (*next).pid } as u64);
+            return next_rsp;
+        }
+
+        // Process alive and time slice not expired — just set NEED_RESCHED
+        let alive = scheduler.current_process_mut()
+            .is_some_and(|p| p.state != ProcessState::Terminated);
+        if alive {
+            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+            crate::hal::ack_irq(32);
+            crate::invariants::timer_irq_exit();
+            crate::invariants::irq_exit_clear();
+            // Push TimerTick event
+            let _ = crate::eventbus::EVENT_BUS.push_event(
+                crate::eventbus::EVENT_TIMER_TICK,
+                crate::eventbus::SOURCE_HAL,
+                1,
+                current_tick,
+                0,
+                0,
+            );
+            return current_rsp;
+        }
+    }
+
+    // ── Kernel mode interrupt OR idle ──────────────────────────
+    // If we interrupted kernel code, just set NEED_RESCHED so the
+    // next syscall boundary triggers a context switch.
     if pid > 0 {
         let alive = scheduler.current_process_mut()
             .is_some_and(|p| p.state != ProcessState::Terminated);
@@ -360,7 +441,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::invariants::irq_exit_clear();
             return current_rsp;
         }
-        // Process is dead or missing — fall through to idle
+        // Process dead — fall through to idle
         scheduler.current_pid = 0;
     }
 
@@ -376,7 +457,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let _ = crate::eventbus::EVENT_BUS.push_event(
         crate::eventbus::EVENT_TIMER_TICK,
         crate::eventbus::SOURCE_HAL,
-        1,   // pit device_id
+        1,
         current_tick,
         0,
         0,

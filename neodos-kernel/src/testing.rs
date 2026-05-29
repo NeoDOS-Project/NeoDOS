@@ -190,6 +190,8 @@ pub fn register_process_tests() {
         test_eq!(p.cpu_ticks, 0);
         test_eq!(p.user_slot, None);
         test_eq!(p.waiting_for, None);
+        test_eq!(p.priority, crate::scheduler::PRIORITY_NORMAL);
+        test_eq!(p.time_slice_remaining, crate::scheduler::TIME_SLICES[crate::scheduler::PRIORITY_NORMAL as usize]);
     });
 
     test_case!("process_state_debug", {
@@ -209,6 +211,147 @@ pub fn register_process_tests() {
         test_eq!(s1, s2);
         test_ne!(ProcessState::Ready, ProcessState::Running);
         test_ne!(ProcessState::Blocked { waiting_for: 1 }, ProcessState::Blocked { waiting_for: 2 });
+    });
+}
+
+pub fn register_sched_priority_tests() {
+    use crate::scheduler::{
+        Process, ProcessState, Scheduler,
+        PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, TIME_SLICES,
+    };
+
+    test_case!("sched_priority_high_picked_first", {
+        // Verify schedule() picks higher-priority Ready process over lower-priority
+        let mut sched = Scheduler::new();
+        sched.next_pid = 3;
+
+        // PID 1: NORMAL priority, Ready
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Ready;
+        p1.priority = PRIORITY_NORMAL;
+
+        // PID 2: HIGH priority, Ready
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Ready;
+        p2.priority = PRIORITY_HIGH;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+
+        let next = sched.schedule();
+        let picked_pid = unsafe { (*next).pid };
+        test_eq!(picked_pid, 2);
+    });
+
+    test_case!("sched_priority_round_robin_same_level", {
+        // Verify round-robin within the same priority level
+        let mut sched = Scheduler::new();
+        sched.next_pid = 3;
+        sched.current_pid = 0;
+
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Ready;
+        p1.priority = PRIORITY_NORMAL;
+
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Ready;
+        p2.priority = PRIORITY_NORMAL;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+
+        let first = sched.schedule();
+        let first_pid = unsafe { (*first).pid };
+        test_ne!(first_pid, 0);
+
+        let second = sched.schedule();
+        let second_pid = unsafe { (*second).pid };
+        test_ne!(second_pid, first_pid);
+    });
+
+    test_case!("sched_priority_idle_last", {
+        // Verify IDLE priority is only picked when no higher priority is ready
+        let mut sched = Scheduler::new();
+        sched.next_pid = 4;
+
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Ready;
+        p1.priority = PRIORITY_IDLE;
+
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Ready;
+        p2.priority = PRIORITY_HIGH;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+
+        let next = sched.schedule();
+        let picked = unsafe { (*next).pid };
+        test_eq!(picked, 2);
+    });
+
+    test_case!("sched_time_slice_default_values", {
+        let p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        test_eq!(p.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        test_eq!(p.priority, PRIORITY_NORMAL);
+    });
+
+    test_case!("sched_on_timer_tick_decrements_slice", {
+        let mut sched = Scheduler::new();
+        sched.next_pid = 2;
+        sched.current_pid = 1;
+
+        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p.state = ProcessState::Running;
+        p.time_slice_remaining = 5;
+        p.priority = PRIORITY_NORMAL;
+        sched.processes[1] = Some(p);
+
+        sched.on_timer_tick();
+
+        let remaining = sched.processes[1].as_ref().unwrap().time_slice_remaining;
+        test_eq!(remaining, 4);
+    });
+
+    test_case!("sched_on_timer_tick_expire_yields", {
+        let mut sched = Scheduler::new();
+        sched.next_pid = 2;
+        sched.current_pid = 1;
+
+        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p.state = ProcessState::Running;
+        p.time_slice_remaining = 1;
+        p.priority = PRIORITY_NORMAL;
+        sched.processes[1] = Some(p);
+
+        sched.on_timer_tick();
+
+        let state = sched.processes[1].as_ref().unwrap().state;
+        test_eq!(state, ProcessState::Ready);
+    });
+
+    test_case!("sched_aging_boosts_starved", {
+        // Create a scheduler with one IDLE priority process that hasn't run for
+        // MAX_STARVATION_TICKS + 1. After an aging interval, it should be boosted.
+        let mut sched = Scheduler::new();
+        sched.next_pid = 2;
+        sched.current_pid = 1;
+
+        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p.state = ProcessState::Ready;
+        p.priority = PRIORITY_IDLE;
+        p.ticks_since_scheduled = 2000; // starved
+        p.time_slice_remaining = 50;
+        sched.processes[1] = Some(p);
+
+        // Run multiple timer ticks to trigger aging (AGING_INTERVAL_TICKS = 100)
+        for _ in 0..100 {
+            sched.on_timer_tick();
+        }
+
+        let boosted = sched.processes[1].as_ref().unwrap();
+        // Priority should have been boosted from IDLE (3) to at least ABOVE_NORMAL (2)
+        test_true!(boosted.priority < PRIORITY_IDLE);
     });
 }
 
@@ -2013,6 +2156,7 @@ pub fn register_tests() {
     register_env_tests();
     register_input_tests();
     register_process_tests();
+    register_sched_priority_tests();
     register_utf8_tests();
     register_alloc_tests();
     register_slab_tests();

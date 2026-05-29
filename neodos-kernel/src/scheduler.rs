@@ -11,6 +11,17 @@ pub const MAX_PROCESSES: usize = 16;
 pub const KERNEL_STACK_SIZE: usize = 16384;
 const IDLE_STACK_SIZE: usize = 4096;
 
+pub const PRIORITY_HIGH: u8 = 0;
+pub const PRIORITY_ABOVE_NORMAL: u8 = 1;
+pub const PRIORITY_NORMAL: u8 = 2;
+pub const PRIORITY_IDLE: u8 = 3;
+pub const PRIORITY_COUNT: u8 = 4;
+
+pub const TIME_SLICES: [u16; PRIORITY_COUNT as usize] = [400, 200, 100, 50];
+
+pub const AGING_INTERVAL_TICKS: u64 = 100;
+pub const MAX_STARVATION_TICKS: u64 = 1000;
+
 #[repr(align(16))]
 pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
@@ -44,6 +55,9 @@ pub struct Process {
     pub rsp: u64,  pub rip: u64,  pub rflags: u64,
     pub pid: u32,  pub state: ProcessState,  pub cpu_ticks: u64,
     pub user_slot: Option<u8>,  pub waiting_for: Option<u32>,
+    pub priority: u8,
+    pub time_slice_remaining: u16,
+    pub ticks_since_scheduled: u64,
     pub cwd_drive: u8,  pub cwd_path: String,
     pub heap_base: u64,  pub heap_break: u64,
     pub kernel_stack_top: u64,
@@ -70,6 +84,8 @@ impl fmt::Debug for Process {
             .field("rsp", &self.rsp)
             .field("state", &self.state)
             .field("cpu_ticks", &self.cpu_ticks)
+            .field("priority", &self.priority)
+            .field("time_slice_remaining", &self.time_slice_remaining)
             .field("kernel_stack_top", &self.kernel_stack_top)
             .field("kobj_id", &self.kobj_id)
             .finish()
@@ -124,6 +140,9 @@ impl Process {
             cpu_ticks: 0,
             user_slot: None,
             waiting_for: None,
+            priority: PRIORITY_NORMAL,
+            time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
+            ticks_since_scheduled: 0,
             cwd_drive: 2,
             cwd_path: String::from("\\"),
             heap_base: 0,
@@ -159,6 +178,9 @@ impl Process {
             cpu_ticks: 0,
             user_slot: Some(slot_idx),
             waiting_for: None,
+            priority: PRIORITY_NORMAL,
+            time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
+            ticks_since_scheduled: 0,
             cwd_drive,
             cwd_path: cwd_path.to_string(),
             heap_base,
@@ -358,28 +380,57 @@ impl Scheduler {
             .expect("Idle process missing from scheduler")
     }
 
-    pub fn schedule(&mut self) -> *mut Process {
-        let start = (self.current_pid + 1) % self.next_pid.max(1);
-        let end = start + self.next_pid;
+    /// Reset the current process's time slice to its priority's quantum.
+    #[allow(dead_code)]
+    pub fn reset_time_slice(&mut self) {
+        if let Some(proc) = self.current_process_mut() {
+            let idx = (proc.priority as usize).min(PRIORITY_COUNT as usize - 1);
+            proc.time_slice_remaining = TIME_SLICES[idx];
+            proc.ticks_since_scheduled = 0;
+        }
+    }
 
+    /// Apply aging: boost priority of starved Ready processes.
+    fn apply_aging(&mut self) {
+        for proc in self.processes.iter_mut().flatten() {
+            if proc.pid > 0 && proc.state == ProcessState::Ready {
+                proc.ticks_since_scheduled = proc.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
+                if proc.ticks_since_scheduled >= MAX_STARVATION_TICKS && proc.priority > PRIORITY_HIGH {
+                    proc.priority -= 1;
+                    proc.ticks_since_scheduled = 0;
+                    crate::serial_println!("[SCHED] Aging: PID {} boosted to priority {}", proc.pid, proc.priority);
+                }
+            }
+        }
+    }
+
+    /// Priority-based schedule: scan from HIGHEST to LOWEST priority.
+    /// Within the same priority level, round-robin from (current_pid + 1).
+    /// Returns a mutable pointer to the selected Process.
+    pub fn schedule(&mut self) -> *mut Process {
         // Invariant: must not be called from inside timer IRQ handler
         if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
             crate::serial_println!("[SCHED] schedule() called from timer IRQ context!");
         }
 
-        for pid in start..end {
-            let check_pid = pid % self.next_pid;
-            if check_pid == 0 {
-                continue;
-            }
-            for proc in self.processes.iter_mut() {
-                if let Some(p) = proc {
-                    if p.pid == check_pid && p.state == ProcessState::Ready {
-                        let prev_pid = self.current_pid;
-                        self.current_pid = check_pid;
-                        p.state = ProcessState::Running;
-                        crate::trace_cswitch!(prev_pid, check_pid);
-                        return p as *mut Process;
+        let start = (self.current_pid + 1) % self.next_pid.max(1);
+
+        // Scan by priority level: HIGHEST first
+        for priority in 0..PRIORITY_COUNT {
+            for offset in 0..self.next_pid {
+                let check_pid = (start + offset) % self.next_pid.max(1);
+                if check_pid == 0 {
+                    continue;
+                }
+                for proc in self.processes.iter_mut() {
+                    if let Some(p) = proc {
+                        if p.pid == check_pid && p.state == ProcessState::Ready && p.priority == priority {
+                            let prev_pid = self.current_pid;
+                            self.current_pid = check_pid;
+                            p.state = ProcessState::Running;
+                            crate::trace_cswitch!(prev_pid, check_pid);
+                            return p as *mut Process;
+                        }
                     }
                 }
             }
@@ -399,20 +450,31 @@ impl Scheduler {
 
     pub fn on_timer_tick(&mut self) {
         self.timer_ticks += 1;
-        if self.timer_ticks % 100 == 0 {
-            if let Some(current) = self.processes.iter_mut().find(|p| {
-                if let Some(proc) = p {
-                    proc.pid == self.current_pid
-                } else {
-                    false
-                }
-            }) {
-                if let Some(proc) = current {
-                    proc.cpu_ticks += 1;
-                    if proc.state == ProcessState::Running {
-                        proc.state = ProcessState::Ready;
-                    }
-                }
+
+        // Apply aging every AGING_INTERVAL_TICKS
+        if self.timer_ticks % AGING_INTERVAL_TICKS == 0 {
+            self.apply_aging();
+        }
+
+        let pid = self.current_pid;
+        if pid == 0 {
+            return;
+        }
+
+        if let Some(proc) = self.current_process_mut() {
+            if proc.state != ProcessState::Running {
+                return;
+            }
+            proc.cpu_ticks += 1;
+
+            if proc.time_slice_remaining > 0 {
+                proc.time_slice_remaining -= 1;
+            }
+
+            // Time slice expired: yield CPU
+            if proc.time_slice_remaining == 0 {
+                proc.state = ProcessState::Ready;
+                crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             }
         }
     }

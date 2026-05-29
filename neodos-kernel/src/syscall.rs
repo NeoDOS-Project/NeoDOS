@@ -422,6 +422,22 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         }
 
         SyscallNum::Yield => {
+            crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut scheduler = s.lock();
+                let pid = scheduler.current_pid;
+                if pid > 0 {
+                    if let Some(proc) = scheduler.current_process_mut() {
+                        if proc.state == ProcessState::Running {
+                            proc.state = ProcessState::Ready;
+                        }
+                        let idx = (proc.priority as usize).min(
+                            crate::scheduler::PRIORITY_COUNT as usize - 1);
+                        proc.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                    }
+                }
+            });
+            NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             0
         }
 

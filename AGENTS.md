@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.21.0
+v0.22.0
 
 ## Build & Run
 
@@ -321,6 +321,31 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - `wake_pipe_readers()` in `pipe.rs` iterates scheduler processes via `Scheduler::processes`
 - `block_current_for_pipe()` sets current process to `Blocked` + sets `NEED_RESCHED`
 
+## Priority Scheduler (A2)
+
+`src/scheduler.rs` — Planificador prioritario con time-slicing dinámico y aging.
+
+### Priority Levels
+| Nivel | Constante | Time Slice | Descripción |
+|-------|-----------|-----------|-------------|
+| 0 | `PRIORITY_HIGH` | 400 ticks | Procesos críticos del sistema |
+| 1 | `PRIORITY_ABOVE_NORMAL` | 200 ticks | Procesos importantes de usuario |
+| 2 | `PRIORITY_NORMAL` | 100 ticks | Prioridad por defecto (nuevos procesos) |
+| 3 | `PRIORITY_IDLE` | 50 ticks | Background, solo se ejecuta si no hay nada más |
+
+### Algorithm
+- **schedule()**: escanea por nivel de prioridad (HIGH→IDLE), round-robin dentro del mismo nivel
+- **on_timer_tick()**: decrementa `time_slice_remaining` cada tick; al expirar marca Ready + `NEED_RESCHED`
+- **sys_yield**: Running→Ready + resetea time slice + fuerza re-schedule
+- **Preemption from Ring 3**: timer handler detecta CS=0x1B (user mode), guarda RSP, llama schedule(), cambia TSS.RSP0
+- **Aging** (cada 100 ticks): boostea prioridad si un proceso Ready no se ha ejecutado en >= 1000 ticks
+
+### Implementation
+- `Process` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64)
+- `timer_handler_inner`: lee CS del stack frame, solo preemptea si interrumpió Ring 3
+- Afecta solo procesos user-mode (Ring 3); el shell corre en Ring 0 y no pasa por schedule()
+- 7 nuevos tests de scheduler: prioridad, round-robin, time-slice, aging
+
 ## ELF64 Loader
 
 `src/elf.rs` — Minimal ELF64 loader for user-mode binaries.
@@ -348,14 +373,14 @@ Binarios flat cargados en `0x400000`.
 
 ## In-Kernel Test Framework
 
-248 tests en 30 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+255 tests en 31 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
 | Environment | 6 | Variables de entorno |
 | Input | 5 | Input buffer (ring buffer) |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
-| Process | 3 | Process struct, state transitions |
+| Scheduler | 7 | Priority scheduling, time-slice, round-robin, aging |
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
@@ -380,7 +405,7 @@ Binarios flat cargados en `0x400000`.
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (248 tests kernel)
+1. Ejecuta `testing::run_all()` (255 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

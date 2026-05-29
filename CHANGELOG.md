@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.23.0 — 2026-05-29
+
+### A2. Priority Scheduler — Añadido
+- **Añadido**: Sistema de 4 niveles de prioridad (`PRIORITY_HIGH`, `PRIORITY_ABOVE_NORMAL`, `PRIORITY_NORMAL`, `PRIORITY_IDLE`) con time-slicing dinámico (400/200/100/50 ticks).
+- **Añadido**: `schedule()` ahora selecciona procesos por nivel de prioridad (HIGH→IDLE), round-robin dentro del mismo nivel.
+- **Añadido**: `on_timer_tick()` decrementa `time_slice_remaining` cada tick; al expirar, marca el proceso Ready y dispara `NEED_RESCHED`.
+- **Añadido**: Preemption desde Ring 3 en `timer_handler_inner`: detecta CS=0x1B, guarda RSP, llama `schedule()`, cambia TSS.RSP0, retorna nuevo RSP.
+- **Añadido**: Aging cada 100 ticks: procesos Ready sin ejecutar por >= 1000 ticks reciben boost de prioridad (evita starvation).
+- **Añadido**: `sys_yield` (RAX=2) implementado correctamente: Running→Ready + reseteo de time slice + `NEED_RESCHED`.
+- **Añadido**: 7 tests de scheduler: prioridad, round-robin, time-slice, aging.
+- **Modificado**: `Process` struct: nuevos campos `priority`, `time_slice_remaining`, `ticks_since_scheduled`.
+- **Modificado**: `Process::new_ring3()` asigna `PRIORITY_NORMAL` por defecto.
+- **Total**: 255 kernel tests + 4 user-mode binaries.
+
 ## v0.22.0 — 2026-05-29
 
 ### ATA NEM Standalone Driver — Añadido
