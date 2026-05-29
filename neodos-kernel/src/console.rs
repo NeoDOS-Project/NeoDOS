@@ -140,6 +140,7 @@ pub fn print_str(s: &str) {
     for byte in s.bytes() {
         write_char(byte);
     }
+    crate::serial_print!("{}", s);
 }
 
 pub fn draw_cursor(visible: bool) {

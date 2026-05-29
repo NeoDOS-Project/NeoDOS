@@ -382,6 +382,93 @@ pub fn register_sched_priority_tests() {
         // Non-existent PID
         test_true!(!sched.set_process_priority(999, PRIORITY_HIGH));
     });
+
+    test_case!("sched_priority_preempt_higher_ready", {
+        // PID 2 (NORMAL, Running) is current. PID 1 (HIGH, Ready) just woke up.
+        // schedule() should pick PID 1 (HIGH beats NORMAL/IDLE).
+        let mut sched = Scheduler::new();
+        sched.next_pid = 4;
+        sched.current_pid = 2;
+
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Ready;
+        p1.priority = PRIORITY_HIGH;
+
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Running;
+        p2.priority = PRIORITY_NORMAL;
+
+        let mut p3 = Process::new_ring3(3, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p3.state = ProcessState::Ready;
+        p3.priority = PRIORITY_IDLE;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+        sched.processes[3] = Some(p3);
+
+        let next = sched.schedule();
+        let picked = unsafe { (*next).pid };
+        test_eq!(picked, 1);
+    });
+
+    test_case!("sched_priority_blocked_ignored", {
+        // Blocked processes should be skipped even if they have higher priority.
+        let mut sched = Scheduler::new();
+        sched.next_pid = 4;
+        sched.current_pid = 2;
+
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Blocked { waiting_for: 99 };
+        p1.priority = PRIORITY_HIGH;
+
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Running;
+        p2.priority = PRIORITY_NORMAL;
+
+        let mut p3 = Process::new_ring3(3, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p3.state = ProcessState::Ready;
+        p3.priority = PRIORITY_IDLE;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+        sched.processes[3] = Some(p3);
+
+        // HIGH is blocked, keep scanning → pick IDLE (only Ready non-idle)
+        let next = sched.schedule();
+        let picked = unsafe { (*next).pid };
+        test_eq!(picked, 3);
+    });
+
+    test_case!("sched_priority_unblock_picks_higher", {
+        // Blocked HIGH unblocks → should be picked over running IDLE.
+        let mut sched = Scheduler::new();
+        sched.next_pid = 3;
+        sched.current_pid = 2;
+
+        // PID 1: HIGH, Blocked (waiting for pipe)
+        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p1.state = ProcessState::Blocked { waiting_for: 0xFFFF_0000 };
+        p1.priority = PRIORITY_HIGH;
+
+        // PID 2: IDLE, Running (currently executing, no other Ready process)
+        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
+        p2.state = ProcessState::Running;
+        p2.priority = PRIORITY_IDLE;
+
+        sched.processes[1] = Some(p1);
+        sched.processes[2] = Some(p2);
+
+        // First: no Ready process except idle → timer expired → PID 2 Ready
+        // tick: NORMAL priority, time_slice_remaining = 100 → 99 keep running
+
+        // Unblock PID 1
+        sched.processes[1].as_mut().unwrap().state = ProcessState::Ready;
+
+        // schedule() should pick PID 1 (HIGH beats IDLE)
+        let next = sched.schedule();
+        let picked = unsafe { (*next).pid };
+        test_eq!(picked, 1);
+    });
 }
 
 pub fn register_utf8_tests() {
