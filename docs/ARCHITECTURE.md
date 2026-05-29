@@ -21,10 +21,10 @@ NeoDOS Kernel (x86_64-unknown-none)
   - graphics init + RAM disk + serial + VGA console
   - CPU structures (GDT/IDT/PIC) + PS/2 + USB HID
   - physical memory init (UEFI mem map → frame allocator bitmap)
-  - kernel heap allocator init (linked_list_allocator)
-  - enable interrupts (STI)
-  - ATA + PCI bus-master DMA + AHCI probe
-  - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
+   - kernel heap allocator init (linked_list_allocator + slab allocator)
+   - enable interrupts (STI)
+   - ATA boot stub PIO (BootAta) + AHCI probe + NVMe probe
+   - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
   - DOS-like shell (37 kernel tests + user commands)
@@ -53,21 +53,24 @@ por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 
 ## ATA, PCI DMA y AHCI
 
-El kernel mantiene dos drivers ATA (`ATA_DRIVER` primario, `ATA_DRIVER_SECONDARY`) más un driver AHCI opcional (`AHCI_DRIVER`).
+El kernel usa una arquitectura de dos niveles para ATA:
 
-### ATA driver (`drivers/ata.rs`)
-Expone dos familias de lecturas:
-- **`read_sector` / `write_sector` / `read_dma` / etc.** — usan `base_lba` (offset de partición).
-  El NeoDOS FS las invoca con LBAs relativos a la partición, y el driver suma `base_lba`
-  antes de enviar el comando al disco.
-- **`read_sector_master`** — lee LBAs absolutos (sin `base_lba`). FAT32 la usa para leer
-  el sector de arranque en LBA 0 o 2048.
+### Boot stub (`neodos-kernel/src/drivers/ata.rs`)
+`BootAta` — PIO only, primary channel only. Used during early boot (PHASE 3.6–3.8) for GPT
+parsing, NeoDOS superblock read, and block cache warmup before NEM drivers are loaded.
 
-### PCI bus-master DMA
-El kernel escanea PCI bus 0 en busca del controlador IDE (class 0x01, subclass 0x01) con capacidad bus-master. BAR4 da la I/O base. Dos buffers estáticos de 4 KB para PRDT + datos DMA. Polling-based. Soporta hasta 8 sectores (4 KB) por llamada.
+### NEM v3 standalone driver (`drivers/ata/` → `ata.nem`, SYSTEM category)
+Full-featured ATA driver loaded at PHASE 3.85 by the boot loader. Scans PCI for IDE controller
+(class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). Enables bus-master bit
+in PCI command register. Initializes primary + secondary channels. Supports DMA read/write (via
+PRDT, up to 8 sectors / 4 KB) and PIO multi-sector fallback. Each active channel registers a
+block device via `hst_register_block_device()` with the kernel's `NemBlockDevice` registry.
 
 ### AHCI fallback
-Si se encuentra un controlador AHCI tras el escaneo PCI, el driver ATA activa `ahci_fallback = true` y redirige las operaciones de disco al driver AHCI. El driver AHCI usa DMA polling por puerto con buffers separados, soporta ATA (READ/WRITE DMA EXT) y ATAPI (PACKET + READ_10 CDB).
+If an AHCI controller is found after PCI scan, the storage manager uses AHCI in preference to
+ATA. The AHCI driver uses DMA polling per port with separate buffers, supports ATA (READ/WRITE
+DMA EXT) and ATAPI (PACKET + READ_10 CDB). If AHCI has no active ports, falls back to ATA boot
+stub (or NEM ATA driver once loaded).
 
 `base_lba` se configura en `main.rs` después de parsear la GPT.
 
@@ -279,7 +282,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 5. Apply relocations: resolve UNDEF symbols against KET
 6. Resolve entry points: `entry_init`, `entry_event`, `entry_activate`, `entry_fini`
 
-**Kernel Export Table (KET):** 11 symbols exported to NEM v3 drivers:
+**Kernel Export Table (KET):** 13 symbols exported to NEM v3 drivers:
 
 | Symbol | Description |
 |---------|-------------|
@@ -291,6 +294,8 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 | `hst_inb(port)` / `hst_outb(port, val)` | 8-bit I/O |
 | `hst_inw(port)` / `hst_outw(port, val)` | 16-bit I/O |
 | `hst_inl(port)` / `hst_outl(port, val)` | 32-bit I/O |
+| `hst_register_block_device(name, len, id, sectors, ssize, read_fn, write_fn)` | Register block device with kernel |
+| `hst_unregister_block_device(idx)` | Unregister block device |
 
 **Event Bus Bridge:** `register_v3_event_bus_handler()` — bridge between the v3 driver calling convention (`driver_on_event(*const Event) → i32`) and the kernel Event Bus (`fn(&Event)`). Uses a static `AtomicUsize` to store the function pointer.
 
@@ -421,7 +426,8 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 | Driver | File | Description |
 |--------|---------|-------------|
-| ATA | `drivers/ata.rs` | PIO + bus-master DMA, primary + secondary, base_lba |
+| ATA (boot stub) | `drivers/ata.rs` | PIO only, primary channel, used before NEM driver loads |
+| ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI | `drivers/ahci.rs` | DMA polling, per-port, ATA + ATAPI, PRDT scatter-gather |
 | PS/2 | `drivers/ps2.rs` | IRQ1, scan code → ASCII via KLC layouts |
 | PCI | `drivers/pci.rs` | Config space primitives via 0xCF8/0xCFC (scanning via NEM driver) |
@@ -430,7 +436,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | RTC | `drivers/rtc.rs` | CMOS RTC |
 | ACPI | `drivers/acpi.rs` | RSDP/XSDT, poweroff via PM1a |
 | NVMe | `drivers/nvme.rs` | In progress |
-| Storage Manager | `drivers/storage_manager.rs` | Unifies ATA/AHCI |
+| Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
 | Block Device | `drivers/block.rs` | Trait + block device manager |
 | USB HID | `drivers/usb_hid/` | UHCI (non-functional on PIIX3) |
 
@@ -438,7 +444,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **248 tests** with suites dedicated to the driver architecture:
+The kernel testing framework includes **248 tests** (30 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -472,7 +478,7 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 ## Kernel Subsystems (High-Level)
 - **kobj**: `src/kobj/mod.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType), 24-byte names, and global registry (64 slots). Used by processes, drivers, and pipes for lifecycle tracking. `KOBJ` shell command lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
-- **drivers**: ATA (PIO + bus-master DMA + AHCI fallback), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
+- **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (512-entry, 2 MB LRU cache for file data I/O, dirty write-back, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:)
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
@@ -491,26 +497,25 @@ The kernel architecture prioritizes memory safety and reentrancy:
 
 ## Syscall Table (INT 0x80)
 
-Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2. Return in RAX.
+Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8 = arg3, R9 = arg4. Return in RAX.
 
 | # | Syscall | Args | Description |
 |---|---------|------|-------------|
 | 0 | sys_exit | RBX=code | Terminate process |
-| 1 | sys_write | RBX=ptr, RCX=len | Write to console |
+| 1 | sys_write | RBX=fd, RCX=ptr, RDX=len | Write to fd (1=console, pipe writer) |
 | 2 | sys_yield | — | Yield CPU |
 | 3 | sys_getpid | — | Return current PID |
-| 4 | sys_read | RBX=fd, RCX=buf, RDX=count | Read from stdin |
+| 4 | sys_read | RBX=fd, RCX=buf, RDX=count | Read from fd (0=stdin, pipe reader) |
+| 5 | sys_pipe | RBX=fds_ptr | Create pipe, returns [read_fd, write_fd] |
+| 6 | sys_dup2 | RBX=old_fd, RCX=new_fd | Duplicate file descriptor |
 | 9 | sys_waitpid | RBX=pid | Wait for child process |
-| 10 | sys_open | RBX=path_ptr, RCX=flags | Open file → inode |
-| 11 | sys_readfile | RBX=inode, RCX=buf, RDX=count | Read from file |
-| 12 | sys_writefile | RBX=inode, RCX=buf, RDX=count | Write to file |
-| 13 | sys_close | RBX=fd | Close (no-op) |
-| 14 | sys_ioctl | RBX=device_id, RCX=cmd, RDX=buf | Device I/O control |
-| 15 | sys_register_device | RBX=device_id | Register as device handler |
-| 16 | sys_chdir | RBX=path_ptr | Change working directory |
-| 17 | sys_getcwd | RBX=buf, RCX=len | Get working directory path |
-| 18 | sys_brk | RBX=addr | Set program break (demand-paged) |
-| 19 | sys_mmap | RBX=size | Allocate zero-filled memory |
+| 10 | sys_open | RBX=path_ptr, RCX=flags | Open file → fd (handle index 0-15) |
+| 11 | sys_readfile | RBX=fd, RCX=buf, RDX=count | Read from file (uses handle offset) |
+| 12 | sys_writefile | RBX=fd, RCX=buf, RDX=count | Write to file (uses handle offset) |
+| 13 | sys_close | RBX=fd | Close handle (pipe, file, device, event) |
+| 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
+| 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
+| 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
 
 ## Debug Interfaces
 

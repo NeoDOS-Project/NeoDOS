@@ -1,0 +1,36 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama (local)",
+      "options": {
+        "baseURL": "http://localhost:11434/v1"
+      },
+      "models": {
+        "llama3.2": { "name": "Llama 3.2" },
+        "qwen2.5-coder:7b": { "name": "Qwen 2.5 Coder 7B" },
+        "qwen2.5-coder:14b": { "name": "Qwen 2.5 Coder 14B" }
+      }
+    }
+  },
+  "instructions": ["AGENTS.md"],
+  "command": {
+    "build": {
+      "template": "Build the NeoDOS OS: compile bootloader + kernel and create the FAT32 disk image. Run from the neodos/ directory.",
+      "description": "Build bootloader, kernel, and disk image"
+    },
+    "run": {
+      "template": "Launch NeoDOS in QEMU with OVMF UEFI firmware, serial output, and GDB server on :1234. Run from neodos/ after building.",
+      "description": "Run NeoDOS in QEMU"
+    },
+    "debug": {
+      "template": "Connect GDB to a running QEMU instance (port :1234) with kernel symbols loaded. Run from neodos/ using gdb -x .gdbinit",
+      "description": "Debug with GDB"
+    },
+    "github": {
+      "template": "Review changes in both the root repo (main) and the neodos/ subdirectory (master). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Commit and push both to GitHub with descriptive messages. Run from the root of the repository.",
+      "description": "Release to GitHub"
+    }
+  }
+}

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.22.0 — 2026-05-29
+
+### ATA NEM Standalone Driver — Añadido
+- **Añadido**: `drivers/ata/` — NEM v3 standalone driver for ATA storage (SYSTEM category). Scans PCI for IDE controller with bus-master DMA capability, initializes primary + secondary channels, supports DMA read/write (via PRDT) and PIO multi-sector fallback. Each active channel registers a `NemBlockDevice` via `hst_register_block_device()`.
+- **Añadido**: `drivers/block.rs` — `NemBlockDevice` struct wrapping NEM driver callbacks as a `BlockDevice` trait. `register_nem_block_device()` / `unregister_nem_block_device()` public API.
+- **Añadido**: `v3loader.rs` — kernel export `hst_register_block_device()` and `hst_unregister_block_device()` for NEM drivers to register block devices with the kernel's `BlockDeviceManager`.
+- **Modificado**: `ata.rs` (kernel) — reducido a `BootAta` PIO-only boot stub (primary channel only, no DMA). Used during early boot for GPT parsing, superblock read, and block cache warmup before NEM drivers load.
+- **Modificado**: `storage_manager.rs` — simplificado: NVMe → AHCI → ATA boot stub priority. Removed legacy `find_ide_controller()` and `enable_bus_master()` inline PCI scan (now handled by the standalone NEM ATA driver).
+- **Modificado**: `block.rs` — removed `AtaWithAhciFallback` wrapper. `BootAta` directly implements `BlockDevice`.
+- **Modificado**: `scripts/build.sh` — añadida compilación de `ata.nem` via `build_nem.py`.
+- **Modificado**: `scripts/create_neodos_image.py` — añadido `ata.nem` a la imagen del sistema de archivos NeoDOS.
+- **Modificado**: `scripts/qemu-debug.sh` — cambiado `-machine q35` a `-machine pc` (PIIX3) para compatibilidad con controlador IDE.
+- **Eliminado**: ATA bus-master DMA inline code (DMA buffers, PRDT, PCI scan) — movido al standalone NEM driver.
+- **Categoría**: SYSTEM (cargado desde `C:\SYSTEM\DRIVERS\SYSTEM\`).
+- **Total**: 248 kernel tests + 4 user-mode binaries.
+
 ## v0.21.0 — 2026-05-28
 
 ### PCI NEM Driver — Añadido

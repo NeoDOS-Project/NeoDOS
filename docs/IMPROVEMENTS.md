@@ -1,7 +1,7 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.21.0 (248 tests, PCI NEM driver with full bus enumeration).
-> Objetivo: v0.22 — kernel modular, estable, extensible.
+> Versión actual: v0.22.0 (248 tests, ATA NEM standalone driver).
+> Objetivo: v0.23 — kernel modular, estable, extensible.
 > Última revisión: Mayo 2026.
 
 ---
@@ -62,6 +62,7 @@
 59. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event to ACPI driver, with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
 60. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category, Lifecycle type 2). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. `find_ide_controller()`/`enable_bus_master()` moved inline to `storage_manager.rs`. `find_nvme_controller()`/`nvme_enable()` moved inline to `nvme.rs`. Dead `find_acpi_pm1_cnt_port()` removed. 4947 bytes.
 61. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18, and enqueues them for scanning up to 256 buses. Added 3 kernel tests validating bus 0 devices, bus 1 emptiness, and bridge detection. QEMU PIIX3: 6 devices on bus 0 (no bridges). Total: 248 kernel tests + 4 user-mode binaries.
+62. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 standalone driver (SYSTEM category) for ATA storage. Scans PCI for IDE controller with bus-master DMA capability; enables bus-mastering and initializes primary + secondary channels. Supports DMA read/write (via PRDT, up to 8 sectors) and PIO multi-sector fallback. Each active channel registers a `NemBlockDevice` via `hst_register_block_device()`. Kernel-side `ata.rs` reduced to `BootAta` PIO-only boot stub (GPT parsing, superblock read, cache warmup before NEM load). `AtaWithAhciFallback` removed. QEMU machine type changed from `q35` to `pc` (PIIX3) for IDE controller compatibility. Total: 248 kernel tests + 4 user-mode binaries.
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -299,81 +300,93 @@ Separación de contextos de usuario.
 Editor de texto del sistema.
 Primera herramienta real de usuario.
 
-43. B7. NeoTOP
+43. B6b. Shared library system (libneodos DLL)
+
+Sistema de biblioteca compartida para procesos Ring 3. Compilar libneodos como binario
+standalone en una dirección fija reservada en el espacio de usuario (ej: `0x30000000`),
+con tabla de exportación de funciones `extern "C"` (syscall wrappers, IO, FS, mem, panic).
+El kernel mapea el DLL en cada proceso Ring 3 al crearlo (`spawn_usermode`). Los binarios
+de usuario se enlazan contra la DLL en lugar de incluir el código estáticamente, reduciendo
+tamaño en disco y compartiendo páginas de código en RAM entre procesos. Requiere: dirección
+fija reservada fuera de user slots y heap, export table con ABI estable, loader en el kernel,
+actualización de linker scripts (`user.ld`) y build system, y compatibilidad `extern "C"` en
+todos los puntos de entrada de libneodos.
+
+44. B7. NeoTOP
 
 Monitor de procesos y recursos.
 Visibilidad del sistema.
 
-44. B11. NeoShell scripting
+45. B11. NeoShell scripting
 
 Lenguaje de scripting del sistema.
 Automatización avanzada.
 
-45. B12. Compositor 2D
+46. B12. Compositor 2D
 
 Sistema gráfico básico de ventanas.
 Base GUI.
 
 🔐 FASE 12 — SECURITY HARDENING
-46. U1. Module signature validation
+47. U1. Module signature validation
 
 Validación criptográfica de drivers.
 Evita código no confiable.
 
-47. U3. Driver permission enforcement
+48. U3. Driver permission enforcement
 
 Control granular de permisos de drivers.
 Reduce superficie de ataque.
 
-48. U4. Secure boot chain
+49. U4. Secure boot chain
 
 Cadena de arranque verificada.
 Protección del sistema completo.
 
 ⚡ FASE 13 — PERFORMANCE & MEMORY EVOLUTION
-49. V2. Zero-copy pipes
+50. V2. Zero-copy pipes
 
 IPC sin copias de memoria.
 Reduce overhead.
 
-50. V3. Copy-on-write fork
+51. V3. Copy-on-write fork
 
 Fork eficiente por páginas compartidas.
 Optimiza procesos.
 
-51. X10. Per-CPU allocators
+52. X10. Per-CPU allocators
 
 Allocators por CPU.
 Escalabilidad SMP.
 
 🧱 FASE 14 — SMP ENABLEMENT
-52. X8. SMP-safe kernel refactor
+53. X8. SMP-safe kernel refactor
 
 Soporte multi-core completo.
 Reescritura mínima del core.
 
 🧪 FASE 15 — EXPERIMENTAL FUTURE
-53. E4. Full GUI system
+54. E4. Full GUI system
 
 Interfaz gráfica completa con ventanas.
 
-54. E5. Advanced secure boot
+55. E5. Advanced secure boot
 
 Secure boot extendido con políticas avanzadas.
 
-55. E6. Package manager
+56. E6. Package manager
 
 Sistema de paquetes y repositorios.
 
-56. T4. Time-travel debugging
+57. T4. Time-travel debugging
 
 Reproducción determinista de ejecuciones.
 
-57. T5. Live kernel patching
+58. T5. Live kernel patching
 
 Parches en caliente del kernel.
 
-58. T2. Distributed NeoDOS nodes
+59. T2. Distributed NeoDOS nodes
 
 NeoDOS en red distribuida.
 

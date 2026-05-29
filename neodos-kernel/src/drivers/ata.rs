@@ -1,430 +1,133 @@
-// src/drivers/ata.rs
+// src/drivers/ata.rs — Boot stub (PIO only, primary channel)
+// Full ATA driver lives in drivers/ata/ (NEM v3 standalone).
 
-#![allow(dead_code)]
-
-const ATA_PRIMARY_DATA: u16 = 0x1F0;
-const ATA_PRIMARY_ERROR: u16 = 0x1F1;
-const ATA_PRIMARY_FEATURES: u16 = 0x1F1;
-const ATA_PRIMARY_SECTOR_COUNT: u16 = 0x1F2;
-const ATA_PRIMARY_LBA_LOW: u16 = 0x1F3;
-const ATA_PRIMARY_LBA_MID: u16 = 0x1F4;
-const ATA_PRIMARY_LBA_HIGH: u16 = 0x1F5;
-const ATA_PRIMARY_DRIVE_SEL: u16 = 0x1F6;
-const ATA_PRIMARY_COMMAND: u16 = 0x1F7;
-const ATA_PRIMARY_STATUS: u16 = 0x1F7;
-
-const ATA_SECONDARY_DATA: u16 = 0x170;
-const ATA_SECONDARY_ERROR: u16 = 0x171;
-const ATA_SECONDARY_FEATURES: u16 = 0x171;
-const ATA_SECONDARY_SECTOR_COUNT: u16 = 0x172;
-const ATA_SECONDARY_LBA_LOW: u16 = 0x173;
-const ATA_SECONDARY_LBA_MID: u16 = 0x174;
-const ATA_SECONDARY_LBA_HIGH: u16 = 0x175;
-const ATA_SECONDARY_DRIVE_SEL: u16 = 0x176;
-const ATA_SECONDARY_COMMAND: u16 = 0x177;
-const ATA_SECONDARY_STATUS: u16 = 0x177;
+const ATA_DATA: u16 = 0x1F0;
+const ATA_SECTOR_COUNT: u16 = 0x1F2;
+const ATA_LBA_LOW: u16 = 0x1F3;
+const ATA_LBA_MID: u16 = 0x1F4;
+const ATA_LBA_HIGH: u16 = 0x1F5;
+const ATA_DRIVE_SEL: u16 = 0x1F6;
+const ATA_COMMAND: u16 = 0x1F7;
+const ATA_STATUS: u16 = 0x1F7;
 
 const ATA_CMD_READ_PIO: u8 = 0x20;
-const ATA_CMD_READ_MULTIPLE: u8 = 0xC4;
-const ATA_CMD_WRITE_MULTIPLE: u8 = 0xC5;
-const ATA_CMD_READ_DMA: u8 = 0xC8;
-const ATA_CMD_WRITE_DMA: u8 = 0xCA;
+const ATA_CMD_WRITE_PIO: u8 = 0x30;
+const ATA_DRIVE_SELECT: u8 = 0xE0;
 
-// Bus-master DMA registers (offsets from BMBA)
-const BM_COMMAND: u16 = 0x0;
-const BM_STATUS: u16 = 0x2;
-const BM_PRDT_ADDRESS: u16 = 0x4;
-
-// BM_COMMAND bits
-const BM_CMD_START: u8 = 0x01;
-const BM_CMD_WRITE: u8 = 0x08;
-
-// BM_STATUS bits
-const BM_STAT_ACTIVE: u8 = 0x01;
-const BM_STAT_ERROR: u8 = 0x02;
-const BM_STAT_INTERRUPT: u8 = 0x04;
-
-#[repr(C, packed)]
-struct PrdtEntry {
-    data_buffer_phys: u32,
-    count: u16,
-    eot: u16,
+pub struct BootAta {
+    base_lba: u64,
 }
 
-#[repr(align(4096))]
-struct DmaAligned([u8; 4096]);
+unsafe impl Send for BootAta {}
 
-static mut PRDT: DmaAligned = DmaAligned([0u8; 4096]);
-static mut DMA_DATA: DmaAligned = DmaAligned([0u8; 4096]);
+impl BootAta {
+    pub fn new() -> Self {
+        BootAta { base_lba: 0 }
+    }
 
-/// LBA drive-select base (bits 7–4). With the unified GPT disk, both NeoDOS FS
-/// and FAT32 ESP are on the same physical drive (master, index=0).
-const ATA_DRIVE_SELECT_LBA_BASE: u8 = 0xE0;
+    pub fn set_base_lba(&mut self, lba: u64) { self.base_lba = lba; }
+    pub fn base_lba(&self) -> u64 { self.base_lba }
 
-/// Master drive — used by the FAT32 driver for absolute-LBA reads.
-const ATA_DRIVE_SELECT_MASTER: u8 = 0xE0;
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum AtaChannel {
-    Primary,
-    Secondary,
-}
-
-pub struct AtaDriver {
-    data_port: u16,
-    _error_port: u16,
-    sector_count_port: u16,
-    lba_low_port: u16,
-    lba_mid_port: u16,
-    lba_high_port: u16,
-    drive_sel_port: u16,
-    command_port: u16,
-    status_port: u16,
-    bmba: Option<u16>,
-    base_lba: u32,
-    channel: AtaChannel,
-}
-
-unsafe impl Send for AtaDriver {}
-unsafe impl Sync for AtaDriver {}
-
-#[derive(Debug)]
-pub enum AtaError {
-    Busy,
-    Error,
-    Timeout,
-}
-
-impl AtaDriver {
-    pub fn new(channel: AtaChannel) -> Self {
-        let (data, err, sc, lba_lo, lba_mid, lba_hi, drv_sel, cmd, sts) = match channel {
-            AtaChannel::Primary => (
-                ATA_PRIMARY_DATA, ATA_PRIMARY_ERROR,
-                ATA_PRIMARY_SECTOR_COUNT, ATA_PRIMARY_LBA_LOW,
-                ATA_PRIMARY_LBA_MID, ATA_PRIMARY_LBA_HIGH,
-                ATA_PRIMARY_DRIVE_SEL, ATA_PRIMARY_COMMAND, ATA_PRIMARY_STATUS,
-            ),
-            AtaChannel::Secondary => (
-                ATA_SECONDARY_DATA, ATA_SECONDARY_ERROR,
-                ATA_SECONDARY_SECTOR_COUNT, ATA_SECONDARY_LBA_LOW,
-                ATA_SECONDARY_LBA_MID, ATA_SECONDARY_LBA_HIGH,
-                ATA_SECONDARY_DRIVE_SEL, ATA_SECONDARY_COMMAND, ATA_SECONDARY_STATUS,
-            ),
-        };
-        AtaDriver {
-            data_port: data,
-            _error_port: err,
-            sector_count_port: sc,
-            lba_low_port: lba_lo,
-            lba_mid_port: lba_mid,
-            lba_high_port: lba_hi,
-            drive_sel_port: drv_sel,
-            command_port: cmd,
-            status_port: sts,
-            bmba: None,
-            base_lba: 0,
-            channel,
+    fn wait_not_busy(&self) -> Result<(), ()> {
+        for _ in 0..1000000 {
+            if (crate::hal::inb(ATA_STATUS) & 0x80) == 0 {
+                return Ok(());
+            }
         }
+        Err(())
     }
 
-    pub fn set_base_lba(&mut self, lba: u32) {
-        self.base_lba = lba;
+    fn wait_data_ready(&self) -> Result<(), ()> {
+        for _ in 0..1000000 {
+            let st = crate::hal::inb(ATA_STATUS);
+            if (st & 0x08) != 0 { return Ok(()); }
+            if (st & 0x01) != 0 { return Err(()); }
+        }
+        Err(())
     }
 
-    pub fn base_lba(&self) -> u32 {
-        self.base_lba
+    pub fn read_sector(&mut self, lba: u64) -> Result<[u8; 512], ()> {
+        let abs = self.base_lba.wrapping_add(lba) as u32;
+        self.wait_not_busy()?;
+        crate::hal::outb(ATA_DRIVE_SEL, ATA_DRIVE_SELECT | ((abs >> 24) & 0x0F) as u8);
+        crate::hal::outb(ATA_SECTOR_COUNT, 1);
+        crate::hal::outb(ATA_LBA_LOW, abs as u8);
+        crate::hal::outb(ATA_LBA_MID, (abs >> 8) as u8);
+        crate::hal::outb(ATA_LBA_HIGH, (abs >> 16) as u8);
+        crate::hal::outb(ATA_COMMAND, ATA_CMD_READ_PIO);
+        self.wait_data_ready()?;
+        let mut buf = [0u8; 512];
+        for i in 0..256 {
+            let w = crate::hal::inw(ATA_DATA);
+            buf[i * 2] = w as u8;
+            buf[i * 2 + 1] = (w >> 8) as u8;
+        }
+        Ok(buf)
     }
 
-    pub fn channel(&self) -> AtaChannel {
-        self.channel
-    }
-
-    pub fn write_sector(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        if abs_lba > 0x0FFFFFFF { return Err(()); }
-        self.write_sector_inner(lba, data)
-    }
-
-    fn write_sector_inner(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        self.wait_not_busy_simple()?;
-        
-        crate::hal::outb(self.sector_count_port, 1);
-        crate::hal::outb(self.lba_low_port, (abs_lba & 0xFF) as u8);
-        crate::hal::outb(self.lba_mid_port, ((abs_lba >> 8) & 0xFF) as u8);
-        crate::hal::outb(self.lba_high_port, ((abs_lba >> 16) & 0xFF) as u8);
-        
-        let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8;
-        crate::hal::outb(self.drive_sel_port, drive_byte);
-        
-        crate::hal::outb(self.command_port, 0x30);
-
-        self.wait_not_busy_simple()?;
-
+    pub fn write_sector(&mut self, lba: u64, data: &[u8; 512]) -> Result<(), ()> {
+        let abs = self.base_lba.wrapping_add(lba) as u32;
+        self.wait_not_busy()?;
+        crate::hal::outb(ATA_SECTOR_COUNT, 1);
+        crate::hal::outb(ATA_LBA_LOW, (abs & 0xFF) as u8);
+        crate::hal::outb(ATA_LBA_MID, ((abs >> 8) & 0xFF) as u8);
+        crate::hal::outb(ATA_LBA_HIGH, ((abs >> 16) & 0xFF) as u8);
+        crate::hal::outb(ATA_DRIVE_SEL, ATA_DRIVE_SELECT | ((abs >> 24) & 0x0F) as u8);
+        crate::hal::outb(ATA_COMMAND, ATA_CMD_WRITE_PIO);
+        self.wait_not_busy()?;
         for i in (0..512).step_by(2) {
-            let word = u16::from_le_bytes([data[i], data[i+1]]);
-            crate::hal::outw(self.data_port, word);
+            crate::hal::outw(ATA_DATA, u16::from_le_bytes([data[i], data[i + 1]]));
         }
-        
-        self.wait_not_busy_simple()?;
+        self.wait_not_busy()?;
         Ok(())
     }
 
-    fn wait_not_busy_simple(&mut self) -> Result<(), ()> {
-        let mut timeout = 0;
-        while (crate::hal::inb(self.status_port) & 0x80) != 0 {
-            timeout += 1;
-            if timeout > 100000 { return Err(()); }
-        }
-        Ok(())
-    }
-
-    fn wait_not_busy(&mut self) -> Result<(), AtaError> {
-        for _ in 0..1000000 {
-            let status = crate::hal::inb(self.status_port);
-            if (status & 0x80) == 0 {
-                return Ok(());
-            }
-        }
-        Err(AtaError::Timeout)
-    }
-
-    fn wait_data_ready(&mut self) -> Result<(), AtaError> {
-        for _ in 0..1000000 {
-            let status = crate::hal::inb(self.status_port);
-            if (status & 0x08) != 0 {
-                return Ok(());
-            }
-            if (status & 0x01) != 0 {
-                return Err(AtaError::Error);
-            }
-        }
-        Err(AtaError::Timeout)
-    }
-
-    pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
-        self.read_sector_inner(lba)
-    }
-
-    pub fn read_sector_master(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
-        self.read_sector_master_inner(lba)
-    }
-
-    fn read_sector_master_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
+    pub fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
+        let abs = self.base_lba.wrapping_add(lba) as u32;
+        let cnt = count.max(1);
+        if buf.len() < (cnt as usize) * 512 { return Err(()); }
         self.wait_not_busy()?;
-
-        crate::hal::outb(self.drive_sel_port, ATA_DRIVE_SELECT_MASTER | ((lba >> 24) & 0x0F) as u8);
-        crate::hal::outb(self.sector_count_port, 1);
-        crate::hal::outb(self.lba_low_port, lba as u8);
-        crate::hal::outb(self.lba_mid_port, (lba >> 8) as u8);
-        crate::hal::outb(self.lba_high_port, (lba >> 16) as u8);
-        crate::hal::outb(self.command_port, ATA_CMD_READ_PIO);
-
-        self.wait_data_ready()?;
-
-        let mut buffer = [0u8; 512];
-        for i in 0..256 {
-            let word = crate::hal::inw(self.data_port);
-            buffer[i * 2] = word as u8;
-            buffer[i * 2 + 1] = (word >> 8) as u8;
-        }
-
-        Ok(buffer)
-    }
-
-    fn read_sector_inner(&mut self, lba: u32) -> Result<[u8; 512], AtaError> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-
-        self.wait_not_busy()?;
-
-        crate::hal::outb(self.drive_sel_port, ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
-        
-        crate::hal::outb(self.sector_count_port, 1);
-        
-        crate::hal::outb(self.lba_low_port, abs_lba as u8);
-        crate::hal::outb(self.lba_mid_port, (abs_lba >> 8) as u8);
-        crate::hal::outb(self.lba_high_port, (abs_lba >> 16) as u8);
-        
-        crate::hal::outb(self.command_port, ATA_CMD_READ_PIO);
-
-        self.wait_data_ready()?;
-
-        let mut buffer = [0u8; 512];
-        for i in 0..256 {
-            let word = crate::hal::inw(self.data_port);
-            buffer[i * 2] = word as u8;
-            buffer[i * 2 + 1] = (word >> 8) as u8;
-        }
-
-        Ok(buffer)
-    }
-
-    pub fn read_sectors(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), AtaError> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        let count = count.max(1);
-        let total_bytes = (count as usize) * 512;
-        if buf.len() < total_bytes {
-            return Err(AtaError::Error);
-        }
-        self.wait_not_busy()?;
-        crate::hal::outb(self.drive_sel_port, ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
-        crate::hal::outb(self.sector_count_port, count);
-        crate::hal::outb(self.lba_low_port, abs_lba as u8);
-        crate::hal::outb(self.lba_mid_port, (abs_lba >> 8) as u8);
-        crate::hal::outb(self.lba_high_port, (abs_lba >> 16) as u8);
-        crate::hal::outb(self.command_port, ATA_CMD_READ_MULTIPLE);
-        for s in 0..count as usize {
+        crate::hal::outb(ATA_DRIVE_SEL, ATA_DRIVE_SELECT | ((abs >> 24) & 0x0F) as u8);
+        crate::hal::outb(ATA_SECTOR_COUNT, cnt);
+        crate::hal::outb(ATA_LBA_LOW, abs as u8);
+        crate::hal::outb(ATA_LBA_MID, (abs >> 8) as u8);
+        crate::hal::outb(ATA_LBA_HIGH, (abs >> 16) as u8);
+        crate::hal::outb(ATA_COMMAND, ATA_CMD_READ_PIO);
+        for s in 0..cnt as usize {
             self.wait_data_ready()?;
             let off = s * 256;
             for i in 0..256 {
-                let word = crate::hal::inw(self.data_port);
-                buf[off * 2 + i * 2] = word as u8;
-                buf[off * 2 + i * 2 + 1] = (word >> 8) as u8;
+                let w = crate::hal::inw(ATA_DATA);
+                buf[off * 2 + i * 2] = w as u8;
+                buf[off * 2 + i * 2 + 1] = (w >> 8) as u8;
             }
         }
         Ok(())
     }
 
-    pub fn init_dma(&mut self, base: u16) {
-        self.bmba = Some(base);
-    }
-
-    pub fn read_dma(&mut self, lba: u32, count: u8, buf: &mut [u8]) -> Result<(), AtaError> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        let bmba = self.bmba.ok_or(AtaError::Error)?;
-        let count = count.max(1).min(8);
-        let total_bytes = (count as usize) * 512;
-        if buf.len() < total_bytes {
-            return Err(AtaError::Error);
-        }
-
-        unsafe {
-            let prdt_phys = &PRDT as *const _ as u32;
-            let data_phys = &DMA_DATA as *const _ as u32;
-
-            let prdt_entries =
-                core::slice::from_raw_parts_mut(&mut PRDT.0 as *mut u8 as *mut PrdtEntry, 512);
-            prdt_entries[0].data_buffer_phys = data_phys;
-            prdt_entries[0].count = (total_bytes as u16).min(0xFFFE);
-            prdt_entries[0].eot = 0x8000;
-            for i in 1..512 {
-                prdt_entries[i].data_buffer_phys = 0;
-                prdt_entries[i].count = 0;
-                prdt_entries[i].eot = 0;
-            }
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-
-            crate::hal::outb(bmba + BM_STATUS, BM_STAT_INTERRUPT);
-            crate::hal::outb(bmba + BM_COMMAND, 0x00);
-            crate::hal::outl(bmba + BM_PRDT_ADDRESS, prdt_phys);
-
-            self.wait_not_busy()?;
-            crate::hal::outb(self.drive_sel_port, ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
-            crate::hal::outb(self.sector_count_port, count);
-            crate::hal::outb(self.lba_low_port, abs_lba as u8);
-            crate::hal::outb(self.lba_mid_port, (abs_lba >> 8) as u8);
-            crate::hal::outb(self.lba_high_port, (abs_lba >> 16) as u8);
-            crate::hal::outb(self.command_port, ATA_CMD_READ_DMA);
-
-            crate::hal::outb(bmba + BM_COMMAND, BM_CMD_START);
-
-            for _ in 0..2000000 {
-                let st = crate::hal::inb(bmba + BM_STATUS);
-                if (st & BM_STAT_ACTIVE) == 0 {
-                    if (st & BM_STAT_ERROR) != 0 || (crate::hal::inb(self.status_port) & 0x01) != 0 {
-                        return Err(AtaError::Error);
-                    }
-                    core::ptr::copy_nonoverlapping(
-                        DMA_DATA.0.as_ptr(),
-                        buf.as_mut_ptr(),
-                        total_bytes,
-                    );
-                    return Ok(());
-                }
-            }
-        }
-        Err(AtaError::Timeout)
-    }
-
-    pub fn write_dma(&mut self, lba: u32, count: u8, data: &[u8]) -> Result<(), AtaError> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        let bmba = self.bmba.ok_or(AtaError::Error)?;
-        let count = count.max(1).min(8);
-        let total_bytes = (count as usize) * 512;
-        if data.len() < total_bytes {
-            return Err(AtaError::Error);
-        }
-
-        unsafe {
-            let prdt_phys = &PRDT as *const _ as u32;
-            let data_phys = &DMA_DATA as *const _ as u32;
-
-            core::ptr::copy_nonoverlapping(data.as_ptr(), DMA_DATA.0.as_mut_ptr(), total_bytes);
-
-            let prdt_entries =
-                core::slice::from_raw_parts_mut(&mut PRDT.0 as *mut u8 as *mut PrdtEntry, 512);
-            prdt_entries[0].data_buffer_phys = data_phys;
-            prdt_entries[0].count = (total_bytes as u16).min(0xFFFE);
-            prdt_entries[0].eot = 0x8000;
-            for i in 1..512 {
-                prdt_entries[i].data_buffer_phys = 0;
-                prdt_entries[i].count = 0;
-                prdt_entries[i].eot = 0;
-            }
-
-            core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
-
-            crate::hal::outb(bmba + BM_STATUS, BM_STAT_INTERRUPT);
-            crate::hal::outb(bmba + BM_COMMAND, 0x00);
-            crate::hal::outl(bmba + BM_PRDT_ADDRESS, prdt_phys);
-
-            self.wait_not_busy()?;
-            crate::hal::outb(self.drive_sel_port, ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8);
-            crate::hal::outb(self.sector_count_port, count);
-            crate::hal::outb(self.lba_low_port, (abs_lba & 0xFF) as u8);
-            crate::hal::outb(self.lba_mid_port, ((abs_lba >> 8) & 0xFF) as u8);
-            crate::hal::outb(self.lba_high_port, ((abs_lba >> 16) & 0xFF) as u8);
-            crate::hal::outb(self.command_port, ATA_CMD_WRITE_DMA);
-
-            crate::hal::outb(bmba + BM_COMMAND, BM_CMD_START | BM_CMD_WRITE);
-
-            for _ in 0..2000000 {
-                let st = crate::hal::inb(bmba + BM_STATUS);
-                if (st & BM_STAT_ACTIVE) == 0 {
-                    if (st & BM_STAT_ERROR) != 0 {
-                        return Err(AtaError::Error);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-        Err(AtaError::Timeout)
-    }
-
-    pub fn write_sectors(&mut self, lba: u32, count: u8, data: &[u8]) -> Result<(), ()> {
-        let abs_lba = self.base_lba.wrapping_add(lba);
-        let count = count.max(1);
-        if abs_lba > 0x0FFFFFFF { return Err(()); }
-        let total_bytes = (count as usize) * 512;
-        if data.len() < total_bytes { return Err(()); }
-        self.wait_not_busy_simple()?;
-        crate::hal::outb(self.sector_count_port, count);
-        crate::hal::outb(self.lba_low_port, (abs_lba & 0xFF) as u8);
-        crate::hal::outb(self.lba_mid_port, ((abs_lba >> 8) & 0xFF) as u8);
-        crate::hal::outb(self.lba_high_port, ((abs_lba >> 16) & 0xFF) as u8);
-        let drive_byte = ATA_DRIVE_SELECT_LBA_BASE | ((abs_lba >> 24) & 0x0F) as u8;
-        crate::hal::outb(self.drive_sel_port, drive_byte);
-        crate::hal::outb(self.command_port, ATA_CMD_WRITE_MULTIPLE);
-        self.wait_not_busy_simple()?;
-        for s in 0..count as usize {
+    pub fn write_blocks(&mut self, lba: u64, count: u8, data: &[u8]) -> Result<(), ()> {
+        let abs = self.base_lba.wrapping_add(lba) as u32;
+        let cnt = count.max(1);
+        if data.len() < (cnt as usize) * 512 { return Err(()); }
+        self.wait_not_busy()?;
+        crate::hal::outb(ATA_SECTOR_COUNT, cnt);
+        crate::hal::outb(ATA_LBA_LOW, (abs & 0xFF) as u8);
+        crate::hal::outb(ATA_LBA_MID, ((abs >> 8) & 0xFF) as u8);
+        crate::hal::outb(ATA_LBA_HIGH, ((abs >> 16) & 0xFF) as u8);
+        crate::hal::outb(ATA_DRIVE_SEL, ATA_DRIVE_SELECT | ((abs >> 24) & 0x0F) as u8);
+        crate::hal::outb(ATA_COMMAND, ATA_CMD_WRITE_PIO);
+        self.wait_not_busy()?;
+        for s in 0..cnt as usize {
             let off = s * 256;
             for i in 0..256 {
-                let word = u16::from_le_bytes([data[off * 2 + i * 2], data[off * 2 + i * 2 + 1]]);
-                crate::hal::outw(self.data_port, word);
+                let w = u16::from_le_bytes([
+                    data[off * 2 + i * 2],
+                    data[off * 2 + i * 2 + 1],
+                ]);
+                crate::hal::outw(ATA_DATA, w);
             }
         }
-        self.wait_not_busy_simple()?;
+        self.wait_not_busy()?;
         Ok(())
     }
 }

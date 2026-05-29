@@ -69,6 +69,31 @@ unsafe extern "C" fn hst_outw(port: u16, val: u16) { crate::hal::outw(port, val)
 unsafe extern "C" fn hst_inl(port: u16) -> u32 { crate::hal::inl(port) }
 unsafe extern "C" fn hst_outl(port: u16, val: u32) { crate::hal::outl(port, val) }
 
+/// Register a block device from a NEM driver.
+/// The driver provides device_id (its internal identifier), num_sectors, sector_size,
+/// and read/write callbacks. Returns the kernel device index on success, or -1 on error.
+unsafe extern "C" fn hst_register_block_device(
+    _name: *const u8,
+    _name_len: u32,
+    device_id: u32,
+    num_sectors: u64,
+    sector_size: u32,
+    read_fn: unsafe extern "C" fn(u32, u64, u8, *mut u8) -> i32,
+    write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
+) -> i32 {
+    let dev = crate::drivers::block::NemBlockDevice::new(
+        device_id, num_sectors, sector_size, read_fn, write_fn,
+    );
+    crate::drivers::block::register_nem_block_device(dev)
+}
+
+/// Unregister a block device previously registered via hst_register_block_device.
+unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
+    if dev_idx < 0 { return -1; }
+    crate::drivers::block::unregister_nem_block_device(dev_idx as usize);
+    0
+}
+
 static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_push_input_byte),
     export_entry!(hst_log),
@@ -81,6 +106,8 @@ static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_outw),
     export_entry!(hst_inl),
     export_entry!(hst_outl),
+    export_entry!(hst_register_block_device),
+    export_entry!(hst_unregister_block_device),
 ];
 
 // ── Memory allocation ──

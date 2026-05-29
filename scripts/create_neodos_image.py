@@ -209,7 +209,7 @@ Happy hacking!
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
         bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
-        sys2dir_blocks = alloc_blocks(20, 512)      # SYSTEM dir (DRIVERS)
+        sys2dir_blocks = alloc_blocks(20, 768)      # SYSTEM dir (DRIVERS)
 
         # Build inodes with correct block lists
         def pad_blocks(blks):
@@ -258,6 +258,7 @@ Happy hacking!
         system_nem_files = [
             (24, "acpi.nem"),
             (25, "pci.nem"),
+            (26, "ata.nem"),
         ]
         for inum, fname in system_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
@@ -424,6 +425,8 @@ VER
                 image[offset:offset+256] = entry_acpi
                 entry_pci = create_dir_entry(25, 1, "pci.nem")
                 image[offset+256:offset+512] = entry_pci
+                entry_ata = create_dir_entry(26, 1, "ata.nem")
+                image[offset+512:offset+768] = entry_ata
 
         # System driver data blocks
         for (inum, fname) in system_nem_files:

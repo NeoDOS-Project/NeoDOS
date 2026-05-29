@@ -40,7 +40,7 @@ echo "[+] QEMU accelerator: $ACCEL"
 echo ""
 
 qemu-system-x86_64 \
-  -machine q35,accel=$ACCEL \
+  -machine pc,accel=$ACCEL \
   -no-reboot \
   -monitor telnet:127.0.0.1:4444,server,nowait \
   -gdb tcp::1234 \

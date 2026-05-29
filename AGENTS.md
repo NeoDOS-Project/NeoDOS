@@ -120,18 +120,24 @@ El sistema usa una **sola imagen de disco con tabla GPT** que contiene dos parti
 | 2 | NeoDOS FS | 206848–227327 | Sistema de archivos NeoDOS |
 
 El kernel parsea la GPT al arrancar mediante `drivers/gpt.rs`, busca la partición de tipo
-`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`, y ajusta `base_lba` en el driver ATA para que
+`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`, y ajusta `base_lba` en el driver de bloques para que
 el FS vea el superbloque en LBA 0 relativo a la partición.
 
-### ATA bus-master DMA
+### ATA driver (two-tier architecture)
 
-Kernel scans PCI bus 0 at boot for the IDE controller (class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). `src/drivers/pci.rs` uses I/O ports 0xCF8/0xCFC (4 primitives). PCI bus enumeration was moved to a standalone NEM driver (`drivers/pci/`, loaded as SYSTEM category) which traverses all buses via PCI-to-PCI bridge detection.
+**Kernel boot stub** (`neodos-kernel/src/drivers/ata.rs`): `BootAta` — PIO only, primary channel
+only. Used during early boot (PHASE 3.6–3.8 in `main.rs`) for GPT parsing, NeoDOS superblock
+read, and block cache warmup before NEM drivers are loaded.
 
-BAR4 gives the bus-master I/O base. Bus-master bit enabled in PCI command register. Two page-aligned (4KB) static buffers for PRDT + DMA data. Polling-based (no IRQ). Methods `read_dma()`/`write_dma()` support up to 8 sectors (4 KB) per call. Existing PIO methods unchanged.
+**NEM v3 standalone driver** (`drivers/ata/` → `ata.nem`, SYSTEM category): Full-featured ATA
+driver loaded at PHASE 3.85 by the boot loader. Scans PCI for IDE controller (bus-master capable),
+initializes primary + secondary channels, supports DMA read/write (via PRDT) and PIO multi-sector
+fallback. Each active channel registers a block device via `hst_register_block_device()` with the
+kernel's `NemBlockDevice` registry. Up to 8 sectors per transfer, ~137 GB addressable.
 
-The ATA driver adds `base_lba` to all logical LBAs before sending them to the disk, so the
-NeoDOS FS code never needs to know about partition offsets. The FAT32 driver reads from
-the master drive using absolute LBAs (no `base_lba`).
+The NEM driver replaces the legacy inline DMA + multi-sector ATA code. The kernel boot stub is
+replaced once the NEM driver activates. The FAT32 driver reads from the master drive using
+absolute LBAs (no `base_lba`).
 
 ## Kernel Slab Allocator (A3)
 
@@ -750,4 +756,5 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | GPT builder | `neodos/scripts/create_gpt_image.py` | Combina ESP + NeoDOS en GPT |
 | HAL ABI v0.3 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
 | PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus enumerator (SYSTEM, full bus scan via bridge traversal) |
+| ATA NEM driver | `neodos/drivers/ata/ata.nem` | NEM v3 standalone ATA driver with DMA+PIO, primary+secondary channels (SYSTEM) |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
