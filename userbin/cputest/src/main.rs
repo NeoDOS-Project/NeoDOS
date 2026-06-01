@@ -4,23 +4,20 @@
 use libneodos::println;
 use libneodos::syscall;
 
-const PROGRESS_MASK: u64 = 0x3FFFF; // ~262k iterations between prints
-const MAX_COUNT: u64 = 5_000_000;
-
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let pid = syscall::sys_getpid();
-    println!("CPUTEST: PID={} starting, max={}", pid, MAX_COUNT);
+    println!("CPUTEST[{}]: inicio", pid);
 
-    let mut count: u64 = 0;
-    while count < MAX_COUNT {
-        count += 1;
-        if count & PROGRESS_MASK == 0 {
-            println!("CPUTEST: PID={} count={}", pid, count);
+    let mut i: u64 = 0;
+    while i < 100 {
+        i += 1;
+        if i % 10 == 0 {
+            println!("CPUTEST[{}]: iter={}", pid, i);
             syscall::sys_yield();
         }
     }
 
-    println!("CPUTEST: PID={} done (count={})", pid, count);
+    println!("CPUTEST[{}]: fin", pid);
     syscall::sys_exit(0)
 }

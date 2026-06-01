@@ -135,7 +135,7 @@ pub trait FileSystem: Send {
 **Responsibilities**:
 - Load flat binaries from VFS into user memory slots
 - Create Ring 3 initial process state (entry point, stack, heap)
-- Save/restore kernel stack (`EXIT_RSP`/`EXIT_RIP`) for Ring 3 → Ring 0 transitions
+- Save/restore kernel stack (`EXIT_RSP`/`EXIT_RIP`) and callee-saved regs (rbx, r12-r15, rbp) for Ring 3 → Ring 0 transitions
 - Handle process exit (`exit_to_kernel` asm trampoline → return to caller)
 
 **Forbidden**:

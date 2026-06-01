@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.23.1 — 2026-06-02
+
+### Bugfix: User-mode callee-saved register corruption
+- **Corregido**: `exit_to_kernel` ahora restaura registros callee-saved (rbx, r12-r15, rbp) que el proceso usuario pisaba, corrompiendo las variables locales del shell (PID, filename). Fix: guardar/restaurar en `execute_usermode_asm`/`exit_to_kernel` (`usermode.rs`).
+- **Corregido**: Race condition en `sys_exit`: `request_exit_to_kernel()` se llamaba fuera de `without_interrupts`, permitiendo que un timer IRQ se disparara antes de que `EXIT_NOW=1`, causando GPF en la cadena de retorno. Fix: mover la llamada dentro del closure (`syscall.rs`).
+- **Total**: 259 kernel tests + 4 user-mode binaries.
+
 ## v0.23.0 — 2026-05-29
 
 ### A2. Priority Scheduler — Añadido

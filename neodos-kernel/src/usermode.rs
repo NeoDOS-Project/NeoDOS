@@ -7,6 +7,18 @@ use core::sync::atomic::{AtomicU8, Ordering};
 static mut EXIT_RSP: u64 = 0;
 #[no_mangle]
 static mut EXIT_RIP: u64 = 0;
+#[no_mangle]
+static mut EXIT_RBX: u64 = 0;
+#[no_mangle]
+static mut EXIT_R12: u64 = 0;
+#[no_mangle]
+static mut EXIT_R13: u64 = 0;
+#[no_mangle]
+static mut EXIT_R14: u64 = 0;
+#[no_mangle]
+static mut EXIT_R15: u64 = 0;
+#[no_mangle]
+static mut EXIT_RBP: u64 = 0;
 
 #[no_mangle]
 static EXIT_NOW: AtomicU8 = AtomicU8::new(0);
@@ -18,6 +30,12 @@ core::arch::global_asm!(
     "lea rax, [rip + 1f]",
     "mov [rip + EXIT_RIP], rax",
     "mov [rip + EXIT_RSP], rsp",
+    "mov [rip + EXIT_RBX], rbx",
+    "mov [rip + EXIT_R12], r12",
+    "mov [rip + EXIT_R13], r13",
+    "mov [rip + EXIT_R14], r14",
+    "mov [rip + EXIT_R15], r15",
+    "mov [rip + EXIT_RBP], rbp",
     "push rcx",
     "push rsi",
     "push 0x200",
@@ -31,6 +49,12 @@ core::arch::global_asm!(
     ".global exit_to_kernel",
     "exit_to_kernel:",
     "mov rsp, [rip + EXIT_RSP]",
+    "mov rbx, [rip + EXIT_RBX]",
+    "mov r12, [rip + EXIT_R12]",
+    "mov r13, [rip + EXIT_R13]",
+    "mov r14, [rip + EXIT_R14]",
+    "mov r15, [rip + EXIT_R15]",
+    "mov rbp, [rip + EXIT_RBP]",
     "push [rip + EXIT_RIP]",
     "ret",
 );

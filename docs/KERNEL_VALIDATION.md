@@ -42,7 +42,7 @@ Every regression must be caught automatically.
 | Arguments are valid user pointers | `is_user_ptr_valid` on all buffer args | `SYSCALL_INVALID_PTR` |
 | Syscall number is within dispatch table | `syscall_dispatch` validates RAX < 20 | `SYSCALL_INVALID_NUMBER` |
 | Return value encoding is consistent | All syscalls return `u64` | `SYSCALL_ABI_DRIFT` |
-| `EXIT_RSP`/`EXIT_RIP` are never clobbered | Atomic guard on usermode entry | `SYSCALL_CLOBBERED_STATE` |
+| `EXIT_RSP`/`EXIT_RIP` + callee-saved regs are restored on usermode exit | Saved in `execute_usermode_asm`, restored in `exit_to_kernel` | `SYSCALL_CLOBBERED_STATE` |
 
 ### 4. Memory Invariants
 

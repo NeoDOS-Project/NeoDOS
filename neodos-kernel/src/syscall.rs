@@ -330,7 +330,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         SyscallNum::Exit => {
             let code = rbx;
 
-            let pid = crate::hal::without_interrupts(|| {
+            crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut scheduler = s.lock();
                 let pid = scheduler.current_pid;
@@ -377,12 +377,13 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 }
 
                 scheduler.wake_waiters(pid);
+
+                if pid > 0 && pid == crate::usermode::current_wait_pid() {
+                    crate::usermode::request_exit_to_kernel();
+                }
+
                 pid
             });
-
-            if pid > 0 && pid == crate::usermode::current_wait_pid() {
-                crate::usermode::request_exit_to_kernel();
-            }
 
             code
         }
