@@ -158,7 +158,7 @@ Happy hacking!
         image[512+512:512+768] = testbat_inode
         
         # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, 0x40, 768, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        system_dir_inode = create_inode(3, 0x40, 1024, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+768:512+1024] = system_dir_inode
 
         # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
@@ -168,6 +168,10 @@ Happy hacking!
         # Inode 5: AUTOEXEC.BAT (root) (points to block 5)
         autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+1280:512+1536] = autoexec_inode
+
+        # Inode 11: BOOT.CFG in SYSTEM (points to block 22)
+        bootcfg_inode = create_inode(11, 0x80, 256, [22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+2816:512+3072] = bootcfg_inode
 
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
@@ -341,6 +345,9 @@ ECHO Done.
         # Entry 3: DRIVERS subdirectory
         entry3 = create_dir_entry(15, 2, "DRIVERS")
         image[offset+512:offset+768] = entry3
+        # Entry 4: BOOT.CFG
+        entry4 = create_dir_entry(11, 1, "BOOT.CFG")
+        image[offset+768:offset+1024] = entry4
 
         # Block 4 = sector 232 (CONFIG.SYS)
         print("[*] Writing CONFIG.SYS...")
@@ -360,6 +367,16 @@ ECHO System Configuration Loaded.
 VER
 """
         image[offset:offset+len(autoexec_content)] = autoexec_content
+
+        # Block 22 = sector 416 (BOOT.CFG)
+        print("[*] Writing BOOT.CFG...")
+        offset = (200 + 176) * 512  # block 22 * 8 = 176 sectors
+        bootcfg_content = b"""# NeoDOS Boot Configuration
+# Benchmark and debug flags (default: 1 = enabled)
+BENCHMARK_REPORT=1
+AHCI_DEBUG=1
+"""
+        image[offset:offset+len(bootcfg_content)] = bootcfg_content
 
         # Write user binary data across their allocated blocks
         bin_data_map = {

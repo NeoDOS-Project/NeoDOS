@@ -144,6 +144,7 @@ pub fn cmd_test(shell: &mut DosShell, args: &[&str]) { shell.cmd_test(args); }
 pub fn cmd_date(shell: &mut DosShell, args: &[&str]) { shell.cmd_date(args); }
 pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
 pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
+pub fn cmd_bench(shell: &mut DosShell, args: &[&str]) { shell.cmd_bench(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
@@ -270,6 +271,12 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
         usage: concat!("Syntax:  RMDIR directory\n",
                        "  Alias for RD."), },
+    CommandEntry { name: "BENCH",    category: "CONFIG",   handler: cmd_bench,   description: "Configure boot benchmark output",
+        usage: concat!("Syntax:  BENCH [REPORT|AHCI] [ON|OFF]\n",
+                       "  Control boot-time benchmark and debug output.\n",
+                       "  BENCH              shows current configuration.\n",
+                       "  BENCH REPORT OFF   disables boot benchmark report.\n",
+                       "  BENCH AHCI OFF     disables AHCI debug output."), },
     CommandEntry { name: "ATTRIB",   category: "FILE",     handler: cmd_attrib,  description: "Display/modify file attributes",
         usage: concat!("Syntax:  ATTRIB [file]\n",
                        "  Display or modify file attributes:\n",

@@ -37,6 +37,7 @@ mod test;
 mod r#type;
 mod vol;
 mod attrib;
+mod bench;
 mod pri;
 mod ps;
 mod run;

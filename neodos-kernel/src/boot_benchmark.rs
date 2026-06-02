@@ -329,10 +329,117 @@ pub fn watchdog_tripped() -> bool {
     WATCHDOG_TRIPPED.load(Ordering::Relaxed)
 }
 
+// ── Configuration flags ──────────────────────────────────────────────
+
+/// Controls whether to print boot benchmark results.
+/// Default: true. Can be disabled by setting BENCHMARK_REPORT=0 in BOOT.CFG.
+pub static ENABLE_BOOT_BENCHMARK_REPORT: AtomicBool = AtomicBool::new(true);
+
+/// Controls whether to print detailed AHCI debug stats.
+/// Default: true. Can be disabled by setting AHCI_DEBUG=0 in BOOT.CFG.
+pub static ENABLE_AHCI_DEBUG_OUTPUT: AtomicBool = AtomicBool::new(true);
+
+/// Initialize boot configuration with default values.
+/// Configuration can be changed at runtime using the BENCH shell command.
+pub fn load_config() {
+    // Both flags default to true (original behavior)
+    // Try to read from C:\SYSTEM\BOOT.CFG if VFS is available
+    
+    // Attempt to read BOOT.CFG from the filesystem
+    if let Ok(content) = read_boot_config() {
+        parse_boot_config(&content);
+    }
+    
+    crate::serial_println!("[BENCH] Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",
+        if ENABLE_BOOT_BENCHMARK_REPORT.load(Ordering::Relaxed) { 1 } else { 0 },
+        if ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) { 1 } else { 0 });
+}
+
+/// Try to read BOOT.CFG from the filesystem
+fn read_boot_config() -> Result<alloc::string::String, &'static str> {
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    
+    let path = "C:\\SYSTEM\\BOOT.CFG";
+    
+    crate::globals::with_vfs(|vfs| {
+        // Resolve path to get drive index and file metadata
+        let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| "Failed to resolve BOOT.CFG")?;
+        
+        // Verify it's a file, not a directory
+        const MODE_FILE: u16 = 0x80;
+        if node.mode & MODE_FILE == 0 {
+            return Err("BOOT.CFG is not a regular file");
+        }
+        
+        // Read file content (up to 1024 bytes)
+        let size = (node.size as usize).min(1024);
+        let mut buf = Vec::with_capacity(size);
+        buf.resize(size, 0u8);
+        
+        vfs.read(drive_idx, node.inode, 0, &mut buf)
+            .map_err(|_| "Failed to read BOOT.CFG")?;
+        
+        // Convert to string
+        String::from_utf8(buf).map_err(|_| "BOOT.CFG is not valid UTF-8")
+    }).map_err(|e| e)
+}
+
+/// Parse BOOT.CFG content and set configuration flags
+fn parse_boot_config(content: &str) {
+    for line in content.lines() {
+        let trimmed = line.trim();
+        
+        // Skip comments and empty lines
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        
+        // Parse KEY=VALUE
+        if let Some(pos) = trimmed.find('=') {
+            let key = trimmed[..pos].trim();
+            let value = trimmed[pos+1..].trim();
+            
+            match key {
+                "BENCHMARK_REPORT" => {
+                    if value == "1" || value.eq_ignore_ascii_case("ON") || value.eq_ignore_ascii_case("YES") {
+                        ENABLE_BOOT_BENCHMARK_REPORT.store(true, Ordering::Relaxed);
+                    } else if value == "0" || value.eq_ignore_ascii_case("OFF") || value.eq_ignore_ascii_case("NO") {
+                        ENABLE_BOOT_BENCHMARK_REPORT.store(false, Ordering::Relaxed);
+                    }
+                }
+                "AHCI_DEBUG" => {
+                    if value == "1" || value.eq_ignore_ascii_case("ON") || value.eq_ignore_ascii_case("YES") {
+                        ENABLE_AHCI_DEBUG_OUTPUT.store(true, Ordering::Relaxed);
+                    } else if value == "0" || value.eq_ignore_ascii_case("OFF") || value.eq_ignore_ascii_case("NO") {
+                        ENABLE_AHCI_DEBUG_OUTPUT.store(false, Ordering::Relaxed);
+                    }
+                }
+                _ => {} // Ignore unknown keys
+            }
+        }
+    }
+}
+
+/// Set benchmark report flag (for testing/dynamic config).
+pub fn set_benchmark_report_enabled(enabled: bool) {
+    ENABLE_BOOT_BENCHMARK_REPORT.store(enabled, Ordering::Relaxed);
+}
+
+/// Set AHCI debug output flag (for testing/dynamic config).
+pub fn set_ahci_debug_enabled(enabled: bool) {
+    ENABLE_AHCI_DEBUG_OUTPUT.store(enabled, Ordering::Relaxed);
+}
+
 // ── Full report ─────────────────────────────────────────────────────
 
 /// Detect which storage driver is active and print the benchmark report.
 pub fn print_report(driver_name: &'static str) {
+    // Check if benchmark reporting is enabled
+    if !ENABLE_BOOT_BENCHMARK_REPORT.load(Ordering::Relaxed) {
+        return;
+    }
+
     crate::serial_println!();
     crate::serial_println!("[BOOT BENCHMARK RESULTS]");
     crate::println!();
@@ -360,7 +467,8 @@ pub fn print_report(driver_name: &'static str) {
 
     result.print();
 
-    if cmds > 0 {
+    // Print detailed AHCI debug stats only if both benchmark AND ahci_debug are enabled
+    if cmds > 0 && ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) {
         crate::serial_println!();
         crate::println!();
         print_ahci_debug();

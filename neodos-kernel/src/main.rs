@@ -280,6 +280,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
 
+    // Load benchmark configuration from BOOT.CFG (now that VFS is mounted)
+    boot_benchmark::load_config();
+
     // Detect which storage driver was selected
     let driver_name: &'static str = {
         let bdevs = globals::BLOCK_DEVICES.lock();
