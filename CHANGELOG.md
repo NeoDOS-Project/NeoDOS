@@ -18,9 +18,6 @@
 - **Modificado**: `boot_loader/mod.rs` — Añadido filtro por `DriverCategory` en `collect_driver_data()`: solo carga drivers con category coincidente (BOOT→Boot, SYSTEM→System).
 - **Añadido**: `boot_ahci.rs` — BootAhci stub built-in (DMA polling, single port) para early-boot en fase 3. Prioridad: NVMe > BootAhci > BootAta PIO.
 
-### Known Bugs
-- **KVM+Q35**: Q35 machine type produce `KVM: entry failed, hardware error 0x0` con OVMF. Usar `-machine pc` (PIIX3) para KVM.
-
 ### X6. Async I/O (IRP system) — Añadido
 - **Añadido**: `src/irp/mod.rs` — Sistema de I/O Request Packets con `IrpOp` (Read/Write/Flush/IoCtl), `IrpStatus` (Pending/Completed/Error), pool global de 64 slots protegido por `Mutex`, IDs únicos por `AtomicU32`.
 - **Añadido**: `irp_alloc()`/`irp_free()`/`irp_get_params()`/`irp_complete()` — API completa de ciclo de vida de IRPs. `irp_get_params()` evita doble-lock devolviendo snapshot de parámetros.
