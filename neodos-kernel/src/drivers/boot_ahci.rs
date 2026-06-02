@@ -153,7 +153,7 @@ fn port_wait_idle(abar: u64, port: usize, timeout_ms: u32) -> bool {
         if port_is_idle(abar, port) {
             return true;
         }
-        crate::hal::hlt_once();
+        core::hint::spin_loop();
     }
     false
 }
@@ -336,19 +336,39 @@ impl BootAhci {
         }
 
         fence(Ordering::SeqCst);
+        crate::boot_benchmark::ahci_cmd_start();
+        let cmd_start = crate::boot_benchmark::boot_time_now();
         port_write32(abar, port, PORT_CI, 1);
 
-        for _ in 0..1_000_000 {
+        let mut poll_count: u64 = 0;
+        let mut cmd_timed_out = false;
+        for _ in 0..10_000_000 {
             let ci = port_read32(abar, port, PORT_CI);
+            poll_count += 1;
             if (ci & 1) == 0 {
                 break;
             }
-            crate::hal::hlt_once();
+            if poll_count % 10_000 == 0 {
+                if crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 1000 {
+                    cmd_timed_out = true;
+                    break;
+                }
+            }
+            core::hint::spin_loop();
+        }
+        crate::boot_benchmark::ahci_cmd_polled(poll_count);
+        let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
+        crate::boot_benchmark::ahci_cmd_done(wait);
+
+        if cmd_timed_out {
+            crate::boot_benchmark::ahci_cmd_timeout();
+            serial_println!("[AHCI] Command timeout: lba={} polls={}", lba, poll_count);
         }
 
         let tfd = port_read32(abar, port, PORT_TFD);
         if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
             let serr = port_read32(abar, port, PORT_SERR);
+            crate::boot_benchmark::ahci_dma_failure();
             serial_println!("[AHCI] DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}",
                 if is_write { "WR" } else { "RD" }, lba, tfd, serr);
             return Err(());

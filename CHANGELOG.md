@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.24.1 — 2026-06-02
+
+### Boot Benchmark & AHCI Performance Fix
+- **Añadido**: `boot_benchmark.rs` — Nuevo sistema de profiling de boot con precisión sub-milisegundo (TSC calibrado contra PIT). Registra `KernelEntry`, `StorageInit`, `StorageReady`, `FirstRead`, `FsMounted`, `ShellReady`.
+- **Añadido**: Watchdog de boot integrado en el benchmark (timeout global de 60s, per-stage de 15s) para detectar y loggear cuelgues durante la fase crítica de inicialización sin pánicos crípticos.
+- **Modificado**: `boot_ahci.rs` — Añadida instrumentación (comandos, tiempo de espera medio/máximo, iteraciones de polling, timeouts, errores DMA).
+- **Corregido**: **AHCI Performance Fix** — Se cambió `hlt_once()` por `spin_loop()` en el bucle de polling de DMA (`dma_xfer`) y port reset. `hlt_once` bloqueaba artificialmente la CPU hasta el siguiente tick del sistema (50ms) por cada comando rápido de AHCI, ralentizando el boot drásticamente. El boot en AHCI pasó de ~15 segundos a **~76 ms**.
+- **Corregido**: El timeout de polling en AHCI ahora comprueba el tiempo real `elapsed_ms` (cada 10.000 vueltas del spin_loop) en lugar de un contador de iteraciones estático, evitando falsos timeouts tras cargar el SO.
+- **Modificado**: `qemu-debug.sh` y `auto_test.py` ahora aceptan los argumentos `--ahci` (por defecto) y `--ata`.
+- **Modificado**: `boot_loader/mod.rs` — El boot loader de drivers NEM ahora descarta intentar cargar la inicialización completa de `ahci.nem` si el benchmark detectó que el boot se completó en modo ATA, evitando warnings confusos en el log.
 ## v0.24.0 — 2026-06-02
 
 ### A11. AHCI NEM standalone driver — Añadido

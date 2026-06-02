@@ -39,6 +39,7 @@ mod testing;
 pub mod trace;
 pub mod invariants;
 pub mod panic_classification;
+pub mod boot_benchmark;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -82,6 +83,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // 2. Setup Serial for output
     arch::x64::init_serial();
+
+    // ── Boot Benchmark: calibrate TSC and mark kernel entry ──
+    boot_benchmark::init();
+    boot_benchmark::mark(boot_benchmark::BootStage::KernelEntry);
+    boot_benchmark::watchdog_arm();
 
     // Check bootloader version compatibility
     let bootloader_version = boot_info.version;
@@ -149,7 +155,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     // PHASE 3 (after custom page tables): Storage stack
     // ============================================
+    boot_benchmark::mark(boot_benchmark::BootStage::StorageInit);
+    boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::StorageInit);
+    if boot_benchmark::watchdog_check() {
+        serial_println!("[WATCHDOG] Timeout before storage init!");
+    }
     drivers::storage_manager::init_storage();
+    boot_benchmark::mark(boot_benchmark::BootStage::StorageReady);
+    boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::StorageReady);
     let primary_idx = 0;
 
     // ── NeoDOS FS via BlockDeviceManager ──
@@ -178,12 +191,22 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         let cache = cache_lock.as_mut().expect("BlockCache not initialized");
 
         println!("[+] Reading Superblock...");
+        if boot_benchmark::watchdog_check() {
+            serial_println!("[WATCHDOG] Timeout before first read!");
+        }
         let sb_data = match dev.read_sector(0) {
-            Ok(data) => data,
+            Ok(data) => {
+                boot_benchmark::mark(boot_benchmark::BootStage::FirstRead);
+                boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FirstRead);
+                data
+            },
             Err(_) => panic!("Failed to read superblock"),
         };
 
         println!("[+] Mounting NeoDOS FS...");
+        if boot_benchmark::watchdog_check() {
+            serial_println!("[WATCHDOG] Timeout before FS mount!");
+        }
         match NeoDosFs::new(&sb_data) {
             Ok(mut fs) => {
                 let _ = fs.rebuild_bitmap(cache, dev);
@@ -192,6 +215,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                         panic!("Failed to mount C: {:?}", e);
                     }
                 });
+                boot_benchmark::mark(boot_benchmark::BootStage::FsMounted);
+                boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FsMounted);
                 println!("[+] NeoDOS FS mounted on C:");
             },
             Err(_) => panic!("Failed to mount filesystem"),
@@ -251,7 +276,27 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 4: Start DOS Shell
     // ============================================
     testing::register_tests();
-    
+
+    // ── Boot Benchmark: shell ready ──
+    boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
+
+    // Detect which storage driver was selected
+    let driver_name: &'static str = {
+        let bdevs = globals::BLOCK_DEVICES.lock();
+        // storage_manager priority: NVMe > AHCI > ATA
+        if bdevs.count() > 0 {
+            // Check AHCI debug counters to see if AHCI was used
+            if boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+                "AHCI.NEM"
+            } else {
+                "ATA.PIO"
+            }
+        } else {
+            "UNKNOWN"
+        }
+    };
+    boot_benchmark::print_report(driver_name);
+
     let mut shell = shell::DosShell::new();
     shell.run();
 }

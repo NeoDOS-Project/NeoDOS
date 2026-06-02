@@ -94,6 +94,13 @@ pub fn boot_load_all() {
                 None => continue,
             };
 
+            if name == "AHCI" {
+                if crate::boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+                    crate::serial_println!("[BOOT]   Skipping {} ... (AHCI controller not active)", name);
+                    continue;
+                }
+            }
+
             let abi_result = crate::drivers::abi::negotiate_default(
                 parsed_v3.header.abi_min,
                 parsed_v3.header.abi_target,

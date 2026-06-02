@@ -43,13 +43,6 @@ def run_test():
     print("[*] NeoDOS Automatic Test Runner (serial log + sendkey)")
     print()
     
-    use_ahci = True
-    for arg in sys.argv[1:]:
-        if arg == "--ata":
-            use_ahci = False
-        elif arg == "--ahci":
-            use_ahci = True
-    
     disk_image = os.path.join(PROJECT_ROOT, "disk_image.img")
     ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
     ovmf_vars_template = "/usr/share/OVMF/OVMF_VARS.fd"
@@ -76,25 +69,10 @@ def run_test():
         "-display", "none",
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
-    ]
-    
-    if use_ahci:
-        cmd.extend([
-            "-device", "ahci,id=ahci",
-            "-drive", f"if=none,format=raw,file={disk_image},id=mydisk",
-            "-device", "ide-hd,drive=mydisk,bus=ahci.0"
-        ])
-        print("[+] Storage: AHCI Mode")
-    else:
-        cmd.extend([
-            "-drive", f"format=raw,file={disk_image},index=0,media=disk"
-        ])
-        print("[+] Storage: ATA/IDE Mode")
-
-    cmd.extend([
+        "-device", "ahci,id=ahci", "-drive", f"if=none,format=raw,file={disk_image},id=mydisk", "-device", "ide-hd,drive=mydisk,bus=ahci.0",
         "-m", "512M",
         "-serial", "file:/tmp/neodos_serial.log",
-    ])
+    ]
     
     timeout = 120
     start_time = time.time()

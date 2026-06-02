@@ -15,6 +15,15 @@ fi
 echo "[*] NeoDOS QEMU Debug Session"
 echo ""
 
+USE_AHCI=true
+
+for arg in "$@"; do
+    case "$arg" in
+        --ata) USE_AHCI=false ;;
+        --ahci) USE_AHCI=true ;;
+    esac
+done
+
 # Create a temporary copy of OVMF_VARS to avoid permission issues and keep state clean
 OVMF_VARS="/tmp/OVMF_VARS_$RANDOM.fd"
 cp "$OVMF_VARS_TMPL" "$OVMF_VARS"
@@ -37,6 +46,13 @@ if [ "$ACCEL" = "kvm" ] && [ ! -c /dev/kvm ]; then
     ACCEL="tcg"
 fi
 echo "[+] QEMU accelerator: $ACCEL"
+if [ "$USE_AHCI" = true ]; then
+  DRIVE_OPTS="-device ahci,id=ahci -drive if=none,format=raw,file=$DISK_IMAGE,id=mydisk -device ide-hd,drive=mydisk,bus=ahci.0"
+  echo "[+] Storage: AHCI Mode"
+else
+  DRIVE_OPTS="-drive format=raw,file=$DISK_IMAGE,index=0,media=disk"
+  echo "[+] Storage: ATA/IDE Mode"
+fi
 echo ""
 
 qemu-system-x86_64 \
@@ -46,7 +62,7 @@ qemu-system-x86_64 \
   -gdb tcp::1234 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
-  -drive format=raw,file="$DISK_IMAGE",index=0,media=disk \
+  $DRIVE_OPTS \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 
