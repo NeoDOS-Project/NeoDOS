@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.23.2 — 2026-06-02
+
+### X5. Deferred work queues — Añadido
+- **Añadido**: Sistema de bottom-half (work queues) para ejecución diferida de trabajo fuera del contexto de IRQ.
+  Dos niveles de prioridad: (1) **High-priority** procesada en `clear_need_resched()` (syscall return path), y
+  (2) **Low-priority** procesada en el idle loop del scheduler.
+- **Añadido**: `src/work_queue.rs` — implementación lock-free SPSC ring buffer (64 slots por nivel)
+  con `WorkQueueManager` global y API `push_high()`/`push_low()`/`process_high()`/`process_low()`.
+- **Modificado**: `scheduler.rs` idle loop — procesa high-priority y low-priority work queues
+  antes de `EVENT_BUS.dispatch_pending()`.
+- **Modificado**: `syscall.rs::clear_need_resched()` — procesa high-priority work queue en cada
+  retorno de syscall (interruptores ya deshabilitados en handler int 0x80).
+- **Añadido**: 6 tests de work queue: push/pop, FIFO order, empty, overflow, high/low isolation,
+  pending flag.
+- **Total**: 265 kernel tests + 4 user-mode binaries.
+
 ## v0.23.1 — 2026-06-02
 
 ### Bugfix: User-mode callee-saved register corruption

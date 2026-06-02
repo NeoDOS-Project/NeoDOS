@@ -191,6 +191,9 @@ pub fn set_need_resched() {
 #[no_mangle]
 pub extern "C" fn clear_need_resched() -> bool {
     crate::globals::flush_cache_if_needed();
+    // Process high-priority work queue on each syscall return boundary.
+    // Interrupts are already disabled in the syscall handler (int 0x80 gate).
+    crate::work_queue::WORK_QUEUE.process_high();
     NEED_RESCHED.swap(false, Ordering::SeqCst)
 }
 

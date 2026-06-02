@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.23.1
+v0.23.2
 
 ## Build & Run
 
@@ -26,7 +26,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 248 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 265 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -371,9 +371,39 @@ User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
 Binarios flat cargados en `0x400000`.
 
+## Deferred Work Queue (X5)
+
+`src/work_queue.rs` — Bottom-half system for deferred execution outside IRQ context.
+
+### Two-Level Architecture
+
+| Level | Processing | Use cases |
+|-------|-----------|-----------|
+| High-priority | Syscall return (`clear_need_resched()`) | Wake blocked pipe readers, signal completion |
+| Low-priority | Idle loop (before HLT) | Page cache flush, KOBJ cleanup, process reaping |
+
+### API
+
+```rust
+// IRQ-safe push
+WORK_QUEUE.push_high(callback, data);   // high-priority
+WORK_QUEUE.push_low(callback, data);    // low-priority
+
+// Consumer (must call with interrupts disabled)
+WORK_QUEUE.process_high();  // drain all high-priority items
+WORK_QUEUE.process_low();   // drain all low-priority items
+```
+
+### Implementation
+
+- Lock-free SPSC ring buffer (64 slots per level), same pattern as EventBus
+- `WorkEntry` stores `(fn(*mut u8), *mut u8)` — function pointer + opaque data
+- `pending` AtomicBool: set on push, cleared when queue drains
+- 6 tests: push/pop, FIFO, empty, overflow, high/low isolation, pending flag
+
 ## In-Kernel Test Framework
 
-256 tests en 31 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+265 tests en 32 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|

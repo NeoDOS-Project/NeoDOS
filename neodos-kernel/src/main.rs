@@ -28,6 +28,7 @@ mod elf;
 mod handle;
 mod pipe;
 mod eventbus;
+mod work_queue;
 mod kobj;
 mod memory;
 mod globals;

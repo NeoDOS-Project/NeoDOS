@@ -107,16 +107,10 @@ Convierte todo el kernel en objetos gestionables.
 Caché central de páginas para filesystem, mmap e I/O.
 Reduce acceso a disco y unifica modelo de memoria.
 
-6. X5. Deferred work queues
+6. **X5. Deferred work queues — COMPLETED** (ver CHANGELOG)
 
 Sistema de bottom-half (work queues) para ejecución diferida de trabajo fuera del contexto de IRQ.
-Actualmente, los handlers de interrupción (IRQ0, IRQ1, IRQ4) ejecutan lógica directamente en contexto de interrupción: el timer handler incrementa ticks y puede forzar reschedule; el keyboard handler procesa scancodes y escribe al ring-buffer; el serial handler drainea el UART FIFO. Esto es frágil porque en IRQ context no se puede llamar a `schedule()`, hacer heap allocation, ni tocar VFS.
-
-La solución es un work queue con dos niveles: (1) **High-priority work queue** para trabajo urgente (ej. despertar procesos bloqueados en pipes al recibir datos), y (2) **Low-priority work queue** para trabajo batch (ej. flushing de page cache dirty pages, limpieza de objetos KOBJ con refcount 0, reaping de procesos terminados). Cada work item es un callback con datos opacos.
-
-El scheduler procesaría la high-priority queue al final de cada timer tick (desde Ring 0, fuera de IRQ context), y la low-priority queue en el idle loop. Esto reemplazaría el actual `EVENT_BUS.dispatch_pending()` en el idle loop por un dispatch más general.
-
-Archivos nuevos: `src/work_queue.rs`. Modificaciones: `src/interrupts/timer.rs`, `src/scheduler.rs` (idle loop), `src/eventbus/mod.rs` (migrar dispatch a work queue).
+Arquivos nuevos: `src/work_queue.rs`. Modificaciones: `src/scheduler.rs` (idle loop), `src/syscall.rs` (clear_need_resched).
 
 7. X7. Event Bus v2
 

@@ -29,6 +29,15 @@ static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
 fn idle_task() -> ! {
     loop {
+        // Process high-priority work (urgent: wake blocked processes, etc.)
+        crate::hal::without_interrupts(|| {
+            crate::work_queue::WORK_QUEUE.process_high();
+        });
+        // Process low-priority work (batch: cache flush, KOBJ cleanup, reaping)
+        crate::hal::without_interrupts(|| {
+            crate::work_queue::WORK_QUEUE.process_low();
+        });
+        // Legacy: dispatch event bus events
         crate::eventbus::EVENT_BUS.dispatch_pending();
         crate::hal::hlt_once();
     }
