@@ -11,15 +11,20 @@ use crate::eventbus::EVENT_SHUTDOWN;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
 
-fn collect_driver_data(files: &[String]) -> Vec<(String, Vec<u8>)> {
+fn collect_driver_data(files: &[String], category: DriverCategory) -> Vec<(String, Vec<u8>)> {
     let mut collected = Vec::new();
     for f in files {
         let data = match read_nem_file(f) {
             Ok(d) => d,
             Err(_) => continue,
         };
-        let name = nem::parse_nem_v3(&data)
-            .map(|p| p.name.to_ascii_uppercase())
+        let parsed = nem::parse_nem_v3(&data);
+        let cat = parsed.as_ref().and_then(|p| nem::DriverCategory::from_u8(p.header.category as u8))
+            .unwrap_or(category);
+        if cat != category {
+            continue;
+        }
+        let name = parsed.map(|p| p.name.to_ascii_uppercase())
             .unwrap_or_else(|| {
                 let base = f.rsplit('\\').next().unwrap_or(f);
                 base.trim_end_matches(".NEM").to_ascii_uppercase()
@@ -53,9 +58,9 @@ pub fn boot_load_all() {
     let mut total_active = 0u32;
     let mut total_faulted = 0u32;
 
-    for (phase_name, root) in &[
-        ("BOOT", "C:\\SYSTEM\\DRIVERS\\BOOT"),
-        ("SYSTEM", "C:\\SYSTEM\\DRIVERS\\SYSTEM"),
+    for (phase_name, root, cat) in &[
+        ("BOOT", "C:\\SYSTEM\\DRIVERS\\BOOT", DriverCategory::Boot),
+        ("SYSTEM", "C:\\SYSTEM\\DRIVERS\\SYSTEM", DriverCategory::System),
     ] {
         crate::serial_println!("[BOOT] Scanning {} drivers...", phase_name);
         let files = driver_scan(root);
@@ -63,7 +68,7 @@ pub fn boot_load_all() {
             continue;
         }
 
-        let collected = collect_driver_data(&files);
+        let collected = collect_driver_data(&files, *cat);
 
         let graph = build_dependency_graph(&collected);
         let sorted = match graph.resolve_order() {
@@ -331,7 +336,7 @@ pub fn register_boot_loader_tests() {
     });
 
     test_case!("boot_collect_driver_data_empty", {
-        let collected = collect_driver_data(&[]);
+        let collected = collect_driver_data(&[], DriverCategory::System);
         test_eq!(collected.len(), 0);
     });
 

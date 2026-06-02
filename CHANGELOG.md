@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.24.0 — 2026-06-02
+
+### A11. AHCI NEM standalone driver — Añadido
+- **Añadido**: `drivers/ahci/` — Nuevo driver NEM v3 standalone AHCI (SYSTEM category). Inicializa HBA, detecta puertos ATA/ATAPI, registra block devices. DMA polling con PRDT.
+- **Eliminado**: `neodos-kernel/src/drivers/ahci.rs` — AHCI driver built-in eliminado (reemplazado por NEM standalone).
+- **Modificado**: `boot_loader/mod.rs` — Añadido filtro por `DriverCategory` en `collect_driver_data()`: solo carga drivers con category coincidente (BOOT→Boot, SYSTEM→System).
+- **Añadido**: `boot_ahci.rs` — BootAhci stub built-in (DMA polling, single port) para early-boot en fase 3. Prioridad: NVMe > BootAhci > BootAta PIO.
+
+### Known Bugs
+- **KVM+Q35**: Q35 machine type produce `KVM: entry failed, hardware error 0x0` con OVMF. Usar `-machine pc` (PIIX3) para KVM.
+
+### X6. Async I/O (IRP system) — Añadido
+- **Añadido**: `src/irp/mod.rs` — Sistema de I/O Request Packets con `IrpOp` (Read/Write/Flush/IoCtl), `IrpStatus` (Pending/Completed/Error), pool global de 64 slots protegido por `Mutex`, IDs únicos por `AtomicU32`.
+- **Añadido**: `irp_alloc()`/`irp_free()`/`irp_get_params()`/`irp_complete()` — API completa de ciclo de vida de IRPs. `irp_get_params()` evita doble-lock devolviendo snapshot de parámetros.
+- **Añadido**: `irp_complete()` con soporte de: (a) wake-up de proceso vía scheduler integration con `IRP_WAIT_MAGIC`, (b) completion callback diferido a `WORK_QUEUE` high-priority mediante `Box<IrpCbDispatch>`, (c) chaining via `chain_next` field.
+- **Añadido**: `IrpQueue` — cola FIFO circular de 32 IrpId para que dispositivos asíncronos encolen operaciones pendientes.
+- **Añadido**: BlockDevice trait extendido con `submit_irp()` e `poll_irp()`. `read_blocks`/`write_blocks` se mantienen como métodos abstractos. Todos los drivers (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implementan `submit_irp`.
+- **Añadido**: `irp_block_current()`/`irp_wake_waiter()` — integración con scheduler: procesos se bloquean en un IRP específico con `waiting_for: IRP_WAIT_MAGIC | irp_id` y son despertados por `irp_complete()`.
+- **Añadido**: `irp_sync_read()`/`irp_sync_write()` — helpers síncronos que usan IRPs internamente (útiles para código nuevo que quiera el path IRP).
+- **Añadido**: 11 tests (alloc/free, status update, error codes, unique IDs, reuse, queue FIFO, queue wraparound, callback dispatch, Flush op, IoCtl op, params extraction). Total: 284 tests.
+
+### X7. Event Bus v2 — Añadido
+- **Añadido**: Event Bus v2 unificado con colas separadas por prioridad: cola de alta prioridad (16 slots, lock-free SPSC) para eventos críticos (timers, IRQ completions) y cola de prioridad normal (64 slots) para eventos de sistema.
+- **Añadido**: Suscripción con filtro (`EventFilter`) — los handlers se registran con filtro por event_type, source_mask bitfield y device_id. `register_handler_v2()` con filtro estricto; `register_handler()` crea filtro por tipo automáticamente (backward compatible).
+- **Añadido**: Backpressure — ambas colas retornan `Err(())` cuando están llenas (productor no sobrescribe). Nueva constante `ERR_EVENT_BUS_FULL` (−16) para drivers NEM.
+- **Añadido**: Eventos con payload dinámico (`push_event_with_dyn_payload()`) — copia del payload en heap, puntero almacenado en data0/data1, auto-liberado tras dispatch.
+- **Añadido**: Dispatch en `clear_need_resched()` — eventos procesados en cada retorno de syscall (syscall boundary), garantizando dispatch incluso con sistema en carga.
+- **Modificado**: `src/eventbus/mod.rs` — eliminada la separación v1/v2. Arquitectura unificada: cola alta (16 slots) + cola normal (64 slots) + tabla de handlers con filtros (64 entradas). Backward compatible: todas las APIs v1 existentes (`push_event`, `register_handler`, `unregister_handler`, `dispatch_pending`, `dispatch_one`) mantienen su firma.
+- **Modificado**: `src/eventbus/v2.rs` — eliminado (contenido migrado a mod.rs).
+- **Modificado**: `src/syscall.rs::clear_need_resched()` — añadido `EVENT_BUS.dispatch_pending()` para procesar eventos en cada syscall return.
+- **Modificado**: Event struct sin cambios (ABI-stable para drivers NEM v3).
+- **Añadido**: 8 nuevos tests: priority_order, filter_by_type, strict_filter, unregister_by_name, high_queue_overflow, dyn_payload_lifecycle, filter_wildcard, filter_source_mask.
+- **Total**: 273 kernel tests + 4 user-mode binaries.
+
 ## v0.23.2 — 2026-06-02
 
 ### X5. Deferred work queues — Añadido

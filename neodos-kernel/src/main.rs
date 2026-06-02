@@ -34,6 +34,7 @@ mod memory;
 mod globals;
 pub mod usermode;
 pub mod syscall;
+mod irp;
 mod testing;
 pub mod trace;
 pub mod invariants;

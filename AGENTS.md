@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.23.2
+v0.24.0
 
 ## Build & Run
 
@@ -21,12 +21,15 @@ QEMU_ACCEL=kvm bash scripts/qemu-debug.sh
 QEMU_ACCEL=kvm python3 scripts/auto_test.py
 ```
 
+**Note**: KVM works with `-machine pc` (PIIX3). Q35 machine type produces
+`KVM: entry failed, hardware error 0x0` with OVMF on some hosts. Use TCG for Q35.
+
 ## Git workflow (testing primero)
 
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 265 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 284 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -102,13 +105,22 @@ Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, p
 
 ## AHCI Driver
 
-- **DMA polling** por puerto, buffers estáticos separados por puerto lógico
+### BootAhci (built-in kernel stub, Phase 3)
+- `drivers/boot_ahci.rs` — DMA polling, single port, single command slot
+- 8-sector PRDT (4 KB max per DMA), static buffers `PORT_CMD_LIST[]`, `PORT_RECV_FIS[]`, `PORT_CMD_TABLE[]`, `PORT_DMA_BUF[]`
+- Priority in `storage_manager.rs`: NVMe > BootAhci > BootAta PIO
+- Required for Q35 machine (no PATA controller)
+
+### NEM AHCI (standalone, SYSTEM category)
+- `drivers/ahci/` — NEM v3 standalone driver, loaded at Phase 3.85
+- Scans PCI for AHCI controllers (class 0x01 subclass 0x06)
+- Initializes HBA, detects ATA/ATAPI per port
+- Registers block devices via `hst_register_block_device()`
+- Per-port buffers separated by logical port index
 - **ATA**: READ/WRITE DMA EXT (0x25/0x35), multi-sector hasta 8 sectores (4KB)
 - **ATAPI**: PACKET command (0xA0) con DMA, READ_10 CDB, sectores de 2048 bytes
-- **Por puerto**: DeviceType::Ata / DeviceType::Atapi
 - **Port reset**: ciclo DET vía SCTL para recuperación de errores
 - **PRDT**: hasta 8 entradas scatter-gather
-- Per-port buffers: `PORT_CMD_LIST[]`, `PORT_RECV_FIS[]`, `PORT_CMD_TABLE[]`, `PORT_DMA_BUF[]`
 
 ## Un disco GPT unificado
 
@@ -123,11 +135,21 @@ El kernel parsea la GPT al arrancar mediante `drivers/gpt.rs`, busca la partici�
 `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`, y ajusta `base_lba` en el driver de bloques para que
 el FS vea el superbloque en LBA 0 relativo a la partición.
 
-### ATA driver (two-tier architecture)
+### BootAhci (kernel stub, Phase 3)
+
+**Kernel boot stub** (`neodos-kernel/src/drivers/boot_ahci.rs`): `BootAhci` — AHCI DMA polling,
+single port, single command slot, 8-sector PRDT. Used during early boot (PHASE 3.6–3.8 in
+`main.rs`) for GPT parsing, NeoDOS superblock read, and block cache warmup before NEM drivers
+are loaded.
+
+Priority in `storage_manager.rs`: NVMe > BootAhci > BootAta (PIO fallback).
+
+### ATA PIO boot stub (fallback)
 
 **Kernel boot stub** (`neodos-kernel/src/drivers/ata.rs`): `BootAta` — PIO only, primary channel
-only. Used during early boot (PHASE 3.6–3.8 in `main.rs`) for GPT parsing, NeoDOS superblock
-read, and block cache warmup before NEM drivers are loaded.
+only. Fallback when no NVMe or AHCI is found. Used for PIIX3/QEMU with PATA controller.
+
+### NEM ATA (standalone, SYSTEM category)
 
 **NEM v3 standalone driver** (`drivers/ata/` → `ata.nem`, SYSTEM category): Full-featured ATA
 driver loaded at PHASE 3.85 by the boot loader. Scans PCI for IDE controller (bus-master capable),
@@ -371,6 +393,22 @@ User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
 Binarios flat cargados en `0x400000`.
 
+## Async I/O (IRP System, X6)
+
+`src/irp/mod.rs` — Unified I/O Request Packet model for all kernel block operations.
+
+| Concept | Description |
+|---------|-------------|
+| **IRP struct** | `#[repr(C)]` with `IrpOp` (Read/Write/Flush/IoCtl), buffer ptr + len, LBA + count, `IrpStatus` (Pending/Completed/Error), callback + ctx, chain_next, waiting_pid |
+| **Global pool** | 64 slots protected by `Spin::Mutex`, sequential IDs via `AtomicU32`. `irp_alloc()`/`irp_free()`/`irp_get_params()` — last returns a snapshot to avoid double-lock deadlock |
+| **IrpQueue** | Per-device FIFO ring buffer (32 entries) for queuing async operations. `push()`, `pop()`, `peek()`, `len()` |
+| **Completion** | `irp_complete(id, status)` — sets status, wakes waiter (`irp_wake_waiter` via `IRP_WAIT_MAGIC`), handles chaining, dispatches callback via `WORK_QUEUE.push_high()` using `Box<IrpCbDispatch>` |
+| **Scheduler** | `irp_block_current(id)` sets `ProcessState::Blocked { waiting_for: IRP_WAIT_MAGIC \| id }`. `irp_complete` wakes via `irp_wake_waiter()` — same pattern as pipe blocking |
+| **Chaining** | `chain_next: Option<IrpId>` — auto-cleared on complete. Device driver responsible for submitting chained IRPs |
+| **Sync helpers** | `irp_sync_read()`/`irp_sync_write()` — allocate IRP, submit, block, free. For code that wants synchronous IRP path |
+| **BlockDevice** | Trait extended with `submit_irp(irp_id)` and `poll_irp(irp_id)`. All 5 implementors (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implement `submit_irp` via `irp_get_params()` → sync I/O → `irp_complete_result()` |
+| **Tests** | 11 tests: alloc/free, status transitions, error codes, unique IDs, slot reuse, queue FIFO/wraparound, callback dispatch via work queue, flush/ioctl ops, params extraction |
+
 ## Deferred Work Queue (X5)
 
 `src/work_queue.rs` — Bottom-half system for deferred execution outside IRQ context.
@@ -403,7 +441,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-265 tests en 32 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+284 tests en 34 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -417,7 +455,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
 | NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
 | ELF | 7 | ELF64 loader: header validation, segment loading, edge cases |
-| Event Bus | 9 | Event: creation, push/pop, ordering, overflow, IDs, handler register/dispatch, type filter, unregister, empty queue |
+| Event Bus | 17 | Unified v2: priority queues, subscription filters (type/source/device), dynamic payload, backpressure, 17 tests |
 | Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
 | Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
@@ -427,6 +465,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | ABI Negotiation | 10 | ABI version negotiation, window overlap, compatibility warnings, edge cases |
 | Dependency | 13 | Dependency graph, topological sort, cycle detection, symbol extraction, case-insensitive |
 | Storage Ref | 14 | Reference storage driver: entrypoints, lifecycle, R/W, geometry, error handling |
+| IRP | 11 | Async I/O: IRP alloc/free, completion/error, pool reuse, queue FIFO/wraparound, callback dispatch, flush/ioctl ops, get_params |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
 | KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
@@ -435,7 +474,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (255 tests kernel)
+1. Ejecuta `testing::run_all()` (284 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
@@ -463,23 +502,24 @@ Comando `test`:
 |-----------|-------------|
 | `PRI <pid> <priority>` | Set scheduling priority for a running process (0=HIGH, 1=ABOVE_NORMAL, 2=NORMAL, 3=IDLE) |
 
-## Event Bus v1
+## Event Bus v2
 
-`src/eventbus/mod.rs` — Centralized event routing layer.
+`src/eventbus/mod.rs` — Centralized event routing layer with priority, subscription filters, dynamic payload, and backpressure.
 
 | Concept | Description |
 |---------|-------------|
-| **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` |
-| **Event types** | 13 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, EVENT_SHUTDOWN, USER(0x1000+). PCI NEM driver adds 0x1000–0x1003 (PCI_READ/WRITE_CONFIG, READ_RESULT, WRITE_DONE) |
+| **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` — ABI-stable for NEM drivers |
+| **Event types** | 13 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, EVENT_SHUTDOWN, USER(0x1000+). PCI NEM driver adds 0x1000–0x1003 |
 | **Event sources** | SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND |
-| **Queue** | Lock-free SPSC ring buffer (64 slots). Pushed from IRQ context, popped from scheduler context |
-| **Callbacks** | `register_handler(event_type, callback, name)` — max 32 handlers |
-| **Dispatch** | `dispatch_one()`/`dispatch_pending()` — outside IRQ context, controlled by scheduler |
-| **IRQ integration** | TimerTick pushed from PIT IRQ0, KeyboardInput pushed from PS/2 IRQ1 |
-| **Scheduler integration** | `EVENT_BUS.dispatch_pending()` in idle loop |
+| **Priority queues** | Two lock-free SPSC ring buffers: **high** (16 slots) for timers/IRQ completions, **normal** (64 slots) for system events. High always drained first |
+| **Subscription filters** | `register_handler_v2(filter, callback, name)` with `EventFilter`: filter by event_type, source_mask bitfield, device_id. v1 `register_handler()` creates a type-only filter |
+| **Dynamic payload** | `push_event_with_dyn_payload()` — allocates a copy, stores pointer in `data0`/`data1`, auto-freed after dispatch via the handlers table |
+| **Backpressure** | Queue full → `Err(())` returned to producer. `ERR_EVENT_BUS_FULL` constant (−16) for drivers |
+| **Callbacks** | `register_handler()` / `register_handler_v2()` — max 64 handlers. Unregister by callback pointer (`unregister_handler`) or by name (`unregister_handler_by_name`) |
+| **Dispatch** | `dispatch_one()`/`dispatch_pending()` — drains high queue first, then normal. Called from: (1) `clear_need_resched()` on every syscall return, (2) idle loop, (3) shell input loop |
+| **IRQ integration** | TimerTick pushed from PIT IRQ0 (normal priority), KeyboardInput from PS/2 IRQ1 (normal priority). All lock-free pushes |
+| **Scheduler integration** | `EVENT_BUS.dispatch_pending()` in `clear_need_resched()` + idle loop. Events dispatched on every syscall boundary |
 | **Isolation** | No driver execution in IRQ context. No recursive dispatch. Events immutable after enqueue |
-
-Rules: events are queued deterministically, dispatched by scheduler, never executed in IRQ context.
 
 See `docs/NEM_SPEC.md` for full NEM format spec.
 
@@ -818,4 +858,5 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | HAL ABI v0.3 | `neodos/neodos-kernel/src/hal/` | 7 módulos: cpu, io, mem, irq, time + x64 backend |
 | PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus enumerator (SYSTEM, full bus scan via bridge traversal) |
 | ATA NEM driver | `neodos/drivers/ata/ata.nem` | NEM v3 standalone ATA driver with DMA+PIO, primary+secondary channels (SYSTEM) |
+| AHCI NEM driver | `neodos/drivers/ahci/ahci.nem` | NEM v3 standalone AHCI driver (SYSTEM, DMA polling, ATA+ATAPI) |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

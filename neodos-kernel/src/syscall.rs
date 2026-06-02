@@ -194,6 +194,11 @@ pub extern "C" fn clear_need_resched() -> bool {
     // Process high-priority work queue on each syscall return boundary.
     // Interrupts are already disabled in the syscall handler (int 0x80 gate).
     crate::work_queue::WORK_QUEUE.process_high();
+    // Process pending Event Bus events on every syscall return.
+    // This ensures events are dispatched even when the system is busy
+    // (the idle loop also dispatches when idle). High-priority events
+    // (timers, IRQ completions) are drained first, then normal-priority.
+    crate::eventbus::EVENT_BUS.dispatch_pending();
     NEED_RESCHED.swap(false, Ordering::SeqCst)
 }
 

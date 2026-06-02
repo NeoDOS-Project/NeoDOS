@@ -1,8 +1,8 @@
 #![allow(dead_code)]
 
 use alloc::boxed::Box;
-use crate::drivers::ahci::AhciDriver;
 use crate::drivers::nvme::NvmeDriver;
+use crate::irp::{self, IrpId, IrpOp, IrpStatus};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -46,13 +46,34 @@ impl BlockDeviceManager {
     }
 }
 
+/// Block device trait with IRP-based async I/O.
+///
+/// The primary interface is `submit_irp()` which enqueues an I/O request
+/// for asynchronous processing (the device calls `irp::irp_complete()`
+/// when done). The synchronous `read_blocks`/`write_blocks` methods are
+/// retained for backward compatibility; each device driver still implements
+/// them directly.
 pub trait BlockDevice: Send {
     fn num_sectors(&self) -> Option<u64> { None }
 
     fn sector_size(&self) -> u32 { 512 }
 
+    /// Submit an I/O Request Packet to this device.
+    /// The IRP must have been allocated from the global pool.
+    /// The device processes the IRP (possibly asynchronously) and calls
+    /// `irp::irp_complete()` when done.
+    fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()>;
+
+    /// Poll the status of a previously submitted IRP.
+    /// Returns the current status without blocking.
+    fn poll_irp(&mut self, irp_id: IrpId) -> IrpStatus {
+        irp::irp_get_status(irp_id)
+    }
+
+    /// Synchronous read of `count` sectors starting at `lba`.
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()>;
 
+    /// Synchronous write of `count` sectors starting at `lba`.
     fn write_blocks(&mut self, lba: u64, count: u8, buf: &[u8]) -> Result<(), ()>;
 
     fn flush(&mut self) -> Result<(), ()> { Ok(()) }
@@ -101,6 +122,36 @@ impl RamDisk {
 }
 
 impl BlockDevice for RamDisk {
+    fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()> {
+        let params = irp::irp_get_params(irp_id).ok_or(())?;
+        match params.op {
+            IrpOp::Read => {
+                let ram = ram_disk_buf().ok_or(())?;
+                let offset = (params.lba as usize) * 512;
+                let len = (params.count as usize) * 512;
+                if offset + len <= ram.len() && params.buf_len >= len {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            ram.as_ptr().add(offset),
+                            params.buf,
+                            len,
+                        );
+                    }
+                    irp::irp_complete_result(irp_id, Ok(()));
+                } else {
+                    irp::irp_complete_result(irp_id, Err(()));
+                }
+            }
+            IrpOp::Write => {
+                irp::irp_complete_result(irp_id, Err(()));
+            }
+            _ => {
+                irp::irp_complete_result(irp_id, Ok(()));
+            }
+        }
+        Ok(())
+    }
+
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
         let ram = ram_disk_buf().ok_or(())?;
         let offset = (lba as usize) * 512;
@@ -124,6 +175,24 @@ impl BlockDevice for RamDisk {
 // ── Direct BlockDevice implementations ──────────────────────────────
 
 impl BlockDevice for crate::drivers::ata::BootAta {
+    fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()> {
+        let params = crate::irp::irp_get_params(irp_id).ok_or(())?;
+        match params.op {
+            IrpOp::Read => {
+                let buf = unsafe { core::slice::from_raw_parts_mut(params.buf, params.buf_len) };
+                let result = self.read_blocks(params.lba, params.count, buf);
+                crate::irp::irp_complete_result(irp_id, result);
+            }
+            IrpOp::Write => {
+                let buf = unsafe { core::slice::from_raw_parts(params.buf as *const u8, params.buf_len) };
+                let result = self.write_blocks(params.lba, params.count, buf);
+                crate::irp::irp_complete_result(irp_id, result);
+            }
+            _ => crate::irp::irp_complete_result(irp_id, Ok(())),
+        }
+        Ok(())
+    }
+
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
         self.read_blocks(lba, count, buf)
     }
@@ -149,33 +218,25 @@ impl BlockDevice for crate::drivers::ata::BootAta {
     }
 }
 
-impl BlockDevice for AhciDriver {
-    fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
-        self.read_sectors(lba as u32, count, buf)
-    }
-
-    fn write_blocks(&mut self, lba: u64, count: u8, buf: &[u8]) -> Result<(), ()> {
-        self.write_sectors(lba as u32, count, buf)
-    }
-
-    fn set_base_lba(&mut self, lba: u64) {
-        AhciDriver::set_base_lba(self, lba as u32);
-    }
-
-    fn base_lba(&self) -> u64 {
-        AhciDriver::base_lba(self) as u64
-    }
-
-    fn read_sector(&mut self, lba: u64) -> Result<[u8; 512], ()> {
-        AhciDriver::read_sector(self, lba as u32)
-    }
-
-    fn write_sector(&mut self, lba: u64, data: &[u8; 512]) -> Result<(), ()> {
-        AhciDriver::write_sector(self, lba as u32, data)
-    }
-}
-
 impl BlockDevice for NvmeDriver {
+    fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()> {
+        let params = crate::irp::irp_get_params(irp_id).ok_or(())?;
+        match params.op {
+            IrpOp::Read => {
+                let buf = unsafe { core::slice::from_raw_parts_mut(params.buf, params.buf_len) };
+                let result = self.read_sectors(params.lba, params.count, buf);
+                crate::irp::irp_complete_result(irp_id, result.map_err(|_| ()));
+            }
+            IrpOp::Write => {
+                let buf = unsafe { core::slice::from_raw_parts(params.buf as *const u8, params.buf_len) };
+                let result = self.write_sectors(params.lba, params.count, buf);
+                crate::irp::irp_complete_result(irp_id, result.map_err(|_| ()));
+            }
+            _ => crate::irp::irp_complete_result(irp_id, Ok(())),
+        }
+        Ok(())
+    }
+
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
         self.read_sectors(lba, count, buf)
     }
@@ -248,6 +309,24 @@ impl BlockDevice for NemBlockDevice {
 
     fn sector_size(&self) -> u32 {
         self.sector_size
+    }
+
+    fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()> {
+        let params = crate::irp::irp_get_params(irp_id).ok_or(())?;
+        match params.op {
+            IrpOp::Read => {
+                let abs_lba = self.base_lba.wrapping_add(params.lba);
+                let rc = unsafe { (self.read_fn)(self.device_id, abs_lba, params.count, params.buf) };
+                crate::irp::irp_complete_result(irp_id, if rc == 0 { Ok(()) } else { Err(()) });
+            }
+            IrpOp::Write => {
+                let abs_lba = self.base_lba.wrapping_add(params.lba);
+                let rc = unsafe { (self.write_fn)(self.device_id, abs_lba, params.count, params.buf as *const u8) };
+                crate::irp::irp_complete_result(irp_id, if rc == 0 { Ok(()) } else { Err(()) });
+            }
+            _ => crate::irp::irp_complete_result(irp_id, Ok(())),
+        }
+        Ok(())
     }
 
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {

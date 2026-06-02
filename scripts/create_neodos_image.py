@@ -125,7 +125,7 @@ Happy hacking!
     print("[*] Writing inode table...")
 
     # .nem test driver files
-    nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers')
+    nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
 
     if args.minimal:
         # --- Minimal disk: only test.txt ---
@@ -210,7 +210,7 @@ Happy hacking!
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
         bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
-        sys2dir_blocks = alloc_blocks(20, 768)      # SYSTEM dir (DRIVERS)
+        sys2dir_blocks = alloc_blocks(20, 1024)     # SYSTEM dir (DRIVERS)
 
         # Build inodes with correct block lists
         def pad_blocks(blks):
@@ -226,7 +226,7 @@ Happy hacking!
             15: (0x40, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (0x40, 256 * 5, pad_blocks(testdir_blocks)),
             19: (0x40, 256 * 2, pad_blocks(bootdir_blocks)),
-            20: (0x40, 512, pad_blocks(sys2dir_blocks)),
+            20: (0x40, 1024, pad_blocks(sys2dir_blocks)),
         }
 
         # Write inodes to inode table
@@ -261,6 +261,7 @@ Happy hacking!
             (24, "acpi.nem"),
             (25, "pci.nem"),
             (26, "ata.nem"),
+            (27, "ahci.nem"),
         ]
         for inum, fname in system_nem_files:
             fpath = os.path.join(nem_dir, "SYSTEM", fname)
@@ -434,6 +435,8 @@ VER
                 image[offset+256:offset+512] = entry_pci
                 entry_ata = create_dir_entry(26, 1, "ata.nem")
                 image[offset+512:offset+768] = entry_ata
+                entry_ahci = create_dir_entry(27, 1, "ahci.nem")
+                image[offset+768:offset+1024] = entry_ahci
 
         # System driver data blocks
         for (inum, fname) in system_nem_files:

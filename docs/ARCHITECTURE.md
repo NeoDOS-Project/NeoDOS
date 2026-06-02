@@ -116,11 +116,12 @@ NeoDOS implements a **layered driver architecture** with full hardware access me
 │   AHCI · ATA · PS/2 · FAT32 · RTC · PCI · NVMe · USB    │
 │   null · echo · timer_listener · reference drivers       │
 └─────────────────────────┬────────────────────────────────┘
-                          │ Event Bus v1 (56-byte Event struct)
+                          │ Event Bus v2 (56-byte Event struct)
 ┌─────────────────────────▼────────────────────────────────┐
-│                    Event Bus v1                            │
-│   src/eventbus/mod.rs — SPSC lock-free (64 slots)         │
-│   11 event types, 32 handlers max                         │
+│                    Event Bus v2                            │
+│   src/eventbus/mod.rs — priority queues, filters,         │
+│   2 priority levels (high 16, normal 64 slots)            │
+│   13 event types, 64 handlers max, dynamic payload        │
 │   dispatch from scheduler (NEVER in IRQ context)          │
 └─────────────────────────┬────────────────────────────────┘
                           │ 26 primitives extern "C"
@@ -173,11 +174,11 @@ CPU initialization code (GDT, IDT, PIC, paging) stays in `arch/x64/` — it is a
 
 ---
 
-### 2. Event Bus v1 (`src/eventbus/mod.rs`)
+### 2. Event Bus v2 (`src/eventbus/mod.rs`)
 
-**Centralized event routing layer**. Transforms raw IRQs into normalized events.
+**Centralized event routing layer** with priority queues, subscription filters, dynamic payload, and backpressure. Transforms raw IRQs into normalized events.
 
-**`Event` structure** (56 bytes, `#[repr(C)]`):
+**`Event` structure** (56 bytes, `#[repr(C)]`, ABI-stable for NEM drivers):
 ```rust
 struct Event {
     event_id: u64,       // monotonically increasing
@@ -191,7 +192,7 @@ struct Event {
 }
 ```
 
-**11 event types:**
+**13 event types:**
 
 | Constant | Value | Description |
 |-----------|-------|-------------|
@@ -204,17 +205,23 @@ struct Event {
 | `EVENT_DRIVER_CRASH` | 6 | Driver crashed |
 | `EVENT_POLICY_VIOLATION` | 7 | Policy violation |
 | `EVENT_FS_MOUNTED` | 8 | Filesystem mounted |
-| `EVENT_USER` | 0x1000 | User-defined event |
+| `EVENT_KEYB_LAYOUT` | 9 | Keyboard layout switch |
+| `EVENT_SHUTDOWN` | 10 | System shutdown request |
+| `EVENT_USER` | 0x1000 | User-defined event base |
 | `EVENT_WILDCARD` | 0xFFFFFFFF | Matches any type |
 
 **Internal architecture:**
-- **Queue**: SPSC (Single-Producer Single-Consumer) lock-free, 64 slots via `UnsafeCell<[Event; 64]>`, head/tail as `AtomicUsize`. Producer = IRQ context, consumer = scheduler/shell.
-- **Handlers**: Up to 32 callbacks `fn(&Event)`, protected by `Mutex<[Option<RegisteredHandler>; 32]>`.
-- **Dispatch**: `dispatch_one()` / `dispatch_pending()` — **never** executed in IRQ context. The scheduler calls `dispatch_pending()` from the idle loop.
-- **IRQ integration**: `push_event()` from PIT IRQ0 (timer tick) and PS/2 IRQ1 (keyboard).
+- **Priority queues**: Two lock-free SPSC ring buffers — **high** (16 slots) for timers/IRQ completions, **normal** (64 slots) for system events. High queue drained first in all dispatch paths.
+- **Handlers**: Up to 64 callbacks `fn(&Event)`, protected by `Mutex<[Option<RegisteredHandler>; 64]>`. Each handler has an `EventFilter` (event_type, source_mask bitfield, device_id).
+- **Subscription**: `register_handler_v2(filter, callback, name)` with structured `EventFilter`. v1 `register_handler(type, callback, name)` creates a type-only filter (backward compatible).
+- **Dynamic payload**: `push_event_with_dyn_payload()` allocates a copy on the kernel heap, stores pointer in `data0`/`data1`, and auto-frees after dispatch via the handlers table.
+- **Backpressure**: When a queue is full, `push_event()` returns `Err(())` — producers must handle. `ERR_EVENT_BUS_FULL` constant (−16) for NEM drivers.
+- **Unregistration**: `unregister_handler(callback)` or `unregister_handler_by_name(name)`.
+- **Dispatch**: `dispatch_one()` / `dispatch_pending()` — **never** executed in IRQ context. Called from: (1) `clear_need_resched()` on every syscall return, (2) idle loop, (3) shell input loop.
+- **IRQ integration**: `push_event()` from PIT IRQ0 (timer tick) and PS/2 IRQ1 (keyboard) — all lock-free pushes.
 - **Isolation**: No driver execution in IRQ context. No recursive dispatch. Events immutable after enqueue.
 
-**API:** `push_event()`, `register_handler()`, `unregister_handler()`, `dispatch_pending()`, `handler_count()`, `queue_available()`.
+**API:** `push_event()`, `push_event_with_dyn_payload()`, `register_handler()`, `register_handler_v2()`, `unregister_handler()`, `unregister_handler_by_name()`, `dispatch_pending()`, `dispatch_one()`, `handler_count()`, `queue_available()`.
 
 ---
 

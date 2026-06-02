@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.22.0 (248 tests, ATA NEM standalone driver).
-> Objetivo: v0.23 — kernel modular, estable, extensible.
-> Última revisión: Mayo 2026.
+> Versión actual: v0.24.0 (284 tests, BootAhci stub + AHCI NEM standalone).
+> Objetivo: v0.25 — kernel modular, estable, extensible.
+> Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (63 items)
+## COMPLETED (65 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -39,7 +39,7 @@
 21. **ACPI driver** — NEM v3 standalone ACPI poweroff driver (`drivers/acpi/`). Scans PCI for PIIX4/ICH9 LPC bridge, detects PM1a port, writes SLP_TYP_S5|SLP_EN. Legacy RSDP/RSDT/FADT parser (`neodos-kernel/src/drivers/acpi.rs`) deleted. Fallback QEMU Bochs port + PS/2 reset. `EVENT_SHUTDOWN` event bus constant. `POWEROFF`/`SHUTDOWN`/`EXIT` command pushes event → ACPI driver → HAL poweroff fallback.
 22. **HAL ABI v0.3** — 26 primitives `extern "C"` (CPU, port I/O, page mem, IRQ, timers).
 23. **Device Model + HAL Binding** — 32-slot registry, handles opacos, 5 boot devices.
-24. **Event Bus v1** — SPSC 64 slots, 11 event types, callbacks max 32, 9 tests.
+24. **Event Bus v2** — Dual priority queues (high 16 + normal 64), subscription filters, dynamic payload, backpressure, dispatch on syscall return. 17 tests.
 25. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
 26. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
 41. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
@@ -64,6 +64,8 @@
 60. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category, Lifecycle type 2). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. `find_ide_controller()`/`enable_bus_master()` moved inline to `storage_manager.rs`. `find_nvme_controller()`/`nvme_enable()` moved inline to `nvme.rs`. Dead `find_acpi_pm1_cnt_port()` removed. 4947 bytes.
 61. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18, and enqueues them for scanning up to 256 buses. Added 3 kernel tests validating bus 0 devices, bus 1 emptiness, and bridge detection. QEMU PIIX3: 6 devices on bus 0 (no bridges). Total: 248 kernel tests + 4 user-mode binaries.
 62. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 standalone driver (SYSTEM category) for ATA storage. Scans PCI for IDE controller with bus-master DMA capability; enables bus-mastering and initializes primary + secondary channels. Supports DMA read/write (via PRDT, up to 8 sectors) and PIO multi-sector fallback. Each active channel registers a `NemBlockDevice` via `hst_register_block_device()`. Kernel-side `ata.rs` reduced to `BootAta` PIO-only boot stub (GPT parsing, superblock read, cache warmup before NEM load). `AtaWithAhciFallback` removed. QEMU machine type changed from `q35` to `pc` (PIIX3) for IDE controller compatibility. Total: 248 kernel tests + 4 user-mode binaries.
+63. **A11. AHCI NEM standalone driver** — `drivers/ahci/` NEM v3 standalone driver (SYSTEM category) for AHCI storage. Scans PCI for AHCI controllers (class 0x01 subclass 0x06), initializes HBA, detects ATA/ATAPI devices per port, and registers block devices via `hst_register_block_device()`. Uses DMA polling with PRDT (up to 8 entries), single-slot command engine. Kernel built-in AHCI driver removed (`ahci.rs` deleted, `storage_manager.rs` no longer probes AHCI). Boot timeout for port CI reduced from 1M to 100K iterations. Category filter added to boot driver loader (`collect_driver_data` checks `DriverCategory`). Storage priority: NVMe > AHCI boot stub > ATA PIO boot stub.
+64. **A12. BootAhci kernel stub** — `boot_ahci.rs` built-in kernel driver (Phase 3 storage init) for AHCI early-boot access. Minimal DMA polling driver (single port, single command slot, 8-sector PRDT). Registers as block device idx=0 before NEM AHCI driver loads. Priority: NVMe > BootAhci > BootAta (PIO). Required for Q35 machine (no PATA). **Bug**: Q35 + KVM produces hardware error on this host (`KVM: entry failed, hardware error 0x0` with OVMF); use `-machine pc` (PIIX3) + PATA for KVM. With TCG, Q35+AHCI works but is very slow (~5 min boot).
 
 ### Userland & Memoria
 27. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -112,26 +114,13 @@ Reduce acceso a disco y unifica modelo de memoria.
 Sistema de bottom-half (work queues) para ejecución diferida de trabajo fuera del contexto de IRQ.
 Arquivos nuevos: `src/work_queue.rs`. Modificaciones: `src/scheduler.rs` (idle loop), `src/syscall.rs` (clear_need_resched).
 
-7. X7. Event Bus v2
+7. **X7. Event Bus v2 — COMPLETED** (ver CHANGELOG)
 
-Evolución del Event Bus v1 actual (SPSC ring buffer de 64 slots, 13 tipos de evento, dispatch en idle loop) a un sistema de eventos asíncrono más capaz. El Event Bus v1 tiene limitaciones significativas: cola única de tamaño fijo (64 slots) que puede saturarse con ráfagas de eventos de teclado, sin priorización entre tipos de evento, sin capacidad de filter por source, y sin colas por-process o por-driver.
+Event Bus v2 unificado: colas separadas por prioridad (alta 16 slots, normal 64 slots), suscripción con filtro (EventFilter por type/source/device_id), backpressure (ERR_EVENT_BUS_FULL), eventos con payload dinámico auto-gestionado. Dispatch en clear_need_resched() + idle loop + shell loop. Sin cambios en Event struct (ABI-stable). Archivos: `src/eventbus/mod.rs` (único), `src/eventbus/v2.rs` eliminado. 17 tests.
 
-Event Bus v2 introduciría: (1) **Colas separadas por prioridad** — cola de alta prioridad (16 slots) para eventos críticos (timers, hardware IRQ completions) y cola de prioridad normal (256 slots) para eventos de sistema (driver loaded, process exit, shutdown). (2) **Suscripción con filtro** — los handlers se registran con un filtro de bits (event_type, source, device_id), permitiendo que un driver reciba solo eventos relevantes. (3) **Backpressure** — si una cola se llena, el productor recibe un error en lugar de sobrescribir; los drivers deben manejar EVENT_BUS_FULL. (4) **Eventos con payload dinámico** — además de los 56 bytes fijos actuales, eventos grandes pueden llevar un puntero a datos adicionales gestionado por el work queue.
+8. **X6. Async I/O (IRP system) — COMPLETED** (ver CHANGELOG)
 
-La dispatch se movería del idle loop a un worker thread virtual gestionado por el scheduler, ejecutado como un proceso Ring 0 con prioridad HIGH. Esto garantiza que los eventos se procesen aunque el sistema esté en carga, y evita starvation del dispatch.
-
-Archivos: `src/eventbus/v2.rs`. Implicaciones: migración de todos los drivers que usan Event Bus v1.
-
-🔁 FASE 3 — ASYNC I/O CORE
-8. X6. Async I/O (IRP system)
-
-Sistema de I/O Request Packets (IRPs) — modelo asíncrono unificado para todas las operaciones de entrada/salida del kernel. Actualmente, las operaciones de bloque son síncronas y bloqueantes: el ATA driver (tanto el boot stub PIO como el NEM standalone) hace DMA polling en un bucle activo esperando que el dispositivo complete; la lectura de sectores del NeoFS espera a que el bloque device termine; las pipes bloquean el proceso completo con `ProcessState::Blocked`. No hay forma de emitir múltiples I/Os concurrentes ni de encolarlos de forma eficiente.
-
-El IRP system introduciría: (1) **IRP struct** con tipo de operación (IRP_READ, IRP_WRITE, IRP_FLUSH, IRP_IOCTL), buffer, callback de completion, y estado. (2) **IRP queue por dispositivo** — cada BlockDevice mantiene una cola de IRPs pendientes; el driver los procesa en orden (o con prioridad) y llama al callback cuando cada uno completa. (3) **Completion callbacks en work queue** — cuando un IRP completo, el callback se encola en el work queue de alta prioridad, no se ejecuta en IRQ context. (4) **IRP chaining** — un IRP puede encadenar múltiples sub-operaciones (ej. ATA: PRDT setup → DMA start → wait completion → callback).
-
-El scheduler debería poder bloquear un proceso en un IRP específico (equivalente al actual `waiting_for: 0xFFFF_0000 | pipe_id` pero genérico), permitiendo que procesos hagan `read()` asíncrono: emiten IRP, se bloquean, y son despertados por el callback de completion.
-
-Archivo nuevo: `src/irp/mod.rs`. Implicaciones profundas: BlockDevice trait cambia de `read_blocks(buf, lba, count) -> Result<()>` a `submit_irp(irp: &Irp) -> IrpId`. El ATA NEM driver, NeoFS, y el page cache deben integrarse con el nuevo modelo. Es el cambio más grande de la roadmap.
+Sistema de I/O Request Packets (IRPs) — modelo asíncrono unificado para todas las operaciones de E/S del kernel. Componentes: (1) **IRP struct** — `IrpOp` (Read/Write/Flush/IoCtl), buffer pointer, completion callback, `IrpStatus` (Pending/Completed/Error), chain_next para encadenamiento, waiting_pid para scheduler integration. (2) **IRP Pool global** — 64 slots protegidos por `Mutex`, IDs únicos via `AtomicU32`, `irp_alloc`/`irp_free`/`irp_get_params` para gestión del ciclo de vida. (3) **IRP Queue por dispositivo** — `IrpQueue` (FIFO ring buffer de 32 entries) para dispositivos que necesitan encolar operaciones asíncronas. (4) **Completion callbacks en work queue** — `irp_complete()` encola el callback en `WORK_QUEUE.push_high()` mediante `Box<IrpCbDispatch>`, evitando ejecución en IRQ context. (5) **Scheduler integration** — `irp_block_current()`/`irp_wake_waiter()` usando `IRP_WAIT_MAGIC | irp_id` como `waiting_for` genérico, mismo patrón que pipes. (6) **IRP chaining** — `chain_next` field para encadenar sub-operaciones; la chain se limpia en `irp_complete()` y puede ser usada por el driver para secuenciar operaciones. (7) **BlockDevice trait extendido** — `submit_irp()` + `poll_irp()` como interfaz primaria; `read_blocks`/`write_blocks` se mantienen como métodos abstractos para compatibilidad hacia atrás. Cada driver (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implementa `submit_irp` vía `irp_get_params()` + operación síncrona + `irp_complete_result()`. (8) **Helpers síncronos** — `irp_sync_read()`/`irp_sync_write()` para código que quiera usar IRPs de forma bloqueante. Archivo nuevo: `src/irp/mod.rs`. 11 tests. Total: 284 tests.
 
 9. V1. Global page cache (advanced)
 
@@ -144,7 +133,7 @@ Archivos: `src/buffer/page_cache.rs` (reescritura), `src/scheduler.rs` (timer-dr
 🧩 FASE 4 — DRIVER ARCHITECTURE SAFETY LAYER
 10. X3. Capability system
 
-Sistema de capacidades explícitas que的控制 qué recursos hardware y del kernel puede usar cada driver NEM. Actualmente, cualquier driver NEM v3 tiene acceso completo a través de la export table (`hst_*` functions), sin restricciones. Esto significa que un driver malicioso o con bugs puede, por ejemplo, llamar a `hst_alloc_page()` cuando solo debería usar IRQ, o escribir a cualquier puerto I/O.
+Sistema de capacidades explícitas que qué recursos hardware y del kernel puede usar cada driver NEM. Actualmente, cualquier driver NEM v3 tiene acceso completo a través de la export table (`hst_*` functions), sin restricciones. Esto significa que un driver malicioso o con bugs puede, por ejemplo, llamar a `hst_alloc_page()` cuando solo debería usar IRQ, o escribir a cualquier puerto I/O.
 
 El capability system introduciría: (1) **Capability flags** por driver — un bitmap de 64 bits al cargar el driver, declarado en el header NEM v4 (ej. `CAP_IRQ=1`, `CAP_DMA=2`, `CAP_MMIO=4`, `CAP_PORTIO=8`, `CAP_ALLOC_PAGE=16`, `CAP_BLOCK_DEVICE=32`). (2) **Capability check en export table** — cada función `hst_*` comprueba en runtime que el driver llamante tenga la capability requerida; si no, retorna error en lugar de ejecutar. (3) **Capability inheritance** — los drivers BOOT pueden tener todas las capabilities por defecto; los drivers SYSTEM y DEMAND tienen un conjunto restringido validado por el boot loader. (4) **Capability escalation policy** — un driver puede pedir capabilities adicionales si demuestra necesidad via el Event Bus (petición auditada por el kernel).
 

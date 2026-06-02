@@ -307,13 +307,13 @@ pub fn register_dependency_tests() {
 
     test_case!("dep_multiple_drivers_order", {
         let mut g = DependencyGraph::new();
-        g.add_driver("AHCI");
         g.add_driver("ATA");
         g.add_driver("PCI");
         g.add_driver("NVME");
-        g.add_dependency("AHCI", "PCI").unwrap();
+        g.add_driver("AHCI");
         g.add_dependency("ATA", "PCI").unwrap();
         g.add_dependency("NVME", "PCI").unwrap();
+        g.add_dependency("AHCI", "PCI").unwrap();
         test_eq!(g.has_cycle(), false);
         let order = g.resolve_order().unwrap();
         test_eq!(order.len(), 4);

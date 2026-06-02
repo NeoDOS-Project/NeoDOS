@@ -1,6 +1,6 @@
 pub mod abi;
-pub mod ahci;
 pub mod ata;
+pub mod boot_ahci;
 pub mod block;
 pub mod boot_loader;
 pub mod builtin_drivers;

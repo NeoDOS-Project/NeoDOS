@@ -1,0 +1,794 @@
+#![no_std]
+#![no_main]
+#![allow(dead_code)]
+
+use core::panic::PanicInfo;
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering, fence};
+
+#[panic_handler]
+fn panic(_: &PanicInfo) -> ! {
+    loop {}
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
+    for i in 0..n {
+        *dest.add(i) = *src.add(i);
+    }
+    dest
+}
+
+#[repr(C)]
+pub struct NeoEvent {
+    pub event_id: u64,
+    pub event_type: u32,
+    pub source: u32,
+    pub timestamp: u64,
+    pub device_id: u32,
+    pub driver_target: u32,
+    pub data0: u64,
+    pub data1: u64,
+    pub flags: u32,
+}
+
+extern "C" {
+    fn hst_inb(port: u16) -> u8;
+    fn hst_outb(port: u16, val: u8);
+    fn hst_inl(port: u16) -> u32;
+    fn hst_outl(port: u16, val: u32);
+    fn hst_log(level: u32, msg: *const u8, len: usize);
+    fn hst_register_block_device(
+        name: *const u8,
+        name_len: u32,
+        device_id: u32,
+        num_sectors: u64,
+        sector_size: u32,
+        read_fn: unsafe extern "C" fn(u32, u64, u8, *mut u8) -> i32,
+        write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
+    ) -> i32;
+}
+
+static INITIALIZED: AtomicU8 = AtomicU8::new(0);
+static ACTIVE: AtomicU8 = AtomicU8::new(0);
+
+// ── AHCI constants ──
+
+const MAX_PORTS: usize = 2;
+const MAX_CMD_SLOTS: usize = 32;
+const MAX_PRD_ENTRIES: usize = 8;
+const DMA_BUF_SIZE: usize = 4096;
+
+const HBA_CAP: usize = 0x00;
+const HBA_GHC: usize = 0x04;
+const HBA_IS: usize = 0x08;
+const HBA_PI: usize = 0x0C;
+const HBA_VS: usize = 0x10;
+
+const HBA_GHC_AE: u32 = 0x8000_0000;
+const HBA_GHC_HR: u32 = 0x0000_0001;
+
+const PORT_STRIDE: usize = 0x80;
+const PORT_REG_BASE: usize = 0x100;
+
+const PORT_CLB: usize = 0x00;
+const PORT_CLBU: usize = 0x04;
+const PORT_FB: usize = 0x08;
+const PORT_FBU: usize = 0x0C;
+const PORT_IS: usize = 0x10;
+const PORT_IE: usize = 0x14;
+const PORT_CMD: usize = 0x18;
+const PORT_TFD: usize = 0x20;
+const PORT_SIG: usize = 0x24;
+const PORT_SSTS: usize = 0x28;
+const PORT_SCTL: usize = 0x2C;
+const PORT_SERR: usize = 0x30;
+const PORT_CI: usize = 0x38;
+
+const CMD_ST: u32 = 0x0001;
+const CMD_FRE: u32 = 0x0010;
+const CMD_POD: u32 = 0x0002;
+const CMD_SUD: u32 = 0x0004;
+const CMD_CR: u32 = 0x8000;
+const CMD_FR: u32 = 0x4000;
+
+const SATA_SIG_ATA: u32 = 0x0000_0101;
+const SATA_SIG_ATAPI: u32 = 0xEB14_0101;
+const SATA_DET_PRESENT: u32 = 0x03;
+const SATA_IPM_ACTIVE: u32 = 0x01;
+
+const TFD_BSY: u32 = 0x80;
+const TFD_DRQ: u32 = 0x08;
+const TFD_ERR: u32 = 0x01;
+
+const CMD_ATA: u16 = 0x0000;
+const CFLAG_C: u16 = 1 << 15;
+const CFLAG_P: u16 = 1 << 6;
+const CFLAG_A: u16 = 1 << 13;
+const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
+const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
+const ATA_CMD_PACKET: u8 = 0xA0;
+const ATAPI_FEAT_DMA: u8 = 0x01;
+
+const ATAPI_SECTOR_SIZE: usize = 2048;
+
+// ── AHCI data structures ──
+
+#[derive(Copy, Clone)]
+#[repr(C, packed)]
+struct PrdtEntry {
+    data_base: u32,
+    data_base_hi: u32,
+    reserved: u32,
+    count: u32,
+}
+
+#[repr(C, packed)]
+struct CmdTableInner {
+    cfis: [u8; 64],
+    acmd: [u8; 16],
+    reserved: [u8; 48],
+    prdt: [PrdtEntry; MAX_PRD_ENTRIES],
+}
+
+#[derive(Copy, Clone)]
+#[repr(C, packed)]
+struct CmdHeader {
+    opts: u16,
+    prdtl: u16,
+    prdbc: u32,
+    ctba: u32,
+    ctba_hi: u32,
+    reserved: [u32; 4],
+}
+
+#[repr(C, packed)]
+struct FisRegH2D {
+    fis_type: u8,
+    pmport: u8,
+    command: u8,
+    features: u8,
+    lba0: u8,
+    lba1: u8,
+    lba2: u8,
+    device: u8,
+    lba3: u8,
+    lba4: u8,
+    lba5: u8,
+    features_exp: u8,
+    sector_count: u8,
+    sector_count_exp: u8,
+    _res: u8,
+    control: u8,
+}
+
+#[repr(C, align(1024))]
+struct CmdList([CmdHeader; MAX_CMD_SLOTS]);
+
+#[repr(C, align(256))]
+struct RecvFis([u8; 256]);
+
+#[repr(C, align(128))]
+struct CmdTable(CmdTableInner);
+
+const EMPTY_CMD_HEADER: CmdHeader = CmdHeader {
+    opts: 0, prdtl: 0, prdbc: 0, ctba: 0, ctba_hi: 0, reserved: [0; 4],
+};
+const EMPTY_PRD: PrdtEntry = PrdtEntry {
+    data_base: 0, data_base_hi: 0, reserved: 0, count: 0,
+};
+const EMPTY_CMD_TABLE: CmdTableInner = CmdTableInner {
+    cfis: [0; 64], acmd: [0; 16], reserved: [0; 48],
+    prdt: [EMPTY_PRD; MAX_PRD_ENTRIES],
+};
+
+static mut PORT_CMD_LIST: [CmdList; MAX_PORTS] = [
+    CmdList([EMPTY_CMD_HEADER; MAX_CMD_SLOTS]),
+    CmdList([EMPTY_CMD_HEADER; MAX_CMD_SLOTS]),
+];
+static mut PORT_RECV_FIS: [RecvFis; MAX_PORTS] = [
+    RecvFis([0; 256]),
+    RecvFis([0; 256]),
+];
+static mut PORT_CMD_TABLE: [CmdTable; MAX_PORTS] = [
+    CmdTable(EMPTY_CMD_TABLE),
+    CmdTable(EMPTY_CMD_TABLE),
+];
+static mut PORT_DMA_BUF: [[u8; DMA_BUF_SIZE]; MAX_PORTS] = [
+    [0; DMA_BUF_SIZE],
+    [0; DMA_BUF_SIZE],
+];
+
+// ── Driver state ──
+
+#[derive(Copy, Clone, PartialEq)]
+enum DeviceType {
+    Ata,
+    Atapi,
+}
+
+struct AhciPortState {
+    phys_port: u8,
+    dev_type: DeviceType,
+    present: u8,
+}
+
+static mut PORT_STATE: [AhciPortState; MAX_PORTS] = [
+    AhciPortState { phys_port: 0, dev_type: DeviceType::Ata, present: 0 },
+    AhciPortState { phys_port: 0, dev_type: DeviceType::Ata, present: 0 },
+];
+
+// HBA pointer and metadata (stored as u32 since AHCI BAR5 is < 4 GB)
+static HBA_PTR: AtomicU32 = AtomicU32::new(0);
+static PORT_COUNT: AtomicU8 = AtomicU8::new(0);
+
+// ── PCI config access via HST I/O ports ──
+
+const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
+const PCI_CONFIG_DATA: u16 = 0xCFC;
+
+fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    let addr = 0x8000_0000u32
+        | ((bus as u32) << 16)
+        | ((dev as u32) << 11)
+        | ((func as u32) << 8)
+        | (offset as u32 & 0xFC);
+    unsafe {
+        hst_outl(PCI_CONFIG_ADDRESS, addr);
+        hst_inl(PCI_CONFIG_DATA)
+    }
+}
+
+fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
+    let dword = pci_config_read_dword(bus, dev, func, offset);
+    ((dword >> ((offset & 3) * 8)) & 0xFFFF) as u16
+}
+
+fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16) {
+    let aligned = offset & 0xFC;
+    let dword = pci_config_read_dword(bus, dev, func, aligned);
+    let shift = (offset & 3) * 8;
+    let mask = !(0xFFFFu32 << shift);
+    let new_dword = (dword & mask) | ((value as u32) << shift);
+    let addr = 0x8000_0000u32
+        | ((bus as u32) << 16)
+        | ((dev as u32) << 11)
+        | ((func as u32) << 8)
+        | (aligned as u32 & 0xFC);
+    unsafe {
+        hst_outl(PCI_CONFIG_ADDRESS, addr);
+        hst_outl(PCI_CONFIG_DATA, new_dword);
+    }
+}
+
+// ── MMIO helpers ──
+
+fn hba_reg(hba: *mut u32, reg: usize) -> *mut u32 {
+    unsafe { hba.add(reg / 4) }
+}
+
+fn port_reg(hba: *mut u32, port: usize, reg: usize) -> *mut u32 {
+    unsafe { hba.add((PORT_REG_BASE + port * PORT_STRIDE + reg) / 4) }
+}
+
+fn mmio_read32(addr: *mut u32) -> u32 {
+    unsafe { addr.read_volatile() }
+}
+
+fn mmio_write32(addr: *mut u32, val: u32) {
+    unsafe { addr.write_volatile(val) }
+}
+
+// ── Logging helper ──
+
+fn log_msg(msg: &[u8]) {
+    unsafe { hst_log(2, msg.as_ptr(), msg.len()) }
+}
+
+fn log_hex(prefix: &[u8], val: u32) {
+    let mut buf = [0u8; 48];
+    let mut pos = 0usize;
+    for &b in prefix { if pos < buf.len() { buf[pos] = b; pos += 1; } }
+    let hex = |v: u8| -> u8 { if v < 10 { b'0' + v } else { b'A' + v - 10 } };
+    pos += 8;
+    let mut v = val;
+    for i in 0..8 {
+        let idx = pos - 1 - i;
+        if idx < buf.len() {
+            buf[idx] = hex((v & 0xF) as u8);
+            v >>= 4;
+        }
+    }
+    if pos < buf.len() - 2 {
+        buf[pos] = b'\r'; buf[pos + 1] = b'\n';
+        unsafe { hst_log(2, buf.as_ptr(), pos + 2) }
+    }
+}
+
+fn log_str(s: &[u8]) {
+    let mut buf = [0u8; 128];
+    let mut pos = 0usize;
+    for &b in s { if pos < buf.len() { buf[pos] = b; pos += 1; } }
+    if pos < buf.len() - 2 {
+        buf[pos] = b'\r'; buf[pos + 1] = b'\n';
+        unsafe { hst_log(2, buf.as_ptr(), pos + 2) }
+    }
+}
+
+// ── AHCI controller discovery ──
+
+fn find_ahci_controller() -> Option<u32> {
+    for bus in 0..=0 {
+        for dev in 0..32 {
+            for func in 0..8 {
+                let vendor = pci_config_read_word(bus, dev, func, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    if func == 0 { break; }
+                    continue;
+                }
+                let class_rev = pci_config_read_dword(bus, dev, func, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                if class == 0x01 && subclass == 0x06 {
+                    let bar5 = pci_config_read_dword(bus, dev, func, 0x24);
+                    let bar5_addr = bar5 & 0xFFFF_FFF0;
+                    log_str(b"ahci.nem: found AHCI controller");
+                    log_hex(b"  BAR5=0x", bar5_addr);
+                    let cmd = pci_config_read_word(bus, dev, func, 0x04);
+                    pci_config_write_word(bus, dev, func, 0x04, cmd | 0x06);
+                    log_str(b"ahci.nem: bus mastering enabled");
+                    return Some(bar5_addr);
+                }
+            }
+        }
+    }
+    None
+}
+
+// ── Port initialization ──
+
+fn port_init(hba: *mut u32, port: usize) {
+    if port >= MAX_PORTS { return; }
+    unsafe {
+        let p = port_reg(hba, port, 0);
+
+        let cmd = mmio_read32(p.add(PORT_CMD / 4));
+        if (cmd & CMD_ST) != 0 || (cmd & CMD_FRE) != 0 {
+            mmio_write32(p.add(PORT_CMD / 4), cmd & !(CMD_ST | CMD_FRE));
+            for _ in 0..10000 {
+                let c = mmio_read32(p.add(PORT_CMD / 4));
+                if (c & (CMD_CR | CMD_FR)) == 0 { break; }
+            }
+        }
+
+        mmio_write32(p.add(PORT_IS / 4), 0xFFFFFFFF);
+
+        let clb = core::ptr::addr_of!(PORT_CMD_LIST).add(port) as u32;
+        let fb = core::ptr::addr_of!(PORT_RECV_FIS).add(port) as u32;
+        mmio_write32(p.add(PORT_CLB / 4), clb);
+        mmio_write32(p.add(PORT_CLBU / 4), 0);
+        mmio_write32(p.add(PORT_FB / 4), fb);
+        mmio_write32(p.add(PORT_FBU / 4), 0);
+
+        mmio_write32(p.add(PORT_IE / 4), 0);
+        mmio_write32(p.add(PORT_SERR / 4), 0xFFFFFFFF);
+
+        mmio_write32(p.add(PORT_CMD / 4), CMD_ST | CMD_FRE | CMD_POD | CMD_SUD);
+
+        for _ in 0..10000 {
+            let c = mmio_read32(p.add(PORT_CMD / 4));
+            if (c & CMD_CR) == 0 { break; }
+        }
+    }
+}
+
+fn port_reset(hba: *mut u32, port: usize) {
+    unsafe {
+        let p = port_reg(hba, port, 0);
+
+        let cmd = mmio_read32(p.add(PORT_CMD / 4));
+        mmio_write32(p.add(PORT_CMD / 4), cmd & !(CMD_ST | CMD_FRE));
+        for _ in 0..10000 {
+            let c = mmio_read32(p.add(PORT_CMD / 4));
+            if (c & (CMD_CR | CMD_FR)) == 0 { break; }
+        }
+
+        mmio_write32(p.add(PORT_SCTL / 4), 0x0301);
+        for _ in 0..1000 { core::hint::spin_loop(); }
+
+        mmio_write32(p.add(PORT_SCTL / 4), 0x0300);
+        for _ in 0..100000 { core::hint::spin_loop(); }
+
+        let ssts = mmio_read32(p.add(PORT_SSTS / 4));
+        if (ssts & 0x0F) == SATA_DET_PRESENT {
+            port_init(hba, port);
+        }
+    }
+}
+
+// ── DMA helpers ──
+
+fn build_read10_cdb(lba: u32, count: u8) -> [u8; 12] {
+    [
+        0x28, 0x00,
+        (lba >> 24) as u8, (lba >> 16) as u8,
+        (lba >> 8) as u8, lba as u8,
+        0x00, 0x00, count, 0x00, 0x00, 0x00,
+    ]
+}
+
+fn dma_xfer(hba: *mut u32, port: usize, pi: usize, lba: u64, count: u8, is_write: bool) -> i32 {
+    let total = (count as usize) * 512;
+    let prd_count = (total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE;
+    let prd_used = prd_count.min(MAX_PRD_ENTRIES);
+
+    unsafe {
+        let p = port_reg(hba, port, 0);
+        let table_ptr: *mut CmdTableInner = (core::ptr::addr_of_mut!(PORT_CMD_TABLE) as *mut CmdTable).add(pi).cast();
+        let table = &mut *table_ptr;
+
+        table.cfis = [0u8; 64];
+        table.acmd = [0u8; 16];
+        table.reserved = [0u8; 48];
+
+        let fis = FisRegH2D {
+            fis_type: 0x27,
+            pmport: 0x80,
+            command: if is_write { ATA_CMD_WRITE_DMA_EXT } else { ATA_CMD_READ_DMA_EXT },
+            features: 0,
+            lba0: lba as u8,
+            lba1: (lba >> 8) as u8,
+            lba2: (lba >> 16) as u8,
+            device: 0x40,
+            lba3: (lba >> 24) as u8,
+            lba4: (lba >> 32) as u8,
+            lba5: (lba >> 40) as u8,
+            features_exp: 0,
+            sector_count: count,
+            sector_count_exp: 0,
+            _res: 0,
+            control: 0,
+        };
+        let fis_bytes = &fis as *const FisRegH2D as *const u8;
+        for i in 0..64 { table.cfis[i] = fis_bytes.add(i).read(); }
+
+        for e in table.prdt.iter_mut() {
+            *e = EMPTY_PRD;
+        }
+        for i in 0..prd_used {
+            let off = i * DMA_BUF_SIZE;
+            let remain = total.saturating_sub(off);
+            let chunk = remain.min(DMA_BUF_SIZE);
+            let dma_buf_ptr = (core::ptr::addr_of!(PORT_DMA_BUF) as *const u8).add(pi * DMA_BUF_SIZE + off);
+            table.prdt[i].data_base = dma_buf_ptr as u32;
+            table.prdt[i].data_base_hi = 0;
+            table.prdt[i].count = (chunk as u32 - 1) | 0x8000_0000;
+        }
+
+        fence(Ordering::Release);
+
+        let ctba = core::ptr::addr_of!(PORT_CMD_TABLE).add(pi) as u32;
+        let cl_ptr: *mut [CmdHeader; MAX_CMD_SLOTS] = &mut (*(core::ptr::addr_of_mut!(PORT_CMD_LIST) as *mut CmdList).add(pi)).0;
+        let cl = &mut *cl_ptr;
+        cl[0].opts = CMD_ATA | CFLAG_C | CFLAG_P;
+        cl[0].prdtl = prd_used as u16;
+        cl[0].prdbc = 0;
+        cl[0].ctba = ctba;
+        cl[0].ctba_hi = 0;
+        cl[1..].fill(EMPTY_CMD_HEADER);
+
+        mmio_write32(p.add(PORT_IE / 4), 0);
+        mmio_write32(p.add(PORT_IS / 4), 0xFFFFFFFF);
+
+        mmio_write32(p.add(PORT_CI / 4), 1);
+
+        for _ in 0..1000000 {
+            let ci = mmio_read32(p.add(PORT_CI / 4));
+            if (ci & 1) == 0 { break; }
+        }
+
+        if (mmio_read32(p.add(PORT_CI / 4)) & 1) != 0 {
+            log_hex(b"ahci: DMA timeout port=", port as u32);
+            port_reset(hba, pi);
+            return -1;
+        }
+
+        let tfd = mmio_read32(p.add(PORT_TFD / 4));
+        if (tfd & TFD_ERR) != 0 || (tfd & TFD_BSY) != 0 {
+            let serr = mmio_read32(p.add(PORT_SERR / 4));
+            log_hex(b"ahci: DMA error TFD=0x", tfd);
+            log_hex(b"  SERR=0x", serr);
+            mmio_write32(p.add(PORT_SERR / 4), serr);
+            port_reset(hba, pi);
+            return -1;
+        }
+
+        fence(Ordering::Acquire);
+    }
+    0
+}
+
+fn dma_packet(hba: *mut u32, port: usize, pi: usize, lba: u32, count: u8) -> i32 {
+    let total = (count as usize) * ATAPI_SECTOR_SIZE;
+    let prd_used = ((total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
+
+    unsafe {
+        let p = port_reg(hba, port, 0);
+        let table_ptr: *mut CmdTableInner = (core::ptr::addr_of_mut!(PORT_CMD_TABLE) as *mut CmdTable).add(pi).cast();
+        let table = &mut *table_ptr;
+
+        table.cfis = [0u8; 64];
+        table.acmd = [0u8; 16];
+        table.reserved = [0u8; 48];
+
+        let fis = FisRegH2D {
+            fis_type: 0x27,
+            pmport: 0x80,
+            command: ATA_CMD_PACKET,
+            features: ATAPI_FEAT_DMA,
+            lba0: 0, lba1: 0, lba2: 0,
+            device: 0x00,
+            lba3: 0, lba4: 0, lba5: 0,
+            features_exp: 0,
+            sector_count: count,
+            sector_count_exp: 0,
+            _res: 0,
+            control: 0,
+        };
+        let fis_bytes = &fis as *const FisRegH2D as *const u8;
+        for i in 0..64 { table.cfis[i] = fis_bytes.add(i).read(); }
+
+        let cdb = build_read10_cdb(lba, count);
+        for i in 0..12 { table.acmd[i] = cdb[i]; }
+
+        for e in table.prdt.iter_mut() {
+            *e = EMPTY_PRD;
+        }
+        for i in 0..prd_used {
+            let off = i * DMA_BUF_SIZE;
+            let remain = total.saturating_sub(off);
+            let chunk = remain.min(DMA_BUF_SIZE);
+            let dma_buf_ptr = (core::ptr::addr_of!(PORT_DMA_BUF) as *const u8).add(pi * DMA_BUF_SIZE + off);
+            table.prdt[i].data_base = dma_buf_ptr as u32;
+            table.prdt[i].data_base_hi = 0;
+            table.prdt[i].count = (chunk as u32 - 1) | 0x8000_0000;
+        }
+
+        fence(Ordering::Release);
+
+        let ctba = core::ptr::addr_of!(PORT_CMD_TABLE).add(pi) as u32;
+        let cl_ptr: *mut [CmdHeader; MAX_CMD_SLOTS] = &mut (*(core::ptr::addr_of_mut!(PORT_CMD_LIST) as *mut CmdList).add(pi)).0;
+        let cl = &mut *cl_ptr;
+        cl[0].opts = CMD_ATA | CFLAG_C | CFLAG_P | CFLAG_A;
+        cl[0].prdtl = prd_used as u16;
+        cl[0].prdbc = 0;
+        cl[0].ctba = ctba;
+        cl[0].ctba_hi = 0;
+        cl[1..].fill(EMPTY_CMD_HEADER);
+
+        mmio_write32(p.add(PORT_IE / 4), 0);
+        mmio_write32(p.add(PORT_IS / 4), 0xFFFFFFFF);
+
+        mmio_write32(p.add(PORT_CI / 4), 1);
+
+        for _ in 0..1000000 {
+            let ci = mmio_read32(p.add(PORT_CI / 4));
+            if (ci & 1) == 0 { break; }
+        }
+
+        if (mmio_read32(p.add(PORT_CI / 4)) & 1) != 0 {
+            log_hex(b"ahci: PACKET timeout port=", port as u32);
+            port_reset(hba, pi);
+            return -1;
+        }
+
+        let tfd = mmio_read32(p.add(PORT_TFD / 4));
+        if (tfd & TFD_ERR) != 0 || (tfd & TFD_BSY) != 0 {
+            let serr = mmio_read32(p.add(PORT_SERR / 4));
+            log_hex(b"ahci: PACKET error TFD=0x", tfd);
+            log_hex(b"  SERR=0x", serr);
+            mmio_write32(p.add(PORT_SERR / 4), serr);
+            port_reset(hba, pi);
+            return -1;
+        }
+
+        fence(Ordering::Acquire);
+    }
+    0
+}
+
+// ── Block device callbacks ──
+
+unsafe extern "C" fn ahci_read(device_id: u32, lba: u64, count: u8, buf: *mut u8) -> i32 {
+    let pi = device_id as usize;
+    if pi >= MAX_PORTS { return -1; }
+    let ps = &*(core::ptr::addr_of!(PORT_STATE) as *const AhciPortState).add(pi);
+    if ps.present == 0 { return -1; }
+    let hba = HBA_PTR.load(Ordering::Relaxed) as *mut u32;
+    if hba.is_null() { return -1; }
+    let phys_port = ps.phys_port as usize;
+
+    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+
+    if ps.dev_type == DeviceType::Atapi {
+        let total = (cnt as usize) * ATAPI_SECTOR_SIZE;
+        if dma_packet(hba, phys_port, pi, lba as u32, cnt) != 0 {
+            return -1;
+        }
+        let src = (core::ptr::addr_of!(PORT_DMA_BUF) as *const u8).add(pi * DMA_BUF_SIZE);
+        core::ptr::copy_nonoverlapping(src, buf, total);
+        0
+    } else {
+        let total = (cnt as usize) * 512;
+        if dma_xfer(hba, phys_port, pi, lba, cnt, false) != 0 {
+            return -1;
+        }
+        let src = (core::ptr::addr_of!(PORT_DMA_BUF) as *const u8).add(pi * DMA_BUF_SIZE);
+        core::ptr::copy_nonoverlapping(src, buf, total);
+        0
+    }
+}
+
+unsafe extern "C" fn ahci_write(device_id: u32, lba: u64, count: u8, buf: *const u8) -> i32 {
+    let pi = device_id as usize;
+    if pi >= MAX_PORTS { return -1; }
+    let ps = &*(core::ptr::addr_of!(PORT_STATE) as *const AhciPortState).add(pi);
+    if ps.present == 0 { return -1; }
+    let hba = HBA_PTR.load(Ordering::Relaxed) as *mut u32;
+    if hba.is_null() { return -1; }
+    let phys_port = ps.phys_port as usize;
+
+    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+    let total = (cnt as usize) * 512;
+
+    let dst = (core::ptr::addr_of_mut!(PORT_DMA_BUF) as *mut u8).add(pi * DMA_BUF_SIZE);
+    core::ptr::copy_nonoverlapping(buf, dst, total);
+
+    if dma_xfer(hba, phys_port, pi, lba, cnt, true) != 0 {
+        return -1;
+    }
+    0
+}
+
+// ── NEM driver entry points ──
+
+#[no_mangle]
+pub extern "C" fn driver_init() -> i32 {
+    if INITIALIZED.load(Ordering::Relaxed) != 0 {
+        return -1;
+    }
+    INITIALIZED.store(1, Ordering::Release);
+
+    log_str(b"ahci.nem: initializing");
+
+    let bar5 = match find_ahci_controller() {
+        Some(a) => a,
+        None => {
+            log_str(b"ahci.nem: no AHCI controller found");
+            return -1;
+        }
+    };
+
+    HBA_PTR.store(bar5, Ordering::Relaxed);
+    let hba = bar5 as *mut u32;
+
+    // Enable AHCI
+    let ghc = mmio_read32(hba_reg(hba, HBA_GHC));
+    mmio_write32(hba_reg(hba, HBA_GHC), ghc | HBA_GHC_AE);
+
+    let caps = mmio_read32(hba_reg(hba, HBA_CAP));
+    let pi = mmio_read32(hba_reg(hba, HBA_PI));
+    let _s64a = (caps >> 31) & 1;
+
+    log_hex(b"ahci.nem: CAP=0x", caps);
+    log_hex(b"ahci.nem: PI=0x", pi);
+
+    let n_ports = (caps & 0x1F) as usize;
+    let mut found = 0usize;
+
+    for p in 0..32.min(n_ports + 1) {
+        if found >= MAX_PORTS { break; }
+        if (pi & (1 << p)) == 0 { continue; }
+
+        let sig = mmio_read32(port_reg(hba, p, PORT_SIG));
+        let ssts = mmio_read32(port_reg(hba, p, PORT_SSTS));
+        let det = ssts & 0x0F;
+        let ipm = (ssts >> 8) & 0x0F;
+
+        if det != SATA_DET_PRESENT || ipm != SATA_IPM_ACTIVE {
+            continue;
+        }
+
+        let dev_type = if sig == SATA_SIG_ATA {
+            DeviceType::Ata
+        } else if sig == SATA_SIG_ATAPI {
+            DeviceType::Atapi
+        } else {
+            log_hex(b"ahci.nem: unknown sig=0x", sig);
+            continue;
+        };
+
+        log_hex(b"ahci.nem: port found, sig=0x", sig);
+
+        unsafe {
+            let ps = &mut *(core::ptr::addr_of_mut!(PORT_STATE) as *mut AhciPortState).add(found);
+            *ps = AhciPortState {
+                phys_port: p as u8,
+                dev_type,
+                present: 1,
+            };
+        }
+
+        port_init(hba, p);
+        found += 1;
+    }
+
+    PORT_COUNT.store(found as u8, Ordering::Relaxed);
+
+    if found == 0 {
+        log_str(b"ahci.nem: no active ports");
+        return -1;
+    }
+
+    // Register block devices for each port
+    for i in 0..found {
+        let name: [u8; 8] = if i == 0 {
+            *b"AHCI0   "
+        } else {
+            *b"AHCI1   "
+        };
+        let is_atapi = unsafe {
+            let ps = &*(core::ptr::addr_of!(PORT_STATE) as *const AhciPortState).add(i);
+            ps.dev_type == DeviceType::Atapi
+        };
+        let sector_size = if is_atapi { ATAPI_SECTOR_SIZE as u32 } else { 512 };
+        let reg = unsafe {
+            hst_register_block_device(
+                name.as_ptr(),
+                5,
+                i as u32,
+                0x0FFFFFFF,
+                sector_size,
+                ahci_read,
+                ahci_write,
+            )
+        };
+        if reg >= 0 {
+            log_hex(b"ahci.nem: reg success idx=", reg as u32);
+        } else {
+            log_str(b"ahci.nem: reg FAILED");
+        }
+    }
+
+    log_str(b"ahci.nem: init done");
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn driver_activate() -> i32 {
+    if INITIALIZED.load(Ordering::Relaxed) == 0 {
+        return -1;
+    }
+    ACTIVE.store(1, Ordering::Release);
+    log_str(b"ahci.nem: activated");
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn driver_on_event(_event: *const NeoEvent) -> i32 {
+    if ACTIVE.load(Ordering::Relaxed) == 0 {
+        return -1;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn driver_fini() {
+    ACTIVE.store(0, Ordering::Release);
+    INITIALIZED.store(0, Ordering::Release);
+    log_str(b"ahci.nem: shutdown");
+}
+
+#[no_mangle]
+pub extern "C" fn driver_is_active() -> i32 {
+    if ACTIVE.load(Ordering::Relaxed) != 0 { 1 } else { 0 }
+}
