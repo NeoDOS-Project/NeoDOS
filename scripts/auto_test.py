@@ -35,9 +35,10 @@ def send_monitor(sock, cmd, wait=0.2):
         return f"[monitor error: {e}]"
 
 def send_keys(sock, keys):
+    time.sleep(0.3)
     for key in keys:
-        resp = send_monitor(sock, f"sendkey {key}", 0.15)
-    time.sleep(0.5)
+        resp = send_monitor(sock, f"sendkey {key}", 0.25)
+    time.sleep(1.0)
 
 def run_test():
     print("[*] NeoDOS Automatic Test Runner (serial log + sendkey)")

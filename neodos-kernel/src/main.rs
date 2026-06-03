@@ -168,7 +168,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ── NeoDOS FS via BlockDeviceManager ──
     println!("[+] Initializing Block Cache...");
     *globals::BLOCK_CACHE.lock() = Some(BlockCache::new());
-    println!("[+] Initializing Page Cache (512 × 4 KB = 2 MB)...");
+    println!("[+] Initializing Page Cache (128 × 4 KB = 512 KB, hash + LRU)...");
 
     {
         let mut bdevs = globals::BLOCK_DEVICES.lock();

@@ -27,7 +27,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
-  - DOS-like shell (37 kernel tests + user commands)
+  - DOS-like shell (290 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -451,7 +451,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **248 tests** (30 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **290 tests** (35 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -466,7 +466,7 @@ The kernel testing framework includes **248 tests** (30 suites) with suites dedi
 | Pipe | 13 | IPC pipes |
 | Mmap | 6 | Memory mapping |
 | FSCK | 6 | Filesystem integrity |
-| Page Cache | 8 | Page cache: create, peek, mark_dirty, invalidate, counts, bounds |
+| Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.BIN`, `FILETEST.BIN`, `ALLTEST.BIN`).
@@ -486,7 +486,7 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 - **kobj**: `src/kobj/mod.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType), 24-byte names, and global registry (64 slots). Used by processes, drivers, and pipes for lifecycle tracking. `KOBJ` shell command lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
-- **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (512-entry, 2 MB LRU cache for file data I/O, dirty write-back, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
+- **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (128-entry, 512 KB hash map O(1) + LRU cache for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:)
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `kobj_id` (optional KOBJ reference)

@@ -33,7 +33,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
 15. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener), load BOOT + SYSTEM NEM v3 drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\` via boot driver loader (PHASE 3.75–3.86)
 16. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
-17. **Shell** — set all keyboard LEDs ON, register kernel tests (248), create and run `DosShell`
+17. **Shell** — set all keyboard LEDs ON, register kernel tests (290), create and run `DosShell`
 
 ### GPT Layout (single disk)
 

@@ -61,7 +61,10 @@ pub fn flush_cache_if_needed() {
         if let Some(mut pc_lock) = PAGE_CACHE.try_lock() {
             let mut bdev_lock = BLOCK_DEVICES.lock();
             if let Some(dev) = bdev_lock.get(0) {
-                let _ = pc_lock.flush(dev);
+                let batch_size = core::cmp::min(pc_lock.dirty_count(), 8);
+                if batch_size > 0 {
+                    let _ = pc_lock.flush_batch(dev, batch_size);
+                }
             }
         }
     }

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.24.0
+v0.24.2
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 284 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 290 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -441,7 +441,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-284 tests en 34 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+290 tests en 35 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -469,12 +469,12 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
 | KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
-| Page Cache | 8 | Page cache: create, peek, mark_dirty, invalidate, entry/dirty counts, bounds |
+| Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (284 tests kernel)
+1. Ejecuta `testing::run_all()` (290 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

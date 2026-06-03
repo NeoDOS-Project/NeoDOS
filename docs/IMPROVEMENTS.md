@@ -1,6 +1,6 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.24.0 (284 tests, BootAhci stub + AHCI NEM standalone).
+> Versión actual: v0.24.2 (290 tests, Page Cache avanzado con hash + LRU).
 > Objetivo: v0.25 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
@@ -122,7 +122,7 @@ Event Bus v2 unificado: colas separadas por prioridad (alta 16 slots, normal 64 
 
 Sistema de I/O Request Packets (IRPs) — modelo asíncrono unificado para todas las operaciones de E/S del kernel. Componentes: (1) **IRP struct** — `IrpOp` (Read/Write/Flush/IoCtl), buffer pointer, completion callback, `IrpStatus` (Pending/Completed/Error), chain_next para encadenamiento, waiting_pid para scheduler integration. (2) **IRP Pool global** — 64 slots protegidos por `Mutex`, IDs únicos via `AtomicU32`, `irp_alloc`/`irp_free`/`irp_get_params` para gestión del ciclo de vida. (3) **IRP Queue por dispositivo** — `IrpQueue` (FIFO ring buffer de 32 entries) para dispositivos que necesitan encolar operaciones asíncronas. (4) **Completion callbacks en work queue** — `irp_complete()` encola el callback en `WORK_QUEUE.push_high()` mediante `Box<IrpCbDispatch>`, evitando ejecución en IRQ context. (5) **Scheduler integration** — `irp_block_current()`/`irp_wake_waiter()` usando `IRP_WAIT_MAGIC | irp_id` como `waiting_for` genérico, mismo patrón que pipes. (6) **IRP chaining** — `chain_next` field para encadenar sub-operaciones; la chain se limpia en `irp_complete()` y puede ser usada por el driver para secuenciar operaciones. (7) **BlockDevice trait extendido** — `submit_irp()` + `poll_irp()` como interfaz primaria; `read_blocks`/`write_blocks` se mantienen como métodos abstractos para compatibilidad hacia atrás. Cada driver (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implementa `submit_irp` vía `irp_get_params()` + operación síncrona + `irp_complete_result()`. (8) **Helpers síncronos** — `irp_sync_read()`/`irp_sync_write()` para código que quiera usar IRPs de forma bloqueante. Archivo nuevo: `src/irp/mod.rs`. 11 tests. Total: 284 tests.
 
-9. V1. Global page cache (advanced)
+9. **V1. Global page cache (advanced) — COMPLETED** (ver CHANGELOG)
 
 Evolución del page cache básico (A5: 512 entradas LRU simple, dirty write-back con timer `NEED_PAGE_CACHE_FLUSH`) hacia un sistema de caché avanzado con prestaciones completas. La implementación actual indexa por `(inode, block_num)` y almacena `data_lba` para safe flush, pero tiene limitaciones: solo 2 MB de caché, LRU O(n) por escaneo lineal de slots, sin readahead predictivo, sin write-back asíncrono (el flush es síncrono a disco), sin integración con el sistema de IRP.
 

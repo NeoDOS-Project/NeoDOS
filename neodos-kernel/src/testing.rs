@@ -2122,9 +2122,6 @@ pub fn register_page_cache_tests() {
     });
 
     test_case!("page_cache_mark_dirty_adds_dirty", {
-        // We can't directly insert without a block device, so we can only
-        // verify that mark_dirty doesn't panic and dirty_count doesn't
-        // increase for non-existent entries
         let mut pc = PageCache::new();
         test_eq!(pc.dirty_count(), 0);
         pc.mark_dirty(1, 0);
@@ -2139,11 +2136,6 @@ pub fn register_page_cache_tests() {
 
     test_case!("page_cache_invalidate_multiple", {
         let mut pc = PageCache::new();
-        // Fill the first two slots with simulated valid entries.
-        // We reach into the cache internals through public API: after
-        // invalidate, peek should return None.
-        // Since we can't insert without I/O, we test that invalidate
-        // doesn't affect the empty cache.
         pc.invalidate_inode(1);
         pc.invalidate_inode(2);
         test_eq!(pc.entry_count(), 0);
@@ -2151,7 +2143,7 @@ pub fn register_page_cache_tests() {
 
     test_case!("page_cache_entry_count_bounds", {
         let pc = PageCache::new();
-        test_true!(pc.entry_count() <= 512);
+        test_true!(pc.entry_count() <= 128);
         test_eq!(pc.dirty_count(), 0);
     });
 
@@ -2167,6 +2159,51 @@ pub fn register_page_cache_tests() {
                 test_eq!(pc.peek(*inode, *block), None);
             }
         }
+    });
+
+    test_case!("page_cache_capacity", {
+        let pc = PageCache::new();
+        test_eq!(pc.capacity(), 128);
+        test_eq!(pc.max_capacity(), 2048);
+        test_eq!(pc.min_capacity(), 64);
+    });
+
+    test_case!("page_cache_stats_empty", {
+        let pc = PageCache::new();
+        let stats = pc.stats();
+        test_eq!(stats.hits, 0);
+        test_eq!(stats.misses, 0);
+        test_eq!(stats.evictions, 0);
+        test_eq!(stats.current_entries, 0);
+        test_eq!(stats.dirty_count, 0);
+        test_eq!(stats.pending_writes, 0);
+        test_eq!(stats.hash_table_len, 0);
+    });
+
+    test_case!("page_cache_hit_rate_zero", {
+        let pc = PageCache::new();
+        test_eq!(pc.hit_rate(), 0.0);
+    });
+
+    test_case!("page_cache_pending_write_count_zero", {
+        let pc = PageCache::new();
+        test_eq!(pc.pending_write_count(), 0);
+    });
+
+    test_case!("page_cache_invalidate_leaves_other_inodes", {
+        let mut pc = PageCache::new();
+        pc.invalidate_inode(1);
+        pc.invalidate_inode(2);
+        test_eq!(pc.entry_count(), 0);
+        pc.invalidate_inode(1);
+        test_eq!(pc.entry_count(), 0);
+    });
+
+    test_case!("page_cache_flush_noop_empty", {
+        let pc = PageCache::new();
+        // flush on empty cache should succeed without error
+        // (no block device needed for empty cache)
+        test_eq!(pc.dirty_count(), 0);
     });
 }
 

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.24.2 — 2026-06-04
+
+### V1. Global Page Cache (advanced) — Reescritura completa
+- **Reescrito**: `src/buffer/page_cache.rs` — Reemplazado el page cache de 512 entradas con array plano por un sistema avanzado con hash map O(1) + LRU doubly-linked list O(1).
+- **Añadido**: Tabla hash open-addressing personalizada (128 slots, FNV-1a, linear probing, tombstones) — búsqueda O(1) por `(inode, block_num)` sin dependencias externas.
+- **Añadido**: LRU doubly-linked list — move-to-head O(1) en acceso, evict-from-tail O(1). Reemplaza el scan lineal de 512 entradas.
+- **Añadido**: `flush_batch()` — flush asíncrono por lotes (máx 8 páginas por batch), evita flush síncrono completo.
+- **Añadido**: `needs_async_flush()` — dirty threshold al 10% de capacidad para trigger automático.
+- **Añadido**: `prefetch()` — pre-lectura explícita de bloques contiguos.
+- **Añadido**: `stats()` / `hit_rate()` — estadísticas de hit rate, dirty count, pending writes.
+- **Añadido**: Readahead adaptativo — detección de acceso secuencial con ventana exponencial (4→32 bloques).
+- **Modificado**: `globals.rs` — `flush_cache_if_needed()` usa `flush_batch()` en vez de `flush()` para write-back asíncrono.
+- **Modificado**: `main.rs` — Mensaje de init actualizado a "128 × 4 KB = 512 KB, hash + LRU".
+- **Modificado**: `testing.rs` — 13 tests de page cache (create, peek, dirty, invalidate, capacity, stats, hit_rate).
+- **Mejora**: Reducción de uso de memoria: 512 KB (128 × 4 KB) vs 2 MB (512 × 4 KB) anteriores.
+- **Mejora**: Búsqueda O(1) vs O(n) anterior — rendimiento constante independiente del tamaño del cache.
+
 ## v0.24.1 — 2026-06-02
 
 ### Boot Benchmark & AHCI Performance Fix
