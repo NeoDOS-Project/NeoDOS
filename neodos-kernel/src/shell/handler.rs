@@ -151,7 +151,6 @@ pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
-pub fn cmd_devicesend(shell: &mut DosShell, args: &[&str]) { shell.cmd_devicesend(args); }
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
@@ -299,10 +298,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  LOAD file.bin [args]\n",
                        "  Load and execute a flat binary. Accepts optional\n",
                        "  command-line arguments passed to the program."), },
-    CommandEntry { name: "DEVICESEND",category: "CTRL",     handler: cmd_devicesend, description: "Send command to device",
-        usage: concat!("Syntax:  DEVICESEND id command\n",
-                       "  Send a command string to a loaded TSR device.\n",
-                       "  DEVICESEND 0 STATUS   queries device 0."), },
     CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID",
         usage: concat!("Syntax:  KILL pid\n",
                        "  Terminate a running process by its PID number.\n",

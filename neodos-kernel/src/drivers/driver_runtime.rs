@@ -36,6 +36,7 @@ pub const ERR_CERTIFICATION_FAILED: u32 = 5;
 pub const ERR_OUT_OF_MEMORY: u32 = 6;
 pub const ERR_POLICY_VIOLATION: u32 = 7;
 pub const ERR_LOAD_FAILED: u32 = 8;
+pub const ERR_CAPABILITY_DENIED: u32 = 9;
 
 pub fn err_to_str(code: u32) -> &'static str {
     match code {
@@ -48,6 +49,7 @@ pub fn err_to_str(code: u32) -> &'static str {
         ERR_OUT_OF_MEMORY => "OUT_OF_MEMORY",
         ERR_POLICY_VIOLATION => "POLICY_VIOLATION",
         ERR_LOAD_FAILED => "LOAD_FAILED",
+        ERR_CAPABILITY_DENIED => "CAPABILITY_DENIED",
         _ => "UNKNOWN",
     }
 }
@@ -139,6 +141,7 @@ pub struct DriverInstance {
     pub last_error: u32,                // 0 = no error, non-zero = error code
     pub certification_step: u8,         // PipelineStep value tracking which step failed
     pub kobj_id: Option<kobj::KObjId>,
+    pub caps: u64,                      // Capability bitmap (X3 capability system)
 }
 
 impl Default for DriverInstance {
@@ -162,6 +165,7 @@ impl Default for DriverInstance {
             last_error: 0,
             certification_step: 0,
             kobj_id: None,
+            caps: 0,
         }
     }
 }
@@ -285,6 +289,8 @@ impl DriverRuntime {
 
         let kobj_id = kobj::kobj_register(kobj::KObjType::Driver, name, id as u64).ok();
 
+        let caps = crate::drivers::caps::capability_for_category(category).bits;
+
         let instance = DriverInstance {
             id,
             name: name_bytes,
@@ -304,6 +310,7 @@ impl DriverRuntime {
             last_error: 0,
             certification_step: PipelineStep::None as u8,
             kobj_id,
+            caps,
         };
 
         for slot in self.drivers.iter_mut() {
@@ -352,6 +359,30 @@ impl DriverRuntime {
             true
         } else {
             false
+        }
+    }
+
+    /// Set the capability bitmap for a driver.
+    pub fn set_capabilities(&mut self, id: DriverId, caps: u64) -> bool {
+        if let Some(drv) = self.get_mut(id) {
+            drv.caps = caps;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get the capability bitmap for a driver.
+    pub fn get_capabilities(&self, id: DriverId) -> Option<u64> {
+        self.get(id).map(|d| d.caps)
+    }
+
+    /// Check whether a driver holds all of the required capabilities.
+    /// Returns Ok(()) or an error string.
+    pub fn check_driver_cap(&self, id: DriverId, required: u64) -> Result<(), &'static str> {
+        match self.get(id) {
+            Some(drv) => crate::drivers::caps::check_capabilities(drv.caps, required),
+            None => Err("Driver not found"),
         }
     }
 
@@ -592,6 +623,21 @@ pub fn driver_names() -> alloc::vec::Vec<(alloc::string::String, DriverId, Drive
         results.push((alloc::string::String::from(drv.name_str()), drv.id, drv.state));
     }
     results
+}
+
+/// Check whether a driver (by ID) holds the required capabilities.
+pub fn check_driver_cap(id: DriverId, required: u64) -> Result<(), &'static str> {
+    DRIVER_RUNTIME.lock().check_driver_cap(id, required)
+}
+
+/// Set capabilities for a driver (by ID).
+pub fn set_capabilities(id: DriverId, caps: u64) -> bool {
+    DRIVER_RUNTIME.lock().set_capabilities(id, caps)
+}
+
+/// Get capabilities for a driver (by ID).
+pub fn get_capabilities(id: DriverId) -> Option<u64> {
+    DRIVER_RUNTIME.lock().get_capabilities(id)
 }
 
 // ── Test suite: Driver State Machine + Certification Pipeline ──

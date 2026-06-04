@@ -1,6 +1,9 @@
 use crate::eventbus;
 use crate::input;
 use crate::hal;
+use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG};
+use crate::drivers::driver_runtime;
+use crate::drivers::nem::driver::current_driver_id;
 
 pub type HstInb = unsafe extern "C" fn(u16) -> u8;
 pub type HstOutb = unsafe extern "C" fn(u16, u8);
@@ -29,25 +32,62 @@ pub struct HalServiceTable {
     pub log: HstLog,
 }
 
-unsafe extern "C" fn hst_inb(port: u16) -> u8 { hal::inb(port) }
-unsafe extern "C" fn hst_outb(port: u16, val: u8) { hal::outb(port, val) }
-unsafe extern "C" fn hst_inw(port: u16) -> u16 { hal::inw(port) }
-unsafe extern "C" fn hst_outw(port: u16, val: u16) { hal::outw(port, val) }
-unsafe extern "C" fn hst_inl(port: u16) -> u32 { hal::inl(port) }
-unsafe extern "C" fn hst_outl(port: u16, val: u32) { hal::outl(port, val) }
+/// Check that the current driver has the required capability.
+/// Returns true if the capability is held or no driver context is set (kernel code).
+fn check_cap(required: u64) -> bool {
+    let id = current_driver_id();
+    if id == 0 {
+        return true; // kernel context — always allowed
+    }
+    driver_runtime::check_driver_cap(id, required).is_ok()
+}
+
+unsafe extern "C" fn hst_inb(port: u16) -> u8 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    hal::inb(port)
+}
+unsafe extern "C" fn hst_outb(port: u16, val: u8) {
+    if !check_cap(CAP_PORTIO) { return; }
+    hal::outb(port, val)
+}
+unsafe extern "C" fn hst_inw(port: u16) -> u16 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    hal::inw(port)
+}
+unsafe extern "C" fn hst_outw(port: u16, val: u16) {
+    if !check_cap(CAP_PORTIO) { return; }
+    hal::outw(port, val)
+}
+unsafe extern "C" fn hst_inl(port: u16) -> u32 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    hal::inl(port)
+}
+unsafe extern "C" fn hst_outl(port: u16, val: u32) {
+    if !check_cap(CAP_PORTIO) { return; }
+    hal::outl(port, val)
+}
 unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64 {
+    if !check_cap(CAP_EVENT_BUS) { return -1; }
     match eventbus::push_event(et, src, dev, d0, d1, fl) {
         Ok(id) => id as i64,
         Err(_) => -1,
     }
 }
 unsafe extern "C" fn hst_push_input(byte: u8) {
+    if !check_cap(CAP_INPUT) { return; }
     input::push_byte(byte);
     crate::syscall::wake_blocked_readers();
 }
-unsafe extern "C" fn hst_get_ticks() -> u64 { hal::get_ticks() }
-unsafe extern "C" fn hst_ack_irq(vec: u8) { hal::ack_irq(vec); }
+unsafe extern "C" fn hst_get_ticks() -> u64 {
+    if !check_cap(CAP_TIMING) { return 0; }
+    hal::get_ticks()
+}
+unsafe extern "C" fn hst_ack_irq(vec: u8) {
+    if !check_cap(CAP_IRQ) { return; }
+    hal::ack_irq(vec);
+}
 unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
+    if !check_cap(CAP_LOG) { return; }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     crate::serial_println!("[DRV] {}", s);
 }

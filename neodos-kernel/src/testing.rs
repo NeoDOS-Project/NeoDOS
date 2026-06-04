@@ -2322,6 +2322,7 @@ pub fn register_tests() {
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
+    crate::drivers::caps::register_cap_tests();
     crate::drivers::driver_runtime::register_driver_certification_tests();
     crate::drivers::boot_loader::register_boot_loader_tests();
     crate::drivers::nem::v3loader::register_v3_loader_tests();

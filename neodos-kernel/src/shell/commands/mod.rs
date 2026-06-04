@@ -15,7 +15,6 @@ mod copy;
 mod cpuinfo;
 mod date;
 mod del;
-mod devicesend;
 mod dir;
 mod drives;
 mod echo;

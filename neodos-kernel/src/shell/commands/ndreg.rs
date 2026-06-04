@@ -294,6 +294,14 @@ impl DosShell {
                                         println!("  Code Size:       {} bytes", parsed.header.text_size);
                                         println!("  Entry Offset:    0x{:04X}", parsed.header.entry_init);
                                         println!("  Compat Flags:    0x{:04X}", parsed.header.flags);
+                                        // Show capabilities from runtime (or category default)
+                                        let caps_bits = match crate::drivers::driver_runtime::get_driver_by_name(parsed.name) {
+                                            Some(d) => d.caps,
+                                            None => crate::drivers::caps::capability_for_category(parsed.category).bits,
+                                        };
+                                        let caps_str = crate::drivers::caps::CapabilitySet::new(caps_bits).format();
+                                        println!("  Capabilities:    0x{:016X}", caps_bits);
+                                        println!("                   {}", caps_str);
                                         println!("  Permissions:     R--");
                                         println!();
                                         println!(" ── Lifecycle State ──");

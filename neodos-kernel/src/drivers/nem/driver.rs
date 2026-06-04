@@ -21,6 +21,12 @@ pub unsafe fn clear_current_driver() {
     CURRENT_DRIVER_ID = 0;
 }
 
+/// Read the current driver ID (0 = kernel context, no driver active).
+/// Used by the capability system to check per-call permissions in hst_* exports.
+pub fn current_driver_id() -> DriverId {
+    unsafe { CURRENT_DRIVER_ID }
+}
+
 /// Public function used by driver binaries to register an event callback.
 /// The callback receives only the `&Event`; the driver can obtain its own runtime state
 /// via `driver_runtime::get_driver(id)` if needed.

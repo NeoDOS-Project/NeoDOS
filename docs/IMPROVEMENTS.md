@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.24.2 (290 tests, Page Cache avanzado con hash + LRU).
+> Versión actual: v0.24.4 (301 tests, X3 Capability System).
 > Objetivo: v0.25 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (72 items)
+## COMPLETED (73 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -70,6 +70,7 @@
 55. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 standalone driver (SYSTEM category). Scans PCI for IDE controller with bus-master DMA capability, initializes primary + secondary channels. Each active channel registers a `NemBlockDevice`. Kernel-side `ata.rs` reduced to `BootAta` PIO-only boot stub. QEMU machine changed from `q35` to `pc` (PIIX3).
 56. **A11. AHCI NEM standalone driver** — `drivers/ahci/` NEM v3 standalone driver (SYSTEM category). Scans PCI for AHCI controllers (class 0x01 subclass 0x06), initializes HBA, detects ATA/ATAPI devices per port. Uses DMA polling with PRDT (up to 8 entries), single-slot command engine. Kernel built-in AHCI driver removed.
 57. **A12. BootAhci kernel stub** — `boot_ahci.rs` built-in kernel driver (Phase 3 storage init) for AHCI early-boot access. Minimal DMA polling driver (single port, single command slot, 8-sector PRDT). Registers as block device idx=0 before NEM AHCI driver loads. Priority: NVMe > BootAhci > BootAta (PIO).
+58. **X3. Capability system** — `src/drivers/caps.rs`: 64-bit capability bitmap per driver (11 flags: IRQ, DMA, MMIO, PORTIO, ALLOC_PAGE, BLOCK_DEVICE, EVENT_BUS, INPUT, LOG, TIMING, MEMORY). Capability inheritance by category (BOOT=all, SYSTEM=restricted, DEMAND=sandboxed). Runtime capability check in every `hst_*` export — denies execution if capability missing. Capability escalation via Event Bus (SYSTEM→CAP_ALLOC_PAGE|BLOCK_DEVICE|MEMORY; DEMAND blocked). `NDREG SHOW` displays capabilities. 11 unit tests.
 
 ### Userland & Memoria
 58. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
@@ -98,15 +99,7 @@ Versión: v0.20 → v1.0
 Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
 
 🧩 FASE 4 — DRIVER ARCHITECTURE SAFETY LAYER
-1. **X3. Capability system**
-
-Sistema de capacidades explícitas que qué recursos hardware y del kernel puede usar cada driver NEM. Actualmente, cualquier driver NEM v3 tiene acceso completo a través de la export table (`hst_*` functions), sin restricciones. Esto significa que un driver malicioso o con bugs puede, por ejemplo, llamar a `hst_alloc_page()` cuando solo debería usar IRQ, o escribir a cualquier puerto I/O.
-
-El capability system introduciría: (1) **Capability flags** por driver — un bitmap de 64 bits al cargar el driver, declarado en el header NEM v4 (ej. `CAP_IRQ=1`, `CAP_DMA=2`, `CAP_MMIO=4`, `CAP_PORTIO=8`, `CAP_ALLOC_PAGE=16`, `CAP_BLOCK_DEVICE=32`). (2) **Capability check en export table** — cada función `hst_*` comprueba en runtime que el driver llamante tenga la capability requerida; si no, retorna error en lugar de ejecutar. (3) **Capability inheritance** — los drivers BOOT pueden tener todas las capabilities por defecto; los drivers SYSTEM y DEMAND tienen un conjunto restringido validado por el boot loader. (4) **Capability escalation policy** — un driver puede pedir capabilities adicionales si demuestra necesidad via el Event Bus (petición auditada por el kernel).
-
-Archivos: `src/drivers/caps.rs` (nuevo), `src/drivers/driver_runtime.rs` (añadir caps a DriverInstance), `src/drivers/loader.rs` (validar caps en load).
-
-2. **X4. Driver isolation layer**
+1. **X4. Driver isolation layer**
 
 Capa de aislamiento parcial para ejecutar drivers NEM con límites de memoria y acceso, reduciendo el riesgo de que un driver defectuoso corrompa el kernel. Actualmente, los drivers NEM se ejecutan en Ring 0 (kernel space) y tienen acceso completo a toda la memoria del kernel, incluyendo tablas de páginas, estructuras del scheduler, y datos de otros drivers. Un buffer overflow en un driver puede corromper cualquier estructura del kernel.
 

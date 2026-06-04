@@ -12,6 +12,9 @@ use crate::nem::{
     R_NEM_64, R_NEM_PC32, R_NEM_32, R_NEM_32S, R_NEM_PLT32,
     NEM_SECT_TEXT, NEM_SECT_RODATA, NEM_SECT_DATA, NEM_SECT_UNDEF,
 };
+use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_BLOCK_DEVICE};
+use crate::drivers::driver_runtime;
+use crate::drivers::nem::driver::current_driver_id;
 
 // ── Kernel Export Table ──
 
@@ -37,13 +40,25 @@ pub fn resolve_export(name: &str) -> Option<*const ()> {
     KERNEL_EXPORTS.iter().find(|e| e.name == name).map(|e| e.addr)
 }
 
+/// Check that the current driver has the required capability.
+/// Returns true if the capability is held or no driver context is set (kernel code).
+fn check_cap(required: u64) -> bool {
+    let id = current_driver_id();
+    if id == 0 {
+        return true; // kernel context — always allowed
+    }
+    driver_runtime::check_driver_cap(id, required).is_ok()
+}
+
 // HAL functions exported to NEM drivers
 unsafe extern "C" fn hst_push_input_byte(byte: u8) {
+    if !check_cap(CAP_INPUT) { return; }
     crate::input::push_byte(byte);
     crate::syscall::wake_blocked_readers();
 }
 
 unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
+    if !check_cap(CAP_LOG) { return; }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     match level {
         0 => crate::serial_println!("[DRV] {}", s),
@@ -52,22 +67,48 @@ unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
     }
 }
 
-unsafe extern "C" fn hst_get_ticks() -> u64 { crate::hal::get_ticks() }
-unsafe extern "C" fn hst_ack_irq(vector: u8) { crate::hal::ack_irq(vector); }
+unsafe extern "C" fn hst_get_ticks() -> u64 {
+    if !check_cap(CAP_TIMING) { return 0; }
+    crate::hal::get_ticks()
+}
+
+unsafe extern "C" fn hst_ack_irq(vector: u8) {
+    if !check_cap(CAP_IRQ) { return; }
+    crate::hal::ack_irq(vector);
+}
 
 unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64 {
+    if !check_cap(CAP_EVENT_BUS) { return -1; }
     match crate::eventbus::push_event(et, src, dev, d0, d1, fl) {
         Ok(id) => id as i64,
         Err(_) => -1,
     }
 }
 
-unsafe extern "C" fn hst_inb(port: u16) -> u8 { crate::hal::inb(port) }
-unsafe extern "C" fn hst_outb(port: u16, val: u8) { crate::hal::outb(port, val) }
-unsafe extern "C" fn hst_inw(port: u16) -> u16 { crate::hal::inw(port) }
-unsafe extern "C" fn hst_outw(port: u16, val: u16) { crate::hal::outw(port, val) }
-unsafe extern "C" fn hst_inl(port: u16) -> u32 { crate::hal::inl(port) }
-unsafe extern "C" fn hst_outl(port: u16, val: u32) { crate::hal::outl(port, val) }
+unsafe extern "C" fn hst_inb(port: u16) -> u8 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    crate::hal::inb(port)
+}
+unsafe extern "C" fn hst_outb(port: u16, val: u8) {
+    if !check_cap(CAP_PORTIO) { return; }
+    crate::hal::outb(port, val)
+}
+unsafe extern "C" fn hst_inw(port: u16) -> u16 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    crate::hal::inw(port)
+}
+unsafe extern "C" fn hst_outw(port: u16, val: u16) {
+    if !check_cap(CAP_PORTIO) { return; }
+    crate::hal::outw(port, val)
+}
+unsafe extern "C" fn hst_inl(port: u16) -> u32 {
+    if !check_cap(CAP_PORTIO) { return 0; }
+    crate::hal::inl(port)
+}
+unsafe extern "C" fn hst_outl(port: u16, val: u32) {
+    if !check_cap(CAP_PORTIO) { return; }
+    crate::hal::outl(port, val)
+}
 
 /// Register a block device from a NEM driver.
 /// The driver provides device_id (its internal identifier), num_sectors, sector_size,
@@ -81,6 +122,7 @@ unsafe extern "C" fn hst_register_block_device(
     read_fn: unsafe extern "C" fn(u32, u64, u8, *mut u8) -> i32,
     write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
 ) -> i32 {
+    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
     let dev = crate::drivers::block::NemBlockDevice::new(
         device_id, num_sectors, sector_size, read_fn, write_fn,
     );
@@ -89,6 +131,7 @@ unsafe extern "C" fn hst_register_block_device(
 
 /// Unregister a block device previously registered via hst_register_block_device.
 unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
+    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
     if dev_idx < 0 { return -1; }
     crate::drivers::block::unregister_nem_block_device(dev_idx as usize);
     0
@@ -359,6 +402,7 @@ const MAX_V3_HANDLERS: usize = 8;
 struct V3HandlerEntry {
     event_type: u32,
     fn_ptr: usize,
+    driver_id: u32,
 }
 
 static V3_HANDLERS: spin::Mutex<[Option<V3HandlerEntry>; MAX_V3_HANDLERS]> =
@@ -369,9 +413,12 @@ fn v3_event_bridge(event: &crate::eventbus::Event) {
     for entry in table.iter() {
         if let Some(e) = entry {
             if e.event_type == event.event_type {
+                // Set current driver context so capability checks work
+                unsafe { crate::drivers::nem::driver::set_current_driver(e.driver_id); }
                 let f: unsafe extern "C" fn(*const crate::eventbus::Event) -> i32 =
                     unsafe { core::mem::transmute(e.fn_ptr) };
                 let _ = unsafe { f(event as *const _) };
+                unsafe { crate::drivers::nem::driver::clear_current_driver(); }
                 return;
             }
         }
@@ -383,6 +430,7 @@ fn v3_event_bridge(event: &crate::eventbus::Event) {
 pub fn register_v3_event_bus_handler(
     entry_event: Option<unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>,
     event_type: u32,
+    driver_id: u32,
 ) -> Result<(), ()> {
     let event_fn_ptr = match entry_event {
         Some(f) => f as usize,
@@ -395,6 +443,7 @@ pub fn register_v3_event_bus_handler(
                 *slot = Some(V3HandlerEntry {
                     event_type,
                     fn_ptr: event_fn_ptr,
+                    driver_id,
                 });
                 break;
             }

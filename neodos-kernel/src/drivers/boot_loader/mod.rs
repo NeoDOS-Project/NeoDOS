@@ -135,6 +135,9 @@ pub fn boot_load_all() {
                     crate::serial_print!("REG OK (id={})", id);
                     total_loaded += 1;
 
+                    // Set current driver context for capability checks
+                    unsafe { crate::drivers::nem::driver::set_current_driver(id); }
+
                     let init_ok = match load_result.entry_init {
                         Some(init_fn) => unsafe { init_fn() == 0 },
                         None => true,
@@ -152,26 +155,26 @@ pub fn boot_load_all() {
                         let bind_ok = match name_upper.as_str() {
                             "PS2KBD" => {
                                 let a = v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_KEYBOARD_INPUT
+                                    load_result.entry_event, EVENT_KEYBOARD_INPUT, id
                                 ).is_ok();
                                 let b = v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_KEYB_LAYOUT
+                                    load_result.entry_event, EVENT_KEYB_LAYOUT, id
                                 ).is_ok();
                                 a && b
                             }
                             "SERIAL" => {
                                 v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA
+                                    load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA, id
                                 ).is_ok()
                             }
                             "RTC" => {
                                 v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_RTC_READ
+                                    load_result.entry_event, EVENT_RTC_READ, id
                                 ).is_ok()
                             }
                             "ACPI" => {
                                 v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_SHUTDOWN
+                                    load_result.entry_event, EVENT_SHUTDOWN, id
                                 ).is_ok()
                             }
                             _ => {
@@ -203,6 +206,8 @@ pub fn boot_load_all() {
                                 total_faulted += 1;
                                 driver_runtime::DRIVER_RUNTIME.lock()
                                     .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
+                                // Clear driver context before continuing
+                                unsafe { crate::drivers::nem::driver::clear_current_driver(); }
                                 crate::serial_println!();
                                 continue;
                             }
@@ -225,6 +230,10 @@ pub fn boot_load_all() {
                         driver_runtime::DRIVER_RUNTIME.lock()
                             .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
                     }
+
+                    // Clear current driver context after entry point returns
+                    unsafe { crate::drivers::nem::driver::clear_current_driver(); }
+
                     crate::serial_println!();
                 }
                 Err(e) => {

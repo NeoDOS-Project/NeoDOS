@@ -289,20 +289,20 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 5. Apply relocations: resolve UNDEF symbols against KET
 6. Resolve entry points: `entry_init`, `entry_event`, `entry_activate`, `entry_fini`
 
-**Kernel Export Table (KET):** 13 symbols exported to NEM v3 drivers:
+**Kernel Export Table (KET):** 13 symbols exported to NEM v3 drivers. Each symbol requires the calling driver to hold the corresponding capability (X3 Capability System):
 
-| Symbol | Description |
-|---------|-------------|
-| `hst_push_input_byte(byte)` | Push byte to kernel input buffer |
-| `hst_log(level, msg, len)` | Logging |
-| `hst_get_ticks()` | Get tick counter |
-| `hst_ack_irq(vector)` | IRQ acknowledge |
-| `hst_push_event(et, src, dev, d0, d1, fl)` | Push event to Event Bus |
-| `hst_inb(port)` / `hst_outb(port, val)` | 8-bit I/O |
-| `hst_inw(port)` / `hst_outw(port, val)` | 16-bit I/O |
-| `hst_inl(port)` / `hst_outl(port, val)` | 32-bit I/O |
-| `hst_register_block_device(name, len, id, sectors, ssize, read_fn, write_fn)` | Register block device with kernel |
-| `hst_unregister_block_device(idx)` | Unregister block device |
+| Symbol | Description | Required Capability |
+|---------|-------------|-------------------|
+| `hst_push_input_byte(byte)` | Push byte to kernel input buffer | `CAP_INPUT` |
+| `hst_log(level, msg, len)` | Logging | `CAP_LOG` |
+| `hst_get_ticks()` | Get tick counter | `CAP_TIMING` |
+| `hst_ack_irq(vector)` | IRQ acknowledge | `CAP_IRQ` |
+| `hst_push_event(et, src, dev, d0, d1, fl)` | Push event to Event Bus | `CAP_EVENT_BUS` |
+| `hst_inb(port)` / `hst_outb(port, val)` | 8-bit I/O | `CAP_PORTIO` |
+| `hst_inw(port)` / `hst_outw(port, val)` | 16-bit I/O | `CAP_PORTIO` |
+| `hst_inl(port)` / `hst_outl(port, val)` | 32-bit I/O | `CAP_PORTIO` |
+| `hst_register_block_device(...)` | Register block device with kernel | `CAP_BLOCK_DEVICE` |
+| `hst_unregister_block_device(idx)` | Unregister block device | `CAP_BLOCK_DEVICE` |
 
 **Event Bus Bridge:** `register_v3_event_bus_handler()` — bridge between the v3 driver calling convention (`driver_on_event(*const Event) → i32`) and the kernel Event Bus (`fn(&Event)`). Uses a static `AtomicUsize` to store the function pointer.
 
@@ -335,8 +335,9 @@ Any state → Faulted(5) | Unloaded(6)
 - `events_received`, `tick_count`, `last_event_type/tick`, `registered_at_tick`
 - `last_error: u32` — error code (0 = OK)
 - `certification_step: u8` — pipeline step where failure occurred
+- `caps: u64` — capability bitmap (X3 Capability System)
 
-**Error codes:** `ERR_NONE=0`, `ERR_INIT_FAILED=1`, `ERR_REGISTRATION_FAILED=2`, `ERR_BIND_FAILED=3`, `ERR_SANDBOX_REJECTED=4`, `ERR_CERTIFICATION_FAILED=5`, `ERR_OUT_OF_MEMORY=6`, `ERR_POLICY_VIOLATION=7`, `ERR_LOAD_FAILED=8`.
+**Error codes:** `ERR_NONE=0`, `ERR_INIT_FAILED=1`, `ERR_REGISTRATION_FAILED=2`, `ERR_BIND_FAILED=3`, `ERR_SANDBOX_REJECTED=4`, `ERR_CERTIFICATION_FAILED=5`, `ERR_OUT_OF_MEMORY=6`, `ERR_POLICY_VIOLATION=7`, `ERR_LOAD_FAILED=8`, `ERR_CAPABILITY_DENIED=9`.
 
 **`certify_and_activate(id)`**: Only promotes to Active if:
 1. Current state == Bound (proves the sequence was followed)
@@ -346,6 +347,22 @@ Any state → Faulted(5) | Unloaded(6)
 **Pipeline steps:** `PipelineStep::None=0`, `Load=1`, `Init=2`, `Registration=3`, `Binding=4`, `Certification=5`
 
 **Global driver runtime:** `lazy_static! { DRIVER_RUNTIME: Mutex<DriverRuntime> }` with 16 slots max.
+
+#### 5.5. X3 Capability System (`src/drivers/caps.rs`)
+
+Fine-grained resource access control for NEM drivers. Each driver inherits a 64-bit capability bitmap at load time based on its category:
+
+| Category | Default Capabilities |
+|----------|---------------------|
+| **BOOT** | All 11 flags (`CAP_ALL`) |
+| **SYSTEM** | `CAP_PORTIO \| CAP_IRQ \| CAP_MMIO \| CAP_DMA \| CAP_EVENT_BUS \| CAP_INPUT \| CAP_LOG \| CAP_TIMING` |
+| **DEMAND** | `CAP_EVENT_BUS \| CAP_LOG \| CAP_TIMING` |
+
+**Runtime enforcement:** Every `hst_*` function in the KET calls `check_cap()` before executing. If the calling driver lacks the required capability, the function returns a sentinel error (0, -1, or no-op) instead of executing. The `current_driver_id()` static tracks which driver is active — set before each `driver_init`/activate/event dispatch call.
+
+**Capability escalation:** A SYSTEM driver may request `CAP_ALLOC_PAGE`, `CAP_BLOCK_DEVICE`, or `CAP_MEMORY` via `EVENT_CAP_ESCALATION` (type `0x2000`). The kernel audits and may grant. DEMAND drivers cannot escalate — this is a security boundary.
+
+See `AGENTS.md` for the complete flag table and implementation details.
 
 ---
 

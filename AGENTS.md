@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.24.3
+v0.24.4
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 290 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 301 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -443,7 +443,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-290 tests en 35 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+301 tests en 36 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -457,6 +457,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
 | NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
 | ELF | 7 | ELF64 loader: header validation, segment loading, edge cases |
+| Capability | 11 | X3 Capability flags, CapabilitySet, category defaults, check/enforce, escalation policy |
 | Event Bus | 17 | Unified v2: priority queues, subscription filters (type/source/device), dynamic payload, backpressure, 17 tests |
 | Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
@@ -476,7 +477,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (290 tests kernel)
+1. Ejecuta `testing::run_all()` (301 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
@@ -556,8 +557,12 @@ All others → ERROR (TransitionError)
 Each `DriverInstance` has:
 - `last_error: u32` — error code from `ERR_*` constants
 - `certification_step: u8` — which pipeline step failed (`PipelineStep`)
+- `caps: u64` — capability bitmap (X3 Capability System)
 
-Error codes: `ERR_NONE=0`, `ERR_INIT_FAILED`, `ERR_REGISTRATION_FAILED`, `ERR_BIND_FAILED`, `ERR_SANDBOX_REJECTED`, `ERR_CERTIFICATION_FAILED`, `ERR_OUT_OF_MEMORY`, `ERR_POLICY_VIOLATION`, `ERR_LOAD_FAILED`.
+Error codes: `ERR_NONE=0`, `ERR_INIT_FAILED`, `ERR_REGISTRATION_FAILED`,
+`ERR_BIND_FAILED`, `ERR_SANDBOX_REJECTED`, `ERR_CERTIFICATION_FAILED`,
+`ERR_OUT_OF_MEMORY`, `ERR_POLICY_VIOLATION`, `ERR_LOAD_FAILED`,
+`ERR_CAPABILITY_DENIED=9`.
 
 ### Certification (`certify_and_activate`)
 
@@ -647,6 +652,48 @@ pub fn resolve_nem_symbol_dependencies(
 ### Boot Loader Integration
 
 `boot_load_all()` v2 scans drivers, builds a `DependencyGraph` per category, resolves load order, and loads in dependency-sorted sequence. Falls back to filesystem order on cycle detection. 13 unit tests.
+
+## X3 Capability System
+
+`src/drivers/caps.rs` — Fine-grained resource access control for NEM drivers.
+
+Each driver has a 64-bit capability bitmap set at load time. Every `hst_*` export
+function checks that the calling driver holds the required capability before executing.
+
+### Capability Flags
+
+| Flag | Value | Resource | Required for |
+|------|-------|----------|-------------|
+| `CAP_IRQ` | 1 | IRQ | `hst_ack_irq()` |
+| `CAP_DMA` | 2 | DMA | DMA transfers |
+| `CAP_MMIO` | 4 | MMIO | Memory-mapped I/O access |
+| `CAP_PORTIO` | 8 | Port I/O | `hst_inb/outb/inw/outw/inl/outl()` |
+| `CAP_ALLOC_PAGE` | 16 | Physical frames | Frame allocation |
+| `CAP_BLOCK_DEVICE` | 32 | Block devices | `hst_register/unregister_block_device()` |
+| `CAP_EVENT_BUS` | 64 | Event Bus | `hst_push_event()` |
+| `CAP_INPUT` | 128 | Input | `hst_push_input_byte()` |
+| `CAP_LOG` | 256 | Logging | `hst_log()` |
+| `CAP_TIMING` | 512 | Timing | `hst_get_ticks()` |
+| `CAP_MEMORY` | 1024 | Memory mapping | mmap operations |
+
+### Category Defaults (Inheritance)
+
+- **BOOT** → All capabilities (`CAP_ALL` = all 11 flags)
+- **SYSTEM** → `CAP_PORTIO | CAP_IRQ | CAP_MMIO | CAP_DMA | CAP_EVENT_BUS | CAP_INPUT | CAP_LOG | CAP_TIMING` (no `CAP_ALLOC_PAGE`, no `CAP_BLOCK_DEVICE`, no `CAP_MEMORY`)
+- **DEMAND** → `CAP_EVENT_BUS | CAP_LOG | CAP_TIMING` (sandboxed)
+
+### Capability Escalation
+
+A SYSTEM driver may request additional capabilities (`CAP_ALLOC_PAGE`, `CAP_BLOCK_DEVICE`,
+`CAP_MEMORY`) via `EVENT_CAP_ESCALATION` (type `0x2000`). The kernel audits and may grant.
+DEMAND drivers cannot escalate — this is a security boundary.
+
+### Implementation
+
+- Each export function in `v3loader.rs` and `hst.rs` calls `check_cap()` before executing
+- `current_driver_id()` tracks which driver is active (set before `driver_init`/activate/event calls)
+- Capability denial returns error/sentinel (0, -1, or no-op) instead of executing
+- `NDREG SHOW` displays capabilities in hex and human-readable format
 
 ## Boot Driver Loader System
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.24.4 — 2026-06-04
+
+### X3. Capability System — Añadido
+- **Añadido**: `src/drivers/caps.rs` — Nuevo módulo de capabilities con 11 flags (CAP_IRQ=1, CAP_DMA=2, CAP_MMIO=4, CAP_PORTIO=8, CAP_ALLOC_PAGE=16, CAP_BLOCK_DEVICE=32, CAP_EVENT_BUS=64, CAP_INPUT=128, CAP_LOG=256, CAP_TIMING=512, CAP_MEMORY=1024).
+- **Añadido**: `CapabilitySet` wrapper con `has()`, `add()`, `remove()`, `format()`, `count()`.
+- **Añadido**: `capability_for_category()` — herencia por categoría: BOOT→todas, SYSTEM→PORTIO|IRQ|MMIO|DMA|EVENT_BUS|INPUT|LOG|TIMING, DEMAND→EVENT_BUS|LOG|TIMING.
+- **Añadido**: Capability checking en runtime en cada `hst_*` export function (v3loader.rs y hst.rs). Las funciones rechazan la ejecución si el driver no tiene la capability requerida.
+- **Añadido**: `current_driver_id()` en `driver.rs` — tracking del driver activo para capability checks.
+- **Añadido**: `caps: u64` field en `DriverInstance` + `set_capabilities()`/`get_capabilities()` en driver_runtime.
+- **Añadido**: `ERR_CAPABILITY_DENIED=9` — nuevo código de error para denegaciones de capability.
+- **Añadido**: `EVENT_CAP_ESCALATION` (type `0x2000`) — escalation policy: SYSTEM puede pedir CAP_ALLOC_PAGE|BLOCK_DEVICE|MEMORY; DEMAND no puede escalar.
+- **Añadido**: `NDREG SHOW` ahora muestra capabilities del driver en hex y formato legible.
+- **Añadido**: 11 tests de capability system (flags, CapabilitySet, category defaults, check/enforce, escalation policy).
+- **Modificado**: `boot_loader/mod.rs` — establece current driver context antes de llamar entry points.
+- **Modificado**: `register_v3_event_bus_handler()` — ahora recibe `driver_id` para establecer contexto en dispatch de eventos.
+- **Modificado**: `V3HandlerEntry` — incluye `driver_id` para capability checks en event bridge.
+- **Total**: 301 kernel tests (+11).
+
+### Chore: DEVICESEND eliminado
+- **Eliminado**: `src/shell/commands/devicesend.rs` — comando legacy obsoleto que solo señalaba un flag atómico sin protocolo real. El Event Bus v2 cubre toda la comunicación con dispositivos.
+
 ## v0.24.3 — 2026-06-04
 
 ### B6b. Shared library system (libneodos DLL) — COMPLETED
