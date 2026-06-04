@@ -103,3 +103,9 @@ pub fn sys_mmap(hint: u64, len: u64, prot: u16, flags: u16, file_handle: u64) ->
 pub fn sys_munmap(addr: u64, len: u64) -> Result<(), i64> {
     ret_unit((export::get_table().sys_munmap)(addr, len))
 }
+
+pub fn sys_loadlib(path: &str) -> Result<u64, i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret((export::get_table().sys_loadlib)(ptr))
+}

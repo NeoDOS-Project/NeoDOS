@@ -25,6 +25,7 @@ mod kill;
 mod kobj;
 mod label;
 mod load;
+mod loadlib;
 mod md;
 mod mem;
 mod ndreg;

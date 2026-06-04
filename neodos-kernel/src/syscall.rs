@@ -52,10 +52,11 @@ pub enum SyscallNum {
     Brk = 18,
     Mmap = 19,
     Munmap = 20,
+    LoadLib = 21,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 20;
+    pub const MAX_VALID: u64 = 21;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -78,6 +79,7 @@ impl SyscallNum {
             18 => Some(Self::Brk),
             19 => Some(Self::Mmap),
             20 => Some(Self::Munmap),
+            21 => Some(Self::LoadLib),
             _ => None,
         }
     }
@@ -141,7 +143,7 @@ pub fn validate_abi() {
     assert!((err_to_u64(SyscallError::NoMem) as i64) < 0);
 
     // Syscall numbers must not overlap or exceed max
-    assert_eq!(SyscallNum::MAX_VALID, 20);
+    assert_eq!(SyscallNum::MAX_VALID, 21);
     for n in 0..=SyscallNum::MAX_VALID {
         if n == 7 || n == 8 {
             assert!(SyscallNum::from_u64(n).is_none(), "reserved hole {} must stay free", n);
@@ -1122,6 +1124,29 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     0
                 }
                 None => err_to_u64(SyscallError::Inval),
+            }
+        }
+
+        SyscallNum::LoadLib => {
+            // RBX = path_ptr (null-terminated string from user space)
+            let path_str = match copy_user_string(rbx) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Fault),
+            };
+
+            if path_str.is_empty() {
+                return err_to_u64(SyscallError::NoEnt);
+            }
+
+            match crate::dll::dll_load(&path_str) {
+                Some(base) => {
+                    serial_println!("[SYS] sys_loadlib '{}' => 0x{:x}", path_str, base);
+                    base
+                }
+                None => {
+                    serial_println!("[SYS] sys_loadlib FAILED '{}'", path_str);
+                    err_to_u64(SyscallError::NoEnt)
+                }
             }
         }
     }

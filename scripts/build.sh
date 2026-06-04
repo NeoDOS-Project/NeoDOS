@@ -99,6 +99,13 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     cp "target/x86_64-unknown-none/release/libneodos-dll" "$DLL_BIN"
     echo "[✓] libneodos DLL: $DLL_BIN ($(stat -c%s "$DLL_BIN") bytes)"
 
+    echo "[+] Building libmath DLL (math library)..."
+    cd "$PROJECT_ROOT/libmath-dll"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libmath-dll"; exit 1; }
+    MATH_DLL_BIN="$PROJECT_ROOT/libmath.dll"
+    cp "target/x86_64-unknown-none/release/libmath-dll" "$MATH_DLL_BIN"
+    echo "[✓] libmath DLL: $MATH_DLL_BIN ($(stat -c%s "$MATH_DLL_BIN") bytes)"
+
     cd "$PROJECT_ROOT"
     if [ -f "$USERBIN_DIR/nem_builder.py" ]; then
         echo "[+] Generating NEM driver binaries (v1/v2 test)..."

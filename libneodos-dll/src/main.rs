@@ -183,6 +183,11 @@ pub extern "C" fn dll_sys_getcwd(buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_2(17, buf as u64, len as u64) })
 }
 
+#[no_mangle]
+pub extern "C" fn dll_sys_loadlib(path: *const u8) -> i64 {
+    ret(unsafe { syscall_1(21, path as u64) })
+}
+
 // ============================================================
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
@@ -323,8 +328,9 @@ pub struct AbiTable {
     pub err_ebusy: i64,
     pub sys_chdir: extern "C" fn(*const u8) -> i64,
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
+    pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub version: u32,
-    pub _reserved: [u64; 3],
+    pub _reserved: [u64; 2],
 }
 
 #[no_mangle]
@@ -345,8 +351,6 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_pipe: dll_sys_pipe,
     sys_dup2: dll_sys_dup2,
     sys_waitpid: dll_sys_waitpid,
-    sys_chdir: dll_sys_chdir,
-    sys_getcwd: dll_sys_getcwd,
     stdout_write: dll_stdout_write,
     stderr_write: dll_stderr_write,
     stdin_read: dll_stdin_read,
@@ -374,6 +378,9 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     err_eio: EIO,
     err_enodev: ENODEV,
     err_ebusy: EBUSY,
+    sys_chdir: dll_sys_chdir,
+    sys_getcwd: dll_sys_getcwd,
+    sys_loadlib: dll_sys_loadlib,
     version: 1,
-    _reserved: [0; 3],
+    _reserved: [0; 2],
 };

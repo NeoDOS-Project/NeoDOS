@@ -52,8 +52,9 @@ pub struct AbiTable {
     pub err_ebusy: i64,
     pub sys_chdir: extern "C" fn(*const u8) -> i64,
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
+    pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub version: u32,
-    pub _reserved: [u64; 3],
+    pub _reserved: [u64; 2],
 }
 
 /// Get a reference to the DLL export table

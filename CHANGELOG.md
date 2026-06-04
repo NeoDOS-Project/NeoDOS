@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.24.5 — 2026-06-05
+
+### Multi-DLL System
+- **Añadido**: `sys_loadlib` (RAX=21) — Nueva syscall que carga un DLL desde NeoFS en un slot libre de la región de DLLs (0x1e000000..0x1e200000). Devuelve la dirección base del DLL cargado.
+- **Añadido**: `LOADLIB <path>` — Nuevo comando del shell que carga un DLL desde el filesystem usando `dll_load()`.
+- **Añadido**: `libmath-dll/` — Nueva crate que compila una librería de matemáticas como DLL standalone en `0x1e040000` (slot 1). Exporta 17 funciones: `abs`, `abs_f64`, `min`, `max`, `clamp`, `pow`, `modulo`, `div`, `sqrt_int`, `sqrt_f64`, `sin`, `cos`, `tan`, `log2`, `log`, `exp`.
+- **Añadido**: `libneodos/src/lib.rs` — Función `loadlib(path)` que invoca `sys_loadlib` y devuelve la dirección base del DLL.
+- **Añadido**: `libneodos-dll/src/main.rs` — `dll_sys_loadlib` wrapper y campo `sys_loadlib` en `AbiTable`.
+- **Modificado**: `scripts/build.sh` — Añadido build step para libmath-dll.
+- **Modificado**: `scripts/create_neodos_image.py` — Añadido `libmath.dll` al directorio `LIB` en la imagen NeoDOS FS (inode 30).
+- **Total**: 301 kernel tests.
+
 ## v0.24.4 — 2026-06-04
 
 ### X3. Capability System — Añadido

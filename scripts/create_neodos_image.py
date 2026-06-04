@@ -203,6 +203,20 @@ Happy hacking!
         else:
             print(f"[!] libneodos.dll not found — DLL not included")
 
+        # Read libmath DLL binary.
+        math_dll_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'libmath.dll'),
+            os.path.join(os.path.dirname(__file__), '..', 'libmath-dll', 'target', 'x86_64-unknown-none', 'release', 'libmath-dll'),
+        ]
+        math_dll_path = next((path for path in math_dll_candidates if os.path.exists(path)), None)
+        math_dll_data = b''
+        if math_dll_path is not None:
+            with open(math_dll_path, 'rb') as f:
+                math_dll_data = f.read()
+            print(f"[*] Including libmath.dll from {os.path.relpath(math_dll_path, os.path.dirname(__file__))} ({len(math_dll_data)} bytes)")
+        else:
+            print(f"[!] libmath.dll not found — DLL not included")
+
         # Allocate data blocks dynamically from block 6 onwards
         next_block = 6
         block_allocs = {}  # inode_num -> list of block numbers
@@ -228,6 +242,7 @@ Happy hacking!
         alltest_blocks = alloc_blocks(9, len(bin_files['alltest']))
         cputest_blocks = alloc_blocks(10, len(bin_files['cputest']))
         dll_blocks = alloc_blocks(29, len(dll_data)) # libneodos.dll
+        math_dll_blocks = alloc_blocks(30, len(math_dll_data)) # libmath.dll
         libdir_blocks = alloc_blocks(28, 256)        # LIB dir
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
@@ -251,6 +266,7 @@ Happy hacking!
             20: (0x40, 1024, pad_blocks(sys2dir_blocks)),
             28: (0x40, 256, pad_blocks(libdir_blocks)),
             29: (0x80, len(dll_data), pad_blocks(dll_blocks)),
+            30: (0x80, len(math_dll_data), pad_blocks(math_dll_blocks)),
         }
 
         # Write inodes to inode table
@@ -483,6 +499,8 @@ AHCI_DEBUG=1
             offset = (200 + blk * 8) * 512
             entry_lib = create_dir_entry(29, 1, "libneodos.dll")
             image[offset:offset+256] = entry_lib
+            entry_math = create_dir_entry(30, 1, "libmath.dll")
+            image[offset+256:offset+512] = entry_math
 
         # Write libneodos.dll data blocks
         if dll_data:
@@ -490,6 +508,15 @@ AHCI_DEBUG=1
             print(f"[*] Writing libneodos.dll ({len(dll_data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
                 chunk = dll_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                offset = (200 + blk * 8) * 512
+                image[offset:offset+len(chunk)] = chunk
+
+        # Write libmath.dll data blocks
+        if math_dll_data:
+            blks = block_allocs.get(30, [])
+            print(f"[*] Writing libmath.dll ({len(math_dll_data)} bytes across {len(blks)} blocks)...")
+            for bi, blk in enumerate(blks):
+                chunk = math_dll_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 offset = (200 + blk * 8) * 512
                 image[offset:offset+len(chunk)] = chunk
     

@@ -151,6 +151,7 @@ pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
+pub fn cmd_loadlib(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadlib(args); }
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
@@ -298,6 +299,12 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  LOAD file.bin [args]\n",
                        "  Load and execute a flat binary. Accepts optional\n",
                        "  command-line arguments passed to the program."), },
+    CommandEntry { name: "LOADLIB",   category: "CTRL",     handler: cmd_loadlib, description: "Load a shared library (DLL)",
+        usage: concat!("Syntax:  LOADLIB path\n",
+                       "  Load a shared library (DLL) from the filesystem.\n",
+                       "  The DLL is loaded into a free slot in the DLL region\n",
+                       "  and its export table becomes accessible at the slot base.\n",
+                       "  LOADLIB C:\\SYSTEM\\LIB\\LIBMATH.DLL"), },
     CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID",
         usage: concat!("Syntax:  KILL pid\n",
                        "  Terminate a running process by its PID number.\n",

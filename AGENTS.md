@@ -270,6 +270,22 @@ Comando de verificación de integridad del sistema de archivos NeoDOS:
 
 Checks: superblock (magic, block_size, num_blocks, label), inode table (mode, inode_num mismatch, block pointers, cross-links), directory tree walk (orphans, dangling entries, entry-type vs mode mismatches). 6 unit tests.
 
+## Shell: LOADLIB
+
+Comando para cargar shared libraries (DLLs) desde el filesystem:
+
+| Comando | Descripción |
+|---------|-------------|
+| `LOADLIB <path>` | Carga un DLL en un slot libre de la región de DLLs |
+
+El DLL se carga en la región `0x1e000000..0x1e200000` (8 slots de 256 KB cada uno). El kernel parsea el ELF, marca las páginas como USER_ACCESSIBLE (read-only), y devuelve la dirección base. La tabla de exportaciones del DLL queda accessible en la dirección base.
+
+DLLs disponibles:
+- `libneodos.dll` — Librería estándar (slot 0, `0x1e000000`), cargada automáticamente en boot
+- `libmath.dll` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\SYSTEM\LIB\LIBMATH.DLL`
+
+Para usar desde user-mode: llamar a `libneodos::loadlib(path)` que invoca `sys_loadlib` (RAX=21) y devuelve la dirección base del DLL.
+
 ## Syscall Table (INT 0x80)
 
 ### Architecture
@@ -301,6 +317,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
 | 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
+| 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
 
 ## IPC / Pipes
 
@@ -908,4 +925,5 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus enumerator (SYSTEM, full bus scan via bridge traversal) |
 | ATA NEM driver | `neodos/drivers/ata/ata.nem` | NEM v3 standalone ATA driver with DMA+PIO, primary+secondary channels (SYSTEM) |
 | AHCI NEM driver | `neodos/drivers/ahci/ahci.nem` | NEM v3 standalone AHCI driver (SYSTEM, DMA polling, ATA+ATAPI) |
+| libmath DLL | `neodos/libmath.dll` | Math library DLL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
