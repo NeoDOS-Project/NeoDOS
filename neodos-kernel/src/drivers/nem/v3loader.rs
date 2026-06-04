@@ -7,7 +7,7 @@
 
 use alloc::alloc::{alloc, dealloc, Layout};
 use alloc::vec::Vec;
-use crate::nem::{self, NemReloc, NemSymbol, ParsedNemV3};
+use crate::nem::{self, NemReloc, NemSymbol, ParsedNemV3, DriverCategory};
 use crate::nem::{
     R_NEM_64, R_NEM_PC32, R_NEM_32, R_NEM_32S, R_NEM_PLT32,
     NEM_SECT_TEXT, NEM_SECT_RODATA, NEM_SECT_DATA, NEM_SECT_UNDEF,
@@ -191,6 +191,7 @@ pub struct NemV3LoadResult {
     pub entry_activate: Option<unsafe extern "C" fn() -> i32>,
     pub entry_fini: Option<unsafe extern "C" fn() -> i32>,
     pub name: Vec<u8>,
+    pub category: DriverCategory,
 }
 
 /// Load a NEM v3 standalone binary into kernel heap memory.
@@ -256,6 +257,7 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
         entry_activate,
         entry_fini,
         name: parsed.name.as_bytes().to_vec(),
+        category: parsed.category,
     })
 }
 

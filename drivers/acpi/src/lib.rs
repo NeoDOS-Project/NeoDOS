@@ -75,8 +75,9 @@ fn find_acpi_pm1a_port() -> Option<u16> {
                 }
                 let device_id = pci_read_word(bus, dev, func, 2);
 
+                // PIIX3 ACPI: device 0x7000 (82371SB)
                 // PIIX4 ACPI: device 0x7113
-                if device_id == 0x7113 {
+                if device_id == 0x7000 || device_id == 0x7113 {
                     let gpbase = pci_read_dword(bus, dev, func, 0x40);
                     if gpbase & 1 != 0 {
                         return Some(((gpbase & 0xFFF0) as u16) + 0x04);

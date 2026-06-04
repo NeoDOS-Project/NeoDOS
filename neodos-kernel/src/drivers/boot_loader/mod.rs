@@ -123,11 +123,15 @@ pub fn boot_load_all() {
             let name_str = String::from_utf8_lossy(&load_result.name);
             let name_upper = name_str.to_ascii_uppercase();
 
-            let rt_id = driver_runtime::register_driver(
+            let rt_id = driver_runtime::register_driver_ext(
                 &name_upper,
                 nem::NemDriverType::Lifecycle,
                 nem::NEM_API_VERSION,
                 0,
+                parsed_v3.header.abi_min,
+                parsed_v3.header.abi_target,
+                parsed_v3.header.abi_max,
+                load_result.category,
             );
 
             match rt_id {

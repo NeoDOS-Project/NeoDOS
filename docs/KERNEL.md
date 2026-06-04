@@ -31,9 +31,11 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 12. **Storage — FAT32** — init FAT32 driver from ESP partition (absolute LBA), mount on `A:` via VFS
 13. **Page tables** — init custom 4-level page tables: 4 GiB identity-map via 2 MB huge pages, user window (`0x400000..0x800000`) marked `USER_ACCESSIBLE`, framebuffer marked uncacheable (`NO_CACHE`), map framebuffer >4 GiB if needed
 14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
-15. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener), load BOOT + SYSTEM NEM v3 drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\` via boot driver loader (PHASE 3.75–3.86)
-16. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
-17. **Shell** — set all keyboard LEDs ON, register kernel tests (290), create and run `DosShell`
+15. **Mmap demand paging** — split mmap region (`0x20000000..0x22000000`) into 4 KB page tables via `init_mmap_demand_paging()`
+16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener), load BOOT + SYSTEM NEM v3 drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\` via boot driver loader (PHASE 3.75–3.86)
+17. **DLL region init** — split DLL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.dll` at slot 0
+18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
+19. **Shell** — set all keyboard LEDs ON, register kernel tests (301), create and run `DosShell`
 
 ### GPT Layout (single disk)
 
@@ -57,18 +59,33 @@ sector reads/writes are transparently offset to the correct partition location.
 
 The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins include:
 
-- `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `VOL`, `DRIVES`, `SYNC`, `CALL`
+- `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `VOL`, `DRIVES`, `SYNC`, `CALL`, `RD`, `DEL`, `REN`
 - `CPUINFO` (CPUID vendor/brand)
 - `MEM` (memory stats derived from UEFI memory map)
+- `PS` (list processes with PID, state, priority, handles)
+- `PRI <pid> <level>` (set process priority 0-3)
+- `KOBJ` (list kernel objects tracked by KOBJ manager)
+- `NDREG LIST|SHOW|QUERY|RUNTIME|HEALTH|DEBUG|LOAD` (driver registry CLI)
+- `LOADLIB <path>` (load shared library DLL)
+- `FSCK [drive:] [/F]` (filesystem integrity check)
+- `SHUTDOWN` / `POWEROFF` / `EXIT` (system shutdown via ACPI)
+- `KILL <pid>` (terminate process)
+- `KEYB US|SP` (switch keyboard layout)
+- `DATE`, `TIME`, `VER`
+- `test` (run 301 kernel self-tests + 4 user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 
 ## Scheduler / Timer
 
-The kernel includes a simple round-robin scheduler and a timer interrupt handler.
+The kernel includes a **priority scheduler** (A2) with 4 levels and dynamic time-slicing.
 
-- An idle process is always present.
-- Context switching is performed from the timer ISR once non-idle processes exist.
+- **Priority levels**: HIGH (400 ticks), ABOVE_NORMAL (200 ticks), NORMAL (100 ticks, default), IDLE (50 ticks)
+- **Algorithm**: `schedule()` scans by priority level (HIGH→IDLE), round-robin within the same level
+- **Preemption**: `timer_handler_inner` detects Ring 3 (CS=0x1B), saves RSP, calls `schedule()`, updates TSS.RSP0
+- **Aging**: every 100 ticks, processes Ready for >= 1000 ticks receive a priority boost (prevents starvation)
+- **sys_yield** (RAX=2): Running→Ready + reset time slice + force reschedule
+- An idle process (PID 0) is always present
 
 See `docs/SCHEDULER.md`.
 

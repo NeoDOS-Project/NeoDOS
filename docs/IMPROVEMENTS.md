@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.24.4 (301 tests, X3 Capability System).
+> Versión actual: v0.24.5 (301 tests, Multi-DLL system).
 > Objetivo: v0.25 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (73 items)
+## COMPLETED (74 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -83,13 +83,17 @@
 65. **S6. libneodos** — `libneodos/`: standard library para procesos Ring 3 en Rust. Syscall wrappers con `int 0x80` inline asm (sys_exit, sys_write, sys_read, sys_open, sys_readfile, sys_writefile, sys_brk, sys_mmap, sys_munmap, etc.). IO module con Stdout/Stdin/Stderr + `core::fmt::Write` impl. FS module (File::open/read/write). Memory module (sbrk, mmap, munmap). Safe macros (print!, println!, eprint!, eprintln!). Panic handler que llama sys_exit(1). Sample user binary `userbin/hello_lib/`.
 
 ### Shell & Testing
-66. **150 kernel self-tests** — 15 suites, comando `test`, 4 user-mode binaries.
+66. **301 kernel self-tests** — 36 suites, comando `test`, 4 user-mode binaries.
 67. **4 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN.
 68. **Command history** — buffer circular 32, ↑/↓ navegación.
 69. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
 70. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
 71. **Shell commands básicos** — HELP, DATE, TIME, VER, DEL, REN, RD, SHUTDOWN, EXIT, LOAD.
 72. **S1. Estabilizar syscall ABI** — `SyscallNum` enum + `from_u64()`, `SyscallError` enum (16 codes), `err_to_u64()` negative encoding, `syserr!` macro, `validate_abi()` boot-time assertion, clean `match` dispatch, `[SYS]` log pruning.
+
+### Shared Libraries & Loading
+73. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
+74. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
 
 ---
 
@@ -556,13 +560,13 @@ Dependencias: networking stack completo (E3), URN (Z2), distributed consensus (R
 1. Memory core (slab + handles + KOBJ + page cache) ✅
 2. Concurrency (scheduler + events + work queues) ✅
 3. Async I/O system (IRP) ✅
-4. Driver safety layer (ABI + deps done; capability, isolation, hot-reload, DLL pending)
+4. Driver safety layer (ABI + deps + capability done; isolation, hot-reload pending)
 5. Observability & debugging — pending
 6. Modern hardware (PCIe + MSI + APIC) — pending
 7. Storage + USB drivers (ATA/AHCI done; VirtIO, NVMe, NCQ, USB pending)
 8. Service layer (NeoInit + namespace) — pending
 9. Networking stack — pending
-10. Userland usable system (libneodos done; PATH, pipes, redirect, ANSI, edit, top, scripting, compositor, DLL pending)
+10. Userland usable system (libneodos + DLL system done; PATH, pipes, redirect, ANSI, edit, top, scripting, compositor pending)
 11. Security hardening — pending
 12. Performance tuning — pending
 13. SMP enablement — pending

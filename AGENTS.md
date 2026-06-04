@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.24.4
+v0.24.5
 
 ## Build & Run
 

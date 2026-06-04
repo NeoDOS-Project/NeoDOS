@@ -426,6 +426,26 @@ Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init o
 
 ---
 
+### 8.5. DLL System (`src/dll.rs`)
+
+Shared library (DLL) loading subsystem for user-mode processes.
+
+**DLL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87).
+
+**Available DLLs**:
+| DLL | Slot | Address | Load |
+|-----|------|---------|------|
+| `libneodos.dll` | 0 | `0x1e000000` | Auto-loaded at boot |
+| `libmath.dll` | 1 | `0x1e040000` | Manual via `LOADLIB` |
+
+**sys_loadlib (RAX=21)**: Loads a NeoDOS DLL from NeoFS into the next free slot. Returns base address. The DLL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
+
+**Shell command**: `LOADLIB C:\SYSTEM\LIB\LIBMATH.DLL` loads libmath into slot 1.
+
+**libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the DLL base address for user-mode `extern "C"` function dispatch.
+
+---
+
 ### 9. NDREG — Registry CLI (`src/shell/commands/ndreg.rs`)
 
 A `regedit`-style tool for inspecting the driver registry.
@@ -468,7 +488,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **290 tests** (35 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **301 tests** (36 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -540,6 +560,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
 | 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
 | 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
+| 21 | sys_loadlib | RBX=path_ptr | Load DLL from NeoFS into DLL region slot |
 
 ## Debug Interfaces
 
