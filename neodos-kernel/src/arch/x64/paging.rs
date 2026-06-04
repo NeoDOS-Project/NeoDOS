@@ -547,6 +547,35 @@ pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
     Ok(())
 }
 
+/// Set USER_ACCESSIBLE on the PD entry covering `virt`.
+/// Required when `split_2mb_page` creates a new page table for a non-heap/mmap address,
+/// because the PD entry gates user access for all 512 PTEs it covers.
+pub fn set_pd_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
+    let pml4_base = crate::hal::read_cr3() & !0xFFF;
+    let pml4_idx = ((virt >> 39) & 0x1FF) as usize;
+    let pdpt_idx = ((virt >> 30) & 0x1FF) as usize;
+    let pd_idx   = ((virt >> 21) & 0x1FF) as usize;
+
+    unsafe {
+        let pml4 = &mut *(pml4_base as *mut PageTable);
+        let pdpt = &mut *(pml4[pml4_idx].addr().as_u64() as *mut PageTable);
+        let pd   = &mut *(pdpt[pdpt_idx].addr().as_u64() as *mut PageTable);
+
+        let pde = &mut pd[pd_idx];
+        let phys = pde.addr();
+        let mut flags = pde.flags();
+        if user {
+            flags |= PageTableFlags::USER_ACCESSIBLE;
+        } else {
+            flags.remove(PageTableFlags::USER_ACCESSIBLE);
+        }
+        pde.set_addr(phys, flags);
+    }
+
+    crate::hal::flush_tlb(virt);
+    Ok(())
+}
+
 /// Check if a virtual address falls within any process's heap range.
 pub fn is_heap_virtual_addr(virt: u64) -> bool {
     virt >= PROCESS_HEAP_BASE

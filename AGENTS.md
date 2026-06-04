@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.24.2
+v0.24.3
 
 ## Build & Run
 
@@ -296,6 +296,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle) |
 | 12 | `sys_writefile` | RBX=fd, RCX=buf, RDX=count | Escribe a archivo (usa offset del handle) |
 | 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) |
+| 16 | `sys_chdir` | RBX=path_ptr | Cambia directorio actual |
+| 17 | `sys_getcwd` | RBX=buf, RCX=len | Obtiene directorio actual |
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
 | 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |

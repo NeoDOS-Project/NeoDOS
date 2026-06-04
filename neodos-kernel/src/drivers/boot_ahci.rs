@@ -362,7 +362,6 @@ impl BootAhci {
 
         if cmd_timed_out {
             crate::boot_benchmark::ahci_cmd_timeout();
-            serial_println!("[AHCI] Command timeout: lba={} polls={}", lba, poll_count);
         }
 
         let tfd = port_read32(abar, port, PORT_TFD);

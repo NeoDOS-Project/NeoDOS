@@ -91,6 +91,15 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     # Also produce hello.elf (same binary as hello.bin, but with .elf extension for ELF loader tests)
     cp "$USERBIN_DIR/hello.bin" "$USERBIN_DIR/hello.elf"
     echo "    -> $USERBIN_DIR/hello.elf"
+
+    echo "[+] Building libneodos DLL (shared library)..."
+    cd "$PROJECT_ROOT/libneodos-dll"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libneodos-dll"; exit 1; }
+    DLL_BIN="$PROJECT_ROOT/libneodos.dll"
+    cp "target/x86_64-unknown-none/release/libneodos-dll" "$DLL_BIN"
+    echo "[✓] libneodos DLL: $DLL_BIN ($(stat -c%s "$DLL_BIN") bytes)"
+
+    cd "$PROJECT_ROOT"
     if [ -f "$USERBIN_DIR/nem_builder.py" ]; then
         echo "[+] Generating NEM driver binaries (v1/v2 test)..."
         python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"

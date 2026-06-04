@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod export;
 pub mod syscall;
 pub mod io;
 pub mod fs;
@@ -8,5 +9,5 @@ pub mod macros;
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    syscall::sys_exit(1)
+    (export::get_table().sys_exit)(1)
 }

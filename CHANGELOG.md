@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.24.3 — 2026-06-04
+
+### B6b. Shared library system (libneodos DLL) — COMPLETED
+- **Añadido**: `libneodos-dll/` — Nueva crate que compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`.
+- **Añadido**: `neodos-kernel/src/dll.rs` — Subsistema de carga de DLLs: `init_dll_region()` divide páginas enormes 2MB para región de DLL, `dll_load()` carga ELF, `load_dll()` carga `libneodos.dll` al arrancar (PHASE 3.86). 8 slots de 256 KB cada uno.
+- **Añadido**: `neodos-kernel/src/arch/x64/paging.rs` — `set_pd_user_accessible()` para marcar entradas PD como USER_ACCESSIBLE en regiones no-heap/mmap.
+- **Modificado**: `libneodos/` — Refactor completo: todas las llamadas a syscall ahora pasan por la export table del DLL (`export::get_table().*`) en lugar de inline asm directo.
+- **Añadido**: `libneodos/src/export.rs` — Estructura `AbiTable` mirror del DLL para acceso a funciones exportadas.
+- **Añadido**: `sys_chdir` y `sys_getcwd` — wrappers en DLL y thin lib, conectados al kernel vía AbiTable (syscall 16 y 17).
+- **Modificado**: `scripts/build.sh` — Añadido build step para libneodos-dll.
+- **Modificado**: `scripts/create_neodos_image.py` — Añadido directorio `LIB` con `libneodos.dll` en la imagen NeoDOS FS.
+- **Modificado**: `.gitignore` — Ignorar `*.dll`.
+
 ## v0.24.2 — 2026-06-04
 
 ### V1. Global Page Cache (advanced) — Reescritura completa

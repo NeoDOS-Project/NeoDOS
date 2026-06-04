@@ -1,4 +1,4 @@
-use core::arch::asm;
+use crate::export;
 
 pub const EINVAL: i64 = -1;
 pub const ENOENT: i64 = -2;
@@ -16,95 +16,36 @@ pub const EIO: i64 = -13;
 pub const ENODEV: i64 = -14;
 pub const EBUSY: i64 = -15;
 
-fn ret(val: u64) -> Result<u64, i64> {
-    let signed = val as i64;
-    if signed < 0 { Err(signed) } else { Ok(val) }
+fn ret(val: i64) -> Result<u64, i64> {
+    if val < 0 { Err(val) } else { Ok(val as u64) }
 }
 
-fn ret_unit(val: u64) -> Result<(), i64> {
-    let signed = val as i64;
-    if signed < 0 { Err(signed) } else { Ok(()) }
-}
-
-unsafe fn syscall_0(n: u64) -> u64 {
-    let r: u64;
-    asm!("mov rax, {}", "int 0x80", in(reg) n, out("rax") r);
-    r
-}
-
-unsafe fn syscall_1(n: u64, a0: u64) -> u64 {
-    let r: u64;
-    asm!(
-        "push rbx",
-        "mov rax, {n}", "mov rbx, {a0}", "int 0x80",
-        "pop rbx",
-        n = in(reg) n, a0 = in(reg) a0,
-        out("rax") r,
-    );
-    r
-}
-
-unsafe fn syscall_2(n: u64, a0: u64, a1: u64) -> u64 {
-    let r: u64;
-    asm!(
-        "push rbx", "push rcx",
-        "mov rax, {n}", "mov rbx, {a0}", "mov rcx, {a1}", "int 0x80",
-        "pop rcx", "pop rbx",
-        n = in(reg) n, a0 = in(reg) a0, a1 = in(reg) a1,
-        out("rax") r,
-    );
-    r
-}
-
-unsafe fn syscall_3(n: u64, a0: u64, a1: u64, a2: u64) -> u64 {
-    let r: u64;
-    asm!(
-        "push rbx", "push rcx", "push rdx",
-        "mov rax, {n}", "mov rbx, {a0}", "mov rcx, {a1}", "mov rdx, {a2}", "int 0x80",
-        "pop rdx", "pop rcx", "pop rbx",
-        n = in(reg) n, a0 = in(reg) a0, a1 = in(reg) a1, a2 = in(reg) a2,
-        out("rax") r,
-    );
-    r
-}
-
-unsafe fn syscall_5(n: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
-    let r: u64;
-    asm!(
-        "push rbx", "push rcx", "push rdx", "push r8", "push r9",
-        "mov rax, {n}", "mov rbx, {a0}", "mov rcx, {a1}", "mov rdx, {a2}",
-        "mov r8, {a3}", "mov r9, {a4}", "int 0x80",
-        "pop r9", "pop r8", "pop rdx", "pop rcx", "pop rbx",
-        n = in(reg) n, a0 = in(reg) a0, a1 = in(reg) a1,
-        a2 = in(reg) a2, a3 = in(reg) a3, a4 = in(reg) a4,
-        out("rax") r,
-    );
-    r
+fn ret_unit(val: i64) -> Result<(), i64> {
+    if val < 0 { Err(val) } else { Ok(()) }
 }
 
 pub fn sys_exit(code: u32) -> ! {
-    unsafe { syscall_1(0, code as u64); }
-    loop { unsafe { asm!("hlt"); } }
+    (export::get_table().sys_exit)(code)
 }
 
 pub fn sys_write(fd: u8, buf: &[u8]) -> Result<usize, i64> {
-    let ptr = buf.as_ptr() as u64;
-    let len = buf.len() as u64;
-    ret(unsafe { syscall_3(1, fd as u64, ptr, len) }).map(|v| v as usize)
+    let ptr = buf.as_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_write)(fd, ptr, len)).map(|v| v as usize)
 }
 
 pub fn sys_yield() {
-    unsafe { syscall_0(2); }
+    (export::get_table().sys_yield)()
 }
 
 pub fn sys_getpid() -> u32 {
-    unsafe { syscall_0(3) as u32 }
+    (export::get_table().sys_getpid)()
 }
 
 pub fn sys_read(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr() as u64;
-    let len = buf.len() as u64;
-    ret(unsafe { syscall_3(4, fd as u64, ptr, len) }).map(|v| v as usize)
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_read)(fd, ptr, len)).map(|v| v as usize)
 }
 
 fn path_to_null_terminated(path: &str) -> Result<[u8; 256], i64> {
@@ -119,46 +60,46 @@ fn path_to_null_terminated(path: &str) -> Result<[u8; 256], i64> {
 
 pub fn sys_open(path: &str) -> Result<u8, i64> {
     let buf = path_to_null_terminated(path)?;
-    let ptr = buf.as_ptr() as u64;
-    ret(unsafe { syscall_2(10, ptr, 0) }).map(|v| v as u8)
+    let ptr = buf.as_ptr();
+    ret((export::get_table().sys_open)(ptr)).map(|v| v as u8)
 }
 
 pub fn sys_readfile(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr() as u64;
-    let len = buf.len() as u64;
-    ret(unsafe { syscall_3(11, fd as u64, ptr, len) }).map(|v| v as usize)
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_readfile)(fd, ptr, len)).map(|v| v as usize)
 }
 
 pub fn sys_writefile(fd: u8, buf: &[u8]) -> Result<usize, i64> {
-    let ptr = buf.as_ptr() as u64;
-    let len = buf.len() as u64;
-    ret(unsafe { syscall_3(12, fd as u64, ptr, len) }).map(|v| v as usize)
+    let ptr = buf.as_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_writefile)(fd, ptr, len)).map(|v| v as usize)
 }
 
 pub fn sys_close(fd: u8) -> Result<(), i64> {
-    ret_unit(unsafe { syscall_1(13, fd as u64) })
+    ret_unit((export::get_table().sys_close)(fd))
 }
 
 pub fn sys_chdir(path: &str) -> Result<(), i64> {
     let buf = path_to_null_terminated(path)?;
-    let ptr = buf.as_ptr() as u64;
-    ret_unit(unsafe { syscall_1(16, ptr) })
+    let ptr = buf.as_ptr();
+    ret_unit((export::get_table().sys_chdir)(ptr))
 }
 
 pub fn sys_getcwd(buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr() as u64;
-    let len = buf.len() as u64;
-    ret(unsafe { syscall_2(17, ptr, len) }).map(|v| v as usize)
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_getcwd)(ptr, len)).map(|v| v as usize)
 }
 
 pub fn sys_brk(new_break: u64) -> Result<u64, i64> {
-    ret(unsafe { syscall_1(18, new_break) })
+    ret((export::get_table().sys_brk)(new_break))
 }
 
 pub fn sys_mmap(hint: u64, len: u64, prot: u16, flags: u16, file_handle: u64) -> Result<u64, i64> {
-    ret(unsafe { syscall_5(19, hint, len, prot as u64, flags as u64, file_handle) })
+    ret((export::get_table().sys_mmap)(hint, len, prot, flags, file_handle))
 }
 
 pub fn sys_munmap(addr: u64, len: u64) -> Result<(), i64> {
-    ret_unit(unsafe { syscall_2(20, addr, len) })
+    ret_unit((export::get_table().sys_munmap)(addr, len))
 }

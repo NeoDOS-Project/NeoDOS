@@ -13,3 +13,4 @@ target/
 *.vdi
 *.log
 *.fs
+*.dll

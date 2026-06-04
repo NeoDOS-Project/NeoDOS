@@ -1,28 +1,23 @@
-use crate::syscall;
+use crate::export;
 
 pub fn brk(new_break: u64) -> Result<u64, i64> {
-    syscall::sys_brk(new_break)
+    let ret = (export::get_table().brk)(new_break);
+    if ret < 0 { Err(ret) } else { Ok(ret as u64) }
 }
 
 pub fn sbrk(increment: i64) -> Result<u64, i64> {
-    let current = brk(0)?;
-    if increment == 0 {
-        return Ok(current);
-    }
-    let new = (current as i64).checked_add(increment).ok_or(syscall::EINVAL)?;
-    if new < 0 {
-        return Err(syscall::EINVAL);
-    }
-    let new = new as u64;
-    brk(new).map(|_| current)
+    let ret = (export::get_table().sbrk)(increment);
+    if ret < 0 { Err(ret) } else { Ok(ret as u64) }
 }
 
 pub fn mmap(len: u64, prot: u16, flags: u16) -> Result<u64, i64> {
-    syscall::sys_mmap(0, len, prot, flags, 0)
+    let ret = (export::get_table().mmap)(len, prot, flags);
+    if ret < 0 { Err(ret) } else { Ok(ret as u64) }
 }
 
 pub fn munmap(addr: u64, len: u64) -> Result<(), i64> {
-    syscall::sys_munmap(addr, len)
+    let ret = (export::get_table().munmap)(addr, len);
+    if ret < 0 { Err(ret) } else { Ok(()) }
 }
 
 pub const PROT_READ: u16 = 1;

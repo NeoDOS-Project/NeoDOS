@@ -34,6 +34,7 @@ mod memory;
 mod globals;
 pub mod usermode;
 pub mod syscall;
+mod dll;
 mod irp;
 mod testing;
 pub mod trace;
@@ -262,9 +263,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::boot_loader::boot_load_all();
 
     // ============================================
-    // PHASE 3.86: Initialise NEM driver bridges
+    // PHASE 3.86: Initialise NEM driver bridges + DLL loader
     // ============================================
     drivers::rtc_bridge::init();
+    dll::init_dll_region();
+    dll::load_dll();
 
     // ============================================
     // PHASE 3.9: Validate syscall ABI

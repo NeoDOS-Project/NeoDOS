@@ -158,7 +158,7 @@ Happy hacking!
         image[512+512:512+768] = testbat_inode
         
         # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, 0x40, 1024, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        system_dir_inode = create_inode(3, 0x40, 1280, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+768:512+1024] = system_dir_inode
 
         # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
@@ -187,6 +187,22 @@ Happy hacking!
                 print(f"[!] {name}.bin not found — skipping")
             bin_files[name] = data
 
+        # Read libneodos DLL binary.
+        # Prefer the copied root artifact, but fall back to the crate output
+        # so the image still includes the DLL if the copy step was skipped.
+        dll_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'libneodos.dll'),
+            os.path.join(os.path.dirname(__file__), '..', 'libneodos-dll', 'target', 'x86_64-unknown-none', 'release', 'libneodos-dll'),
+        ]
+        dll_path = next((path for path in dll_candidates if os.path.exists(path)), None)
+        dll_data = b''
+        if dll_path is not None:
+            with open(dll_path, 'rb') as f:
+                dll_data = f.read()
+            print(f"[*] Including libneodos.dll from {os.path.relpath(dll_path, os.path.dirname(__file__))} ({len(dll_data)} bytes)")
+        else:
+            print(f"[!] libneodos.dll not found — DLL not included")
+
         # Allocate data blocks dynamically from block 6 onwards
         next_block = 6
         block_allocs = {}  # inode_num -> list of block numbers
@@ -211,6 +227,8 @@ Happy hacking!
         filetest_blocks = alloc_blocks(8, len(bin_files['filetest']))
         alltest_blocks = alloc_blocks(9, len(bin_files['alltest']))
         cputest_blocks = alloc_blocks(10, len(bin_files['cputest']))
+        dll_blocks = alloc_blocks(29, len(dll_data)) # libneodos.dll
+        libdir_blocks = alloc_blocks(28, 256)        # LIB dir
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
         bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
@@ -231,6 +249,8 @@ Happy hacking!
             16: (0x40, 256 * 5, pad_blocks(testdir_blocks)),
             19: (0x40, 256 * 2, pad_blocks(bootdir_blocks)),
             20: (0x40, 1024, pad_blocks(sys2dir_blocks)),
+            28: (0x40, 256, pad_blocks(libdir_blocks)),
+            29: (0x80, len(dll_data), pad_blocks(dll_blocks)),
         }
 
         # Write inodes to inode table
@@ -348,6 +368,9 @@ ECHO Done.
         # Entry 4: BOOT.CFG
         entry4 = create_dir_entry(11, 1, "BOOT.CFG")
         image[offset+768:offset+1024] = entry4
+        # Entry 5: LIB subdirectory
+        entry5 = create_dir_entry(28, 2, "LIB")
+        image[offset+1024:offset+1280] = entry5
 
         # Block 4 = sector 232 (CONFIG.SYS)
         print("[*] Writing CONFIG.SYS...")
@@ -404,19 +427,6 @@ AHCI_DEBUG=1
         entry_sys2 = create_dir_entry(20, 2, "SYSTEM")
         image[off+512:off+768] = entry_sys2
 
-        print("[*] Writing TEST directory...")
-        off = (200 + testdir_blocks[0] * 8) * 512
-        entry_null = create_dir_entry(10, 1, "null.nem")
-        image[off:off+256] = entry_null
-        entry_echo = create_dir_entry(11, 1, "echo.nem")
-        image[off+256:off+512] = entry_echo
-        entry_stress = create_dir_entry(12, 1, "stress_lifecycle.nem")
-        image[off+512:off+768] = entry_stress
-        entry_fault = create_dir_entry(13, 1, "fault.nem")
-        image[off+768:off+1024] = entry_fault
-        entry_burst = create_dir_entry(14, 1, "burst.nem")
-        image[off+1024:off+1280] = entry_burst
-
         # BOOT directory (uses dynamically allocated blocks)
         print("[*] Writing BOOT directory...")
         for bi, blk in enumerate(bootdir_blocks):
@@ -465,6 +475,23 @@ AHCI_DEBUG=1
                     offset = (200 + blk * 8) * 512
                     image[offset:offset+len(chunk)] = chunk
                 print(f"[*] Writing SYSTEM/{fname} content...")
+
+        # Write LIB directory content
+        if libdir_blocks:
+            print("[*] Writing LIB directory...")
+            blk = libdir_blocks[0]
+            offset = (200 + blk * 8) * 512
+            entry_lib = create_dir_entry(29, 1, "libneodos.dll")
+            image[offset:offset+256] = entry_lib
+
+        # Write libneodos.dll data blocks
+        if dll_data:
+            blks = block_allocs.get(29, [])
+            print(f"[*] Writing libneodos.dll ({len(dll_data)} bytes across {len(blks)} blocks)...")
+            for bi, blk in enumerate(blks):
+                chunk = dll_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                offset = (200 + blk * 8) * 512
+                image[offset:offset+len(chunk)] = chunk
     
     # Escribir imagen a disco
     output_file = args.output
