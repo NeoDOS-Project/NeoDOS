@@ -1,6 +1,6 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.25.0 (312 tests, Driver Isolation Layer).
+> Versión actual: v0.25.2 (312 tests + 5 user-mode binaries, Driver Isolation Layer).
 > Objetivo: v0.26 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
@@ -85,7 +85,7 @@
 
 ### Shell & Testing
 66. **301 kernel self-tests** — 36 suites, comando `test`, 4 user-mode binaries.
-67. **4 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN.
+67. **5 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN, TEST.BIN.
 68. **Command history** — buffer circular 32, ↑/↓ navegación.
 69. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
 70. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
@@ -96,6 +96,7 @@
 73. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
 74. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
 75. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: Page-isolated 16 MB region (0x30000000–0x31000000) for NEM drivers with 16 × 1 MB slots. Region init splits 2 MB huge pages into 4K page tables; strips identity mapping during init. `allocate_driver_slot()`/`free_driver_slot()` with `ISOLATED_REGIONS` tracking. `alloc_isolated_page()`/`free_isolated_page()` for per-page phys frame + identity-mapped page table entry. `validate_driver_ptr()`/`validate_driver_str_ptr()` for argument validation in export table, accepting kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000), and driver region. `handle_isolated_page_fault()` for sandbox mode (DEMAND drivers → FAULTED). `CAP_ISOLATION` (bit 11). Loader (`v3loader.rs`) allocates via isolated region with heap fallback. Boot loader binds isolation region after registration. `NDREG SHOW`/`RUNTIME` display isolation mode and region. 12 unit tests. Total: 312 tests.
+76. **TEST.EXE — libmath.dll self-test user binary** — `userbin/test/` Rust project que carga `libmath.dll` dinámicamente vía `sys_loadlib` (RAX=21) y ejecuta 5 fases de validación: LOAD TEST (carga + verificación de tabla de exportación), BASIC ARITHMETIC TESTS (add, sub, mul, div correctness), EDGE CASES (ceros, valores negativos, casos límite), STRESS TEST (1,000,000 iteraciones add(i, i+1) detectando stack corruption/memory instability), DETERMINISM (1000 iteraciones idénticas con resultado reproducible), e INTEGRITY CHECKS (ABI stability: 100 mixed calls a add/sub/mul/div/abs/min/max sin crash ni desviación). `libmath-dll` extendido con funciones `math_add`, `math_sub`, `math_mul` + entradas en `MathAbiTable`. Scripts `build.sh` y `create_neodos_image.py` actualizados. Total: 312 kernel tests + 5 user-mode binaries.
 
 ---
 

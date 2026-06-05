@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.25.2 — 2026-06-05
+
+### TEST.EXE — libmath.dll self-test user binary
+- **Añadido**: `math_add`, `math_sub`, `math_mul` en `libmath-dll/src/main.rs` — tres nuevas funciones aritméticas con sus correspondientes entradas en `MathAbiTable`.
+- **Añadido**: `userbin/test/` — nuevo proyecto userland (`TEST.EXE`) que carga `libmath.dll` dinámicamente vía `sys_loadlib` y ejecuta 5 fases: LOAD TEST (carga + resolución de símbolos), BASIC ARITHMETIC TESTS (add, sub, mul, div), EDGE CASES (ceros, negativos, overflow), STRESS TEST (1M iteraciones add(i, i+1)), DETERMINISM (1000 iteraciones idénticas), e INTEGRITY CHECKS (ABI stability cross-call). Imprime reporte PASS/FAIL.
+- **Actualizado**: `scripts/build.sh` — añadido `test` a la lista de bins a compilar.
+- **Actualizado**: `scripts/create_neodos_image.py` — incluye `TEST.BIN` como inode 12, entry en root directory.
+- **Total**: 312 kernel tests + 5 user-mode binaries.
+
 ## v0.25.1 — 2026-06-05
 
 ### Default file permissions by context — Añadido

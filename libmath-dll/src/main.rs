@@ -16,6 +16,21 @@ pub extern "C" fn dll_entry() -> ! {
 // ============================================================
 
 #[no_mangle]
+pub extern "C" fn math_add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+#[no_mangle]
+pub extern "C" fn math_sub(a: i64, b: i64) -> i64 {
+    a - b
+}
+
+#[no_mangle]
+pub extern "C" fn math_mul(a: i64, b: i64) -> i64 {
+    a * b
+}
+
+#[no_mangle]
 pub extern "C" fn math_abs(x: i64) -> i64 {
     if x < 0 { -x } else { x }
 }
@@ -180,6 +195,9 @@ const LN2: f64 = 0.69314718055994530942;
 #[repr(C)]
 pub struct MathAbiTable {
     pub version: u32,
+    pub add: extern "C" fn(i64, i64) -> i64,
+    pub sub: extern "C" fn(i64, i64) -> i64,
+    pub mul: extern "C" fn(i64, i64) -> i64,
     pub abs: extern "C" fn(i64) -> i64,
     pub abs_f64: extern "C" fn(f64) -> f64,
     pub min: extern "C" fn(i64, i64) -> i64,
@@ -203,6 +221,9 @@ pub struct MathAbiTable {
 #[link_section = ".export_table"]
 pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
     version: 1,
+    add: math_add,
+    sub: math_sub,
+    mul: math_mul,
     abs: math_abs,
     abs_f64: math_abs_f64,
     min: math_min,

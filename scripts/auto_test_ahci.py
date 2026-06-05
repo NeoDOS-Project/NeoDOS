@@ -240,13 +240,13 @@ def run_test():
         
         # Check user-mode tests
         user_tests_found = 0
-        for ut in ["HELLO.BIN", "SYSTEST.BIN", "FILETEST.BIN", "ALLTEST.BIN"]:
+        for ut in ["HELLO.BIN", "SYSTEST.BIN", "FILETEST.BIN", "ALLTEST.BIN", "CPUTEST.BIN", "TEST.BIN"]:
             if f"Running {ut}" in full_text or f"--- Running {ut}" in full_text:
                 user_tests_found += 1
-        if user_tests_found >= 4:
-            print(f"[PASS] All 4 user-mode binaries executed")
+        if user_tests_found >= 6:
+            print(f"[PASS] All 6 user-mode binaries executed")
         elif user_tests_found > 0:
-            print(f"[PARTIAL] {user_tests_found}/4 user-mode binaries executed")
+            print(f"[PARTIAL] {user_tests_found}/6 user-mode binaries executed")
         else:
             print("[UNKNOWN] No user-mode binary output found")
         

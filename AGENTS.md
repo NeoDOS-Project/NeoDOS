@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.25.1
+v0.25.2
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 312 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 312 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -425,6 +425,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 |---------|-----------|--------|--------|
 | `hello.bin` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
 | `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.4 |
+| `test.bin` | Rust `userbin/test/` | ~21 KB | libmath.dll self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
@@ -514,7 +515,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 Comando `test`:
 1. Ejecuta `testing::run_all()` (312 tests kernel)
-2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
+2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
 
