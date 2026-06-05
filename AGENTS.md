@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.25.0
+v0.25.1
 
 ## Build & Run
 
@@ -259,6 +259,24 @@ Comandos de gestión de archivos que operan via VFS (`vfs.rs`):
 | `RD dir` | Elimina directorio vacío | `vfs.remove_dir()` |
 
 Métodos del trait `FileSystem`: `remove_file()`, `remove_dir()`, `rename()` — con default `NotImplemented`.
+
+## Default File Permissions by Context
+
+Al crear un archivo o directorio en NeoFS, se asignan permisos RWXSD según el tipo de archivo (extensión). Los permisos se almacenan en el campo `mode` del inodo y coexisten con `MODE_FILE`/`MODE_DIR`.
+
+| Tipo | Extensiones | Permisos (RWXSD) | Uso |
+|------|-------------|------------------|-----|
+| Ejecutable | `.BIN`, `.COM`, `.EXE` | `R-X--` | Leer + ejecutar, protección contra modificación accidental |
+| Driver | `.NEM` | `R----` | Solo lectura, archivos críticos del sistema |
+| Librería | `.DLL` | `R-X--` | Cargar desde user-mode, no modificar |
+| Script | `.BAT`, `.CMD` | `R-X--` | Leer + ejecutar por el shell |
+| Sistema | `.SYS` | `R----` | Configuración crítica del sistema |
+| Configuración | `.CFG`, `.INI` | `RW---` | Leer y modificar |
+| Texto | `.TXT`, `.MD`, `.LOG`, `.ASC` | `RW---` | Edición normal |
+| Otros | cualquier otra extensión | `RW---` | Por defecto |
+| Directorios | — | `RWXD-` | Permisos completos sobre el directorio |
+
+La asignación se realiza en `NeoDosFs::create_file_at()` (vía `default_perms_for_filename()`) y `create_directory_at()`. El script `create_neodos_image.py` aplica los mismos criterios al generar la imagen inicial del FS.
 
 ## Shell: FSCK
 

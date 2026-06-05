@@ -9,6 +9,36 @@ SUPERBLOCK_MAGIC = 0x4F444F4E  # "NEOD"
 DATA_START_SECTOR = 200
 ROOT_DIR_BLOCK = 0
 
+# NeoDOS permission and mode flags (matching neodos_fs.rs)
+MODE_DIR = 0x0040
+MODE_FILE = 0x0080
+PERM_R = 0x0001
+PERM_W = 0x0002
+PERM_X = 0x0004
+PERM_S = 0x0008
+PERM_D = 0x0010
+
+
+def default_perms_for_filename(name):
+    """Match kernel's NeodosFs::default_perms_for_filename() logic."""
+    upper = name.upper()
+    if upper.endswith('.BIN') or upper.endswith('.COM') or upper.endswith('.EXE'):
+        return PERM_R | PERM_X
+    elif upper.endswith('.NEM'):
+        return PERM_R
+    elif upper.endswith('.DLL'):
+        return PERM_R | PERM_X
+    elif upper.endswith('.BAT') or upper.endswith('.CMD'):
+        return PERM_R | PERM_X
+    elif upper.endswith('.SYS'):
+        return PERM_R
+    elif upper.endswith('.CFG') or upper.endswith('.INI'):
+        return PERM_R | PERM_W
+    elif upper.endswith('.TXT') or upper.endswith('.MD') or upper.endswith('.LOG') or upper.endswith('.ASC'):
+        return PERM_R | PERM_W
+    else:
+        return PERM_R | PERM_W
+
 def create_superblock(volume_label=""):
     """Crear superbloque (512 bytes)"""
     data = bytearray(512)
@@ -129,9 +159,10 @@ Happy hacking!
 
     if args.minimal:
         # --- Minimal disk: only test.txt ---
-        root_inode = create_inode(0, 0x40, 256, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        dir_mode = MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D
+        root_inode = create_inode(0, dir_mode, 256, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512:512+256] = root_inode
-        txt_inode = create_inode(1, 0x80, 56, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        txt_inode = create_inode(1, MODE_FILE | default_perms_for_filename("test.txt"), 56, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+256:512+512] = txt_inode
 
         # Root dir
@@ -144,33 +175,35 @@ Happy hacking!
         txt_content = b"This is the secondary disk (D:). Only has this file.\r\n"
         image[offset:offset+len(txt_content)] = txt_content
     else:
+        dir_mode = MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D
+        
         # Inode 0: root directory (block 0 is valid and reserved for root directory data)
         # Directory logical size must cover all directory entries (3 × 256 = 768; use full block).
-        root_inode = create_inode(0, 0x40, BLOCK_SIZE, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        root_inode = create_inode(0, dir_mode, BLOCK_SIZE, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512:512+256] = root_inode
         
         # Inode 1: readme.txt (points to block 1)
-        readme_inode = create_inode(1, 0x80, 1024, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        readme_inode = create_inode(1, MODE_FILE | default_perms_for_filename("readme.txt"), 1024, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+256:512+512] = readme_inode
         
         # Inode 2: test.bat (points to block 2)
-        testbat_inode = create_inode(2, 0x80, 512, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        testbat_inode = create_inode(2, MODE_FILE | default_perms_for_filename("test.bat"), 512, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+512:512+768] = testbat_inode
         
         # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, 0x40, 1280, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        system_dir_inode = create_inode(3, dir_mode, 1280, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+768:512+1024] = system_dir_inode
 
         # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
-        config_inode = create_inode(4, 0x80, 512, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        config_inode = create_inode(4, MODE_FILE | default_perms_for_filename("CONFIG.SYS"), 512, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+1024:512+1280] = config_inode
 
         # Inode 5: AUTOEXEC.BAT (root) (points to block 5)
-        autoexec_inode = create_inode(5, 0x80, 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        autoexec_inode = create_inode(5, MODE_FILE | default_perms_for_filename("AUTOEXEC.BAT"), 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+1280:512+1536] = autoexec_inode
 
         # Inode 11: BOOT.CFG in SYSTEM (points to block 22)
-        bootcfg_inode = create_inode(11, 0x80, 256, [22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        bootcfg_inode = create_inode(11, MODE_FILE | default_perms_for_filename("BOOT.CFG"), 256, [22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+2816:512+3072] = bootcfg_inode
 
         # Read all user binary data
@@ -255,18 +288,18 @@ Happy hacking!
             return (blks + [0] * 12)[:12]
 
         inodes_data = {
-            6: (0x80, len(bin_files['hello']), pad_blocks(hello_blocks)),
-            7: (0x80, len(bin_files['systest']), pad_blocks(systest_blocks)),
-            8: (0x80, len(bin_files['filetest']), pad_blocks(filetest_blocks)),
-            9: (0x80, len(bin_files['alltest']), pad_blocks(alltest_blocks)),
-            10: (0x80, len(bin_files['cputest']), pad_blocks(cputest_blocks)),
-            15: (0x40, BLOCK_SIZE, pad_blocks(dir_blocks)),
-            16: (0x40, 256 * 5, pad_blocks(testdir_blocks)),
-            19: (0x40, 256 * 2, pad_blocks(bootdir_blocks)),
-            20: (0x40, 1024, pad_blocks(sys2dir_blocks)),
-            28: (0x40, 256, pad_blocks(libdir_blocks)),
-            29: (0x80, len(dll_data), pad_blocks(dll_blocks)),
-            30: (0x80, len(math_dll_data), pad_blocks(math_dll_blocks)),
+            6: (MODE_FILE | default_perms_for_filename("HELLO.BIN"), len(bin_files['hello']), pad_blocks(hello_blocks)),
+            7: (MODE_FILE | default_perms_for_filename("SYSTEST.BIN"), len(bin_files['systest']), pad_blocks(systest_blocks)),
+            8: (MODE_FILE | default_perms_for_filename("FILETEST.BIN"), len(bin_files['filetest']), pad_blocks(filetest_blocks)),
+            9: (MODE_FILE | default_perms_for_filename("ALLTEST.BIN"), len(bin_files['alltest']), pad_blocks(alltest_blocks)),
+            10: (MODE_FILE | default_perms_for_filename("CPUTEST.BIN"), len(bin_files['cputest']), pad_blocks(cputest_blocks)),
+            15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
+            16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
+            19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
+            20: (dir_mode, 1024, pad_blocks(sys2dir_blocks)),
+            28: (dir_mode, 256, pad_blocks(libdir_blocks)),
+            29: (MODE_FILE | default_perms_for_filename("libneodos.dll"), len(dll_data), pad_blocks(dll_blocks)),
+            30: (MODE_FILE | default_perms_for_filename("libmath.dll"), len(math_dll_data), pad_blocks(math_dll_blocks)),
         }
 
         # Write inodes to inode table
@@ -291,7 +324,7 @@ Happy hacking!
                 print(f"[*] Including BOOT/{fname} ({len(data)} bytes)")
             boot_nem_data[inum] = data
             blks = alloc_blocks(inum, len(data))
-            inode = create_inode(inum, 0x80, len(data), pad_blocks(blks))
+            inode = create_inode(inum, MODE_FILE | default_perms_for_filename(fname), len(data), pad_blocks(blks))
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
@@ -312,7 +345,7 @@ Happy hacking!
                 print(f"[*] Including SYSTEM/{fname} ({len(data)} bytes)")
             system_nem_data[inum] = data
             blks = alloc_blocks(inum, len(data))
-            inode = create_inode(inum, 0x80, len(data), pad_blocks(blks))
+            inode = create_inode(inum, MODE_FILE | default_perms_for_filename(fname), len(data), pad_blocks(blks))
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 

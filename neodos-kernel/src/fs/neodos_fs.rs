@@ -713,6 +713,43 @@ impl NeoDosFs {
         self.create_file_at(ROOT_INODE, filename, cache, dev)
     }
 
+    fn ext_eq(name: &str, ext: &str) -> bool {
+        let name = name.as_bytes();
+        let ext = ext.as_bytes();
+        name.len() >= ext.len()
+            && name[name.len() - ext.len()..]
+                .iter()
+                .zip(ext.iter())
+                .all(|(a, b)| a.to_ascii_uppercase() == *b)
+    }
+
+    fn default_perms_for_filename(name: &str) -> u16 {
+        if Self::ext_eq(name, ".BIN")
+            || Self::ext_eq(name, ".COM")
+            || Self::ext_eq(name, ".EXE")
+        {
+            PERM_R | PERM_X
+        } else if Self::ext_eq(name, ".NEM") {
+            PERM_R
+        } else if Self::ext_eq(name, ".DLL") {
+            PERM_R | PERM_X
+        } else if Self::ext_eq(name, ".BAT") || Self::ext_eq(name, ".CMD") {
+            PERM_R | PERM_X
+        } else if Self::ext_eq(name, ".SYS") {
+            PERM_R
+        } else if Self::ext_eq(name, ".CFG") || Self::ext_eq(name, ".INI") {
+            PERM_R | PERM_W
+        } else if Self::ext_eq(name, ".TXT")
+            || Self::ext_eq(name, ".MD")
+            || Self::ext_eq(name, ".LOG")
+            || Self::ext_eq(name, ".ASC")
+        {
+            PERM_R | PERM_W
+        } else {
+            PERM_R | PERM_W
+        }
+    }
+
     #[allow(dead_code)]
     pub fn create_file_at(&mut self, parent_inode_num: u32, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
@@ -723,7 +760,7 @@ impl NeoDosFs {
         // 2. Create inode
         let new_inode = Inode {
             inode_num: new_inode_num,
-            mode: MODE_FILE,
+            mode: MODE_FILE | Self::default_perms_for_filename(filename),
             size: 0,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1,
@@ -748,7 +785,7 @@ impl NeoDosFs {
         let new_inode_num = self.find_free_inode(cache, dev)?;
         let new_inode = Inode {
             inode_num: new_inode_num,
-            mode: MODE_DIR,
+            mode: MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D,
             size: 0,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1,

@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.25.1 — 2026-06-05
+
+### Default file permissions by context — Añadido
+- **Añadido**: `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según la extensión del archivo al crearse: `.BIN/.COM/.EXE` → `R|X`, `.NEM` → `R`, `.DLL` → `R|X`, `.BAT/.CMD` → `R|X`, `.SYS` → `R`, `.CFG/.INI` → `R|W`, `.TXT/.MD/.LOG` → `R|W`, otros → `R|W`.
+- **Modificado**: `create_file_at()` usa `default_perms_for_filename()` en vez de `MODE_FILE` sin permisos.
+- **Modificado**: `create_directory_at()` establece `MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D` (permisos completos para directorios).
+- **Actualizado**: `scripts/create_neodos_image.py` — la imagen inicial del FS usa los mismos criterios de permisos por extensión (`.bin` → `R|X`, `.nem` → `R`, `.dll` → `R|X`, `.sys` → `R`, `.bat` → `R|X`, `.cfg` → `R|W`, `.txt` → `R|W`, directorios → `RWXD`).
+
 ## v0.25.0 — 2026-06-05
 
 ### X4. Driver Isolation Layer — Añadido

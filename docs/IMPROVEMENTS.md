@@ -25,7 +25,8 @@
 14. **V1. Global page cache (advanced)** — `src/buffer/page_cache.rs`: hash map O(1) index for `(inode, block_num)` lookups. LRU doubly-linked list for O(1) access updates. Adaptive readahead (sequential detection). Async write-back (flush in batch at threshold). Dynamic sizing via slab pool. 13 tests.
 
 ### Storage
-15. **ATA PIO driver** — read/write por puertos 0x1F0/0x3F6.
+15. **P1. Default file permissions by context** — `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según extensión: `.BIN/.COM/.EXE` → R|X, `.NEM` → R, `.DLL` → R|X, `.BAT/.CMD` → R|X, `.SYS` → R, `.CFG/.INI` → R|W, `.TXT/.MD/.LOG` → R|W. Directorios obtienen `RWXD` completos. Script de imagen `create_neodos_image.py` actualizado con los mismos criterios.
+16. **ATA PIO driver** — read/write por puertos 0x1F0/0x3F6.
 16. **AHCI driver** — DMA polling, PRDT scatter-gather, ATA + ATAPI.
 17. **ATA bus-master DMA** — PCI BAR4, buffers alineados, hasta 8 sectores.
 18. **NeoFS** — filesystem propio: inodos 256 B, bloques 4 KB, timestamps, permisos, directorios, 75 tests.
