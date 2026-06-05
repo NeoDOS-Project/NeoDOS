@@ -1136,27 +1136,42 @@ impl FileSystem for NeoDosFs {
             let block_sector = 200 + (current_block * 8);
             
             for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
                 for entry_offset in (0..512).step_by(256) {
-                    let first_byte = sector_data[entry_offset];
-                    if first_byte == 0xE5 || first_byte == 0 { continue; }
-                    
-                    if current_idx == index {
+                    let entry = {
+                        let sector_data = cache.get_sector(block_sector + sector_offset, dev)?;
+                        let first_byte = sector_data[entry_offset];
+                        if first_byte == 0xE5 || first_byte == 0 {
+                            continue;
+                        }
+
                         let entry: DirectoryEntry = unsafe {
                             core::ptr::read_unaligned(sector_data.as_ptr().add(entry_offset) as *const _)
                         };
-                        let name = core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("?").into();
-                        let inode_data = self.inode_cache.load_inode(entry.inode_num as usize, cache, dev)?;
-                        return Ok(Some(VfsDirEntry {
-                            name,
-                            node: VfsNode {
-                                inode: entry.inode_num,
-                                mode: inode_data.mode,
-                                size: inode_data.size,
-                            }
-                        }));
-                    }
-                    current_idx += 1;
+
+                        if current_idx != index {
+                            current_idx += 1;
+                            continue;
+                        }
+
+                        entry
+                    };
+
+                    let name = core::str::from_utf8(&entry.name[..entry.name_len as usize]).unwrap_or("?").into();
+                    let inode_data = match self.inode_cache.load_inode(entry.inode_num as usize, cache, dev) {
+                        Ok(inode_data) => inode_data,
+                        Err(_) => {
+                            continue;
+                        }
+                    };
+
+                    return Ok(Some(VfsDirEntry {
+                        name,
+                        node: VfsNode {
+                            inode: entry.inode_num,
+                            mode: inode_data.mode,
+                            size: inode_data.size,
+                        }
+                    }));
                 }
             }
             bytes_to_read -= BLOCK_SIZE.min(bytes_to_read);

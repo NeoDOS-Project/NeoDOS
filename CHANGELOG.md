@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.24.6 — 2026-06-05
+
+### Fixed
+- **AHCI port reclaim after NEM AHCI driver init** — NEM AHCI driver's `port_init()` overwrites HBA PORT_CLB/PORT_FB registers with its own buffer addresses, breaking BootAhci DMA for any subsequent uncached filesystem read (DLL loading at PHASE 3.87, DIR, TYPE, etc.). Added `BootAhci::reclaim_ahci_port()` (PHASE 3.86) that stops the port, restores BootAhci's static buffer pointers, clears error status, and restarts the port — called between `boot_load_all()` and DLL loading.
+- **stress_syscall_invalid_numbers test** — Updated to test syscall number 22 (instead of 21) since `LoadLib` (RAX=21) is now a valid syscall. All 300 kernel tests pass.
+
+### Total
+- 300 kernel tests, 4 user-mode binaries.
+
 ## v0.24.5 — 2026-06-05
 
 ### Multi-DLL System

@@ -263,7 +263,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::boot_loader::boot_load_all();
 
     // ============================================
-    // PHASE 3.86: Initialise NEM driver bridges + DLL loader
+    // PHASE 3.86: Reclaim AHCI port after NEM driver init
+    // The NEM AHCI driver's port_init() overwrites PORT_CLB/PORT_FB
+    // with its own buffer addresses, breaking BootAhci DMA.
+    // ============================================
+    crate::drivers::boot_ahci::BootAhci::reclaim_ahci_port();
+
+    // ============================================
+    // PHASE 3.87: Initialise NEM driver bridges + DLL loader
     // ============================================
     drivers::rtc_bridge::init();
     dll::init_dll_region();

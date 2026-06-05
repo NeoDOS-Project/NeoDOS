@@ -412,8 +412,8 @@ VER
         offset = (200 + 176) * 512  # block 22 * 8 = 176 sectors
         bootcfg_content = b"""# NeoDOS Boot Configuration
 # Benchmark and debug flags (default: 1 = enabled)
-BENCHMARK_REPORT=1
-AHCI_DEBUG=1
+BENCHMARK_REPORT=0
+AHCI_DEBUG=0
 """
         image[offset:offset+len(bootcfg_content)] = bootcfg_content
 

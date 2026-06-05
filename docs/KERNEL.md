@@ -32,8 +32,8 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 13. **Page tables** — init custom 4-level page tables: 4 GiB identity-map via 2 MB huge pages, user window (`0x400000..0x800000`) marked `USER_ACCESSIBLE`, framebuffer marked uncacheable (`NO_CACHE`), map framebuffer >4 GiB if needed
 14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
 15. **Mmap demand paging** — split mmap region (`0x20000000..0x22000000`) into 4 KB page tables via `init_mmap_demand_paging()`
-16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener), load BOOT + SYSTEM NEM v3 drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\` via boot driver loader (PHASE 3.75–3.86)
-17. **DLL region init** — split DLL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.dll` at slot 0
+16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
+17. **DLL region init** — split DLL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.dll` at slot 0 (PHASE 3.87)
 18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
 19. **Shell** — set all keyboard LEDs ON, register kernel tests (301), create and run `DosShell`
 

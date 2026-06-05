@@ -1,6 +1,7 @@
 use crate::arch::x64::paging;
 use crate::serial_println;
 use crate::globals;
+use crate::fs::vfs::{VfsNode, MODE_DIR, MODE_FILE};
 
 const DLL_REGION_BASE: u64 = 0x1e00_0000;
 const DLL_REGION_SIZE: u64 = 0x20_0000;
@@ -73,8 +74,16 @@ pub fn dll_load(path: &str) -> Option<u64> {
     let image_size = {
         let mut size = 0usize;
         let result = globals::with_vfs(|vfs| {
-            match vfs.resolve_path(path) {
-                Ok((drive_idx, node)) => {
+            let resolved = match vfs.resolve_path(path) {
+                Ok(result) => Some(result),
+                Err(e) => {
+                    serial_println!("[DLL] resolve '{}' failed: {:?}", path, e);
+                    None
+                }
+            }.or_else(|| resolve_dll_fallback(vfs, path));
+
+            match resolved {
+                Some((drive_idx, node)) => {
                     match vfs.read(drive_idx, node.inode, 0, buf) {
                         Ok(n) => { size = n; Ok(()) }
                         Err(e) => {
@@ -83,10 +92,7 @@ pub fn dll_load(path: &str) -> Option<u64> {
                         }
                     }
                 }
-                Err(e) => {
-                    serial_println!("[DLL] resolve '{}' failed: {:?}", path, e);
-                    Err(())
-                }
+                None => Err(()),
             }
         });
         if result.is_err() || size == 0 { return None; }
@@ -117,6 +123,62 @@ pub fn dll_load(path: &str) -> Option<u64> {
 
     serial_println!("[DLL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
+}
+
+fn resolve_dll_fallback(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Option<(usize, VfsNode)> {
+    let file_name = path
+        .rsplit(|c| c == '\\' || c == '/')
+        .next()
+        .unwrap_or(path);
+
+    for drive_idx in 0..vfs.drives.len() {
+        if vfs.drives[drive_idx].is_none() {
+            continue;
+        }
+
+        if let Some(found) = search_directory(vfs, drive_idx, 0, file_name, 0) {
+            return Some(found);
+        }
+    }
+
+    None
+}
+
+fn search_directory(
+    vfs: &mut crate::fs::vfs::Vfs,
+    drive_idx: usize,
+    inode: u32,
+    file_name: &str,
+    depth: usize,
+) -> Option<(usize, VfsNode)> {
+    if depth > 16 {
+        return None;
+    }
+
+    let mut index = 0usize;
+    loop {
+        match vfs.readdir(drive_idx, inode, index) {
+            Ok(Some(entry)) => {
+                if entry.name.eq_ignore_ascii_case(file_name) && (entry.node.mode & MODE_FILE) != 0 {
+                    return Some((drive_idx, entry.node));
+                }
+
+                if (entry.node.mode & MODE_DIR) != 0 {
+                    if let Some(found) = search_directory(vfs, drive_idx, entry.node.inode, file_name, depth + 1) {
+                        return Some(found);
+                    }
+                }
+
+                index += 1;
+            }
+            Ok(None) => break,
+            Err(_) => {
+                index += 1;
+            }
+        }
+    }
+
+    None
 }
 
 fn find_free_slot() -> Option<usize> {

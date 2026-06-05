@@ -748,7 +748,7 @@ fn register_syscall_stress() {
     test_case!("stress_syscall_invalid_numbers", {
         // ABI fuzzing: ensure invalid syscall numbers return -ENOSYS
         let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::NoSys);
-        for num in &[21u64, 100, 255, 0xFFFFFFFF] {
+        for num in &[22u64, 100, 255, 0xFFFFFFFF] {
             let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0, 0, 0);
             test_eq!(result, expected);
         }

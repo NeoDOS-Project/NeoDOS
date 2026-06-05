@@ -6,6 +6,9 @@ use crate::drivers::pci::{pci_config_read_dword, pci_config_read_word, pci_confi
 use crate::irp::{self, IrpId, IrpOp};
 use crate::serial_println;
 
+/// Saved AHCI port info so we can reclaim the port after NEM AHCI driver overrides it.
+static BOOT_AHCI_INFO: spin::Mutex<Option<(u64, usize)>> = spin::Mutex::new(None);
+
 const MAX_PORTS: usize = 2;
 const MAX_CMD_SLOTS: usize = 32;
 const MAX_PRD_ENTRIES: usize = 8;
@@ -275,8 +278,52 @@ impl BootAhci {
 
         let num_sectors = 0x0012_4F00u64;
         serial_println!("[AHCI] Boot AHCI ready on port {}", port);
+        *BOOT_AHCI_INFO.lock() = Some((abar, port));
 
         Some(BootAhci { abar, port, base_lba: 0, num_sectors, is_atapi })
+    }
+
+    /// Reclaim the AHCI port after a NEM AHCI driver overrides PORT_CLB/PORT_FB.
+    /// Must be called after boot_load_all() but before any further DMA via BootAhci.
+    pub fn reclaim_ahci_port() {
+        let info = BOOT_AHCI_INFO.lock();
+        let Some((abar, port)) = *info else { return };
+
+        serial_println!("[AHCI] Reclaiming port {} after NEM driver init", port);
+
+        // Stop the port so we can safely change CLB/FB
+        let cmd = port_read32(abar, port, PORT_CMD);
+        if (cmd & CMD_ST) != 0 || (cmd & CMD_FRE) != 0 {
+            port_write32(abar, port, PORT_CMD, cmd & !(CMD_ST | CMD_FRE));
+            for _ in 0..10000 {
+                let c = port_read32(abar, port, PORT_CMD);
+                if (c & (CMD_CR | CMD_FR)) == 0 { break; }
+            }
+        }
+
+        // Re-set CLB and FB to BootAhci's own static buffers
+        unsafe {
+            let clb = &PORT_CMD_LIST[port] as *const CmdList as u32;
+            port_write32(abar, port, PORT_CLB, clb);
+            port_write32(abar, port, PORT_CLBU, 0);
+
+            let fb = &PORT_RECV_FIS[port] as *const RecvFis as u32;
+            port_write32(abar, port, PORT_FB, fb);
+            port_write32(abar, port, PORT_FBU, 0);
+        }
+
+        // Clear error status
+        port_write32(abar, port, PORT_IS, 0xFFFF_FFFF);
+        port_write32(abar, port, PORT_SERR, 0xFFFF_FFFF);
+
+        // Restart the port
+        port_write32(abar, port, PORT_CMD, CMD_ST | CMD_FRE | CMD_POD | CMD_SUD);
+        for _ in 0..10000 {
+            let c = port_read32(abar, port, PORT_CMD);
+            if (c & CMD_CR) == 0 { break; }
+        }
+
+        serial_println!("[AHCI] Port reclaimed successfully");
     }
 
     fn dma_xfer(&mut self, lba: u64, count: u8, buf: *const u8, is_write: bool) -> Result<(), ()> {
