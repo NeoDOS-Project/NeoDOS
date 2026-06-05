@@ -10,13 +10,14 @@ pub mod driver_loader;
 pub mod driver_runtime;
 pub mod fat32;
 pub mod gpt;
+pub mod isolation;
 pub mod iso9660;
+pub mod storage_manager;
 pub mod ps2;
 pub mod nem;
 pub mod nvme;
 pub mod pci;
 pub mod rtc_bridge;
-pub mod storage_manager;
 pub mod usb_hid;
 
 use core::sync::atomic::AtomicBool;

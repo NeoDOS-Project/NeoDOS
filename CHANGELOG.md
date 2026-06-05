@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.25.0 — 2026-06-05
+
+### X4. Driver Isolation Layer — Añadido
+- **Añadido**: `src/drivers/isolation.rs` — Nuevo módulo de aislamiento de drivers con región de 16 MB (0x30000000–0x31000000, 16 slots × 1 MB). Inicialización divide páginas enormes 2 MB en page tables de 4 KB, elimina identity mapping durante init.
+- **Añadido**: `allocate_driver_slot()`/`free_driver_slot()` con `DriverMemoryRegion` tracking (driver_id, base, size, isolation_mode). `alloc_isolated_page()`/`free_isolated_page()` para mapeo bajo demanda de páginas 4K en la región aislada.
+- **Añadido**: `validate_driver_ptr()`/`validate_driver_str_ptr()` — validación de punteros en export table: acepta región del driver, kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000). Rechaza direcciones fuera de estos rangos.
+- **Añadido**: `handle_isolated_page_fault()` — integración con page fault handler para sandbox opcional (DEMAND drivers → FAULTED).
+- **Añadido**: `CAP_ISOLATION` (bit 11) en `src/drivers/caps.rs`.
+- **Añadido**: Isolation mode por driver (Basic para BOOT/SYSTEM, Sandbox para DEMAND). Set desde `register_driver_ext()` en driver_runtime.
+- **Modificado**: `v3loader.rs` — `alloc_driver_memory()` usa región aislada con fallback a heap. `bind_isolated_driver()` asocia driver con slot. `hst_log` y `hst_register_block_device` validan punteros.
+- **Modificado**: `boot_loader/mod.rs` — llama a `bind_isolated_driver()` tras registro.
+- **Modificado**: `ndreg.rs` — `NDREG SHOW` y `NDREG RUNTIME` muestran isolation mode y región.
+- **Modificado**: `testing.rs` — MAX_TESTS incrementado de 300 a 320 para acomodar nuevos tests.
+- **Añadido**: 12 tests de isolation (constantes, bounds, alloc/free, driver_id lookup, layout, pointer validation, overflow, max slots, str ptr, mode for category, mode str).
+- **Total**: 312 kernel tests, 4 user-mode binaries.
+
 ## v0.24.6 — 2026-06-05
 
 ### Fixed

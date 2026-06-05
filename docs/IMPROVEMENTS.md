@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.24.5 (301 tests, Multi-DLL system).
-> Objetivo: v0.25 — kernel modular, estable, extensible.
+> Versión actual: v0.25.0 (312 tests, Driver Isolation Layer).
+> Objetivo: v0.26 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (74 items)
+## COMPLETED (75 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -94,6 +94,7 @@
 ### Shared Libraries & Loading
 73. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
 74. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
+75. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: Page-isolated 16 MB region (0x30000000–0x31000000) for NEM drivers with 16 × 1 MB slots. Region init splits 2 MB huge pages into 4K page tables; strips identity mapping during init. `allocate_driver_slot()`/`free_driver_slot()` with `ISOLATED_REGIONS` tracking. `alloc_isolated_page()`/`free_isolated_page()` for per-page phys frame + identity-mapped page table entry. `validate_driver_ptr()`/`validate_driver_str_ptr()` for argument validation in export table, accepting kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000), and driver region. `handle_isolated_page_fault()` for sandbox mode (DEMAND drivers → FAULTED). `CAP_ISOLATION` (bit 11). Loader (`v3loader.rs`) allocates via isolated region with heap fallback. Boot loader binds isolation region after registration. `NDREG SHOW`/`RUNTIME` display isolation mode and region. 12 unit tests. Total: 312 tests.
 
 ---
 
@@ -103,17 +104,7 @@ Versión: v0.20 → v1.0
 Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
 
 🧩 FASE 4 — DRIVER ARCHITECTURE SAFETY LAYER
-1. **X4. Driver isolation layer**
-
-Capa de aislamiento parcial para ejecutar drivers NEM con límites de memoria y acceso, reduciendo el riesgo de que un driver defectuoso corrompa el kernel. Actualmente, los drivers NEM se ejecutan en Ring 0 (kernel space) y tienen acceso completo a toda la memoria del kernel, incluyendo tablas de páginas, estructuras del scheduler, y datos de otros drivers. Un buffer overflow en un driver puede corromper cualquier estructura del kernel.
-
-El isolation layer exploraría: (1) **Segmentación por página** — los drivers se cargan en una región de memoria aislada (ej. `0x30000000..0x31000000`, 16 MB) cuya page table tiene permisos restrictivos: código RX, datos RW (sin ejecución), sin acceso a páginas del kernel fuera de la región y la export table. (2) **Export table como unico puente** — el driver solo puede llamar a funciones del kernel a través de la export table (tabla de punteros a función); no puede hacer llamadas directas a memoria arbitraria del kernel. (3) **Argument validation** — las funciones de la export table validan que los punteros pasados por el driver apunten a memoria del driver o a buffers válidos del usuario (no a estructuras internas del kernel). (4) **Sandbox opcional** — para drivers DEMAND, se podría usar el page fault handler para detectar accesos inválidos y marcar el driver como FAULTED automáticamente.
-
-Nota: el isolation total requeriría cambios en cómo se invocan los entrypoints del driver (`driver_init`, `driver_on_event`, `driver_fini`), probablemente envolviendo cada llamada en un callback que cambie CR3 a una page table aislada. Esto tiene overhead, por lo que se implementaría como opt-in para drivers DEMAND y como hard-requirement para drivers de terceros.
-
-Archivos: `src/drivers/isolation.rs`, modificaciones en `src/drivers/loader.rs` y `src/drivers/driver_runtime.rs`.
-
-3. **W2. Hot reload drivers**
+1. **W2. Hot reload drivers**
 
 Carga, descarga y recarga de drivers en runtime sin necesidad de reiniciar el sistema. Actualmente, los drivers NEM solo se cargan en el boot (PHASE 3.85) o mediante el comando LOADNEM/NDREG LOAD. Una vez cargados, no hay forma de descargarlos limpiamente ni de recargar una versión actualizada.
 

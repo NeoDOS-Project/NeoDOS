@@ -255,6 +255,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::builtin_drivers::init();
 
     // ============================================
+    // PHASE 3.80: X4 — Driver Isolation Layer
+    // Initialize isolated driver region at 0x30000000
+    // for loading NEM drivers with restricted permissions.
+    // ============================================
+    println!("[+] Initializing Driver Isolation Layer...");
+    drivers::isolation::init_isolated_region();
+
+    // ============================================
     // PHASE 3.85: Boot Driver Loader
     // Auto-scan and load BOOT .nem drivers first,
     // then SYSTEM .nem drivers.

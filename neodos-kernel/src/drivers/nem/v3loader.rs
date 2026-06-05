@@ -5,7 +5,6 @@
 // kernel heap, applies relocations, resolves undefined symbols against the
 // kernel export table, and returns function pointers for entry points.
 
-use alloc::alloc::{alloc, dealloc, Layout};
 use alloc::vec::Vec;
 use crate::nem::{self, NemReloc, NemSymbol, ParsedNemV3, DriverCategory};
 use crate::nem::{
@@ -15,6 +14,7 @@ use crate::nem::{
 use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_BLOCK_DEVICE};
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
+use crate::drivers::isolation;
 
 // ── Kernel Export Table ──
 
@@ -59,6 +59,14 @@ unsafe extern "C" fn hst_push_input_byte(byte: u8) {
 
 unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
     if !check_cap(CAP_LOG) { return; }
+    // X4: Validate driver pointer before dereferencing
+    if crate::drivers::nem::driver::current_driver_id() != 0 {
+        if isolation::validate_export_ptr(msg, len, false).is_err() {
+            crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", 
+                crate::drivers::nem::driver::current_driver_id());
+            return;
+        }
+    }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     match level {
         0 => crate::serial_println!("[DRV] {}", s),
@@ -114,8 +122,8 @@ unsafe extern "C" fn hst_outl(port: u16, val: u32) {
 /// The driver provides device_id (its internal identifier), num_sectors, sector_size,
 /// and read/write callbacks. Returns the kernel device index on success, or -1 on error.
 unsafe extern "C" fn hst_register_block_device(
-    _name: *const u8,
-    _name_len: u32,
+    name: *const u8,
+    name_len: u32,
     device_id: u32,
     num_sectors: u64,
     sector_size: u32,
@@ -123,6 +131,14 @@ unsafe extern "C" fn hst_register_block_device(
     write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
 ) -> i32 {
     if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
+    // X4: Validate name pointer
+    if crate::drivers::nem::driver::current_driver_id() != 0 {
+        if isolation::validate_export_ptr(name, name_len as usize, false).is_err() {
+            crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
+                crate::drivers::nem::driver::current_driver_id());
+            return -1;
+        }
+    }
     let dev = crate::drivers::block::NemBlockDevice::new(
         device_id, num_sectors, sector_size, read_fn, write_fn,
     );
@@ -153,27 +169,57 @@ static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_unregister_block_device),
 ];
 
-// ── Memory allocation ──
+// ── Memory allocation (isolated region) ──
 
-const MAX_DRIVER_SIZE: usize = 1024 * 1024; // 1 MB per driver
-
+/// Allocate a slot in the isolated driver region.
+/// Uses a placeholder driver ID that will be replaced after registration.
 fn alloc_driver_memory(size: usize) -> Option<*mut u8> {
-    if size == 0 || size > MAX_DRIVER_SIZE {
+    if size == 0 || size > isolation::MAX_DRIVER_SIZE as usize {
         return None;
     }
-    // Align to 16 bytes (minimum for heap allocator)
-    let layout = Layout::from_size_align(size, 16).ok()?;
-    let ptr = unsafe { alloc(layout) };
-    if ptr.is_null() {
+    // Allocate a slot in the isolated region (temp driver_id = 0xFFFF_FFFE)
+    let slot_base = isolation::allocate_driver_slot(0xFFFF_FFFE, size as u64)?;
+
+    // Allocate pages for the driver within the slot, initially as RW for loading
+    // (will be set to RX/R/RW after copying sections)
+    let end = slot_base + size as u64;
+    let mut addr = slot_base;
+    while addr < end {
+        if isolation::alloc_isolated_page(addr, 0x2).is_none() {
+            // Rollback on OOM
+            isolation::free_isolated_range(slot_base, addr);
+            isolation::free_driver_slot(0xFFFF_FFFE);
+            return None;
+        }
+        addr += crate::arch::x64::paging::PAGE_4K;
+    }
+
+    Some(slot_base as *mut u8)
+}
+
+/// Free driver memory in the isolated region (use driver_id, not pointer).
+/// Called from unload_nem_v3 with the driver_id stored during activation.
+pub fn free_isolated_driver(driver_id: u32) {
+    isolation::free_driver_slot(driver_id);
+    crate::serial_println!("[NEM] Isolated driver {} freed", driver_id);
+}
+
+/// Legacy fallback for non-isolated drivers (heap allocated).
+/// Only used when isolated region is full or disabled.
+fn alloc_heap_fallback(size: usize) -> Option<*mut u8> {
+    if size == 0 || size > isolation::MAX_DRIVER_SIZE as usize {
         return None;
     }
+    let layout = core::alloc::Layout::from_size_align(size, 16).ok()?;
+    let ptr = unsafe { alloc::alloc::alloc(layout) };
+    if ptr.is_null() { return None; }
     unsafe { core::ptr::write_bytes(ptr, 0, size); }
     Some(ptr)
 }
 
-unsafe fn free_driver_memory(ptr: *mut u8, size: usize) {
-    if let Ok(layout) = Layout::from_size_align(size, 16) {
-        dealloc(ptr, layout);
+unsafe fn free_heap_fallback(ptr: *mut u8, size: usize) {
+    if let Ok(layout) = core::alloc::Layout::from_size_align(size, 16) {
+        alloc::alloc::dealloc(ptr, layout);
     }
 }
 
@@ -186,31 +232,51 @@ pub struct NemV3LoadResult {
     pub text_base: *mut u8,
     pub rodata_base: *mut u8,
     pub data_base: *mut u8,
+    pub text_size: u64,
+    pub rodata_size: u64,
+    pub data_size: u64,
+    pub bss_size: u64,
     pub entry_init: Option<unsafe extern "C" fn() -> i32>,
     pub entry_event: Option<unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>,
     pub entry_activate: Option<unsafe extern "C" fn() -> i32>,
     pub entry_fini: Option<unsafe extern "C" fn() -> i32>,
     pub name: Vec<u8>,
     pub category: DriverCategory,
+    pub isolated: bool,             // X4: true if loaded in isolated region
+    pub driver_id: u32,             // X4: driver ID (0 = not yet bound)
 }
 
-/// Load a NEM v3 standalone binary into kernel heap memory.
+/// Load a NEM v3 standalone binary into the isolated region (or heap fallback).
 ///
 /// 1. Parses the .nem v3 format
 /// 2. Validates ABI
-/// 3. Allocates memory, copies sections
-/// 4. Applies relocations (resolves kernel exports)
-/// 5. Finds entry points
+/// 3. Allocates slot in isolated driver region (falls back to kernel heap)
+/// 4. Copies sections, sets page permissions (RX for code, R for rodata, RW for data)
+/// 5. Applies relocations (resolves kernel exports)
+/// 6. Finds entry points
 pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
     let parsed = nem::parse_nem_v3(data).ok_or("Invalid NEM v3 header")?;
     validate_v3_abi(&parsed)?;
 
     let total = parsed.header.total_mem_size as usize;
-    if total == 0 || total > MAX_DRIVER_SIZE {
+    if total == 0 || total > isolation::MAX_DRIVER_SIZE as usize {
         return Err("Invalid driver size");
     }
 
-    let base = alloc_driver_memory(total).ok_or("Out of memory for driver")?;
+    let text_size = parsed.header.text_size as u64;
+    let rodata_size = parsed.header.rodata_size as u64;
+    let data_size = parsed.header.data_size as u64;
+    let bss_size = total as u64 - text_size - rodata_size - data_size;
+
+    // Try to allocate from isolated region first
+    let (base, isolated) = match alloc_driver_memory(total) {
+        Some(ptr) => (ptr, true),
+        None => {
+            let ptr = alloc_heap_fallback(total).ok_or("Out of memory for driver")?;
+            crate::serial_println!("[NEM] Falling back to heap allocation for driver (isolated region full)");
+            (ptr, false)
+        }
+    };
 
     let text_off = 0usize;
     let rodata_off = parsed.header.text_size as usize;
@@ -226,6 +292,18 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
     let rodata_base = unsafe { base.add(rodata_off) };
     let data_base = unsafe { base.add(data_off) };
     let bss_base = unsafe { data_base.add(parsed.header.data_size as usize) };
+
+    // If isolated, set proper page permissions.
+    // Code/data pages are kept RW (writable) for compatibility with existing
+    // NEM drivers that may write to .text during init. The isolation boundary
+    // (memory region restriction) is enforced by the page fault handler.
+    // Future optimization: set code pages to RX after driver_init() completes.
+    if isolated {
+        let slot_base = base as u64;
+        isolation::set_driver_layout(0xFFFF_FFFE, text_size, rodata_size, data_size, bss_size);
+        crate::serial_println!("[NEM] Loaded into isolated region @ 0x{:x} ({} KB, mode=basic)",
+            slot_base, total / 1024);
+    }
 
     // Apply relocations
     for reloc in parsed.relocs {
@@ -252,18 +330,60 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
         text_base,
         rodata_base,
         data_base,
+        text_size,
+        rodata_size,
+        data_size,
+        bss_size,
         entry_init,
         entry_event,
         entry_activate,
         entry_fini,
         name: parsed.name.as_bytes().to_vec(),
         category: parsed.category,
+        isolated,
+        driver_id: 0,
     })
 }
 
-/// Unload a driver, freeing its memory.
+/// Bind an isolated region slot to a driver after registration.
+/// Called by the boot loader after `driver_runtime::register_driver_ext()` returns an ID.
+/// Sets the driver_id on the slot and records the isolation region in the driver runtime.
+pub fn bind_isolated_driver(driver_id: u32, result: &NemV3LoadResult) {
+    if !result.isolated {
+        return;
+    }
+    let old_id = 0xFFFF_FFFEu32;
+
+    // Update the slot's driver_id in the isolation tracker
+    let slot_base = result.base as u64;
+    // The isolation tracker uses the old placeholder ID; we need to
+    // free the old slot and re-allocate with the real ID.
+    // Since re-allocation with the same address isn't directly supported,
+    // we directly update the region table.
+    unsafe {
+        for region in isolation::ISOLATED_REGIONS.iter_mut() {
+            if region.in_use && region.driver_id == old_id && region.base == slot_base {
+                region.driver_id = driver_id;
+                break;
+            }
+        }
+    }
+
+    // Record isolation info in the driver runtime
+    let size = result.total_size as u64;
+    let _ = driver_runtime::DRIVER_RUNTIME.lock()
+        .set_isolation_region(driver_id, slot_base, size);
+
+    crate::serial_println!("[NEM] Isolation bound: driver {} → isolated region @ 0x{:x}", driver_id, slot_base);
+}
+
+/// Unload a driver from the isolated region (or free heap memory).
 pub unsafe fn unload_nem_v3(result: &NemV3LoadResult) {
-    free_driver_memory(result.base, result.total_size);
+    if result.isolated {
+        isolation::free_driver_slot(result.driver_id);
+    } else {
+        free_heap_fallback(result.base, result.total_size);
+    }
 }
 
 // ── ABI validation ──

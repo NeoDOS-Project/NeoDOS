@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 300;
+const MAX_TESTS: usize = 320;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -2323,6 +2323,7 @@ pub fn register_tests() {
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
     crate::drivers::caps::register_cap_tests();
+    crate::drivers::isolation::register_isolation_tests();
     crate::drivers::driver_runtime::register_driver_certification_tests();
     crate::drivers::boot_loader::register_boot_loader_tests();
     crate::drivers::nem::v3loader::register_v3_loader_tests();

@@ -142,6 +142,9 @@ pub struct DriverInstance {
     pub certification_step: u8,         // PipelineStep value tracking which step failed
     pub kobj_id: Option<kobj::KObjId>,
     pub caps: u64,                      // Capability bitmap (X3 capability system)
+    pub isolation_mode: u8,             // X4: IsolationMode enum value (0=None, 1=Basic, 2=Sandbox)
+    pub isolated_base: u64,             // X4: Base address in isolated region, or 0
+    pub isolated_size: u64,             // X4: Allocated size in isolated region, or 0
 }
 
 impl Default for DriverInstance {
@@ -166,6 +169,9 @@ impl Default for DriverInstance {
             certification_step: 0,
             kobj_id: None,
             caps: 0,
+            isolation_mode: 0,
+            isolated_base: 0,
+            isolated_size: 0,
         }
     }
 }
@@ -290,6 +296,7 @@ impl DriverRuntime {
         let kobj_id = kobj::kobj_register(kobj::KObjType::Driver, name, id as u64).ok();
 
         let caps = crate::drivers::caps::capability_for_category(category).bits;
+        let isolation_mode = crate::drivers::isolation::isolation_mode_for_category(category) as u8;
 
         let instance = DriverInstance {
             id,
@@ -311,6 +318,9 @@ impl DriverRuntime {
             certification_step: PipelineStep::None as u8,
             kobj_id,
             caps,
+            isolation_mode,
+            isolated_base: 0,
+            isolated_size: 0,
         };
 
         for slot in self.drivers.iter_mut() {
@@ -366,6 +376,17 @@ impl DriverRuntime {
     pub fn set_capabilities(&mut self, id: DriverId, caps: u64) -> bool {
         if let Some(drv) = self.get_mut(id) {
             drv.caps = caps;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set the isolation region for a driver.
+    pub fn set_isolation_region(&mut self, id: DriverId, base: u64, size: u64) -> bool {
+        if let Some(drv) = self.get_mut(id) {
+            drv.isolated_base = base;
+            drv.isolated_size = size;
             true
         } else {
             false

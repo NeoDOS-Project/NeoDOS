@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.24.5
+v0.25.0
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 301 kernel tests + 4 user-mode binaries
+2. `python3 scripts/auto_test.py` — 312 kernel tests + 4 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -460,7 +460,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-301 tests en 36 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+312 tests en 37 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -481,6 +481,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
+| Isolation | 12 | X4 Driver Isolation Layer: constants, bounds, alloc/free, driver_id lookup, layout, pointer validation, overflow, max slots, str ptr, mode for category, mode string |
 | Boot Loader | 8 | Boot driver loader: scan, load, init, activate, unload, category ordering |
 | ABI Negotiation | 10 | ABI version negotiation, window overlap, compatibility warnings, edge cases |
 | Dependency | 13 | Dependency graph, topological sort, cycle detection, symbol extraction, case-insensitive |
@@ -494,7 +495,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Stress | 8 | Stress: sched, syscall, mem |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (301 tests kernel)
+1. Ejecuta `testing::run_all()` (312 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
@@ -692,6 +693,7 @@ function checks that the calling driver holds the required capability before exe
 | `CAP_LOG` | 256 | Logging | `hst_log()` |
 | `CAP_TIMING` | 512 | Timing | `hst_get_ticks()` |
 | `CAP_MEMORY` | 1024 | Memory mapping | mmap operations |
+| `CAP_ISOLATION` | 2048 | Driver Isolation | Loading into isolated region |
 
 ### Category Defaults (Inheritance)
 
@@ -711,6 +713,77 @@ DEMAND drivers cannot escalate — this is a security boundary.
 - `current_driver_id()` tracks which driver is active (set before `driver_init`/activate/event calls)
 - Capability denial returns error/sentinel (0, -1, or no-op) instead of executing
 - `NDREG SHOW` displays capabilities in hex and human-readable format
+
+## X4. Driver Isolation Layer
+
+`src/drivers/isolation.rs` — Page-isolated memory region for NEM drivers to limit the impact of driver bugs.
+
+### Constants & Region
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `DRIVER_ISO_BASE` | `0x3000_0000` | Start of isolated region (16 MB) |
+| `DRIVER_ISO_SIZE` | `0x100_0000` | Total region size |
+| `DRIVER_ISO_END` | `0x3100_0000` | End of isolated region |
+| `DRIVER_SLOT_SIZE` | `0x10_0000` | Per-driver slot size (1 MB) |
+| `MAX_ISOLATED_DRIVERS` | 16 | Maximum concurrent isolated drivers |
+| `MAX_DRIVER_SIZE` | `0x10_0000` | Maximum driver binary size (1 MB) |
+
+### Initialization
+
+`init_isolated_region()` (PHASE 3.80) splits 2 MB huge pages in the isolated region into 4 KB page tables, then strips all identity mapping. Pages are allocated on demand via `alloc_isolated_page()` during driver loading.
+
+### API
+
+```rust
+fn allocate_driver_slot(driver_id: u32, size: u64) -> Option<u64>
+fn free_driver_slot(driver_id: u32)
+fn driver_base(driver_id: u32) -> Option<u64>
+fn set_driver_layout(driver_id: u32, text_size: u32, rodata_size: u32, data_size: u32, bss_size: u32)
+fn driver_id_for_address(virt_addr: *const u8) -> Option<u32>
+fn alloc_isolated_page(virt: u64, flags: u64) -> Option<u64>
+fn free_isolated_page(virt: u64) -> bool
+fn free_isolated_range(start: u64, end: u64)
+fn is_in_isolated_region(virt: u64) -> bool
+fn is_in_driver_region(addr: u64, driver_id: u32) -> bool
+fn validate_driver_ptr(ptr: *const u8, size: usize, driver_id: u32, writable: bool) -> Result<(), &'static str>
+fn validate_driver_str_ptr(ptr: *const u8, driver_id: u32) -> Result<usize, &'static str>
+fn handle_isolated_page_fault(virt: u64) -> bool
+fn isolation_mode_str(mode: IsolationMode) -> &'static str
+```
+
+### Isolation Modes
+
+| Mode | Value | Applied to | Behavior on page fault |
+|------|-------|-----------|----------------------|
+| `None` | 0 | — | No isolation |
+| `Basic` | 1 | BOOT, SYSTEM drivers | Ignore (no check) |
+| `Sandbox` | 2 | DEMAND drivers | Mark driver FAULTED |
+
+### Pointer Validation Rules
+
+`validate_driver_ptr()` accepts addresses in these ranges:
+- Driver's own isolated slot (0x30000000 base per slot)
+- Kernel heap (0x01000000–0x02000000)
+- Kernel .rodata/.text (0x00100000–0x01000000)
+- User heap (0x10000000–0x12000000)
+- mmap region (0x20000000–0x22000000)
+- User code (0x400000–0x800000)
+- Kernel image (0x200000–PHYS_MEM_END default)
+
+All other addresses are rejected.
+
+### Integration
+
+- `v3loader.rs` — `alloc_driver_memory` uses isolated region with heap fallback; `bind_isolated_driver` links driver to slot after registration
+- `driver_runtime.rs` — `DriverInstance` stores `isolation_mode`, `isolated_base`, `isolated_size`; `set_isolation_region()` method
+- `boot_loader/mod.rs` — calls `bind_isolated_driver` after each `register_driver_ext`
+- `caps.rs` — `CAP_ISOLATION = 2048` (bit 11)
+- `ndreg.rs` — SHOW and RUNTIME display isolation info
+
+### Tests
+
+12 tests: constants sanity, region bounds, alloc/free, driver_id lookup, layout, pointer validation (in/out-of-region, writable/read-only), overflow, max slots, str ptr, mode for category, mode string.
 
 ## Boot Driver Loader System
 
@@ -925,5 +998,6 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | PCI NEM driver | `neodos/drivers/pci/pci.nem` | NEM v3 standalone PCI bus enumerator (SYSTEM, full bus scan via bridge traversal) |
 | ATA NEM driver | `neodos/drivers/ata/ata.nem` | NEM v3 standalone ATA driver with DMA+PIO, primary+secondary channels (SYSTEM) |
 | AHCI NEM driver | `neodos/drivers/ahci/ahci.nem` | NEM v3 standalone AHCI driver (SYSTEM, DMA polling, ATA+ATAPI) |
+| Driver Isolation | `neodos-kernel/src/drivers/isolation.rs` | X4 driver isolation layer (16 MB region, 16 × 1 MB slots, pointer validation, sandbox mode) |
 | libmath DLL | `neodos/libmath.dll` | Math library DLL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

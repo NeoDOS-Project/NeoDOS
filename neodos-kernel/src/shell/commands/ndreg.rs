@@ -303,6 +303,27 @@ impl DosShell {
                                         println!("  Capabilities:    0x{:016X}", caps_bits);
                                         println!("                   {}", caps_str);
                                         println!("  Permissions:     R--");
+                                        // X4: Show isolation info
+                                        if let Some(drv) = crate::drivers::driver_runtime::get_driver_by_name(parsed.name) {
+                                            let iso_mode = drv.isolation_mode;
+                                            let iso_mode_str = crate::drivers::isolation::isolation_mode_str(
+                                                match iso_mode {
+                                                    0 => crate::drivers::isolation::IsolationMode::None,
+                                                    1 => crate::drivers::isolation::IsolationMode::Basic,
+                                                    2 => crate::drivers::isolation::IsolationMode::Sandbox,
+                                                    _ => crate::drivers::isolation::IsolationMode::None,
+                                                }
+                                            );
+                                            println!("  Isolation:       {} (mode={})", iso_mode_str, iso_mode);
+                                            if drv.isolated_base != 0 {
+                                                println!("  ISO Region:      0x{:x}..0x{:x} ({} KB)",
+                                                    drv.isolated_base,
+                                                    drv.isolated_base + drv.isolated_size,
+                                                    drv.isolated_size / 1024);
+                                            }
+                                        } else {
+                                            println!("  Isolation:       NONE (not loaded)");
+                                        }
                                         println!();
                                         println!(" ── Lifecycle State ──");
                                         println!("  Runtime State:   {} ({})", drv_state.to_str(), drv_state as u8);
@@ -488,18 +509,25 @@ impl DosShell {
         if names.is_empty() {
             println!("  No drivers loaded.");
         } else {
-            println!("  ID  NAME                  CATEGORY  STATE       ERR    EVENTS  TICKS  PIPELINE");
-            println!("  --- --------------------  --------  ----------  -----  ------  -----  --------");
+            println!("  ID  NAME                  CATEGORY  STATE       ERR    EVENTS  TICKS  ISO     PIPELINE");
+            println!("  --- --------------------  --------  ----------  -----  ------  -----  ------  --------");
             let r = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             for (name, id, state) in &names {
                 if let Some(drv) = r.get(*id) {
                     let err_str = driver_runtime::err_to_str(drv.last_error);
                     let pipe = pipeline_indicator(drv.state);
+                    let iso_str = match drv.isolation_mode {
+                        0 => "NONE",
+                        1 => "BASIC",
+                        2 => "SBOX",
+                        _ => "?",
+                    };
                     println!(
-                        "  {:>3}  {:20}  {:>8}  {:10}  {:>5}  {:>6}  {:>5}  {:>8}",
+                        "  {:>3}  {:20}  {:>8}  {:10}  {:>5}  {:>6}  {:>5}  {:>6}  {:>8}",
                         id, name, drv.category.to_str(), state.to_str(),
                         if drv.last_error == 0 { "." } else { err_str },
                         drv.events_received, drv.tick_count,
+                        iso_str,
                         pipe
                     );
                 }

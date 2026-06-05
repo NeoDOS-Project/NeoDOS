@@ -22,6 +22,7 @@ pub const CAP_INPUT: u64 = 1 << 7;
 pub const CAP_LOG: u64 = 1 << 8;
 pub const CAP_TIMING: u64 = 1 << 9;
 pub const CAP_MEMORY: u64 = 1 << 10;
+pub const CAP_ISOLATION: u64 = 1 << 11;
 
 pub const CAP_ALL: u64 = u64::MAX;
 
@@ -39,6 +40,7 @@ pub fn cap_name(flag: u64) -> &'static str {
         CAP_LOG => "LOG",
         CAP_TIMING => "TIMING",
         CAP_MEMORY => "MEMORY",
+        CAP_ISOLATION => "ISOLATION",
         _ => "UNKNOWN",
     }
 }
@@ -57,6 +59,7 @@ pub fn all_cap_names() -> &'static [(u64, &'static str)] {
         (CAP_LOG, "LOG"),
         (CAP_TIMING, "TIMING"),
         (CAP_MEMORY, "MEMORY"),
+        (CAP_ISOLATION, "ISOLATION"),
     ]
 }
 

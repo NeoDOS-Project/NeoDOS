@@ -139,6 +139,9 @@ pub fn boot_load_all() {
                     crate::serial_print!("REG OK (id={})", id);
                     total_loaded += 1;
 
+                    // X4: Bind the isolated region slot to this driver
+                    v3loader::bind_isolated_driver(id, &load_result);
+
                     // Set current driver context for capability checks
                     unsafe { crate::drivers::nem::driver::set_current_driver(id); }
 

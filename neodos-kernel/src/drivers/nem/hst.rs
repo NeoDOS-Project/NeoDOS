@@ -4,6 +4,7 @@ use crate::hal;
 use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG};
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
+use crate::drivers::isolation;
 
 pub type HstInb = unsafe extern "C" fn(u16) -> u8;
 pub type HstOutb = unsafe extern "C" fn(u16, u8);
@@ -88,6 +89,14 @@ unsafe extern "C" fn hst_ack_irq(vec: u8) {
 }
 unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
     if !check_cap(CAP_LOG) { return; }
+    // X4: Validate driver pointer before dereferencing
+    let driver_id = current_driver_id();
+    if driver_id != 0 {
+        if isolation::validate_export_ptr(msg, len, false).is_err() {
+            crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", driver_id);
+            return;
+        }
+    }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     crate::serial_println!("[DRV] {}", s);
 }
