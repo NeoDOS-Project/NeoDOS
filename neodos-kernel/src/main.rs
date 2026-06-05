@@ -282,6 +282,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     drivers::rtc_bridge::init();
     dll::init_dll_region();
+    drivers::hotreload::init_hot_reload();
     dll::load_dll();
 
     // ============================================

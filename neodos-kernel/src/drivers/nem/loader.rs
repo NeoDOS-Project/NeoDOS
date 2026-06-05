@@ -34,6 +34,9 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
         0, // compat_flags
     ).map_err(|_| "Failed to register driver")?;
     
+    // Register load result for hot reload
+    crate::drivers::hotreload::register_load_result(id, &result);
+
     crate::serial_println!("[NEM] v3 driver loaded: {} (path={})", driver_name, path);
     Ok(id)
 }

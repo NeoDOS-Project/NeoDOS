@@ -142,13 +142,33 @@ unsafe extern "C" fn hst_register_block_device(
     let dev = crate::drivers::block::NemBlockDevice::new(
         device_id, num_sectors, sector_size, read_fn, write_fn,
     );
-    crate::drivers::block::register_nem_block_device(dev)
+    let idx = crate::drivers::block::register_nem_block_device(dev);
+    // Track resource ownership for hot reload
+    if idx >= 0 {
+        let driver_id = crate::drivers::nem::driver::current_driver_id();
+        if driver_id != 0 {
+            crate::drivers::hotreload::track_resource(
+                driver_id,
+                crate::drivers::hotreload::ResourceType::BlockDevice,
+                idx as u32,
+            );
+        }
+    }
+    idx
 }
 
 /// Unregister a block device previously registered via hst_register_block_device.
 unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
     if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
     if dev_idx < 0 { return -1; }
+    let driver_id = crate::drivers::nem::driver::current_driver_id();
+    if driver_id != 0 {
+        crate::drivers::hotreload::untrack_resource(
+            driver_id,
+            crate::drivers::hotreload::ResourceType::BlockDevice,
+            dev_idx as u32,
+        );
+    }
     crate::drivers::block::unregister_nem_block_device(dev_idx as usize);
     0
 }

@@ -24,6 +24,8 @@ pub const EVENT_KEYB_LAYOUT: EventType = 9;
 pub const EVENT_RTC_READ: EventType = 10;
 pub const EVENT_RTC_DATA: EventType = 11;
 pub const EVENT_SHUTDOWN: EventType = 12;
+pub const EVENT_DRIVER_UNLOAD: EventType = 13;
+pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;
 pub const EVENT_USER: EventType = 0x1000;
 pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 

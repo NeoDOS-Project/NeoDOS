@@ -37,6 +37,8 @@ pub const ERR_OUT_OF_MEMORY: u32 = 6;
 pub const ERR_POLICY_VIOLATION: u32 = 7;
 pub const ERR_LOAD_FAILED: u32 = 8;
 pub const ERR_CAPABILITY_DENIED: u32 = 9;
+pub const ERR_UNLOAD_FAILED: u32 = 10;
+pub const ERR_UNLOAD_TIMEOUT: u32 = 11;
 
 pub fn err_to_str(code: u32) -> &'static str {
     match code {
@@ -50,14 +52,19 @@ pub fn err_to_str(code: u32) -> &'static str {
         ERR_POLICY_VIOLATION => "POLICY_VIOLATION",
         ERR_LOAD_FAILED => "LOAD_FAILED",
         ERR_CAPABILITY_DENIED => "CAPABILITY_DENIED",
+        ERR_UNLOAD_FAILED => "UNLOAD_FAILED",
+        ERR_UNLOAD_TIMEOUT => "UNLOAD_TIMEOUT",
         _ => "UNKNOWN",
     }
 }
 
-// ── Driver state (7-state lifecycle) ──
+// ── Driver state (8-state lifecycle, W2 Hot Reload) ──
 //
 // State machine transition rules:
 //   Loaded → Initialized → Registered → Bound → Active
+//   Active → Unloading (graceful drain in progress)
+//   Unloading → Unloaded (completed drain)
+//   Unloaded → Loaded (reload path)
 //   Any state → Faulted | Unloaded (terminal)
 //   All other transitions are INVALID.
 
@@ -71,6 +78,7 @@ pub enum DriverState {
     Active = 4,        // fully operational in runtime
     Faulted = 5,       // runtime failure detected
     Unloaded = 6,      // removed from system
+    Unloading = 7,     // graceful drain in progress (hot reload)
 }
 
 impl DriverState {
@@ -83,6 +91,7 @@ impl DriverState {
             DriverState::Active => "ACTIVE",
             DriverState::Faulted => "FAULTED",
             DriverState::Unloaded => "UNLOADED",
+            DriverState::Unloading => "UNLOADING",
         }
     }
 }
@@ -104,6 +113,7 @@ pub enum PipelineStep {
     Registration = 3,
     Binding = 4,
     Certification = 5,
+    Unloading = 6,
 }
 
 impl PipelineStep {
@@ -115,6 +125,7 @@ impl PipelineStep {
             PipelineStep::Registration => "REGISTER",
             PipelineStep::Binding => "BIND",
             PipelineStep::Certification => "CERTIFY",
+            PipelineStep::Unloading => "UNLOAD",
         }
     }
 }
@@ -198,6 +209,9 @@ impl DriverInstance {
         if self.state == DriverState::Unloaded {
             return "Driver unloaded";
         }
+        if self.state == DriverState::Unloading {
+            return "Driver unloading — graceful drain in progress";
+        }
         match self.state {
             DriverState::Loaded => "Loaded but not Initialized — driver_init() never called",
             DriverState::Initialized => "Initialized but not Registered — registry commit missing",
@@ -229,6 +243,11 @@ fn is_valid_transition(from: DriverState, to: DriverState) -> bool {
         (DriverState::Initialized, DriverState::Registered) => true,
         (DriverState::Registered, DriverState::Bound) => true,
         (DriverState::Bound, DriverState::Active) => true,
+
+        // Hot reload: Active → Unloading → Unloaded → Loaded (reload)
+        (DriverState::Active, DriverState::Unloading) => true,
+        (DriverState::Unloading, DriverState::Unloaded) => true,
+        (DriverState::Unloaded, DriverState::Loaded) => true,
 
         // Error handling: any state can fault or unload
         (_, DriverState::Faulted) => true,
@@ -552,7 +571,7 @@ impl DriverRuntime {
 
     /// Breakdown of drivers by state (for NDREG QUERY).
     pub fn state_counts(&self) -> alloc::vec::Vec<(DriverState, usize)> {
-        let mut counts = [0usize; 7];
+        let mut counts = [0usize; 8];
         for d in self.drivers.iter().flatten() {
             counts[d.state as usize] += 1;
         }
@@ -567,6 +586,7 @@ impl DriverRuntime {
                     4 => DriverState::Active,
                     5 => DriverState::Faulted,
                     6 => DriverState::Unloaded,
+                    7 => DriverState::Unloading,
                     _ => continue,
                 };
                 result.push((state, c));

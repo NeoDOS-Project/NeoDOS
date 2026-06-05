@@ -41,6 +41,19 @@ impl BlockDeviceManager {
         self.devices.get_mut(idx)?.replace(dev)
     }
 
+    /// Remove a block device by index. Returns the removed device if found.
+    pub fn remove(&mut self, idx: usize) -> Option<Box<dyn BlockDevice>> {
+        if idx < self.devices.len() {
+            let removed = self.devices[idx].take();
+            if removed.is_some() {
+                self.count -= 1;
+            }
+            removed
+        } else {
+            None
+        }
+    }
+
     pub fn count(&self) -> usize {
         self.count
     }
@@ -372,9 +385,10 @@ pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
     }
 }
 
-/// Unregister a NemBlockDevice by its index (no-op for now, as BlockDeviceManager
-/// does not support direct removal).
-pub fn unregister_nem_block_device(_idx: usize) {
-    // BlockDeviceManager does not support removal.
-    // Future: implement BlockDeviceManager::remove().
+/// Unregister a NemBlockDevice by its index.
+pub fn unregister_nem_block_device(idx: usize) {
+    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+    if bdevs.remove(idx).is_some() {
+        crate::serial_println!("[BLK] NEM block device unregistered at idx={}", idx);
+    }
 }

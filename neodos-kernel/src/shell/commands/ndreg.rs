@@ -59,10 +59,35 @@ impl DosShell {
                     Err(e) => println!("Failed to load driver: {:?}", e),
                 }
             }
+            "UNLOAD" => {
+                if path.is_empty() {
+                    println!("Usage: NDREG UNLOAD <driver_name> [/F]");
+                    println!("  Unload a driver gracefully. /F forces unload without waiting for ACK.");
+                    return;
+                }
+                let force = args.iter().any(|a| a.eq_ignore_ascii_case("/F"));
+                match crate::drivers::hotreload::unload_driver(path, force) {
+                    Ok(msg) => println!("{}", msg),
+                    Err(e) => println!("Failed to unload driver: {}", e),
+                }
+            }
+            "RELOAD" => {
+                if path.is_empty() {
+                    println!("Usage: NDREG RELOAD <path>");
+                    println!("  Reload a driver from disk. The driver is unloaded and re-loaded");
+                    println!("  through the certification pipeline with ABI version check.");
+                    return;
+                }
+                let full_path = self.resolve_absolute_path(path);
+                match crate::drivers::hotreload::reload_driver(&full_path) {
+                    Ok(msg) => println!("{}", msg),
+                    Err(e) => println!("Failed to reload driver: {}", e),
+                }
+            }
             _ => {
-                println!("NDREG — NeoDOS Driver Registry v1 (Certification Pipeline)");
+                println!("NDREG — NeoDOS Driver Registry v2 (W2 Hot Reload)");
                 println!();
-                println!("Pipeline: Loaded → Initialized → Registered → Bound → Active");
+                println!("Pipeline: Loaded → Initialized → Registered → Bound → Active → Unloading → Unloaded → Loaded");
                 println!();
                 println!("Subcommands:");
                 println!("  NDREG LIST [path]     List drivers with metadata + state");
@@ -72,6 +97,8 @@ impl DosShell {
                 println!("  NDREG HEALTH          Validate driver metadata");
                 println!("  NDREG DEBUG <name>    Diagnose why driver is NOT active");
                 println!("  NDREG LOAD <path>     Load a driver via certification pipeline");
+                println!("  NDREG UNLOAD <name> [/F]  Gracefully unload a driver");
+                println!("  NDREG RELOAD <path>   Reload a driver (unload + load with ABI check)");
             }
         }
     }
@@ -346,15 +373,16 @@ impl DosShell {
                                         if drv_state == DriverState::Active {
                                             println!("  ✓ FULLY CERTIFIED — Driver is ACTIVE");
                                         } else {
-                                            println!("  ✗ NOT ACTIVE — {}", match drv_state {
-                                                DriverState::Loaded => "Stuck at LOADED (not initialized)",
-                                                DriverState::Initialized => "Stuck at INIT (not registered)",
-                                                DriverState::Registered => "Stuck at REGISTERED (not bound)",
-                                                DriverState::Bound => "Stuck at BOUND (certification pending)",
-                                                DriverState::Faulted => "FAULTED — see error code",
-                                                DriverState::Unloaded => "Terminated",
-                                                _ => "Unknown state",
-                                            });
+            println!("  ✗ NOT ACTIVE — {}", match drv_state {
+                DriverState::Loaded => "Stuck at LOADED (not initialized)",
+                DriverState::Initialized => "Stuck at INIT (not registered)",
+                DriverState::Registered => "Stuck at REGISTERED (not bound)",
+                DriverState::Bound => "Stuck at BOUND (certification pending)",
+                DriverState::Faulted => "FAULTED — see error code",
+                DriverState::Unloaded => "Terminated",
+                DriverState::Unloading => "UNLOADING — graceful drain in progress",
+                _ => "Unknown state",
+            });
                                             if last_error != 0 {
                                                 println!("  Cause: {} ({})", driver_runtime::err_to_str(last_error), last_error);
                                             }

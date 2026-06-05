@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.25.2 (312 tests + 5 user-mode binaries, Driver Isolation Layer).
-> Objetivo: v0.26 — kernel modular, estable, extensible.
+> Versión actual: v0.26.0 (323 tests + 5 user-mode binaries, Hot Reload Drivers).
+> Objetivo: v0.27 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (75 items)
+## COMPLETED (76 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -96,7 +96,8 @@
 73. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
 74. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
 75. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: Page-isolated 16 MB region (0x30000000–0x31000000) for NEM drivers with 16 × 1 MB slots. Region init splits 2 MB huge pages into 4K page tables; strips identity mapping during init. `allocate_driver_slot()`/`free_driver_slot()` with `ISOLATED_REGIONS` tracking. `alloc_isolated_page()`/`free_isolated_page()` for per-page phys frame + identity-mapped page table entry. `validate_driver_ptr()`/`validate_driver_str_ptr()` for argument validation in export table, accepting kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000), and driver region. `handle_isolated_page_fault()` for sandbox mode (DEMAND drivers → FAULTED). `CAP_ISOLATION` (bit 11). Loader (`v3loader.rs`) allocates via isolated region with heap fallback. Boot loader binds isolation region after registration. `NDREG SHOW`/`RUNTIME` display isolation mode and region. 12 unit tests. Total: 312 tests.
-76. **TEST.EXE — libmath.dll self-test user binary** — `userbin/test/` Rust project que carga `libmath.dll` dinámicamente vía `sys_loadlib` (RAX=21) y ejecuta 5 fases de validación: LOAD TEST (carga + verificación de tabla de exportación), BASIC ARITHMETIC TESTS (add, sub, mul, div correctness), EDGE CASES (ceros, valores negativos, casos límite), STRESS TEST (1,000,000 iteraciones add(i, i+1) detectando stack corruption/memory instability), DETERMINISM (1000 iteraciones idénticas con resultado reproducible), e INTEGRITY CHECKS (ABI stability: 100 mixed calls a add/sub/mul/div/abs/min/max sin crash ni desviación). `libmath-dll` extendido con funciones `math_add`, `math_sub`, `math_mul` + entradas en `MathAbiTable`. Scripts `build.sh` y `create_neodos_image.py` actualizados. Total: 312 kernel tests + 5 user-mode binaries.
+76. **W2. Hot reload drivers** — `src/drivers/hotreload.rs`: runtime unload/reload of NEM drivers without reboot. Extended state machine: `Active → Unloading → Unloaded → Loaded` (reload path). Global resource registry for ownership tracking (block devices). Graceful drain via `EVENT_DRIVER_UNLOAD` with configurable timeout (100 ticks, force fallback). ABI version check on reload via `abi::negotiate_default()`. `NDREG UNLOAD <name> [/F]` and `NDREG RELOAD <path>` shell commands. Registered load results for boot-loaded and manually-loaded drivers. 11 unit tests. Total: 323 kernel tests.
+77. **TEST.EXE — libmath.dll self-test user binary** — `userbin/test/` Rust project que carga `libmath.dll` dinámicamente vía `sys_loadlib` (RAX=21) y ejecuta 5 fases de validación: LOAD TEST (carga + verificación de tabla de exportación), BASIC ARITHMETIC TESTS (add, sub, mul, div correctness), EDGE CASES (ceros, valores negativos, casos límite), STRESS TEST (1,000,000 iteraciones add(i, i+1) detectando stack corruption/memory instability), DETERMINISM (1000 iteraciones idénticas con resultado reproducible), e INTEGRITY CHECKS (ABI stability: 100 mixed calls a add/sub/mul/div/abs/min/max sin crash ni desviación). `libmath-dll` extendido con funciones `math_add`, `math_sub`, `math_mul` + entradas en `MathAbiTable`. Scripts `build.sh` y `create_neodos_image.py` actualizados. Total: 312 kernel tests + 5 user-mode binaries.
 
 ---
 
@@ -104,17 +105,6 @@ NeoDOS — ORDERED IMPROVEMENTS (WITH DESCRIPTION)
 
 Versión: v0.20 → v1.0
 Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
-
-🧩 FASE 4 — DRIVER ARCHITECTURE SAFETY LAYER
-1. **W2. Hot reload drivers**
-
-Carga, descarga y recarga de drivers en runtime sin necesidad de reiniciar el sistema. Actualmente, los drivers NEM solo se cargan en el boot (PHASE 3.85) o mediante el comando LOADNEM/NDREG LOAD. Una vez cargados, no hay forma de descargarlos limpiamente ni de recargar una versión actualizada.
-
-El sistema hot reload requeriría: (1) **Driver state machine extendida** — añadir transiciones `Active → Unloading` (descarga en curso) y `Unloaded → Loaded` (recarga). (2) **Ownership tracking** — al descargar un driver, el kernel debe asegurarse de que ningún otro driver o subsistema tenga referencias a recursos del driver (handles de eventos, block devices registrados, páginas de código). Esto requiere que cada driver declare sus recursos explícitamente, o que el kernel los rastree mediante KOBJ. (3) **Graceful drain** — antes de descargar, el kernel envía un evento `EVENT_DRIVER_UNLOAD` y espera a que el driver libere sus recursos (timeout configurable). Si el driver no responde, se fuerza la descarga y se marcan sus recursos como huérfanos. (4) **Binary version check** — al recargar, se verifica que la nueva versión del driver sea ABI-compatible con el kernel actual.
-
-Casos de uso: actualizar un driver sin reboot (ej. fix de bug en ATA driver), cargar un driver de depuración solo cuando sea necesario, descargar un driver que falló y recargarlo.
-
-Archivos: `src/drivers/hotreload.rs`, modificaciones en `driver_runtime.rs` y `shell/commands/ndreg.rs`.
 
 🧪 FASE 5 — OBSERVABILITY & DEBUGGING (CRÍTICO)
 4. **Y1. Kernel tracing infrastructure**

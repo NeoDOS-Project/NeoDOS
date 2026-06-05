@@ -2333,6 +2333,7 @@ pub fn register_tests() {
     crate::kobj::register_kobj_tests();
     crate::work_queue::register_tests();
     crate::irp::register_tests();
+    crate::drivers::hotreload::register_hotreload_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }

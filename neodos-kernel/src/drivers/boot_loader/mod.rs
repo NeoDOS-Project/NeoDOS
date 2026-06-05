@@ -142,6 +142,9 @@ pub fn boot_load_all() {
                     // X4: Bind the isolated region slot to this driver
                     v3loader::bind_isolated_driver(id, &load_result);
 
+                    // Track load result for hot reload
+                    crate::drivers::hotreload::register_load_result(id, &load_result);
+
                     // Set current driver context for capability checks
                     unsafe { crate::drivers::nem::driver::set_current_driver(id); }
 

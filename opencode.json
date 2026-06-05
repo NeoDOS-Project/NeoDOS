@@ -28,7 +28,7 @@
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Review changes in both the root repo (main) and the neodos/ subdirectory (master). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Commit and push both to GitHub with descriptive messages. Run from the root of the repository.",
+      "template": "Review uncommitted changes in the repo (master branch). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Build kernel + user binaries, then run auto_test.py. Commit and push to GitHub with descriptive message.",
       "description": "Release to GitHub"
     }
   }

@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.26.0 — 2026-06-05
+
+### W2. Hot reload drivers — Añadido
+- **Añadido**: `src/drivers/hotreload.rs` — Nuevo sistema de recarga en caliente de drivers NEM sin reinicio. Sigue el diseño W2.
+- **Añadido**: Estado `Unloading = 7` en `DriverState` con transiciones `Active → Unloading → Unloaded → Loaded` (reload path).
+- **Añadido**: `EVENT_DRIVER_UNLOAD = 13` y `EVENT_DRIVER_UNLOAD_ACK = 14` en Event Bus.
+- **Añadido**: Resource tracking — `ResourceRegistry` global que rastrea bloqueos de dispositivos por driver_id. Hooks en `hst_register_block_device()` y `hst_unregister_block_device()`.
+- **Añadido**: Graceful drain — `unload_driver()` llama a `driver_fini()`, envía `EVENT_DRIVER_UNLOAD`, espera ACK con timeout de 100 ticks. Force mode (`/F`) salta espera.
+- **Añadido**: `reload_driver()` — lectura de nuevo binario, ABI compatibility check via `negociate_default()`, unload del anterior, load + init + activate del nuevo.
+- **Añadido**: `NDREG UNLOAD <name> [/F]` y `NDREG RELOAD <path>` comandos de shell.
+- **Añadido**: `init_hot_reload()` en PHASE 3.87 de `main.rs` — registra handler de `EVENT_DRIVER_UNLOAD_ACK`.
+- **Añadido**: `register_load_result()` en boot loader y loader para persistir `entry_fini` info.
+- **Añadido**: `BlockDeviceManager::remove()` en `block.rs` y `unregister_nem_block_device()` funcional.
+- **Añadido**: Errores `ERR_UNLOAD_FAILED = 10` y `ERR_UNLOAD_TIMEOUT = 11` en driver_runtime.
+- **Total**: 323 kernel tests + 5 user-mode binaries.
+
 ## v0.25.2 — 2026-06-05
 
 ### TEST.EXE — libmath.dll self-test user binary

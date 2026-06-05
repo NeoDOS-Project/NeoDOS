@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.25.2
+v0.26.0
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 312 kernel tests + 5 user-mode binaries
+2. `python3 scripts/auto_test.py` — 323 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -479,7 +479,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-312 tests en 37 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+323 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -512,9 +512,10 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
 | Stress | 8 | Stress: sched, syscall, mem |
+| Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (312 tests kernel)
+1. Ejecuta `testing::run_all()` (323 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
@@ -549,7 +550,7 @@ Comando `test`:
 | Concept | Description |
 |---------|-------------|
 | **Event** | `#[repr(C)]` struct (56 bytes): `event_id`, `event_type`, `source`, `timestamp`, `device_id`, `data0`, `data1`, `flags` — ABI-stable for NEM drivers |
-| **Event types** | 13 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, EVENT_SHUTDOWN, USER(0x1000+). PCI NEM driver adds 0x1000–0x1003 |
+| **Event types** | 15 named constants: TIMER_TICK, KEYBOARD_INPUT, SERIAL_DATA, DISK_IO_COMPLETE, PROCESS_EXIT, DRIVER_LOADED, DRIVER_CRASH, POLICY_VIOLATION, FS_MOUNTED, KEYB_LAYOUT, EVENT_SHUTDOWN, EVENT_DRIVER_UNLOAD, EVENT_DRIVER_UNLOAD_ACK, USER(0x1000+). PCI NEM driver adds 0x1000–0x1003 |
 | **Event sources** | SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND |
 | **Priority queues** | Two lock-free SPSC ring buffers: **high** (16 slots) for timers/IRQ completions, **normal** (64 slots) for system events. High always drained first |
 | **Subscription filters** | `register_handler_v2(filter, callback, name)` with `EventFilter`: filter by event_type, source_mask bitfield, device_id. v1 `register_handler()` creates a type-only filter |
@@ -567,7 +568,7 @@ See `docs/NEM_SPEC.md` for full NEM format spec.
 
 `src/drivers/driver_runtime.rs` — Strict driver lifecycle state machine.
 
-### Lifecycle States (7-state)
+### Lifecycle States (8-state, W2 Hot Reload)
 
 ```rust
 DriverState::Loaded      // binary loaded, not verified
@@ -577,6 +578,7 @@ DriverState::Bound       // bound to Event Bus / Device
 DriverState::Active      // fully operational, certified
 DriverState::Faulted     // runtime failure (recoverable? → Unloaded)
 DriverState::Unloaded    // removed from system (terminal)
+DriverState::Unloading   // graceful drain in progress (W2 hot reload)
 ```
 
 ### Transition Rules
@@ -584,6 +586,7 @@ DriverState::Unloaded    // removed from system (terminal)
 Only these transitions are valid:
 ```
 Loaded → Initialized → Registered → Bound → Active
+Active → Unloading → Unloaded → Loaded (reload path)
 Any → Faulted
 Any → Unloaded
 All others → ERROR (TransitionError)
@@ -901,6 +904,8 @@ A driver is ABI-compatible iff:
 | `NDREG HEALTH` | Validate driver metadata integrity (NEM header validity) |
 | `NDREG DEBUG <name>` | Diagnose why a driver is NOT active (5-stage checklist) |
 | `NDREG LOAD <path>` | Load driver through certification pipeline (→ Active if all pass) |
+| `NDREG UNLOAD <name> [/F]` | Gracefully unload a driver (sends EVENT_DRIVER_UNLOAD, waits for ACK, cleanup resources). `/F` forces unload without waiting |
+| `NDREG RELOAD <path>` | Reload a driver from disk with ABI version check (unload + load + re-initialize) |
 
 All data is read-only from NeoFS + runtime registry. No driver execution.
 
