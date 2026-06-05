@@ -36,6 +36,7 @@ pub mod usermode;
 pub mod syscall;
 mod dll;
 mod irp;
+mod interrupts;
 mod testing;
 pub mod trace;
 pub mod invariants;
@@ -116,6 +117,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     
     println!("[+] Initializing IDT...");
     arch::x64::init_idt();
+    
+    println!("[+] Initializing MSI subsystem...");
+    interrupts::msi::init();
     
     println!("[+] Initializing PIC...");
     arch::x64::init_pic();

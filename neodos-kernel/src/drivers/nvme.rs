@@ -132,6 +132,10 @@ pub struct NvmeDriver {
     ns_sectors: u64,
     lbads: u8,
     base_lba: u64,
+    bus: u8,
+    dev: u8,
+    func: u8,
+    msi_vector: Option<u8>,
 }
 
 unsafe impl Send for NvmeDriver {}
@@ -467,6 +471,8 @@ impl NvmeDriver {
             io_sq_id: 1, io_cq_id: 1,
             dma_buf_phys: dma_phys,
             nsid: 0, ns_sectors: 0, lbads: 9, base_lba: 0,
+            bus: info.bus, dev: info.device, func: info.func,
+            msi_vector: None,
         };
 
         // Identify Controller
@@ -694,6 +700,13 @@ impl NvmeDriver {
         serial_println!("[NVMe] Ready: {} sectors x {}B, QID {}→{}",
             nsze, 1u64 << lbads, io_sq_id, io_cq_id);
 
+        if let Ok(vec) = crate::interrupts::msi::msi_request(drv.bus, drv.dev, drv.func, nvme_irq_handler) {
+            drv.msi_vector = Some(vec);
+            serial_println!("[NVMe] MSI vector {} configured", vec);
+        } else {
+            serial_println!("[NVMe] Warning: Failed to configure MSI");
+        }
+
         [Some(drv)]
     }
 
@@ -762,8 +775,9 @@ impl NvmeDriver {
     fn io_cmd(&mut self, opcode: u8, slba: u64, nlb: u16, prp1: u64) -> Result<(), u16> {
         let idx = self.iosq_tail;
         let cdw0 = (opcode as u32) | ((idx as u32) << 16);
+        let sqe_addr = self.iosq_phys + (idx as u64) * SQE_SIZE as u64;
         unsafe {
-            Self::poke_io_sqe(self.iosq_phys, cdw0, self.nsid, prp1, slba, nlb);
+            Self::poke_io_sqe(sqe_addr, cdw0, self.nsid, prp1, slba, nlb);
         }
         self.iosq_tail = (self.iosq_tail + 1) % IOSQ_ENTRIES;
         self.ring_sq_db(self.io_sq_id, self.iosq_tail);
@@ -780,13 +794,6 @@ impl NvmeDriver {
                 self.ring_cq_db(self.io_cq_id, self.iocq_head);
                 if status != 0 { return Err(status); }
                 return Ok(());
-            }
-            if iter & 0x7FFF == 0 {
-                let w0 = unsafe { cqe32.add(0).read_volatile() };
-                let w1 = unsafe { cqe32.add(1).read_volatile() };
-                let w2 = unsafe { cqe32.add(2).read_volatile() };
-                serial_println!("[NVMe] IOCQ[{}] poll: {:08x} {:08x} {:08x} {:08x} phase={} expect_phase={} cid={} expect_cid={}",
-                    self.iocq_head, w0, w1, w2, w3, status_field & 1, self.iocq_phase as u16, w3 & 0xFFFF, idx);
             }
             crate::hal::hlt_once();
         }
@@ -816,5 +823,15 @@ impl Drop for NvmeDriver {
         if self.iosq_phys != 0 { Self::free_contig(self.iosq_phys, IOSQ_ENTRIES as u64 * SQE_SIZE as u64); }
         if self.iocq_phys != 0 { Self::free_contig(self.iocq_phys, IOCQ_ENTRIES as u64 * CQE_SIZE as u64); }
         if self.dma_buf_phys != 0 { Self::free_contig(self.dma_buf_phys, PAGE_SIZE_4K); }
+
+        if let Some(vec) = self.msi_vector {
+            crate::interrupts::msi::msi_release(self.bus, self.dev, self.func, vec);
+        }
     }
+}
+
+fn nvme_irq_handler(vector: u8) {
+    // Basic MSI handler for NVMe.
+    // Right now the driver polls synchronously, so we just acknowledge the interrupt.
+    crate::serial_println!("[NVMe] MSI interrupt fired on vector {}", vector);
 }

@@ -26,7 +26,21 @@ pub const EVENT_RTC_DATA: EventType = 11;
 pub const EVENT_SHUTDOWN: EventType = 12;
 pub const EVENT_DRIVER_UNLOAD: EventType = 13;
 pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;
-pub const EVENT_USER: EventType = 0x1000;
+// ── PCI / MSI events (must match pci.nem constants) ──
+/// Kernel → pci.nem: read a config dword.  data0[31:0] = packed BDF+offset.
+pub const EVENT_PCI_READ_CONFIG: EventType    = 0x1000;
+/// Kernel → pci.nem: write a config dword.  data0 = packed BDF+offset, data1 = value.
+pub const EVENT_PCI_WRITE_CONFIG: EventType   = 0x1001;
+/// pci.nem → kernel: result of a config read.  data0 = packed BDF+offset, data1 = value.
+pub const EVENT_PCI_READ_RESULT: EventType    = 0x1002;
+/// pci.nem → kernel: config write acknowledged.
+pub const EVENT_PCI_WRITE_DONE: EventType     = 0x1003;
+/// Kernel → pci.nem: configure MSI for a device.
+/// data0[63:32] = vector, data0[31:0] = packed BDF, data1 = cap_offset.
+pub const EVENT_MSI_CONFIGURE: EventType      = 0x1010;
+/// pci.nem → kernel: MSI configured OK.  data0 = packed BDF.
+pub const EVENT_MSI_CONFIGURED: EventType     = 0x1011;
+pub const EVENT_USER: EventType = 0x2000;
 pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 
 pub const SOURCE_HAL: EventSource = 0;

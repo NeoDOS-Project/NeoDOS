@@ -532,3 +532,68 @@ extern "x86-interrupt" fn serial_handler(_: InterruptStackFrame) {
 pub fn init() {
     IDT.load();
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dynamic MSI handler registration
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The IDT is a lazy_static — its entries cannot be changed after it is loaded.
+// To support dynamic MSI vector allocation without rebuilding the IDT, we use
+// a secondary dispatch table: every MSI-capable vector (48..=255) points to
+// the same `msi_generic_handler` entry in the IDT, which then calls the
+// per-vector function stored in MSI_HANDLER_TABLE.
+
+/// Maximum number of IDT entries (vectors 0-255).
+const IDT_SIZE: usize = 256;
+/// First vector available for MSI allocation (after legacy IRQ remaps 32-47).
+const MSI_VECTOR_BASE: usize = 48;
+
+type MsiHandlerFn = fn(vector: u8);
+
+/// Per-vector handler table.  Index == vector number.  `None` means the
+/// vector is not yet claimed.
+static MSI_HANDLER_TABLE: spin::Mutex<[Option<MsiHandlerFn>; IDT_SIZE]> =
+    spin::Mutex::new([None; IDT_SIZE]);
+
+/// Register a handler function for an already-allocated MSI vector.
+/// Panics if the vector is out of the MSI range or already registered.
+pub fn msi_register_handler(vector: u8, handler: MsiHandlerFn) {
+    assert!(
+        (vector as usize) >= MSI_VECTOR_BASE,
+        "msi_register_handler: vector {} is in the legacy range",
+        vector
+    );
+    let mut table = MSI_HANDLER_TABLE.lock();
+    assert!(
+        table[vector as usize].is_none(),
+        "msi_register_handler: vector {} already has a handler",
+        vector
+    );
+    table[vector as usize] = Some(handler);
+}
+
+/// Unregister the handler for an MSI vector (call before freeing the vector).
+pub fn msi_unregister_handler(vector: u8) {
+    if (vector as usize) < MSI_VECTOR_BASE {
+        return;
+    }
+    MSI_HANDLER_TABLE.lock()[vector as usize] = None;
+}
+
+/// Generic MSI dispatch — called from the IDT stub for every MSI vector.
+/// It looks up the per-vector handler in MSI_HANDLER_TABLE and calls it.
+/// If no handler is registered the spurious interrupt is silently discarded.
+#[no_mangle]
+pub extern "C" fn msi_dispatch(vector: u8) {
+    let handler = {
+        let table = MSI_HANDLER_TABLE.lock();
+        table[vector as usize]
+    };
+    if let Some(f) = handler {
+        f(vector);
+    } else {
+        crate::serial_println!("[MSI] Spurious interrupt on vector {}", vector);
+    }
+    // Send EOI via the HAL (no-op if APIC is not configured yet).
+    crate::hal::ack_irq(vector);
+}

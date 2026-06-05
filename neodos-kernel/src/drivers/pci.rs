@@ -43,3 +43,32 @@ pub fn pci_config_write_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16)
     let new_dword = (dword & mask) | ((value as u32) << shift);
     pci_config_write_dword(bus, dev, func, aligned, new_dword);
 }
+
+/// Scan the PCI capability list for a capability with the given ID (e.g.
+/// 0x05 = MSI, 0x11 = MSI-X). Returns the byte offset within the PCI
+/// configuration space where the capability header begins, or `None` if the
+/// device does not expose the capability or has no capability list at all.
+pub fn find_capability(bus: u8, dev: u8, func: u8, cap_id: u8) -> Option<u8> {
+    // Bit 4 of the Status register (offset 0x06) indicates that the capability
+    // list is present.
+    let status = pci_config_read_word(bus, dev, func, 0x06);
+    if (status & (1 << 4)) == 0 {
+        return None;
+    }
+
+    // The first capability pointer is at offset 0x34 (low 8 bits only).
+    let mut ptr = (pci_config_read_word(bus, dev, func, 0x34) & 0xFF) as u8;
+
+    let mut guard = 0u8; // prevent infinite loops on malformed lists
+    while ptr != 0 && guard < 48 {
+        // Each capability header: [7:0] = Capability ID, [15:8] = Next Ptr
+        let header = pci_config_read_word(bus, dev, func, ptr);
+        let id = (header & 0xFF) as u8;
+        if id == cap_id {
+            return Some(ptr);
+        }
+        ptr = ((header >> 8) & 0xFF) as u8;
+        guard += 1;
+    }
+    None
+}

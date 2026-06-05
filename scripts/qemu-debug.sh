@@ -15,12 +15,13 @@ fi
 echo "[*] NeoDOS QEMU Debug Session"
 echo ""
 
-USE_AHCI=true
+USE_STORAGE="ahci"
 
 for arg in "$@"; do
     case "$arg" in
-        --ata) USE_AHCI=false ;;
-        --ahci) USE_AHCI=true ;;
+        --ata) USE_STORAGE="ata" ;;
+        --ahci) USE_STORAGE="ahci" ;;
+        --nvme) USE_STORAGE="nvme" ;;
     esac
 done
 
@@ -46,9 +47,13 @@ if [ "$ACCEL" = "kvm" ] && [ ! -c /dev/kvm ]; then
     ACCEL="tcg"
 fi
 echo "[+] QEMU accelerator: $ACCEL"
-if [ "$USE_AHCI" = true ]; then
+
+if [ "$USE_STORAGE" = "ahci" ]; then
   DRIVE_OPTS="-device ahci,id=ahci -drive if=none,format=raw,file=$DISK_IMAGE,id=mydisk -device ide-hd,drive=mydisk,bus=ahci.0"
   echo "[+] Storage: AHCI Mode"
+elif [ "$USE_STORAGE" = "nvme" ]; then
+  DRIVE_OPTS="-drive if=none,format=raw,file=$DISK_IMAGE,id=nvm -device nvme,serial=deadbeef,drive=nvm"
+  echo "[+] Storage: NVMe Mode"
 else
   DRIVE_OPTS="-drive format=raw,file=$DISK_IMAGE,index=0,media=disk"
   echo "[+] Storage: ATA/IDE Mode"

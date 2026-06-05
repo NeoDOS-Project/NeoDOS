@@ -37,6 +37,11 @@ const EVENT_PCI_READ_CONFIG: u32 = 0x1000;
 const EVENT_PCI_WRITE_CONFIG: u32 = 0x1001;
 const EVENT_PCI_READ_RESULT: u32 = 0x1002;
 const EVENT_PCI_WRITE_DONE: u32 = 0x1003;
+/// Kernel requests MSI configuration for a device.
+/// data0[63:32] = vector, data0[31:0] = packed BDF (bus<<16|dev<<11|func<<8)
+/// data1[7:0]   = cap_offset (from the PCI capability list)
+const EVENT_MSI_CONFIGURE: u32 = 0x1010;
+const EVENT_MSI_CONFIGURED: u32 = 0x1011;
 const SOURCE_DRIVER: u32 = 1;
 
 static INITIALIZED: AtomicU8 = AtomicU8::new(0);
@@ -130,6 +135,41 @@ unsafe fn log_dev(bus: u8, dev: u8, func: u8,
         pos += 1;
         hst_log(2, bp, pos);
     }
+}
+
+fn find_capability(bus: u8, dev: u8, func: u8, cap_id: u8) -> Option<u8> {
+    // Check Status.CapabilitiesList (bit 4 of offset 0x06)
+    let status = pci_config_read_word(bus, dev, func, 0x06);
+    if (status & (1 << 4)) == 0 { return None; }
+    let mut ptr = (pci_config_read_word(bus, dev, func, 0x34) & 0xFF) as u8;
+    let mut guard = 0u8;
+    while ptr != 0 && guard < 48 {
+        let header = pci_config_read_word(bus, dev, func, ptr);
+        if (header & 0xFF) as u8 == cap_id { return Some(ptr); }
+        ptr = ((header >> 8) & 0xFF) as u8;
+        guard += 1;
+    }
+    None
+}
+
+fn configure_msi_registers(bus: u8, dev: u8, func: u8, cap: u8, vector: u8) {
+    // Check 64-bit MSI capability flag (bit 7 of the control word at cap+2)
+    let ctrl = pci_config_read_word(bus, dev, func, cap + 2);
+    let is_64bit = (ctrl & (1 << 7)) != 0;
+
+    // Message Address (CPU 0 local APIC)
+    pci_config_write_dword(bus, dev, func, cap + 4, 0xFEE0_0000);
+    if is_64bit {
+        pci_config_write_dword(bus, dev, func, cap + 8, 0); // upper address = 0
+    }
+
+    // Message Data: fixed delivery, edge-triggered, vector in bits[7:0]
+    let data_off = if is_64bit { cap + 12 } else { cap + 8 };
+    pci_config_write_dword(bus, dev, func, data_off, (vector as u32) & 0xFF);
+
+    // Enable MSI: clear MME[6:4], set Enable bit[0]
+    let new_ctrl = (ctrl & !0x0070) | 0x0001;
+    pci_config_write_word(bus, dev, func, cap + 2, new_ctrl);
 }
 
 fn scan_bus(bus: u8, bus_list: *mut u8, bus_count: *mut u16) -> u16 {
@@ -316,6 +356,40 @@ pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
                 )
             };
             0
+        }
+        EVENT_MSI_CONFIGURE => {
+            // data0: [63:32] = vector, [31:0] = packed BDF (bus<<16|dev<<11|func<<8)
+            // data1: [7:0]   = cap_offset (0 = auto-discover via find_capability)
+            let packed  = (ev.data0 & 0xFFFF_FFFF) as u32;
+            let vector  = ((ev.data0 >> 32) & 0xFF) as u8;
+            let bus     = ((packed >> 16) & 0xFF) as u8;
+            let dev     = ((packed >> 11) & 0x1F) as u8;
+            let func    = ((packed >>  8) & 0x07) as u8;
+            let cap_hint = (ev.data1 & 0xFF) as u8;
+
+            // Use provided cap_offset or auto-locate (MSI capability ID = 0x05)
+            let cap = if cap_hint != 0 {
+                Some(cap_hint)
+            } else {
+                find_capability(bus, dev, func, 0x05)
+            };
+
+            match cap {
+                Some(cap_off) => {
+                    configure_msi_registers(bus, dev, func, cap_off, vector);
+                    let msg = b"pci.nem: MSI configured\r\n";
+                    unsafe { hst_log(2, msg.as_ptr(), msg.len()) };
+                    let _ = unsafe {
+                        hst_push_event(EVENT_MSI_CONFIGURED, SOURCE_DRIVER, 0, packed as u64, 0, 0)
+                    };
+                    0
+                }
+                None => {
+                    let msg = b"pci.nem: MSI cap not found\r\n";
+                    unsafe { hst_log(1, msg.as_ptr(), msg.len()) };
+                    -1
+                }
+            }
         }
         _ => 1,
     }
