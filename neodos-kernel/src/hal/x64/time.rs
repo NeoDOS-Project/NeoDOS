@@ -11,6 +11,12 @@ pub extern "C" fn get_ticks() -> u64 {
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn sleep_hint(us: u32) {
+    // If HPET is available, use it for more accurate delays
+    if crate::timers::hpet::hpet_mmio_base() != 0 {
+        crate::timers::hpet::sleep_us(us as u64);
+        return;
+    }
+    // Fallback: I/O port busy-wait
     for _ in 0..us {
         unsafe { core::arch::asm!("out dx, al", in("dx") 0x80u16, in("al") 0u8,
             options(nomem, nostack, preserves_flags)); }
@@ -24,6 +30,26 @@ pub extern "C" fn increment_ticks() {
     TIMER_TICKS.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Get the tick rate in Hz (ticks per second).
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn get_tick_rate() -> u64 {
+    match crate::timers::active() {
+        crate::timers::TimerSource::Hpet | crate::timers::TimerSource::ApicTimer => {
+            1_000_000_000 / crate::timers::TICK_INTERVAL_US
+        }
+        crate::timers::TimerSource::Pit => 18,
+    }
+}
+
+/// Initialize the system timer (HPET with PIT fallback).
+/// Called during boot after HAL init.
+#[no_mangle]
+#[inline(never)]
+pub extern "C" fn init_system_timer() {
+    crate::timers::init();
+}
+
 // ── Force ABI symbol retention ──
 #[used]
 static KEEP_TIME_GET_TICKS: unsafe extern "C" fn() -> u64 = get_ticks;
@@ -31,3 +57,7 @@ static KEEP_TIME_GET_TICKS: unsafe extern "C" fn() -> u64 = get_ticks;
 static KEEP_TIME_SLEEP_HINT: unsafe extern "C" fn(u32) = sleep_hint;
 #[used]
 static KEEP_TIME_INCREMENT_TICKS: unsafe extern "C" fn() = increment_ticks;
+#[used]
+static KEEP_TIME_GET_TICK_RATE: unsafe extern "C" fn() -> u64 = get_tick_rate;
+#[used]
+static KEEP_TIME_INIT_TIMER: unsafe extern "C" fn() = init_system_timer;

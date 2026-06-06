@@ -35,6 +35,7 @@ pub struct BootInfo {
     pub memory_map_desc_version: u32,
     pub fs_image_addr: u64,
     pub fs_image_size: u64,
+    pub acpi_rsdp_addr: u64,  // ACPI RSDP physical address (0 if not found)
 }
 
 #[uefi::entry]
@@ -109,7 +110,11 @@ fn efi_main() -> Status {
         (0, 0)
     };
 
-    // 4/5. Exit boot services and capture the final UEFI memory map.
+    // 4. Find ACPI RSDP from UEFI configuration table before ExitBootServices.
+    log::info!("[+] Locating ACPI RSDP...");
+    let acpi_rsdp_addr = find_acpi_rsdp();
+
+    // 5. Exit boot services and capture the final UEFI memory map.
     //
     // The map buffer is allocated from UEFI pool (typically LOADER_DATA). After
     // ExitBootServices the pool allocator is unavailable, so we *leak* the map
@@ -131,6 +136,7 @@ fn efi_main() -> Status {
         memory_map_desc_version: meta.desc_version,
         fs_image_addr,
         fs_image_size,
+        acpi_rsdp_addr,
     };
     core::mem::forget(mmap);
 
@@ -204,6 +210,60 @@ fn init_gop() -> Option<FramebufferInfo> {
 
     log::warn!("[!] GOP not available");
     None
+}
+
+/// Find the ACPI 2.0 RSDP address from UEFI configuration tables.
+/// Returns 0 if not found.
+fn find_acpi_rsdp() -> u64 {
+    use uefi::table::cfg::ConfigTableEntry;
+    use uefi::table::system_table_raw;
+
+    let st = match system_table_raw() {
+        Some(st) => st,
+        None => {
+            log::warn!("[!] UEFI system table not available");
+            return 0;
+        }
+    };
+
+    unsafe {
+        let st_ref = st.as_ref();
+        let count = st_ref.number_of_configuration_table_entries;
+        let entries = st_ref.configuration_table;
+
+        if entries.is_null() || count == 0 {
+            log::warn!("[!] No UEFI configuration tables");
+            return 0;
+        }
+
+        // Compare GUID via uguid (both uefi::Guid and uefi_raw::Guid are uguid::Guid)
+        let acpi2_guid: uefi::Guid = ConfigTableEntry::ACPI2_GUID;
+        let acpi1_guid: uefi::Guid = ConfigTableEntry::ACPI_GUID;
+
+        for i in 0..count {
+            let entry = &*entries.add(i);
+            // Both uefi::Guid and uefi_raw::Guid are uguid::Guid, so direct comparison works
+            if entry.vendor_guid == acpi2_guid {
+                let addr = entry.vendor_table as u64;
+                log::info!("[✓] ACPI 2.0 RSDP found at 0x{:x}", addr);
+                return addr;
+            }
+        }
+
+        // Fallback: try ACPI 1.0 RSDP if ACPI 2.0 not found
+        for i in 0..count {
+            let entry = &*entries.add(i);
+            if entry.vendor_guid == acpi1_guid {
+                let addr = entry.vendor_table as u64;
+                log::info!("[✓] ACPI 1.0 RSDP found at 0x{:x}", addr);
+                return addr;
+            }
+        }
+
+        log::warn!("[!] ACPI RSDP not found in UEFI configuration tables");
+    }
+
+    0
 }
 
 fn load_esp_file(path: &uefi::CStr16) -> Result<alloc::vec::Vec<u8>, uefi::Error> {

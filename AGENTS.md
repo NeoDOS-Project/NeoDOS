@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.26.0
+v0.27.0
 
 ## Build & Run
 
@@ -29,7 +29,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 323 kernel tests + 5 user-mode binaries
+2. `python3 scripts/auto_test.py` — 320 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Cada vez que se complete una tarea:**
@@ -84,10 +84,11 @@ The resulting ELF binary can be loaded by the kernel's `RUN` command.
 - **Heap**: 16 MB @ `0x1000000`, uses kernel slab allocator (9 size classes 8B–2KB) with `linked_list_allocator` fallback for large objects. `Box`, `Vec`, `String` disponibles.
 - **Profiles**: release with `opt-level=3`, `lto=true`, `debug=true`, `panic="abort"`.
 - A shared `.cargo/config.toml` at `neodos/` adds extra linker flags (`-melf_x86_64`, `rust-lld`) for the kernel target only.
+- **Timers**: HPET (High Precision Event Timer) detected via ACPI RSDP/RSDT table scan. Configured at 1 KHz periodic mode with legacy replacement routing to IRQ0. Local APIC timer calibrated against HPET, used as primary timer source when available. APIC timer disables HPET legacy replacement and masks PIC IRQ0 to prevent double interrupts. Fallback to PIT (8254) at 18.2 Hz when HPET not available. `sleep_hint()` uses HPET counter for µs-resolution delays.
 
 ## Boot ABI
 
-Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map leaked via `forget`), jumps to kernel. `BootInfo` has: framebuffer info + raw memory map pointer/metadata.
+Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map leaked via `forget`), jumps to kernel. `BootInfo` has: framebuffer info, raw memory map pointer/metadata, and ACPI RSDP address (`acpi_rsdp_addr`).
 
 ## Code generation
 
@@ -479,7 +480,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-323 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+320 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -515,7 +516,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (323 tests kernel)
+1. Ejecuta `testing::run_all()` (320 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

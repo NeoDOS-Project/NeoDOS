@@ -218,6 +218,7 @@ pub fn register_sched_priority_tests() {
     use crate::scheduler::{
         Process, ProcessState, Scheduler,
         PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, TIME_SLICES,
+        MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS,
     };
 
     test_case!("sched_priority_high_picked_first", {
@@ -340,12 +341,12 @@ pub fn register_sched_priority_tests() {
         let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
         p.state = ProcessState::Ready;
         p.priority = PRIORITY_IDLE;
-        p.ticks_since_scheduled = 2000; // starved
+        p.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
         p.time_slice_remaining = 50;
         sched.processes[1] = Some(p);
 
-        // Run multiple timer ticks to trigger aging (AGING_INTERVAL_TICKS = 100)
-        for _ in 0..100 {
+        // Run enough timer ticks to trigger aging (AGING_INTERVAL_TICKS)
+        for _ in 0..AGING_INTERVAL_TICKS + 5 {
             sched.on_timer_tick();
         }
 

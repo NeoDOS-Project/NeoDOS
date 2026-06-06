@@ -37,6 +37,7 @@ pub mod syscall;
 mod dll;
 mod irp;
 mod interrupts;
+mod timers;
 mod testing;
 pub mod trace;
 pub mod invariants;
@@ -65,6 +66,7 @@ pub struct BootInfo {
     pub memory_map_desc_version: u32,
     pub fs_image_addr: u64,
     pub fs_image_size: u64,
+    pub acpi_rsdp_addr: u64,  // ACPI RSDP physical address (0 if not found)
 }
 
 #[no_mangle]
@@ -123,6 +125,24 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     
     println!("[+] Initializing PIC...");
     arch::x64::init_pic();
+
+    println!("[+] Initializing HPET / timers...");
+    unsafe {
+        timers::BOOT_RSDP_ADDR = boot_info.acpi_rsdp_addr;
+    }
+    if boot_info.acpi_rsdp_addr != 0 {
+        println!("[+] ACPI RSDP at 0x{:x}", boot_info.acpi_rsdp_addr);
+    }
+    timers::init();
+    if timers::active() == timers::TimerSource::Hpet {
+        println!("[+] Initializing APIC timer...");
+        if timers::apic::init_apic_timer() {
+            timers::set_active(timers::TimerSource::ApicTimer);
+            println!("[+] APIC timer active ({} KHz bus)", timers::apic::apic_bus_khz());
+        } else {
+            println!("[+] APIC timer not available, using HPET");
+        }
+    }
 
     println!("[+] Initializing PS/2 controller...");
     drivers::ps2::init_ps2();

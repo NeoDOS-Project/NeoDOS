@@ -19,8 +19,8 @@ pub const PRIORITY_COUNT: u8 = 4;
 
 pub const TIME_SLICES: [u16; PRIORITY_COUNT as usize] = [400, 200, 100, 50];
 
-pub const AGING_INTERVAL_TICKS: u64 = 100;
-pub const MAX_STARVATION_TICKS: u64 = 1000;
+pub const AGING_INTERVAL_TICKS: u64 = 500;
+pub const MAX_STARVATION_TICKS: u64 = 5000;
 
 #[repr(align(16))]
 pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);

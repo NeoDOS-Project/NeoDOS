@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.27.0 — 2026-06-06
+
+### C3. HPET / APIC Timers — Añadido
+- **Añadido**: `src/timers/hpet.rs` — HPET driver: detección vía ACPI RSDP/RSDT table scanning (legacy BIOS, EBDA, option ROM, boot-provided address), MMIO register definitions, `init_hpet()` configura timer 0 en modo periódico a 1 KHz con legacy replacement routing a IRQ0.
+- **Añadido**: `src/timers/apic.rs` — Local APIC timer driver: detección via `IA32_APIC_BASE` MSR, calibración contra HPET (1 ms one-shot, divider 16), LVT timer en modo periódico, APIC EOI, `init_apic_timer()` deshabilita HPET legacy y enmascara PIC IRQ0 al activarse.
+- **Añadido**: `src/timers/mod.rs` — Timer subsystem: `TimerSource` enum, `init()` que prueba HPET → APIC → PIT fallback.
+- **Añadido**: `neodos-bootloader/src/main.rs` — RSDP lookup en UEFI configuration tables antes de ExitBootServices; pasa `acpi_rsdp_addr` en BootInfo.
+- **Modificado**: `src/hal/x64/time.rs` — `init_system_timer()`, `get_tick_rate()`, `sleep_hint()` con HPET para delays de µs.
+- **Modificado**: `src/hal/x64/irq.rs` — `ack_irq()` envía APIC EOI para vector 32 cuando APIC timer activo.
+- **Modificado**: `src/scheduler.rs` — `AGING_INTERVAL_TICKS`=500, `MAX_STARVATION_TICKS`=5000 para scheduler a 1 KHz.
+- **Modificado**: `src/testing.rs` — `sched_aging_boosts_starved` usa constantes importadas.
+- **Total**: 320 kernel tests + 5 user-mode binaries.
+
 ## v0.26.0 — 2026-06-05
 
 ### W2. Hot reload drivers — Añadido

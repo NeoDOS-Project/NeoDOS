@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap de 100 Items
 
-> Versión actual: v0.26.0 (323 tests + 5 user-mode binaries, Hot Reload Drivers).
-> Objetivo: v0.27 — kernel modular, estable, extensible.
+> Versión actual: v0.27.0 (320 kernel tests + 5 user-mode binaries, HPET/APIC Timers).
+> Objetivo: v0.28 — kernel modular, estable, extensible.
 > Última revisión: Junio 2026.
 
 ---
 
-## COMPLETED (76 items)
+## COMPLETED (82 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -23,82 +23,85 @@
 12. **X5. Deferred work queues** — `src/work_queue.rs`: bottom-half system for deferred execution outside IRQ context. Two-level architecture (high/low priority). Lock-free SPSC ring buffer (64 slots per level). `WORK_QUEUE.push_high()`/`push_low()`/`process_high()`/`process_low()`. 6 tests.
 13. **X6. Async I/O (IRP system)** — `src/irp/mod.rs`: unified I/O Request Packet model. Global 64-slot pool, `IrpQueue` per-device (32 entries), completion callbacks via work queue, scheduler integration (`irp_block_current`/`irp_wake_waiter`), IRP chaining. BlockDevice trait extended with `submit_irp`/`poll_irp`. 5 BlockDevice implementors. 11 tests. Total: 284 tests.
 14. **V1. Global page cache (advanced)** — `src/buffer/page_cache.rs`: hash map O(1) index for `(inode, block_num)` lookups. LRU doubly-linked list for O(1) access updates. Adaptive readahead (sequential detection). Async write-back (flush in batch at threshold). Dynamic sizing via slab pool. 13 tests.
+15. **MSI/MSI-X** — `src/interrupts/msi.rs` (232 lines): MSI and MSI-X interrupt support infrastructure. Two operational modes: Direct (kernel writes PCI config via port I/O during early boot) and Delegated (via Event Bus to `pci.nem` when active). 256-entry vector bitmap allocator (vectors 0-47 pre-reserved). Dynamic IDT dispatch via `msi_dispatch` with per-vector handler table. Integrated with PCI and NVMe drivers.
+16. **C3. HPET / APIC timers** — `src/timers/hpet.rs`, `src/timers/apic.rs`: HPET detected via ACPI RSDP/RSDT table scanning (legacy BIOS areas + boot-provided address from UEFI). Configured at 1 KHz periodic mode with legacy replacement routing to IRQ0. Local APIC timer calibrated against HPET (1 ms one-shot, divider 16), activated as primary timer. APIC mode disables HPET legacy replacement and masks PIC IRQ0 to prevent double interrupts. Fallback to PIT (8254) at 18.2 Hz when HPET unavailable. `sleep_hint()` uses HPET counter for µs-resolution delays. Bootloader updated to pass `acpi_rsdp_addr` from UEFI configuration tables. Scheduler constants scaled for 1 KHz: high-priority slice=400 ms, aging=500 ms, starvation=5 s. 320 kernel tests.
 
 ### Storage
-15. **P1. Default file permissions by context** — `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según extensión: `.BIN/.COM/.EXE` → R|X, `.NEM` → R, `.DLL` → R|X, `.BAT/.CMD` → R|X, `.SYS` → R, `.CFG/.INI` → R|W, `.TXT/.MD/.LOG` → R|W. Directorios obtienen `RWXD` completos. Script de imagen `create_neodos_image.py` actualizado con los mismos criterios.
-16. **ATA PIO driver** — read/write por puertos 0x1F0/0x3F6.
-16. **AHCI driver** — DMA polling, PRDT scatter-gather, ATA + ATAPI.
-17. **ATA bus-master DMA** — PCI BAR4, buffers alineados, hasta 8 sectores.
-18. **NeoFS** — filesystem propio: inodos 256 B, bloques 4 KB, timestamps, permisos, directorios, 75 tests.
-19. **FAT32 read** — lectura de sector absoluto desde ESP.
-20. **GPT partition parsing** — detecta partición NeoDOS por UUID.
-21. **Unified GPT disk image** — `disk_image.img` (ESP FAT32 + NeoDOS FS).
-22. **VFS layer** — `FileSystem` trait, `resolve_path()`, FAT32 + NeoDOS + ISO9660.
-23. **ISO9660 read** — driver completo con PVD, extent cache, Joliet.
-24. **BlockDevice abstraction** — `BlockDevice` trait, `StorageManager` unifica ATA/AHCI.
+16. **P1. Default file permissions by context** — `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según extensión: `.BIN/.COM/.EXE` → R|X, `.NEM` → R, `.DLL` → R|X, `.BAT/.CMD` → R|X, `.SYS` → R, `.CFG/.INI` → R|W, `.TXT/.MD/.LOG` → R|W. Directorios obtienen `RWXD` completos. Script de imagen `create_neodos_image.py` actualizado con los mismos criterios.
+17. **ATA PIO driver** — read/write por puertos 0x1F0/0x3F6.
+18. **AHCI driver** — DMA polling, PRDT scatter-gather, ATA + ATAPI.
+19. **ATA bus-master DMA** — PCI BAR4, buffers alineados, hasta 8 sectores.
+20. **NeoFS** — filesystem propio: inodos 256 B, bloques 4 KB, timestamps, permisos, directorios, 75 tests.
+21. **FAT32 read** — lectura de sector absoluto desde ESP.
+22. **GPT partition parsing** — detecta partición NeoDOS por UUID.
+23. **Unified GPT disk image** — `disk_image.img` (ESP FAT32 + NeoDOS FS).
+24. **VFS layer** — `FileSystem` trait, `resolve_path()`, FAT32 + NeoDOS + ISO9660.
+25. **ISO9660 read** — driver completo con PVD, extent cache, Joliet.
+26. **BlockDevice abstraction** — `BlockDevice` trait, `StorageManager` unifica ATA/AHCI.
+27. **NVMe driver** — `src/drivers/nvme.rs` (837 lines): NVMe block driver as kernel built-in (not NEM standalone). PCI detection (class 0x01, subclass 0x08, prog-if 0x02). BAR0 MMIO with 64-bit support. Admin Queue setup (ACQ + ASQ). I/O Submission/Completion Queues with doorbell registers. NVM Read/Write commands with PRP scatter-gather. Integrated with `StorageManager` as highest boot priority: NVMe > BootAhci > BootAta. NEM v3 ABI integration for runtime handover.
 
 ### Drivers & Dispositivos
-25. **Module ABI v0 (.NDM)** — header 64 bytes, kernel service table, LOAD command.
-26. **NEM module** — NeoDOS Driver Format v1, 6 tipos, 14 tests parse.
-27. **RTC driver** — CMOS RTC, get_datetime(), usado por DATE/TIME.
-28. **ACPI driver** — NEM v3 standalone ACPI poweroff driver (`drivers/acpi/`). Scans PCI for PIIX4/ICH9 LPC bridge, detects PM1a port, writes SLP_TYP_S5|SLP_EN. Legacy RSDP/RSDT/FADT parser (`neodos-kernel/src/drivers/acpi.rs`) deleted. Fallback QEMU Bochs port + PS/2 reset. `EVENT_SHUTDOWN` event bus constant. `POWEROFF`/`SHUTDOWN`/`EXIT` command pushes event → ACPI driver → HAL poweroff fallback.
-29. **HAL ABI v0.3** — 26 primitives `extern "C"` (CPU, port I/O, page mem, IRQ, timers).
-30. **Device Model + HAL Binding** — 32-slot registry, handles opacos, 5 boot devices.
-31. **Event Bus v2** — Dual priority queues (high 16 + normal 64), subscription filters, dynamic payload, backpressure, dispatch on syscall return. 17 tests.
-32. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
-33. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
-34. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
-35. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
-36. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `handle_table[16]` con HandleEntry (stdin/stdout/stderr/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, handle table.
-37. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot scheduler y liberan `Box<AlignedKStack>` (kernel stack) al salir. `kill_pid()` reescrito: libera heap, mmap, pipes, user slot, kernel stack y recicla slot inmediatamente. En waitpid desde Ring 3, el slot del proceso esperado se recicla automáticamente tras detectar Terminated.
-38. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock validation (magic, block_size, num_blocks, num_inodes, label), inode table integrity check (mode bits, inode_num mismatch, block pointer bounds, cross-linked block detection), directory tree walk with cycle protection (MAX_DIR_DEPTH=32), orphan inode detection, dangling directory entry detection, entry-type vs inode-mode mismatch detection. Repair mode (`FSCK /F`). Shell command `FSCK`. 6 unit tests.
-39. **BDL1. NEM v2 ABI fields** — `src/nem/mod.rs`: extended NEM format to v2 (48-byte header) with ABI validation fields (abi_min, abi_target, abi_max), driver category (Boot/System/Demand), 16-byte driver name. Backward-compatible with v1. 9 new tests.
-40. **BDL2. Boot Driver Loader System** — `src/drivers/boot_loader/mod.rs`: automatic boot-time scanning and loading of .nem drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\`. Implements `driver_scan()`, `driver_load()`, `driver_init()`, `driver_activate()`, `driver_unload()` API with full certification pipeline integration. Connected to boot sequence in `main.rs` as PHASE 3.85. 8 kernel tests.
-41. **BDL3. Driver Instance extended** — `src/drivers/driver_runtime.rs`: added `DriverCategory` field and ABI fields (abi_min, abi_target, abi_max) to `DriverInstance`. New `register_ext()` method. `DriverCategory` enum (Boot=0, System=1, Demand=2) embedded in NEM v2 header.
-42. **BDL4. ABI Validation Policy** — `src/drivers/nem/policy.rs`: new `validate_abi()` function checks driver/kernel ABI compatibility window. Rejects drivers if `abi_min > ABI_MAX_VALID`, `abi_max < ABI_MIN_VALID`, or `abi_target` outside range. Boot/System drivers require v2 format.
-43. **BDL5. Rust reference .nem drivers** — `src/drivers/reference/`: three complete reference Rust driver implementations for PS/2 keyboard, framebuffer, and storage. Each demonstrates `extern "C"` entrypoint contract, event integration, lifecycle management, null-safety, and parameter validation. 32 kernel tests.
-44. **BDL6. NDREG updated** — `src/shell/commands/ndreg.rs`: LIST and SHOW subcommands now display driver category (BOOT/SYSTEM/DEMAND) and ABI range (v1/v2 format). RUNTIME snapshot shows category per driver.
-45. **BDL7. NEM v3 standalone serial driver** — `drivers/serial/build_nem.py` compila `serial.nem` (SYSTEM category). driver_init() configura UART 16550A (38400, 8N1, FIFO, RDA IRQ). IRQ4 desenmascarado en PIC (mask 0xE8). IDT[36] serial_handler con while-loop draining + push EVENT_SERIAL_DATA. **Bugfix**: V3_EVENT_FN reemplazado por tabla de dispatch por event_type para soportar múltiples drivers v3 simultáneamente.
-46. **BDL8. NEM ps2kbd layout switching** — KEYB US|SP command envía EVENT_KEYB_LAYOUT (type=9) via Event Bus. ps2kbd.nem driver_on_event() maneja EVENT_KEYB_LAYOUT y cambia layout atómico. Sin cambio en kernel export table.
-47. **W1. ABI negotiation layer** — `src/drivers/abi/mod.rs`: formalized ABI version negotiation between kernel and NEM drivers. `AbiVersion` struct (min/target/max), `NegotiationResult` enum (Compatible/CompatibleWithWarnings/Incompatible), `negotiate()` function with window overlap check and warning levels. Integrated into v3loader `validate_v3_abi()`. 10 unit tests.
-48. **W4. Driver dependency resolver** — `src/drivers/dependency/mod.rs`: automatic dependency resolution for NEM drivers. `DependencyGraph` with topological sort via DFS and cycle detection. Convention: `__dep_DRIVERNAME` symbols in NEM symbol table. Boot loader v2 uses dependency-resolved order within each category. 13 unit tests.
-49. **Device Model + TSR removal** — Removed legacy `src/devices/mod.rs` (Device Model v0.3) and `src/tsr/mod.rs` (TSR system). Shell commands DEVICES and TSR removed. Reduces kernel code by ~530 lines.
-50. **X2. Unified handle table** — `src/handle.rs`: unified handle table per-process replacing `FdEntry`/`FdTable`. Handle types: CLOSED, STDIN, STDOUT, STDERR, PIPE_READ, PIPE_WRITE, FILE, DEVICE, EVENT. File handles store drive+inode+offset cursor. `sys_open` returns fd. `sys_readfile`/`sys_writefile`/`sys_close` use fd. All process lifecycle code cleans up via handle table. 229 kernel tests + 4 user-mode binaries.
-51. **PS/2 double-character fix** — Boot loader `_` fallthrough arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`, creating a duplicate event bus handler. Fixed by changing `_` to `true` (bind without handler).
-52. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
-53. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. 4947 bytes.
-54. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18. 3 kernel tests. Total: 248 kernel tests.
-55. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 standalone driver (SYSTEM category). Scans PCI for IDE controller with bus-master DMA capability, initializes primary + secondary channels. Each active channel registers a `NemBlockDevice`. Kernel-side `ata.rs` reduced to `BootAta` PIO-only boot stub. QEMU machine changed from `q35` to `pc` (PIIX3).
-56. **A11. AHCI NEM standalone driver** — `drivers/ahci/` NEM v3 standalone driver (SYSTEM category). Scans PCI for AHCI controllers (class 0x01 subclass 0x06), initializes HBA, detects ATA/ATAPI devices per port. Uses DMA polling with PRDT (up to 8 entries), single-slot command engine. Kernel built-in AHCI driver removed.
-57. **A12. BootAhci kernel stub** — `boot_ahci.rs` built-in kernel driver (Phase 3 storage init) for AHCI early-boot access. Minimal DMA polling driver (single port, single command slot, 8-sector PRDT). Registers as block device idx=0 before NEM AHCI driver loads. Priority: NVMe > BootAhci > BootAta (PIO).
-58. **X3. Capability system** — `src/drivers/caps.rs`: 64-bit capability bitmap per driver (11 flags: IRQ, DMA, MMIO, PORTIO, ALLOC_PAGE, BLOCK_DEVICE, EVENT_BUS, INPUT, LOG, TIMING, MEMORY). Capability inheritance by category (BOOT=all, SYSTEM=restricted, DEMAND=sandboxed). Runtime capability check in every `hst_*` export — denies execution if capability missing. Capability escalation via Event Bus (SYSTEM→CAP_ALLOC_PAGE|BLOCK_DEVICE|MEMORY; DEMAND blocked). `NDREG SHOW` displays capabilities. 11 unit tests.
+28. **Module ABI v0 (.NDM)** — header 64 bytes, kernel service table, LOAD command.
+29. **NEM module** — NeoDOS Driver Format v1, 6 tipos, 14 tests parse.
+30. **RTC driver** — CMOS RTC, get_datetime(), usado por DATE/TIME.
+31. **ACPI driver** — NEM v3 standalone ACPI poweroff driver (`drivers/acpi/`). Scans PCI for PIIX4/ICH9 LPC bridge, detects PM1a port, writes SLP_TYP_S5|SLP_EN. Legacy RSDP/RSDT/FADT parser (`neodos-kernel/src/drivers/acpi.rs`) deleted. Fallback QEMU Bochs port + PS/2 reset. `EVENT_SHUTDOWN` event bus constant. `POWEROFF`/`SHUTDOWN`/`EXIT` command pushes event → ACPI driver → HAL poweroff fallback.
+32. **HAL ABI v0.3** — 26 primitives `extern "C"` (CPU, port I/O, page mem, IRQ, timers).
+33. **Device Model + HAL Binding** — 32-slot registry, handles opacos, 5 boot devices.
+34. **Event Bus v2** — Dual priority queues (high 16 + normal 64), subscription filters, dynamic payload, backpressure, dispatch on syscall return. 17 tests.
+35. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
+36. **NDREG / LOADNEM / NEMLIST** — driver registry CLI, LOADNEM carga .nem drivers.
+37. **Driver Certification Pipeline v1** — estado Loaded→Initialized→Registered→Bound→Active, state machine con transiciones estrictas, función `certify_and_activate()`, error tracking (`last_error` + `certification_step`), ndreg DEBUG para diagnóstico LOADED≠ACTIVE, 21 tests de state machine + pipeline.
+38. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20), región 0x20000000–0x22000000, anónimo + file-backed vía page fault handler, `is_user_ptr_valid` extendido, 6 tests mmap.
+39. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB, refcounting automático. Per-process `handle_table[16]` con HandleEntry (stdin/stdout/stderr/pipe reader/pipe writer). Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). `sys_read`/`sys_write`/`sys_close` modificados para pipe fds. Blocking reads via `ProcessState::Blocked` + `wake_pipe_readers()` scheduler integration. 13 tests pipe: alloc/free, write/read, múltiples writes, EOF, buffer capacity, EPIPE, max pipes, bloqueo/desbloqueo, handle table.
+40. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot scheduler y liberan `Box<AlignedKStack>` (kernel stack) al salir. `kill_pid()` reescrito: libera heap, mmap, pipes, user slot, kernel stack y recicla slot inmediatamente. En waitpid desde Ring 3, el slot del proceso esperado se recicla automáticamente tras detectar Terminated.
+41. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock validation (magic, block_size, num_blocks, num_inodes, label), inode table integrity check (mode bits, inode_num mismatch, block pointer bounds, cross-linked block detection), directory tree walk with cycle protection (MAX_DIR_DEPTH=32), orphan inode detection, dangling directory entry detection, entry-type vs inode-mode mismatch detection. Repair mode (`FSCK /F`). Shell command `FSCK`. 6 unit tests.
+42. **BDL1. NEM v2 ABI fields** — `src/nem/mod.rs`: extended NEM format to v2 (48-byte header) with ABI validation fields (abi_min, abi_target, abi_max), driver category (Boot/System/Demand), 16-byte driver name. Backward-compatible with v1. 9 new tests.
+43. **BDL2. Boot Driver Loader System** — `src/drivers/boot_loader/mod.rs`: automatic boot-time scanning and loading of .nem drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\`. Implements `driver_scan()`, `driver_load()`, `driver_init()`, `driver_activate()`, `driver_unload()` API with full certification pipeline integration. Connected to boot sequence in `main.rs` as PHASE 3.85. 8 kernel tests.
+44. **BDL3. Driver Instance extended** — `src/drivers/driver_runtime.rs`: added `DriverCategory` field and ABI fields (abi_min, abi_target, abi_max) to `DriverInstance`. New `register_ext()` method. `DriverCategory` enum (Boot=0, System=1, Demand=2) embedded in NEM v2 header.
+45. **BDL4. ABI Validation Policy** — `src/drivers/nem/policy.rs`: new `validate_abi()` function checks driver/kernel ABI compatibility window. Rejects drivers if `abi_min > ABI_MAX_VALID`, `abi_max < ABI_MIN_VALID`, or `abi_target` outside range. Boot/System drivers require v2 format.
+46. **BDL5. Rust reference .nem drivers** — `src/drivers/reference/`: three complete reference Rust driver implementations for PS/2 keyboard, framebuffer, and storage. Each demonstrates `extern "C"` entrypoint contract, event integration, lifecycle management, null-safety, and parameter validation. 32 kernel tests.
+47. **BDL6. NDREG updated** — `src/shell/commands/ndreg.rs`: LIST and SHOW subcommands now display driver category (BOOT/SYSTEM/DEMAND) and ABI range (v1/v2 format). RUNTIME snapshot shows category per driver.
+48. **BDL7. NEM v3 standalone serial driver** — `drivers/serial/build_nem.py` compila `serial.nem` (SYSTEM category). driver_init() configura UART 16550A (38400, 8N1, FIFO, RDA IRQ). IRQ4 desenmascarado en PIC (mask 0xE8). IDT[36] serial_handler con while-loop draining + push EVENT_SERIAL_DATA. **Bugfix**: V3_EVENT_FN reemplazado por tabla de dispatch por event_type para soportar múltiples drivers v3 simultáneamente.
+49. **BDL8. NEM ps2kbd layout switching** — KEYB US|SP command envía EVENT_KEYB_LAYOUT (type=9) via Event Bus. ps2kbd.nem driver_on_event() maneja EVENT_KEYB_LAYOUT y cambia layout atómico. Sin cambio en kernel export table.
+50. **W1. ABI negotiation layer** — `src/drivers/abi/mod.rs`: formalized ABI version negotiation between kernel and NEM drivers. `AbiVersion` struct (min/target/max), `NegotiationResult` enum (Compatible/CompatibleWithWarnings/Incompatible), `negotiate()` function with window overlap check and warning levels. Integrated into v3loader `validate_v3_abi()`. 10 unit tests.
+51. **W4. Driver dependency resolver** — `src/drivers/dependency/mod.rs`: automatic dependency resolution for NEM drivers. `DependencyGraph` with topological sort via DFS and cycle detection. Convention: `__dep_DRIVERNAME` symbols in NEM symbol table. Boot loader v2 uses dependency-resolved order within each category. 13 unit tests.
+52. **Device Model + TSR removal** — Removed legacy `src/devices/mod.rs` (Device Model v0.3) and `src/tsr/mod.rs` (TSR system). Shell commands DEVICES and TSR removed. Reduces kernel code by ~530 lines.
+53. **X2. Unified handle table** — `src/handle.rs`: unified handle table per-process replacing `FdEntry`/`FdTable`. Handle types: CLOSED, STDIN, STDOUT, STDERR, PIPE_READ, PIPE_WRITE, FILE, DEVICE, EVENT. File handles store drive+inode+offset cursor. `sys_open` returns fd. `sys_readfile`/`sys_writefile`/`sys_close` use fd. All process lifecycle code cleans up via handle table. 229 kernel tests + 4 user-mode binaries.
+54. **PS/2 double-character fix** — Boot loader `_` fallthrough arm registered `v3_event_bridge` for `EVENT_KEYBOARD_INPUT` with unknown drivers' `driver_on_event`, creating a duplicate event bus handler. Fixed by changing `_` to `true` (bind without handler).
+55. **ACPI NEM poweroff driver** — NEM v3 standalone driver for ACPI S5 poweroff via PCI-based PM1a detection. Replaces legacy RSDP/RSDT/FADT table parser. `EVENT_SHUTDOWN` event bus constant (type 12). `POWEROFF`/`SHUTDOWN` command dispatches event with `hal::poweroff()` fallback. Added `-no-reboot` to `qemu-debug.sh`.
+56. **PCI NEM driver** — `drivers/pci/` standalone NEM v3 driver (SYSTEM category). Logs all PCI devices with vendor/device/class/subclass/prog-if/rev. Handles config read/write via Event Bus (events 0x1000–0x1003). Kernel `src/drivers/pci.rs` reduced to 4 low-level config primitives. 4947 bytes.
+57. **A10. PCIe bus enumeration** — Extended PCI NEM driver to discover all PCI buses recursively via PCI-to-PCI bridge detection. Scans bus 0, detects bridges (class 0x06, subclass 0x04), reads secondary bus numbers from config offset 0x18. 3 kernel tests. Total: 248 kernel tests.
+58. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 standalone driver (SYSTEM category). Scans PCI for IDE controller with bus-master DMA capability, initializes primary + secondary channels. Each active channel registers a `NemBlockDevice`. Kernel-side `ata.rs` reduced to `BootAta` PIO-only boot stub. QEMU machine changed from `q35` to `pc` (PIIX3).
+59. **A11. AHCI NEM standalone driver** — `drivers/ahci/` NEM v3 standalone driver (SYSTEM category). Scans PCI for AHCI controllers (class 0x01 subclass 0x06), initializes HBA, detects ATA/ATAPI devices per port. Uses DMA polling with PRDT (up to 8 entries), single-slot command engine. Kernel built-in AHCI driver removed.
+60. **A12. BootAhci kernel stub** — `boot_ahci.rs` built-in kernel driver (Phase 3 storage init) for AHCI early-boot access. Minimal DMA polling driver (single port, single command slot, 8-sector PRDT). Registers as block device idx=0 before NEM AHCI driver loads. Priority: NVMe > BootAhci > BootAta (PIO).
+61. **X3. Capability system** — `src/drivers/caps.rs`: 64-bit capability bitmap per driver (11 flags: IRQ, DMA, MMIO, PORTIO, ALLOC_PAGE, BLOCK_DEVICE, EVENT_BUS, INPUT, LOG, TIMING, MEMORY). Capability inheritance by category (BOOT=all, SYSTEM=restricted, DEMAND=sandboxed). Runtime capability check in every `hst_*` export — denies execution if capability missing. Capability escalation via Event Bus (SYSTEM→CAP_ALLOC_PAGE|BLOCK_DEVICE|MEMORY; DEMAND blocked). `NDREG SHOW` displays capabilities. 11 unit tests.
 
 ### Userland & Memoria
-58. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
-59. **sys_brk / sys_mmap** — ajuste program break, asignación zero-filled.
-60. **ELF64 loader** — src/elf.rs: carga segmentos PT_LOAD a vaddr, 7 tests.
-61. **User-mode processes** — IRETQ a Ring 3, EXIT_RSP/EXIT_RIP, scheduler add_ring3_process.
-62. **Kernel private stacks** — TSS.RSP0 por proceso, actualizado en cada context switch.
-63. **Syscall table (INT 0x80)** — 14 syscalls: exit, write, yield, getpid, read, waitpid, open, readfile, writefile, close, chdir, getcwd, brk, mmap.
-64. **Scheduler blocking** — ProcessState::Blocked, wake_waiters(), idle HLT.
-65. **S6. libneodos** — `libneodos/`: standard library para procesos Ring 3 en Rust. Syscall wrappers con `int 0x80` inline asm (sys_exit, sys_write, sys_read, sys_open, sys_readfile, sys_writefile, sys_brk, sys_mmap, sys_munmap, etc.). IO module con Stdout/Stdin/Stderr + `core::fmt::Write` impl. FS module (File::open/read/write). Memory module (sbrk, mmap, munmap). Safe macros (print!, println!, eprint!, eprintln!). Panic handler que llama sys_exit(1). Sample user binary `userbin/hello_lib/`.
+62. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
+63. **sys_brk / sys_mmap** — ajuste program break, asignación zero-filled.
+64. **ELF64 loader** — src/elf.rs: carga segmentos PT_LOAD a vaddr, 7 tests.
+65. **User-mode processes** — IRETQ a Ring 3, EXIT_RSP/EXIT_RIP, scheduler add_ring3_process.
+66. **Kernel private stacks** — TSS.RSP0 por proceso, actualizado en cada context switch.
+67. **Syscall table (INT 0x80)** — 14 syscalls: exit, write, yield, getpid, read, waitpid, open, readfile, writefile, close, chdir, getcwd, brk, mmap.
+68. **Scheduler blocking** — ProcessState::Blocked, wake_waiters(), idle HLT.
+69. **S6. libneodos** — `libneodos/`: standard library para procesos Ring 3 en Rust. Syscall wrappers con `int 0x80` inline asm (sys_exit, sys_write, sys_read, sys_open, sys_readfile, sys_writefile, sys_brk, sys_mmap, sys_munmap, etc.). IO module con Stdout/Stdin/Stderr + `core::fmt::Write` impl. FS module (File::open/read/write). Memory module (sbrk, mmap, munmap). Safe macros (print!, println!, eprint!, eprintln!). Panic handler que llama sys_exit(1). Sample user binary `userbin/hello_lib/`.
 
 ### Shell & Testing
-66. **301 kernel self-tests** — 36 suites, comando `test`, 4 user-mode binaries.
-67. **5 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN, TEST.BIN.
-68. **Command history** — buffer circular 32, ↑/↓ navegación.
-69. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
-70. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
-71. **Shell commands básicos** — HELP, DATE, TIME, VER, DEL, REN, RD, SHUTDOWN, EXIT, LOAD.
-72. **S1. Estabilizar syscall ABI** — `SyscallNum` enum + `from_u64()`, `SyscallError` enum (16 codes), `err_to_u64()` negative encoding, `syserr!` macro, `validate_abi()` boot-time assertion, clean `match` dispatch, `[SYS]` log pruning.
+70. **301 kernel self-tests** — 36 suites, comando `test`, 4 user-mode binaries.
+71. **5 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN, TEST.BIN.
+72. **Command history** — buffer circular 32, ↑/↓ navegación.
+73. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
+74. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
+75. **Shell commands básicos** — HELP, DATE, TIME, VER, DEL, REN, RD, SHUTDOWN, EXIT, LOAD.
+76. **S1. Estabilizar syscall ABI** — `SyscallNum` enum + `from_u64()`, `SyscallError` enum (16 codes), `err_to_u64()` negative encoding, `syserr!` macro, `validate_abi()` boot-time assertion, clean `match` dispatch, `[SYS]` log pruning.
 
 ### Shared Libraries & Loading
-73. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
-74. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
-75. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: Page-isolated 16 MB region (0x30000000–0x31000000) for NEM drivers with 16 × 1 MB slots. Region init splits 2 MB huge pages into 4K page tables; strips identity mapping during init. `allocate_driver_slot()`/`free_driver_slot()` with `ISOLATED_REGIONS` tracking. `alloc_isolated_page()`/`free_isolated_page()` for per-page phys frame + identity-mapped page table entry. `validate_driver_ptr()`/`validate_driver_str_ptr()` for argument validation in export table, accepting kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000), and driver region. `handle_isolated_page_fault()` for sandbox mode (DEMAND drivers → FAULTED). `CAP_ISOLATION` (bit 11). Loader (`v3loader.rs`) allocates via isolated region with heap fallback. Boot loader binds isolation region after registration. `NDREG SHOW`/`RUNTIME` display isolation mode and region. 12 unit tests. Total: 312 tests.
-76. **W2. Hot reload drivers** — `src/drivers/hotreload.rs`: runtime unload/reload of NEM drivers without reboot. Extended state machine: `Active → Unloading → Unloaded → Loaded` (reload path). Global resource registry for ownership tracking (block devices). Graceful drain via `EVENT_DRIVER_UNLOAD` with configurable timeout (100 ticks, force fallback). ABI version check on reload via `abi::negotiate_default()`. `NDREG UNLOAD <name> [/F]` and `NDREG RELOAD <path>` shell commands. Registered load results for boot-loaded and manually-loaded drivers. 11 unit tests. Total: 323 kernel tests.
-77. **TEST.EXE — libmath.dll self-test user binary** — `userbin/test/` Rust project que carga `libmath.dll` dinámicamente vía `sys_loadlib` (RAX=21) y ejecuta 5 fases de validación: LOAD TEST (carga + verificación de tabla de exportación), BASIC ARITHMETIC TESTS (add, sub, mul, div correctness), EDGE CASES (ceros, valores negativos, casos límite), STRESS TEST (1,000,000 iteraciones add(i, i+1) detectando stack corruption/memory instability), DETERMINISM (1000 iteraciones idénticas con resultado reproducible), e INTEGRITY CHECKS (ABI stability: 100 mixed calls a add/sub/mul/div/abs/min/max sin crash ni desviación). `libmath-dll` extendido con funciones `math_add`, `math_sub`, `math_mul` + entradas en `MathAbiTable`. Scripts `build.sh` y `create_neodos_image.py` actualizados. Total: 312 kernel tests + 5 user-mode binaries.
+77. **B6b. Shared library system (libneodos DLL)** — Compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`. 8 slots de 256 KB en la región `0x1e000000..0x1e200000`. Se carga automáticamente en boot (PHASE 3.86).
+78. **Multi-DLL system** — `sys_loadlib` (RAX=21) para cargar DLLs desde NeoFS en runtime. `LOADLIB` shell command. `libmath-dll/` crate (17 funciones exportadas: abs, min, max, pow, sqrt, sin, cos, log, exp, etc.) en slot 1 (`0x1e040000`). `libneodos::loadlib(path)` wrapper para user-mode. Build system integrado.
+79. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: Page-isolated 16 MB region (0x30000000–0x31000000) for NEM drivers with 16 × 1 MB slots. Region init splits 2 MB huge pages into 4K page tables; strips identity mapping during init. `allocate_driver_slot()`/`free_driver_slot()` with `ISOLATED_REGIONS` tracking. `alloc_isolated_page()`/`free_isolated_page()` for per-page phys frame + identity-mapped page table entry. `validate_driver_ptr()`/`validate_driver_str_ptr()` for argument validation in export table, accepting kernel heap (0x01000000–0x02000000), kernel .rodata/.text (0x00100000–0x01000000), user heap (0x10000000–0x12000000), mmap (0x20000000–0x22000000), and driver region. `handle_isolated_page_fault()` for sandbox mode (DEMAND drivers → FAULTED). `CAP_ISOLATION` (bit 11). Loader (`v3loader.rs`) allocates via isolated region with heap fallback. Boot loader binds isolation region after registration. `NDREG SHOW`/`RUNTIME` display isolation mode and region. 12 unit tests. Total: 312 tests.
+80. **W2. Hot reload drivers** — `src/drivers/hotreload.rs`: runtime unload/reload of NEM drivers without reboot. Extended state machine: `Active → Unloading → Unloaded → Loaded` (reload path). Global resource registry for ownership tracking (block devices). Graceful drain via `EVENT_DRIVER_UNLOAD` with configurable timeout (100 ticks, force fallback). ABI version check on reload via `abi::negotiate_default()`. `NDREG UNLOAD <name> [/F]` and `NDREG RELOAD <path>` shell commands. Registered load results for boot-loaded and manually-loaded drivers. 11 unit tests. Total: 320 kernel tests.
 
+81. **TEST.EXE — libmath.dll self-test user binary** — `userbin/test/` Rust project que carga `libmath.dll` dinámicamente vía `sys_loadlib` (RAX=21) y ejecuta 5 fases de validación: LOAD TEST (carga + verificación de tabla de exportación), BASIC ARITHMETIC TESTS (add, sub, mul, div correctness), EDGE CASES (ceros, valores negativos, casos límite), STRESS TEST (1,000,000 iteraciones add(i, i+1) detectando stack corruption/memory instability), DETERMINISM (1000 iteraciones idénticas con resultado reproducible), e INTEGRITY CHECKS (ABI stability: 100 mixed calls a add/sub/mul/div/abs/min/max sin crash ni desviación). `libmath-dll` extendido con funciones `math_add`, `math_sub`, `math_mul` + entradas en `MathAbiTable`. Scripts `build.sh` y `create_neodos_image.py` actualizados. Total: 320 kernel tests + 5 user-mode binaries.
 ---
 
 NeoDOS — ORDERED IMPROVEMENTS (WITH DESCRIPTION)
@@ -107,7 +110,7 @@ Versión: v0.20 → v1.0
 Objetivo: eliminar reescrituras, estabilizar kernel core, escalar a sistema completo
 
 🧪 FASE 5 — OBSERVABILITY & DEBUGGING (CRÍTICO)
-4. **Y1. Kernel tracing infrastructure**
+1. **Y1. Kernel tracing infrastructure**
 
 Infraestructura de tracing de eventos del kernel en tiempo real para diagnóstico y profiling. Actualmente, la única forma de ver qué ocurre dentro del kernel es mediante `serial_println!` (logging) y el Event Bus (eventos de alto nivel). No hay un sistema estructurado para medir latencias, conteo de llamadas, o seguir el flujo de ejecución a través de subsistemas.
 
@@ -115,7 +118,7 @@ El tracing infrastructure incluiría: (1) **Trace points** — macros `trace!(ca
 
 Archivos: `src/trace/mod.rs`, modificaciones en `src/syscall.rs`, `src/scheduler.rs`, `src/interrupts/idt.rs`, etc. para añadir trace points.
 
-5. **Y4. Crash dump framework**
+2. **Y4. Crash dump framework**
 
 Sistema de captura de estado completo del sistema cuando ocurre un fallo irrecuperable (page fault en Ring 0, triple fault, panic, assert fallido). Actualmente, cuando el kernel panic, `hal::poweroff()` se llama directamente (a través de `_start` → `poweroff`), sin capturing de estado. La única información disponible es el mensaje de panic enviado por serial.
 
@@ -123,7 +126,7 @@ El crash dump framework introduciría: (1) **Panic handler mejorado** — antes 
 
 Archivos: `src/crash/mod.rs`, modificaciones en `src/main.rs` (panicking), `scripts/crashdump_analyzer.py`.
 
-6. **Y2. NeoTrace system**
+3. **Y2. NeoTrace system**
 
 Herramienta de visualización y análisis de trazas del kernel, construida sobre la infraestructura de tracing (Y1). Mientras que Y1 proporciona la recolección cruda de datos, NeoTrace es el front-end que permite al desarrollador navegar, filtrar y comprender las trazas.
 
@@ -133,7 +136,7 @@ La herramienta no requiere conexión de red ni puerto externo; funciona enterame
 
 Archivo: `src/shell/commands/neotrace.rs`.
 
-7. **Y5. Kernel debugger**
+4. **Y5. Kernel debugger**
 
 Debugger interactivo para inspección de memoria, procesos y drivers en runtime, sin necesidad de GDB ni conexión JTAG. A diferencia del tracing (pasivo), el debugger permite inspección activa: leer estructuras del kernel, modificar variables, y controlar la ejecución de procesos.
 
@@ -143,7 +146,7 @@ A diferencia del NDREG DEBUG (que solo verifica el pipeline de certificación), 
 
 Archivos: `src/debugger/mod.rs`, modificaciones en `src/interrupts/idt.rs` (INT3 handler), `src/shell/commands/debug.rs`.
 
-8. **Y6. Watchdog subsystem**
+5. **Y6. Watchdog subsystem**
 
 Sistema de detección de bloqueos y hangs del kernel con recuperación automática. Actualmente, si el kernel entra en un bucle infinito (por ejemplo, un driver que no retorna de `driver_on_event`, o un bucle en el scheduler), el sistema se cuelga sin posibilidad de recuperación. El watchdog proporciona un mecanismo de timeout hardware para detectar y mitigar estas situaciones.
 
@@ -152,30 +155,9 @@ El watchdog subsystem incluiría: (1) **HPET watchdog timer** — configurar un 
 Archivos: `src/watchdog/mod.rs`, modificaciones en `src/interrupts/timer.rs` (watchdog pet), `src/hal/watchdog.rs` (primitivas HAL para HPET/PIT).
 
 🖥️ FASE 6 — MODERN HARDWARE LAYER
-9. **A11. MSI/MSI-X**
-
-Sistema de interrupciones basado en mensajes (Message Signaled Interrupts) como reemplazo del PIC legacy (8259A) actual. Actualmente, el kernel usa el PIC clásico: IRQ0–IRQ15 mapeados a vectores 32–47, con EOI por puerto I/O (0x20/0xA0). Esto limita el número de dispositivos (16 IRQs), fuerza reparto estático de prioridades, y no escala a sistemas SMP.
-
-MSI/MSI-X permitiría: (1) **Configuración vía PCI** — cada dispositivo PCI con capacidad MSI tiene un Message Address Register (MAR) y Message Data Register (MDR) en su configuration space. El kernel escribe la dirección y datos que el dispositivo usará para generar una interrupción como una escritura MMIO. (2) **Vectores dinámicos** — cada dispositivo MSI puede tener su propio vector IDT, eliminando la necesidad de compartir IRQs y detectar quién generó la interrupción. (3) **MSI-X** — variante que permite hasta 2048 interrupciones por dispositivo, cada una con su propia dirección y datos, ideal para NVMe con múltiples colas. (4) **Kernel infrastructure** — tabla de vectores MSI asignados dinámicamente, función `msi_alloc_vector(device)` / `msi_free_vector(vector)`, integración con el PCI NEM driver para detectar y configurar capacidades MSI/MSI-X de cada dispositivo.
-
-El PIC legacy se mantendría como fallback para dispositivos legacy (PS/2, serial). Los dispositivos modernos (NVMe, VirtIO, USB xHCI) usarían MSI-X.
-
-Archivos: `src/interrupts/msi.rs`, modificaciones en `src/drivers/pci.rs` (pci config primitives), `src/interrupts/idt.rs` (allocation de vectores libres).
-
-10. **C3. HPET / APIC timers**
-
-Timers de alta precisión basados en HPET (High Precision Event Timer) y Local APIC timer, como reemplazo del PIT (8254) actual de 18.2 Hz. El kernel actual usa el PIT channel 0 a 18.2 Hz (~55 ms de resolución) para el timer tick. Esto limita la granularidad del scheduler (time slices de 50-400 ticks = 2.75-22 segundos en el nivel más bajo) y no permite mediciones de tiempo precisas.
-
-HPET: (1) **Detección en boot** — buscar la tabla ACPI HPET (firmware reservada en memoria). Leer dirección base MMIO y configurar el counter a 1 MHz (tick cada 1 µs). (2) **One-shot vs periodic** — HPET puede configurarse en modo periódico (como el PIT actual) o one-shot (interrupción única después de N µs). (3) **Mayor resolución** — timer tick configurable a 1 KHz (1 ms) o incluso 10 KHz (100 µs) para scheduling más preciso.
-
-Local APIC timer: (1) **Detectar APIC** — leer MSR IA32_APIC_BASE (0x1B) para verificar que el Local APIC está presente y habilitado. (2) **Configurar timer** — programar el LVT Timer register del APIC con divisor y contador inicial, usando el bus del procesador como referencia de tiempo. (3) **SMP foundation** — cada CPU tiene su propio Local APIC timer, necesario para scheduler por-CPU en sistemas SMP.
-
-Implementación escalonada: primero HPET como timer principal (reemplazando PIT), luego APIC timer como opción para sistemas SMP.
-
-Archivos: `src/timers/hpet.rs`, `src/timers/apic.rs`, `src/hal/timers.rs`, modificaciones en `src/interrupts/timer.rs` y `arch/x64/pic.rs`.
 
 ⚡ FASE 7 — MODERN I/O DRIVERS
-11. **A8. VirtIO driver**
+7. **A8. VirtIO driver**
 
 Driver paravirtualizado para dispositivos VirtIO en QEMU/KVM, proporcionando almacenamiento y red de alto rendimiento sin emulación hardware. VirtIO es el estándar de paravirtualización en QEMU: ofrece latencias mucho menores que la emulación de hardware real (PIIX3 IDE, AHCI, e1000).
 
@@ -185,17 +167,7 @@ Beneficio principal: en QEMU/KVM, VirtIO Block es ~10× más rápido que la emul
 
 Archivos nuevos en `drivers/virtio/` (NEM v3 standalone driver: `build_nem.py` + `main.c` o `main.rs`). Archivos kernel: `neodos-kernel/src/drivers/virtio.rs` (primitivas básicas de detección y virtqueue), más el driver standalone.
 
-12. **A9. NVMe driver**
-
-Driver para almacenamiento NVMe (Non-Volatile Memory Express) sobre PCI Express, proporcionando acceso a discos SSD modernos con latencias de microsegundos y múltiples colas paralelas. Actualmente, el kernel solo soporta ATA (PIO/DMA en PIIX3 IDE) y AHCI (SATA emulado). NVMe es el estándar moderno para SSDs.
-
-El NVMe driver requeriría: (1) **Detección PCI** — buscar dispositivos con class 0x01 (mass storage), subclass 0x08 (NVMe). O bien usar el PCI NEM driver para detectar el dispositivo. (2) **Admin Queue setup** — crear la Admin Completion Queue (ACQ) y Admin Submission Queue (ASQ) en memoria, escribir las puertas MMIO (doorbells) para notificar al controlador. Enviar comandos admin: Identify (obtener información del controlador y namespaces), Get Features, Set Features. (3) **I/O Queues** — crear uno o más pares de I/O Submission Queue (SQ) y I/O Completion Queue (CQ) en memoria. Cada queue puede tener hasta 64 KB de profundidad (65536 entradas). Múltiples queues permiten I/O paralelo. (4) **Comandos I/O** — comando NVM Read/Write con direcciones LBA (sectores de 512 B a 4 KB), usando PRP (Physical Region Page) entries para scatter-gather DMA. (5) **Integración con IRP system** — NVMe es inherentemente asíncrono: se escribe un comando en la SQ, se notifica via MMIO doorbell, y el dispositivo escribe la completion en la CQ y genera una interrupción MSI-X. Esto encaja perfectamente con el sistema de IRPs (X6). (6) **Namespace management** — detectar namespaces activos, tamaños de sector, y capacidades.
-
-Dependencia fuerte del IRP system (X6) y MSI/MSI-X (A11). Sin async I/O, el driver NVMe tendría que hacer polling (como el AHCI actual), perdiendo la ventaja principal del protocolo.
-
-Archivos: `drivers/nvme/build_nem.py` + `main.rs` (NEM v3 standalone driver), `neodos-kernel/src/drivers/nvme.rs` (primitivas), o integración directa como driver NEM SYSTEM.
-
-13. **C6. AHCI NCQ**
+8. **C6. AHCI NCQ**
 
 Soporte para Native Command Queuing (NCQ) en el driver AHCI, permitiendo que hasta 32 comandos estén pendientes simultáneamente en un disco SATA. Actualmente, el driver AHCI usa DMA polling con un solo comando activo por puerto (descriptor de comando único en el Command List). Esto infrautiliza la capacidad de los discos SATA modernos, especialmente en operaciones con patrón de acceso aleatorio (multiple procesos leyendo archivos diferentes).
 
@@ -206,7 +178,7 @@ NCQ extiende el driver AHCI existente (no requiere reescritura completa). Se int
 Archivo: `neodos-kernel/src/drivers/ahci.rs` (modificaciones para NCQ).
 
 🔌 FASE 8 — INPUT & STORAGE DEVICES
-14. **C1. USB HID**
+9. **C1. USB HID**
 
 Soporte para dispositivos de interfaz humana (Human Interface Device) por USB: teclados, ratones y otros periféricos de entrada. Actualmente, el único método de entrada es PS/2 (IRQ1, teclado). No hay soporte para ratón (PS/2 mouse no está implementado) ni para teclados USB.
 
@@ -216,7 +188,7 @@ Dependencia: UHCI driver funcional (C7), scheduler blocking, work queues para en
 
 Archivos: `neodos-kernel/src/drivers/usb/` (nuevo módulo, varios archivos: `uhci.rs`, `hub.rs`, `hid.rs`), o un NEM v3 standalone driver `drivers/usb_hid/`.
 
-15. **C2. USB mass storage**
+10. **C2. USB mass storage**
 
 Soporte para dispositivos de almacenamiento masivo USB (pendrives, discos externos USB) usando el protocolo Bulk-Only Transport (BOT) sobre USB. Esto permitiría arrancar NeoDOS desde un pendrive y usar discos USB como almacenamiento secundario.
 
@@ -226,7 +198,7 @@ Dependencia: USB host controller funcional (UHCI/OHCI/xHCI de C1), IRP system (X
 
 Archivos: `neodos-kernel/src/drivers/usb/msd.rs`, o NEM v3 standalone `drivers/usb_msd/`.
 
-16. **C7. USB UHCI fix**
+11. **C7. USB UHCI fix**
 
 Corrección y estabilización del driver UHCI legacy, que actualmente no es funcional en la máquina PIIX3 de QEMU. El código UHCI existente en el kernel (mencionado en AGENTS.md como "driver UHCI para USB no funcional en PIIX3") necesita ser diagnosticado y reparado.
 
@@ -237,7 +209,7 @@ Si el UHCI de PIIX3 no funciona en QEMU, considerar cambiar a OHCI (USB 1.x, com
 Archivo: `neodos-kernel/src/drivers/usb/uhci.rs` (reescritura/reparación del driver existente).
 
 🧠 FASE 9 — SERVICE LAYER & SYSTEM CORE
-17. **Z1. NeoInit service manager**
+12. **Z1. NeoInit service manager**
 
 Gestor de servicios del sistema — el proceso de inicio (`PID 1`) que orquesta el arranque de todos los servicios de userland, gestiona sus dependencias y ciclo de vida, y supervisa su salud. Actualmente, tras el boot del kernel, el shell es el único proceso userland. No hay un sistema de servicios: cada binario se ejecuta manualmente con el comando `RUN`.
 
@@ -247,7 +219,7 @@ NeoInit requiere: libneodos funcional con syscalls completas, IPC por pipes para
 
 Archivos: `userbin/neoinit/` (nuevo proyecto userland), `C:\SYSTEM\INIT.CFG` en el NeoDOS FS image.
 
-18. **Z6. System configuration registry**
+13. **Z6. System configuration registry**
 
 Registro central de configuración persistente del sistema, accesible por drivers y procesos de userland. Similar al registro de Windows o a los archivos de configuración de `/etc` en Unix, pero unificado en un solo sistema con acceso por clave-valor.
 
@@ -257,7 +229,7 @@ Casos de uso: configuración de red (IP estática vs DHCP), tamaño de page cach
 
 Archivos: `src/registry/mod.rs`, `src/shell/commands/reg.rs`, `scripts/init_config.py` para generar CONFIG.REG inicial en la imagen de disco.
 
-19. **Z2. Unified resource namespace**
+14. **Z2. Unified resource namespace**
 
 Sistema de nombres unificado que expone todos los recursos del kernel (procesos, drivers, dispositivos, objetos KOBJ, memoria) como un espacio de nombres accesible mediante una API unificada. La idea es que todo en NeoDOS tenga un nombre canónico y sea referenciable de forma homogénea.
 
@@ -267,7 +239,7 @@ URN no reemplaza los mecanismos existentes (PID, KOBJ ID, nombres de driver), si
 
 Archivos: `src/namespace/mod.rs`.
 
-20. **Z3. Virtual FS objects**
+15. **Z3. Virtual FS objects**
 
 Sistema `/proc`-like que expone estructuras internas del kernel como archivos virtuales dentro del NeoDOS File System. Mientras que Z2 (URN) es una API programática, Z3 es un filesystem virtual accesible a través de las syscalls `sys_open`/`sys_read`/`sys_readfile` desde cualquier proceso userland, incluyendo el shell.
 
@@ -278,7 +250,7 @@ VFO permitiría que scripts de shell y herramientas userland inspeccionen y cont
 Archivos: `src/vfs/virtual_fs.rs` (nuevo VirtualFS), modificaciones en `src/vfs/mod.rs` (montar K: drive automáticamente en boot).
 
 🌐 FASE 10 — NETWORKING STACK
-21. **D9. Socket API**
+16. **D9. Socket API**
 
 API de sockets al estilo POSIX para procesos userland. Es la capa de abstracción que permite a los programas de usuario crear conexiones de red sin conocer los detalles del hardware de red ni del stack TCP/IP subyacente.
 
@@ -288,7 +260,7 @@ La Socket API es la frontera entre userland y el stack de red. El stack interno 
 
 Archivos: `src/net/socket.rs`, `src/syscall.rs` (nuevas syscalls), `libneodos/src/net.rs`.
 
-22. **E3. Network stack (TCP/IP)**
+17. **E3. Network stack (TCP/IP)**
 
 Stack completo de red con soporte para IPv4, ARP, ICMP, UDP y TCP, implementado como un driver NEM v3 (SYSTEM) que gestiona una tarjeta de red (inicialmente VirtIO Network, después RTL8139 o e1000 emulados por QEMU).
 
@@ -300,7 +272,7 @@ Dependencias críticas: IRP system (X6), work queues (X5), MSI/MSI-X (A11) para 
 
 Archivos: `drivers/net/` (driver NEM v3), `neodos-kernel/src/net/` (protocol layers: `ether.rs`, `arp.rs`, `ipv4.rs`, `icmp.rs`, `udp.rs`, `tcp.rs`), `src/net/mod.rs`.
 
-23. **D8. DHCP client**
+18. **D8. DHCP client**
 
 Cliente DHCP (Dynamic Host Configuration Protocol) para obtener configuración de red automáticamente al arrancar: dirección IP, máscara de red, gateway predeterminado, y servidores DNS. Sin DHCP, la configuración de red debe ser manual (IP estática configurada en CONFIG.REG, Z6).
 
@@ -310,7 +282,7 @@ Implementado como proceso userland (parte de NEODOS.SYS o servicio independiente
 
 Archivos: `userbin/dhcp/` (proyecto userland), libneodos socket wrappers.
 
-24. **D7. NTP client**
+19. **D7. NTP client**
 
 Cliente NTP (Network Time Protocol) para sincronizar el reloj del sistema con servidores de tiempo en Internet. Actualmente, el tiempo del sistema se obtiene del RTC (CMOS) durante el boot y no se sincroniza después, acumulando deriva.
 
@@ -321,7 +293,7 @@ Implementado como proceso userland usando la Socket API (D9) y UDP (E3). Depende
 Archivos: `userbin/ntp/` (proyecto userland).
 
 🧑‍💻 FASE 11 — USERLAND USABLE SYSTEM
-25. **S8. PATH resolution**
+20. **S8. PATH resolution**
 
 Sistema de búsqueda de ejecutables en múltiples directorios, equivalente a la variable `PATH` en Unix o MS-DOS. Actualmente, el comando `RUN` solo busca el binario en el directorio actual o con ruta absoluta. No hay un concepto de "path de búsqueda".
 
@@ -331,7 +303,7 @@ La implementación afecta a `handler.rs` (búsqueda de comandos), `shell.rs` (`t
 
 Archivos: `src/shell/path.rs` (nuevo, lógica de PATH), modificaciones en `src/shell/handler.rs` y `src/shell/commands/run.rs`.
 
-26. **S9. Shell pipes**
+21. **S9. Shell pipes**
 
 Conectores entre procesos (pipes en línea de comandos) que permiten encadenar la salida de un proceso como entrada del siguiente, usando el operador `|`. Ejemplo: `DIR | SORT.BIN` listaría archivos y los pasaría al binario SORT para ordenarlos.
 
@@ -341,7 +313,7 @@ Requiere: IPC/pipes existente (sys_pipe + sys_dup2), waitpid para esperar proces
 
 Archivos modificados: `src/shell/parser.rs` (análisis de pipes), `src/shell/commands/run.rs` (ejecución con pipes).
 
-27. **S3. Shell redirection**
+22. **S3. Shell redirection**
 
 Redirección de entrada/salida estándar a archivos usando los operadores `>`, `>>` y `<`. Ejemplo: `DIR > LISTADO.TXT` (escribe salida de DIR a archivo), `SORT.BIN < ENTRADA.TXT > SALIDA.TXT` (lee de archivo, escribe a archivo).
 
@@ -351,7 +323,7 @@ Requiere: sys_open con flags, sys_dup2 existente, parser de shell.
 
 Archivos modificados: `src/shell/parser.rs`, `src/shell/commands/run.rs`.
 
-28. **B2. ANSI terminal**
+23. **B2. ANSI terminal**
 
 Soporte de secuencias de escape ANSI para control de terminal: colores, posicionamiento de cursor, borrado de pantalla, y estilos de texto. Actualmente, el shell usa salida raw: solo texto plano CRLF, sin colores ni control de cursor.
 
@@ -359,7 +331,7 @@ ANSI terminal incluiría: (1) **Parser ANSI** — el módulo de salida de consol
 
 Archivos: `src/console/ansi.rs`, modificaciones en `src/io.rs` (console output), `src/shell.rs` (prompt y mensajes coloreados).
 
-29. **B1. Virtual terminals**
+24. **B1. Virtual terminals**
 
 Múltiples sesiones de consola virtual (VT) accesibles mediante combinaciones de teclas (ej. Alt+F1, Alt+F2, etc.), permitiendo tener varios contextos de shell simultáneos. Actualmente, solo hay una sesión de shell: la salida del framebuffer y la entrada del teclado están dedicadas al único shell.
 
@@ -367,7 +339,7 @@ Virtual terminals requeriría: (1) **VT Manager** — estructura que mantiene N 
 
 Archivos: `src/console/vt.rs`, modificaciones en `src/shell.rs`, `src/input.rs`, `src/framebuffer.rs`.
 
-30. **B6. NeoEdit**
+25. **B6. NeoEdit**
 
 Editor de texto en modo texto para el shell NeoDOS, permitiendo crear y modificar archivos de texto directamente desde la terminal. Es la primera herramienta de usuario real (más allá de comandos de shell).
 
@@ -377,11 +349,11 @@ Implementado como binario userland (proyecto en `userbin/neoedit/`) usando libne
 
 Archivos: `userbin/neoedit/main.rs`, `userbin/neoedit/Cargo.toml`, `userbin/neoedit/user.ld`.
 
-31. **B6b. Shared library system (libneodos DLL)**
+26. **B6b-v2. Shared library per-process binding**
 
 Sistema de biblioteca compartida para procesos Ring 3. Compilar libneodos como binario standalone en una dirección fija reservada en el espacio de usuario (ej: `0x30000000`), con tabla de exportación de funciones `extern "C"` (syscall wrappers, IO, FS, mem, panic). El kernel mapea el DLL en cada proceso Ring 3 al crearlo (`spawn_usermode`). Los binarios de usuario se enlazan contra la DLL en lugar de incluir el código estáticamente, reduciendo tamaño en disco y compartiendo páginas de código en RAM entre procesos. Requiere: dirección fija reservada fuera de user slots y heap, export table con ABI estable, loader en el kernel, actualización de linker scripts (`user.ld`) y build system, y compatibilidad `extern "C"` en todos los puntos de entrada de libneodos.
 
-32. **B7. NeoTOP**
+27. **B7. NeoTOP**
 
 Monitor interactivo de procesos y recursos del sistema, similar al comando `top` de Unix o `TASKMAN` de MS-DOS. Ejecutable como comando `TOP` desde el shell.
 
@@ -391,7 +363,7 @@ Depende de VFO (Z3) para obtener datos de procesos sin syscalls especiales. Alte
 
 Archivos: `userbin/neotop/main.rs`, `userbin/neotop/Cargo.toml`.
 
-33. **B11. NeoShell scripting**
+28. **B11. NeoShell scripting**
 
 Lenguaje de scripting para el shell NeoDOS, permitiendo automatizar tareas mediante scripts (archivos `.BAT` o `.SH`). Actualmente, el shell solo ejecuta comandos individuales introducidos por el usuario.
 
@@ -401,7 +373,7 @@ Implementación: el parser de shell existente se extiende para detectar y maneja
 
 Archivos: `src/shell/script.rs`, modificaciones en `src/shell/handler.rs` (detectar `.BAT`), `src/shell/parser.rs` (extensiones de parsing).
 
-34. **B12. Compositor 2D**
+29. **B12. Compositor 2D**
 
 Sistema gráfico básico para dibujar ventanas y elementos 2D en el framebuffer, la base para una futura interfaz gráfica de usuario (GUI). Actualmente, el framebuffer solo muestra texto de la consola del shell. Un compositor 2D permitiría dibujar ventanas, botones, y gráficos simples.
 
@@ -412,7 +384,7 @@ Implementación escalonada: primero el compositor como capa sobre el framebuffer
 Archivos: `src/compositor/mod.rs`, `src/compositor/font.rs`, `src/compositor/layer.rs`, syscalls en `src/syscall.rs`.
 
 🔐 FASE 12 — SECURITY HARDENING
-35. **U1. Module signature validation**
+30. **U1. Module signature validation**
 
 Validación criptográfica de drivers NEM mediante firmas digitales antes de cargarlos, impidiendo la ejecución de código no confiable o modificado. Actualmente, cualquier driver .nem se carga sin verificar su origen o integridad. Un atacante con acceso al disco podría reemplazar un driver legítimo por uno malicioso.
 
@@ -422,7 +394,7 @@ Dependencia: hashing SHA-256 en kernel (nuevo módulo `src/crypto/sha256.rs`), v
 
 Archivos: `src/crypto/sha256.rs`, `src/drivers/signature.rs`, `scripts/sign_driver.py`, modificación de `src/drivers/loader.rs` y header NEM v4.
 
-36. **U3. Driver permission enforcement**
+31. **U3. Driver permission enforcement**
 
 Control granular de permisos para drivers NEM en runtime, asegurando que un driver solo accede a los recursos que explícitamente se le han concedido. Mientras que el Capability System (X3) controla qué tipo de recursos puede usar un driver, Permission Enforcement controla a qué instancias específicas de esos recursos puede acceder.
 
@@ -430,7 +402,7 @@ Permission enforcement incluiría: (1) **Access Control Lists (ACLs)** — cada 
 
 Archivos: `src/drivers/perms.rs`, modificaciones en export table (`src/hal/exports.rs` o equivalente), shell command `perm`.
 
-37. **U4. Secure boot chain**
+32. **U4. Secure boot chain**
 
 Cadena de arranque verificada desde el firmware UEFI hasta el kernel y los drivers del sistema, asegurando que cada componente en la cadena de arranque es auténtico y no ha sido modificado. Es la extensión del Secure Boot de UEFI hacia el sistema NeoDOS completo.
 
@@ -443,7 +415,7 @@ Depende de: U1 (signature validation), infraestructura criptográfica en bootloa
 Archivos: modificación de `neodos-bootloader/` para verificación de firmas, scripts de firma, gestión de claves.
 
 ⚡ FASE 13 — PERFORMANCE & MEMORY EVOLUTION
-38. **V2. Zero-copy pipes**
+33. **V2. Zero-copy pipes**
 
 Optimización del sistema de pipes (IPC) para eliminar copias de datos innecesarias entre procesos. Actualmente, cada escritura a un pipe copia los datos del buffer del usuario al pipe buffer (4 KB estático), y cada lectura copia los datos del pipe buffer al buffer del usuario. Esto significa dos copias de memoria por transferencia.
 
@@ -455,7 +427,7 @@ Dependencia: mmap avanzado (MAP_SHARED), frame allocator, manejo de refcount de 
 
 Archivos: `src/pipe.rs` (reescritura del pipe buffer), `src/syscall.rs` (sys_pipe extendido).
 
-39. **V3. Copy-on-write fork**
+34. **V3. Copy-on-write fork**
 
 Implementación de `fork()` con copy-on-write (COW) para crear procesos hijos de forma eficiente, compartiendo páginas de memoria entre padre e hijo hasta que uno de los dos escribe. Actualmente, la única forma de crear un proceso es `RUN` que carga un binario desde disco en una dirección fija. No hay `fork()`.
 
@@ -467,7 +439,7 @@ Dependencia: page table manipulation en `arch/x64/paging.rs`, page fault handler
 
 Archivos: `src/process.rs` (sys_fork), `arch/x64/paging.rs` (COW PTE flag, COW page fault handler), `src/syscall.rs`.
 
-40. **X10. Per-CPU allocators**
+35. **X10. Per-CPU allocators**
 
 Allocadores de memoria independientes por cada núcleo CPU para eliminar contención en el slab allocator global. Actualmente, el slab allocator usa un único `spin::Mutex` que protege las 9 caches de size classes. En un sistema SMP, esto significa que todos los núcleos compiten por el mismo lock, limitando el escalabilidad.
 
@@ -478,7 +450,7 @@ Dependencia: identificación de CPU (APIC ID), soporte SMP (X8), memoria per-CPU
 Archivos: `src/slab.rs` (reescritura para per-CPU), `src/memory.rs` (per-CPU page pool), `arch/x64/smp.rs` (identificación de CPU).
 
 🧱 FASE 14 — SMP ENABLEMENT
-41. **X8. SMP-safe kernel refactor**
+36. **X8. SMP-safe kernel refactor**
 
 Reescritura mínima del kernel para soportar múltiples núcleos de CPU (Symmetric Multi-Processing). Actualmente, el kernel entero asume un solo núcleo: el scheduler es una cola global única, el slab allocator tiene un solo lock, el frame bitmap no es seguro para acceso concurrente, y no hay coordinación entre CPUs.
 
@@ -491,7 +463,7 @@ Dependencias: APIC timers (C3), per-CPU allocators (X10) para rendimiento, MSI/M
 Archivos: `arch/x64/smp.rs` (AP startup, IPI), `src/scheduler.rs` (per-CPU run queues, load balancing), `src/memory.rs` (per-CPU page pool), `src/lock.rs` (audit de locks), modificaciones en `src/slab.rs`, `src/drivers/` etc.
 
 🧪 FASE 15 — EXPERIMENTAL FUTURE
-42. **E4. Full GUI system**
+37. **E4. Full GUI system**
 
 Sistema de interfaz gráfica de usuario completo con ventanas, menús, botones, y soporte para aplicaciones gráficas, construido sobre el Compositor 2D (B12). Es la evolución de la interfaz de texto a un entorno gráfico moderno.
 
@@ -499,7 +471,7 @@ Incluiría: (1) **Window Manager** — servicio userland que gestiona ventanas: 
 
 Dependencias: ratón (PS/2 o USB HID, C1), Compositor 2D (B12), scheduler para eventos de input.
 
-43. **E5. Advanced secure boot**
+38. **E5. Advanced secure boot**
 
 Extensión del Secure Boot chain (U4) con políticas avanzadas de arranque, atestación remota, y soporte para múltiples claves y jerarquías de confianza.
 
@@ -507,7 +479,7 @@ Incluiría: (1) **Multiple key hierarchy** — claves de fabricante (OEM), clave
 
 Dependencias: U1 (signature validation), U4 (secure boot chain), TPM driver.
 
-44. **E6. Package manager**
+39. **E6. Package manager**
 
 Sistema de gestión de paquetes para instalar, actualizar y eliminar software en NeoDOS, con repositorios remotos y resolución de dependencias. Es el equivalente a `apt` (Debian), `pacman` (Arch), o `pkg` (FreeBSD).
 
@@ -515,7 +487,7 @@ Incluiría: (1) **Package format** — archivos `.NDP` (NeoDOS Package): cabecer
 
 Dependencias: red (E3), HTTP client, firmas digitales (U1), resolver de dependencias (inspirado en W4 pero para userland).
 
-45. **T4. Time-travel debugging**
+40. **T4. Time-travel debugging**
 
 Sistema de depuración determinista que graba la ejecución del kernel y permite reproducirla hacia adelante y hacia atrás, facilitando el diagnóstico de bugs intermitentes y condiciones de carrera.
 
@@ -523,7 +495,7 @@ Incluiría: (1) **Execution recorder** — componente del kernel que graba en un
 
 Dependencia: infraestructura de tracing (Y1), capacidad de snapshot de memoria.
 
-46. **T5. Live kernel patching**
+41. **T5. Live kernel patching**
 
 Sistema para aplicar parches al kernel en caliente (sin reiniciar), permitiendo corregir bugs de seguridad o estabilidad en el kernel en ejecución sin interrumpir los servicios.
 
@@ -531,7 +503,7 @@ Incluiría: (1) **Patch format** — archivos `.NHP` (NeoDOS Hot Patch): contien
 
 Dependencias: firmas digitales (U1), conocimiento de símbolos del kernel (tabla de símbolos), soporte SMP para reemplazo atómico.
 
-47. **T2. Distributed NeoDOS nodes**
+42. **T2. Distributed NeoDOS nodes**
 
 Sistema de nodos NeoDOS distribuidos en red, permitiendo que múltiples instancias de NeoDOS se coordinen como un cluster, compartan recursos, y ejecuten tareas distribuidas.
 
@@ -540,13 +512,13 @@ Incluiría: (1) **Node discovery** — detectar otros nodos NeoDOS en la red loc
 Dependencias: networking stack completo (E3), URN (Z2), distributed consensus (Raft/Paxos) para coordinación.
 
 🧭 RESUMEN FINAL
-1. Memory core (slab + handles + KOBJ + page cache) ✅
+1. Memory core (slab + handles + KOBJ + page cache + brk/mmap) ✅
 2. Concurrency (scheduler + events + work queues) ✅
 3. Async I/O system (IRP) ✅
-4. Driver safety layer (ABI + deps + capability done; isolation, hot-reload pending)
+4. Driver safety layer (ABI + deps + capability + isolation + hot-reload done) ✅
 5. Observability & debugging — pending
-6. Modern hardware (PCIe + MSI + APIC) — pending
-7. Storage + USB drivers (ATA/AHCI done; VirtIO, NVMe, NCQ, USB pending)
+6. Modern hardware (PCIe + MSI + HPET/APIC timers done)
+7. Storage + USB drivers (ATA/AHCI + NVMe done; VirtIO, NCQ, USB pending)
 8. Service layer (NeoInit + namespace) — pending
 9. Networking stack — pending
 10. Userland usable system (libneodos + DLL system done; PATH, pipes, redirect, ANSI, edit, top, scripting, compositor pending)
