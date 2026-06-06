@@ -3,6 +3,12 @@
 
 v0.28.0
 
+## Architecture Governance
+
+See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — all architectural invariants are
+enforceable rules, not suggestions. Run `python3 scripts/auto_test.py` and
+`scripts/check_deps.py` before any commit.
+
 ## Build & Run
 
 All commands from `neodos/`. Dependencies: `rustup`, `qemu-system-x86`, `ovmf`, `gdb`, `mtools`, `dosfstools`, `util-linux` (sfdisk).
@@ -31,6 +37,10 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
 2. `python3 scripts/auto_test.py` — 320 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
+
+**Antes de decidir sobre arquitectura:** consultar primero
+`docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`. Si una regla está definida allí,
+el código debe cumplirla — no al revés.
 
 **Cada vez que se complete una tarea:**
 - Actualizar `docs/IMPROVEMENTS.md` (mover item a Completado con descripción)
