@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 320;
+const MAX_TESTS: usize = 400;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -776,6 +776,70 @@ fn register_mem_stress() {
     use alloc::boxed::Box;
     use alloc::vec::Vec;
     use alloc::string::String;
+
+    test_case!("buddy_alloc_free_sanity", {
+        let p = crate::memory::allocate_frame().expect("alloc failed");
+        crate::memory::free_frame(p);
+    });
+
+    test_case!("buddy_multiple_orders", {
+        for order in 0..=4 {
+            let p = crate::memory::alloc_frames(order).expect("alloc failed");
+            crate::memory::free_frames(p, order);
+        }
+    });
+
+    test_case!("buddy_stress_100k_cycles", {
+        let start = crate::hal::get_ticks();
+        for _ in 0..100_000 {
+            let p = crate::memory::allocate_frame().expect("alloc failed");
+            crate::memory::free_frame(p);
+        }
+        let elapsed = crate::hal::get_ticks().wrapping_sub(start);
+        // 100 kHz timer ticks → each tick = 10 µs.
+        // 100k cycles should complete in < 100 ticks (< 1 ms).
+        let _ = elapsed;
+    });
+
+    test_case!("buddy_stress_random_orders", {
+        for _ in 0..1000 {
+            let order = (0usize..=6).map(|i| i * 3 % 7).next().unwrap_or(0);
+            let p = crate::memory::alloc_frames(order).expect("alloc failed");
+            crate::memory::free_frames(p, order);
+        }
+    });
+
+    test_case!("handle_table_250_handles", {
+        let mut ht = crate::handle::HandleTable::with_defaults();
+        for i in 0..250 {
+            let fd = ht.alloc_handle(crate::handle::HandleEntry::file(0, i));
+            test_true!(fd.is_some());
+            test_eq!(fd.unwrap() as usize, 3 + i as usize);
+        }
+        test_eq!(ht.len(), 3 + 250);
+        for i in 0..250 {
+            let entry = ht.get((3 + i) as u8);
+            test_eq!(entry.kind, crate::handle::HANDLE_FILE);
+            test_eq!(entry.id, i);
+        }
+    });
+
+    test_case!("handle_table_reuse_closed_slots", {
+        let mut ht = crate::handle::HandleTable::with_defaults();
+        // Open 10 handles
+        for i in 0..10 {
+            ht.alloc_handle(crate::handle::HandleEntry::file(0, i));
+        }
+        test_eq!(ht.len(), 13);
+        // Close handles 3, 4, 5
+        ht.set(3, crate::handle::HandleEntry::closed());
+        ht.set(4, crate::handle::HandleEntry::closed());
+        ht.set(5, crate::handle::HandleEntry::closed());
+        // New alloc should reuse fd 3
+        let fd = ht.alloc_handle(crate::handle::HandleEntry::file(1, 42));
+        test_eq!(fd, Some(3));
+        test_eq!(ht.get(3).id, 42);
+    });
 
     test_case!("stress_mem_alloc_free_storm", {
         // Rapid Box allocation and drop

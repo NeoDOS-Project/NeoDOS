@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.28.0 — 2026-06-06
+
+### A0.1–A0.4. Memory Architecture Rewrite
+- **Añadido**: `src/memory/buddy.rs` — Buddy system frame allocator con 11 órdenes (4 KB → 4 MB). `alloc_frames(order)`/`free_frames(addr, order)` — O(log n). Free lists intrusivas en memoria libre. Bitmap como validación secundaria.
+- **Añadido**: `src/memory/layout.rs` — MemoryLayout manager dinámico con 32 slots de región. `reserve_region(size, align, flags)` y `reserve_at(base, size, name, flags)` con verificación de solapamiento. `init_default()` replica el layout legacy.
+- **Añadido**: `src/memory/mod.rs` — Módulo de memoria unificado. `MemoryMap { total_phys, highest_page }` detectado dinámicamente del memory map UEFI. `validate_layout_consistency()` verifica constantes vs layout en boot.
+- **Modificado**: `src/memory.rs` → `src/memory/mod.rs` — Reestructuración a módulo con sub-módulos.
+- **Modificado**: `src/handle.rs` — `HandleTable` reescrita con `Vec<HandleEntry>` interno. Sin límite fijo. `Index`/`IndexMut` para compatibilidad con código existente. `MAX_HANDLES` eliminado.
+- **Modificado**: `src/scheduler.rs` — Adaptado a nueva `HandleTable` (Vec-based).
+- **Modificado**: `src/syscall.rs` — Eliminados bounds checks de `MAX_HANDLES`. Toda la tabla crece dinámicamente.
+- **Añadido**: 6 nuevos tests de stress: buddy allocator (4) + handle table (2).
+- **Modificado**: `src/testing.rs` — `MAX_TESTS` aumentado de 320 a 400. Stress suite de 8 → 14 tests.
+- **Total**: 329 kernel tests + 5 user-mode binaries.
+
 ## v0.27.0 — 2026-06-06
 
 ### C3. HPET / APIC Timers — Añadido

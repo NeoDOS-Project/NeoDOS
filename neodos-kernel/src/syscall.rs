@@ -371,7 +371,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                         proc.mmap_regions.clear();
                         proc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
 
-                        for h in proc.handle_table.iter_mut() {
+                        for i in 0..proc.handle_table.len() {
+                            let h = proc.handle_table[i];
                             match h.kind {
                                 crate::handle::HANDLE_PIPE_READ => {
                                     crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
@@ -381,7 +382,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                                 }
                                 _ => {}
                             }
-                            *h = crate::handle::HandleEntry::closed();
+                            proc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                         }
                     }
                 }
@@ -576,13 +577,6 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let old_fd = rbx as u8;
             let new_fd = rcx as u8;
 
-            if new_fd as usize >= crate::handle::MAX_HANDLES {
-                return err_to_u64(SyscallError::BadF);
-            }
-            if old_fd as usize >= crate::handle::MAX_HANDLES {
-                return err_to_u64(SyscallError::BadF);
-            }
-
             let src_entry = current_handle_entry(old_fd);
             if src_entry.kind == crate::handle::HANDLE_CLOSED {
                 return err_to_u64(SyscallError::BadF);
@@ -706,10 +700,6 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let buf_ptr = rcx as *mut u8;
             let count = rdx as usize;
 
-            if fd as usize >= crate::handle::MAX_HANDLES {
-                return err_to_u64(SyscallError::BadF);
-            }
-
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
                 return err_to_u64(SyscallError::Fault);
             }
@@ -762,10 +752,6 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let fd = rbx as u8;
             let buf_ptr = rcx as *const u8;
             let count = rdx as usize;
-
-            if fd as usize >= crate::handle::MAX_HANDLES {
-                return err_to_u64(SyscallError::BadF);
-            }
 
             if !is_user_ptr_valid(rcx, count as u64) || count > 4096 {
                 return err_to_u64(SyscallError::Fault);
@@ -1064,12 +1050,10 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     let s = scheduler::current_scheduler();
                     let mut lock = s.lock();
                     if let Some(proc) = lock.current_process_mut() {
-                        if (fd as usize) < crate::handle::MAX_HANDLES {
-                            let entry = proc.handle_table[fd as usize];
-                            if entry.kind == crate::handle::HANDLE_FILE {
-                                return (entry.extra as usize, entry.id);
-                            }
-                        }
+                    let entry = proc.handle_table[fd as usize];
+                    if entry.kind == crate::handle::HANDLE_FILE {
+                        return (entry.extra as usize, entry.id);
+                    }
                     }
                     (usize::MAX, 0)
                 });
@@ -1159,9 +1143,7 @@ fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(proc) = lock.current_process_mut() {
-            if (fd as usize) < crate::handle::MAX_HANDLES {
-                return proc.handle_table[fd as usize];
-            }
+            return proc.handle_table.get(fd);
         }
         crate::handle::HandleEntry::closed()
     })
@@ -1172,9 +1154,7 @@ fn set_current_handle(fd: u8, entry: crate::handle::HandleEntry) {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(proc) = lock.current_process_mut() {
-            if (fd as usize) < crate::handle::MAX_HANDLES {
-                proc.handle_table[fd as usize] = entry;
-            }
+            proc.handle_table.set(fd, entry);
         }
     });
 }

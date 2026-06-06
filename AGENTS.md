@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.27.0
+v0.28.0
 
 ## Build & Run
 
@@ -85,6 +85,43 @@ The resulting ELF binary can be loaded by the kernel's `RUN` command.
 - **Profiles**: release with `opt-level=3`, `lto=true`, `debug=true`, `panic="abort"`.
 - A shared `.cargo/config.toml` at `neodos/` adds extra linker flags (`-melf_x86_64`, `rust-lld`) for the kernel target only.
 - **Timers**: HPET (High Precision Event Timer) detected via ACPI RSDP/RSDT table scan. Configured at 1 KHz periodic mode with legacy replacement routing to IRQ0. Local APIC timer calibrated against HPET, used as primary timer source when available. APIC timer disables HPET legacy replacement and masks PIC IRQ0 to prevent double interrupts. Fallback to PIT (8254) at 18.2 Hz when HPET not available. `sleep_hint()` uses HPET counter for µs-resolution delays.
+
+## Memory Architecture (A0)
+
+### A0.1 Buddy System Frame Allocator
+
+`src/memory/buddy.rs` — Reemplaza el bitmap O(n) con buddy system O(log n).
+
+| Concept | Description |
+|---------|-------------|
+| **Orders** | 11 power-of-2 levels: 0=4KB, 1=8KB, … 10=4MB |
+| **Free lists** | Fixed-size arrays (512 slots per order), no writes to freed frames |
+| **Allocation** | `alloc_frames(order)` — finds smallest free block ≥ requested order, splits |
+| **Free** | `free_frames(addr, order)` — frees block, merges with buddy if free |
+| **Bitmap** | 16384 u64 words for O(1) buddy-status check (within 4 GB) |
+| **Max RAM** | No hard limit; detects from UEFI memory map |
+| **API** | `allocate_frame()`/`free_frame(phys)` wrappers for order 0 |
+
+### A0.2 Dynamic Physical Memory
+
+`src/memory/mod.rs` — `MemoryMap { total_phys, highest_page }` parsed from `BootInfo` UEFI memory map entries.
+
+- `PHYS_MEM_END` is dynamic: detected from actual UEFI memory descriptors
+- Frame allocator initialized with all free regions after reserving low 1 MiB, kernel image, and framebuffer
+- Supports >4 GB physical RAM natively (frame allocator hands out any physical address)
+
+### A0.3 Dynamic Memory Layout Manager
+
+`src/memory/layout.rs` — Centralized region registry replacing hardcoded constants.
+
+| Feature | Description |
+|---------|-------------|
+| `MemoryRegion` | base, size, 24-byte name, flags |
+| `MemoryLayout` | 32-slot fixed-size array + `reserve_region()` |
+| `init_default()` | Replicates legacy layout: kernel_image, user_window, kernel_heap, user_heap, dll_region, mmap_region, driver_iso |
+| Overlap detection | `panic!()` on any overlapping reservation |
+
+Boot-time `validate_layout_consistency()` asserts layout-registered bases match hardcoded constants.
 
 ## Boot ABI
 
@@ -350,11 +387,11 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - `sys_dup2` copies an fd to another slot (increments refcount for pipe fds)
 
 ### Per-Process Handle Table
-- `Process.handle_table: [HandleEntry; 16]` — fixed-size array indexed by handle number
+- `Process.handle_table: HandleTable` — `Vec<HandleEntry>`-backed, grows dynamically, unlimited capacity
 - `HandleEntry` types: `Closed`, `Stdin`, `Stdout`, `Stderr`, `PipeReader(id)`, `PipeWriter(id)`, `File(drive, inode, offset)`, `Device(id)`, `Event(type)`
 - File handles carry a per-open `offset` cursor for independent read/write positioning
 - fd 0 = stdin (keyboard), fd 1 = stdout (console), fd 2 = stderr (console)
-- fds 3–15 available for pipes/files/devices/events
+- fds 3+ available for pipes/files/devices/events (unlimited, grows dynamically)
 - Default table for Ring 3 processes; `closed_handle_table()` for Ring 0
 - `sys_exit` iterates handle table and cleans up all resource types (pipes decrement refcount, files closed cleanly)
 
@@ -480,7 +517,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-320 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+329 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -512,11 +549,11 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
-| Stress | 8 | Stress: sched, syscall, mem |
+| Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (320 tests kernel)
+1. Ejecuta `testing::run_all()` (329 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

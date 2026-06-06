@@ -4,7 +4,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::handle::{HandleTable, closed_handle_table, default_handle_table};
 use crate::kobj::{self, KObjType};
 
 pub const MAX_PROCESSES: usize = 16;
@@ -73,7 +72,7 @@ pub struct Process {
     kernel_stack: Option<Box<AlignedKStack>>,
     pub mmap_regions: Vec<MmapRegion>,
     pub mmap_next: u64,
-    pub handle_table: HandleTable,
+    pub handle_table: crate::handle::HandleTable,
     pub kobj_id: Option<kobj::KObjId>,
 }
 
@@ -160,7 +159,7 @@ impl Process {
             kernel_stack: stack,
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
-            handle_table: closed_handle_table(),
+            handle_table: crate::handle::HandleTable::new(),
             kobj_id: None,
         }
     }
@@ -198,7 +197,7 @@ impl Process {
             kernel_stack: Some(stack),
             mmap_regions: Vec::new(),
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
-            handle_table: default_handle_table(),
+            handle_table: crate::handle::HandleTable::with_defaults(),
             kobj_id: None,
         }
     }
@@ -302,7 +301,8 @@ impl Scheduler {
                     crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
                 }
                 // Close all handles (pipes, files, etc.)
-                for h in proc.handle_table.iter_mut() {
+                for i in 0..proc.handle_table.len() {
+                    let h = proc.handle_table[i];
                     match h.kind {
                         crate::handle::HANDLE_PIPE_READ => {
                             crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
@@ -312,7 +312,7 @@ impl Scheduler {
                         }
                         _ => {}
                     }
-                    *h = crate::handle::HandleEntry::closed();
+                    proc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                 }
                 // proc dropped here: kernel_stack (Box<AlignedKStack>), cwd_path, etc. freed
                 crate::trace_sched!(2, pid, 0); // 2 = KILL_PROCESS
