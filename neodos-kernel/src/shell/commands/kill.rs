@@ -24,7 +24,6 @@ impl DosShell {
 
         let mut scheduler = current_scheduler().lock();
         if scheduler.kill_pid(pid) {
-            // Wake any process waiting on this PID
             scheduler.wake_waiters(pid);
             println!("Process {} terminated.", pid);
         } else {

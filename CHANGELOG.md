@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.29.0 — 2026-06-07
+
+### A1.5. EPROCESS/KTHREAD — Process/Thread Split
+- **Añadido**: `src/scheduler.rs` — `Eprocess` struct (shared resources: handle table, CWD, heap, mmap, thread_count)
+- **Añadido**: `src/scheduler.rs` — `Kthread` struct (per-thread CPU context, state, priority, kernel stack, TEB)
+- **Añadido**: `ThreadState` enum (`Ready`, `Running`, `Blocked{waiting_for}`, `Terminated`) reemplazando `ProcessState`
+- **Añadido**: `sys_thread_create` (RAX=22) — crea nuevo thread en EPROCESS existente
+- **Añadido**: `sys_thread_join` (RAX=23) — espera a que un thread termine
+- **Añadido**: `Kthread::new_ring3()` / `Eprocess::new_ring3()` / `Scheduler::add_ring3_process()` constructores
+- **Añadido**: `add_thread_to_process()` para crear threads adicionales
+- **Modificado**: `Scheduler` — `processes[16]` → `eprocesses[16]` + `kthreads[32]`
+- **Modificado**: `schedule()` retorna `*mut Kthread` en lugar de `*mut Process`
+- **Modificado**: Pipe blocking — `ThreadState::Blocked` + `Scheduler::kthreads` en lugar de `ProcessState`
+- **Modificado**: IRP blocking — `current_kthread_mut()` en lugar de `current_process_mut()`
+- **Modificado**: `cleanup_terminated_process()` recycles EPROCESS solo cuando último thread termina
+- **Modificado**: `find_eprocess`, `find_kthread`, `alloc_*_slot` — ahora son `pub` (acceso externo)
+- **Eliminado**: `Process` struct, `ProcessState` enum, `current_process_mut()` — API removed
+- **Eliminado**: `scheduler.processes` field — reemplazado por `eprocesses`/`kthreads`
+- **Tests**: 4 nuevos tests de Kthread/Eprocess + 9 tests de scheduler adaptados
+- **Total**: 330 kernel tests (antes 329)
+
 ## v0.28.0 — 2026-06-06
 
 ### MCP Server — Kernel Introspection & VFS Analysis

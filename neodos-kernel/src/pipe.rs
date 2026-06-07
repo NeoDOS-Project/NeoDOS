@@ -1,5 +1,5 @@
 use spin::Mutex;
-use crate::scheduler::{self, ProcessState};
+use crate::scheduler::{self, ThreadState};
 use crate::kobj::{self, KObjType};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
@@ -196,7 +196,6 @@ impl PipeManager {
         wake_pipe_readers(pipe_id);
         Ok(n)
     }
-
 }
 
 // ── Blocking support ──
@@ -206,26 +205,18 @@ fn wake_pipe_readers(pipe_id: u8) {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        for proc in scheduler.processes.iter_mut() {
-            if let Some(p) = proc {
-                if p.waiting_for == Some(magic) && matches!(p.state, ProcessState::Blocked { .. }) {
-                    p.waiting_for = None;
-                    p.state = ProcessState::Ready;
-                    crate::syscall::set_need_resched();
-                }
-            }
-        }
+        scheduler.wake_blocked_on_magic(magic);
+        crate::syscall::set_need_resched();
     });
 }
 
 pub fn block_current_for_pipe(pipe_id: u8) {
     let magic = 0xFFFF_0000u32 | (pipe_id as u32);
     crate::hal::without_interrupts(|| {
-        let s = scheduler::current_scheduler();
-        let mut scheduler = s.lock();
-        if let Some(proc) = scheduler.current_process_mut() {
-            proc.state = ProcessState::Blocked { waiting_for: magic };
-            proc.waiting_for = Some(magic);
+        let mut lock = scheduler::current_scheduler().lock();
+        if let Some(k) = lock.current_kthread_mut() {
+            k.state = ThreadState::Blocked { waiting_for: magic };
+            k.waiting_for = Some(magic);
         }
         crate::syscall::set_need_resched();
     });

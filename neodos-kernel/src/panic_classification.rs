@@ -69,12 +69,12 @@ pub fn dump_forensic_info() {
     let ticks = crate::hal::get_ticks();
     let _ = write!(w, "  Timer ticks: {}\n", ticks);
     if let Some(sched) = crate::scheduler::current_scheduler().try_lock() {
-        let _ = write!(w, "  Current PID: {}  Next PID: {}\n", sched.current_pid, sched.next_pid);
-        for (i, p) in sched.processes.iter().enumerate() {
-            if let Some(proc) = p {
-                let state = format!("{:?}", proc.state);
-                let _ = write!(w, "  [{}] PID={} state={} ticks={}\n",
-                    i, proc.pid, state, proc.cpu_ticks);
+        let _ = write!(w, "  Current TID: {}  Next TID: {}  Next PID: {}\n", sched.current_tid, sched.next_tid, sched.next_pid);
+        for (i, t) in sched.kthreads.iter().enumerate() {
+            if let Some(k) = t {
+                let state = format!("{:?}", k.state);
+                let _ = write!(w, "  [{}] TID={} PID={} state={} ticks={}\n",
+                    i, k.tid, k.pid, state, k.cpu_ticks);
             }
         }
     } else {

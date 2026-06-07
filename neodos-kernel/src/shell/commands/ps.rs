@@ -1,12 +1,12 @@
 use crate::println;
-use crate::scheduler::{current_scheduler, ProcessState, MAX_PROCESSES};
+use crate::scheduler::{current_scheduler, ThreadState, MAX_THREADS};
 use crate::shell::shell::DosShell;
 
 #[derive(Copy, Clone)]
-struct ProcSnap {
+struct ThSnap {
+    tid: u32,
     pid: u32,
-    state: ProcessState,
-    user_slot: Option<u8>,
+    state: ThreadState,
     rip: u64,
     rsp: u64,
     cpu_ticks: u64,
@@ -16,21 +16,21 @@ struct ProcSnap {
 
 impl DosShell {
     pub fn cmd_ps(&mut self) {
-        let mut snap = [None; MAX_PROCESSES];
+        let mut snap = [None; MAX_THREADS];
 
         {
             let scheduler = current_scheduler().lock();
-            for (i, proc) in scheduler.processes.iter().enumerate() {
-                if let Some(p) = proc {
-                    snap[i] = Some(ProcSnap {
-                        pid: p.pid,
-                        state: p.state,
-                        user_slot: p.user_slot,
-                        rip: p.rip,
-                        rsp: p.rsp,
-                        cpu_ticks: p.cpu_ticks,
-                        priority: p.priority,
-                        ticks_since_scheduled: p.ticks_since_scheduled,
+            for (i, th) in scheduler.kthreads.iter().enumerate() {
+                if let Some(k) = th {
+                    snap[i] = Some(ThSnap {
+                        tid: k.tid,
+                        pid: k.pid,
+                        state: k.state,
+                        rip: k.rip,
+                        rsp: k.rsp,
+                        cpu_ticks: k.cpu_ticks,
+                        priority: k.priority,
+                        ticks_since_scheduled: k.ticks_since_scheduled,
                     });
                 }
             }
@@ -38,40 +38,30 @@ impl DosShell {
 
         let has_any = snap.iter().any(|e| e.is_some());
         if !has_any {
-            println!("No processes");
+            println!("No threads");
             return;
         }
 
-        println!("PID  STATE       WAIT SLOT  PRI      RIP               RSP               TICKS");
+        println!("TID  PID  STATE       PRI      RIP               RSP               TICKS");
         for entry in snap.iter() {
-            if let Some(p) = entry {
-                let (state_str, wait_str, slot_str, pri_str) = format_proc_info(p);
-                println!("{:>3}  {:9}  {:>4} {:>4}  {:>3}  0x{:016x}  0x{:016x}  {}",
-                    p.pid, state_str, wait_str, slot_str, pri_str, p.rip, p.rsp, p.cpu_ticks);
+            if let Some(t) = entry {
+                let (state_str, pri_str) = format_th_info(t);
+                println!("{:>3}  {:>3}  {:9}  {:>3}  0x{:016x}  0x{:016x}  {}",
+                    t.tid, t.pid, state_str, pri_str, t.rip, t.rsp, t.cpu_ticks);
             }
         }
     }
 }
 
-fn format_proc_info(p: &ProcSnap) -> (&'static str, &'static str, &'static str, &'static str) {
-    let state_str = match p.state {
-        ProcessState::Ready => "Ready",
-        ProcessState::Running => "Running",
-        ProcessState::Blocked { .. } => "Blocked",
-        ProcessState::Terminated => "Term.",
+fn format_th_info(t: &ThSnap) -> (&'static str, &'static str) {
+    let state_str = match t.state {
+        ThreadState::Ready => "Ready",
+        ThreadState::Running => "Running",
+        ThreadState::Blocked { .. } => "Blocked",
+        ThreadState::Terminated => "Term.",
     };
 
-    let wait_str = match p.state {
-        ProcessState::Blocked { .. } => "yes",
-        _ => "-",
-    };
-
-    let slot_str = match p.user_slot {
-        Some(_) => "yes",
-        None => "-",
-    };
-
-    let pri_str = match p.priority {
+    let pri_str = match t.priority {
         0 => "H",
         1 => "AN",
         2 => "N",
@@ -79,5 +69,5 @@ fn format_proc_info(p: &ProcSnap) -> (&'static str, &'static str, &'static str, 
         _ => "?",
     };
 
-    (state_str, wait_str, slot_str, pri_str)
+    (state_str, pri_str)
 }

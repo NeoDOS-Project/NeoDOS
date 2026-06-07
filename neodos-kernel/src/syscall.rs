@@ -11,21 +11,15 @@
 //! Return value in RAX:
 //!   Non-negative (≥ 0)  → success, value is the result
 //!   Negative (< 0)       → error, value is `-(SyscallError)`.
-//!     User code checks for error with `cmp rax, -1` / `jl error` or
-//!     compares against `SYSERR_*` constants.
 //!
 //! Error codes are returned as `u64` containing the twos-complement
-//! representation of the negative error.  Example:
-//!   `SYSERR_NOENT = 2`  → RAX = `0xFFFF_FFFF_FFFF_FFFE` (= -2 as i64).
-//!
-//! Legacy: syscalls that never fail (sys_getpid, sys_yield, sys_exit)
-//! return 0 on success.  New code should treat 0 as success.
+//! representation of the negative error.
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::serial_println;
-use crate::scheduler::{self, ProcessState};
+use crate::scheduler::{self, ThreadState};
 
 // ── Syscall Number Constants (frozen ABI) ──
 
@@ -53,10 +47,14 @@ pub enum SyscallNum {
     Mmap = 19,
     Munmap = 20,
     LoadLib = 21,
+
+    // A1.5 thread syscalls
+    ThreadCreate = 22,
+    ThreadJoin = 23,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 21;
+    pub const MAX_VALID: u64 = 23;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -80,70 +78,47 @@ impl SyscallNum {
             19 => Some(Self::Mmap),
             20 => Some(Self::Munmap),
             21 => Some(Self::LoadLib),
+            22 => Some(Self::ThreadCreate),
+            23 => Some(Self::ThreadJoin),
             _ => None,
         }
     }
 }
 
 // ── Standard Error Codes ──
-//
-// Returned as negative u64: `err_to_u64(SyscallError::NoEnt)` → 0xFFFF_FFFF_FFFF_FFFE.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i64)]
 pub enum SyscallError {
-    /// Invalid argument
     Inval = 1,
-    /// No such file or directory
     NoEnt = 2,
-    /// Out of memory
     NoMem = 3,
-    /// Permission denied
     Acces = 4,
-    /// Bad file descriptor / handle
     BadF = 5,
-    /// Bad address
     Fault = 6,
-    /// Function not implemented
     NoSys = 7,
-    /// Resource temporarily unavailable
     Again = 8,
-    /// Broken pipe
     Pipe = 9,
-    /// File exists
     Exist = 10,
-    /// Not a directory
     NotDir = 11,
-    /// Is a directory
     IsDir = 12,
-    /// I/O error
     Io = 13,
-    /// No such device
     NoDev = 14,
-    /// Device or resource busy
     Busy = 15,
 }
 
-/// Convert a `SyscallError` into the `u64` return value convention
-/// (negative encoding: `NoEnt=2` → RAX = `0xFFFF_FFFF_FFFF_FFFE` = -2 as i64).
 pub fn err_to_u64(e: SyscallError) -> u64 {
     (-(e as i64)) as u64
 }
 
-
-
 // ── ABI validation ──
 
-/// Validate syscall ABI assumptions at boot time.
-/// Called once during kernel init.
 pub fn validate_abi() {
-    // SyscallError values must fit in a negative i64 when cast to u64
     assert!((err_to_u64(SyscallError::Inval) as i64) < 0);
     assert!((err_to_u64(SyscallError::NoEnt) as i64) < 0);
     assert!((err_to_u64(SyscallError::NoMem) as i64) < 0);
 
-    // Syscall numbers must not overlap or exceed max
-    assert_eq!(SyscallNum::MAX_VALID, 21);
+    assert_eq!(SyscallNum::MAX_VALID, 23);
     for n in 0..=SyscallNum::MAX_VALID {
         if n == 7 || n == 8 {
             assert!(SyscallNum::from_u64(n).is_none(), "reserved hole {} must stay free", n);
@@ -193,27 +168,20 @@ pub fn set_need_resched() {
 #[no_mangle]
 pub extern "C" fn clear_need_resched() -> bool {
     crate::globals::flush_cache_if_needed();
-    // Process high-priority work queue on each syscall return boundary.
-    // Interrupts are already disabled in the syscall handler (int 0x80 gate).
     crate::work_queue::WORK_QUEUE.process_high();
-    // Process pending Event Bus events on every syscall return.
-    // This ensures events are dispatched even when the system is busy
-    // (the idle loop also dispatches when idle). High-priority events
-    // (timers, IRQ completions) are drained first, then normal-priority.
     crate::eventbus::EVENT_BUS.dispatch_pending();
     NEED_RESCHED.swap(false, Ordering::SeqCst)
 }
 
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
-    // Invariant: must not be called from inside timer IRQ handler
     if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
         crate::serial_println!("[SYS] resched called from timer IRQ context!");
     }
 
     let has_non_idle = crate::hal::without_interrupts(|| {
         let scheduler = scheduler::current_scheduler().lock();
-        scheduler.has_non_idle_processes()
+        scheduler.has_non_idle_threads()
     });
 
     if !has_non_idle {
@@ -224,34 +192,30 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
-        let pid = scheduler.current_pid;
-        if pid > 0 {
-            if let Some(current) = scheduler.current_process_mut() {
-                current.rsp = current_rsp;
-                // Only transition from Running → Ready.
-                // Blocked processes (pipe reads, etc.) stay Blocked
-                // so the scheduler skips them.
-                if current.state == ProcessState::Running {
-                    current.state = ProcessState::Ready;
+        let tid = scheduler.current_tid;
+        if tid > 0 {
+            if let Some(k) = scheduler.current_kthread_mut() {
+                k.rsp = current_rsp;
+                if k.state == ThreadState::Running {
+                    k.state = ThreadState::Ready;
                 } else if cfg!(feature = "validation") {
-                    crate::serial_println!("[SYS] Context switch from non-Running state: {:?}", current.state);
+                    crate::serial_println!("[SYS] Context switch from non-Running state: {:?}", k.state);
                 }
             }
         }
 
         let next = scheduler.schedule();
 
-        // Update TSS.RSP0 to the next process's private kernel stack
+        // Update TSS.RSP0 to the next thread's kernel stack
         let next_ks_top = unsafe { (*next).kernel_stack_top };
         crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
 
         let next_rsp = unsafe { (*next).rsp };
-        crate::trace_cswitch!(pid, unsafe { (*next).pid } as u64);
+        crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })
 }
 
-/// Normalize a DOS path: resolve `.`/`..`, collapse separators.
 fn normalize_dos_path(path: &str) -> String {
     let mut drive_prefix = [0u8; 2];
     let rest = if path.len() >= 2 && path.as_bytes()[1] == b':' {
@@ -284,9 +248,6 @@ fn normalize_dos_path(path: &str) -> String {
     result
 }
 
-/// Check if `[ptr, ptr+len)` is a valid user-accessible address range.
-/// Valid ranges: the standard user slot window (4–8 MB), the current
-/// process's heap region, or any active mmap region.
 pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
         return true;
@@ -295,7 +256,6 @@ pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break {
         return true;
     }
-    // Check mmap regions
     let regions = crate::scheduler::current_process_mmap_regions();
     for r in &regions {
         if ptr >= r.base && ptr.saturating_add(len) <= r.base + r.len {
@@ -305,7 +265,6 @@ pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     false
 }
 
-/// Copy a null-terminated string from user space (up to 255 bytes).
 fn copy_user_string(ptr: u64) -> Result<String, ()> {
     if !is_user_ptr_valid(ptr, 1) {
         return Err(());
@@ -327,7 +286,6 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u64, r9: u64) -> u64 {
     crate::trace_syscall!(rax, rbx, rcx, rdx);
 
-    // ABI validation: reject unknown syscall numbers
     let num = match SyscallNum::from_u64(rax) {
         Some(n) => n,
         None => {
@@ -337,68 +295,92 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
     };
 
     match num {
+        // ── Exit (thread exit) ──
         SyscallNum::Exit => {
             let code = rbx;
 
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut scheduler = s.lock();
-                let pid = scheduler.current_pid;
+                let tid = scheduler.current_tid;
 
-                if pid > 0 {
-                    if let Some(proc) = scheduler.current_process_mut() {
-                        proc.state = ProcessState::Terminated;
+                if tid > 0 {
+                    // Mark this thread as Terminated
+                    if let Some(k) = scheduler.current_kthread_mut() {
+                        k.state = ThreadState::Terminated;
+                    }
 
-                        if let Some(slot) = proc.user_slot.take() {
-                            crate::arch::x64::paging::free_user_slot(slot);
-                        }
-                        if proc.heap_base != 0 {
-                            crate::arch::x64::paging::heap_free_range(
-                                proc.heap_base,
-                                proc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
-                            );
-                            let idx = ((proc.heap_base
-                                - crate::arch::x64::paging::PROCESS_HEAP_BASE)
-                                / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
-                            crate::arch::x64::paging::free_heap_slot(idx);
-                            proc.heap_base = 0;
-                            proc.heap_break = 0;
-                        }
-                        // Free all mmap regions
-                        for r in proc.mmap_regions.iter() {
-                            crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
-                        }
-                        proc.mmap_regions.clear();
-                        proc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
+                    // Get owning EPROCESS pid
+                    let pid = scheduler.current_pid();
+                    if pid > 0 {
+                        let eproc = scheduler.current_eprocess_mut();
+                        if let Some(ep) = eproc {
+                            ep.thread_count = ep.thread_count.saturating_sub(1);
+                            ep.exit_code = code as i64;
 
-                        for i in 0..proc.handle_table.len() {
-                            let h = proc.handle_table[i];
-                            match h.kind {
-                                crate::handle::HANDLE_PIPE_READ => {
-                                    crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
+                            // Only free process resources when LAST thread exits
+                            if ep.thread_count == 0 {
+                                // Free user slot
+                                if let Some(slot) = ep.user_slot.take() {
+                                    crate::arch::x64::paging::free_user_slot(slot);
                                 }
-                                crate::handle::HANDLE_PIPE_WRITE => {
-                                    crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
+                                // Free heap
+                                if ep.heap_base != 0 {
+                                    crate::arch::x64::paging::heap_free_range(
+                                        ep.heap_base,
+                                        ep.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
+                                    );
+                                    let heap_idx = ((ep.heap_base
+                                        - crate::arch::x64::paging::PROCESS_HEAP_BASE)
+                                        / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+                                    crate::arch::x64::paging::free_heap_slot(heap_idx);
+                                    ep.heap_base = 0;
+                                    ep.heap_break = 0;
                                 }
-                                _ => {}
+                                // Free mmap
+                                for r in ep.mmap_regions.iter() {
+                                    crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
+                                }
+                                ep.mmap_regions.clear();
+                                ep.mmap_next = crate::arch::x64::paging::MMAP_BASE;
+                                // Close handles
+                                for i in 0..ep.handle_table.len() {
+                                    let h = ep.handle_table[i];
+                                    match h.kind {
+                                        crate::handle::HANDLE_PIPE_READ => {
+                                            crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
+                                        }
+                                        crate::handle::HANDLE_PIPE_WRITE => {
+                                            crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
+                                        }
+                                        _ => {}
+                                    }
+                                    ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
+                                }
+
+                                // Wake any process waiting on this PID
+                                scheduler.wake_waiters(pid);
                             }
-                            proc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
+                        }
+                    }
+
+                    // Wake any thread joined to this TID
+                    crate::scheduler::wake_thread_joiner(tid);
+
+                    // Request exit to kernel (if shell is waiting for this process)
+                    if pid > 0 && pid == crate::usermode::current_wait_pid() {
+                        let eproc = scheduler.current_eprocess();
+                        if eproc.map_or(true, |ep| ep.thread_count == 0) {
+                            crate::usermode::request_exit_to_kernel();
                         }
                     }
                 }
-
-                scheduler.wake_waiters(pid);
-
-                if pid > 0 && pid == crate::usermode::current_wait_pid() {
-                    crate::usermode::request_exit_to_kernel();
-                }
-
-                pid
             });
 
             code
         }
 
+        // ── Write ──
         SyscallNum::Write => {
             let fd = rbx as u8;
             let ptr = rcx as *const u8;
@@ -433,19 +415,20 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── Yield ──
         SyscallNum::Yield => {
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
-                let mut scheduler = s.lock();
-                let pid = scheduler.current_pid;
-                if pid > 0 {
-                    if let Some(proc) = scheduler.current_process_mut() {
-                        if proc.state == ProcessState::Running {
-                            proc.state = ProcessState::Ready;
+                let mut lock = s.lock();
+                let tid = lock.current_tid;
+                if tid > 0 {
+                    if let Some(k) = lock.current_kthread_mut() {
+                        if k.state == ThreadState::Running {
+                            k.state = ThreadState::Ready;
                         }
-                        let idx = (proc.priority as usize).min(
+                        let idx = (k.priority as usize).min(
                             crate::scheduler::PRIORITY_COUNT as usize - 1);
-                        proc.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                        k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
                     }
                 }
             });
@@ -453,13 +436,15 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             0
         }
 
+        // ── GetPid ──
         SyscallNum::GetPid => {
             let pid = crate::hal::without_interrupts(|| {
-                crate::scheduler::current_scheduler().lock().current_pid
+                crate::scheduler::current_scheduler().lock().current_pid()
             });
             pid as u64
         }
 
+        // ── Read ──
         SyscallNum::Read => {
             let fd = rbx as u8;
             let buf_ptr = rcx as *mut u8;
@@ -528,6 +513,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── Pipe ──
         SyscallNum::Pipe => {
             let fds_ptr = rbx as *mut u64;
             if !is_user_ptr_valid(rbx, 16) {
@@ -542,10 +528,10 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let handle_result = crate::hal::without_interrupts(|| -> Result<(u8, u8), ()> {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
-                if let Some(proc) = lock.current_process_mut() {
+                if let Some(ep) = lock.current_eprocess_mut() {
                     let read_entry = crate::handle::HandleEntry::pipe_read(pipe_id);
                     let write_entry = crate::handle::HandleEntry::pipe_write(pipe_id);
-                    match crate::handle::alloc_two_handles(&mut proc.handle_table, read_entry, write_entry) {
+                    match crate::handle::alloc_two_handles(&mut ep.handle_table, read_entry, write_entry) {
                         Some((r, w)) => Ok((r, w)),
                         None => Err(()),
                     }
@@ -573,6 +559,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             0
         }
 
+        // ── Dup2 ──
         SyscallNum::Dup2 => {
             let old_fd = rbx as u8;
             let new_fd = rcx as u8;
@@ -607,6 +594,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             new_fd as u64
         }
 
+        // ── WaitPid ──
         SyscallNum::WaitPid => {
             let wait_pid = rbx as u32;
 
@@ -614,21 +602,23 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 let is_terminated = crate::hal::without_interrupts(|| {
                     let s = crate::scheduler::current_scheduler();
                     let scheduler = s.lock();
-                    scheduler.processes.iter().any(|p| {
-                        p.as_ref().is_some_and(|proc| proc.pid == wait_pid && proc.state == ProcessState::Terminated)
-                    })
+                    // Check if EPROCESS has been removed (thread_count == 0 and terminated)
+                    if let Some(ep) = scheduler.find_eprocess(wait_pid) {
+                        ep.thread_count == 0
+                    } else {
+                        true // already recycled
+                    }
                 });
 
                 if is_terminated { break; }
                 crate::hal::hlt_once();
             }
 
-            // Recycle the slot and free kernel stack of the waited-for process
             crate::scheduler::cleanup_terminated_process(wait_pid);
-
             0
         }
 
+        // ── Open ──
         SyscallNum::Open => {
             let path_ptr = rbx as *const u8;
             let _flags = rcx;
@@ -682,8 +672,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
-                if let Some(proc) = lock.current_process_mut() {
-                    crate::handle::alloc_handle(&mut proc.handle_table, entry)
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
                 } else {
                     None
                 }
@@ -695,6 +685,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── ReadFile ──
         SyscallNum::ReadFile => {
             let fd = rbx as u8;
             let buf_ptr = rcx as *mut u8;
@@ -707,8 +698,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let (drive_idx, inode_num, offset) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
-                if let Some(proc) = lock.current_process_mut() {
-                    let entry = proc.handle_table[fd as usize];
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    let entry = ep.handle_table[fd as usize];
                     if entry.kind == crate::handle::HANDLE_FILE {
                         (entry.extra as usize, entry.id, entry.offset)
                     } else {
@@ -738,8 +729,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     crate::hal::without_interrupts(|| {
                         let s = scheduler::current_scheduler();
                         let mut lock = s.lock();
-                        if let Some(proc) = lock.current_process_mut() {
-                            proc.handle_table[fd as usize].offset += bytes_read as u64;
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            ep.handle_table[fd as usize].offset += bytes_read as u64;
                         }
                     });
                     bytes_read as u64
@@ -748,6 +739,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── WriteFile ──
         SyscallNum::WriteFile => {
             let fd = rbx as u8;
             let buf_ptr = rcx as *const u8;
@@ -760,8 +752,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             let (drive_idx, inode_num, offset) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
-                if let Some(proc) = lock.current_process_mut() {
-                    let entry = proc.handle_table[fd as usize];
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    let entry = ep.handle_table[fd as usize];
                     if entry.kind == crate::handle::HANDLE_FILE {
                         (entry.extra as usize, entry.id, entry.offset)
                     } else {
@@ -791,8 +783,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                     crate::hal::without_interrupts(|| {
                         let s = scheduler::current_scheduler();
                         let mut lock = s.lock();
-                        if let Some(proc) = lock.current_process_mut() {
-                            proc.handle_table[fd as usize].offset += bytes_written as u64;
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            ep.handle_table[fd as usize].offset += bytes_written as u64;
                         }
                     });
                     bytes_written as u64
@@ -801,6 +793,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── Close ──
         SyscallNum::Close => {
             let fd = rbx as u8;
             let entry = current_handle_entry(fd);
@@ -811,15 +804,14 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 crate::handle::HANDLE_PIPE_WRITE => {
                     crate::pipe::PIPE_MANAGER.dec_write_ref(entry.id as u8);
                 }
-                crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT => {
-                    // Clean close: no extra resource release needed for files/devices/events
-                }
+                crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT => {}
                 _ => {}
             }
             set_current_handle(fd, crate::handle::HandleEntry::closed());
             0
         }
 
+        // ── Ioctl ──
         SyscallNum::Ioctl => {
             let device_id = rbx as u32;
             let cmd = rcx as u32;
@@ -863,10 +855,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── RegisterDevice ──
         SyscallNum::RegisterDevice => {
             let device_id = rbx as u32;
             let current_pid = crate::hal::without_interrupts(|| {
-                crate::scheduler::current_scheduler().lock().current_pid
+                crate::scheduler::current_scheduler().lock().current_pid()
             });
 
             if register_device(device_id, current_pid) {
@@ -876,6 +869,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── ChDir ──
         SyscallNum::ChDir => {
             let path_str = match copy_user_string(rbx) {
                 Ok(s) => s,
@@ -932,6 +926,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── GetCwd ──
         SyscallNum::GetCwd => {
             let buf_ptr = rbx as *mut u8;
             let buf_len = rcx as usize;
@@ -954,6 +949,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             to_copy as u64
         }
 
+        // ── Brk ──
         SyscallNum::Brk => {
             let new_break = rbx;
             let (heap_base, current_break) = crate::scheduler::current_process_heap_range();
@@ -1012,9 +1008,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             new_break
         }
 
+        // ── Mmap ──
         SyscallNum::Mmap => {
-            // RBX = addr_hint (0 = auto), RCX = length, RDX = prot
-            // R8 = flags (bit0=1 anonymous, bit1=1 shared), R9 = fd (for file-backed)
             let _addr_hint = rbx;
             let length = rcx;
             let prot = rdx as u16;
@@ -1049,11 +1044,11 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 let (drive_idx, inode_num) = crate::hal::without_interrupts(|| {
                     let s = scheduler::current_scheduler();
                     let mut lock = s.lock();
-                    if let Some(proc) = lock.current_process_mut() {
-                    let entry = proc.handle_table[fd as usize];
-                    if entry.kind == crate::handle::HANDLE_FILE {
-                        return (entry.extra as usize, entry.id);
-                    }
+                    if let Some(ep) = lock.current_eprocess_mut() {
+                        let entry = ep.handle_table[fd as usize];
+                        if entry.kind == crate::handle::HANDLE_FILE {
+                            return (entry.extra as usize, entry.id);
+                        }
                     }
                     (usize::MAX, 0)
                 });
@@ -1090,8 +1085,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── Munmap ──
         SyscallNum::Munmap => {
-            // RBX = addr, RCX = length
             let addr = rbx;
             let length = rcx;
 
@@ -1099,11 +1094,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 return err_to_u64(SyscallError::Inval);
             }
 
-            // Find and remove the VMA
             let region = crate::scheduler::remove_current_mmap_region(addr);
             match region {
                 Some(r) => {
-                    // Free all physical pages in the range
                     crate::scheduler::free_current_mmap_pages(r.base, r.len);
                     0
                 }
@@ -1111,8 +1104,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             }
         }
 
+        // ── LoadLib ──
         SyscallNum::LoadLib => {
-            // RBX = path_ptr (null-terminated string from user space)
             let path_str = match copy_user_string(rbx) {
                 Ok(s) => s,
                 Err(_) => return err_to_u64(SyscallError::Fault),
@@ -1133,6 +1126,103 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
                 }
             }
         }
+
+        // ── ThreadCreate (RAX=22) ──
+        // RBX = entry point, RCX = user stack pointer (or 0 for default)
+        // Returns: TID on success, negative error on failure
+        SyscallNum::ThreadCreate => {
+            let entry = rbx;
+            let user_stack = rcx;
+
+            if entry == 0 || entry >= 0x800000 {
+                return err_to_u64(SyscallError::Inval);
+            }
+
+            let result = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                let pid = lock.current_pid();
+                if pid == 0 {
+                    return Err(SyscallError::Inval);
+                }
+
+                // Determine user stack: if 0, use a default one within the user slot
+                let stack = if user_stack != 0 {
+                    user_stack
+                } else {
+                    // Default stack: 4 KB below the user slot stack top
+                    if let Some(ep) = lock.find_eprocess(pid) {
+                        if let Some(slot_idx) = ep.user_slot {
+                            let slot_size = 0x20000u64;
+                            let max_bin = 0x10000u64;
+                            let user_stack_size = 0x10000u64;
+                            let stack_top = crate::arch::x64::paging::USER_BASE
+                                + slot_idx as u64 * slot_size
+                                + max_bin + user_stack_size;
+                            stack_top - 0x1000 // 4 KB below top for safety
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
+                };
+
+                if stack == 0 {
+                    return Err(SyscallError::NoMem);
+                }
+
+                match lock.add_thread_to_process(pid, entry, stack) {
+                    Some(tid) => {
+                        serial_println!("[SYS] thread_create: PID {} TID {} entry=0x{:x} stack=0x{:x}",
+                            pid, tid, entry, stack);
+                        Ok(tid)
+                    }
+                    None => Err(SyscallError::NoMem),
+                }
+            });
+
+            match result {
+                Ok(tid) => tid as u64,
+                Err(e) => err_to_u64(e),
+            }
+        }
+
+        // ── ThreadJoin (RAX=23) ──
+        // RBX = TID to wait for
+        // Returns: 0 on success (target thread has exited)
+        SyscallNum::ThreadJoin => {
+            let target_tid = rbx as u32;
+
+            // Busy-wait (or block) until target thread is Terminated
+            loop {
+                let is_done = crate::hal::without_interrupts(|| {
+                    let s = scheduler::current_scheduler();
+                    let lock = s.lock();
+                    // Check if thread exists and is Terminated, or doesn't exist (already reaped)
+                    if let Some(k) = lock.find_kthread(target_tid) {
+                        k.state == ThreadState::Terminated
+                    } else {
+                        true // already gone
+                    }
+                });
+
+                if is_done { break; }
+
+                // Block ourselves on this TID
+                crate::scheduler::block_current_for_thread(target_tid);
+                return err_to_u64(SyscallError::Again); // will retry when woken
+            }
+
+            // Recycle the thread's kernel stack
+            crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                lock.recycle_thread(target_tid);
+            });
+
+            0
+        }
     }
 }
 
@@ -1141,9 +1231,9 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
 fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
-        let mut lock = s.lock();
-        if let Some(proc) = lock.current_process_mut() {
-            return proc.handle_table.get(fd);
+        let lock = s.lock();
+        if let Some(ep) = lock.current_eprocess() {
+            return ep.handle_table.get(fd);
         }
         crate::handle::HandleEntry::closed()
     })
@@ -1153,8 +1243,8 @@ fn set_current_handle(fd: u8, entry: crate::handle::HandleEntry) {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
-        if let Some(proc) = lock.current_process_mut() {
-            proc.handle_table.set(fd, entry);
+        if let Some(ep) = lock.current_eprocess_mut() {
+            ep.handle_table.set(fd, entry);
         }
     });
 }
@@ -1163,15 +1253,6 @@ pub fn wake_blocked_readers() {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        
-        for proc in scheduler.processes.iter_mut() {
-            if let Some(p) = proc {
-                if matches!(p.state, ProcessState::Blocked { waiting_for: 0xFFFFFFFF }) {
-                    p.state = ProcessState::Ready;
-                    p.waiting_for = None;
-                    set_need_resched();
-                }
-            }
-        }
+        scheduler.wake_blocked_on_magic(0xFFFFFFFF);
     });
 }

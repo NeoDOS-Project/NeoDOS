@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.28.0
+v0.29.0
 
 ## Architecture Governance
 
@@ -260,7 +260,7 @@ sys_exit
 
 ## mmap Lazy (anonymous + file-backed)
 
-**Archivos:** `arch/x64/paging.rs` (mmap_alloc_page, mmap_free_range, handle_mmap_page_fault, load_file_mmap_page), `scheduler.rs` (MmapRegion, VMA list per-process), `syscall.rs` (sys_mmap/sys_munmap dispatch), `arch/x64/idt.rs` (page_fault_handler → handle_mmap_page_fault)
+**Archivos:** `arch/x64/paging.rs` (mmap_alloc_page, mmap_free_range, handle_mmap_page_fault, load_file_mmap_page), `scheduler.rs` (MmapRegion, VMA list per-EPROCESS), `syscall.rs` (sys_mmap/sys_munmap dispatch), `arch/x64/idt.rs` (page_fault_handler → handle_mmap_page_fault)
 
 Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB durante el arranque (`init_mmap_demand_paging`).
 
@@ -270,7 +270,7 @@ Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB du
 - **Anonymous**: page fault → allocate_frame() + map USER_ACCESSIBLE
 - **File-backed**: page fault → with_vfs → vfs.read() a frame identity-mapped → map USER_ACCESSIBLE
 - **is_user_ptr_valid()**: extendido para cubrir regiones mmap
-- **sys_exit**: libera todas las regiones mmap del proceso
+- **sys_exit**: libera todas las regiones mmap del EPROCESS (cuando el último thread termina)
 
 ## User-mode process lifecycle
 
@@ -278,9 +278,9 @@ Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB du
 
 `execute_usermode()` in `usermode.rs` saves the kernel RSP/RIP into `EXIT_RSP`/`EXIT_RIP` statics, then IRETQs to Ring 3. The function is **not** `options(noreturn)` — it can return.
 
-On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` frees all external resources (user slot, heap pages, mmap regions, pipe refcounts), calls `request_exit_to_kernel()` (sets `EXIT_NOW=1`) inside `without_interrupts`, and marks the process `Terminated` in the scheduler, then the `syscall_handler_asm` trampoline detects RAX==0 and jumps to `exit_to_kernel`, which restores `EXIT_RSP`/`EXIT_RIP` plus all callee-saved registers (rbx, r12-r15, rbp) — preventing user-mode register clobber from corrupting shell local variables. Control returns to `execute_usermode`'s caller (`cmd_run`), which calls `scheduler::cleanup_terminated_process(pid)` to recycle the scheduler slot and free the kernel stack (`Box<AlignedKStack>`). The `KILL` command (`kill_pid()`) does full cleanup (heap, mmap, pipes, user slot, kernel stack) and recycles the slot immediately. The `sys_waitpid` syscall recycles the waited-for process's slot after detecting it is `Terminated`.
+On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the calling KTHREAD `Terminated`, decrements the EPROCESS `thread_count`. When the last thread exits, all EPROCESS resources (user slot, heap pages, mmap regions, pipe refcounts) are freed, and `cleanup_terminated_process(pid)` recycles the EPROCESS slot. The `syscall_handler_asm` trampoline detects RAX==0 and jumps to `exit_to_kernel`, restoring `EXIT_RSP`/`EXIT_RIP` plus all callee-saved registers — preventing user-mode register clobber from corrupting shell local variables. Control returns to `execute_usermode`'s caller (`cmd_run`). The `KILL` command (`kill_pid()`) does full cleanup (heap, mmap, pipes, user slot, kernel stack, all threads) and recycles the slot immediately. `sys_waitpid` recycles the waited-for EPROCESS slot after detecting all threads are `Terminated`.
 
-Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking), `scheduler.rs` (recycle_terminated, cleanup_terminated_process, kill_pid).
+Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking, sys_thread_create/join), `scheduler.rs` (EPROCESS/KTHREAD lifecycle, kill_pid).
 
 ## Shell: TAB autocomplete + history
 
@@ -384,6 +384,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
 | 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
+| 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
+| 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
 
 ## IPC / Pipes
 
@@ -396,8 +398,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - `sys_close` on a pipe fd decrements refcount; pipe freed when refs reach 0
 - `sys_dup2` copies an fd to another slot (increments refcount for pipe fds)
 
-### Per-Process Handle Table
-- `Process.handle_table: HandleTable` — `Vec<HandleEntry>`-backed, grows dynamically, unlimited capacity
+### Per-EPROCESS Handle Table
+- `Eprocess.handle_table: HandleTable` — `Vec<HandleEntry>`-backed, grows dynamically, unlimited capacity
 - `HandleEntry` types: `Closed`, `Stdin`, `Stdout`, `Stderr`, `PipeReader(id)`, `PipeWriter(id)`, `File(drive, inode, offset)`, `Device(id)`, `Event(type)`
 - File handles carry a per-open `offset` cursor for independent read/write positioning
 - fd 0 = stdin (keyboard), fd 1 = stdout (console), fd 2 = stderr (console)
@@ -406,13 +408,13 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - `sys_exit` iterates handle table and cleans up all resource types (pipes decrement refcount, files closed cleanly)
 
 ### Blocking Reads
-- When a process reads from an empty pipe with write end open:
-  1. Process state set to `Blocked { waiting_for: 0xFFFF_0000 | pipe_id }`
+- When a thread reads from an empty pipe with write end open:
+  1. Thread state set to `ThreadState::Blocked { waiting_for: 0xFFFF_0000 | pipe_id }`
   2. `NEED_RESCHED` flag set
   3. `syscall_dispatch` returns `-EAGAIN` to user space
-  4. Assembly resched picks a different process
-- On pipe write: `wake_pipe_readers()` scans scheduler processes, sets Blocked→Ready
-- When woken process runs: user code retries `read()` syscall (handles -EAGAIN)
+  4. Assembly resched picks a different thread
+- On pipe write: `wake_pipe_readers()` scans scheduler threads, sets Blocked→Ready
+- When woken thread runs: user code retries `read()` syscall (handles -EAGAIN)
 
 ### Syscall Changes
 | RAX | Syscall | Cambio |
@@ -425,8 +427,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 
 ### Scheduler Integration
 - `syscall_try_resched` modified: only transitions `Running → Ready` (does not override `Blocked`)
-- `wake_pipe_readers()` in `pipe.rs` iterates scheduler processes via `Scheduler::processes`
-- `block_current_for_pipe()` sets current process to `Blocked` + sets `NEED_RESCHED`
+- `wake_pipe_readers()` in `pipe.rs` iterates scheduler threads via `Scheduler::kthreads`
+- `block_current_for_pipe()` sets current thread to `Blocked` + sets `NEED_RESCHED`
 
 ## Priority Scheduler (A2)
 
@@ -448,10 +450,10 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 - **Aging** (cada 100 ticks): boostea prioridad si un proceso Ready no se ha ejecutado en >= 1000 ticks
 
 ### Implementation
-- `Process` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64)
+- `Kthread` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64), `tid`, `pid`, `teb_base`, `kernel_stack_top`, `cpu_ticks`
 - `timer_handler_inner`: lee CS del stack frame, solo preemptea si interrumpió Ring 3
-- Afecta solo procesos user-mode (Ring 3); el shell corre en Ring 0 y no pasa por schedule()
-- 7 nuevos tests de scheduler: prioridad, round-robin, time-slice, aging
+- Afecta solo threads user-mode (Ring 3); el shell corre en Ring 0 y no pasa por schedule()
+- 7 tests de scheduler: prioridad, round-robin, time-slice, aging
 
 ## ELF64 Loader
 
@@ -489,7 +491,7 @@ Binarios flat cargados en `0x400000`.
 | **Global pool** | 64 slots protected by `Spin::Mutex`, sequential IDs via `AtomicU32`. `irp_alloc()`/`irp_free()`/`irp_get_params()` — last returns a snapshot to avoid double-lock deadlock |
 | **IrpQueue** | Per-device FIFO ring buffer (32 entries) for queuing async operations. `push()`, `pop()`, `peek()`, `len()` |
 | **Completion** | `irp_complete(id, status)` — sets status, wakes waiter (`irp_wake_waiter` via `IRP_WAIT_MAGIC`), handles chaining, dispatches callback via `WORK_QUEUE.push_high()` using `Box<IrpCbDispatch>` |
-| **Scheduler** | `irp_block_current(id)` sets `ProcessState::Blocked { waiting_for: IRP_WAIT_MAGIC \| id }`. `irp_complete` wakes via `irp_wake_waiter()` — same pattern as pipe blocking |
+| **Scheduler** | `irp_block_current(id)` sets `ThreadState::Blocked { waiting_for: IRP_WAIT_MAGIC \| id }`. `irp_complete` wakes via `irp_wake_waiter()` — same pattern as pipe blocking |
 | **Chaining** | `chain_next: Option<IrpId>` — auto-cleared on complete. Device driver responsible for submitting chained IRPs |
 | **Sync helpers** | `irp_sync_read()`/`irp_sync_write()` — allocate IRP, submit, block, free. For code that wants synchronous IRP path |
 | **BlockDevice** | Trait extended with `submit_irp(irp_id)` and `poll_irp(irp_id)`. All 5 implementors (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implement `submit_irp` via `irp_get_params()` → sync I/O → `irp_complete_result()` |
@@ -527,13 +529,14 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-329 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+330 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
 | Environment | 6 | Variables de entorno |
 | Input | 5 | Input buffer (ring buffer) |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
+| Process/Thread | 4 | Kthread struct, ThreadState, Eprocess constructor |
 | Scheduler | 7 | Priority scheduling, time-slice, round-robin, aging |
 | UTF-8 | 6 | Validación UTF-8 |
 | Allocator | 8 | Box, Vec, String |
@@ -563,7 +566,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (329 tests kernel)
+1. Ejecuta `testing::run_all()` (330 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1

@@ -98,40 +98,56 @@ pub fn wait_for_process(pid: u32) {
 
     let (entry, user_stack_top, kernel_stack_top) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
-        let mut entry = 0u64;
-        let mut sp = 0u64;
-        let mut ks_top = 0u64;
-        for proc in s.processes.iter() {
-            if let Some(p) = proc {
-                if p.pid == pid {
-                    entry = p.rip;
-                    ks_top = p.kernel_stack_top;
-                    sp = if let Some(slot) = p.user_slot {
-                        let slot_size = 0x20000u64;
-                        let max_bin = 0x10000u64;
-                        let user_stack = 0x10000u64;
-                        crate::arch::x64::paging::USER_BASE
-                            + slot as u64 * slot_size
-                            + max_bin + user_stack
+        // Find the first non-idle thread belonging to this PID
+        for th in s.kthreads.iter() {
+            if let Some(k) = th {
+                if k.pid == pid && k.tid > 0 {
+                    let entry_ = k.rip;
+                    let ks_top = k.kernel_stack_top;
+                    // Find user_stack_top from EPROCESS
+                    let sp = if let Some(ep) = s.find_eprocess(pid) {
+                        if let Some(slot) = ep.user_slot {
+                            let slot_size = 0x20000u64;
+                            let max_bin = 0x10000u64;
+                            let user_stack = 0x10000u64;
+                            crate::arch::x64::paging::USER_BASE
+                                + slot as u64 * slot_size
+                                + max_bin + user_stack
+                        } else {
+                            k.rsp
+                        }
                     } else {
-                        p.rsp
+                        k.rsp
                     };
-                    break;
+                    return (entry_, sp, ks_top);
                 }
             }
         }
-        (entry, sp, ks_top)
+        (0u64, 0u64, 0u64)
     });
 
-    // Set TSS.RSP0 to this process's private kernel stack BEFORE entering Ring 3.
-    // This ensures the first IRQ or syscall from user mode loads the correct stack.
+    if entry == 0 {
+        crate::serial_println!("[USER] wait_for_process: PID {} not found", pid);
+        return;
+    }
+
+    // Set TSS.RSP0 to thread's kernel stack
     gdt::set_kernel_stack(kernel_stack_top);
 
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        s.current_pid = pid;
-        if let Some(proc) = s.current_process_mut() {
-            proc.state = scheduler::ProcessState::Running;
+        // Set current_tid to the first thread of this PID
+        for th in s.kthreads.iter() {
+            if let Some(k) = th {
+                if k.pid == pid && k.tid > 0 {
+                    s.current_tid = k.tid;
+                    break;
+                }
+            }
+        }
+        // Set thread state to Running
+        if let Some(k) = s.current_kthread_mut() {
+            k.state = scheduler::ThreadState::Running;
         }
     });
 

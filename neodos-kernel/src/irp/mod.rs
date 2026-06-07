@@ -238,13 +238,13 @@ fn irp_wake_waiter(pid: u32) {
     let magic = IRP_WAIT_MAGIC | pid;
     let s = crate::scheduler::current_scheduler();
     let mut scheduler = s.lock();
-    for proc in scheduler.processes.iter_mut() {
-        if let Some(p) = proc {
-            if matches!(p.state, crate::scheduler::ProcessState::Blocked { .. })
-                && p.waiting_for == Some(magic)
+    for th in scheduler.kthreads.iter_mut() {
+        if let Some(k) = th {
+            if matches!(k.state, crate::scheduler::ThreadState::Blocked { .. })
+                && k.waiting_for == Some(magic)
             {
-                p.waiting_for = None;
-                p.state = crate::scheduler::ProcessState::Ready;
+                k.waiting_for = None;
+                k.state = crate::scheduler::ThreadState::Ready;
                 crate::syscall::set_need_resched();
             }
         }
@@ -300,15 +300,15 @@ pub fn irp_complete_result(irp_id: IrpId, result: Result<(), ()>) {
     }
 }
 
-/// Block the current process until the given IRP completes.
+/// Block the current thread until the given IRP completes.
 pub fn irp_block_current(irp_id: IrpId) {
     let magic = IRP_WAIT_MAGIC | irp_id;
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        if let Some(proc) = scheduler.current_process_mut() {
-            proc.state = crate::scheduler::ProcessState::Blocked { waiting_for: magic };
-            proc.waiting_for = Some(magic);
+        if let Some(k) = scheduler.current_kthread_mut() {
+            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: magic };
+            k.waiting_for = Some(magic);
         }
         crate::syscall::set_need_resched();
     });

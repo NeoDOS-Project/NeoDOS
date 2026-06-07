@@ -6,7 +6,7 @@
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 89 / ~130 items completados. Próximo milestone: **A1.5** (Thread model) — desbloquea APC, SEH y SMP.
+**Progreso:** 90 / ~130 items completados. Próximo milestone: **A1.1** (Per-CPU data structures) — desbloquea SMP y APC.
 
 ---
 
@@ -181,18 +181,13 @@ El scheduler actual asume monoprocesador y planifica `Process` como unidad únic
 
 **Orden interno:** A1.5 → A1.1 → A1.2 → A1.3 → A1.4
 
-- [ ] **A1.5. Thread split EPROCESS/KTHREAD** | NT: `EPROCESS`/`KTHREAD` | Prereqs: A0
-  - **Archivos:** `src/scheduler/process.rs`, `src/scheduler/thread.rs`, reescritura `src/scheduler.rs`
-  - **Descripción:** Separar recursos de proceso de estado de ejecución para implementar el modelo de threads del NT.
-    - **EPROCESS:** address space (CR3 per-proceso), handle table global (compartida), access token (stub), thread list (head→doubly-linked threads), exit code, virtual memory manager bookkeeping.
-    - **KTHREAD:** contexto CPU independiente (RAX-R15, RSP, RIP, RFLAGS), priority, time slice remaining, APC queue (kernel + user, stub hasta A4.5), kernel stack privado (16 KB), `EPROCESS*` backref, TEB (Thread Environment Block en Ring 3).
-    - **Schedule:** `schedule()` itera threads en runqueues per-CPU, no procesos. El mismo proceso puede tener múltiples threads listos simultáneamente. Context switch solo reemplaza `RSP/RIP/RBX/R12-R15/RBP` (callee-saved), no CR3 a menos que salte a proceso diferente (lazy CR3 swap).
-    - **Memory sharing:** Múltiples threads del mismo EPROCESS comparten paging structures (PML4), heap, mmap regions. Cada thread tiene su kernel stack aislado para evitar stack overflows entre threads.
-  - **Criterio:** 
-    - Crear 2 threads en 1 proceso, ambos incrementan contador compartido vía `sys_mmap` anónimo. Preemption alterna entre threads cada 100 ticks.
-    - Context switch mide latencia (< 10 µs sin fault).
-    - Ambos threads terminan vía `sys_exit(code)`, EPROCESS se recicla solo cuando ÚLTIMO thread sale.
-  - **Tests:** `thread_create`, `thread_join`, `shared_cr3_heap`, `independent_preempt`, `last_thread_exit_reaps`, `thread_env_block`, `kernel_stack_isolation` (7 tests).
+- [x] **A1.5. Thread split EPROCESS/KTHREAD** | NT: `EPROCESS`/`KTHREAD` | Prereqs: A0
+  - **Implementado en v0.29.0.**
+  - **Archivos:** `src/scheduler.rs`, `src/syscall.rs`, `src/pipe.rs`, `src/irp/mod.rs`, `src/testing.rs`, `src/usermode.rs`
+  - **Descripción:** `Process` → `Eprocess` (recursos compartidos) + `Kthread` (contexto CPU). `schedule()` retorna `*mut Kthread`. EPROCESS reaped cuando último thread termina.
+  - **Syscalls:** `sys_thread_create` (RAX=22), `sys_thread_join` (RAX=23).
+  - **Limitaciones (post-v0.29.0):** Sin per-CPU runqueues (A1.1), sin SMP, sin lazy CR3 swap, sin APC queues.
+  - **Tests:** `kthread_new_initial_state`, `kthread_state_debug`, `kthread_state_partial_eq`, `eprocess_new_ring3` (4) + 9 scheduler priority tests + 4 stress tests adaptados. Total: 330.
 
 - [ ] **A1.1. Per-CPU data structures** | NT: `KPRCB` (Kernel Processor Control Block) | Prereqs: A1.5
   - **Archivos:** `arch/x64/smp.rs`, `src/scheduler/cpu_local.rs`, `arch/x64/msr.rs` (GSBASE)

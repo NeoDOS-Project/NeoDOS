@@ -383,8 +383,8 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     let region = crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        if let Some(proc) = scheduler.current_process_mut() {
-            for r in &proc.mmap_regions {
+        if let Some(ep) = scheduler.current_eprocess_mut() {
+            for r in &ep.mmap_regions {
                 if aligned >= r.base && aligned < r.base + r.len {
                     return Some(*r);
                 }

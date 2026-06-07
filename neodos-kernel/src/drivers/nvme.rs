@@ -784,7 +784,7 @@ impl NvmeDriver {
 
         let cqe = self.iocq_phys + (self.iocq_head as u64) * CQE_SIZE as u64;
         let cqe32 = cqe as *mut u32;
-        for iter in 0..self.timeout_ms * 10 {
+        for _iter in 0..self.timeout_ms * 10 {
             let w3 = unsafe { cqe32.add(3).read_volatile() };
             let status_field = (w3 >> 16) as u16;
             if ((status_field & 0x1) != 0) == self.iocq_phase && (w3 & 0xFFFF) as u16 == idx {

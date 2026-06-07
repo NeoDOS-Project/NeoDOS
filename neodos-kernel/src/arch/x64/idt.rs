@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::serial_println;
-use crate::scheduler::{current_scheduler, ProcessState};
+use crate::scheduler::{current_scheduler, ThreadState};
 use crate::panic_classification::PanicClass;
 use crate::trace::TraceEvent;
 
@@ -358,33 +358,31 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     scheduler.on_timer_tick();
 
-    let pid = scheduler.current_pid;
+    let tid = scheduler.current_tid;
 
     // ── Preemptive context switch ──────────────────────────────
-    // Only when: we interrupted Ring 3 AND the current process's
-    // time slice expired (state was changed to Ready by on_timer_tick).
-    if pid > 0 && from_user {
-        let should_preempt = scheduler.current_process_mut()
-            .is_some_and(|p| p.state == ProcessState::Ready && p.pid == pid);
+    if tid > 0 && from_user {
+        let should_preempt = scheduler.current_kthread_mut()
+            .is_some_and(|k| k.state == ThreadState::Ready && k.tid == tid);
 
         if should_preempt {
-            // Save the current process's RSP (points to saved GPRs)
-            if let Some(proc) = scheduler.current_process_mut() {
-                proc.rsp = current_rsp;
+            // Save the current thread's RSP
+            if let Some(k) = scheduler.current_kthread_mut() {
+                k.rsp = current_rsp;
             }
 
-            // Pick next process
+            // Pick next thread
             let next = scheduler.schedule();
 
-            // Reset the NEXT process's time slice to its priority quantum
+            // Reset the NEXT thread's time slice
             unsafe {
-                let np = &mut *next;
-                let idx = (np.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
-                np.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
-                np.ticks_since_scheduled = 0;
+                let nt = &mut *next;
+                let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
+                nt.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                nt.ticks_since_scheduled = 0;
             }
 
-            // Switch TSS.RSP0 to the new process's kernel stack
+            // Switch TSS.RSP0 to the new thread's kernel stack
             let next_ks_top = unsafe { (*next).kernel_stack_top };
             crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
 
@@ -403,19 +401,18 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 0,
             );
 
-            crate::trace_cswitch!(pid, unsafe { (*next).pid } as u64);
+            crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
 
-        // Process alive and time slice not expired — just set NEED_RESCHED
-        let alive = scheduler.current_process_mut()
-            .is_some_and(|p| p.state != ProcessState::Terminated);
+        // Thread alive and time slice not expired — just set NEED_RESCHED
+        let alive = scheduler.current_kthread_mut()
+            .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            // Push TimerTick event
             let _ = crate::eventbus::EVENT_BUS.push_event(
                 crate::eventbus::EVENT_TIMER_TICK,
                 crate::eventbus::SOURCE_HAL,
@@ -429,11 +426,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     }
 
     // ── Kernel mode interrupt OR idle ──────────────────────────
-    // If we interrupted kernel code, just set NEED_RESCHED so the
-    // next syscall boundary triggers a context switch.
-    if pid > 0 {
-        let alive = scheduler.current_process_mut()
-            .is_some_and(|p| p.state != ProcessState::Terminated);
+    if tid > 0 {
+        let alive = scheduler.current_kthread_mut()
+            .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
             crate::hal::ack_irq(32);
@@ -441,12 +436,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::invariants::irq_exit_clear();
             return current_rsp;
         }
-        // Process dead — fall through to idle
-        scheduler.current_pid = 0;
+        // Thread dead — fall through to idle
+        // Set idle via current_tid = 0 doesn't work here; schedule() picks idle
+        crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
 
-    // ── Idle process (PID 0) ─────────────────────────────────────
-    if scheduler.has_non_idle_processes() {
+    // ── Idle thread (TID 0) ─────────────────────────────────────
+    if scheduler.has_non_idle_threads() {
         crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
     }
     crate::hal::ack_irq(32);

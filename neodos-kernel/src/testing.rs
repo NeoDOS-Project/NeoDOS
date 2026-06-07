@@ -180,294 +180,256 @@ pub fn register_input_tests() {
 }
 
 pub fn register_process_tests() {
-    use crate::scheduler::{Process, ProcessState};
+    use crate::scheduler::{Kthread, ThreadState, Eprocess};
 
-    test_case!("process_new_initial_state", {
-        let p = Process::new_ring0(1, 0x400000, 0x800000, None);
-        test_eq!(p.pid, 1);
-        test_eq!(p.rip, 0x400000);
-        test_eq!(p.state, ProcessState::Ready);
-        test_eq!(p.cpu_ticks, 0);
-        test_eq!(p.user_slot, None);
-        test_eq!(p.waiting_for, None);
-        test_eq!(p.priority, crate::scheduler::PRIORITY_NORMAL);
-        test_eq!(p.time_slice_remaining, crate::scheduler::TIME_SLICES[crate::scheduler::PRIORITY_NORMAL as usize]);
+    test_case!("kthread_new_initial_state", {
+        let k = Kthread::new_idle(1, 0, 0x400000, 0x800000);
+        test_eq!(k.tid, 1);
+        test_eq!(k.rip, 0x400000);
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.cpu_ticks, 0);
+        test_eq!(k.pid, 0);
+        test_eq!(k.priority, crate::scheduler::PRIORITY_NORMAL);
+        test_eq!(k.time_slice_remaining, crate::scheduler::TIME_SLICES[crate::scheduler::PRIORITY_NORMAL as usize]);
     });
 
-    test_case!("process_state_debug", {
-        let mut p = Process::new_ring0(1, 0x400000, 0x800000, None);
-        test_eq!(p.state, ProcessState::Ready);
-        p.state = ProcessState::Running;
-        test_eq!(p.state, ProcessState::Running);
-        p.state = ProcessState::Blocked { waiting_for: 42 };
-        test_eq!(p.state, ProcessState::Blocked { waiting_for: 42 });
-        p.state = ProcessState::Terminated;
-        test_eq!(p.state, ProcessState::Terminated);
+    test_case!("kthread_state_debug", {
+        let mut k = Kthread::new_idle(1, 0, 0x400000, 0x800000);
+        test_eq!(k.state, ThreadState::Ready);
+        k.state = ThreadState::Running;
+        test_eq!(k.state, ThreadState::Running);
+        k.state = ThreadState::Blocked { waiting_for: 42 };
+        test_eq!(k.state, ThreadState::Blocked { waiting_for: 42 });
+        k.state = ThreadState::Terminated;
+        test_eq!(k.state, ThreadState::Terminated);
     });
 
-    test_case!("process_state_partial_eq", {
-        let s1 = ProcessState::Ready;
-        let s2 = ProcessState::Ready;
+    test_case!("kthread_state_partial_eq", {
+        let s1 = ThreadState::Ready;
+        let s2 = ThreadState::Ready;
         test_eq!(s1, s2);
-        test_ne!(ProcessState::Ready, ProcessState::Running);
-        test_ne!(ProcessState::Blocked { waiting_for: 1 }, ProcessState::Blocked { waiting_for: 2 });
+        test_ne!(ThreadState::Ready, ThreadState::Running);
+        test_ne!(ThreadState::Blocked { waiting_for: 1 }, ThreadState::Blocked { waiting_for: 2 });
+    });
+
+    test_case!("eprocess_new_ring3", {
+        let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000);
+        test_eq!(ep.pid, 42);
+        test_eq!(ep.heap_base, 0x10000000);
+        test_eq!(ep.heap_break, 0x10000000);
+        test_eq!(ep.thread_count, 1);
+        test_eq!(ep.cwd_drive, 2);
     });
 }
 
 pub fn register_sched_priority_tests() {
     use crate::scheduler::{
-        Process, ProcessState, Scheduler,
+        Kthread, ThreadState, Scheduler, Eprocess,
         PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, TIME_SLICES,
         MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS,
     };
 
+    fn add_test_thread(sched: &mut Scheduler, tid: u32, pid: u32, entry: u64, priority: u8, state: ThreadState) {
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(tid, pid, entry, 0x800000);
+        k.state = state;
+        k.priority = priority;
+        k.time_slice_remaining = TIME_SLICES[priority as usize];
+        sched.kthreads[slot] = Some(k);
+        // Ensure eprocess exists
+        if sched.find_eprocess(pid).is_none() {
+            let ep_slot = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000));
+        }
+        // Ensure next_tid is high enough
+        if tid >= sched.next_tid {
+            sched.next_tid = tid + 1;
+        }
+    }
+
     test_case!("sched_priority_high_picked_first", {
-        // Verify schedule() picks higher-priority Ready process over lower-priority
         let mut sched = Scheduler::new();
-        sched.next_pid = 3;
+        sched.next_tid = 3;
 
-        // PID 1: NORMAL priority, Ready
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Ready;
-        p1.priority = PRIORITY_NORMAL;
-
-        // PID 2: HIGH priority, Ready
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Ready;
-        p2.priority = PRIORITY_HIGH;
-
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
 
         let next = sched.schedule();
-        let picked_pid = unsafe { (*next).pid };
-        test_eq!(picked_pid, 2);
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
     });
 
     test_case!("sched_priority_round_robin_same_level", {
-        // Verify round-robin within the same priority level
         let mut sched = Scheduler::new();
-        sched.next_pid = 3;
-        sched.current_pid = 0;
+        sched.next_tid = 3;
+        sched.current_tid = 0;
 
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Ready;
-        p1.priority = PRIORITY_NORMAL;
-
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Ready;
-        p2.priority = PRIORITY_NORMAL;
-
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
 
         let first = sched.schedule();
-        let first_pid = unsafe { (*first).pid };
-        test_ne!(first_pid, 0);
+        let first_tid = unsafe { (*first).tid };
+        test_ne!(first_tid, 0);
 
         let second = sched.schedule();
-        let second_pid = unsafe { (*second).pid };
-        test_ne!(second_pid, first_pid);
+        let second_tid = unsafe { (*second).tid };
+        test_ne!(second_tid, first_tid);
     });
 
     test_case!("sched_priority_idle_last", {
-        // Verify IDLE priority is only picked when no higher priority is ready
         let mut sched = Scheduler::new();
-        sched.next_pid = 4;
+        sched.next_tid = 4;
 
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Ready;
-        p1.priority = PRIORITY_IDLE;
-
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Ready;
-        p2.priority = PRIORITY_HIGH;
-
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
 
         let next = sched.schedule();
-        let picked = unsafe { (*next).pid };
+        let picked = unsafe { (*next).tid };
         test_eq!(picked, 2);
     });
 
     test_case!("sched_time_slice_default_values", {
-        let p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        test_eq!(p.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
-        test_eq!(p.priority, PRIORITY_NORMAL);
+        let k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        test_eq!(k.priority, PRIORITY_NORMAL);
     });
 
     test_case!("sched_on_timer_tick_decrements_slice", {
         let mut sched = Scheduler::new();
-        sched.next_pid = 2;
-        sched.current_pid = 1;
+        sched.next_tid = 2;
+        sched.current_tid = 1;
 
-        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p.state = ProcessState::Running;
-        p.time_slice_remaining = 5;
-        p.priority = PRIORITY_NORMAL;
-        sched.processes[1] = Some(p);
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 5;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(k);
+
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
 
         sched.on_timer_tick();
 
-        let remaining = sched.processes[1].as_ref().unwrap().time_slice_remaining;
+        let remaining = sched.kthreads[slot].as_ref().unwrap().time_slice_remaining;
         test_eq!(remaining, 4);
     });
 
     test_case!("sched_on_timer_tick_expire_yields", {
         let mut sched = Scheduler::new();
-        sched.next_pid = 2;
-        sched.current_pid = 1;
+        sched.next_tid = 2;
+        sched.current_tid = 1;
 
-        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p.state = ProcessState::Running;
-        p.time_slice_remaining = 1;
-        p.priority = PRIORITY_NORMAL;
-        sched.processes[1] = Some(p);
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 1;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(k);
+
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
 
         sched.on_timer_tick();
 
-        let state = sched.processes[1].as_ref().unwrap().state;
-        test_eq!(state, ProcessState::Ready);
+        let state = sched.kthreads[slot].as_ref().unwrap().state;
+        test_eq!(state, ThreadState::Ready);
     });
 
     test_case!("sched_aging_boosts_starved", {
-        // Create a scheduler with one IDLE priority process that hasn't run for
-        // MAX_STARVATION_TICKS + 1. After an aging interval, it should be boosted.
         let mut sched = Scheduler::new();
-        sched.next_pid = 2;
-        sched.current_pid = 1;
+        sched.next_tid = 2;
+        sched.current_tid = 1;
 
-        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p.state = ProcessState::Ready;
-        p.priority = PRIORITY_IDLE;
-        p.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
-        p.time_slice_remaining = 50;
-        sched.processes[1] = Some(p);
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        k.priority = PRIORITY_IDLE;
+        k.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
+        k.time_slice_remaining = 50;
+        sched.kthreads[slot] = Some(k);
 
-        // Run enough timer ticks to trigger aging (AGING_INTERVAL_TICKS)
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
             sched.on_timer_tick();
         }
 
-        let boosted = sched.processes[1].as_ref().unwrap();
-        // Priority should have been boosted from IDLE (3) to at least ABOVE_NORMAL (2)
+        let boosted = sched.kthreads[slot].as_ref().unwrap();
         test_true!(boosted.priority < PRIORITY_IDLE);
     });
 
     test_case!("sched_set_process_priority", {
         let mut sched = Scheduler::new();
-        sched.next_pid = 2;
+        sched.next_tid = 2;
 
-        let mut p = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p.state = ProcessState::Ready;
-        sched.processes[1] = Some(p);
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        sched.kthreads[slot] = Some(k);
 
-        // Set to HIGH
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+
         test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
-        let proc = sched.processes[1].as_ref().unwrap();
-        test_eq!(proc.priority, PRIORITY_HIGH);
-        test_eq!(proc.time_slice_remaining, TIME_SLICES[PRIORITY_HIGH as usize]);
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_HIGH);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_HIGH as usize]);
 
-        // Set to IDLE
         test_true!(sched.set_process_priority(1, PRIORITY_IDLE));
-        let proc = sched.processes[1].as_ref().unwrap();
-        test_eq!(proc.priority, PRIORITY_IDLE);
-        test_eq!(proc.time_slice_remaining, TIME_SLICES[PRIORITY_IDLE as usize]);
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_IDLE);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_IDLE as usize]);
 
-        // Invalid priority
         test_true!(!sched.set_process_priority(1, 99));
-        let proc = sched.processes[1].as_ref().unwrap();
-        test_eq!(proc.priority, PRIORITY_IDLE);
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_IDLE);
 
-        // Non-existent PID
         test_true!(!sched.set_process_priority(999, PRIORITY_HIGH));
     });
 
     test_case!("sched_priority_preempt_higher_ready", {
-        // PID 2 (NORMAL, Running) is current. PID 1 (HIGH, Ready) just woke up.
-        // schedule() should pick PID 1 (HIGH beats NORMAL/IDLE).
         let mut sched = Scheduler::new();
-        sched.next_pid = 4;
-        sched.current_pid = 2;
+        sched.next_tid = 4;
+        sched.current_tid = 2;
 
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Ready;
-        p1.priority = PRIORITY_HIGH;
-
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Running;
-        p2.priority = PRIORITY_NORMAL;
-
-        let mut p3 = Process::new_ring3(3, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p3.state = ProcessState::Ready;
-        p3.priority = PRIORITY_IDLE;
-
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
-        sched.processes[3] = Some(p3);
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
 
         let next = sched.schedule();
-        let picked = unsafe { (*next).pid };
+        let picked = unsafe { (*next).tid };
         test_eq!(picked, 1);
     });
 
     test_case!("sched_priority_blocked_ignored", {
-        // Blocked processes should be skipped even if they have higher priority.
         let mut sched = Scheduler::new();
-        sched.next_pid = 4;
-        sched.current_pid = 2;
+        sched.next_tid = 4;
+        sched.current_tid = 2;
 
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Blocked { waiting_for: 99 };
-        p1.priority = PRIORITY_HIGH;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 99 });
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
 
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Running;
-        p2.priority = PRIORITY_NORMAL;
-
-        let mut p3 = Process::new_ring3(3, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p3.state = ProcessState::Ready;
-        p3.priority = PRIORITY_IDLE;
-
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
-        sched.processes[3] = Some(p3);
-
-        // HIGH is blocked, keep scanning → pick IDLE (only Ready non-idle)
         let next = sched.schedule();
-        let picked = unsafe { (*next).pid };
+        let picked = unsafe { (*next).tid };
         test_eq!(picked, 3);
     });
 
     test_case!("sched_priority_unblock_picks_higher", {
-        // Blocked HIGH unblocks → should be picked over running IDLE.
         let mut sched = Scheduler::new();
-        sched.next_pid = 3;
-        sched.current_pid = 2;
+        sched.next_tid = 3;
+        sched.current_tid = 2;
 
-        // PID 1: HIGH, Blocked (waiting for pipe)
-        let mut p1 = Process::new_ring3(1, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p1.state = ProcessState::Blocked { waiting_for: 0xFFFF_0000 };
-        p1.priority = PRIORITY_HIGH;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000 });
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_IDLE, ThreadState::Running);
 
-        // PID 2: IDLE, Running (currently executing, no other Ready process)
-        let mut p2 = Process::new_ring3(2, 0x400000, 0x800000, 0, 2, "\\", 0x10000000);
-        p2.state = ProcessState::Running;
-        p2.priority = PRIORITY_IDLE;
+        sched.kthreads.iter_mut().find(|t| t.as_ref().is_some_and(|k| k.tid == 1))
+            .and_then(|t| t.as_mut()).unwrap().state = ThreadState::Ready;
 
-        sched.processes[1] = Some(p1);
-        sched.processes[2] = Some(p2);
-
-        // First: no Ready process except idle → timer expired → PID 2 Ready
-        // tick: NORMAL priority, time_slice_remaining = 100 → 99 keep running
-
-        // Unblock PID 1
-        sched.processes[1].as_mut().unwrap().state = ProcessState::Ready;
-
-        // schedule() should pick PID 1 (HIGH beats IDLE)
         let next = sched.schedule();
-        let picked = unsafe { (*next).pid };
+        let picked = unsafe { (*next).tid };
         test_eq!(picked, 1);
     });
 }
@@ -718,18 +680,15 @@ fn register_sched_stress() {
 
     test_case!("stress_sched_state_transitions", {
         // Test that Ready↔Running cycles are legal
-        use crate::scheduler::{Process, ProcessState};
-        let mut p = Process::new_ring0(99, 0x400000, 0x800000, None);
-        test_eq!(p.state, ProcessState::Ready);
+        use crate::scheduler::{Kthread, ThreadState};
+        let mut p = Kthread::new_idle(99, 0, 0x400000, 0x800000);
+        test_eq!(p.state, ThreadState::Ready);
         for _ in 0..200 {
-            // Ready → Running – legal
-            p.state = ProcessState::Running;
-            // Running → Ready (timer tick) – legal
-            p.state = ProcessState::Ready;
+            p.state = ThreadState::Running;
+            p.state = ThreadState::Ready;
         }
-        p.state = ProcessState::Terminated;
-        // Once terminated, should never go back to Ready (checked elsewhere)
-        test_eq!(p.state, ProcessState::Terminated);
+        p.state = ThreadState::Terminated;
+        test_eq!(p.state, ThreadState::Terminated);
     });
 }
 
@@ -740,7 +699,7 @@ fn register_syscall_stress() {
         // Rapid PID queries exercise the scheduler lock path
         for _ in 0..200 {
             let pid = crate::hal::without_interrupts(|| {
-                crate::scheduler::current_scheduler().lock().current_pid
+                crate::scheduler::current_scheduler().lock().current_pid()
             });
             test_true!(pid < 1000);
         }
@@ -748,8 +707,9 @@ fn register_syscall_stress() {
 
     test_case!("stress_syscall_invalid_numbers", {
         // ABI fuzzing: ensure invalid syscall numbers return -ENOSYS
+        // Note: 22 = ThreadCreate (valid), skip it
         let expected = crate::syscall::err_to_u64(crate::syscall::SyscallError::NoSys);
-        for num in &[22u64, 100, 255, 0xFFFFFFFF] {
+        for num in &[100u64, 255, 0xFFFFFFFF] {
             let result = crate::syscall::syscall_dispatch(*num, 0, 0, 0, 0, 0);
             test_eq!(result, expected);
         }
@@ -1947,30 +1907,30 @@ pub fn register_mmap_tests() {
     });
 
     test_case!("mmap_process_add_remove", {
-        use crate::scheduler::Process;
-        let mut p = Process::new_ring0(99, 0x400000, 0x800000, None);
-        test_eq!(p.mmap_regions.len(), 0);
+        use crate::scheduler::Eprocess;
+        let mut ep = Eprocess::new_ring3(99, 0, 2, "\\", 0x10000000);
+        test_eq!(ep.mmap_regions.len(), 0);
 
         let r1 = MmapRegion {
             base: 0x20000000, len: 0x1000, prot: 3, flags: 1,
             drive: 0, inode: 0, file_size: 0,
         };
-        p.mmap_regions.push(r1);
-        test_eq!(p.mmap_regions.len(), 1);
-        test_eq!(p.mmap_regions[0].base, 0x20000000);
+        ep.mmap_regions.push(r1);
+        test_eq!(ep.mmap_regions.len(), 1);
+        test_eq!(ep.mmap_regions[0].base, 0x20000000);
 
         let r2 = MmapRegion {
             base: 0x20001000, len: 0x2000, prot: 1, flags: 1,
             drive: 0, inode: 0, file_size: 0,
         };
-        p.mmap_regions.push(r2);
-        test_eq!(p.mmap_regions.len(), 2);
+        ep.mmap_regions.push(r2);
+        test_eq!(ep.mmap_regions.len(), 2);
 
-        let idx = p.mmap_regions.iter().position(|r| r.base == 0x20000000);
+        let idx = ep.mmap_regions.iter().position(|r| r.base == 0x20000000);
         test_true!(idx.is_some());
-        p.mmap_regions.remove(idx.unwrap());
-        test_eq!(p.mmap_regions.len(), 1);
-        test_eq!(p.mmap_regions[0].base, 0x20001000);
+        ep.mmap_regions.remove(idx.unwrap());
+        test_eq!(ep.mmap_regions.len(), 1);
+        test_eq!(ep.mmap_regions[0].base, 0x20001000);
     });
 }
 
@@ -2092,34 +2052,33 @@ pub fn register_pipe_tests() {
     });
 
     test_case!("pipe_block_current_wake", {
-        // Test that block_current_for_pipe and wake_pipe_readers
-        // work correctly by simulating a block/wake cycle.
+        use crate::scheduler::ThreadState;
+
         let pid = PIPE_MANAGER.alloc().unwrap();
         PIPE_MANAGER.inc_read_ref(pid);
         PIPE_MANAGER.inc_write_ref(pid);
 
-        // Block current (idle) process on this pipe
+        // Block current (idle) thread on this pipe
         crate::pipe::block_current_for_pipe(pid);
 
-        // Verify we're now blocked
+        // Verify we're now blocked — idle thread is at kthreads[0]
         let state = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();
-            lock.processes[0].as_ref().unwrap().state
+            lock.kthreads[0].as_ref().unwrap().state
         });
-        test_eq!(state, crate::scheduler::ProcessState::Blocked { waiting_for: 0xFFFF_0000 | pid as u32 });
+        test_eq!(state, ThreadState::Blocked { waiting_for: 0xFFFF_0000 | pid as u32 });
 
-        // Wake readers - the wake function resets state to Ready
-        // But we need a write to trigger the wake. Let's manually verify by doing the wake.
+        // Manually wake
         let magic = 0xFFFF_0000u32 | (pid as u32);
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut lock = s.lock();
-            for proc in lock.processes.iter_mut() {
-                if let Some(p) = proc {
-                    if p.waiting_for == Some(magic) {
-                        p.waiting_for = None;
-                        p.state = crate::scheduler::ProcessState::Ready;
+            for th in lock.kthreads.iter_mut() {
+                if let Some(k) = th {
+                    if k.waiting_for == Some(magic) {
+                        k.waiting_for = None;
+                        k.state = ThreadState::Ready;
                     }
                 }
             }
@@ -2128,9 +2087,9 @@ pub fn register_pipe_tests() {
         let state2 = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();
-            lock.processes[0].as_ref().unwrap().state
+            lock.kthreads[0].as_ref().unwrap().state
         });
-        test_eq!(state2, crate::scheduler::ProcessState::Ready);
+        test_eq!(state2, ThreadState::Ready);
 
         PIPE_MANAGER.dec_read_ref(pid);
         PIPE_MANAGER.dec_write_ref(pid);
