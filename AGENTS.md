@@ -957,6 +957,71 @@ A driver is ABI-compatible iff:
 
 All data is read-only from NeoFS + runtime registry. No driver execution.
 
+## MCP Server — Kernel Introspection & VFS Analysis
+
+`scripts/mcp_server/` implements a Model Context Protocol (MCP) server for
+AI-assisted kernel debugging, VFS inspection, and architectural validation.
+
+### Launch
+```bash
+bash scripts/mcp-server.sh              # stdio mode (MCP protocol)
+bash scripts/mcp-server.sh --tool vfs_list path='\' drive=C
+```
+
+### Tools (18 total)
+
+| Tool | Description |
+|------|-------------|
+| `kernel_index` | Source file index with line counts, grouped by subsystem |
+| `search_symbol` | Search for fn/struct/trait/const in kernel source |
+| `get_kernel_architecture` | Memory layout, boot phases, subsystem boundaries |
+| `get_build_errors` | Check for duplicate code, missing artifacts, ABI issues |
+| `vfs_list` | List directory via NeoDOS FS image parser |
+| `vfs_read` | Read file via VFS (text or hex dump) |
+| `vfs_stat` | File/directory metadata (inode, size, perms) |
+| `vfs_resolve` | Path resolution with fallback across drives |
+| `vfs_tree` | Recursive directory tree |
+| `vfs_dump_superblock` | Superblock details |
+| `vfs_dump_inodes` | Inode table dump |
+| `list_loaded_modules` | List NEM drivers and DLLs from build artifacts |
+| `get_module_symbols` | Show symbols/exports for a NEM driver or DLL |
+| `sys_loadlib_analyze` | Read-only analysis of what sys_loadlib would do |
+| `analyze_libneodos_api` | libneodos ABI table, syscall wrappers, error codes |
+| `check_abi_compatibility` | NEM/ELF ABI version check against kernel |
+| `analyze_libneodos_coverage` | Syscall coverage: which have wrappers, which missing |
+| `check_consistency` | Validate architecture: code, docs, artifacts, invariants |
+
+### Resources (3)
+| URI | Description |
+|-----|-------------|
+| `neodos://system/info` | Project structure, version, build artifacts |
+| `neodos://kernel/architecture` | Memory layout, boot phases, subsystem map |
+| `neodos://libneodos/api` | Full AbiTable reference, error constants, syscall map |
+
+### Prompts (3)
+
+| Prompt | Description |
+|--------|-------------|
+| `analyze_system_state` | Comprehensive system analysis (kernel/modules/VFS/API) |
+| `debug_module_loading` | Debug why a NEM/DLL fails to load |
+| `analyze_vfs_path` | Trace VFS path resolution through NeoDOS filesystem |
+
+### Architecture
+
+- `server.py` — MCP protocol engine (JSON-RPC 2.0 over stdio)
+- `parsers/neodos_fs.py` — NeoDOS filesystem image parser (reads neodos_image.img)
+- `parsers/nem_parser.py` — NEM v3 driver format parser (80-byte header, relocs, symbols)
+- `parsers/elf_parser.py` — ELF64 parser for DLL/user binary analysis
+- `tools/kernel_tools.py` — Kernel introspection (source index, symbol search, build check)
+- `tools/vfs_tools.py` — VFS analysis (list, read, stat, tree, superblock, inodes)
+- `tools/module_tools.py` — Module analysis (NEM/DLL parsing, sys_loadlib simulation)
+- `tools/libneodos_tools.py` — libneodos API analysis (AbiTable, coverage, ABI check)
+- `tools/system_tools.py` — Consistency checker, system resource provider
+
+Reglas: toda operación de archivos pasa por los parsers VFS (nunca acceso directo
+al disco). Los módulos dinámicos se analizan offline — no se cargan realmente.
+El MCP es observador, no generador de sistema.
+
 ## Dependencias
 
 ```bash

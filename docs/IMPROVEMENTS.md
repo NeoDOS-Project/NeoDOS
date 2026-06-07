@@ -6,7 +6,7 @@
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 88 / ~130 items completados. Próximo milestone: **A1.5** (Thread model) — desbloquea APC, SEH y SMP.
+**Progreso:** 89 / ~130 items completados. Próximo milestone: **A1.5** (Thread model) — desbloquea APC, SEH y SMP.
 
 ---
 
@@ -123,6 +123,7 @@
 86. **A0.3. Dynamic memory layout manager** — `src/memory/layout.rs`: `MemoryLayout { regions: [MemoryRegion; 32] }` con `reserve_region()` dinámico y verificación de solapamientos.
 87. **A0.4. Dynamic handle table** — `HandleTable` con `Vec<HandleEntry>` interno. Sin límite fijo. 1024+ handles simultáneos por proceso. Migración transparente.
 88. **Architecture Source of Truth** — `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`: Definición estricta de invariantes y contratos del sistema (Dave Cutler style) para evitar regresiones de diseño.
+89. **MCP Server — Kernel Introspection & VFS Analysis** — `scripts/mcp_server/`: MCP protocol server (JSON-RPC 2.0) with 18 tools for AI-assisted kernel debugging, VFS inspection, and architectural validation. Parser offline de NeoDOS FS, NEM v3, ELF64. 3 resources, 3 prompts. `scripts/mcp-server.sh` launcher.
 
 ---
 

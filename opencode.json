@@ -31,5 +31,12 @@
       "template": "Review uncommitted changes in the repo (master branch). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Build kernel + user binaries, then run auto_test.py. Commit and push to GitHub with descriptive message.",
       "description": "Release to GitHub"
     }
+  },
+  "mcp": {
+    "neodos-mcp": {
+      "type": "local",
+      "command": ["bash", "scripts/mcp-server.sh"],
+      "enabled": true
+    }
   }
 }

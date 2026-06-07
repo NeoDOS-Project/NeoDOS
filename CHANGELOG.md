@@ -2,6 +2,18 @@
 
 ## v0.28.0 — 2026-06-06
 
+### MCP Server — Kernel Introspection & VFS Analysis
+- **Añadido**: `scripts/mcp_server/` — MCP server completo con 18 tools, 3 resources, 3 prompts.
+- **Añadido**: `parsers/neodos_fs.py` — Parser offline de NeoDOS FS (superblock, inodes, directory tree).
+- **Añadido**: `parsers/nem_parser.py` — Parser offline de NEM v3 drivers (80B header, relocs, symbols, ABI check).
+- **Añadido**: `parsers/elf_parser.py` — Parser ELF64 para DLLs y user binaries (segments, exports, symbols).
+- **Añadido**: `tools/kernel_tools.py` — Introspection de kernel (source index, symbol search, build verification).
+- **Añadido**: `tools/vfs_tools.py` — Análisis VFS (list, read, stat, tree, superblock, inodes).
+- **Añadido**: `tools/module_tools.py` — Análisis de módulos runtime (NEM drivers, DLLs, sys_loadlib sim).
+- **Añadido**: `tools/libneodos_tools.py` — Análisis de API libneodos (AbiTable, coverage, ABI check).
+- **Añadido**: `tools/system_tools.py` — Consistency checker, invariants, system resource.
+- **Añadido**: `scripts/mcp-server.sh` — Launch script con soporte stdio y one-shot --tool.
+
 ### A0.1–A0.4. Memory Architecture Rewrite
 - **Añadido**: `src/memory/buddy.rs` — Buddy system frame allocator con 11 órdenes (4 KB → 4 MB). `alloc_frames(order)`/`free_frames(addr, order)` — O(log n). Free lists intrusivas en memoria libre. Bitmap como validación secundaria.
 - **Añadido**: `src/memory/layout.rs` — MemoryLayout manager dinámico con 32 slots de región. `reserve_region(size, align, flags)` y `reserve_at(base, size, name, flags)` con verificación de solapamiento. `init_default()` replica el layout legacy.
