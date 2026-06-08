@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.30.0 — 2026-06-08
+
+### A1.1/A1.2. Per-CPU Data Structures + SMP + Run Queues
+
+#### Added
+- **`arch/x64/cpu_local.rs`** — `Kprcb` struct (4 KB page per CPU, `#[repr(C, align(4096))]`): cpu_id, apic_id, current_thread, current_pid, idle, need_resched, in_dispatch_level, `CpuRunQueue` (64-entry ring buffer), `PerCpuSlabCache[9]` (32-object hot lists), interrupt/context_switch/timer_tick counters, exit trampoline (exit_rsp/exit_rip/exit_rbx/exit_r12-r15/exit_rbp via GS), exit_now.
+- **`arch/x64/cpu_local.rs`** — GS-segment accessors: `gs_read_u64/u32/u8()`, `gs_write_u64/u8()` (inline asm `gs:[offset]`). High-level: `this_cpu_id()`, `this_cpu_current_thread()`, `this_cpu_need_resched()`, `this_cpu_set_need_resched()`, run queue accessors.
+- **`arch/x64/cpu_local.rs`** — 20 compile-time `offset_of!` assertions enforcing KPRCB layout consistency.
+- **`arch/x64/msr.rs`** — Centralized MSR access: `rdmsr()`/`wrmsr()`, typed accessors for `IA32_GS_BASE`, `IA32_KERNEL_GS_BASE`, `read_gs_base()`, `write_gs_base()`, `is_bsp()`, `rdtsc()`, `rdtscp()`.
+- **`arch/x64/smp.rs`** — SMP boot via INIT-SIPI-SIPI: AP trampoline (16→32→64-bit), `init_smp()`, `ap_entry()`, per-CPU GS base setup, AP readiness detection.
+- **Per-CPU run queues**: `CpuRunQueue` in KPRCB (64-entry ring buffer). `enqueue_to_cpu_run_queue()`, `try_dequeue_local()`, `try_work_steal()`. Scheduler tries local queue → work stealing → global fallback.
+- **IPI infrastructure**: `send_ipi()`, `send_ipi_all()`, `send_ipi_all_excl_self()` via Local APIC ICR. IPI_RESCHEDULE vector 0xF0 with IDT handler. `ipi_reschedule_handler` sets per-CPU `need_resched` via GS.
+- **Per-CPU `need_resched`**: Hot path in `syscall_handler_asm` reads GS:0x015 before falling back to global `NEED_RESCHED` AtomicBool. Timer handler uses per-CPU flag.
+- **Per-CPU exit trampoline**: `execute_usermode_asm` and `exit_to_kernel` now read/write exit context (RSP, RIP, RBX, R12-R15, RBP) via GS segment offsets in KPRCB.
+- **8 new kernel tests**: `cpu_local_kprcb_size`, `cpu_local_slab_cache_count`, `cpu_local_run_queue_ops`, `cpu_local_kprcb_init`, `cpu_local_offset_sanity`, `smp_constants`, `smp_trampoline_size`, `smp_bsp_is_cpu0`.
+
+#### Fixed
+- **Deadlock in `handler_exit`** — double-locking `SCHEDULER` mutex when calling `wake_thread_joiner()`. Inlined the wake call to use the already-held lock.
+- **`request_exit_to_kernel()` bug** — read value at GS offset as pointer instead of using `gs_write_u8`. Fixed to use direct GS write.
+- **Stale KPRCB offset constants** — 13 offsets after `slab_caches` were 2 bytes too low due to CpuRunQueue alignment (262→264 bytes). Fixed all constants and added compile-time assertions.
+
 ## v0.29.0 — 2026-06-07
 
 ### A1.5. EPROCESS/KTHREAD — Process/Thread Split

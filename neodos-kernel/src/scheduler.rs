@@ -92,6 +92,9 @@ pub struct Kthread {
     // TEB (Thread Environment Block) — user-mode TLS area
     pub teb_base: u64,
 
+    // CPU affinity
+    pub cpu: u32,
+
     // KOBJ
     pub kobj_id: Option<kobj::KObjId>,
 }
@@ -206,6 +209,7 @@ impl Kthread {
             kernel_stack_top: stack_top,
             kernel_stack: None,
             teb_base: 0,
+            cpu: 0,
             kobj_id: None,
         }
     }
@@ -233,6 +237,7 @@ impl Kthread {
             kernel_stack_top,
             kernel_stack: Some(stack),
             teb_base,
+            cpu: unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
             kobj_id: None,
         }
     }
@@ -443,6 +448,11 @@ impl Scheduler {
         self.eprocesses[ep_slot] = Some(eproc);
         self.kthreads[th_slot] = Some(thread);
 
+        // Enqueue new thread to its CPU's run queue
+        if let Some(k) = &self.kthreads[th_slot] {
+            Self::enqueue_to_cpu_run_queue(k);
+        }
+
         crate::trace_sched!(1, pid, 0); // ADD_PROCESS
         pid
     }
@@ -469,6 +479,12 @@ impl Scheduler {
         };
 
         self.kthreads[th_slot] = Some(thread);
+
+        // Enqueue new thread to its CPU's run queue
+        if let Some(k) = &self.kthreads[th_slot] {
+            Self::enqueue_to_cpu_run_queue(k);
+        }
+
         Some(tid)
     }
 
@@ -637,6 +653,8 @@ impl Scheduler {
                     k.waiting_for = None;
                     if matches!(k.state, ThreadState::Blocked { .. }) {
                         k.state = ThreadState::Ready;
+                        // Enqueue to its CPU's run queue
+                        Self::enqueue_to_cpu_run_queue(k);
                     }
                 }
             }
@@ -649,6 +667,8 @@ impl Scheduler {
                 if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                     k.waiting_for = None;
                     k.state = ThreadState::Ready;
+                    // Enqueue to its CPU's run queue
+                    Self::enqueue_to_cpu_run_queue(k);
                 }
             }
         }
@@ -700,9 +720,96 @@ impl Scheduler {
 
     // ── Schedule ──
 
-    /// Schedule the next thread.  Scans by priority level, round-robin by TID.
-    /// Returns a `*mut Kthread` for RSP/stack access.
+    /// Enqueue a thread to its assigned CPU's per-CPU run queue.
+    /// Called when a thread transitions to Ready state.
+    fn enqueue_to_cpu_run_queue(k: &Kthread) {
+        let cpu = k.cpu as usize;
+        if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
+        unsafe {
+            let run_queue = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+            run_queue.push(k.tid);
+        }
+    }
+
+    /// Try to dequeue the next thread from the current CPU's local run queue.
+    /// Returns the TID if found, or None if the queue is empty.
+    fn try_dequeue_local() -> Option<u32> {
+        unsafe {
+            let run_queue = crate::arch::x64::cpu_local::this_cpu_run_queue_mut();
+            run_queue.pop()
+        }
+    }
+
+    /// Try to steal a thread from another CPU's run queue.
+    /// Returns the TID if found, or None if all queues are empty.
+    fn try_work_steal() -> Option<u32> {
+        let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            if cpu == my_cpu { continue; }
+            unsafe {
+                let stolen = crate::arch::x64::cpu_local::steal_from_cpu_run_queue(
+                    cpu, crate::arch::x64::cpu_local::this_cpu_run_queue_mut());
+                if stolen > 0 {
+                    // We stole at least one thread, pop from our queue
+                    return Self::try_dequeue_local();
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a thread slot by TID, returning a raw pointer.
+    fn find_kthread_ptr(&self, tid: u32) -> *mut Option<Kthread> {
+        for th in self.kthreads.iter() {
+            if let Some(k) = th {
+                if k.tid == tid {
+                    return th as *const Option<Kthread> as *mut Option<Kthread>;
+                }
+            }
+        }
+        core::ptr::null_mut()
+    }
+
+    /// Schedule the next thread.  Tries per-CPU run queue first, falls back
+    /// to global priority scan.  Returns a `*mut Kthread` for RSP/stack access.
     pub fn schedule(&mut self) -> *mut Kthread {
+        // 1. Try per-CPU local run queue (fast path)
+        if let Some(tid) = Self::try_dequeue_local() {
+            let ptr = self.find_kthread_ptr(tid);
+            if !ptr.is_null() {
+                unsafe {
+                    if let Some(k) = &mut *ptr {
+                        if k.state == ThreadState::Ready {
+                            let prev = self.current_tid;
+                            self.current_tid = tid;
+                            k.state = ThreadState::Running;
+                            crate::trace_cswitch!(prev as u64, tid as u64);
+                            return k as *mut Kthread;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Try work stealing from another CPU
+        if let Some(tid) = Self::try_work_steal() {
+            let ptr = self.find_kthread_ptr(tid);
+            if !ptr.is_null() {
+                unsafe {
+                    if let Some(k) = &mut *ptr {
+                        if k.state == ThreadState::Ready {
+                            let prev = self.current_tid;
+                            self.current_tid = tid;
+                            k.state = ThreadState::Running;
+                            crate::trace_cswitch!(prev as u64, tid as u64);
+                            return k as *mut Kthread;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Fallback: global priority scan (existing algorithm)
         let start = (self.current_tid + 1) % self.next_tid.max(1);
 
         for priority in 0..PRIORITY_COUNT {
@@ -748,18 +855,28 @@ impl Scheduler {
         let tid = self.current_tid;
         if tid == 0 { return; }
 
+        let mut needs_resched = false;
         if let Some(k) = self.current_kthread_mut() {
-            if k.state != ThreadState::Running { return; }
-            k.cpu_ticks += 1;
+            if k.state == ThreadState::Running {
+                k.cpu_ticks += 1;
 
-            if k.time_slice_remaining > 0 {
-                k.time_slice_remaining -= 1;
-            }
+                if k.time_slice_remaining > 0 {
+                    k.time_slice_remaining -= 1;
+                }
 
-            if k.time_slice_remaining == 0 {
-                k.state = ThreadState::Ready;
-                crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+                if k.time_slice_remaining == 0 {
+                    k.state = ThreadState::Ready;
+                    needs_resched = true;
+                }
             }
+        }
+
+        if needs_resched {
+            // Enqueue back to its CPU's run queue (avoid borrow conflict)
+            if let Some(k) = self.find_kthread(tid) {
+                Self::enqueue_to_cpu_run_queue(k);
+            }
+            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
         }
     }
 }

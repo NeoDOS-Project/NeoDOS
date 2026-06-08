@@ -48,8 +48,6 @@ core::arch::global_asm!(
 core::arch::global_asm!(
     ".extern syscall_dispatch",
     ".extern syscall_try_resched",
-    ".extern NEED_RESCHED",
-    ".extern clear_need_resched",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
     "push rbp",
@@ -76,15 +74,27 @@ core::arch::global_asm!(
     "mov r9,  [rsp + 56]",
     "call syscall_dispatch",
     "mov [rsp + 0], rax",
+    // Check if syscall number was 0 (exit) — if so, check per-CPU exit_now flag
     "test r15, r15",
     "jnz 1f",
-    ".extern EXIT_NOW",
-    "cmp byte ptr [rip + EXIT_NOW], 0",
+    // Read per-CPU exit_now from KPRCB via GS segment
+    "xor rax, rax",
+    "mov al, gs:[0xB98]",                  // OFFSET_EXIT_NOW in KPRCB
+    "test al, al",
     "jz 1f",
-    "mov byte ptr [rip + EXIT_NOW], 0",
+    // Clear exit_now and jump to exit_to_kernel
+    "mov byte ptr gs:[0xB98], 0",          // OFFSET_EXIT_NOW
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
     "1:",
+    // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
+    "xor rax, rax",
+    "mov al, gs:[0x015]",                  // OFFSET_NEED_RESCHED in KPRCB
+    "test al, al",
+    "jz 3f",
+    // Clear per-CPU NEED_RESCHED
+    "mov byte ptr gs:[0x015], 0",          // OFFSET_NEED_RESCHED
+    // Also clear the global NEED_RESCHED (backward compat) and do work
     "call clear_need_resched",
     "test al, al",
     "jz 3f",
@@ -156,6 +166,12 @@ lazy_static! {
                 .set_handler_addr(x86_64::VirtAddr::new(syscall_handler_asm as *const () as u64))
                 .set_privilege_level(x86_64::PrivilegeLevel::Ring3)
                 .disable_interrupts(true);
+        }
+
+        // IPI handler for per-CPU reschedule (vector 0xF0)
+        unsafe {
+            idt[0xF0]
+                .set_handler_addr(x86_64::VirtAddr::new(ipi_reschedule_handler as *const () as u64));
         }
 
         idt
@@ -340,6 +356,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::hal::increment_ticks();
     let current_tick = crate::hal::get_ticks();
 
+    // Increment per-CPU timer tick count
+    unsafe { crate::arch::x64::cpu_local::this_cpu_inc_timer_tick_count(); }
+
     crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
 
     {
@@ -386,6 +405,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             let next_ks_top = unsafe { (*next).kernel_stack_top };
             crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
 
+            // Update per-CPU current thread and PID
+            unsafe {
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
+                crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+            }
+
             let next_rsp = unsafe { (*next).rsp };
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
@@ -405,11 +431,11 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             return next_rsp;
         }
 
-        // Thread alive and time slice not expired — just set NEED_RESCHED
+        // Thread alive and time slice not expired — just set per-CPU NEED_RESCHED
         let alive = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
-            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+            unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
@@ -430,20 +456,18 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         let alive = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
-            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+            unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
             return current_rsp;
         }
-        // Thread dead — fall through to idle
-        // Set idle via current_tid = 0 doesn't work here; schedule() picks idle
-        crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+        unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
     }
 
     // ── Idle thread (TID 0) ─────────────────────────────────────
     if scheduler.has_non_idle_threads() {
-        crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+        unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
     }
     crate::hal::ack_irq(32);
     crate::invariants::timer_irq_exit();
@@ -460,6 +484,15 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     );
 
     current_rsp
+}
+
+/// IPI handler for per-CPU reschedule (vector 0xF0).
+/// Called when a remote CPU wakes a thread on this CPU.
+extern "x86-interrupt" fn ipi_reschedule_handler(_: InterruptStackFrame) {
+    unsafe {
+        crate::arch::x64::cpu_local::this_cpu_set_need_resched(true);
+    }
+    crate::hal::ack_irq(0xF0);
 }
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {

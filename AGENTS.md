@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.29.0
+v0.30.0
 
 ## Architecture Governance
 
@@ -95,6 +95,7 @@ The resulting ELF binary can be loaded by the kernel's `RUN` command.
 - **Profiles**: release with `opt-level=3`, `lto=true`, `debug=true`, `panic="abort"`.
 - A shared `.cargo/config.toml` at `neodos/` adds extra linker flags (`-melf_x86_64`, `rust-lld`) for the kernel target only.
 - **Timers**: HPET (High Precision Event Timer) detected via ACPI RSDP/RSDT table scan. Configured at 1 KHz periodic mode with legacy replacement routing to IRQ0. Local APIC timer calibrated against HPET, used as primary timer source when available. APIC timer disables HPET legacy replacement and masks PIC IRQ0 to prevent double interrupts. Fallback to PIT (8254) at 18.2 Hz when HPET not available. `sleep_hint()` uses HPET counter for µs-resolution delays.
+- **SMP**: Boot via INIT-SIPI-SIPI from BSP. Per-CPU KPRCB (4 KB page, `#[repr(C, align(4096))]`) accessed via GS segment base (`MSR IA32_GS_BASE`). Up to 16 CPUs. AP trampoline at physical 0x800000 for real→long mode transition. IPI via Local APIC ICR: reschedule (vector 0xF0), TLB shootdown (vector 0xF1). Per-CPU run queues (`CpuRunQueue`), per-CPU slab caches (`PerCpuSlabCache[9]`), per-CPU `need_resched` flag (GS:0x015), per-CPU exit trampoline (exit_rsp/exit_rip via GS). Compile-time `offset_of!` assertions enforce KPRCB layout correctness.
 
 ## Memory Architecture (A0)
 
@@ -444,14 +445,15 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 3 | `PRIORITY_IDLE` | 50 ticks | Background, solo se ejecuta si no hay nada más |
 
 ### Algorithm
-- **schedule()**: escanea por nivel de prioridad (HIGH→IDLE), round-robin dentro del mismo nivel
-- **on_timer_tick()**: decrementa `time_slice_remaining` cada tick; al expirar marca Ready + `NEED_RESCHED`
+- **schedule()**: intenta cola local (CpuRunQueue) → work stealing → global fallback. Escanea por nivel de prioridad (HIGH→IDLE), round-robin dentro del mismo nivel
+- **on_timer_tick()**: decrementa `time_slice_remaining` cada tick; al expirar marca Ready + `this_cpu_set_need_resched()`. Si cola local vacía, intenta work stealing de otro CPU.
 - **sys_yield**: Running→Ready + resetea time slice + fuerza re-schedule
 - **Preemption from Ring 3**: timer handler detecta CS=0x1B (user mode), guarda RSP, llama schedule(), cambia TSS.RSP0
 - **Aging** (cada 100 ticks): boostea prioridad si un proceso Ready no se ha ejecutado en >= 1000 ticks
+- **Work stealing**: `try_work_steal()` roba el thread más viejo de la cola IDLE de otro CPU cuando la cola local está vacía. Escaneo round-robin entre CPUs.
 
 ### Implementation
-- `Kthread` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64), `tid`, `pid`, `teb_base`, `kernel_stack_top`, `cpu_ticks`
+- `Kthread` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64), `tid`, `pid`, `teb_base`, `kernel_stack_top`, `cpu_ticks`, `cpu` (target CPU for local queue)
 - `timer_handler_inner`: lee CS del stack frame, solo preemptea si interrumpió Ring 3
 - Afecta solo threads user-mode (Ring 3); el shell corre en Ring 0 y no pasa por schedule()
 - 7 tests de scheduler: prioridad, round-robin, time-slice, aging
@@ -530,7 +532,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-335 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+343 tests en 41 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -565,10 +567,59 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
+| Per-CPU (KPRCB) | 5 | KPRCB size, slab cache count, run queue ops, init, offset sanity |
+| SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (335 tests kernel)
+1. Ejecuta `testing::run_all()` (343 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
+
+## SMP & Per-CPU Architecture (A1)
+
+### Per-CPU Data Structures
+
+`src/arch/x64/cpu_local.rs` — Kprcb struct (4 KB page per CPU, `#[repr(C, align(4096))]`), accessed via GS segment base.
+
+| Field | Offset | Type | Description |
+|-------|--------|------|-------------|
+| `cpu_id` | 0x000 | u32 | Logical CPU index (0–15) |
+| `apic_id` | 0x004 | u32 | Local APIC ID |
+| `current_thread` | 0x008 | Option<NonNull<Kthread>> | Currently running thread |
+| `current_pid` | 0x010 | u64 | Current process PID |
+| `idle` | 0x014 | bool | Is this CPU idle? |
+| `need_resched` | 0x015 | bool | Per-CPU reschedule flag (GS:0x015) |
+| `in_dispatch_level` | 0x016 | bool | In dispatch level context |
+| `run_queue` | 0x018 | CpuRunQueue | 64-entry ring buffer per priority |
+| `slab_caches` | 0x120 | [PerCpuSlabCache; 9] | 9 size classes (8B–2KB), 288 bytes each |
+| `interrupt_count` | 0xB40 | u64 | Per-CPU interrupt counter |
+| `context_switch_count` | 0xB48 | u64 | Context switch counter |
+| `timer_tick_count` | 0xB50 | u64 | Timer tick counter |
+| `exit_rsp` | 0xB58 | u64 | Exit trampoline RSP |
+| `exit_rip` | 0xB60 | u64 | Exit trampoline RIP |
+| `exit_rbx` | 0xB68 | u64 | Saved RBX for exit |
+| `exit_r12` | 0xB70 | u64 | Saved R12 for exit |
+| `exit_r13` | 0xB78 | u64 | Saved R13 for exit |
+| `exit_r14` | 0xB80 | u64 | Saved R14 for exit |
+| `exit_r15` | 0xB88 | u64 | Saved R15 for exit |
+| `exit_rbp` | 0xB90 | u64 | Saved RBP for exit |
+| `exit_now` | 0xB98 | bool | Exit flag (GS:0xB98) |
+
+20 compile-time `offset_of!` assertions enforce layout correctness.
+
+### Per-CPU Run Queues
+
+- `CpuRunQueue`: 64-entry ring buffer (tail + head u16 indices)
+- `schedule()` tries: local queue → `try_work_steal()` → global fallback
+- `try_work_steal()`: steals from another CPU's IDLE queue, round-robin scan
+- IPI_RESCHEDULE (vector 0xF0): sent when thread enqueued on another CPU
+
+### SMP Boot
+
+`src/arch/x64/smp.rs` — INIT-SIPI-SIPI sequence, AP trampoline at physical 0x800000.
+
+- AP trampoline: 16-bit real mode → 32-bit protected → 64-bit long mode
+- `ap_entry()`: sets GS base via `wrmsr(IA32_GS_BASE)`, signals readiness via `AP_READY`
+- BSP polls `AP_READY_COUNT` until all APs are ready
 
 ## Kernel Object Manager (KOBJ) v1
 

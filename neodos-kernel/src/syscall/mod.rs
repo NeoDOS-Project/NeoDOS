@@ -185,6 +185,8 @@ pub fn get_device_handler(device_id: u32) -> Option<DeviceHandler> {
 
 pub fn set_need_resched() {
     NEED_RESCHED.store(true, Ordering::SeqCst);
+    // Also set per-CPU flag via GS
+    unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
 }
 
 #[no_mangle]
@@ -192,7 +194,10 @@ pub extern "C" fn clear_need_resched() -> bool {
     crate::globals::flush_cache_if_needed();
     crate::work_queue::WORK_QUEUE.process_high();
     crate::eventbus::EVENT_BUS.dispatch_pending();
-    NEED_RESCHED.swap(false, Ordering::SeqCst)
+    // Clear both global and per-CPU flags
+    let prev_global = NEED_RESCHED.swap(false, Ordering::SeqCst);
+    unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(false); }
+    prev_global
 }
 
 #[no_mangle]
@@ -377,7 +382,7 @@ fn handler_exit(regs: Registers) -> u64 {
                 }
             }
             crate::serial_println!("[EXIT] wake_thread_joiner");
-            crate::scheduler::wake_thread_joiner(tid);
+            scheduler.wake_blocked_on_magic(tid | 0x8000_0000);
             crate::serial_println!("[EXIT] checking: pid={} wait_pid={}",
                 pid, crate::usermode::current_wait_pid());
             if pid > 0 && pid == crate::usermode::current_wait_pid() {

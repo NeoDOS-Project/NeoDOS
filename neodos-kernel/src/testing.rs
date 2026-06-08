@@ -2359,6 +2359,10 @@ pub fn register_tests() {
     crate::irp::register_tests();
     crate::drivers::hotreload::register_hotreload_tests();
     crate::syscall::register_syscall_table_tests();
+    // Per-CPU data structure tests (A1.1)
+    crate::arch::x64::cpu_local::register_cpu_local_tests();
+    // SMP tests (A1.5)
+    crate::arch::x64::smp::register_smp_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }

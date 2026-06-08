@@ -4,6 +4,9 @@ pub mod idt;
 pub mod pic;
 pub mod serial;
 pub mod paging;
+pub mod msr;
+pub mod smp;
+pub mod cpu_local;
 
 pub use gdt::init as init_gdt;
 pub use idt::init as init_idt;

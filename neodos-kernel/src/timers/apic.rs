@@ -12,6 +12,8 @@ const IA32_APIC_BASE_ADDR_MASK: u64 = 0xFFFF_FFFF_FFFF_F000;
 const APIC_ID_REG: u64          = 0x020;
 const APIC_VERSION_REG: u64     = 0x030;
 const APIC_LVT_TIMER: u64       = 0x320;
+const APIC_ICR_LOW: u64         = 0x300;   // Interrupt Command Register (low)
+const APIC_ICR_HIGH: u64        = 0x310;   // Interrupt Command Register (high)
 const APIC_TIMER_INIT_COUNT: u64 = 0x380;
 const APIC_TIMER_CUR_COUNT: u64 = 0x390;
 const APIC_TIMER_DIVIDER: u64   = 0x3E0;
@@ -290,6 +292,82 @@ pub fn is_bsp() -> bool {
     unsafe {
         let base = rdmsr(IA32_APIC_BASE);
         (base & IA32_APIC_BASE_BSP) != 0
+    }
+}
+
+// ── IPI (Inter-Processor Interrupt) ──────────────────────────────────
+
+/// IPI vector for per-CPU reschedule.
+pub const IPI_RESCHEDULE: u8 = 0xF0;
+
+/// Send an IPI to a specific APIC ID.
+///
+/// # Safety
+/// Caller must ensure the APIC is initialized and the target CPU exists.
+pub unsafe fn send_ipi(apic_id: u32, vector: u8) {
+    let base = apic_base();
+
+    // Write destination APIC ID to ICR high (bits 63:24)
+    let icr_high = (apic_id as u64) << 24;
+    write_volatile((base + APIC_ICR_HIGH) as *mut u32, icr_high as u32);
+
+    // Write vector + delivery mode to ICR low
+    // Delivery mode 0 = Fixed, destination shorthand 0 = use destination field
+    let icr_low = vector as u32;
+    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+
+    // Wait for delivery status to clear (bit 12 of ICR low)
+    loop {
+        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        if (val & (1 << 12)) == 0 {
+            break;
+        }
+    }
+}
+
+/// Send an IPI to all CPUs including self (broadcast).
+pub unsafe fn send_ipi_all(vector: u8) {
+    let base = apic_base();
+
+    // ICR low: vector + delivery mode + shorthand = all including self (0b11 << 18)
+    let icr_low = vector as u32 | (0b11 << 18);
+    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+
+    loop {
+        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        if (val & (1 << 12)) == 0 {
+            break;
+        }
+    }
+}
+
+/// Send an IPI to all CPUs except self.
+pub unsafe fn send_ipi_all_excl_self(vector: u8) {
+    let base = apic_base();
+
+    // ICR low: vector + delivery mode + shorthand = all excluding self (0b10 << 18)
+    let icr_low = vector as u32 | (0b10 << 18);
+    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+
+    loop {
+        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        if (val & (1 << 12)) == 0 {
+            break;
+        }
+    }
+}
+
+/// Get a CPU's APIC ID from its index.
+/// Requires the KPRCB to be initialized for that CPU.
+pub fn get_apic_id_for_cpu(cpu: u32) -> Option<u32> {
+    if cpu as usize >= crate::arch::x64::cpu_local::MAX_CPUS {
+        return None;
+    }
+    unsafe {
+        let kprcb = crate::arch::x64::cpu_local::KPRCB_PAGES[cpu as usize];
+        if kprcb == 0 { return None; }
+        let apic_id = core::ptr::read_volatile((kprcb + 4) as *const u32);
+        Some(apic_id)
     }
 }
 

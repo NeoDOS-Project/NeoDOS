@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.28.0 (329 kernel tests + 5 user-mode binaries).
+> Versión actual: v0.30.0 (343 kernel tests + 4 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 90 / ~130 items completados. Próximo milestone: **A1.1** (Per-CPU data structures) — desbloquea SMP y APC.
+**Progreso:** 92 / ~130 items completados. Próximo milestone: **A1.3** (Per-CPU slab allocator).
 
 ---
 
@@ -125,6 +125,13 @@
 88. **Architecture Source of Truth** — `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`: Definición estricta de invariantes y contratos del sistema (Dave Cutler style) para evitar regresiones de diseño.
 89. **MCP Server — Kernel Introspection & VFS Analysis** — `scripts/mcp_server/`: MCP protocol server (JSON-RPC 2.0) with 18 tools for AI-assisted kernel debugging, VFS inspection, and architectural validation. Parser offline de NeoDOS FS, NEM v3, ELF64. 3 resources, 3 prompts. `scripts/mcp-server.sh` launcher.
 90. **A4.2. Syscall dispatch table (SSDT)** — `src/syscall/mod.rs`: tabla SSDT `[Option<fn(Registers) -> u64>; 256]` con `lazy_static!` reemplaza match monolítico. Tabla paralela `[SyscallPermission; 256]` con admin/ring/caps. Admin syscall RAX=50 (`handler_ndreg`). `validate_abi()` itera SSDT para verificar integridad. Dispatcher table-based con permission check antes de cada llamada. 5 tests: `syscall_table_sparse_dispatch`, `syscall_permission_admin_check`, `syscall_enosys_unknown`, `syscall_table_validation_boot`, `syscall_add_new_easy`.
+91. **A1.1. Per-CPU data structures (KPRCB)** — `arch/x64/cpu_local.rs`: Kprcb struct (4 KB page per CPU) con cpu_id, apic_id, current_thread, CpuRunQueue (64-entry ring buffer), PerCpuSlabCache[9], interrupt/context_switch/timer_tick counters, exit trampoline via GS. GS-segment accessors. 20 compile-time offset_of! assertions. 5 tests.
+92. **A1.1b. MSR access module** — `arch/x64/msr.rs`: rdmsr/wrmsr, typed accessors (read_gs_base, write_gs_base, is_bsp, rdtsc, rdtscp).
+93. **A1.1c. SMP boot (INIT-SIPI-SIPI)** — `arch/x64/smp.rs`: AP trampoline (16→32→64-bit), copy to 0x800000, INIT-SIPI-SIPI sequence, per-CPU GS base, AP entry. 3 tests.
+94. **A1.2. Per-CPU run queues + work stealing** — CpuRunQueue in KPRCB. schedule() tries local queue → work stealing → global fallback. Threads enqueued on creation/wake/timer. IPI_RESCHEDULE (vector 0xF0). 8 total new tests.
+95. **Bug fix: handler_exit deadlock** — Double-locking SCHEDULER mutex when calling wake_thread_joiner(). Inlined wake call.
+96. **Bug fix: request_exit_to_kernel()** — Read value as pointer instead of using gs_write_u8.
+97. **Bug fix: KPRCB offset constants** — 13 offsets 2 bytes too low due to CpuRunQueue alignment. Fixed with compile-time assertions.
 
 ---
 
@@ -190,34 +197,18 @@ El scheduler actual asume monoprocesador y planifica `Process` como unidad únic
   - **Limitaciones (post-v0.29.0):** Sin per-CPU runqueues (A1.1), sin SMP, sin lazy CR3 swap, sin APC queues.
   - **Tests:** `kthread_new_initial_state`, `kthread_state_debug`, `kthread_state_partial_eq`, `eprocess_new_ring3` (4) + 9 scheduler priority tests + 4 stress tests adaptados. Total: 330.
 
-- [ ] **A1.1. Per-CPU data structures** | NT: `KPRCB` (Kernel Processor Control Block) | Prereqs: A1.5
-  - **Archivos:** `arch/x64/smp.rs`, `src/scheduler/cpu_local.rs`, `arch/x64/msr.rs` (GSBASE)
-  - **Descripción:** CPU-local storage via segmento GS para variables críticas sin locks en path rápido.
-    - **Estructura KPRCB:** `cpu_id, current_thread, run_queue, slab_caches[9], interrupt_count, work_queue_pending, idle_thread, context_switch_count, timer_tick`.
-    - **Acceso vía macro:** `CPU_LOCAL!(cpu_id)` → lectura `GS:[offset]` directo (atomic si aligned). Macro `per_cpu!(cpu_id, var)` asigna slots en orden de compilación.
-    - **Inicialización:** BSP (CPU 0) @ PHASE 2.2 asigna una página de 4 KB por potencial CPU (max 16). KPRCB colocado en offset 0. BSP escribe su GSBASE en MSR_GS_BASE (0xC0000101), apunta a su KPRCB. AP startup (APs) en PHASE 1.5 recibe GSBASE @ `AP_KPRCB_PTR` (dirección física compartida), ejecuta `wrmsr MSR_GS_BASE`. Cada AP escribe `cpu_id` en su KPRCB en offset +0.
-    - **Run queues:** Per-CPU, no global. Scheduler examina `this_cpu().run_queue` sin lock (FIFO per priority level).
-    - **Slab caches:** 9 caches (8B–2KB) per CPU. Path rápido: `alloc_local()` en DISPATCH_LEVEL, solo examina KPRCB local sin spin::Mutex.
-  - **Criterio:** 
-    - Boot con 4 CPUs (QEMU `-smp 4`), cada CPU reporte `cpu_id()` único sin race.
-    - GSBASE msr-locked, acceso simultáneo desde múltiples CPUs a sus propios caches no causa collision.
-    - Intel TSC usado como timestamp global para comparaciones cross-CPU.
-  - **Tests:** `kprcb_init_all_cpus`, `cpu_id_unique`, `per_cpu_gs_isolation`, `run_queue_per_cpu`, `slab_per_cpu_no_contention` (5 tests).
+- [x] **A1.1. Per-CPU data structures** | NT: `KPRCB` (Kernel Processor Control Block) | Prereqs: A1.5
+  - **Implementado en v0.30.0.**
+  - **Archivos:** `arch/x64/cpu_local.rs`, `arch/x64/msr.rs`, `arch/x64/smp.rs`
+  - **Descripción:** Kprcb struct (4 KB page per CPU) via GS segment. 20 compile-time offset_of! assertions. CpuRunQueue (64-entry ring buffer). PerCpuSlabCache[9]. Exit trampoline via GS. SMP boot (INIT-SIPI-SIPI). IPI infrastructure (vector 0xF0). Per-CPU need_resched flag. 8 tests.
+  - **Tests:** `cpu_local_kprcb_size`, `cpu_local_slab_cache_count`, `cpu_local_run_queue_ops`, `cpu_local_kprcb_init`, `cpu_local_offset_sanity`, `smp_constants`, `smp_trampoline_size`, `smp_bsp_is_cpu0` (8 tests).
 
-- [ ] **A1.2. Per-CPU run queues + load balancing** | NT: Load balance scheduling | Prereqs: A1.1
-  - **Archivos:** `src/scheduler/mod.rs` (reescritura completa), `src/scheduler/load_balance.rs`, `src/scheduler/cpu_affinity.rs`
-  - **Descripción:** Distribuir threads sobre multiple CPUs sin contención de locks globales.
-    - **Per-CPU run queues:** Cada CPU tiene 4 colas de prioridad (HIGH, ABOVE_NORMAL, NORMAL, IDLE). `Scheduler` contiene array `[CpuScheduler; MAX_CPU]`. Sin queue global.
-    - **Schedule algorítmo:** Cada CPU ejecuta `schedule()` localmente (sin IPI): examina su runqueue de prioridad más alta, extrae hilo. Si cola vacía en TODAS las prioridades, intenta `try_steal()` de otra CPU.
-    - **Work stealing:** `try_steal(victim_cpu)` lee (sin lock) el nivel IDLE de `victim_cpu`, intenta CAS para llevar thread a nuestra cola. Busca CPUs en orden round-robin (prev_victim + 1) para distribuir carga.
-    - **Load balancing:** Timer cada 100 ticks llama `balance_load()` en cada CPU. Si esta CPU tiene << threads que promedio, señaliza a CPU sobrecargada via `send_ipi(cpu, IPI_RESCHEDULE)` para que re-schedule e intente migraciones.
-    - **Thread affinity:** Struct `ThreadAffinity { cpumask: u64, preferred_cpu: u8 }`. `schedule()` respeta afinidad: prioriza preferred_cpu, solo steal si necesario.
-    - **Idle handling:** CPU con queues vacías y sin stealable work entra en `HLT` (halt_until_interrupt). Wake-IPI despierta.
-  - **Criterio:**
-    - 4 threads HIGH priority, 1 por CPU. Median latency enqueue→scheduler < 1 ms.
-    - Load spike: 8 threads aparecen súbitamente en CPU 0. Dentro de 10 ms, otras CPUs roban threads vía `try_steal()`. Load se distribuye a CPU 1–3.
-    - Thread migration respeta affinity: no cambia CPU sin necesidad.
-  - **Tests:** `load_balance_steal_success`, `load_balance_round_robin`, `thread_affinity_respected`, `idle_cpu_halts_then_wakes`, `multi_cpu_latency_fair` (5 tests).
+- [x] **A1.2. Per-CPU run queues + load balancing** | NT: Load balance scheduling | Prereqs: A1.1
+  - **Implementado en v0.30.0 (parcial).**
+  - **Archivos:** `src/scheduler.rs`, `arch/x64/cpu_local.rs`, `timers/apic.rs`
+  - **Descripción:** Per-CPU run queues en KPRCB (CpuRunQueue). `schedule()` intenta cola local → work stealing → fallback global. IPI_RESCHEDULE (vector 0xF0) registrado en IDT. `send_ipi()` via APIC ICR. Threads encolados en creación, wake, y timer expiry.
+  - **Limitaciones:** Load balancing pasivo (sin timer-driven balance). Thread affinity no implementada. Work stealing usa scan lineal.
+  - **Tests:** Integrados en los 343 kernel tests.
 
 - [ ] **A1.3. Per-CPU slab allocator** | NT: Per-processor lookaside lists | Prereqs: A1.1
   - **Archivos:** `src/slab.rs` (reescritura completa), `src/memory/per_cpu_cache.rs`, integración `src/allocator.rs`

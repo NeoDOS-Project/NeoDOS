@@ -14,7 +14,7 @@ mod arch;
 mod hal;
 mod console;
 mod cpu;
-mod scheduler;
+pub mod scheduler;
 mod processes;
 mod drivers;
 mod buffer;
@@ -161,6 +161,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.75: Heap allocator (uses identity map)
     // ============================================
     allocator::init();
+
+    // ============================================
+    // PHASE 2.8: SMP — Start Application Processors
+    // ============================================
+    println!("[+] Initializing SMP (per-CPU data structures)...");
+    let cpu_count = arch::x64::smp::init_smp();
+    println!("[+] {} CPU(s) online", cpu_count);
 
     println!("[+] Enabling interrupts...");
     hal::enable_interrupts();
