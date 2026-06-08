@@ -3,12 +3,12 @@
   "provider": {
       "llmstudio": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "LLM Studio (local)",
+      "name": "LM Studio (local)",
       "options": {
-        "baseURL": "http://localhost:1234/v1"
+        "baseURL": "http://localhost:1234/v1",
+        "apiKey": "lm-studio-api-key"
       },
       "models": {
-        "mistralai/ministral-3-3b": { "name": "Ministral 3:3b" },
         "google/gemma-4-e4b": { "name": "Gemma 4-e4b" }
       }
     }

@@ -62,14 +62,13 @@ neodos/
 ├── userbin/                    # User-mode test binaries (hello, systest, filetest, alltest)
 ├── docs/                       # Design notes + specifications
 │   ├── ARCHITECTURE.md         # System architecture
+│   ├── ARCHITECTURE_SOURCE_OF_TRUTH.md  # Architecture invariants & source of truth
 │   ├── KERNEL.md               # Kernel spec
 │   ├── BOOTLOADER.md           # Bootloader spec
-│   ├── NEM_SPEC.md             # NEM driver format spec
-│   ├── KERNEL_SUBSYSTEMS.md    # Subsystem dependency rules
 │   ├── HAL_ABI.md              # Hardware Abstraction Layer spec
 │   ├── SCHEDULER.md            # Scheduler design
 │   ├── SYSCALLS.md             # Syscall reference
-│   ├── VFS_STATUS.md           # VFS status
+│   ├── DEBUG.md                # Debugging guide
 │   └── IMPROVEMENTS.md         # Ordered improvement roadmap
 ├── CHANGELOG.md                # Version history
 ├── AGENTS.md                   # Development guide
@@ -135,14 +134,12 @@ neodos/
 | Document | Description |
 |----------|-------------|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture |
+| [`docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`](docs/ARCHITECTURE_SOURCE_OF_TRUTH.md) | Architecture invariants & source of truth |
 | [`docs/KERNEL.md`](docs/KERNEL.md) | Kernel specification |
 | [`docs/BOOTLOADER.md`](docs/BOOTLOADER.md) | Bootloader specification |
-| [`docs/NEM_SPEC.md`](docs/NEM_SPEC.md) | NEM driver format specification |
-| [`docs/KERNEL_SUBSYSTEMS.md`](docs/KERNEL_SUBSYSTEMS.md) | Subsystem boundaries and dependency rules |
 | [`docs/HAL_ABI.md`](docs/HAL_ABI.md) | Hardware Abstraction Layer ABI v0.3 |
 | [`docs/SCHEDULER.md`](docs/SCHEDULER.md) | Scheduler design |
 | [`docs/SYSCALLS.md`](docs/SYSCALLS.md) | Complete syscall reference |
-| [`docs/VFS_STATUS.md`](docs/VFS_STATUS.md) | VFS implementation status |
 | [`docs/DEBUG.md`](docs/DEBUG.md) | Debugging guide |
 | [`docs/IMPROVEMENTS.md`](docs/IMPROVEMENTS.md) | Ordered improvement roadmap |
 | [`CHANGELOG.md`](CHANGELOG.md) | Version history |
@@ -240,7 +237,7 @@ Kernel @ 0x200000
 
 **Subsystem Dependency Rules:**
 
-16 explicit subsystems with controlled dependencies. See [`docs/KERNEL_SUBSYSTEMS.md`](docs/KERNEL_SUBSYSTEMS.md).
+16 explicit subsystems with controlled dependencies. See [`docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`](docs/ARCHITECTURE_SOURCE_OF_TRUTH.md).
 
 ## Shell Commands
 

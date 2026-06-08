@@ -28,7 +28,7 @@
 
 ---
 
-## COMPLETED (88 items)
+## COMPLETED (89 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -124,6 +124,7 @@
 87. **A0.4. Dynamic handle table** — `HandleTable` con `Vec<HandleEntry>` interno. Sin límite fijo. 1024+ handles simultáneos por proceso. Migración transparente.
 88. **Architecture Source of Truth** — `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`: Definición estricta de invariantes y contratos del sistema (Dave Cutler style) para evitar regresiones de diseño.
 89. **MCP Server — Kernel Introspection & VFS Analysis** — `scripts/mcp_server/`: MCP protocol server (JSON-RPC 2.0) with 18 tools for AI-assisted kernel debugging, VFS inspection, and architectural validation. Parser offline de NeoDOS FS, NEM v3, ELF64. 3 resources, 3 prompts. `scripts/mcp-server.sh` launcher.
+90. **A4.2. Syscall dispatch table (SSDT)** — `src/syscall/mod.rs`: tabla SSDT `[Option<fn(Registers) -> u64>; 256]` con `lazy_static!` reemplaza match monolítico. Tabla paralela `[SyscallPermission; 256]` con admin/ring/caps. Admin syscall RAX=50 (`handler_ndreg`). `validate_abi()` itera SSDT para verificar integridad. Dispatcher table-based con permission check antes de cada llamada. 5 tests: `syscall_table_sparse_dispatch`, `syscall_permission_admin_check`, `syscall_enosys_unknown`, `syscall_table_validation_boot`, `syscall_add_new_easy`.
 
 ---
 
@@ -450,31 +451,16 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
 
 > **Estado actual (v0.28.0):** `main.rs:346` ejecuta `DosShell::run()` en Ring 0. `ARCHITECTURE_SOURCE_OF_TRUTH.md` describe NeoInit como PID 1 — es el target, no el estado actual.
 
-- [ ] **A4.2. Syscall dispatch table (SSDT)** | NT: Service Descriptor Table | Prereqs: —
-  - **Archivos:** `src/syscall.rs` (refactor), `src/syscall/table.rs` (new), `src/syscall/permission.rs` (new)
+- [x] **A4.2. Syscall dispatch table (SSDT)** | NT: Service Descriptor Table | Prereqs: — [COMPLETED]
+  - **Archivos:** `src/syscall/mod.rs` (refactor), `src/syscall/table.rs` (new), `src/syscall/permission.rs` (new)
   - **Descripción:** Centralizar despacho de syscalls en tabla indexada en lugar de match monolítico para mejor escalabilidad y seguridad.
-    - **Tabla SSDT:** `[Option<fn(Registers) -> u64>; 256]`. Inicialmente sparse: 22 funciones, resto None.
-    - **Macro SYSCALL!:** Sintaxis declarativa para registrar:
-      ```rust
-      syscall_table! {
-          0 => sys_exit,
-          1 => sys_write,
-          ...
-          21 => sys_loadlib,
-      }
-      ```
-      Macro expande a inicializador de array.
-    - **Permisos:** Tabla paralela `[SyscallPermission; 256]` con requisitos: `{ caps: u64, ring_min: u8, admin: bool }`.
+    - **Tabla SSDT:** `[Option<fn(Registers) -> u64>; 256]` via `lazy_static!`. 23 funciones + admin stub.
+    - **Tabla permisos:** `[SyscallPermission; 256]` con requisitos: `{ caps: u64, ring_min: u8, admin: bool }`.
       - `sys_exit`: ring=3, caps=0, admin=false
-      - `sys_ndreg`: ring=0, caps=CAP_ADMIN, admin=true
-      - `sys_test`: admin=true (requerido)
-    - **Dispatch:** `syscall_dispatch(rax, registers)` → busca `SSDT[rax]`. Si None → `ENOSYS` (-38). Si Some(fn) → chequea permiso, ejecuta, retorna.
-    - **Boot validation:** `validate_abi()` (A1.0 completo) ahora único check: iterar SSDT, verificar 0..MAX_SYSCALL tienen entradas, permisos consisten.
-  - **Criterio:**
-    - Nueva syscall RAX=50: añadir 1 línea en `syscall_table!`, 1 entry en permission table.
-    - Syscall desconocida (RAX=99) → ENOSYS, no panic.
-    - Admin syscall sin admin token → EPERM (-13)
-  - **Tests:** `syscall_table_sparse_dispatch`, `syscall_permission_admin_check`, `syscall_enosys_unknown`, `syscall_table_validation_boot`, `syscall_add_new_easy` (5 tests).
+      - `sys_ndreg`: ring=0, caps=CAP_ADMIN, admin=true (RAX=50)
+    - **Dispatch:** `syscall_dispatch(rax, registers)` → busca `SSDT[rax]`. Si None → NoSys (-7). Si Some(fn) → chequea permiso, ejecuta, retorna.
+    - **Boot validation:** `validate_abi()` itera SSDT, verifica 0..MAX_SYSCALL tienen entradas, permisos consisten.
+  - **Tests:** 5 tests (sparse dispatch, admin check, ENOSYS, validation, add new syscall). Total: 335 kernel tests.
 
 - [ ] **A4.3. ELF loader con validación de rangos** | NT: Loader security checks | Prereqs: A0.3
   - **Archivos:** `src/elf.rs` (refactor), `src/scheduler/address_space.rs` (new), `src/shell/commands/run.rs`

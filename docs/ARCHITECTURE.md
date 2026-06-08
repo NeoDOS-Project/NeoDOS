@@ -492,7 +492,7 @@ The kernel testing framework includes **301 tests** (36 suites) with suites dedi
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
-| NEM | 23 | v1+v2+v3 parsing, ABI, relocations, edge cases |
+| NEM | 23 | v3 parsing, ABI, relocations, edge cases |
 | Event Bus | 9 | Creation, push/pop, order, overflow, IDs, dispatch, filters |
 | Driver State | 21 | 7-state pipeline, transition matrix, certification |
 | Boot Loader | 8 | Scan, load, init, activate, categories |

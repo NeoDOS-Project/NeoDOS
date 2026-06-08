@@ -1,11 +1,11 @@
 [package]
 name = "neodos_bootloader"
-version = "0.10.5"
+version = "0.11.0"
 edition = "2021"
 
 [dependencies]
 uefi = { version = "0.37", features = ["alloc", "global_allocator", "logger", "panic_handler"] }
-log = "0.4"
+log = "0.4.32"
 
 [profile.release]
 opt-level = 3

@@ -46,7 +46,7 @@ el código debe cumplirla — no al revés.
 - Actualizar `docs/IMPROVEMENTS.md` (mover item a Completado con descripción)
 - Actualizar `AGENTS.md` si es necesario (nuevas secciones, tablas de syscalls, comandos, etc.)
 - Actualizar `docs/ARCHITECTURE.md`, `docs/KERNEL.md` u otros doc si la feature afecta al diseño
-- Si se añade una syscall nueva: actualizar tabla de syscalls en `AGENTS.md` y `src/syscall.rs`
+- Si se añade una syscall nueva: actualizar tabla de syscalls en `AGENTS.md` y `src/syscall/mod.rs`
 - Si se añade un comando del shell: actualizar `AGENTS.md` en la sección de comandos
 - `git add -A && git commit -m "feat: ..." && git push`
 
@@ -64,7 +64,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall.rs` | Raw `int 0x80` wrappers (exit, write, read, open, readfile, writefile, close, yield, getpid, brk, mmap, munmap). Error constants (`EINVAL`, `ENOENT`, etc.). All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 24 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -260,7 +260,7 @@ sys_exit
 
 ## mmap Lazy (anonymous + file-backed)
 
-**Archivos:** `arch/x64/paging.rs` (mmap_alloc_page, mmap_free_range, handle_mmap_page_fault, load_file_mmap_page), `scheduler.rs` (MmapRegion, VMA list per-EPROCESS), `syscall.rs` (sys_mmap/sys_munmap dispatch), `arch/x64/idt.rs` (page_fault_handler → handle_mmap_page_fault)
+**Archivos:** `arch/x64/paging.rs` (mmap_alloc_page, mmap_free_range, handle_mmap_page_fault, load_file_mmap_page), `scheduler.rs` (MmapRegion, VMA list per-EPROCESS), `syscall/mod.rs` (sys_mmap/sys_munmap dispatch), `arch/x64/idt.rs` (page_fault_handler → handle_mmap_page_fault)
 
 Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB durante el arranque (`init_mmap_demand_paging`).
 
@@ -280,7 +280,7 @@ Región dedicada: `0x20000000..0x22000000` (32 MB), dividida en páginas 4 KB du
 
 On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the calling KTHREAD `Terminated`, decrements the EPROCESS `thread_count`. When the last thread exits, all EPROCESS resources (user slot, heap pages, mmap regions, pipe refcounts) are freed, and `cleanup_terminated_process(pid)` recycles the EPROCESS slot. The `syscall_handler_asm` trampoline detects RAX==0 and jumps to `exit_to_kernel`, restoring `EXIT_RSP`/`EXIT_RIP` plus all callee-saved registers — preventing user-mode register clobber from corrupting shell local variables. Control returns to `execute_usermode`'s caller (`cmd_run`). The `KILL` command (`kill_pid()`) does full cleanup (heap, mmap, pipes, user slot, kernel stack, all threads) and recycles the slot immediately. `sys_waitpid` recycles the waited-for EPROCESS slot after detecting all threads are `Terminated`.
 
-Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall.rs` (dispatch & Terminated marking, sys_thread_create/join), `scheduler.rs` (EPROCESS/KTHREAD lifecycle, kill_pid).
+Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall/mod.rs` (dispatch & Terminated marking, sys_thread_create/join), `scheduler.rs` (EPROCESS/KTHREAD lifecycle, kill_pid).
 
 ## Shell: TAB autocomplete + history
 
@@ -386,6 +386,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
 | 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
 | 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
+| 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 
 ## IPC / Pipes
 
@@ -529,7 +530,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-330 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+335 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -566,7 +567,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (330 tests kernel)
+1. Ejecuta `testing::run_all()` (335 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## Kernel Object Manager (KOBJ) v1
@@ -613,7 +614,7 @@ Comando `test`:
 | **Scheduler integration** | `EVENT_BUS.dispatch_pending()` in `clear_need_resched()` + idle loop. Events dispatched on every syscall boundary |
 | **Isolation** | No driver execution in IRQ context. No recursive dispatch. Events immutable after enqueue |
 
-See `docs/NEM_SPEC.md` for full NEM format spec.
+See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` §12 NEM format for full NEM format spec.
 
 ## Driver Certification Pipeline v1
 
@@ -1031,7 +1032,7 @@ El MCP es observador, no generador de sistema.
 python3 scripts/check_deps.py        # Validate subsystem dependency rules
 ```
 
-Ver `docs/KERNEL_SUBSYSTEMS.md` para la arquitectura completa de subsistemas.
+Ver `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` para la arquitectura completa de subsistemas.
 
 ## Arquitectura (subsystem boundaries)
 
@@ -1053,7 +1054,7 @@ La kernel está organizada en 16 subsistemas explícitos. Cada subsistema:
 | Console | scheduler, filesystems, drivers |
 | Memory/frame allocator | scheduler, filesystems, drivers |
 
-Ver `docs/KERNEL_SUBSYSTEMS.md` para la especificación completa.
+Ver `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` para la especificación completa.
 
 ## Mejoras pendientes
 

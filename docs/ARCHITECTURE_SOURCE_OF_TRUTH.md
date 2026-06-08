@@ -489,8 +489,21 @@ Return: RAX (≥ 0 success, < 0 error)
 **Rule 12.1.1**: This convention is frozen. New syscalls MUST use this convention.
 **Rule 12.1.2**: Error is encoded as negative `u64`. `err_to_u64(SyscallError::NoEnt)`
 produces `0xFFFF_FFFF_FFFF_FFFE`. User code checks `cmp rax, -1`.
-**Rule 12.1.3**: `validate_abi()` at boot confirms every `SyscallNum` variant has a handler
+**Rule 12.1.3**: `validate_abi()` at boot confirms every SSDT entry (0..=MAX_SYSCALL) has a handler
 and error encoding is correct.
+
+### 12.1.1 SSDT Architecture
+
+The syscall dispatch uses a centralized indexed table (SSDT) instead of a monolithic match:
+
+```rust
+pub static SYSCALL_TABLE: [Option<SyscallFn>; 256]  // handler dispatch
+pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permissions
+```
+
+**Rule 12.1.1.1**: All syscalls 0..=MAX_SYSCALL MUST have entries in both tables.
+**Rule 12.1.1.2**: Adding a new syscall requires: 1 handler function + 1 SSDT entry + 1 permission entry.
+**Rule 12.1.1.3**: Unknown syscalls (None in SSDT) return ENOSYS without panic.
 
 ### 12.2 Syscall Table
 
@@ -518,8 +531,11 @@ and error encoding is correct.
 | 19 | `mmap` | `(hint, len, prot, flags, fd)` | STABLE |
 | 20 | `munmap` | `(addr, len)` | STABLE |
 | 21 | `loadlib` | `(path)` | STABLE |
+| 22 | `thread_create` | `(entry, stack)` | STABLE |
+| 23 | `thread_join` | `(tid)` | STABLE |
+| 50 | `ndreg` | `()` | ADMIN-ONLY |
 
-**Rule 12.2.1**: Reserved slots (7, 8, 14, 15) MUST NOT be assigned without a breaking
+**Rule 12.2.1**: Reserved slots (7, 8) MUST NOT be assigned without a breaking
 change version bump.
 **Rule 12.2.2**: Adding a new syscall at the next available RAX is NOT a breaking change.
 **Rule 12.2.3**: Changing the signature, return convention, or semantics of a STABLE syscall

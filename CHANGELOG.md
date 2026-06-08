@@ -21,6 +21,19 @@
 - **Tests**: 4 nuevos tests de Kthread/Eprocess + 9 tests de scheduler adaptados
 - **Total**: 330 kernel tests (antes 329)
 
+### A4.2. Syscall dispatch table (SSDT)
+- **Añadido**: `src/syscall/table.rs` — `Registers` struct, `SyscallFn` type alias, `MAX_SYSCALL` constant
+- **Añadido**: `src/syscall/permission.rs` — `SyscallPermission` struct (caps, ring_min, admin), `CAP_ADMIN` constant
+- **Añadido**: `src/syscall/mod.rs` — SSDT `[Option<SyscallFn>; 256]` via `lazy_static!` con 23 handlers + admin stub
+- **Añadido**: `src/syscall/mod.rs` — SYSCALL_PERMISSIONS `[SyscallPermission; 256]` tabla paralela de permisos
+- **Añadido**: `sys_ndreg` (RAX=50) — admin-only stub para operaciones NDREG desde user-space
+- **Añadido**: `check_syscall_permission()` — validación de permisos antes de cada dispatch
+- **Modificado**: `syscall_dispatch()` — table-based lookup reemplaza match monolítico
+- **Modificado**: `validate_abi()` — itera SSDT para verificar integridad de entradas y permisos
+- **Modificado**: `src/syscall.rs` → `src/syscall/mod.rs` — reestructuración a módulo con submódulos
+- **Tests**: 5 nuevos tests: `syscall_table_sparse_dispatch`, `syscall_permission_admin_check`, `syscall_enosys_unknown`, `syscall_table_validation_boot`, `syscall_add_new_easy`
+- **Total**: 335 kernel tests (antes 330)
+
 ## v0.28.0 — 2026-06-06
 
 ### MCP Server — Kernel Introspection & VFS Analysis
