@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.30.0
+v0.31.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 320 kernel tests + 5 user-mode binaries
+2. `python3 scripts/auto_test.py` — 353 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -212,11 +212,12 @@ absolute LBAs (no `base_lba`).
 
 ## Kernel Slab Allocator (A3)
 
-`src/slab.rs` — Efficient fixed-size allocation for kernel objects.
+`src/slab.rs` — Per-CPU lookaside lists with global fallback for kernel object allocation.
 
 | Concept | Description |
 |---------|-------------|
 | **Size classes** | 9 power-of-2 caches: 8, 16, 32, 64, 128, 256, 512, 1024, 2048 bytes |
+| **Per-CPU hot cache** | 32-object free list in KPRCB (GS-segment), O(1) alloc/free without locks |
 | **Slab pages** | 4 KB pages from `hal::alloc_page()` (physical frames) |
 | **Page header** | 32-byte `#[repr(C, align(16))]` header at offset 0: magic "SLAB" (u32), slot_size (u16), capacity (u16), allocated (u16), free_head (u16), next pointer |
 | **Free list** | Inline `u16` indices stored in each free slot — O(1) alloc and free |
@@ -224,8 +225,9 @@ absolute LBAs (no `base_lba`).
 | **Fallback** | `linked_list_allocator::LockedHeap` for objects >2048 bytes or alignment >16 |
 | **Isolation** | Heap region (0x01000000..0x02000000) reserved in frame bitmap to prevent slab/heap overlap |
 | **Global allocator** | `SlabAllocator` implements `GlobalAlloc`, set as `#[global_allocator]` in `allocator.rs` |
-| **Locking** | Single `spin::Mutex` protects all 9 caches; `LockedHeap` has its own internal Mutex |
-| **Tests** | 9 tests: per-size alloc/free, multi-page stress, mix sizes, large fallback, free-reuse |
+| **Locking** | Global `spin::Mutex` protects 9 global slab caches; per-CPU hot caches lock-free via GS |
+| **Refill/drain** | `refill_from_global()` moves batch from global to local; `drain_to_global()` returns full local batch |
+| **Tests** | 14 tests: per-size alloc/free, multi-page stress, mix sizes, large fallback, free-reuse, per-CPU alloc/free, refill/drain, scaling, dispatch-level, stress 100k |
 
 ## Demand Paging (heap 4 KB)
 
@@ -532,7 +534,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-343 tests en 41 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+353 tests en 41 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -571,7 +573,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (343 tests kernel)
+1. Ejecuta `testing::run_all()` (353 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
 
 ## SMP & Per-CPU Architecture (A1)
@@ -620,6 +622,21 @@ Comando `test`:
 - AP trampoline: 16-bit real mode → 32-bit protected → 64-bit long mode
 - `ap_entry()`: sets GS base via `wrmsr(IA32_GS_BASE)`, signals readiness via `AP_READY`
 - BSP polls `AP_READY_COUNT` until all APs are ready
+
+### IPI Infrastructure
+
+`src/arch/x64/ipi.rs` — Unified IPI module for inter-processor communication.
+
+| Vector | Name | Purpose |
+|--------|------|---------|
+| 0xF0 | IPI_RESCHEDULE | Wake remote CPU's scheduler (sets per-CPU `need_resched`) |
+| 0xF1 | IPI_TLB_SHOOTDOWN | Synchronous TLB invalidation with ACK protocol |
+| 0xF2 | IPI_CALL_FUNCTION | Execute function on remote CPUs with ACK |
+
+- **TLB shootdown**: `tlb_shootdown(start, end, target_mask)` — shared `TlbShootdownPayload` with atomic ack counter. Target CPUs execute `invlpg` for each page and ACK. Used by `paging.rs` for heap/mmap page free and protection changes.
+- **Call function**: `call_function_all(func, arg, target_mask)` — `CallFunctionPayload` with atomic func pointer and ack counter. Generic cross-CPU function dispatch.
+- **Scheduler integration**: `enqueue_to_cpu_run_queue()` sends `IPI_RESCHEDULE` to remote CPU when thread is enqueued.
+- **EOI**: `ack_irq()` in `hal/x64/irq.rs` sends APIC EOI for ALL vectors >= 32 (fixed bug where IPI vectors were not acknowledged).
 
 ## Kernel Object Manager (KOBJ) v1
 

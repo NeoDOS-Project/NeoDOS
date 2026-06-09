@@ -7,6 +7,7 @@ pub mod paging;
 pub mod msr;
 pub mod smp;
 pub mod cpu_local;
+pub mod ipi;
 
 pub use gdt::init as init_gdt;
 pub use idt::init as init_idt;

@@ -1,13 +1,18 @@
-//! Kernel slab allocator — efficient fixed-size allocation.
+//! Kernel slab allocator — per-CPU lookaside lists with global fallback.
 //!
-//! Manages 9 size classes (8B–2KB) backed by 4 KB slab pages with O(1)
-//! alloc/free via per-slot free lists. Larger allocations or alignments
-//! >16 bytes fall through to the linked-list fallback allocator.
+//! Architecture:
+//! - 9 size classes (8B–2KB) backed by 4 KB slab pages
+//! - Per-CPU hot caches (32 objects each) in KPRCB for O(1) lock-free alloc/free
+//! - Global pool protected by `spin::Mutex` for cross-CPU replenishment
+//! - Fallback to `linked_list_allocator` for objects >2048 bytes or alignment >16
 //!
-//! Each 4 KB slab page carries a 32-byte header with magic + free-list
-//! metadata; the remainder is divided into equal-sized slots.  Free
-//! slots are chained by storing the next-free index as a `u16` at the
-//! start of each slot.
+//! Fast path (alloc_local / free_local):
+//!   No locks, no atomic ops. Just GS-segment reads/writes to the per-CPU
+//!   free_list array. O(1) for both alloc and free.
+//!
+//! Slow path (refill / drain):
+//!   Acquires the global `Mutex`, moves a batch of up to SLAB_BATCH_SIZE
+//!   objects between global slab pages and the per-CPU hot cache.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
@@ -15,6 +20,7 @@ use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 use crate::memory;
 use crate::serial_println;
+use crate::arch::x64::cpu_local;
 
 // ── Constants ────────────────────────────────────────────────────────────
 
@@ -32,6 +38,9 @@ const NUM_CACHES: usize = 9;
 
 /// Size classes — power-of-two from 8 to 2048.
 const CACHE_SIZES: [usize; NUM_CACHES] = [8, 16, 32, 64, 128, 256, 512, 1024, 2048];
+
+/// Batch size for refill/drain operations (must match SLAB_BATCH_SIZE in cpu_local).
+const BATCH_SIZE: usize = 32;
 
 // ── SlabPage: per-page header ────────────────────────────────────────────
 
@@ -128,8 +137,10 @@ impl SlabPage {
     }
 }
 
-// ── SlabCache: single size class ─────────────────────────────────────────
+// ── SlabCache: single size class (global pool) ──────────────────────────
 
+/// Global slab cache for a single size class.
+/// Protected by the parent `SlabAllocator` mutex.
 struct SlabCache {
     head: *mut SlabPage,
     slot_size: usize,
@@ -140,6 +151,7 @@ impl SlabCache {
         SlabCache { head: ptr::null_mut(), slot_size }
     }
 
+    /// Allocate a single object from the global pool.
     fn alloc(&mut self) -> *mut u8 {
         let mut curr = self.head;
         while !curr.is_null() {
@@ -168,6 +180,7 @@ impl SlabCache {
         unsafe { (*page).alloc() }
     }
 
+    /// Free an object back to the global pool.
     fn free(&mut self, ptr: *mut u8) -> bool {
         let page_base = (ptr as usize) & !(SLAB_PAGE_SIZE - 1);
         if page_base == 0 {
@@ -180,6 +193,33 @@ impl SlabCache {
         }
         slab.free(ptr);
         true
+    }
+
+    /// Fill a batch of objects from the global pool into a local buffer.
+    /// Returns the number of objects moved.
+    fn refill_batch(&mut self, buf: &mut [*mut u8; BATCH_SIZE]) -> usize {
+        let mut count = 0;
+        while count < BATCH_SIZE {
+            let obj = self.alloc();
+            if obj.is_null() {
+                break;
+            }
+            buf[count] = obj;
+            count += 1;
+        }
+        count
+    }
+
+    /// Drain a batch of objects from a local buffer into the global pool.
+    /// Returns the number of objects moved.
+    fn drain_batch(&mut self, buf: &[*mut u8], count: usize) -> usize {
+        let mut drained = 0;
+        for i in 0..count {
+            if self.free(buf[i]) {
+                drained += 1;
+            }
+        }
+        drained
     }
 }
 
@@ -225,7 +265,8 @@ impl SlabAllocator {
     }
 
     pub fn init(&self, heap_start: *mut u8, heap_size: usize) {
-        serial_println!("[SLAB] [+] Initializing slab allocator ({} caches)", NUM_CACHES);
+        serial_println!("[SLAB] [+] Initializing per-CPU slab allocator ({} caches, batch={})",
+                       NUM_CACHES, BATCH_SIZE);
 
         // Reserve the fallback-heap region in the physical frame allocator
         // so that slab pages (from hal::mem::alloc_page) never collide with
@@ -236,8 +277,9 @@ impl SlabAllocator {
             self.fallback.lock().init(heap_start, heap_size);
         }
 
-        serial_println!("[SLAB] [+] Ready: {}B..{}B slab + {} KB fallback",
-                       CACHE_SIZES[0], CACHE_SIZES[NUM_CACHES - 1], heap_size / 1024);
+        serial_println!("[SLAB] [+] Ready: {}B..{}B slab + {} KB fallback, per-CPU hot cache={} slots",
+                       CACHE_SIZES[0], CACHE_SIZES[NUM_CACHES - 1],
+                       heap_size / 1024, BATCH_SIZE);
     }
 
     fn cache_index(size: usize) -> Option<usize> {
@@ -247,16 +289,66 @@ impl SlabAllocator {
         }
         Some((rounded.trailing_zeros() - 3) as usize)
     }
+
+    /// Refill the per-CPU hot cache from the global pool.
+    /// Called when the local cache is empty.
+    #[cold]
+    fn refill_from_global(&self, cache_idx: usize) -> usize {
+        let mut inner = self.inner.lock();
+        let mut batch = [ptr::null_mut::<u8>(); BATCH_SIZE];
+        let count = inner.caches[cache_idx].refill_batch(&mut batch);
+
+        // Push objects into per-CPU hot cache (GS-segment writes, no lock needed)
+        unsafe {
+            for i in 0..count {
+                let _ = cpu_local::this_cpu_slab_free_local(cache_idx, batch[i]);
+            }
+        }
+        count
+    }
+
+    /// Drain the per-CPU hot cache to the global pool.
+    /// Called when the local cache is full.
+    #[cold]
+    fn drain_to_global(&self, cache_idx: usize) {
+        let mut inner = self.inner.lock();
+
+        // Read all objects from per-CPU hot cache
+        let mut batch = [ptr::null_mut::<u8>(); BATCH_SIZE];
+        let mut count = 0usize;
+        unsafe {
+            while let Some(obj) = cpu_local::this_cpu_slab_alloc_local(cache_idx) {
+                if count >= BATCH_SIZE { break; }
+                batch[count] = obj;
+                count += 1;
+            }
+        }
+
+        // Push into global pool
+        if count > 0 {
+            inner.caches[cache_idx].drain_batch(&batch, count);
+        }
+    }
 }
 
 unsafe impl GlobalAlloc for SlabAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if layout.size() <= MAX_SLAB_SIZE && layout.align() <= SLAB_ALIGN {
             if let Some(idx) = Self::cache_index(layout.size()) {
-                let mut inner = self.inner.lock();
-                let ptr = inner.caches[idx].alloc();
-                if !ptr.is_null() {
+                // Fast path: per-CPU hot cache (no lock, GS-segment only)
+                if let Some(ptr) = cpu_local::this_cpu_slab_alloc_local(idx) {
+                    cpu_local::gs_read_u64(
+                        cpu_local::OFFSET_SLAB_CACHES + (idx as u32) * 288 + 0x110
+                    ); // stats: total_allocated (read to bump, but we skip for perf)
                     return ptr;
+                }
+
+                // Slow path: refill from global pool (acquires lock)
+                let count = self.refill_from_global(idx);
+                if count > 0 {
+                    if let Some(ptr) = cpu_local::this_cpu_slab_alloc_local(idx) {
+                        return ptr;
+                    }
                 }
                 // Slab OOM — fall through to fallback.
             }
@@ -270,18 +362,25 @@ unsafe impl GlobalAlloc for SlabAllocator {
         }
 
         // Check if the pointer is from a slab page by inspecting the
-        // page-aligned header magic.  This is safe because slab pages
-        // are always 4 KB aligned and the magic is immutable after init.
+        // page-aligned header magic.
         let page_base = (ptr as usize) & !(SLAB_PAGE_SIZE - 1);
         if page_base != 0 {
             let page = page_base as *const SlabPage;
             if (*page).magic == SLAB_MAGIC {
                 let sz = (*page).slot_size as usize;
                 if let Some(idx) = Self::cache_index(sz) {
-                    let mut inner = self.inner.lock();
-                    if inner.caches[idx].free(ptr) {
+                    // Fast path: return to per-CPU hot cache (no lock)
+                    if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
                         return;
                     }
+
+                    // Slow path: drain to global pool (acquires lock)
+                    self.drain_to_global(idx);
+                    // Now the local cache has room — retry
+                    if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
+                        return;
+                    }
+                    // Should never fail after drain, but fall through just in case
                 }
             }
         }

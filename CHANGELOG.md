@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.31.0 — 2026-06-09
+
+### A1.3. Per-CPU Slab Allocator
+
+#### Added
+- **`src/slab.rs`** — Complete rewrite with per-CPU fast path: 32-object hot caches in KPRCB via GS-segment for O(1) alloc/free without locks. `refill_from_global()` / `drain_to_global()` with global `spin::Mutex` for cross-CPU replenishment. Batch size = 32 objects. Fallback to `LockedHeap` for >2KB or >16-byte alignment.
+- **`arch/x64/cpu_local.rs`** — Per-CPU slab accessor functions: `this_cpu_slab_alloc_local()`, `this_cpu_slab_free_local()`, `this_cpu_slab_head()`, `this_cpu_set_slab_head()`. GS-segment helpers: `gs_read_u16()`, `gs_write_u16()`. Layout constants for `PerCpuSlabCache` fields (head, free_list, free_count, slot_size, total_allocated, total_freed).
+
+### A1.4. IPI Infrastructure + TLB Shootdown
+
+#### Added
+- **`arch/x64/ipi.rs`** — Unified IPI module: `send_ipi()`, `send_ipi_all()`, `send_ipi_all_excl_self()`, `send_ipi_mask()` via Local APIC ICR. Three IPI vectors: `IPI_RESCHEDULE` (0xF0), `IPI_TLB_SHOOTDOWN` (0xF1), `IPI_CALL_FUNCTION` (0xF2). Synchronous TLB shootdown with `TlbShootdownPayload` (start, end, target_mask, ack_count, done). Cross-CPU function call with `CallFunctionPayload` and `CallFunctionCb` dispatch. IDT handlers for vectors 0xF1 and 0xF2.
+- **`arch/x64/paging.rs`** — TLB shootdown coordination: `build_tlb_target_mask()` scans scheduler for active threads on remote CPUs. `shootdown_single_page()` and `shootdown_range()` called from `heap_free_page()`, `heap_free_range()`, `mmap_free_page()`, `mmap_free_range()`, `set_page_user_accessible()`.
+
+#### Changed
+- **`hal/x64/irq.rs`** — `ack_irq()` rewritten with proper vector routing: IPI vectors (0xF0–0xF2) always use APIC EOI; timer vector 32 uses APIC EOI when APIC timer active; legacy device IRQs (32–47) always use PIC EOI. Fixed bug where APIC EOI was sent for keyboard IRQ (33), causing input to hang.
+- **`scheduler.rs`** — `enqueue_to_cpu_run_queue()` sends `IPI_RESCHEDULE` to remote CPU when thread is enqueued on another CPU's run queue.
+- **`main.rs`** — Added PHASE 2.9: IPI subsystem initialization after SMP init.
+
+#### Tests
+- 5 new per-CPU slab tests: `per_cpu_slab_alloc_free_concurrent`, `per_cpu_refill_drain_batching`, `slab_scaling_8cpu`, `slab_under_irql_dispatch`, `slab_stress_100k`.
+- 5 new IPI tests: `ipi_constants`, `ipi_tlb_shootdown_struct`, `ipi_call_function_struct`, `ipi_tlb_shootdown_local_only`, `ipi_call_function_no_targets`.
+- Total: 353 kernel tests (343 + 10 new).
+
 ## v0.30.0 — 2026-06-08
 
 ### A1.1/A1.2. Per-CPU Data Structures + SMP + Run Queues

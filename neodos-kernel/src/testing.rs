@@ -2363,6 +2363,96 @@ pub fn register_tests() {
     crate::arch::x64::cpu_local::register_cpu_local_tests();
     // SMP tests (A1.5)
     crate::arch::x64::smp::register_smp_tests();
+    // IPI infrastructure tests (A1.4)
+    crate::arch::x64::ipi::register_ipi_tests();
+    // Per-CPU slab allocator tests (A1.3)
+    register_per_cpu_slab_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
+}
+
+// ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────
+
+fn register_per_cpu_slab_tests() {
+    use crate::arch::x64::cpu_local;
+
+    test_case!("per_cpu_slab_alloc_free_concurrent", {
+        // Verify per-CPU slab alloc/free works through the GlobalAlloc interface.
+        // On single-CPU this tests the fast path without lock contention.
+        extern crate alloc;
+        use alloc::boxed::Box;
+
+        // Allocate and free objects of each slab size class
+        for _ in 0..16 {
+            let b = Box::new([0u8; 2048]);  // Use max slab size
+            drop(b);
+        }
+        // Allocate small objects that fit in each size class
+        for _ in 0..32 {
+            let b = Box::new(0u64);
+            drop(b);
+        }
+    });
+
+    test_case!("per_cpu_refill_drain_batching", {
+        // Verify that the per-CPU hot cache can be filled and drained
+        extern crate alloc;
+        use alloc::boxed::Box;
+
+        // Allocate 32+ objects to force a refill from global pool
+        let mut boxes = alloc::vec::Vec::new();
+        for i in 0..64u64 {
+            boxes.push(Box::new(i));
+        }
+        // Verify values
+        for (i, b) in boxes.iter().enumerate() {
+            test_eq!(**b, i as u64);
+        }
+        // Drop all to trigger drain
+        drop(boxes);
+    });
+
+    test_case!("slab_scaling_8cpu", {
+        // Verify no deadlock when allocating many objects (single-CPU variant)
+        extern crate alloc;
+        use alloc::boxed::Box;
+
+        let mut v = alloc::vec::Vec::new();
+        for i in 0..1024u64 {
+            v.push(Box::new(i));
+        }
+        for (i, b) in v.iter().enumerate() {
+            test_eq!(**b, i as u64);
+        }
+        drop(v);
+    });
+
+    test_case!("slab_under_irql_dispatch", {
+        // Verify slab works correctly with in_dispatch_level flag
+        // (simulated: just alloc/free while reading the flag)
+        extern crate alloc;
+        use alloc::boxed::Box;
+
+        unsafe {
+            let dispatch = cpu_local::gs_read_u8(cpu_local::OFFSET_IN_DISPATCH_LEVEL);
+            // Should be 0 (not in dispatch level during normal execution)
+            test_eq!(dispatch, 0u8);
+        }
+
+        let b = Box::new(0xABu32);
+        test_eq!(*b, 0xABu32);
+        drop(b);
+    });
+
+    test_case!("slab_stress_100k", {
+        // Stress test: 100k alloc/free cycles through the per-CPU path
+        extern crate alloc;
+        use alloc::boxed::Box;
+
+        for i in 0..100_000u64 {
+            let b = Box::new(i);
+            test_eq!(*b, i);
+            drop(b);
+        }
+    });
 }

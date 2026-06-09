@@ -589,6 +589,117 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
     stolen
 }
 
+// ── Per-CPU slab cache accessors (GS-segment) ───────────────────────────
+//
+// PerCpuSlabCache layout (from cpu_local.rs):
+//   offset 0x00: head          (*mut u8, 8 bytes)
+//   offset 0x08: free_list     ([*mut u8; 32], 256 bytes)
+//   offset 0x108: free_count   (u16)
+//   offset 0x10A: slot_size    (u16)
+//   offset 0x10C: pad          (4 bytes)
+//   offset 0x110: total_allocated (u64)
+//   offset 0x118: total_freed  (u64)
+//   Total: 288 bytes per cache
+
+/// Size of one PerCpuSlabCache in bytes (must match struct layout).
+const PER_CPU_SLAB_CACHE_SIZE: u32 = 288;
+
+/// Offset within a single PerCpuSlabCache to its `free_count` field.
+const SLAB_FREE_COUNT_OFFSET: u32 = 0x108;
+
+/// Offset within a single PerCpuSlabCache to its `free_list[0]` element.
+const SLAB_FREE_LIST_OFFSET: u32 = 0x008;
+
+/// Maximum objects per-CPU hot cache.
+pub const SLAB_BATCH_SIZE_USIZE: usize = 32;
+
+/// Get the absolute GS-segment offset of the `free_count` for a given cache index.
+#[inline(always)]
+fn slab_free_count_offset(cache_idx: usize) -> u32 {
+    OFFSET_SLAB_CACHES + (cache_idx as u32) * PER_CPU_SLAB_CACHE_SIZE + SLAB_FREE_COUNT_OFFSET
+}
+
+/// Get the absolute GS-segment offset of `free_list[i]` for a given cache index.
+#[inline(always)]
+fn slab_free_list_elem_offset(cache_idx: usize, elem: usize) -> u32 {
+    OFFSET_SLAB_CACHES + (cache_idx as u32) * PER_CPU_SLAB_CACHE_SIZE
+        + SLAB_FREE_LIST_OFFSET + (elem as u32) * 8
+}
+
+/// Try to pop a free object from the per-CPU hot cache.
+/// Returns the object pointer if available, or `None` if the cache is empty.
+///
+/// # Safety
+/// Requires GS base to be set. Only the owning CPU should call this.
+#[inline(always)]
+pub unsafe fn this_cpu_slab_alloc_local(cache_idx: usize) -> Option<*mut u8> {
+    let count_offset = slab_free_count_offset(cache_idx);
+    let count = gs_read_u16(count_offset);
+    if count == 0 {
+        return None;
+    }
+    let idx = (count - 1) as usize;
+    let ptr = gs_read_u64(slab_free_list_elem_offset(cache_idx, idx));
+    gs_write_u16(count_offset, count - 1);
+    Some(ptr as *mut u8)
+}
+
+/// Push a free object into the per-CPU hot cache.
+/// Returns `Ok(())` on success, or `Err(ptr)` if the cache is full.
+///
+/// # Safety
+/// Requires GS base to be set. Only the owning CPU should call this.
+#[inline(always)]
+pub unsafe fn this_cpu_slab_free_local(cache_idx: usize, ptr: *mut u8) -> Result<(), *mut u8> {
+    let count_offset = slab_free_count_offset(cache_idx);
+    let count = gs_read_u16(count_offset);
+    if count as usize >= SLAB_BATCH_SIZE_USIZE {
+        return Err(ptr);
+    }
+    let elem_offset = slab_free_list_elem_offset(cache_idx, count as usize);
+    gs_write_u64(elem_offset, ptr as u64);
+    gs_write_u16(count_offset, count + 1);
+    Ok(())
+}
+
+/// Get the per-CPU slab cache `head` pointer for a given cache index.
+#[inline(always)]
+pub unsafe fn this_cpu_slab_head(cache_idx: usize) -> *mut u8 {
+    let offset = OFFSET_SLAB_CACHES + (cache_idx as u32) * PER_CPU_SLAB_CACHE_SIZE;
+    gs_read_u64(offset) as *mut u8
+}
+
+/// Set the per-CPU slab cache `head` pointer for a given cache index.
+#[inline(always)]
+pub unsafe fn this_cpu_set_slab_head(cache_idx: usize, head: *mut u8) {
+    let offset = OFFSET_SLAB_CACHES + (cache_idx as u32) * PER_CPU_SLAB_CACHE_SIZE;
+    gs_write_u64(offset, head as u64);
+}
+
+/// Read a u16 from the current CPU's KPRCB at the given byte offset.
+#[inline(always)]
+pub unsafe fn gs_read_u16(offset: u32) -> u16 {
+    let val: u32;
+    core::arch::asm!(
+        "mov {0:e}, gs:[{1}]",
+        out(reg) val,
+        in(reg) offset as u64,
+        options(nostack, nomem)
+    );
+    val as u16
+}
+
+/// Write a u16 to the current CPU's KPRCB at the given byte offset.
+#[inline(always)]
+pub unsafe fn gs_write_u16(offset: u32, val: u16) {
+    core::arch::asm!(
+        "mov gs:[{0}], {1:e}",
+        in(reg) offset as u64,
+        in(reg) val as u32,
+        options(nostack, nomem)
+    );
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 pub fn register_cpu_local_tests() {

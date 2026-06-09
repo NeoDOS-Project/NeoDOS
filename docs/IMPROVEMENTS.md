@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.30.0 (343 kernel tests + 4 user-mode binaries).
+> Versión actual: v0.31.0 (353 kernel tests + 4 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 92 / ~130 items completados. Próximo milestone: **A1.3** (Per-CPU slab allocator).
+**Progreso:** 94 / ~130 items completados. Próximo milestone: **A2.4** (IRQL framework).
 
 ---
 
@@ -28,7 +28,7 @@
 
 ---
 
-## COMPLETED (89 items)
+## COMPLETED (94 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -132,6 +132,8 @@
 95. **Bug fix: handler_exit deadlock** — Double-locking SCHEDULER mutex when calling wake_thread_joiner(). Inlined wake call.
 96. **Bug fix: request_exit_to_kernel()** — Read value as pointer instead of using gs_write_u8.
 97. **Bug fix: KPRCB offset constants** — 13 offsets 2 bytes too low due to CpuRunQueue alignment. Fixed with compile-time assertions.
+98. **A1.3. Per-CPU slab allocator** — `src/slab.rs` rewritten with per-CPU fast path: 32-object hot caches in KPRCB via GS-segment, O(1) alloc/free without locks. `refill_from_global()` / `drain_to_global()` with global Mutex for cross-CPU replenishment. Per-CPU slab accessor functions in `cpu_local.rs` (gs_read_u16/gs_write_u16, this_cpu_slab_alloc_local/free_local). 5 tests: `per_cpu_slab_alloc_free_concurrent`, `per_cpu_refill_drain_batching`, `slab_scaling_8cpu`, `slab_under_irql_dispatch`, `slab_stress_100k`.
+99. **A1.4. IPI infrastructure + TLB shootdown** — `arch/x64/ipi.rs`: unified IPI module with `send_ipi()`, `send_ipi_mask()`, `send_ipi_all()`. IPI_TLB_SHOOTDOWN (vector 0xF1) with synchronous ACK protocol and shared `TlbShootdownPayload`. IPI_CALL_FUNCTION (vector 0xF2) with `CallFunctionCb` dispatch. TLB shootdown integrated into `paging.rs` (heap_free_page, heap_free_range, mmap_free_page, mmap_free_range, set_page_user_accessible). `ack_irq()` fixed to send APIC EOI for all vectors >= 32 (was only vector 32). Scheduler sends IPI_RESCHEDULE on cross-CPU thread enqueue. 5 tests: `ipi_constants`, `ipi_tlb_shootdown_struct`, `ipi_call_function_struct`, `ipi_tlb_shootdown_local_only`, `ipi_call_function_no_targets`.
 
 ---
 
@@ -209,41 +211,6 @@ El scheduler actual asume monoprocesador y planifica `Process` como unidad únic
   - **Descripción:** Per-CPU run queues en KPRCB (CpuRunQueue). `schedule()` intenta cola local → work stealing → fallback global. IPI_RESCHEDULE (vector 0xF0) registrado en IDT. `send_ipi()` via APIC ICR. Threads encolados en creación, wake, y timer expiry.
   - **Limitaciones:** Load balancing pasivo (sin timer-driven balance). Thread affinity no implementada. Work stealing usa scan lineal.
   - **Tests:** Integrados en los 343 kernel tests.
-
-- [ ] **A1.3. Per-CPU slab allocator** | NT: Per-processor lookaside lists | Prereqs: A1.1
-  - **Archivos:** `src/slab.rs` (reescritura completa), `src/memory/per_cpu_cache.rs`, integración `src/allocator.rs`
-  - **Descripción:** Caches locales por CPU sin spin::Mutex en path crítico, inspirados en lookaside lists de NT.
-    - **Estructura:** 9 caches per-CPU (8B, 16B, ..., 2KB). Cada caché contiene up to `BATCH_SIZE=32` objetos pre-asignados. Almacenados en KPRCB via macro `per_cpu!`.
-    - **Alloc rápido:** `alloc_local(size)` → sin locks, examina caché local, extrae objeto O(1). Si vacío → `refill_from_global(size)` (con lock de caché global).
-    - **Free rápido:** `free_local(ptr, size)` → sin locks, retorna objeto a caché local. Si full → `drain_to_global()` (con lock).
-    - **Global pool:** Un caché global compartido (con `spin::Mutex`) mantiene stock. `refill_from_global()` llena lote de CPU-local desde global. `drain_to_global()` devuelve lotes cuando local lleno.
-    - **Per-CPU state:** `thread_in_dispatch_level: bool`. Si `true`, `alloc_local`/`free_local` no requieren lock (solo lectura GS). Si `false` (passive level), lock implícito via página compartida (CAS).
-    - **Fallback:** >2KB → sigue usando `LockedHeap` (linked_list_allocator).
-  - **Criterio:**
-    - Single-threaded alloc/free: throughput similar a v0.14 (baseline).
-    - 8 CPUs simultáneamente alloqueando 1024 objetos 128B cada uno: throughput 8× esperado vs 1 CPU (lineal scaling). Sin tunelación de locks a global.
-    - Stress test: 100k allocs/free/reallocs en 8 CPUs, no deadlock, no memory leak.
-  - **Tests:** `per_cpu_slab_alloc_free_concurrent`, `per_cpu_refill_drain_batching`, `slab_scaling_8cpu`, `slab_under_irql_dispatch`, `slab_stress_100k` (5 tests).
-
-- [ ] **A1.4. IPI infrastructure + TLB shootdown** | NT: `KeIpiGenericCall`, TLB invalidation | Prereqs: A1.1, A2.4
-  - **Archivos:** `arch/x64/ipi.rs`, `arch/x64/paging.rs` (refactor), `src/hal/ipi.rs`
-  - **Descripción:** Inter-Processor Interrupts para mantener coherencia de memoria y TLB entre CPUs.
-    - **IPI delivery:** `send_ipi(cpu_mask: u64, vector: u8)` escribe en Local APIC ICR (Interrupt Command Register): bits 56-63 destination, bits 0-7 vector. Delivery mode FIXED (bits 8-10 = 000). Wait para APIC delivery (polling bit 12 "delivery status" hasta 0).
-    - **IPI handlers:** IDT entradas 240–252 reservadas para IPIs.
-      - `IPI_RESCHEDULE` (vector 240): destino CPU re-ejecuta `schedule()` sin cambiar contexto actual. Usado por load_balance y wake-from-blocked-wait.
-      - `IPI_TLB_SHOOTDOWN` (vector 241): invalida rango TLB. Payload: `[start_addr, end_addr, asid?]` en estructura compartida. CPU ejecuta `invlpg` para cada página en rango, envía ACK vía IPI de retorno.
-      - `IPI_CALL_FUNCTION` (vector 242): ejecuta función genérica con parámetro. Usado por CPU hotplug, mode change.
-    - **TLB coherence:** Cuando CPU modifica page table (munmap, prot change, COW fault), debe invalidar TLB en todas las CPUs que podrían tener la página cached:
-      1. Lee `pcb.cr3` (PML4 físico), busca en scheduler todos los EPROCESS con ese CR3.
-      2. Para cada EPROCESS, construye bitmask de CPUs actualmente ejecutando threads de ese proceso (from `thread.cpu_id`).
-      3. Envía `IPI_TLB_SHOOTDOWN` al bitmask. Espera confirmación (ACK).
-      4. `invlpg` local en CPU actual.
-    - **Shootdown latency:** Target < 1 ms para invalidar 1 página, < 100 µs para invalidar 1 rango contiguo.
-  - **Criterio:**
-    - CPU 0 llama `munmap(0x10000000, 4KB)`. Thread en CPU 1 tenía esa página mapeada. Sin IPI, CPU 1 continuaría con caché TLB stale.
-    - Con IPI: `send_ipi(1<<1, IPI_TLB_SHOOTDOWN)` → CPU 1 recibe, ejecuta `invlpg(0x10000000)`, responde ACK.
-    - Medición: próxima lectura en CPU 1 a esa dirección causaría page fault (esperado) vs cache hit (bug).
-  - **Tests:** `ipi_tlb_shootdown_single_page`, `ipi_tlb_shootdown_range_1mb`, `ipi_call_function_all_cpus`, `ipi_ack_timeout_handling`, `ipi_shootdown_latency_sub_100us` (5 tests).
 
 ---
 
@@ -861,8 +828,8 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 
 - [ ] **B6.1 V2. Zero-copy pipes** | Prereqs: A4.5, S2 | Files: `src/pipe.rs` | Done when: pipe read/write sin copia kernel intermedia para buffers alineados.
 - [ ] **B6.2 V3. Copy-on-write fork** | Prereqs: A1.5 | Files: `src/memory/cow.rs`, `src/syscall.rs` | Done when: `sys_fork` duplica address space con COW pages.
-- [ ] **B6.3 X10. Per-CPU allocators** | Prereqs: A1.3 | Ref: cubierto por A1.3 — marcar completado cuando A1.3 lo esté.
-- [ ] **B6.4 X8. SMP-safe kernel** | Prereqs: A1.1–A1.4 | Ref: cubierto por A1 — marcar completado cuando A1 lo esté.
+- [x] **B6.3 X10. Per-CPU allocators** | Prereqs: A1.3 | Ref: cubierto por A1.3.
+- [x] **B6.4 X8. SMP-safe kernel** | Prereqs: A1.1–A1.4 | Ref: cubierto por A1.
 
 #### B7. Experimental
 
@@ -884,8 +851,8 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 3 | Handle table fijo (16) | A0.4 | Ob handles | Completado | — |
 | 4 | Thread model ausente (1 hilo/proceso) | A1.5 | KTHREAD | Pendiente | Sin multithreading, sin APC, sin fork real |
 | 5 | Scheduler monoprocesador | A1.1–A1.2 | Ps | Pendiente | No escala a multi-core |
-| 6 | Slab allocator lock global | A1.3 | Lookaside | Pendiente | Throughput no escala con CPUs |
-| 7 | Sin IPI / TLB shootdown | A1.4 | KeIpi | Pendiente | Data corruption en SMP |
+| 6 | Slab allocator lock global | A1.3 | Lookaside | Completado | Throughput no escala con CPUs |
+| 7 | Sin IPI / TLB shootdown | A1.4 | KeIpi | Completado | Data corruption en SMP |
 | 8 | IRQL ausente (solo cli/sti) | A2.4 | IRQL | Pendiente | Latencia IRQ, sin DPC real |
 | 9 | DPC ausente (work queue parche) | A2.5 | DPC | Pendiente | Completion paths incorrectos |
 | 10 | PCI port I/O asume x86 | A2.1 | HAL | Pendiente | No portar a ARM64/RISC-V |

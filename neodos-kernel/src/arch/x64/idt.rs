@@ -174,6 +174,18 @@ lazy_static! {
                 .set_handler_addr(x86_64::VirtAddr::new(ipi_reschedule_handler as *const () as u64));
         }
 
+        // IPI handler for TLB shootdown (vector 0xF1)
+        unsafe {
+            idt[0xF1]
+                .set_handler_addr(x86_64::VirtAddr::new(ipi_tlb_shootdown_handler as *const () as u64));
+        }
+
+        // IPI handler for cross-CPU function call (vector 0xF2)
+        unsafe {
+            idt[0xF2]
+                .set_handler_addr(x86_64::VirtAddr::new(ipi_call_function_handler as *const () as u64));
+        }
+
         idt
     };
 }
@@ -492,7 +504,21 @@ extern "x86-interrupt" fn ipi_reschedule_handler(_: InterruptStackFrame) {
     unsafe {
         crate::arch::x64::cpu_local::this_cpu_set_need_resched(true);
     }
-    crate::hal::ack_irq(0xF0);
+    crate::hal::ack_irq(crate::arch::x64::ipi::IPI_RESCHEDULE);
+}
+
+/// IPI handler for TLB shootdown (vector 0xF1).
+/// Invalidates TLB entries for a virtual address range and sends ACK.
+extern "x86-interrupt" fn ipi_tlb_shootdown_handler(_: InterruptStackFrame) {
+    crate::arch::x64::ipi::ipi_tlb_shootdown_handler_impl();
+    crate::hal::ack_irq(crate::arch::x64::ipi::IPI_TLB_SHOOTDOWN);
+}
+
+/// IPI handler for cross-CPU function call (vector 0xF2).
+/// Executes a registered function on the receiving CPU and sends ACK.
+extern "x86-interrupt" fn ipi_call_function_handler(_: InterruptStackFrame) {
+    crate::arch::x64::ipi::ipi_call_function_handler_impl();
+    crate::hal::ack_irq(crate::arch::x64::ipi::IPI_CALL_FUNCTION);
 }
 
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {

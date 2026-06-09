@@ -3,6 +3,50 @@ use x86_64::PhysAddr;
 use crate::serial_println;
 use crate::scheduler::MmapRegion;
 
+// ── TLB shootdown helpers ────────────────────────────────────────────────
+
+/// Build a CPU bitmask of all CPUs that might have user pages cached in TLB.
+/// In this single-address-space kernel, all user processes share the same
+/// CR3, so we target all CPUs that have active non-terminated threads.
+fn build_tlb_target_mask() -> u64 {
+    let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    let count = crate::arch::x64::cpu_local::cpu_count() as usize;
+    let mut mask = 0u64;
+
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let scheduler = s.lock();
+        for slot in &scheduler.kthreads {
+            if let Some(k) = slot {
+                if k.state == crate::scheduler::ThreadState::Terminated {
+                    continue;
+                }
+                if (k.cpu as usize) < count && k.cpu as usize != my_cpu {
+                    mask |= 1u64 << (k.cpu as usize);
+                }
+            }
+        }
+    });
+
+    mask
+}
+
+/// Perform a cross-CPU TLB shootdown for a single page.
+fn shootdown_single_page(page: u64) {
+    let mask = build_tlb_target_mask();
+    if mask != 0 {
+        let _ = crate::arch::x64::ipi::tlb_shootdown(page, page + 4096, mask);
+    }
+}
+
+/// Perform a cross-CPU TLB shootdown for a range of pages.
+fn shootdown_range(start: u64, end: u64) {
+    let mask = build_tlb_target_mask();
+    if mask != 0 {
+        let _ = crate::arch::x64::ipi::tlb_shootdown(start, end, mask);
+    }
+}
+
 #[repr(align(4096))]
 pub struct AlignedPageTable(PageTable);
 
@@ -347,6 +391,7 @@ pub fn mmap_free_page(virt: u64) {
         if entry.flags().contains(PageTableFlags::PRESENT) {
             let phys = entry.addr().as_u64();
             let _ = crate::hal::unmap_page(virt);
+            shootdown_single_page(virt);
             crate::hal::free_page(phys as *mut u8);
         }
     }
@@ -357,10 +402,14 @@ pub fn mmap_free_range(start: u64, end: u64) {
     let s = start.max(MMAP_BASE);
     let e = end.min(MMAP_BASE + MMAP_TOTAL_SIZE);
     let mut addr = s & !(PAGE_4K - 1);
+    let mut first_page = 0u64;
+    let mut last_page = 0u64;
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let phys = entry.addr().as_u64();
+                if first_page == 0 { first_page = addr; }
+                last_page = addr + PAGE_4K;
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
@@ -368,6 +417,9 @@ pub fn mmap_free_range(start: u64, end: u64) {
             }
         }
         addr += PAGE_4K;
+    }
+    if first_page < last_page {
+        shootdown_range(first_page, last_page);
     }
 }
 
@@ -544,6 +596,7 @@ pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
     }
     entry.set_addr(phys, flags);
     crate::hal::flush_tlb(virt);
+    shootdown_single_page(virt);
     Ok(())
 }
 
@@ -617,6 +670,7 @@ pub fn heap_free_page(virt: u64) {
     let Some(entry) = entry else { return };
     let phys = entry.addr().as_u64();
     let _ = crate::hal::unmap_page(virt);
+    shootdown_single_page(virt);
     crate::hal::free_page(phys as *mut u8);
 }
 
@@ -625,10 +679,14 @@ pub fn heap_free_range(start: u64, end: u64) {
     let s = start.max(PROCESS_HEAP_BASE);
     let e = end.min(PROCESS_HEAP_BASE + MAX_HEAP_SLOTS as u64 * PROCESS_HEAP_SIZE);
     let mut addr = s & !(PAGE_4K - 1);
+    let mut first_page = 0u64;
+    let mut last_page = 0u64;
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let phys = entry.addr().as_u64();
+                if first_page == 0 { first_page = addr; }
+                last_page = addr + PAGE_4K;
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
@@ -636,6 +694,9 @@ pub fn heap_free_range(start: u64, end: u64) {
             }
         }
         addr += PAGE_4K;
+    }
+    if first_page < last_page {
+        shootdown_range(first_page, last_page);
     }
 }
 

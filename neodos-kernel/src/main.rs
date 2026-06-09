@@ -169,6 +169,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let cpu_count = arch::x64::smp::init_smp();
     println!("[+] {} CPU(s) online", cpu_count);
 
+    // ============================================
+    // PHASE 2.9: IPI infrastructure
+    // ============================================
+    arch::x64::ipi::init();
+
     println!("[+] Enabling interrupts...");
     hal::enable_interrupts();
 

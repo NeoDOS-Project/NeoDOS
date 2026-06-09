@@ -725,9 +725,25 @@ impl Scheduler {
     fn enqueue_to_cpu_run_queue(k: &Kthread) {
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
+        let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
         unsafe {
             let run_queue = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
             run_queue.push(k.tid);
+        }
+        // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
+        if cpu != my_cpu {
+            unsafe {
+                let kprcb = crate::arch::x64::cpu_local::kprcb_page(cpu);
+                if let Some(kprcb_addr) = kprcb {
+                    let apic_id = core::ptr::read_volatile(
+                        (kprcb_addr + 4) as *const u32 // apic_id at offset 0x004
+                    );
+                    crate::arch::x64::ipi::send_ipi(
+                        apic_id,
+                        crate::arch::x64::ipi::IPI_RESCHEDULE,
+                    );
+                }
+            }
         }
     }
 
