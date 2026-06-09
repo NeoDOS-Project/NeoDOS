@@ -1,9 +1,9 @@
-ENTRY(dll_entry)
+ENTRY(nxl_entry)
 SECTIONS
 {
     /* Single LOAD segment: export table first, then code */
-    . = 0x1e000000;
-    __dll_start = .;
+    . = 0x1e040000;
+    __nxl_start = .;
 
     .export_table : {
         KEEP(*(.export_table))
@@ -25,5 +25,5 @@ SECTIONS
         *(COMMON)
     }
 
-    __dll_end = .;
+    __nxl_end = .;
 }

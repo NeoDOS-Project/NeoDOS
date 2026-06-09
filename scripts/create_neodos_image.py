@@ -22,11 +22,11 @@ PERM_D = 0x0010
 def default_perms_for_filename(name):
     """Match kernel's NeodosFs::default_perms_for_filename() logic."""
     upper = name.upper()
-    if upper.endswith('.BIN') or upper.endswith('.COM') or upper.endswith('.EXE'):
+    if upper.endswith('.NXE') or upper.endswith('.COM') or upper.endswith('.EXE'):
         return PERM_R | PERM_X
     elif upper.endswith('.NEM'):
         return PERM_R
-    elif upper.endswith('.DLL'):
+    elif upper.endswith('.NXL'):
         return PERM_R | PERM_X
     elif upper.endswith('.BAT') or upper.endswith('.CMD'):
         return PERM_R | PERM_X
@@ -208,47 +208,47 @@ Happy hacking!
 
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
-        bin_files = {}
+        nxe_files = {}
         for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test']:
-            fpath = os.path.join(userbin_dir, f'{name}.bin')
+            fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
                 with open(fpath, 'rb') as f:
                     data = f.read()
-                print(f"[*] Including {name}.bin ({len(data)} bytes)")
+                print(f"[*] Including {name}.nxe ({len(data)} bytes)")
             else:
-                print(f"[!] {name}.bin not found — skipping")
-            bin_files[name] = data
+                print(f"[!] {name}.nxe not found — skipping")
+            nxe_files[name] = data
 
-        # Read libneodos DLL binary.
+        # Read libneodos NXL binary.
         # Prefer the copied root artifact, but fall back to the crate output
-        # so the image still includes the DLL if the copy step was skipped.
-        dll_candidates = [
-            os.path.join(os.path.dirname(__file__), '..', 'libneodos.dll'),
-            os.path.join(os.path.dirname(__file__), '..', 'libneodos-dll', 'target', 'x86_64-unknown-none', 'release', 'libneodos-dll'),
+        # so the image still includes the NXL if the copy step was skipped.
+        nxl_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'libneodos.nxl'),
+            os.path.join(os.path.dirname(__file__), '..', 'libneodos-nxl', 'target', 'x86_64-unknown-none', 'release', 'libneodos-nxl'),
         ]
-        dll_path = next((path for path in dll_candidates if os.path.exists(path)), None)
-        dll_data = b''
-        if dll_path is not None:
-            with open(dll_path, 'rb') as f:
-                dll_data = f.read()
-            print(f"[*] Including libneodos.dll from {os.path.relpath(dll_path, os.path.dirname(__file__))} ({len(dll_data)} bytes)")
+        nxl_path = next((path for path in nxl_candidates if os.path.exists(path)), None)
+        nxl_data = b''
+        if nxl_path is not None:
+            with open(nxl_path, 'rb') as f:
+                nxl_data = f.read()
+            print(f"[*] Including libneodos.nxl from {os.path.relpath(nxl_path, os.path.dirname(__file__))} ({len(nxl_data)} bytes)")
         else:
-            print(f"[!] libneodos.dll not found — DLL not included")
+            print(f"[!] libneodos.nxl not found — NXL not included")
 
-        # Read libmath DLL binary.
-        math_dll_candidates = [
-            os.path.join(os.path.dirname(__file__), '..', 'libmath.dll'),
-            os.path.join(os.path.dirname(__file__), '..', 'libmath-dll', 'target', 'x86_64-unknown-none', 'release', 'libmath-dll'),
+        # Read libmath NXL binary.
+        math_nxl_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'libmath.nxl'),
+            os.path.join(os.path.dirname(__file__), '..', 'libmath-nxl', 'target', 'x86_64-unknown-none', 'release', 'libmath-nxl'),
         ]
-        math_dll_path = next((path for path in math_dll_candidates if os.path.exists(path)), None)
-        math_dll_data = b''
-        if math_dll_path is not None:
-            with open(math_dll_path, 'rb') as f:
-                math_dll_data = f.read()
-            print(f"[*] Including libmath.dll from {os.path.relpath(math_dll_path, os.path.dirname(__file__))} ({len(math_dll_data)} bytes)")
+        math_nxl_path = next((path for path in math_nxl_candidates if os.path.exists(path)), None)
+        math_nxl_data = b''
+        if math_nxl_path is not None:
+            with open(math_nxl_path, 'rb') as f:
+                math_nxl_data = f.read()
+            print(f"[*] Including libmath.nxl from {os.path.relpath(math_nxl_path, os.path.dirname(__file__))} ({len(math_nxl_data)} bytes)")
         else:
-            print(f"[!] libmath.dll not found — DLL not included")
+            print(f"[!] libmath.nxl not found — NXL not included")
 
         # Allocate data blocks dynamically from block 6 onwards
         next_block = 6
@@ -269,14 +269,14 @@ Happy hacking!
             return blks
 
         # Assign blocks for user binaries
-        hello_blocks = alloc_blocks(6, len(bin_files['hello']))
-        systest_blocks = alloc_blocks(7, len(bin_files['systest']))
-        filetest_blocks = alloc_blocks(8, len(bin_files['filetest']))
-        alltest_blocks = alloc_blocks(9, len(bin_files['alltest']))
-        cputest_blocks = alloc_blocks(10, len(bin_files['cputest']))
-        test_blocks = alloc_blocks(12, len(bin_files['test']))
-        dll_blocks = alloc_blocks(29, len(dll_data)) # libneodos.dll
-        math_dll_blocks = alloc_blocks(30, len(math_dll_data)) # libmath.dll
+        hello_blocks = alloc_blocks(6, len(nxe_files['hello']))
+        systest_blocks = alloc_blocks(7, len(nxe_files['systest']))
+        filetest_blocks = alloc_blocks(8, len(nxe_files['filetest']))
+        alltest_blocks = alloc_blocks(9, len(nxe_files['alltest']))
+        cputest_blocks = alloc_blocks(10, len(nxe_files['cputest']))
+        test_blocks = alloc_blocks(12, len(nxe_files['test']))
+        nxl_blocks = alloc_blocks(29, len(nxl_data)) # libneodos.nxl
+        math_nxl_blocks = alloc_blocks(30, len(math_nxl_data)) # libmath.nxl
         libdir_blocks = alloc_blocks(28, 256)        # LIB dir
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
@@ -289,19 +289,19 @@ Happy hacking!
             return (blks + [0] * 12)[:12]
 
         inodes_data = {
-            6: (MODE_FILE | default_perms_for_filename("HELLO.BIN"), len(bin_files['hello']), pad_blocks(hello_blocks)),
-            7: (MODE_FILE | default_perms_for_filename("SYSTEST.BIN"), len(bin_files['systest']), pad_blocks(systest_blocks)),
-            8: (MODE_FILE | default_perms_for_filename("FILETEST.BIN"), len(bin_files['filetest']), pad_blocks(filetest_blocks)),
-            9: (MODE_FILE | default_perms_for_filename("ALLTEST.BIN"), len(bin_files['alltest']), pad_blocks(alltest_blocks)),
-            10: (MODE_FILE | default_perms_for_filename("CPUTEST.BIN"), len(bin_files['cputest']), pad_blocks(cputest_blocks)),
-            12: (MODE_FILE | default_perms_for_filename("TEST.BIN"), len(bin_files['test']), pad_blocks(test_blocks)),
+            6: (MODE_FILE | default_perms_for_filename("HELLO.NXE"), len(nxe_files['hello']), pad_blocks(hello_blocks)),
+            7: (MODE_FILE | default_perms_for_filename("SYSTEST.NXE"), len(nxe_files['systest']), pad_blocks(systest_blocks)),
+            8: (MODE_FILE | default_perms_for_filename("FILETEST.NXE"), len(nxe_files['filetest']), pad_blocks(filetest_blocks)),
+            9: (MODE_FILE | default_perms_for_filename("ALLTEST.NXE"), len(nxe_files['alltest']), pad_blocks(alltest_blocks)),
+            10: (MODE_FILE | default_perms_for_filename("CPUTEST.NXE"), len(nxe_files['cputest']), pad_blocks(cputest_blocks)),
+            12: (MODE_FILE | default_perms_for_filename("TEST.NXE"), len(nxe_files['test']), pad_blocks(test_blocks)),
             15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
             19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
             20: (dir_mode, 1024, pad_blocks(sys2dir_blocks)),
             28: (dir_mode, 256, pad_blocks(libdir_blocks)),
-            29: (MODE_FILE | default_perms_for_filename("libneodos.dll"), len(dll_data), pad_blocks(dll_blocks)),
-            30: (MODE_FILE | default_perms_for_filename("libmath.dll"), len(math_dll_data), pad_blocks(math_dll_blocks)),
+            29: (MODE_FILE | default_perms_for_filename("libneodos.nxl"), len(nxl_data), pad_blocks(nxl_blocks)),
+            30: (MODE_FILE | default_perms_for_filename("libmath.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
         }
 
         # Write inodes to inode table
@@ -367,28 +367,28 @@ Happy hacking!
         entry = create_dir_entry(3, 2, "SYSTEM") # type=2 (dir)
         image[offset+512:offset+768] = entry
 
-        # Entry 3: HELLO.BIN (user-mode binary)
-        entry = create_dir_entry(6, 1, "HELLO.BIN")
+        # Entry 3: HELLO.NXE (user-mode binary)
+        entry = create_dir_entry(6, 1, "HELLO.NXE")
         image[offset+768:offset+1024] = entry
 
-        # Entry 4: SYSTEST.BIN (syscall test binary)
-        entry = create_dir_entry(7, 1, "SYSTEST.BIN")
+        # Entry 4: SYSTEST.NXE (syscall test binary)
+        entry = create_dir_entry(7, 1, "SYSTEST.NXE")
         image[offset+1024:offset+1280] = entry
 
-        # Entry 5: FILETEST.BIN (file I/O test binary)
-        entry = create_dir_entry(8, 1, "FILETEST.BIN")
+        # Entry 5: FILETEST.NXE (file I/O test binary)
+        entry = create_dir_entry(8, 1, "FILETEST.NXE")
         image[offset+1280:offset+1536] = entry
 
-        # Entry 6: ALLTEST.BIN (comprehensive syscall test)
-        entry = create_dir_entry(9, 1, "ALLTEST.BIN")
+        # Entry 6: ALLTEST.NXE (comprehensive syscall test)
+        entry = create_dir_entry(9, 1, "ALLTEST.NXE")
         image[offset+1536:offset+1792] = entry
 
-        # Entry 7: CPUTEST.BIN (CPU-bound priority test)
-        entry = create_dir_entry(10, 1, "CPUTEST.BIN")
+        # Entry 7: CPUTEST.NXE (CPU-bound priority test)
+        entry = create_dir_entry(10, 1, "CPUTEST.NXE")
         image[offset+1792:offset+2048] = entry
 
-        # Entry 8: TEST.BIN (libmath self-test)
-        entry = create_dir_entry(12, 1, "TEST.BIN")
+        # Entry 8: TEST.NXE (libmath self-test)
+        entry = create_dir_entry(12, 1, "TEST.NXE")
         image[offset+2048:offset+2304] = entry
 
         # 4. Data blocks
@@ -458,12 +458,12 @@ AHCI_DEBUG=0
 
         # Write user binary data across their allocated blocks
         bin_data_map = {
-            6: ('HELLO.BIN', bin_files['hello']),
-            7: ('SYSTEST.BIN', bin_files['systest']),
-            8: ('FILETEST.BIN', bin_files['filetest']),
-            9: ('ALLTEST.BIN', bin_files['alltest']),
-            10: ('CPUTEST.BIN', bin_files['cputest']),
-            12: ('TEST.BIN', bin_files['test']),
+            6: ('HELLO.NXE', nxe_files['hello']),
+            7: ('SYSTEST.NXE', nxe_files['systest']),
+            8: ('FILETEST.NXE', nxe_files['filetest']),
+            9: ('ALLTEST.NXE', nxe_files['alltest']),
+            10: ('CPUTEST.NXE', nxe_files['cputest']),
+            12: ('TEST.NXE', nxe_files['test']),
         }
         for inum, (name, data) in bin_data_map.items():
             if not data:
@@ -537,26 +537,26 @@ AHCI_DEBUG=0
             print("[*] Writing LIB directory...")
             blk = libdir_blocks[0]
             offset = (200 + blk * 8) * 512
-            entry_lib = create_dir_entry(29, 1, "libneodos.dll")
+            entry_lib = create_dir_entry(29, 1, "libneodos.nxl")
             image[offset:offset+256] = entry_lib
-            entry_math = create_dir_entry(30, 1, "libmath.dll")
+            entry_math = create_dir_entry(30, 1, "libmath.nxl")
             image[offset+256:offset+512] = entry_math
 
-        # Write libneodos.dll data blocks
-        if dll_data:
+        # Write libneodos.nxl data blocks
+        if nxl_data:
             blks = block_allocs.get(29, [])
-            print(f"[*] Writing libneodos.dll ({len(dll_data)} bytes across {len(blks)} blocks)...")
+            print(f"[*] Writing libneodos.nxl ({len(nxl_data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
-                chunk = dll_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                chunk = nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 offset = (200 + blk * 8) * 512
                 image[offset:offset+len(chunk)] = chunk
 
-        # Write libmath.dll data blocks
-        if math_dll_data:
+        # Write libmath.nxl data blocks
+        if math_nxl_data:
             blks = block_allocs.get(30, [])
-            print(f"[*] Writing libmath.dll ({len(math_dll_data)} bytes across {len(blks)} blocks)...")
+            print(f"[*] Writing libmath.nxl ({len(math_nxl_data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
-                chunk = math_dll_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 offset = (200 + blk * 8) * 512
                 image[offset:offset+len(chunk)] = chunk
     

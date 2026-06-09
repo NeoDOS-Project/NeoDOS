@@ -724,14 +724,12 @@ impl NeoDosFs {
     }
 
     fn default_perms_for_filename(name: &str) -> u16 {
-        if Self::ext_eq(name, ".BIN")
-            || Self::ext_eq(name, ".COM")
-            || Self::ext_eq(name, ".EXE")
+        if Self::ext_eq(name, ".NXE")
         {
             PERM_R | PERM_X
         } else if Self::ext_eq(name, ".NEM") {
             PERM_R
-        } else if Self::ext_eq(name, ".DLL") {
+        } else if Self::ext_eq(name, ".NXL") {
             PERM_R | PERM_X
         } else if Self::ext_eq(name, ".BAT") || Self::ext_eq(name, ".CMD") {
             PERM_R | PERM_X

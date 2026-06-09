@@ -3,72 +3,72 @@ use crate::serial_println;
 use crate::globals;
 use crate::fs::vfs::{VfsNode, MODE_DIR, MODE_FILE};
 
-const DLL_REGION_BASE: u64 = 0x1e00_0000;
-const DLL_REGION_SIZE: u64 = 0x20_0000;
-const DLL_SLOT_SIZE: u64 = 0x4_0000;
-const DLL_SLOT_COUNT: usize = 8;
-const DLL_MAX_SIZE: usize = 64 * 1024;
+const NXL_REGION_BASE: u64 = 0x1e00_0000;
+const NXL_REGION_SIZE: u64 = 0x20_0000;
+const NXL_SLOT_SIZE: u64 = 0x4_0000;
+const NXL_SLOT_COUNT: usize = 8;
+const NXL_MAX_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
-struct DllSlot {
+struct NxlSlot {
     loaded: bool,
     base: u64,
     size: usize,
     name: [u8; 24],
 }
 
-static mut DLL_REGISTRY: [DllSlot; DLL_SLOT_COUNT] = [
-    DllSlot { loaded: false, base: 0x1e00_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e04_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e08_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e0c_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e10_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e14_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e18_0000, size: 0, name: [0u8; 24] },
-    DllSlot { loaded: false, base: 0x1e1c_0000, size: 0, name: [0u8; 24] },
+static mut NXL_REGISTRY: [NxlSlot; NXL_SLOT_COUNT] = [
+    NxlSlot { loaded: false, base: 0x1e00_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e04_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e08_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e0c_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e10_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e14_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e18_0000, size: 0, name: [0u8; 24] },
+    NxlSlot { loaded: false, base: 0x1e1c_0000, size: 0, name: [0u8; 24] },
 ];
 
-pub fn init_dll_region() -> bool {
-    serial_println!("[DLL] Initializing shared library region 0x{:x}..0x{:x}",
-        DLL_REGION_BASE, DLL_REGION_BASE + DLL_REGION_SIZE);
+pub fn init_nxl_region() -> bool {
+    serial_println!("[NXL] Initializing shared library region 0x{:x}..0x{:x}",
+        NXL_REGION_BASE, NXL_REGION_BASE + NXL_REGION_SIZE);
 
-    if paging::split_2mb_page(DLL_REGION_BASE).is_err() {
-        serial_println!("[DLL] FAILED to split 2MB page");
+    if paging::split_2mb_page(NXL_REGION_BASE).is_err() {
+        serial_println!("[NXL] FAILED to split 2MB page");
         return false;
     }
 
-    if paging::set_pd_user_accessible(DLL_REGION_BASE, true).is_err() {
-        serial_println!("[DLL] FAILED to set PD USER_ACCESSIBLE");
+    if paging::set_pd_user_accessible(NXL_REGION_BASE, true).is_err() {
+        serial_println!("[NXL] FAILED to set PD USER_ACCESSIBLE");
         return false;
     }
 
-    serial_println!("[DLL] Region ready: {} x {} KB slots",
-        DLL_SLOT_COUNT, DLL_SLOT_SIZE / 1024);
+    serial_println!("[NXL] Region ready: {} x {} KB slots",
+        NXL_SLOT_COUNT, NXL_SLOT_SIZE / 1024);
     true
 }
 
-pub fn load_dll() -> bool {
-    match dll_load("C:\\SYSTEM\\LIB\\libneodos.dll") {
+pub fn load_nxl() -> bool {
+    match nxl_load("C:\\SYSTEM\\LIB\\libneodos.nxl") {
         Some(base) => {
-            serial_println!("[DLL] libneodos DLL loaded at 0x{:x}", base);
+            serial_println!("[NXL] libneodos NXL loaded at 0x{:x}", base);
             true
         }
         None => {
-            serial_println!("[DLL] WARNING: libneodos.dll not found");
+            serial_println!("[NXL] WARNING: libneodos.nxl not found");
             false
         }
     }
 }
 
-static mut DLL_IMAGE_BUF: [u8; DLL_MAX_SIZE] = [0u8; DLL_MAX_SIZE];
+static mut NXL_IMAGE_BUF: [u8; NXL_MAX_SIZE] = [0u8; NXL_MAX_SIZE];
 
-pub fn dll_load(path: &str) -> Option<u64> {
+pub fn nxl_load(path: &str) -> Option<u64> {
     let slot_idx = find_free_slot()?;
-    let base = unsafe { DLL_REGISTRY[slot_idx].base };
+    let base = unsafe { NXL_REGISTRY[slot_idx].base };
 
-    serial_println!("[DLL] Loading '{}' @ slot {} => 0x{:x}", path, slot_idx, base);
+    serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x}", path, slot_idx, base);
 
-    let buf: &mut [u8] = unsafe { &mut DLL_IMAGE_BUF };
+    let buf: &mut [u8] = unsafe { &mut NXL_IMAGE_BUF };
     buf.fill(0);
 
     let image_size = {
@@ -77,17 +77,17 @@ pub fn dll_load(path: &str) -> Option<u64> {
             let resolved = match vfs.resolve_path(path) {
                 Ok(result) => Some(result),
                 Err(e) => {
-                    serial_println!("[DLL] resolve '{}' failed: {:?}", path, e);
+                    serial_println!("[NXL] resolve '{}' failed: {:?}", path, e);
                     None
                 }
-            }.or_else(|| resolve_dll_fallback(vfs, path));
+            }.or_else(|| resolve_nxl_fallback(vfs, path));
 
             match resolved {
                 Some((drive_idx, node)) => {
                     match vfs.read(drive_idx, node.inode, 0, buf) {
                         Ok(n) => { size = n; Ok(()) }
                         Err(e) => {
-                            serial_println!("[DLL] read error: {:?}", e);
+                            serial_println!("[NXL] read error: {:?}", e);
                             Err(())
                         }
                     }
@@ -99,15 +99,15 @@ pub fn dll_load(path: &str) -> Option<u64> {
         size
     };
 
-    let data = unsafe { &*core::ptr::slice_from_raw_parts(DLL_IMAGE_BUF.as_ptr(), image_size) };
+    let data = unsafe { &*core::ptr::slice_from_raw_parts(NXL_IMAGE_BUF.as_ptr(), image_size) };
 
     let result = crate::elf::load_elf(data)?;
-    serial_println!("[DLL] ELF entry=0x{:x}", result.entry);
+    serial_println!("[NXL] ELF entry=0x{:x}", result.entry);
 
     mark_slot_user_accessible(base, image_size);
 
     unsafe {
-        DLL_REGISTRY[slot_idx] = DllSlot {
+        NXL_REGISTRY[slot_idx] = NxlSlot {
             loaded: true,
             base,
             size: image_size,
@@ -121,11 +121,11 @@ pub fn dll_load(path: &str) -> Option<u64> {
         };
     }
 
-    serial_println!("[DLL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
+    serial_println!("[NXL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
 }
 
-fn resolve_dll_fallback(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Option<(usize, VfsNode)> {
+fn resolve_nxl_fallback(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Option<(usize, VfsNode)> {
     let file_name = path
         .rsplit(|c| c == '\\' || c == '/')
         .next()
@@ -183,7 +183,7 @@ fn search_directory(
 
 fn find_free_slot() -> Option<usize> {
     unsafe {
-        DLL_REGISTRY.iter().position(|s| !s.loaded)
+        NXL_REGISTRY.iter().position(|s| !s.loaded)
     }
 }
 
@@ -206,6 +206,6 @@ fn mark_slot_user_accessible(base: u64, image_size: usize) {
         addr += paging::PAGE_4K;
     }
 
-    serial_println!("[DLL] Marked 0x{:x}..0x{:x} USER_ACCESSIBLE",
+    serial_println!("[NXL] Marked 0x{:x}..0x{:x} USER_ACCESSIBLE",
         start, end_aligned);
 }

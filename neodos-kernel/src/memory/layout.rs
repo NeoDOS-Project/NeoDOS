@@ -106,7 +106,7 @@ pub fn init_default() {
     l.reserve_region(0x0040_0000, 0x0040_0000, b"user_window\0", 0);
     l.reserve_region(0x0100_0000, 0x0100_0000, b"kernel_heap\0", 0);
     l.reserve_region(0x1000_0000, 0x0200_0000, b"user_heap\0", 0);
-    l.reserve_region(0x1e00_0000, 0x0020_0000, b"dll_region\0", 0);
+    l.reserve_region(0x1e00_0000, 0x0020_0000, b"nxl_region\0", 0);
     l.reserve_region(0x2000_0000, 0x0200_0000, b"mmap_region\0", 0);
     l.reserve_region(0x3000_0000, 0x0100_0000, b"driver_iso\0", 0);
 }

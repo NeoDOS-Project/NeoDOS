@@ -431,10 +431,10 @@ impl DosShell {
                                         let name_upper = entry.name.to_ascii_uppercase();
                                         let p_upper = prefix.to_ascii_uppercase();
                                         if name_upper.starts_with(&p_upper)
-                                            && (name_upper.ends_with(".BIN")
+                                            && (name_upper.ends_with(".NXE")
                                                 || !entry.name.contains('.'))
                                         {
-                                            let display_name = if name_upper.ends_with(".BIN") {
+                                            let display_name = if name_upper.ends_with(".NXE") {
                                                 entry.name[..entry.name.len() - 4].to_string()
                                             } else {
                                                 entry.name.clone()

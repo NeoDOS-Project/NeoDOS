@@ -48,15 +48,15 @@ def _driver_paths() -> list[Path]:
 
 
 def _dll_paths() -> list[Path]:
-    """Return all known DLL file paths."""
+    """Return all known NXL file paths."""
     paths = []
     # Project root
-    paths.extend(NEODOS_ROOT.glob("*.dll"))
+    paths.extend(NEODOS_ROOT.glob("*.nxl"))
     # Userbin outputs
     ub = NEODOS_ROOT / "userbin"
     for d in ub.iterdir():
         if d.is_dir():
-            paths.extend(d.glob("target/**/*.dll"))
+            paths.extend(d.glob("target/**/*.nxl"))
     return sorted(set(p for p in paths if p.exists()))
 
 
@@ -93,7 +93,7 @@ def list_loaded_modules(category: str = "all") -> str:
             lines.append("  (none found — run build.sh --neodos-image first)")
 
     if category in ("all", "dll"):
-        lines.append(f"\nDLLs ({len(dlls)} found):")
+        lines.append(f"\nNXLs ({len(dlls)} found):")
         if dlls:
             for p in dlls:
                 try:
@@ -196,7 +196,7 @@ def _analyze_elf_load(data: bytes, file_path: Path) -> str:
 
     lines = [
         f"sys_loadlib analysis for '{file_path.name}':",
-        f"  Format:       ELF64 {'DLL' if elf.is_dll else 'EXEC'}",
+        f"  Format:       ELF64 {'NXL' if elf.is_dll else 'EXEC'}",
         f"  Entry point:  0x{elf.entry_point:016X}",
         f"  Segments:     {len(elf.segments)}",
         f"  Exports:      {len(elf.exports())}",

@@ -93,7 +93,7 @@ PHASE 3.7   RamDisk init
 PHASE 3.8   VFS init, working directory
 PHASE 3.80  Driver isolation region init (0x30000000)
 PHASE 3.85  Boot driver loader (BOOT → SYSTEM, dependency-sorted)
-PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\SYSTEM\NEOINIT.BIN`
+PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\SYSTEM\NEOINIT.NXE`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -111,7 +111,7 @@ and boot continues.
 | Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
 | User window | 0x400000 | 4 MB | User processes (code+stack) |
 | User heap | 0x10000000 | 32 MB | Per-process (demand paged) |
-| DLL region | 0x1E000000 | 2 MB | Shared libraries |
+| NXL region | 0x1E000000 | 2 MB | Shared libraries |
 | mmap region | 0x20000000 | 32 MB | Per-process mmap |
 | Driver isolation | 0x30000000 | 16 MB | NEM drivers (per-slot) |
 
@@ -119,7 +119,7 @@ and boot continues.
 MUST panic.
 **Rule 3.2.2**: The identity map covers 0..4 GiB. Any region added outside 4 GiB requires separate
 page table management.
-**Rule 3.2.3**: User-accessible PTEs must only be set in user heap, user window, DLL, mmap, and
+**Rule 3.2.3**: User-accessible PTEs must only be set in user heap, user window, NXL, mmap, and
 driver isolation regions.
 
 ### 3.3 Syscall Handler Integrity
@@ -414,10 +414,10 @@ and `device_id`.
 
 ### 10.1 Startup Contract
 
-**Rule 10.1.1**: NeoInit is loaded from `C:\SYSTEM\NEOINIT.BIN` at Phase 4.
+**Rule 10.1.1**: NeoInit is loaded from `C:\SYSTEM\NEOINIT.NXE` at Phase 4.
 **Rule 10.1.2**: NeoInit is the only process that starts at boot. All other user processes
 are descendants of NeoInit.
-**Rule 10.1.3**: NeoInit receives argv `["/SYSTEM/NEOINIT.BIN"]` and inherits fds 0/1/2
+**Rule 10.1.3**: NeoInit receives argv `["/SYSTEM/NEOINIT.NXE"]` and inherits fds 0/1/2
 pointing to the kernel console.
 
 ### 10.2 Privileges

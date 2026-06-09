@@ -40,9 +40,9 @@ impl DosShell {
         crate::globals::with_vfs(|vfs| {
             match vfs.resolve_path(&full_path) {
                 Ok((drive_idx, node)) => {
-                    static mut BIN_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
+                    static mut NXE_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
                     unsafe {
-                        let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(BIN_BUF);
+                        let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(NXE_BUF);
                         (*buf_ptr).fill(0);
                         match vfs.read(drive_idx, node.inode, 0, &mut *buf_ptr) {
                             Ok(n) => {
@@ -73,7 +73,7 @@ impl DosShell {
                                     } else {
                                         // Flat binary: copy raw to slot
                                         let dst = slot.code_base as *mut u8;
-                                        let src = core::ptr::addr_of!(BIN_BUF) as *const u8;
+                                        let src = core::ptr::addr_of!(NXE_BUF) as *const u8;
                                         core::ptr::copy_nonoverlapping(src, dst, bin_size);
                                     }
                                 }

@@ -129,7 +129,7 @@ The resulting ELF binary can be loaded by the kernel's `RUN` command.
 |---------|-------------|
 | `MemoryRegion` | base, size, 24-byte name, flags |
 | `MemoryLayout` | 32-slot fixed-size array + `reserve_region()` |
-| `init_default()` | Replicates legacy layout: kernel_image, user_window, kernel_heap, user_heap, dll_region, mmap_region, driver_iso |
+| `init_default()` | Replicates legacy layout: kernel_image, user_window, kernel_heap, user_heap, nxl_region, mmap_region, driver_iso |
 | Overlap detection | `panic!()` on any overlapping reservation |
 
 Boot-time `validate_layout_consistency()` asserts layout-registered bases match hardcoded constants.
@@ -288,7 +288,7 @@ Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_
 ## Shell: TAB autocomplete + history
 
 El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
-- **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.BIN` del PATH
+- **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.NXE` del PATH
 - **Argumentos**: completa nombres de archivo/directorio desde el directorio actual
 - **Rutas**: soporta rutas con separador (`DIR \\BIN\\TE` → `\\BIN\\TEST`)
 - Match único: reemplaza y añade espacio (comandos)
@@ -317,9 +317,9 @@ Al crear un archivo o directorio en NeoFS, se asignan permisos RWXSD según el t
 
 | Tipo | Extensiones | Permisos (RWXSD) | Uso |
 |------|-------------|------------------|-----|
-| Ejecutable | `.BIN`, `.COM`, `.EXE` | `R-X--` | Leer + ejecutar, protección contra modificación accidental |
+| Ejecutable | `.NXE`, `.COM`, `.EXE` | `R-X--` | Leer + ejecutar, protección contra modificación accidental |
 | Driver | `.NEM` | `R----` | Solo lectura, archivos críticos del sistema |
-| Librería | `.DLL` | `R-X--` | Cargar desde user-mode, no modificar |
+| Librería | `.NXL` | `R-X--` | Cargar desde user-mode, no modificar |
 | Script | `.BAT`, `.CMD` | `R-X--` | Leer + ejecutar por el shell |
 | Sistema | `.SYS` | `R----` | Configuración crítica del sistema |
 | Configuración | `.CFG`, `.INI` | `RW---` | Leer y modificar |
@@ -350,8 +350,8 @@ Comando para cargar shared libraries (DLLs) desde el filesystem:
 El DLL se carga en la región `0x1e000000..0x1e200000` (8 slots de 256 KB cada uno). El kernel parsea el ELF, marca las páginas como USER_ACCESSIBLE (read-only), y devuelve la dirección base. La tabla de exportaciones del DLL queda accessible en la dirección base.
 
 DLLs disponibles:
-- `libneodos.dll` — Librería estándar (slot 0, `0x1e000000`), cargada automáticamente en boot
-- `libmath.dll` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\SYSTEM\LIB\LIBMATH.DLL`
+- `libneodos.nxl` — Librería estándar (slot 0, `0x1e000000`), cargada automáticamente en boot
+- `libmath.nxl` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\SYSTEM\LIB\LIBMATH.NXL`
 
 Para usar desde user-mode: llamar a `libneodos::loadlib(path)` que invoca `sys_loadlib` (RAX=21) y devuelve la dirección base del DLL.
 
@@ -478,9 +478,9 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
-| `hello.bin` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
-| `systest.bin` | `generate_systest.py` | 247 B | Misma estructura que hello.bin + mensajes v0.10.4 |
-| `test.bin` | Rust `userbin/test/` | ~21 KB | libmath.dll self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
+| `hello.nxe` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
+| `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
+| `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
@@ -574,7 +574,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 Comando `test`:
 1. Ejecuta `testing::run_all()` (353 tests kernel)
-2. Si pasan, ejecuta `run SYSTEST.BIN`, `run FILETEST.BIN`, `run ALLTEST.BIN`, `run CPUTEST.BIN`, `run TEST.BIN` (user-mode)
+2. Si pasan, ejecuta `run SYSTEST.NXE`, `run FILETEST.NXE`, `run ALLTEST.NXE`, `run CPUTEST.NXE`, `run TEST.NXE` (user-mode)
 
 ## SMP & Per-CPU Architecture (A1)
 
@@ -1208,5 +1208,5 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 | ATA NEM driver | `neodos/drivers/ata/ata.nem` | NEM v3 standalone ATA driver with DMA+PIO, primary+secondary channels (SYSTEM) |
 | AHCI NEM driver | `neodos/drivers/ahci/ahci.nem` | NEM v3 standalone AHCI driver (SYSTEM, DMA polling, ATA+ATAPI) |
 | Driver Isolation | `neodos-kernel/src/drivers/isolation.rs` | X4 driver isolation layer (16 MB region, 16 × 1 MB slots, pointer validation, sandbox mode) |
-| libmath DLL | `neodos/libmath.dll` | Math library DLL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
+| libmath NXL | `neodos/libmath.nxl` | Math library NXL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |

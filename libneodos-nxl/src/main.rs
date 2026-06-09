@@ -4,10 +4,10 @@
 use core::arch::asm;
 
 // ============================================================
-// DLL entry point — never actually executed (passive library)
+// NXL entry point — never actually executed (passive library)
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_entry() -> ! {
+pub extern "C" fn nxl_entry() -> ! {
     loop { unsafe { asm!("hlt"); } }
 }
 
@@ -98,93 +98,93 @@ fn ret(val: u64) -> i64 {
 // Extern "C" Syscall wrappers
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_sys_exit(code: u32) -> ! {
+pub extern "C" fn nxl_sys_exit(code: u32) -> ! {
     unsafe { syscall_1(0, code as u64); }
     loop { unsafe { asm!("hlt"); } }
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_write(fd: u8, buf: *const u8, len: usize) -> i64 {
+pub extern "C" fn nxl_sys_write(fd: u8, buf: *const u8, len: usize) -> i64 {
     ret(unsafe { syscall_3(1, fd as u64, buf as u64, len as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
+pub extern "C" fn nxl_sys_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_3(4, fd as u64, buf as u64, len as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_getpid() -> u32 {
+pub extern "C" fn nxl_sys_getpid() -> u32 {
     unsafe { syscall_0(3) as u32 }
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_yield() {
+pub extern "C" fn nxl_sys_yield() {
     unsafe { syscall_0(2); }
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_open(path: *const u8) -> i64 {
+pub extern "C" fn nxl_sys_open(path: *const u8) -> i64 {
     ret(unsafe { syscall_2(10, path as u64, 0) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_readfile(fd: u8, buf: *mut u8, len: usize) -> i64 {
+pub extern "C" fn nxl_sys_readfile(fd: u8, buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_3(11, fd as u64, buf as u64, len as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_writefile(fd: u8, buf: *const u8, len: usize) -> i64 {
+pub extern "C" fn nxl_sys_writefile(fd: u8, buf: *const u8, len: usize) -> i64 {
     ret(unsafe { syscall_3(12, fd as u64, buf as u64, len as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_close(fd: u8) -> i64 {
+pub extern "C" fn nxl_sys_close(fd: u8) -> i64 {
     ret(unsafe { syscall_1(13, fd as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_brk(new_break: u64) -> i64 {
+pub extern "C" fn nxl_sys_brk(new_break: u64) -> i64 {
     ret(unsafe { syscall_1(18, new_break) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_mmap(hint: u64, len: u64, prot: u16, flags: u16, file_handle: u64) -> i64 {
+pub extern "C" fn nxl_sys_mmap(hint: u64, len: u64, prot: u16, flags: u16, file_handle: u64) -> i64 {
     ret(unsafe { syscall_5(19, hint, len, prot as u64, flags as u64, file_handle) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_munmap(addr: u64, len: u64) -> i64 {
+pub extern "C" fn nxl_sys_munmap(addr: u64, len: u64) -> i64 {
     ret(unsafe { syscall_2(20, addr, len) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_pipe(fds: *mut u64) -> i64 {
+pub extern "C" fn nxl_sys_pipe(fds: *mut u64) -> i64 {
     ret(unsafe { syscall_1(5, fds as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_dup2(old_fd: u8, new_fd: u8) -> i64 {
+pub extern "C" fn nxl_sys_dup2(old_fd: u8, new_fd: u8) -> i64 {
     ret(unsafe { syscall_2(6, old_fd as u64, new_fd as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_waitpid(pid: u32) -> i64 {
+pub extern "C" fn nxl_sys_waitpid(pid: u32) -> i64 {
     ret(unsafe { syscall_1(9, pid as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_chdir(path: *const u8) -> i64 {
+pub extern "C" fn nxl_sys_chdir(path: *const u8) -> i64 {
     ret(unsafe { syscall_1(16, path as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_getcwd(buf: *mut u8, len: usize) -> i64 {
+pub extern "C" fn nxl_sys_getcwd(buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_2(17, buf as u64, len as u64) })
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sys_loadlib(path: *const u8) -> i64 {
+pub extern "C" fn nxl_sys_loadlib(path: *const u8) -> i64 {
     ret(unsafe { syscall_1(21, path as u64) })
 }
 
@@ -192,91 +192,91 @@ pub extern "C" fn dll_sys_loadlib(path: *const u8) -> i64 {
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_stdout_write(buf: *const u8, len: usize) -> i64 {
-    dll_sys_write(1, buf, len)
+pub extern "C" fn nxl_stdout_write(buf: *const u8, len: usize) -> i64 {
+    nxl_sys_write(1, buf, len)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_stderr_write(buf: *const u8, len: usize) -> i64 {
-    dll_sys_write(2, buf, len)
+pub extern "C" fn nxl_stderr_write(buf: *const u8, len: usize) -> i64 {
+    nxl_sys_write(2, buf, len)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_stdin_read(buf: *mut u8, len: usize) -> i64 {
-    dll_sys_read(0, buf, len)
+pub extern "C" fn nxl_stdin_read(buf: *mut u8, len: usize) -> i64 {
+    nxl_sys_read(0, buf, len)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_print(fmt_ptr: *const u8, fmt_len: usize) {
+pub extern "C" fn nxl_print(fmt_ptr: *const u8, fmt_len: usize) {
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(fmt_ptr, fmt_len)) };
-    let _ = dll_sys_write(1, s.as_ptr(), s.len());
+    let _ = nxl_sys_write(1, s.as_ptr(), s.len());
 }
 
 #[no_mangle]
-pub extern "C" fn dll_eprint(fmt_ptr: *const u8, fmt_len: usize) {
+pub extern "C" fn nxl_eprint(fmt_ptr: *const u8, fmt_len: usize) {
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(fmt_ptr, fmt_len)) };
-    let _ = dll_sys_write(2, s.as_ptr(), s.len());
+    let _ = nxl_sys_write(2, s.as_ptr(), s.len());
 }
 
 // ============================================================
 // FS: File open/read/write
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_file_open(path: *const u8) -> i64 {
-    dll_sys_open(path)
+pub extern "C" fn nxl_file_open(path: *const u8) -> i64 {
+    nxl_sys_open(path)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_file_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
-    dll_sys_readfile(fd, buf, len)
+pub extern "C" fn nxl_file_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
+    nxl_sys_readfile(fd, buf, len)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
-    dll_sys_writefile(fd, buf, len)
+pub extern "C" fn nxl_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
+    nxl_sys_writefile(fd, buf, len)
 }
 
 // ============================================================
 // Mem: brk, sbrk, mmap, munmap
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_brk(new_break: u64) -> i64 {
-    dll_sys_brk(new_break)
+pub extern "C" fn nxl_brk(new_break: u64) -> i64 {
+    nxl_sys_brk(new_break)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_sbrk(increment: i64) -> i64 {
-    let current = dll_sys_brk(0);
+pub extern "C" fn nxl_sbrk(increment: i64) -> i64 {
+    let current = nxl_sys_brk(0);
     if current < 0 { return current; }
     if increment == 0 { return current; }
     let new = (current as i64).checked_add(increment).unwrap_or(-1);
     if new < 0 { return EINVAL; }
     let new = new as u64;
-    let result = dll_sys_brk(new);
+    let result = nxl_sys_brk(new);
     if result < 0 { return result; }
     current
 }
 
 #[no_mangle]
-pub extern "C" fn dll_mmap(len: u64, prot: u16, flags: u16) -> i64 {
-    dll_sys_mmap(0, len, prot, flags, 0)
+pub extern "C" fn nxl_mmap(len: u64, prot: u16, flags: u16) -> i64 {
+    nxl_sys_mmap(0, len, prot, flags, 0)
 }
 
 #[no_mangle]
-pub extern "C" fn dll_munmap(addr: u64, len: u64) -> i64 {
-    dll_sys_munmap(addr, len)
+pub extern "C" fn nxl_munmap(addr: u64, len: u64) -> i64 {
+    nxl_sys_munmap(addr, len)
 }
 
 // ============================================================
 // Panic handler (DLL version — prints and exits)
 // ============================================================
 #[panic_handler]
-fn dll_panic(info: &core::panic::PanicInfo) -> ! {
+fn nxl_panic(info: &core::panic::PanicInfo) -> ! {
     let msg = core::format_args!("DLL PANIC: {}\r\n", info.message());
     if let Ok(s) = core::str::from_utf8(msg.as_str().unwrap_or("").as_bytes()) {
-        let _ = dll_sys_write(2, s.as_ptr(), s.len());
+        let _ = nxl_sys_write(2, s.as_ptr(), s.len());
     }
-    dll_sys_exit(1)
+    nxl_sys_exit(1)
 }
 
 // ============================================================
@@ -302,8 +302,8 @@ pub struct AbiTable {
     pub stdout_write: extern "C" fn(*const u8, usize) -> i64,
     pub stderr_write: extern "C" fn(*const u8, usize) -> i64,
     pub stdin_read: extern "C" fn(*mut u8, usize) -> i64,
-    pub dll_print: extern "C" fn(*const u8, usize),
-    pub dll_eprint: extern "C" fn(*const u8, usize),
+    pub nxl_print: extern "C" fn(*const u8, usize),
+    pub nxl_eprint: extern "C" fn(*const u8, usize),
     pub file_open: extern "C" fn(*const u8) -> i64,
     pub file_read: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub file_write: extern "C" fn(u8, *const u8, usize) -> i64,
@@ -336,33 +336,33 @@ pub struct AbiTable {
 #[no_mangle]
 #[link_section = ".export_table"]
 pub static EXPORT_TABLE: AbiTable = AbiTable {
-    sys_exit: dll_sys_exit,
-    sys_write: dll_sys_write,
-    sys_read: dll_sys_read,
-    sys_getpid: dll_sys_getpid,
-    sys_yield: dll_sys_yield,
-    sys_open: dll_sys_open,
-    sys_readfile: dll_sys_readfile,
-    sys_writefile: dll_sys_writefile,
-    sys_close: dll_sys_close,
-    sys_brk: dll_sys_brk,
-    sys_mmap: dll_sys_mmap,
-    sys_munmap: dll_sys_munmap,
-    sys_pipe: dll_sys_pipe,
-    sys_dup2: dll_sys_dup2,
-    sys_waitpid: dll_sys_waitpid,
-    stdout_write: dll_stdout_write,
-    stderr_write: dll_stderr_write,
-    stdin_read: dll_stdin_read,
-    dll_print: dll_print,
-    dll_eprint: dll_eprint,
-    file_open: dll_file_open,
-    file_read: dll_file_read,
-    file_write: dll_file_write,
-    brk: dll_brk,
-    sbrk: dll_sbrk,
-    mmap: dll_mmap,
-    munmap: dll_munmap,
+    sys_exit: nxl_sys_exit,
+    sys_write: nxl_sys_write,
+    sys_read: nxl_sys_read,
+    sys_getpid: nxl_sys_getpid,
+    sys_yield: nxl_sys_yield,
+    sys_open: nxl_sys_open,
+    sys_readfile: nxl_sys_readfile,
+    sys_writefile: nxl_sys_writefile,
+    sys_close: nxl_sys_close,
+    sys_brk: nxl_sys_brk,
+    sys_mmap: nxl_sys_mmap,
+    sys_munmap: nxl_sys_munmap,
+    sys_pipe: nxl_sys_pipe,
+    sys_dup2: nxl_sys_dup2,
+    sys_waitpid: nxl_sys_waitpid,
+    stdout_write: nxl_stdout_write,
+    stderr_write: nxl_stderr_write,
+    stdin_read: nxl_stdin_read,
+    nxl_print: nxl_print,
+    nxl_eprint: nxl_eprint,
+    file_open: nxl_file_open,
+    file_read: nxl_file_read,
+    file_write: nxl_file_write,
+    brk: nxl_brk,
+    sbrk: nxl_sbrk,
+    mmap: nxl_mmap,
+    munmap: nxl_munmap,
     err_einval: EINVAL,
     err_enonet: ENOENT,
     err_enomem: ENOMEM,
@@ -378,9 +378,9 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     err_eio: EIO,
     err_enodev: ENODEV,
     err_ebusy: EBUSY,
-    sys_chdir: dll_sys_chdir,
-    sys_getcwd: dll_sys_getcwd,
-    sys_loadlib: dll_sys_loadlib,
+    sys_chdir: nxl_sys_chdir,
+    sys_getcwd: nxl_sys_getcwd,
+    sys_loadlib: nxl_sys_loadlib,
     version: 1,
     _reserved: [0; 2],
 };

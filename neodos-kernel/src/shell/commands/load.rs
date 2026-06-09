@@ -32,9 +32,9 @@ impl DosShell {
         let ok = crate::globals::with_vfs(|vfs| {
             match vfs.resolve_path(&full_path) {
                 Ok((drive_idx, node)) => {
-                    static mut BIN_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
+                    static mut NXE_BUF: [u8; MAX_BIN_SIZE] = [0u8; MAX_BIN_SIZE];
                     unsafe {
-                        let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(BIN_BUF);
+                        let buf_ptr: *mut [u8; MAX_BIN_SIZE] = core::ptr::addr_of_mut!(NXE_BUF);
                         core::ptr::write_bytes(buf_ptr as *mut u8, 0, MAX_BIN_SIZE);
                         match vfs.read(drive_idx, node.inode, 0, core::slice::from_raw_parts_mut(buf_ptr as *mut u8, MAX_BIN_SIZE)) {
                             Ok(n) if n > 0 => {

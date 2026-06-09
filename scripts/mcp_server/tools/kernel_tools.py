@@ -180,7 +180,7 @@ def get_kernel_architecture() -> str:
         "  3.75      Built-in drivers\n"
         "  3.80      X4 Driver Isolation region init\n"
         "  3.85      Boot driver loader (BOOT -> SYSTEM, dependency-sorted)\n"
-        "  3.87      DLL region init + libneodos.dll auto-load\n"
+        "  3.87      DLL region init + libneodos.nxl auto-load\n"
         "  3.9       Syscall ABI validation\n"
         "  4         Shell start\n"
         "\n"
@@ -250,10 +250,10 @@ def get_build_errors() -> str:
     if elf_path and elf_path.exists():
         issues.append(("OK", "ELF64 loader in elf.rs"))
 
-    # dll.rs
-    dll_path = KERNEL_SRC / "dll.rs" if KERNEL_SRC else None
-    if dll_path and dll_path.exists():
-        issues.append(("OK", "DLL system in dll.rs"))
+    # nxl.rs
+    nxl_path = KERNEL_SRC / "nxl.rs" if KERNEL_SRC else None
+    if nxl_path and nxl_path.exists():
+        issues.append(("OK", "NXL system in nxl.rs"))
 
     # Check for the AGENTS.md version consistency
     changelog = NEODOS_ROOT / "CHANGELOG.md"

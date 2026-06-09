@@ -253,7 +253,7 @@ def build_server(root_dir: str):
     # Runtime module tools
     server.register_tool(ToolSpec(
         name="list_loaded_modules",
-        description="List NEM drivers and DLLs found in build artifacts",
+        description="List NEM drivers and NXLs found in build artifacts",
         input_schema={
             "type": "object",
             "properties": {

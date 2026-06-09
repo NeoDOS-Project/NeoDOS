@@ -1,11 +1,11 @@
-//! Export table for libneodos DLL at 0x1e000000.
-//! Thin-client library calls into the DLL via this ABI table.
+//! Export table for libneodos NXL at 0x1e000000.
+//! Thin-client library calls into the NXL via this ABI table.
 
-pub const DLL_BASE: u64 = 0x1e00_0000;
+pub const NXL_BASE: u64 = 0x1e00_0000;
 pub const EXPORT_TABLE_OFFSET: u64 = 0x00;
 pub const ABI_VERSION: u32 = 1;
 
-/// Mirrors `AbiTable` from libneodos-dll
+/// Mirrors `AbiTable` from libneodos-nxl
 #[repr(C)]
 pub struct AbiTable {
     pub sys_exit: extern "C" fn(u32) -> !,
@@ -59,5 +59,5 @@ pub struct AbiTable {
 
 /// Get a reference to the DLL export table
 pub fn get_table() -> &'static AbiTable {
-    unsafe { &*((DLL_BASE + EXPORT_TABLE_OFFSET) as *const AbiTable) }
+    unsafe { &*((NXL_BASE + EXPORT_TABLE_OFFSET) as *const AbiTable) }
 }

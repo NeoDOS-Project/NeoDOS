@@ -263,7 +263,7 @@ def run_test():
         
         # Check user-mode tests
         user_tests_found = 0
-        for ut in ["HELLO.BIN", "SYSTEST.BIN", "FILETEST.BIN", "ALLTEST.BIN", "CPUTEST.BIN", "TEST.BIN"]:
+        for ut in ["HELLO.NXE", "SYSTEST.NXE", "FILETEST.NXE", "ALLTEST.NXE", "CPUTEST.NXE", "TEST.NXE"]:
             if f"Running {ut}" in full_text or f"--- Running {ut}" in full_text:
                 user_tests_found += 1
         if user_tests_found >= 6:

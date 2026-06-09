@@ -126,7 +126,7 @@ neodos/
 
 ### Testing
 - **245+ kernel tests** in 24 suites (NeoFS, NEM, ELF, Event Bus, pipes, mmap, FSCK, driver lifecycle, boot loader, reference drivers, stress, etc.)
-- **5 user-mode binaries** — `TEST.BIN` (libmath.dll self-test) plus `SYSTEST.BIN`, `FILETEST.BIN`, `ALLTEST.BIN`, `HELLO.BIN`
+- **5 user-mode binaries** — `TEST.NXE` (libmath.nxl self-test) plus `SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `HELLO.NXE`
 - **Automated runner** — `python3 scripts/auto_test.py`
 
 ## Documentation

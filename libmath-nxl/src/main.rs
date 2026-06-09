@@ -4,10 +4,10 @@
 use core::arch::asm;
 
 // ============================================================
-// DLL entry point — never actually executed (passive library)
+// NXL entry point — never actually executed (passive library)
 // ============================================================
 #[no_mangle]
-pub extern "C" fn dll_entry() -> ! {
+pub extern "C" fn nxl_entry() -> ! {
     loop { unsafe { asm!("hlt"); } }
 }
 
@@ -247,6 +247,6 @@ pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
 // Panic handler (DLL version — loops on HLT)
 // ============================================================
 #[panic_handler]
-fn dll_panic(_info: &core::panic::PanicInfo) -> ! {
+fn nxl_panic(_info: &core::panic::PanicInfo) -> ! {
     loop { unsafe { asm!("hlt"); } }
 }

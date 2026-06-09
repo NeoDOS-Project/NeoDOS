@@ -136,20 +136,20 @@
 
 ## v0.25.2 — 2026-06-05
 
-### TEST.EXE — libmath.dll self-test user binary
-- **Añadido**: `math_add`, `math_sub`, `math_mul` en `libmath-dll/src/main.rs` — tres nuevas funciones aritméticas con sus correspondientes entradas en `MathAbiTable`.
-- **Añadido**: `userbin/test/` — nuevo proyecto userland (`TEST.EXE`) que carga `libmath.dll` dinámicamente vía `sys_loadlib` y ejecuta 5 fases: LOAD TEST (carga + resolución de símbolos), BASIC ARITHMETIC TESTS (add, sub, mul, div), EDGE CASES (ceros, negativos, overflow), STRESS TEST (1M iteraciones add(i, i+1)), DETERMINISM (1000 iteraciones idénticas), e INTEGRITY CHECKS (ABI stability cross-call). Imprime reporte PASS/FAIL.
+### TEST.EXE — libmath.nxl self-test user binary
+- **Añadido**: `math_add`, `math_sub`, `math_mul` en `libmath-nxl/src/main.rs` — tres nuevas funciones aritméticas con sus correspondientes entradas en `MathAbiTable`.
+- **Añadido**: `userbin/test/` — nuevo proyecto userland (`TEST.EXE`) que carga `libmath.nxl` dinámicamente vía `sys_loadlib` y ejecuta 5 fases: LOAD TEST (carga + resolución de símbolos), BASIC ARITHMETIC TESTS (add, sub, mul, div), EDGE CASES (ceros, negativos, overflow), STRESS TEST (1M iteraciones add(i, i+1)), DETERMINISM (1000 iteraciones idénticas), e INTEGRITY CHECKS (ABI stability cross-call). Imprime reporte PASS/FAIL.
 - **Actualizado**: `scripts/build.sh` — añadido `test` a la lista de bins a compilar.
-- **Actualizado**: `scripts/create_neodos_image.py` — incluye `TEST.BIN` como inode 12, entry en root directory.
+- **Actualizado**: `scripts/create_neodos_image.py` — incluye `TEST.NXE` como inode 12, entry en root directory.
 - **Total**: 312 kernel tests + 5 user-mode binaries.
 
 ## v0.25.1 — 2026-06-05
 
 ### Default file permissions by context — Añadido
-- **Añadido**: `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según la extensión del archivo al crearse: `.BIN/.COM/.EXE` → `R|X`, `.NEM` → `R`, `.DLL` → `R|X`, `.BAT/.CMD` → `R|X`, `.SYS` → `R`, `.CFG/.INI` → `R|W`, `.TXT/.MD/.LOG` → `R|W`, otros → `R|W`.
+- **Añadido**: `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según la extensión del archivo al crearse: `.NXE/.COM/.EXE` → `R|X`, `.NEM` → `R`, `.NXL` → `R|X`, `.BAT/.CMD` → `R|X`, `.SYS` → `R`, `.CFG/.INI` → `R|W`, `.TXT/.MD/.LOG` → `R|W`, otros → `R|W`.
 - **Modificado**: `create_file_at()` usa `default_perms_for_filename()` en vez de `MODE_FILE` sin permisos.
 - **Modificado**: `create_directory_at()` establece `MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D` (permisos completos para directorios).
-- **Actualizado**: `scripts/create_neodos_image.py` — la imagen inicial del FS usa los mismos criterios de permisos por extensión (`.bin` → `R|X`, `.nem` → `R`, `.dll` → `R|X`, `.sys` → `R`, `.bat` → `R|X`, `.cfg` → `R|W`, `.txt` → `R|W`, directorios → `RWXD`).
+- **Actualizado**: `scripts/create_neodos_image.py` — la imagen inicial del FS usa los mismos criterios de permisos por extensión (`.nxe` → `R|X`, `.nem` → `R`, `.nxl` → `R|X`, `.sys` → `R`, `.bat` → `R|X`, `.cfg` → `R|W`, `.txt` → `R|W`, directorios → `RWXD`).
 
 ## v0.25.0 — 2026-06-05
 
@@ -181,11 +181,11 @@
 ### Multi-DLL System
 - **Añadido**: `sys_loadlib` (RAX=21) — Nueva syscall que carga un DLL desde NeoFS en un slot libre de la región de DLLs (0x1e000000..0x1e200000). Devuelve la dirección base del DLL cargado.
 - **Añadido**: `LOADLIB <path>` — Nuevo comando del shell que carga un DLL desde el filesystem usando `dll_load()`.
-- **Añadido**: `libmath-dll/` — Nueva crate que compila una librería de matemáticas como DLL standalone en `0x1e040000` (slot 1). Exporta 17 funciones: `abs`, `abs_f64`, `min`, `max`, `clamp`, `pow`, `modulo`, `div`, `sqrt_int`, `sqrt_f64`, `sin`, `cos`, `tan`, `log2`, `log`, `exp`.
+- **Añadido**: `libmath-nxl/` — Nueva crate que compila una librería de matemáticas como DLL standalone en `0x1e040000` (slot 1). Exporta 17 funciones: `abs`, `abs_f64`, `min`, `max`, `clamp`, `pow`, `modulo`, `div`, `sqrt_int`, `sqrt_f64`, `sin`, `cos`, `tan`, `log2`, `log`, `exp`.
 - **Añadido**: `libneodos/src/lib.rs` — Función `loadlib(path)` que invoca `sys_loadlib` y devuelve la dirección base del DLL.
-- **Añadido**: `libneodos-dll/src/main.rs` — `dll_sys_loadlib` wrapper y campo `sys_loadlib` en `AbiTable`.
-- **Modificado**: `scripts/build.sh` — Añadido build step para libmath-dll.
-- **Modificado**: `scripts/create_neodos_image.py` — Añadido `libmath.dll` al directorio `LIB` en la imagen NeoDOS FS (inode 30).
+- **Añadido**: `libneodos-nxl/src/main.rs` — `nxl_sys_loadlib` wrapper y campo `sys_loadlib` en `AbiTable`.
+- **Modificado**: `scripts/build.sh` — Añadido build step para libmath-nxl.
+- **Modificado**: `scripts/create_neodos_image.py` — Añadido `libmath.nxl` al directorio `LIB` en la imagen NeoDOS FS (inode 30).
 - **Total**: 301 kernel tests.
 
 ## v0.24.4 — 2026-06-04
@@ -212,15 +212,15 @@
 ## v0.24.3 — 2026-06-04
 
 ### B6b. Shared library system (libneodos DLL) — COMPLETED
-- **Añadido**: `libneodos-dll/` — Nueva crate que compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`.
-- **Añadido**: `neodos-kernel/src/dll.rs` — Subsistema de carga de DLLs: `init_dll_region()` divide páginas enormes 2MB para región de DLL, `dll_load()` carga ELF, `load_dll()` carga `libneodos.dll` al arrancar (PHASE 3.86). 8 slots de 256 KB cada uno.
+- **Añadido**: `libneodos-nxl/` — Nueva crate que compila libneodos como binario standalone (DLL) con tabla de exportación `AbiTable` en sección `.export_table` en dirección fija `0x1e000000`.
+- **Añadido**: `neodos-kernel/src/dll.rs` — Subsistema de carga de DLLs: `init_dll_region()` divide páginas enormes 2MB para región de DLL, `dll_load()` carga ELF, `load_dll()` carga `libneodos.nxl` al arrancar (PHASE 3.86). 8 slots de 256 KB cada uno.
 - **Añadido**: `neodos-kernel/src/arch/x64/paging.rs` — `set_pd_user_accessible()` para marcar entradas PD como USER_ACCESSIBLE en regiones no-heap/mmap.
 - **Modificado**: `libneodos/` — Refactor completo: todas las llamadas a syscall ahora pasan por la export table del DLL (`export::get_table().*`) en lugar de inline asm directo.
 - **Añadido**: `libneodos/src/export.rs` — Estructura `AbiTable` mirror del DLL para acceso a funciones exportadas.
 - **Añadido**: `sys_chdir` y `sys_getcwd` — wrappers en DLL y thin lib, conectados al kernel vía AbiTable (syscall 16 y 17).
-- **Modificado**: `scripts/build.sh` — Añadido build step para libneodos-dll.
-- **Modificado**: `scripts/create_neodos_image.py` — Añadido directorio `LIB` con `libneodos.dll` en la imagen NeoDOS FS.
-- **Modificado**: `.gitignore` — Ignorar `*.dll`.
+- **Modificado**: `scripts/build.sh` — Añadido build step para libneodos-nxl.
+- **Modificado**: `scripts/create_neodos_image.py` — Añadido directorio `LIB` con `libneodos.nxl` en la imagen NeoDOS FS.
+- **Modificado**: `.gitignore` — Ignorar `*.nxl`.
 
 ## v0.24.2 — 2026-06-04
 
@@ -318,7 +318,7 @@
 - **Añadido**: `PRI` shell command — cambia la prioridad de un proceso en tiempo de ejecución.
 - **Añadido**: `sched_set_process_priority()` en `Scheduler` (validación de rango, reseteo de time slice).
 - **Añadido**: Columna `PRI` en salida de `PS` (H/AN/N/I para niveles de prioridad).
-- **Añadido**: `CPUTEST.BIN` — binary user-mode para tests de prioridad (CPU-bound, cuenta hasta 200M).
+- **Añadido**: `CPUTEST.NXE` — binary user-mode para tests de prioridad (CPU-bound, cuenta hasta 200M).
 - **Añadido**: Test `sched_set_process_priority` en suite de scheduler.
 - **Total**: 256 kernel tests + 4 user-mode binaries.
 
@@ -562,7 +562,7 @@
 - **Añadido**: `src/elf.rs` — ELF64 loader (header validation, PT_LOAD segment loading, .bss zero-fill)
 - **Añadido**: Auto-detección ELF vs flat binary en `cmd_run` (por magic `\x7fELF`)
 - **Añadido**: 7 tests ELF64 (header validation, invalid magic/class/machine, truncated header, segment loading, bad phentsize)
-- **Añadido**: `userbin/generate_hello_elf.py` — genera `hello.elf` (ELF64 equivalente a `hello.bin`)
+- **Añadido**: `userbin/generate_hello_elf.py` — genera `hello.elf` (ELF64 equivalente a `hello.nxe`)
 - **Añadido**: `hello.elf` incluido en imagen NeoDOS FS
 - **Total**: 150 tests kernel + 4 user-mode binaries
 
@@ -724,7 +724,7 @@
 
 - **Añadido**: `src/module_abi.rs` — procesado del header NDM v1 (`NdModuleHeader`, `ParsedModule`), tabla de servicios del kernel (`KernelServiceTableV1`) en `0x4FFFF00` para módulos Ring 0 con funciones de I/O, consola, frame allocator y block device.
 - **Añadido**: `docs/MODULE_ABI.md` — especificación completa del formato `.ndm`, estructura del header, tabla de servicios, compatibilidad de versiones, ciclo de vida del módulo y dispatch de TSR.
-- **Actualizado**: `LOAD` command (`shell/commands/load.rs`) — valida el header NDM v1 antes de cargar; soporta módulos con secciones code+data separadas y entry point explícito; fallback a binario raw para `.bin` legacy.
+- **Actualizado**: `LOAD` command (`shell/commands/load.rs`) — valida el header NDM v1 antes de cargar; soporta módulos con secciones code+data separadas y entry point explícito; fallback a binario raw para `.nxe` legacy.
 - **Actualizado**: `generate_driver.py` — produce `driver.ndm` con header NDM v1 (64 bytes) + code + data.
 - **Inicializado**: `module_abi::init_kernel_service_table()` en `main.rs` (Phase 2.75, tras heap allocator).
 
@@ -732,7 +732,7 @@
 
 - **Corregido**: `schedule()` ya no selecciona idle (PID 0) cuando hay procesos no-idle listos. El round-robin ahora escanea todos los PIDs > 0 antes de caer en idle.
 - **Corregido**: `timer_handler_inner` ya no guarda `current.rsp`. El timer puede dispararse durante ejecución en Ring 0 (syscalls) generando un frame IRETQ de 3 items. Solo `syscall_try_resched` guarda RSP porque INT 0x80 siempre viene de Ring 3 con frame de 5 items.
-- **Consecuencia**: `ALLTEST.BIN` pasa completo por primera vez (yield, getpid, open, readfile, close, chdir, getcwd, brk → ALL_TESTS_PASSED).
+- **Consecuencia**: `ALLTEST.NXE` pasa completo por primera vez (yield, getpid, open, readfile, close, chdir, getcwd, brk → ALL_TESTS_PASSED).
 
 ### Herramientas
 
@@ -761,7 +761,7 @@
 - **Corregido**: `timer_handler_inner` ya no sobrescribe el estado `Terminated` de un proceso que salió. Previene que el timer reactive procesos muertos o cambie el contexto prematuramente cuando el shell corre en Ring 0 fuera del scheduler.
 - **Corregido**: `syscall_try_resched` solo marca `Ready` si el proceso estaba `Running` (no `Terminated`).
 - **Corregido**: `EXIT_NOW` cambiado a `AtomicU8` con `SeqCst` store. El compilador podía eliminar el `= 1` con LTO `opt-level=3`, haciendo que `sys_exit` hiciera `IRETQ` al espacio de usuario en vez de saltar a `exit_to_kernel`, ejecutando datos como código (page fault en RIP=0x4002ad).
-- **Añadido**: `ALLTEST.BIN` — test exhaustivo de syscalls (open, readfile, close, chdir, getcwd, brk, yield, getpid, exit). Incluido en la imagen NeoDOS FS.
+- **Añadido**: `ALLTEST.NXE` — test exhaustivo de syscalls (open, readfile, close, chdir, getcwd, brk, yield, getpid, exit). Incluido en la imagen NeoDOS FS.
 
 ### Estabilidad en arranque
 

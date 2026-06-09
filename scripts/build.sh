@@ -84,27 +84,27 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"
         cargo build --release 2>&1 || { echo "[!] Failed to build $pkg"; exit 1; }
-        cp "target/x86_64-unknown-none/release/$pkg" "$USERBIN_DIR/$pkg.bin"
-        echo "    -> $USERBIN_DIR/$pkg.bin"
+        cp "target/x86_64-unknown-none/release/$pkg" "$USERBIN_DIR/$pkg.nxe"
+        echo "    -> $USERBIN_DIR/$pkg.nxe"
     done
     cd "$PROJECT_ROOT"
-    # Also produce hello.elf (same binary as hello.bin, but with .elf extension for ELF loader tests)
-    cp "$USERBIN_DIR/hello.bin" "$USERBIN_DIR/hello.elf"
+    # Also produce hello.elf (same binary as hello.nxe, but with .elf extension for ELF loader tests)
+    cp "$USERBIN_DIR/hello.nxe" "$USERBIN_DIR/hello.elf"
     echo "    -> $USERBIN_DIR/hello.elf"
 
-    echo "[+] Building libneodos DLL (shared library)..."
-    cd "$PROJECT_ROOT/libneodos-dll"
-    cargo build --release 2>&1 || { echo "[!] Failed to build libneodos-dll"; exit 1; }
-    DLL_BIN="$PROJECT_ROOT/libneodos.dll"
-    cp "target/x86_64-unknown-none/release/libneodos-dll" "$DLL_BIN"
-    echo "[✓] libneodos DLL: $DLL_BIN ($(stat -c%s "$DLL_BIN") bytes)"
+    echo "[+] Building libneodos NXL (shared library)..."
+    cd "$PROJECT_ROOT/libneodos-nxl"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libneodos-nxl"; exit 1; }
+    NXL_BIN="$PROJECT_ROOT/libneodos.nxl"
+    cp "target/x86_64-unknown-none/release/libneodos-nxl" "$NXL_BIN"
+    echo "[✓] libneodos NXL: $NXL_BIN ($(stat -c%s "$NXL_BIN") bytes)"
 
-    echo "[+] Building libmath DLL (math library)..."
-    cd "$PROJECT_ROOT/libmath-dll"
-    cargo build --release 2>&1 || { echo "[!] Failed to build libmath-dll"; exit 1; }
-    MATH_DLL_BIN="$PROJECT_ROOT/libmath.dll"
-    cp "target/x86_64-unknown-none/release/libmath-dll" "$MATH_DLL_BIN"
-    echo "[✓] libmath DLL: $MATH_DLL_BIN ($(stat -c%s "$MATH_DLL_BIN") bytes)"
+    echo "[+] Building libmath NXL (math library)..."
+    cd "$PROJECT_ROOT/libmath-nxl"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libmath-nxl"; exit 1; }
+    MATH_NXL_BIN="$PROJECT_ROOT/libmath.nxl"
+    cp "target/x86_64-unknown-none/release/libmath-nxl" "$MATH_NXL_BIN"
+    echo "[✓] libmath NXL: $MATH_NXL_BIN ($(stat -c%s "$MATH_NXL_BIN") bytes)"
 
     cd "$PROJECT_ROOT"
     if [ -f "$USERBIN_DIR/nem_builder.py" ]; then

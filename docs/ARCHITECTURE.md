@@ -76,7 +76,7 @@ stub (or NEM ATA driver once loaded).
 
 ## RAM Disk
 
-The bootloader loads the NeoDOS filesystem image into memory (as a raw byte buffer) and passes the address/size in `BootInfo`. The kernel stores these in `globals::RAM_DISK_BASE` / `RAM_DISK_SIZE` and provides `globals::ram_disk_buf() -> Option<&[u8]>`. The RAM disk is used by the shell's `run` command to load user binaries (flat `.BIN` files) without reading from the disk.
+The bootloader loads the NeoDOS filesystem image into memory (as a raw byte buffer) and passes the address/size in `BootInfo`. The kernel stores these in `globals::RAM_DISK_BASE` / `RAM_DISK_SIZE` and provides `globals::ram_disk_buf() -> Option<&[u8]>`. The RAM disk is used by the shell's `run` command to load user binaries (flat `.NXE` files) without reading from the disk.
 
 ## Boot ABI (`BootInfo`)
 
@@ -426,23 +426,23 @@ Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init o
 
 ---
 
-### 8.5. DLL System (`src/dll.rs`)
+### 8.5. NXL System (`src/nxl.rs`)
 
-Shared library (DLL) loading subsystem for user-mode processes.
+Shared library (NXL) loading subsystem for user-mode processes.
 
-**DLL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87).
+**NXL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87).
 
-**Available DLLs**:
-| DLL | Slot | Address | Load |
+**Available NXLs**:
+| NXL | Slot | Address | Load |
 |-----|------|---------|------|
-| `libneodos.dll` | 0 | `0x1e000000` | Auto-loaded at boot |
-| `libmath.dll` | 1 | `0x1e040000` | Manual via `LOADLIB` |
+| `libneodos.nxl` | 0 | `0x1e000000` | Auto-loaded at boot |
+| `libmath.nxl` | 1 | `0x1e040000` | Manual via `LOADLIB` |
 
-**sys_loadlib (RAX=21)**: Loads a NeoDOS DLL from NeoFS into the next free slot. Returns base address. The DLL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
+**sys_loadlib (RAX=21)**: Loads a NeoDOS NXL from NeoFS into the next free slot. Returns base address. The NXL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
 
-**Shell command**: `LOADLIB C:\SYSTEM\LIB\LIBMATH.DLL` loads libmath into slot 1.
+**Shell command**: `LOADLIB C:\SYSTEM\LIB\LIBMATH.NXL` loads libmath into slot 1.
 
-**libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the DLL base address for user-mode `extern "C"` function dispatch.
+**libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the NXL base address for user-mode `extern "C"` function dispatch.
 
 ---
 
@@ -506,7 +506,7 @@ The kernel testing framework includes **301 tests** (36 suites) with suites dedi
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
 
-Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.BIN`, `FILETEST.BIN`, `ALLTEST.BIN`, `TEST.BIN`).
+Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `TEST.NXE`).
 
 ---
 
@@ -560,7 +560,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
 | 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
 | 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
-| 21 | sys_loadlib | RBX=path_ptr | Load DLL from NeoFS into DLL region slot |
+| 21 | sys_loadlib | RBX=path_ptr | Load NXL from NeoFS into NXL region slot |
 
 ## Debug Interfaces
 

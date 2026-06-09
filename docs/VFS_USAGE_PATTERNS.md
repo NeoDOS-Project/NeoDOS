@@ -134,7 +134,7 @@ Reads file content at specified offset.
 **Example**:
 ```rust
 crate::globals::with_vfs(|vfs| {
-    let (drive_idx, node) = vfs.resolve_path("C:\\test.bin")?;
+    let (drive_idx, node) = vfs.resolve_path("C:\\test.nxe")?;
     
     if node.mode & MODE_FILE == 0 {
         return Err(VfsError::NotAFile);

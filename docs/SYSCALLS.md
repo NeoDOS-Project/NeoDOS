@@ -136,6 +136,6 @@ Unmaps a previously mmap'd region, freeing all physical pages and removing the V
 - **Returns (`RAX`)**: `0` on success, or error code.
 
 ### 21 — `sys_loadlib`
-Loads a NeoDOS shared library (DLL) from the filesystem into a free slot in the DLL region (`0x1e000000..0x1e200000`, 8 × 256 KB slots). The ELF is parsed, sections mapped as read-only USER_ACCESSIBLE, and the export table becomes accessible at the returned base address.
+Loads a NeoDOS shared library (NXL) from the filesystem into a free slot in the NXL region (`0x1e000000..0x1e200000`, 8 × 256 KB slots). The ELF is parsed, sections mapped as read-only USER_ACCESSIBLE, and the export table becomes accessible at the returned base address.
 - **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 file path (`*const u8`).
-- **Returns (`RAX`)**: Base address of the loaded DLL, or error code.
+- **Returns (`RAX`)**: Base address of the loaded NXL, or error code.

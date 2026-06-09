@@ -3,7 +3,7 @@
 
 use libneodos::println;
 
-// MathAbiTable must match libmath-dll/src/main.rs exactly
+// MathAbiTable must match libmath-nxl/src/main.rs exactly
 #[repr(C)]
 struct MathAbiTable {
     version: u32,
@@ -51,21 +51,21 @@ pub extern "C" fn _start() -> ! {
     // ================================================================
     // PHASE 1: LOAD TEST
     // ================================================================
-    println!("[TEST] Loading libmath.dll...");
+    println!("[TEST] Loading libmath.nxl...");
 
-    let math_base = match libneodos::syscall::sys_loadlib("C:\\SYSTEM\\LIB\\LIBMATH.DLL") {
+    let math_base = match libneodos::syscall::sys_loadlib("C:\\SYSTEM\\LIB\\LIBMATH.NXL") {
         Ok(base) => base,
         Err(e) => {
             println!("[FAIL] sys_loadlib error code {}", e);
             println!();
             println!("RESULT: FAILURE");
             println!("FAILED AT: LOAD TEST");
-            println!("REASON: Could not load libmath.dll");
+            println!("REASON: Could not load libmath.nxl");
             libneodos::syscall::sys_exit(1)
         }
     };
 
-    println!("[OK] libmath.dll loaded at 0x{:x}", math_base);
+    println!("[OK] libmath.nxl loaded at 0x{:x}", math_base);
     println!("[TEST] Symbol resolution...");
 
     let table = unsafe { &*(math_base as *const MathAbiTable) };
@@ -109,13 +109,13 @@ pub extern "C" fn _start() -> ! {
     }
 
     if load_ok {
-        println!("[LOAD] libmath.dll........ OK");
+        println!("[LOAD] libmath.nxl........ OK");
         println!("[SYM] add................. OK");
         println!("[SYM] sub................. OK");
         println!("[SYM] mul................. OK");
         println!("[SYM] div................. OK");
     } else {
-        println!("[LOAD] libmath.dll........ FAIL");
+        println!("[LOAD] libmath.nxl........ FAIL");
         println!("[SYM] add................. FAIL");
         println!("[SYM] sub................. FAIL");
         println!("[SYM] mul................. FAIL");

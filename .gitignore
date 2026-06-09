@@ -7,11 +7,11 @@ target/
 
 # Generated build outputs
 *.elf
-*.bin
+*.nxe
 *.efi
 *.img
 *.vdi
 *.log
 *.fs
-*.dll
+*.nxl
 __pycache__

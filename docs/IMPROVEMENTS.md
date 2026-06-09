@@ -106,18 +106,18 @@
 69. **Scheduler blocking** — ProcessState::Blocked, wake_waiters(), idle HLT.
 70. **S6. libneodos** — `libneodos/`: standard library para Ring 3 Rust processes. Syscall wrappers via `int 0x80`. IO/FS/Mem modules. `print!`/`println!` macros.
 71. **301 kernel self-tests** — 36 suites, comando `test`.
-72. **5 user-mode test binaries** — HELLO.BIN, SYSTEST.BIN, FILETEST.BIN, ALLTEST.BIN, TEST.BIN.
+72. **5 user-mode test binaries** — HELLO.NXE, SYSTEST.NXE, FILETEST.NXE, ALLTEST.NXE, TEST.NXE.
 73. **Command history** — buffer circular 32, ↑/↓ navegación.
 74. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
 75. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
 76. **Shell commands básicos** — HELP, DATE, TIME, VER, DEL, REN, RD, SHUTDOWN, EXIT, LOAD.
 77. **S1. Estabilizar syscall ABI** — `SyscallNum` enum, `SyscallError` (16 codes), `err_to_u64()`, `validate_abi()`.
-78. **B6b. Shared library system (libneodos DLL)** — libneodos como DLL standalone con `AbiTable`. Slot 0 en `0x1e000000`. Auto-load en PHASE 3.86.
-79. **Multi-DLL system** — `sys_loadlib` (RAX=21), `LOADLIB` command. libmath.dll en slot 1 (`0x1e040000`).
+78. **B6b. Shared library system (libneodos NXL)** — libneodos como NXL standalone con `AbiTable`. Slot 0 en `0x1e000000`. Auto-load en PHASE 3.86.
+79. **Multi-NXL system** — `sys_loadlib` (RAX=21), `LOADLIB` command. libmath.nxl en slot 1 (`0x1e040000`).
 80. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: 16 MB region (0x30000000–0x31000000), 16 × 1 MB slots. Pointer validation. Sandbox mode. 12 tests.
 81. **W2. Hot reload drivers** — `src/drivers/hotreload.rs`: runtime unload/reload. State machine: Active→Unloading→Unloaded→Loaded. EVENT_DRIVER_UNLOAD with timeout. 11 tests. Total: 320 kernel tests.
-82. **TEST.EXE — libmath.dll self-test** — `userbin/test/`: LOAD TEST, BASIC ARITHMETIC, EDGE CASES, STRESS TEST (1M iter), DETERMINISM. 320 tests + 5 user binaries.
-83. **CPUTEST.BIN — CPU stress test binary** — `userbin/cputest/`: tests CPU arithmetic, loops, and basic instruction throughput. Iterative testing across 100 iterations.
+82. **TEST.EXE — libmath.nxl self-test** — `userbin/test/`: LOAD TEST, BASIC ARITHMETIC, EDGE CASES, STRESS TEST (1M iter), DETERMINISM. 320 tests + 5 user binaries.
+83. **CPUTEST.NXE — CPU stress test binary** — `userbin/cputest/`: tests CPU arithmetic, loops, and basic instruction throughput. Iterative testing across 100 iterations.
 84. **A0.1. Buddy system frame allocator** — `src/memory/buddy.rs`: buddy system de 11 órdenes (4 KB → 4 MB) con free lists O(log n). Bitmap como validación. `alloc_frames(order)`/`free_frames(addr, order)`.
 85. **A0.2. Dynamic PHYS_MEM_END** — `MemoryMap { total_phys, highest_page }` detectado del memory map UEFI. Frame allocator soporta >4 GB sin modificar constantes.
 86. **A0.3. Dynamic memory layout manager** — `src/memory/layout.rs`: `MemoryLayout { regions: [MemoryRegion; 32] }` con `reserve_region()` dinámico y verificación de solapamientos.
@@ -432,7 +432,7 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
          - Kernel heap (0x1000000–0x2000000): ERROR
          - User heap (0x10000000–0x12000000): ERROR
          - mmap region (0x20000000–0x22000000): ERROR
-         - DLL region (0x1e000000–0x1e200000): ERROR
+         - NXL region (0x1e000000–0x1e200000): ERROR
          - Driver isolation (0x30000000–0x31000000): ERROR
       5. **Contenedor entrypoint:** Si entry point no está en rango de ningún PT_LOAD → log warning (posible intentional obfuscation pero permitir).
     - **Errores:
@@ -445,7 +445,7 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
   - **Criterio:**
     - ELF malicioso @ 0x1000000 (kernel heap base) → loader rechaza con ELF_ERR_KERNEL_COLLISION, sin triple fault
     - ELF normal carga ok
-    - Stats: `DLL LOAD TEST.BIN` imprime validations passed, file size, entrypoint
+    - Stats: `NXL LOAD TEST.NXE` imprime validations passed, file size, entrypoint
   - **Tests:** `elf_validation_valid_range`, `elf_reject_zero_vaddr`, `elf_reject_kernel_collision`, `elf_reject_heap_collision`, `elf_reject_mmap_collision`, `elf_malicious_no_triple_fault`, `elf_overlap_segments` (7 tests).
 
 - [ ] **A4.5. APC engine** | NT: Asynchronous Procedure Calls | Prereqs: A1.5, A2.4
@@ -478,7 +478,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 
 1. Crear `userbin/neoinit/` — supervisor mínimo (spawn, wait, respawn hijos).
 2. Crear `userbin/shell/` — portar `DosShell` a libneodos (comandos, history, TAB).
-3. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.BIN`, no `DosShell::run()`.
+3. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.NXE`, no `DosShell::run()`.
 4. NeoInit lanza shell como hijo; kernel entra idle loop (HLT + work queue + event bus).
 5. Syscalls admin (`test`, `ndreg`, `kobj`) requieren `CAP_ADMIN` en access token.
 
@@ -507,7 +507,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
   - **Descripción:** Supervisor de servicios de nivel de sistema que gestiona procesos críticos como shell, daemon services, y respawning.
     - **NeoInit responsibilities:**
       1. **Inicio:** Kernel lo carga como ELF @ 0x400000 con argv `["neoinit"]`. Hereda fds: 0=stdin (keyboard), 1=stdout (console), 2=stderr (console).
-      2. **Spawn shell:** `sys_spawn("\\SYSTEM\\SHELL.BIN", ...)` → fork + exec (si fork no existe, usar spawn directo). Shell es hijo de NeoInit (PPID=1).
+      2. **Spawn shell:** `sys_spawn("\\SYSTEM\\SHELL.NXE", ...)` → fork + exec (si fork no existe, usar spawn directo). Shell es hijo de NeoInit (PPID=1).
       3. **Respawn children:** Loop `sys_waitpid(-1)` espera cualquier hijo. Si termina: `if child_id == shell_pid { respawn_shell() }`. Otros servicios: respawn si critical, else cleanup.
       4. **Shutdown:** Si NeoInit recibe SIGTERM (A3.4 SEH user exception) o comando shutdown de shell via IPC, escribe final state a NeoFS (`/SYSTEM/.NEOINIT_STATE`).
       5. **Exit:** NeoInit nunca llama `sys_exit()` (INV-10: kernel panic si PID 1 sale).
@@ -515,7 +515,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
       ```
       services: [{
           name: "shell",
-          path: "\\SYSTEM\\SHELL.BIN",
+          path: "\\SYSTEM\\SHELL.NXE",
           critical: true,  // respawn siempre
           auto_start: true,
           args: [],
@@ -737,11 +737,11 @@ Prereqs: A4.1 (userland no hardcodea `C:`).
       2. Parse NeoDOS superblock en Partition1 → crear `\Device\HarddiskVolume0` symlink → Partition1
       3. Mount NeoFS: `vfs_mount("\Device\HarddiskVolume0", &NeoDosFs)` → registra mount point
       4. Create symlink `\DosDevices\C:` → `\Device\HarddiskVolume0`
-    - **Path resolution (VFS lookup):** `vfs_open("\DosDevices\C:\SYSTEM\NEOINIT.BIN")` →
+    - **Path resolution (VFS lookup):** `vfs_open("\DosDevices\C:\SYSTEM\NEOINIT.NXE")` →
       1. Ob lookup `\DosDevices\C:` → symlink → `\Device\HarddiskVolume0`
       2. Lookup `\Device\HarddiskVolume0` → mount point object
-      3. VFS decompose path: mount = "/", rest = "SYSTEM/NEOINIT.BIN"
-      4. `mount.fs.lookup("SYSTEM/NEOINIT.BIN")` en NeoDOS
+      3. VFS decompose path: mount = "/", rest = "SYSTEM/NEOINIT.NXE"
+      4. `mount.fs.lookup("SYSTEM/NEOINIT.NXE")` en NeoDOS
       5. Retornar VFS inode
     - **No hardcoding:** Kernel no conoce literal `C:`. Drivers pueden montar `\Device` arbitrariamente, shell resuelve `C:` via Ob lookup.
   - **Criterio:**
@@ -807,13 +807,13 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 
 #### B4. Userland Usable System
 
-- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.1 | Files: `userbin/shell/` | Done when: shell busca `.BIN`/`.COM`/`.EXE` en dirs de PATH.
+- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.1 | Files: `userbin/shell/` | Done when: shell busca `.NXE`/`.COM`/`.EXE` en dirs de PATH.
 - [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.1, S2 | Files: `userbin/shell/` | Done when: `cmd1 | cmd2` conecta stdout→stdin via pipe.
 - [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.1 | Files: `userbin/shell/` | Done when: redirect a archivo via dup2.
 - [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.1 | Files: `userbin/shell/`, framebuffer driver | Done when: colores y cursor ANSI en consola.
 - [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/shell/`, `src/input/` | Done when: Alt+F1–F3 cambia VT activo.
 - [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.1, B4.4 | Files: `userbin/neoedit/` | Done when: edit/save `.TXT` via VFS.
-- [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/` | Done when: DLL binding per-process, no global slot sharing.
+- [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/` | Done when: NXL binding per-process, no global slot sharing.
 - [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.1, A1.5 | Files: `userbin/neotop/` | Done when: muestra procesos/threads, CPU, memoria en tiempo real.
 - [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/shell/` | Done when: ejecuta scripts `.BAT`/`.CMD` con IF, GOTO, CALL.
 - [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/` | Done when: ventanas superpuestas 2D sobre framebuffer.

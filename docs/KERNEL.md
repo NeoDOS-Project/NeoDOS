@@ -33,7 +33,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
 15. **Mmap demand paging** — split mmap region (`0x20000000..0x22000000`) into 4 KB page tables via `init_mmap_demand_paging()`
 16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
-17. **DLL region init** — split DLL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.dll` at slot 0 (PHASE 3.87)
+17. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
 18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
 19. **Shell** — set all keyboard LEDs ON, register kernel tests (301), create and run `DosShell`
 
@@ -66,7 +66,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `PRI <pid> <level>` (set process priority 0-3)
 - `KOBJ` (list kernel objects tracked by KOBJ manager)
 - `NDREG LIST|SHOW|QUERY|RUNTIME|HEALTH|DEBUG|LOAD` (driver registry CLI)
-- `LOADLIB <path>` (load shared library DLL)
+- `LOADLIB <path>` (load shared library NXL)
 - `FSCK [drive:] [/F]` (filesystem integrity check)
 - `SHUTDOWN` / `POWEROFF` / `EXIT` (system shutdown via ACPI)
 - `KILL <pid>` (terminate process)

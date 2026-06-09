@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal test: boot, run CPUTEST.BIN, capture output."""
+"""Minimal test: boot, run CPUTEST.NXE, capture output."""
 import subprocess, time, os, sys, socket, re
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -71,9 +71,9 @@ while time.time() - start < timeout:
 
     if boot_detected and not sent_run and time.time() > start + 25:
         time.sleep(2)
-        print("[+] Sending: run CPUTEST.BIN")
+        print("[+] Sending: run CPUTEST.NXE")
         sys.stdout.flush()
-        for ch in "r", "u", "n", "spc", "c", "p", "u", "t", "e", "s", "t", "dot", "b", "i", "n", "ret":
+        for ch in "r", "u", "n", "spc", "c", "p", "u", "t", "e", "s", "t", "dot", "n", "x", "e", "ret":
             sock.sendall(f"sendkey {ch}\n".encode())
             time.sleep(0.15)
         sent_run = True

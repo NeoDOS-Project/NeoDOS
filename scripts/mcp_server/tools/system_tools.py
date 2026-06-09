@@ -252,8 +252,8 @@ def get_system_resource() -> str:
         nem_files = list(drivers_dir.rglob("*.nem"))
         lines.append(f"NEM driver projects: {len(nem_files)}")
 
-    dll_files = list(NEODOS_ROOT.glob("*.dll"))
-    lines.append(f"DLLs: {len(dll_files)}")
+    dll_files = list(NEODOS_ROOT.glob("*.nxl"))
+    lines.append(f"NXLs: {len(dll_files)}")
 
     # Disk images
     lines.append("")

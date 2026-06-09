@@ -1120,7 +1120,7 @@ fn handler_loadlib(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::NoEnt);
     }
 
-    match crate::dll::dll_load(&path_str) {
+    match crate::nxl::nxl_load(&path_str) {
         Some(base) => {
             serial_println!("[SYS] sys_loadlib '{}' => 0x{:x}", path_str, base);
             base

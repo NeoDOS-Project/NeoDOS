@@ -38,7 +38,7 @@ pub extern "C" fn _start() -> ! {
 
     // sys_open
     let fd = check(
-        syscall::sys_open("C:\\HELLO.BIN"),
+        syscall::sys_open("C:\\HELLO.NXE"),
         "sys_open: OK",
         "sys_open: FAIL",
     );

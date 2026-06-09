@@ -1,8 +1,8 @@
 [package]
-name = "libmath-dll"
+name = "libneodos-nxl"
 version = "0.1.0"
 edition = "2021"
-description = "NeoDOS math library (DLL) — compiled as standalone binary at 0x1e040000"
+description = "NeoDOS shared library (NXL) — compiled as standalone binary at 0x1e000000"
 
 [profile.release]
 panic = "abort"

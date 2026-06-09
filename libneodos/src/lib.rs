@@ -7,9 +7,9 @@ pub mod fs;
 pub mod mem;
 pub mod macros;
 
-/// Load a shared library (DLL) from the filesystem.
-/// Returns the base address where the DLL was loaded, which is also
-/// the address of the DLL's export table.
+/// Load a shared library (NXL) from the filesystem.
+/// Returns the base address where the NXL was loaded, which is also
+/// the address of the NXL's export table.
 pub fn loadlib(path: &str) -> Result<u64, i64> {
     syscall::sys_loadlib(path)
 }
