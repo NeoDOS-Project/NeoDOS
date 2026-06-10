@@ -35,7 +35,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
 17. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
 18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
-19. **Shell** — set all keyboard LEDs ON, register kernel tests (301), create and run `DosShell`
+19. **Shell** — set all keyboard LEDs ON, register kernel tests (366), create and run `DosShell`
 
 ### GPT Layout (single disk)
 
@@ -72,7 +72,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 301 kernel self-tests + 4 user-mode binaries)
+- `test` (run 366 kernel self-tests + 4 user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 

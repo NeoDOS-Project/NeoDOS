@@ -27,7 +27,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
-  - DOS-like shell (290 kernel tests + user commands)
+  - DOS-like shell (366 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -149,7 +149,7 @@ Unified kernel object system for tracking, referencing, and enumerating kernel o
 | **KObjEntry** | Metadata per object: KObjId (u64, global sequential), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
 | **KObjRegistry** | 64-slot fixed-size array behind `spin::Mutex`, global via `lazy_static!` |
 | **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
-| **Integration** | Processes (`scheduler.rs`), drivers (`driver_runtime.rs`), pipes (`pipe.rs`) auto-register on creation and auto-unregister on destruction |
+| **Integration** | Processes (`scheduler/mod.rs`), drivers (`driver_runtime.rs`), pipes (`pipe.rs`) auto-register on creation and auto-unregister on destruction |
 | **CLI** | `KOBJ` shell command lists all live objects (ID, type, name, refcount, native_id) |
 
 The KOBJ registry is populated at boot by driver loading and at runtime by process/pipe creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close).
@@ -167,8 +167,9 @@ Lowest kernel layer. Provides **26 `extern "C` primitives** for pure hardware ac
 | Page Memory | `mem.rs` | `alloc_page()`, `free_page()`, `map_page()`, `unmap_page()`, `memory_barrier()` |
 | Interrupts | `irq.rs` | `register_irq()` (stub), `ack_irq()` |
 | Timing | `time.rs` | `get_ticks()`, `increment_ticks()`, `sleep_hint()` |
+| IRQL | `irql.rs` | `raise_irql()`, `lower_irql()`, `current_irql()`, `at_or_above_dispatch()`, `IrqMutex<T>`, `at_dispatch()` |
 
-Non-ABI helpers (Rust ABI): `without_interrupts()`, `walk_ptes_4k()`, `cpu_info()`.
+Non-ABI helpers (Rust ABI): `without_interrupts()` (legacy), `walk_ptes_4k()`, `cpu_info()`.
 
 CPU initialization code (GDT, IDT, PIC, paging) stays in `arch/x64/` — it is architecture-specific and not part of the HAL contract.
 
@@ -488,23 +489,24 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **301 tests** (36 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **366 tests** (37 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
 | NEM | 23 | v3 parsing, ABI, relocations, edge cases |
-| Event Bus | 9 | Creation, push/pop, order, overflow, IDs, dispatch, filters |
+| Event Bus | 17 | Creation, push/pop, order, overflow, IDs, dispatch, filters |
 | Driver State | 21 | 7-state pipeline, transition matrix, certification |
 | Boot Loader | 8 | Scan, load, init, activate, categories |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver |
 | Framebuffer Ref | 8 | Reference framebuffer driver |
 | Storage Ref | 14 | Reference storage driver |
-| ELF | 7 | ELF64 loader |
+| ELF | 15 | ELF64 loader with A4.3 address space validation |
 | Pipe | 13 | IPC pipes |
 | Mmap | 6 | Memory mapping |
 | FSCK | 6 | Filesystem integrity |
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
+| IRQL | 5 | IRQL raise/lower, page fault invariant, spinlock implicit raise, nesting, preemption threshold |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `TEST.NXE`).
 

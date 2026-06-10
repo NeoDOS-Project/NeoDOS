@@ -101,7 +101,15 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     let data = unsafe { &*core::ptr::slice_from_raw_parts(NXL_IMAGE_BUF.as_ptr(), image_size) };
 
-    let result = crate::elf::load_elf(data)?;
+    // NXL loader bypasses address space validation — it loads into the dedicated
+    // NXL region which is a protected region for user ELF validation.
+    let result = match crate::elf::load_elf(data, None) {
+        Ok(r) => r,
+        Err(e) => {
+            serial_println!("[NXL] ELF load failed: {:?}", e);
+            return None;
+        }
+    };
     serial_println!("[NXL] ELF entry=0x{:x}", result.entry);
 
     mark_slot_user_accessible(base, image_size);

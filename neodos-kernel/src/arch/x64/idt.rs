@@ -294,6 +294,19 @@ extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
 ) {
+    // INV-14: Page fault at IRQL >= DISPATCH is fatal (bugcheck).
+    // Holding a spinlock implies DISPATCH_LEVEL; a page fault there
+    // means the kernel is accessing paged-out memory, which is illegal.
+    let irql = unsafe { crate::arch::x64::cpu_local::this_cpu_irql() };
+    if irql >= crate::hal::irql::DISPATCH_LEVEL {
+        let rip = stack_frame.instruction_pointer.as_u64();
+        let virt = crate::hal::read_cr2();
+        panic_classified!(PanicClass::PageFault,
+            "BUGCHECK KI_EXCEPTION_ACCESS_VIOLATION: page fault at IRQL {} (>= DISPATCH) \
+             @ {:#x} virt={:#x}",
+            irql, rip, virt);
+    }
+
     let virt = crate::hal::read_cr2();
     let is_user = error_code.contains(PageFaultErrorCode::USER_MODE);
     let is_write = error_code.contains(PageFaultErrorCode::CAUSED_BY_WRITE);

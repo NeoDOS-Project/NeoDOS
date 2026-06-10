@@ -3,12 +3,14 @@
 mod cpu;
 mod io;
 mod irq;
+pub mod irql;
 mod mem;
 mod time;
 
 pub use cpu::*;
 pub use io::*;
 pub use irq::*;
+pub use irql::*;
 pub use mem::*;
 pub use time::*;
 

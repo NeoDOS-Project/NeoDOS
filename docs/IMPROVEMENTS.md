@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.31.0 (353 kernel tests + 4 user-mode binaries).
+> Versión actual: v0.31.0 (366 kernel tests + 4 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 94 / ~130 items completados. Próximo milestone: **A2.4** (IRQL framework).
+**Progreso:** 95 / ~130 items completados. Próximo milestone: **A2.5** (DPC engine).
 
 ---
 
@@ -218,18 +218,17 @@ El scheduler actual asume monoprocesador y planifica `Process` como unidad únic
 
 La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bloquear todas las interrupciones.
 
-- [ ] **A2.4. IRQL framework** | NT: `KeRaiseIrql`/`KeLowerIrql` (Interrupt Request Level) | Prereqs: A1.1
-  - **Archivos:** `src/hal/irql.rs`, `src/hal/x64/irql.rs`, integración `arch/x64/idt.rs`
+- [x] **A2.4. IRQL framework** | NT: `KeRaiseIrql`/`KeLowerIrql` (Interrupt Request Level) | Prereqs: A1.1
+  - **Archivos:** `src/hal/x64/irql.rs`, integración `arch/x64/idt.rs`, `cpu_local.rs`
   - **Descripción:** Modelo de priorización de interrupciones sin deshabilitar todas (reemplaza `cli` global).
     - **IRQL levels (per-CPU):** `PASSIVE=0` (user code), `APC=1` (APC delivery), `DISPATCH=2` (DPC delivery + scheduler), `DIRQL=3–11` (device interrupts mapped to vectors 32–40), `HIGH=15` (NMI, machine check).
-    - **Storage:** Per-CPU en KPRCB, acceso vía `cpu_local!(current_irql)`. Al raise: almacenar IRQL anterior en stack (para lower anidado).
-    - **Semantics:** `raise_irql(new_level)` deshabilita interrupts solo si `new_level > current_irql`. En x86, traduce a `cli` si DIRQL >= 3, nada si APC/DISPATCH. `lower_irql(old_level)` restaura anterior; `sti` si es necesario.
-    - **Constraints:** Página fault (INT 14) en IRQL >= DISPATCH es FATAL (bugcheck KI_EXCEPTION_ACCESS_VIOLATION). Holding spin::Mutex implica IRQL >= DISPATCH automáticamente (verificado).
-    - **Replazo de `without_interrupts`:** Refactor paths de alloc/free: `without_interrupts` → `raise_irql(DISPATCH)` + `lower_irql`. Spinlock paths += automático IRQL raise.
+    - **Storage:** Per-CPU en KPRCB, acceso vía `this_cpu_irql()` / `this_cpu_set_irql()` en `cpu_local.rs` (GS offset 0x016).
+    - **Semantics:** `raise_irql(new_level)` deshabilita interrupts solo si `new_level > current_irql`. En x86, traduce a `cli` si new >= DISPATCH, nada si PASSIVE/APC. `lower_irql(old_level)` restaura anterior; `sti` si es necesario.
+    - **Constraints:** Página fault (INT 14) en IRQL >= DISPATCH es FATAL (bugcheck KI_EXCEPTION_ACCESS_VIOLATION). `IrqMutex` implica IRQL >= DISPATCH automáticamente.
+    - **Replazo de `without_interrupts`:** Migrado work_queue, scheduler helpers, pipe blocking/wake.
   - **Criterio:**
     - Código en `raise_irql(DISPATCH)` puede sufrir page fault → kernel panic (INV-14).
-    - Código en `raise_irql(APC)` puede recibir INT 14 (page fault), int 32–40 (device IRQs) pero NO INT 33–40 reales (enmascaradas).
-    - Spinlock adquirido en PASSIVE automáticamente eleva a DISPATCH; release baja IRQL.
+    - `IrqMutex` adquirido en PASSIVE automáticamente eleva a DISPATCH; release baja IRQL.
   - **Tests:** `irql_raise_lower_passive_dispatch`, `irql_page_fault_at_dispatch_panics`, `irql_spinlock_implicit_raise`, `irql_nesting_stack`, `irql_preemption_threshold` (5 tests).
 
 - [ ] **A2.5. DPC engine** | NT: `KeInsertQueueDpc`, Deferred Procedure Call | Prereqs: A2.4
@@ -418,9 +417,9 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
       - `sys_ndreg`: ring=0, caps=CAP_ADMIN, admin=true (RAX=50)
     - **Dispatch:** `syscall_dispatch(rax, registers)` → busca `SSDT[rax]`. Si None → NoSys (-7). Si Some(fn) → chequea permiso, ejecuta, retorna.
     - **Boot validation:** `validate_abi()` itera SSDT, verifica 0..MAX_SYSCALL tienen entradas, permisos consisten.
-  - **Tests:** 5 tests (sparse dispatch, admin check, ENOSYS, validation, add new syscall). Total: 335 kernel tests.
+  - **Tests:** 5 tests (sparse dispatch, admin check, ENOSYS, validation, add new syscall). Total: 361 kernel tests.
 
-- [ ] **A4.3. ELF loader con validación de rangos** | NT: Loader security checks | Prereqs: A0.3
+- [x] **A4.3. ELF loader con validación de rangos** | NT: Loader security checks | Prereqs: A0.3
   - **Archivos:** `src/elf.rs` (refactor), `src/scheduler/address_space.rs` (new), `src/shell/commands/run.rs`
   - **Descripción:** Validación rigurosa de segmentos ELF para prevenir exploits via ELF malicioso.
     - **Checks en `load_elf_segment()`:**
@@ -446,7 +445,7 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
     - ELF malicioso @ 0x1000000 (kernel heap base) → loader rechaza con ELF_ERR_KERNEL_COLLISION, sin triple fault
     - ELF normal carga ok
     - Stats: `NXL LOAD TEST.NXE` imprime validations passed, file size, entrypoint
-  - **Tests:** `elf_validation_valid_range`, `elf_reject_zero_vaddr`, `elf_reject_kernel_collision`, `elf_reject_heap_collision`, `elf_reject_mmap_collision`, `elf_malicious_no_triple_fault`, `elf_overlap_segments` (7 tests).
+  - **Tests:** `elf_validation_valid_range`, `elf_reject_zero_vaddr`, `elf_reject_kernel_collision`, `elf_reject_heap_collision`, `elf_reject_mmap_collision`, `elf_malicious_no_triple_fault`, `elf_overlap_segments`, `elf_user_heap_collision` (8 tests).
 
 - [ ] **A4.5. APC engine** | NT: Asynchronous Procedure Calls | Prereqs: A1.5, A2.4
   - **Archivos:** `src/apc/mod.rs` (new), refactor `src/irp/mod.rs` (completion callback dispatch), integración `src/syscall.rs` (syscalls A4.5-only)
@@ -853,7 +852,7 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 5 | Scheduler monoprocesador | A1.1–A1.2 | Ps | Pendiente | No escala a multi-core |
 | 6 | Slab allocator lock global | A1.3 | Lookaside | Completado | Throughput no escala con CPUs |
 | 7 | Sin IPI / TLB shootdown | A1.4 | KeIpi | Completado | Data corruption en SMP |
-| 8 | IRQL ausente (solo cli/sti) | A2.4 | IRQL | Pendiente | Latencia IRQ, sin DPC real |
+| 8 | IRQL ausente (solo cli/sti) | A2.4 | IRQL | Completado | Per-CPU IRQL levels, IrqMutex, INV-14 page fault check |
 | 9 | DPC ausente (work queue parche) | A2.5 | DPC | Pendiente | Completion paths incorrectos |
 | 10 | PCI port I/O asume x86 | A2.1 | HAL | Pendiente | No portar a ARM64/RISC-V |
 | 11 | PIC legacy como default | A2.2 | IOAPIC | Pendiente | Límite 15 IRQs |
@@ -864,7 +863,7 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 16 | Shell en Ring 0 | A4.1 | CSRSS | Pendiente | Bug shell = kernel panic |
 | 17 | NeoInit no implementado | Z1 | smss.exe | Pendiente | Doc/código divergen |
 | 18 | Syscall dispatch manual | A4.2 | SSDT | Pendiente | Cada syscall = más bugs |
-| 19 | ELF loader sin validación | A4.3 | Ldr | Pendiente | Triple fault con binarios maliciosos |
+| 19 | ELF loader sin validación | A4.3 | Ldr | Completado | Triple fault con binarios maliciosos |
 | 20 | APC ausente | A4.5 | APC | Pendiente | I/O completion en contexto incorrecto |
 | 21 | Input sin multiplexión | A4.4 | ConDrv | Pendiente | No escalar a múltiples terminales |
 | 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | Pendiente | Doble mantenimiento |

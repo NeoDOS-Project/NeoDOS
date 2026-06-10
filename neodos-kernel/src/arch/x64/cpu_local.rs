@@ -14,7 +14,7 @@
 //! | 0x010  | 4    | current_pid           |
 //! | 0x014  | 1    | idle                  |
 //! | 0x015  | 1    | need_resched          |
-//! | 0x016  | 1    | in_dispatch_level     |
+//! | 0x016  | 1    | current_irql          |
 //! | 0x017  | 1    | _pad0                 |
 //! | 0x018  | 32   | run_queue (CpuRunQueue) |
 //! | 0x038  | 288  | slab_caches[9] (PerCpuSlabCache) |
@@ -155,7 +155,7 @@ impl PerCpuSlabCache {
 /// 0x010: current_pid     (u32)
 /// 0x014: idle            (bool)
 /// 0x015: need_resched    (bool)
-/// 0x016: in_dispatch_level (bool)
+/// 0x016: current_irql (u8)
 /// 0x017: _pad0           (u8)
 /// 0x018: run_queue       (CpuRunQueue, 264 bytes)
 /// 0x120: slab_caches     ([PerCpuSlabCache; 9], 9 × 288 bytes)
@@ -196,8 +196,8 @@ pub struct Kprcb {
     pub idle: bool,                            // 0x014
     /// Per-CPU NEED_RESCHED flag (set by timer, cleared on syscall return).
     pub need_resched: bool,                    // 0x015
-    /// True when running at DISPATCH_LEVEL (interrupts may be disabled).
-    pub in_dispatch_level: bool,               // 0x016
+    /// Current IRQL level (0=PASSIVE, 1=APC, 2=DISPATCH, 3+=DIRQL, 15=HIGH).
+    pub current_irql: u8,                      // 0x016
     _pad0: u8,                                // 0x017
 
     // ── Offset 0x018: Per-CPU run queue ──
@@ -233,7 +233,7 @@ impl Kprcb {
             current_pid: 0,
             idle: true,
             need_resched: false,
-            in_dispatch_level: false,
+            current_irql: 0,
             _pad0: 0,
             run_queue: CpuRunQueue::new(),
             slab_caches: Self::new_slab_caches(),
@@ -276,7 +276,7 @@ const _: () = assert!(OFFSET_CURRENT_THREAD as usize == core::mem::offset_of!(Kp
 const _: () = assert!(OFFSET_CURRENT_PID as usize == core::mem::offset_of!(Kprcb, current_pid));
 const _: () = assert!(OFFSET_IDLE as usize == core::mem::offset_of!(Kprcb, idle));
 const _: () = assert!(OFFSET_NEED_RESCHED as usize == core::mem::offset_of!(Kprcb, need_resched));
-const _: () = assert!(OFFSET_IN_DISPATCH_LEVEL as usize == core::mem::offset_of!(Kprcb, in_dispatch_level));
+const _: () = assert!(OFFSET_CURRENT_IRQL as usize == core::mem::offset_of!(Kprcb, current_irql));
 const _: () = assert!(OFFSET_RUN_QUEUE as usize == core::mem::offset_of!(Kprcb, run_queue));
 const _: () = assert!(OFFSET_SLAB_CACHES as usize == core::mem::offset_of!(Kprcb, slab_caches));
 const _: () = assert!(OFFSET_INTERRUPT_COUNT as usize == core::mem::offset_of!(Kprcb, interrupt_count));
@@ -429,7 +429,7 @@ pub const OFFSET_CURRENT_THREAD: u32 = 0x008;
 pub const OFFSET_CURRENT_PID: u32 = 0x010;
 pub const OFFSET_IDLE: u32 = 0x014;
 pub const OFFSET_NEED_RESCHED: u32 = 0x015;
-pub const OFFSET_IN_DISPATCH_LEVEL: u32 = 0x016;
+pub const OFFSET_CURRENT_IRQL: u32 = 0x016;
 pub const OFFSET_RUN_QUEUE: u32 = 0x018;
 pub const OFFSET_SLAB_CACHES: u32 = 0x120;
 pub const OFFSET_INTERRUPT_COUNT: u32 = 0xB40;
@@ -508,6 +508,24 @@ pub unsafe fn this_cpu_need_resched() -> bool {
 #[inline(always)]
 pub unsafe fn this_cpu_set_need_resched(val: bool) {
     gs_write_u8(OFFSET_NEED_RESCHED, val as u8);
+}
+
+/// Get the current CPU's IRQL level.
+#[inline(always)]
+pub unsafe fn this_cpu_irql() -> u8 {
+    gs_read_u8(OFFSET_CURRENT_IRQL)
+}
+
+/// Set the current CPU's IRQL level.
+#[inline(always)]
+pub unsafe fn this_cpu_set_irql(level: u8) {
+    gs_write_u8(OFFSET_CURRENT_IRQL, level);
+}
+
+/// Check if the current CPU is at DISPATCH_LEVEL or higher (IRQL >= 2).
+#[inline(always)]
+pub unsafe fn this_cpu_in_dispatch_level() -> bool {
+    this_cpu_irql() >= 2
 }
 
 /// Increment the per-CPU interrupt count.
@@ -738,6 +756,7 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_CPU_ID, 0x000u32);
         crate::test_eq!(OFFSET_CURRENT_THREAD, 0x008u32);
         crate::test_eq!(OFFSET_NEED_RESCHED, 0x015u32);
+        crate::test_eq!(OFFSET_CURRENT_IRQL, 0x016u32);
         crate::test_eq!(OFFSET_EXIT_RSP, 0xB58u32);
         crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
         Ok(())

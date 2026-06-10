@@ -155,16 +155,22 @@ impl WorkQueueManager {
         count
     }
 
-    /// Process the high-priority queue with interrupts temporarily disabled.
+    /// Process the high-priority queue at DISPATCH_LEVEL.
     /// Safe to call from any context.
     pub fn process_high_safe(&self) -> usize {
-        crate::hal::without_interrupts(|| self.process_high())
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let result = self.process_high();
+        unsafe { crate::hal::irql::lower_irql(old_irql) };
+        result
     }
 
-    /// Process the low-priority queue with interrupts temporarily disabled.
+    /// Process the low-priority queue at DISPATCH_LEVEL.
     /// Safe to call from any context.
     pub fn process_low_safe(&self) -> usize {
-        crate::hal::without_interrupts(|| self.process_low())
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let result = self.process_low();
+        unsafe { crate::hal::irql::lower_irql(old_irql) };
+        result
     }
 
     /// Process both queues (high first, then low) with interrupts disabled.

@@ -4,6 +4,7 @@ use crate::println;
 use crate::serial_println;
 use crate::shell::shell::DosShell;
 use crate::arch::x64::paging::{USER_LIMIT, alloc_user_slot};
+use crate::scheduler::address_space::AddressSpace;
 
 const MAX_BIN_SIZE: usize = 64 * 1024;
 
@@ -36,6 +37,7 @@ impl DosShell {
         // ── 2. Find and read the binary ──
         let mut bin_size = 0;
         let mut entry = slot.code_base;
+        let mut addr_space = AddressSpace::new();
 
         crate::globals::with_vfs(|vfs| {
             match vfs.resolve_path(&full_path) {
@@ -55,18 +57,21 @@ impl DosShell {
                                         && (*buf_ptr)[2] == b'L'
                                         && (*buf_ptr)[3] == b'F';
                                     if is_elf {
-                                        // ELF64 binary
+                                        // ELF64 binary with range validation
                                         let data = core::slice::from_raw_parts(
                                             core::ptr::addr_of!(*buf_ptr) as *const u8,
                                             bin_size,
                                         );
-                                        match crate::elf::load_elf(data) {
-                                            Some(result) => {
+                                        match crate::elf::load_elf(data, Some(&mut addr_space)) {
+                                            Ok(result) => {
                                                 entry = result.entry;
-                                                serial_println!("[SHELL] ELF64: entry=0x{:x}", entry);
+                                                serial_println!(
+                                                    "[SHELL] ELF64: entry=0x{:x}, segments={}, validations passed",
+                                                    entry, result.segments.len()
+                                                );
                                             }
-                                            None => {
-                                                println!("Error: Invalid or unsupported ELF binary.");
+                                            Err(e) => {
+                                                println!("Error: ELF validation failed: {:?}", e);
                                                 bin_size = 0;
                                             }
                                         }
@@ -98,9 +103,16 @@ impl DosShell {
         serial_println!("[SHELL] '{}' -> {} bytes, entry=0x{:x}",
             filename, bin_size, entry);
 
-        // ── 4. Spawn as scheduler process (inherit shell's cwd) ──
+        // ── 4. Store address space in EPROCESS after spawn ──
         let cwd_drive = self.current_drive as u8 - b'A';
         let pid = crate::usermode::spawn_usermode(entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
+
+        // Attach validated address space to the new EPROCESS
+        crate::hal::without_interrupts(|| {
+            if let Some(eproc) = crate::scheduler::current_scheduler().lock().find_eprocess_mut(pid) {
+                eproc.address_space = addr_space;
+            }
+        });
 
         serial_println!("[SHELL] Spawned PID {}, slot_idx={}", pid, slot.slot_idx);
         println!("Launching '{}' ({} bytes) in Ring 3 (PID {})...", filename, bin_size, pid);

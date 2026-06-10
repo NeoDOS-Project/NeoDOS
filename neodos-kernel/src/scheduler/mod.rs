@@ -4,6 +4,8 @@
 //! - KTHREAD: per-thread CPU context, priority, time slice, kernel stack
 //! - Schedule operates on threads, lazy CR3 swap across EPROCESS boundaries
 
+pub mod address_space;
+
 use alloc::boxed::Box;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -137,6 +139,7 @@ pub struct Eprocess {
     pub thread_count: u32,
     pub exit_code: i64,
     pub kobj_id: Option<kobj::KObjId>,
+    pub address_space: address_space::AddressSpace,
 }
 
 // ── Frame init helpers ──
@@ -258,6 +261,7 @@ impl Eprocess {
             thread_count: 0,
             exit_code: 0,
             kobj_id: None,
+            address_space: address_space::AddressSpace::new(),
         }
     }
 
@@ -275,6 +279,7 @@ impl Eprocess {
             thread_count: 1,
             exit_code: 0,
             kobj_id: None,
+            address_space: address_space::AddressSpace::new(),
         }
     }
 }
@@ -911,87 +916,99 @@ pub fn current_scheduler() -> &'static Mutex<Scheduler> {
 
 /// Recycle a terminated EPROCESS. External resources should already be freed.
 pub fn cleanup_terminated_process(pid: u32) {
-    crate::hal::without_interrupts(|| {
-        current_scheduler().lock().recycle_terminated(pid);
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    current_scheduler().lock().recycle_terminated(pid);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 /// Get current thread's EPROCESS CWD.
 pub fn get_current_cwd() -> (u8, String) {
-    crate::hal::without_interrupts(|| {
-        let lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess() {
-            (ep.cwd_drive, ep.cwd_path.clone())
-        } else {
-            (2, String::from("\\"))
-        }
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess() {
+        (ep.cwd_drive, ep.cwd_path.clone())
+    } else {
+        (2, String::from("\\"))
+    };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn set_current_cwd(drive: u8, path: &str) {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            ep.cwd_drive = drive;
-            ep.cwd_path = path.to_string();
-        }
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    if let Some(ep) = lock.current_eprocess_mut() {
+        ep.cwd_drive = drive;
+        ep.cwd_path = path.to_string();
+    }
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 pub fn current_process_heap_range() -> (u64, u64) {
-    crate::hal::without_interrupts(|| {
-        let lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess() {
-            (ep.heap_base, ep.heap_break)
-        } else {
-            (0, 0)
-        }
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess() {
+        (ep.heap_base, ep.heap_break)
+    } else {
+        (0, 0)
+    };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn set_current_heap_break(new_break: u64) {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            ep.heap_break = new_break;
-        }
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    if let Some(ep) = lock.current_eprocess_mut() {
+        ep.heap_break = new_break;
+    }
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 pub fn current_process_mmap_regions() -> Vec<MmapRegion> {
-    crate::hal::without_interrupts(|| {
-        let lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess() {
-            ep.mmap_regions.clone()
-        } else {
-            Vec::new()
-        }
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess() {
+        ep.mmap_regions.clone()
+    } else {
+        Vec::new()
+    };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            ep.mmap_regions.push(region);
-            ep.mmap_next = region.base + region.len;
-            Some(region.base)
-        } else {
-            None
-        }
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess_mut() {
+        ep.mmap_regions.push(region);
+        ep.mmap_next = region.base + region.len;
+        Some(region.base)
+    } else {
+        None
+    };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn remove_current_mmap_region(base: u64) -> Option<MmapRegion> {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        if let Some(ep) = lock.current_eprocess_mut() {
-            let idx = ep.mmap_regions.iter().position(|r| r.base == base);
-            idx.map(|i| ep.mmap_regions.remove(i))
-        } else {
-            None
-        }
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess_mut() {
+        let idx = ep.mmap_regions.iter().position(|r| r.base == base);
+        idx.map(|i| ep.mmap_regions.remove(i))
+    } else {
+        None
+    };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn free_current_mmap_pages(base: u64, len: u64) {
@@ -1000,43 +1017,50 @@ pub fn free_current_mmap_pages(base: u64, len: u64) {
 
 /// Find a thread's TEB base address.
 pub fn current_teb_base() -> u64 {
-    crate::hal::without_interrupts(|| {
-        let lock = SCHEDULER.lock();
-        lock.find_kthread(lock.current_tid).map(|k| k.teb_base).unwrap_or(0)
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = lock.find_kthread(lock.current_tid).map(|k| k.teb_base).unwrap_or(0);
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 // ── Convenience: current PID (deprecated, prefer current_tid) ──
 
 pub fn current_pid() -> u32 {
-    crate::hal::without_interrupts(|| {
-        let lock = SCHEDULER.lock();
-        lock.current_pid()
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = lock.current_pid();
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn current_tid() -> u32 {
-    crate::hal::without_interrupts(|| {
-        SCHEDULER.lock().current_tid
-    })
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let result = SCHEDULER.lock().current_tid;
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 /// For thread_join: block current thread until target TID terminates.
 pub fn block_current_for_thread(tid: u32) {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        if let Some(k) = lock.current_kthread_mut() {
-            k.state = ThreadState::Blocked { waiting_for: tid | 0x8000_0000 };
-            k.waiting_for = Some(tid | 0x8000_0000);
-        }
-        crate::syscall::set_need_resched();
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    if let Some(k) = lock.current_kthread_mut() {
+        k.state = ThreadState::Blocked { waiting_for: tid | 0x8000_0000 };
+        k.waiting_for = Some(tid | 0x8000_0000);
+    }
+    crate::syscall::set_need_resched();
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 /// Wake a thread blocked on join.
 pub fn wake_thread_joiner(tid: u32) {
-    crate::hal::without_interrupts(|| {
-        let mut lock = SCHEDULER.lock();
-        lock.wake_blocked_on_magic(tid | 0x8000_0000);
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = SCHEDULER.lock();
+    lock.wake_blocked_on_magic(tid | 0x8000_0000);
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }

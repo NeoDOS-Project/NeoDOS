@@ -202,24 +202,26 @@ impl PipeManager {
 
 fn wake_pipe_readers(pipe_id: u8) {
     let magic = 0xFFFF_0000u32 | (pipe_id as u32);
-    crate::hal::without_interrupts(|| {
-        let s = scheduler::current_scheduler();
-        let mut scheduler = s.lock();
-        scheduler.wake_blocked_on_magic(magic);
-        crate::syscall::set_need_resched();
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let s = scheduler::current_scheduler();
+    let mut scheduler = s.lock();
+    scheduler.wake_blocked_on_magic(magic);
+    crate::syscall::set_need_resched();
+    drop(scheduler);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 pub fn block_current_for_pipe(pipe_id: u8) {
     let magic = 0xFFFF_0000u32 | (pipe_id as u32);
-    crate::hal::without_interrupts(|| {
-        let mut lock = scheduler::current_scheduler().lock();
-        if let Some(k) = lock.current_kthread_mut() {
-            k.state = ThreadState::Blocked { waiting_for: magic };
-            k.waiting_for = Some(magic);
-        }
-        crate::syscall::set_need_resched();
-    });
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let mut lock = scheduler::current_scheduler().lock();
+    if let Some(k) = lock.current_kthread_mut() {
+        k.state = ThreadState::Blocked { waiting_for: magic };
+        k.waiting_for = Some(magic);
+    }
+    crate::syscall::set_need_resched();
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
 lazy_static::lazy_static! {

@@ -1,6 +1,24 @@
 # Changelog
 
-## v0.31.0 — 2026-06-09
+## v0.31.0 — 2026-06-10
+
+### A2.4. IRQL Framework
+
+#### Added
+- **`hal/x64/irql.rs`** — Per-CPU IRQL (Interrupt Request Level) mechanism replacing blanket `cli`/`sti`. Levels: PASSIVE(0), APC(1), DISPATCH(2), DIRQL(3–11), HIGH(15). `raise_irql()`/`lower_irql()` with automatic CLI/STI at DISPATCH+. `IrqMutex<T>` wrapper for spinlocks with automatic IRQL raise/lower. `at_dispatch()` closure helper. Constants: `PASSIVE_LEVEL`, `APC_LEVEL`, `DISPATCH_LEVEL`, `DIRQL_BASE`, `HIGH_LEVEL`.
+- **`arch/x64/cpu_local.rs`** — Replaced `in_dispatch_level` bool with `current_irql: u8` at GS offset 0x016. Added `this_cpu_irql()`, `this_cpu_set_irql()`, `this_cpu_in_dispatch_level()` accessors. `OFFSET_CURRENT_IRQL` constant with compile-time assertion.
+- **`arch/x64/idt.rs`** — INV-14: Page fault handler now checks `current_irql()` at entry. If >= DISPATCH_LEVEL, panics with `BUGCHECK KI_EXCEPTION_ACCESS_VIOLATION`.
+
+#### Changed
+- **`work_queue.rs`** — `process_high_safe()`/`process_low_safe()` now use `raise_irql(DISPATCH)` + `lower_irql` instead of `without_interrupts`.
+- **`scheduler/mod.rs`** — All global helpers (`current_pid`, `current_tid`, `get_current_cwd`, `set_current_cwd`, `current_process_heap_range`, `set_current_heap_break`, `current_process_mmap_regions`, `add_current_mmap_region`, `remove_current_mmap_region`, `current_teb_base`, `block_current_for_thread`, `wake_thread_joiner`, `cleanup_terminated_process`) migrated from `without_interrupts` to `raise_irql(DISPATCH)` + `lower_irql`.
+- **`pipe.rs`** — `wake_pipe_readers()`, `block_current_for_pipe()` migrated from `without_interrupts` to `raise_irql(DISPATCH)` + `lower_irql`.
+
+#### Tests
+- 5 new IRQL tests: `irql_raise_lower_passive_dispatch`, `irql_page_fault_at_dispatch_panics`, `irql_spinlock_implicit_raise`, `irql_nesting_stack`, `irql_preemption_threshold`.
+- Total: 366 kernel tests (361 + 5 new).
+
+## v0.30.1 — 2026-06-09
 
 ### A1.3. Per-CPU Slab Allocator
 

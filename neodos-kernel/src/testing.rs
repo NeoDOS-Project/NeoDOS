@@ -2367,6 +2367,8 @@ pub fn register_tests() {
     crate::arch::x64::ipi::register_ipi_tests();
     // Per-CPU slab allocator tests (A1.3)
     register_per_cpu_slab_tests();
+    // IRQL framework tests (A2.4)
+    register_irql_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
 }
@@ -2428,15 +2430,14 @@ fn register_per_cpu_slab_tests() {
     });
 
     test_case!("slab_under_irql_dispatch", {
-        // Verify slab works correctly with in_dispatch_level flag
-        // (simulated: just alloc/free while reading the flag)
+        // Verify slab works correctly when IRQL is at DISPATCH level
         extern crate alloc;
         use alloc::boxed::Box;
 
         unsafe {
-            let dispatch = cpu_local::gs_read_u8(cpu_local::OFFSET_IN_DISPATCH_LEVEL);
-            // Should be 0 (not in dispatch level during normal execution)
-            test_eq!(dispatch, 0u8);
+            let irql = cpu_local::gs_read_u8(cpu_local::OFFSET_CURRENT_IRQL);
+            // Should be 0 (PASSIVE_LEVEL) during normal execution
+            test_eq!(irql, 0u8);
         }
 
         let b = Box::new(0xABu32);
@@ -2453,6 +2454,112 @@ fn register_per_cpu_slab_tests() {
             let b = Box::new(i);
             test_eq!(*b, i);
             drop(b);
+        }
+    });
+}
+
+// ── IRQL framework tests (A2.4) ──────────────────────────────────────
+
+pub fn register_irql_tests() {
+    use crate::hal::irql;
+
+    test_case!("irql_raise_lower_passive_dispatch", {
+        unsafe {
+            let initial = irql::current_irql();
+            test_eq!(initial, irql::PASSIVE_LEVEL);
+
+            let old = irql::raise_irql(irql::DISPATCH_LEVEL);
+            test_eq!(old, irql::PASSIVE_LEVEL);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+
+            irql::lower_irql(old);
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+        }
+    });
+
+    test_case!("irql_page_fault_at_dispatch_panics", {
+        unsafe {
+            let initial = irql::current_irql();
+            test_eq!(initial, irql::PASSIVE_LEVEL);
+
+            let old = irql::raise_irql(irql::DISPATCH_LEVEL);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+            test_true!(irql::at_or_above_dispatch());
+
+            irql::lower_irql(old);
+            test_true!(!irql::at_or_above_dispatch());
+        }
+    });
+
+    test_case!("irql_spinlock_implicit_raise", {
+        use crate::hal::irql::IrqMutex;
+
+        let mutex = IrqMutex::new(42u64);
+        test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+
+        {
+            let mut guard = mutex.lock();
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+            test_eq!(*guard, 42u64);
+            *guard = 100;
+            test_eq!(*guard, 100u64);
+        }
+        test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+
+        let guard = mutex.lock();
+        test_eq!(*guard, 100u64);
+        drop(guard);
+    });
+
+    test_case!("irql_nesting_stack", {
+        unsafe {
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+
+            let old1 = irql::raise_irql(irql::DISPATCH_LEVEL);
+            test_eq!(old1, irql::PASSIVE_LEVEL);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+
+            let old2 = irql::raise_irql(irql::DIRQL_BASE);
+            test_eq!(old2, irql::DISPATCH_LEVEL);
+            test_eq!(irql::current_irql(), irql::DIRQL_BASE);
+
+            let old3 = irql::raise_irql(irql::HIGH_LEVEL);
+            test_eq!(old3, irql::DIRQL_BASE);
+            test_eq!(irql::current_irql(), irql::HIGH_LEVEL);
+
+            irql::lower_irql(old3);
+            test_eq!(irql::current_irql(), irql::DIRQL_BASE);
+
+            irql::lower_irql(old2);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+
+            irql::lower_irql(old1);
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+        }
+    });
+
+    test_case!("irql_preemption_threshold", {
+        unsafe {
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+
+            // Raising to same level — no-op
+            let old = irql::raise_irql(irql::PASSIVE_LEVEL);
+            test_eq!(old, irql::PASSIVE_LEVEL);
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+            irql::lower_irql(old);
+
+            // Raising to DISPATCH
+            let old = irql::raise_irql(irql::DISPATCH_LEVEL);
+            test_eq!(old, irql::PASSIVE_LEVEL);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+
+            // Raising again to DISPATCH — returns current level as old
+            let old2 = irql::raise_irql(irql::DISPATCH_LEVEL);
+            test_eq!(old2, irql::DISPATCH_LEVEL);
+            test_eq!(irql::current_irql(), irql::DISPATCH_LEVEL);
+
+            irql::lower_irql(old);
+            test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
         }
     });
 }
