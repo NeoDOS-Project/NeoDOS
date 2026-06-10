@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.31.0 (366 kernel tests + 4 user-mode binaries).
+> Versión actual: v0.31.0 (371 kernel tests + 4 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 95 / ~130 items completados. Próximo milestone: **A2.5** (DPC engine).
+**Progreso:** 96 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
 
 ---
 
@@ -185,35 +185,6 @@ Paralelizable sin bloquear NT core: **A2.1–A2.3** (HAL/PCI), **A5.2** VirtIO.
 
 ---
 
-### FASE A1 — Execution Model (NT: Ps/Ke thread scheduler)
-
-El scheduler actual asume monoprocesador y planifica `Process` como unidad única (1 hilo/proceso). NT planifica threads (`KTHREAD`) dentro de contenedores pasivos (`EPROCESS`).
-
-**Orden interno:** A1.5 → A1.1 → A1.2 → A1.3 → A1.4
-
-- [x] **A1.5. Thread split EPROCESS/KTHREAD** | NT: `EPROCESS`/`KTHREAD` | Prereqs: A0
-  - **Implementado en v0.29.0.**
-  - **Archivos:** `src/scheduler.rs`, `src/syscall.rs`, `src/pipe.rs`, `src/irp/mod.rs`, `src/testing.rs`, `src/usermode.rs`
-  - **Descripción:** `Process` → `Eprocess` (recursos compartidos) + `Kthread` (contexto CPU). `schedule()` retorna `*mut Kthread`. EPROCESS reaped cuando último thread termina.
-  - **Syscalls:** `sys_thread_create` (RAX=22), `sys_thread_join` (RAX=23).
-  - **Limitaciones (post-v0.29.0):** Sin per-CPU runqueues (A1.1), sin SMP, sin lazy CR3 swap, sin APC queues.
-  - **Tests:** `kthread_new_initial_state`, `kthread_state_debug`, `kthread_state_partial_eq`, `eprocess_new_ring3` (4) + 9 scheduler priority tests + 4 stress tests adaptados. Total: 330.
-
-- [x] **A1.1. Per-CPU data structures** | NT: `KPRCB` (Kernel Processor Control Block) | Prereqs: A1.5
-  - **Implementado en v0.30.0.**
-  - **Archivos:** `arch/x64/cpu_local.rs`, `arch/x64/msr.rs`, `arch/x64/smp.rs`
-  - **Descripción:** Kprcb struct (4 KB page per CPU) via GS segment. 20 compile-time offset_of! assertions. CpuRunQueue (64-entry ring buffer). PerCpuSlabCache[9]. Exit trampoline via GS. SMP boot (INIT-SIPI-SIPI). IPI infrastructure (vector 0xF0). Per-CPU need_resched flag. 8 tests.
-  - **Tests:** `cpu_local_kprcb_size`, `cpu_local_slab_cache_count`, `cpu_local_run_queue_ops`, `cpu_local_kprcb_init`, `cpu_local_offset_sanity`, `smp_constants`, `smp_trampoline_size`, `smp_bsp_is_cpu0` (8 tests).
-
-- [x] **A1.2. Per-CPU run queues + load balancing** | NT: Load balance scheduling | Prereqs: A1.1
-  - **Implementado en v0.30.0 (parcial).**
-  - **Archivos:** `src/scheduler.rs`, `arch/x64/cpu_local.rs`, `timers/apic.rs`
-  - **Descripción:** Per-CPU run queues en KPRCB (CpuRunQueue). `schedule()` intenta cola local → work stealing → fallback global. IPI_RESCHEDULE (vector 0xF0) registrado en IDT. `send_ipi()` via APIC ICR. Threads encolados en creación, wake, y timer expiry.
-  - **Limitaciones:** Load balancing pasivo (sin timer-driven balance). Thread affinity no implementada. Work stealing usa scan lineal.
-  - **Tests:** Integrados en los 343 kernel tests.
-
----
-
 ### FASE A2 — Sync & HAL (NT: IRQL, HAL, interrupts)
 
 La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bloquear todas las interrupciones.
@@ -231,7 +202,7 @@ La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bl
     - `IrqMutex` adquirido en PASSIVE automáticamente eleva a DISPATCH; release baja IRQL.
   - **Tests:** `irql_raise_lower_passive_dispatch`, `irql_page_fault_at_dispatch_panics`, `irql_spinlock_implicit_raise`, `irql_nesting_stack`, `irql_preemption_threshold` (5 tests).
 
-- [ ] **A2.5. DPC engine** | NT: `KeInsertQueueDpc`, Deferred Procedure Call | Prereqs: A2.4
+- [x] **A2.5. DPC engine** | NT: `KeInsertQueueDpc`, Deferred Procedure Call | Prereqs: A2.4
   - **Archivos:** `src/dpc/mod.rs`, refactor `src/work_queue.rs`, integración `arch/x64/idt.rs` (DIRQL→DISPATCH transition)
   - **Descripción:** Colas de procedimientos diferidos ejecutadas a DISPATCH_LEVEL, permitiendo IRQ handlers rápidos y ejecución de lógica compleja fuera de contexto de IRQ.
     - **DPC structure:** `{ function: fn(*mut u8), context: *mut u8, queued: bool }`. Máx 128 DPCs pending per-CPU.
@@ -853,7 +824,7 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 6 | Slab allocator lock global | A1.3 | Lookaside | Completado | Throughput no escala con CPUs |
 | 7 | Sin IPI / TLB shootdown | A1.4 | KeIpi | Completado | Data corruption en SMP |
 | 8 | IRQL ausente (solo cli/sti) | A2.4 | IRQL | Completado | Per-CPU IRQL levels, IrqMutex, INV-14 page fault check |
-| 9 | DPC ausente (work queue parche) | A2.5 | DPC | Pendiente | Completion paths incorrectos |
+| 9 | DPC ausente (work queue parche) | A2.5 | DPC | Completado | Per-CPU DPC queues, SPSC ring buffer, DIRQL→DISPATCH dispatch |
 | 10 | PCI port I/O asume x86 | A2.1 | HAL | Pendiente | No portar a ARM64/RISC-V |
 | 11 | PIC legacy como default | A2.2 | IOAPIC | Pendiente | Límite 15 IRQs |
 | 12 | HAL mezcla raw y safe | A2.3 | HAL | Pendiente | asm disperso, difícil auditar |

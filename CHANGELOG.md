@@ -18,6 +18,21 @@
 - 5 new IRQL tests: `irql_raise_lower_passive_dispatch`, `irql_page_fault_at_dispatch_panics`, `irql_spinlock_implicit_raise`, `irql_nesting_stack`, `irql_preemption_threshold`.
 - Total: 366 kernel tests (361 + 5 new).
 
+### A2.5. DPC Engine
+
+#### Added
+- **`src/dpc/mod.rs`** — Deferred Procedure Call engine with per-CPU queues (128 entries, SPSC ring buffer). Functions: `insert_queue_dpc()` (enqueue from DIRQL), `dpc_dispatch_pending()` (drain at DISPATCH), `dpc_has_pending()`. Nesting limit `MAX_DPC_DEPTH=10` prevents infinite recursion.
+- **`arch/x64/cpu_local.rs`** — Removed inline `DpcQueue` from KPRCB (would exceed 4096-byte limit); stored in separate `DPC_QUEUES[16]` static array. Removed `OFFSET_DPC_QUEUE` constant.
+- **`arch/x64/idt.rs`** — `timer_handler_inner()` calls `dpc_dispatch_pending()` for DIRQL→DISPATCH transition.
+- **`syscall/mod.rs`** — `clear_need_resched()` calls `dpc_dispatch_pending()` for syscall-return dispatch.
+
+#### Changed
+- **`work_queue.rs`** — DPC engine complements existing work queue; no code changes needed.
+
+#### Tests
+- 5 new DPC tests: `dpc_enqueue_dispatch_level`, `dpc_irq_to_dispatch_transition`, `dpc_nesting_depth_limit`, `dpc_callback_execution_order`, `dpc_stress_100_irqs`.
+- Total: 371 kernel tests (366 + 5 new).
+
 ## v0.30.1 — 2026-06-09
 
 ### A1.3. Per-CPU Slab Allocator

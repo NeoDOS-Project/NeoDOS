@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 366 kernel tests + 5 user-mode binaries
+2. `python3 scripts/auto_test.py` — 371 kernel tests + 5 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -563,7 +563,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-366 tests en 37 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+371 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -600,13 +600,14 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IPI | 5 | Inter-processor interrupts: constants, TLB shootdown struct, call function struct, local-only, no-targets |
 | Per-CPU Slab | 5 | Per-CPU slab alloc/free, refill/drain batching, scaling |
 | IRQL | 5 | IRQL raise/lower, page fault invariant, spinlock implicit raise, nesting, preemption threshold |
+| DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 | Per-CPU (KPRCB) | 5 | KPRCB size, slab cache count, run queue ops, init, offset sanity |
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (366 tests kernel)
+1. Ejecuta `testing::run_all()` (371 tests kernel)
 2. Si pasan, ejecuta `run SYSTEST.NXE`, `run FILETEST.NXE`, `run ALLTEST.NXE`, `run CPUTEST.NXE`, `run TEST.NXE` (user-mode)
 
 ## SMP & Per-CPU Architecture (A1)
@@ -1282,6 +1283,37 @@ Key paths migrated:
 | `irql_spinlock_implicit_raise` | IrqMutex raises/lowers IRQL correctly |
 | `irql_nesting_stack` | Nested raise/lower preserves correct old levels |
 | `irql_preemption_threshold` | Raising to same level is no-op, threshold semantics |
+
+## DPC Engine (A2.5)
+
+`src/dpc/mod.rs` — Deferred Procedure Call engine for executing callbacks at DISPATCH_LEVEL, offloaded from DIRQL interrupt handlers.
+
+### Design
+
+| Concept | Description |
+|---------|-------------|
+| **Per-CPU queues** | 128-entry SPSC ring buffer stored in `DPC_QUEUES[16]` static array (not in KPRCB to keep it ≤4096) |
+| **Enqueue** | `insert_queue_dpc(fn, ctx)` — SPSC, no locks (producer runs at DIRQL with interrupts off) |
+| **Dispatch** | `dpc_dispatch_pending()` — drains queue at DISPATCH_LEVEL (consumer) |
+| **Nesting limit** | `MAX_DPC_DEPTH=10` prevents infinite recursion when DPCs enqueue other DPCs |
+| **Integration** | Called from timer handler exit (`idt.rs`) and syscall return (`clear_need_resched()` in `syscall/mod.rs`) |
+
+### Per-CPU Queue Access
+
+```rust
+static mut DPC_QUEUES: [DpcQueue; MAX_CPUS] = [...];
+fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
+```
+
+### Tests (5)
+
+| Test | Description |
+|------|-------------|
+| `dpc_enqueue_dispatch_level` | Basic enqueue + dispatch + callback execution |
+| `dpc_irq_to_dispatch_transition` | Simulate IRQ enqueue followed by DIRQL→DISPATCH dispatch |
+| `dpc_nesting_depth_limit` | Verify MAX_DPC_DEPTH prevents infinite recursion |
+| `dpc_callback_execution_order` | Verify FIFO order of 3 callbacks |
+| `dpc_stress_100_irqs` | 100 IRQs generating DPCs each, all executed, no leaks |
 
 ## Artifacts generados
 

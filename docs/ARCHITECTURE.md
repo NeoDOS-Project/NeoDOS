@@ -27,7 +27,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
-  - DOS-like shell (366 kernel tests + user commands)
+  - DOS-like shell (371 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -489,7 +489,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **366 tests** (37 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **371 tests** (38 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -507,8 +507,9 @@ The kernel testing framework includes **366 tests** (37 suites) with suites dedi
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
 | IRQL | 5 | IRQL raise/lower, page fault invariant, spinlock implicit raise, nesting, preemption threshold |
+| DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
 
-Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `TEST.NXE`).
+Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `CPUTEST.NXE`, `TEST.NXE`).
 
 ---
 

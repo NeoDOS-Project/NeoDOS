@@ -508,6 +508,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         0,
     );
 
+    // A2.5: DPC dispatch — process deferred procedures at DISPATCH_LEVEL
+    // after device IRQ handling. This is the DIRQL→DISPATCH transition point.
+    crate::dpc::dpc_dispatch_pending();
+
     current_rsp
 }
 

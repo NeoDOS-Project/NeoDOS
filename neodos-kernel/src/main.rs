@@ -29,6 +29,7 @@ mod handle;
 mod pipe;
 mod eventbus;
 mod work_queue;
+mod dpc;
 mod kobj;
 mod memory;
 mod globals;

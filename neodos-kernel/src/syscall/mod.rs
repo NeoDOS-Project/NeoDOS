@@ -193,6 +193,8 @@ pub fn set_need_resched() {
 pub extern "C" fn clear_need_resched() -> bool {
     crate::globals::flush_cache_if_needed();
     crate::work_queue::WORK_QUEUE.process_high();
+    // A2.5: Dispatch pending DPCs at DISPATCH_LEVEL on syscall return
+    crate::dpc::dpc_dispatch_pending();
     crate::eventbus::EVENT_BUS.dispatch_pending();
     // Clear both global and per-CPU flags
     let prev_global = NEED_RESCHED.swap(false, Ordering::SeqCst);
