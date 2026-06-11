@@ -237,7 +237,7 @@ unsafe fn lapic_write_icr(val: u64) {
     loop {
         let status = core::ptr::read_volatile(icr_low);
         if (status & ICR_DELIVERY_STATUS) == 0 { break; }
-        core::arch::asm!("pause", options(nomem, nostack));
+        crate::hal::raw::raw_pause();
     }
     // Write low dword (vector + mode)
     core::ptr::write_volatile(icr_low, val as u32);
@@ -319,8 +319,10 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
         // The x86_64 crate's IDT is not Send, so we build one inline
         let idt_ptr = alloc_idt_page();
         if !idt_ptr.is_null() {
-            core::arch::asm!("lidt [{}]", in(reg) idt_ptr as u64 + 2, // IDT descriptor
-                options(nostack));
+            let desc = crate::hal::raw::IdtDescriptor::from_raw(
+                (256 * 16 - 1) as u16, idt_ptr as u64
+            );
+            crate::hal::raw::raw_lidt(&desc);
         }
     }
 
@@ -337,7 +339,7 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
                 // TODO: call local scheduler schedule()
             }
         }
-        unsafe { core::arch::asm!("hlt", options(nomem, nostack)); }
+        unsafe { crate::hal::raw::raw_hlt_once(); }
     }
 }
 

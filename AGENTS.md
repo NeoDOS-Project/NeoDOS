@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.32.0
+v0.33.0
 
 ## Architecture Governance
 
@@ -1173,6 +1173,34 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 - sys_brk/ sys_mmap: ...
 ### Changed
 - ...
+```
+
+## HAL v0.4 (Hardware Abstraction Layer, raw/safe split)
+
+### Architecture
+
+`src/hal/` implements ABI v0.4. All inline assembly is confined to this directory tree.
+
+| Module | Description |
+|--------|-------------|
+| `hal/raw/` | Bare asm primitives: MSR, CPUID, TSC, I/O ports, control registers, segment regs, GS-segment, interrupt flags, pause, TLB |
+| `hal/safe/` | Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants with `IsSafe` flag, `read_cr2()` |
+| `hal/x64/` | Extern "C" ABI surface for bootloader/kernel, delegates to `hal/raw` |
+
+### Audit constraint
+
+```bash
+grep -rn 'asm!(' src/ --exclude-dir=hal/    # MUST return 0
+grep -rn 'asm!(' src/hal/ --exclude-dir=target  # All 55 asm calls here
+```
+
+### Msr trait example
+
+```rust
+use crate::hal::safe::{read_msr, write_msr, Msr, GsBase, GS_BASE};
+
+let gs_base: u64 = read_msr(&GS_BASE);
+unsafe { write_msr(&GS_BASE, new_base); }
 ```
 
 ## HAL v0.3 (Hardware Abstraction Layer)

@@ -357,40 +357,19 @@ pub fn cpu_count() -> u32 {
 /// for atomic access.
 #[inline(always)]
 pub unsafe fn gs_read_u64(offset: u32) -> u64 {
-    let val: u64;
-    core::arch::asm!(
-        "mov {0:r}, gs:[{1}]",
-        out(reg) val,
-        in(reg) offset as u64,
-        options(nostack, nomem)
-    );
-    val
+    crate::hal::raw::raw_gs_read_u64(offset)
 }
 
 /// Read a u32 from the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_read_u32(offset: u32) -> u32 {
-    let val: u32;
-    core::arch::asm!(
-        "mov {0:e}, gs:[{1}]",
-        out(reg) val,
-        in(reg) offset as u64,
-        options(nostack, nomem)
-    );
-    val
+    crate::hal::raw::raw_gs_read_u32(offset)
 }
 
 /// Read a u8 from the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_read_u8(offset: u32) -> u8 {
-    let val: u32;
-    core::arch::asm!(
-        "mov {0:e}, gs:[{1}]",
-        out(reg) val,
-        in(reg) offset as u64,
-        options(nostack, nomem)
-    );
-    val as u8
+    crate::hal::raw::raw_gs_read_u8(offset)
 }
 
 /// Write a u64 to the current CPU's KPRCB at the given byte offset.
@@ -399,23 +378,13 @@ pub unsafe fn gs_read_u8(offset: u32) -> u8 {
 /// Same requirements as `gs_read_u64`. Only the owning CPU should call this.
 #[inline(always)]
 pub unsafe fn gs_write_u64(offset: u32, val: u64) {
-    core::arch::asm!(
-        "mov gs:[{0}], {1:r}",
-        in(reg) offset as u64,
-        in(reg) val,
-        options(nostack, nomem)
-    );
+    crate::hal::raw::raw_gs_write_u64(offset, val);
 }
 
 /// Write a u8 to the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_write_u8(offset: u32, val: u8) {
-    core::arch::asm!(
-        "mov gs:[{0}], {1:e}",
-        in(reg) offset as u64,
-        in(reg) val as u32,
-        options(nostack, nomem)
-    );
+    crate::hal::raw::raw_gs_write_u8(offset, val);
 }
 
 // ── KPRCB field offsets (for GS-segment access) ──────────────────────────
@@ -697,25 +666,13 @@ pub unsafe fn this_cpu_set_slab_head(cache_idx: usize, head: *mut u8) {
 /// Read a u16 from the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_read_u16(offset: u32) -> u16 {
-    let val: u32;
-    core::arch::asm!(
-        "mov {0:e}, gs:[{1}]",
-        out(reg) val,
-        in(reg) offset as u64,
-        options(nostack, nomem)
-    );
-    val as u16
+    crate::hal::raw::raw_gs_read_u16(offset)
 }
 
 /// Write a u16 to the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_write_u16(offset: u32, val: u16) {
-    core::arch::asm!(
-        "mov gs:[{0}], {1:e}",
-        in(reg) offset as u64,
-        in(reg) val as u32,
-        options(nostack, nomem)
-    );
+    crate::hal::raw::raw_gs_write_u16(offset, val);
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

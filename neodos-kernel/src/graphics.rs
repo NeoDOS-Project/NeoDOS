@@ -32,12 +32,8 @@ impl Renderer {
     pub fn clear(&self, color: u32) {
         let count = self.fb.size / 4;
         unsafe {
-            core::arch::asm!(
-                "rep stosd",
-                inout("rcx") count => _,
-                inout("rdi") self.fb.base_address as *mut u32 => _,
-                in("eax") color,
-                options(nostack, preserves_flags)
+            crate::hal::raw::raw_rep_stosd(
+                self.fb.base_address as *mut u32, count, color
             );
         }
     }

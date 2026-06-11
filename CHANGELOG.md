@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.33.0 — 2026-06-11
+
+### A2.3 HAL v0.4 — raw/safe split
+
+#### Added
+- **`src/hal/raw/`** — Bare asm primitives: `raw_read_msr`, `raw_write_msr`, `raw_read_tsc`, `raw_cpuid`, `raw_sti`, `raw_cli`, `raw_halt`, `raw_read_cr2/3/4`, `raw_write_cr3`, `raw_invlpg`, `raw_invpcid`, `raw_read_rflags`, `raw_lgdt`, `raw_lidt`, `raw_ltr`, `raw_pause`, `raw_set_segment_regs`, `raw_gs_read/write_u64/u32/u16/u8`, `raw_inb/outb/inw/outw/inl/outl`, `raw_rep_stosd`, `raw_debug_port_write`, plus GPR readers for crash dump.
+- **`src/hal/safe/`** — Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants (`GS_BASE`, `KERNEL_GS_BASE`, `FS_BASE`, `APIC_BASE_MSR`, `EFER`, etc.) with `IsSafe` flag. `read_cr2()` safe wrapper. `GdtDescriptor`/`IdtDescriptor` types.
+- **Audit constraint:** `grep -rn 'asm!(' src/ --exclude-dir=hal/` returns 0. All 55 inline asm calls confined to `hal/`.
+
+#### Changed
+- `src/hal/x64/` — All extern "C" ABI functions now delegate to `hal::raw` primitives.
+- `src/arch/x64/msr.rs` — `rdmsr`/`wrmsr` use `hal::raw::raw_read_msr`/`raw_write_msr`.
+- `src/cpu.rs` — `cpuid()` delegates to `hal::raw::raw_cpuid`.
+- `src/boot_benchmark.rs` — `rdtsc()` delegates to `hal::raw::raw_read_tsc`.
+- `src/arch/x64/gdt.rs` — Segment register loading via `raw_set_segment_regs`/`raw_set_gs`/`raw_set_fs`.
+- `src/arch/x64/smp.rs` — Pause/lidt/hlt via `hal::raw`.
+- `src/arch/x64/ipi.rs` — Pause via `hal::raw`.
+- `src/arch/x64/cpu_local.rs` — GS-segment reads/writes via `hal::raw`.
+- `src/timers/apic.rs` — MSR read/write via `hal::raw`.
+- `src/timers/hpet.rs` — Pause via `hal::raw`.
+- `src/graphics.rs` — `rep stosd` via `hal::raw`.
+- `src/drivers/nvme.rs` — Debug port write via `hal::raw`.
+- `src/drivers/usb_hid/` — `nop` delay replaced with `spin_loop()`.
+- `src/processes.rs` — `nop` delay replaced with `spin_loop()`.
+- `src/crash/mod.rs` — GPR/CR reads via `hal::raw`.
+- `src/main.rs` — RSP read via `hal::raw`.
+
+#### Tests
+- 5 HAL v0.4 tests: `hal_v04_abi_msr_safe`, `hal_msr_read_write_consistency`, `hal_no_asm_outside_hal_dir`, `hal_cr2_page_fault_addr`, `hal_invpcid_tlb_invalidation`.
+
 ## v0.32.0 — 2026-06-11
 
 ### A3.1 Crash Dump Framework

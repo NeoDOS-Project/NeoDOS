@@ -181,43 +181,39 @@ fn fill_header(header: &mut CrashDumpHeader, cause: u32, param: &[u64; 4],
     // Stack walk: capture return addresses from the stack
     // We read stack frames (RBP chains) for the first 32 entries
     let mut stack_rip: u64;
-    let mut stack_rbp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rbp", out(reg) stack_rbp);
-    }
+    let stack_rbp: u64 = unsafe { crate::hal::raw::raw_read_rbp() };
+    let mut rbp = stack_rbp;
     let mut depth = 0u32;
     for i in 0..32 {
-        if stack_rbp < 0x100000 || stack_rbp > 0x20000000 {
+        if rbp < 0x100000 || rbp > 0x20000000 {
             break;
         }
         unsafe {
-            stack_rip = (stack_rbp as *const u64).offset(1).read();
-            stack_rbp = (stack_rbp as *const u64).read();
+            stack_rip = (rbp as *const u64).offset(1).read();
+            rbp = (rbp as *const u64).read();
         }
         header.stack_trace[i] = stack_rip;
         depth = (i + 1) as u32;
     }
     header.stack_depth = depth;
 
-    // GPRs via inline asm
+    // GPRs via hal::raw
     unsafe {
-        core::arch::asm!("mov {}, rax", out(reg) header.rax);
-        core::arch::asm!("mov {}, rbx", out(reg) header.rbx);
-        core::arch::asm!("mov {}, rcx", out(reg) header.rcx);
-        core::arch::asm!("mov {}, rdx", out(reg) header.rdx);
-        core::arch::asm!("mov {}, rsi", out(reg) header.rsi);
-        core::arch::asm!("mov {}, rdi", out(reg) header.rdi);
-        core::arch::asm!("mov {}, r8",  out(reg) header.r8);
-        core::arch::asm!("mov {}, r9",  out(reg) header.r9);
-        core::arch::asm!("mov {}, r10", out(reg) header.r10);
-        core::arch::asm!("mov {}, r11", out(reg) header.r11);
-        core::arch::asm!("mov {}, r12", out(reg) header.r12);
-        core::arch::asm!("mov {}, r13", out(reg) header.r13);
-        core::arch::asm!("mov {}, r14", out(reg) header.r14);
-        core::arch::asm!("mov {}, r15", out(reg) header.r15);
-        let rflags: u64;
-        core::arch::asm!("pushfq; pop {}", out(reg) rflags);
-        header.rflags = rflags;
+        header.rax = crate::hal::raw::raw_read_rax();
+        header.rbx = crate::hal::raw::raw_read_rbx();
+        header.rcx = crate::hal::raw::raw_read_rcx();
+        header.rdx = crate::hal::raw::raw_read_rdx();
+        header.rsi = crate::hal::raw::raw_read_rsi();
+        header.rdi = crate::hal::raw::raw_read_rdi();
+        header.r8  = crate::hal::raw::raw_read_r8();
+        header.r9  = crate::hal::raw::raw_read_r9();
+        header.r10 = crate::hal::raw::raw_read_r10();
+        header.r11 = crate::hal::raw::raw_read_r11();
+        header.r12 = crate::hal::raw::raw_read_r12();
+        header.r13 = crate::hal::raw::raw_read_r13();
+        header.r14 = crate::hal::raw::raw_read_r14();
+        header.r15 = crate::hal::raw::raw_read_r15();
+        header.rflags = crate::hal::raw::raw_read_rflags();
     }
     header.rsp = rsp;
     header.rip = rip;
@@ -227,17 +223,13 @@ fn fill_header(header: &mut CrashDumpHeader, cause: u32, param: &[u64; 4],
         header.cr0 = crate::hal::read_cr3(); // we only get CR3 easily
         header.cr2 = crate::hal::read_cr2();
         header.cr3 = crate::hal::read_cr3();
-        core::arch::asm!("mov {}, cr4", out(reg) header.cr4);
-        core::arch::asm!("mov {}, cr0", out(reg) header.cr0);
+        header.cr4 = crate::hal::raw::raw_read_cr4();
+        header.cr0 = crate::hal::raw::raw_read_cr0();
     }
 
     // EFER via MSR
     unsafe {
-        let efer_lo: u32;
-        let efer_hi: u32;
-        core::arch::asm!("rdmsr", in("ecx") 0xC0000080u32,
-                         out("eax") efer_lo, out("edx") efer_hi);
-        header.efer = (efer_hi as u64) << 32 | efer_lo as u64;
+        header.efer = crate::hal::raw::raw_read_msr(0xC0000080);
     }
 
     // Scheduler snapshot

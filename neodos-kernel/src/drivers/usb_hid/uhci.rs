@@ -98,7 +98,7 @@ static HID_ENDPOINT: AtomicU8   = AtomicU8::new(0);
 
 fn delay_us(us: u32) {
     for _ in 0..(us * 1000) {
-        unsafe { core::arch::asm!("nop"); }
+        core::hint::spin_loop();
     }
 }
 

@@ -2369,6 +2369,8 @@ pub fn register_tests() {
     crate::arch::x64::ipi::register_ipi_tests();
     // Per-CPU slab allocator tests (A1.3)
     register_per_cpu_slab_tests();
+    // HAL v0.4 raw/safe split tests (A2.3)
+    crate::hal::tests::register_hal_tests();
     // IRQL framework tests (A2.4)
     register_irql_tests();
     // Stress tests are always registered but can be gated by feature

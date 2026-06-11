@@ -67,7 +67,7 @@ pub fn usb_push_byte(byte: u8) {
 
 fn delay_ms(ms: u32) {
     for _ in 0..(ms * 1000 * 1000) {
-        unsafe { core::arch::asm!("nop"); }
+        core::hint::spin_loop();
     }
 }
 

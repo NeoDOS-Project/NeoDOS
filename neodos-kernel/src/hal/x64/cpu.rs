@@ -1,23 +1,21 @@
-use core::arch::asm;
+use crate::hal::raw;
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn enable_interrupts() {
-    unsafe { asm!("sti", options(nostack, nomem)); }
+    unsafe { raw::raw_sti(); }
 }
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn disable_interrupts() {
-    unsafe { asm!("cli", options(nostack, nomem)); }
+    unsafe { raw::raw_cli(); }
 }
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn halt() -> ! {
-    loop {
-        unsafe { asm!("hlt", options(nostack, nomem)); }
-    }
+    unsafe { raw::raw_halt() }
 }
 
 #[no_mangle]
@@ -27,11 +25,9 @@ pub extern "C" fn poweroff() -> ! {
     unsafe {
         for &(port, val) in &[(0x404u16, 0x2000u16), (0x604u16, 0x2000u16),
                               (0xB004u16, 0x2000u16), (0x4004u16, 0x3400u16)] {
-            asm!("out dx, ax", in("dx") port, in("ax") val,
-                options(nomem, nostack, preserves_flags));
+            raw::raw_outw(port, val);
         }
-        asm!("out dx, al", in("dx") 0x64u16, in("al") 0xFEu8,
-            options(nomem, nostack, preserves_flags));
+        raw::raw_outb(0x64u16, 0xFEu8);
     }
     halt()
 }
@@ -44,46 +40,38 @@ pub fn cpu_info() -> crate::cpu::CpuInfo {
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn read_cr2() -> u64 {
-    let val: u64;
-    unsafe { asm!("mov {}, cr2", out(reg) val, options(nomem, nostack)); }
-    val
+    unsafe { raw::raw_read_cr2() }
 }
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn read_cr3() -> u64 {
-    let val: u64;
-    unsafe { asm!("mov {}, cr3", out(reg) val, options(nomem, nostack)); }
-    val
+    unsafe { raw::raw_read_cr3() }
 }
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn write_cr3(val: u64) {
-    unsafe { asm!("mov cr3, {}", in(reg) val, options(nomem, nostack)); }
+    unsafe { raw::raw_write_cr3(val); }
 }
 
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn flush_tlb(virt: u64) {
-    unsafe { asm!("invlpg [{}]", in(reg) virt, options(nostack, nomem, preserves_flags)); }
+    unsafe { raw::raw_invlpg(virt); }
 }
 
-/// Returns true if interrupts are currently enabled (IF flag).
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn interrupts_enabled() -> bool {
-    let flags: u64;
-    unsafe { asm!("pushfq; pop {}", out(reg) flags, options(nomem, nostack)); }
+    let flags = unsafe { raw::raw_read_rflags() };
     (flags & 0x200) != 0
 }
 
-/// Execute a single HLT instruction (wait for next interrupt, then return).
-/// Unlike `halt()` which never returns, this issues one HLT and returns.
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn hlt_once() {
-    unsafe { asm!("hlt", options(nomem, nostack)); }
+    unsafe { raw::raw_hlt_once(); }
 }
 
 // ── Force ABI symbol retention ──

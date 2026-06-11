@@ -48,17 +48,12 @@ pub static mut APIC_BUS_KHZ: u64 = 0;
 
 #[inline]
 unsafe fn rdmsr(msr: u32) -> u64 {
-    let low: u32;
-    let high: u32;
-    core::arch::asm!("rdmsr", out("eax") low, out("edx") high, in("ecx") msr, options(nomem, nostack));
-    ((high as u64) << 32) | (low as u64)
+    crate::hal::raw::raw_read_msr(msr)
 }
 
 #[inline]
 unsafe fn wrmsr(msr: u32, val: u64) {
-    let low = val as u32;
-    let high = (val >> 32) as u32;
-    core::arch::asm!("wrmsr", in("eax") low, in("edx") high, in("ecx") msr, options(nomem, nostack));
+    crate::hal::raw::raw_write_msr(msr, val);
 }
 
 // ── MMIO helpers ───────────────────────────────────────────────────
@@ -223,7 +218,7 @@ unsafe fn calibrate_apic_bus() -> u64 {
         if now.wrapping_sub(hpet_start) >= hpet_ticks {
             break;
         }
-        core::arch::asm!("pause", options(nomem, nostack));
+        crate::hal::raw::raw_pause();
     }
 
     // Read remaining APIC count

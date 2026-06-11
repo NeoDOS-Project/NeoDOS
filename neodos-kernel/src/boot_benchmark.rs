@@ -11,17 +11,7 @@ use core::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
 /// Read the CPU Time-Stamp Counter (RDTSC).
 #[inline(always)]
 pub fn rdtsc() -> u64 {
-    let lo: u32;
-    let hi: u32;
-    unsafe {
-        core::arch::asm!(
-            "rdtsc",
-            out("eax") lo,
-            out("edx") hi,
-            options(nomem, nostack, preserves_flags),
-        );
-    }
-    ((hi as u64) << 32) | (lo as u64)
+    unsafe { crate::hal::raw::raw_read_tsc() }
 }
 
 /// Estimate TSC frequency by timing against the PIT (Channel 2).

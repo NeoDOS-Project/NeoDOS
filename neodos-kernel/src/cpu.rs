@@ -243,22 +243,5 @@ pub fn get_cpu_info_full() -> CpuInfoFull {
 
 #[cfg(target_arch = "x86_64")]
 fn cpuid(leaf: u32, subleaf: u32) -> (u32, u32, u32, u32) {
-    let mut eax = leaf;
-    let mut ecx = subleaf;
-    let ebx: u32;
-    let edx: u32;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "cpuid",
-            "mov {ebx_out:e}, ebx",
-            "pop rbx",
-            inout("eax") eax,
-            inout("ecx") ecx,
-            ebx_out = lateout(reg) ebx,
-            lateout("edx") edx,
-            options(nomem),
-        );
-    }
-    (eax, ebx, ecx, edx)
+    unsafe { crate::hal::raw::raw_cpuid(leaf, subleaf) }
 }

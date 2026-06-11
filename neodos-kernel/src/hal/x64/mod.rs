@@ -22,8 +22,7 @@ pub fn without_interrupts<F, R>(f: F) -> R
 where
     F: FnOnce() -> R,
 {
-    let flags: u64;
-    unsafe { core::arch::asm!("pushfq; pop {}", out(reg) flags, options(nomem, nostack)); }
+    let flags = unsafe { crate::hal::raw::raw_read_rflags() };
     let enabled = (flags & 0x200) != 0;
     disable_interrupts();
     let result = f();

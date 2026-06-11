@@ -429,7 +429,7 @@ pub fn sleep_us(us: u64) {
                 break;
             }
             // Pause hint for hyperthreading
-            core::arch::asm!("pause", options(nomem, nostack));
+            crate::hal::raw::raw_pause();
         }
     }
 }

@@ -62,14 +62,9 @@ pub fn init() {
         CS::set_reg(GDT.1.kernel_code);
         load_tss(GDT.1.tss);
 
-        core::arch::asm!(
-            "mov ds, {0:x}",
-            "mov es, {0:x}",
-            "mov ss, {0:x}",
-            "mov gs, {0:x}",
-            "mov fs, {0:x}",
-            in(reg) GDT.1.kernel_data.0
-        );
+        crate::hal::raw::raw_set_segment_regs(GDT.1.kernel_data.0, GDT.1.kernel_data.0, GDT.1.kernel_data.0);
+        crate::hal::raw::raw_set_gs(GDT.1.kernel_data.0);
+        crate::hal::raw::raw_set_fs(GDT.1.kernel_data.0);
     }
 
     TSS_READY.store(true, Ordering::Relaxed);

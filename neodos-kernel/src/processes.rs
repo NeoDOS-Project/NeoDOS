@@ -9,7 +9,7 @@ pub fn proc_a() -> ! {
         console::print_str("A");
         serial_print!("A");
         for _ in 0..100000 {
-            unsafe { core::arch::asm!("nop") };
+            core::hint::spin_loop();
         }
     }
 }
@@ -20,7 +20,7 @@ pub fn proc_b() -> ! {
         console::print_str("B");
         serial_print!("B");
         for _ in 0..100000 {
-            unsafe { core::arch::asm!("nop") };
+            core::hint::spin_loop();
         }
     }
 }
@@ -31,7 +31,7 @@ pub fn proc_c() -> ! {
         console::print_str("C");
         serial_print!("C");
         for _ in 0..100000 {
-            unsafe { core::arch::asm!("nop") };
+            core::hint::spin_loop();
         }
     }
 }
@@ -42,7 +42,7 @@ pub fn proc_d() -> ! {
         console::print_str("D");
         serial_print!("D");
         for _ in 0..100000 {
-            unsafe { core::arch::asm!("nop") };
+            core::hint::spin_loop();
         }
     }
 }

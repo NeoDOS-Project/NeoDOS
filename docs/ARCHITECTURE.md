@@ -156,18 +156,26 @@ The KOBJ registry is populated at boot by driver loading and at runtime by proce
 
 ---
 
-### 1. HAL ABI v0.3 (`src/hal/x64/`)
+### 1. HAL ABI v0.4 — raw/safe split (`src/hal/`)
 
-Lowest kernel layer. Provides **26 `extern "C` primitives** for pure hardware access:
+Lowest kernel layer. All inline assembly confined to `src/hal/` (55 asm calls). Zero `asm!()` outside.
 
-| Module | File | Primitives |
-|--------|---------|------------|
-| CPU | `cpu.rs` | `enable_interrupts()`, `disable_interrupts()`, `halt()`, `poweroff()`, `read_cr2()`, `read_cr3()`, `write_cr3()`, `flush_tlb()`, `interrupts_enabled()`, `hlt_once()` |
-| Port I/O | `io.rs` | `inb()`, `outb()`, `inw()`, `outw()`, `inl()`, `outl()` |
-| Page Memory | `mem.rs` | `alloc_page()`, `free_page()`, `map_page()`, `unmap_page()`, `memory_barrier()` |
-| Interrupts | `irq.rs` | `register_irq()` (stub), `ack_irq()` |
-| Timing | `time.rs` | `get_ticks()`, `increment_ticks()`, `sleep_hint()` |
-| IRQL | `irql.rs` | `raise_irql()`, `lower_irql()`, `current_irql()`, `at_or_above_dispatch()`, `IrqMutex<T>`, `at_dispatch()` |
+| Layer | Module | Contents |
+|-------|--------|----------|
+| **raw** | `hal/raw/` | Bare asm primitives: `raw_read_msr`, `raw_write_msr`, `raw_pause`, `raw_sti/cli`, `raw_halt`, `raw_read_tsc`, `raw_cpuid`, `raw_read_cr0/2/3/4`, `raw_write_cr3`, `raw_invlpg`, `raw_invpcid`, `raw_read_rflags`, `raw_lgdt/lidt/ltr`, `raw_set_segment_regs`, `raw_gs_read/write_u64/u32/u16/u8`, `raw_inb/outb/inw/outw/inl/outl`, `raw_rep_stosd` |
+| **safe** | `hal/safe/` | Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants (`GS_BASE`, `APIC_BASE_MSR`, `EFER`), `IsSafe` flag, `read_cr2()` |
+| **x64 ABI** | `hal/x64/` | Extern "C" ABI surface (26 primitives), delegates to `hal/raw`. `cpu.rs`, `io.rs`, `mem.rs`, `irq.rs`, `time.rs`, `irql.rs`, `mod.rs` |
+
+**Extern "C" primitives (ABI surface):**
+
+| Module | Primitives |
+|--------|------------|
+| CPU | `enable_interrupts()`, `disable_interrupts()`, `halt()`, `poweroff()`, `read_cr2()`, `read_cr3()`, `write_cr3()`, `flush_tlb()`, `interrupts_enabled()`, `hlt_once()` |
+| Port I/O | `inb()`, `outb()`, `inw()`, `outw()`, `inl()`, `outl()` |
+| Page Memory | `alloc_page()`, `free_page()`, `map_page()`, `unmap_page()`, `memory_barrier()` |
+| Interrupts | `register_irq()` (stub), `ack_irq()` |
+| Timing | `get_ticks()`, `increment_ticks()`, `sleep_hint()` |
+| IRQL | `raise_irql()`, `lower_irql()`, `current_irql()`, `at_or_above_dispatch()`, `IrqMutex<T>`, `at_dispatch()` |
 
 Non-ABI helpers (Rust ABI): `without_interrupts()` (legacy), `walk_ptes_4k()`, `cpu_info()`.
 

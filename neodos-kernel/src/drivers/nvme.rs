@@ -292,7 +292,7 @@ impl NvmeDriver {
                 }
                 // Yield to QEMU via port 0x80 to let NVMe emulation run (TCG)
                 if i & 0x7FFF == 0 {
-                    core::arch::asm!("out 0x80, al", in("al") 0u8, options(preserves_flags, nostack));
+                    crate::hal::raw::raw_debug_port_write(0u8);
                 }
             }
             let cqe = acq + (acq_head as u64) * CQE_SIZE as u64;

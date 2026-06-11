@@ -129,7 +129,7 @@ unsafe fn lapic_write_icr(val: u64) {
     loop {
         let status = core::ptr::read_volatile(icr_low);
         if (status & ICR_DELIVERY_STATUS) == 0 { break; }
-        core::arch::asm!("pause", options(nomem, nostack));
+        crate::hal::raw::raw_pause();
     }
 
     // Write low dword (vector + delivery mode)
@@ -245,7 +245,7 @@ pub fn tlb_shootdown(start: u64, end: u64, target_mask: u64) -> Result<(), ()> {
         if acked >= expected_acks {
             break;
         }
-        unsafe { core::arch::asm!("pause", options(nomem, nostack)); }
+        unsafe { crate::hal::raw::raw_pause(); }
         attempts += 1;
         if attempts >= MAX_ATTEMPTS {
             return Err(()); // Timeout
@@ -318,7 +318,7 @@ pub fn call_function_all(func: CallFunctionCb, arg: u64, target_mask: u64) -> Re
         if acked >= expected_acks {
             break;
         }
-        unsafe { core::arch::asm!("pause", options(nomem, nostack)); }
+        unsafe { crate::hal::raw::raw_pause(); }
         attempts += 1;
         if attempts >= MAX_ATTEMPTS {
             return Err(());

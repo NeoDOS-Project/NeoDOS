@@ -373,13 +373,8 @@ fn panic(info: &PanicInfo) -> ! {
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP
-    let rip: u64;
-    let rsp: u64;
-    unsafe {
-        core::arch::asm!("mov {}, rsp", out(reg) rsp);
-        // Read return address from top of stack (approx RIP at panic site)
-        rip = (rsp as *const u64).read();
-    }
+    let rsp: u64 = unsafe { crate::hal::raw::raw_read_rsp() };
+    let rip: u64 = unsafe { (rsp as *const u64).read() };
 
     // Dump crash dump to serial + RAM buffer (must happen before any other output)
     crate::crash::dump_panic(rip, rsp);

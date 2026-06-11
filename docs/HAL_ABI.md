@@ -1,10 +1,13 @@
-# HAL ABI v0.3 — Formal Specification
+# HAL ABI v0.4 — raw/safe split
 
-> **Status**: Active. This document describes HAL ABI v0.3 as implemented
-> in `src/hal/`. Extends v0.2 with wide I/O, CR register access, TLB flush,
-> and interrupt query primitives.
+> **Status**: Active. This document describes HAL ABI v0.4.
+> ABI v0.3 binary interface is preserved (same 26 extern "C" primitives).
+> Internal restructuring adds `hal/raw/` (bare asm) and `hal/safe/` (type-safe wrappers)
+> to isolate all inline assembly from the rest of the kernel.
 >
-> **Source of truth**: `src/hal/x64/<module>.rs`. This document is derivative — it formalises
+> **Audit constraint**: `grep -rn 'asm!(' src/ --exclude-dir=hal/` MUST return 0.
+>
+> **Source of truth**: `src/hal/`. This document is derivative — it formalises
 > what already exists; it does not define new behaviour.
 
 ---
@@ -77,6 +80,29 @@ pub extern "C" fn sleep_hint(us: u32);
 ```rust
 pub fn without_interrupts<F, R>(f: F) -> R;     // NOT extern "C" — generic closure helper
 ```
+
+---
+
+### 1.7 Internal Structure — `hal/raw/` and `hal/safe/`
+
+Since HAL v0.4, the HAL module is split into three layers to audit inline asm:
+
+| Layer | Description |
+|-------|-------------|
+| `hal/raw/` | Bare inline asm primitives (`raw_read_msr`, `raw_cpuid`, `raw_sti`, `raw_pause`, GS access, I/O ports, etc.) |
+| `hal/safe/` | Type-safe `Msr` trait: `read_msr<T: Msr>()`, `write_msr<T: Msr>()`, named MSR constants with `IS_SAFE` flag |
+| `hal/x64/` | Extern "C" ABI surface — delegates all asm calls to `hal/raw` |
+
+```rust
+// Safe MSR access example (type-safe):
+use crate::hal::safe::{read_msr, write_msr, GsBase, GS_BASE};
+
+let gs_base: u64 = read_msr(&GS_BASE);           // type-safe, no inline asm
+unsafe { write_msr(&GS_BASE, new_base); }
+```
+
+The `Msr` trait marks dangerous MSRs (EFER, IA32_FEATURE_CONTROL) with `IS_SAFE = false`,
+requiring explicit `unsafe` to write.
 
 ---
 

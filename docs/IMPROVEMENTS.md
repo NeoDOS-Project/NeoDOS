@@ -229,7 +229,7 @@ La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bl
     - **Safety:** MMIO read puede tomar 0.1–1 µs. Evitar busy loops.
   - **Criterio:**
     - Leer vendor ID de NVMe @ PCI 0:4:0 vía ECAM → retorna 0x8086 (Intel) ✓
-    - Misma lectura vía legacy port I/O → resultado idéntico ✓
+    - Misma lectura vía legacy port I/O → r
     - Detección MCFG desde ACPI → corre sin error en QEMU ✓
   - **Tests:** `ecam_read_match_legacy_pio`, `ecam_mcfg_table_parse`, `ecam_nvme_vendor_id_nvme`, `ecam_fallback_to_pio_if_no_mcfg` (4 tests).
 
@@ -248,7 +248,7 @@ La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bl
     - All 4 queues entregan eventos en paralelo sin serialización PIC.
   - **Tests:** `ioapic_init_from_madt`, `msix_nvme_4_queue_allocation`, `msix_vector_delivery_latency`, `ioapic_isa_compat_legacy`, `ioapic_pic_disabled` (5 tests).
 
-- [ ] **A2.3. HAL v0.4 — raw/safe split** | NT: HAL isolation, type-safe CPU primitives | Prereqs: A2.4
+- [x] **A2.3. HAL v0.4 — raw/safe split** | NT: HAL isolation, type-safe CPU primitives | Prereqs: A2.4
   - **Archivos:** `src/hal/raw/` (new), `src/hal/safe/` (new), refactor `src/hal/x64/`, auditoría codebase
   - **Descripción:** Separar responsabilidades HAL: máquina pura (raw asm) vs. abstracciones type-safe para minimizar superficie de audit y evitar scattered inline asm.
     - **`hal::raw` (bare asm):** Funciones con `#[naked]` o inline asm puro:
@@ -829,7 +829,7 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 9 | DPC ausente (work queue parche) | A2.5 | DPC | Completado | Per-CPU DPC queues, SPSC ring buffer, DIRQL→DISPATCH dispatch |
 | 10 | PCI port I/O asume x86 | A2.1 | HAL | Pendiente | No portar a ARM64/RISC-V |
 | 11 | PIC legacy como default | A2.2 | IOAPIC | Pendiente | Límite 15 IRQs |
-| 12 | HAL mezcla raw y safe | A2.3 | HAL | Pendiente | asm disperso, difícil auditar |
+| 12 | HAL mezcla raw y safe | A2.3 | HAL | COMPLETED | asm confinado a hal/ |
 | 13 | Sin crash dump ni recovery | A3.1–A3.3 | Bugcheck | Pendiente | Bugs imposibles de diagnosticar |
 | 14 | SEH ausente | A3.4 | SEH | Pendiente | User exceptions = kill |
 | 15 | Stack unwinding inexistente | A3.2 | KD | Pendiente | Sin backtrace |
