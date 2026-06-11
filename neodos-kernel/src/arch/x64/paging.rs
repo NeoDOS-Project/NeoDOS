@@ -402,24 +402,24 @@ pub fn mmap_free_range(start: u64, end: u64) {
     let s = start.max(MMAP_BASE);
     let e = end.min(MMAP_BASE + MMAP_TOTAL_SIZE);
     let mut addr = s & !(PAGE_4K - 1);
-    let mut first_page = 0u64;
-    let mut last_page = 0u64;
+    let mut freed_first = 0u64;
+    let mut freed_last = 0u64;
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let phys = entry.addr().as_u64();
-                if first_page == 0 { first_page = addr; }
-                last_page = addr + PAGE_4K;
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
+                    if freed_first == 0 { freed_first = addr; }
+                    freed_last = addr + PAGE_4K;
                 }
             }
         }
         addr += PAGE_4K;
     }
-    if first_page < last_page {
-        shootdown_range(first_page, last_page);
+    if freed_first < freed_last {
+        shootdown_range(freed_first, freed_last);
     }
 }
 
@@ -679,24 +679,25 @@ pub fn heap_free_range(start: u64, end: u64) {
     let s = start.max(PROCESS_HEAP_BASE);
     let e = end.min(PROCESS_HEAP_BASE + MAX_HEAP_SLOTS as u64 * PROCESS_HEAP_SIZE);
     let mut addr = s & !(PAGE_4K - 1);
-    let mut first_page = 0u64;
-    let mut last_page = 0u64;
+    let mut freed_first = 0u64;
+    let mut freed_last = 0u64;
+
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             if entry.flags().contains(PageTableFlags::PRESENT) {
                 let phys = entry.addr().as_u64();
-                if first_page == 0 { first_page = addr; }
-                last_page = addr + PAGE_4K;
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
+                    if freed_first == 0 { freed_first = addr; }
+                    freed_last = addr + PAGE_4K;
                 }
             }
         }
         addr += PAGE_4K;
     }
-    if first_page < last_page {
-        shootdown_range(first_page, last_page);
+    if freed_first < freed_last {
+        shootdown_range(freed_first, freed_last);
     }
 }
 

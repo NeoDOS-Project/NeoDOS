@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.32.0 — 2026-06-11
+
+### A3.1 Crash Dump Framework
+
+#### Added
+- **`src/crash/mod.rs`** — Crash dump subsystem with ring buffer, serial dump at panic, 16 KB `CrashDumpHeader` (magic, version, cause, stack trace, GPRs, CR registers, scheduler state, PML4 snapshot, trace events). Functions: `fill_header()`, `dump_to_serial()`. Recursion guard via `CRASH_DUMP_OCCURRED` atomic.
+- **`src/shell/commands/crash.rs`** — Shell commands: `CRASH` (show crash status), `CRASH DUMP` (dump to serial). Crash dump area @ `0x0F000000` (16 MB), initialized at boot.
+- **`scripts/crash_analyzer.py`** — Python script to parse crash dump output from serial log.
+
+#### Tests
+- 5 crash dump tests: `crash_dump_header_size`, `crash_dump_new_zeroed`, `crash_dump_header_layout`, `crash_dump_fill_and_serialize`, `crash_dump_no_recursion`.
+
+### sys_getcpuinfo (RAX=24)
+
+#### Added
+- **`src/cpu.rs`** — `CpuInfoFull` struct with vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers. `get_cpu_info_full()` returns all CPUID data.
+- **`src/syscall/mod.rs`** — `handler_get_cpuinfo()` (RAX=24): reads RBX=buf_ptr, RCX=buf_size, copies `CpuInfoFull` to user buffer.
+- **`libneodos/src/syscall.rs`** — `sys_getcpuinfo(buf)` wrapper for user-mode.
+- **`libneodos/src/export.rs`** — Export table updated.
+
+### cpuinfo — User-mode CPU Info
+
+#### Added
+- **`userbin/cpuinfo/`** — `cpuinfo.nxe` user-mode binary that loads `cpuinfo.nxl` via `sys_loadlib` and displays vendor, brand, family/model/stepping, features, topology, timers.
+- **`libcpu-nxl/`** — `cpuinfo.nxl` NXL library with `CpuInfoAbiTable` (46 function pointers) in `.export_table`. Null-terminated feature names.
+- **`scripts/build.sh`** — Build support for `cpuinfo.nxl` + `cpuinfo.nxe`.
+- **`scripts/create_neodos_image.py`** — Include `cpuinfo.nxl` and `cpuinfo.nxe` in NeoDOS FS image.
+
+### NXL Loader Improvements
+
+#### Changed
+- **`src/nxl.rs`** — `find_slot_for_base(compiled_base)` replaces `find_free_slot()`: parses ELF header PT_LOAD vaddr and selects slot matching compiled address. `mark_segment_user_accessible()` sets `WRITABLE` on segments with `PF_W` (2) in `p_flags`.
+- **`src/elf.rs`** — `SegmentInfo` gains `flags: u32` field. `load_elf()` passes segment flags.
+- **`src/scheduler/address_space.rs`** — `SegmentInfo.flags` field.
+- **`src/syscall/mod.rs`** — `is_user_ptr_valid()` extended to include NXL region (`0x1E000000..0x1E200000`), allowing NXL functions to pass buffers to syscalls.
+
+### TLB Shootdown Deadlock Fix
+
+#### Fixed
+- **`src/arch/x64/paging.rs`** — `heap_free_range()` and `mmap_free_range()` now track `freed_first`/`freed_last` only when `phys != addr` (actual free), preventing unnecessary `shootdown_range()` calls that tried to acquire the scheduler lock while `handler_exit` already holds it.
+
+### Test command extended
+
+#### Changed
+- **`src/shell/commands/test.rs`** — `test` command now runs all 7 user-mode binaries: HELLO, SYSTEST, FILETEST, ALLTEST, CPUTEST, TEST, CPUINFO.
+
+### Cleanup
+
+#### Changed
+- Deleted obsolete scripts: `auto_test_ahci.py`, `test_cputest.py`, `test_disks.py`.
+
+#### Tests
+- 5 new crash dump tests.
+- Total: 376 kernel tests (371 + 5 new).
+- 7 user-mode binaries (6 + 1 new: CPUINFO.NXE).
+
 ## v0.31.0 — 2026-06-10
 
 ### A2.4. IRQL Framework

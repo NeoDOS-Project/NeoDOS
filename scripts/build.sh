@@ -80,7 +80,7 @@ NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
-    for pkg in hello systest filetest alltest cputest test; do
+    for pkg in hello systest filetest alltest cputest test cpuinfo; do
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"
         cargo build --release 2>&1 || { echo "[!] Failed to build $pkg"; exit 1; }
@@ -106,13 +106,12 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     cp "target/x86_64-unknown-none/release/libmath-nxl" "$MATH_NXL_BIN"
     echo "[✓] libmath NXL: $MATH_NXL_BIN ($(stat -c%s "$MATH_NXL_BIN") bytes)"
 
-    cd "$PROJECT_ROOT"
-    if [ -f "$USERBIN_DIR/nem_builder.py" ]; then
-        echo "[+] Generating NEM driver binaries (v1/v2 test)..."
-        python3 "$USERBIN_DIR/nem_builder.py" "$NEM_DIR"
-    else
-        echo "[!] nem_builder.py not found — skipping NEM v1/v2 drivers"
-    fi
+    echo "[+] Building cpuinfo NXL (CPU information library)..."
+    cd "$PROJECT_ROOT/libcpu-nxl"
+    cargo build --release 2>&1 || { echo "[!] Failed to build cpuinfo NXL"; exit 1; }
+    CPUINFO_NXL_BIN="$PROJECT_ROOT/cpuinfo.nxl"
+    cp "target/x86_64-unknown-none/release/libcpu-nxl" "$CPUINFO_NXL_BIN"
+    echo "[✓] cpuinfo NXL: $CPUINFO_NXL_BIN ($(stat -c%s "$CPUINFO_NXL_BIN") bytes)"
 
     echo "[+] Compiling NEM v3 standalone driver (ps2kbd)..."
     DRV_DIR="$PROJECT_ROOT/drivers/ps2kbd"

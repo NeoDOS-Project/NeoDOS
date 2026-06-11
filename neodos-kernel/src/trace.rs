@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicU16, Ordering};
 // Consumer = panic handler (interrupts off, single-reader).
 
 pub const TRACE_CAPACITY: usize = 1024;
+pub const TRACE_EVENT_SIZE: usize = core::mem::size_of::<TraceEntry>();
 pub const TRACE_DUMP_COUNT: usize = 32; // entries to dump on panic
 
 #[repr(u8)]
@@ -33,8 +34,8 @@ pub struct TraceEntry {
 }
 
 pub struct TraceBuffer {
-    entries: [TraceEntry; TRACE_CAPACITY],
-    head: AtomicU16,
+    pub entries: [TraceEntry; TRACE_CAPACITY],
+    pub head: AtomicU16,
 }
 
 impl TraceBuffer {

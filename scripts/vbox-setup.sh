@@ -59,11 +59,11 @@ echo "[6/8] Configuring serial port (COM1 -> file)..."
 VBoxManage modifyvm "$VM_NAME" --uart1 0x3F8 4
 VBoxManage modifyvm "$VM_NAME" --uartmode1 file "$PROJECT_ROOT/vbox_serial.log"
 
-echo "[7/8] Adding IDE controller..."
-VBoxManage storagectl "$VM_NAME" --name "IDE" --add ide --controller PIIX4
+echo "[7/8] Adding AHCI controller..."
+VBoxManage storagectl "$VM_NAME" --name "AHCI" --add ahci --controller AHCI
 
 echo "[8/8] Attaching unified disk image..."
-VBoxManage storageattach "$VM_NAME" --storagectl "IDE" --port 0 --device 0 --type hdd \
+VBoxManage storageattach "$VM_NAME" --storagectl "AHCI" --port 0 --device 0 --type hdd \
     --medium "$DISK_VDI"
 
 echo ""

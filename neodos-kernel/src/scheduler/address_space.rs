@@ -42,6 +42,7 @@ pub const ELF_ERR_MMAP_COLLISION: i64 = -6;
 pub struct SegmentInfo {
     pub vaddr: u64,
     pub memsz: u64,
+    pub flags: u32,
 }
 
 // ── AddressSpace ──
@@ -98,10 +99,10 @@ impl AddressSpace {
 
     /// Full validation: range, null, protected regions, and inter-segment overlap.
     /// Returns Ok(()) if all checks pass, Err(error_code) on failure.
-    pub fn add_segment(&mut self, vaddr: u64, memsz: u64) -> Result<(), i64> {
+    pub fn add_segment(&mut self, vaddr: u64, memsz: u64, flags: u32) -> Result<(), i64> {
         Self::validate_segment(vaddr, memsz)?;
 
-        let new_seg = SegmentInfo { vaddr, memsz };
+        let new_seg = SegmentInfo { vaddr, memsz, flags };
 
         // Check 3: no overlap with existing segments
         for existing in &self.loaded_segments {

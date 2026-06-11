@@ -17,7 +17,7 @@ impl DosShell {
         let user_tests: &[&str] = if args.contains(&"quick") {
             &["SYSTEST.NXE"]
         } else {
-            &["HELLO.NXE", "SYSTEST.NXE", "FILETEST.NXE", "ALLTEST.NXE"]
+            &["HELLO.NXE", "SYSTEST.NXE", "FILETEST.NXE", "ALLTEST.NXE", "CPUTEST.NXE", "TEST.NXE", "CPUINFO.NXE"]
         };
 
         for bin in user_tests {

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.31.0
+v0.32.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 371 kernel tests + 5 user-mode binaries
+2. `python3 scripts/auto_test.py` — 376 kernel tests + 7 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -64,7 +64,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 24 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 25 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -389,6 +389,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
 | 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
 | 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
+| 24 | `sys_getcpuinfo` | RBX=buf_ptr, RCX=buf_size | Copia CpuInfoFull al buffer de usuario (CPUID + SMP + timers) |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 
 ## IPC / Pipes
@@ -510,6 +511,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `hello.nxe` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
 | `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
 | `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
+| `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)

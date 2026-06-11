@@ -159,6 +159,7 @@ pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
 pub fn cmd_fsck(shell: &mut DosShell, args: &[&str]) { shell.cmd_fsck(args); }
 pub fn cmd_kobj(shell: &mut DosShell, _args: &[&str]) { shell.cmd_kobj(); }
+pub fn cmd_crash(shell: &mut DosShell, args: &[&str]) { shell.cmd_crash(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
@@ -346,6 +347,13 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  List all kernel objects tracked by the Kernel Object Manager.\n",
                        "  Shows ID, type, name, reference count, and native ID for each\n",
                        "  registered kernel object (processes, drivers, pipes, etc.)."), },
+    CommandEntry { name: "CRASH",    category: "CTRL",     handler: cmd_crash,  description: "Crash dump management",
+        usage: concat!("Syntax:  CRASH [DUMP|STATUS|TRIGGER]\n",
+                       "  Manage crash dump buffers.\n",
+                       "  CRASH              - show crash dump status\n",
+                       "  CRASH DUMP          - write full crash dump to serial\n",
+                       "  CRASH STATUS        - show crash dump area status\n",
+                       "  CRASH TRIGGER       - trigger a test crash dump (safe)"), },
     CommandEntry { name: "FSCK", category: "CTRL", handler: cmd_fsck, description: "Check filesystem integrity",
         usage: concat!("Syntax:  FSCK [drive:] [/F]\n",
                        "  Check filesystem integrity on a NeoDOS volume.\n",

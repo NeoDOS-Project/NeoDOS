@@ -209,7 +209,7 @@ Happy hacking!
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test']:
+        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -250,6 +250,20 @@ Happy hacking!
         else:
             print(f"[!] libmath.nxl not found — NXL not included")
 
+        # Read cpuinfo NXL binary.
+        cpuinfo_nxl_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'cpuinfo.nxl'),
+            os.path.join(os.path.dirname(__file__), '..', 'userbin', 'cpuinfo_nxl', 'target', 'x86_64-unknown-none', 'release', 'cpuinfo_nxl'),
+        ]
+        cpuinfo_nxl_path = next((path for path in cpuinfo_nxl_candidates if os.path.exists(path)), None)
+        cpuinfo_nxl_data = b''
+        if cpuinfo_nxl_path is not None:
+            with open(cpuinfo_nxl_path, 'rb') as f:
+                cpuinfo_nxl_data = f.read()
+            print(f"[*] Including cpuinfo.nxl from {os.path.relpath(cpuinfo_nxl_path, os.path.dirname(__file__))} ({len(cpuinfo_nxl_data)} bytes)")
+        else:
+            print(f"[!] cpuinfo.nxl not found — NXL not included")
+
         # Allocate data blocks dynamically from block 6 onwards
         next_block = 6
         block_allocs = {}  # inode_num -> list of block numbers
@@ -275,8 +289,10 @@ Happy hacking!
         alltest_blocks = alloc_blocks(9, len(nxe_files['alltest']))
         cputest_blocks = alloc_blocks(10, len(nxe_files['cputest']))
         test_blocks = alloc_blocks(12, len(nxe_files['test']))
+        cpuinfo_blocks = alloc_blocks(13, len(nxe_files['cpuinfo']))
         nxl_blocks = alloc_blocks(29, len(nxl_data)) # libneodos.nxl
         math_nxl_blocks = alloc_blocks(30, len(math_nxl_data)) # libmath.nxl
+        cpuinfo_nxl_blocks = alloc_blocks(31, len(cpuinfo_nxl_data)) # cpuinfo.nxl
         libdir_blocks = alloc_blocks(28, 256)        # LIB dir
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
@@ -295,6 +311,7 @@ Happy hacking!
             9: (MODE_FILE | default_perms_for_filename("ALLTEST.NXE"), len(nxe_files['alltest']), pad_blocks(alltest_blocks)),
             10: (MODE_FILE | default_perms_for_filename("CPUTEST.NXE"), len(nxe_files['cputest']), pad_blocks(cputest_blocks)),
             12: (MODE_FILE | default_perms_for_filename("TEST.NXE"), len(nxe_files['test']), pad_blocks(test_blocks)),
+            13: (MODE_FILE | default_perms_for_filename("CPUINFO.NXE"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
             15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
             19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
@@ -302,6 +319,7 @@ Happy hacking!
             28: (dir_mode, 256, pad_blocks(libdir_blocks)),
             29: (MODE_FILE | default_perms_for_filename("libneodos.nxl"), len(nxl_data), pad_blocks(nxl_blocks)),
             30: (MODE_FILE | default_perms_for_filename("libmath.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
+            31: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks)),
         }
 
         # Write inodes to inode table
@@ -391,6 +409,10 @@ Happy hacking!
         entry = create_dir_entry(12, 1, "TEST.NXE")
         image[offset+2048:offset+2304] = entry
 
+        # Entry 9: CPUINFO.NXE (CPU information)
+        entry = create_dir_entry(13, 1, "CPUINFO.NXE")
+        image[offset+2304:offset+2560] = entry
+
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
         print("[*] Writing readme.txt content...")
@@ -464,6 +486,7 @@ AHCI_DEBUG=0
             9: ('ALLTEST.NXE', nxe_files['alltest']),
             10: ('CPUTEST.NXE', nxe_files['cputest']),
             12: ('TEST.NXE', nxe_files['test']),
+            13: ('CPUINFO.NXE', nxe_files['cpuinfo']),
         }
         for inum, (name, data) in bin_data_map.items():
             if not data:
@@ -541,6 +564,8 @@ AHCI_DEBUG=0
             image[offset:offset+256] = entry_lib
             entry_math = create_dir_entry(30, 1, "libmath.nxl")
             image[offset+256:offset+512] = entry_math
+            entry_cpuinfo = create_dir_entry(31, 1, "cpuinfo.nxl")
+            image[offset+512:offset+768] = entry_cpuinfo
 
         # Write libneodos.nxl data blocks
         if nxl_data:
@@ -557,6 +582,15 @@ AHCI_DEBUG=0
             print(f"[*] Writing libmath.nxl ({len(math_nxl_data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
                 chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                offset = (200 + blk * 8) * 512
+                image[offset:offset+len(chunk)] = chunk
+
+        # Write cpuinfo.nxl data blocks
+        if cpuinfo_nxl_data:
+            blks = block_allocs.get(31, [])
+            print(f"[*] Writing cpuinfo.nxl ({len(cpuinfo_nxl_data)} bytes across {len(blks)} blocks)...")
+            for bi, blk in enumerate(blks):
+                chunk = cpuinfo_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 offset = (200 + blk * 8) * 512
                 image[offset:offset+len(chunk)] = chunk
     

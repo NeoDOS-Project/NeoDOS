@@ -38,6 +38,7 @@ mod r#type;
 mod vol;
 mod attrib;
 mod bench;
+mod crash;
 mod pri;
 mod ps;
 mod run;

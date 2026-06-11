@@ -63,11 +63,6 @@ pub fn load_nxl() -> bool {
 static mut NXL_IMAGE_BUF: [u8; NXL_MAX_SIZE] = [0u8; NXL_MAX_SIZE];
 
 pub fn nxl_load(path: &str) -> Option<u64> {
-    let slot_idx = find_free_slot()?;
-    let base = unsafe { NXL_REGISTRY[slot_idx].base };
-
-    serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x}", path, slot_idx, base);
-
     let buf: &mut [u8] = unsafe { &mut NXL_IMAGE_BUF };
     buf.fill(0);
 
@@ -101,8 +96,20 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     let data = unsafe { &*core::ptr::slice_from_raw_parts(NXL_IMAGE_BUF.as_ptr(), image_size) };
 
-    // NXL loader bypasses address space validation — it loads into the dedicated
-    // NXL region which is a protected region for user ELF validation.
+    // Parse ELF to find the compiled vaddr base (first PT_LOAD vaddr aligned to slot boundary)
+    let compiled_base = match elf_compiled_base(data) {
+        Some(b) => b,
+        None => {
+            serial_println!("[NXL] Cannot determine compiled base");
+            return None;
+        }
+    };
+
+    // Find a slot whose base matches the compiled base
+    let slot_idx = find_slot_for_base(compiled_base)?;
+    let base = unsafe { NXL_REGISTRY[slot_idx].base };
+    serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
+
     let result = match crate::elf::load_elf(data, None) {
         Ok(r) => r,
         Err(e) => {
@@ -112,7 +119,10 @@ pub fn nxl_load(path: &str) -> Option<u64> {
     };
     serial_println!("[NXL] ELF entry=0x{:x}", result.entry);
 
-    mark_slot_user_accessible(base, image_size);
+    // Mark each segment with appropriate page permissions based on ELF p_flags
+    for seg in &result.segments {
+        mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
+    }
 
     unsafe {
         NXL_REGISTRY[slot_idx] = NxlSlot {
@@ -131,6 +141,42 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     serial_println!("[NXL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
+}
+
+/// Peek at the ELF header to find the first PT_LOAD virtual address, aligned to slot size.
+fn elf_compiled_base(data: &[u8]) -> Option<u64> {
+    use core::mem::size_of;
+
+    if data.len() < size_of::<crate::elf::Elf64Hdr>() {
+        return None;
+    }
+
+    let hdr: &crate::elf::Elf64Hdr = unsafe { &*(data.as_ptr() as *const crate::elf::Elf64Hdr) };
+    if hdr.e_ident[..4] != [0x7f, b'E', b'L', b'F'] {
+        return None;
+    }
+
+    let phoff = hdr.e_phoff as usize;
+    let phentsize = hdr.e_phentsize as usize;
+    let phnum = hdr.e_phnum as usize;
+
+    if phentsize != size_of::<crate::elf::Elf64Phdr>() {
+        return None;
+    }
+    if phoff + phnum * phentsize > data.len() {
+        return None;
+    }
+
+    for i in 0..phnum {
+        let off = phoff + i * phentsize;
+        let phdr: &crate::elf::Elf64Phdr = unsafe { &*(data.as_ptr().add(off) as *const crate::elf::Elf64Phdr) };
+        if phdr.p_type == 1 {
+            // Align base to slot boundary
+            return Some(phdr.p_vaddr & !(NXL_SLOT_SIZE - 1));
+        }
+    }
+
+    None
 }
 
 fn resolve_nxl_fallback(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Option<(usize, VfsNode)> {
@@ -189,31 +235,38 @@ fn search_directory(
     None
 }
 
-fn find_free_slot() -> Option<usize> {
+/// Find a slot whose base address matches the given compiled_base.
+fn find_slot_for_base(compiled_base: u64) -> Option<usize> {
     unsafe {
-        NXL_REGISTRY.iter().position(|s| !s.loaded)
+        NXL_REGISTRY.iter().position(|s| s.base == compiled_base && !s.loaded)
     }
 }
 
-fn mark_slot_user_accessible(base: u64, image_size: usize) {
-    let start = base & !(paging::PAGE_4K - 1);
-    let end = base + image_size as u64 + paging::PAGE_4K - 1;
-    let end_aligned = end & !(paging::PAGE_4K - 1);
+/// Mark pages for an ELF segment with USER_ACCESSIBLE and WRITABLE (if PF_W).
+/// ELF p_flags: PF_R=4, PF_W=2, PF_X=1
+fn mark_segment_user_accessible(vaddr: u64, memsz: u64, p_flags: u32) {
+    let start = vaddr & !(paging::PAGE_4K - 1);
+    let end = (vaddr + memsz + paging::PAGE_4K - 1) & !(paging::PAGE_4K - 1);
+    let writable = (p_flags & 2) != 0;
 
     let mut addr = start;
-    while addr < end_aligned {
+    while addr < end {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
             use x86_64::structures::paging::PageTableFlags;
             let phys = entry.addr();
             let mut flags = entry.flags();
-            flags.remove(PageTableFlags::WRITABLE);
             flags |= PageTableFlags::USER_ACCESSIBLE;
+            if writable {
+                flags |= PageTableFlags::WRITABLE;
+            } else {
+                flags.remove(PageTableFlags::WRITABLE);
+            }
             entry.set_addr(phys, flags);
             crate::hal::flush_tlb(addr);
         }
         addr += paging::PAGE_4K;
     }
 
-    serial_println!("[NXL] Marked 0x{:x}..0x{:x} USER_ACCESSIBLE",
-        start, end_aligned);
+    serial_println!("[NXL] Marked 0x{:x}..0x{:x} USER_ACCESSIBLE{}",
+        start, end, if writable { " + WRITABLE" } else { "" });
 }

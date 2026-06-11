@@ -2330,6 +2330,7 @@ pub fn register_pci_enum_tests() {
 
 
 pub fn register_tests() {
+    crate::crash::register_crash_tests();
     register_env_tests();
     register_input_tests();
     register_process_tests();

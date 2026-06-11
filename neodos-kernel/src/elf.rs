@@ -23,36 +23,36 @@ const PT_LOAD: u32 = 1;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct Elf64Hdr {
-    e_ident: [u8; 16],
-    e_type: u16,
-    e_machine: u16,
-    e_version: u32,
-    e_entry: u64,
-    e_phoff: u64,
-    e_shoff: u64,
-    e_flags: u32,
-    e_ehsize: u16,
-    e_phentsize: u16,
-    e_phnum: u16,
-    e_shentsize: u16,
-    e_shnum: u16,
-    e_shstrndx: u16,
+pub(crate) struct Elf64Hdr {
+    pub e_ident: [u8; 16],
+    pub e_type: u16,
+    pub e_machine: u16,
+    pub e_version: u32,
+    pub e_entry: u64,
+    pub e_phoff: u64,
+    pub e_shoff: u64,
+    pub e_flags: u32,
+    pub e_ehsize: u16,
+    pub e_phentsize: u16,
+    pub e_phnum: u16,
+    pub e_shentsize: u16,
+    pub e_shnum: u16,
+    pub e_shstrndx: u16,
 }
 
 // ── ELF64 program header (56 bytes) ──
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
-struct Elf64Phdr {
-    p_type: u32,
-    p_flags: u32,
-    p_offset: u64,
-    p_vaddr: u64,
-    p_paddr: u64,
-    p_filesz: u64,
-    p_memsz: u64,
-    p_align: u64,
+pub(crate) struct Elf64Phdr {
+    pub p_type: u32,
+    pub p_flags: u32,
+    pub p_offset: u64,
+    pub p_vaddr: u64,
+    pub p_paddr: u64,
+    pub p_filesz: u64,
+    pub p_memsz: u64,
+    pub p_align: u64,
 }
 
 // ── Error type ──
@@ -145,6 +145,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
 
         let vaddr = ph.p_vaddr;
         let memsz = ph.p_memsz;
+        let flags = ph.p_flags;
 
         // Check entry point containment (check 5 — log warning, don't fail)
         if entry >= vaddr && entry < vaddr.saturating_add(memsz) {
@@ -153,11 +154,11 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
 
         // Validate segment range and register with address space (if provided)
         if let Some(ref mut space) = addr_space {
-            space.add_segment(vaddr, memsz)
+            space.add_segment(vaddr, memsz, flags)
                 .map_err(|e| ElfLoadError::AddressSpaceViolation(e))?;
         }
 
-        segments.push(SegmentInfo { vaddr, memsz });
+        segments.push(SegmentInfo { vaddr, memsz, flags });
     }
 
     // Check 5: entry point not in any PT_LOAD — log warning

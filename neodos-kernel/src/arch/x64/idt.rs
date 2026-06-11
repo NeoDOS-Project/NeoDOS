@@ -207,8 +207,11 @@ extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
     serial_println!("[IRQ] Debug exception");
 }
 
-extern "x86-interrupt" fn nmi_handler(_: InterruptStackFrame) {
+extern "x86-interrupt" fn nmi_handler(stack_frame: InterruptStackFrame) {
     crate::trace_event!(TraceEvent::Panic, 1, 0, 0, 0);
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    crate::crash::dump_nmi(rip, rsp);
     panic_classified!(PanicClass::UnknownCpuException, "Non-maskable interrupt");
 }
 
@@ -238,11 +241,13 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
     crate::trace_event!(TraceEvent::Panic, 2, error_code, 0, 0);
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    // Capture crash dump before panic (will write to serial and RAM buffer)
+    crate::crash::dump_double_fault(rip, rsp, error_code);
     panic_classified!(PanicClass::DoubleFault,
         "Double fault: rip={:#x} rsp={:#x} error={:#x}",
-        stack_frame.instruction_pointer.as_u64(),
-        stack_frame.stack_pointer.as_u64(),
-        error_code);
+        rip, rsp, error_code);
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, error_code: u64) {

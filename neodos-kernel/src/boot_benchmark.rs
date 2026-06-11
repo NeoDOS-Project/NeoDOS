@@ -64,6 +64,11 @@ pub fn init() {
     crate::serial_println!("[BENCH] TSC calibrated: {} ticks/ms", khz);
 }
 
+/// Get calibrated TSC frequency in ticks per millisecond.
+pub fn get_tsc_khz() -> u64 {
+    TSC_KHZ.load(Ordering::Relaxed)
+}
+
 /// Current timestamp in TSC ticks.
 #[inline]
 pub fn boot_time_now() -> u64 {

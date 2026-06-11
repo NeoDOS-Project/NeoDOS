@@ -44,6 +44,7 @@ pub mod trace;
 pub mod invariants;
 pub mod panic_classification;
 pub mod boot_benchmark;
+mod crash;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -157,6 +158,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     //  timer IRQ0 can fire immediately after STI)
     // ============================================
     memory::init(boot_info);
+
+    // Initialize crash dump area (reserve 16 MB @ 0x0F000000)
+    crash::init_crash_dump_area();
+    memory::reserve_range(crash::CRASH_DUMP_AREA_BASE, crash::CRASH_DUMP_AREA_SIZE);
 
     // ============================================
     // PHASE 2.75: Heap allocator (uses identity map)
@@ -366,6 +371,19 @@ fn panic(info: &PanicInfo) -> ! {
 
     let class = crate::panic_classification::current_panic_class();
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
+
+    // Capture approximate RIP from return address on stack, and RSP
+    let rip: u64;
+    let rsp: u64;
+    unsafe {
+        core::arch::asm!("mov {}, rsp", out(reg) rsp);
+        // Read return address from top of stack (approx RIP at panic site)
+        rip = (rsp as *const u64).read();
+    }
+
+    // Dump crash dump to serial + RAM buffer (must happen before any other output)
+    crate::crash::dump_panic(rip, rsp);
+
     if let Some(location) = info.location() {
         println!("Location: {}:{}", location.file(), location.line());
     }

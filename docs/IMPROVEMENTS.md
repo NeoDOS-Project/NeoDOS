@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.31.0 (371 kernel tests + 4 user-mode binaries).
+> Versión actual: v0.32.0 (376 kernel tests + 7 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 96 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
+**Progreso:** 98 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
 
 ---
 
@@ -134,6 +134,8 @@
 97. **Bug fix: KPRCB offset constants** — 13 offsets 2 bytes too low due to CpuRunQueue alignment. Fixed with compile-time assertions.
 98. **A1.3. Per-CPU slab allocator** — `src/slab.rs` rewritten with per-CPU fast path: 32-object hot caches in KPRCB via GS-segment, O(1) alloc/free without locks. `refill_from_global()` / `drain_to_global()` with global Mutex for cross-CPU replenishment. Per-CPU slab accessor functions in `cpu_local.rs` (gs_read_u16/gs_write_u16, this_cpu_slab_alloc_local/free_local). 5 tests: `per_cpu_slab_alloc_free_concurrent`, `per_cpu_refill_drain_batching`, `slab_scaling_8cpu`, `slab_under_irql_dispatch`, `slab_stress_100k`.
 99. **A1.4. IPI infrastructure + TLB shootdown** — `arch/x64/ipi.rs`: unified IPI module with `send_ipi()`, `send_ipi_mask()`, `send_ipi_all()`. IPI_TLB_SHOOTDOWN (vector 0xF1) with synchronous ACK protocol and shared `TlbShootdownPayload`. IPI_CALL_FUNCTION (vector 0xF2) with `CallFunctionCb` dispatch. TLB shootdown integrated into `paging.rs` (heap_free_page, heap_free_range, mmap_free_page, mmap_free_range, set_page_user_accessible). `ack_irq()` fixed to send APIC EOI for all vectors >= 32 (was only vector 32). Scheduler sends IPI_RESCHEDULE on cross-CPU thread enqueue. 5 tests: `ipi_constants`, `ipi_tlb_shootdown_struct`, `ipi_call_function_struct`, `ipi_tlb_shootdown_local_only`, `ipi_call_function_no_targets`.
+100. **A3.1. Crash dump framework** — `src/crash/mod.rs`: 16 KB CrashDumpHeader, stack walk, GPR snapshot, serial output. `CRASH`/`CRASH DUMP` commands. 5 tests.
+101. **B8. cpuinfo.nxe — user-mode CPU info binary** — `userbin/cpuinfo/`: uses `libcpu-nxl` NXL via sys_loadlib. Displays vendor, brand, topology, timers, features. sys_getcpuinfo (RAX=24) kernel + user wrappers.
 
 ---
 
@@ -275,7 +277,7 @@ La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bl
 
 El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en cualquier excepción.
 
-- [ ] **A3.1. Crash dump framework** | NT: `KeBugCheckEx` + memory dump | Prereqs: A0
+- [x] **A3.1. Crash dump framework** | NT: `KeBugCheckEx` + memory dump | Prereqs: A0
   - **Archivos:** `src/crash/mod.rs`, `src/crash/dump.rs`, `scripts/crash_analyzer.py`, `src/shell/commands/crash.rs` (admin command)
   - **Descripción:** Infraestructura para capturar y preservar estado del sistema en caso de panic, triple fault, o watchdog timeout.
     - **Dump structure:** 16 KB header + up to 16 MB data (extensible a 64 MB si espacio disponible).

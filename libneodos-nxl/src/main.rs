@@ -188,6 +188,11 @@ pub extern "C" fn nxl_sys_loadlib(path: *const u8) -> i64 {
     ret(unsafe { syscall_1(21, path as u64) })
 }
 
+#[no_mangle]
+pub extern "C" fn nxl_sys_getcpuinfo(buf: *mut u8, len: usize) -> i64 {
+    ret(unsafe { syscall_2(24, buf as u64, len as u64) })
+}
+
 // ============================================================
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
@@ -329,6 +334,7 @@ pub struct AbiTable {
     pub sys_chdir: extern "C" fn(*const u8) -> i64,
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
+    pub sys_getcpuinfo: extern "C" fn(*mut u8, usize) -> i64,
     pub version: u32,
     pub _reserved: [u64; 2],
 }
@@ -381,6 +387,7 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_chdir: nxl_sys_chdir,
     sys_getcwd: nxl_sys_getcwd,
     sys_loadlib: nxl_sys_loadlib,
+    sys_getcpuinfo: nxl_sys_getcpuinfo,
     version: 1,
     _reserved: [0; 2],
 };

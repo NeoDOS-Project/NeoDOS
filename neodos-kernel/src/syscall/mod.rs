@@ -53,10 +53,11 @@ pub enum SyscallNum {
     LoadLib = 21,
     ThreadCreate = 22,
     ThreadJoin = 23,
+    GetCpuInfo = 24,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 23;
+    pub const MAX_VALID: u64 = 24;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -82,6 +83,7 @@ impl SyscallNum {
             21 => Some(Self::LoadLib),
             22 => Some(Self::ThreadCreate),
             23 => Some(Self::ThreadJoin),
+            24 => Some(Self::GetCpuInfo),
             _ => None,
         }
     }
@@ -120,7 +122,7 @@ pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6,
-        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         50,
     ];
     // Reserved syscall slots that MUST be None
@@ -278,6 +280,10 @@ fn normalize_dos_path(path: &str) -> String {
 
 pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
+        return true;
+    }
+    // NXL region (shared libraries): 0x1E000000..0x1E200000
+    if ptr >= 0x1E000000 && ptr.saturating_add(len) <= 0x1E200000 {
         return true;
     }
     let (heap_base, heap_break) = crate::scheduler::current_process_heap_range();
@@ -1225,6 +1231,28 @@ fn handler_ndreg(_regs: Registers) -> u64 {
     0
 }
 
+/// sys_getcpuinfo (RAX=24): copy CpuInfoFull to user buffer.
+/// RBX = pointer to user buffer, RCX = buffer size (for validation).
+fn handler_get_cpuinfo(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    let _buf_size = regs.rcx as u64;
+    let struct_size = core::mem::size_of::<crate::cpu::CpuInfoFull>() as u64;
+
+    if buf_ptr == 0 || !is_user_ptr_valid(buf_ptr, struct_size) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let info = crate::cpu::get_cpu_info_full();
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &info as *const crate::cpu::CpuInfoFull as *const u8,
+            buf_ptr as *mut u8,
+            struct_size as usize,
+        );
+    }
+    0
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -1254,6 +1282,7 @@ lazy_static! {
         t[21] = Some(handler_loadlib as SyscallFn);
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
+        t[24] = Some(handler_get_cpuinfo as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -1282,6 +1311,7 @@ lazy_static! {
         t[21] = SyscallPermission::user();
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
+        t[24] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };
@@ -1407,7 +1437,7 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6,
-            9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+            9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             50,
         ];
         const RESERVED: &[u64] = &[7, 8];

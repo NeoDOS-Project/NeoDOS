@@ -64,6 +64,17 @@ pub enum ThreadState {
     Terminated,
 }
 
+impl ThreadState {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            ThreadState::Ready => 0,
+            ThreadState::Running => 1,
+            ThreadState::Blocked { .. } => 2,
+            ThreadState::Terminated => 3,
+        }
+    }
+}
+
 // ── KTHREAD ──
 
 #[repr(C)]
