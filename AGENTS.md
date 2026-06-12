@@ -514,6 +514,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
 | `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~15 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, EXIT + external PATH commands |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)

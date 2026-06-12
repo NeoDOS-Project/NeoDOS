@@ -2,6 +2,11 @@
 
 ## v0.34.0 — 2026-06-12
 
+### Fixed
+- **Ring 3 keyboard input** — `sys_read(fd=0)` (stdin) now properly dispatches event bus events and enables interrupts (`sti; hlt; cli`) in the wait loop. The INT 0x80 syscall handler runs with IF=0, so `hlt_once()` returned immediately — keyboard IRQ1 could never wake the waiting thread.
+  - `src/syscall/mod.rs`: `handler_read` → `HANDLE_STDIN` loop
+- **Ring 3 blocking wait** — `sys_waitpid` also used `hlt_once()` in the same IF=0 context, causing a busy-wait spin loop. Fixed with `sti; hlt; cli`.
+
 ### A4.5 APC engine — Asynchronous Procedure Calls
 
 #### Added

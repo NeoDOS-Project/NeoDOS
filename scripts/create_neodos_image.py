@@ -209,7 +209,7 @@ Happy hacking!
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo']:
+        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo', 'neoshell']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -290,6 +290,7 @@ Happy hacking!
         cputest_blocks = alloc_blocks(10, len(nxe_files['cputest']))
         test_blocks = alloc_blocks(12, len(nxe_files['test']))
         cpuinfo_blocks = alloc_blocks(13, len(nxe_files['cpuinfo']))
+        neoshell_blocks = alloc_blocks(14, len(nxe_files['neoshell']))
         nxl_blocks = alloc_blocks(29, len(nxl_data)) # libneodos.nxl
         math_nxl_blocks = alloc_blocks(30, len(math_nxl_data)) # libmath.nxl
         cpuinfo_nxl_blocks = alloc_blocks(31, len(cpuinfo_nxl_data)) # cpuinfo.nxl
@@ -311,7 +312,8 @@ Happy hacking!
             9: (MODE_FILE | default_perms_for_filename("ALLTEST.NXE"), len(nxe_files['alltest']), pad_blocks(alltest_blocks)),
             10: (MODE_FILE | default_perms_for_filename("CPUTEST.NXE"), len(nxe_files['cputest']), pad_blocks(cputest_blocks)),
             12: (MODE_FILE | default_perms_for_filename("TEST.NXE"), len(nxe_files['test']), pad_blocks(test_blocks)),
-            13: (MODE_FILE | default_perms_for_filename("CPUINFO.NXE"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
+             13: (MODE_FILE | default_perms_for_filename("CPUINFO.NXE"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
+             14: (MODE_FILE | default_perms_for_filename("NEOSHELL.NXE"), len(nxe_files['neoshell']), pad_blocks(neoshell_blocks)),
             15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
             19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
@@ -413,6 +415,10 @@ Happy hacking!
         entry = create_dir_entry(13, 1, "CPUINFO.NXE")
         image[offset+2304:offset+2560] = entry
 
+        # Entry 10: NEOSHELL.NXE (Ring 3 shell)
+        entry = create_dir_entry(14, 1, "NEOSHELL.NXE")
+        image[offset+2560:offset+2816] = entry
+
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
         print("[*] Writing readme.txt content...")
@@ -456,6 +462,7 @@ ECHO Done.
 BUFFERS=10
 COUNTRY=034
 CURSOR=10
+RUN C:\\NEOSHELL.NXE
 """
         image[offset:offset+len(config_content)] = config_content
 
@@ -487,6 +494,7 @@ AHCI_DEBUG=0
             10: ('CPUTEST.NXE', nxe_files['cputest']),
             12: ('TEST.NXE', nxe_files['test']),
             13: ('CPUINFO.NXE', nxe_files['cpuinfo']),
+            14: ('NEOSHELL.NXE', nxe_files['neoshell']),
         }
         for inum, (name, data) in bin_data_map.items():
             if not data:

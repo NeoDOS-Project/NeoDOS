@@ -512,7 +512,13 @@ fn handler_read(regs: Registers) -> u64 {
                                 bytes_read += 1;
                                 break;
                             }
-                            crate::hal::hlt_once();
+                            crate::eventbus::EVENT_BUS.dispatch_pending();
+                            if let Some(b) = crate::input::pop_byte() {
+                                unsafe { buf_ptr.add(bytes_read).write(b); }
+                                bytes_read += 1;
+                                break;
+                            }
+                            unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
                         }
                     }
                 }
@@ -641,7 +647,7 @@ fn handler_waitpid(regs: Registers) -> u64 {
         });
 
         if is_terminated { break; }
-        crate::hal::hlt_once();
+        unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
     }
 
     crate::scheduler::cleanup_terminated_process(wait_pid);

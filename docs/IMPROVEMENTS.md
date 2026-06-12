@@ -391,8 +391,6 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
   - **Tests:** `neoshell_prompt_and_cd`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
 
 - [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
-
-- [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
   - **Archivos:** `userbin/neoinit/` (new Rust project), refactor `src/main.rs` (PHASE 3.8 entry), `scripts/create_neodos_image.py` (empaquetado)
   - **Descripción:** Supervisor de servicios de nivel de sistema que gestiona procesos críticos como shell, daemon services, y respawning.
     - **NeoInit responsibilities:**

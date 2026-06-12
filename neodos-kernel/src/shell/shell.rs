@@ -52,7 +52,7 @@ impl DosShell {
     }
 
     pub fn run(&mut self) -> ! {
-        println!("NeoDOS v{} - VFS Active", env!("CARGO_PKG_VERSION"));
+        println!("NeoDOS v{} - RING0", env!("CARGO_PKG_VERSION"));
         println!("Type HELP for a list of commands.");
 
         self.check_config_sys();
