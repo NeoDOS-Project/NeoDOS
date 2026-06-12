@@ -72,7 +72,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 371 kernel self-tests + 5 user-mode binaries)
+- `test` (run 386 kernel self-tests + 5 user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 
@@ -88,4 +88,26 @@ The kernel includes a **priority scheduler** (A2) with 4 levels and dynamic time
 - An idle process (PID 0) is always present
 
 See `docs/SCHEDULER.md`.
+
+## Asynchronous Procedure Calls (APC)
+
+The APC engine (A4.5) provides per-thread queues for kernel and user-mode APCs,
+modelled after NT's `KeInitializeApc` / `KeInsertQueueApc`.
+
+- **APC structure**: `ApcEntry { function: ApcFn, context: *mut u8, kernel: bool }`
+- **Kernel APCs**: Queued per-thread (max 64), dispatched at PASSIVE_LEVEL
+  from `apc_dispatch_on_syscall_return()` (called before IRETQ in the syscall handler).
+  Used for IRP completion cleanup and deferred work.
+- **User APCs**: Queued per-thread (max 64), dispatched one-at-a-time in Ring 3
+  context before returning to user-mode. An alertable wait (`sys_wait_alertable`,
+  RAX=40) blocks the thread but wakes immediately if a user APC is queued.
+- **IRP→APC bridge**: `irp_complete_with_apc()` extracts the IRP callback and
+  delivers it as a user APC. The completion flow is: DIRQL → DPC → APC.
+- **Syscalls**: `sys_wait_alertable` (RAX=40) and `sys_sleep_ex` (RAX=41).
+- **Integration**: `apc_dispatch_on_syscall_return()` runs in the syscall
+  assembly handler (`idt.rs`) before IRETQ, dispatching kernel APCs then one
+  user APC per syscall return.
+- **File**: `src/apc/mod.rs`
+- **Tests**: 5 APC-specific tests (kernel dispatch, alertable wait, queue overflow,
+  IRP→APC completion, stress 100 concurrent IRPs).
 

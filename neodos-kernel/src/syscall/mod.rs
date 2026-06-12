@@ -54,10 +54,12 @@ pub enum SyscallNum {
     ThreadCreate = 22,
     ThreadJoin = 23,
     GetCpuInfo = 24,
+    WaitAlertable = 40,
+    SleepEx = 41,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 24;
+    pub const MAX_VALID: u64 = 41;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -84,6 +86,8 @@ impl SyscallNum {
             22 => Some(Self::ThreadCreate),
             23 => Some(Self::ThreadJoin),
             24 => Some(Self::GetCpuInfo),
+            40 => Some(Self::WaitAlertable),
+            41 => Some(Self::SleepEx),
             _ => None,
         }
     }
@@ -123,6 +127,7 @@ pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        40, 41,
         50,
     ];
     // Reserved syscall slots that MUST be None
@@ -1225,6 +1230,58 @@ fn handler_thread_join(regs: Registers) -> u64 {
     0
 }
 
+/// sys_wait_alertable (RAX=40): If user APC pending, dispatch it and return APC_ALERTED.
+/// Otherwise, block the thread in an alertable state and return APC_ALERTED when woken.
+fn handler_wait_alertable(_regs: Registers) -> u64 {
+    // Check if any user APC is pending for this thread
+    if crate::apc::has_pending_user_apcs() {
+        crate::apc::dispatch_one_user_apc();
+        return crate::apc::APC_ALERTED;
+    }
+    // No APC pending — block in alertable state
+    crate::apc::block_current_alertable();
+    // When woken, check for APC again
+    if crate::apc::has_pending_user_apcs() {
+        crate::apc::dispatch_one_user_apc();
+        return crate::apc::APC_ALERTED;
+    }
+    // Woken by other means (timeout, etc.) — return 0
+    0
+}
+
+/// sys_sleep_ex (RAX=41): Yield the CPU but remain alertable to APCs.
+/// If an APC is pending, dispatch it and return APC_ALERTED.
+fn handler_sleep_ex(_regs: Registers) -> u64 {
+    // Check for pending user APCs before yielding
+    if crate::apc::has_pending_user_apcs() {
+        crate::apc::dispatch_one_user_apc();
+        return crate::apc::APC_ALERTED;
+    }
+    // Yield — same as sys_yield but alertable
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        let tid = lock.current_tid;
+        if tid > 0 {
+            if let Some(k) = lock.current_kthread_mut() {
+                if k.state == crate::scheduler::ThreadState::Running {
+                    k.state = crate::scheduler::ThreadState::Ready;
+                }
+                let idx = (k.priority as usize).min(
+                    crate::scheduler::PRIORITY_COUNT as usize - 1);
+                k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+            }
+        }
+    });
+    crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+    // After reschedule, check for APC again
+    if crate::apc::has_pending_user_apcs() {
+        crate::apc::dispatch_one_user_apc();
+        return crate::apc::APC_ALERTED;
+    }
+    0
+}
+
 /// Admin syscall stub (RAX=50). Placeholder for NDREG operations from user-space.
 fn handler_ndreg(_regs: Registers) -> u64 {
     serial_println!("[SYS] sys_ndreg (RAX=50) called - admin stub");
@@ -1283,6 +1340,8 @@ lazy_static! {
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
         t[24] = Some(handler_get_cpuinfo as SyscallFn);
+        t[40] = Some(handler_wait_alertable as SyscallFn);
+        t[41] = Some(handler_sleep_ex as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -1312,6 +1371,8 @@ lazy_static! {
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
         t[24] = SyscallPermission::user();
+        t[40] = SyscallPermission::user();
+        t[41] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };
@@ -1438,6 +1499,7 @@ pub fn register_syscall_table_tests() {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6,
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            40, 41,
             50,
         ];
         const RESERVED: &[u64] = &[7, 8];

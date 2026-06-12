@@ -191,32 +191,6 @@ Paralelizable sin bloquear NT core: **A2.1–A2.3** (HAL/PCI), **A5.2** VirtIO.
 
 La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bloquear todas las interrupciones.
 
-- [x] **A2.4. IRQL framework** | NT: `KeRaiseIrql`/`KeLowerIrql` (Interrupt Request Level) | Prereqs: A1.1
-  - **Archivos:** `src/hal/x64/irql.rs`, integración `arch/x64/idt.rs`, `cpu_local.rs`
-  - **Descripción:** Modelo de priorización de interrupciones sin deshabilitar todas (reemplaza `cli` global).
-    - **IRQL levels (per-CPU):** `PASSIVE=0` (user code), `APC=1` (APC delivery), `DISPATCH=2` (DPC delivery + scheduler), `DIRQL=3–11` (device interrupts mapped to vectors 32–40), `HIGH=15` (NMI, machine check).
-    - **Storage:** Per-CPU en KPRCB, acceso vía `this_cpu_irql()` / `this_cpu_set_irql()` en `cpu_local.rs` (GS offset 0x016).
-    - **Semantics:** `raise_irql(new_level)` deshabilita interrupts solo si `new_level > current_irql`. En x86, traduce a `cli` si new >= DISPATCH, nada si PASSIVE/APC. `lower_irql(old_level)` restaura anterior; `sti` si es necesario.
-    - **Constraints:** Página fault (INT 14) en IRQL >= DISPATCH es FATAL (bugcheck KI_EXCEPTION_ACCESS_VIOLATION). `IrqMutex` implica IRQL >= DISPATCH automáticamente.
-    - **Replazo de `without_interrupts`:** Migrado work_queue, scheduler helpers, pipe blocking/wake.
-  - **Criterio:**
-    - Código en `raise_irql(DISPATCH)` puede sufrir page fault → kernel panic (INV-14).
-    - `IrqMutex` adquirido en PASSIVE automáticamente eleva a DISPATCH; release baja IRQL.
-  - **Tests:** `irql_raise_lower_passive_dispatch`, `irql_page_fault_at_dispatch_panics`, `irql_spinlock_implicit_raise`, `irql_nesting_stack`, `irql_preemption_threshold` (5 tests).
-
-- [x] **A2.5. DPC engine** | NT: `KeInsertQueueDpc`, Deferred Procedure Call | Prereqs: A2.4
-  - **Archivos:** `src/dpc/mod.rs`, refactor `src/work_queue.rs`, integración `arch/x64/idt.rs` (DIRQL→DISPATCH transition)
-  - **Descripción:** Colas de procedimientos diferidos ejecutadas a DISPATCH_LEVEL, permitiendo IRQ handlers rápidos y ejecución de lógica compleja fuera de contexto de IRQ.
-    - **DPC structure:** `{ function: fn(*mut u8), context: *mut u8, queued: bool }`. Máx 128 DPCs pending per-CPU.
-    - **Enqueue:** `insert_queue_dpc(dpc, fn, ctx)` → sin locks (IRQL >= DIRQL al llamar desde IRQ). Append a DPC queue per-CPU. Si ya queued, ignorar (upsert).
-    - **Dispatch:** Al final de `dirql_handler_exit()` (cuando se baja IRQL de device DIRQL a DISPATCH), chequear si DPC queue tiene items. Si sí: ejecutar todos los DPCs a DISPATCH_LEVEL (interrupts enabled, pero sin device IRQs). `dpc_handler()` itera, ejecuta callbacks, pop de queue.
-    - **IRQ integration:** Device IRQ handler (DIRQL=X): minimizar lógica, encolar DPC, return. `dirql_to_dispatch_transition()` ejecuta DPCs antes de permitir reschedule.
-    - **Nesting:** DPC puede encolar DPC, pero evitar infinito (contador MAX_DPC_DEPTH=10).
-  - **Criterio:**
-    - NVMe completion IRQ (DIRQL) encola DPC para wake readers. DPC ejecuta a DISPATCH, envía IPIs, no bloquea IRQ handler.
-    - Time from completion a DISPATCH DPC < 100 µs (device DIRQL handling + DPC dispatch).
-    - Stress: 100 IRQs generando DPCs cada una, todos ejecutados, no memory leak, no infinite loop.
-  - **Tests:** `dpc_enqueue_dispatch_level`, `dpc_irq_to_dispatch_transition`, `dpc_nesting_depth_limit`, `dpc_callback_execution_order`, `dpc_stress_100_irqs` (5 tests).
 
 - [ ] **A2.1. MMIO ECAM PCI config space** | NT: MCFG (PCI Express Config Access Mechanism) | Prereqs: A0
   - **Archivos:** `src/drivers/pci.rs` (refactor kernel boot stub), `src/hal/pci.rs`, integración ACPI
@@ -248,59 +222,11 @@ La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bl
     - All 4 queues entregan eventos en paralelo sin serialización PIC.
   - **Tests:** `ioapic_init_from_madt`, `msix_nvme_4_queue_allocation`, `msix_vector_delivery_latency`, `ioapic_isa_compat_legacy`, `ioapic_pic_disabled` (5 tests).
 
-- [x] **A2.3. HAL v0.4 — raw/safe split** | NT: HAL isolation, type-safe CPU primitives | Prereqs: A2.4
-  - **Archivos:** `src/hal/raw/` (new), `src/hal/safe/` (new), refactor `src/hal/x64/`, auditoría codebase
-  - **Descripción:** Separar responsabilidades HAL: máquina pura (raw asm) vs. abstracciones type-safe para minimizar superficie de audit y evitar scattered inline asm.
-    - **`hal::raw` (bare asm):** Funciones con `#[naked]` o inline asm puro:
-      - `raw_read_msr(msr_addr: u32) -> u64` — `rdmsr`
-      - `raw_write_msr(msr_addr: u32, value: u64)` — `wrmsr`
-      - `raw_invpcid(descriptor: &InvpcidDescriptor)` — `invpcid`
-      - `raw_halt_until_interrupt() -> !` — `hlt` con loop
-      - `raw_read_tsc() -> u64` — `rdtsc`
-      - `raw_lgdt(gdt_ptr)`, `raw_lidt(idt_ptr)` — descriptores globales
-    - **`hal::safe` (wrappers):** Abstracciones type-safe que wrappean raw:
-      - `read_msr<T: Msr>(msr: &T) -> T::Value` — parse bits mediante associated type
-      - `write_msr<T: Msr>(msr: &T, val: T::Value)` — validar rangos
-      - `read_cr2() -> u64` — page fault linear address (no asm inline)
-      - Trait `Msr` define `MSR_GS_BASE`, `MSR_IA32_FEATURE_CONTROL`, etc.
-    - **Audit constraint:** `grep -rn "asm!" src/ --exclude-dir=hal/` retorna 0. Todo inline asm confinado.
-    - **MSR safety:** Algunos MSRs pueden ser peligrosos (core frequency, virtualization). Trait `Msr` puede marcar como `IsSafe=false`, requiriendo `unsafe` en contextos relevantes.
-  - **Criterio:**
-    - Lectura MSR_GS_BASE: `let gs_base = read_msr(&msr::GS_BASE);` es type-safe.
-    - Cero inline asm outside `hal/`.
-    - Refactor `allocator.rs`, `scheduler.rs`, etc. para usar `read_msr()` en lugar de inline.
-  - **Tests:** `hal_v04_abi_msr_safe`, `hal_msr_read_write_consistency`, `hal_no_asm_outside_hal_dir`, `hal_cr2_page_fault_addr`, `hal_invpcid_tlb_invalidation` (5 tests).
-
 ---
 
 ### FASE A3 — Fault Tolerance (NT: Bugcheck, KD, SEH)
 
 El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en cualquier excepción.
-
-- [x] **A3.1. Crash dump framework** | NT: `KeBugCheckEx` + memory dump | Prereqs: A0
-  - **Archivos:** `src/crash/mod.rs`, `src/crash/dump.rs`, `scripts/crash_analyzer.py`, `src/shell/commands/crash.rs` (admin command)
-  - **Descripción:** Infraestructura para capturar y preservar estado del sistema en caso de panic, triple fault, o watchdog timeout.
-    - **Dump structure:** 16 KB header + up to 16 MB data (extensible a 64 MB si espacio disponible).
-      - Header: `{ magic: [u8; 4], version: u32, timestamp: u64, cause: u32 (panic/triple_fault/watchdog/nmi), param0-3: u64 }`
-      - Stack trace: 32 RIP values (return addresses de stack walk)
-      - GPRs snapshot: RAX–R15, RSP, RIP, RFLAGS, CR0–4, EFER
-      - Scheduler snapshot: current_thread, thread state, all runqueues (per-CPU)
-      - Page tables: copy de PML4 + sample PTEs (primeras 10 tablas)
-      - Circular trace buffer: last 256 events (alloc/free/syscall/page_fault timestamps)
-    - **Capture points:**
-      1. `panic!(msg)` en `panic_handler()` → `crash::dump_panic(msg, rip, rsp)`
-      2. Triple fault (CPU exception 0) → new `triple_fault_handler` guarda registros antes de reset
-      3. Watchdog timeout (A3.3) → NMI handler → `crash::dump_nmi()`
-    - **Persistence:** Escritura a:
-      - Puerto serie (115200 baud, volcado en tiempo real)
-      - Partición NeoDOS crash reserved (sector 0x7000 si presente) — requiere espacio dedicado en imagen
-      - RAM crash buffer (16 MB si espacio) — `crash_dump_area` @ 0x0F000000 durante init
-    - **Analyzer script:** `crash_analyzer.py` parse dump binario, imprime readable backtrace, registers, memoria.
-  - **Criterio:**
-    - `panic!("test")` en PHASE 3.7 → dump a serial (visible en QEMU output)
-    - Analyzer resuelve RIPs a ñómeros de línea via `kernel.elf` (debug symbols)
-    - Stress: crear dump sin additional crash (cero recursion)
-  - **Tests:** `crash_dump_panic_capture`, `crash_dump_serialize_deserialize`, `crash_dump_serial_output`, `crash_dump_analyzer_backtrace`, `crash_dump_no_recursion` (5 tests).
 
 - [ ] **A3.2. Kernel debugger (KD)** | NT: WinDbg kernel-mode debugging | Prereqs: A3.1
   - **Archivos:** `src/debugger/mod.rs`, `src/debugger/breakpoint.rs`, `src/debugger/watchpoint.rs`, `src/shell/commands/debug.rs`, `scripts/kd_client.py` (GDB stub adapter)
@@ -381,48 +307,9 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
 
 > **Estado actual (v0.28.0):** `main.rs:346` ejecuta `DosShell::run()` en Ring 0. `ARCHITECTURE_SOURCE_OF_TRUTH.md` describe NeoInit como PID 1 — es el target, no el estado actual.
 
-- [x] **A4.2. Syscall dispatch table (SSDT)** | NT: Service Descriptor Table | Prereqs: — [COMPLETED]
-  - **Archivos:** `src/syscall/mod.rs` (refactor), `src/syscall/table.rs` (new), `src/syscall/permission.rs` (new)
-  - **Descripción:** Centralizar despacho de syscalls en tabla indexada en lugar de match monolítico para mejor escalabilidad y seguridad.
-    - **Tabla SSDT:** `[Option<fn(Registers) -> u64>; 256]` via `lazy_static!`. 23 funciones + admin stub.
-    - **Tabla permisos:** `[SyscallPermission; 256]` con requisitos: `{ caps: u64, ring_min: u8, admin: bool }`.
-      - `sys_exit`: ring=3, caps=0, admin=false
-      - `sys_ndreg`: ring=0, caps=CAP_ADMIN, admin=true (RAX=50)
-    - **Dispatch:** `syscall_dispatch(rax, registers)` → busca `SSDT[rax]`. Si None → NoSys (-7). Si Some(fn) → chequea permiso, ejecuta, retorna.
-    - **Boot validation:** `validate_abi()` itera SSDT, verifica 0..MAX_SYSCALL tienen entradas, permisos consisten.
-  - **Tests:** 5 tests (sparse dispatch, admin check, ENOSYS, validation, add new syscall). Total: 361 kernel tests.
-
-- [x] **A4.3. ELF loader con validación de rangos** | NT: Loader security checks | Prereqs: A0.3
-  - **Archivos:** `src/elf.rs` (refactor), `src/scheduler/address_space.rs` (new), `src/shell/commands/run.rs`
-  - **Descripción:** Validación rigurosa de segmentos ELF para prevenir exploits via ELF malicioso.
-    - **Checks en `load_elf_segment()`:**
-      1. **Rango válido:** `p_vaddr >= USER_BASE (0x400000) && p_vaddr + p_memsz <= USER_WINDOW_END (0x800000)`. Rechazar si fuera de ventana.
-      2. **Prohibir válido=0:** `p_vaddr != 0` (null pointer dereference exploit). Si vaddr==0 → `EINVAL`.
-      3. **Sin solapamientos internos:** Verificar que PT_LOAD segments no se solapan entre sí.
-      4. **Sin solapamiento con kernel/heap/mmap:** Mantener `AddressSpace { loaded_segments: Vec<SegmentInfo> }` por EPROCESS. Al cargar ELF, intersectar nueva range con:
-         - Kernel image (0x200000–0x400000): ERROR si overlap
-         - Kernel heap (0x1000000–0x2000000): ERROR
-         - User heap (0x10000000–0x12000000): ERROR
-         - mmap region (0x20000000–0x22000000): ERROR
-         - NXL region (0x1e000000–0x1e200000): ERROR
-         - Driver isolation (0x30000000–0x31000000): ERROR
-      5. **Contenedor entrypoint:** Si entry point no está en rango de ningún PT_LOAD → log warning (posible intentional obfuscation pero permitir).
-    - **Errores:
-      - `ELF_ERR_VADDR_OUT_OF_RANGE (-1)`
-      - `ELF_ERR_ZERO_VADDR (-2)`
-      - `ELF_ERR_SEGMENT_OVERLAP (-3)`
-      - `ELF_ERR_KERNEL_COLLISION (-4)`
-      - `ELF_ERR_HEAP_COLLISION (-5)`
-      - `ELF_ERR_MMAP_COLLISION (-6)`
-  - **Criterio:**
-    - ELF malicioso @ 0x1000000 (kernel heap base) → loader rechaza con ELF_ERR_KERNEL_COLLISION, sin triple fault
-    - ELF normal carga ok
-    - Stats: `NXL LOAD TEST.NXE` imprime validations passed, file size, entrypoint
-  - **Tests:** `elf_validation_valid_range`, `elf_reject_zero_vaddr`, `elf_reject_kernel_collision`, `elf_reject_heap_collision`, `elf_reject_mmap_collision`, `elf_malicious_no_triple_fault`, `elf_overlap_segments`, `elf_user_heap_collision` (8 tests).
-
-- [ ] **A4.5. APC engine** | NT: Asynchronous Procedure Calls | Prereqs: A1.5, A2.4
+- [x] **A4.5. APC engine** | NT: Asynchronous Procedure Calls | Prereqs: A1.5, A2.4
   - **Archivos:** `src/apc/mod.rs` (new), refactor `src/irp/mod.rs` (completion callback dispatch), integración `src/syscall.rs` (syscalls A4.5-only)
-  - **Descripción:** Colas de procedimientos asincrónicos por thread para entregar resultados de I/O y eventos sin trabajo sync.
+  - **Descripción:** Colas de procedimientos asir resultados de I/O y eventos sin trabajo sync.
     - **APC structure:** `{ function: fn(*mut u8), context: *mut u8, kernel: bool }`
       - **Kernel APC:** Ejecutado a PASSIVE_LEVEL (contexto kernel). Ej: `WorkItem` completion callback.
       - **User APC:** Ejecutado en Ring 3 a PASSIVE_LEVEL antes de retornar de syscall (user-mode execution).
@@ -444,37 +331,68 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
     - Timing: APC encolado a entregado < 1 ms (DISPATCH → PASSIVE transition).
   - **Tests:** `apc_kernel_dispatch_during_cleanup`, `apc_user_alertable_wait_receives`, `apc_queue_overflow_handling`, `irp_completion_dispatches_apc`, `apc_stress_100_concurrent_irps` (5 tests).
 
-#### Boot path migration (A4.1 + Z1 unificados)
+#### Boot path migration (A4.6 + A4.7 + Z1 unificados)
 
 Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 
-1. Crear `userbin/neoinit/` — supervisor mínimo (spawn, wait, respawn hijos).
-2. Crear `userbin/shell/` — portar `DosShell` a libneodos (comandos, history, TAB).
-3. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.NXE`, no `DosShell::run()`.
-4. NeoInit lanza shell como hijo; kernel entra idle loop (HLT + work queue + event bus).
-5. Syscalls admin (`test`, `ndreg`, `kobj`) requieren `CAP_ADMIN` en access token.
+1. **A4.6**: Implementar syscalls faltantes (`sys_spawn`, `sys_readdir`, etc.) en el kernel.
+2. **A4.7**: Construir neoshell como .NXE que usa las nuevas syscalls.
+3. Crear `userbin/neoinit/` — supervisor mínimo (spawn, wait, respawn hijos).
+4. Crear coretools (`userbin/coredir/`, `userbin/coretype/`, etc.) como .NXE independientes.
+5. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.NXE`, no `DosShell::run()`.
+6. NeoInit lanza neoshell como hijo; kernel entra idle loop (HLT + work queue + event bus).
 
-- [ ] **A4.1. Shell como proceso Ring 3** | NT: CSRSS (Client/Server Runtime Subsystem) | Prereqs: A4.2, A4.3
-  - **Archivos:** `userbin/shell/` (new Rust project), `src/main.rs` (remoción `DosShell::run()` en PHASE 3.8), nuevas syscalls admin, integración libneodos
-  - **Descripción:** Mover shell del kernel (Ring 0) a Ring 3 como proceso normal. Mejora robustez: buffer overflow en shell ≠ kernel panic.
-    - **Migrar código:**
-      - `src/shell/` → `userbin/shell/src/` (copiar, depender de libneodos)
-      - Reemplazar `println!` con libneodos `println!` macro
-      - Reemplazar `open/readfile/writefile` directo con `libneodos::fs::File` API
-      - IPC keyboard input: nueva syscall `sys_read_console(buf, len)` o usar stdin fd (RAX=4, RBX=0 stdin)
-    - **Syscalls admin nuevos:**
-      - `sys_test` (RAX=22): ejecuta kernel self-tests. Solo con `CAP_ADMIN`.
-      - `sys_ndreg` (RAX=23): driver registry commands. Solo con `CAP_ADMIN`.
-      - `sys_kobj` (RAX=24): kernel object manager. Solo con `CAP_ADMIN`.
-    - **Access token:** Shell heredará token desde NeoInit. Si NeoInit es PID 1 (admin), shell es admin. Si otra ventana, user.
-    - **Error handling:** Shell buffer overflow (stack smash) → process SEGFAULT → kernel marca PID como Terminated, no panic. NeoInit respawn shell.
+- [ ] **A4.6. Syscalls para shell Ring 3** | NT: CSRSS, SSDT | Prereqs: A4.2, A4.3
+  - **Archivos:** `neodos-kernel/src/syscall/mod.rs` (6 new handlers), `neodos-kernel/src/handle.rs` (HANDLE_DIR), `libneodos-nxl/src/main.rs` (NXL wrappers), `libneodos/src/syscall.rs` (safe wrappers), `libneodos/src/export.rs` (AbiTable)
+  - **Descripción:** Añadir 6 syscalls necesarias para que una shell Ring 3 pueda operar sobre el filesystem y lanzar procesos.
+    - **sys_spawn (RAX=7):** RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd → u64 (PID). Lee binario via VFS, alloc user slot + heap slot, carga ELF/flat, crea EPROCESS+KTHREAD con handles opcionalmente heredados, en cola a run queue. Reutiliza lógica de `commands/run.rs` pero desde contexto syscall.
+    - **sys_readdir (RAX=8):** RBX=fd, RCX=buf_ptr → u64 (entries read). Lee una entrada de directorio (inode + name + type) del handle de directorio. Requiere modificar `sys_open` para aceptar directorios (HANDLE_DIR type 9 en handle.rs).
+    - **sys_mkdir (RAX=25):** RBX=path_ptr → u64. Crea directorio via VFS.
+    - **sys_unlink (RAX=26):** RBX=path_ptr → u64. Elimina archivo via VFS.
+    - **sys_rmdir (RAX=27):** RBX=path_ptr → u64. Elimina directorio vacío via VFS.
+    - **sys_rename (RAX=28):** RBX=old_path, RCX=new_path → u64. Renombra archivo/directorio via VFS.
+  - **libneodos-nxl:** Añadir `nxl_sys_spawn`, `nxl_sys_readdir`, `nxl_sys_mkdir`, `nxl_sys_unlink`, `nxl_sys_rmdir`, `nxl_sys_rename` como `extern "C"` con INT 0x80 inline. Extender `AbiTable` con los 6 nuevos function pointers.
+  - **libneodos:** Añadir wrappers safe Rust en `syscall.rs`. Actualizar `export.rs` con mirror de la nueva tabla.
   - **Criterio:**
-    - Shell ejecutándose en Ring 3 PID > 1. `ps` (userbin command) muestra PID/name.
-    - Malformed input (`cmd\x00\x00...`) → shell crash → respawn. Kernel sigue vivo.
-    - Comando admin sin admin token (`sys_ndreg LIST` desde shell user) → EPERM error message, shell continua.
-  - **Tests:** `shell_ring3_spawn_success`, `shell_ring3_admin_requires_cap`, `shell_crash_respawn_noinit`, `shell_input_buffer_overflow_survives`, `shell_parse_malformed_command` (5 tests).
+    - `sys_spawn("C:\BIN\HELLO.NXE", 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)` → devuelve PID, el proceso se ejecuta y termina.
+    - `sys_spawn` con fds válidos redirige stdin/stdout/stderr del hijo.
+    - `sys_open("C:\")` → fd de directorio. `sys_readdir(fd, buf)` → primera entrada.
+    - `sys_mkdir("C:\NEWDIR")` → directorio creado, `sys_rmdir` lo elimina.
+    - `sys_unlink("C:\FILE.TXT")` → archivo eliminado.
+    - `sys_rename("C:\OLD.TXT", "C:\NEW.TXT")` → archivo renombrado.
+  - **Tests:** `spawn_hello_binary`, `spawn_with_fd_redirection`, `readdir_list_root`, `mkdir_rmdir_roundtrip`, `unlink_file`, `rename_file` (6 tests).
 
-- [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.1
+- [ ] **A4.7. neoshell (shell Ring 3)** | NT: CSRSS | Prereqs: A4.6
+  - **Archivos:** `userbin/neoshell/` (new Rust project con libneodos), `scripts/create_neodos_image.py` (incluir neoshell.nxe en C:\BIN\), `docs/NEOSHELL_PLAN.md`
+  - **Descripción:** Shell interactiva Ring 3 que reemplaza la shell Ring 0 como interfaz de usuario principal.
+    - **Arquitectura thin:** neoshell es un dispatch minimalista — no tiene comandos embebidos (excepto CD, CWD, EXIT, CLS, HELP, SET). Cada comando es un .NXE independiente (coretools) buscado en PATH.
+    - **Main loop:** prompt → readline (sys_read STDIN) → tokenize → drive change (X:) → built-in? → PATH scan `cmd.NXE` → `sys_spawn` + `sys_waitpid`.
+    - **Line editing:** backspace, UTF-8, histórico circular (32 entradas), TAB completion (built-ins + PATH scan).
+    - **Pipelines (futuro):** parse `cmd1 | cmd2` → `sys_pipe` + `sys_spawn` con dup2 + `sys_waitpid` para ambos.
+    - **Redirection (futuro):** parse `cmd > file` → `sys_open` file + `sys_dup2` fd → `sys_spawn`.
+    - **Environment:** PATH, PROMPT ($P$G style), variables de entorno en memoria.
+    - **Built-ins mínimos:**
+      - `CD <path>` — `sys_chdir`
+      - `CWD` — `sys_getcwd`
+      - `CLS` — ANSI escape o fill
+      - `HELP` — lista coretools + built-ins
+      - `ECHO [text]` — `sys_write`
+      - `SET [var[=val]]` — env vars
+      - `EXIT` — `sys_exit`
+  - **Integración:** La shell Ring 0 carga neoshell al final de CONFIG.SYS via `RUN C:\BIN\NEOSHELL.NXE`. Cuando neoshell hace EXIT, vuelve a la shell Ring 0.
+  - **Criterio:**
+    - neoshell arranca, muestra prompt `C:\>`, acepta input.
+    - `CD SYSTEM` → prompt cambia a `C:\SYSTEM>`.
+    - `DIR` → busca `DIR.NXE` en PATH, ejecuta, muestra salida.
+    - `VER` → muestra versión via `VER.NXE`.
+    - `ECHO hola mundo` → built-in, imprime "hola mundo".
+    - TAB completa built-ins y .NXE del PATH.
+    - ↑/↓ navega histórico.
+  - **Tests:** `neoshell_prompt_and_cd`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
+
+- [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
+
+- [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
   - **Archivos:** `userbin/neoinit/` (new Rust project), refactor `src/main.rs` (PHASE 3.8 entry), `scripts/create_neodos_image.py` (empaquetado)
   - **Descripción:** Supervisor de servicios de nivel de sistema que gestiona procesos críticos como shell, daemon services, y respawning.
     - **NeoInit responsibilities:**
@@ -504,7 +422,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
     - `neoinit --version` o similar muestra PID 1 running.
   - **Tests:** `neoinit_boot_load_shell`, `neoinit_respawn_shell_on_crash`, `neoinit_waitpid_loop_async`, `neoinit_exit_panics_kernel`, `neoinit_service_table_parse` (5 tests).
 
-- [ ] **A4.4. Input subsystem rediseñado** | NT: ConDrv (Console Driver) | Prereqs: A4.1
+- [ ] **A4.4. Input subsystem rediseñado** | NT: ConDrv (Console Driver) | Prereqs: A4.7
   - **Archivos:** `src/input/mod.rs` (reescritura), `src/input/manager.rs` (new), `src/input/vt.rs` (new), integración `arch/x64/idt.rs` (PS/2 delivery)
   - **Descripción:** Sistema de entrada multiplexado soportando múltiples terminales virtuales (VTs) con independencia de input.
     - **Virtual Terminals:** Máx 4 VTs (Alt+F1–F4). Cada VT tiene:
@@ -757,7 +675,7 @@ Prereqs: NT5 (objects need security descriptors).
 
 ### FASE B — Features (userland + servicios)
 
-Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguridad.
+Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguridad.
 
 #### B1. Tracing & Observability
 
@@ -779,15 +697,15 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 
 #### B4. Userland Usable System
 
-- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.1 | Files: `userbin/shell/` | Done when: shell busca `.NXE`/`.COM`/`.EXE` en dirs de PATH.
-- [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.1, S2 | Files: `userbin/shell/` | Done when: `cmd1 | cmd2` conecta stdout→stdin via pipe.
-- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.1 | Files: `userbin/shell/` | Done when: redirect a archivo via dup2.
-- [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.1 | Files: `userbin/shell/`, framebuffer driver | Done when: colores y cursor ANSI en consola.
-- [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/shell/`, `src/input/` | Done when: Alt+F1–F3 cambia VT activo.
-- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.1, B4.4 | Files: `userbin/neoedit/` | Done when: edit/save `.TXT` via VFS.
+- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.7 | Files: `userbin/neoshell/` | Done when: shell busca `.NXE`/`.COM`/`.EXE` en dirs de PATH.
+- [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.7, S2 | Files: `userbin/neoshell/` | Done when: `cmd1 | cmd2` conecta stdout→stdin via pipe.
+- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.7 | Files: `userbin/neoshell/` | Done when: redirect a archivo via dup2.
+- [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver | Done when: colores y cursor ANSI en consola.
+- [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/` | Done when: Alt+F1–F3 cambia VT activo.
+- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/` | Done when: edit/save `.TXT` via VFS.
 - [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/` | Done when: NXL binding per-process, no global slot sharing.
-- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.1, A1.5 | Files: `userbin/neotop/` | Done when: muestra procesos/threads, CPU, memoria en tiempo real.
-- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/shell/` | Done when: ejecuta scripts `.BAT`/`.CMD` con IF, GOTO, CALL.
+- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/` | Done when: muestra procesos/threads, CPU, memoria en tiempo real.
+- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/` | Done when: ejecuta scripts `.BAT`/`.CMD` con IF, GOTO, CALL.
 - [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/` | Done when: ventanas superpuestas 2D sobre framebuffer.
 
 #### B5. Security
@@ -802,6 +720,23 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 - [ ] **B6.2 V3. Copy-on-write fork** | Prereqs: A1.5 | Files: `src/memory/cow.rs`, `src/syscall.rs` | Done when: `sys_fork` duplica address space con COW pages.
 - [x] **B6.3 X10. Per-CPU allocators** | Prereqs: A1.3 | Ref: cubierto por A1.3.
 - [x] **B6.4 X8. SMP-safe kernel** | Prereqs: A1.1–A1.4 | Ref: cubierto por A1.
+
+#### B8. Coretools (comandos .NXE independientes)
+
+Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con libneodos, compilado como `.NXE` y ubicado en `C:\BIN\`.
+
+- [ ] **B8.1. DIR.NXE** | `userbin/coredir/` | Lista directorio con `sys_open` (dir) + `sys_readdir`. Columnas, `/W` (wide), `/P` (pausa).
+- [ ] **B8.2. TYPE.NXE** | `userbin/coretype/` | Muestra contenido de archivo con `sys_open` + `sys_readfile`. Búfer 512 B.
+- [ ] **B8.3. ECHO.NXE** | `userbin/coreecho/` | Imprime argumentos a stdout via `sys_write`.
+- [ ] **B8.4. VER.NXE** | `userbin/corever/` | Muestra versión del sistema (constante compilada).
+- [ ] **B8.5. CLS.NXE** | `userbin/corecls/` | Limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
+- [ ] **B8.6. HELP.NXE** | `userbin/corehelp/` | Lista coretools disponibles escaneando `C:\BIN\*.NXE` con `sys_readdir`.
+- [ ] **B8.7. COPY.NXE** | `userbin/corecopy/` | Copia archivo: `sys_open` src (read) + `sys_open`/`sys_writefile` dst. Búfer 4 KB.
+- [ ] **B8.8. DEL.NXE** | `userbin/coredel/` | Elimina archivo via `sys_unlink`.
+- [ ] **B8.9. REN.NXE** | `userbin/coreren/` | Renombra via `sys_rename`.
+- [ ] **B8.10. MD.NXE** | `userbin/coremd/` | Crea directorio via `sys_mkdir`.
+- [ ] **B8.11. RD.NXE** | `userbin/corerd/` | Elimina directorio vacío via `sys_rmdir`.
+- [ ] **B8.12. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
 
 #### B7. Experimental
 
@@ -833,11 +768,11 @@ Prereqs globales: A4.1 mínimo para items userland; NT5/NT6 para items de seguri
 | 13 | Sin crash dump ni recovery | A3.1–A3.3 | Bugcheck | Pendiente | Bugs imposibles de diagnosticar |
 | 14 | SEH ausente | A3.4 | SEH | Pendiente | User exceptions = kill |
 | 15 | Stack unwinding inexistente | A3.2 | KD | Pendiente | Sin backtrace |
-| 16 | Shell en Ring 0 | A4.1 | CSRSS | Pendiente | Bug shell = kernel panic |
+| 16 | Shell en Ring 0 | A4.7 | CSRSS | Pendiente | Bug shell = kernel panic |
 | 17 | NeoInit no implementado | Z1 | smss.exe | Pendiente | Doc/código divergen |
 | 18 | Syscall dispatch manual | A4.2 | SSDT | Pendiente | Cada syscall = más bugs |
 | 19 | ELF loader sin validación | A4.3 | Ldr | Completado | Triple fault con binarios maliciosos |
-| 20 | APC ausente | A4.5 | APC | Pendiente | I/O completion en contexto incorrecto |
+| 20 | APC ausente | A4.5 | APC | Completado v0.34.0 | I/O completion en contexto incorrecto |
 | 21 | Input sin multiplexión | A4.4 | ConDrv | Pendiente | No escalar a múltiples terminales |
 | 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | Pendiente | Doble mantenimiento |
 | 23 | Ob flat (no namespace) | NT5 | Ob | Pendiente | Hardcode C:, sin symlinks |

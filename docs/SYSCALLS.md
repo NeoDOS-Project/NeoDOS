@@ -139,3 +139,35 @@ Unmaps a previously mmap'd region, freeing all physical pages and removing the V
 Loads a NeoDOS shared library (NXL) from the filesystem into a free slot in the NXL region (`0x1e000000..0x1e200000`, 8 × 256 KB slots). The ELF is parsed, sections mapped as read-only USER_ACCESSIBLE, and the export table becomes accessible at the returned base address.
 - **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 file path (`*const u8`).
 - **Returns (`RAX`)**: Base address of the loaded NXL, or error code.
+
+### 22 — `sys_thread_create`
+Creates a new thread within the current process. The new thread begins executing at the given entry point with the provided stack.
+- **Arg0 (`RBX`)**: Entry point address (`*const fn()`).
+- **Arg1 (`RCX`)**: Stack base address.
+- **Returns (`RAX`)**: Thread ID (TID), or error code.
+
+### 23 — `sys_thread_join`
+Blocks the calling thread until the specified thread terminates.
+- **Arg0 (`RBX`)**: Thread ID (TID) to wait for.
+- **Returns (`RAX`)**: `0` on success, or error code.
+
+### 24 — `sys_getcpuinfo`
+Copies a `CpuInfoFull` structure (CPUID vendor, brand, features, SMP topology, timer info) to the user buffer.
+- **Arg0 (`RBX`)**: Pointer to output buffer (`*mut u8`).
+- **Arg1 (`RCX`)**: Buffer size (`usize`).
+- **Returns (`RAX`)**: Number of bytes written, or error code.
+
+### 40 — `sys_wait_alertable`
+Alertable wait. If a user APC is pending, dispatches it immediately and returns `APC_ALERTED` (1). Otherwise, blocks the calling thread in an alertable state — it can be woken by a queued APC.
+- **Args**: None.
+- **Returns (`RAX`)**: `1` (`APC_ALERTED`) if an APC was delivered, `0` if wait completed normally.
+
+### 41 — `sys_sleep_ex`
+Alertable yield. Yields the CPU, checking for pending APCs before and after the yield. If an APC was received, returns `APC_ALERTED` (1).
+- **Args**: None.
+- **Returns (`RAX`)**: `1` (`APC_ALERTED`) if an APC was delivered, `0` otherwise.
+
+### 50 — `sys_ndreg`
+Admin-only syscall for NDREG operations (kernel driver registry). Requires admin token.
+- **Args**: Reserved.
+- **Returns (`RAX`)**: Reserved.

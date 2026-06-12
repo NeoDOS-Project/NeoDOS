@@ -70,7 +70,7 @@ struct IrpSlot {
     irp: Irp,
 }
 
-struct IrpPoolInner {
+pub(crate) struct IrpPoolInner {
     slots: [IrpSlot; IRP_POOL_SIZE],
 }
 
@@ -104,7 +104,7 @@ impl IrpPoolInner {
         self.slots[idx].in_use = false;
     }
 
-    fn get_mut(&mut self, id: IrpId) -> Option<&mut Irp> {
+    pub fn get_mut(&mut self, id: IrpId) -> Option<&mut Irp> {
         let idx = (id as usize) % IRP_POOL_SIZE;
         if self.slots[idx].in_use && self.slots[idx].irp.id == id {
             Some(&mut self.slots[idx].irp)
@@ -115,7 +115,7 @@ impl IrpPoolInner {
 }
 
 pub struct IrpPool {
-    inner: Mutex<IrpPoolInner>,
+    pub(crate) inner: Mutex<IrpPoolInner>,
     next_id: AtomicU32,
 }
 

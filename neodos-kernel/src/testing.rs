@@ -2359,6 +2359,7 @@ pub fn register_tests() {
     crate::work_queue::register_tests();
     crate::dpc::register_tests();
     crate::irp::register_tests();
+    crate::apc::register_tests();
     crate::drivers::hotreload::register_hotreload_tests();
     crate::syscall::register_syscall_table_tests();
     // Per-CPU data structure tests (A1.1)

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.33.0
+v0.34.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 376 kernel tests + 7 user-mode binaries
+2. `python3 scripts/auto_test.py` — 386 kernel tests + 7 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -390,6 +390,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
 | 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
 | 24 | `sys_getcpuinfo` | RBX=buf_ptr, RCX=buf_size | Copia CpuInfoFull al buffer de usuario (CPUID + SMP + timers) |
+| 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
+| 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 
 ## IPC / Pipes
@@ -565,7 +567,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-371 tests en 38 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+386 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|

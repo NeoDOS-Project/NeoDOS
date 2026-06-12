@@ -497,7 +497,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **371 tests** (38 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **386 tests** (39 suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -516,6 +516,7 @@ The kernel testing framework includes **371 tests** (38 suites) with suites dedi
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection |
 | IRQL | 5 | IRQL raise/lower, page fault invariant, spinlock implicit raise, nesting, preemption threshold |
 | DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
+| APC | 5 | APC engine: kernel dispatch, alertable wait, queue overflow, IRP→APC completion, stress 100 concurrent IRPs |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `CPUTEST.NXE`, `TEST.NXE`).
 
@@ -531,6 +532,7 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 - `without_interrupts()` is used for critical sections that cannot be interrupted.
 
 ## Kernel Subsystems (High-Level)
+- **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
 - **kobj**: `src/kobj/mod.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType), 24-byte names, and global registry (64 slots). Used by processes, drivers, and pipes for lifecycle tracking. `KOBJ` shell command lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
@@ -568,10 +570,17 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 11 | sys_readfile | RBX=fd, RCX=buf, RDX=count | Read from file (uses handle offset) |
 | 12 | sys_writefile | RBX=fd, RCX=buf, RDX=count | Write to file (uses handle offset) |
 | 13 | sys_close | RBX=fd | Close handle (pipe, file, device, event) |
+| 16 | sys_chdir | RBX=path_ptr | Change current directory |
+| 17 | sys_getcwd | RBX=buf, RCX=len | Get current directory |
 | 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
 | 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
 | 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
 | 21 | sys_loadlib | RBX=path_ptr | Load NXL from NeoFS into NXL region slot |
+| 22 | sys_thread_create | RBX=entry, RCX=stack | Create thread in current process |
+| 23 | sys_thread_join | RBX=tid | Wait for thread termination |
+| 24 | sys_getcpuinfo | RBX=buf_ptr, RCX=buf_size | Copy CpuInfoFull to user buffer |
+| 40 | sys_wait_alertable | — | Alertable wait: dispatch pending APC or block |
+| 41 | sys_sleep_ex | — | Alertable yield: check APC before/after yielding |
 
 ## Debug Interfaces
 

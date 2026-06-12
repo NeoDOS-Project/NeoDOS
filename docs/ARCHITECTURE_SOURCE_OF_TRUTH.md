@@ -240,7 +240,7 @@ after `sys_exit` and before slot recycle.
 irp_alloc() → Pending
   → submit to device queue
   → device processes → irp_complete() → Completed / Error
-  → callback dispatched via work queue
+  → callback dispatched via work queue (sync path) or APC (async alertable path)
   → irp_free() (automatic after callback)
 ```
 
@@ -249,6 +249,9 @@ irp_alloc() → Pending
 **Rule 7.1.3**: The device driver calls `irp_complete` exactly once per IRP.
 **Rule 7.1.4**: `irp_sync_read` / `irp_sync_write` are synchronous wrappers that block the
 calling process. They MUST NOT be called from IRQ context.
+**Rule 7.1.5**: `irp_complete_with_apc` delivers the IRP completion callback via the
+target thread's user APC queue (DIRQL → DPC → APC flow). The callback runs at PASSIVE_LEVEL
+in user context before the next user-mode instruction.
 
 ### 7.2 BlockDevice Trait
 

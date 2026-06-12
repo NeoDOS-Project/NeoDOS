@@ -36,6 +36,7 @@ mod globals;
 pub mod usermode;
 pub mod syscall;
 mod nxl;
+mod apc;
 mod irp;
 mod interrupts;
 mod timers;

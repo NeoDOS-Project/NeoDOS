@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.34.0 — 2026-06-12
+
+### A4.5 APC engine — Asynchronous Procedure Calls
+
+#### Added
+- **`src/apc/mod.rs`** — Per-thread APC queues (kernel + user, 64 entries each). `queue_kernel_apc()`, `queue_user_apc()`, `dispatch_kernel_apcs()`, `dispatch_one_user_apc()`, `has_pending_user_apcs()`, `irp_complete_with_apc()`, `irp_queue_apc_dpc_completion()`.
+- **`irp_complete_with_apc(irp_id, tid)`** — New IRP completion path: DIRQL → DPC (DISPATCH) → user APC (PASSIVE). Device ISR enqueues DPC via `irp_queue_apc_dpc_completion()`, DPC calls `irp_complete_with_apc()` which queues user APC to target thread.
+- **`sys_wait_alertable` (RAX=40)** — Alertable wait: if APC pending, dispatches it and returns `APC_ALERTED` (1). Otherwise blocks thread in alertable state.
+- **`sys_sleep_ex` (RAX=41)** — Yield CPU with alertable APCs: checks for pending APCs before/after yield.
+- **`apc_dispatch_on_syscall_return()`** — Called from syscall handler assembly before IRETQ to Ring 3. Dispatches pending kernel APCs (cleanup, post-I/O) and one user APC on every syscall return.
+- **Kthread** — Added `kernel_apc_queue`, `user_apc_queue`, `apc_pending` fields to `Kthread` struct.
+
+#### Changed
+- `src/arch/x64/idt.rs` — Added `call apc_dispatch_on_syscall_return` in `syscall_handler_asm` before IRETQ.
+- `src/syscall/mod.rs` — Added `WaitAlertable = 40`, `SleepEx = 41` to `SyscallNum` enum, SSDT entries, and permission table.
+- `src/irp/mod.rs` — `IrpPool::inner` and `IrpPoolInner::get_mut` made `pub(crate)` for APC integration.
+
+#### Tests
+- 5 APC tests: `apc_kernel_dispatch_during_cleanup`, `apc_user_alertable_wait_receives`, `apc_queue_overflow_handling`, `irp_completion_dispatches_apc`, `apc_stress_100_concurrent_irps` (386 total kernel tests).
+
 ## v0.33.0 — 2026-06-11
 
 ### A2.3 HAL v0.4 — raw/safe split

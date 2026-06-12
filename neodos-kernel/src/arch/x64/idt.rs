@@ -48,6 +48,7 @@ core::arch::global_asm!(
 core::arch::global_asm!(
     ".extern syscall_dispatch",
     ".extern syscall_try_resched",
+    ".extern apc_dispatch_on_syscall_return",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
     "push rbp",
@@ -91,16 +92,19 @@ core::arch::global_asm!(
     "xor rax, rax",
     "mov al, gs:[0x015]",                  // OFFSET_NEED_RESCHED in KPRCB
     "test al, al",
-    "jz 3f",
+    "jz 2f",
     // Clear per-CPU NEED_RESCHED
     "mov byte ptr gs:[0x015], 0",          // OFFSET_NEED_RESCHED
     // Also clear the global NEED_RESCHED (backward compat) and do work
     "call clear_need_resched",
     "test al, al",
-    "jz 3f",
+    "jz 2f",
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
+    "2:",
+    // A4.5: Dispatch pending APCs before returning to Ring 3
+    "call apc_dispatch_on_syscall_return",
     "3:",
     "pop rax",
     "pop rbx",

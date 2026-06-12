@@ -7,6 +7,7 @@
 pub mod address_space;
 
 use alloc::boxed::Box;
+use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
@@ -110,6 +111,11 @@ pub struct Kthread {
 
     // KOBJ
     pub kobj_id: Option<kobj::KObjId>,
+
+    // A4.5 — APC queues
+    pub kernel_apc_queue: VecDeque<crate::apc::ApcEntry>,
+    pub user_apc_queue: VecDeque<crate::apc::ApcEntry>,
+    pub apc_pending: bool,
 }
 
 impl fmt::Debug for Kthread {
@@ -225,6 +231,9 @@ impl Kthread {
             teb_base: 0,
             cpu: 0,
             kobj_id: None,
+            kernel_apc_queue: VecDeque::new(),
+            user_apc_queue: VecDeque::new(),
+            apc_pending: false,
         }
     }
 
@@ -253,6 +262,9 @@ impl Kthread {
             teb_base,
             cpu: unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
             kobj_id: None,
+            kernel_apc_queue: VecDeque::new(),
+            user_apc_queue: VecDeque::new(),
+            apc_pending: false,
         }
     }
 }
@@ -738,7 +750,7 @@ impl Scheduler {
 
     /// Enqueue a thread to its assigned CPU's per-CPU run queue.
     /// Called when a thread transitions to Ready state.
-    fn enqueue_to_cpu_run_queue(k: &Kthread) {
+    pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
