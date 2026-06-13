@@ -38,6 +38,7 @@ pub enum SyscallNum {
     Read = 4,
     Pipe = 5,
     Dup2 = 6,
+    Spawn = 7,
     WaitPid = 9,
     Open = 10,
     ReadFile = 11,
@@ -56,10 +57,11 @@ pub enum SyscallNum {
     GetCpuInfo = 24,
     WaitAlertable = 40,
     SleepEx = 41,
+    Poweroff = 42,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 41;
+    pub const MAX_VALID: u64 = 42;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -70,6 +72,7 @@ impl SyscallNum {
             4 => Some(Self::Read),
             5 => Some(Self::Pipe),
             6 => Some(Self::Dup2),
+            7 => Some(Self::Spawn),
             9 => Some(Self::WaitPid),
             10 => Some(Self::Open),
             11 => Some(Self::ReadFile),
@@ -88,6 +91,7 @@ impl SyscallNum {
             24 => Some(Self::GetCpuInfo),
             40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
+            42 => Some(Self::Poweroff),
             _ => None,
         }
     }
@@ -125,13 +129,13 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 5, 6,
+        0, 1, 2, 3, 4, 5, 6, 7,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        40, 41,
+        40, 41, 42,
         50,
     ];
     // Reserved syscall slots that MUST be None
-    const RESERVED: &[u64] = &[7, 8];
+    const RESERVED: &[u64] = &[8];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -325,6 +329,176 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 // SSDT Handlers — each wraps the original match-arm logic
 // ═══════════════════════════════════════════════════════════════════════
 
+fn handler_spawn(regs: Registers) -> u64 {
+    let path_str = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    if path_str.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+    crate::serial_println!("[SPAWN] path='{}'", path_str);
+
+    // Read binary from VFS
+    const MAX_BIN: usize = 65536;
+    static mut BIN_BUF: [u8; MAX_BIN] = [0u8; MAX_BIN];
+    let bin_size = crate::globals::with_vfs(|vfs| {
+        match vfs.resolve_path(&path_str) {
+            Ok((drive_idx, node)) => {
+                if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
+                unsafe {
+                    match vfs.read(drive_idx, node.inode, 0, &mut BIN_BUF) {
+                        Ok(n) => { if n > MAX_BIN { 0 } else { n } }
+                        Err(_) => 0,
+                    }
+                }
+            }
+            Err(_) => 0,
+        }
+    });
+    if bin_size < 4 {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    // Save NeoInit's code+stack (slot 0: 0x400000..0x420000, 128 KB)
+    const SAVE_SIZE: usize = 0x20000;
+    let mut save_buf = alloc::vec![0u8; SAVE_SIZE];
+    unsafe {
+        core::ptr::copy_nonoverlapping(0x400000 as *const u8, save_buf.as_mut_ptr(), SAVE_SIZE);
+    }
+
+    // Load ELF at 0x400000 (overwrites NeoInit)
+    let data = unsafe { &BIN_BUF[..bin_size] };
+    let result = match crate::elf::load_elf(data, None) {
+        Ok(r) => r,
+        Err(_) => {
+            unsafe {
+                core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE);
+            }
+            return err_to_u64(SyscallError::Inval);
+        }
+    };
+    let entry = result.entry;
+
+    // Allocate user slot for child
+    let slot = match crate::arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => {
+            unsafe {
+                core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE);
+            }
+            return err_to_u64(SyscallError::NoMem);
+        }
+    };
+
+    // Get current process info for child's cwd
+    let (cwd_drive, cwd_path, parent_pid) = crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler().lock();
+        let pid = s.current_pid();
+        let cwd = if let Some(ep) = s.find_eprocess(pid) {
+            (ep.cwd_drive, ep.cwd_path.clone())
+        } else {
+            (2u8, String::from("\\"))
+        };
+        (cwd.0, cwd.1, pid)
+    });
+
+    // Spawn child process
+    let child_pid = crate::usermode::spawn_usermode(
+        entry, slot.stack_top, slot.slot_idx,
+        cwd_drive, &cwd_path, parent_pid,
+    );
+    crate::serial_println!("[SPAWN] child PID={}", child_pid);
+
+    // Get child's kernel stack top, TID, and NeoInit's kernel stack top
+    let (child_kernel_top, child_tid, neoinit_kernel_top) = crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler().lock();
+        let mut ct = 0u64;
+        let mut c_tid = 0u32;
+        let mut neo_top = 0u64;
+        for th in s.kthreads.iter() {
+            if let Some(k) = th {
+                if k.pid == child_pid && k.tid > 0 {
+                    ct = k.kernel_stack_top;
+                    c_tid = k.tid;
+                }
+                if k.pid == parent_pid && k.tid > 0 {
+                    neo_top = k.kernel_stack_top;
+                }
+            }
+        }
+        (ct, c_tid, neo_top)
+    });
+
+    // Set scheduler current_tid to child and make Running
+    crate::hal::without_interrupts(|| {
+        let mut s = crate::scheduler::current_scheduler().lock();
+        for th in s.kthreads.iter() {
+            if let Some(k) = th {
+                if k.tid == child_tid {
+                    s.current_tid = k.tid;
+                    break;
+                }
+            }
+        }
+        if let Some(k) = s.current_kthread_mut() {
+            k.state = ThreadState::Running;
+        }
+    });
+
+    // Set TSS.RSP0 to child's kernel stack for Ring 3→0 transitions
+    crate::arch::x64::gdt::set_kernel_stack(child_kernel_top);
+
+    // Set WAIT_PID so child's sys_exit triggers request_exit_to_kernel()
+    crate::usermode::set_wait_pid(child_pid);
+
+    // ── Enter child (blocks until exit) ──
+    crate::serial_println!("[SPAWN] entering child at entry=0x{:x}, stack=0x{:x}", entry, slot.stack_top);
+    crate::usermode::execute_usermode(entry, slot.stack_top);
+
+    // ── Child exited ──
+    crate::serial_println!("[SPAWN] child exited, restoring NeoInit");
+
+    // Restore TSS.RSP0 to NeoInit's kernel stack
+    crate::arch::x64::gdt::set_kernel_stack(neoinit_kernel_top);
+    // Restore scheduler current_tid to parent (NeoInit's TID)
+    crate::hal::without_interrupts(|| {
+        let mut s = crate::scheduler::current_scheduler().lock();
+        for th in s.kthreads.iter() {
+            if let Some(k) = th {
+                if k.pid == parent_pid && k.tid > 0 {
+                    s.current_tid = k.tid;
+                    break;
+                }
+            }
+        }
+    });
+
+    // Restore NeoInit code+stack
+    unsafe {
+        core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE);
+    }
+
+    // Cleanup child (kernel-side)
+    crate::scheduler::cleanup_terminated_process(child_pid);
+    crate::serial_println!("[SPAWN] done, returning child PID {}", child_pid);
+
+    child_pid as u64
+}
+
+fn handler_poweroff(_regs: Registers) -> u64 {
+    crate::serial_println!("[POWEROFF] sys_poweroff called — shutting down");
+    crate::globals::flush_cache_if_needed();
+    crate::eventbus::EVENT_BUS.push_event(
+        crate::eventbus::EVENT_SHUTDOWN,
+        crate::eventbus::SOURCE_KERNEL,
+        0, 0, 0, 0,
+    );
+    crate::eventbus::EVENT_BUS.dispatch_pending();
+    crate::hal::poweroff();
+    0
+}
+
 fn handler_exit(regs: Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
@@ -468,7 +642,7 @@ fn handler_yield(_regs: Registers) -> u64 {
             }
         }
     });
-    NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+    set_need_resched();
     0
 }
 
@@ -635,23 +809,60 @@ fn handler_dup2(regs: Registers) -> u64 {
 fn handler_waitpid(regs: Registers) -> u64 {
     let wait_pid = regs.rbx as u32;
 
-    loop {
-        let is_terminated = crate::hal::without_interrupts(|| {
+    if wait_pid == 0xFFFFFFFF {
+        // Check for any terminated child without blocking
+        let child_pid = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let scheduler = s.lock();
-            if let Some(ep) = scheduler.find_eprocess(wait_pid) {
-                ep.thread_count == 0
-            } else {
-                true
+            let my_pid = scheduler.current_pid();
+            for ep in scheduler.eprocesses.iter() {
+                if let Some(ep) = ep {
+                    if ep.parent_pid == my_pid && ep.thread_count == 0 {
+                        return Some(ep.pid);
+                    }
+                }
             }
+            None
         });
 
-        if is_terminated { break; }
-        unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
-    }
+        if let Some(pid) = child_pid {
+            crate::scheduler::cleanup_terminated_process(pid);
+            return pid as u64;
+        }
+        // No terminated child — yield to let other threads run
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut lock = s.lock();
+            let tid = lock.current_tid;
+            if tid > 0 {
+                if let Some(k) = lock.current_kthread_mut() {
+                    if k.state == ThreadState::Running {
+                        k.state = ThreadState::Ready;
+                    }
+                }
+            }
+        });
+        set_need_resched();
+        return 0;
+    } else {
+        loop {
+            let is_terminated = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let scheduler = s.lock();
+                if let Some(ep) = scheduler.find_eprocess(wait_pid) {
+                    ep.thread_count == 0
+                } else {
+                    true
+                }
+            });
 
-    crate::scheduler::cleanup_terminated_process(wait_pid);
-    0
+            if is_terminated { break; }
+            unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
+        }
+
+        crate::scheduler::cleanup_terminated_process(wait_pid);
+        0
+    }
 }
 
 fn handler_open(regs: Registers) -> u64 {
@@ -1330,6 +1541,7 @@ lazy_static! {
         t[4] = Some(handler_read as SyscallFn);
         t[5] = Some(handler_pipe as SyscallFn);
         t[6] = Some(handler_dup2 as SyscallFn);
+        t[7] = Some(handler_spawn as SyscallFn);
         t[9] = Some(handler_waitpid as SyscallFn);
         t[10] = Some(handler_open as SyscallFn);
         t[11] = Some(handler_readfile as SyscallFn);
@@ -1348,6 +1560,7 @@ lazy_static! {
         t[24] = Some(handler_get_cpuinfo as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
+        t[42] = Some(handler_poweroff as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -1361,6 +1574,7 @@ lazy_static! {
         t[4] = SyscallPermission::user();
         t[5] = SyscallPermission::user();
         t[6] = SyscallPermission::user();
+        t[7] = SyscallPermission::user();
         t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();
         t[11] = SyscallPermission::user();
@@ -1379,6 +1593,7 @@ lazy_static! {
         t[24] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
+        t[42] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };
@@ -1503,12 +1718,12 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 5, 6,
+            0, 1, 2, 3, 4, 5, 6, 7,
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            40, 41,
+            40, 41, 42,
             50,
         ];
-        const RESERVED: &[u64] = &[7, 8];
+        const RESERVED: &[u64] = &[8];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }

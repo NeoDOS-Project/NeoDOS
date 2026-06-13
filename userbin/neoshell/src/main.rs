@@ -247,6 +247,7 @@ impl Shell {
             b"CWD" => self.cmd_cwd(),
             b"DIR" => self.cmd_dir_stub(),
             b"EXIT" => self.cmd_exit(),
+            b"POWEROFF" => self.cmd_poweroff(),
             _ => {
                 write_err(b"\r\nneoshell: '");
                 write_err(upper);
@@ -264,6 +265,7 @@ impl Shell {
         write_str(b"  CD      Change directory\r\n");
         write_str(b"  CWD     Show current directory\r\n");
         write_str(b"  DIR     List directory (coming in A4.6)\r\n");
+        write_str(b"  POWEROFF  Power off machine\r\n");
         write_str(b"  EXIT    Return to Ring 0 shell\r\n");
         write_str(b"\r\nExternal commands via PATH.NXE (coming in A4.6)\r\n");
     }
@@ -343,6 +345,11 @@ impl Shell {
 
     fn cmd_dir_stub(&self) {
         write_str(b"\r\nneoshell: DIR requires sys_readdir (A4.6)\r\n");
+    }
+
+    fn cmd_poweroff(&self) -> ! {
+        write_str(b"\r\nneoshell: powering off...\r\n");
+        syscall::sys_poweroff()
     }
 
     fn cmd_exit(&self) -> ! {

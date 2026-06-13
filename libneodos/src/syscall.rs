@@ -197,6 +197,17 @@ impl CpuInfoFull {
     pub fn has_fxsr(&self) -> bool { (self.features_edx >> 24) & 1 == 1 }
 }
 
+/// sys_poweroff: power off the machine (RAX=42).
+pub fn sys_poweroff() -> ! {
+    unsafe {
+        core::arch::asm!(
+            "int 0x80",
+            in("rax") 42u64,
+            options(noreturn)
+        );
+    }
+}
+
 /// sys_getcpuinfo: fill a CpuInfoFull buffer from the kernel.
 pub fn sys_getcpuinfo(buf: &mut CpuInfoFull) -> Result<(), i64> {
     ret_unit((export::get_table().sys_getcpuinfo)(

@@ -362,8 +362,78 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     };
     boot_benchmark::print_report(driver_name);
 
-    let mut shell = shell::DosShell::new();
-    shell.run();
+    // ── PHASE 4: NeoInit (PID 1, Ring 3) ──
+    // Loads NEOINIT.NXE as the init process. NeoInit spawns NEOSHELL.NXE
+    // via sys_spawn (RAX=7). When the shell exits, sys_spawn restores
+    // NeoInit's code and returns, and NeoInit respawns the shell.
+    // Set NEOINIT=0 in C:\SYSTEM\BOOT.CFG to skip NeoInit for testing.
+    if !boot_benchmark::NEOINIT_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
+        println!("[+] NeoInit disabled (BOOT.CFG). Starting kernel shell.");
+        let mut sh = shell::DosShell::new();
+        sh.run();
+    }
+    println!("[+] Loading NeoInit (PID 1, Ring 3)...");
+
+    let mut addr_space = scheduler::address_space::AddressSpace::new();
+    let (entry, loaded) = {
+        static mut BIN_BUF: [u8; 65536] = [0u8; 65536];
+        let mut entry: u64 = 0;
+        let mut loaded = false;
+        crate::globals::with_vfs(|vfs| {
+            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\NEOINIT.NXE") {
+                if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
+                let size = unsafe {
+                    match vfs.read(drive_idx, node.inode, 0, &mut BIN_BUF) {
+                        Ok(n) => n,
+                        Err(_) => 0,
+                    }
+                };
+                if size < 4 { return; }
+                let data = unsafe { &BIN_BUF[..size] };
+                match elf::load_elf(data, Some(&mut addr_space)) {
+                    Ok(r) => { entry = r.entry; loaded = true; }
+                    Err(_) => {}
+                }
+            }
+        });
+        (entry, loaded)
+    };
+
+    if !loaded {
+        println!("[!] NEOINIT.NXE not found or invalid. Starting kernel shell.");
+        let mut sh = shell::DosShell::new();
+        sh.run();
+    }
+
+    let slot = match arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => {
+            println!("[!] No free user slots. Starting kernel shell.");
+            let mut sh = shell::DosShell::new();
+            sh.run();
+        }
+    };
+
+    let pid = usermode::spawn_usermode(
+        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+    );
+
+    hal::without_interrupts(|| {
+        if let Some(eproc) = scheduler::current_scheduler().lock().find_eprocess_mut(pid) {
+            eproc.address_space = addr_space;
+        }
+    });
+
+    println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
+
+    // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)
+    usermode::wait_for_process(pid);
+
+    // If we get here, NeoInit exited (shouldn't happen)
+    println!("[!] NeoInit PID {} exited! This should not occur.", pid);
+    scheduler::cleanup_terminated_process(pid);
+    let mut sh = shell::DosShell::new();
+    sh.run();
 }
 
 #[panic_handler]

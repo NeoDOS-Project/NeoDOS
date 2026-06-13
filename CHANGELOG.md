@@ -1,11 +1,22 @@
 # Changelog
 
-## v0.34.0 — 2026-06-12
+## v0.35.0 — 2026-06-13
+
+### Added
+- **NeoInit (PID 1) init process** — `userbin/neoinit/` is a Ring 3 init process that spawns NEOSHELL.NXE via sys_spawn (RAX=7). When the shell exits, NeoInit respawns it. Uses a save/restore mechanism in the kernel to preserve NeoInit's code+stack at 0x400000 while the child binary runs.
+- **`sys_spawn` (RAX=7)** — handler_spawn saves NeoInit's slot (0x400000..0x420000) to a kernel heap buffer, loads the child ELF at 0x400000, enters it via execute_usermode, restores TSS.RSP0 on exit, restores NeoInit's code+stack, and returns the child PID. Handles TSS.RSP0 switching, scheduler current_tid save/restore, WAIT_PID setting.
+- **`cmd_poweroff` in neoshell** — New POWEROFF command in the Ring 3 shell that calls sys_poweroff (RAX=42) to shut down the machine.
+- **`sys_poweroff` (RAX=42)** — handler_poweroff flushes caches, sends EVENT_SHUTDOWN, and calls hal::poweroff() (QEMU debug port + ACPI S5 + PS/2 reset).
+- **`set_wait_pid(pid)`** — New public function in `usermode.rs` for setting WAIT_PID externally (needed by handler_spawn).
+- **BOOT.CFG `NEOINIT` flag** — `NEOINIT=0` in `C:\SYSTEM\BOOT.CFG` skips NeoInit and boots directly into kernel shell for testing. `NEOINIT=1` (default) loads NeoInit as PID 1.
+
+### Changed
+- **main.rs PHASE 4** — Replaced kernel-mode respawn loop with NeoInit init process loading. Falls back to kernel shell if NEOINIT.NXE not found or when NEOINIT=0 in BOOT.CFG.
+- **Removed INV-10 panic** — PID 1 is no longer blocked from exiting (former INV-10 invariant removed). NeoInit manages itself via sys_spawn loop.
+- **`create_neodos_image.py`** — Updated BOOT.CFG with NEOINIT setting; removed SHELL.NXE alias (inode 18); added NEOINIT.NXE (inode 17).
+- **`build.sh`** — Builds and copies neoinit binary to kernel.elf ESP directory.
 
 ### Fixed
-- **Ring 3 keyboard input** — `sys_read(fd=0)` (stdin) now properly dispatches event bus events and enables interrupts (`sti; hlt; cli`) in the wait loop. The INT 0x80 syscall handler runs with IF=0, so `hlt_once()` returned immediately — keyboard IRQ1 could never wake the waiting thread.
-  - `src/syscall/mod.rs`: `handler_read` → `HANDLE_STDIN` loop
-- **Ring 3 blocking wait** — `sys_waitpid` also used `hlt_once()` in the same IF=0 context, causing a busy-wait spin loop. Fixed with `sti; hlt; cli`.
 
 ### A4.5 APC engine — Asynchronous Procedure Calls
 

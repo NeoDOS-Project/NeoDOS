@@ -62,7 +62,7 @@ impl DosShell {
 
         let cwd_drive = self.current_drive as u8 - b'A';
         let pid = crate::usermode::spawn_usermode(
-            entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
+            entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir, 0);
 
         println!("Loaded module '{}' (PID {}) in Ring 3", filename, pid);
     }

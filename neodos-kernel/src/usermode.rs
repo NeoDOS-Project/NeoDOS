@@ -122,7 +122,7 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
-pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str) -> u32 {
+pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> u32 {
     let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
     let heap_base = match heap_slot {
         Some(slot) => slot.base,
@@ -134,7 +134,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
 
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        s.add_ring3_process(entry, stack_top, slot_idx, cwd_drive, cwd_path, heap_base)
+        s.add_ring3_process(entry, stack_top, slot_idx, cwd_drive, cwd_path, heap_base, parent_pid)
     })
 }
 
@@ -207,6 +207,10 @@ pub fn request_exit_to_kernel() {
 
 pub fn current_wait_pid() -> u32 {
     unsafe { WAIT_PID }
+}
+
+pub fn set_wait_pid(pid: u32) {
+    unsafe { WAIT_PID = pid; }
 }
 
 pub fn clear_wait_pid() {

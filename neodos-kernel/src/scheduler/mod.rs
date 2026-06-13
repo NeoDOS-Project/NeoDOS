@@ -145,6 +145,7 @@ impl Kthread {
 
 pub struct Eprocess {
     pub pid: u32,
+    pub parent_pid: u32,
     pub handle_table: crate::handle::HandleTable,
     pub cwd_drive: u8,
     pub cwd_path: String,
@@ -273,6 +274,7 @@ impl Eprocess {
     pub fn new_idle(pid: u32) -> Self {
         Eprocess {
             pid,
+            parent_pid: 0,
             handle_table: crate::handle::HandleTable::new(),
             cwd_drive: 2,
             cwd_path: String::from("\\"),
@@ -288,9 +290,10 @@ impl Eprocess {
         }
     }
 
-    pub fn new_ring3(pid: u32, slot_idx: u8, cwd_drive: u8, cwd_path: &str, heap_base: u64) -> Self {
+    pub fn new_ring3(pid: u32, slot_idx: u8, cwd_drive: u8, cwd_path: &str, heap_base: u64, parent_pid: u32) -> Self {
         Eprocess {
             pid,
+            parent_pid,
             handle_table: crate::handle::HandleTable::with_defaults(),
             cwd_drive,
             cwd_path: cwd_path.to_string(),
@@ -446,6 +449,7 @@ impl Scheduler {
         cwd_drive: u8,
         cwd_path: &str,
         heap_base: u64,
+        parent_pid: u32,
     ) -> u32 {
         let pid = self.next_pid;
         self.next_pid += 1;
@@ -459,7 +463,7 @@ impl Scheduler {
         let th_slot = self.alloc_kthread_slot()
             .expect("KTHREAD table full");
 
-        let mut eproc = Eprocess::new_ring3(pid, slot_idx, cwd_drive, cwd_path, heap_base);
+        let mut eproc = Eprocess::new_ring3(pid, slot_idx, cwd_drive, cwd_path, heap_base, parent_pid);
         let mut thread = Kthread::new_ring3(tid, pid, entry, user_stack_top);
 
         let name = alloc::format!("eproc/{}", pid);

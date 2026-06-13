@@ -390,16 +390,10 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
     - ↑/↓ navega histórico.
   - **Tests:** `neoshell_prompt_and_cd`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
 
-- [ ] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
-  - **Archivos:** `userbin/neoinit/` (new Rust project), refactor `src/main.rs` (PHASE 3.8 entry), `scripts/create_neodos_image.py` (empaquetado)
-  - **Descripción:** Supervisor de servicios de nivel de sistema que gestiona procesos críticos como shell, daemon services, y respawning.
-    - **NeoInit responsibilities:**
-      1. **Inicio:** Kernel lo carga como ELF @ 0x400000 con argv `["neoinit"]`. Hereda fds: 0=stdin (keyboard), 1=stdout (console), 2=stderr (console).
-      2. **Spawn shell:** `sys_spawn("\\SYSTEM\\SHELL.NXE", ...)` → fork + exec (si fork no existe, usar spawn directo). Shell es hijo de NeoInit (PPID=1).
-      3. **Respawn children:** Loop `sys_waitpid(-1)` espera cualquier hijo. Si termina: `if child_id == shell_pid { respawn_shell() }`. Otros servicios: respawn si critical, else cleanup.
-      4. **Shutdown:** Si NeoInit recibe SIGTERM (A3.4 SEH user exception) o comando shutdown de shell via IPC, escribe final state a NeoFS (`/SYSTEM/.NEOINIT_STATE`).
-      5. **Exit:** NeoInit nunca llama `sys_exit()` (INV-10: kernel panic si PID 1 sale).
-    - **Service table (NeoInit internal):**
+- [x] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
+  - **Archivos:** `userbin/neoinit/` (new Rust project), refactor `src/main.rs`, `src/syscall/mod.rs` (handler_spawn + save/restore), `scripts/create_neodos_image.py` (empaquetado), `scripts/build.sh`
+  - **v0.35.0:** Implementación básica: kernel carga NeoInit como PID 1, NeoInit spawn ea NEOSHELL.NXE via sys_spawn (RAX=7). handler_spawn salva slot 0 (0x400000, 128 KB) en buffer heap, carga ELF child, lo ejecuta, y al salir restaura NeoInit. TSS.RSP0 y scheduler current_tid correctamente salvados/restaurados. NeoInit respawnea shell en loop.
+  - **Pendiente Z1.1:** Service table, SIGTERM, shutdown state file, soporte multi-servicio.
       ```
       services: [{
           name: "shell",

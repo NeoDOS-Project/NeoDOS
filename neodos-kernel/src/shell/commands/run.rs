@@ -105,7 +105,7 @@ impl DosShell {
 
         // ── 4. Store address space in EPROCESS after spawn ──
         let cwd_drive = self.current_drive as u8 - b'A';
-        let pid = crate::usermode::spawn_usermode(entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir);
+        let pid = crate::usermode::spawn_usermode(entry, slot.stack_top, slot.slot_idx, cwd_drive, &self.current_dir, 0);
 
         // Attach validated address space to the new EPROCESS
         crate::hal::without_interrupts(|| {

@@ -213,7 +213,7 @@ pub fn register_process_tests() {
     });
 
     test_case!("eprocess_new_ring3", {
-        let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000);
+        let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000, 0);
         test_eq!(ep.pid, 42);
         test_eq!(ep.heap_base, 0x10000000);
         test_eq!(ep.heap_break, 0x10000000);
@@ -239,7 +239,7 @@ pub fn register_sched_priority_tests() {
         // Ensure eprocess exists
         if sched.find_eprocess(pid).is_none() {
             let ep_slot = sched.alloc_eprocess_slot().unwrap();
-            sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000));
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000, 0));
         }
         // Ensure next_tid is high enough
         if tid >= sched.next_tid {
@@ -307,7 +307,7 @@ pub fn register_sched_priority_tests() {
         sched.kthreads[slot] = Some(k);
 
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
 
         sched.on_timer_tick();
 
@@ -328,7 +328,7 @@ pub fn register_sched_priority_tests() {
         sched.kthreads[slot] = Some(k);
 
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
 
         sched.on_timer_tick();
 
@@ -350,7 +350,7 @@ pub fn register_sched_priority_tests() {
         sched.kthreads[slot] = Some(k);
 
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
 
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
             sched.on_timer_tick();
@@ -370,7 +370,7 @@ pub fn register_sched_priority_tests() {
         sched.kthreads[slot] = Some(k);
 
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
 
         test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
         let k = sched.kthreads[slot].as_ref().unwrap();
@@ -1908,7 +1908,7 @@ pub fn register_mmap_tests() {
 
     test_case!("mmap_process_add_remove", {
         use crate::scheduler::Eprocess;
-        let mut ep = Eprocess::new_ring3(99, 0, 2, "\\", 0x10000000);
+        let mut ep = Eprocess::new_ring3(99, 0, 2, "\\", 0x10000000, 0);
         test_eq!(ep.mmap_regions.len(), 0);
 
         let r1 = MmapRegion {

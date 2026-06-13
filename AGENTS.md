@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.34.0
+v0.35.0
 
 ## Architecture Governance
 
@@ -376,6 +376,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de fd (0=stdin, pipe reader); bloquea con -EAGAIN |
 | 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr |
 | 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) |
+| 7 | `sys_spawn` | RBX=path_ptr | Carga y ejecuta un binario ELF64 desde NeoFS. Save/restore del proceso llamante (NeoInit). Retorna PID del hijo |
 | 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo |
 | 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle index 0-15) |
 | 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle) |
@@ -392,6 +393,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 24 | `sys_getcpuinfo` | RBX=buf_ptr, RCX=buf_size | Copia CpuInfoFull al buffer de usuario (CPUID + SMP + timers) |
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
+| 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 
 ## IPC / Pipes
@@ -514,7 +516,8 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
 | `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~15 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, EXIT + external PATH commands |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~15 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, DIR, POWEROFF, EXIT |
+| `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
