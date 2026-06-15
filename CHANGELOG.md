@@ -2,6 +2,23 @@
 
 ## v0.37.0 — 2026-06-15
 
+### Changed
+- **Directory structure reorganized** — New NeoDOS FS layout:
+  - `\System\Kernel\boot.cfg` (was `\SYSTEM\BOOT.CFG`)
+  - `\System\Config\system.cfg` (was `\SYSTEM\CONFIG.SYS`)
+  - `\System\Config\input.cfg` (new)
+  - `\System\Drivers\` (flat, was `\SYSTEM\DRIVERS\BOOT\` + `\SYSTEM\DRIVERS\SYSTEM\`)
+  - `\System\Libraries\` (was `\SYSTEM\LIB\`)
+  - `\System\Layouts\` (new: es-ES.nkb, en-US.nkb)
+  - `\Programs\` (was `\BIN\` + `\SYSTEM\BIN\` + root .NXE files)
+  - `\Packages\`, `\Users\`, `\Temp\`, `\Data\`, `\Logs\` (new empty dirs)
+  - All paths updated in kernel (nxl.rs, shell.rs, handler.rs, boot_loader, ndreg, etc.), user-mode binaries (neoshell, neoinit, cpuinfo, test, corehelp, filetest, alltest), and docs.
+- **PATH** default: `\Programs` (was `\BIN;\SYSTEM`)
+- Kernel loads config from `C:\System\Config\system.cfg` (was `C:\CONFIG.SYS` + `C:\SYSTEM\CONFIG.SYS`)
+- Drivers: flattened into single `C:\System\Drivers` — category determined by NEM header, not directory.
+- NEM driver renaming: `ps2kbd.nem` → `keyboard.nem`, `ata.nem` → `disk.nem`
+- Libraries: `libneodos.nxl` stored as `fs.nxl`, `io.nxl`, and `process.nxl` (same binary)
+
 ### Added
 - **B8.6 HELP.NXE (corehelp)** — Standalone user-mode help utility (`userbin/corehelp/`):
   - Scans `C:\BIN\*.NXE` via `sys_open` (directory handle) + `sys_readdir`
@@ -15,7 +32,7 @@
 - **A4.7. neoshell (Ring 3 shell)** — Full-featured interactive shell running at Ring 3:
   - Built-in commands: HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT
   - DIR uses sys_open + sys_readdir to list directories with entry counts
-  - External command dispatch: scans PATH dirs (\\BIN;\\SYSTEM) for `CMD.NXE`, spawns via sys_spawn + sys_waitpid
+  - External command dispatch: scans PATH dirs (\\Programs) for `CMD.NXE`, spawns via sys_spawn + sys_waitpid
   - TAB completion: matches built-in commands (single match replaces word cleanly, multiple lists all)
   - Command history: circular 32-entry buffer with ↑/↓ navigation
   - Drive change: `C:`, `D:`, etc. via sys_chdir

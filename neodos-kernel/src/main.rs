@@ -366,7 +366,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Loads NEOINIT.NXE as the init process. NeoInit spawns NEOSHELL.NXE
     // via sys_spawn (RAX=7). When the shell exits, sys_spawn restores
     // NeoInit's code and returns, and NeoInit respawns the shell.
-    // Set NEOINIT=0 in C:\SYSTEM\BOOT.CFG to skip NeoInit for testing.
+    // Set NEOINIT=0 in C:\System\Kernel\boot.cfg to skip NeoInit for testing.
     if !boot_benchmark::NEOINIT_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
         println!("[+] NeoInit disabled (BOOT.CFG). Starting kernel shell.");
         let mut sh = shell::DosShell::new();
@@ -380,7 +380,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         let mut entry: u64 = 0;
         let mut loaded = false;
         crate::globals::with_vfs(|vfs| {
-            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\NEOINIT.NXE") {
+            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\NeoInit.nxe") {
                 if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
                 let size = unsafe {
                     match vfs.read(drive_idx, node.inode, 0, &mut BIN_BUF) {

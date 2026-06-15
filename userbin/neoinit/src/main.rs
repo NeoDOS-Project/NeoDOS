@@ -3,7 +3,7 @@
 
 use libneodos::syscall;
 
-const SHELL_PATH: &[u8] = b"C:\\NEOSHELL.NXE\0";
+const SHELL_PATH: &[u8] = b"C:\\Programs\\NeoShell.nxe\0";
 const NEOINIT_VERSION: &str = "NeoInit v0.1.0 (PID 1)";
 
 fn write_str(s: &[u8]) {

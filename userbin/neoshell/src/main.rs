@@ -107,7 +107,7 @@ impl Shell {
             env: [EnvVar { key: [0u8; 32], key_len: 0, val: [0u8; 128], val_len: 0 }; MAX_ENV],
             env_count: 0,
         };
-        s.env_set(b"PATH", b"\\SYSTEM\\BIN;\\SYSTEM");
+        s.env_set(b"PATH", b"\\Programs");
         s
     }
 
@@ -343,7 +343,7 @@ impl Shell {
     }
 
     fn resolve_command_path(&self, cmd_upper: &[u8]) -> Result<[u8; 260], ()> {
-        let path_val = self.env_get(b"PATH").unwrap_or(b"\\SYSTEM\\BIN;\\SYSTEM");
+        let path_val = self.env_get(b"PATH").unwrap_or(b"\\Programs");
         let drive = self.get_drive_letter();
         let mut start = 0usize;
         loop {

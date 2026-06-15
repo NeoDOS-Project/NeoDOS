@@ -59,8 +59,8 @@ pub fn boot_load_all() {
     let mut total_faulted = 0u32;
 
     for (phase_name, root, cat) in &[
-        ("BOOT", "C:\\SYSTEM\\DRIVERS\\BOOT", DriverCategory::Boot),
-        ("SYSTEM", "C:\\SYSTEM\\DRIVERS\\SYSTEM", DriverCategory::System),
+        ("BOOT", "C:\\System\\Drivers", DriverCategory::Boot),
+        ("SYSTEM", "C:\\System\\Drivers", DriverCategory::System),
     ] {
         crate::serial_println!("[BOOT] Scanning {} drivers...", phase_name);
         let files = driver_scan(root);
@@ -314,7 +314,7 @@ pub fn register_boot_loader_tests() {
     use crate::test_true;
 
     test_case!("boot_scan_empty_dir", {
-        let files = driver_scan("C:\\NONEXISTENT");
+        let files = driver_scan("C:\\NONEXISTENT\\");
         test_eq!(files.len(), 0);
     });
 
@@ -325,7 +325,7 @@ pub fn register_boot_loader_tests() {
     });
 
     test_case!("boot_driver_scan_path_format", {
-        let path = "C:\\SYSTEM\\DRIVERS";
+        let path = "C:\\System\\Drivers";
         let files = driver_scan(path);
         test_true!(files.len() < 1000);
         for f in &files {

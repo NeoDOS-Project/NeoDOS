@@ -179,7 +179,7 @@ def get_kernel_architecture() -> str:
         "  3.5       Storage init (NVMe > AHCI > ATA) + GPT + NeoFS mount\n"
         "  3.75      Built-in drivers\n"
         "  3.80      X4 Driver Isolation region init\n"
-        "  3.85      Boot driver loader (BOOT -> SYSTEM, dependency-sorted)\n"
+        "  3.85      Boot driver loader (from C:\\System\\Drivers, dependency-sorted)\n"
         "  3.87      DLL region init + libneodos.nxl auto-load\n"
         "  3.9       Syscall ABI validation\n"
         "  4         Shell start\n"

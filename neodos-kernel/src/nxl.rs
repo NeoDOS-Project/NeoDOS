@@ -48,7 +48,7 @@ pub fn init_nxl_region() -> bool {
 }
 
 pub fn load_nxl() -> bool {
-    match nxl_load("C:\\SYSTEM\\LIB\\libneodos.nxl") {
+    match nxl_load("C:\\System\\Libraries\\fs.nxl") {
         Some(base) => {
             serial_println!("[NXL] libneodos NXL loaded at 0x{:x}", base);
             true

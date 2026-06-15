@@ -359,7 +359,7 @@ fn read_boot_config() -> Result<alloc::string::String, &'static str> {
     use alloc::string::String;
     use alloc::vec::Vec;
     
-    let path = "C:\\SYSTEM\\BOOT.CFG";
+    let path = "C:\\System\\Kernel\\boot.cfg";
     
     crate::globals::with_vfs(|vfs| {
         // Resolve path to get drive index and file metadata

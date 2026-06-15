@@ -2033,9 +2033,7 @@ pub fn register_syscall_table_tests() {
         // Test that handler_spawn's VFS path resolution works for hello.nxe
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
         let result = crate::globals::with_vfs(|vfs| {
-            vfs.resolve_path("C:\\HELLO.NXE")
-                .or_else(|_| vfs.resolve_path("C:\\BIN\\HELLO.NXE"))
-                .or_else(|_| vfs.resolve_path("C:\\SYSTEM\\HELLO.NXE"))
+            vfs.resolve_path("C:\\Programs\\hello.nxe")
         });
         test_true!(result.is_ok());
         if let Ok((_, node)) = result {
@@ -2099,7 +2097,7 @@ pub fn register_syscall_table_tests() {
     test_case!("mkdir_rmdir_roundtrip", {
         // Test creating and removing a directory via VFS
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let test_dir = "C:\\_A46TESTDIR";
+        let test_dir = "C:\\Temp\\_A46TESTDIR";
 
         let mkdir_result = crate::globals::with_vfs(|vfs| {
             vfs.mkdir(test_dir)
@@ -2128,7 +2126,7 @@ pub fn register_syscall_table_tests() {
     test_case!("unlink_file", {
         // Test creating and deleting a file via VFS
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let test_file = "C:\\_A46TESTFILE.TXT";
+        let test_file = "C:\\Temp\\_A46TESTFILE.TXT";
 
         // Create test file
         let create_result = crate::globals::with_vfs(|vfs| {
@@ -2152,7 +2150,7 @@ pub fn register_syscall_table_tests() {
     test_case!("rename_file", {
         // Test renaming a file via VFS
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
-        let old_name = "C:\\_A46RENOLD.TXT";
+        let old_name = "C:\\Temp\\_A46RENOLD.TXT";
         let new_name = "RENEWED.TXT";
 
         // Create test file
@@ -2174,7 +2172,7 @@ pub fn register_syscall_table_tests() {
         test_true!(old_stat.is_err());
 
         // New name should exist (in root directory C:\)
-        let new_full = "C:\\RENEWED.TXT";
+        let new_full = "C:\\Temp\\RENEWED.TXT";
         let new_stat = crate::globals::with_vfs(|vfs| {
             vfs.resolve_path(new_full)
         });

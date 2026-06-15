@@ -53,7 +53,7 @@ pub extern "C" fn _start() -> ! {
     // ================================================================
     println!("[TEST] Loading libmath.nxl...");
 
-    let math_base = match libneodos::syscall::sys_loadlib("C:\\SYSTEM\\LIB\\LIBMATH.NXL") {
+    let math_base = match libneodos::syscall::sys_loadlib("C:\\System\\Libraries\\math.nxl") {
         Ok(base) => base,
         Err(e) => {
             println!("[FAIL] sys_loadlib error code {}", e);

@@ -125,7 +125,7 @@ pub extern "C" fn _start() -> ! {
 
     println!("[TEST] Loading cpuinfo.nxl...");
 
-    let base = match libneodos::syscall::sys_loadlib("C:\\SYSTEM\\LIB\\CPUINFO.NXL") {
+    let base = match libneodos::syscall::sys_loadlib("C:\\System\\Libraries\\cpuinfo.nxl") {
         Ok(b) => b,
         Err(e) => {
             println!("[FAIL] sys_loadlib error code {}", e);

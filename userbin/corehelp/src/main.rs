@@ -4,7 +4,7 @@
 use libneodos::syscall;
 use libneodos::syscall::DirEntry;
 
-const BIN_DIR: &str = "C:\\BIN";
+const BIN_DIR: &str = "C:\\Programs";
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -100,7 +100,7 @@ pub extern "C" fn _start() -> ! {
         }
         Err(_) => {
             write_str(b"No core tools directory found.\r\n");
-            write_str(b"Create C:\\BIN with .NXE tools.\r\n");
+            write_str(b"Create C:\\Programs with .NXE tools.\r\n");
         }
     }
 

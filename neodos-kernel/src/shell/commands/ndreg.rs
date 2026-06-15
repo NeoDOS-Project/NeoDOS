@@ -122,7 +122,7 @@ impl DosShell {
         let search_dirs: &[&str] = if has_path {
             &[args[0]]
         } else {
-            &["C:\\SYSTEM\\DRIVERS\\BOOT", "C:\\SYSTEM\\DRIVERS\\SYSTEM"]
+            &["C:\\System\\Drivers"]
         };
 
         for dir in search_dirs {
@@ -263,18 +263,13 @@ impl DosShell {
         }
 
         let lc_name = name.to_ascii_lowercase();
-        let search_paths = [
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\BOOT\\{}", lc_name),
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\SYSTEM\\{}", lc_name),
-        ];
+        let search_path = alloc::format!("C:\\System\\Drivers\\{}", lc_name);
 
-        for full_path in &search_paths {
-            if self.ndreg_show_file(full_path.as_str()) {
-                return;
-            }
+        if self.ndreg_show_file(&search_path) {
+            return;
         }
 
-        println!("Driver '{}' not found in SYSTEM\\DRIVERS\\", name);
+        println!("Driver '{}' not found in System\\Drivers\\", name);
     }
 
     fn ndreg_show_file(&self, full_path: &str) -> bool {
@@ -421,8 +416,7 @@ impl DosShell {
 
     fn ndreg_query(&mut self, _args: &[&str]) {
         let search_paths = [
-            "C:\\SYSTEM\\DRIVERS\\BOOT",
-            "C:\\SYSTEM\\DRIVERS\\SYSTEM",
+            "C:\\System\\Drivers",
         ];
 
         let mut total = 0u32;
@@ -576,8 +570,7 @@ impl DosShell {
 
         let lc_name = name.to_ascii_lowercase();
         let search_paths = [
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\BOOT\\{}", lc_name),
-            alloc::format!("C:\\SYSTEM\\DRIVERS\\SYSTEM\\{}", lc_name),
+            alloc::format!("C:\\System\\Drivers\\{}", lc_name),
         ];
 
         // Find the driver in the runtime registry
@@ -606,7 +599,7 @@ impl DosShell {
                     println!("    2. Driver was loaded but later removed/unloaded.");
                     println!("    3. Driver name mismatch between file and registry.");
                     println!();
-                    println!("  To load: NDREG LOAD C:\\SYSTEM\\DRIVERS\\TEST\\{}.nem", lc_name);
+                    println!("  To load: NDREG LOAD C:\\System\\Drivers\\{}.nem", lc_name);
                 } else {
                     println!("Driver '{}' not found in registry or filesystem.", name);
                 }
@@ -724,8 +717,7 @@ impl DosShell {
 
     fn ndreg_health(&mut self) {
         let search_paths = [
-            "C:\\SYSTEM\\DRIVERS\\BOOT",
-            "C:\\SYSTEM\\DRIVERS\\SYSTEM",
+            "C:\\System\\Drivers",
         ];
 
         println!("========================================");

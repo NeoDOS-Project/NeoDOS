@@ -42,7 +42,7 @@ impl DosShell {
             history: Vec::new(),
             history_pos: 0,
         };
-        shell.environment.set("PATH", "\\BIN;\\SYSTEM");
+        shell.environment.set("PATH", "\\Programs");
         shell.environment.set("PROMPT", "$P$G");
         if !shell.environment.get("SYSTEMDRIVE").is_some() {
             shell.environment.set("SYSTEMDRIVE", "C");
@@ -315,8 +315,7 @@ impl DosShell {
     }
 
     pub fn check_config_sys(&mut self) {
-        self.try_load_config("C:\\CONFIG.SYS");
-        self.try_load_config("C:\\SYSTEM\\CONFIG.SYS");
+        self.try_load_config("C:\\System\\Config\\system.cfg");
     }
 
     fn try_load_config(&mut self, path: &str) {

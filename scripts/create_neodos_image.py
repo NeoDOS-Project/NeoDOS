@@ -176,33 +176,7 @@ Happy hacking!
         image[offset:offset+len(txt_content)] = txt_content
     else:
         dir_mode = MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D
-        
-        # Inode 0: root directory (block 0 is valid and reserved for root directory data)
-        # Directory logical size must cover all directory entries (3 × 256 = 768; use full block).
-        root_inode = create_inode(0, dir_mode, BLOCK_SIZE, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512:512+256] = root_inode
-        
-        # Inode 1: readme.txt (points to block 1)
-        readme_inode = create_inode(1, MODE_FILE | default_perms_for_filename("readme.txt"), 1024, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+256:512+512] = readme_inode
-        
-        # Inode 2: test.bat (points to block 2)
-        testbat_inode = create_inode(2, MODE_FILE | default_perms_for_filename("test.bat"), 512, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+512:512+768] = testbat_inode
-        
-        # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, dir_mode, 1536, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+768:512+1024] = system_dir_inode
 
-        # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
-        config_inode = create_inode(4, MODE_FILE | default_perms_for_filename("CONFIG.SYS"), 512, [4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+1024:512+1280] = config_inode
-
-        # Inode 5: AUTOEXEC.BAT (root) (points to block 5)
-        autoexec_inode = create_inode(5, MODE_FILE | default_perms_for_filename("AUTOEXEC.BAT"), 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+1280:512+1536] = autoexec_inode
-
-        # Inode 11: BOOT.CFG in SYSTEM (uses BOOTCFG_BLOCK = 66, past all NEM driver blocks)
         bootcfg_content = b"""# NeoDOS Boot Configuration
 # Benchmark and debug flags (default: 1 = enabled)
 BENCHMARK_REPORT=0
@@ -210,11 +184,28 @@ AHCI_DEBUG=0
 # Set NEOINIT=0 to skip NeoInit (PID 1) and boot directly into kernel shell for testing
 NEOINIT=0
 """
-        BOOTCFG_BLOCK = 66  # past all dynamic allocator blocks (max ~65 for AHCI)
-        bootcfg_inode = create_inode(11, MODE_FILE | default_perms_for_filename("BOOT.CFG"), len(bootcfg_content), [BOOTCFG_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-        image[512+2816:512+3072] = bootcfg_inode
+        system_cfg_content = b"""FILES=20
+BUFFERS=10
+COUNTRY=034
+CURSOR=10
+RUN C:\\Programs\\NeoShell.nxe
+"""
+        input_cfg_content = b"""; NeoDOS Input Configuration
+KEYBOARD_LAYOUT=en-US
+MOUSE_SPEED=5
+"""
+        es_nkb_content = b"[NeoDOS Keyboard Layout]\r\nName=es-ES\r\nDescription=Spanish (Spain)\r\n"
+        en_nkb_content = b"[NeoDOS Keyboard Layout]\r\nName=en-US\r\nDescription=English (United States)\r\n"
 
-        # Read all user binary data
+        # Inodes 0-2: root dir, readme.txt, test.bat
+        root_inode = create_inode(0, dir_mode, BLOCK_SIZE, [ROOT_DIR_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512:512+256] = root_inode
+        readme_inode = create_inode(1, MODE_FILE | default_perms_for_filename("readme.txt"), 1024, [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+256:512+512] = readme_inode
+        testbat_inode = create_inode(2, MODE_FILE | default_perms_for_filename("test.bat"), 512, [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        image[512+512:512+768] = testbat_inode
+
+        # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
         for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo', 'neoshell', 'neoinit', 'coredir', 'corehelp']:
@@ -228,9 +219,14 @@ NEOINIT=0
                 print(f"[!] {name}.nxe not found — skipping")
             nxe_files[name] = data
 
-        # Read libneodos NXL binary.
-        # Prefer the copied root artifact, but fall back to the crate output
-        # so the image still includes the NXL if the copy step was skipped.
+        nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
+        def read_nem(subdir, fname):
+            fpath = os.path.join(nem_dir, subdir, fname)
+            if os.path.exists(fpath):
+                with open(fpath, 'rb') as nf:
+                    return nf.read()
+            return b''
+
         nxl_candidates = [
             os.path.join(os.path.dirname(__file__), '..', 'libneodos.nxl'),
             os.path.join(os.path.dirname(__file__), '..', 'libneodos-nxl', 'target', 'x86_64-unknown-none', 'release', 'libneodos-nxl'),
@@ -244,7 +240,6 @@ NEOINIT=0
         else:
             print(f"[!] libneodos.nxl not found — NXL not included")
 
-        # Read libmath NXL binary.
         math_nxl_candidates = [
             os.path.join(os.path.dirname(__file__), '..', 'libmath.nxl'),
             os.path.join(os.path.dirname(__file__), '..', 'libmath-nxl', 'target', 'x86_64-unknown-none', 'release', 'libmath-nxl'),
@@ -258,7 +253,6 @@ NEOINIT=0
         else:
             print(f"[!] libmath.nxl not found — NXL not included")
 
-        # Read cpuinfo NXL binary.
         cpuinfo_nxl_candidates = [
             os.path.join(os.path.dirname(__file__), '..', 'cpuinfo.nxl'),
             os.path.join(os.path.dirname(__file__), '..', 'userbin', 'cpuinfo_nxl', 'target', 'x86_64-unknown-none', 'release', 'cpuinfo_nxl'),
@@ -272,9 +266,9 @@ NEOINIT=0
         else:
             print(f"[!] cpuinfo.nxl not found — NXL not included")
 
-        # Allocate data blocks dynamically from block 6 onwards
+        # ── Dynamic block allocator ──
         next_block = 6
-        block_allocs = {}  # inode_num -> list of block numbers
+        block_allocs = {}
 
         def alloc_blocks(inode_num, data_size):
             nonlocal next_block
@@ -290,172 +284,145 @@ NEOINIT=0
             block_allocs[inode_num] = blks
             return blks
 
-        # Assign blocks for user binaries
-        hello_blocks = alloc_blocks(6, len(nxe_files['hello']))
-        systest_blocks = alloc_blocks(7, len(nxe_files['systest']))
-        filetest_blocks = alloc_blocks(8, len(nxe_files['filetest']))
-        alltest_blocks = alloc_blocks(9, len(nxe_files['alltest']))
-        cputest_blocks = alloc_blocks(10, len(nxe_files['cputest']))
-        test_blocks = alloc_blocks(12, len(nxe_files['test']))
-        cpuinfo_blocks = alloc_blocks(13, len(nxe_files['cpuinfo']))
-        neoshell_blocks = alloc_blocks(14, len(nxe_files['neoshell']))
-        neoinit_blocks = alloc_blocks(17, len(nxe_files['neoinit']))
-        # shell_blocks = alloc_blocks(18, ...)  # removed — SHELL.NXE alias no longer needed
-        nxl_blocks = alloc_blocks(29, len(nxl_data)) # libneodos.nxl
-        math_nxl_blocks = alloc_blocks(30, len(math_nxl_data)) # libmath.nxl
-        cpuinfo_nxl_blocks = alloc_blocks(31, len(cpuinfo_nxl_data)) # cpuinfo.nxl
-        corehelp_blocks = alloc_blocks(33, len(nxe_files['corehelp']))
-        rootbindir_blocks = alloc_blocks(34, 512)    # root-level \BIN dir
-        coredir_blocks = alloc_blocks(32, len(nxe_files['coredir']))
-        bindir_blocks = alloc_blocks(18, 768)        # SYSTEM\BIN dir (DIR.NXE + CPUINFO.NXE + HELP.NXE)
-        libdir_blocks = alloc_blocks(28, 256)        # LIB dir
-        dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
-        testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
-        bootdir_blocks = alloc_blocks(19, 256 * 2)  # BOOT dir
-        sys2dir_blocks = alloc_blocks(20, 1024)     # SYSTEM dir (DRIVERS)
-
-        # Build inodes with correct block lists
         def pad_blocks(blks):
-            """Pad block list to 12 entries with zeros."""
             return (blks + [0] * 12)[:12]
 
-        inodes_data = {
-            6: (MODE_FILE | default_perms_for_filename("HELLO.NXE"), len(nxe_files['hello']), pad_blocks(hello_blocks)),
-            7: (MODE_FILE | default_perms_for_filename("SYSTEST.NXE"), len(nxe_files['systest']), pad_blocks(systest_blocks)),
-            8: (MODE_FILE | default_perms_for_filename("FILETEST.NXE"), len(nxe_files['filetest']), pad_blocks(filetest_blocks)),
-            9: (MODE_FILE | default_perms_for_filename("ALLTEST.NXE"), len(nxe_files['alltest']), pad_blocks(alltest_blocks)),
-            10: (MODE_FILE | default_perms_for_filename("CPUTEST.NXE"), len(nxe_files['cputest']), pad_blocks(cputest_blocks)),
-            12: (MODE_FILE | default_perms_for_filename("TEST.NXE"), len(nxe_files['test']), pad_blocks(test_blocks)),
-            13: (MODE_FILE | default_perms_for_filename("CPUINFO.NXE"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
-            14: (MODE_FILE | default_perms_for_filename("NEOSHELL.NXE"), len(nxe_files['neoshell']), pad_blocks(neoshell_blocks)),
-            17: (MODE_FILE | default_perms_for_filename("NEOINIT.NXE"), len(nxe_files['neoinit']), pad_blocks(neoinit_blocks)),
-            18: (dir_mode, 768, pad_blocks(bindir_blocks)),
-            15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
-            16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
-            19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
-            20: (dir_mode, 1536, pad_blocks(sys2dir_blocks)),
-            28: (dir_mode, 256, pad_blocks(libdir_blocks)),
-            29: (MODE_FILE | default_perms_for_filename("libneodos.nxl"), len(nxl_data), pad_blocks(nxl_blocks)),
-            30: (MODE_FILE | default_perms_for_filename("libmath.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
-             31: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks)),
-              32: (MODE_FILE | default_perms_for_filename("DIR.NXE"), len(nxe_files['coredir']), pad_blocks(coredir_blocks)),
-              33: (MODE_FILE | default_perms_for_filename("HELP.NXE"), len(nxe_files['corehelp']), pad_blocks(corehelp_blocks)),
-              34: (dir_mode, 512, pad_blocks(rootbindir_blocks)),
-         }
+        # ── Inode allocation map ──
+        # 0=Root, 1=readme.txt, 2=test.bat
+        # 3=System, 4=Kernel, 5=boot.cfg
+        # 6=Drivers, 7-13=NEM drivers
+        # 14=Libraries, 15-18,44=NXL files
+        # 19=Layouts, 20-21=NKB files
+        # 22=Config, 23-24=cfg files
+        # 25=Programs, 26-36=NXE files
+        # 37=Packages, 38=Users, 39=Default, 40=Alejandro
+        # 41=Temp, 42=Data, 43=Logs
 
-        # Write inodes to inode table
+        # Read NEM driver data
+        nem_data = {
+            7:  ("keyboard.nem", read_nem("BOOT", "ps2kbd.nem")),
+            8:  ("serial.nem",   read_nem("BOOT", "serial.nem")),
+            9:  ("rtc.nem",      read_nem("BOOT", "rtc.nem")),
+            10: ("acpi.nem",     read_nem("SYSTEM", "acpi.nem")),
+            11: ("pci.nem",      read_nem("SYSTEM", "pci.nem")),
+            12: ("disk.nem",     read_nem("SYSTEM", "ata.nem")),
+            13: ("ahci.nem",     read_nem("SYSTEM", "ahci.nem")),
+        }
+
+        # Allocate blocks for everything
+        hello_blocks      = alloc_blocks(31, len(nxe_files['hello']))
+        systest_blocks    = alloc_blocks(32, len(nxe_files['systest']))
+        filetest_blocks   = alloc_blocks(33, len(nxe_files['filetest']))
+        alltest_blocks    = alloc_blocks(34, len(nxe_files['alltest']))
+        cputest_blocks    = alloc_blocks(35, len(nxe_files['cputest']))
+        test_blocks       = alloc_blocks(36, len(nxe_files['test']))
+        cpuinfo_blocks    = alloc_blocks(28, len(nxe_files['cpuinfo']))
+        neoshell_blocks   = alloc_blocks(26, len(nxe_files['neoshell']))
+        neoinit_blocks    = alloc_blocks(27, len(nxe_files['neoinit']))
+        coredir_blocks    = alloc_blocks(29, len(nxe_files['coredir']))
+        corehelp_blocks   = alloc_blocks(30, len(nxe_files['corehelp']))
+        fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
+        io_nxl_blocks     = alloc_blocks(16, len(nxl_data))
+        process_nxl_blocks= alloc_blocks(17, len(nxl_data))
+        cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
+        math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
+        bootcfg_blocks    = alloc_blocks(5, len(bootcfg_content))
+        system_cfg_blocks = alloc_blocks(23, len(system_cfg_content))
+        input_cfg_blocks  = alloc_blocks(24, len(input_cfg_content))
+        es_nkb_blocks     = alloc_blocks(20, len(es_nkb_content))
+        en_nkb_blocks     = alloc_blocks(21, len(en_nkb_content))
+
+        nem_blocks = {}
+        for inum in nem_data:
+            nem_blocks[inum] = alloc_blocks(inum, len(nem_data[inum][1]))
+
+        # Directory blocks (fixed block allocation)
+        sys_dir_blocks    = alloc_blocks(3, 2304)    # System dir (9 entries × 256)
+        kernel_dir_blocks = alloc_blocks(4, 512)     # Kernel dir
+        drv_dir_blocks    = alloc_blocks(6, 2048)    # Drivers dir (7 entries + padding)
+        lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
+        lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
+        cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
+        prog_dir_blocks   = alloc_blocks(25, 3072)   # Programs dir (11 entries)
+        pkg_dir_blocks    = alloc_blocks(37, 256)    # Packages dir (empty)
+        usr_dir_blocks    = alloc_blocks(38, 768)    # Users dir
+        def_dir_blocks    = alloc_blocks(39, 256)    # Users\Default (empty)
+        ale_dir_blocks    = alloc_blocks(40, 256)    # Users\Alejandro (empty)
+        tmp_dir_blocks    = alloc_blocks(41, 256)    # Temp dir (empty)
+        dat_dir_blocks    = alloc_blocks(42, 256)    # Data dir (empty)
+        log_dir_blocks    = alloc_blocks(43, 256)    # Logs dir (empty)
+
+        # ── Write inode table ──
+        inodes_data = {
+            3:  (dir_mode, 2304, pad_blocks(sys_dir_blocks)),
+            4:  (dir_mode, 512,  pad_blocks(kernel_dir_blocks)),
+            5:  (MODE_FILE | default_perms_for_filename("boot.cfg"), len(bootcfg_content), pad_blocks(bootcfg_blocks)),
+            6:  (dir_mode, 2048, pad_blocks(drv_dir_blocks)),
+            14: (dir_mode, 1536, pad_blocks(lib_dir_blocks)),
+            15: (MODE_FILE | default_perms_for_filename("fs.nxl"), len(nxl_data), pad_blocks(fs_nxl_blocks)),
+            16: (MODE_FILE | default_perms_for_filename("io.nxl"), len(nxl_data), pad_blocks(io_nxl_blocks)),
+            17: (MODE_FILE | default_perms_for_filename("process.nxl"), len(nxl_data), pad_blocks(process_nxl_blocks)),
+            18: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks2)),
+            44: (MODE_FILE | default_perms_for_filename("math.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
+            19: (dir_mode, 768,  pad_blocks(lay_dir_blocks)),
+            20: (MODE_FILE | default_perms_for_filename("es-ES.nkb"), len(es_nkb_content), pad_blocks(es_nkb_blocks)),
+            21: (MODE_FILE | default_perms_for_filename("en-US.nkb"), len(en_nkb_content), pad_blocks(en_nkb_blocks)),
+            22: (dir_mode, 768,  pad_blocks(cfg_dir_blocks)),
+            23: (MODE_FILE | default_perms_for_filename("system.cfg"), len(system_cfg_content), pad_blocks(system_cfg_blocks)),
+            24: (MODE_FILE | default_perms_for_filename("input.cfg"), len(input_cfg_content), pad_blocks(input_cfg_blocks)),
+            25: (dir_mode, 3072, pad_blocks(prog_dir_blocks)),
+            26: (MODE_FILE | default_perms_for_filename("NeoShell.nxe"), len(nxe_files['neoshell']), pad_blocks(neoshell_blocks)),
+            27: (MODE_FILE | default_perms_for_filename("NeoInit.nxe"), len(nxe_files['neoinit']), pad_blocks(neoinit_blocks)),
+            28: (MODE_FILE | default_perms_for_filename("cpuinfo.nxe"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
+            29: (MODE_FILE | default_perms_for_filename("dir.nxe"), len(nxe_files['coredir']), pad_blocks(coredir_blocks)),
+            30: (MODE_FILE | default_perms_for_filename("help.nxe"), len(nxe_files['corehelp']), pad_blocks(corehelp_blocks)),
+            31: (MODE_FILE | default_perms_for_filename("hello.nxe"), len(nxe_files['hello']), pad_blocks(hello_blocks)),
+            32: (MODE_FILE | default_perms_for_filename("systest.nxe"), len(nxe_files['systest']), pad_blocks(systest_blocks)),
+            33: (MODE_FILE | default_perms_for_filename("filetest.nxe"), len(nxe_files['filetest']), pad_blocks(filetest_blocks)),
+            34: (MODE_FILE | default_perms_for_filename("alltest.nxe"), len(nxe_files['alltest']), pad_blocks(alltest_blocks)),
+            35: (MODE_FILE | default_perms_for_filename("cputest.nxe"), len(nxe_files['cputest']), pad_blocks(cputest_blocks)),
+            36: (MODE_FILE | default_perms_for_filename("test.nxe"), len(nxe_files['test']), pad_blocks(test_blocks)),
+            37: (dir_mode, 256,  pad_blocks(pkg_dir_blocks)),
+            38: (dir_mode, 768,  pad_blocks(usr_dir_blocks)),
+            39: (dir_mode, 256,  pad_blocks(def_dir_blocks)),
+            40: (dir_mode, 256,  pad_blocks(ale_dir_blocks)),
+            41: (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
+            42: (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
+            43: (dir_mode, 256,  pad_blocks(log_dir_blocks)),
+        }
+
         for inum, (mode, size, blks) in inodes_data.items():
             inode = create_inode(inum, mode, size, blks)
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
-        # Boot .nem driver inodes (BOOT category)
-        boot_nem_data = {}
-        boot_nem_files = [
-            (21, "ps2kbd.nem"),
-            (22, "serial.nem"),
-            (23, "rtc.nem"),
-        ]
-        for inum, fname in boot_nem_files:
-            fpath = os.path.join(nem_dir, "BOOT", fname)
-            data = b''
-            if os.path.exists(fpath):
-                with open(fpath, 'rb') as nf:
-                    data = nf.read()
-                print(f"[*] Including BOOT/{fname} ({len(data)} bytes)")
-            boot_nem_data[inum] = data
-            blks = alloc_blocks(inum, len(data))
-            inode = create_inode(inum, MODE_FILE | default_perms_for_filename(fname), len(data), pad_blocks(blks))
+        # NEM driver inodes
+        for inum, (fname, fdata) in nem_data.items():
+            blks = nem_blocks.get(inum, [])
+            inode = create_inode(inum, MODE_FILE | default_perms_for_filename(fname), len(fdata), pad_blocks(blks))
             offset = 512 + inum * 256
             image[offset:offset+256] = inode
 
-        # System .nem driver inodes (SYSTEM category)
-        system_nem_data = {}
-        system_nem_files = [
-            (24, "acpi.nem"),
-            (25, "pci.nem"),
-            (26, "ata.nem"),
-            (27, "ahci.nem"),
-        ]
-        for inum, fname in system_nem_files:
-            fpath = os.path.join(nem_dir, "SYSTEM", fname)
-            data = b''
-            if os.path.exists(fpath):
-                with open(fpath, 'rb') as nf:
-                    data = nf.read()
-                print(f"[*] Including SYSTEM/{fname} ({len(data)} bytes)")
-            system_nem_data[inum] = data
-            blks = alloc_blocks(inum, len(data))
-            inode = create_inode(inum, MODE_FILE | default_perms_for_filename(fname), len(data), pad_blocks(blks))
-            offset = 512 + inum * 256
-            image[offset:offset+256] = inode
-
-        # 3. Root directory block (block 0) @ first data sector
+        # ── Root directory entries ──
         print("[*] Writing root directory...")
         offset = (DATA_START_SECTOR + ROOT_DIR_BLOCK * 8) * 512
-        
-        # Entry 0: readme.txt
-        entry = create_dir_entry(1, 1, "readme.txt")  # type=1 (file)
-        image[offset:offset+256] = entry
-        
-        # Entry 1: test.bat
-        entry = create_dir_entry(2, 1, "test.bat")
-        image[offset+256:offset+512] = entry
+        image[offset:offset+256]   = create_dir_entry(1, 1, "readme.txt")
+        image[offset+256:offset+512] = create_dir_entry(2, 1, "test.bat")
+        image[offset+512:offset+768] = create_dir_entry(3, 2, "System")
+        image[offset+768:offset+1024] = create_dir_entry(25, 2, "Programs")
+        image[offset+1024:offset+1280] = create_dir_entry(37, 2, "Packages")
+        image[offset+1280:offset+1536] = create_dir_entry(38, 2, "Users")
+        image[offset+1536:offset+1792] = create_dir_entry(41, 2, "Temp")
+        image[offset+1792:offset+2048] = create_dir_entry(42, 2, "Data")
+        image[offset+2048:offset+2304] = create_dir_entry(43, 2, "Logs")
 
-        # Entry 2: SYSTEM dir
-        entry = create_dir_entry(3, 2, "SYSTEM") # type=2 (dir)
-        image[offset+512:offset+768] = entry
-
-        # Entry 3: HELLO.NXE (user-mode binary)
-        entry = create_dir_entry(6, 1, "HELLO.NXE")
-        image[offset+768:offset+1024] = entry
-
-        # Entry 4: SYSTEST.NXE (syscall test binary)
-        entry = create_dir_entry(7, 1, "SYSTEST.NXE")
-        image[offset+1024:offset+1280] = entry
-
-        # Entry 5: FILETEST.NXE (file I/O test binary)
-        entry = create_dir_entry(8, 1, "FILETEST.NXE")
-        image[offset+1280:offset+1536] = entry
-
-        # Entry 6: ALLTEST.NXE (comprehensive syscall test)
-        entry = create_dir_entry(9, 1, "ALLTEST.NXE")
-        image[offset+1536:offset+1792] = entry
-
-        # Entry 7: CPUTEST.NXE (CPU-bound priority test)
-        entry = create_dir_entry(10, 1, "CPUTEST.NXE")
-        image[offset+1792:offset+2048] = entry
-
-        # Entry 8: TEST.NXE (libmath self-test)
-        entry = create_dir_entry(12, 1, "TEST.NXE")
-        image[offset+2048:offset+2304] = entry
-
-        # Entry 9: HELP.NXE (core tools help)
-        entry = create_dir_entry(33, 1, "HELP.NXE")
-        image[offset+2304:offset+2560] = entry
-
-        # Entry 10: NEOSHELL.NXE (Ring 3 shell)
-        entry = create_dir_entry(14, 1, "NEOSHELL.NXE")
-        image[offset+2560:offset+2816] = entry
-
-        # Entry 11: NEOINIT.NXE (PID 1 service manager)
-        entry = create_dir_entry(17, 1, "NEOINIT.NXE")
-        image[offset+2816:offset+3072] = entry
-
-        # Entry 12: BIN directory (root-level core tools)
-        entry = create_dir_entry(34, 2, "BIN")
-        image[offset+3072:offset+3328] = entry
-
-        # Entry 13: (available)
-
-        # 4. Data blocks
-        # Block 1 = sector 208 (readme.txt)
+        # ── Data blocks ──
+        # Block 1 = readme.txt
         print("[*] Writing readme.txt content...")
         offset = (200 + 8) * 512
-        readme_content = readme_text.encode('utf-8')
-        image[offset:offset+len(readme_content)] = readme_content
-        
-        # Block 2 = sector 216 (test.bat)
+        image[offset:offset+len(readme_text)] = readme_text.encode('utf-8')
+
+        # Block 2 = test.bat
         print("[*] Writing test.bat content...")
         offset = (200 + 16) * 512
         testbat_content = b"""ECHO Running batch test...
@@ -467,193 +434,162 @@ ECHO Done.
 """
         image[offset:offset+len(testbat_content)] = testbat_content
 
-        # Block 3 = sector 224 (SYSTEM directory)
-        print("[*] Writing SYSTEM directory...")
-        offset = (200 + 24) * 512
-        entry1 = create_dir_entry(4, 1, "CONFIG.SYS")
-        image[offset:offset+256] = entry1
-        entry2 = create_dir_entry(5, 1, "AUTOEXEC.BAT")
-        image[offset+256:offset+512] = entry2
-        # Entry 3: DRIVERS subdirectory
-        entry3 = create_dir_entry(15, 2, "DRIVERS")
-        image[offset+512:offset+768] = entry3
-        # Entry 4: BOOT.CFG
-        entry4 = create_dir_entry(11, 1, "BOOT.CFG")
-        image[offset+768:offset+1024] = entry4
-        # Entry 5: LIB subdirectory
-        entry5 = create_dir_entry(28, 2, "LIB")
-        image[offset+1024:offset+1280] = entry5
+        # ── System\ directory ──
+        print("[*] Writing System directory...")
+        blk = sys_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]      = create_dir_entry(4, 2, "Kernel")
+        image[offset+256:offset+512]  = create_dir_entry(6, 2, "Drivers")
+        image[offset+512:offset+768]  = create_dir_entry(14, 2, "Libraries")
+        image[offset+768:offset+1024] = create_dir_entry(19, 2, "Layouts")
+        image[offset+1024:offset+1280]= create_dir_entry(22, 2, "Config")
 
-        # Entry 6: BIN subdirectory (external commands)
-        entry6 = create_dir_entry(18, 2, "BIN")
-        image[offset+1280:offset+1536] = entry6
+        # System\Kernel\
+        print("[*] Writing System\\Kernel directory...")
+        blk = kernel_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256] = create_dir_entry(5, 1, "boot.cfg")
 
-        # Block 4 = sector 232 (CONFIG.SYS)
-        print("[*] Writing CONFIG.SYS...")
-        offset = (200 + 32) * 512
-        config_content = b"""FILES=20
-BUFFERS=10
-COUNTRY=034
-CURSOR=10
-RUN C:\\NEOSHELL.NXE
-"""
-        image[offset:offset+len(config_content)] = config_content
+        # System\Kernel\boot.cfg content
+        print("[*] Writing boot.cfg...")
+        for bi, blk in enumerate(bootcfg_blocks):
+            chunk = bootcfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+            off = (200 + blk * 8) * 512
+            image[off:off+len(chunk)] = chunk
 
-        # Block 5 = sector 240 (AUTOEXEC.BAT)
-        print("[*] Writing AUTOEXEC.BAT...")
-        offset = (200 + 40) * 512
-        autoexec_content = b"""ECHO Welcome to NeoDOS 0.16
-ECHO System Configuration Loaded.
-VER
-"""
-        image[offset:offset+len(autoexec_content)] = autoexec_content
+        # System\Drivers\ directory
+        print("[*] Writing System\\Drivers directory...")
+        blk = drv_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]    = create_dir_entry(7, 1, "keyboard.nem")
+        image[offset+256:offset+512]= create_dir_entry(8, 1, "serial.nem")
+        image[offset+512:offset+768]= create_dir_entry(9, 1, "rtc.nem")
+        image[offset+768:offset+1024]= create_dir_entry(10, 1, "acpi.nem")
+        image[offset+1024:offset+1280]= create_dir_entry(11, 1, "pci.nem")
+        image[offset+1280:offset+1536]= create_dir_entry(12, 1, "disk.nem")
+        image[offset+1536:offset+1792]= create_dir_entry(13, 1, "ahci.nem")
 
-        # Block BOOTCFG_BLOCK = sector offset
-        print("[*] Writing BOOT.CFG...")
-        offset = (200 + BOOTCFG_BLOCK * 8) * 512
-        image[offset:offset+len(bootcfg_content)] = bootcfg_content
+        # NEM driver data blocks
+        for inum, (fname, fdata) in nem_data.items():
+            if not fdata:
+                continue
+            blks = nem_blocks.get(inum, [])
+            print(f"[*] Writing System\\Drivers\\{fname} content ({len(fdata)} bytes)...")
+            for bi, blk in enumerate(blks):
+                chunk = fdata[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
 
-        # Write user binary data across their allocated blocks
-        bin_data_map = {
-            6: ('HELLO.NXE', nxe_files['hello']),
-            7: ('SYSTEST.NXE', nxe_files['systest']),
-            8: ('FILETEST.NXE', nxe_files['filetest']),
-            9: ('ALLTEST.NXE', nxe_files['alltest']),
-            10: ('CPUTEST.NXE', nxe_files['cputest']),
-            12: ('TEST.NXE', nxe_files['test']),
-            13: ('CPUINFO.NXE', nxe_files['cpuinfo']),
-            14: ('NEOSHELL.NXE', nxe_files['neoshell']),
-             17: ('NEOINIT.NXE', nxe_files['neoinit']),
-              32: ('DIR.NXE', nxe_files['coredir']),
-              33: ('HELP.NXE', nxe_files['corehelp']),
-         }
-        for inum, (name, data) in bin_data_map.items():
+        # System\Libraries\ directory
+        print("[*] Writing System\\Libraries directory...")
+        blk = lib_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]     = create_dir_entry(15, 1, "fs.nxl")
+        image[offset+256:offset+512] = create_dir_entry(16, 1, "io.nxl")
+        image[offset+512:offset+768] = create_dir_entry(17, 1, "process.nxl")
+        image[offset+768:offset+1024]= create_dir_entry(18, 1, "cpuinfo.nxl")
+        image[offset+1024:offset+1280]= create_dir_entry(44, 1, "math.nxl")
+
+        # fs.nxl (libneodos) data blocks
+        if nxl_data:
+            for (inum, blklist) in [(15, fs_nxl_blocks), (16, io_nxl_blocks), (17, process_nxl_blocks)]:
+                print(f"[*] Writing System\\Libraries inode {inum} ({len(nxl_data)} bytes)...")
+                for bi, blk in enumerate(blklist):
+                    chunk = nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                    off = (200 + blk * 8) * 512
+                    image[off:off+len(chunk)] = chunk
+
+        # math.nxl data blocks
+        if math_nxl_data:
+            print(f"[*] Writing System\\Libraries\\math.nxl ({len(math_nxl_data)} bytes)...")
+            for bi, blk in enumerate(math_nxl_blocks):
+                chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
+
+        # cpuinfo.nxl data blocks
+        if cpuinfo_nxl_data:
+            blks = cpuinfo_nxl_blocks2
+            print(f"[*] Writing System\\Libraries\\cpuinfo.nxl ({len(cpuinfo_nxl_data)} bytes)...")
+            for bi, blk in enumerate(blks):
+                chunk = cpuinfo_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
+
+        # System\Layouts\ directory
+        print("[*] Writing System\\Layouts directory...")
+        blk = lay_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]  = create_dir_entry(20, 1, "es-ES.nkb")
+        image[offset+256:offset+512]= create_dir_entry(21, 1, "en-US.nkb")
+
+        # NKB data blocks
+        for inum, content, blk_list in [(20, es_nkb_content, es_nkb_blocks), (21, en_nkb_content, en_nkb_blocks)]:
+            for bi, blk in enumerate(blk_list):
+                chunk = content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
+
+        # System\Config\ directory
+        print("[*] Writing System\\Config directory...")
+        blk = cfg_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]  = create_dir_entry(23, 1, "system.cfg")
+        image[offset+256:offset+512]= create_dir_entry(24, 1, "input.cfg")
+
+        # system.cfg content
+        print("[*] Writing system.cfg...")
+        for bi, blk in enumerate(system_cfg_blocks):
+            chunk = system_cfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+            off = (200 + blk * 8) * 512
+            image[off:off+len(chunk)] = chunk
+
+        # input.cfg content
+        print("[*] Writing input.cfg...")
+        for bi, blk in enumerate(input_cfg_blocks):
+            chunk = input_cfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+            off = (200 + blk * 8) * 512
+            image[off:off+len(chunk)] = chunk
+
+        # ── Programs\ directory ──
+        print("[*] Writing Programs directory...")
+        blk = prog_dir_blocks[0]
+        offset = (200 + blk * 8) * 512
+        image[offset:offset+256]      = create_dir_entry(26, 1, "NeoShell.nxe")
+        image[offset+256:offset+512]  = create_dir_entry(27, 1, "NeoInit.nxe")
+        image[offset+512:offset+768]  = create_dir_entry(28, 1, "cpuinfo.nxe")
+        image[offset+768:offset+1024] = create_dir_entry(29, 1, "dir.nxe")
+        image[offset+1024:offset+1280]= create_dir_entry(30, 1, "help.nxe")
+        image[offset+1280:offset+1536]= create_dir_entry(31, 1, "hello.nxe")
+        image[offset+1536:offset+1792]= create_dir_entry(32, 1, "systest.nxe")
+        image[offset+1792:offset+2048]= create_dir_entry(33, 1, "filetest.nxe")
+        image[offset+2048:offset+2304]= create_dir_entry(34, 1, "alltest.nxe")
+        image[offset+2304:offset+2560]= create_dir_entry(35, 1, "cputest.nxe")
+        image[offset+2560:offset+2816]= create_dir_entry(36, 1, "test.nxe")
+
+        # Write all NXE binary data
+        nxe_inode_map = {
+            26: ('NeoShell.nxe', nxe_files['neoshell']),
+            27: ('NeoInit.nxe', nxe_files['neoinit']),
+            28: ('cpuinfo.nxe', nxe_files['cpuinfo']),
+            29: ('dir.nxe', nxe_files['coredir']),
+            30: ('help.nxe', nxe_files['corehelp']),
+            31: ('hello.nxe', nxe_files['hello']),
+            32: ('systest.nxe', nxe_files['systest']),
+            33: ('filetest.nxe', nxe_files['filetest']),
+            34: ('alltest.nxe', nxe_files['alltest']),
+            35: ('cputest.nxe', nxe_files['cputest']),
+            36: ('test.nxe', nxe_files['test']),
+        }
+        for inum, (name, data) in nxe_inode_map.items():
             if not data:
                 continue
             blks = block_allocs.get(inum, [])
-            print(f"[*] Writing {name} content ({len(data)} bytes across {len(blks)} blocks)...")
+            print(f"[*] Writing Programs\\{name} ({len(data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
                 chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 off = (200 + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
-
-        # Write directory data blocks
-        print("[*] Writing DRIVERS directory...")
-        off = (200 + dir_blocks[0] * 8) * 512
-        entry_boot = create_dir_entry(19, 2, "BOOT")
-        image[off+256:off+512] = entry_boot
-        entry_sys2 = create_dir_entry(20, 2, "SYSTEM")
-        image[off+512:off+768] = entry_sys2
-
-        # BOOT directory (uses dynamically allocated blocks)
-        print("[*] Writing BOOT directory...")
-        for bi, blk in enumerate(bootdir_blocks):
-            if bi == 0:
-                offset = (200 + blk * 8) * 512
-                entry_ps2kbd = create_dir_entry(21, 1, "ps2kbd.nem")
-                image[offset:offset+256] = entry_ps2kbd
-                entry_serial = create_dir_entry(22, 1, "serial.nem")
-                image[offset+256:offset+512] = entry_serial
-                entry_rtc = create_dir_entry(23, 1, "rtc.nem")
-                image[offset+512:offset+768] = entry_rtc
-
-
-        # Boot driver data blocks
-        for (inum, fname) in boot_nem_files:
-            data = boot_nem_data.get(inum, b'')
-            if data:
-                blks = block_allocs.get(inum, [])
-                for bi, blk in enumerate(blks):
-                    chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                    offset = (200 + blk * 8) * 512
-                    image[offset:offset+len(chunk)] = chunk
-                print(f"[*] Writing BOOT/{fname} content...")
-
-        # SYSTEM directory (DRIVERS) - uses dynamically allocated block
-        print("[*] Writing SYSTEM directory (DRIVERS)...")
-        for bi, blk in enumerate(sys2dir_blocks):
-            if bi == 0:
-                offset = (200 + blk * 8) * 512
-                entry_acpi = create_dir_entry(24, 1, "acpi.nem")
-                image[offset:offset+256] = entry_acpi
-                entry_pci = create_dir_entry(25, 1, "pci.nem")
-                image[offset+256:offset+512] = entry_pci
-                entry_ata = create_dir_entry(26, 1, "ata.nem")
-                image[offset+512:offset+768] = entry_ata
-                entry_ahci = create_dir_entry(27, 1, "ahci.nem")
-                image[offset+768:offset+1024] = entry_ahci
-
-        # System driver data blocks
-        for (inum, fname) in system_nem_files:
-            data = system_nem_data.get(inum, b'')
-            if data:
-                blks = block_allocs.get(inum, [])
-                for bi, blk in enumerate(blks):
-                    chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                    offset = (200 + blk * 8) * 512
-                    image[offset:offset+len(chunk)] = chunk
-                print(f"[*] Writing SYSTEM/{fname} content...")
-
-        # Write LIB directory content
-        if libdir_blocks:
-            print("[*] Writing LIB directory...")
-            blk = libdir_blocks[0]
-            offset = (200 + blk * 8) * 512
-            entry_lib = create_dir_entry(29, 1, "libneodos.nxl")
-            image[offset:offset+256] = entry_lib
-            entry_math = create_dir_entry(30, 1, "libmath.nxl")
-            image[offset+256:offset+512] = entry_math
-            entry_cpuinfo = create_dir_entry(31, 1, "cpuinfo.nxl")
-            image[offset+512:offset+768] = entry_cpuinfo
-
-        # Write BIN directory content (SYSTEM\BIN)
-        if bindir_blocks:
-            print("[*] Writing SYSTEM\\BIN directory...")
-            blk = bindir_blocks[0]
-            offset = (200 + blk * 8) * 512
-            entry_dirnxe = create_dir_entry(32, 1, "DIR.NXE")
-            image[offset:offset+256] = entry_dirnxe
-            entry_cpuinfo = create_dir_entry(13, 1, "CPUINFO.NXE")
-            image[offset+256:offset+512] = entry_cpuinfo
-            entry_help = create_dir_entry(33, 1, "HELP.NXE")
-            image[offset+512:offset+768] = entry_help
-
-        # Write root-level \BIN directory content
-        if rootbindir_blocks:
-            print("[*] Writing \\BIN directory...")
-            blk = rootbindir_blocks[0]
-            offset = (200 + blk * 8) * 512
-            entry_dirnxe = create_dir_entry(32, 1, "DIR.NXE")
-            image[offset:offset+256] = entry_dirnxe
-            entry_cpuinfo = create_dir_entry(13, 1, "CPUINFO.NXE")
-            image[offset+256:offset+512] = entry_cpuinfo
-
-        # Write libneodos.nxl data blocks
-        if nxl_data:
-            blks = block_allocs.get(29, [])
-            print(f"[*] Writing libneodos.nxl ({len(nxl_data)} bytes across {len(blks)} blocks)...")
-            for bi, blk in enumerate(blks):
-                chunk = nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                offset = (200 + blk * 8) * 512
-                image[offset:offset+len(chunk)] = chunk
-
-        # Write libmath.nxl data blocks
-        if math_nxl_data:
-            blks = block_allocs.get(30, [])
-            print(f"[*] Writing libmath.nxl ({len(math_nxl_data)} bytes across {len(blks)} blocks)...")
-            for bi, blk in enumerate(blks):
-                chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                offset = (200 + blk * 8) * 512
-                image[offset:offset+len(chunk)] = chunk
-
-        # Write cpuinfo.nxl data blocks
-        if cpuinfo_nxl_data:
-            blks = block_allocs.get(31, [])
-            print(f"[*] Writing cpuinfo.nxl ({len(cpuinfo_nxl_data)} bytes across {len(blks)} blocks)...")
-            for bi, blk in enumerate(blks):
-                chunk = cpuinfo_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                offset = (200 + blk * 8) * 512
-                image[offset:offset+len(chunk)] = chunk
     
     # Escribir imagen a disco
     output_file = args.output

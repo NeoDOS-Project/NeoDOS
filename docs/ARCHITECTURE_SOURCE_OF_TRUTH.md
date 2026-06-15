@@ -92,8 +92,8 @@ PHASE 3.5   Block cache init, NeoFS mount
 PHASE 3.7   RamDisk init
 PHASE 3.8   VFS init, working directory
 PHASE 3.80  Driver isolation region init (0x30000000)
-PHASE 3.85  Boot driver loader (BOOT → SYSTEM, dependency-sorted)
-PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\SYSTEM\NEOINIT.NXE`
+PHASE 3.85  Boot driver loader (from C:\System\Drivers, dependency-sorted)
+PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\NeoInit.nxe`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -417,10 +417,10 @@ and `device_id`.
 
 ### 10.1 Startup Contract
 
-**Rule 10.1.1**: NeoInit is loaded from `C:\SYSTEM\NEOINIT.NXE` at Phase 4.
+**Rule 10.1.1**: NeoInit is loaded from `C:\Programs\NeoInit.nxe` at Phase 4.
 **Rule 10.1.2**: NeoInit is the only process that starts at boot. All other user processes
 are descendants of NeoInit.
-**Rule 10.1.3**: NeoInit receives argv `["/SYSTEM/NEOINIT.NXE"]` and inherits fds 0/1/2
+**Rule 10.1.3**: NeoInit receives argv `["/Programs/NeoInit.nxe"]` and inherits fds 0/1/2
 pointing to the kernel console.
 
 ### 10.2 Privileges

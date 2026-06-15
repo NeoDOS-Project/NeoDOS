@@ -197,7 +197,7 @@ userbin/neoshell/
 
 ```
 _start:
-  1. init env: PATH="\\BIN;\\SYSTEM", PROMPT="$P$G"
+   1. init env: PATH="\\Programs", PROMPT="$P$G"
   2. print banner
   3. loop:
      a. print prompt (env PWD style o $P$G)
@@ -260,7 +260,7 @@ pub struct LineEditor {
 
 ```rust
 pub fn resolve_command(cmd: &str) -> Result<String, ()> {
-    let path = env::get("PATH").unwrap_or("\\BIN;\\SYSTEM");
+    let path = env::get("PATH").unwrap_or("\\Programs");
     for dir in path.split(';') {
         let full = format!("{}\\{}.NXE", dir, cmd);
         // Try opening to check existence
@@ -293,7 +293,7 @@ pub struct Environment {
 impl Environment {
     pub fn init() -> Self {
         let mut env = Self::new();
-        env.set("PATH", "\\BIN;\\SYSTEM");
+        env.set("PATH", "\\Programs");
         env.set("PROMPT", "$P$G");
         env.set("SYSTEMDRIVE", "C");
         env

@@ -78,7 +78,7 @@
 41. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot y liberan kernel stack.
 42. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock, inode table, directory tree validation + repair. 6 tests.
 43. **BDL1. NEM v2 ABI fields** — NEM v2 48-byte header with ABI validation fields, driver category, 16-byte name. 9 tests.
-44. **BDL2. Boot Driver Loader System** — auto scanning and loading of .nem drivers from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\`. 8 tests.
+44. **BDL2. Boot Driver Loader System** — auto scanning and loading of .nem drivers from `C:\System\Drivers\`. 8 tests.
 45. **BDL3. Driver Instance extended** — `DriverCategory`, ABI fields in `DriverInstance`. `register_ext()`.
 46. **BDL4. ABI Validation Policy** — validate_abi() checks ABI compatibility window. Boot/System require v2 format.
 47. **BDL5. Rust reference .nem drivers** — PS/2 keyboard, framebuffer, storage reference implementations. 32 tests.
@@ -312,7 +312,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 2. **A4.7**: Construir neoshell como .NXE que usa las nuevas syscalls.
 3. Crear `userbin/neoinit/` — supervisor mínimo (spawn, wait, respawn hijos).
 4. Crear coretools (`userbin/coredir/`, `userbin/coretype/`, etc.) como .NXE independientes.
-5. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.NXE`, no `DosShell::run()`.
+5. PHASE 4: kernel carga `C:\Programs\NeoInit.nxe`, no `DosShell::run()`.
 6. NeoInit lanza neoshell como hijo; kernel entra idle loop (HLT + work queue + event bus).
 
 - [x] **A4.6. Syscalls para shell Ring 3** | NT: CSRSS, SSDT | Prereqs: A4.2, A4.3
@@ -569,7 +569,7 @@ Prereqs: A4.1 (userland no hardcodea `C:`).
       2. Parse NeoDOS superblock en Partition1 → crear `\Device\HarddiskVolume0` symlink → Partition1
       3. Mount NeoFS: `vfs_mount("\Device\HarddiskVolume0", &NeoDosFs)` → registra mount point
       4. Create symlink `\DosDevices\C:` → `\Device\HarddiskVolume0`
-    - **Path resolution (VFS lookup):** `vfs_open("\DosDevices\C:\SYSTEM\NEOINIT.NXE")` →
+    - **Path resolution (VFS lookup):** `vfs_open("\DosDevices\C:\Programs\NeoInit.nxe")` →
       1. Ob lookup `\DosDevices\C:` → symlink → `\Device\HarddiskVolume0`
       2. Lookup `\Device\HarddiskVolume0` → mount point object
       3. VFS decompose path: mount = "/", rest = "SYSTEM/NEOINIT.NXE"

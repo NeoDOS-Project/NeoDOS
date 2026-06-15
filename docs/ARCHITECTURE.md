@@ -380,9 +380,9 @@ See `AGENTS.md` for the complete flag table and implementation details.
 Automatic NEM v3 driver loading orchestrator at system startup (PHASE 3.85 in `main.rs`).
 
 **Load order:**
-1. **BOOT drivers** — scanned from `C:\SYSTEM\DRIVERS\BOOT\` (essential for init)
-2. **SYSTEM drivers** — scanned from `C:\SYSTEM\DRIVERS\SYSTEM\` (standard extensions)
+1. **BOOT drivers** — scanned from `C:\System\Drivers\` (essential for init)
 
+2. **SYSTEM drivers** — scanned from `C:\System\Drivers\` (standard extensions)
 If any BOOT driver fails, boot continues (no panic) and the driver is marked FAULTED.
 
 **API:**
@@ -449,7 +449,7 @@ Shared library (NXL) loading subsystem for user-mode processes.
 
 **sys_loadlib (RAX=21)**: Loads a NeoDOS NXL from NeoFS into the next free slot. Returns base address. The NXL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
 
-**Shell command**: `LOADLIB C:\SYSTEM\LIB\LIBMATH.NXL` loads libmath into slot 1.
+**Shell command**: `LOADLIB C:\System\Libraries\fs.nxl` loads a shared library (e.g., `LOADLIB C:\System\Libraries\math.nxl` for the math library).
 
 **libneodos wrapper**: `libneodos::loadlib(path)` invokes `sys_loadlib` and returns the NXL base address for user-mode `extern "C"` function dispatch.
 
@@ -518,7 +518,7 @@ The kernel testing framework includes **386 tests** (39 suites) with suites dedi
 | DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
 | APC | 5 | APC engine: kernel dispatch, alertable wait, queue overflow, IRP→APC completion, stress 100 concurrent IRPs |
 
-Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`HELLO.NXE`, `SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `CPUTEST.NXE`, `TEST.NXE`, `C:\SYSTEM\BIN\CPUINFO.NXE`, `C:\SYSTEM\BIN\DIR.NXE`).
+Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`C:\Programs\hello.nxe`, `C:\Programs\systest.nxe`, `C:\Programs\filetest.nxe`, `C:\Programs\alltest.nxe`, `C:\Programs\cputest.nxe`, `C:\Programs\test.nxe`, `C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`).
 
 ---
 

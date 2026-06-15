@@ -93,7 +93,7 @@ pub enum VfsError {
 Resolves a full path and returns drive index + file metadata.
 
 **Parameters**:
-- `path`: Full path like `"C:\\SYSTEM\\CONFIG.SYS"`
+- `path`: Full path like `"C:\\System\\Config\\system.cfg"`
 
 **Returns**: 
 - `Ok((drive_idx, VfsNode))` - drive index (0-25) and file metadata
@@ -347,7 +347,7 @@ match result {
 ### Pattern 3: List Directory
 ```rust
 crate::globals::with_vfs(|vfs| {
-    let (drive_idx, dir_node) = vfs.resolve_path("C:\\SYSTEM")?;
+    let (drive_idx, dir_node) = vfs.resolve_path("C:\\System")?;
     
     let mut index = 0;
     while let Ok(Some(entry)) = vfs.readdir(drive_idx, dir_node.inode, index) {

@@ -121,7 +121,7 @@ def build_server(root_dir: str):
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Directory path (e.g. \\ or \\SYSTEM\\DRIVERS)",
+                    "description": "Directory path (e.g. \\ or \\System\\Drivers)",
                     "default": "\\",
                 },
                 "drive": {
@@ -475,7 +475,7 @@ def build_server(root_dir: str):
         arguments=[
             {
                 "name": "path",
-                "description": "Path to trace (e.g. \\SYSTEM\\DRIVERS\\BOOT\\PS2KBD.NEM)",
+                "description": "Path to trace (e.g. \\System\\Drivers\\keyboard.nem)",
                 "required": True,
                 "type": "string",
             }

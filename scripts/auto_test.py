@@ -275,7 +275,7 @@ def run_test():
         
         # Check user-mode tests
         user_tests_found = 0
-        user_bins = ["HELLO.NXE", "SYSTEST.NXE", "FILETEST.NXE", "ALLTEST.NXE", "CPUTEST.NXE", "TEST.NXE", "CPUINFO.NXE", "DIR.NXE"]
+        user_bins = ["hello.nxe", "systest.nxe", "filetest.nxe", "alltest.nxe", "cputest.nxe", "test.nxe", "cpuinfo.nxe", "dir.nxe"]
         for ut in user_bins:
             if f"--- Running" in full_text and ut in full_text:
                 user_tests_found += 1

@@ -9,7 +9,7 @@ impl DosShell {
             println!("  The NXL is loaded into a free slot in the DLL region");
             println!("  and its export table becomes accessible at the slot base address.");
             println!();
-            println!("  LOADLIB C:\\SYSTEM\\LIB\\LIBMATH.NXL");
+            println!("  LOADLIB C:\\System\\Libraries\\math.nxl");
             return;
         }
 

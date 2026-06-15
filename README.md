@@ -101,7 +101,7 @@ neodos/
 ### Driver Framework
 - **NEM v3 Format** — NeoDOS Driver Model: 80-byte header with 4 sections (text/rodata/data/bss), relocation entries, symbol table, string table, ABI validation, categories (Boot/System/Demand)
 - **Certification Pipeline** — 7-state lifecycle: Loaded → Initialized → Registered → Bound → Active → Faulted/Unloaded
-- **Boot Driver Loader** — automatic loading from `C:\SYSTEM\DRIVERS\BOOT\` and `C:\SYSTEM\DRIVERS\SYSTEM\`
+- **Boot Driver Loader** — automatic loading from `C:\System\Drivers\`
 - **PS/2 Keyboard Driver** (NEM v3) — layout switching (US/SP), compose keys, Event Bus integration
 - **Serial Driver** (NEM v3) — COM1 IRQ4, Event Bus serial data, loopback
 - **Reference Drivers** — storage, framebuffer, PS/2 keyboard (for validation)

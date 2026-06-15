@@ -8,7 +8,7 @@ use libneodos::syscall;
 pub extern "C" fn _start() -> ! {
     println!("=== NeoDOS File I/O Test ===");
 
-    match syscall::sys_open("C:\\readme.txt") {
+    match syscall::sys_open("C:\\Data\\filetest.txt") {
         Ok(fd) => {
             let data = b"Hola FILETEST!";
             let _ = syscall::sys_writefile(fd, data);

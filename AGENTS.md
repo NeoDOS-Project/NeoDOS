@@ -171,6 +171,63 @@ Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, p
 - **Port reset**: ciclo DET vía SCTL para recuperación de errores
 - **PRDT**: hasta 8 entradas scatter-gather
 
+## Directory Structure (NeoDOS FS)
+
+The NeoDOS filesystem uses the following directory layout:
+
+```
+/
+├─ System/
+│   ├─ Kernel/
+│   │   ├─ boot.cfg      # Boot configuration
+│   │   └─ neodos.krn    # Kernel image (reference)
+│   │
+│   ├─ Drivers/
+│   │   ├─ keyboard.nem  # PS/2 keyboard driver
+│   │   ├─ serial.nem    # Serial port driver
+│   │   ├─ rtc.nem       # RTC driver
+│   │   ├─ acpi.nem      # ACPI driver
+│   │   ├─ pci.nem       # PCI enumerator
+│   │   ├─ disk.nem      # ATA disk driver
+│   │   └─ ahci.nem      # AHCI disk driver
+│   │
+│   ├─ Libraries/
+│   │   ├─ fs.nxl        # Filesystem library (libneodos)
+│   │   ├─ io.nxl        # I/O library (libneodos)
+│   │   ├─ process.nxl   # Process library (libneodos)
+│   │   ├─ cpuinfo.nxl   # CPU info library
+│   │   └─ math.nxl      # Math library (libmath)
+│   │
+│   ├─ Layouts/
+│   │   ├─ es-ES.nkb     # Spanish keyboard layout
+│   │   └─ en-US.nkb     # US English keyboard layout
+│   │
+│   └─ Config/
+│       ├─ system.cfg    # System configuration
+│       └─ input.cfg     # Input configuration
+│
+├─ Programs/
+│   ├─ NeoShell.nxe      # Ring 3 shell
+│   ├─ NeoInit.nxe       # PID 1 init process
+│   ├─ cpuinfo.nxe       # CPU info tool
+│   ├─ dir.nxe           # Directory listing
+│   ├─ help.nxe          # Help system
+│   ├─ hello.nxe         # Hello world test
+│   ├─ systest.nxe       # Syscall test
+│   ├─ filetest.nxe      # File I/O test
+│   ├─ alltest.nxe       # Comprehensive test
+│   ├─ cputest.nxe       # CPU stress test
+│   └─ test.nxe          # libmath self-test
+│
+├─ Packages/             # Package files (.NXP)
+├─ Users/
+│   ├─ Default/          # Default user profile
+│   └─ Alejandro/        # User directories
+├─ Temp/                 # Temporary files
+├─ Data/                 # User data
+└─ Logs/                 # System logs
+```
+
 ## Un disco GPT unificado
 
 El sistema usa una **sola imagen de disco con tabla GPT** que contiene dos particiones:
@@ -290,7 +347,7 @@ Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_
 El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
 - **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.NXE` del PATH
 - **Argumentos**: completa nombres de archivo/directorio desde el directorio actual
-- **Rutas**: soporta rutas con separador (`DIR \\BIN\\TE` → `\\BIN\\TEST`)
+- **Rutas**: soporta rutas con separador (`DIR \\Programs\\Te` → `\\Programs\\TEST`)
 - Match único: reemplaza y añade espacio (comandos)
 - Múltiples matches: lista todos y redibuja prompt + línea
 
@@ -351,7 +408,7 @@ El DLL se carga en la región `0x1e000000..0x1e200000` (8 slots de 256 KB cada u
 
 DLLs disponibles:
 - `libneodos.nxl` — Librería estándar (slot 0, `0x1e000000`), cargada automáticamente en boot
-- `libmath.nxl` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\SYSTEM\LIB\LIBMATH.NXL`
+- `libmath.nxl` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\System\Libraries\math.nxl`
 
 Para usar desde user-mode: llamar a `libneodos::loadlib(path)` que invoca `sys_loadlib` (RAX=21) y devuelve la dirección base del DLL.
 
@@ -985,8 +1042,8 @@ All other addresses are rejected.
 
 ### Boot Order
 
-1. **BOOT drivers** — scanned from `C:\SYSTEM\DRIVERS\BOOT\` (required for system init)
-2. **SYSTEM drivers** — scanned from `C:\SYSTEM\DRIVERS\SYSTEM\` (standard kernel extension)
+1. **BOOT drivers** — scanned from `C:\System\Drivers\` (required for system init)
+2. **SYSTEM drivers** — scanned from `C:\System\Drivers\` (standard kernel extension)
 
 Within each category, drivers are **dependency-sorted**: the boot loader scans `.nem` files, extracts `__dep_` symbol dependencies, builds a `DependencyGraph`, and loads drivers in topological order (dependencies before dependents).
 
