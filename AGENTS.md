@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.35.0
+v0.37.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 386 kernel tests + 7 user-mode binaries
+2. `python3 scripts/auto_test.py` — 392 kernel tests + 7 user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -64,7 +64,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 25 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 33 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -376,9 +376,10 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de fd (0=stdin, pipe reader); bloquea con -EAGAIN |
 | 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr |
 | 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) |
-| 7 | `sys_spawn` | RBX=path_ptr | Carga y ejecuta un binario ELF64 desde NeoFS. Save/restore del proceso llamante (NeoInit). Retorna PID del hijo |
+| 7 | `sys_spawn` | RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd | Carga y ejecuta un binario ELF64 desde NeoFS. stdfd=0xFF hereda. Retorna PID del hijo |
+| 8 | `sys_readdir` | RBX=fd, RCX=buf_ptr | Lee entrada de directorio del handle fd; retorna 1 si hay entrada, 0 si fin |
 | 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo |
-| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle index 0-15) |
+| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle); directorios → HANDLE_DIR |
 | 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle) |
 | 12 | `sys_writefile` | RBX=fd, RCX=buf, RDX=count | Escribe a archivo (usa offset del handle) |
 | 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) |
@@ -391,6 +392,10 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
 | 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
 | 24 | `sys_getcpuinfo` | RBX=buf_ptr, RCX=buf_size | Copia CpuInfoFull al buffer de usuario (CPUID + SMP + timers) |
+| 25 | `sys_mkdir` | RBX=path_ptr | Crea directorio via VFS |
+| 26 | `sys_unlink` | RBX=path_ptr | Elimina archivo via VFS |
+| 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
+| 28 | `sys_rename` | RBX=old_path, RCX=new_path | Renombra archivo/directorio via VFS |
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
 | 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
@@ -409,7 +414,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 
 ### Per-EPROCESS Handle Table
 - `Eprocess.handle_table: HandleTable` — `Vec<HandleEntry>`-backed, grows dynamically, unlimited capacity
-- `HandleEntry` types: `Closed`, `Stdin`, `Stdout`, `Stderr`, `PipeReader(id)`, `PipeWriter(id)`, `File(drive, inode, offset)`, `Device(id)`, `Event(type)`
+- `HandleEntry` types: `Closed`, `Stdin`, `Stdout`, `Stderr`, `PipeReader(id)`, `PipeWriter(id)`, `File(drive, inode, offset)`, `Device(id)`, `Event(type)`, `Dir(drive, inode)`
 - File handles carry a per-open `offset` cursor for independent read/write positioning
 - fd 0 = stdin (keyboard), fd 1 = stdout (console), fd 2 = stderr (console)
 - fds 3+ available for pipes/files/devices/events (unlimited, grows dynamically)
@@ -516,7 +521,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
 | `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~15 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, DIR, POWEROFF, EXIT |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT; TAB completion; PATH dispatch for external .NXE commands; history (32); drive change |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
@@ -571,7 +576,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-386 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+392 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -612,11 +617,14 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 | Per-CPU (KPRCB) | 5 | KPRCB size, slab cache count, run queue ops, init, offset sanity |
+| Syscall | 11 | SSDT dispatch, permissions, A4.6 spawn/readdir/mkdir/unlink/rmdir/rename |
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (371 tests kernel)
-2. Si pasan, ejecuta `run SYSTEST.NXE`, `run FILETEST.NXE`, `run ALLTEST.NXE`, `run CPUTEST.NXE`, `run TEST.NXE` (user-mode)
+1. Ejecuta `testing::run_all()` (392 tests kernel)
+2. Si pasan, ejecuta `run SYSTEST.NXE`, `run FILETEST.NXE`, `run ALLTEST.NXE`, `run CPUTEST.NXE`, `run TEST.NXE`, `run CPUINFO.NXE` (user-mode)
+
+La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.
 
 ## SMP & Per-CPU Architecture (A1)
 

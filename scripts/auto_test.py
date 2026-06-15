@@ -177,15 +177,27 @@ def run_test():
                                     elif state == "waiting_prompt":
                                         waiting_lines += 1
                                         print(f"[WAIT] line #{waiting_lines}: {clean[:80]}")
-                                        if waiting_lines >= 4 and not test_sent:
-                                            print(f"[+] Shell ready, sending 'test' via sendkey...")
-                                            sys.stdout.flush()
-                                            if monitor_sock:
-                                                send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
-                                                test_sent = True
-                                                state = "waiting_response"
-                                                waiting_start = time.time()
-                                                print("[+] 'test' command sent!")
+                                        is_neoshell = "neoshell" in clean.lower() or "[ns]" in clean
+                                        has_prompt = "C:\\>" in clean
+                                        if has_prompt and not test_sent:
+                                            if is_neoshell:
+                                                print(f"[+] Neoshell detected, sending 'exit' to reach kernel shell...")
+                                                sys.stdout.flush()
+                                                if monitor_sock:
+                                                    send_keys(monitor_sock, ["e", "x", "i", "t", "ret"])
+                                                    time.sleep(1.0)
+                                                    state = "booting"
+                                                    test_sent = False
+                                                    waiting_start = time.time()
+                                            else:
+                                                print(f"[+] Kernel shell ready, sending 'test' via sendkey...")
+                                                sys.stdout.flush()
+                                                if monitor_sock:
+                                                    send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
+                                                    test_sent = True
+                                                    state = "waiting_response"
+                                                    waiting_start = time.time()
+                                                    print("[+] 'test' command sent!")
                                     elif state == "waiting_response":
                                         if "Running" in clean and "self-tests" in clean:
                                             print(f"\n[+] TEST EXECUTED!")
@@ -202,9 +214,9 @@ def run_test():
             except Exception as e:
                 pass
             
-            # Monitor timeout fallback
+            # Monitor timeout fallback: send 'test' directly (already in kernel shell)
             if monitor_sock and state == "waiting_prompt" and time.time() - waiting_start > 10 and not test_sent:
-                print("[*] Timeout: sending 'test' via sendkey...")
+                print("[*] Prompt timeout: sending 'test' via sendkey...")
                 sys.stdout.flush()
                 send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
                 test_sent = True

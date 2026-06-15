@@ -536,7 +536,7 @@ impl NeoDosFs {
                     
                     let mut entry_name = [0u8; 256];
                     let copy_len = name_len.min(255);
-                    entry_name[..copy_len].copy_from_slice(&sector_data[entry_off + 6..entry_off + 6 + copy_len]);
+                    entry_name[..copy_len].copy_from_slice(&sector_data[entry_off + 7..entry_off + 7 + copy_len]);
                     
                     if core::str::from_utf8(&entry_name[..copy_len])
                         .map(|s| s.eq_ignore_ascii_case(dirname))
@@ -1005,13 +1005,13 @@ impl NeoDosFs {
                     
                     let mut entry_name = [0u8; 256];
                     let copy_len = name_len.min(255);
-                    entry_name[..copy_len].copy_from_slice(&sector_data[entry_off + 6..entry_off + 6 + copy_len]);
+                    entry_name[..copy_len].copy_from_slice(&sector_data[entry_off + 7..entry_off + 7 + copy_len]);
                     
                     if core::str::from_utf8(&entry_name[..copy_len]).map(|s| s.eq_ignore_ascii_case(old_name)).unwrap_or(false) {
                         let new_len = new_name.len().min(255);
                         sector_data[entry_off + 4] = new_len as u8;
-                        sector_data[entry_off + 6..entry_off + 6 + new_len].copy_from_slice(new_name.as_bytes());
-                        for i in (entry_off + 6 + new_len)..(entry_off + 256) {
+                        sector_data[entry_off + 7..entry_off + 7 + new_len].copy_from_slice(new_name.as_bytes());
+                        for i in (entry_off + 7 + new_len)..(entry_off + 256) {
                             sector_data[i] = 0x20;
                         }
                         cache.mark_dirty(sector_lba);

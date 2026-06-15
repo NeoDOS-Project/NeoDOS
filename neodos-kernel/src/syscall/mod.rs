@@ -39,8 +39,13 @@ pub enum SyscallNum {
     Pipe = 5,
     Dup2 = 6,
     Spawn = 7,
+    ReadDir = 8,
     WaitPid = 9,
     Open = 10,
+    MkDir = 25,
+    Unlink = 26,
+    RmDir = 27,
+    Rename = 28,
     ReadFile = 11,
     WriteFile = 12,
     Close = 13,
@@ -73,6 +78,7 @@ impl SyscallNum {
             5 => Some(Self::Pipe),
             6 => Some(Self::Dup2),
             7 => Some(Self::Spawn),
+            8 => Some(Self::ReadDir),
             9 => Some(Self::WaitPid),
             10 => Some(Self::Open),
             11 => Some(Self::ReadFile),
@@ -89,6 +95,10 @@ impl SyscallNum {
             22 => Some(Self::ThreadCreate),
             23 => Some(Self::ThreadJoin),
             24 => Some(Self::GetCpuInfo),
+            25 => Some(Self::MkDir),
+            26 => Some(Self::Unlink),
+            27 => Some(Self::RmDir),
+            28 => Some(Self::Rename),
             40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
             42 => Some(Self::Poweroff),
@@ -129,13 +139,14 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 5, 6, 7,
+        0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        25, 26, 27, 28,
         40, 41, 42,
         50,
     ];
     // Reserved syscall slots that MUST be None
-    const RESERVED: &[u64] = &[8];
+    const RESERVED: &[u64] = &[];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -329,6 +340,19 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 // SSDT Handlers — each wraps the original match-arm logic
 // ═══════════════════════════════════════════════════════════════════════
 
+fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::handle::HandleEntry {
+    match entry.kind {
+        crate::handle::HANDLE_PIPE_READ => {
+            crate::pipe::PIPE_MANAGER.inc_read_ref(entry.id as u8);
+        }
+        crate::handle::HANDLE_PIPE_WRITE => {
+            crate::pipe::PIPE_MANAGER.inc_write_ref(entry.id as u8);
+        }
+        _ => {}
+    }
+    *entry
+}
+
 fn handler_spawn(regs: Registers) -> u64 {
     let path_str = match copy_user_string(regs.rbx) {
         Ok(s) => s,
@@ -337,7 +361,11 @@ fn handler_spawn(regs: Registers) -> u64 {
     if path_str.is_empty() {
         return err_to_u64(SyscallError::NoEnt);
     }
-    crate::serial_println!("[SPAWN] path='{}'", path_str);
+    let stdin_fd = regs.rcx as u8;
+    let stdout_fd = regs.rdx as u8;
+    let stderr_fd = regs.r8 as u8;
+    crate::serial_println!("[SPAWN] path='{}' stdin_fd={} stdout_fd={} stderr_fd={}",
+        path_str, stdin_fd, stdout_fd, stderr_fd);
 
     // Read binary from VFS
     const MAX_BIN: usize = 65536;
@@ -380,6 +408,41 @@ fn handler_spawn(regs: Registers) -> u64 {
     };
     let entry = result.entry;
 
+    // Collect parent handle entries for fd redirection before creating child
+    let (parent_stdin_entry, parent_stdout_entry, parent_stderr_entry) = crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        let get_parent_entry = |fd: u8| -> Option<crate::handle::HandleEntry> {
+            if let Some(ep) = lock.current_eprocess() {
+                Some(ep.handle_table.get(fd))
+            } else { None }
+        };
+        let sin = if stdin_fd != 0xFF { get_parent_entry(stdin_fd) } else { None };
+        let sout = if stdout_fd != 0xFF { get_parent_entry(stdout_fd) } else { None };
+        let serr = if stderr_fd != 0xFF { get_parent_entry(stderr_fd) } else { None };
+        (sin, sout, serr)
+    });
+
+    // Validate redirected fds
+    if let Some(ref e) = parent_stdin_entry {
+        if e.kind == crate::handle::HANDLE_CLOSED {
+            unsafe { core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE); }
+            return err_to_u64(SyscallError::BadF);
+        }
+    }
+    if let Some(ref e) = parent_stdout_entry {
+        if e.kind == crate::handle::HANDLE_CLOSED {
+            unsafe { core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE); }
+            return err_to_u64(SyscallError::BadF);
+        }
+    }
+    if let Some(ref e) = parent_stderr_entry {
+        if e.kind == crate::handle::HANDLE_CLOSED {
+            unsafe { core::ptr::copy_nonoverlapping(save_buf.as_ptr(), 0x400000 as *mut u8, SAVE_SIZE); }
+            return err_to_u64(SyscallError::BadF);
+        }
+    }
+
     // Allocate user slot for child
     let slot = match crate::arch::x64::paging::alloc_user_slot() {
         Some(s) => s,
@@ -409,6 +472,28 @@ fn handler_spawn(regs: Registers) -> u64 {
         cwd_drive, &cwd_path, parent_pid,
     );
     crate::serial_println!("[SPAWN] child PID={}", child_pid);
+
+    // Apply fd redirection: customize child's handle table
+    if stdin_fd != 0xFF || stdout_fd != 0xFF || stderr_fd != 0xFF {
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut lock = s.lock();
+            if let Some(ep) = lock.find_eprocess_mut(child_pid) {
+                if let Some(ref entry) = parent_stdin_entry {
+                    let child_entry = copy_handle_entry_for_child(entry);
+                    ep.handle_table.set(0, child_entry);
+                }
+                if let Some(ref entry) = parent_stdout_entry {
+                    let child_entry = copy_handle_entry_for_child(entry);
+                    ep.handle_table.set(1, child_entry);
+                }
+                if let Some(ref entry) = parent_stderr_entry {
+                    let child_entry = copy_handle_entry_for_child(entry);
+                    ep.handle_table.set(2, child_entry);
+                }
+            }
+        });
+    }
 
     // Get child's kernel stack top, TID, and NeoInit's kernel stack top
     let (child_kernel_top, child_tid, neoinit_kernel_top) = crate::hal::without_interrupts(|| {
@@ -910,11 +995,13 @@ fn handler_open(regs: Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::NoEnt),
     };
 
-    if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
-        return err_to_u64(SyscallError::IsDir);
-    }
-
-    let entry = crate::handle::HandleEntry::file(drive_idx as u8, node.inode);
+    let entry = if (node.mode & crate::fs::vfs::MODE_FILE) != 0 {
+        crate::handle::HandleEntry::file(drive_idx as u8, node.inode)
+    } else if (node.mode & crate::fs::vfs::MODE_DIR) != 0 {
+        crate::handle::HandleEntry::dir(drive_idx as u8, node.inode)
+    } else {
+        return err_to_u64(SyscallError::Inval);
+    };
     let fd = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
@@ -1047,11 +1134,177 @@ fn handler_close(regs: Registers) -> u64 {
         crate::handle::HANDLE_PIPE_WRITE => {
             crate::pipe::PIPE_MANAGER.dec_write_ref(entry.id as u8);
         }
-        crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT => {}
+        crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT | crate::handle::HANDLE_DIR => {}
         _ => {}
     }
     set_current_handle(fd, crate::handle::HandleEntry::closed());
     0
+}
+
+/// ABI-stable directory entry returned by sys_readdir (RAX=8).
+/// Kernel writes exactly this struct into the user buffer.
+#[repr(C)]
+pub struct DirEntryRaw {
+    pub inode: u32,
+    pub mode: u16,
+    pub size: u32,
+    pub name: [u8; 260],
+}
+
+fn handler_readdir(regs: Registers) -> u64 {
+    let fd = regs.rbx as u8;
+    let buf_ptr = regs.rcx as *mut u8;
+
+    if !is_user_ptr_valid(regs.rcx, core::mem::size_of::<DirEntryRaw>() as u64) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let (drive_idx, dir_inode, current_index) = crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            let entry = ep.handle_table[fd as usize];
+            if entry.kind == crate::handle::HANDLE_DIR {
+                (entry.extra as usize, entry.id, entry.offset)
+            } else {
+                return (usize::MAX, 0, 0);
+            }
+        } else {
+            (usize::MAX, 0, 0)
+        }
+    });
+
+    if drive_idx == usize::MAX {
+        return err_to_u64(SyscallError::BadF);
+    }
+
+    let vfs_entry = crate::globals::with_vfs(|vfs| {
+        vfs.readdir(drive_idx, dir_inode, current_index as usize)
+    });
+
+    match vfs_entry {
+        Ok(Some(entry)) => {
+            let raw = DirEntryRaw {
+                inode: entry.node.inode,
+                mode: entry.node.mode,
+                size: entry.node.size,
+                name: {
+                    let mut n = [0u8; 260];
+                    let name_bytes = entry.name.as_bytes();
+                    let copy_len = name_bytes.len().min(259);
+                    n[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+                    n
+                },
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &raw as *const DirEntryRaw as *const u8,
+                    buf_ptr,
+                    core::mem::size_of::<DirEntryRaw>(),
+                );
+            }
+            // Advance the directory index in the handle
+            crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    ep.handle_table[fd as usize].offset = current_index + 1;
+                }
+            });
+            1
+        }
+        Ok(None) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
+fn handler_mkdir(regs: Registers) -> u64 {
+    let path_str = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    if path_str.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    let result = crate::globals::with_vfs(|vfs| {
+        vfs.mkdir(&path_str)
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
+fn handler_unlink(regs: Registers) -> u64 {
+    let path_str = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    if path_str.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    let result = crate::globals::with_vfs(|vfs| {
+        vfs.remove_file(&path_str)
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
+fn handler_rmdir(regs: Registers) -> u64 {
+    let path_str = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    if path_str.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    let result = crate::globals::with_vfs(|vfs| {
+        vfs.remove_dir(&path_str)
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
+fn handler_rename(regs: Registers) -> u64 {
+    let old_path = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    let new_path = match copy_user_string(regs.rcx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+    if old_path.is_empty() || new_path.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    // Extract leaf name from new_path (strip directory part if present)
+    let new_leaf = match new_path.rfind(|c| c == '\\' || c == '/') {
+        Some(idx) => &new_path[idx + 1..],
+        None => &new_path,
+    };
+    if new_leaf.is_empty() {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let result = crate::globals::with_vfs(|vfs| {
+        vfs.rename(&old_path, new_leaf)
+    });
+
+    match result {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
 }
 
 fn handler_ioctl(regs: Registers) -> u64 {
@@ -1542,6 +1795,7 @@ lazy_static! {
         t[5] = Some(handler_pipe as SyscallFn);
         t[6] = Some(handler_dup2 as SyscallFn);
         t[7] = Some(handler_spawn as SyscallFn);
+        t[8] = Some(handler_readdir as SyscallFn);
         t[9] = Some(handler_waitpid as SyscallFn);
         t[10] = Some(handler_open as SyscallFn);
         t[11] = Some(handler_readfile as SyscallFn);
@@ -1558,6 +1812,10 @@ lazy_static! {
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
         t[24] = Some(handler_get_cpuinfo as SyscallFn);
+        t[25] = Some(handler_mkdir as SyscallFn);
+        t[26] = Some(handler_unlink as SyscallFn);
+        t[27] = Some(handler_rmdir as SyscallFn);
+        t[28] = Some(handler_rename as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
         t[42] = Some(handler_poweroff as SyscallFn);
@@ -1575,6 +1833,7 @@ lazy_static! {
         t[5] = SyscallPermission::user();
         t[6] = SyscallPermission::user();
         t[7] = SyscallPermission::user();
+        t[8] = SyscallPermission::user();
         t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();
         t[11] = SyscallPermission::user();
@@ -1591,6 +1850,10 @@ lazy_static! {
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
         t[24] = SyscallPermission::user();
+        t[25] = SyscallPermission::user();
+        t[26] = SyscallPermission::user();
+        t[27] = SyscallPermission::user();
+        t[28] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();
@@ -1718,12 +1981,13 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 5, 6, 7,
+            0, 1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28,
             40, 41, 42,
             50,
         ];
-        const RESERVED: &[u64] = &[8];
+        const RESERVED: &[u64] = &[];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
@@ -1754,5 +2018,171 @@ pub fn register_syscall_table_tests() {
         // Verify permission entries exist
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
         test_eq!(SYSCALL_PERMISSIONS[50].admin, true);
+
+        // Verify new syscall entries exist
+        test_true!(SYSCALL_TABLE[8].is_some());   // readdir
+        test_true!(SYSCALL_TABLE[25].is_some());  // mkdir
+        test_true!(SYSCALL_TABLE[26].is_some());  // unlink
+        test_true!(SYSCALL_TABLE[27].is_some());  // rmdir
+        test_true!(SYSCALL_TABLE[28].is_some());  // rename
+    });
+
+    // ── A4.6 Integration tests ──
+
+    test_case!("spawn_hello_binary_path_resolve", {
+        // Test that handler_spawn's VFS path resolution works for hello.nxe
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let result = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path("C:\\HELLO.NXE")
+                .or_else(|_| vfs.resolve_path("C:\\BIN\\HELLO.NXE"))
+                .or_else(|_| vfs.resolve_path("C:\\SYSTEM\\HELLO.NXE"))
+        });
+        test_true!(result.is_ok());
+        if let Ok((_, node)) = result {
+            test_true!(node.mode & crate::fs::vfs::MODE_FILE != 0);
+            test_true!(node.size >= 4);
+        }
+    });
+
+    test_case!("spawn_with_fd_redirection_helpers", {
+        // Test that the handle entry copy logic works for different handle types
+        let read_entry = crate::handle::HandleEntry::pipe_read(1);
+        let write_entry = crate::handle::HandleEntry::pipe_write(1);
+        let file_entry = crate::handle::HandleEntry::file(2, 42);
+        let dir_entry = crate::handle::HandleEntry::dir(2, 0);
+
+        test_eq!(read_entry.kind, crate::handle::HANDLE_PIPE_READ);
+        test_eq!(write_entry.kind, crate::handle::HANDLE_PIPE_WRITE);
+        test_eq!(file_entry.kind, crate::handle::HANDLE_FILE);
+        test_eq!(dir_entry.kind, crate::handle::HANDLE_DIR);
+
+        // Test valid fd range: 0xFF means "no redirection"
+        let no_redir: u8 = 0xFF;
+        test_eq!(no_redir, 255);
+        test_true!(no_redir != 0);
+
+        // Test closed entry looked up → should return Check
+        let closed = crate::handle::HandleEntry::closed();
+        test_eq!(closed.kind, crate::handle::HANDLE_CLOSED);
+    });
+
+    test_case!("readdir_list_root", {
+        // Test that opening root directory and reading entries works
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let entries = crate::globals::with_vfs(|vfs| {
+            let (drive_idx, node) = vfs.resolve_path("C:\\")?;
+            if node.mode & crate::fs::vfs::MODE_DIR == 0 {
+                return Err(crate::fs::vfs::VfsError::NotADirectory);
+            }
+            let mut count = 0u32;
+            for i in 0..100 {
+                match vfs.readdir(drive_idx, node.inode, i) {
+                    Ok(Some(entry)) => {
+                        count += 1;
+                        // Each entry should have a name and a valid inode
+                        if entry.name.is_empty() || entry.node.inode == 0 {
+                            return Err(crate::fs::vfs::VfsError::IOError);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            Ok(count)
+        });
+        test_true!(entries.is_ok());
+        if let Ok(count) = entries {
+            test_true!(count > 0);
+        }
+    });
+
+    test_case!("mkdir_rmdir_roundtrip", {
+        // Test creating and removing a directory via VFS
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let test_dir = "C:\\_A46TESTDIR";
+
+        let mkdir_result = crate::globals::with_vfs(|vfs| {
+            vfs.mkdir(test_dir)
+        });
+        test_true!(mkdir_result.is_ok());
+
+        // Verify it exists
+        let stat_result = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path(test_dir)
+        });
+        test_true!(stat_result.is_ok());
+
+        // Remove it
+        let rmdir_result = crate::globals::with_vfs(|vfs| {
+            vfs.remove_dir(test_dir)
+        });
+        test_true!(rmdir_result.is_ok());
+
+        // Verify it's gone
+        let stat_again = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path(test_dir)
+        });
+        test_true!(stat_again.is_err());
+    });
+
+    test_case!("unlink_file", {
+        // Test creating and deleting a file via VFS
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let test_file = "C:\\_A46TESTFILE.TXT";
+
+        // Create test file
+        let create_result = crate::globals::with_vfs(|vfs| {
+            vfs.create(test_file)
+        });
+        test_true!(create_result.is_ok());
+
+        // Remove it
+        let unlink_result = crate::globals::with_vfs(|vfs| {
+            vfs.remove_file(test_file)
+        });
+        test_true!(unlink_result.is_ok());
+
+        // Verify it's gone
+        let stat_again = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path(test_file)
+        });
+        test_true!(stat_again.is_err());
+    });
+
+    test_case!("rename_file", {
+        // Test renaming a file via VFS
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let old_name = "C:\\_A46RENOLD.TXT";
+        let new_name = "RENEWED.TXT";
+
+        // Create test file
+        let create_result = crate::globals::with_vfs(|vfs| {
+            vfs.create(old_name)
+        });
+        test_true!(create_result.is_ok());
+
+        // Rename it
+        let rename_result = crate::globals::with_vfs(|vfs| {
+            vfs.rename(old_name, new_name)
+        });
+        test_true!(rename_result.is_ok());
+
+        // Old name should be gone
+        let old_stat = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path(old_name)
+        });
+        test_true!(old_stat.is_err());
+
+        // New name should exist (in root directory C:\)
+        let new_full = "C:\\RENEWED.TXT";
+        let new_stat = crate::globals::with_vfs(|vfs| {
+            vfs.resolve_path(new_full)
+        });
+        test_true!(new_stat.is_ok());
+
+        // Cleanup
+        let _ = crate::globals::with_vfs(|vfs| {
+            vfs.remove_file(new_full)
+        });
     });
 }

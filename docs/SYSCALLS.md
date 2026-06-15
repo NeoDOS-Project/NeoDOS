@@ -62,6 +62,20 @@ Duplicates an existing file descriptor to a target slot (used for redirection).
 - **Arg1 (`RCX`)**: Target file descriptor number.
 - **Returns (`RAX`)**: `0` on success, or error code.
 
+### 7 — `sys_spawn`
+Loads a user-mode binary from the NeoDOS filesystem and executes it in a new child process. Supports file descriptor redirection via `stdin_fd`, `stdout_fd`, `stderr_fd` (pass `0xFF` to inherit the parent's fd).
+- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 file path (`*const u8`).
+- **Arg1 (`RCX`)**: Stdin fd to redirect (`u8`, `0xFF` = inherit).
+- **Arg2 (`RDX`)**: Stdout fd to redirect (`u8`, `0xFF` = inherit).
+- **Arg3 (`R8`)**: Stderr fd to redirect (`u8`, `0xFF` = inherit).
+- **Returns (`RAX`)**: PID of the child process on success, or error code.
+
+### 8 — `sys_readdir`
+Reads one directory entry from a HANDLE_DIR file descriptor. Returns a `DirEntryRaw` struct (inode, mode, size, name[260]) into the user buffer.
+- **Arg0 (`RBX`)**: Directory fd (`u8`) obtained from `sys_open`.
+- **Arg1 (`RCX`)**: Pointer to a `DirEntryRaw` output buffer (`*mut u8`).
+- **Returns (`RAX`)**: `1` if an entry was read, `0` if end of directory, or error code.
+
 ### 9 — `sys_waitpid`
 Blocks the calling process until the specified child process terminates.
 - **Arg0 (`RBX`)**: PID of the process to wait for (`u32`).
@@ -157,6 +171,27 @@ Copies a `CpuInfoFull` structure (CPUID vendor, brand, features, SMP topology, t
 - **Arg1 (`RCX`)**: Buffer size (`usize`).
 - **Returns (`RAX`)**: Number of bytes written, or error code.
 
+### 25 — `sys_mkdir`
+Creates a new directory via the Virtual File System (VFS).
+- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
+- **Returns (`RAX`)**: `0` on success, or error code.
+
+### 26 — `sys_unlink`
+Deletes a file via the Virtual File System (VFS). The file is removed from the directory tree and its data blocks are freed.
+- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
+- **Returns (`RAX`)**: `0` on success, or error code.
+
+### 27 — `sys_rmdir`
+Removes an empty directory via the Virtual File System (VFS).
+- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
+- **Returns (`RAX`)**: `0` on success, or error code.
+
+### 28 — `sys_rename`
+Renames a file or directory via the Virtual File System (VFS). The new name (leaf) is extracted from the second path argument.
+- **Arg0 (`RBX`)**: Pointer to the current path (`*const u8`).
+- **Arg1 (`RCX`)**: Pointer to the new path (leaf name extracted automatically) (`*const u8`).
+- **Returns (`RAX`)**: `0` on success, or error code.
+
 ### 40 — `sys_wait_alertable`
 Alertable wait. If a user APC is pending, dispatches it immediately and returns `APC_ALERTED` (1). Otherwise, blocks the calling thread in an alertable state — it can be woken by a queued APC.
 - **Args**: None.
@@ -166,6 +201,11 @@ Alertable wait. If a user APC is pending, dispatches it immediately and returns 
 Alertable yield. Yields the CPU, checking for pending APCs before and after the yield. If an APC was received, returns `APC_ALERTED` (1).
 - **Args**: None.
 - **Returns (`RAX`)**: `1` (`APC_ALERTED`) if an APC was delivered, `0` otherwise.
+
+### 42 — `sys_poweroff`
+Powers off the machine. Flushes caches, sends EVENT_SHUTDOWN, and attempts hardware poweroff via QEMU debug port, ACPI S5, and PS/2 reset.
+- **Args**: None.
+- **Returns (`RAX`)**: Does not return.
 
 ### 50 — `sys_ndreg`
 Admin-only syscall for NDREG operations (kernel driver registry). Requires admin token.

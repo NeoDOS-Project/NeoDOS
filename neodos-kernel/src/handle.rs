@@ -10,6 +10,7 @@ pub const HANDLE_PIPE_WRITE: u8 = 5;
 pub const HANDLE_FILE: u8 = 6;
 pub const HANDLE_DEVICE: u8 = 7;
 pub const HANDLE_EVENT: u8 = 8;
+pub const HANDLE_DIR: u8 = 9;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandleEntry {
@@ -54,6 +55,10 @@ impl HandleEntry {
 
     pub fn event(event_type: u32) -> Self {
         HandleEntry { kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
+    }
+
+    pub fn dir(drive: u8, inode: u32) -> Self {
+        HandleEntry { kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
     }
 }
 

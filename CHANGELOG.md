@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.37.0 — 2026-06-15
+
+### Added
+- **A4.7. neoshell (Ring 3 shell)** — Full-featured interactive shell running at Ring 3:
+  - Built-in commands: HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT
+  - DIR uses sys_open + sys_readdir to list directories with entry counts
+  - External command dispatch: scans PATH dirs (\\BIN;\\SYSTEM) for `CMD.NXE`, spawns via sys_spawn + sys_waitpid
+  - TAB completion: matches built-in commands (single match replaces word cleanly, multiple lists all)
+  - Command history: circular 32-entry buffer with ↑/↓ navigation
+  - Drive change: `C:`, `D:`, etc. via sys_chdir
+  - Environment variables: `SET` built-in with `SET VAR=VAL` and `SET VAR` display
+  - Prompt shows current working directory: `C:\> `
+
+### Changed
+- **neoshell binary** — Grew from ~15 KB to ~27 KB with all new features
+- **NeoInit spawn** — Fixed stdin_fd/stdout_fd/stderr_fd to use 0xFF (inherit) instead of 0 (explicit fd 0), allowing neoshell output to appear on console
+- **AGENTS.md** — Updated to v0.37.0
+
+## v0.36.0 — 2026-06-15
+
+### Added
+- **A4.6. Syscalls para shell Ring 3** — 6 new syscalls for Ring 3 shell FS/process operations:
+  - `sys_spawn (RAX=7)`: Now supports fd redirection (RBX=path, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd). `0xFF` = inherit default. Child handle table customized for redirected fds.
+  - `sys_readdir (RAX=8)`: Read directory entries from HANDLE_DIR handles. Returns `DirEntryRaw` struct (inode, mode, size, name[260]).
+  - `sys_mkdir (RAX=25)`: Create directory via VFS.
+  - `sys_unlink (RAX=26)`: Delete file via VFS.
+  - `sys_rmdir (RAX=27)`: Remove empty directory via VFS.
+  - `sys_rename (RAX=28)`: Rename file/directory via VFS. Extracts leaf name from new path.
+- **HANDLE_DIR (type 9)** — New handle type for directory handles. `sys_open` now accepts directories and returns HANDLE_DIR.
+- **libneodos v0.2.0 / libneodos-nxl v0.2.0** — New NXL ABI table entries: `sys_spawn`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`. Safe Rust wrappers in `syscall.rs`. `DirEntry` struct for readdir.
+- **6 new syscall tests** — `spawn_hello_binary_path_resolve`, `spawn_with_fd_redirection_helpers`, `readdir_list_root`, `mkdir_rmdir_roundtrip`, `unlink_file`, `rename_file`.
+
+### Changed
+- **handler_spawn** — Rewritten to accept stdin_fd/stdout_fd/stderr_fd parameters (RBX=path, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd). 0xFF = inherit default. Redirected fds increment pipe refcounts.
+- **handler_open** — Now accepts directories: returns HANDLE_DIR (type 9) instead of E_ISDIR.
+- **ABI table version** — Updated to version 2 with 6 new function pointer slots.
+
 ## v0.35.0 — 2026-06-13
 
 ### Added

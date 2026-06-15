@@ -202,8 +202,16 @@ Happy hacking!
         autoexec_inode = create_inode(5, MODE_FILE | default_perms_for_filename("AUTOEXEC.BAT"), 512, [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+1280:512+1536] = autoexec_inode
 
-        # Inode 11: BOOT.CFG in SYSTEM (points to block 22)
-        bootcfg_inode = create_inode(11, MODE_FILE | default_perms_for_filename("BOOT.CFG"), 256, [22, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        # Inode 11: BOOT.CFG in SYSTEM (uses BOOTCFG_BLOCK = 66, past all NEM driver blocks)
+        bootcfg_content = b"""# NeoDOS Boot Configuration
+# Benchmark and debug flags (default: 1 = enabled)
+BENCHMARK_REPORT=0
+AHCI_DEBUG=0
+# Set NEOINIT=0 to skip NeoInit (PID 1) and boot directly into kernel shell for testing
+NEOINIT=0
+"""
+        BOOTCFG_BLOCK = 66  # past all dynamic allocator blocks (max ~65 for AHCI)
+        bootcfg_inode = create_inode(11, MODE_FILE | default_perms_for_filename("BOOT.CFG"), len(bootcfg_content), [BOOTCFG_BLOCK, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+2816:512+3072] = bootcfg_inode
 
         # Read all user binary data
@@ -487,16 +495,9 @@ VER
 """
         image[offset:offset+len(autoexec_content)] = autoexec_content
 
-        # Block 22 = sector 416 (BOOT.CFG)
+        # Block BOOTCFG_BLOCK = sector offset
         print("[*] Writing BOOT.CFG...")
-        offset = (200 + 176) * 512  # block 22 * 8 = 176 sectors
-        bootcfg_content = b"""# NeoDOS Boot Configuration
-# Benchmark and debug flags (default: 1 = enabled)
-BENCHMARK_REPORT=0
-AHCI_DEBUG=0
-# Set NEOINIT=0 to skip NeoInit (PID 1) and boot directly into kernel shell for testing
-NEOINIT=0
-"""
+        offset = (200 + BOOTCFG_BLOCK * 8) * 512
         image[offset:offset+len(bootcfg_content)] = bootcfg_content
 
         # Write user binary data across their allocated blocks

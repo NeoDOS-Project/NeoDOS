@@ -193,6 +193,36 @@ pub extern "C" fn nxl_sys_getcpuinfo(buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_2(24, buf as u64, len as u64) })
 }
 
+#[no_mangle]
+pub extern "C" fn nxl_sys_spawn(path: *const u8, stdin_fd: u8, stdout_fd: u8, stderr_fd: u8) -> i64 {
+    ret(unsafe { syscall_5(7, path as u64, stdin_fd as u64, stdout_fd as u64, stderr_fd as u64, 0) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_readdir(fd: u8, buf: *mut u8) -> i64 {
+    ret(unsafe { syscall_2(8, fd as u64, buf as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_mkdir(path: *const u8) -> i64 {
+    ret(unsafe { syscall_1(25, path as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_unlink(path: *const u8) -> i64 {
+    ret(unsafe { syscall_1(26, path as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_rmdir(path: *const u8) -> i64 {
+    ret(unsafe { syscall_1(27, path as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_rename(old_path: *const u8, new_path: *const u8) -> i64 {
+    ret(unsafe { syscall_2(28, old_path as u64, new_path as u64) })
+}
+
 // ============================================================
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
@@ -335,6 +365,12 @@ pub struct AbiTable {
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub sys_getcpuinfo: extern "C" fn(*mut u8, usize) -> i64,
+    pub sys_spawn: extern "C" fn(*const u8, u8, u8, u8) -> i64,
+    pub sys_readdir: extern "C" fn(u8, *mut u8) -> i64,
+    pub sys_mkdir: extern "C" fn(*const u8) -> i64,
+    pub sys_unlink: extern "C" fn(*const u8) -> i64,
+    pub sys_rmdir: extern "C" fn(*const u8) -> i64,
+    pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
     pub version: u32,
     pub _reserved: [u64; 2],
 }
@@ -388,6 +424,12 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_getcwd: nxl_sys_getcwd,
     sys_loadlib: nxl_sys_loadlib,
     sys_getcpuinfo: nxl_sys_getcpuinfo,
-    version: 1,
+    sys_spawn: nxl_sys_spawn,
+    sys_readdir: nxl_sys_readdir,
+    sys_mkdir: nxl_sys_mkdir,
+    sys_unlink: nxl_sys_unlink,
+    sys_rmdir: nxl_sys_rmdir,
+    sys_rename: nxl_sys_rename,
+    version: 2,
     _reserved: [0; 2],
 };

@@ -1,12 +1,12 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
-> Versión actual: v0.32.0 (376 kernel tests + 7 user-mode binaries).
+> Versión actual: v0.37.0 (392 kernel tests + 7 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 98 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
+**Progreso:** 102 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
 
 ---
 
@@ -136,6 +136,7 @@
 99. **A1.4. IPI infrastructure + TLB shootdown** — `arch/x64/ipi.rs`: unified IPI module with `send_ipi()`, `send_ipi_mask()`, `send_ipi_all()`. IPI_TLB_SHOOTDOWN (vector 0xF1) with synchronous ACK protocol and shared `TlbShootdownPayload`. IPI_CALL_FUNCTION (vector 0xF2) with `CallFunctionCb` dispatch. TLB shootdown integrated into `paging.rs` (heap_free_page, heap_free_range, mmap_free_page, mmap_free_range, set_page_user_accessible). `ack_irq()` fixed to send APIC EOI for all vectors >= 32 (was only vector 32). Scheduler sends IPI_RESCHEDULE on cross-CPU thread enqueue. 5 tests: `ipi_constants`, `ipi_tlb_shootdown_struct`, `ipi_call_function_struct`, `ipi_tlb_shootdown_local_only`, `ipi_call_function_no_targets`.
 100. **A3.1. Crash dump framework** — `src/crash/mod.rs`: 16 KB CrashDumpHeader, stack walk, GPR snapshot, serial output. `CRASH`/`CRASH DUMP` commands. 5 tests.
 101. **B8. cpuinfo.nxe — user-mode CPU info binary** — `userbin/cpuinfo/`: uses `libcpu-nxl` NXL via sys_loadlib. Displays vendor, brand, topology, timers, features. sys_getcpuinfo (RAX=24) kernel + user wrappers.
+102. **A4.7. neoshell (Ring 3 shell)** — `userbin/neoshell/`: full-featured Ring 3 interactive shell. Built-in commands: HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT. DIR uses sys_open+sys_readdir. External commands: PATH scan for `.NXE`, sys_spawn + sys_waitpid. TAB completion (built-ins). History (32 entries). Env vars with SET. CWD prompt. Drive change.
 
 ---
 
@@ -303,34 +304,6 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
 
 ---
 
-### FASE A4 — Kernel/User Separation (NT: CSRSS, SSDT, smss.exe)
-
-> **Estado actual (v0.28.0):** `main.rs:346` ejecuta `DosShell::run()` en Ring 0. `ARCHITECTURE_SOURCE_OF_TRUTH.md` describe NeoInit como PID 1 — es el target, no el estado actual.
-
-- [x] **A4.5. APC engine** | NT: Asynchronous Procedure Calls | Prereqs: A1.5, A2.4
-  - **Archivos:** `src/apc/mod.rs` (new), refactor `src/irp/mod.rs` (completion callback dispatch), integración `src/syscall.rs` (syscalls A4.5-only)
-  - **Descripción:** Colas de procedimientos asir resultados de I/O y eventos sin trabajo sync.
-    - **APC structure:** `{ function: fn(*mut u8), context: *mut u8, kernel: bool }`
-      - **Kernel APC:** Ejecutado a PASSIVE_LEVEL (contexto kernel). Ej: `WorkItem` completion callback.
-      - **User APC:** Ejecutado en Ring 3 a PASSIVE_LEVEL antes de retornar de syscall (user-mode execution).
-    - **Queues per-thread:**
-      - `kernel_apc_queue: VecDeque<ApcEntry>` (up to 64)
-      - `user_apc_queue: VecDeque<ApcEntry>` (up to 64)
-    - **IRP completion — nueva ruta:**
-      1. Device completion handler (DIRQL) encola DPC
-      2. DPC (DISPATCH) → llama `irp_complete_with_apc(irp_id, thread_id)`
-      3. `irp_complete_with_apc()` localiza thread, –versa si user thread– instancia APC (`function=user_apc_handler, context=irp_result`) en `user_apc_queue`
-      4. `syscall_dispatch` retorno → `dispatch_user_apcs()` procesa queue antes de IRETQ
-    - **User syscalls nuevos (A4.5):**
-      - `sys_wait_alertable` (RAX=40): espera a object, pero despierta si APC encolado. Si APC, despacha + retorna `ALERTED`
-      - `sys_sleep_ex` (RAX=41): `sys_yield` pero alertable a APCs
-    - **Kernel APC:** Ejecutado en contexto actual (no scheduler), típicamente para limpieza post-I/O.
-  - **Criterio:**
-    - User thread emite `sys_read` async. Device completion llama `irp_complete_with_apc()`. Thread recibe APC en `sys_wait_alertable` retorno.
-    - Stress: 100 IRPs simultáneamente, cada uno encola APC a thread diferente. Todos APCs procesados sin deadlock.
-    - Timing: APC encolado a entregado < 1 ms (DISPATCH → PASSIVE transition).
-  - **Tests:** `apc_kernel_dispatch_during_cleanup`, `apc_user_alertable_wait_receives`, `apc_queue_overflow_handling`, `irp_completion_dispatches_apc`, `apc_stress_100_concurrent_irps` (5 tests).
-
 #### Boot path migration (A4.6 + A4.7 + Z1 unificados)
 
 Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
@@ -342,7 +315,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 5. PHASE 4: kernel carga `C:\SYSTEM\NEOINIT.NXE`, no `DosShell::run()`.
 6. NeoInit lanza neoshell como hijo; kernel entra idle loop (HLT + work queue + event bus).
 
-- [ ] **A4.6. Syscalls para shell Ring 3** | NT: CSRSS, SSDT | Prereqs: A4.2, A4.3
+- [x] **A4.6. Syscalls para shell Ring 3** | NT: CSRSS, SSDT | Prereqs: A4.2, A4.3
   - **Archivos:** `neodos-kernel/src/syscall/mod.rs` (6 new handlers), `neodos-kernel/src/handle.rs` (HANDLE_DIR), `libneodos-nxl/src/main.rs` (NXL wrappers), `libneodos/src/syscall.rs` (safe wrappers), `libneodos/src/export.rs` (AbiTable)
   - **Descripción:** Añadir 6 syscalls necesarias para que una shell Ring 3 pueda operar sobre el filesystem y lanzar procesos.
     - **sys_spawn (RAX=7):** RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd → u64 (PID). Lee binario via VFS, alloc user slot + heap slot, carga ELF/flat, crea EPROCESS+KTHREAD con handles opcionalmente heredados, en cola a run queue. Reutiliza lógica de `commands/run.rs` pero desde contexto syscall.
@@ -362,7 +335,7 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
     - `sys_rename("C:\OLD.TXT", "C:\NEW.TXT")` → archivo renombrado.
   - **Tests:** `spawn_hello_binary`, `spawn_with_fd_redirection`, `readdir_list_root`, `mkdir_rmdir_roundtrip`, `unlink_file`, `rename_file` (6 tests).
 
-- [ ] **A4.7. neoshell (shell Ring 3)** | NT: CSRSS | Prereqs: A4.6
+- [x] **A4.7. neoshell (shell Ring 3)** | NT: CSRSS | Prereqs: A4.6
   - **Archivos:** `userbin/neoshell/` (new Rust project con libneodos), `scripts/create_neodos_image.py` (incluir neoshell.nxe en C:\BIN\), `docs/NEOSHELL_PLAN.md`
   - **Descripción:** Shell interactiva Ring 3 que reemplaza la shell Ring 0 como interfaz de usuario principal.
     - **Arquitectura thin:** neoshell es un dispatch minimalista — no tiene comandos embebidos (excepto CD, CWD, EXIT, CLS, HELP, SET). Cada comando es un .NXE independiente (coretools) buscado en PATH.
@@ -390,29 +363,6 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
     - ↑/↓ navega histórico.
   - **Tests:** `neoshell_prompt_and_cd`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
 
-- [x] **Z1. NeoInit service manager (PID 1)** | NT: `smss.exe` (Session Manager Subsystem) | Prereqs: A4.7
-  - **Archivos:** `userbin/neoinit/` (new Rust project), refactor `src/main.rs`, `src/syscall/mod.rs` (handler_spawn + save/restore), `scripts/create_neodos_image.py` (empaquetado), `scripts/build.sh`
-  - **v0.35.0:** Implementación básica: kernel carga NeoInit como PID 1, NeoInit spawn ea NEOSHELL.NXE via sys_spawn (RAX=7). handler_spawn salva slot 0 (0x400000, 128 KB) en buffer heap, carga ELF child, lo ejecuta, y al salir restaura NeoInit. TSS.RSP0 y scheduler current_tid correctamente salvados/restaurados. NeoInit respawnea shell en loop.
-  - **Pendiente Z1.1:** Service table, SIGTERM, shutdown state file, soporte multi-servicio.
-      ```
-      services: [{
-          name: "shell",
-          path: "\\SYSTEM\\SHELL.NXE",
-          critical: true,  // respawn siempre
-          auto_start: true,
-          args: [],
-      }]
-      ```
-      Futuro (B2): leer de `/SYSTEM/SERVICES.CFG` (registry hive).
-    - **IPC:** Shell comunica con NeoInit via pipe `\Device\NeoInitPipe` (creado por kernel) para solicitar shutdown elegante.
-    - **Debugger:** Si A3.2 KD activo, breakpoint permitido en NeoInit (no afecta shell). Shell crash es independiente.
-  - **Criterio:**
-    - PHASE 3.8: kernel no ejecuta `DosShell::run()`. Carga `neoinit` en su lugar.
-    - `neoinit` spawn shell en Ring 3.
-    - Shell termina (crash, exit) → NeoInit detecta via `sys_waitpid(-1)` → respawn automático.
-    - Segundo shell funciona sin intervención manual.
-    - `neoinit --version` o similar muestra PID 1 running.
-  - **Tests:** `neoinit_boot_load_shell`, `neoinit_respawn_shell_on_crash`, `neoinit_waitpid_loop_async`, `neoinit_exit_panics_kernel`, `neoinit_service_table_parse` (5 tests).
 
 - [ ] **A4.4. Input subsystem rediseñado** | NT: ConDrv (Console Driver) | Prereqs: A4.7
   - **Archivos:** `src/input/mod.rs` (reescritura), `src/input/manager.rs` (new), `src/input/vt.rs` (new), integración `arch/x64/idt.rs` (PS/2 delivery)
@@ -710,8 +660,6 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
 
 - [ ] **B6.1 V2. Zero-copy pipes** | Prereqs: A4.5, S2 | Files: `src/pipe.rs` | Done when: pipe read/write sin copia kernel intermedia para buffers alineados.
 - [ ] **B6.2 V3. Copy-on-write fork** | Prereqs: A1.5 | Files: `src/memory/cow.rs`, `src/syscall.rs` | Done when: `sys_fork` duplica address space con COW pages.
-- [x] **B6.3 X10. Per-CPU allocators** | Prereqs: A1.3 | Ref: cubierto por A1.3.
-- [x] **B6.4 X8. SMP-safe kernel** | Prereqs: A1.1–A1.4 | Ref: cubierto por A1.
 
 #### B8. Coretools (comandos .NXE independientes)
 

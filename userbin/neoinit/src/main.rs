@@ -11,7 +11,8 @@ fn write_str(s: &[u8]) {
 }
 
 /// Invoke sys_spawn (RAX=7) directly via INT 0x80.
-/// RBX = path_ptr, RCX = flags (0), RDX = 0.
+/// RBX = path_ptr, RCX = stdin_fd, RDX = stdout_fd, R8 = stderr_fd.
+/// 0xFF = inherit from parent.
 fn spawn(path: &[u8]) -> Result<u32, i64> {
     let path_ptr = path.as_ptr() as u64;
     let result: i64;
@@ -23,8 +24,9 @@ fn spawn(path: &[u8]) -> Result<u32, i64> {
             "pop rbx",
             in("rax") 7u64,
             in("rsi") path_ptr,
-            in("rcx") 0u64,
-            in("rdx") 0u64,
+            in("rcx") 0xFFu64,
+            in("rdx") 0xFFu64,
+            in("r8") 0xFFu64,
             lateout("rax") result,
             options(nostack),
         );

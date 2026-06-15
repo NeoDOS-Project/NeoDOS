@@ -197,6 +197,70 @@ impl CpuInfoFull {
     pub fn has_fxsr(&self) -> bool { (self.features_edx >> 24) & 1 == 1 }
 }
 
+/// DirEntry — matches kernel's DirEntryRaw (RAX=8).
+#[repr(C)]
+pub struct DirEntry {
+    pub inode: u32,
+    pub mode: u16,
+    pub size: u32,
+    pub name: [u8; 260],
+}
+
+impl DirEntry {
+    pub fn name_str(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(0);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("")
+    }
+}
+
+/// sys_spawn: spawn a process (RAX=7).
+/// stdin_fd/stdout_fd/stderr_fd = 0xFF means inherit default.
+pub fn sys_spawn(path: &str, stdin_fd: u8, stdout_fd: u8, stderr_fd: u8) -> Result<u32, i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret((export::get_table().sys_spawn)(ptr, stdin_fd, stdout_fd, stderr_fd)).map(|v| v as u32)
+}
+
+/// sys_readdir: read a directory entry (RAX=8).
+/// Returns 1 if an entry was written, 0 at end, negative on error.
+pub fn sys_readdir(fd: u8, entry: &mut DirEntry) -> Result<usize, i64> {
+    let ptr = entry as *mut DirEntry as *mut u8;
+    ret((export::get_table().sys_readdir)(fd, ptr)).map(|v| v as usize)
+}
+
+/// sys_mkdir: create a directory (RAX=25).
+pub fn sys_mkdir(path: &str) -> Result<(), i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret_unit((export::get_table().sys_mkdir)(ptr))
+}
+
+/// sys_unlink: delete a file (RAX=26).
+pub fn sys_unlink(path: &str) -> Result<(), i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret_unit((export::get_table().sys_unlink)(ptr))
+}
+
+/// sys_rmdir: remove an empty directory (RAX=27).
+pub fn sys_rmdir(path: &str) -> Result<(), i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret_unit((export::get_table().sys_rmdir)(ptr))
+}
+
+/// sys_rename: rename a file/directory (RAX=28).
+pub fn sys_rename(old_path: &str, new_path: &str) -> Result<(), i64> {
+    let old_buf = path_to_null_terminated(old_path)?;
+    let new_buf = path_to_null_terminated(new_path)?;
+    ret_unit((export::get_table().sys_rename)(old_buf.as_ptr(), new_buf.as_ptr()))
+}
+
+/// sys_waitpid: wait for a child process to exit (RAX=9).
+pub fn sys_waitpid(pid: u32) -> Result<(), i64> {
+    ret_unit((export::get_table().sys_waitpid)(pid))
+}
+
 /// sys_poweroff: power off the machine (RAX=42).
 pub fn sys_poweroff() -> ! {
     unsafe {
