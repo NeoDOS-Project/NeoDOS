@@ -72,7 +72,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 386 kernel self-tests + 5 user-mode binaries)
+- `test` (run 392 kernel self-tests + 8 user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 

@@ -1,14 +1,14 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall::{self, DirEntry};
+use libneodos::syscall;
 
 const LINE_BUF_SIZE: usize = 256;
 const HISTORY_SIZE: usize = 32;
 const MAX_ENV: usize = 16;
 static BUILTINS: &[&[u8]] = &[
     b"HELP", b"CLS", b"ECHO", b"VER", b"CD", b"CWD",
-    b"DIR", b"SET", b"EXIT", b"POWEROFF",
+    b"SET", b"EXIT", b"POWEROFF",
 ];
 
 fn make_ascii_uppercase(buf: &mut [u8]) {
@@ -107,7 +107,7 @@ impl Shell {
             env: [EnvVar { key: [0u8; 32], key_len: 0, val: [0u8; 128], val_len: 0 }; MAX_ENV],
             env_count: 0,
         };
-        s.env_set(b"PATH", b"\\BIN;\\SYSTEM");
+        s.env_set(b"PATH", b"\\SYSTEM\\BIN;\\SYSTEM");
         s
     }
 
@@ -334,8 +334,17 @@ impl Shell {
         trim_ascii(&self.line[..self.pos])
     }
 
+    fn get_drive_letter(&self) -> u8 {
+        let mut cwd_buf = [0u8; 256];
+        match syscall::sys_getcwd(&mut cwd_buf) {
+            Ok(n) if n > 0 && cwd_buf[1] == b':' => cwd_buf[0],
+            _ => b'C',
+        }
+    }
+
     fn resolve_command_path(&self, cmd_upper: &[u8]) -> Result<[u8; 260], ()> {
-        let path_val = self.env_get(b"PATH").unwrap_or(b"\\BIN;\\SYSTEM");
+        let path_val = self.env_get(b"PATH").unwrap_or(b"\\SYSTEM\\BIN;\\SYSTEM");
+        let drive = self.get_drive_letter();
         let mut start = 0usize;
         loop {
             while start < path_val.len() && path_val[start] == b';' {
@@ -351,6 +360,8 @@ impl Shell {
             let dir = &path_val[start..end];
             let mut full = [0u8; 260];
             let mut pos = 0;
+            full[pos] = drive; pos += 1;
+            full[pos] = b':'; pos += 1;
             for &b in dir {
                 if pos < 255 { full[pos] = b; pos += 1; }
             }
@@ -403,13 +414,11 @@ impl Shell {
         };
 
         match &cmd_upper[..cmd_upper_len] {
-            b"HELP" => self.cmd_help(),
             b"CLS" => self.cmd_cls(),
             b"ECHO" => self.cmd_echo(),
             b"VER" => self.cmd_ver(),
             b"CD" => self.cmd_cd(),
             b"CWD" => self.cmd_cwd(),
-            b"DIR" => self.cmd_dir(),
             b"SET" => self.cmd_set(),
             b"EXIT" => self.cmd_exit(),
             b"POWEROFF" => self.cmd_poweroff(),
@@ -442,21 +451,6 @@ impl Shell {
                 }
             }
         }
-    }
-
-    fn cmd_help(&self) {
-        write_str(b"\r\nneoshell built-in commands:\r\n");
-        write_str(b"  HELP     Show this help\r\n");
-        write_str(b"  CLS      Clear screen\r\n");
-        write_str(b"  ECHO     Print text\r\n");
-        write_str(b"  VER      Show version\r\n");
-        write_str(b"  CD       Change directory\r\n");
-        write_str(b"  CWD      Show current directory\r\n");
-        write_str(b"  DIR      List directory\r\n");
-        write_str(b"  SET      Show/set environment variables\r\n");
-        write_str(b"  POWEROFF Power off machine\r\n");
-        write_str(b"  EXIT     Return to Ring 0 shell\r\n");
-        write_str(b"\r\nExternal commands: any .NXE in PATH\r\n");
     }
 
     fn cmd_cls(&self) {
@@ -526,99 +520,6 @@ impl Shell {
             }
             _ => {
                 write_str(b"\r\nC:\\\r\n");
-            }
-        }
-    }
-
-    fn cmd_dir(&self) {
-        let raw = self.line_trimmed();
-        let rest = after_first_token(raw);
-        let mut path_buf = [0u8; 260];
-        let path_buf_len: usize;
-
-        if rest.is_empty() {
-            let mut cwd_buf = [0u8; 256];
-            match syscall::sys_getcwd(&mut cwd_buf) {
-                Ok(n) if n > 0 => {
-                    let mut pos = 0;
-                    for &b in &cwd_buf[..n - 1] {
-                        if pos < 259 { path_buf[pos] = b; pos += 1; }
-                    }
-                    path_buf_len = pos;
-                }
-                _ => {
-                    path_buf[..3].copy_from_slice(b"C:\\");
-                    path_buf_len = 3;
-                }
-            }
-        } else if rest[0] != b'\\' && rest[0] != b'/' && !rest.contains(&b':') {
-            let mut cwd_buf = [0u8; 256];
-            let cwd = match syscall::sys_getcwd(&mut cwd_buf) {
-                Ok(n) if n > 0 => core::str::from_utf8(&cwd_buf[..n - 1]).unwrap_or("C:\\"),
-                _ => "C:\\",
-            };
-            let mut pos = 0;
-            for &b in cwd.as_bytes() {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            if !cwd.ends_with('\\') && !cwd.ends_with('/') {
-                if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
-            }
-            for &b in rest {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            path_buf_len = pos;
-        } else {
-            let mut pos = 0;
-            for &b in rest {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            path_buf_len = pos;
-        }
-
-        let dir_path = core::str::from_utf8(&path_buf[..path_buf_len]).unwrap_or("C:\\");
-        write_str(b"\r\n Directory of ");
-        write_str(dir_path.as_bytes());
-        write_str(b"\r\n\r\n");
-
-        match syscall::sys_open(dir_path) {
-            Ok(fd) => {
-                let mut entry = DirEntry {
-                    inode: 0,
-                    mode: 0,
-                    size: 0,
-                    name: [0u8; 260],
-                };
-                let mut total = 0u64;
-                loop {
-                    match syscall::sys_readdir(fd, &mut entry) {
-                        Ok(1) => {
-                            let name = entry.name_str();
-                            if name.is_empty() || name == "." || name == ".." {
-                                continue;
-                            }
-                            let is_dir = (entry.mode & 0x4000) != 0;
-                            if is_dir {
-                                write_str(b"[DIR] ");
-                            } else {
-                                write_str(b"      ");
-                            }
-                            write_str(name.as_bytes());
-                            write_str(b"\r\n");
-                            total += 1;
-                        }
-                        Ok(0) => break,
-                        Err(_) => { write_err(b"readdir error\r\n"); break; }
-                        _ => break,
-                    }
-                }
-                let _ = syscall::sys_close(fd);
-                write_str(b"\r\n");
-                write_u64(total);
-                write_str(b" entry(s)\r\n");
-            }
-            Err(_) => {
-                write_err(b"neoshell: DIR: path not found\r\n");
             }
         }
     }

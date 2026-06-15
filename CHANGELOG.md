@@ -3,6 +3,15 @@
 ## v0.37.0 — 2026-06-15
 
 ### Added
+- **B8.6 HELP.NXE (corehelp)** — Standalone user-mode help utility (`userbin/corehelp/`):
+  - Scans `C:\BIN\*.NXE` via `sys_open` (directory handle) + `sys_readdir`
+  - Lists available core tools with count
+  - Embedded `::HELP::` text for neoshell's HELP display
+- **B8.1 DIR.NXE (coredir)** — Standalone user-mode directory listing utility (`userbin/coredir/`):
+  - Lists directory contents via `sys_open` (directory handle) + `sys_readdir`
+  - Multi-column output (3 columns with `<DIR>` markers for directories)
+  - `/W` (wide) mode: 5-column compact listing
+  - `/P` (pause) mode: pauses after each screenful
 - **A4.7. neoshell (Ring 3 shell)** — Full-featured interactive shell running at Ring 3:
   - Built-in commands: HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT
   - DIR uses sys_open + sys_readdir to list directories with entry counts

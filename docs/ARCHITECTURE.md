@@ -518,7 +518,7 @@ The kernel testing framework includes **386 tests** (39 suites) with suites dedi
 | DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
 | APC | 5 | APC engine: kernel dispatch, alertable wait, queue overflow, IRP→APC completion, stress 100 concurrent IRPs |
 
-Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `CPUTEST.NXE`, `TEST.NXE`).
+Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`HELLO.NXE`, `SYSTEST.NXE`, `FILETEST.NXE`, `ALLTEST.NXE`, `CPUTEST.NXE`, `TEST.NXE`, `C:\SYSTEM\BIN\CPUINFO.NXE`, `C:\SYSTEM\BIN\DIR.NXE`).
 
 ---
 

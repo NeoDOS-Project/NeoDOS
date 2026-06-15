@@ -191,7 +191,7 @@ Happy hacking!
         image[512+512:512+768] = testbat_inode
         
         # Inode 3: SYSTEM directory (points to block 3)
-        system_dir_inode = create_inode(3, dir_mode, 1280, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        system_dir_inode = create_inode(3, dir_mode, 1536, [3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
         image[512+768:512+1024] = system_dir_inode
 
         # Inode 4: CONFIG.SYS in SYSTEM (points to block 4)
@@ -217,7 +217,7 @@ NEOINIT=0
         # Read all user binary data
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo', 'neoshell', 'neoinit']:
+        for name in ['hello', 'systest', 'filetest', 'alltest', 'cputest', 'test', 'cpuinfo', 'neoshell', 'neoinit', 'coredir', 'corehelp']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -304,6 +304,10 @@ NEOINIT=0
         nxl_blocks = alloc_blocks(29, len(nxl_data)) # libneodos.nxl
         math_nxl_blocks = alloc_blocks(30, len(math_nxl_data)) # libmath.nxl
         cpuinfo_nxl_blocks = alloc_blocks(31, len(cpuinfo_nxl_data)) # cpuinfo.nxl
+        corehelp_blocks = alloc_blocks(33, len(nxe_files['corehelp']))
+        rootbindir_blocks = alloc_blocks(34, 512)    # root-level \BIN dir
+        coredir_blocks = alloc_blocks(32, len(nxe_files['coredir']))
+        bindir_blocks = alloc_blocks(18, 768)        # SYSTEM\BIN dir (DIR.NXE + CPUINFO.NXE + HELP.NXE)
         libdir_blocks = alloc_blocks(28, 256)        # LIB dir
         dir_blocks = alloc_blocks(15, BLOCK_SIZE)   # DRIVERS dir
         testdir_blocks = alloc_blocks(16, 256 * 5)  # TEST dir
@@ -325,7 +329,7 @@ NEOINIT=0
             13: (MODE_FILE | default_perms_for_filename("CPUINFO.NXE"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
             14: (MODE_FILE | default_perms_for_filename("NEOSHELL.NXE"), len(nxe_files['neoshell']), pad_blocks(neoshell_blocks)),
             17: (MODE_FILE | default_perms_for_filename("NEOINIT.NXE"), len(nxe_files['neoinit']), pad_blocks(neoinit_blocks)),
-            # 18: (SHELL.NXE) — removed
+            18: (dir_mode, 768, pad_blocks(bindir_blocks)),
             15: (dir_mode, BLOCK_SIZE, pad_blocks(dir_blocks)),
             16: (dir_mode, 256 * 5, pad_blocks(testdir_blocks)),
             19: (dir_mode, 256 * 2, pad_blocks(bootdir_blocks)),
@@ -333,8 +337,11 @@ NEOINIT=0
             28: (dir_mode, 256, pad_blocks(libdir_blocks)),
             29: (MODE_FILE | default_perms_for_filename("libneodos.nxl"), len(nxl_data), pad_blocks(nxl_blocks)),
             30: (MODE_FILE | default_perms_for_filename("libmath.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
-            31: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks)),
-        }
+             31: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks)),
+              32: (MODE_FILE | default_perms_for_filename("DIR.NXE"), len(nxe_files['coredir']), pad_blocks(coredir_blocks)),
+              33: (MODE_FILE | default_perms_for_filename("HELP.NXE"), len(nxe_files['corehelp']), pad_blocks(corehelp_blocks)),
+              34: (dir_mode, 512, pad_blocks(rootbindir_blocks)),
+         }
 
         # Write inodes to inode table
         for inum, (mode, size, blks) in inodes_data.items():
@@ -423,8 +430,8 @@ NEOINIT=0
         entry = create_dir_entry(12, 1, "TEST.NXE")
         image[offset+2048:offset+2304] = entry
 
-        # Entry 9: CPUINFO.NXE (CPU information)
-        entry = create_dir_entry(13, 1, "CPUINFO.NXE")
+        # Entry 9: HELP.NXE (core tools help)
+        entry = create_dir_entry(33, 1, "HELP.NXE")
         image[offset+2304:offset+2560] = entry
 
         # Entry 10: NEOSHELL.NXE (Ring 3 shell)
@@ -435,7 +442,11 @@ NEOINIT=0
         entry = create_dir_entry(17, 1, "NEOINIT.NXE")
         image[offset+2816:offset+3072] = entry
 
-        # Entry 12: available (was SHELL.NXE alias)
+        # Entry 12: BIN directory (root-level core tools)
+        entry = create_dir_entry(34, 2, "BIN")
+        image[offset+3072:offset+3328] = entry
+
+        # Entry 13: (available)
 
         # 4. Data blocks
         # Block 1 = sector 208 (readme.txt)
@@ -473,7 +484,9 @@ ECHO Done.
         entry5 = create_dir_entry(28, 2, "LIB")
         image[offset+1024:offset+1280] = entry5
 
-        # Entry 6: available (was SHELL.NXE alias)
+        # Entry 6: BIN subdirectory (external commands)
+        entry6 = create_dir_entry(18, 2, "BIN")
+        image[offset+1280:offset+1536] = entry6
 
         # Block 4 = sector 232 (CONFIG.SYS)
         print("[*] Writing CONFIG.SYS...")
@@ -510,8 +523,10 @@ VER
             12: ('TEST.NXE', nxe_files['test']),
             13: ('CPUINFO.NXE', nxe_files['cpuinfo']),
             14: ('NEOSHELL.NXE', nxe_files['neoshell']),
-            17: ('NEOINIT.NXE', nxe_files['neoinit']),
-        }
+             17: ('NEOINIT.NXE', nxe_files['neoinit']),
+              32: ('DIR.NXE', nxe_files['coredir']),
+              33: ('HELP.NXE', nxe_files['corehelp']),
+         }
         for inum, (name, data) in bin_data_map.items():
             if not data:
                 continue
@@ -590,6 +605,28 @@ VER
             image[offset+256:offset+512] = entry_math
             entry_cpuinfo = create_dir_entry(31, 1, "cpuinfo.nxl")
             image[offset+512:offset+768] = entry_cpuinfo
+
+        # Write BIN directory content (SYSTEM\BIN)
+        if bindir_blocks:
+            print("[*] Writing SYSTEM\\BIN directory...")
+            blk = bindir_blocks[0]
+            offset = (200 + blk * 8) * 512
+            entry_dirnxe = create_dir_entry(32, 1, "DIR.NXE")
+            image[offset:offset+256] = entry_dirnxe
+            entry_cpuinfo = create_dir_entry(13, 1, "CPUINFO.NXE")
+            image[offset+256:offset+512] = entry_cpuinfo
+            entry_help = create_dir_entry(33, 1, "HELP.NXE")
+            image[offset+512:offset+768] = entry_help
+
+        # Write root-level \BIN directory content
+        if rootbindir_blocks:
+            print("[*] Writing \\BIN directory...")
+            blk = rootbindir_blocks[0]
+            offset = (200 + blk * 8) * 512
+            entry_dirnxe = create_dir_entry(32, 1, "DIR.NXE")
+            image[offset:offset+256] = entry_dirnxe
+            entry_cpuinfo = create_dir_entry(13, 1, "CPUINFO.NXE")
+            image[offset+256:offset+512] = entry_cpuinfo
 
         # Write libneodos.nxl data blocks
         if nxl_data:
