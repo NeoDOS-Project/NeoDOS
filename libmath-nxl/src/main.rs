@@ -244,7 +244,7 @@ pub static MATH_EXPORT_TABLE: MathAbiTable = MathAbiTable {
 };
 
 // ============================================================
-// Panic handler (DLL version — loops on HLT)
+// Panic handler (NXL version — loops on HLT)
 // ============================================================
 #[panic_handler]
 fn nxl_panic(_info: &core::panic::PanicInfo) -> ! {

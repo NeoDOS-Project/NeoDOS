@@ -223,6 +223,16 @@ pub extern "C" fn nxl_sys_rename(old_path: *const u8, new_path: *const u8) -> i6
     ret(unsafe { syscall_2(28, old_path as u64, new_path as u64) })
 }
 
+#[no_mangle]
+pub extern "C" fn nxl_sys_get_version(buf: *mut u8, len: usize) -> i64 {
+    ret(unsafe { syscall_2(43, buf as u64, len as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_get_datetime(buf: *mut u8) -> i64 {
+    ret(unsafe { syscall_1(44, buf as u64) })
+}
+
 // ============================================================
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
@@ -371,8 +381,9 @@ pub struct AbiTable {
     pub sys_unlink: extern "C" fn(*const u8) -> i64,
     pub sys_rmdir: extern "C" fn(*const u8) -> i64,
     pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
+    pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
+    pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
     pub version: u32,
-    pub _reserved: [u64; 2],
 }
 
 #[no_mangle]
@@ -430,6 +441,7 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_unlink: nxl_sys_unlink,
     sys_rmdir: nxl_sys_rmdir,
     sys_rename: nxl_sys_rename,
+    sys_get_version: nxl_sys_get_version,
+    sys_get_datetime: nxl_sys_get_datetime,
     version: 2,
-    _reserved: [0; 2],
 };

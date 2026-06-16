@@ -12,8 +12,6 @@
 mod call;
 mod cd;
 mod copy;
-mod cpuinfo;
-mod date;
 mod del;
 mod dir;
 mod drives;
@@ -36,8 +34,6 @@ mod shutdown;
 mod test;
 mod r#type;
 mod vol;
-mod attrib;
-mod bench;
 mod crash;
 mod pri;
 mod ps;

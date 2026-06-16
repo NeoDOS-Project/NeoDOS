@@ -275,14 +275,14 @@ def run_test():
         
         # Check user-mode tests
         user_tests_found = 0
-        user_bins = ["hello.nxe", "systest.nxe", "filetest.nxe", "alltest.nxe", "cputest.nxe", "test.nxe", "cpuinfo.nxe", "dir.nxe"]
+        user_bins = ["cpuinfo.nxe", "dir.nxe", "datetime.nxe", "ver.nxe"]
         for ut in user_bins:
             if f"--- Running" in full_text and ut in full_text:
                 user_tests_found += 1
-        if user_tests_found >= 8:
-            print(f"[PASS] All 8 user-mode binaries executed")
+        if user_tests_found >= 4:
+            print(f"[PASS] All {user_tests_found} user-mode binaries executed")
         elif user_tests_found > 0:
-            print(f"[PARTIAL] {user_tests_found}/8 user-mode binaries executed")
+            print(f"[PARTIAL] {user_tests_found}/{len(user_bins)} user-mode binaries executed")
         else:
             print("[UNKNOWN] No user-mode binary output found")
         

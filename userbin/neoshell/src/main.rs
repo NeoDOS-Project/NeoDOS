@@ -7,7 +7,7 @@ const LINE_BUF_SIZE: usize = 256;
 const HISTORY_SIZE: usize = 32;
 const MAX_ENV: usize = 16;
 static BUILTINS: &[&[u8]] = &[
-    b"HELP", b"CLS", b"ECHO", b"VER", b"CD", b"CWD",
+    b"CLS", b"ECHO", b"CD", b"CWD",
     b"SET", b"EXIT", b"POWEROFF",
 ];
 
@@ -416,7 +416,6 @@ impl Shell {
         match &cmd_upper[..cmd_upper_len] {
             b"CLS" => self.cmd_cls(),
             b"ECHO" => self.cmd_echo(),
-            b"VER" => self.cmd_ver(),
             b"CD" => self.cmd_cd(),
             b"CWD" => self.cmd_cwd(),
             b"SET" => self.cmd_set(),
@@ -462,10 +461,6 @@ impl Shell {
         let rest = after_first_token(self.line_trimmed());
         write_str(rest);
         write_str(b"\r\n");
-    }
-
-    fn cmd_ver(&self) {
-        write_str(b"\r\nneoshell v0.1.0 (Ring 3)\r\n");
     }
 
     fn cmd_cd(&mut self) {

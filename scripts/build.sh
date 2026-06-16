@@ -13,7 +13,6 @@ NEODOS_IMAGE2="$SCRIPT_DIR/neodos_image2.img"
 for arg in "$@"; do
     case "$arg" in
         --neodos-image|-n) BUILD_NEODOS_IMAGE=true; BUILD_USERBIN=true ;;
-        --userbin|-u)      BUILD_USERBIN=true ;;
     esac
 done
 
@@ -80,7 +79,8 @@ NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
-    for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
+    for pkg in neoshell neoinit coredir corehelp cpuinfo datetime ver; do
+    #for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"
         cargo build --release 2>&1 || { echo "[!] Failed to build $pkg"; exit 1; }
@@ -89,8 +89,8 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     done
     cd "$PROJECT_ROOT"
     # Also produce hello.elf (same binary as hello.nxe, but with .elf extension for ELF loader tests)
-    cp "$USERBIN_DIR/hello.nxe" "$USERBIN_DIR/hello.elf"
-    echo "    -> $USERBIN_DIR/hello.elf"
+    #cp "$USERBIN_DIR/hello.nxe" "$USERBIN_DIR/hello.elf"
+    #echo "    -> $USERBIN_DIR/hello.elf"
 
     echo "[+] Building libneodos NXL (shared library)..."
     cd "$PROJECT_ROOT/libneodos-nxl"
@@ -242,24 +242,6 @@ if command -v mkfs.fat >/dev/null 2>&1; then
 else
     echo "[!] mkfs.fat not found; ESP image not formatted"
     echo "    Install: sudo apt install dosfstools"
-fi
-
-# ============================================
-# 5. Compile user-mode binaries (nasm asm files only)
-# ============================================
-if [ "$BUILD_USERBIN" = true ]; then
-    echo ""
-    echo "[+] Compiling user-mode assembly binaries..."
-
-    # Compile any .asm files if nasm is available
-    if command -v nasm >/dev/null 2>&1; then
-        for asm_file in "$USERBIN_DIR"/*.asm; do
-            [ -f "$asm_file" ] || continue
-            bin_file="${asm_file%.asm}.bin"
-            nasm -f bin -o "$bin_file" "$asm_file"
-            echo "[\u2713] nasm: $(basename "$asm_file") -> $(basename "$bin_file") ($(wc -c < "$bin_file") bytes)"
-        done
-    fi
 fi
 
 # ============================================

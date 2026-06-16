@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.37.0
+v0.38.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 392 kernel tests + 9 user-mode binaries
+2. `python3 scripts/auto_test.py` — 392 kernel tests + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -64,7 +64,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 33 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 35 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -456,6 +456,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
 | 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
+| 43 | `sys_get_version` | RBX=buf_ptr, RCX=buf_size | Copia versión del kernel (KERNEL_VERSION) al buffer de usuario |
+| 44 | `sys_get_datetime` | RBX=buf_ptr | Copia fecha/hora RTC a `SysDateTime` (seg, min, hora, día, mes, año, valid) |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 
 ## IPC / Pipes
@@ -574,14 +576,13 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
-| `hello.nxe` | `generate_hello.py` | 232 B | sys_write, sys_getpid, sys_yield, sys_exit |
-| `systest.nxe` | `generate_systest.py` | 247 B | Misma estructura que hello.nxe + mensajes v0.10.4 |
-| `test.nxe` | Rust `userbin/test/` | ~21 KB | libmath.nxl self-test: load, symbol resolution, arithmetic, edge cases, stress (1M iter), determinism |
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
 | `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT; TAB completion; PATH dispatch for external .NXE commands; history (32); drive change |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
 | `corehelp.nxe` | Rust `userbin/corehelp/` | ~8 KB | Standalone HELP command: scans `C:\BIN\*.NXE` via `sys_readdir`, lists available core tools |
+| `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | sys_get_datetime (RAX=44): muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
+| `ver.nxe` | Rust `userbin/ver/` | ~5 KB | sys_get_version (RAX=43): muestra versión del kernel NeoDOS |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
@@ -681,7 +682,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 Comando `test`:
 1. Ejecuta `testing::run_all()` (392 tests kernel)
-2. Si pasan, ejecuta `run SYSTEST.NXE`, `run FILETEST.NXE`, `run ALLTEST.NXE`, `run CPUTEST.NXE`, `run TEST.NXE`, `run CPUINFO.NXE` (user-mode)
+2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.
 

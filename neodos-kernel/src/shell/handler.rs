@@ -122,7 +122,6 @@ pub fn cmd_type(shell: &mut DosShell, args: &[&str]) { shell.cmd_type(args); }
 pub fn cmd_echo(shell: &mut DosShell, args: &[&str]) { shell.cmd_echo(args); }
 pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
 pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
-pub fn cmd_cpuinfo(shell: &mut DosShell, _args: &[&str]) { shell.cmd_cpuinfo(); }
 pub fn cmd_mem(shell: &mut DosShell, args: &[&str]) { shell.cmd_mem(args); }
 pub fn cmd_cd(shell: &mut DosShell, args: &[&str]) { shell.cmd_cd(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
@@ -131,20 +130,10 @@ pub fn cmd_md(shell: &mut DosShell, args: &[&str]) { shell.cmd_md(args); }
 pub fn cmd_vol(shell: &mut DosShell, args: &[&str]) { shell.cmd_vol(args); }
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
 pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
-pub fn cmd_sync(_shell: &mut DosShell, _args: &[&str]) {
-    crate::println!("Syncing disk...");
-    crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
-    crate::globals::flush_cache_if_needed();
-}
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
 pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
 pub fn cmd_rd(shell: &mut DosShell, args: &[&str]) { shell.cmd_rd(args); }
-pub fn cmd_ver(_shell: &mut DosShell, _args: &[&str]) { crate::println!("NeoDOS v{}", env!("CARGO_PKG_VERSION")); }
 pub fn cmd_test(shell: &mut DosShell, args: &[&str]) { shell.cmd_test(args); }
-pub fn cmd_date(shell: &mut DosShell, args: &[&str]) { shell.cmd_date(args); }
-pub fn cmd_time(shell: &mut DosShell, args: &[&str]) { shell.cmd_time(args); }
-pub fn cmd_attrib(shell: &mut DosShell, args: &[&str]) { shell.cmd_attrib(args); }
-pub fn cmd_bench(shell: &mut DosShell, args: &[&str]) { shell.cmd_bench(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
@@ -153,7 +142,6 @@ pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
 pub fn cmd_loadlib(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadlib(args); }
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
-pub fn cmd_shutdown(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
@@ -193,8 +181,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Change the active keyboard layout.\n",
                        "  US = English (United States)\n",
                        "  SP = Spanish"), },
-    CommandEntry { name: "CPUINFO",  category: "INFO",     handler: cmd_cpuinfo, description: "Show CPU vendor and brand",
-        usage: "Syntax:  CPUINFO\n  Show CPU vendor string and brand name from the CPUID instruction.", },
     CommandEntry { name: "MEM",      category: "INFO",     handler: cmd_mem,     description: "Show memory usage",
         usage: concat!("Syntax:  MEM [/H]\n",
                        "  Show memory usage. /H shows human-readable sizes (KB/MB).\n",
@@ -212,18 +198,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "    2 = NORMAL (100 ticks) — default\n",
                        "    3 = IDLE (50 ticks)\n",
                        "  PRI 2 0   boosts PID 2 to HIGH priority."), },
-    CommandEntry { name: "DATE",     category: "INFO",     handler: cmd_date,    description: "Display current date",
-        usage: concat!("Syntax:  DATE [YYYY-MM-DD]\n",
-                       "  Display the current date, or set a new date.\n",
-                       "  DATE              shows current date.\n",
-                       "  DATE 2026-12-25   sets the date to December 25, 2026."), },
-    CommandEntry { name: "TIME",     category: "INFO",     handler: cmd_time,    description: "Display current time",
-        usage: concat!("Syntax:  TIME [HH:MM:SS]\n",
-                       "  Display the current time, or set a new time.\n",
-                       "  TIME               shows current time.\n",
-                       "  TIME 14:30:00      sets the time to 14:30:00."), },
-    CommandEntry { name: "VER",      category: "INFO",     handler: cmd_ver,     description: "Show kernel version",
-        usage: "Syntax:  VER\n  Show the NeoDOS kernel version string.", },
     CommandEntry { name: "CD",       category: "DISK",     handler: cmd_cd,      description: "Change directory / switch drive",
         usage: concat!("Syntax:  CD [path]\n",
                         "  CD C:\\Programs      changes to C:\\Programs.\n",
@@ -272,21 +246,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
         usage: concat!("Syntax:  RMDIR directory\n",
                        "  Alias for RD."), },
-    CommandEntry { name: "BENCH",    category: "CONFIG",   handler: cmd_bench,   description: "Configure boot benchmark output",
-        usage: concat!("Syntax:  BENCH [REPORT|AHCI] [ON|OFF]\n",
-                       "  Control boot-time benchmark and debug output.\n",
-                       "  BENCH              shows current configuration.\n",
-                       "  BENCH REPORT OFF   disables boot benchmark report.\n",
-                       "  BENCH AHCI OFF     disables AHCI debug output."), },
-    CommandEntry { name: "ATTRIB",   category: "FILE",     handler: cmd_attrib,  description: "Display/modify file attributes",
-        usage: concat!("Syntax:  ATTRIB [file]\n",
-                       "  Display or modify file attributes:\n",
-                       "  R = Read-only, H = Hidden, S = System, A = Archive\n",
-                        "  ATTRIB C:\\Programs\\readme.txt   shows attributes."), },
-    CommandEntry { name: "SYNC",     category: "CTRL",     handler: cmd_sync,    description: "Flush disk cache to disk",
-        usage: concat!("Syntax:  SYNC\n",
-                       "  Flush all pending disk writes from the block cache\n",
-                       "  to the physical disk."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
         usage: concat!("Syntax:  TEST\n",
                         "  Run all kernel self-tests (392 tests across 39 suites).\n",
@@ -315,13 +274,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  EXIT\n",
                        "  Sync disk cache and halt the system.\n",
                        "  Equivalent to SYNC followed by HLT."), },
-    CommandEntry { name: "SHUTDOWN", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
-        usage: concat!("Syntax:  SHUTDOWN\n",
-                       "  Power off the system. Uses QEMU debug port.\n",
-                       "  Falls back to HLT if power-off is unavailable."), },
-    CommandEntry { name: "POWEROFF", category: "SHUTDOWN", handler: cmd_shutdown,description: "Power off the system",
-        usage: concat!("Syntax:  POWEROFF\n",
-                       "  Alias for SHUTDOWN."), },
     CommandEntry { name: "NDREG",    category: "INFO",     handler: cmd_ndreg,   description: "Driver Registry CLI",
         usage: concat!("Syntax:  NDREG <subcommand> [args]\n",
                        "  NeoDOS Driver Registry — inspect driver metadata.\n",

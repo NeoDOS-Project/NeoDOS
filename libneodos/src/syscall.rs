@@ -279,3 +279,28 @@ pub fn sys_getcpuinfo(buf: &mut CpuInfoFull) -> Result<(), i64> {
         core::mem::size_of::<CpuInfoFull>(),
     ))
 }
+
+/// DateTime — matches kernel's SysDateTime (RAX=44).
+#[repr(C)]
+pub struct DateTime {
+    pub second: u8,
+    pub minute: u8,
+    pub hour: u8,
+    pub day: u8,
+    pub month: u8,
+    pub year: u8,
+    pub valid: u8,
+}
+
+/// sys_get_version (RAX=43): copy kernel version string to buf.
+/// Returns the full string length (may be larger than buf).
+pub fn sys_get_version(buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    ret((export::get_table().sys_get_version)(ptr, len)).map(|v| v as usize)
+}
+
+/// sys_get_datetime (RAX=44): fill a DateTime struct from the kernel RTC.
+pub fn sys_get_datetime(dt: &mut DateTime) -> Result<(), i64> {
+    ret_unit((export::get_table().sys_get_datetime)(dt as *mut DateTime as *mut u8))
+}

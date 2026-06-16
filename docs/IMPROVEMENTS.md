@@ -668,7 +668,7 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 - [x] **B8.1. DIR.NXE** | `userbin/coredir/` | Lista directorio con `sys_open` (dir) + `sys_readdir`. Columnas, `/W` (wide), `/P` (pausa).
 - [ ] **B8.2. TYPE.NXE** | `userbin/coretype/` | Muestra contenido de archivo con `sys_open` + `sys_readfile`. Búfer 512 B.
 - [ ] **B8.3. ECHO.NXE** | `userbin/coreecho/` | Imprime argumentos a stdout via `sys_write`.
-- [ ] **B8.4. VER.NXE** | `userbin/corever/` | Muestra versión del sistema (constante compilada).
+- [x] **B8.4. VER.NXE** | `userbin/ver/` | Muestra versión del sistema via sys_get_version (RAX=43).
 - [ ] **B8.5. CLS.NXE** | `userbin/corecls/` | Limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
 - [x] **B8.6. HELP.NXE** | `userbin/corehelp/` | Lista coretools disponibles escaneando `C:\BIN\*.NXE` con `sys_readdir`.
 - [ ] **B8.7. COPY.NXE** | `userbin/corecopy/` | Copia archivo: `sys_open` src (read) + `sys_open`/`sys_writefile` dst. Búfer 4 KB.
@@ -676,7 +676,8 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 - [ ] **B8.9. REN.NXE** | `userbin/coreren/` | Renombra via `sys_rename`.
 - [ ] **B8.10. MD.NXE** | `userbin/coremd/` | Crea directorio via `sys_mkdir`.
 - [ ] **B8.11. RD.NXE** | `userbin/corerd/` | Elimina directorio vacío via `sys_rmdir`.
-- [ ] **B8.12. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
+- [x] **B8.12. DATETIME.NXE** | `userbin/datetime/` | Muestra fecha/hora RTC via sys_get_datetime (RAX=44). Flags `/D`, `/T`.
+- [ ] **B8.13. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
 
 #### B7. Experimental
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.38.0 — 2026-06-16
+
+### Added
+- **sys_get_version (RAX=43)** — `handler_get_version`: copies kernel version string to user buffer.
+- **sys_get_datetime (RAX=44)** — `handler_get_datetime`: fills `SysDateTime` struct from RTC bridge.
+- **VER.NXE** — `userbin/ver/`: standalone user-mode binary that displays kernel version via sys_get_version.
+- **DATETIME.NXE** — `userbin/datetime/`: standalone user-mode binary that displays RTC date and time via sys_get_datetime, with `/D` (date only) and `/T` (time only) flags.
+- **libneodos wrappers** — `sys_get_version(buf)` and `sys_get_datetime(dt)` in `libneodos/src/syscall.rs`. `DateTime` struct in public API.
+
+### Changed
+- Updated `scripts/build.sh` and `scripts/create_neodos_image.py` to build and include `datetime.nxe` and `ver.nxe` in NeoDOS FS image.
+- Removed stale test binaries (`hello.nxe`, `systest.nxe`, `filetest.nxe`, `alltest.nxe`, `cputest.nxe`, `test.nxe`) from build and image creation.
+- `spawn_hello_binary_path_resolve` test uses `dir.nxe` instead of removed `hello.nxe`.
+
 ## v0.37.0 — 2026-06-15
 
 ### Changed

@@ -15,9 +15,9 @@ impl DosShell {
         }
 
         let user_tests: &[&str] = if args.contains(&"quick") {
-            &["SYSTEST.NXE"]
+            &["DIR.NXE"]
         } else {
-            &["C:\\Programs\\hello.nxe", "C:\\Programs\\systest.nxe", "C:\\Programs\\filetest.nxe", "C:\\Programs\\alltest.nxe", "C:\\Programs\\cputest.nxe", "C:\\Programs\\test.nxe", "C:\\Programs\\cpuinfo.nxe", "C:\\Programs\\dir.nxe"]
+            &["C:\\Programs\\cpuinfo.nxe", "C:\\Programs\\dir.nxe", "C:\\Programs\\datetime.nxe", "C:\\Programs\\ver.nxe"]
         };
 
         for bin in user_tests {

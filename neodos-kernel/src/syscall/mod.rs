@@ -63,10 +63,12 @@ pub enum SyscallNum {
     WaitAlertable = 40,
     SleepEx = 41,
     Poweroff = 42,
+    GetVersion = 43,
+    GetDateTime = 44,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 42;
+    pub const MAX_VALID: u64 = 44;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -102,6 +104,8 @@ impl SyscallNum {
             40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
             42 => Some(Self::Poweroff),
+            43 => Some(Self::GetVersion),
+            44 => Some(Self::GetDateTime),
             _ => None,
         }
     }
@@ -142,7 +146,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28,
-        40, 41, 42,
+        40, 41, 42, 43, 44,
         50,
     ];
     // Reserved syscall slots that MUST be None
@@ -587,39 +591,39 @@ fn handler_poweroff(_regs: Registers) -> u64 {
 fn handler_exit(regs: Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
-        crate::serial_println!("[EXIT] enter");
+        //crate::serial_println!("[EXIT] enter");
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
         if tid > 0 {
-            crate::serial_println!("[EXIT] tid={} start", tid);
+            //crate::serial_println!("[EXIT] tid={} start", tid);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.state = ThreadState::Terminated;
             }
-            crate::serial_println!("[EXIT] marked Terminated");
+            //crate::serial_println!("[EXIT] marked Terminated");
             let pid = scheduler.current_pid();
-            crate::serial_println!("[EXIT] pid={}", pid);
+            //crate::serial_println!("[EXIT] pid={}", pid);
             if pid > 0 {
-                crate::serial_println!("[EXIT] getting eproc");
+                //crate::serial_println!("[EXIT] getting eproc");
                 let eproc = scheduler.current_eprocess_mut();
-                crate::serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
+                //crate::serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
                 if let Some(ep) = eproc {
                     ep.thread_count = ep.thread_count.saturating_sub(1);
                     ep.exit_code = code as i64;
-                    crate::serial_println!("[EXIT] thread_count={}", ep.thread_count);
+                    //crate::serial_println!("[EXIT] thread_count={}", ep.thread_count);
                     if ep.thread_count == 0 {
-                        crate::serial_println!("[EXIT] freeing resources");
+                        //crate::serial_println!("[EXIT] freeing resources");
                         if let Some(slot) = ep.user_slot.take() {
-                            crate::serial_println!("[EXIT] free_user_slot");
+                            //crate::serial_println!("[EXIT] free_user_slot");
                             crate::arch::x64::paging::free_user_slot(slot);
                         }
                         if ep.heap_base != 0 {
-                            crate::serial_println!("[EXIT] heap_free_range");
+                            //crate::serial_println!("[EXIT] heap_free_range");
                             crate::arch::x64::paging::heap_free_range(
                                 ep.heap_base,
                                 ep.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
                             );
-                            crate::serial_println!("[EXIT] free_heap_slot");
+                            //crate::serial_println!("[EXIT] free_heap_slot");
                             let heap_idx = ((ep.heap_base
                                 - crate::arch::x64::paging::PROCESS_HEAP_BASE)
                                 / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
@@ -627,14 +631,14 @@ fn handler_exit(regs: Registers) -> u64 {
                             ep.heap_base = 0;
                             ep.heap_break = 0;
                         }
-                        crate::serial_println!("[EXIT] mmap regions count={}", ep.mmap_regions.len());
+                        //crate::serial_println!("[EXIT] mmap regions count={}", ep.mmap_regions.len());
                         for r in ep.mmap_regions.iter() {
-                            crate::serial_println!("[EXIT] mmap_free_range base=0x{:x}", r.base);
+                            //crate::serial_println!("[EXIT] mmap_free_range base=0x{:x}", r.base);
                             crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
                         }
                         ep.mmap_regions.clear();
                         ep.mmap_next = crate::arch::x64::paging::MMAP_BASE;
-                        crate::serial_println!("[EXIT] handle_table len={}", ep.handle_table.len());
+                        //crate::serial_println!("[EXIT] handle_table len={}", ep.handle_table.len());
                         for i in 0..ep.handle_table.len() {
                             let h = ep.handle_table[i];
                             match h.kind {
@@ -650,30 +654,28 @@ fn handler_exit(regs: Registers) -> u64 {
                         }
                         scheduler.wake_waiters(pid);
                     }
-                    crate::serial_println!("[EXIT] after resource freeing");
+                    //crate::serial_println!("[EXIT] after resource freeing");
                 }
             }
-            crate::serial_println!("[EXIT] wake_thread_joiner");
+            //crate::serial_println!("[EXIT] wake_thread_joiner");
             scheduler.wake_blocked_on_magic(tid | 0x8000_0000);
-            crate::serial_println!("[EXIT] checking: pid={} wait_pid={}",
-                pid, crate::usermode::current_wait_pid());
+            //crate::serial_println!("[EXIT] checking: pid={} wait_pid={}", pid, crate::usermode::current_wait_pid());
             if pid > 0 && pid == crate::usermode::current_wait_pid() {
                 let eproc = scheduler.current_eprocess();
                 if eproc.map_or(true, |ep| ep.thread_count == 0) {
-                    crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
+                    //crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
                     crate::usermode::request_exit_to_kernel();
-                    crate::serial_println!("[EXIT] after request_exit_to_kernel");
+                    //crate::serial_println!("[EXIT] after request_exit_to_kernel");
                 } else {
-                    crate::serial_println!("[EXIT] NOT calling: thread_count != 0");
+                    //crate::serial_println!("[EXIT] NOT calling: thread_count != 0");
                 }
             } else {
-                crate::serial_println!("[EXIT] NOT calling: pid={} wait_pid={}",
-                    pid, crate::usermode::current_wait_pid());
+                //crate::serial_println!("[EXIT] NOT calling: pid={} wait_pid={}", pid, crate::usermode::current_wait_pid());
             }
         }
-        crate::serial_println!("[EXIT] done (after if tid > 0 block)");
+        //crate::serial_println!("[EXIT] done (after if tid > 0 block)");
     });
-    crate::serial_println!("[EXIT] returned from without_interrupts");
+    //crate::serial_println!("[EXIT] returned from without_interrupts");
     code
 }
 
@@ -1780,6 +1782,75 @@ fn handler_get_cpuinfo(regs: Registers) -> u64 {
     0
 }
 
+/// sys_get_version (RAX=43): copy kernel version string to user buffer.
+/// RBX = user buffer ptr, RCX = buffer size.
+fn handler_get_version(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    let buf_size = regs.rcx;
+    if buf_ptr == 0 || buf_size == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    let ver = crate::KERNEL_VERSION.as_bytes();
+    let copy_len = ver.len().min(buf_size as usize);
+    if !is_user_ptr_valid(buf_ptr, copy_len as u64) {
+        return err_to_u64(SyscallError::Fault);
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(ver.as_ptr(), buf_ptr as *mut u8, copy_len);
+    }
+    ver.len() as u64
+}
+
+/// ABI-stable DateTime struct for sys_get_datetime (RAX=44).
+#[repr(C)]
+pub struct SysDateTime {
+    pub second: u8,
+    pub minute: u8,
+    pub hour: u8,
+    pub day: u8,
+    pub month: u8,
+    pub year: u8,
+    pub valid: u8,
+}
+
+/// sys_get_datetime (RAX=44): copy RTC date/time to user buffer.
+/// RBX = user buffer ptr.
+fn handler_get_datetime(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    if buf_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    let sz = core::mem::size_of::<SysDateTime>() as u64;
+    if !is_user_ptr_valid(buf_ptr, sz) {
+        return err_to_u64(SyscallError::Fault);
+    }
+    let dt = crate::drivers::rtc_bridge::request_datetime();
+    let sysdt = match dt {
+        Some(d) => SysDateTime {
+            second: d.second,
+            minute: d.minute,
+            hour: d.hour,
+            day: d.day,
+            month: d.month,
+            year: d.year,
+            valid: 1,
+        },
+        None => SysDateTime {
+            second: 0, minute: 0, hour: 0,
+            day: 0, month: 0, year: 0,
+            valid: 0,
+        },
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &sysdt as *const SysDateTime as *const u8,
+            buf_ptr as *mut u8,
+            sz as usize,
+        );
+    }
+    0
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -1819,6 +1890,8 @@ lazy_static! {
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
         t[42] = Some(handler_poweroff as SyscallFn);
+        t[43] = Some(handler_get_version as SyscallFn);
+        t[44] = Some(handler_get_datetime as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -1857,6 +1930,8 @@ lazy_static! {
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();
+        t[43] = SyscallPermission::user();
+        t[44] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };
@@ -2030,10 +2105,10 @@ pub fn register_syscall_table_tests() {
     // ── A4.6 Integration tests ──
 
     test_case!("spawn_hello_binary_path_resolve", {
-        // Test that handler_spawn's VFS path resolution works for hello.nxe
+        // Test that handler_spawn's VFS path resolution works for an existing .nxe
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
         let result = crate::globals::with_vfs(|vfs| {
-            vfs.resolve_path("C:\\Programs\\hello.nxe")
+            vfs.resolve_path("C:\\Programs\\dir.nxe")
         });
         test_true!(result.is_ok());
         if let Ok((_, node)) = result {

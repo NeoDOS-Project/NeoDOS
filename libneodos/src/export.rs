@@ -60,8 +60,9 @@ pub struct AbiTable {
     pub sys_unlink: extern "C" fn(*const u8) -> i64,
     pub sys_rmdir: extern "C" fn(*const u8) -> i64,
     pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
+    pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
+    pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
     pub version: u32,
-    pub _reserved: [u64; 2],
 }
 
 /// Get a reference to the DLL export table
