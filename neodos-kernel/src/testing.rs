@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 400;
+const MAX_TESTS: usize = 512;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -2376,6 +2376,8 @@ pub fn register_tests() {
     register_irql_tests();
     // Stress tests are always registered but can be gated by feature
     register_stress_tests();
+    // A5.1 Unified block I/O layer (IoStack) tests
+    crate::vfs::io::register_tests();
 }
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────

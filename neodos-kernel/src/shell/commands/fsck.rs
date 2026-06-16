@@ -44,7 +44,8 @@ impl DosShell {
             crate::fs::fsck::FsckMode::CheckOnly
         };
 
-        let stats = crate::fs::fsck::run(cache, dev, mode);
+        let partition_base = crate::globals::PRIMARY_PARTITION_BASE.load(core::sync::atomic::Ordering::Relaxed) as u32;
+        let stats = crate::fs::fsck::run(cache, dev, mode, partition_base);
 
         crate::fs::fsck::print_report(&stats);
 

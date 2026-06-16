@@ -248,7 +248,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Alias for RD."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
         usage: concat!("Syntax:  TEST\n",
-                        "  Run all kernel self-tests (392 tests across 39 suites).\n",
+                        "  Run all kernel self-tests (397 tests across 40 suites).\n",
                         "  If all pass, runs 8 user-mode binaries:\n",
                         "  HELLO.NXE, SYSTEST.NXE, FILETEST.NXE, ALLTEST.NXE,\n",
                         "  CPUTEST.NXE, TEST.NXE, CPUINFO.NXE, DIR.NXE"), },

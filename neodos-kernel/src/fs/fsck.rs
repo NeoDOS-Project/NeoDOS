@@ -27,34 +27,34 @@ pub enum FsckMode {
 }
 
 // Helper: read Inode value from disk.
-fn read_inode(inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<Inode, ()> {
+fn read_inode(inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Inode, ()> {
     let inode_sector = 1 + (inode_num / 2);
     let offset = (inode_num % 2) as usize * 256;
-    let sector_data = cache.get_sector(inode_sector, dev)?;
+    let sector_data = cache.get_sector(inode_sector + partition_base, dev)?;
     let inode: Inode = unsafe {
         core::ptr::read_unaligned(sector_data.as_ptr().add(offset) as *const _)
     };
     Ok(inode)
 }
 
-fn write_inode(inode_num: u32, inode: &Inode, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
+fn write_inode(inode_num: u32, inode: &Inode, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
     let inode_sector = 1 + (inode_num / 2);
     let offset = (inode_num % 2) as usize * 256;
-    let sector_data = cache.get_sector_mut(inode_sector, dev)?;
+    let sector_data = cache.get_sector_mut(inode_sector + partition_base, dev)?;
     unsafe {
         core::ptr::write_unaligned(sector_data.as_mut_ptr().add(offset) as *mut Inode, *inode);
     }
     Ok(())
 }
 
-fn read_superblock(cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<Superblock, ()> {
-    let data = cache.get_sector(0, dev)?;
+fn read_superblock(cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Superblock, ()> {
+    let data = cache.get_sector(partition_base, dev)?;
     let sb: Superblock = unsafe { core::ptr::read_unaligned(data.as_ptr() as *const _) };
     Ok(sb)
 }
 
-fn write_superblock(sb: &Superblock, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
-    let data = cache.get_sector_mut(0, dev)?;
+fn write_superblock(sb: &Superblock, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
+    let data = cache.get_sector_mut(partition_base, dev)?;
     unsafe { core::ptr::write_unaligned(data.as_mut_ptr() as *mut Superblock, *sb); }
     Ok(())
 }
@@ -63,7 +63,7 @@ fn read_dir_entry(sector_data: &[u8; 512], entry_off: usize) -> DirectoryEntry {
     unsafe { core::ptr::read_unaligned(sector_data.as_ptr().add(entry_off) as *const _) }
 }
 
-pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) -> FsckStats {
+pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, partition_base: u32) -> FsckStats {
     let mut stats = FsckStats {
         total_inodes: 0, used_inodes: 0, valid_inodes: 0, corrupted_inodes: 0,
         cross_linked_blocks: 0, bitmap_orphan_blocks: 0, bitmap_missing_blocks: 0,
@@ -74,7 +74,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
     let is_repair = matches!(mode, FsckMode::Repair);
 
     // ── 1. Superblock ──────────────────────────────────────
-    let sb = match read_superblock(cache, dev) {
+    let sb = match read_superblock(cache, dev, partition_base) {
         Ok(sb) => sb,
         Err(_) => {
             stats.superblock_errors += 1;
@@ -137,7 +137,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
     }
 
     if stats.superblock_errors > 0 && is_repair {
-        let _ = write_superblock(&sb_fixed, cache, dev);
+        let _ = write_superblock(&sb_fixed, cache, dev, partition_base);
         stats.repairs_applied += 1;
     }
 
@@ -148,7 +148,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
     let mut inodes: Vec<(u32, Inode)> = Vec::new();
 
     for i in 0..total_inodes as u32 {
-        let inode = match read_inode(i, cache, dev) {
+        let inode = match read_inode(i, cache, dev, partition_base) {
             Ok(inode_val) => inode_val,
             Err(_) => {
                 stats.corrupted_inodes += 1;
@@ -174,7 +174,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                 if is_repair {
                     let mut fixed = inode;
                     fixed.inode_num = 0;
-                    let _ = write_inode(i, &fixed, cache, dev);
+                    let _ = write_inode(i, &fixed, cache, dev, partition_base);
                     stats.repairs_applied += 1;
                     crate::serial_println!("[FSCK] REPAIR: Cleared inode_num for inode {}", i);
                 }
@@ -191,7 +191,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
             if is_repair {
                 let mut fixed = inode;
                 fixed.inode_num = i;
-                let _ = write_inode(i, &fixed, cache, dev);
+                let _ = write_inode(i, &fixed, cache, dev, partition_base);
                 stats.repairs_applied += 1;
                 crate::serial_println!("[FSCK] REPAIR: Fixed inode_num for inode {}", i);
             }
@@ -220,7 +220,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                 if (fixed.mode & (MODE_DIR | MODE_FILE)) == 0 {
                     fixed.mode = MODE_FILE;
                 }
-                let _ = write_inode(i, &fixed, cache, dev);
+                let _ = write_inode(i, &fixed, cache, dev, partition_base);
                 stats.repairs_applied += 1;
                 let fmode = fixed.mode;
                 crate::serial_println!("[FSCK] REPAIR: Fixed mode for inode {} to 0x{:04X}", i, fmode);
@@ -245,7 +245,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
             if is_repair {
                 let mut fixed = inode;
                 fixed.size = max_size;
-                let _ = write_inode(i, &fixed, cache, dev);
+                let _ = write_inode(i, &fixed, cache, dev, partition_base);
                 stats.repairs_applied += 1;
                 crate::serial_println!("[FSCK] REPAIR: Clamped size for inode {} to {}", i, max_size);
             }
@@ -278,7 +278,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                     if (fixed.mode & MODE_DIR) != 0 && idx == 0 && fixed.size > 0 {
                         fixed.size = 0;
                     }
-                    let _ = write_inode(inode_num, &fixed, cache, dev);
+                    let _ = write_inode(inode_num, &fixed, cache, dev, partition_base);
                     stats.repairs_applied += 1;
                     crate::serial_println!("[FSCK] REPAIR: Cleared out-of-range block ptr in inode {} block {}", inode_num, idx);
                 }
@@ -295,7 +295,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                     if (fixed.mode & MODE_DIR) != 0 && idx == 0 && fixed.size > 0 {
                         fixed.size = 0;
                     }
-                    let _ = write_inode(inode_num, &fixed, cache, dev);
+                    let _ = write_inode(inode_num, &fixed, cache, dev, partition_base);
                     stats.repairs_applied += 1;
                     crate::serial_println!("[FSCK] REPAIR: Cleared cross-linked block {} from inode {} block {}", b, inode_num, idx);
                 }
@@ -364,7 +364,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                 // Phase 1: Read sector (immutable borrow, then release)
                 let mut sector_entries: Vec<(usize, u32, u8, u8, [u8; 249])> = Vec::new();
                 {
-                    let sector_data = match cache.get_sector(block_sector + sector_offset, dev) {
+                    let sector_data = match cache.get_sector(block_sector + sector_offset + partition_base, dev) {
                         Ok(d) => d,
                         Err(_) => {
                             stats.dir_errors += 1;
@@ -393,7 +393,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                         stats.dangling_entries += 1;
                         crate::serial_println!("[FSCK] ERROR: Dir inode {} has entry pointing to invalid inode {} (name_len={})", dir_inode_num, entry_inode_num, entry_name_len);
                         if is_repair {
-                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset, dev) {
+                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset + partition_base, dev) {
                                 data[entry_offset] = 0xE5;
                                 stats.repairs_applied += 1;
                                 crate::serial_println!("[FSCK] REPAIR: Deleted dangling entry in inode {} at sector {}", dir_inode_num, block_sector + sector_offset);
@@ -413,7 +413,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                         stats.dangling_entries += 1;
                         crate::serial_println!("[FSCK] ERROR: Dir inode {} entry inode_num={} points to unused inode", dir_inode_num, entry_inode_num);
                         if is_repair {
-                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset, dev) {
+                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset + partition_base, dev) {
                                 data[entry_offset] = 0xE5;
                                 stats.repairs_applied += 1;
                                 crate::serial_println!("[FSCK] REPAIR: Deleted stale entry pointing to inode {} in dir {}", entry_inode_num, dir_inode_num);
@@ -436,7 +436,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                         stats.dir_errors += 1;
                         crate::serial_println!("[FSCK] ERROR: Dir inode {} entry type mismatch: entry_type={}, inode mode=0x{:04X}", dir_inode_num, entry_type, actual_mode);
                         if is_repair {
-                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset, dev) {
+                            if let Ok(data) = cache.get_sector_mut(block_sector + sector_offset + partition_base, dev) {
                                 data[entry_offset + 5] = if is_actually_dir { 2 } else { 1 };
                                 stats.repairs_applied += 1;
                                 crate::serial_println!("[FSCK] REPAIR: Fixed entry type for inode {}", entry_inode_num);
@@ -479,7 +479,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
                 fixed.inode_num = 0;
                 fixed.size = 0;
                 fixed.direct_blocks = [0; 12];
-                let _ = write_inode(inode_num, &fixed, cache, dev);
+                let _ = write_inode(inode_num, &fixed, cache, dev, partition_base);
                 stats.repairs_applied += 1;
                 crate::serial_println!("[FSCK] REPAIR: Freed orphan inode {}", inode_num);
             }
@@ -498,7 +498,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode) ->
 pub fn print_report(stats: &FsckStats) {
     crate::println!("");
     crate::println!("========================================");
-    crate::println!("  N e o D O S  F S C K   R e p o r t");
+    crate::println!("  NeoDOS  FSCK   Report"                 );
     crate::println!("========================================");
     crate::println!("");
 

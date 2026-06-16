@@ -1,5 +1,7 @@
 # NeoDOS — Roadmap v3.0 (NT Alignment + Features)
 
+> This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
+
 > Versión actual: v0.37.0 (392 kernel tests + 9 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
@@ -315,25 +317,6 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 5. PHASE 4: kernel carga `C:\Programs\NeoInit.nxe`, no `DosShell::run()`.
 6. NeoInit lanza neoshell como hijo; kernel entra idle loop (HLT + work queue + event bus).
 
-- [x] **A4.6. Syscalls para shell Ring 3** | NT: CSRSS, SSDT | Prereqs: A4.2, A4.3
-  - **Archivos:** `neodos-kernel/src/syscall/mod.rs` (6 new handlers), `neodos-kernel/src/handle.rs` (HANDLE_DIR), `libneodos-nxl/src/main.rs` (NXL wrappers), `libneodos/src/syscall.rs` (safe wrappers), `libneodos/src/export.rs` (AbiTable)
-  - **Descripción:** Añadir 6 syscalls necesarias para que una shell Ring 3 pueda operar sobre el filesystem y lanzar procesos.
-    - **sys_spawn (RAX=7):** RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd → u64 (PID). Lee binario via VFS, alloc user slot + heap slot, carga ELF/flat, crea EPROCESS+KTHREAD con handles opcionalmente heredados, en cola a run queue. Reutiliza lógica de `commands/run.rs` pero desde contexto syscall.
-    - **sys_readdir (RAX=8):** RBX=fd, RCX=buf_ptr → u64 (entries read). Lee una entrada de directorio (inode + name + type) del handle de directorio. Requiere modificar `sys_open` para aceptar directorios (HANDLE_DIR type 9 en handle.rs).
-    - **sys_mkdir (RAX=25):** RBX=path_ptr → u64. Crea directorio via VFS.
-    - **sys_unlink (RAX=26):** RBX=path_ptr → u64. Elimina archivo via VFS.
-    - **sys_rmdir (RAX=27):** RBX=path_ptr → u64. Elimina directorio vacío via VFS.
-    - **sys_rename (RAX=28):** RBX=old_path, RCX=new_path → u64. Renombra archivo/directorio via VFS.
-  - **libneodos-nxl:** Añadir `nxl_sys_spawn`, `nxl_sys_readdir`, `nxl_sys_mkdir`, `nxl_sys_unlink`, `nxl_sys_rmdir`, `nxl_sys_rename` como `extern "C"` con INT 0x80 inline. Extender `AbiTable` con los 6 nuevos function pointers.
-  - **libneodos:** Añadir wrappers safe Rust en `syscall.rs`. Actualizar `export.rs` con mirror de la nueva tabla.
-  - **Criterio:**
-    - `sys_spawn("C:\BIN\HELLO.NXE", 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF)` → devuelve PID, el proceso se ejecuta y termina.
-    - `sys_spawn` con fds válidos redirige stdin/stdout/stderr del hijo.
-    - `sys_open("C:\")` → fd de directorio. `sys_readdir(fd, buf)` → primera entrada.
-    - `sys_mkdir("C:\NEWDIR")` → directorio creado, `sys_rmdir` lo elimina.
-    - `sys_unlink("C:\FILE.TXT")` → archivo eliminado.
-    - `sys_rename("C:\OLD.TXT", "C:\NEW.TXT")` → archivo renombrado.
-  - **Tests:** `spawn_hello_binary`, `spawn_with_fd_redirection`, `readdir_list_root`, `mkdir_rmdir_roundtrip`, `unlink_file`, `rename_file` (6 tests).
 
 - [x] **A4.7. neoshell (shell Ring 3)** | NT: CSRSS | Prereqs: A4.6
   - **Archivos:** `userbin/neoshell/` (new Rust project con libneodos), `scripts/create_neodos_image.py` (incluir neoshell.nxe en C:\BIN\), `docs/NEOSHELL_PLAN.md`
@@ -400,57 +383,99 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 
 ### FASE A5 — Storage Unification (NT: IoStack)
 
-- [ ] **A5.1. Unified block I/O layer** | NT: IoStack, driver stack | Prereqs: A0
-  - **Archivos:** `src/vfs/io.rs` (new), `src/vfs/partition.rs` (new), refactor `src/fs/neofs/`, `src/fs/fat32/`, integración `src/drivers/storage.rs`
-  - **Descripción:** Abstracción unificada para I/O de bloques con cache, manejo de particiones y criptografía (futura).
-    - **IoStack structure:**
-      ```rust
-      struct IoStack {
-          device: &'static dyn BlockDevice,  // NVMe/AHCI/etc
-          partition_info: Option<PartitionInfo>,  // LBA base, size
-          cache_level: PageCacheLevel,  // none/l1/l2
-          crypto_ctx: Option<CryptoContext>,  // future: AES-XTS
-      }
-      ```
-    - **PartitionInfo:** Resultado de parse GPT/MBR. Almacena: `{ base_lba: u64, sector_count: u64, partition_type: [u8; 16] }`.
-    - **API unified:** `iostack_read_sectors(io: &IoStack, lba_offset: u64, sector_count: usize, buf: &mut [u8]) -> Result`
-      1. Translate LBA: lba = `partition.base_lba + lba_offset`
-      2. Check cache (page cache v1.14): hit → copy
-      3. Miss → submit IRP a `io.device.submit_irp()`
-      4. Decrypt si crypto activo
-      5. Retornar
-    - **FAT32 refactor:** Usar `iostack_read_sectors()` en lugar de hardcode `block_device_read()`.
-    - **NeoFS refactor:** Usar `iostack_read_sectors()` en lugar de hardcode.
-    - **Ventaja:** Agregar nuevo device (VirtIO) o ciphered disk no requiere cambiar FAT32/NeoFS.
-  - **Criterio:**
-    - FAT32 y NeoFS en mismo disco, lectura de ambos visiá unified `iostack_read_sectors()`.
-    - Cache hit ratio identico para ambos (mejora transversal).
-    - Stress: 100 reads simultáneamente a FAT32 + NeoFS, sin deadlock, latency uniform.
-  - **Tests:** `iostack_fat32_direct_read`, `iostack_neofs_direct_read`, `iostack_shared_cache`, `iostack_partition_offset_correct`, `iostack_uniform_latency` (5 tests).
+- [ ] #### A5.2. VirtIO block driver (BOOT_DRIVER)
+Prereqs: A2.1
+* **Archivos:** `src/drivers/virtio_blk.rs` (new, 400–500 lines), integración `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6 (priority init)
+* **Descripción:** Controlador de bloques VirtIO para máquinas virtuales QEMU/KVM. Se clasifica como **BOOT_DRIVER**, no como `.NEM`, ya que participa directamente en la cadena de arranque del sistema y debe estar disponible antes del montaje del volumen raíz.
+  * **PCI detection:** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
+  * **Initialization:**
+    1. Read BAR0 (MMIO base)
+    2. Write device status: ACKNOWLEDGE | DRIVER
+    3. Allocate virtqueue (#0, 32 descriptors)
+    4. Register queue physical address
+    5. Negotiate legacy/modern features
+    6. Write device status: DRIVER_OK
+  * **I/O path:** `submit_irp(irp)` →
+    1. Allocate descriptor slot
+    2. Fill request header
+    3. Configure sector_start, sector_count, buffer address
+    4. Notify device (doorbell)
+    5. Wait completion (polling or interrupt)
+    6. Process used ring
+    7. Complete IRP
+  * **Supported operations:**
+    * READ
+    * WRITE
+    * FLUSH
+    * DISCARD
+  * **Storage priority:**
+    ```text
+    NVMe > VirtIO > BootAhci > BootAta
+    ```
+  * **Boot integration:**
+    * Available before VFS mount
+    * Available before NeoInit
+    * Available before NeoShell
+    * Available before NEM loader
+    * Used by GPT parser
+    * Used by NeoDOS filesystem loader
+  * **Driver classification:**
+    ```text
+    DriverClass::Boot
+    ```
+  * **Future compatibility:**
+    Diseñar el driver usando el futuro Driver ABI interno para facilitar una migración posterior a módulos preembebidos tipo:
+    ```text
+    kernel.bin
+     ├─ virtio_blk.nem
+     ├─ ahci.nem
+     └─ nvme.nem
+    ```
+    cargados desde memoria durante early boot. No implementar todavía.
+* **Criterio:**
+  * Arrancar NeoDOS en QEMU usando:
+    ```text
+    -drive if=virtio
+    ```
+  * Detección automática PCI.
+  * Inicialización correcta del dispositivo.
+  * GPT parsing vía VirtIO.
+  * Carga del superblock NeoDOS.
+  * Montaje de volumen raíz.
+  * Arranque completo de NeoInit y NeoShell.
+  * Lectura de 1 MB < 50 ms.
 
-- [ ] **A5.2. VirtIO block driver** | NT: VirtIO Storport controller | Prereqs: A2.1
-  - **Archivos:** `src/drivers/virtio_blk.rs` (new, 400–500 lines), integración `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6 (priority init)
-  - **Descripción:** Controlador de bloques VirtIO para máquinas virtuales QEMU/KVM.
-    - **PCI detection:** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
-    - **Initialization:**
-      1. Read BAR0 (MMIO base, typically 0xFEB00000 in QEMU)
-      2. Write device status: ACKNOWLEDGE | DRIVER
-      3. Allocate virtqueue (queue #0, 32 descriptors)
-      4. Write virtqueue address to device
-      5. Write device status: DRIVER_OK
-    - **I/O path:** `submit_irp(irp)` →
-      1. Allocate descriptor slot (round-robin)
-      2. Fill: sector_start (u64), sector_count (u32), buffer phys addr
-      3. Write available ring index (doorbell)
-      4. Poll/interrupt waits completion
-      5. Check used ring, collect result, `irp_complete()`
-    - **Features:** Legacy/modern VirtIO. Support READ/WRITE/FLUSH/DISCARD commands.
-    - **Device priority:** `NVMe > VirtIO > BootAhci > BootAta`. Se prueba en PHASE 3.6.
-  - **Criterio:**
-    - Arrancar NeoDOS en QEMU desde disco VirtIO (`-drive if=virtio`). Kernel detecta, inicializa, monta FS correctamente.
-    - GPT parsing, NeoDOS superblock load, shell boot — todo vía VirtIO.
-    - Performance: lectura 1 MB takes < 50 ms (vs 30 ms AHCI, baseline OK).
-  - **Tests:** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing` (5 tests).
+* **Tests:**
+  * `virtio_pci_detect`
+  * `virtio_virtqueue_init`
+  * `virtio_submit_read_write`
+  * `virtio_boot_load_kernel`
+  * `virtio_gpt_parsing`
+  * `virtio_mount_rootfs`
+  * `virtio_boot_neoshell`
+  * **(7 tests)**- [ ] ****A5.2. VirtIO block driver**** | NT: VirtIO Storport controller | Prereqs: A2.1
+      - ****Archivos:**** `src/drivers/virtio_blk.rs` (new, 400–500 lines), integración `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6 (priority init)
+      - ****Descripción:**** Controlador de bloques VirtIO para máquinas virtuales QEMU/KVM.
+        - ****PCI detection:**** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
+        - ****Initialization:****
+          1. Read BAR0 (MMIO base, typically 0xFEB00000 in QEMU)
+          2. Write device status: ACKNOWLEDGE | DRIVER
+          3. Allocate virtqueue (queue #0, 32 descriptors)
+          4. Write virtqueue address to device
+          5. Write device status: DRIVER_OK
+        - ****I/O path:**** `submit_irp(irp)` →
+          1. Allocate descriptor slot (round-robin)
+          2. Fill: sector_start (u64), sector_count (u32), buffer phys addr
+          3. Write available ring index (doorbell)
+          4. Poll/interrupt waits completion
+          5. Check used ring, collect result, `irp_complete()`
+        - ****Features:**** Legacy/modern VirtIO. Support READ/WRITE/FLUSH/DISCARD commands.
+        - ****Device priority:**** `NVMe > VirtIO > BootAhci > BootAta`. Se prueba en PHASE 3.6.
+      - ****Criterio:****
+        - Arrancar NeoDOS en QEMU desde disco VirtIO (`-drive if=virtio`). Kernel detecta, inicializa, monta FS correctamente.
+        - GPT parsing, NeoDOS superblock load, shell boot — todo vía VirtIO.
+        - Performance: lectura 1 MB takes < 50 ms (vs 30 ms AHCI, baseline OK).
+      - ****Tests:**** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing` (5 tests).
 
 - [ ] **A5.3. AHCI NCQ** | NT: Storport Native Command Queuing | Prereqs: A2.2
   - **Archivos:** `src/drivers/boot_ahci.rs` (extend), `src/drivers/ahci/mod.rs` (NEM driver), `src/irp/mod.rs` (tag-based dispatch)
@@ -621,34 +646,106 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
 
 #### B1. Tracing & Observability
 
-- [ ] **B1.1 Y1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs` | Done when: trace points registrables, buffer circular 4 KB, dump via serial.
-- [ ] **B1.2 Y2. NeoTrace system** | Prereqs: B1.1 | Files: `src/shell/commands/neotrace.rs` | Done when: comando `NEOTRACE START/STOP/DUMP` funcional en shell userland.
+- [ ] **B1.1 Y1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
+  - **Descripción:** Ampliar el `TraceBuffer` existente (1024 entries, lock-free ring buffer en `trace.rs`) con trace points registrables dinámicamente. Actualmente el buffer soporta 7 tipos de evento (`ContextSwitch`, `SyscallEnter/Exit`, `IrqEnter/Exit`, `SchedDecision`, `Panic`) con 4 argumentos u64 por entry. Esta mejora añade: registro dinámico de trace points por subsistema (scheduler, VFS, memory, drivers), filtrado por categoría/nivel, y dump formateado via serial con timestamps HPET. El buffer circular de 4 KB se mantiene lock-free para uso desde contexto IRQ.
+  - **Criterio:** Trace points registrables desde cualquier módulo kernel. Dump via serial legible. Filtrado por categoría funcional.
+  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`.
+
+- [ ] **B1.2 Y2. NeoTrace system** | Prereqs: B1.1 | Files: `src/shell/commands/neotrace.rs`
+  - **Descripción:** Comando de shell `NEOTRACE` que expone la infraestructura de tracing (B1.1) al usuario. Subcomandos: `START` (activa captura global), `STOP` (pausa captura), `DUMP [N]` (vuelca las últimas N entradas del TraceBuffer a consola), `FILTER <category>` (filtra por categoría). Usa `TRACE.dump()` internamente. Compatible con shell Ring 0 y futuro neoshell Ring 3 (via syscall wrapper).
+  - **Criterio:** `NEOTRACE START` + ejecutar proceso + `NEOTRACE DUMP 32` muestra últimas 32 entradas con timestamps.
+  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`.
 
 #### B2. Service Layer
 
-- [ ] **B2.1 Z6. Registry hive database** | NT: `\Registry\Machine\...` | Prereqs: NT5, A5.1 | Files: `src/registry/mod.rs` | Done when: read/write keys via path `\Registry\Machine\System\CurrentControlSet\...`. Hive binario transaccional, no flat `CONFIG.REG`.
-- [ ] **B2.2 Z2. Unified resource namespace (URN)** | Prereqs: NT5.3 | Files: `src/urn/mod.rs` | Done when: recursos addressables por URN unificado (device, file, config).
-- [ ] **B2.3 Z3. Virtual FS objects (`K:\` drive)** | Prereqs: NT5.4 | Files: `src/vfs/kdrive.rs` | Done when: `K:\` expone objetos kernel (procesos, drivers, stats) como archivos virtuales.
+- [ ] **B2.1 Z6. Registry hive database** | NT: `\Registry\Machine\...` | Prereqs: NT5, A5.1 | Files: `src/registry/mod.rs`
+  - **Descripción:** Base de datos jerárquica de configuración persistente, reemplazando el flat `CONFIG.REG`. Estructura tipo hive binario con transacciones atómicas (write-ahead log). Keys organizadas en árbol: `\Registry\Machine\System\CurrentControlSet\Services\...`, `\Registry\Machine\Software\...`, `\Registry\User\Default\...`. Tipos de valor: `REG_SZ` (string), `REG_DWORD` (u32), `REG_BINARY` (bytes). API: `reg_open_key()`, `reg_query_value()`, `reg_set_value()`, `reg_delete_key()`. Persistencia via NeoFS: hive serializado a `C:\System\Config\SYSTEM.HIV`.
+  - **Criterio:** Read/write keys via path completo. Hive persistido a disco y recargado al boot.
+  - **Tests:** `registry_create_key`, `registry_set_query_value`, `registry_hive_persist_reload`.
+
+- [ ] **B2.2 Z2. Unified resource namespace (URN)** | Prereqs: NT5.3 | Files: `src/urn/mod.rs`
+  - **Descripción:** Capa de abstracción que unifica el acceso a recursos heterogéneos (devices, archivos VFS, claves registry, objetos kernel) bajo un esquema de URN único. Formato: `neodos://device/Harddisk0/Partition1`, `neodos://file/C:/System/boot.cfg`, `neodos://registry/Machine/System`. El URN resolver parsea el esquema, delega al subsistema correspondiente (ObNamespace para devices, VFS para files, Registry para config). Permite que user-mode acceda a cualquier recurso con una API unificada (`urn_open()`, `urn_read()`, `urn_write()`).
+  - **Criterio:** `urn_open("neodos://file/C:/System/boot.cfg")` retorna handle válido.
+  - **Tests:** `urn_parse_scheme`, `urn_resolve_file`, `urn_resolve_device`.
+
+- [ ] **B2.3 Z3. Virtual FS objects (`K:\` drive)** | Prereqs: NT5.4 | Files: `src/vfs/kdrive.rs`
+  - **Descripción:** Drive virtual `K:\` que expone objetos kernel internos como archivos de solo lectura accesibles via VFS estándar. Estructura: `K:\Processes\` (lista PIDs con estado, threads, memoria), `K:\Drivers\` (NEM drivers cargados con caps y estado), `K:\Memory\` (estadísticas buddy allocator, slab, page cache), `K:\Interrupts\` (contadores IRQ, APIC stats). Implementa el trait `FileSystem` con `read()` que genera contenido dinámicamente al momento de la lectura (no almacena datos). Similar a `/proc` y `/sys` de Linux.
+  - **Criterio:** `TYPE K:\Processes\1` muestra info del PID 1. `DIR K:\Drivers\` lista drivers cargados.
+  - **Tests:** `kdrive_list_processes`, `kdrive_read_driver_info`, `kdrive_memory_stats`.
 
 #### B3. Networking
 
-- [ ] **B3.1 D9. Socket API** | Prereqs: A4.1, A4.2 | Files: `src/net/socket.rs`, `src/syscall.rs` | Done when: syscalls RAX 30–39 (socket, bind, listen, accept, connect, send, recv, shutdown).
-- [ ] **B3.2 E3. TCP/IP stack** | Prereqs: B3.1 | Files: `src/net/` | Done when: Ethernet, ARP, IPv4, ICMP, UDP, TCP funcional en QEMU `-netdev user`.
-- [ ] **B3.3 D8. DHCP client** | Prereqs: B3.2 | Files: `src/net/dhcp.rs` | Done when: obtiene IP automáticamente al boot.
-- [ ] **B3.4 D7. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs` | Done when: sincroniza RTC con servidor NTP.
+- [ ] **B3.1 D9. Socket API** | Prereqs: A4.1, A4.2 | Files: `src/net/socket.rs`, `src/syscall.rs`
+  - **Descripción:** API de sockets BSD-like expuesta como syscalls (RAX 30–39). Tipos: `SOCK_STREAM` (TCP), `SOCK_DGRAM` (UDP). Syscalls: `sys_socket(domain, type, proto)`, `sys_bind(fd, addr, len)`, `sys_listen(fd, backlog)`, `sys_accept(fd)`, `sys_connect(fd, addr, len)`, `sys_send(fd, buf, len, flags)`, `sys_recv(fd, buf, len, flags)`, `sys_shutdown(fd, how)`. Cada socket es un `HandleEntry` tipo `HANDLE_SOCKET` en la handle table del proceso. Buffers internos: TX ring 8 KB, RX ring 8 KB. Blocking via `ThreadState::Blocked` con wake desde IRQ del NIC.
+  - **Criterio:** User-mode puede crear socket, bind, listen, accept conexión TCP entrante.
+  - **Tests:** `socket_create_tcp`, `socket_bind_listen`, `socket_send_recv_loopback`.
+
+- [ ] **B3.2 E3. TCP/IP stack** | Prereqs: B3.1 | Files: `src/net/`
+  - **Descripción:** Stack de red completo en kernel. Capas: Ethernet (frame TX/RX, MAC addressing), ARP (tabla 64 entries, request/reply, timeout 300s), IPv4 (header parse/build, checksum, TTL decrement, fragmentation básica), ICMP (echo request/reply para `PING`), UDP (connectionless, checksum opcional), TCP (3-way handshake, sequence numbers, sliding window 16 KB, retransmit timer, FIN/RST). NIC driver via VirtIO-net o e1000 (QEMU). Se prueba con QEMU `-netdev user,hostfwd=tcp::8080-:80`.
+  - **Criterio:** `PING 10.0.2.2` recibe reply. TCP connection a host funciona.
+  - **Tests:** `tcp_handshake_3way`, `udp_send_recv`, `arp_table_lookup`, `icmp_echo_reply`.
+
+- [ ] **B3.3 D8. DHCP client** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
+  - **Descripción:** Cliente DHCP (RFC 2131) que obtiene configuración de red automáticamente al boot. Envía DHCPDISCOVER broadcast (UDP 68→67), recibe DHCPOFFER, envía DHCPREQUEST, recibe DHCPACK. Configura: IP address, subnet mask, default gateway, DNS server. Lease renewal timer via HPET. En QEMU `-netdev user`, el DHCP server integrado de QEMU asigna 10.0.2.15.
+  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automáticamente sin configuración manual.
+  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
+
+- [ ] **B3.4 D7. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
+  - **Descripción:** Cliente NTP (RFC 5905, modo SNTP simplificado) que sincroniza el RTC del sistema con un servidor NTP externo. Envía NTP request (UDP puerto 123), parsea respuesta (timestamps T1–T4), calcula offset y round-trip delay, ajusta RTC via `rtc_bridge.rs`. Servidor configurable en registry o `C:\System\Config\system.cfg`. Sincronización periódica cada 3600 segundos.
+  - **Criterio:** Tras boot con red, RTC sincronizado con servidor NTP (offset < 1s).
+  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`.
 
 #### B4. Userland Usable System
 
-- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.7 | Files: `userbin/neoshell/` | Done when: shell busca `.NXE`/`.COM`/`.EXE` en dirs de PATH.
-- [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.7, S2 | Files: `userbin/neoshell/` | Done when: `cmd1 | cmd2` conecta stdout→stdin via pipe.
-- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.7 | Files: `userbin/neoshell/` | Done when: redirect a archivo via dup2.
-- [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver | Done when: colores y cursor ANSI en consola.
-- [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/` | Done when: Alt+F1–F3 cambia VT activo.
-- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/` | Done when: edit/save `.TXT` via VFS.
-- [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/` | Done when: NXL binding per-process, no global slot sharing.
-- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/` | Done when: muestra procesos/threads, CPU, memoria en tiempo real.
-- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/` | Done when: ejecuta scripts `.BAT`/`.CMD` con IF, GOTO, CALL.
-- [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/` | Done when: ventanas superpuestas 2D sobre framebuffer.
+- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.7 | Files: `userbin/neoshell/`
+  - **Descripción:** Implementar búsqueda de ejecutables en múltiples directorios PATH en neoshell. Cuando el usuario escribe un comando sin ruta absoluta (ej. `DIR`), neoshell itera sobre los directorios de la variable `PATH` (ej. `C:\Programs;C:\BIN`) buscando `DIR.NXE`, `DIR.COM` o `DIR.EXE` via `sys_open` + `sys_readdir`. El primer match se ejecuta via `sys_spawn`. Prioridad de extensión: `.NXE` > `.COM` > `.EXE`. PATH se inicializa desde env vars (`SET PATH=...`).
+  - **Criterio:** `SET PATH=C:\Programs;C:\BIN` + `DIR` encuentra y ejecuta `C:\BIN\DIR.NXE`.
+  - **Tests:** `path_search_first_match`, `path_extension_priority`, `path_not_found_error`.
+
+- [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.7, S2 | Files: `userbin/neoshell/`
+  - **Descripción:** Soporte de pipelines en neoshell. Parser tokeniza `cmd1 | cmd2 | cmd3`, crea pipes via `sys_pipe` (RAX=5) para cada conexión, y spawna cada comando con `sys_spawn` usando `sys_dup2` (RAX=6) para redirigir stdout del productor al stdin del consumidor. El `PipeManager` existente (16 buffers × 4 KB) soporta blocking reads via `ThreadState::Blocked`. Neoshell hace `sys_waitpid` en el último comando del pipeline.
+  - **Criterio:** `DIR | TYPE` — DIR escribe a pipe, TYPE lee de pipe y muestra en pantalla.
+  - **Tests:** `pipe_two_commands`, `pipe_chain_three`, `pipe_blocking_read`.
+
+- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.7 | Files: `userbin/neoshell/`
+  - **Descripción:** Redirección de I/O en neoshell. Parser detecta tokens `>` (write), `>>` (append), `<` (read). Para `cmd > file`: neoshell abre/crea `file` via `sys_open`, luego spawna `cmd` con `sys_dup2` redirigiendo fd 1 (stdout) al handle del archivo. Para `cmd < file`: abre archivo y redirige fd 0 (stdin). Para `>>`: abre con flag append. Tras `sys_waitpid`, cierra el handle del archivo via `sys_close`.
+  - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
+  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
+
+- [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver
+  - **Descripción:** Emulador de terminal ANSI básico en el framebuffer driver del kernel. Interpreta secuencias de escape ANSI: `\x1b[Nm` (color foreground/background, 16 colores), `\x1b[2J` (clear screen), `\x1b[H` (cursor home), `\x1b[row;colH` (posicionar cursor), `\x1b[K` (clear to EOL). El console driver (`console.rs`) parsea el stream de bytes y aplica atributos al renderizar caracteres VGA 8×16 en el framebuffer GOP 1280×800. User-mode usa `sys_write` con secuencias ANSI embedded.
+  - **Criterio:** `ECHO \x1b[31mRed\x1b[0m` muestra "Red" en rojo. `CLS` limpia pantalla via ANSI.
+  - **Tests:** `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
+
+- [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/`
+  - **Descripción:** Multiplexar el framebuffer y el input en hasta 4 terminales virtuales (VTs). Depende de A4.4 (input subsystem rediseñado con `InputManager` y `vt_queues[4]`). Cada VT tiene su propio buffer de framebuffer (back-buffer 1280×800), cola de input independiente, y PID foreground. Alt+F1–F4 cambia VT activo: el kernel copia el back-buffer del VT seleccionado al framebuffer visible y redirige IRQ1 (PS/2) a la cola correspondiente. NeoInit spawna una instancia de neoshell por VT.
+  - **Criterio:** Alt+F1 y Alt+F2 muestran shells independientes. Input en un VT no afecta al otro.
+  - **Tests:** `vt_switch_alt_f1_f2`, `vt_independent_input`, `vt_framebuffer_swap`.
+
+- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
+  - **Descripción:** Editor de texto modal Ring 3 (`.NXE`). Usa `sys_open` + `sys_readfile` para cargar archivos y `sys_writefile` para guardar. Interfaz: barra de estado (nombre archivo, línea, columna), área de edición con scroll vertical, comandos Ctrl+S (save), Ctrl+Q (quit), Ctrl+G (goto line). Renderiza via `sys_write` con secuencias ANSI (B4.4) para posicionar cursor y aplicar colores (syntax highlighting básico para `.CFG`, `.BAT`). Buffer interno: array de líneas `Vec<String>` limitado a 64 KB.
+  - **Criterio:** `NEOEDIT C:\System\Config\system.cfg` abre, edita, guarda correctamente.
+  - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`.
+
+- [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/`
+  - **Descripción:** Evolucionar el sistema NXL actual (slots globales fijos en 0x1E000000–0x1E200000 compartidos entre procesos) a binding per-process. Cada EPROCESS mantiene su propia tabla de NXLs cargadas (`nxl_table: [Option<NxlBinding>; 8]` en `Eprocess`). `sys_loadlib` (RAX=21) mapea la NXL en el address space del proceso caller (no global). Al hacer `sys_exit`, se desmapean las NXLs del proceso. Esto permite versiones diferentes de la misma NXL en procesos distintos.
+  - **Criterio:** Dos procesos cargan versiones distintas de `libmath.nxl` sin interferencia.
+  - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`.
+
+- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/`
+  - **Descripción:** Monitor de sistema Ring 3 en tiempo real (`.NXE`). Muestra: lista de EPROCESS/KTHREAD (PID, TID, estado, prioridad, CPU ticks, memoria), uso de CPU por core (contadores del KPRCB via `sys_getcpuinfo`), estadísticas de memoria (buddy allocator free frames, slab usage, page cache hit ratio), drivers cargados. Refresco cada 1 segundo via `sys_sleep`. Renderiza con ANSI escape codes. Columnas ordenables. Ctrl+Q para salir.
+  - **Criterio:** `NEOTOP` muestra procesos activos actualizándose en tiempo real. Ctrl+Q sale limpiamente.
+  - **Tests:** `neotop_display_processes`, `neotop_refresh_loop`, `neotop_exit_clean`.
+
+- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/`
+  - **Descripción:** Intérprete de scripts batch en neoshell. Soporta archivos `.BAT`/`.CMD` con: `ECHO` (imprimir), `SET` (variables), `IF %VAR%==valor cmd` (condicional), `GOTO :label` (salto), `CALL script.bat` (subrutina), `FOR %%i IN (*.txt) DO cmd` (iteración), `REM` (comentarios), `@` (silenciar echo). Parser lee línea a línea via `sys_readfile`. Variables expandidas con `%VAR%`. Exit code del último comando en `%ERRORLEVEL%`.
+  - **Criterio:** Script `.BAT` con IF/GOTO/CALL ejecuta correctamente. `%ERRORLEVEL%` refleja exit codes.
+  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`.
+
+- [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/`
+  - **Descripción:** Compositor de ventanas 2D sobre el framebuffer GOP 1280×800. Modelo: cada ventana tiene un back-buffer (ancho×alto×4 bytes BGRA), posición (x,y), z-order, título. El compositor blittea ventanas en orden z sobre el framebuffer principal. Soporte: mover ventanas (drag título), redimensionar (drag bordes), minimizar, cerrar. Input: mouse events (futuro PS/2 mouse driver o emulación con teclado). IPC: procesos envían draw commands via pipe o shared memory al compositor. Renderiza a 30 FPS máximo (33ms refresh via HPET timer).
+  - **Criterio:** Dos ventanas superpuestas, una encima de otra. Mover ventana actualiza framebuffer.
+  - **Tests:** `compositor_create_window`, `compositor_z_order`, `compositor_blit_overlap`.
 
 #### B5. Security
 
@@ -715,7 +812,7 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 | 19 | ELF loader sin validación | A4.3 | Ldr | Completado | Triple fault con binarios maliciosos |
 | 20 | APC ausente | A4.5 | APC | Completado v0.34.0 | I/O completion en contexto incorrecto |
 | 21 | Input sin multiplexión | A4.4 | ConDrv | Pendiente | No escalar a múltiples terminales |
-| 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | Pendiente | Doble mantenimiento |
+| 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | Completado | Ambos usan IoStack para I/O |
 | 23 | Ob flat (no namespace) | NT5 | Ob | Pendiente | Hardcode C:, sin symlinks |
 | 24 | SRM ausente | NT6 | Se | Pendiente | Sin control de acceso real |
 | 25 | Registry flat | B2.1 Z6 | Cm | Pendiente | Sin config jerárquica transaccional |

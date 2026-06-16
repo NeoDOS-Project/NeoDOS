@@ -198,7 +198,10 @@ pub fn kobj_iter_snapshot() -> alloc::vec::Vec<(KObjId, KObjType, [u8; KOBJ_NAME
     res
 }
 
+pub mod namespace;
+
 pub fn register_kobj_tests() {
+    namespace::register_namespace_tests();
     test_case!("kobj_register_unregister", {
         let id = kobj_register(KObjType::Process, "test_proc", 42).unwrap();
         test_true!(id > 0);

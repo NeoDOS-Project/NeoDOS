@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 392 kernel tests + user-mode binaries
+2. `python3 scripts/auto_test.py` — 397 kernel tests + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -368,6 +368,58 @@ Comandos de gestión de archivos que operan via VFS (`vfs.rs`):
 
 Métodos del trait `FileSystem`: `remove_file()`, `remove_dir()`, `rename()` — con default `NotImplemented`.
 
+## A5.1 Unified Block I/O Layer (IoStack)
+
+`src/vfs/io.rs`, `src/vfs/partition.rs` — Abstraction unificada para I/O de bloques con cache, manejo de particiones.
+
+### IoStack Structure
+
+```rust
+struct IoStack {
+    device_id: usize,              // Index into BLOCK_DEVICES
+    partition: Option<PartitionInfo>,  // LBA base + size
+    cache_level: PageCacheLevel,   // None / L1 (sector cache) / L2
+}
+```
+
+### PartitionInfo
+
+```rust
+struct PartitionInfo {
+    base_lba: u64,
+    sector_count: u64,
+    partition_type: [u8; 16],     // GPT partition type GUID
+}
+```
+
+### Unified API
+
+| Function | Description |
+|----------|-------------|
+| `iostack_read_sectors(lba, count, buf)` | 1. Translate LBA (+ partition base) → 2. Check cache → 3. Read from device → 4. (future) Decrypt |
+| `iostack_write_sectors(lba, count, buf)` | Translate LBA + write to device |
+| `read_sector(lba)` | Single-sector convenience wrapper |
+| `write_sector(lba, data)` | Single-sector convenience wrapper |
+| `with_device(f)` | Borrow the underlying BlockDevice for cache operations |
+
+### Recent Changes
+
+| File | Change |
+|------|--------|
+| `src/vfs/io.rs` | New: IoStack + iostack_read/write_sectors |
+| `src/vfs/partition.rs` | New: PartitionInfo, GPT partition lookup by GUID |
+| `src/vfs/mod.rs` | New: module declarations |
+| `src/drivers/fat32.rs` | Refactored: uses IoStack instead of `base_lba` save/restore |
+| `src/fs/neodos_fs.rs` | Refactored: uses `io_stack.device_id` instead of hardcoded 0 |
+| `src/main.rs` | Updated: creates IoStacks from GPT, passes to filesystems |
+| `src/drivers/gpt.rs` | Added: `PART_TYPE_ESP`, `find_all_esp_partitions()` |
+
+### Criterio de aceptación
+
+- FAT32 y NeoFS en mismo disco, ambos acceden vía `iostack_read_sectors()`
+- Cache hit ratio idéntico para ambos (mejora transversal)
+- Tests: 5 (ver tabla en Testing)
+
 ## Default File Permissions by Context
 
 Al crear un archivo o directorio en NeoFS, se asignan permisos RWXSD según el tipo de archivo (extensión). Los permisos se almacenan en el campo `mode` del inodo y coexisten con `MODE_FILE`/`MODE_DIR`.
@@ -636,7 +688,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-392 tests en 39 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+397 tests en 40 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -656,6 +708,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
 | Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
 | Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
+| IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
 | Isolation | 12 | X4 Driver Isolation Layer: constants, bounds, alloc/free, driver_id lookup, layout, pointer validation, overflow, max slots, str ptr, mode for category, mode string |
@@ -681,7 +734,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (392 tests kernel)
+1. Ejecuta `testing::run_all()` (397 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

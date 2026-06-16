@@ -19,6 +19,9 @@ pub const FLUSH_INTERVAL_TICKS: u64 = 180;
 
 pub static NEED_PAGE_CACHE_FLUSH: AtomicBool = AtomicBool::new(false);
 
+/// Partition base LBA for primary block device (set during boot from GPT scan).
+pub static PRIMARY_PARTITION_BASE: AtomicU64 = AtomicU64::new(0);
+
 pub fn with_vfs<F, R>(f: F) -> R
 where
     F: FnOnce(&mut crate::fs::vfs::Vfs) -> R

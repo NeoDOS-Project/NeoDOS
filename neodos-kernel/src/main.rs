@@ -19,6 +19,7 @@ mod processes;
 mod drivers;
 mod buffer;
 mod fs;
+mod vfs;
 mod input;
 mod shell;
 mod graphics;
@@ -52,6 +53,8 @@ use drivers::gpt;
 use buffer::block_cache::BlockCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
+use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
+use vfs::io::{IoStack, PageCacheLevel};
 
 pub const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
@@ -170,6 +173,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     allocator::init();
 
     // ============================================
+    // PHASE 2.76: Object Manager (Ob) namespace
+    // Create root \ and standard directories.
+    // ============================================
+    //println!("[+] Initializing Object Manager namespace...");
+    //kobj::namespace::init_object_namespace();
+
+    // ============================================
     // PHASE 2.8: SMP — Start Application Processors
     // ============================================
     println!("[+] Initializing SMP (per-CPU data structures)...");
@@ -209,76 +219,96 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::StorageReady);
     let primary_idx = 0;
 
-    // ── NeoDOS FS via BlockDeviceManager ──
+    // ── A5.1: Create IoStacks from GPT ──
     println!("[+] Initializing Block Cache...");
     *globals::BLOCK_CACHE.lock() = Some(BlockCache::new());
     println!("[+] Initializing Page Cache (128 × 4 KB = 512 KB, hash + LRU)...");
 
-    {
+    println!("[+] Scanning GPT for partitions...");
+    let (neodos_io, esp_io) = {
         let mut bdevs = globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(primary_idx)
             .expect("Primary block device vanished");
 
-        // Scan GPT on primary disk
-        println!("[+] Scanning GPT for NeoDOS partitions (disk 0)...");
+        // Find both NeoDOS and ESP partitions
         let disk0_parts = gpt::find_all_neodos_partitions(dev);
+        let esp_parts = gpt::find_all_esp_partitions(dev);
 
-        if let Some(part) = &disk0_parts[0] {
-            println!("[+] Primary NeoDOS partition: LBA {}..{}",
-                part.start_lba, part.end_lba);
-            dev.set_base_lba(part.start_lba);
+        let neodos_part = disk0_parts[0].map(|p| {
+            PartitionInfo::new(p.start_lba, p.end_lba - p.start_lba, PART_TYPE_NEODOS)
+        });
+        let esp_part = esp_parts[0].map(|p| {
+            PartitionInfo::new(p.start_lba, p.end_lba - p.start_lba, PART_TYPE_ESP)
+        });
+
+        if let Some(ref part) = neodos_part {
+            println!("[+] NeoDOS partition: LBA {}..{} ({} sectors)",
+                part.base_lba, part.base_lba + part.sector_count, part.sector_count);
         } else {
             println!("[!] No GPT/NeoDOS partition found; assuming LBA 0");
         }
-
-        let mut cache_lock = globals::BLOCK_CACHE.lock();
-        let cache = cache_lock.as_mut().expect("BlockCache not initialized");
-
-        println!("[+] Reading Superblock...");
-        if boot_benchmark::watchdog_check() {
-            serial_println!("[WATCHDOG] Timeout before first read!");
+        if let Some(ref part) = esp_part {
+            println!("[+] ESP partition: LBA {}..{} ({} sectors)",
+                part.base_lba, part.base_lba + part.sector_count, part.sector_count);
+        } else {
+            println!("[!] No ESP partition found");
         }
-        let sb_data = match dev.read_sector(0) {
-            Ok(data) => {
-                boot_benchmark::mark(boot_benchmark::BootStage::FirstRead);
-                boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FirstRead);
-                data
-            },
-            Err(_) => panic!("Failed to read superblock"),
+
+        let neodos_io = match neodos_part {
+            Some(p) => IoStack::with_partition(primary_idx, p, PageCacheLevel::L1),
+            None => IoStack::new(primary_idx),
+        };
+        let esp_io = match esp_part {
+            Some(p) => IoStack::with_partition(primary_idx, p, PageCacheLevel::L1),
+            None => IoStack::new(primary_idx),
         };
 
-        println!("[+] Mounting NeoDOS FS...");
-        if boot_benchmark::watchdog_check() {
-            serial_println!("[WATCHDOG] Timeout before FS mount!");
-        }
-        match NeoDosFs::new(&sb_data) {
-            Ok(mut fs) => {
-                let _ = fs.rebuild_bitmap(cache, dev);
-                crate::globals::with_vfs(|vfs| {
-                    if let Err(e) = vfs.mount('C', alloc::boxed::Box::new(fs)) {
-                        panic!("Failed to mount C: {:?}", e);
-                    }
-                });
-                boot_benchmark::mark(boot_benchmark::BootStage::FsMounted);
-                boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FsMounted);
-                println!("[+] NeoDOS FS mounted on C:");
-            },
-            Err(_) => panic!("Failed to mount filesystem"),
-        }
+        (neodos_io, esp_io)
+    };
 
-        // Restore base_lba to primary partition
-        if let Some(part) = &disk0_parts[0] {
-            dev.set_base_lba(part.start_lba);
-        }
+    // Store partition base for shell commands (FSCK etc.)
+    if let Some(ref part) = neodos_io.partition {
+        globals::PRIMARY_PARTITION_BASE.store(part.base_lba, core::sync::atomic::Ordering::Relaxed);
+    }
 
-        core::mem::drop(cache_lock);
+    // ── NeoDOS FS via IoStack ──
+    println!("[+] Reading Superblock...");
+    if boot_benchmark::watchdog_check() {
+        serial_println!("[WATCHDOG] Timeout before first read!");
+    }
+    let sb_data = match neodos_io.read_sector(0) {
+        Ok(data) => {
+            boot_benchmark::mark(boot_benchmark::BootStage::FirstRead);
+            boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FirstRead);
+            data
+        },
+        Err(_) => panic!("Failed to read superblock"),
+    };
+
+    println!("[+] Mounting NeoDOS FS...");
+    if boot_benchmark::watchdog_check() {
+        serial_println!("[WATCHDOG] Timeout before FS mount!");
+    }
+    match NeoDosFs::new(&sb_data, neodos_io) {
+        Ok(mut fs) => {
+            let _ = fs.rebuild_bitmap_with_io();
+            crate::globals::with_vfs(|vfs| {
+                if let Err(e) = vfs.mount('C', alloc::boxed::Box::new(fs)) {
+                    panic!("Failed to mount C: {:?}", e);
+                }
+            });
+            boot_benchmark::mark(boot_benchmark::BootStage::FsMounted);
+            boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FsMounted);
+            println!("[+] NeoDOS FS mounted on C:");
+        },
+        Err(_) => panic!("Failed to mount filesystem"),
     }
 
     // ============================================
-    // FAT32: via BlockDeviceManager (with ATA fallback)
+    // FAT32: via IoStack
     // ============================================
     println!("[+] Initializing FAT32 driver...");
-    let fat32_mounted = if let Ok(fat32) = Fat32Driver::new() {
+    let fat32_mounted = if let Ok(fat32) = Fat32Driver::new(esp_io) {
         crate::globals::with_vfs(|vfs| {
             let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
         });
@@ -388,12 +418,30 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                         Err(_) => 0,
                     }
                 };
-                if size < 4 { return; }
+                crate::serial_println!(
+                    "[NEOINIT] resolved inode={} size={} mode=0x{:04x} read={} bytes",
+                    node.inode,
+                    node.size,
+                    node.mode,
+                    size
+                );
+                if size < 4 {
+                    crate::serial_println!("[NEOINIT] file read too small");
+                    return;
+                }
                 let data = unsafe { &BIN_BUF[..size] };
                 match elf::load_elf(data, Some(&mut addr_space)) {
-                    Ok(r) => { entry = r.entry; loaded = true; }
-                    Err(_) => {}
+                    Ok(r) => {
+                        entry = r.entry;
+                        loaded = true;
+                        crate::serial_println!("[NEOINIT] ELF load OK: entry=0x{:x}", entry);
+                    }
+                    Err(err) => {
+                        crate::serial_println!("[NEOINIT] ELF load failed: {:?}", err);
+                    }
                 }
+            } else {
+                crate::serial_println!("[NEOINIT] path not found: C:\\Programs\\NeoInit.nxe");
             }
         });
         (entry, loaded)
