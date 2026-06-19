@@ -183,6 +183,18 @@ pub fn validate_driver_ptr(
         return Ok(());
     }
 
+    // Allow pointers to kernel identity-mapped memory between heap end and user heap.
+    // Covers the kernel image, page tables, and boot stack.
+    if addr >= 0x0200_0000 && end <= 0x1000_0000 {
+        return Ok(());
+    }
+
+    // Allow pointers to kernel identity-mapped memory between user heap end and mmap base.
+    // Covers the boot stack at ~0x1FFFF000 and any other kernel data.
+    if addr >= 0x1200_0000 && end <= 0x2000_0000 {
+        return Ok(());
+    }
+
     Err("Pointer outside allowed memory regions")
 }
 

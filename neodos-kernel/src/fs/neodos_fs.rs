@@ -593,8 +593,8 @@ impl NeoDosFs {
             let Some(current_block) = self.get_inode_block_ptr(&inode, block_idx) else {
                 continue;
             };
-            let block_lba = 200 + (current_block * 8);
-            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let block_lba = self.abs_lba(200 + (current_block * 8)) as u64;
+            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = bytes_left.min(4096).min(buf.len() - total_read);
             buf[total_read..total_read + to_copy].copy_from_slice(&page[..to_copy]);
             total_read += to_copy;
@@ -623,8 +623,8 @@ impl NeoDosFs {
             let Some(current_block) = self.get_inode_block_ptr(&inode, block_idx) else {
                 continue;
             };
-            let block_lba = 200 + (current_block * 8);
-            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let block_lba = self.abs_lba(200 + (current_block * 8)) as u64;
+            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = bytes_left.min(4096);
             
             if let Ok(text) = core::str::from_utf8(&page[..to_copy]) {
@@ -902,9 +902,9 @@ impl NeoDosFs {
             }
             
             let block_ptr = inode.direct_blocks[block_idx];
-            let block_lba = 200 + (block_ptr * 8);
+            let block_lba = self.abs_lba(200 + (block_ptr * 8)) as u64;
             
-            let page = page_cache.get_page_mut(inode_num, block_idx as u32, block_lba as u64, dev)?;
+            let page = page_cache.get_page_mut(inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = (data.len() - written).min(4096);
             page[..to_copy].copy_from_slice(&data[written..written + to_copy]);
             written += to_copy;

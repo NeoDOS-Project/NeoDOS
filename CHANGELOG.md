@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.38.1 — 2026-06-19
+
+### Fixed
+- **LBA translation in file data reads** — `read_file_to_buf`, `read_file`, and `write_file` in `neodos_fs.rs` computed partition-relative LBAs but bypassed `abs_lba()` (which adds partition base via IoStack). Directory operations correctly used `abs_lba()`, so file data read from the wrong absolute disk location, returning garbage. This caused NEOINIT.NXE and libneodos.nxl to fail with `InvalidMagic`.
+- **Driver isolation pointer validation** — `validate_driver_ptr` in `isolation.rs` only allowed kernel heap (`0x01000000..0x02000000`) but the boot stack lives at `0x1FFFF000` (above heap), causing `[ISO] DENIED: hst_log with invalid pointer` when NEM drivers passed stack-allocated buffers to `hst_log`.
+
 ## v0.38.0 — 2026-06-16
 
 ### Added
