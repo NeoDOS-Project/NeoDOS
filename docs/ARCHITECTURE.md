@@ -101,7 +101,7 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 - **User heap**: 32 MB virtual range `0x10000000..0x12000000`, organised as 16 × 2 MB huge pages. At boot `init_heap_demand_paging()` splits each 2 MB huge page into 4 KB page tables. Physical frames are allocated on demand by the page fault handler when user-space touches a new page.
 - **Demand paging**: The page fault handler (`idt.rs`) checks if the faulting address falls in the heap range; if so, it calls `handle_heap_page_fault()` which walks the 4 KB page tables and allocates a physical frame via `allocate_frame()` marked as `USER_ACCESSIBLE`. On heap shrink (`sys_brk`), `heap_free_range()` unmaps pages and returns frames to the frame allocator. `heap_alloc_page()` touches pages to trigger page faults.
 - The frame allocator manages the first 4 GiB of physical memory via a bitmap (`memory.rs`). A page of memory is 4096 bytes (0x1000).
-- The `MEM` shell command reports totals derived from the UEFI memory map, clamped to the first 4 GiB and with some reservations applied:
+- The `MEM` shell command (migrated to Ring 3 as `MEM.NXE`) reports totals derived from the UEFI memory map, clamped to the first 4 GiB and with some reservations applied:
   - first 1 MiB
   - kernel image (`__kernel_start..__kernel_end`)
   - framebuffer range
@@ -572,6 +572,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 13 | sys_close | RBX=fd | Close handle (pipe, file, device, event) |
 | 16 | sys_chdir | RBX=path_ptr | Change current directory |
 | 17 | sys_getcwd | RBX=buf, RCX=len | Get current directory |
+| 47 | sys_chdir_parent | RBX=path_ptr | Change parent process current directory |
 | 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
 | 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
 | 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
@@ -591,4 +592,3 @@ The provided script `scripts/qemu-debug.sh` runs QEMU with:
 - GDB server on `tcp::1234`
 
 See `docs/DEBUG.md` for a walkthrough.
-

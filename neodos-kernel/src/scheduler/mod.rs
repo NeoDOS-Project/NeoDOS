@@ -963,14 +963,23 @@ pub fn get_current_cwd() -> (u8, String) {
 }
 
 pub fn set_current_cwd(drive: u8, path: &str) {
+    let current_pid = current_pid();
+    let _ = set_cwd_for_pid(current_pid, drive, path);
+}
+
+pub fn set_cwd_for_pid(pid: u32, drive: u8, path: &str) -> bool {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
-    if let Some(ep) = lock.current_eprocess_mut() {
+    let result = if let Some(ep) = lock.find_eprocess_mut(pid) {
         ep.cwd_drive = drive;
         ep.cwd_path = path.to_string();
-    }
+        true
+    } else {
+        false
+    };
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
 }
 
 pub fn current_process_heap_range() -> (u64, u64) {

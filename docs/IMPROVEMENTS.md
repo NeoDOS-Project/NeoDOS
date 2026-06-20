@@ -138,7 +138,7 @@
 99. **A1.4. IPI infrastructure + TLB shootdown** — `arch/x64/ipi.rs`: unified IPI module with `send_ipi()`, `send_ipi_mask()`, `send_ipi_all()`. IPI_TLB_SHOOTDOWN (vector 0xF1) with synchronous ACK protocol and shared `TlbShootdownPayload`. IPI_CALL_FUNCTION (vector 0xF2) with `CallFunctionCb` dispatch. TLB shootdown integrated into `paging.rs` (heap_free_page, heap_free_range, mmap_free_page, mmap_free_range, set_page_user_accessible). `ack_irq()` fixed to send APIC EOI for all vectors >= 32 (was only vector 32). Scheduler sends IPI_RESCHEDULE on cross-CPU thread enqueue. 5 tests: `ipi_constants`, `ipi_tlb_shootdown_struct`, `ipi_call_function_struct`, `ipi_tlb_shootdown_local_only`, `ipi_call_function_no_targets`.
 100. **A3.1. Crash dump framework** — `src/crash/mod.rs`: 16 KB CrashDumpHeader, stack walk, GPR snapshot, serial output. `CRASH`/`CRASH DUMP` commands. 5 tests.
 101. **B8. cpuinfo.nxe — user-mode CPU info binary** — `userbin/cpuinfo/`: uses `libcpu-nxl` NXL via sys_loadlib. Displays vendor, brand, topology, timers, features. sys_getcpuinfo (RAX=24) kernel + user wrappers.
-102. **A4.7. neoshell (Ring 3 shell)** — `userbin/neoshell/`: full-featured Ring 3 interactive shell. Built-in commands: HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT. DIR uses sys_open+sys_readdir. External commands: PATH scan for `.NXE`, sys_spawn + sys_waitpid. TAB completion (built-ins). History (32 entries). Env vars with SET. CWD prompt. Drive change.
+102. **A4.7. neoshell (Ring 3 shell)** — `userbin/neoshell/`: full-featured Ring 3 interactive shell. Built-in commands: HELP, CLS, ECHO, VER, CWD, DIR, SET, POWEROFF, EXIT. `CD` is a separate Ring 3 tool (`cd.nxe`) that changes the parent shell cwd via `sys_chdir_parent`. DIR uses sys_open+sys_readdir. External commands: PATH scan for `.NXE`, sys_spawn + sys_waitpid. TAB completion (built-ins). History (32 entries). Env vars with SET. CWD prompt. Drive change.
 
 ---
 
@@ -321,14 +321,14 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
 - [x] **A4.7. neoshell (shell Ring 3)** | NT: CSRSS | Prereqs: A4.6
   - **Archivos:** `userbin/neoshell/` (new Rust project con libneodos), `scripts/create_neodos_image.py` (incluir neoshell.nxe en C:\BIN\), `docs/NEOSHELL_PLAN.md`
   - **Descripción:** Shell interactiva Ring 3 que reemplaza la shell Ring 0 como interfaz de usuario principal.
-    - **Arquitectura thin:** neoshell es un dispatch minimalista — no tiene comandos embebidos (excepto CD, CWD, EXIT, CLS, HELP, SET). Cada comando es un .NXE independiente (coretools) buscado en PATH.
+    - **Arquitectura thin:** neoshell es un dispatch minimalista — no tiene comandos embebidos (excepto CWD, EXIT, CLS, HELP, SET). Cada comando es un .NXE independiente (coretools) buscado en PATH.
     - **Main loop:** prompt → readline (sys_read STDIN) → tokenize → drive change (X:) → built-in? → PATH scan `cmd.NXE` → `sys_spawn` + `sys_waitpid`.
     - **Line editing:** backspace, UTF-8, histórico circular (32 entradas), TAB completion (built-ins + PATH scan).
     - **Pipelines (futuro):** parse `cmd1 | cmd2` → `sys_pipe` + `sys_spawn` con dup2 + `sys_waitpid` para ambos.
     - **Redirection (futuro):** parse `cmd > file` → `sys_open` file + `sys_dup2` fd → `sys_spawn`.
     - **Environment:** PATH, PROMPT ($P$G style), variables de entorno en memoria.
     - **Built-ins mínimos:**
-      - `CD <path>` — `sys_chdir`
+      - `CD <path>` — `cd.nxe` + `sys_chdir_parent`
       - `CWD` — `sys_getcwd`
       - `CLS` — ANSI escape o fill
       - `HELP` — lista coretools + built-ins
@@ -338,13 +338,13 @@ Secuencia para migrar de shell Ring 0 a NeoInit + shell userland:
   - **Integración:** La shell Ring 0 carga neoshell al final de CONFIG.SYS via `RUN C:\BIN\NEOSHELL.NXE`. Cuando neoshell hace EXIT, vuelve a la shell Ring 0.
   - **Criterio:**
     - neoshell arranca, muestra prompt `C:\>`, acepta input.
-    - `CD SYSTEM` → prompt cambia a `C:\SYSTEM>`.
+    - `CD SYSTEM` → `cd.nxe` cambia el cwd del shell padre y el prompt pasa a `C:\SYSTEM>`.
     - `DIR` → busca `DIR.NXE` en PATH, ejecuta, muestra salida.
     - `VER` → muestra versión via `VER.NXE`.
     - `ECHO hola mundo` → built-in, imprime "hola mundo".
     - TAB completa built-ins y .NXE del PATH.
     - ↑/↓ navega histórico.
-  - **Tests:** `neoshell_prompt_and_cd`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
+  - **Tests:** `neoshell_prompt_and_cd_nxe`, `neoshell_run_coretool`, `neoshell_history_navigation`, `neoshell_tab_completion_builtin` (4 tests).
 
 
 - [ ] **A4.4. Input subsystem rediseñado** | NT: ConDrv (Console Driver) | Prereqs: A4.7
@@ -774,7 +774,8 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 - [ ] **B8.10. MD.NXE** | `userbin/coremd/` | Crea directorio via `sys_mkdir`.
 - [ ] **B8.11. RD.NXE** | `userbin/corerd/` | Elimina directorio vacío via `sys_rmdir`.
 - [x] **B8.12. DATETIME.NXE** | `userbin/datetime/` | Muestra fecha/hora RTC via sys_get_datetime (RAX=44). Flags `/D`, `/T`.
-- [ ] **B8.13. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
+- [x] **B8.13. MEM.NXE** | `userbin/mem/` | Muestra uso de memoria via sys_get_meminfo (RAX=45). Migrado de Ring 0.
+- [ ] **B8.14. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
 
 #### B7. Experimental
 

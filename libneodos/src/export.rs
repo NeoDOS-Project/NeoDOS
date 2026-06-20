@@ -3,7 +3,7 @@
 
 pub const NXL_BASE: u64 = 0x1e00_0000;
 pub const EXPORT_TABLE_OFFSET: u64 = 0x00;
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 4;
 
 /// Mirrors `AbiTable` from libneodos-nxl
 #[repr(C)]
@@ -51,6 +51,7 @@ pub struct AbiTable {
     pub err_enodev: i64,
     pub err_ebusy: i64,
     pub sys_chdir: extern "C" fn(*const u8) -> i64,
+    pub sys_chdir_parent: extern "C" fn(*const u8) -> i64,
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub sys_getcpuinfo: extern "C" fn(*mut u8, usize) -> i64,
@@ -62,6 +63,7 @@ pub struct AbiTable {
     pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
     pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
+    pub sys_get_meminfo: extern "C" fn(*mut u8) -> i64,
     pub version: u32,
 }
 

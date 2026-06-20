@@ -6,8 +6,9 @@ use libneodos::syscall;
 const LINE_BUF_SIZE: usize = 256;
 const HISTORY_SIZE: usize = 32;
 const MAX_ENV: usize = 16;
+const ARGS_ADDR: u64 = 0x41F000;
 static BUILTINS: &[&[u8]] = &[
-    b"CLS", b"ECHO", b"CD", b"CWD",
+    b"CLS", b"CWD",
     b"SET", b"EXIT", b"POWEROFF",
 ];
 
@@ -415,19 +416,29 @@ impl Shell {
 
         match &cmd_upper[..cmd_upper_len] {
             b"CLS" => self.cmd_cls(),
-            b"ECHO" => self.cmd_echo(),
-            b"CD" => self.cmd_cd(),
             b"CWD" => self.cmd_cwd(),
             b"SET" => self.cmd_set(),
             b"EXIT" => self.cmd_exit(),
             b"POWEROFF" => self.cmd_poweroff(),
             _ => {
                 write_str(b"\r\n");
+                let line = self.line_trimmed();
+                let rest = after_first_token(line);
+                // Write arguments to shared buffer for the spawned process
+                unsafe {
+                    let dst = ARGS_ADDR as *mut u8;
+                    let copy_len = rest.len().min(255);
+                    dst.write_bytes(0, 256);
+                    core::ptr::copy_nonoverlapping(rest.as_ptr(), dst, copy_len);
+                    dst.add(copy_len).write(0);
+                }
                 match self.resolve_command_path(&cmd_upper[..cmd_upper_len]) {
                     Ok(full_path) => {
                         let path_str = core::str::from_utf8(
                             &full_path[..full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len())]
                         ).unwrap_or("");
+                        let is_cd_tool = path_str.ends_with("\\CD.NXE")
+                            || path_str.eq_ignore_ascii_case("CD.NXE");
                         match syscall::sys_spawn(path_str, 0xFF, 0xFF, 0xFF) {
                             Ok(pid) => {
                                 write_str(b"[PID ");
@@ -437,6 +448,24 @@ impl Shell {
                                 write_str(b"\r\n");
                                 if syscall::sys_waitpid(pid).is_err() {
                                     write_err(b"waitpid error\r\n");
+                                } else if is_cd_tool {
+                                    let mut buf = [0u8; 256];
+                                    unsafe {
+                                        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, buf.as_mut_ptr(), buf.len());
+                                    }
+                                    let result = trim_ascii(&buf);
+                                    if rest.is_empty() {
+                                        if !result.is_empty() {
+                                            write_str(b"\r\n");
+                                            write_str(result);
+                                            write_str(b"\r\n");
+                                        }
+                                    } else if !result.is_empty() {
+                                        let path = core::str::from_utf8(result).unwrap_or("");
+                                        if syscall::sys_chdir(path).is_err() {
+                                            write_err(b"cd: directory not found\r\n");
+                                        }
+                                    }
                                 }
                             }
                             Err(_) => {
@@ -454,55 +483,6 @@ impl Shell {
 
     fn cmd_cls(&self) {
         write_str(b"\x1b[2J\x1b[H");
-    }
-
-    fn cmd_echo(&self) {
-        write_str(b"\r\n");
-        let rest = after_first_token(self.line_trimmed());
-        write_str(rest);
-        write_str(b"\r\n");
-    }
-
-    fn cmd_cd(&mut self) {
-        let raw = self.line_trimmed();
-        let rest = after_first_token(raw);
-        if rest.is_empty() {
-            let _ = syscall::sys_chdir("\\");
-            return;
-        }
-        let mut path_buf = [0u8; 260];
-        let path_len: usize;
-        if rest[0] != b'\\' && rest[0] != b'/' && !rest.contains(&b':') {
-            let mut cwd_buf = [0u8; 256];
-            let cwd = match syscall::sys_getcwd(&mut cwd_buf) {
-                Ok(n) if n > 0 => core::str::from_utf8(&cwd_buf[..n - 1]).unwrap_or("C:\\"),
-                _ => "C:\\",
-            };
-            let mut pos = 0;
-            for &b in cwd.as_bytes() {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            if !cwd.ends_with('\\') && !cwd.ends_with('/') {
-                if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
-            }
-            for &b in rest {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            path_len = pos;
-        } else {
-            let mut pos = 0;
-            for &b in rest {
-                if pos < 259 { path_buf[pos] = b; pos += 1; }
-            }
-            path_len = pos;
-        }
-        let path = core::str::from_utf8(&path_buf[..path_len]).unwrap_or("\\");
-        match syscall::sys_chdir(path) {
-            Ok(_) => {}
-            Err(_) => {
-                write_err(b"\r\nneoshell: CD: directory not found\r\n");
-            }
-        }
     }
 
     fn cmd_cwd(&self) {

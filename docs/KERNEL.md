@@ -59,9 +59,10 @@ sector reads/writes are transparently offset to the correct partition location.
 
 The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins include:
 
-- `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `CD`, `VOL`, `DRIVES`, `SYNC`, `CALL`, `RD`, `DEL`, `REN`
+- `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `VOL`, `DRIVES`, `SYNC`, `CALL`, `RD`, `DEL`, `REN`
+- `CD.NXE` is now a Ring 3 tool; it changes the parent shell cwd via `sys_chdir_parent`.
 - `CPUINFO` (CPUID vendor/brand)
-- `MEM` (memory stats derived from UEFI memory map)
+- `MEM` (memory stats derived from UEFI memory map, migrado a Ring 3 como MEM.NXE)
 - `PS` (list processes with PID, state, priority, handles)
 - `PRI <pid> <level>` (set process priority 0-3)
 - `KOBJ` (list kernel objects tracked by KOBJ manager)
@@ -72,7 +73,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 392 kernel self-tests + 8 user-mode binaries)
+- `test` (run 403 kernel self-tests + user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 
@@ -110,4 +111,3 @@ modelled after NT's `KeInitializeApc` / `KeInsertQueueApc`.
 - **File**: `src/apc/mod.rs`
 - **Tests**: 5 APC-specific tests (kernel dispatch, alertable wait, queue overflow,
   IRP→APC completion, stress 100 concurrent IRPs).
-

@@ -79,7 +79,7 @@ NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
-    for pkg in neoshell neoinit coredir corehelp cpuinfo datetime ver; do
+    for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver mem vol echo; do
     #for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"

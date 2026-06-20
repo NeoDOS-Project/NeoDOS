@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 397 kernel tests + user-mode binaries
+2. `python3 scripts/auto_test.py` — 403 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -510,8 +510,11 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
 | 43 | `sys_get_version` | RBX=buf_ptr, RCX=buf_size | Copia versión del kernel (KERNEL_VERSION) al buffer de usuario |
 | 44 | `sys_get_datetime` | RBX=buf_ptr | Copia fecha/hora RTC a `SysDateTime` (seg, min, hora, día, mes, año, valid) |
-| 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
+| 45 | `sys_get_meminfo` | RBX=buf_ptr | Copia `MemInfo` (phys_max, total_kib, usable_kib, free_kib, used_kib, reserved_kib) |
+| 46 | `sys_get_volume_label` | RBX=drive_char, RCX=buf_ptr, RDX=buf_size | Obtiene la etiqueta del volumen de una unidad |
+| 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre que lanzó el binario |
 
+| 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -629,12 +632,16 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in HELP, CLS, ECHO, VER, CD, CWD, DIR, SET, POWEROFF, EXIT; TAB completion; PATH dispatch for external .NXE commands; history (32); drive change |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CLS, CWD, SET, POWEROFF, EXIT; TAB completion; PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change |
+| `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
 | `corehelp.nxe` | Rust `userbin/corehelp/` | ~8 KB | Standalone HELP command: scans `C:\BIN\*.NXE` via `sys_readdir`, lists available core tools |
 | `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | sys_get_datetime (RAX=44): muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
 | `ver.nxe` | Rust `userbin/ver/` | ~5 KB | sys_get_version (RAX=43): muestra versión del kernel NeoDOS |
+| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | sys_get_meminfo (RAX=45): muestra uso de memoria. Reemplaza el comando MEM de Ring 0 |
+| `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto. Reemplaza el comando ECHO de Ring 0 |
+| `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: muestra etiqueta del volumen. Reemplaza el comando VOL de Ring 0 |
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
@@ -688,7 +695,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-397 tests en 40 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+403 tests en 40 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -734,7 +741,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (397 tests kernel)
+1. Ejecuta `testing::run_all()` (403 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

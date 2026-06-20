@@ -65,10 +65,13 @@ pub enum SyscallNum {
     Poweroff = 42,
     GetVersion = 43,
     GetDateTime = 44,
+    GetMemInfo = 45,
+    GetVolumeLabel = 46,
+    ChDirParent = 47,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 44;
+    pub const MAX_VALID: u64 = 47;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -106,6 +109,9 @@ impl SyscallNum {
             42 => Some(Self::Poweroff),
             43 => Some(Self::GetVersion),
             44 => Some(Self::GetDateTime),
+            45 => Some(Self::GetMemInfo),
+            46 => Some(Self::GetVolumeLabel),
+            47 => Some(Self::ChDirParent),
             _ => None,
         }
     }
@@ -146,7 +152,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28,
-        40, 41, 42, 43, 44,
+        40, 41, 42, 43, 44, 45, 46, 47,
         50,
     ];
     // Reserved syscall slots that MUST be None
@@ -1370,54 +1376,40 @@ fn handler_chdir(regs: Registers) -> u64 {
         Ok(s) => s,
         Err(_) => return err_to_u64(SyscallError::Fault),
     };
-
-    let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
-
-    let is_absolute = path_str.contains(':')
-        || path_str.starts_with('\\')
-        || path_str.starts_with('/');
-
-    let raw = if is_absolute {
-        path_str
-    } else {
-        alloc::format!("{}\\{}", cwd_path, path_str)
-    };
-
-    let normalized = normalize_dos_path(&raw);
-
-    let (new_drive, new_cwd_path) = if normalized.contains(':') {
-        let colon = match normalized.find(':') {
-            Some(c) => c,
-            None => return err_to_u64(SyscallError::Inval),
-        };
-        let dl = match normalized[..colon].chars().next() {
-            Some(c) => c.to_ascii_uppercase(),
-            None => return err_to_u64(SyscallError::Inval),
-        };
-        let idx = match crate::fs::vfs::Vfs::drive_index(dl) {
-            Some(i) => i as u8,
-            None => return err_to_u64(SyscallError::NoEnt),
-        };
-        (idx, normalized[colon + 1..].to_string())
-    } else {
-        (cwd_drive, normalized)
-    };
-
-    let vfs_path = alloc::format!("{}:{}", (b'A' + new_drive) as char, &new_cwd_path);
-    let result = crate::globals::with_vfs(|vfs| {
-        let (_, node) = vfs.resolve_path(&vfs_path)?;
-        if node.mode != crate::fs::vfs::MODE_DIR {
-            return Err(crate::fs::vfs::VfsError::NotADirectory);
-        }
-        Ok(())
-    });
-
-    match result {
-        Ok(()) => {
+    match resolve_chdir_target(path_str) {
+        Ok((new_drive, new_cwd_path)) => {
             crate::scheduler::set_current_cwd(new_drive, &new_cwd_path);
             0
         }
-        Err(_) => err_to_u64(SyscallError::NoEnt),
+        Err(err) => err_to_u64(err),
+    }
+}
+
+fn handler_chdir_parent(regs: Registers) -> u64 {
+    let path_str = match copy_user_string(regs.rbx) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+
+    let (parent_pid, target_drive, target_path) = match resolve_chdir_target(path_str) {
+        Ok((drive, path)) => {
+            let parent_pid = crate::hal::without_interrupts(|| {
+                let scheduler = crate::scheduler::current_scheduler().lock();
+                let current_pid = scheduler.current_pid();
+                scheduler.find_eprocess(current_pid).map(|ep| ep.parent_pid).unwrap_or(0)
+            });
+            if parent_pid == 0 {
+                return err_to_u64(SyscallError::NoEnt);
+            }
+            (parent_pid, drive, path)
+        }
+        Err(err) => return err_to_u64(err),
+    };
+
+    if crate::scheduler::set_cwd_for_pid(parent_pid, target_drive, &target_path) {
+        0
+    } else {
+        err_to_u64(SyscallError::NoEnt)
     }
 }
 
@@ -1441,6 +1433,45 @@ fn handler_getcwd(regs: Registers) -> u64 {
     }
 
     to_copy as u64
+}
+
+fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
+    let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
+
+    let is_absolute = path_str.contains(':')
+        || path_str.starts_with('\\')
+        || path_str.starts_with('/');
+
+    let raw = if is_absolute {
+        path_str
+    } else {
+        alloc::format!("{}\\{}", cwd_path, path_str)
+    };
+
+    let normalized = normalize_dos_path(&raw);
+
+    let (new_drive, new_cwd_path) = if normalized.contains(':') {
+        let colon = normalized.find(':').ok_or(SyscallError::Inval)?;
+        let dl = normalized[..colon].chars().next().ok_or(SyscallError::Inval)?.to_ascii_uppercase();
+        let idx = crate::fs::vfs::Vfs::drive_index(dl).ok_or(SyscallError::NoEnt)? as u8;
+        (idx, normalized[colon + 1..].to_string())
+    } else {
+        (cwd_drive, normalized)
+    };
+
+    let vfs_path = alloc::format!("{}:{}", (b'A' + new_drive) as char, &new_cwd_path);
+    let result = crate::globals::with_vfs(|vfs| {
+        let (_, node) = vfs.resolve_path(&vfs_path)?;
+        if node.mode != crate::fs::vfs::MODE_DIR {
+            return Err(crate::fs::vfs::VfsError::NotADirectory);
+        }
+        Ok(())
+    });
+
+    match result {
+        Ok(()) => Ok((new_drive, new_cwd_path)),
+        Err(_) => Err(SyscallError::NoEnt),
+    }
 }
 
 fn handler_brk(regs: Registers) -> u64 {
@@ -1851,6 +1882,83 @@ fn handler_get_datetime(regs: Registers) -> u64 {
     0
 }
 
+/// ABI-stable MemInfo struct for sys_get_meminfo (RAX=45).
+#[repr(C)]
+pub struct MemInfo {
+    pub phys_max: u64,
+    pub total_kib: u64,
+    pub usable_kib: u64,
+    pub free_kib: u64,
+    pub used_kib: u64,
+    pub reserved_kib: u64,
+}
+
+/// sys_get_meminfo (RAX=45): copy memory stats to user buffer.
+/// RBX = user buffer ptr.
+fn handler_get_meminfo(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    if buf_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    let sz = core::mem::size_of::<MemInfo>() as u64;
+    if !is_user_ptr_valid(buf_ptr, sz) {
+        return err_to_u64(SyscallError::Fault);
+    }
+    let stats = crate::memory::stats();
+    let info = MemInfo {
+        phys_max: stats.phys_max,
+        total_kib: stats.total_kib,
+        usable_kib: stats.usable_kib,
+        free_kib: stats.free_kib,
+        used_kib: stats.used_kib,
+        reserved_kib: stats.reserved_kib,
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &info as *const MemInfo as *const u8,
+            buf_ptr as *mut u8,
+            sz as usize,
+        );
+    }
+    0
+}
+
+/// sys_get_volume_label (RAX=46): get the volume label for a drive.
+/// RBX = drive_char (ASCII, e.g. 'C'), RCX = user buffer ptr, RDX = buffer size.
+/// Returns number of bytes written (excluding null terminator).
+fn handler_get_volume_label(regs: Registers) -> u64 {
+    let drive_char = (regs.rbx & 0xFF) as u8 as char;
+    let buf_ptr = regs.rcx as *mut u8;
+    let buf_size = regs.rdx as usize;
+
+    if buf_ptr.is_null() || buf_size == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    if !is_user_ptr_valid(regs.rcx, buf_size as u64) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let result = crate::globals::with_vfs(|vfs| {
+        vfs.volume_label(drive_char.to_ascii_uppercase())
+    });
+
+    match result {
+        Ok(label) => {
+            let bytes = label.as_bytes();
+            let copy_len = core::cmp::min(bytes.len(), buf_size.saturating_sub(1));
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, copy_len);
+                buf_ptr.add(copy_len).write(0);
+            }
+            copy_len as u64
+        }
+        Err(_) => {
+            unsafe { buf_ptr.write(0); }
+            0
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -1892,6 +2000,9 @@ lazy_static! {
         t[42] = Some(handler_poweroff as SyscallFn);
         t[43] = Some(handler_get_version as SyscallFn);
         t[44] = Some(handler_get_datetime as SyscallFn);
+        t[45] = Some(handler_get_meminfo as SyscallFn);
+        t[46] = Some(handler_get_volume_label as SyscallFn);
+        t[47] = Some(handler_chdir_parent as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -1932,6 +2043,9 @@ lazy_static! {
         t[42] = SyscallPermission::user();
         t[43] = SyscallPermission::user();
         t[44] = SyscallPermission::user();
+        t[45] = SyscallPermission::user();
+        t[46] = SyscallPermission::user();
+        t[47] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };
@@ -2059,7 +2173,7 @@ pub fn register_syscall_table_tests() {
             0, 1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28,
-            40, 41, 42,
+            40, 41, 42, 43, 44, 45, 46,
             50,
         ];
         const RESERVED: &[u64] = &[];

@@ -14,7 +14,9 @@ fn fmt_perms(mode: u16) -> [u8; 5] {
 }
 
 impl DosShell {
+    #[deprecated(since = "0.38.1", note = "Use coredir.nxe (Ring 3) via neoshell instead")]
     pub fn cmd_dir(&mut self, args: &[&str]) {
+        println!("  [DEPRECATED] Use DIR from Ring 3 shell (neoshell). Falling back to legacy DIR...");
         let path_arg = args.first().copied().unwrap_or(".");
         let full_path = self.resolve_absolute_path(path_arg);
 

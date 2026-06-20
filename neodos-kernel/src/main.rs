@@ -369,6 +369,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     testing::register_tests();
 
+    // ── Run kernel self-tests at boot (for auto_test.py) ──
+    {
+        let (passed, failed) = testing::run_all();
+        if failed == 0 {
+            println!("All {} kernel tests passed.", passed);
+        } else {
+            println!("{} kernel tests passed, {} failed.", passed, failed);
+        }
+        println!("ALL_TESTS_COMPLETE");
+    }
+
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
 

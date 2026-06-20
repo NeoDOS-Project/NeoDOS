@@ -119,15 +119,12 @@ fn print_usage(entry: &CommandEntry) {
 pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
 pub fn cmd_dir(shell: &mut DosShell, args: &[&str]) { shell.cmd_dir(args); }
 pub fn cmd_type(shell: &mut DosShell, args: &[&str]) { shell.cmd_type(args); }
-pub fn cmd_echo(shell: &mut DosShell, args: &[&str]) { shell.cmd_echo(args); }
 pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
 pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
-pub fn cmd_mem(shell: &mut DosShell, args: &[&str]) { shell.cmd_mem(args); }
-pub fn cmd_cd(shell: &mut DosShell, args: &[&str]) { shell.cmd_cd(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
 pub fn cmd_copy(shell: &mut DosShell, args: &[&str]) { shell.cmd_copy(args); }
 pub fn cmd_md(shell: &mut DosShell, args: &[&str]) { shell.cmd_md(args); }
-pub fn cmd_vol(shell: &mut DosShell, args: &[&str]) { shell.cmd_vol(args); }
+
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
 pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
@@ -157,20 +154,14 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  HELP DIR     shows detailed help for DIR."), },
     CommandEntry { name: "CLS",      category: "CTRL",     handler: cmd_cls,     description: "Clear screen",
         usage: "Syntax:  CLS\n  Clear the screen and reset cursor to top-left.", },
-    CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "List directory contents",
+    CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "[DEPRECATED] List directory contents — use Ring 3 shell",
         usage: concat!("Syntax:  DIR [path]\n",
-                       "  List files and directories. Shows name, size in bytes,\n",
-                       "  DOS attributes (RHS), permissions (RWXSD), and timestamps.\n",
+                       "  [DEPRECATED] Use the Ring 3 shell (neoshell) for DIR.\n",
+                       "  Shows name, permissions (RWXSD), and size.\n",
                         "  DIR C:\\Programs   lists the contents of C:\\Programs."), },
     CommandEntry { name: "TYPE",     category: "FILE",     handler: cmd_type,    description: "Display file contents",
         usage: concat!("Syntax:  TYPE [drive:][path]filename\n",
                        "  Display the contents of a text file on screen."), },
-    CommandEntry { name: "ECHO",     category: "CONFIG",   handler: cmd_echo,    description: "Print text with %VAR% expansion",
-        usage: concat!("Syntax:  ECHO [text]\n",
-                       "  Print text, expanding %VAR% environment variables.\n",
-                       "  ECHO               prints a blank line.\n",
-                       "  ECHO %PATH%        shows the current PATH variable.\n",
-                       "  ECHO Hello world   prints \"Hello world\"."), },
     CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
         usage: concat!("Syntax:  SET [var[=value]]\n",
                        "  SET                lists all environment variables.\n",
@@ -181,10 +172,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Change the active keyboard layout.\n",
                        "  US = English (United States)\n",
                        "  SP = Spanish"), },
-    CommandEntry { name: "MEM",      category: "INFO",     handler: cmd_mem,     description: "Show memory usage",
-        usage: concat!("Syntax:  MEM [/H]\n",
-                       "  Show memory usage. /H shows human-readable sizes (KB/MB).\n",
-                       "  Displays total, used, and free heap memory."), },
     CommandEntry { name: "PS",       category: "INFO",     handler: cmd_ps,      description: "Show process list",
         usage: concat!("Syntax:  PS\n",
                        "  List all running processes with PID, current state,\n",
@@ -198,15 +185,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "    2 = NORMAL (100 ticks) — default\n",
                        "    3 = IDLE (50 ticks)\n",
                        "  PRI 2 0   boosts PID 2 to HIGH priority."), },
-    CommandEntry { name: "CD",       category: "DISK",     handler: cmd_cd,      description: "Change directory / switch drive",
-        usage: concat!("Syntax:  CD [path]\n",
-                        "  CD C:\\Programs      changes to C:\\Programs.\n",
-                       "  CD ..          goes up one directory level.\n",
-                       "  CD             displays the current directory path."), },
-    CommandEntry { name: "VOL",      category: "DISK",     handler: cmd_vol,     description: "Show volume label",
-        usage: concat!("Syntax:  VOL [drive:]\n",
-                       "  Show the volume label of the specified drive,\n",
-                       "  or the current drive if none given."), },
     CommandEntry { name: "LABEL",    category: "DISK",     handler: cmd_label,   description: "Display or set volume label",
         usage: concat!("Syntax:  LABEL [drive:][label]\n",
                        "  Display or change the volume label of a drive.\n",
@@ -248,7 +226,7 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Alias for RD."), },
     CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
         usage: concat!("Syntax:  TEST\n",
-                        "  Run all kernel self-tests (397 tests across 40 suites).\n",
+                        "  Run all kernel self-tests (403 tests across 40 suites).\n",
                         "  If all pass, runs 8 user-mode binaries:\n",
                         "  HELLO.NXE, SYSTEST.NXE, FILETEST.NXE, ALLTEST.NXE,\n",
                         "  CPUTEST.NXE, TEST.NXE, CPUINFO.NXE, DIR.NXE"), },

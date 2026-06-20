@@ -86,6 +86,12 @@ pub fn sys_chdir(path: &str) -> Result<(), i64> {
     ret_unit((export::get_table().sys_chdir)(ptr))
 }
 
+pub fn sys_chdir_parent(path: &str) -> Result<(), i64> {
+    let buf = path_to_null_terminated(path)?;
+    let ptr = buf.as_ptr();
+    ret_unit((export::get_table().sys_chdir_parent)(ptr))
+}
+
 pub fn sys_getcwd(buf: &mut [u8]) -> Result<usize, i64> {
     let ptr = buf.as_mut_ptr();
     let len = buf.len();
@@ -303,4 +309,43 @@ pub fn sys_get_version(buf: &mut [u8]) -> Result<usize, i64> {
 /// sys_get_datetime (RAX=44): fill a DateTime struct from the kernel RTC.
 pub fn sys_get_datetime(dt: &mut DateTime) -> Result<(), i64> {
     ret_unit((export::get_table().sys_get_datetime)(dt as *mut DateTime as *mut u8))
+}
+
+/// MemInfo — matches kernel's MemInfo (RAX=45).
+#[repr(C)]
+pub struct MemInfo {
+    pub phys_max: u64,
+    pub total_kib: u64,
+    pub usable_kib: u64,
+    pub free_kib: u64,
+    pub used_kib: u64,
+    pub reserved_kib: u64,
+}
+
+/// sys_get_meminfo (RAX=45): fill a MemInfo struct from the kernel.
+pub fn sys_get_meminfo(info: &mut MemInfo) -> Result<(), i64> {
+    ret_unit((export::get_table().sys_get_meminfo)(info as *mut MemInfo as *mut u8))
+}
+
+/// sys_get_volume_label (RAX=46): get the volume label for a drive.
+/// drive = ASCII drive letter (e.g. b'C'). Returns label string in buf (null-terminated).
+pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "mov rax, 46",
+            "mov rbx, {drive}",
+            "mov rcx, {ptr}",
+            "mov rdx, {len}",
+            "int 0x80",
+            drive = in(reg) drive as u64,
+            ptr = in(reg) ptr as u64,
+            len = in(reg) len as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as usize)
 }

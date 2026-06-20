@@ -10,12 +10,10 @@
 //!    Help is automatic — the entry's `category` and `description` appear in HELP.
 
 mod call;
-mod cd;
 mod copy;
 mod del;
 mod dir;
 mod drives;
-mod echo;
 mod fsck;
 mod help;
 mod keyb;
@@ -25,7 +23,6 @@ mod label;
 mod load;
 mod loadlib;
 mod md;
-mod mem;
 mod ndreg;
 mod ren;
 mod rd;
@@ -33,7 +30,6 @@ mod set;
 mod shutdown;
 mod test;
 mod r#type;
-mod vol;
 mod crash;
 mod pri;
 mod ps;

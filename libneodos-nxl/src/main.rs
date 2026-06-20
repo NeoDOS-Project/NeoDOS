@@ -179,6 +179,11 @@ pub extern "C" fn nxl_sys_chdir(path: *const u8) -> i64 {
 }
 
 #[no_mangle]
+pub extern "C" fn nxl_sys_chdir_parent(path: *const u8) -> i64 {
+    ret(unsafe { syscall_1(47, path as u64) })
+}
+
+#[no_mangle]
 pub extern "C" fn nxl_sys_getcwd(buf: *mut u8, len: usize) -> i64 {
     ret(unsafe { syscall_2(17, buf as u64, len as u64) })
 }
@@ -231,6 +236,11 @@ pub extern "C" fn nxl_sys_get_version(buf: *mut u8, len: usize) -> i64 {
 #[no_mangle]
 pub extern "C" fn nxl_sys_get_datetime(buf: *mut u8) -> i64 {
     ret(unsafe { syscall_1(44, buf as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_get_meminfo(buf: *mut u8) -> i64 {
+    ret(unsafe { syscall_1(45, buf as u64) })
 }
 
 // ============================================================
@@ -372,6 +382,7 @@ pub struct AbiTable {
     pub err_enodev: i64,
     pub err_ebusy: i64,
     pub sys_chdir: extern "C" fn(*const u8) -> i64,
+    pub sys_chdir_parent: extern "C" fn(*const u8) -> i64,
     pub sys_getcwd: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub sys_getcpuinfo: extern "C" fn(*mut u8, usize) -> i64,
@@ -383,6 +394,7 @@ pub struct AbiTable {
     pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
     pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
+    pub sys_get_meminfo: extern "C" fn(*mut u8) -> i64,
     pub version: u32,
 }
 
@@ -432,6 +444,7 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     err_enodev: ENODEV,
     err_ebusy: EBUSY,
     sys_chdir: nxl_sys_chdir,
+    sys_chdir_parent: nxl_sys_chdir_parent,
     sys_getcwd: nxl_sys_getcwd,
     sys_loadlib: nxl_sys_loadlib,
     sys_getcpuinfo: nxl_sys_getcpuinfo,
@@ -443,5 +456,6 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_rename: nxl_sys_rename,
     sys_get_version: nxl_sys_get_version,
     sys_get_datetime: nxl_sys_get_datetime,
-    version: 2,
+    sys_get_meminfo: nxl_sys_get_meminfo,
+    version: 4,
 };

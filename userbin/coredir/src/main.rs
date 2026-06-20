@@ -4,8 +4,14 @@
 use libneodos::syscall;
 use libneodos::syscall::DirEntry;
 
-const MODE_DIR: u16 = 0x4000;
+const MODE_DIR: u16 = 0x40;
+const PERM_R: u16 = 0x0001;
+const PERM_W: u16 = 0x0002;
+const PERM_X: u16 = 0x0004;
+const PERM_S: u16 = 0x0008;
+const PERM_D: u16 = 0x0010;
 const PAGE_LINES: usize = 23;
+const ARGS_ADDR: u64 = 0x41F000;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -28,6 +34,16 @@ fn is_dir(mode: u16) -> bool {
     (mode & MODE_DIR) != 0
 }
 
+fn fmt_perms(mode: u16) -> [u8; 5] {
+    let mut p = [b'-'; 5];
+    if mode & PERM_R != 0 { p[0] = b'R'; }
+    if mode & PERM_W != 0 { p[1] = b'W'; }
+    if mode & PERM_X != 0 { p[2] = b'X'; }
+    if mode & PERM_S != 0 { p[3] = b'S'; }
+    if mode & PERM_D != 0 { p[4] = b'D'; }
+    p
+}
+
 fn entry_name(name_buf: &[u8; 260]) -> &str {
     let end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
     core::str::from_utf8(&name_buf[..end]).unwrap_or("?")
@@ -47,33 +63,151 @@ fn spaces(n: usize) {
     for _ in 0..n { write_str(b" "); }
 }
 
-fn cell_writer(marker: &[u8; 5], name: &str, cell_w: usize) {
-    let mut buf = [b' '; 32];
-    buf[..5].copy_from_slice(marker);
-    buf[5] = b' ';
-    let name_bytes = name.as_bytes();
-    let max_name = cell_w.saturating_sub(6).min(18);
-    let copy_len = name_bytes.len().min(max_name);
-    buf[6..6 + copy_len].copy_from_slice(&name_bytes[..copy_len]);
-    write_str(&buf[..cell_w]);
+/// Read args from the shared buffer at 0x41F000.
+/// Returns (path, wide, pause).
+fn parse_args() -> ([u8; 260], bool, bool) {
+    let mut arg_buf = [0u8; 256];
+    unsafe {
+        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
+    }
+    let arg_slice = trim_ascii(&arg_buf);
+
+    let mut path = [0u8; 260];
+    let mut wide = false;
+    let mut pause = false;
+
+    if arg_slice.is_empty() {
+        return (path, wide, pause);
+    }
+
+    let mut tokens: [(usize, usize); 8] = [(0, 0); 8];
+    let mut tok_count = 0usize;
+    let mut i = 0usize;
+    while i < arg_slice.len() && tok_count < 8 {
+        while i < arg_slice.len() && (arg_slice[i] == b' ' || arg_slice[i] == b'\t') { i += 1; }
+        if i >= arg_slice.len() { break; }
+        let start = i;
+        while i < arg_slice.len() && arg_slice[i] != b' ' && arg_slice[i] != b'\t' { i += 1; }
+            tokens[tok_count] = (start, i);
+        tok_count += 1;
+    }
+
+    let mut path_tokens: [(usize, usize); 8] = [(0, 0); 8];
+    let mut ptok_count = 0usize;
+
+    for t in 0..tok_count {
+        let (start, end) = tokens[t];
+        let token = &arg_slice[start..end];
+        if token == b"/W" || token == b"/w" || token == b"-W" || token == b"-w" {
+            wide = true;
+        } else if token == b"/P" || token == b"/p" || token == b"-P" || token == b"-p" {
+            pause = true;
+        } else {
+            path_tokens[ptok_count] = (start, end);
+            ptok_count += 1;
+        }
+    }
+
+    if ptok_count > 0 {
+        let mut pos = 0usize;
+        for t in 0..ptok_count {
+            if t > 0 {
+                if pos < 259 { path[pos] = b' '; pos += 1; }
+            }
+            let (start, end) = path_tokens[t];
+            for &b in &arg_slice[start..end] {
+                if pos < 259 { path[pos] = b; pos += 1; }
+            }
+        }
+    }
+
+    (path, wide, pause)
+}
+
+fn trim_ascii(s: &[u8]) -> &[u8] {
+    let mut start = 0;
+    while start < s.len() && (s[start] == b' ' || s[start] == b'\t' || s[start] == b'\0') {
+        start += 1;
+    }
+    let mut end = s.len();
+    while end > start && (s[end - 1] == b' ' || s[end - 1] == b'\t' || s[end - 1] == b'\0') {
+        end -= 1;
+    }
+    &s[start..end]
+}
+
+fn resolve_path(path_buf: &[u8; 260]) -> [u8; 260] {
+    let path_str = entry_name(path_buf);
+    if path_str.is_empty() {
+        let mut buf = [0u8; 260];
+        let mut cwd_buf = [0u8; 256];
+        match syscall::sys_getcwd(&mut cwd_buf) {
+            Ok(n) if n > 0 => {
+                let mut pos = 0;
+                for &b in &cwd_buf[..n - 1] {
+                    if pos < 259 { buf[pos] = b; pos += 1; }
+                }
+                if pos < 259 { buf[pos] = 0; }
+            }
+            _ => {
+                buf[..3].copy_from_slice(b"C:\\");
+            }
+        }
+        return buf;
+    }
+
+    let bytes = path_str.as_bytes();
+    let mut buf = [0u8; 260];
+    if bytes[0] == b'\\' || bytes.contains(&b':') {
+        let n = bytes.len().min(259);
+        buf[..n].copy_from_slice(&bytes[..n]);
+    } else {
+        let mut cwd_buf = [0u8; 256];
+        let mut pos = 0;
+        match syscall::sys_getcwd(&mut cwd_buf) {
+            Ok(n) if n > 0 => {
+                for &b in &cwd_buf[..n - 1] {
+                    if pos < 259 { buf[pos] = b; pos += 1; }
+                }
+                if pos > 0 && buf[pos - 1] != b'\\' {
+                    if pos < 259 { buf[pos] = b'\\'; pos += 1; }
+                }
+            }
+            _ => {
+                buf[..3].copy_from_slice(b"C:\\");
+                pos = 3;
+            }
+        }
+        for &b in bytes {
+            if pos < 259 { buf[pos] = b; pos += 1; }
+        }
+    }
+    buf
 }
 
 #[derive(Clone, Copy)]
 struct Info {
     name: [u8; 260],
     dir: bool,
+    mode: u16,
+    size: u32,
 }
 
-fn list_directory(dir_path: &str, wide: bool, pause: bool) {
-    write_str(b"\r\n Volume in drive ");
-    write_str(&[dir_path.as_bytes()[0]]);
-    write_str(b" is NEODOS\r\n\r\n Directory of ");
-    write_str(dir_path.as_bytes());
+fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
+    write_str(b"\r\n Directory of ");
+    write_str(dir_path);
     write_str(b"\r\n\r\n");
 
-    match syscall::sys_open(dir_path) {
+    let path_str = core::str::from_utf8(dir_path).unwrap_or("C:\\");
+    let mut path_end = path_str.len();
+    while path_end > 0 && (dir_path[path_end - 1] == b' ' || dir_path[path_end - 1] == 0) {
+        path_end -= 1;
+    }
+    let clean_path = core::str::from_utf8(&dir_path[..path_end]).unwrap_or("C:\\");
+
+    match syscall::sys_open(clean_path) {
         Ok(fd) => {
-            let mut entries: [Info; 256] = [Info { name: [0u8; 260], dir: false }; 256];
+            let mut entries: [Info; 256] = [Info { name: [0u8; 260], dir: false, mode: 0, size: 0 }; 256];
             let mut count = 0usize;
 
             let mut raw = DirEntry { inode: 0, mode: 0, size: 0, name: [0u8; 260] };
@@ -88,7 +222,7 @@ fn list_directory(dir_path: &str, wide: bool, pause: bool) {
                         let b = n.as_bytes();
                         let cl = b.len().min(259);
                         nb[..cl].copy_from_slice(&b[..cl]);
-                        entries[count] = Info { name: nb, dir: is_dir(raw.mode) };
+                        entries[count] = Info { name: nb, dir: is_dir(raw.mode), mode: raw.mode, size: raw.size };
                         count += 1;
                     }
                     Ok(0) => break,
@@ -101,7 +235,6 @@ fn list_directory(dir_path: &str, wide: bool, pause: bool) {
             let mut line_count = 0usize;
 
             if wide {
-                // Wide mode: 5 columns, just names
                 let cols = 5;
                 let cell_w: usize = 15;
                 let rows = (count + cols - 1) / cols;
@@ -126,24 +259,42 @@ fn list_directory(dir_path: &str, wide: bool, pause: bool) {
                     }
                 }
             } else {
-                // Default: 3 columns with [DIR] markers
-                // Entries flow top-to-bottom, left-to-right
-                let cols = 3;
-                let cell_w: usize = 25;
-                let rows = (count + cols - 1) / cols;
-                for r in 0..rows {
-                    for c in 0..cols {
-                        let idx = r + c * rows;
-                        if idx < count {
-                            let e = &entries[idx];
-                            let n = entry_name(&e.name);
-                            let marker = if e.dir { b"<DIR>" } else { b"     " };
-                            cell_writer(marker, n, cell_w);
-                        } else {
-                            spaces(cell_w);
+                for i in 0..count {
+                    let e = &entries[i];
+                    let n = entry_name(&e.name);
+                    let perms = fmt_perms(e.mode);
+
+                    let mut line_buf = [b' '; 40];
+                    let name_len = n.len().min(12);
+                    line_buf[..name_len].copy_from_slice(&n.as_bytes()[..name_len]);
+
+                    let type_str: &[u8] = if e.dir { b"<DIR>" } else { b"     " };
+                    line_buf[13..18].copy_from_slice(type_str);
+
+                    line_buf[19..24].copy_from_slice(&perms);
+
+                    let mut v = e.size as u64;
+                    let mut si = 19usize;
+                    let mut tmp = [0u8; 20];
+                    if v == 0 {
+                        tmp[19] = b'0';
+                        si = 18;
+                    } else {
+                        while v > 0 {
+                            tmp[si] = b'0' + (v % 10) as u8;
+                            v /= 10;
+                            if si == 0 { break; }
+                            si -= 1;
                         }
                     }
+                    let size_src = &tmp[si + 1..=19];
+                    let size_start = 25 + (10 - size_src.len());
+                    line_buf[size_start..size_start + size_src.len()].copy_from_slice(size_src);
+
+                    write_str(b"  ");
+                    write_str(&line_buf[..35]);
                     write_str(b"\r\n");
+
                     line_count += 1;
                     if pause && line_count >= PAGE_LINES {
                         write_str(b"Press any key to continue...");
@@ -164,9 +315,6 @@ fn list_directory(dir_path: &str, wide: bool, pause: bool) {
     }
 }
 
-// Help text marker for external HELP command.
-// neoshell's HELP reads the .NXE binary, finds ::HELP::, and
-// displays everything up to ::END::.
 #[used]
 #[link_section = ".rodata"]
 static DIR_HELP: &[u8] = b"::HELP::\
@@ -179,35 +327,9 @@ DIR [path] [/W] [/P]\r\n\
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    // Parse the command line for arguments.
-    // Currently NeoDOS does not pass argc/argv to user-mode processes.
-    // When arg passing is available, the binary will see args like:
-    //   DIR.NXE /W
-    //   DIR.NXE C:\SYSTEM /P
-    //   DIR.NXE /W /P
-
-    let wide = false;
-    let pause = false;
-
-    let mut path_buf = [0u8; 260];
-    let path_len = {
-        let mut cwd_buf = [0u8; 256];
-        match syscall::sys_getcwd(&mut cwd_buf) {
-            Ok(n) if n > 0 => {
-                let mut pos = 0;
-                for &b in &cwd_buf[..n - 1] {
-                    if pos < 259 { path_buf[pos] = b; pos += 1; }
-                }
-                pos
-            }
-            _ => {
-                path_buf[..3].copy_from_slice(b"C:\\");
-                3
-            }
-        }
-    };
-
-    let dir_path = core::str::from_utf8(&path_buf[..path_len]).unwrap_or("C:\\");
-    list_directory(dir_path, wide, pause);
+    let (path_buf, wide, pause) = parse_args();
+    let dir_path = resolve_path(&path_buf);
+    let path_end = dir_path.iter().position(|&b| b == 0).unwrap_or(dir_path.len());
+    list_directory(&dir_path[..path_end], wide, pause);
     syscall::sys_exit(0)
 }

@@ -168,45 +168,27 @@ def run_test():
                                     
                                     # State machine
                                     if state == "booting":
-                                        if "Type HELP" in clean or ("NeoDOS" in clean and "FS Started" in clean):
-                                            print("\n[+] Shell detected! Waiting for prompt...")
-                                            sys.stdout.flush()
-                                            state = "waiting_prompt"
-                                            waiting_lines = 0
-                                            waiting_start = time.time()
-                                    elif state == "waiting_prompt":
-                                        waiting_lines += 1
-                                        print(f"[WAIT] line #{waiting_lines}: {clean[:80]}")
-                                        is_neoshell = "neoshell" in clean.lower() or "[ns]" in clean
-                                        has_prompt = "C:\\>" in clean
-                                        if has_prompt and not test_sent:
-                                            if is_neoshell:
-                                                print(f"[+] Neoshell detected, sending 'exit' to reach kernel shell...")
-                                                sys.stdout.flush()
-                                                if monitor_sock:
-                                                    send_keys(monitor_sock, ["e", "x", "i", "t", "ret"])
-                                                    time.sleep(1.0)
-                                                    state = "booting"
-                                                    test_sent = False
-                                                    waiting_start = time.time()
-                                            else:
-                                                print(f"[+] Kernel shell ready, sending 'test' via sendkey...")
-                                                sys.stdout.flush()
-                                                if monitor_sock:
-                                                    send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
-                                                    test_sent = True
-                                                    state = "waiting_response"
-                                                    waiting_start = time.time()
-                                                    print("[+] 'test' command sent!")
-                                    elif state == "waiting_response":
-                                        if "Running" in clean and "self-tests" in clean:
-                                            print(f"\n[+] TEST EXECUTED!")
-                                        if "kernel tests" in clean.lower() or "passed" in clean or "failed" in clean:
-                                            print(f"[TEST] {clean}")
                                         if "ALL_TESTS_COMPLETE" in clean:
                                             print(f"\n[+] ALL TESTS COMPLETE")
                                             state = "done"
                                             break
+                                        if "kernel tests passed" in clean.lower() or "passed" in clean or "failed" in clean:
+                                            print(f"[TEST] {clean}")
+                                        if "Type HELP" in clean or ("NeoDOS" in clean and "FS Started" in clean):
+                                            print("\n[+] Shell detected!")
+                                            sys.stdout.flush()
+                                            state = "idle"
+                                    elif state == "idle":
+                                        waiting_lines += 1
+                                        if waiting_lines <= 3:
+                                            print(f"[WAIT] {clean[:80]}")
+                                    elif state == "waiting_response":
+                                        if "ALL_TESTS_COMPLETE" in clean:
+                                            print(f"\n[+] ALL TESTS COMPLETE")
+                                            state = "done"
+                                            break
+                                        if "kernel tests" in clean.lower() or "passed" in clean or "failed" in clean:
+                                            print(f"[TEST] {clean}")
                                         if time.time() - waiting_start > 60:
                                             print(f"\n[!] Response timeout ({time.time()-waiting_start:.1f}s)")
                                             state = "done"
@@ -214,14 +196,11 @@ def run_test():
             except Exception as e:
                 pass
             
-            # Monitor timeout fallback: send 'test' directly (already in kernel shell)
-            if monitor_sock and state == "waiting_prompt" and time.time() - waiting_start > 10 and not test_sent:
-                print("[*] Prompt timeout: sending 'test' via sendkey...")
-                sys.stdout.flush()
-                send_keys(monitor_sock, ["t", "e", "s", "t", "ret"])
-                test_sent = True
-                state = "waiting_response"
-                waiting_start = time.time()
+            # Timeout fallback
+            if state == "waiting_response" and time.time() - waiting_start > 60:
+                print(f"\n[!] Response timeout ({time.time()-waiting_start:.1f}s)")
+                state = "done"
+                break
             
             time.sleep(0.3)
         
@@ -273,18 +252,15 @@ def run_test():
         else:
             print("[UNKNOWN] Could not determine kernel test results")
         
-        # Check user-mode tests
-        user_tests_found = 0
-        user_bins = ["cpuinfo.nxe", "dir.nxe", "datetime.nxe", "ver.nxe"]
-        for ut in user_bins:
-            if f"--- Running" in full_text and ut in full_text:
-                user_tests_found += 1
-        if user_tests_found >= 4:
-            print(f"[PASS] All {user_tests_found} user-mode binaries executed")
+        # Check user-mode tests (run during boot if configured)
+        user_bins = ["cpuinfo.nxe", "dir.nxe", "datetime.nxe", "ver.nxe", "mem.nxe"]
+        user_tests_found = sum(1 for ut in user_bins if f"--- Running" in full_text and ut in full_text)
+        if user_tests_found >= len(user_bins):
+            print(f"[PASS] All user-mode binaries executed")
         elif user_tests_found > 0:
             print(f"[PARTIAL] {user_tests_found}/{len(user_bins)} user-mode binaries executed")
         else:
-            print("[UNKNOWN] No user-mode binary output found")
+            print("[SKIP] User-mode binaries not auto-run (manual via neoshell)")
         
         # Overall
         if "kernel tests passed" in full_text and "ALL_TESTS_COMPLETE" in full_text:

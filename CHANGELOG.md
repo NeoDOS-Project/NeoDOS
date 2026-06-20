@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.38.2 — 2026-06-20
+
+### Added
+- **sys_get_meminfo (RAX=45)** — `handler_get_meminfo`: fills `MemInfo` struct from memory stats.
+- **sys_get_volume_label (RAX=46)** — `handler_get_volume_label`: obtiene la etiqueta del volumen desde VFS.
+- **sys_chdir_parent (RAX=47)** — `handler_chdir_parent`: cambia el CWD del proceso padre (usado por CD.NXE).
+- **CD.NXE** — `userbin/cd/`: migrado de Ring 0 a Ring 3. Resuelve rutas absolutas/relativas con `..`/`.` normalization, valida el directorio, comunica el resultado al shell padre vía buffer compartido.
+- **ECHO.NXE** — `userbin/echo/`: migrado de Ring 0 a Ring 3. Imprime texto recibido como argumento.
+- **MEM.NXE** — `userbin/mem/`: migrado de Ring 0 a Ring 3. Muestra uso de memoria vía sys_get_meminfo.
+- **VOL.NXE** — `userbin/vol/`: migrado de Ring 0 a Ring 3. Muestra etiqueta del volumen vía sys_get_volume_label.
+- **libneodos wrappers** — `sys_get_meminfo(info)`, `sys_get_volume_label(drive, buf)`, `sys_chdir_parent(path)` en `libneodos/src/syscall.rs`. `MemInfo` struct en API pública.
+- **AbiTable v4** — nuevos campos `sys_chdir_parent`, `sys_get_meminfo`. ABI_VERSION bump de 2 a 4.
+
+### Changed
+- **neoshell** — CD y ECHO quitados de built-ins; ahora se ejecutan como .NXE externos via PATH. El fallthrough dispatch escribe args en buffer compartido 0x41F000 antes de spawn. CD.NXE usa el buffer para devolver el path resuelto al shell.
+- **coredir.nxe** — refactorizado: parsea argumentos (/W, /P, path) desde el buffer compartido, muestra permisos RWXSD, resuelve path relativo contra CWD.
+- Updated `scripts/build.sh` y `scripts/create_neodos_image.py` para compilar e incluir `cd.nxe`, `echo.nxe`, `mem.nxe`, `vol.nxe` en NeoDOS FS image.
+- **CD/ECHO/MEM/VOL commands** — eliminados de Ring 0 (handler.rs, commands/*.rs, commands/mod.rs).
+
 ## v0.38.1 — 2026-06-19
 
 ### Fixed
