@@ -2356,6 +2356,7 @@ pub fn register_tests() {
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
     crate::kobj::register_kobj_tests();
+    crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();
     crate::dpc::register_tests();
     crate::irp::register_tests();

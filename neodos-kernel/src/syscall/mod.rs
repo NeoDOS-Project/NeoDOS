@@ -68,10 +68,11 @@ pub enum SyscallNum {
     GetMemInfo = 45,
     GetVolumeLabel = 46,
     ChDirParent = 47,
+    KObjEnum = 48,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 47;
+    pub const MAX_VALID: u64 = 48;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -112,6 +113,7 @@ impl SyscallNum {
             45 => Some(Self::GetMemInfo),
             46 => Some(Self::GetVolumeLabel),
             47 => Some(Self::ChDirParent),
+            48 => Some(Self::KObjEnum),
             _ => None,
         }
     }
@@ -152,7 +154,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28,
-        40, 41, 42, 43, 44, 45, 46, 47,
+        40, 41, 42, 43, 44, 45, 46, 47, 48,
         50,
     ];
     // Reserved syscall slots that MUST be None
@@ -584,14 +586,13 @@ fn handler_spawn(regs: Registers) -> u64 {
 fn handler_poweroff(_regs: Registers) -> u64 {
     crate::serial_println!("[POWEROFF] sys_poweroff called — shutting down");
     crate::globals::flush_cache_if_needed();
-    crate::eventbus::EVENT_BUS.push_event(
+    let _ = crate::eventbus::EVENT_BUS.push_event(
         crate::eventbus::EVENT_SHUTDOWN,
         crate::eventbus::SOURCE_KERNEL,
         0, 0, 0, 0,
     );
     crate::eventbus::EVENT_BUS.dispatch_pending();
     crate::hal::poweroff();
-    0
 }
 
 fn handler_exit(regs: Registers) -> u64 {
@@ -1413,6 +1414,57 @@ fn handler_chdir_parent(regs: Registers) -> u64 {
     }
 }
 
+/// ABI-stable KOBJ entry for sys_kobj_enum (RAX=48).
+#[repr(C)]
+struct KObjEntryRaw {
+    id: u64,
+    obj_type: u32,
+    padding: u32,
+    name: [u8; 24],
+    refcount: u32,
+    native_id: u64,
+}
+
+/// sys_kobj_enum (RAX=48): enumerate kernel objects.
+/// RBX = buffer ptr, RCX = max entries.
+/// Returns number of entries written (0 = none).
+fn handler_kobj_enum(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    let max_entries = regs.rcx as usize;
+
+    if buf_ptr == 0 || max_entries == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let entry_size = core::mem::size_of::<KObjEntryRaw>() as u64;
+    if !is_user_ptr_valid(buf_ptr, entry_size.saturating_mul(max_entries as u64)) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let snapshot = crate::kobj::kobj_iter_snapshot();
+    let count = core::cmp::min(max_entries, snapshot.len());
+
+    for i in 0..count {
+        let (id, obj_type, name, refcount, native_id) = &snapshot[i];
+        let raw = KObjEntryRaw {
+            id: *id,
+            obj_type: *obj_type as u32,
+            padding: 0,
+            name: *name,
+            refcount: *refcount,
+            native_id: *native_id,
+        };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                &raw as *const KObjEntryRaw as *const u8,
+                (buf_ptr as *mut u8).add(i * core::mem::size_of::<KObjEntryRaw>()),
+                core::mem::size_of::<KObjEntryRaw>(),
+            );
+        }
+    }
+    count as u64
+}
+
 fn handler_getcwd(regs: Registers) -> u64 {
     let buf_ptr = regs.rbx as *mut u8;
     let buf_len = regs.rcx as usize;
@@ -2003,6 +2055,7 @@ lazy_static! {
         t[45] = Some(handler_get_meminfo as SyscallFn);
         t[46] = Some(handler_get_volume_label as SyscallFn);
         t[47] = Some(handler_chdir_parent as SyscallFn);
+        t[48] = Some(handler_kobj_enum as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
         t
     };
@@ -2046,6 +2099,7 @@ lazy_static! {
         t[45] = SyscallPermission::user();
         t[46] = SyscallPermission::user();
         t[47] = SyscallPermission::user();
+        t[48] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
         t
     };

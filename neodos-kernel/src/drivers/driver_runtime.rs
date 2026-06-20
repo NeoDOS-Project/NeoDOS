@@ -697,6 +697,7 @@ pub fn register_driver_state_tests() {
         test_eq!(rt.get(id).unwrap().state, DriverState::Loaded);
         test_true!(rt.try_transition(id, DriverState::Initialized).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Initialized);
+        rt.remove(id);
     });
 
     test_case!("dstate_valid_init_to_registered", {
@@ -705,6 +706,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Initialized).ok();
         test_true!(rt.try_transition(id, DriverState::Registered).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Registered);
+        rt.remove(id);
     });
 
     test_case!("dstate_valid_registered_to_bound", {
@@ -714,6 +716,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Registered).ok();
         test_true!(rt.try_transition(id, DriverState::Bound).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Bound);
+        rt.remove(id);
     });
 
     test_case!("dstate_valid_bound_to_active", {
@@ -724,6 +727,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Bound).ok();
         test_true!(rt.try_transition(id, DriverState::Active).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Active);
+        rt.remove(id);
     });
 
     // ── Invalid transition tests ──
@@ -734,6 +738,7 @@ pub fn register_driver_state_tests() {
         // Cannot skip Initialized — going directly to Registered should fail
         test_true!(rt.try_transition(id, DriverState::Registered).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Loaded);
+        rt.remove(id);
     });
 
     test_case!("dstate_invalid_skip_registered", {
@@ -743,6 +748,7 @@ pub fn register_driver_state_tests() {
         // Cannot skip Registered — going directly to Bound should fail
         test_true!(rt.try_transition(id, DriverState::Bound).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Initialized);
+        rt.remove(id);
     });
 
     test_case!("dstate_invalid_skip_bound", {
@@ -753,6 +759,7 @@ pub fn register_driver_state_tests() {
         // Cannot skip Bound — going directly to Active should fail
         test_true!(rt.try_transition(id, DriverState::Active).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Registered);
+        rt.remove(id);
     });
 
     test_case!("dstate_invalid_skip_all", {
@@ -761,6 +768,7 @@ pub fn register_driver_state_tests() {
         // Loaded → Active is impossible (6 steps missing)
         test_true!(rt.try_transition(id, DriverState::Active).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Loaded);
+        rt.remove(id);
     });
 
     // ── Fault / Unload transition tests ──
@@ -771,6 +779,7 @@ pub fn register_driver_state_tests() {
         // Any state can go to Faulted
         test_true!(rt.try_transition(id, DriverState::Faulted).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Faulted);
+        rt.remove(id);
     });
 
     test_case!("dstate_any_to_unloaded", {
@@ -778,6 +787,7 @@ pub fn register_driver_state_tests() {
         let id = rt.register("test", NemDriverType::Null, 1, 0).unwrap();
         test_true!(rt.try_transition(id, DriverState::Unloaded).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Unloaded);
+        rt.remove(id);
     });
 
     test_case!("dstate_faulted_to_active_fails", {
@@ -786,6 +796,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Faulted).ok();
         // Cannot recover from Faulted to Active (must go through Unloaded)
         test_true!(rt.try_transition(id, DriverState::Active).is_err());
+        rt.remove(id);
     });
 
     // ── Certification pipeline tests ──
@@ -802,6 +813,7 @@ pub fn register_driver_state_tests() {
         test_eq!(rt.get(id).unwrap().state, DriverState::Active);
         test_eq!(rt.get(id).unwrap().last_error, 0);
         test_eq!(rt.get(id).unwrap().certification_step, 0);
+        rt.remove(id);
     });
 
     test_case!("dstate_certify_incomplete_pipeline", {
@@ -814,6 +826,7 @@ pub fn register_driver_state_tests() {
         test_true!(rt.certify_and_activate(id).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Registered);
         test_ne!(rt.get(id).unwrap().last_error, 0);
+        rt.remove(id);
     });
 
     test_case!("dstate_certify_not_initialized", {
@@ -822,6 +835,7 @@ pub fn register_driver_state_tests() {
         // Only Loaded — can't certify
         test_true!(rt.certify_and_activate(id).is_err());
         test_eq!(rt.get(id).unwrap().state, DriverState::Loaded);
+        rt.remove(id);
     });
 
     test_case!("dstate_certify_not_bound", {
@@ -832,6 +846,7 @@ pub fn register_driver_state_tests() {
         // Not Bound — can't certify
         test_true!(rt.certify_and_activate(id).is_err());
         test_eq!(rt.get(id).unwrap().certification_step, PipelineStep::Certification as u8);
+        rt.remove(id);
     });
 
     test_case!("dstate_set_error_and_fault", {
@@ -841,6 +856,7 @@ pub fn register_driver_state_tests() {
         let drv = rt.get(id).unwrap();
         test_eq!(drv.state, DriverState::Faulted);
         test_eq!(drv.last_error, ERR_OUT_OF_MEMORY);
+        rt.remove(id);
     });
 
     test_case!("dstate_set_error_no_fault", {
@@ -851,6 +867,7 @@ pub fn register_driver_state_tests() {
         // Should still be Loaded (not faulted)
         test_eq!(drv.state, DriverState::Loaded);
         test_eq!(drv.last_error, ERR_CERTIFICATION_FAILED);
+        rt.remove(id);
     });
 
     // ── Active count tests ──
@@ -868,6 +885,7 @@ pub fn register_driver_state_tests() {
         test_eq!(rt.active_count(), 1);
         // drv2 should not affect active_count
         test_eq!(rt.active_count(), 1);
+        rt.remove(id1); rt.remove(_id2);
     });
 
     test_case!("dstate_loaded_count", {
@@ -880,6 +898,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id1, DriverState::Bound).ok();
         rt.certify_and_activate(id1).ok();
         test_eq!(rt.loaded_count(), 1); // drv2 still loaded-not-active
+        rt.remove(id1); rt.remove(_id2);
     });
 
     // ── Inactive reason tests ──
@@ -894,6 +913,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Initialized).ok();
         let drv = rt.get(id).unwrap();
         test_true!(drv.inactive_reason().contains("Initialized"));
+        rt.remove(id);
     });
 
     // ── Pipeline progress test ──
@@ -915,6 +935,7 @@ pub fn register_driver_state_tests() {
         rt.try_transition(id, DriverState::Active).ok();
         let prog = rt.get(id).unwrap().pipeline_progress();
         test_eq!(prog, [true, true, true, true, true]);
+        rt.remove(id);
     });
 }
 

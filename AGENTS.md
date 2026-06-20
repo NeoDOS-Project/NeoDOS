@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.38.1
+v0.39.0
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 403 kernel tests (auto-run at boot) + user-mode binaries
+2. `python3 scripts/auto_test.py` — 416 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -64,7 +64,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 35 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 36 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -513,6 +513,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 45 | `sys_get_meminfo` | RBX=buf_ptr | Copia `MemInfo` (phys_max, total_kib, usable_kib, free_kib, used_kib, reserved_kib) |
 | 46 | `sys_get_volume_label` | RBX=drive_char, RCX=buf_ptr, RDX=buf_size | Obtiene la etiqueta del volumen de una unidad |
 | 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre que lanzó el binario |
+| 48 | `sys_kobj_enum` | RBX=buf_ptr, RCX=max_entries | Enumerates kernel objects into user buffer (KObjEntryRaw array). Returns count written |
 
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 ## IPC / Pipes
@@ -695,7 +696,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-403 tests en 40 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+416 tests en 41 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -741,7 +742,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (403 tests kernel)
+1. Ejecuta `testing::run_all()` (416 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.
@@ -814,18 +815,20 @@ La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins
 
 | Concept | Description |
 |---------|-------------|
-| **KObjType** | Enum (u32 repr): Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion |
+| **KObjType** | Enum (u32 repr): Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory |
 | **KObjEntry** | Per-object metadata: KObjId (u64), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
-| **KObjRegistry** | 64-slot fixed-size registry protected by `spin::Mutex`. Global via `lazy_static!` |
+| **KObjRegistry** | Dynamic `Vec<Option<KObjEntry>>` registry (no hard limit) protected by `spin::Mutex`. Global via `lazy_static!` |
 | **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
 | **Integration** | Processes (scheduler.rs), drivers (driver_runtime.rs), pipes (pipe.rs) — auto-register on create, auto-unregister on destroy |
-| **Shell** | `KOBJ` command — list all kernel objects with ID, type, name, refcount, native ID |
+| **Shell** | `KOBJ` command via Ring 3 `kobj.nxe` (sys_kobj_enum RAX=48) |
 
 ### KOBJ Command
 
+This command is implemented as a Ring 3 user-mode binary (`userbin/kobj/`, produces `kobj.nxe`). It uses `sys_kobj_enum` (RAX=48) to enumerate the KObj registry. The kernel's built-in KOBJ shell command has been removed in favor of the `.NXE` dispatched via PATH.
+
 | Subcommand | Description |
 |-----------|-------------|
-| `KOBJ` | List all kernel objects tracked by KOBJ. Shows ID, type, name, reference count, and native ID |
+| `KOBJ` | Lists all kernel objects: ID, type, name, refcount, native ID. Shows DRIVER, MOUNTPOINT, DIRECTORY and all other registered types |
 
 ### PRI Command
 

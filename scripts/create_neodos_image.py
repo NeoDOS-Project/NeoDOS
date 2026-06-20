@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'kobj']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -313,6 +313,7 @@ Happy hacking!
         mem_blocks        = alloc_blocks(33, len(nxe_files['mem']))
         vol_blocks        = alloc_blocks(34, len(nxe_files['vol']))
         echo_blocks       = alloc_blocks(35, len(nxe_files['echo']))
+        kobj_blocks       = alloc_blocks(45, len(nxe_files['kobj']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
@@ -333,7 +334,7 @@ Happy hacking!
         lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
-        prog_dir_blocks   = alloc_blocks(25, 3840)   # Programs dir (15 entries)
+        prog_dir_blocks   = alloc_blocks(25, 4096)   # Programs dir (16 entries)
         pkg_dir_blocks    = alloc_blocks(37, 256)    # Packages dir (empty)
         usr_dir_blocks    = alloc_blocks(38, 768)    # Users dir
         def_dir_blocks    = alloc_blocks(39, 256)    # Users\Default (empty)
@@ -370,6 +371,7 @@ Happy hacking!
             33: (MODE_FILE | default_perms_for_filename("mem.nxe"), len(nxe_files['mem']), pad_blocks(mem_blocks)),
             34: (MODE_FILE | default_perms_for_filename("vol.nxe"), len(nxe_files['vol']), pad_blocks(vol_blocks)),
             35: (MODE_FILE | default_perms_for_filename("echo.nxe"), len(nxe_files['echo']), pad_blocks(echo_blocks)),
+            45: (MODE_FILE | default_perms_for_filename("kobj.nxe"), len(nxe_files['kobj']), pad_blocks(kobj_blocks)),
             37: (dir_mode, 256,  pad_blocks(pkg_dir_blocks)),
             38: (dir_mode, 768,  pad_blocks(usr_dir_blocks)),
             39: (dir_mode, 256,  pad_blocks(def_dir_blocks)),
@@ -546,6 +548,7 @@ Happy hacking!
         image[offset+2048:offset+2304]= create_dir_entry(34, 1, "vol.nxe")
         image[offset+2304:offset+2560]= create_dir_entry(35, 1, "echo.nxe")
         image[offset+2560:offset+2816]= create_dir_entry(36, 1, "cd.nxe")
+        image[offset+2816:offset+3072]= create_dir_entry(45, 1, "kobj.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -560,6 +563,7 @@ Happy hacking!
             34: ('vol.nxe', nxe_files['vol']),
             35: ('echo.nxe', nxe_files['echo']),
             36: ('cd.nxe', nxe_files['cd']),
+            45: ('kobj.nxe', nxe_files['kobj']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

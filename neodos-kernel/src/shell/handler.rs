@@ -117,6 +117,7 @@ fn print_usage(entry: &CommandEntry) {
 
 // Command shims
 pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
+#[allow(deprecated)]
 pub fn cmd_dir(shell: &mut DosShell, args: &[&str]) { shell.cmd_dir(args); }
 pub fn cmd_type(shell: &mut DosShell, args: &[&str]) { shell.cmd_type(args); }
 pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
@@ -124,7 +125,6 @@ pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
 pub fn cmd_copy(shell: &mut DosShell, args: &[&str]) { shell.cmd_copy(args); }
 pub fn cmd_md(shell: &mut DosShell, args: &[&str]) { shell.cmd_md(args); }
-
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
 pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
@@ -143,7 +143,6 @@ pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
 pub fn cmd_fsck(shell: &mut DosShell, args: &[&str]) { shell.cmd_fsck(args); }
-pub fn cmd_kobj(shell: &mut DosShell, _args: &[&str]) { shell.cmd_kobj(); }
 pub fn cmd_crash(shell: &mut DosShell, args: &[&str]) { shell.cmd_crash(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
@@ -273,11 +272,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  NEMLIST\n",
                        "  List all currently loaded .nem drivers with their\n",
                        "  IDs, names, states, event counts, and tick counts."), },
-    CommandEntry { name: "KOBJ", category: "INFO", handler: cmd_kobj, description: "List kernel objects",
-        usage: concat!("Syntax:  KOBJ\n",
-                       "  List all kernel objects tracked by the Kernel Object Manager.\n",
-                       "  Shows ID, type, name, reference count, and native ID for each\n",
-                       "  registered kernel object (processes, drivers, pipes, etc.)."), },
     CommandEntry { name: "CRASH",    category: "CTRL",     handler: cmd_crash,  description: "Crash dump management",
         usage: concat!("Syntax:  CRASH [DUMP|STATUS|TRIGGER]\n",
                        "  Manage crash dump buffers.\n",

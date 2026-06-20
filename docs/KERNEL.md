@@ -65,7 +65,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `MEM` (memory stats derived from UEFI memory map, migrado a Ring 3 como MEM.NXE)
 - `PS` (list processes with PID, state, priority, handles)
 - `PRI <pid> <level>` (set process priority 0-3)
-- `KOBJ` (list kernel objects tracked by KOBJ manager)
+- `KOBJ` (list kernel objects via Ring 3 kobj.nxe)
 - `NDREG LIST|SHOW|QUERY|RUNTIME|HEALTH|DEBUG|LOAD` (driver registry CLI)
 - `LOADLIB <path>` (load shared library NXL)
 - `FSCK [drive:] [/F]` (filesystem integrity check)
@@ -73,7 +73,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 403 kernel self-tests + user-mode binaries)
+- `test` (run 416 kernel self-tests + user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 

@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.39.0 — 2026-06-20
+
+### Added
+- **NT5.1 — Object directory tree**: Dynamic Vec-based KObj registry (replaces 64-slot fixed array). Root `\` and standard directories (`\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`) created at boot. Added `KObjType::Symlink`, `KObjType::MountPoint`, `KObjType::Directory` variants.
+- **NT5.2 — Symbolic links**: `SymlinkEntry` with name/target, `insert_symlink()`, `lookup_symlink()`, `remove_symlink()`. Resolution follows up to 10 hops; loop detection.
+- **NT5.3 — Path resolution API**: `ob_lookup_by_path()` with path normalization (`.`, `..`, trailing `\` strip). Case-insensitive name comparison via lowercased keys.
+- **NT5.4 — VFS mount points**: `src/vfs/mount.rs` with `MountManager`, `MountPoint`, `FilesystemType` (NeoDosFs, Fat32, Iso9660). Mount creates KObj + `\DosDevices\{letter}:` symlink. Real mounts at boot register C: and A: in the namespace.
+- **sys_kobj_enum (RAX=48)** — `handler_kobj_enum`: enumerates kernel objects into user buffer. Returns array of `KObjEntryRaw`. Accessible from Ring 3.
+- **KOBJ.NXE** — `userbin/kobj/`: Ring 3 KOBJ command migrated from Ring 0. Lists all kernel objects (ID, type, name, refcount, native ID) via `sys_kobj_enum`.
+- **libneodos wrapper** — `sys_kobj_enum(buf)`, `KObjEntryRaw` struct in `libneodos/src/syscall.rs`.
+
+### Fixed
+- **Test KObj leaks**: All 38 leaking tests fixed (21 driver_runtime, 2 boot_loader, 4 hotreload, 5 mount, 6 namespace). Added `rt.remove(id)` cleanup for local `DriverRuntime` tests, `DRIVER_RUNTIME.lock().remove(id)` for global tests, and unmount at end of mount tests.
+- **Deadlock in init_object_namespace**: Split into two loops — first creates namespace directories, then registers KObjs (outside the namespace lock).
+
+### Changed
+- **KObjRegistry**: Dynamic `Vec<Option<KObjEntry>>` instead of fixed 64-slot array. No hard limit.
+- **kobj_register**: Auto-inserts into namespace via `ob_insert_object_auto()`.
+- **kobj_unregister**: Auto-removes from namespace via `ob_remove_object_auto()`.
+- **MountManager::mount()**: Now takes `drive_letter: char` instead of `volume_name: &str`. Derives `{letter}:` for name, `\Device\{letter}:` for device path, `\DosDevices\{letter}:` for DosDevices symlink.
+- **Tests**: 416 total (403 original + 8 new namespace + 5 new mount). 41 test suites.
+
 ## v0.38.2 — 2026-06-20
 
 ### Added

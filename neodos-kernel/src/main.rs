@@ -176,8 +176,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.76: Object Manager (Ob) namespace
     // Create root \ and standard directories.
     // ============================================
-    //println!("[+] Initializing Object Manager namespace...");
-    //kobj::namespace::init_object_namespace();
+    println!("[+] Initializing Object Manager namespace...");
+    kobj::namespace::init_object_namespace();
 
     // ============================================
     // PHASE 2.8: SMP — Start Application Processors
@@ -300,6 +300,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             boot_benchmark::mark(boot_benchmark::BootStage::FsMounted);
             boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FsMounted);
             println!("[+] NeoDOS FS mounted on C:");
+            let _ = vfs::mount::vfs_mount("\\Device\\NeoDosVolume0", 'C', vfs::mount::FilesystemType::NeoDosFs);
         },
         Err(_) => panic!("Failed to mount filesystem"),
     }
@@ -318,6 +319,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     };
     if fat32_mounted {
         println!("[+] FAT32 ESP mounted on A:");
+        let _ = vfs::mount::vfs_mount("\\Device\\EspVolume0", 'A', vfs::mount::FilesystemType::Fat32);
     }
 
     drivers::ps2::set_leds(0b111); // All ON = storage ready

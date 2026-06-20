@@ -2,7 +2,7 @@ use crate::{test_case, test_eq, test_true};
 use spin::Mutex;
 use lazy_static::lazy_static;
 
-pub const MAX_KOBJ_ENTRIES: usize = 64;
+pub const MAX_KOBJ_ENTRIES_HINT: usize = 64;
 const KOBJ_NAME_LEN: usize = 24;
 
 pub type KObjId = u64;
@@ -19,6 +19,9 @@ pub enum KObjType {
     BlockDevice = 6,
     Filesystem = 7,
     MemoryRegion = 8,
+    Symlink = 9,
+    MountPoint = 10,
+    Directory = 11,
 }
 
 impl KObjType {
@@ -33,6 +36,9 @@ impl KObjType {
             KObjType::BlockDevice => "BLOCKDEV",
             KObjType::Filesystem => "FILESYSTEM",
             KObjType::MemoryRegion => "MEMREGION",
+            KObjType::Symlink => "SYMLINK",
+            KObjType::MountPoint => "MOUNTPOINT",
+            KObjType::Directory => "DIRECTORY",
         }
     }
 }
@@ -60,19 +66,22 @@ impl KObjEntry {
         self.name[..len].copy_from_slice(&bytes[..len]);
         self.name[len] = 0;
     }
+
+    fn set_name_from_bytes(&mut self, src: &[u8; KOBJ_NAME_LEN]) {
+        self.name.copy_from_slice(src);
+    }
 }
 
 pub struct KObjRegistry {
-    entries: [Option<KObjEntry>; MAX_KOBJ_ENTRIES],
+    entries: alloc::vec::Vec<Option<KObjEntry>>,
     count: usize,
     next_id: KObjId,
 }
 
 impl KObjRegistry {
-    pub const fn new() -> Self {
-        const NONE: Option<KObjEntry> = None;
+    pub fn new() -> Self {
         KObjRegistry {
-            entries: [NONE; MAX_KOBJ_ENTRIES],
+            entries: alloc::vec::Vec::new(),
             count: 0,
             next_id: 1,
         }
@@ -84,9 +93,6 @@ impl KObjRegistry {
         name: &str,
         native_id: u64,
     ) -> Result<KObjId, &'static str> {
-        if self.count >= MAX_KOBJ_ENTRIES {
-            return Err("KOBJ registry full");
-        }
         let id = self.next_id;
         self.next_id += 1;
 
@@ -108,7 +114,9 @@ impl KObjRegistry {
                 return Ok(id);
             }
         }
-        Err("No free KOBJ slot")
+        self.entries.push(Some(entry));
+        self.count += 1;
+        Ok(id)
     }
 
     pub fn unregister(&mut self, id: KObjId) -> bool {
@@ -159,6 +167,10 @@ impl KObjRegistry {
     pub fn is_empty(&self) -> bool {
         self.count == 0
     }
+
+    pub fn iter_entries_mut(&mut self) -> impl Iterator<Item = &mut KObjEntry> {
+        self.entries.iter_mut().filter_map(|s| s.as_mut())
+    }
 }
 
 lazy_static! {
@@ -166,11 +178,26 @@ lazy_static! {
 }
 
 pub fn kobj_register(obj_type: KObjType, name: &str, native_id: u64) -> Result<KObjId, &'static str> {
-    KOBJ_REGISTRY.lock().register(obj_type, name, native_id)
+    let id = KOBJ_REGISTRY.lock().register(obj_type, name, native_id)?;
+    let _ = namespace::ob_insert_object_auto(obj_type, name, id);
+    Ok(id)
 }
 
 pub fn kobj_unregister(id: KObjId) -> bool {
-    KOBJ_REGISTRY.lock().unregister(id)
+    let (obj_type, name) = {
+        let reg = KOBJ_REGISTRY.lock();
+        reg.lookup(id).map(|e| (e.obj_type, e.name)).unwrap_or((KObjType::Unknown, [0u8; KOBJ_NAME_LEN]))
+    };
+    if KOBJ_REGISTRY.lock().unregister(id) {
+        let name_str = {
+            let len = name.iter().position(|&b| b == 0).unwrap_or(KOBJ_NAME_LEN);
+            core::str::from_utf8(&name[..len]).unwrap_or("?")
+        };
+        namespace::ob_remove_object_auto(obj_type, name_str);
+        true
+    } else {
+        false
+    }
 }
 
 pub fn kobj_ref(id: KObjId) -> Option<u32> {
@@ -198,6 +225,20 @@ pub fn kobj_iter_snapshot() -> alloc::vec::Vec<(KObjId, KObjType, [u8; KOBJ_NAME
     res
 }
 
+pub fn kobj_update_name(id: KObjId, name: &str) -> bool {
+    let mut reg = KOBJ_REGISTRY.lock();
+    if let Some(entry) = reg.lookup_mut(id) {
+        entry.set_name(name);
+        true
+    } else {
+        false
+    }
+}
+
+pub fn kobj_iter_mut_snapshot() -> alloc::vec::Vec<(u64, &'static mut [u8])> {
+    alloc::vec::Vec::new()
+}
+
 pub mod namespace;
 
 pub fn register_kobj_tests() {
@@ -221,6 +262,8 @@ pub fn register_kobj_tests() {
         test_eq!(KObjType::Process.to_str(), "PROCESS");
         test_eq!(KObjType::Driver.to_str(), "DRIVER");
         test_eq!(KObjType::Pipe.to_str(), "PIPE");
+        test_eq!(KObjType::Symlink.to_str(), "SYMLINK");
+        test_eq!(KObjType::MountPoint.to_str(), "MOUNTPOINT");
         test_eq!(KObjType::Unknown.to_str(), "UNKNOWN");
     });
 
@@ -233,16 +276,25 @@ pub fn register_kobj_tests() {
         kobj_unregister(id);
     });
 
-    test_case!("kobj_registry_full", {
+    test_case!("kobj_registry_dynamic", {
         let mut ids = alloc::vec::Vec::new();
-        while let Ok(id) = kobj_register(KObjType::Unknown, "fill", 0) {
-            ids.push(id);
+        for i in 0..128 {
+            let name = alloc::format!("fill_{}", i);
+            if let Ok(id) = kobj_register(KObjType::Unknown, &name, 0) {
+                ids.push(id);
+            } else {
+                break;
+            }
         }
-        test_true!(ids.len() > 0);
-        test_true!(kobj_register(KObjType::Unknown, "should_fail", 0).is_err());
+        test_eq!(ids.len(), 128);
+        let one_more_id = kobj_register(KObjType::Unknown, "one_more", 0).unwrap();
+        let extra_id = kobj_register(KObjType::Unknown, "extra", 0).unwrap();
+        test_true!(extra_id > 0);
         for id in ids {
             kobj_unregister(id);
         }
+        kobj_unregister(one_more_id);
+        kobj_unregister(extra_id);
     });
 
     test_case!("kobj_lookup", {

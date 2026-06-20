@@ -349,6 +349,7 @@ pub fn register_boot_loader_tests() {
         rt.certify_and_activate(id).unwrap();
         let d = rt.get(id).unwrap();
         test_eq!(d.state, DriverState::Active);
+        rt.remove(id);
     });
 
     test_case!("boot_activation_fails_on_skip", {
@@ -359,6 +360,7 @@ pub fn register_boot_loader_tests() {
         rt.try_transition(id, DriverState::Initialized).unwrap();
         let r = rt.certify_and_activate(id);
         test_true!(r.is_err());
+        rt.remove(id);
     });
 
     test_case!("boot_collect_driver_data_empty", {

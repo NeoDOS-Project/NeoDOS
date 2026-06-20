@@ -349,3 +349,62 @@ pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
     }
     ret(r).map(|v| v as usize)
 }
+
+/// KObjEntryRaw — matches kernel's KObjEntryRaw (RAX=48).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct KObjEntryRaw {
+    pub id: u64,
+    pub obj_type: u32,
+    pub padding: u32,
+    pub name: [u8; 24],
+    pub refcount: u32,
+    pub native_id: u64,
+}
+
+impl KObjEntryRaw {
+    pub fn name_str(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(24);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
+    }
+
+    pub fn type_str(&self) -> &'static str {
+        match self.obj_type {
+            0 => "UNKNOWN",
+            1 => "PROCESS",
+            2 => "DRIVER",
+            3 => "DEVICE",
+            4 => "PIPE",
+            5 => "EVENTBUS",
+            6 => "BLOCKDEV",
+            7 => "FILESYSTEM",
+            8 => "MEMREGION",
+            9 => "SYMLINK",
+            10 => "MOUNTPOINT",
+            11 => "DIRECTORY",
+            _ => "?",
+        }
+    }
+}
+
+/// sys_kobj_enum (RAX=48): enumerate kernel objects.
+/// buf must be large enough for max_entries entries (each 48 bytes).
+/// Returns number of entries written.
+pub fn sys_kobj_enum(buf: &mut [KObjEntryRaw]) -> Result<usize, i64> {
+    let buf_ptr = buf.as_mut_ptr() as *mut u8;
+    let max = buf.len() as u64;
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "mov rax, 48",
+            "mov rbx, {ptr}",
+            "mov rcx, {max}",
+            "int 0x80",
+            ptr = in(reg) buf_ptr as u64,
+            max = in(reg) max,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as usize)
+}

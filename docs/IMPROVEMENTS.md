@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.37.0 (392 kernel tests + 9 user-mode binaries).
+> Versión actual: v0.39.0 (416 kernel tests + 11 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 102 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
+**Progreso:** 106 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
 
 ---
 
@@ -504,7 +504,7 @@ Prereqs: A2.1
 
 Prereqs: A4.1 (userland no hardcodea `C:`).
 
-- [ ] **NT5.1. Object directory tree** | NT: `\` root object namespace | Prereqs: A4.1
+- [X] **NT5.1. Object directory tree** | NT: `\` root object namespace | Prereqs: A4.1
   - **Archivos:** `src/kobj/namespace.rs` (new), refactor `src/kobj/mod.rs` (current flat registry), integración path resolution
   - **Descripción:** Transformar registry KOBJ plano (64 slots) a árbol jerárquico de objetos para escalabilidad y organización.
     - **Structure:**
@@ -538,7 +538,7 @@ Prereqs: A4.1 (userland no hardcodea `C:`).
     - Stress: 1000 objetos en árbol, lookup promedio < 1 ms (BTreeMap log search).
   - **Tests:** `ob_directory_create`, `ob_directory_hierarchy`, `ob_lookup_path_simple`, `ob_lookup_path_nested`, `ob_rename_directory`, `ob_tree_stress_1000_objects` (6 tests).
 
-- [ ] **NT5.2. Symbolic links** | NT: `\DosDevices\C:` → device | Prereqs: NT5.1
+- [X] **NT5.2. Symbolic links** | NT: `\DosDevices\C:` → device | Prereqs: NT5.1
   - **Archivos:** `src/kobj/symlink.rs` (new), integración `src/kobj/namespace.rs`
   - **Descripción:** Objetos simbólicos que apuntan a otros objetos o paths.
     - **Symlink structure:** `{ target_path: [u8; 255], normalized: bool }`
@@ -555,7 +555,7 @@ Prereqs: A4.1 (userland no hardcodea `C:`).
     - Symlink loop (A → B → A) detectado, error en paso 11.
   - **Tests:** `ob_symlink_create_simple`, `ob_symlink_resolve_one_level`, `ob_symlink_resolve_chain`, `ob_symlink_loop_detection`, `ob_symlink_invalid_target` (5 tests).
 
-- [ ] **NT5.3. Path resolution API** | NT: `ObpLookupObjectByName`, hardened path walking | Prereqs: NT5.2
+- [X] **NT5.3. Path resolution API** | NT: `ObpLookupObjectByName`, hardened path walking | Prereqs: NT5.2
   - **Archivos:** `src/kobj/lookup.rs` (new), integración `src/vfs/`, `src/syscall.rs`
   - **Descripción:** Unified API para resolver paths NT-style en el namespace de objetos.
     - **Function:** `ob_lookup_by_path(path: &str, root: Option<&DirObject>) -> Result<ObjectRef, ObError>`
@@ -577,7 +577,7 @@ Prereqs: A4.1 (userland no hardcodea `C:`).
     - Performance: cached path lookup < 1 µs, uncached < 100 µs (BTreeMap search).
   - **Tests:** `ob_lookup_absolute_path`, `ob_lookup_relative_path`, `ob_lookup_case_insensitive`, `ob_lookup_symlink_follow`, `ob_lookup_performance_cached` (5 tests).
 
-- [ ] **NT5.4. VFS mount points integration** | NT: `\Device\HarddiskVolume1`, mount namespace | Prereqs: NT5.3
+- [X] **NT5.4. VFS mount points integration** | NT: `\Device\HarddiskVolume1`, mount namespace | Prereqs: NT5.3
   - **Archivos:** `src/vfs/mount.rs` (new), refactor `src/vfs/mod.rs`, integración `src/shell/` (cmdline parsing C: → ob_lookup)
   - **Descripción:** Integrar VFS con namespace de objetos, permitiendo montar filesystems bajo `\Device` y acceder via paths NT.
     - **Mount point:** Objeto representando un filesystem montado.
@@ -764,7 +764,7 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 
 - [x] **B8.1. DIR.NXE** | `userbin/coredir/` | Lista directorio con `sys_open` (dir) + `sys_readdir`. Columnas, `/W` (wide), `/P` (pausa).
 - [ ] **B8.2. TYPE.NXE** | `userbin/coretype/` | Muestra contenido de archivo con `sys_open` + `sys_readfile`. Búfer 512 B.
-- [ ] **B8.3. ECHO.NXE** | `userbin/coreecho/` | Imprime argumentos a stdout via `sys_write`.
+- [x] **B8.3. ECHO.NXE** | `userbin/coreecho/` | Imprime argumentos a stdout via `sys_write`.
 - [x] **B8.4. VER.NXE** | `userbin/ver/` | Muestra versión del sistema via sys_get_version (RAX=43).
 - [ ] **B8.5. CLS.NXE** | `userbin/corecls/` | Limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
 - [x] **B8.6. HELP.NXE** | `userbin/corehelp/` | Lista coretools disponibles escaneando `C:\BIN\*.NXE` con `sys_readdir`.

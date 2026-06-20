@@ -596,7 +596,7 @@ pub fn register_hotreload_tests() {
         test_eq!(entry.unwrap().driver_id, id);
         drop(reg);
         HOT_RELOAD_REGISTRY.lock().unregister(id);
-        driver_runtime::DRIVER_RUNTIME.lock().unregister(id);
+        driver_runtime::DRIVER_RUNTIME.lock().remove(id);
     });
 
     test_case!("hotreload_state_transitions", {
@@ -618,6 +618,7 @@ pub fn register_hotreload_tests() {
         // Unloaded → Loaded (reload path, new transition)
         test_true!(rt.try_transition(id, DriverState::Loaded).is_ok());
         test_eq!(rt.get(id).unwrap().state, DriverState::Loaded);
+        rt.remove(id);
     });
 
     test_case!("hotreload_invalid_transitions", {
@@ -630,6 +631,7 @@ pub fn register_hotreload_tests() {
         test_true!(rt.try_transition(id, DriverState::Active).is_err());
         // Unloaded → Loaded is valid (reload path)
         test_true!(rt.try_transition(id, DriverState::Loaded).is_ok());
+        rt.remove(id);
     });
 
     test_case!("hotreload_state_counts_with_unloading", {
@@ -652,6 +654,8 @@ pub fn register_hotreload_tests() {
         }
         test_true!(found_unloading);
         test_true!(found_loaded);
+        rt.remove(id);
+        rt.remove(_id2);
     });
 
     test_case!("hotreload_unload_non_existent", {
