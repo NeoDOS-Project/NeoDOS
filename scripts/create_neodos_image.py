@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -329,6 +329,7 @@ Happy hacking!
         keyb_blocks       = alloc_blocks(57, len(nxe_files['keyb']))
         kill_blocks       = alloc_blocks(58, len(nxe_files['kill']))
         pri_blocks        = alloc_blocks(59, len(nxe_files['pri']))
+        label_blocks      = alloc_blocks(60, len(nxe_files['label']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
@@ -404,7 +405,8 @@ Happy hacking!
              56: (MODE_FILE | default_perms_for_filename("ps.nxe"), len(nxe_files['ps']), pad_blocks(ps_blocks)),
              57: (MODE_FILE | default_perms_for_filename("keyb.nxe"), len(nxe_files['keyb']), pad_blocks(keyb_blocks)),
              58: (MODE_FILE | default_perms_for_filename("kill.nxe"), len(nxe_files['kill']), pad_blocks(kill_blocks)),
-             59: (MODE_FILE | default_perms_for_filename("pri.nxe"), len(nxe_files['pri']), pad_blocks(pri_blocks)),
+              59: (MODE_FILE | default_perms_for_filename("pri.nxe"), len(nxe_files['pri']), pad_blocks(pri_blocks)),
+              60: (MODE_FILE | default_perms_for_filename("label.nxe"), len(nxe_files['label']), pad_blocks(label_blocks)),
             41: (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             42: (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             43: (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -592,6 +594,7 @@ Happy hacking!
         image[offset+5888:offset+6144]= create_dir_entry(57, 1, "keyb.nxe")
         image[offset+6144:offset+6400]= create_dir_entry(58, 1, "kill.nxe")
         image[offset+6400:offset+6656]= create_dir_entry(59, 1, "pri.nxe")
+        image[offset+6656:offset+6912]= create_dir_entry(60, 1, "label.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -620,7 +623,8 @@ Happy hacking!
               56: ('ps.nxe', nxe_files['ps']),
               57: ('keyb.nxe', nxe_files['keyb']),
               58: ('kill.nxe', nxe_files['kill']),
-              59: ('pri.nxe', nxe_files['pri']),
+               59: ('pri.nxe', nxe_files['pri']),
+               60: ('label.nxe', nxe_files['label']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

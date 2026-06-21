@@ -1,13 +1,17 @@
 #![allow(dead_code)]
 
 use core::sync::atomic::{fence, Ordering};
+use core::alloc::Layout;
+use alloc::alloc::alloc_zeroed;
+
 use crate::drivers::block::BlockDevice;
 use crate::drivers::pci::{pci_config_read_dword, pci_config_read_word, pci_config_write_word};
 use crate::irp::{self, IrpId, IrpOp};
 use crate::serial_println;
 
 /// Saved AHCI port info so we can reclaim the port after NEM AHCI driver overrides it.
-static BOOT_AHCI_INFO: spin::Mutex<Option<(u64, usize)>> = spin::Mutex::new(None);
+/// Stores (abar, port, clb, fb) — the DMA buffer addresses needed to restore the port.
+static BOOT_AHCI_INFO: spin::Mutex<Option<(u64, usize, u32, u32)>> = spin::Mutex::new(None);
 
 const MAX_PORTS: usize = 2;
 const MAX_CMD_SLOTS: usize = 32;
@@ -94,27 +98,35 @@ const EMPTY_CMD_HEADER: CmdHeader = CmdHeader {
 const EMPTY_PRD: PrdtEntry = PrdtEntry {
     data_base: 0, data_base_hi: 0, reserved: 0, count: 0,
 };
-const EMPTY_CMD_TABLE_INNER: CmdTableInner = CmdTableInner {
-    cfis: [0; 64], acmd: [0; 16], reserved: [0; 48],
-    prdt: [EMPTY_PRD; MAX_PRD_ENTRIES],
-};
 
-static mut PORT_CMD_LIST: [CmdList; MAX_PORTS] = [
-    CmdList([EMPTY_CMD_HEADER; MAX_CMD_SLOTS]),
-    CmdList([EMPTY_CMD_HEADER; MAX_CMD_SLOTS]),
-];
-static mut PORT_RECV_FIS: [RecvFis; MAX_PORTS] = [
-    RecvFis([0; 256]),
-    RecvFis([0; 256]),
-];
-static mut PORT_CMD_TABLE: [CmdTable; MAX_PORTS] = [
-    CmdTable(EMPTY_CMD_TABLE_INNER),
-    CmdTable(EMPTY_CMD_TABLE_INNER),
-];
-static mut PORT_DMA_BUF: [[u8; DMA_BUF_SIZE]; MAX_PORTS] = [
-    [0; DMA_BUF_SIZE],
-    [0; DMA_BUF_SIZE],
-];
+// ── Heap-allocated AHCI buffers (replaces static buffers, v0.40) ──
+// Allocated from kernel heap during probe(). Pointers stored in the
+// struct so they're alive for as long as BootAhci is registered.
+
+fn ahci_alloc_buffers() -> (*mut CmdList, *mut RecvFis, *mut CmdTable, *mut u8) {
+    let cl_layout = Layout::from_size_align(
+        core::mem::size_of::<CmdList>() * MAX_PORTS, 1024).unwrap();
+    let rf_layout = Layout::from_size_align(
+        core::mem::size_of::<RecvFis>() * MAX_PORTS, 256).unwrap();
+    let ct_layout = Layout::from_size_align(
+        core::mem::size_of::<CmdTable>() * MAX_PORTS, 128).unwrap();
+
+    let cl_ptr = unsafe { alloc_zeroed(cl_layout) } as *mut CmdList;
+    let rf_ptr = unsafe { alloc_zeroed(rf_layout) } as *mut RecvFis;
+    let ct_ptr = unsafe { alloc_zeroed(ct_layout) } as *mut CmdTable;
+    let db_ptr = unsafe { alloc_zeroed(Layout::new::<[u8; DMA_BUF_SIZE * MAX_PORTS]>()) };
+
+    if cl_ptr.is_null() || rf_ptr.is_null() || ct_ptr.is_null() || db_ptr.is_null() {
+        // Free partial allocations on OOM
+        if !cl_ptr.is_null() { unsafe { alloc::alloc::dealloc(cl_ptr as *mut u8, cl_layout); } }
+        if !rf_ptr.is_null() { unsafe { alloc::alloc::dealloc(rf_ptr as *mut u8, rf_layout); } }
+        if !ct_ptr.is_null() { unsafe { alloc::alloc::dealloc(ct_ptr as *mut u8, ct_layout); } }
+        if !db_ptr.is_null() { unsafe { alloc::alloc::dealloc(db_ptr, Layout::new::<[u8; DMA_BUF_SIZE * MAX_PORTS]>()); } }
+        return (core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut(), core::ptr::null_mut());
+    }
+
+    (cl_ptr, rf_ptr, ct_ptr, db_ptr)
+}
 
 fn mmio_read32(base: u64, offset: u64) -> u32 {
     unsafe { (base as *const u32).add(offset as usize / 4).read_volatile() }
@@ -189,7 +201,47 @@ pub struct BootAhci {
     base_lba: u64,
     num_sectors: u64,
     is_atapi: bool,
+    // Heap-allocated DMA buffers (v0.40)
+    cmd_list: *mut CmdList,
+    recv_fis: *mut RecvFis,
+    cmd_table: *mut CmdTable,
+    dma_buf: *mut u8,
 }
+
+impl Drop for BootAhci {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.cmd_list.is_null() {
+                alloc::alloc::dealloc(
+                    self.cmd_list as *mut u8,
+                    Layout::from_size_align_unchecked(
+                        core::mem::size_of::<CmdList>() * MAX_PORTS, 1024),
+                );
+            }
+            if !self.recv_fis.is_null() {
+                alloc::alloc::dealloc(
+                    self.recv_fis as *mut u8,
+                    Layout::from_size_align_unchecked(
+                        core::mem::size_of::<RecvFis>() * MAX_PORTS, 256),
+                );
+            }
+            if !self.cmd_table.is_null() {
+                alloc::alloc::dealloc(
+                    self.cmd_table as *mut u8,
+                    Layout::from_size_align_unchecked(
+                        core::mem::size_of::<CmdTable>() * MAX_PORTS, 128),
+                );
+            }
+            if !self.dma_buf.is_null() {
+                alloc::alloc::dealloc(
+                    self.dma_buf,
+                    Layout::new::<[u8; DMA_BUF_SIZE * MAX_PORTS]>());
+            }
+        }
+    }
+}
+
+unsafe impl Send for BootAhci {}
 
 impl BootAhci {
     pub fn probe() -> Option<Self> {
@@ -257,19 +309,31 @@ impl BootAhci {
         let is_atapi = sig == SATA_SIG_ATAPI;
         serial_println!("[AHCI] Using port {} sig=0x{:08x} {}", port, sig, if is_atapi { "ATAPI" } else { "ATA" });
 
-        unsafe {
-            let clb = &PORT_CMD_LIST[port] as *const CmdList as u32;
+        // ── Allocate heap buffers for DMA (v0.40, replaces static buffers) ──
+        let (cmd_list, recv_fis, cmd_table, dma_buf) = ahci_alloc_buffers();
+        if cmd_list.is_null() || recv_fis.is_null() || cmd_table.is_null() || dma_buf.is_null() {
+            serial_println!("[AHCI] Failed to allocate DMA buffers from heap");
+            return None;
+        }
+        serial_println!(
+            "[AHCI] DMA buffers allocated: cmd_list=0x{:p} recv_fis=0x{:p} cmd_table=0x{:p} dma_buf=0x{:p}",
+            cmd_list, recv_fis, cmd_table, dma_buf
+        );
+
+        let (clb_val, fb_val) = unsafe {
+            let clb = &*cmd_list.add(port) as *const CmdList as u32;
             let clbu = 0u32;
             port_write32(abar, port, PORT_CLB, clb);
             port_write32(abar, port, PORT_CLBU, clbu);
 
-            let fb = &PORT_RECV_FIS[port] as *const RecvFis as u32;
+            let fb = &*recv_fis.add(port) as *const RecvFis as u32;
             let fbu = 0u32;
             port_write32(abar, port, PORT_FB, fb);
             port_write32(abar, port, PORT_FBU, fbu);
 
             port_write32(abar, port, PORT_SERR, port_read32(abar, port, PORT_SERR));
-        }
+            (clb, fb)
+        };
 
         if !port_reset_and_start(abar, port) {
             serial_println!("[AHCI] Port {} failed to start", port);
@@ -278,16 +342,16 @@ impl BootAhci {
 
         let num_sectors = 0x0012_4F00u64;
         serial_println!("[AHCI] Boot AHCI ready on port {}", port);
-        *BOOT_AHCI_INFO.lock() = Some((abar, port));
+        *BOOT_AHCI_INFO.lock() = Some((abar, port, clb_val, fb_val));
 
-        Some(BootAhci { abar, port, base_lba: 0, num_sectors, is_atapi })
+        Some(BootAhci { abar, port, base_lba: 0, num_sectors, is_atapi, cmd_list, recv_fis, cmd_table, dma_buf })
     }
 
     /// Reclaim the AHCI port after a NEM AHCI driver overrides PORT_CLB/PORT_FB.
     /// Must be called after boot_load_all() but before any further DMA via BootAhci.
     pub fn reclaim_ahci_port() {
         let info = BOOT_AHCI_INFO.lock();
-        let Some((abar, port)) = *info else { return };
+        let Some((abar, port, saved_clb, saved_fb)) = *info else { return };
 
         serial_println!("[AHCI] Reclaiming port {} after NEM driver init", port);
 
@@ -301,29 +365,24 @@ impl BootAhci {
             }
         }
 
-        // Re-set CLB and FB to BootAhci's own static buffers
-        unsafe {
-            let clb = &PORT_CMD_LIST[port] as *const CmdList as u32;
-            port_write32(abar, port, PORT_CLB, clb);
-            port_write32(abar, port, PORT_CLBU, 0);
-
-            let fb = &PORT_RECV_FIS[port] as *const RecvFis as u32;
-            port_write32(abar, port, PORT_FB, fb);
-            port_write32(abar, port, PORT_FBU, 0);
-        }
+        // Restore BootAhci's own DMA buffer addresses (overwritten by NEM driver)
+        port_write32(abar, port, PORT_CLB, saved_clb);
+        port_write32(abar, port, PORT_CLBU, 0);
+        port_write32(abar, port, PORT_FB, saved_fb);
+        port_write32(abar, port, PORT_FBU, 0);
 
         // Clear error status
         port_write32(abar, port, PORT_IS, 0xFFFF_FFFF);
         port_write32(abar, port, PORT_SERR, 0xFFFF_FFFF);
 
-        // Restart the port
+        // Restart the port with BootAhci's buffers
         port_write32(abar, port, PORT_CMD, CMD_ST | CMD_FRE | CMD_POD | CMD_SUD);
         for _ in 0..10000 {
             let c = port_read32(abar, port, PORT_CMD);
             if (c & CMD_CR) == 0 { break; }
         }
 
-        serial_println!("[AHCI] Port reclaimed successfully");
+        serial_println!("[AHCI] Port reclaimed successfully (BootAhci buffers restored)");
     }
 
     fn dma_xfer(&mut self, lba: u64, count: u8, buf: *const u8, is_write: bool) -> Result<(), ()> {
@@ -336,9 +395,8 @@ impl BootAhci {
         }
 
         unsafe {
-            let ct = &mut PORT_CMD_TABLE[port] as *mut CmdTable;
-            let ct_inner = &mut (*ct).0;
-            ct_inner.cfis = [0; 64];
+            let ct = &mut *self.cmd_table.add(port);
+            let ct_inner = &mut ct.0;
             ct_inner.cfis = [0; 64];
             ct_inner.cfis[0] = 0x27;
             ct_inner.cfis[1] = 0x80;
@@ -357,7 +415,7 @@ impl BootAhci {
             ct_inner.cfis[12] = count;
             ct_inner.cfis[13] = 0;
 
-            let dbuf = PORT_DMA_BUF[port].as_mut_ptr();
+            let dbuf = self.dma_buf.add(DMA_BUF_SIZE * port);
             let dbuf_phys = dbuf as u32;
             if is_write {
                 core::ptr::copy_nonoverlapping(buf, dbuf, (count as usize) * 512);
@@ -371,12 +429,12 @@ impl BootAhci {
             ct_inner.prdt[0].data_base_hi = 0;
             ct_inner.prdt[0].count = ((count as u32) * 512 - 1) | (1 << 31);
 
-            let cl = &mut PORT_CMD_LIST[port];
+            let cl = &mut *self.cmd_list.add(port);
             cl.0[0] = CmdHeader {
                 opts: 5 | (1 << 6),
                 prdtl: nprd as u16,
                 prdbc: 0,
-                ctba: ct as u32,
+                ctba: ct as *mut CmdTable as u32,
                 ctba_hi: 0,
                 reserved: [0; 4],
             };
@@ -422,7 +480,7 @@ impl BootAhci {
 
         if !is_write {
             unsafe {
-                let dbuf = PORT_DMA_BUF[port].as_ptr();
+                let dbuf = self.dma_buf.add(DMA_BUF_SIZE * port);
                 core::ptr::copy_nonoverlapping(dbuf, buf as *mut u8, (count as usize) * 512);
             }
         }
@@ -430,8 +488,6 @@ impl BootAhci {
         Ok(())
     }
 }
-
-unsafe impl Send for BootAhci {}
 
 impl BlockDevice for BootAhci {
     fn submit_irp(&mut self, irp_id: IrpId) -> Result<(), ()> {

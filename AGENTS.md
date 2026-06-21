@@ -546,6 +546,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 51 | `sys_set_priority` | RBX=pid, RCX=priority (0-3) | Set process scheduling priority (admin) |
 | 52 | `sys_kill_process` | RBX=pid | Terminate process by PID (admin) |
 | 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 |
+| 54 | `sys_set_volume_label` | RBX=drive_char, RCX=label_ptr | Set volume label for a drive |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.

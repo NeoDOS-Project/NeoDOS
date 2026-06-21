@@ -717,7 +717,7 @@ fn register_syscall_stress() {
 
     test_case!("stress_syscall_ptr_validation", {
         // Ensure user pointer validation rejects kernel addresses
-        let kernel_addr: u64 = 0x200000; // kernel .text start
+        let kernel_addr: u64 = 0x4000000; // kernel .text start (v0.40)
         let valid = crate::syscall::is_user_ptr_valid(kernel_addr, 10);
         test_eq!(valid, false);
         let valid2 = crate::syscall::is_user_ptr_valid(kernel_addr, 1);
@@ -2356,6 +2356,7 @@ pub fn register_tests() {
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
     crate::kobj::register_kobj_tests();
+    crate::object::register_object_tests();
     crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();
     crate::dpc::register_tests();
@@ -2399,7 +2400,7 @@ pub fn register_tests() {
     crate::vfs::kdrive::register_kdrive_tests();
 
     // B9.1: HELP command tests
-    register_help_tests();
+    register_ring0_remaining_tests();
 
     // B9.2/B9.3: Ring 0 SET/EXIT removed tests
     register_shell_removed_tests();
@@ -2411,40 +2412,31 @@ pub fn register_tests() {
     crate::exception::dispatcher::register_exception_tests();
 }
 
-// ── B9.1: HELP command tests ────────────────────────────────────────────
+// ── B9.1: Ring 0 commands still present (moved to Ring 3 no longer here) ──
 
-fn register_help_tests() {
-    test_case!("help_ring0_stub_output", {
+fn register_ring0_remaining_tests() {
+    test_case!("ring0_call_still_dispatched", {
         use crate::shell::shell::DosShell;
         use crate::shell::handler::COMMANDS;
         let mut shell = DosShell::new();
-        // cmd_help should not panic; output contains "stub" or "neoshell"
-        COMMANDS.dispatch("HELP", &[], &mut shell);
+        let handled = COMMANDS.dispatch("CALL", &[], &mut shell);
+        test_eq!(handled, true);
     });
 
-    test_case!("help_ring0_stub_output_detail", {
+    test_case!("ring0_run_still_dispatched", {
         use crate::shell::shell::DosShell;
         use crate::shell::handler::COMMANDS;
         let mut shell = DosShell::new();
-        // HELP with args also should not panic
-        COMMANDS.dispatch("HELP", &["CLS"], &mut shell);
+        let handled = COMMANDS.dispatch("RUN", &[], &mut shell);
+        test_eq!(handled, true);
     });
 
-    test_case!("help_ring0_stub_no_old_behavior", {
+    test_case!("ring0_ndreg_still_dispatched", {
         use crate::shell::shell::DosShell;
         use crate::shell::handler::COMMANDS;
         let mut shell = DosShell::new();
-        // HELP in Ring 0 no longer lists built-ins; redirects to neoshell
-        // Verify it doesn't print "NeoDOS HELP" header
-        COMMANDS.dispatch("HELP", &[], &mut shell);
-    });
-
-    test_case!("help_ring0_slash_question", {
-        use crate::shell::shell::DosShell;
-        use crate::shell::handler::COMMANDS;
-        let mut shell = DosShell::new();
-        // HELP /? should not panic
-        COMMANDS.dispatch("HELP", &["/?"], &mut shell);
+        let handled = COMMANDS.dispatch("NDREG", &[], &mut shell);
+        test_eq!(handled, true);
     });
 }
 

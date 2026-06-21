@@ -1,23 +1,23 @@
 ENTRY(_start)
 SECTIONS
 {
-    . = 0x4000000;
-    __kernel_start = .;
-    
+    . = 0x400000;
+    __user_start = .;
+
     .text : {
         *(.text.entry)
         *(.text*)
         *(.rodata*)
     }
-    
+
     .data : {
         *(.data*)
     }
-    
+
     .bss : {
         *(.bss*)
         *(COMMON)
     }
 
-    __kernel_end = .;
+    __user_end = .;
 }

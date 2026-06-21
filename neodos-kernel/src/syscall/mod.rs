@@ -74,11 +74,12 @@ pub enum SyscallNum {
     KillProcess = 52,
     SetExceptionHandler = 29,
     CursorBlink = 53,
+    SetVolumeLabel = 54,
     GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 53;
+    pub const MAX_VALID: u64 = 54;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -125,7 +126,8 @@ impl SyscallNum {
              49 => Some(Self::SetKeyboardLayout),
              51 => Some(Self::SetPriority),
              52 => Some(Self::KillProcess),
-             53 => Some(Self::CursorBlink),
+              53 => Some(Self::CursorBlink),
+              54 => Some(Self::SetVolumeLabel),
             _ => None,
         }
     }
@@ -168,7 +170,7 @@ pub fn validate_abi() {
         25, 26, 27, 28, 29,
         33,
          40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-        50, 51, 52, 53,
+         50, 51, 52, 53, 54,
     ];
     // Reserved syscall slots that MUST be None
     const RESERVED: &[u64] = &[];
@@ -343,7 +345,7 @@ fn normalize_dos_path(path: &str) -> String {
 }
 
 pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
-    if ptr >= 0x400000 && ptr.saturating_add(len) <= 0x800000 {
+    if ptr >= crate::arch::x64::paging::USER_BASE && ptr.saturating_add(len) <= crate::arch::x64::paging::USER_LIMIT {
         return true;
     }
     // NXL region (shared libraries): 0x1E000000..0x1E200000
@@ -1780,7 +1782,7 @@ fn handler_thread_create(regs: Registers) -> u64 {
     let entry = regs.rbx;
     let user_stack = regs.rcx;
 
-    if entry == 0 || entry >= 0x800000 {
+    if entry == 0 || entry >= crate::arch::x64::paging::USER_LIMIT {
         return err_to_u64(SyscallError::Inval);
     }
 
@@ -2188,6 +2190,36 @@ fn handler_get_volume_label(regs: Registers) -> u64 {
     }
 }
 
+/// sys_set_volume_label (RAX=54): set the volume label for a drive.
+/// RBX = drive char, RCX = label string pointer.
+fn handler_set_volume_label(regs: Registers) -> u64 {
+    let drive_char = (regs.rbx & 0xFF) as u8 as char;
+    let label_ptr = regs.rcx;
+
+    if label_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let label = match copy_user_string(label_ptr) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+
+    if label.len() > 11 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    match crate::globals::with_vfs(|vfs| {
+        vfs.set_volume_label(drive_char.to_ascii_uppercase(), &label)
+    }) {
+        Ok(()) => {
+            crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
+            0
+        }
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
 /// ABI-stable drive info for sys_get_drives (RAX=33).
 #[repr(C)]
 struct DriveInfoRaw {
@@ -2316,6 +2348,7 @@ lazy_static! {
         t[51] = Some(handler_set_priority as SyscallFn);
         t[52] = Some(handler_kill_process as SyscallFn);
         t[53] = Some(handler_cursor_blink as SyscallFn);
+        t[54] = Some(handler_set_volume_label as SyscallFn);
         t
     };
 
@@ -2366,6 +2399,7 @@ lazy_static! {
         t[51] = SyscallPermission::admin();
         t[52] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
+        t[54] = SyscallPermission::user();
         t
     };
 }

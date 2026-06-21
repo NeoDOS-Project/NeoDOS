@@ -407,9 +407,9 @@ pub fn register_elf_tests() {
     });
 
     test_case!("elf_reject_kernel_collision", {
-        // Segment at 0x200000 (kernel image base) should be rejected
+        // Segment at 0x4000000 (kernel image base, v0.40) should be rejected
         let code = [0x90u8; 16];
-        let raw = build_valid_elf(0x200000, 0x200000, &code);
+        let raw = build_valid_elf(0x4000000, 0x4000000, &code);
         let mut addr_space = AddressSpace::new();
         let result = load_elf(&raw, Some(&mut addr_space));
         test_true!(result.is_err());
@@ -422,9 +422,9 @@ pub fn register_elf_tests() {
     });
 
     test_case!("elf_reject_heap_collision", {
-        // Segment at 0x1000000 (kernel heap base) should be rejected
+        // Segment at 0x2400000 (kernel heap base, v0.40) should be rejected
         let code = [0x90u8; 16];
-        let raw = build_valid_elf(0x1000000, 0x1000000, &code);
+        let raw = build_valid_elf(0x2400000, 0x2400000, &code);
         let mut addr_space = AddressSpace::new();
         let result = load_elf(&raw, Some(&mut addr_space));
         test_true!(result.is_err());
@@ -458,8 +458,8 @@ pub fn register_elf_tests() {
 
         let targets: &[u64] = &[
             0x0,            // null
-            0x100000,       // kernel image
-            0x1000000,      // kernel heap
+            0x4000000,      // kernel image (v0.40)
+            0x2400000,      // kernel heap (v0.40)
             0x10000000,     // user heap
             0x20000000,     // mmap region
             0x30000000,     // driver isolation

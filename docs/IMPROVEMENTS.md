@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.9 (463 kernel tests + 23 user-mode binaries).
+> Versión actual: v0.40.3 (486 kernel tests + 27 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > **NUEVA GUÍA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 132 / ~160 items completados (+28 planificados: X7 Object Manager). Próximo milestone: **v0.40** (Maduración estructural) / **X7** (Object Manager).
+**Progreso:** 135 / ~162 items completados (+27 planificados: X7 Object Manager). Próximo milestone: **v0.41** (Slab&lt;T&gt;, ObObjectTable).
 
 ---
 
@@ -169,6 +169,7 @@
 130. **A2.1. MMIO ECAM PCI config space** — `src/hal/pci.rs`, `src/drivers/pci.rs`: ECAM-based PCI config space access via MMIO from ACPI MCFG table. Auto-selects ECAM or legacy PIO fallback. Tests: 5.
 131. **A2.2. IOAPIC + MSI-X como modelo primario** — `src/interrupts/ioapic.rs`, `src/interrupts/msi.rs`: I/O APIC detected from MADT, replaces legacy PIC. MSI-X per-entry table programming. IOAPIC init at PHASE 2.91. Tests: 5.
 132. **B4.4 B2. ANSI terminal** — `userbin/neoshell/`, framebuffer driver: Emulador de terminal ANSI básico en framebuffer. Interpreta secuencias de escape: color, clear screen, cursor position. Tests: `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
+133. **v0.40 — Buddy bitmap dinámico, User window 32MB, Static buffers→heap** — `src/memory/buddy.rs`: bitmap dinámico (>4GB RAM) en vez de `[u64; 16384]`. `src/arch/x64/paging.rs`, `src/scheduler/address_space.rs`, `src/memory/layout.rs`: user window 4MB→32MB (0x400000..0x2400000), kernel heap reubicado (0x2400000). `kernel.ld`: kernel movido a 0x4000000 (64MB). `src/drivers/boot_ahci.rs`: búferes AHCI heap-allocados. `src/main.rs`: CMD_BUF/BIN_BUF heap-allocados. 479 tests.
 
 ---
 
@@ -185,8 +186,8 @@
 
 Orden de implementación dentro de la fase:
 
-1. **v0.40** — Buddy bitmap dinámico (>4GB RAM), User window 4MB→32MB, Static buffers→heap
-2. **v0.41** — Slab<T> contenedor, Scheduler Vec<EPROCESS>/Vec<KTHREAD>, Pipe buffers dinámicos, **ObObjectTable (refactor KOBJ → Object Manager)**
+1. ~~**v0.40** — Buddy bitmap dinámico (>4GB RAM), User window 4MB→32MB, Static buffers→heap~~ **COMPLETADO**
+2. **v0.41** — Slab&lt;T&gt; contenedor, Scheduler Vec&lt;EPROCESS&gt;/Vec&lt;KTHREAD&gt;, Pipe buffers dinámicos, **ObObjectTable (refactor KOBJ → Object Manager)**
 3. **v0.42** — Unified Wait Engine (KWait), Congelar ABI: eventos 0–15, capability flags, IOAPIC, **HandleEntry refactor (object_id field)**
 4. **v0.43** — SeAccessCheck NT-compatible (completar con ACE order NT-correct), sys_poll(), Congelar pipe/IRP protocols
 5. **v0.44** — ASLR v1 (base aleatoria), FileSystem trait freeze, Registry v1 (B2.1)

@@ -1,6 +1,51 @@
 # Changelog
 
-## v0.40.0 — 2026-06-21
+## v0.40.3 — 2026-06-22
+
+### Fixed
+- **AHCI reclaim** — `boot_ahci.rs`: guarda `clb`/`fb` en `BOOT_AHCI_INFO` y los restaura en `reclaim_ahci_port()`. El driver NEM AHCI (Phase 3.85) sobrescribía PORT_CLB/PORT_FB, rompiendo el DMA de BootAhci para la carga del NXL en Phase 3.87.
+
+### Changed
+- **Ring 0 → Ring 3**: Eliminados de la shell Ring 0 los comandos `KEYB`, `PS`, `PRI`, `DRIVES`, `KILL`, `HELP`, `LABEL`. Todos tienen equivalentes Ring 3 (`keyb.nxe`, `ps.nxe`, `pri.nxe`, `drives.nxe`, `kill.nxe`, `corehelp.nxe`, `label.nxe`).
+- **Syscall `SetVolumeLabel` (RAX=54)**: Nueva syscall para cambiar la etiqueta del volumen desde Ring 3. Wrapper en `libneodos`.
+
+### Added
+- **label.nxe**: Nuevo binario Ring 3 para el comando `LABEL` (muestra y cambia etiqueta del volumen). Incluido en la imagen del FS.
+- **Test `ring0_call_still_dispatched`, `ring0_run_still_dispatched`, `ring0_ndreg_still_dispatched`**: Reemplazan los tests de HELP eliminados.
+
+## v0.40.0 — 2026-06-22
+
+### Added
+- **Buddy bitmap dinámico (>4GB)** — `src/memory/buddy.rs`: bitmap dinámico (heap allocated) en vez de `[u64; 16384]`. Calcula tamaño de `phys_max`. Fallback a 4GB tracking si no hay páginas contiguas. `LEGACY_BITMAP_WORDS=16384`.
+- **User window 32MB** — `USER_LIMIT` expandido de `0x0080_0000` a `0x0240_0000` (4MB→32MB). Slot count: 32→256. Kernel heap reubicado a `0x0240_0000` (36MB). Kernel load address movida a `0x4000000` (64MB) para evitar solapamiento con user window.
+- **Static buffers→heap** — `BootAhci` búferes DMA (`cmd_list`, `recv_fis`, `cmd_table`, `dma_buf`) ahora heap-allocados via `alloc_zeroed`. `main.rs` CMD_BUF/BIN_BUF convertidos a `alloc::vec!`. Implementación `Drop` para liberación.
+
+### Changed
+- `src/memory/buddy.rs`: `BITMAP_WORDS` eliminado, `bitmap` es `*mut u64`, `init_bitmap()` separado de `init_from_regions()`
+- `src/memory/mod.rs`: calcula y reserva páginas para bitmap dinámico desde la memory map UEFI
+- `src/arch/x64/paging.rs`, `src/scheduler/address_space.rs`: USER_LIMIT=0x2400000
+- `src/memory/layout.rs`, `src/allocator.rs`: kernel_heap en 0x2400000
+- `kernel.ld`: kernel en 0x4000000
+- `src/drivers/isolation.rs`: rangos de validación ajustados
+- `src/syscall/mod.rs`: `is_user_ptr_valid()` y `handler_thread_create()` usan USER_LIMIT
+- `src/elf.rs`: tests actualizados con nuevas direcciones
+- `src/drivers/boot_ahci.rs`: búferes heap-allocados con alineación 1024/256/128
+- `src/panic_classification.rs`, `src/testing.rs`: direcciones kernel actualizadas
+
+### Tests
+- 479 kernel tests (de 469) + 14 command tests
+
+## v0.40.2 — 2026-06-22
+
+### Added
+- **X7. NeoDOS Object Manager (Ob)** — Documento de arquitectura y roadmap de implementación:
+  - `docs/OBJECT_MANAGER_ARCHITECTURE.md`: Diseño completo del Object Manager que unifica Handles, KOBJ, URN y Security bajo una sola abstracción. Define ObObject, ObHandle, ObDirectory, ObOperations, integración con seguridad, y 6 nuevas syscalls (RAX 60–65).
+  - `docs/IMPROVEMENTS.md`: Nueva sección X7 con 40 tests planificados, análisis de dependencias, impacto en archivos, métricas objetivo y riesgos.
+  - Plan de implementación detallado dividido en 23 issues organizados en 4 versiones (v0.41→v1.0), con ~1920 líneas nuevas estimadas y 69 tests.
+
+### Changed
+- **AGENTS.md**: Updated priorities to include Ob milestones (v0.41–v1.0). Added reference to `OBJECT_MANAGER_ARCHITECTURE.md`.
+- **IMPROVEMENTS.md**: Updated progress to 132/160 items. Added X7 section and Ob milestones to v0.41/v0.42/v0.50/v1.0 roadmap phases.
 
 ### Added
 - **B9.4 PS** (`userbin/ps/`): Ring 3 `ps.nxe` — process listing via `sys_kobj_enum` (RAX=48). Shows PID, TID, name.

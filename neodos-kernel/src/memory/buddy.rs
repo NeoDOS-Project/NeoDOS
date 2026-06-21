@@ -4,14 +4,17 @@ use core::cmp;
 
 const PAGE_SIZE: u64 = 4096;
 pub const MAX_ORDER: usize = 10;
-pub const BITMAP_WORDS: usize = 16384;
 pub const MAX_FREE_SLOTS: usize = 512;
+/// Legacy fixed bitmap size (16384 u64 = 1,048,576 frames = 4 GB).
+/// Used as fallback when dynamic allocation fails.
+pub const LEGACY_BITMAP_WORDS: usize = 16384;
 
 pub struct BuddyAllocator {
     free_lists: [u64; MAX_ORDER + 1],
     free_counts: [u16; MAX_ORDER + 1],
     free_slots: [[u64; MAX_FREE_SLOTS]; MAX_ORDER + 1],
-    bitmap: [u64; BITMAP_WORDS],
+    bitmap: *mut u64,
+    bitmap_words: usize,
     free_pages: u64,
     total_pages: u64,
 }
@@ -25,27 +28,28 @@ impl BuddyAllocator {
             free_lists: [0; 11],
             free_counts: [0; 11],
             free_slots: [[0; MAX_FREE_SLOTS]; 11],
-            bitmap: [u64::MAX; BITMAP_WORDS],
+            bitmap: core::ptr::null_mut(),
+            bitmap_words: 0,
             free_pages: 0,
             total_pages: 0,
         }
     }
 
     fn bitmap_set(&mut self, frame: usize) {
-        if frame < BITMAP_WORDS * 64 {
-            self.bitmap[frame / 64] |= 1u64 << (frame % 64);
+        if frame < self.bitmap_words * 64 {
+            unsafe { (*self.bitmap.add(frame / 64)) |= 1u64 << (frame % 64); }
         }
     }
 
     fn bitmap_clear(&mut self, frame: usize) {
-        if frame < BITMAP_WORDS * 64 {
-            self.bitmap[frame / 64] &= !(1u64 << (frame % 64));
+        if frame < self.bitmap_words * 64 {
+            unsafe { (*self.bitmap.add(frame / 64)) &= !(1u64 << (frame % 64)); }
         }
     }
 
     fn bitmap_test(&self, frame: usize) -> bool {
-        if frame < BITMAP_WORDS * 64 {
-            (self.bitmap[frame / 64] & (1u64 << (frame % 64))) != 0
+        if frame < self.bitmap_words * 64 {
+            unsafe { (*self.bitmap.add(frame / 64) & (1u64 << (frame % 64))) != 0 }
         } else {
             true
         }
@@ -100,10 +104,20 @@ impl BuddyAllocator {
         }
     }
 
+    /// Initialise bitmap pointer and fill with all-1 (all used).
+    /// Must be called before `init_from_regions`.
+    pub fn init_bitmap(&mut self, ptr: *mut u64, words: usize) {
+        self.bitmap = ptr;
+        self.bitmap_words = words;
+        for i in 0..words {
+            unsafe { ptr.add(i).write(u64::MAX); }
+        }
+    }
+
     pub fn init_from_regions(&mut self, regions: &[(u64, u64)], phys_max: u64) {
         let max_frames = (phys_max.max(1) + PAGE_SIZE - 1) / PAGE_SIZE;
         self.total_pages = max_frames;
-        let limit = (max_frames as usize).min(BITMAP_WORDS * 64);
+        let limit = (max_frames as usize).min(self.bitmap_words * 64);
 
         for &(start, end) in regions {
             let first = (start / PAGE_SIZE) as usize;
@@ -218,7 +232,7 @@ impl BuddyAllocator {
     pub fn mark_used_region(&mut self, start: u64, size: u64) {
         let first = (start / PAGE_SIZE) as usize;
         let last = ((start + size + PAGE_SIZE - 1) / PAGE_SIZE) as usize;
-        let limit = (self.total_pages as usize).min(BITMAP_WORDS * 64);
+        let limit = (self.total_pages as usize).min(self.bitmap_words * 64);
         for frame in first..last.min(limit) {
             if !self.bitmap_test(frame) {
                 self.bitmap_set(frame);
@@ -234,6 +248,10 @@ impl BuddyAllocator {
 
 lazy_static! {
     pub static ref ALLOCATOR: Mutex<BuddyAllocator> = Mutex::new(BuddyAllocator::new());
+}
+
+pub fn init_bitmap(ptr: *mut u64, words: usize) {
+    ALLOCATOR.lock().init_bitmap(ptr, words);
 }
 
 pub fn init_from_regions(regions: &[(u64, u64)], phys_max: u64) {

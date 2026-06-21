@@ -154,7 +154,7 @@ pub struct PanicSignature {
 
 const SIGNATURES: &[PanicSignature] = &[
     // IRETQ instruction in syscall epilogue (~0x20xxxx range)
-    PanicSignature { rip_lower: 0x200000, rip_upper: 0x210000, classification: PanicClass::InvalidIretq, description: "IRETQ in kernel text range" },
+    PanicSignature { rip_lower: 0x4000000, rip_upper: 0x4010000, classification: PanicClass::InvalidIretq, description: "IRETQ in kernel text range (v0.40)" },
 ];
 
 /// Classify a panic based on RIP, exception vector, and error code.

@@ -103,8 +103,8 @@ pub fn layout() -> &'static Mutex<MemoryLayout> {
 pub fn init_default() {
     let mut l = LAYOUT.lock();
     l.reserve_region(0x0010_0000, 0x0010_0000, b"kernel_image\0", 0);
-    l.reserve_region(0x0040_0000, 0x0040_0000, b"user_window\0", 0);
-    l.reserve_region(0x0100_0000, 0x0100_0000, b"kernel_heap\0", 0);
+    l.reserve_region(0x0040_0000, 0x0200_0000, b"user_window\0", 0);
+    l.reserve_region(0x0240_0000, 0x0100_0000, b"kernel_heap\0", 0);
     l.reserve_region(0x0f00_0000, 0x0100_0000, b"crash_dump_area\0", 0);
     l.reserve_region(0x1000_0000, 0x0200_0000, b"user_heap\0", 0);
     l.reserve_region(0x1e00_0000, 0x0020_0000, b"nxl_region\0", 0);

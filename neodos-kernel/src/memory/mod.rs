@@ -130,6 +130,85 @@ pub fn init(boot_info: &crate::BootInfo) {
         clean_count = n;
     }
 
+    // ── Allocate dynamic bitmap for buddy allocator (>4GB support) ──
+    // The bitmap must be allocated BEFORE buddy init since the buddy
+    // allocator manages all remaining physical memory.
+    let mut bitmap_words = (((phys_max >> 12) + 63) / 64) as usize; // ceil(frames / 64)
+    let bitmap_bytes = bitmap_words.saturating_mul(8);
+    let mut bitmap_pages = ((bitmap_bytes + 4095) / 4096) as usize;
+    let mut bitmap_phys = 0u64;
+
+    if bitmap_pages > 0 {
+        // Find a clean segment large enough to host the bitmap.
+        // Take from the LAST segment (highest address) to avoid
+        // fragmenting low-memory free space.
+        for seg in clean_segments[..clean_count].iter_mut().rev() {
+            let (s, e) = *seg;
+            let region_pages = ((e - s) / 4096) as usize;
+            if region_pages >= bitmap_pages {
+                // Take from the END of the segment
+                bitmap_phys = e - (bitmap_pages as u64 * 4096);
+                *seg = (s, bitmap_phys);
+                break;
+            }
+        }
+        if bitmap_phys == 0 && clean_count > 0 {
+            // Fallback: take from the first segment that fits
+            for seg in clean_segments[..clean_count].iter_mut() {
+                let (s, e) = *seg;
+                let region_pages = ((e - s) / 4096) as usize;
+                if region_pages >= bitmap_pages {
+                    bitmap_phys = s;
+                    *seg = (s + bitmap_pages as u64 * 4096, e);
+                    break;
+                }
+            }
+        }
+        if bitmap_phys == 0 {
+            // The bitmap is essential — fallback would mean no memory tracking.
+            // This virtually never happens with realistic memory maps having
+            // at least a few MB of free conventional memory.
+            crate::serial_println!(
+                "[MEM] WARNING: Could not allocate {} pages for dynamic bitmap, limiting to 4 GB tracking",
+                bitmap_pages
+            );
+            bitmap_words = crate::memory::buddy::LEGACY_BITMAP_WORDS;
+            bitmap_pages = (bitmap_words * 8 + 4095) / 4096;
+            // Re-try allocation with smaller size
+            for seg in clean_segments[..clean_count].iter_mut().rev() {
+                let (s, e) = *seg;
+                let region_pages = ((e - s) / 4096) as usize;
+                if region_pages >= bitmap_pages {
+                    bitmap_phys = e - (bitmap_pages as u64 * 4096);
+                    *seg = (s, bitmap_phys);
+                    break;
+                }
+            }
+            if bitmap_phys == 0 {
+                // Last resort: take from the beginning of first non-empty segment
+                for seg in clean_segments[..clean_count].iter_mut() {
+                    let (s, e) = *seg;
+                    let region_pages = ((e - s) / 4096) as usize;
+                    if region_pages >= bitmap_pages {
+                        bitmap_phys = s;
+                        *seg = (s + bitmap_pages as u64 * 4096, e);
+                        break;
+                    }
+                }
+            }
+            if bitmap_phys == 0 {
+                panic!("Cannot allocate bitmap pages for buddy allocator");
+            }
+        }
+        // Zero-fill the bitmap pages
+        for i in 0..bitmap_pages {
+            unsafe { core::ptr::write_bytes((bitmap_phys + i as u64 * 4096) as *mut u8, 0, 4096); }
+        }
+    }
+
+    // Initialise the buddy bitmap
+    buddy::init_bitmap(bitmap_phys as *mut u64, bitmap_words);
+
     let mut buddy_regions: [(u64, u64); 64] = [(0, 0); 64];
     let mut buddy_count = 0usize;
     for i in 0..clean_count {
@@ -141,6 +220,11 @@ pub fn init(boot_info: &crate::BootInfo) {
     }
 
     buddy::init_from_regions(&buddy_regions[..buddy_count], phys_max);
+
+    // Mark bitmap pages as used in the buddy allocator
+    if bitmap_phys > 0 && bitmap_pages > 0 {
+        buddy::mark_used_region(bitmap_phys, bitmap_pages as u64 * 4096);
+    }
 
     let free_pages = buddy::free_pages();
     let stats = MemoryStats {
@@ -167,7 +251,7 @@ pub fn validate_layout_consistency() {
             "layout USER_BASE mismatch: layout=0x{:x}, const=0x{:x}", r.base, crate::arch::x64::paging::USER_BASE);
     }
     if let Some(r) = l.find_region(b"kernel_heap\0") {
-        assert_eq!(r.base, 0x0100_0000,
+        assert_eq!(r.base, 0x0240_0000,
             "layout kernel_heap mismatch");
     }
     if let Some(r) = l.find_region(b"driver_iso\0") {

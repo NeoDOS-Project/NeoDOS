@@ -172,20 +172,21 @@ pub fn validate_driver_ptr(
         return Ok(());
     }
 
-    // Allow pointers to kernel heap (where parsed NEM data resides)
-    if addr >= 0x0100_0000 && end <= 0x0200_0000 {
-        return Ok(());
-    }
-
     // Allow pointers to kernel .rodata/.text (string constants, export table)
-    // Kernel identity-mapped region: 0x0010_0000..0x0100_0000
-    if addr >= 0x0010_0000 && end <= 0x0100_0000 {
+    // Kernel identity-mapped region: 0x0010_0000..0x0040_0000
+    if addr >= 0x0010_0000 && end <= 0x0040_0000 {
         return Ok(());
     }
 
-    // Allow pointers to kernel identity-mapped memory between heap end and user heap.
-    // Covers the kernel image, page tables, and boot stack.
-    if addr >= 0x0200_0000 && end <= 0x1000_0000 {
+    // Allow pointers to kernel heap (where parsed NEM data resides)
+    // v0.40: moved from 0x0100_0000 to after expanded user window
+    if addr >= 0x0240_0000 && end <= 0x0340_0000 {
+        return Ok(());
+    }
+
+    // Allow pointers to kernel identity-mapped memory between kernel heap and user heap.
+    // Covers page tables, boot stack, and kernel data.
+    if addr >= 0x0340_0000 && end <= 0x1000_0000 {
         return Ok(());
     }
 

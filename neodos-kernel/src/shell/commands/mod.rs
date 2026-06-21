@@ -10,16 +10,9 @@
 //!    Help is automatic — the entry's `category` and `description` appear in HELP.
 
 mod call;
-mod drives;
 mod fsck;
-mod help;
-mod keyb;
-mod kill;
-mod label;
 mod ndreg;
 mod crash;
-mod pri;
-mod ps;
 mod run;
 
 use crate::shell::handler::COMMANDS;

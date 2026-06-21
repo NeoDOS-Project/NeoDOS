@@ -51,6 +51,7 @@ mod crash;
 mod security;
 mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
+mod object;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -179,6 +180,12 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.75: Heap allocator (uses identity map)
     // ============================================
     allocator::init();
+
+    // ============================================
+    // PHASE 2.759: Object Manager (Ob) — new base module
+    // Replaces KOBJ progressively. Must init before namespace.
+    // ============================================
+    object::init_object_manager();
 
     // ============================================
     // PHASE 2.76: Object Manager (Ob) namespace
@@ -425,20 +432,18 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     {
         println!("[CMDTEST] Loading cmdtest.nxe...");
         let saved_entry = {
-            static mut CMD_BUF: [u8; 65536] = [0u8; 65536];
+            let mut cmd_buf = alloc::vec![0u8; 65536];
             let mut entry: u64 = 0;
             let mut loaded = false;
             crate::globals::with_vfs(|vfs| {
                 if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
                     if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                    let size = unsafe {
-                        match vfs.read(drive_idx, node.inode, 0, &mut CMD_BUF) {
-                            Ok(n) => n,
-                            Err(_) => 0,
-                        }
+                    let size = match vfs.read(drive_idx, node.inode, 0, &mut cmd_buf) {
+                        Ok(n) => n,
+                        Err(_) => 0,
                     };
                     if size >= 4 {
-                        let data = unsafe { &CMD_BUF[..size] };
+                        let data = &cmd_buf[..size];
                         match elf::load_elf(data, None) {
                             Ok(r) => {
                                 entry = r.entry;
@@ -507,17 +512,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     let mut addr_space = scheduler::address_space::AddressSpace::new();
     let (entry, loaded) = {
-        static mut BIN_BUF: [u8; 65536] = [0u8; 65536];
+        let mut bin_buf = alloc::vec![0u8; 65536];
         let mut entry: u64 = 0;
         let mut loaded = false;
         crate::globals::with_vfs(|vfs| {
             if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\NeoInit.nxe") {
                 if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                let size = unsafe {
-                    match vfs.read(drive_idx, node.inode, 0, &mut BIN_BUF) {
-                        Ok(n) => n,
-                        Err(_) => 0,
-                    }
+                let size = match vfs.read(drive_idx, node.inode, 0, &mut bin_buf) {
+                    Ok(n) => n,
+                    Err(_) => 0,
                 };
                 crate::serial_println!(
                     "[NEOINIT] resolved inode={} size={} mode=0x{:04x} read={} bytes",
@@ -530,7 +533,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                     crate::serial_println!("[NEOINIT] file read too small");
                     return;
                 }
-                let data = unsafe { &BIN_BUF[..size] };
+                let data = &bin_buf[..size];
                 match elf::load_elf(data, Some(&mut addr_space)) {
                     Ok(r) => {
                         entry = r.entry;

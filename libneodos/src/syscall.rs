@@ -572,6 +572,34 @@ pub fn sys_kill(pid: u32) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+/// sys_set_volume_label (RAX=54): set the volume label for a drive.
+pub fn sys_set_volume_label(drive: u8, label: &[u8]) -> Result<(), i64> {
+    if label.len() > 11 {
+        return Err(EINVAL);
+    }
+    let mut buf = [0u8; 12];
+    buf[..label.len()].copy_from_slice(label);
+    let ptr = buf.as_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 54",
+            "mov rbx, {drive}",
+            "mov rcx, {ptr}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            drive = in(reg) drive as u64,
+            ptr = in(reg) ptr as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
 /// sys_cursor_blink (RAX=53): enable/disable automatic cursor blinking.
 pub fn sys_cursor_blink(enabled: bool) -> Result<(), i64> {
     let r: i64;

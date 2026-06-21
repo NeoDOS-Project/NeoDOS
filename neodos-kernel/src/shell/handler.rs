@@ -116,14 +116,7 @@ fn print_usage(entry: &CommandEntry) {
 }
 
 // Command shims
-pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
-pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
-pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
-pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
-pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
-pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
-pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
@@ -133,37 +126,6 @@ pub fn cmd_fsck(shell: &mut DosShell, args: &[&str]) { shell.cmd_fsck(args); }
 pub fn cmd_crash(shell: &mut DosShell, args: &[&str]) { shell.cmd_crash(args); }
 
 pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
-    CommandEntry { name: "HELP",     category: "CTRL",     handler: cmd_help,    description: "Show this help",
-        usage: concat!("Syntax:  HELP [command]\n",
-                       "  Show general help listing or detailed help for a\n",
-                       "  specific command.\n",
-                       "  HELP DIR     shows detailed help for DIR."), },
-    CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change keyboard layout",
-        usage: concat!("Syntax:  KEYB US|SP\n",
-                       "  Change the active keyboard layout.\n",
-                       "  US = English (United States)\n",
-                       "  SP = Spanish"), },
-    CommandEntry { name: "PS",       category: "INFO",     handler: cmd_ps,      description: "Show process list",
-        usage: concat!("Syntax:  PS\n",
-                       "  List all running processes with PID, current state,\n",
-                       "  and name. States: Running, Ready, Blocked, Terminated."), },
-    CommandEntry { name: "PRI",      category: "CTRL",     handler: cmd_pri,     description: "Set process priority",
-        usage: concat!("Syntax:  PRI <pid> <priority>\n",
-                       "  Set the scheduling priority of a running process.\n",
-                       "  Priority levels:\n",
-                       "    0 = HIGH (400 ticks)\n",
-                       "    1 = ABOVE_NORMAL (200 ticks)\n",
-                       "    2 = NORMAL (100 ticks) — default\n",
-                       "    3 = IDLE (50 ticks)\n",
-                       "  PRI 2 0   boosts PID 2 to HIGH priority."), },
-    CommandEntry { name: "LABEL",    category: "DISK",     handler: cmd_label,   description: "Display or set volume label",
-        usage: concat!("Syntax:  LABEL [drive:][label]\n",
-                       "  Display or change the volume label of a drive.\n",
-                       "  LABEL C:MYDISK   sets C: label to MYDISK."), },
-    CommandEntry { name: "DRIVES",   category: "DISK",     handler: cmd_drives,  description: "List mounted drive letters",
-        usage: concat!("Syntax:  DRIVES\n",
-                       "  List all mounted drives, their letters, filesystem types,\n",
-                       "  and volume labels."), },
     CommandEntry { name: "CALL",     category: "CTRL",     handler: cmd_call,    description: "Execute a .BAT batch file",
         usage: concat!("Syntax:  CALL file.bat [args]\n",
                        "  Execute a batch file from within another batch file.\n",
@@ -172,10 +134,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  RUN file.nxe\n",
                        "  Load and execute a flat binary in user mode (Ring 3).\n",
                        "  RUN HELLO.NXE   runs the hello binary."), },
-    CommandEntry { name: "KILL",     category: "CTRL",     handler: cmd_kill,    description: "Terminate a process by PID",
-        usage: concat!("Syntax:  KILL pid\n",
-                       "  Terminate a running process by its PID number.\n",
-                       "  Use PS to list running processes and their PIDs."), },
     CommandEntry { name: "NDREG",    category: "INFO",     handler: cmd_ndreg,   description: "Driver Registry CLI",
         usage: concat!("Syntax:  NDREG <subcommand> [args]\n",
                        "  NeoDOS Driver Registry — inspect driver metadata.\n",

@@ -1,8 +1,8 @@
 use crate::serial_println;
 use crate::slab::SlabAllocator;
 
-pub const HEAP_START: u64 = 0x0100_0000; // 16 MB
-pub const HEAP_SIZE: u64 = 0x0100_0000; // 16 MB heap (16-32 MB)
+pub const HEAP_START: u64 = 0x0240_0000; // 36 MB (after expanded user window, v0.40)
+pub const HEAP_SIZE: u64 = 0x0100_0000; // 16 MB heap (36-52 MB)
 
 #[global_allocator]
 pub static ALLOCATOR: SlabAllocator = SlabAllocator::new();

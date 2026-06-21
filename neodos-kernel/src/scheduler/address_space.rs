@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 // ── Memory layout constants (from paging.rs) ──
 
 pub const USER_BASE: u64 = 0x0040_0000;
-pub const USER_LIMIT: u64 = 0x0080_0000;
+pub const USER_LIMIT: u64 = 0x0240_0000; // 32 MB window (v0.40)
 
 // ── Protected region ranges ──
 
@@ -19,8 +19,8 @@ struct ProtectedRegion {
 }
 
 const PROTECTED_REGIONS: &[ProtectedRegion] = &[
-    ProtectedRegion { start: 0x0020_0000, end: 0x0040_0000, name: "kernel_image" },
-    ProtectedRegion { start: 0x0100_0000, end: 0x0200_0000, name: "kernel_heap" },
+    ProtectedRegion { start: 0x4000_0000, end: 0x4020_0000, name: "kernel_image" },
+    ProtectedRegion { start: 0x0240_0000, end: 0x0340_0000, name: "kernel_heap" },
     ProtectedRegion { start: 0x1000_0000, end: 0x1200_0000, name: "user_heap" },
     ProtectedRegion { start: 0x1E00_0000, end: 0x1E20_0000, name: "nxl_region" },
     ProtectedRegion { start: 0x2000_0000, end: 0x2200_0000, name: "mmap_region" },
