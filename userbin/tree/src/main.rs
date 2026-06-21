@@ -17,24 +17,9 @@ fn is_dir(mode: u16) -> bool {
     (mode & MODE_DIR) != 0
 }
 
-fn trim_ascii(s: &[u8]) -> &[u8] {
-    let mut start = 0;
-    while start < s.len() && (s[start] == b' ' || s[start] == b'\t' || s[start] == b'\0') {
-        start += 1;
-    }
-    let mut end = s.len();
-    while end > start && (s[end - 1] == b' ' || s[end - 1] == b'\t' || s[end - 1] == b'\0') {
-        end -= 1;
-    }
-    &s[start..end]
-}
-
 fn read_args() -> [u8; 260] {
-    let mut arg_buf = [0u8; 256];
-    unsafe {
-        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
-    }
-    let arg_slice = trim_ascii(&arg_buf);
+    let raw = libneodos::args::read_args();
+    let arg_slice = libneodos::args::trim_ascii(&raw);
     let mut path = [0u8; 260];
     if !arg_slice.is_empty() {
         let n = arg_slice.len().min(259);
@@ -273,15 +258,15 @@ pub extern "C" fn _start() -> ! {
         unsafe {
             core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
         }
-        let s = trim_ascii(&arg_buf);
+        let s = libneodos::args::trim_ascii(&arg_buf);
         let mut buf = [0u8; 260];
         let n = s.len().min(259);
         buf[..n].copy_from_slice(&s[..n]);
         buf
     };
 
-    let arg_slice_ref = trim_ascii(&arg_slice);
-    if arg_slice_ref == b"/?" || arg_slice_ref == b"-h" || arg_slice_ref == b"--help" {
+    let arg_slice_ref = libneodos::args::trim_ascii(&arg_slice);
+    if libneodos::args::is_help_flag(arg_slice_ref) {
         write_str(b"\r\nTREE [drive:][path]\r\n  Display directory tree.\r\n  TREE            shows tree of current directory\r\n  TREE C:\\        shows tree of C:\\\r\n  TREE \\Programs  shows tree of \\Programs\r\n\r\n");
         syscall::sys_exit(0);
     }

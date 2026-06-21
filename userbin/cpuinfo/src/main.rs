@@ -132,20 +132,7 @@ fn print_help() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let ptr = 0x41F000 as *const u8;
-    let mut arg_buf = [0u8; 32];
-    unsafe {
-        let mut i = 0;
-        while i < 31 {
-            let b = ptr.add(i).read();
-            arg_buf[i] = b;
-            if b == 0 { break; }
-            i += 1;
-        }
-    }
-    let args = core::str::from_utf8(&arg_buf).unwrap_or("");
-    let trimmed = args.trim();
-    if trimmed == "/?" || trimmed == "-h" || trimmed == "--help" {
+    if libneodos::args::is_help_flag(&libneodos::args::read_args()) {
         print_help();
         syscall::sys_exit(0);
     }

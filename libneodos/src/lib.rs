@@ -6,6 +6,7 @@ pub mod io;
 pub mod fs;
 pub mod mem;
 pub mod macros;
+pub mod args;
 
 /// Load a shared library (NXL) from the filesystem.
 /// Returns the base address where the NXL was loaded, which is also

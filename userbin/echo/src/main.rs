@@ -3,8 +3,6 @@
 
 use libneodos::syscall;
 
-const ARGS_ADDR: u64 = 0x41F000;
-
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -18,29 +16,23 @@ ECHO [text]\r\n\
   ECHO Hello world   prints \"Hello world\".\r\n\
 ::END::";
 
-fn get_args<'a>() -> &'a [u8] {
-    unsafe {
-        let ptr = ARGS_ADDR as *const u8;
-        let mut len = 0usize;
-        while len < 256 && *ptr.add(len) != 0 {
-            len += 1;
-        }
-        core::slice::from_raw_parts(ptr, len)
-    }
-}
-
 fn print_help() {
     write_str(b"\r\nECHO [text]\r\n  Print text.\r\n  ECHO               prints a blank line.\r\n  ECHO Hello world   prints \"Hello world\".\r\n\r\n");
 }
 
+fn args_to_slice(buf: &[u8; 256]) -> &[u8] {
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    &buf[..end]
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let args = get_args();
-    let trimmed = core::str::from_utf8(args).unwrap_or("").trim();
-    if trimmed == "/?" || trimmed == "-h" || trimmed == "--help" {
+    let raw = libneodos::args::read_args();
+    if libneodos::args::is_help_flag(&raw) {
         print_help();
         syscall::sys_exit(0);
     }
+    let args = args_to_slice(&raw);
     write_str(b"\r\n");
     if !args.is_empty() {
         write_str(args);

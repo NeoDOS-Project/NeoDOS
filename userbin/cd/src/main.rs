@@ -13,26 +13,6 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
-fn trim_ascii(s: &[u8]) -> &[u8] {
-    let mut start = 0;
-    while start < s.len() && matches!(s[start], b' ' | b'\t' | b'\r' | b'\n' | 0) {
-        start += 1;
-    }
-    let mut end = s.len();
-    while end > start && matches!(s[end - 1], b' ' | b'\t' | b'\r' | b'\n' | 0) {
-        end -= 1;
-    }
-    &s[start..end]
-}
-
-fn read_args() -> [u8; 256] {
-    let mut buf = [0u8; 256];
-    unsafe {
-        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, buf.as_mut_ptr(), buf.len());
-    }
-    buf
-}
-
 fn write_result(path: &[u8]) {
     unsafe {
         let dst = ARGS_ADDR as *mut u8;
@@ -71,7 +51,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
     if !absolute {
         let mut cwd_buf = [0u8; 256];
         if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
-            let cwd = trim_ascii(&cwd_buf[..n]);
+            let cwd = libneodos::args::trim_ascii(&cwd_buf[..n]);
             let cwd_path = core::str::from_utf8(cwd).unwrap_or("C:\\");
             let cwd_bytes = cwd_path.as_bytes();
             if cwd_bytes.len() >= 2 && cwd_bytes[1] == b':' {
@@ -187,20 +167,20 @@ fn print_usage() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let raw_args = read_args();
-    let args = trim_ascii(&raw_args);
+    let raw_args = libneodos::args::read_args();
+    let args = libneodos::args::trim_ascii(&raw_args);
 
     if args.is_empty() {
         let mut cwd_buf = [0u8; 256];
         if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
-            write_result(trim_ascii(&cwd_buf[..n]));
+            write_result(libneodos::args::trim_ascii(&cwd_buf[..n]));
         } else {
             write_result(b"C:\\");
         }
         syscall::sys_exit(0);
     }
 
-    if args == b"/?" || args == b"-h" || args == b"--help" {
+    if libneodos::args::is_help_flag(args) {
         print_usage();
         syscall::sys_exit(0);
     }

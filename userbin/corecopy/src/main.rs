@@ -3,8 +3,6 @@
 
 use libneodos::syscall;
 
-const ARGS_ADDR: u64 = 0x41F000;
-
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -20,26 +18,6 @@ COPY [drive:][path]src [drive:][path]dst\r\n\
   Copy a file from source to destination.\r\n\
   COPY C:\\file.txt D:\\backup.txt\r\n\
 ::END::";
-
-fn trim_ascii(s: &[u8]) -> &[u8] {
-    let mut start = 0;
-    while start < s.len() && matches!(s[start], b' ' | b'\t' | b'\r' | b'\n' | 0) {
-        start += 1;
-    }
-    let mut end = s.len();
-    while end > start && matches!(s[end - 1], b' ' | b'\t' | b'\r' | b'\n' | 0) {
-        end -= 1;
-    }
-    &s[start..end]
-}
-
-fn read_args() -> [u8; 256] {
-    let mut buf = [0u8; 256];
-    unsafe {
-        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, buf.as_mut_ptr(), buf.len());
-    }
-    buf
-}
 
 fn normalize_path(input: &[u8]) -> [u8; 260] {
     let path_str = core::str::from_utf8(input).unwrap_or("");
@@ -91,7 +69,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 }
 
 fn split_first_token(args: &[u8]) -> (&[u8], &[u8]) {
-    let trimmed = trim_ascii(args);
+    let trimmed = libneodos::args::trim_ascii(args);
     if trimmed.is_empty() {
         return (b"", b"");
     }
@@ -100,7 +78,7 @@ fn split_first_token(args: &[u8]) -> (&[u8], &[u8]) {
         idx += 1;
     }
     let first = &trimmed[..idx];
-    let rest = trim_ascii(&trimmed[idx..]);
+    let rest = libneodos::args::trim_ascii(&trimmed[idx..]);
     (first, rest)
 }
 
@@ -112,15 +90,15 @@ fn print_usage() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let raw_args = read_args();
-    let args = trim_ascii(&raw_args);
+    let raw_args = libneodos::args::read_args();
+    let args = libneodos::args::trim_ascii(&raw_args);
 
     if args.is_empty() {
         print_usage();
         syscall::sys_exit(0);
     }
 
-    if args == b"/?" || args == b"-h" || args == b"--help" {
+    if libneodos::args::is_help_flag(args) {
         print_usage();
         syscall::sys_exit(0);
     }
