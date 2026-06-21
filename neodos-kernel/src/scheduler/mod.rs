@@ -14,6 +14,7 @@ use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::kobj::{self, KObjType};
+use crate::security::token::Token;
 
 // ── Constants ──
 
@@ -158,6 +159,7 @@ pub struct Eprocess {
     pub exit_code: i64,
     pub kobj_id: Option<kobj::KObjId>,
     pub address_space: address_space::AddressSpace,
+    pub token: Token,
 }
 
 // ── Frame init helpers ──
@@ -287,6 +289,7 @@ impl Eprocess {
             exit_code: 0,
             kobj_id: None,
             address_space: address_space::AddressSpace::new(),
+            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
         }
     }
 
@@ -306,6 +309,7 @@ impl Eprocess {
             exit_code: 0,
             kobj_id: None,
             address_space: address_space::AddressSpace::new(),
+            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
         }
     }
 }
@@ -477,6 +481,14 @@ impl Scheduler {
         }
 
         eproc.thread_count = 1;
+
+        // NT6.1: Inherit token from parent process
+        if parent_pid > 0 {
+            if let Some(parent_ep) = self.find_eprocess(parent_pid) {
+                eproc.token = parent_ep.token;
+            }
+        }
+
         self.eprocesses[ep_slot] = Some(eproc);
         self.kthreads[th_slot] = Some(thread);
 

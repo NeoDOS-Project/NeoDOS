@@ -2169,8 +2169,11 @@ fn is_current_admin() -> bool {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();
-        let pid = lock.current_pid();
-        pid == 0 || pid == 1
+        if let Some(ep) = lock.current_eprocess() {
+            ep.token.is_admin_token()
+        } else {
+            false
+        }
     })
 }
 

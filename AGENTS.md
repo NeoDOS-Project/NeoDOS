@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.2
+v0.39.3
 
 ## Architecture Governance
 
@@ -35,7 +35,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 416 kernel tests (auto-run at boot) + user-mode binaries
+2. `python3 scripts/auto_test.py` — 431 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -658,7 +658,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 419 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 431 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -714,7 +714,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-419 tests en 42 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+431 tests en 43 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -759,9 +759,10 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Syscall | 11 | SSDT dispatch, permissions, A4.6 spawn/readdir/mkdir/unlink/rmdir/rename |
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 | ANSI | 3 | ANSI terminal: color fg/bg, cursor position, clear screen |
+| Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (419 tests kernel)
+1. Ejecuta `testing::run_all()` (431 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.
@@ -1500,6 +1501,41 @@ fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
 | `dpc_nesting_depth_limit` | Verify MAX_DPC_DEPTH prevents infinite recursion |
 | `dpc_callback_execution_order` | Verify FIFO order of 3 callbacks |
 | `dpc_stress_100_irqs` | 100 IRQs generating DPCs each, all executed, no leaks |
+
+## NT6 Security Reference Monitor
+
+`src/security/` — Security identity and access control for processes and objects.
+
+| Module | File | Contents |
+|--------|------|----------|
+| SID | `src/security/sid.rs` | `Sid` struct (S-R-I-S* format), `sid_builtin_admin()` (S-1-5-18), `sid_builtin_user()` (S-1-5-21-0-0-0-1000), `format_string()` |
+| Token | `src/security/token.rs` | `Token` struct (sid + is_admin), `new_admin()`/`new_user()`, `is_admin_token()` |
+| ACL | `src/security/acl.rs` | `Ace` (allow/deny, access_mask, Sid), `Acl` (revision + ACE vec), `SecurityDescriptor` (owner, group, dacl). Access constants: `ACCESS_READ`, `ACCESS_WRITE`, `ACCESS_EXECUTE`, `ACCESS_ALL` |
+| Access | `src/security/access.rs` | `se_access_check()` — token vs SD check with admin bypass, deny-by-default, ACL iteration |
+| Initialization | `src/security/mod.rs` | `init_security()` in Phase 2.77. `DEFAULT_ADMIN_TOKEN`/`DEFAULT_USER_TOKEN` lazy_static globals |
+
+### Token Lifecycle
+- Boot: idle process (PID 0) gets admin token
+- PID 1 (NeoInit): inherits admin token via `add_ring3_process()`
+- Child processes: inherit parent's token at spawn
+- `is_current_admin()` uses `eprocess.token.is_admin_token()` replacing old PID-based check
+
+### Tests (12)
+
+| Test | Description |
+|------|-------------|
+| `sid_format` | Admin SID format: S-1-5-18, revision=1, sub_authority_count=1 |
+| `token_admin_boot_default` | Admin token has admin=true, user token has admin=false |
+| `token_inherit` | Child token matches parent SID and admin status |
+| `acl_allow_access` | Allow ACE grants read access, denies write |
+| `acl_deny_access` | Deny ACE blocks user, admin bypasses |
+| `acl_inherit_parent` | SecurityDescriptor clone preserves structure |
+| `se_access_check_deny` | Deny ACE correctly blocks access |
+| `se_access_check_allow` | Allow ACE correctly grants access |
+| `se_access_check_admin_override` | Admin token bypasses restrictive ACL |
+| `se_admin_required` | Syscall 50 requires admin permission |
+| `se_user_denied_admin_syscall` | User token cannot call admin syscalls |
+| `se_admin_token_isolation` | Admin and user tokens have different SIDs, admin bypasses ACL |
 
 ## Artifacts generados
 

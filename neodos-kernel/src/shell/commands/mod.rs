@@ -10,19 +10,13 @@
 //!    Help is automatic — the entry's `category` and `description` appear in HELP.
 
 mod call;
-mod copy;
-mod del;
-mod dir;
 mod drives;
 mod fsck;
 mod help;
 mod keyb;
 mod kill;
 mod label;
-mod md;
 mod ndreg;
-mod ren;
-mod rd;
 mod set;
 mod shutdown;
 mod crash;

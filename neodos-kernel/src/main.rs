@@ -47,6 +47,7 @@ pub mod invariants;
 pub mod panic_classification;
 pub mod boot_benchmark;
 mod crash;
+mod security;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -178,6 +179,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing Object Manager namespace...");
     kobj::namespace::init_object_namespace();
+
+    // ============================================
+    // PHASE 2.77: Security subsystem initialization
+    // Creates default admin/user tokens for process identity.
+    // ============================================
+    println!("[+] Initializing Security subsystem...");
+    security::init_security();
 
     // ============================================
     // PHASE 2.8: SMP — Start Application Processors

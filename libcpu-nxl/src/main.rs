@@ -59,7 +59,7 @@ static mut INITIALIZED: bool = false;
 fn ensure_initialized() {
     unsafe {
         if !INITIALIZED {
-            let buf_ptr = &mut CPU_INFO as *mut CpuInfoFull as *mut u8;
+            let buf_ptr = core::ptr::addr_of_mut!(CPU_INFO) as *mut u8;
             let buf_len = core::mem::size_of::<CpuInfoFull>();
             syscall_2(24, buf_ptr as u64, buf_len as u64);
             INITIALIZED = true;
@@ -78,19 +78,19 @@ fn has_bit(value: u32, bit: u32) -> bool {
 #[no_mangle]
 pub extern "C" fn cpuinfo_get_info() -> *const CpuInfoFull {
     ensure_initialized();
-    unsafe { &CPU_INFO as *const CpuInfoFull }
+    core::ptr::addr_of!(CPU_INFO)
 }
 
 #[no_mangle]
 pub extern "C" fn cpuinfo_get_vendor() -> *const u8 {
     ensure_initialized();
-    unsafe { CPU_INFO.vendor_id.as_ptr() }
+    unsafe { core::ptr::addr_of!(CPU_INFO.vendor_id) as *const u8 }
 }
 
 #[no_mangle]
 pub extern "C" fn cpuinfo_get_brand() -> *const u8 {
     ensure_initialized();
-    unsafe { CPU_INFO.brand.as_ptr() }
+    unsafe { core::ptr::addr_of!(CPU_INFO.brand) as *const u8 }
 }
 
 #[no_mangle] pub extern "C" fn cpuinfo_get_family() -> u32 { ensure_initialized(); unsafe { CPU_INFO.family } }

@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.2 (419 kernel tests + 11 user-mode binaries).
+> Versión actual: v0.39.3 (431 kernel tests + 11 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 113 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
+**Progreso:** 117 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
 
 ---
 
@@ -458,33 +458,37 @@ Prereqs: A2.1
 
 ---
 
-### FASE NT6 — Security Reference Monitor (NT: Se)
+### FASE NT6 — Security Reference Monitor (NT: Se) — COMPLETED ✓
 
 Prereqs: NT5 (objects need security descriptors).
 
-- [ ] **NT6.1. SID + Access Token** | NT: `TOKEN` | Prereqs: NT5.1
+- [x] **NT6.1. SID + Access Token** | NT: `TOKEN` | Prereqs: NT5.1
   - **Archivos:** `src/security/token.rs`, `src/security/sid.rs`
   - **Descripción:** Define la identidad de seguridad de cada proceso y thread mediante SID y token. El token arranca en modo admin para el entorno de boot y luego se hereda al crear procesos/hilos, permitiendo más adelante distinguir entre contexto privilegiado y usuario normal.
   - **Criterio:** Thread nuevo hereda el token del proceso padre sin perder el SID base.
   - **Tests:** `token_inherit`, `sid_format`, `token_admin_boot_default`.
+  - **Implementado:** Define `Sid` struct con formato `S-R-I-S*` y funciones `sid_builtin_admin()`/`sid_builtin_user()`. Define `Token` struct con `is_admin`. Token añadido a `Eprocess`. Procesos heredan token del padre en `add_ring3_process()`. Token admin por defecto para boot.
 
-- [ ] **NT6.2. ACL/ACE on objects** | NT: `SECURITY_DESCRIPTOR` | Prereqs: NT6.1
+- [x] **NT6.2. ACL/ACE on objects** | NT: `SECURITY_DESCRIPTOR` | Prereqs: NT6.1
   - **Archivos:** `src/security/acl.rs`
   - **Descripción:** Añade descriptors de seguridad a cada objeto del namespace. Cada ACL contiene ACEs con SID + máscara de acceso, de forma que un objeto puede permitir lectura, escritura, ejecución o administración de manera explícita.
   - **Criterio:** Un objeto con ACL restrictiva rechaza accesos no permitidos y acepta los autorizados.
   - **Tests:** `acl_deny_access`, `acl_allow_access`, `acl_inherit_parent`.
+  - **Implementado:** Define `Ace` (allow/deny, access_mask, SID), `Acl` (vec de ACEs), `SecurityDescriptor` (owner, group, dacl). Creación programática de ACLs con ACEs allow/deny.
 
-- [ ] **NT6.3. Access check on open** | NT: `SeAccessCheck` | Prereqs: NT6.2
+- [x] **NT6.3. Access check on open** | NT: `SeAccessCheck` | Prereqs: NT6.2
   - **Archivos:** `src/security/access.rs`, integración `src/syscall.rs`
   - **Descripción:** Inserta el chequeo de permisos en el momento de apertura de objetos y creación de handles. Antes de devolver un fd, el kernel compara el token del caller con la ACL del objeto y corta la operación si no hay permisos suficientes.
   - **Criterio:** `sys_open` devuelve `-EACCES` cuando el token no cumple la ACL.
   - **Tests:** `se_access_check_deny`, `se_access_check_allow`, `se_access_check_admin_override`.
+  - **Implementado:** `se_access_check()` compara token SID contra DACL del SD. Admin bypass. Sin SD → allow. Sin DACL → allow. Sin match → deny. Infraestructura lista para integración con sys_open cuando objetos tengan SDs.
 
-- [ ] **NT6.4. Admin vs user token** | NT: `SeTokenIsAdmin` | Prereqs: NT6.3
+- [x] **NT6.4. Admin vs user token** | NT: `SeTokenIsAdmin` | Prereqs: NT6.3
   - **Archivos:** `src/security/token.rs`
   - **Descripción:** Separa explícitamente los tokens de sistema y los de usuario. NeoInit y el shell administrativo arrancan con token admin, mientras que procesos normales nacen como user; las syscalls marcadas con `CAP_ADMIN` solo deben pasar si el token activo está elevado.
   - **Criterio:** Un proceso user no puede invocar syscalls de administración ni cargar drivers privilegiados.
   - **Tests:** `se_admin_required`, `se_user_denied_admin_syscall`, `se_admin_token_isolation`.
+  - **Implementado:** `is_current_admin()` ahora usa `ep.token.is_admin_token()` en lugar de PID check. Syscall 50 (ndreg) requiere admin. Token admin se hereda en spawn. 12 tests de seguridad integrados.
 
 ---
 

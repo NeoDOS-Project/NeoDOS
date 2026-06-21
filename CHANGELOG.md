@@ -2,6 +2,15 @@
 
 ## v0.39.3 — 2026-06-21
 
+### Added
+- **NT6 Security Reference Monitor** (`src/security/`):
+  - **NT6.1 — SID + Access Token**: `Sid` struct (S-R-I-S* format, `sid_builtin_admin`/`sid_builtin_user`), `Token` struct with `is_admin` flag. Token field added to `Eprocess`. Token inheritance in `add_ring3_process()` from parent PID. Boot processes get admin token by default.
+  - **NT6.2 — ACL/ACE on objects**: `Ace` (allow/deny, access_mask, SID), `Acl` (revision + ACE vector), `SecurityDescriptor` (owner, group, DACL). Programmatic creation of ACLs with fine-grained access masks (READ/WRITE/EXECUTE/DELETE/ALL).
+  - **NT6.3 — Access check on open**: `se_access_check()` compares caller token SID against object DACL. Admin bypass. No SD/ACL → allow. No match → deny by default. Infrastructure ready for sys_open integration when objects carry SDs.
+  - **NT6.4 — Admin vs user token**: `is_current_admin()` now uses `ep.token.is_admin_token()` replacing PID-based check. Syscall 50 (ndreg) enforced via token. 12 unit tests across all 4 sub-phases.
+  - **Files**: `src/security/mod.rs`, `sid.rs`, `token.rs`, `acl.rs`, `access.rs`.
+  - **Integration**: Phase 2.77 at boot. Token inherited via scheduler's `add_ring3_process`. `is_current_admin()` token-based in `syscall/mod.rs`.
+
 ### Fixed
 - **libneodos inline asm register clobber** (`libneodos/src/syscall.rs`): `sys_open_with_flags`, `sys_get_volume_label`, `sys_kobj_enum` used direct `int 0x80` inline asm that wrote to `rbx`/`rcx`/`rdx` without saving them. The Rust compiler, unaware of the clobber, reused those registers for local variables, corrupting fd values (e.g. fd=5 became fd=216). Fixed by adding explicit `push`/`pop` around `int 0x80`.
 - **NeoDOS FS write sets inode.size prematurely** (`neodos_fs.rs`): `write_file` set `inode.size = BLOCK_SIZE` (4096) during block allocation, before data was written. A 33-byte write left size=4096, causing reads to return garbage after EOF. Removed premature size assignment.

@@ -118,17 +118,11 @@ fn print_usage(entry: &CommandEntry) {
 // Command shims
 pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
 #[allow(deprecated)]
-pub fn cmd_dir(shell: &mut DosShell, args: &[&str]) { shell.cmd_dir(args); }
 pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
 pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
-pub fn cmd_copy(shell: &mut DosShell, args: &[&str]) { shell.cmd_copy(args); }
-pub fn cmd_md(shell: &mut DosShell, args: &[&str]) { shell.cmd_md(args); }
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
 pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
-pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
-pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
-pub fn cmd_rd(shell: &mut DosShell, args: &[&str]) { shell.cmd_rd(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
@@ -147,13 +141,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Show general help listing or detailed help for a\n",
                        "  specific command.\n",
                        "  HELP DIR     shows detailed help for DIR."), },
-    CommandEntry { name: "CLS",      category: "CTRL",     handler: cmd_cls,     description: "Clear screen",
-        usage: "Syntax:  CLS\n  Clear the screen and reset cursor to top-left.", },
-    CommandEntry { name: "DIR",      category: "DISK",     handler: cmd_dir,     description: "[DEPRECATED] List directory contents — use Ring 3 shell",
-        usage: concat!("Syntax:  DIR [path]\n",
-                       "  [DEPRECATED] Use the Ring 3 shell (neoshell) for DIR.\n",
-                       "  Shows name, permissions (RWXSD), and size.\n",
-                        "  DIR C:\\Programs   lists the contents of C:\\Programs."), },
     CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
         usage: concat!("Syntax:  SET [var[=value]]\n",
                        "  SET                lists all environment variables.\n",
@@ -189,33 +176,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  CALL file.bat [args]\n",
                        "  Execute a batch file from within another batch file.\n",
                        "  Returns control to the caller when the batch completes."), },
-    CommandEntry { name: "COPY",     category: "FILE",     handler: cmd_copy,    description: "Copy a file",
-        usage: concat!("Syntax:  COPY source destination\n",
-                       "  Copy a file from source path to destination path.\n",
-                        "  COPY C:\\Data\\file.txt A:\\file.txt"), },
-    CommandEntry { name: "MD",       category: "FILE",     handler: cmd_md,      description: "Create a directory",
-        usage: concat!("Syntax:  MD directory\n",
-                       "  Create a new directory.\n",
-                        "  MD C:\\Data   creates the C:\\Data directory."), },
-    CommandEntry { name: "DEL",      category: "FILE",     handler: cmd_del,     description: "Delete a file",
-        usage: concat!("Syntax:  DEL file\n",
-                       "  Delete a file.\n",
-                        "  DEL C:\\Temp\\old.txt   deletes the file."), },
-    CommandEntry { name: "REN",      category: "FILE",     handler: cmd_ren,     description: "Rename a file",
-        usage: concat!("Syntax:  REN oldname newname\n",
-                       "  Rename a file. Both names are relative to the same\n",
-                       "  directory (REN does not move files across directories).\n",
-                       "  REN report.txt report_old.txt"), },
-    CommandEntry { name: "RENAME",   category: "FILE",     handler: cmd_ren,     description: "Rename a file",
-        usage: concat!("Syntax:  RENAME oldname newname\n",
-                       "  Alias for REN."), },
-    CommandEntry { name: "RD",       category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
-        usage: concat!("Syntax:  RD directory\n",
-                       "  Remove an empty directory.\n",
-                        "  RD C:\\Temp\\emptydir   removes the directory."), },
-    CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
-        usage: concat!("Syntax:  RMDIR directory\n",
-                       "  Alias for RD."), },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3",
         usage: concat!("Syntax:  RUN file.nxe\n",
                        "  Load and execute a flat binary in user mode (Ring 3).\n",

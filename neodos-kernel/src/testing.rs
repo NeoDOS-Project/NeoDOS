@@ -2381,6 +2381,8 @@ pub fn register_tests() {
     crate::vfs::io::register_tests();
     // B4.4 B2 ANSI terminal tests
     crate::console::register_ansi_tests();
+    // NT6 Security Reference Monitor tests
+    crate::security::register_security_tests();
 }
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────
