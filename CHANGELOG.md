@@ -18,6 +18,15 @@
   - **Integration**: IOAPIC init at Phase 2.91 (after heap, before SMP). Toggle in main.rs log message.
   - **Tests**: `ioapic_has_valid_pin_count`, `ioapic_resolve_gsi_no_override`, `ioapic_resolve_gsi_with_override`, `ioapic_mask_unmask_safe`, `ioapic_pic_disabled_when_ioapic_active` (5 tests).
 
+- **NeoDOS LSP** (`neodos-lsp/`):
+  - **LSP server**: Full Language Server Protocol implementation for NeoDOS development. Written in Rust, runs as stdio LSP server. Supports completion (symbols + syscalls + shell commands + capabilities), go-to-definition, find references, hover (type signatures + NeoDOS annotations), diagnostics (unbalanced delimiters, missing semicolons), rename, and document symbols.
+  - **Background indexing**: Discovers and indexes all `.rs` files in the workspace via rayon-based parallel parsing. Polling-based file change detection.
+  - **NeoDOS-aware parsing**: Detects syscall handlers by naming convention (`sys_*`) and attributes (`#[syscall(num)]`). Recognizes boot phase functions, capability constants (`CAP_*`), shell command entries, driver state enums, and `impl FileSystem` patterns.
+  - **Database**: `dashmap`-backed in-memory database with symbol IDs, file index, name prefix index, reference edges, and NeoDOS-specific registries (syscalls, shell commands, drivers).
+  - **LSP MCP tools**: 8 new MCP tools (`lsp_list_symbols`, `lsp_search_symbol`, `lsp_get_syscalls`, `lsp_get_shell_commands`, `lsp_get_capabilities`, `lsp_get_diagnostics`, `lsp_get_driver_states`, `lsp_get_kernel_modules`) for AI-level code analysis without needing the LSP server running.
+  - **opencode.json integration**: Registers `neodos-lsp` for `.rs` files with workspace root and log level configuration.
+  - **Tests**: 34 unit tests (cache, database, handlers, indexer, workspace). All tests pass.
+
 ## v0.39.3 — 2026-06-21
 
 ### Added

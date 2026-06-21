@@ -1602,3 +1602,57 @@ fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
 | Driver Isolation | `neodos-kernel/src/drivers/isolation.rs` | X4 driver isolation layer (16 MB region, 16 × 1 MB slots, pointer validation, sandbox mode) |
 | libmath NXL | `neodos/libmath.nxl` | Math library NXL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
+
+## NeoDOS LSP
+
+`neodos-lsp/` — Language Server Protocol implementation for NeoDOS development.
+Provides IDE features (completion, goto-def, hover, diagnostics, rename) for
+kernel, driver, user-mode, and library code.
+
+### LSP Features
+
+| Feature | Handler | Description |
+|---------|---------|-------------|
+| Completion | `textDocument/completion` | Symbols + syscalls + shell commands + capabilities |
+| Go to Definition | `textDocument/definition` | Navigate to symbol declarations |
+| Find References | `textDocument/references` | All references to a symbol |
+| Hover | `textDocument/hover` | Type signatures, docs, NeoDOS annotations |
+| Diagnostics | `textDocument/publishDiagnostics` | Unbalanced delimiters, missing semicolons |
+| Rename | `textDocument/rename` | Safe renaming with workspace edit |
+| Document Symbols | `textDocument/documentSymbol` | Hierarchical file outline |
+
+### MCP Tools (LSP bridge)
+
+8 tools added to `neodos-mcp` for AI-level code analysis:
+
+| Tool | Description |
+|------|-------------|
+| `lsp_list_symbols` | List symbols in a file/directory |
+| `lsp_search_symbol` | Search symbols by name across the codebase |
+| `lsp_get_syscalls` | List all syscalls with numbers and dispatch locations |
+| `lsp_get_shell_commands` | List all shell commands with categories |
+| `lsp_get_capabilities` | List all capability flags with bit values |
+| `lsp_get_diagnostics` | Run basic source diagnostics on a .rs file |
+| `lsp_get_driver_states` | List driver lifecycle states and transitions |
+| `lsp_get_kernel_modules` | List kernel subsystems with file counts |
+
+### Usage
+
+Build:
+```bash
+cd neodos-lsp && cargo build --release
+```
+
+The binary runs as a stdio LSP server. Configure in your editor or use the
+opencode LSP config (see opencode.json).
+
+The MCP tools are available via `scripts/mcp-server.sh` — no LSP server needed
+for AI-level queries.
+
+### Integration
+
+- `opencode.json` registers `neodos-lsp` for `.rs` files and `neodos-mcp`
+  for AI-level analysis tools (includes all LSP-style tools: lsp_list_symbols,
+  lsp_search_symbol, lsp_get_syscalls, etc.).
+- The existing `neodos-mcp` tools (kernel, VFS, modules, ABI, LSP) complement
+  the LSP with filesystem, build artifact, and architectural analysis.

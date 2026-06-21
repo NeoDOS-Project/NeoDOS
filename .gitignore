@@ -15,4 +15,3 @@ target/
 *.fs
 *.nxl
 __pycache__/
-neodos-lsp/

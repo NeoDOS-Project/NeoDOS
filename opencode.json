@@ -19,6 +19,10 @@
       "template": "Build the NeoDOS OS: compile bootloader + kernel and create the FAT32 disk image. Run from the neodos/ directory.",
       "description": "Build bootloader, kernel, and disk image"
     },
+    "build-lsp": {
+      "template": "Build the NeoDOS LSP server: `cd neodos-lsp && cargo build --release`. The binary will be at neodos-lsp/target/release/neodos-lsp.",
+      "description": "Build the NeoDOS LSP server"
+    },
     "run": {
       "template": "Launch NeoDOS in QEMU with OVMF UEFI firmware, serial output, and GDB server on :1234. Run from neodos/ after building.",
       "description": "Run NeoDOS in QEMU"
@@ -30,6 +34,17 @@
     "github": {
       "template": "Review uncommitted changes in the repo (master branch). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Build kernel + user binaries, then run auto_test.py. Commit and push to GitHub with descriptive message.",
       "description": "Release to GitHub"
+    }
+  },
+  "lsp": {
+    "neodos-lsp": {
+      "command": ["./neodos-lsp/target/release/neodos-lsp"],
+      "extensions": ["rs"],
+      "disabled": false,
+      "env": {
+        "RUST_LOG": "neodos_lsp=info",
+        "NEODOS_LSP_ROOT": "."
+      }
     }
   },
   "mcp": {

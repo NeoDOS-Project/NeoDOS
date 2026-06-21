@@ -41,13 +41,14 @@ def build_server(root_dir: str):
     from .server import McpServer, ToolSpec, ResourceSpec, PromptSpec
 
     # Configure tool modules
-    from .tools import kernel_tools, vfs_tools, module_tools, libneodos_tools, system_tools
+    from .tools import kernel_tools, vfs_tools, module_tools, libneodos_tools, system_tools, lsp_tools
 
     kernel_tools.configure(root_dir)
     vfs_tools.configure(root_dir)
     module_tools.configure(root_dir)
     libneodos_tools.configure(root_dir)
     system_tools.configure(root_dir)
+    lsp_tools.configure(root_dir)
 
     server = McpServer(name="neodos-mcp", version="0.28.0")
 
@@ -380,6 +381,101 @@ def build_server(root_dir: str):
             },
         },
         handler=system_tools.check_consistency,
+    ))
+
+    # ── LSP Analysis Tools ──
+
+    server.register_tool(ToolSpec(
+        name="lsp_list_symbols",
+        description="List all Rust symbols (functions, structs, enums, traits, consts, modules) in a file or directory",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File or directory path relative to neodos/ (default: neodos-kernel/src)",
+                    "default": "",
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "If True and path is a directory, recurse into subdirectories",
+                    "default": False,
+                },
+            },
+        },
+        handler=lsp_tools.lsp_list_symbols,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_search_symbol",
+        description="Search for symbols (functions, structs, enums, traits) across the codebase by name pattern",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Symbol name to search for (case-insensitive, partial match)",
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum results (default: 30)",
+                    "default": 30,
+                },
+            },
+            "required": ["query"],
+        },
+        handler=lsp_tools.lsp_search_symbol,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_syscalls",
+        description="List all NeoDOS syscalls with numbers, handler names, and source locations",
+        input_schema={"type": "object", "properties": {}},
+        handler=lsp_tools.lsp_get_syscalls,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_shell_commands",
+        description="List all NeoDOS shell commands with categories and descriptions",
+        input_schema={"type": "object", "properties": {}},
+        handler=lsp_tools.lsp_get_shell_commands,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_capabilities",
+        description="List all NeoDOS capability flags with bit values and descriptions",
+        input_schema={"type": "object", "properties": {}},
+        handler=lsp_tools.lsp_get_capabilities,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_diagnostics",
+        description="Run basic source code diagnostics on a Rust file: unbalanced delimiters, line length, style issues",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Path to .rs file, relative to neodos/",
+                },
+            },
+            "required": ["file_path"],
+        },
+        handler=lsp_tools.lsp_get_diagnostics,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_driver_states",
+        description="List all NEM driver lifecycle states and valid transitions",
+        input_schema={"type": "object", "properties": {}},
+        handler=lsp_tools.lsp_get_driver_states,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="lsp_get_kernel_modules",
+        description="List all kernel modules/subsystems with responsibilities and file counts",
+        input_schema={"type": "object", "properties": {}},
+        handler=lsp_tools.lsp_get_kernel_modules,
     ))
 
     # ── Resources ──
