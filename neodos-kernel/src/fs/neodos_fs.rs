@@ -898,7 +898,6 @@ impl NeoDosFs {
         while written < data.len() && block_idx < 12 {
             if block_idx * BLOCK_SIZE >= inode.size as usize {
                 inode.direct_blocks[block_idx] = self.allocate_block(cache, dev)?;
-                inode.size = (block_idx * BLOCK_SIZE) as u32 + BLOCK_SIZE as u32; 
             }
             
             let block_ptr = inode.direct_blocks[block_idx];

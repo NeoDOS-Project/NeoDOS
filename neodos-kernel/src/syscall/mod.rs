@@ -1028,7 +1028,11 @@ fn handler_open(regs: Registers) -> u64 {
                             }
                         });
                         return match fd {
-                            Some(fd) => fd as u64,
+                            Some(fd) => {
+                                crate::serial_println!("[OPEN-O_CREAT] fd={} for path={} inode={}",
+                                    fd, path, created_node.inode);
+                                fd as u64
+                            }
                             None => err_to_u64(SyscallError::NoMem),
                         };
                     }
@@ -1057,7 +1061,11 @@ fn handler_open(regs: Registers) -> u64 {
     });
 
     match fd {
-        Some(fd) => fd as u64,
+        Some(fd) => {
+            crate::serial_println!("[OPEN] fd={} for path={} inode={} kind={}",
+                fd, path, node.inode, entry.kind);
+            fd as u64
+        }
         None => err_to_u64(SyscallError::NoMem),
     }
 }
@@ -1089,6 +1097,7 @@ fn handler_readfile(regs: Registers) -> u64 {
     if drive_idx == usize::MAX {
         return err_to_u64(SyscallError::BadF);
     }
+
 
     let mut temp_buf = Vec::with_capacity(count);
     temp_buf.resize(count, 0u8);

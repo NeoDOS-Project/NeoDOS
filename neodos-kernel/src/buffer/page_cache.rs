@@ -489,6 +489,12 @@ impl PageCache {
     // ── Internal: slot management ────────────────────────────────
 
     fn evict_lru(&mut self) -> u16 {
+        // Prefer free slots — only evict when cache is actually full
+        for i in 0..DEFAULT_CACHE_SIZE {
+            if !self.slots[i].valid {
+                return i as u16;
+            }
+        }
         if let Some(tail) = self.lru_tail {
             let slot = &self.slots[tail as usize];
             if slot.valid && slot.dirty && !slot.write_pending {

@@ -382,6 +382,55 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("ALL_TESTS_COMPLETE");
     }
 
+    // ── Run user-mode command tests (cmdtest.nxe) ──
+    {
+        println!("[CMDTEST] Loading cmdtest.nxe...");
+        let saved_entry = {
+            static mut CMD_BUF: [u8; 65536] = [0u8; 65536];
+            let mut entry: u64 = 0;
+            let mut loaded = false;
+            crate::globals::with_vfs(|vfs| {
+                if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
+                    if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
+                    let size = unsafe {
+                        match vfs.read(drive_idx, node.inode, 0, &mut CMD_BUF) {
+                            Ok(n) => n,
+                            Err(_) => 0,
+                        }
+                    };
+                    if size >= 4 {
+                        let data = unsafe { &CMD_BUF[..size] };
+                        match elf::load_elf(data, None) {
+                            Ok(r) => {
+                                entry = r.entry;
+                                loaded = true;
+                            }
+                            Err(err) => {
+                                println!("[CMDTEST] ELF load failed: {:?}", err);
+                            }
+                        }
+                    }
+                } else {
+                    println!("[CMDTEST] cmdtest.nxe not found, skipping");
+                }
+            });
+            (entry, loaded)
+        };
+        if saved_entry.1 {
+            if let Some(slot) = arch::x64::paging::alloc_user_slot() {
+                let pid = usermode::spawn_usermode(
+                    saved_entry.0, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+                );
+                println!("[CMDTEST] PID {} entered", pid);
+                usermode::wait_for_process(pid);
+                println!("[CMDTEST] PID {} exited, cleaning up", pid);
+                scheduler::cleanup_terminated_process(pid);
+            } else {
+                println!("[CMDTEST] no free user slot, skipping");
+            }
+        }
+    }
+
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
 

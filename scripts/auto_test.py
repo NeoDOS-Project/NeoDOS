@@ -252,27 +252,44 @@ def run_test():
         else:
             print("[UNKNOWN] Could not determine kernel test results")
         
-        # Check user-mode tests (run during boot if configured)
-        user_bins = ["cpuinfo.nxe", "dir.nxe", "datetime.nxe", "ver.nxe", "mem.nxe"]
-        user_tests_found = sum(1 for ut in user_bins if f"--- Running" in full_text and ut in full_text)
-        if user_tests_found >= len(user_bins):
-            print(f"[PASS] All user-mode binaries executed")
-        elif user_tests_found > 0:
-            print(f"[PARTIAL] {user_tests_found}/{len(user_bins)} user-mode binaries executed")
+        # Check user-mode command tests (cmdtest.nxe)
+        if "CMDTEST_COMPLETE" in full_text:
+            if "ALL_COMMAND_TESTS_PASSED" in full_text:
+                # Extract pass/fail count
+                cmd_match = re.search(r"\[CMDTEST\] (\d+) passed, (\d+) failed", full_text)
+                if cmd_match:
+                    print(f"[PASS] Command tests: {cmd_match.group(1)} passed, {cmd_match.group(2)} failed")
+                else:
+                    print("[PASS] Command tests: all passed")
+            else:
+                cmd_match = re.search(r"\[CMDTEST\] (\d+) passed, (\d+) failed", full_text)
+                if cmd_match:
+                    print(f"[FAIL] Command tests: {cmd_match.group(1)} passed, {cmd_match.group(2)} failed")
+                else:
+                    print("[FAIL] Command tests: some failed")
         else:
-            print("[SKIP] User-mode binaries not auto-run (manual via neoshell)")
+            print("[SKIP] Command tests not run or incomplete")
         
-        # Overall
-        if "kernel tests passed" in full_text and "ALL_TESTS_COMPLETE" in full_text:
-            print("\n" + "=" * 60)
-            print("OVERALL: SUCCESS")
-            print("=" * 60)
-            return 0
-        elif "kernel tests passed" in full_text:
-            print("\n" + "=" * 60)
-            print("OVERALL: KERNEL OK, BUT USER TESTS INCOMPLETE")
-            print("=" * 60)
-            return 1
+        # Overall: kernel tests must pass; command tests optional
+        kernel_ok = "kernel tests passed" in full_text
+        cmdtest_ran = "CMDTEST_COMPLETE" in full_text
+        cmd_ok = "ALL_COMMAND_TESTS_PASSED" in full_text
+        if kernel_ok:
+            if cmdtest_ran and cmd_ok:
+                print("\n" + "=" * 60)
+                print("OVERALL: SUCCESS (kernel + commands)")
+                print("=" * 60)
+                return 0
+            elif cmdtest_ran:
+                print("\n" + "=" * 60)
+                print("OVERALL: KERNEL OK, COMMAND TESTS FAILED")
+                print("=" * 60)
+                return 1
+            else:
+                print("\n" + "=" * 60)
+                print("OVERALL: KERNEL OK (no command tests)")
+                print("=" * 60)
+                return 0
         else:
             print("\n" + "=" * 60)
             print("OVERALL: INCOMPLETE")

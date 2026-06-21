@@ -339,10 +339,14 @@ pub fn sys_open_with_flags(path: &str, flags: u64) -> Result<u8, i64> {
     let r: i64;
     unsafe {
         core::arch::asm!(
+            "push rbx",
+            "push rcx",
             "mov rax, 10",
             "mov rbx, {ptr}",
             "mov rcx, {flags}",
             "int 0x80",
+            "pop rcx",
+            "pop rbx",
             ptr = in(reg) ptr as u64,
             flags = in(reg) flags,
             out("rax") r,
@@ -360,11 +364,17 @@ pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
     let r: i64;
     unsafe {
         core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "push rdx",
             "mov rax, 46",
             "mov rbx, {drive}",
             "mov rcx, {ptr}",
             "mov rdx, {len}",
             "int 0x80",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
             drive = in(reg) drive as u64,
             ptr = in(reg) ptr as u64,
             len = in(reg) len as u64,
@@ -421,10 +431,14 @@ pub fn sys_kobj_enum(buf: &mut [KObjEntryRaw]) -> Result<usize, i64> {
     let r: i64;
     unsafe {
         core::arch::asm!(
+            "push rbx",
+            "push rcx",
             "mov rax, 48",
             "mov rbx, {ptr}",
             "mov rcx, {max}",
             "int 0x80",
+            "pop rcx",
+            "pop rbx",
             ptr = in(reg) buf_ptr as u64,
             max = in(reg) max,
             out("rax") r,
