@@ -6,8 +6,10 @@ v0.40.0
 ## Architecture Governance
 
 See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — all architectural invariants are
-enforceable rules, not suggestions. Run `python3 scripts/auto_test.py` and
-`scripts/check_deps.py` before any commit.
+enforceable rules, not suggestions. See `docs/OBJECT_MANAGER_ARCHITECTURE.md`
+for the Object Manager (Ob) evolution plan — handles, KOBJ, URN, and security
+unification. Run `python3 scripts/auto_test.py` and `scripts/check_deps.py`
+before any commit.
 
 **IMPORTANTE:** Antes de implementar cualquier cambio, leer
 [ARCHITECTURAL_VISION.md](docs/ARCHITECTURAL_VISION.md). Este documento define
@@ -15,11 +17,13 @@ la estrategia a largo plazo (v0.40 → v1.0) y las decisiones de no-cambio. Las
 prioridades actuales son:
 
 1. **v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap
-2. **v0.41**: Slab<T> contenedor para arrays fijos, scheduler Vec dinámico
-3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI
+2. **v0.41**: Slab<T> contenedor para arrays fijos, scheduler Vec dinámico, **ObObjectTable (refactor KOBJ → Object Manager)**
+3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI, **HandleEntry refactor (object_id field)**
 4. **v0.43**: SeAccessCheck NT-compatible, sys_poll()
-5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree
+5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree, **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**
 6. **v0.47**: Networking (TCP/IP stack)
+7. **v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob
+8. **v1.0**: **Security integration in ObOpen**, **Full Ob API stable**
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
@@ -51,7 +55,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 431 kernel tests (auto-run at boot) + user-mode binaries
+2. `python3 scripts/auto_test.py` — 479 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -526,6 +530,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 26 | `sys_unlink` | RBX=path_ptr | Elimina archivo via VFS |
 | 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
 | 28 | `sys_rename` | RBX=old_path, RCX=new_path | Renombra archivo/directorio via VFS |
+| 29 | `sys_set_exception_handler` | RBX=handler_fn | Sets SEH handler for current thread (A3.4). handler_fn=0 clears chain. Returns 0 success, -1 TEB not ready |
 | 33 | `sys_get_drives` | RBX=buf_ptr, RCX=max_entries | Enumerates mounted drives into DriveInfo array. Returns count written |
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |

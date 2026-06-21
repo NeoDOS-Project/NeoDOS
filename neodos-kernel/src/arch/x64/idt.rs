@@ -4,6 +4,13 @@ use crate::serial_println;
 use crate::scheduler::{current_scheduler, ThreadState};
 use crate::panic_classification::PanicClass;
 use crate::trace::TraceEvent;
+use crate::exception::{
+    EXCEPTION_DIVIDE_ERROR, EXCEPTION_GPF, EXCEPTION_PAGE_FAULT,
+    EXCEPTION_INVALID_OPCODE, EXCEPTION_OVERFLOW, EXCEPTION_BOUND_RANGE,
+    EXCEPTION_DEVICE_NOT_AVAILABLE,
+    DispatchResult,
+    exception_dispatch,
+};
 
 core::arch::global_asm!(
     ".extern timer_handler_inner",
@@ -214,10 +221,46 @@ macro_rules! panic_classified {
     }};
 }
 
+/// Helper: check if the exception was from user mode (Ring 3).
+fn is_user_exception(frame: &InterruptStackFrame) -> bool {
+    frame.code_segment == 0x1B
+}
+
+/// Helper: terminate the current user process (Ring 3 exception unhandled).
+fn terminate_user_process() {
+    use crate::scheduler::{current_scheduler, current_tid};
+    use crate::syscall::set_need_resched;
+    let tid = current_tid();
+    if tid > 0 {
+        let mut s = current_scheduler().lock();
+        if let Some(k) = s.find_kthread_mut(tid) {
+            k.state = ThreadState::Terminated;
+        }
+    }
+    set_need_resched();
+}
+
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+
+    if is_user_exception(&stack_frame) {
+        let result = exception_dispatch(
+            EXCEPTION_DIVIDE_ERROR, rip, rsp, 0, true, 0, 0,
+        );
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => {
+                terminate_user_process();
+                return;
+            }
+            DispatchResult::Panic => {} // fall through to kernel panic
+        }
+    }
+
     crate::trace_event!(TraceEvent::Panic, 0, 0, 0, 0);
     panic_classified!(PanicClass::UnknownCpuException,
-        "Divide error: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+        "Divide error: rip={:#x}", rip);
 }
 
 extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
@@ -237,23 +280,59 @@ extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
-    panic_classified!(PanicClass::UnknownCpuException,
-        "Overflow: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    if is_user_exception(&stack_frame) {
+        let result = exception_dispatch(EXCEPTION_OVERFLOW, rip, rsp, 0, true, 0, 0);
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Panic => {}
+        }
+    }
+    panic_classified!(PanicClass::UnknownCpuException, "Overflow: rip={:#x}", rip);
 }
 
 extern "x86-interrupt" fn bounds_handler(stack_frame: InterruptStackFrame) {
-    panic_classified!(PanicClass::UnknownCpuException,
-        "Bound range: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    if is_user_exception(&stack_frame) {
+        let result = exception_dispatch(EXCEPTION_BOUND_RANGE, rip, rsp, 0, true, 0, 0);
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Panic => {}
+        }
+    }
+    panic_classified!(PanicClass::UnknownCpuException, "Bound range: rip={:#x}", rip);
 }
 
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
-    panic_classified!(PanicClass::UnknownCpuException,
-        "Invalid opcode: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    if is_user_exception(&stack_frame) {
+        let result = exception_dispatch(EXCEPTION_INVALID_OPCODE, rip, rsp, 0, true, 0, 0);
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Panic => {}
+        }
+    }
+    panic_classified!(PanicClass::UnknownCpuException, "Invalid opcode: rip={:#x}", rip);
 }
 
 extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptStackFrame) {
-    panic_classified!(PanicClass::UnknownCpuException,
-        "Device not available: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+    if is_user_exception(&stack_frame) {
+        let result = exception_dispatch(EXCEPTION_DEVICE_NOT_AVAILABLE, rip, rsp, 0, true, 0, 0);
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Panic => {}
+        }
+    }
+    panic_classified!(PanicClass::UnknownCpuException, "Device not available: rip={:#x}", rip);
 }
 
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
@@ -299,6 +378,22 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
         stack_frame.cpu_flags, rsp,
 crate::hal::get_ticks(),
         );
+
+    // Try user-mode dispatch first
+    if is_user_exception(&stack_frame) {
+        // For GPF, the fault_addr is typically RIP (null deref) or a selector
+        let fault_addr = rip;
+        let result = exception_dispatch(EXCEPTION_GPF, rip, rsp, error_code, true, fault_addr, error_code);
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => {
+                terminate_user_process();
+                return;
+            }
+            DispatchResult::Panic => {} // fall through
+        }
+    }
+
     let class = if error_code == 0x15c {
         PanicClass::InvalidIretq
     } else if rsp & 0xFFF < 0x100 || rsp & 0xFFF > 0xF00 {
@@ -317,8 +412,6 @@ extern "x86-interrupt" fn page_fault_handler(
     error_code: PageFaultErrorCode,
 ) {
     // INV-14: Page fault at IRQL >= DISPATCH is fatal (bugcheck).
-    // Holding a spinlock implies DISPATCH_LEVEL; a page fault there
-    // means the kernel is accessing paged-out memory, which is illegal.
     let irql = unsafe { crate::arch::x64::cpu_local::this_cpu_irql() };
     if irql >= crate::hal::irql::DISPATCH_LEVEL {
         let rip = stack_frame.instruction_pointer.as_u64();
@@ -341,9 +434,31 @@ extern "x86-interrupt" fn page_fault_handler(
         if crate::arch::x64::paging::handle_mmap_page_fault(virt, true, is_write) {
             return;
         }
+        // Also handle TEB demand paging (TEB at 0x7000)
+        if crate::arch::x64::paging::handle_teb_page_fault(virt) {
+            return;
+        }
     }
 
     let rip = stack_frame.instruction_pointer.as_u64();
+    let rsp = stack_frame.stack_pointer.as_u64();
+
+    // A3.4: Try user-mode SEH dispatch before panic
+    if is_user {
+        let fault_code = if is_not_present { 0u64 } else { 1u64 }; // 0=not-present, 1=protection
+        let result = exception_dispatch(
+            EXCEPTION_PAGE_FAULT, rip, rsp, 0, true, virt, fault_code,
+        );
+        match result {
+            DispatchResult::Handled => return,
+            DispatchResult::Terminated => {
+                terminate_user_process();
+                return;
+            }
+            DispatchResult::Panic => {} // fall through
+        }
+    }
+
     let class = if !is_not_present {
         PanicClass::PageTableCorruption
     } else {
@@ -408,6 +523,12 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     unsafe { crate::arch::x64::cpu_local::this_cpu_inc_timer_tick_count(); }
 
     crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
+
+    // A3.3: Watchdog pet + check on every timer tick
+    crate::watchdog::watchdog_pet();
+    if crate::watchdog::watchdog_check() {
+        crate::watchdog::watchdog_trigger();
+    }
 
     {
         use core::sync::atomic::Ordering;

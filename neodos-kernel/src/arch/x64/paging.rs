@@ -65,7 +65,7 @@ static mut PD_HIGH: [AlignedPageTable; 4] = [
 /// Base address of the user-accessible memory window.
 /// Must stay inside the 4 GiB identity-mapped range.
 pub const USER_BASE:  u64 = 0x0040_0000; // 4 MB
-pub const USER_LIMIT: u64 = 0x0080_0000; // 8 MB  (4 MB window)
+pub const USER_LIMIT: u64 = 0x0240_0000; // 36 MB (32 MB window, v0.40)
 
 /// Per-process slot constants
 const MAX_BIN_SIZE: u64 = 64 * 1024;      // 64 KB  (mirrors run.rs)
@@ -699,6 +699,46 @@ pub fn heap_free_range(start: u64, end: u64) {
     if freed_first < freed_last {
         shootdown_range(freed_first, freed_last);
     }
+}
+
+/// Handle a page fault for the TEB page at 0x7000.
+/// Returns true if the fault was handled.
+pub fn handle_teb_page_fault(virt: u64) -> bool {
+    // TEB is at 0x7000, within the first 4 KB page of the TEB region
+    if virt >= 0x7000 && virt < 0x8000 {
+        // Check if PTEs exist (page table was split)
+        let aligned = virt & !(PAGE_4K - 1);
+        if crate::hal::walk_ptes_4k(aligned).is_none() {
+            // Need to split the 2 MB page first
+            if split_2mb_page(aligned).is_err() {
+                return false;
+            }
+            let _ = set_pd_user_accessible(aligned, true);
+        }
+        // Check if the TEB page is already mapped
+        if let Some(entry) = crate::hal::walk_ptes_4k(aligned) {
+            if entry.flags().contains(PageTableFlags::PRESENT) {
+                return true; // Already mapped
+            }
+        }
+        // Allocate and map TEB page
+        let phys = crate::hal::alloc_page();
+        if phys.is_null() { return false; }
+        unsafe { core::ptr::write_bytes(phys as *mut u8, 0, 4096); }
+        let rc = crate::hal::map_page(phys as u64, aligned, 0x7);
+        if rc != 0 {
+            crate::hal::free_page(phys);
+            return false;
+        }
+        // Set self-pointer
+        unsafe {
+            let teb_ptr = aligned as *mut crate::exception::Teb;
+            core::ptr::write(teb_ptr, crate::exception::Teb::new());
+            (*teb_ptr).teb_self = aligned;
+        }
+        return true;
+    }
+    false
 }
 
 /// Handle a page fault for on-demand heap allocation.

@@ -417,6 +417,11 @@ pub fn dump_nmi(rip: u64, rsp: u64) {
     dump_crash(CAUSE_NMI, &param, rip, rsp);
 }
 
+pub fn dump_watchdog(rip: u64, rsp: u64, event_id: u64) {
+    let param = [rip, rsp, event_id, 0];
+    dump_crash(CAUSE_WATCHDOG, &param, rip, rsp);
+}
+
 pub fn is_crash_dump_present() -> bool {
     unsafe {
         let ptr = crash_dump_area_ptr() as *const u32;

@@ -46,8 +46,10 @@ pub mod trace;
 pub mod invariants;
 pub mod panic_classification;
 pub mod boot_benchmark;
+mod watchdog;  // A3.3 Watchdog subsystem
 mod crash;
 mod security;
+mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
 
 use drivers::fat32::Fat32Driver;
@@ -170,6 +172,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     crash::init_crash_dump_area();
     memory::reserve_range(crash::CRASH_DUMP_AREA_BASE, crash::CRASH_DUMP_AREA_SIZE);
 
+    // A3.3: Initialize watchdog subsystem (requires HPET + crash dump area)
+    watchdog::init_watchdog();
+
     // ============================================
     // PHASE 2.75: Heap allocator (uses identity map)
     // ============================================
@@ -225,6 +230,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     arch::x64::paging::init_heap_demand_paging();
     // Split mmap region huge pages for lazy file/anonymous mapping
     arch::x64::paging::init_mmap_demand_paging();
+
+    // ============================================
+    // PHASE 6.1: TEB page mapping (A3.4 SEH)
+    // Split first 2MB huge page and map TEB at 0x7000
+    // as USER_ACCESSIBLE for user-mode exception handling.
+    // Requires custom page tables to be active.
+    // ============================================
+    exception::init_teb_paging();
 
     // ============================================
     // PHASE 2.3 (after custom page tables): PCIe ECAM

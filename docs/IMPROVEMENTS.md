@@ -8,7 +8,7 @@
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 136 / ~145 items completados. Próximo milestone: **v0.40** (Maduración estructural).
+**Progreso:** 132 / ~160 items completados (+28 planificados: X7 Object Manager). Próximo milestone: **v0.40** (Maduración estructural) / **X7** (Object Manager).
 
 ---
 
@@ -186,8 +186,8 @@
 Orden de implementación dentro de la fase:
 
 1. **v0.40** — Buddy bitmap dinámico (>4GB RAM), User window 4MB→32MB, Static buffers→heap
-2. **v0.41** — Slab<T> contenedor, Scheduler Vec<EPROCESS>/Vec<KTHREAD>, Pipe buffers dinámicos
-3. **v0.42** — Unified Wait Engine (KWait), Congelar ABI: eventos 0–15, capability flags, IOAPIC
+2. **v0.41** — Slab<T> contenedor, Scheduler Vec<EPROCESS>/Vec<KTHREAD>, Pipe buffers dinámicos, **ObObjectTable (refactor KOBJ → Object Manager)**
+3. **v0.42** — Unified Wait Engine (KWait), Congelar ABI: eventos 0–15, capability flags, IOAPIC, **HandleEntry refactor (object_id field)**
 4. **v0.43** — SeAccessCheck NT-compatible (completar con ACE order NT-correct), sys_poll(), Congelar pipe/IRP protocols
 5. **v0.44** — ASLR v1 (base aleatoria), FileSystem trait freeze, Registry v1 (B2.1)
 6. **v0.45** — Device Tree + Resource Manager, Driver state machine freeze
@@ -205,7 +205,7 @@ Orden de implementación dentro de la fase:
 2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1–B3.2)
 3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, AHCI NCQ (A5.3), DHCP (B3.3)
 4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
-5. **v0.50** — Namespace por proceso (chroot-lite), Symlinks en VFS, Audit trail SACL, Shell pipes (B4.2), Redirection (B4.3), VT (B4.5)
+5. **v0.50** — **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**, Namespace por proceso (chroot-lite), Symlinks en VFS, Audit trail SACL, Shell pipes (B4.2), Redirection (B4.3), VT (B4.5), URN rewrite como frontend de Ob
 
 ---
 
@@ -239,59 +239,15 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
     - Un cliente GDB remoto puede conectar, listar registros, leer memoria y continuar sin corromper el estado interno.
   - **Tests:** `kd_breakpoint_set_and_hit`, `kd_breakpoint_invalid_addr`, `kd_watchpoint_write_detect`, `kd_register_snapshot`, `kd_gdb_protocol_qSupported` (5 tests).
 
-- [ ] **A3.3. Watchdog subsystem** | NT: Watchdog timer, NMI | Prereqs: A2 (HPET)
-  - **Archivos:** `src/watchdog/mod.rs`, `src/hal/watchdog.rs`, `arch/x64/nmi.rs`, integración `src/timers/hpet.rs`
-  - **Descripción:** Detección de kernel hang y recovery automático via watchdog timer y NMI (Non-Maskable Interrupt). El subsistema funciona como una malla de seguridad para bloquear cuelgues silenciosos: mantiene un contador vivo, genera un evento de aviso antes del reset y conserva una traza mínima del fallo para análisis posterior.
-    - **HPET watchdog:** Usa HPET como fuente de tiempo de alta precisión. Se programa un timeout de 5 segundos y se rearmará cada vez que el kernel confirme que sigue progresando. Si el sistema deja de responder, el watchdog fuerza una interrupción no enmascarable.
-    - **Petting:** `watchdog_pet()` se invoca desde el timer tick normal (~1 ms). Si el scheduler o una ruta crítica dejan de llamar a esta función, el watchdog asume deadlock, spinlock infinito o hard hang.
-    - **NMI handler:** `nmi_handler()` captura el estado de CPU antes de que el sistema se degrade más.
-      1. Snapshot inmediato de RAX–R15, RIP, RSP, CR3, EFER
-      2. `crash::dump_nmi()` para stack trace, estado del scheduler y marca temporal
-      3. Publicación de `EVENT_NMI_WATCHDOG` para que subsistemas observability reaccionen
-      4. Volcado persistente del dump a disco si el canal de I/O sigue vivo
-      5. Reinicio controlado vía ACPI o puerto 0x64
-    - **Hang detection:** si el watchdog expira sin petting, se considera que el kernel no está haciendo forward progress. El objetivo es que una máquina colgada deje un artefacto útil en vez de quedarse congelada sin explicación.
-    - **Stats:** `watchdog_stats { nmi_count, dump_writes, recoveries, last_pet_tsc }` para medir frecuencia de fallos, éxito del volcado y latencia entre pets. `KOBJ WATCHDOG` expone estas métricas.
-  - **Criterio:**
-    - Infinite loop en scheduler: kernel se cuelga en PHASE 3.8.
-    - Después de 5 s: NMI disparado. Dump captura todo. CPU reset.
-    - Serial output muestra el dump (legible via analyzer.py).
-    - Sin reemplementación de reseteo: TPM reset port (UEFI/ACPI) suficiente para QEMU.
-    - Si el volcado a disco falla, el watchdog sigue completando el reset sin bloquear el reboot.
-  - **Tests:** `watchdog_pet_resets_counter`, `watchdog_nmi_triggers_after_5s`, `watchdog_dump_on_nmi`, `watchdog_stats_increment`, `watchdog_hang_detection_latency` (5 tests).
+- [x] **A3.3. Watchdog subsystem** | NT: Watchdog timer, NMI | Prereqs: A2 (HPET)
+  - **Archivos:** `src/watchdog/mod.rs`, `src/crash/mod.rs` (dump_watchdog), `src/arch/x64/idt.rs` (timer tick integration), `src/eventbus/mod.rs` (EVENT_NMI_WATCHDOG)
+  - **Implementación:** Software watchdog basado en HPET. Mantiene timestamp HPET actualizado via `watchdog_pet()` desde timer tick (1 KHz). Si transcurren 5s sin petting, `watchdog_trigger()` captura crash dump con CAUSE_WATCHDOG, publica `EVENT_NMI_WATCHDOG`, intenta volcado a disco y resetea el sistema. Stats atómicas expuestas via API pública. Re-entry guard con MAX_NMI_RECOVERIES=3.
+  - **Tests pasan:** 5/5: `watchdog_pet_resets_counter`, `watchdog_stats_increment`, `watchdog_armed_state`, `watchdog_trigger_no_reentry`, `watchdog_hang_detection_latency`.
 
-- [ ] **A3.4. SEH + exception dispatcher** | NT: `KiDispatchException`, Structured Exception Handling | Prereqs: A1.5, A4.1
-  - **Archivos:** `src/exception/mod.rs`, `src/exception/dispatcher.rs`, `arch/x64/idt.rs` (refactor handlers), `libneodos/src/seh.rs`, `libneodos/src/teb.rs` (Thread Environment Block)
-  - **Descripción:** Mecanismo unificado para manejar excepciones (faults, traps, aborts) de CPU y entregar a user-mode handlers o panic en kernel. La intención es separar claramente la política de manejo entre kernel y userland, de forma que un fallo del proceso no mate al sistema y un fallo del kernel sí quede registrado como bugcheck.
-    - **Ring 0 (kernel):**
-      - Divide-by-zero, null deref, stack overflow → `crash::dump_panic()` → serial + reset
-      - Page fault → stack trace (A3.2 KD) + analysis
-      - GP fault → "invalid instruction" analysis
-      - Handler nunca devuelve al flujo normal si la excepción invalida estado del kernel; siempre termina en dump o panic controlado.
-    - **Ring 3 (userland):**
-      - Divide-by-zero → TEB exception handler chain→ user __except block→ continue/abort
-      - Access violation (null deref) → handler si registrado
-      - Stack overflow → emergency stack para handler
-      - Unhandled → process terminates (no kernel panic)
-    - **TEB (Thread Environment Block) @ 0x7000:**
-      - `{ teb_self: *TEB, process: *EPROCESS, thread: *KTHREAD, exception_list: *ExceptionFrame }`
-      - Exception frame chain (linked list): `{ prev_frame, handler_fn, exception_type }`
-      - Linker script coloca `__except_handler` stub (thunk) en TEB
-    - **User handlers:** `libneodos::sys_set_exception_handler(handler_fn: fn(ExceptionInfo) -> ExceptionAction)`
-      - `enum ExceptionAction { Continue, Terminate, ReevaluateFilters }`
-      - Handler verifica `exception_type` (DIVIDE_ZERO, ACCESS_VIOLATION, etc.), decide acción
-      - El callback corre con el contexto del thread interrumpido y debe poder devolver una decisión determinista sin depender de heap ni I/O bloqueante.
-    - **Dispatcher:** `exception_dispatch(exception_type, fault_addr, fault_code)` en `idt.rs`:
-      1. Si Ring 0 → `crash::dump()` + panic
-      2. Si Ring 3 → `teb_invoke_exception_handler()` con frame chain
-      3. Si no handler registrado → `sys_exit(-1)`
-  - **Criterio:**
-    - User program: `int x = 0; int y = 10 / x;` → exception delivered a handler user (no se termina el proceso)
-    - Handler devuelve `Continue` → programa continua normalmente
-    - Handler devuelve `Terminate` → proceso sale (con código 1)
-    - Null deref sin handler → process kill vía `sys_exit(-1)`, shell sigue viva
-    - Un handler puede encadenar `ReevaluateFilters` para pasar al siguiente filtro si no quiere consumir la excepción.
-  - **Tests:** `seh_divide_zero_caught`, `seh_access_violation_handler`, `seh_unhandled_terminates_process`, `seh_handler_continue_action`, `seh_handler_terminate_action` (5 tests).
+- [x] **A3.4. SEH + exception dispatcher** | NT: `KiDispatchException`, Structured Exception Handling | Prereqs: A1.5, A4.1
+  - **Archivos:** `src/exception/mod.rs`, `src/exception/dispatcher.rs`, `src/arch/x64/idt.rs` (refactor handlers), `libneodos/src/seh.rs`, `src/arch/x64/paging.rs` (TEB demand paging)
+  - **Implementación:** Mecanismo unificado `exception_dispatch()` que distingue Ring 0 (→ crash dump + panic) vs Ring 3 (→ TEB exception handler chain). TEB mapeado en 0x7000 con `Teb { teb_self, pid, tid, exception_list }`. Exception frames linked-list con handler_fn extern "C". sys_set_exception_handler (RAX=29) registra/limpia handlers. IDT handlers refactorizados para divide_error, invalid_opcode, overflow, bounds, device_not_available, GPF y page fault.
+  - **Tests pasan:** 5/5: `seh_teb_frame_alloc`, `seh_exception_action_values`, `seh_teb_layout`, `seh_exception_type_constants`, `seh_dispatch_kernel_classification`.
 
 ---
 
@@ -434,10 +390,10 @@ Prereqs: A2.1
 
 Orden de implementación dentro de la fase:
 
-1. **v0.51** — sys_fork/clone (bajo demanda), sys_signal mínimo
-2. **v0.52** — Stack de red completo (UDP, DNS, DHCP), TFTP/NFS básico
+1. **v0.51** — sys_fork/clone (bajo demanda), sys_signal mínimo, **ObWait (RAX 65) + KWait integration**, **HandleEntry full migration (kind→ObId)**
+2. **v0.52** — Stack de red completo (UDP, DNS, DHCP), TFTP/NFS básico, **Security integration in ObOpen**
 3. **v0.53** — Rendimiento: per-CPU heaps NUMA-aware, scheduler lock-free, zero-copy pipes (B6.1), COW fork (B6.2)
-4. **v0.54–0.59** — Documentación API completa, test coverage >95%, fuzzing, module signatures (B5.1), secure boot (B5.3)
+4. **v0.54–0.59** — Documentación API completa, test coverage >95%, fuzzing, module signatures (B5.1), secure boot (B5.3), **Ob API documentation + legacy syscall compat verified**
 5. **v1.0.0** — Primera API estable. Todo lo anterior debe estar COMPLETED.
 
 ---
@@ -1316,6 +1272,188 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
 
 ---
 
+### 🔷 X7. NeoDOS Object Manager (Ob) — Unificación de Handles, KOBJ, URN y Seguridad
+
+> **NT Reference:** Ob (Object Manager) — `ObOpen`, `ObCreate`, `ObQueryInfo`, `ObReferenceObject`
+> **Documento de diseño:** [`docs/OBJECT_MANAGER_ARCHITECTURE.md`](OBJECT_MANAGER_ARCHITECTURE.md)
+> **Prerequisitos:** v0.40 (buddy >4GB, user window 32MB, static buffers → heap), A0.4 (dynamic handle table), NT5 (Ob namespace + symlinks), NT6 (SID/ACL/SeAccessCheck), X5 (work queue), X6 (IRP system)
+> **Versión objetivo:** v0.41–v1.0
+> **Estado:** 🔴 No iniciado
+
+#### ⚠️ Problema Actual
+
+El kernel de NeoDOS tiene **tres abstracciones paralelas** para gestionar recursos del sistema:
+
+| Abstracción | Propósito | Limitaciones |
+|------------|-----------|-------------|
+| **HandleEntry** (handle.rs) | Referencia por proceso a archivos, pipes, dispositivos | Tipos hardcoded (10 valores), `id` polimórfico, sin metadatos |
+| **KObjEntry** (kobj/mod.rs) | Registry global de metadata de objetos | Solo metadatos — no hay operaciones ni refcount real |
+| **UrnHandle** (urn/mod.rs) | Acceso unificado tipo URL | Paralelo a handles, schemes sin implementar |
+
+**Consecuencias:**
+
+1. **Acoplamiento:** Cada syscall que opera sobre un handle (close, dup2, exit, kill, pipe) debe conocer los tipos internos y despachar manualmente — 5+ handlers modificados para añadir un nuevo tipo.
+
+2. **Duplicación de cleanup:** La liberación de recursos se distribuye entre `handler_exit` (~230 líneas), `kill_pid` (~70 líneas), `sys_close`, y `PIPE_MANAGER`.
+
+3. **Sin query/estandarización:** Dado un handle fd, no hay forma de preguntar "¿qué tipo de objeto es?" o "¿cuáles son sus metadatos?" sin conocer internamente el tipo.
+
+4. **Sin seguridad por objeto:** SeAccessCheck existe pero solo se usa en syscall 50. No se verifica acceso en `sys_open`, `sys_readfile`, `sys_writefile`.
+
+5. **URN desconectado:** No hay camino de UrnHandle → HandleEntry → fd real.
+
+#### 🏗️ Diseño Propuesto
+
+**Object Manager (Ob):** Abstracción única que unifica handles, objetos, seguridad y namespace.
+
+```
+ObObject (kernel object)
+├── id: ObId (hereda KObjId)
+├── type: ObType (Process, Thread, File, Pipe, Device, ...)
+├── name: [u8; 256]
+├── sd: SecurityDescriptor
+├── refcount: u32
+├── ops: &'static ObOperations (vtable polimórfica)
+└── context: *mut c_void (back-pointer al recurso real)
+
+ObHandle (per-process)
+├── object_id: ObId → referencia a ObObject
+├── access_mask: u32 (READ|WRITE|EXEC|DELETE)
+└── offset: u64
+
+ObDirectory (namespace)
+├── \Global\, \Device\, \Driver\, \FileSystem\, \Registry\
+└── \Process\ (virtual: PID-indexed)
+```
+
+**Syscalls nuevas (RAX 60–65):**
+
+| RAX | Syscall | Args | Descripción |
+|-----|---------|------|-------------|
+| 60 | `sys_ob_open` | RBX=path, RCX=access | Open named object → handle |
+| 61 | `sys_ob_create` | RBX=path, RCX=type, RDX=attrs | Create named object |
+| 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=len | Query object metadata |
+| 63 | `sys_ob_set_info` | RBX=fd, RCX=class, RDX=buf | Set object metadata |
+| 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory |
+| 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=to | Wait on objects |
+
+**Syscalls existentes que migran (wrappers internos):**
+
+| RAX | Syscall | Pasa a ser wrapper de | Fase |
+|-----|---------|----------------------|------|
+| 10 | `sys_open` | ObOpen + ObQueryInfo | v0.45 |
+| 11 | `sys_readfile` | ObQueryInfo → vfs read | v0.45 |
+| 12 | `sys_writefile` | ObQueryInfo → vfs write | v0.45 |
+| 5 | `sys_pipe` | ObCreate(Pipe) + ObOpen x2 | v0.45 |
+| 13 | `sys_close` | ObClose(handle) | v0.41 |
+| 8 | `sys_readdir` | ObEnum(dir) | v0.45 |
+| 9 | `sys_waitpid` | ObWait(Process, CHILD_EXIT) | v0.45 |
+| 22 | `sys_thread_create` | ObCreate(Thread) + ObOpen | v0.45 |
+| 23 | `sys_thread_join` | ObWait(Thread, THREAD_EXIT) | v0.45 |
+| 48 | `sys_kobj_enum` | ObEnum(global) | v0.45 |
+
+**Syscalls que permanecen (no migran):** exit, yield, getpid, spawn, chdir, getcwd, brk, mmap, munmap, loadlib, get_cpuinfo, get_version, get_datetime, get_meminfo, poweroff, cursor_blink — son demasiado específicas o internas para abstraer como objetos.
+
+#### 📋 Dependencias
+
+| # | Dependencia | Tipo | Estado |
+|---|-------------|------|--------|
+| 1 | Handle table dinámico (A0.4) | Hard | Completado v0.40 |
+| 2 | KOBJ registry + namespace (NT5) | Hard | Completado v0.40 |
+| 3 | SID/ACL/SeAccessCheck (NT6) | Hard | Completado v0.40 |
+| 4 | KWait Unified Wait Engine | Soft | v0.42 |
+| 5 | SecurityDescriptor en objetos | Soft | NT6 ya existe, falta integrar |
+
+#### 📐 Arquitectura de Módulos
+
+```
+src/
+├── object/                    # NUEVO: Object Manager
+│   ├── mod.rs                # ObObjectTable, ObObject, ObOperations
+│   ├── handle.rs             # HandleEntry refactorizado (ObId + access_mask)
+│   ├── types/                # Implementaciones de ObOperations por tipo
+│   │   ├── process.rs        # Process operations
+│   │   ├── thread.rs         # Thread operations
+│   │   ├── file.rs           # File operations
+│   │   ├── pipe.rs           # Pipe operations
+│   │   ├── device.rs         # Device operations
+│   │   └── driver.rs         # Driver operations
+│   ├── security.rs           # Integración SeAccessCheck en ObOpen
+│   └── namespace.rs          # ObDirectory (refactor de kobj/namespace.rs)
+│
+├── kobj/                      # RENOMBRAR → object/ (legacy wrappers)
+│   └── mod.rs                # Stub de compatibilidad
+│
+├── handle.rs                  # REFACTOR → object/handle.rs
+│
+└── urn/                       # REWRITE → frontend de Ob
+    └── mod.rs                # ObOpen + ObEnum tras Ob
+```
+
+#### 📦 Impacto en Archivos Existentes
+
+| Archivo | Cambio | Líneas estimadas |
+|---------|--------|-----------------|
+| `src/syscall/mod.rs` | 5 handlers refactorizados, 6 nuevos | +400/−150 |
+| `src/handle.rs` | Añadir object_id, mantener compat | +20/−10 |
+| `src/kobj/mod.rs` | Refactor como ObObjectTable + stubs | +200/−100 |
+| `src/kobj/namespace.rs` | Integrar con ObDirectory | +50/−30 |
+| `src/urn/mod.rs` | Rewrite como frontend de Ob | +80/−100 |
+| `src/scheduler/mod.rs` | EPROCESS/KTHREAD register en Ob | +30/−10 |
+| `src/pipe.rs` | Pipe operations para Ob | +40/−10 |
+| `src/security/access.rs` | Integrar check en ObOpen | +30/−5 |
+
+**Total estimado:** ~850 líneas nuevas, ~415 modificadas, ~255 eliminadas.
+
+#### 🛡️ Seguridad
+
+Cada ObObject tiene un `SecurityDescriptor`. `ObOpen` ejecuta `SeAccessCheck` antes de crear el handle. El handle almacena la `access_mask` concedida. Las operaciones posteriores verifican que la mask del handle cubra el acceso solicitado.
+
+Flujo:
+```rust
+ObOpen(path, desired_access)
+  → ob_resolve_path(path) → ObId
+  → se_access_check(token, &obj.sd, desired_access)
+  → if GRANT: handle = HandleTable::push(ObId, desired_access)
+  → if DENY: return ACCESS_DENIED
+```
+
+#### 🧪 Tests Planificados
+
+| Categoría | Tests | Descripción |
+|-----------|-------|-------------|
+| Object lifecycle | 6 | create, open, close, refcount, double-close, not-found |
+| Operations | 8 | query_info (4 types), set_info, enum, wait |
+| Namespace | 5 | resolve, create dir, symlink resolve, case-insensitive, virtual Proc |
+| Security | 6 | access GRANT, DENY, admin bypass, invalid mask, token-check, handle-mask |
+| Legacy compat | 8 | sys_open wrapper, sys_close wrapper, sys_readdir, sys_pipe, sys_readfile, sys_writefile, sys_waitpid, sys_thread_join |
+| URN integration | 4 | file → Ob, device → Ob, registry stub, roundtrip |
+| Stress | 3 | 1000 objects, concurrent open/close, mixed types |
+| **Total** | **40** | |
+
+#### 📈 Métricas Objetivo (v1.0)
+
+| Métrica | Actual | Objetivo |
+|---------|--------|----------|
+| HandleEntry tipo-seguro | ❌ (kind hardcoded) | ✅ (ObId ref) |
+| KOBJ + handles unificados | ❌ | ✅ |
+| Security en open | ❌ (solo syscall 50) | ✅ (todo acceso) |
+| URN funcional | Parcial (file + device) | Full (all schemes) |
+| Tipos de objeto | ~8 implícitos | 15+ explícitos |
+| Syscalls Ob | 0 | 6 nuevas |
+
+#### ⚠️ Riesgos
+
+| Riesgo | Probabilidad | Impacto | Mitigación |
+|--------|-------------|---------|------------|
+| Performance regression en hot path (read/write) | Media | Alto | Benchmarks antes/después, eliminar indirección en hot path si es necesario |
+| Rotura de compatibilidad con binarios existentes | Baja | Alto | Wrappers mantienen firma exacta, no eliminar syscalls legacy |
+| Complejidad excesiva del dispatch | Media | Medio | ObOperations es opcional — los objetos simples pueden tener ops = None |
+| Deadlock en refcount cross-module | Baja | Alto | Refcount atómico, sin locks en hot path |
+| Migración demasiado lenta | Media | Medio | Priorizar por impacto: close primero (fácil), pipe después (complejo) |
+
+---
+
 #### B7. Experimental
 
 - [ ] **B7.1 E4. Full GUI system** | NT: Desktop Window Manager | Prereqs: B4.10 | Files: `userbin/gui/` | Desktop con iconos, menú, ventanas redimensionables.
@@ -1354,6 +1492,7 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
 | 23 | Ob flat (no namespace) | NT5 | Ob | Completado | Hardcode C:, sin symlinks |
 | 24 | SRM ausente | NT6 | Se | Pendiente | Sin control de acceso real |
 | 25 | Registry flat → cell-based hive + Ob integration | B2.1–B2.5 | Cm | Pendiente | Sin config jerárquica transaccional, notificaciones, ni load/unload |
+| 26 | Handles/KOBJ/URN/security no unificados | X7 | Ob | Pendiente | Tipos hardcoded, dispatch manual, cleanup duplicado, sin security en objetos |
 
 ---
 

@@ -2403,6 +2403,12 @@ pub fn register_tests() {
 
     // B9.2/B9.3: Ring 0 SET/EXIT removed tests
     register_shell_removed_tests();
+
+    // A3.3: Watchdog subsystem tests
+    crate::watchdog::register_watchdog_tests();
+
+    // A3.4: SEH + Exception Dispatcher tests
+    crate::exception::dispatcher::register_exception_tests();
 }
 
 // ── B9.1: HELP command tests ────────────────────────────────────────────

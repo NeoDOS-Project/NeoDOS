@@ -72,6 +72,7 @@ pub enum SyscallNum {
     SetKeyboardLayout = 49,
     SetPriority = 51,
     KillProcess = 52,
+    SetExceptionHandler = 29,
     CursorBlink = 53,
     GetDrives = 33,
 }
@@ -109,8 +110,9 @@ impl SyscallNum {
             25 => Some(Self::MkDir),
             26 => Some(Self::Unlink),
             27 => Some(Self::RmDir),
-            28 => Some(Self::Rename),
-            40 => Some(Self::WaitAlertable),
+             28 => Some(Self::Rename),
+             29 => Some(Self::SetExceptionHandler),
+             40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
             42 => Some(Self::Poweroff),
             43 => Some(Self::GetVersion),
@@ -163,7 +165,7 @@ pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28,
+        25, 26, 27, 28, 29,
         33,
          40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
         50, 51, 52, 53,
@@ -1972,6 +1974,42 @@ fn handler_kill_process(regs: Registers) -> u64 {
     })
 }
 
+/// sys_set_exception_handler (RAX=29): set the current thread's SEH handler.
+/// RBX = handler_fn address (0 to clear), or user-space pointer to callback.
+/// The handler receives (exception_type, fault_addr, fault_code) and must return
+/// 0 (Continue), 1 (Terminate), or 2 (ReevaluateFilters).
+/// Returns 0 on success, -1 if TEB not initialized.
+fn handler_set_exception_handler(regs: Registers) -> u64 {
+    let handler_fn_addr = regs.rbx;
+
+    if handler_fn_addr == 0 {
+        // Clear all handlers for this thread
+        let teb_base = crate::scheduler::current_teb_base();
+        if teb_base == 0 {
+            return (-1i64) as u64;
+        }
+        let teb = teb_base as *mut crate::exception::Teb;
+        unsafe {
+            (*teb).exception_list = None;
+        }
+        return 0;
+    }
+
+    // Validate user pointer
+    if !is_user_ptr_valid(handler_fn_addr, 1) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let handler_fn = unsafe {
+        core::mem::transmute::<u64, extern "C" fn(u32, u64, u64) -> u32>(handler_fn_addr)
+    };
+
+    match crate::exception::set_thread_exception_handler(Some(handler_fn)) {
+        0 => 0,
+        _ => (-1i64) as u64,
+    }
+}
+
 /// sys_cursor_blink (RAX=53): enable or disable automatic cursor blinking.
 /// RBX = 0 (disable) or 1 (enable).
 fn handler_cursor_blink(regs: Registers) -> u64 {
@@ -2262,6 +2300,7 @@ lazy_static! {
         t[26] = Some(handler_unlink as SyscallFn);
         t[27] = Some(handler_rmdir as SyscallFn);
         t[28] = Some(handler_rename as SyscallFn);
+        t[29] = Some(handler_set_exception_handler as SyscallFn);
         t[33] = Some(handler_get_drives as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
@@ -2311,6 +2350,7 @@ lazy_static! {
         t[26] = SyscallPermission::user();
         t[27] = SyscallPermission::user();
         t[28] = SyscallPermission::user();
+        t[29] = SyscallPermission::user();
         t[33] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
