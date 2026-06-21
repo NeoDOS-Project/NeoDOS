@@ -2,7 +2,7 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.0 (416 kernel tests + 11 user-mode binaries).
+> Versión actual: v0.39.2 (419 kernel tests + 11 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
@@ -1191,7 +1191,7 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
 
-- [ ] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver
+- [x] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver
   - **Descripción:** Emulador de terminal ANSI básico en el framebuffer driver del kernel. Interpreta secuencias de escape ANSI: `\x1b[Nm` (color foreground/background, 16 colores), `\x1b[2J` (clear screen), `\x1b[H` (cursor home), `\x1b[row;colH` (posicionar cursor), `\x1b[K` (clear to EOL). El console driver (`console.rs`) parsea el stream de bytes y aplica atributos al renderizar caracteres VGA 8×16 en el framebuffer GOP 1280×800. User-mode usa `sys_write` con secuencias ANSI embedded.
   - **Criterio:** `ECHO \x1b[31mRed\x1b[0m` muestra "Red" en rojo. `CLS` limpia pantalla via ANSI.
   - **Tests:** `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.

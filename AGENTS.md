@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.0
+v0.39.2
 
 ## Architecture Governance
 
@@ -700,7 +700,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-416 tests en 41 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+419 tests en 42 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -744,9 +744,10 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Per-CPU (KPRCB) | 5 | KPRCB size, slab cache count, run queue ops, init, offset sanity |
 | Syscall | 11 | SSDT dispatch, permissions, A4.6 spawn/readdir/mkdir/unlink/rmdir/rename |
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
+| ANSI | 3 | ANSI terminal: color fg/bg, cursor position, clear screen |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (416 tests kernel)
+1. Ejecuta `testing::run_all()` (419 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

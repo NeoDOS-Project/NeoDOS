@@ -1,4 +1,5 @@
-// src/vga.rs (now acts as a generic console)
+// src/console.rs
+// ANSI-capable console driver: parses escape sequences, renders with 16-color palette
 
 use core::fmt::{Write, Result, Arguments};
 use crate::graphics::RENDERER;
@@ -7,11 +8,69 @@ use crate::font;
 const VGA_WIDTH: usize = 160;
 const VGA_HEIGHT: usize = 50;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, AtomicU8, AtomicBool, Ordering};
 
 static ROW: AtomicUsize = AtomicUsize::new(0);
 static COL: AtomicUsize = AtomicUsize::new(0);
 
+// ── ANSI color table (16 standard VGA/ANSI colors) ─────────────────────────
+const ANSI_COLORS: [u32; 16] = [
+    0x000000, //  0: Black
+    0xAA0000, //  1: Red
+    0x00AA00, //  2: Green
+    0xAA5500, //  3: Brown
+    0x0000AA, //  4: Blue
+    0xAA00AA, //  5: Magenta
+    0x00AAAA, //  6: Cyan
+    0xAAAAAA, //  7: White (light gray)
+    0x555555, //  8: Bright Black (gray)
+    0xFF5555, //  9: Bright Red
+    0x55FF55, // 10: Bright Green
+    0xFFFF55, // 11: Bright Yellow
+    0x5555FF, // 12: Bright Blue
+    0xFF55FF, // 13: Bright Magenta
+    0x55FFFF, // 14: Bright Cyan
+    0xFFFFFF, // 15: Bright White
+];
+
+// ── ANSI parser state machine ─────────────────────────────────────────────
+const ANSI_NORMAL: u8 = 0;
+const ANSI_ESC: u8 = 1;
+const ANSI_CSI: u8 = 2;
+
+static ANSI_STATE: AtomicU8 = AtomicU8::new(ANSI_NORMAL);
+static ANSI_FG: AtomicU8 = AtomicU8::new(7);    // default fg = white
+static ANSI_BG: AtomicU8 = AtomicU8::new(0);    // default bg = black
+static ANSI_BOLD: AtomicBool = AtomicBool::new(false);
+
+// Parser transient state — only accessed when ANSI_STATE == CSI.
+// Safe with same re-entrancy caveat as ROW/COL (interrupt handling could
+// corrupt mid-sequence parsing; in practice ANSI sequences are short and
+// interrupt handlers don't inject partial escape codes).
+static mut ANSI_CSI_PARAM: u16 = 0;
+static mut ANSI_CSI_PARAMS: [u16; 8] = [0; 8];
+static mut ANSI_CSI_COUNT: usize = 0;
+static mut ANSI_CSI_HAS_DIGIT: bool = false;
+
+// ── Public helpers for tests ──────────────────────────────────────────────
+pub fn get_row() -> usize { ROW.load(Ordering::SeqCst) }
+pub fn get_col() -> usize { COL.load(Ordering::SeqCst) }
+pub fn get_fg() -> u8 { ANSI_FG.load(Ordering::Relaxed) }
+pub fn get_bg() -> u8 { ANSI_BG.load(Ordering::Relaxed) }
+pub fn get_bold() -> bool { ANSI_BOLD.load(Ordering::Relaxed) }
+
+fn current_fg_rgb() -> u32 {
+    let idx = ANSI_FG.load(Ordering::Relaxed);
+    let bold = ANSI_BOLD.load(Ordering::Relaxed);
+    let actual = if bold && idx < 8 { idx + 8 } else { idx };
+    ANSI_COLORS[actual as usize]
+}
+
+fn current_bg_rgb() -> u32 {
+    ANSI_COLORS[ANSI_BG.load(Ordering::Relaxed) as usize]
+}
+
+// ── VgaWriter (fmt::Write) ─────────────────────────────────────────────────
 pub struct VgaWriter;
 
 impl Write for VgaWriter {
@@ -26,10 +85,15 @@ impl Write for VgaWriter {
 pub fn write_codepoint(cp: u32) {
     let index: u8 = if cp <= 0xFF {
         cp as u8
-    } else if cp == 0x20AC {
-        0x80
     } else {
-        0x81
+        match cp {
+            0x20AC => 0x80, // €
+            0x2500 => 0x82, // ─
+            0x2502 => 0x83, // │
+            0x2514 => 0x84, // └
+            0x251C => 0x85, // ├
+            _      => 0x81, // full block fallback
+        }
     };
     write_char(index);
 }
@@ -40,9 +104,7 @@ pub fn _print(args: Arguments) {
     crate::serial_print!("{}", args);
 }
 
-pub fn init() {
-    // Legacy VGA init could go here, but we are using GOP
-}
+pub fn init() {}
 
 fn console_max_row() -> usize {
     if let Some(ref r) = *RENDERER.lock() {
@@ -53,24 +115,172 @@ fn console_max_row() -> usize {
     }
 }
 
+// ── ANSI escape handler ───────────────────────────────────────────────────
+fn handle_ansi_byte(c: u8) {
+    let state = ANSI_STATE.load(Ordering::Relaxed);
+    match state {
+        ANSI_ESC => {
+            if c == b'[' {
+                // Enter CSI — reset parameter accumulators
+                ANSI_STATE.store(ANSI_CSI, Ordering::Relaxed);
+                unsafe {
+                    ANSI_CSI_PARAM = 0;
+                    ANSI_CSI_COUNT = 0;
+                    ANSI_CSI_HAS_DIGIT = false;
+                }
+            } else {
+                // Not a CSI sequence; abort back to normal
+                ANSI_STATE.store(ANSI_NORMAL, Ordering::Relaxed);
+            }
+        }
+        ANSI_CSI => {
+            match c {
+                b'0'..=b'9' => {
+                    unsafe {
+                        ANSI_CSI_PARAM = ANSI_CSI_PARAM * 10 + (c - b'0') as u16;
+                        ANSI_CSI_HAS_DIGIT = true;
+                    }
+                }
+                b';' => {
+                    unsafe {
+                        if ANSI_CSI_COUNT < 8 {
+                            ANSI_CSI_PARAMS[ANSI_CSI_COUNT] = ANSI_CSI_PARAM;
+                            ANSI_CSI_COUNT += 1;
+                        }
+                        ANSI_CSI_PARAM = 0;
+                        ANSI_CSI_HAS_DIGIT = false;
+                    }
+                }
+                _ => {
+                    // Command byte — finalise params and execute
+                    unsafe {
+                        if ANSI_CSI_HAS_DIGIT && ANSI_CSI_COUNT < 8 {
+                            ANSI_CSI_PARAMS[ANSI_CSI_COUNT] = ANSI_CSI_PARAM;
+                            ANSI_CSI_COUNT += 1;
+                        } else if !ANSI_CSI_HAS_DIGIT && ANSI_CSI_COUNT == 0 {
+                            // No params at all (e.g., ESC[H)
+                        } else if !ANSI_CSI_HAS_DIGIT {
+                            // Last was ';' — an empty trailing param counts as 0
+                        }
+                    }
+                    execute_ansi_csi(c);
+                    ANSI_STATE.store(ANSI_NORMAL, Ordering::Relaxed);
+                }
+            }
+        }
+        _ => {
+            ANSI_STATE.store(ANSI_NORMAL, Ordering::Relaxed);
+        }
+    }
+}
+
+fn execute_ansi_csi(cmd: u8) {
+    unsafe {
+        let count = ANSI_CSI_COUNT;
+        let params = &ANSI_CSI_PARAMS[..count];
+
+        match cmd {
+            b'm' => { // SGR — Select Graphic Rendition
+                if count == 0 {
+                    // No params = reset (ESC[m ≣ ESC[0m)
+                    ANSI_FG.store(7, Ordering::Relaxed);
+                    ANSI_BG.store(0, Ordering::Relaxed);
+                    ANSI_BOLD.store(false, Ordering::Relaxed);
+                }
+                for &p in params {
+                    match p {
+                        0 => {
+                            ANSI_FG.store(7, Ordering::Relaxed);
+                            ANSI_BG.store(0, Ordering::Relaxed);
+                            ANSI_BOLD.store(false, Ordering::Relaxed);
+                        }
+                        1 => { ANSI_BOLD.store(true, Ordering::Relaxed); }
+                        22 => { ANSI_BOLD.store(false, Ordering::Relaxed); }
+                        30..=37 => { ANSI_FG.store((p - 30) as u8, Ordering::Relaxed); }
+                        38 => {} // extended fg — not implemented
+                        39 => { ANSI_FG.store(7, Ordering::Relaxed); }
+                        40..=47 => { ANSI_BG.store((p - 40) as u8, Ordering::Relaxed); }
+                        48 => {} // extended bg — not implemented
+                        49 => { ANSI_BG.store(0, Ordering::Relaxed); }
+                        90..=97 => { ANSI_FG.store((p - 90 + 8) as u8, Ordering::Relaxed); }
+                        100..=107 => { ANSI_BG.store((p - 100 + 8) as u8, Ordering::Relaxed); }
+                        _ => {}
+                    }
+                }
+            }
+
+            b'H' | b'f' => { // CUP / HVP — cursor position
+                let row = if count >= 1 { (params[0].max(1) - 1) as usize } else { 0 };
+                let col = if count >= 2 { (params[1].max(1) - 1) as usize } else { 0 };
+                ROW.store(row, Ordering::SeqCst);
+                COL.store(col, Ordering::SeqCst);
+            }
+
+            b'J' => { // ED — erase in display
+                let mode = if count >= 1 { params[0] } else { 0 };
+                if mode == 2 {
+                    // Clear entire screen
+                    ROW.store(0, Ordering::SeqCst);
+                    COL.store(0, Ordering::SeqCst);
+                    if let Some(ref r) = *RENDERER.lock() {
+                        r.clear(current_bg_rgb());
+                    }
+                }
+                // mode 0 and 1 are not implemented
+            }
+
+            b'K' => { // EL — erase in line
+                let mode = if count >= 1 { params[0] } else { 0 };
+                if mode == 0 || mode == 2 {
+                    let row = ROW.load(Ordering::SeqCst).min(console_max_row() - 1);
+                    let start_col = if mode == 0 { COL.load(Ordering::SeqCst) } else { 0 };
+                    let max_col = console_width();
+                    let bg = current_bg_rgb();
+                    for c in start_col..max_col {
+                        let x = c * font::FONT_WIDTH;
+                        let y = row * font::FONT_HEIGHT;
+                        font::draw_char(b' ', x, y, bg, bg);
+                    }
+                }
+            }
+
+            _ => {} // unsupported — silently ignore
+        }
+
+        // Reset parser accumulators
+        ANSI_CSI_PARAM = 0;
+        ANSI_CSI_PARAMS = [0; 8];
+        ANSI_CSI_COUNT = 0;
+        ANSI_CSI_HAS_DIGIT = false;
+    }
+}
+
+// ── Character output ──────────────────────────────────────────────────────
 pub fn write_char(c: u8) {
+    // Check ANSI parser state first
+    if ANSI_STATE.load(Ordering::Relaxed) != ANSI_NORMAL {
+        handle_ansi_byte(c);
+        return;
+    }
+
+    // ESC starts an escape sequence
+    if c == 0x1b {
+        ANSI_STATE.store(ANSI_ESC, Ordering::Relaxed);
+        return;
+    }
+
     let mut r = ROW.load(Ordering::SeqCst);
     let mut col = COL.load(Ordering::SeqCst);
 
     match c {
-        b'\n' => {
-            r += 1;
-            col = 0;
-        }
-        b'\r' => {
-            col = 0;
-        }
+        b'\n' => { r += 1; col = 0; }
+        b'\r' => { col = 0; }
         b'\x08' => {
             if col > 0 { col -= 1; }
-            draw_char_at(b' ', r, col, 0x000000);
+            draw_char_at(b' ', r, col);
         }
         c => {
-            draw_char_at(c, r, col, 0xFFFFFF);
+            draw_char_at(c, r, col);
             col += 1;
         }
     }
@@ -93,10 +303,10 @@ pub fn write_char(c: u8) {
     COL.store(col, Ordering::SeqCst);
 }
 
-fn draw_char_at(c: u8, row: usize, col: usize, color: u32) {
+fn draw_char_at(c: u8, row: usize, col: usize) {
     let x = col * font::FONT_WIDTH;
     let y = row * font::FONT_HEIGHT;
-    font::draw_char(c, x, y, color);
+    font::draw_char(c, x, y, current_fg_rgb(), current_bg_rgb());
 }
 
 fn scroll() {
@@ -108,8 +318,8 @@ fn scroll() {
         let visible_rows = fb_height_pixels / row_h;
         if visible_rows < 2 { return; }
         let rows_total = visible_rows * row_h;
+        let bg = current_bg_rgb();
 
-        // Shift all pixel rows up by one character row
         unsafe {
             core::ptr::copy(
                 fb.add(row_h * stride),
@@ -117,9 +327,9 @@ fn scroll() {
                 (rows_total - row_h) * stride,
             );
 
-            // Clear last character row
             let last = fb.add((rows_total - row_h) * stride);
-            core::ptr::write_bytes(last, 0, row_h * stride * 4);
+            // Fill new blank row with background color
+            crate::hal::raw::raw_rep_stosd(last, row_h * stride, bg);
         }
     }
 }
@@ -137,8 +347,8 @@ pub fn print_hex(value: u64) {
 }
 
 pub fn print_str(s: &str) {
-    for byte in s.bytes() {
-        write_char(byte);
+    for c in s.chars() {
+        write_codepoint(c as u32);
     }
     crate::serial_print!("{}", s);
 }
@@ -148,10 +358,12 @@ pub fn draw_cursor(visible: bool) {
     let max_col = console_width();
     let r = ROW.load(Ordering::SeqCst).min(max_row - 1);
     let c = COL.load(Ordering::SeqCst).min(max_col - 1);
+    let fg = current_fg_rgb();
+    let bg = current_bg_rgb();
     if visible {
-        draw_char_at(b'_', r, c, 0xFFFFFF);
+        font::draw_char(b'_', c * font::FONT_WIDTH, r * font::FONT_HEIGHT, fg, bg);
     } else {
-        draw_char_at(b' ', r, c, 0x000000);
+        font::draw_char(b' ', c * font::FONT_WIDTH, r * font::FONT_HEIGHT, bg, bg);
     }
 }
 
@@ -159,7 +371,7 @@ pub fn clear_screen() {
     ROW.store(0, Ordering::SeqCst);
     COL.store(0, Ordering::SeqCst);
     if let Some(ref r) = *RENDERER.lock() {
-        r.clear(0x000000);
+        r.clear(current_bg_rgb());
     }
 }
 
@@ -182,4 +394,110 @@ macro_rules! print {
 macro_rules! println {
     () => ($crate::print!("\r\n"));
     ($($arg:tt)*) => ($crate::print!("{}\r\n", format_args!($($arg)*)));
+}
+
+// ── ANSI tests ────────────────────────────────────────────────────────────
+pub fn register_ansi_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+
+    test_case!("ansi_color_foreground", {
+        let saved_fg = ANSI_FG.load(Ordering::Relaxed);
+        let saved_bg = ANSI_BG.load(Ordering::Relaxed);
+        let saved_bold = ANSI_BOLD.load(Ordering::Relaxed);
+
+        // ESC[31m — red foreground
+        print_str("\x1b[31m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), 1);
+
+        // ESC[41m — red background
+        print_str("\x1b[41m");
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), 1);
+
+        // ESC[1m — bold
+        print_str("\x1b[1m");
+        test_true!(ANSI_BOLD.load(Ordering::Relaxed));
+
+        // ESC[0m — reset
+        print_str("\x1b[0m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), 7);
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), 0);
+        test_eq!(ANSI_BOLD.load(Ordering::Relaxed), false);
+
+        // ESC[91m — bright red foreground
+        print_str("\x1b[91m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), 9);
+
+        // ESC[107m — bright white background
+        print_str("\x1b[107m");
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), 15);
+
+        // ESC[1;32m — bold + green
+        print_str("\x1b[0m");
+        print_str("\x1b[1;32m");
+        test_true!(ANSI_BOLD.load(Ordering::Relaxed));
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), 2);
+
+        // ESC[39m — default fg
+        print_str("\x1b[39m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), 7);
+
+        // ESC[49m — default bg
+        print_str("\x1b[49m");
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), 0);
+
+        // Restore
+        ANSI_FG.store(saved_fg, Ordering::Relaxed);
+        ANSI_BG.store(saved_bg, Ordering::Relaxed);
+        ANSI_BOLD.store(saved_bold, Ordering::Relaxed);
+    });
+
+    test_case!("ansi_cursor_position", {
+        let saved_row = ROW.load(Ordering::SeqCst);
+        let saved_col = COL.load(Ordering::SeqCst);
+
+        // ESC[10;20H — cursor to row 10, col 20
+        print_str("\x1b[10;20H");
+        test_eq!(ROW.load(Ordering::SeqCst), 9);
+        test_eq!(COL.load(Ordering::SeqCst), 19);
+
+        // ESC[H — cursor home
+        print_str("\x1b[H");
+        test_eq!(ROW.load(Ordering::SeqCst), 0);
+        test_eq!(COL.load(Ordering::SeqCst), 0);
+
+        // ESC[1;1H — explicit home
+        print_str("\x1b[1;1H");
+        test_eq!(ROW.load(Ordering::SeqCst), 0);
+        test_eq!(COL.load(Ordering::SeqCst), 0);
+
+        // ESC[f — alternative home
+        print_str("\x1b[5;15f");
+        test_eq!(ROW.load(Ordering::SeqCst), 4);
+        test_eq!(COL.load(Ordering::SeqCst), 14);
+
+        // Restore
+        ROW.store(saved_row, Ordering::SeqCst);
+        COL.store(saved_col, Ordering::SeqCst);
+    });
+
+    test_case!("ansi_clear_screen", {
+        let saved_row = ROW.load(Ordering::SeqCst);
+        let saved_col = COL.load(Ordering::SeqCst);
+
+        // Move cursor to known position
+        print_str("\x1b[5;10H");
+        test_eq!(ROW.load(Ordering::SeqCst), 4);
+        test_eq!(COL.load(Ordering::SeqCst), 9);
+
+        // ESC[2J — clear entire screen (resets cursor to home)
+        print_str("\x1b[2J");
+        test_eq!(ROW.load(Ordering::SeqCst), 0);
+        test_eq!(COL.load(Ordering::SeqCst), 0);
+
+        // Restore
+        ROW.store(saved_row, Ordering::SeqCst);
+        COL.store(saved_col, Ordering::SeqCst);
+    });
 }

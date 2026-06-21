@@ -327,6 +327,31 @@ pub fn sys_get_meminfo(info: &mut MemInfo) -> Result<(), i64> {
     ret_unit((export::get_table().sys_get_meminfo)(info as *mut MemInfo as *mut u8))
 }
 
+/// sys_open_with_flags (RAX=10): open a file with creation flags.
+/// flags & 1 = O_CREAT (create file if it doesn't exist).
+/// Uses raw int 0x80 to pass the flags parameter.
+pub fn sys_open_with_flags(path: &str, flags: u64) -> Result<u8, i64> {
+    let bytes = path.as_bytes();
+    let mut buf = [0u8; 256];
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "mov rax, 10",
+            "mov rbx, {ptr}",
+            "mov rcx, {flags}",
+            "int 0x80",
+            ptr = in(reg) ptr as u64,
+            flags = in(reg) flags,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as u8)
+}
+
 /// sys_get_volume_label (RAX=46): get the volume label for a drive.
 /// drive = ASCII drive letter (e.g. b'C'). Returns label string in buf (null-terminated).
 pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {

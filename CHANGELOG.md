@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.39.2 — 2026-06-21
+
+### Added
+- **B4.4 B2. ANSI terminal emulator** — `console.rs` + `font.rs`: ANSI escape sequence parser in kernel console driver. Supports `\x1b[Nm` (SGR: 16 fg/bg colors, bold, reset), `\x1b[H`/`\x1b[row;colH`/`\x1b[f` (cursor position), `\x1b[2J` (clear screen w/ current bg), `\x1b[K` (erase to EOL). 16-color ANSI palette. `font::draw_char()` takes fg+bg colors. `print_str()` now decodes UTF-8 via `chars()`. Box-drawing glyphs (U+2500/2502/2514/251C) added to 8×16 font at slots 0x82-0x85. 3 tests: `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
+- **LOADLIB command removed from Ring 0 shell** — `cmd_loadlib` and `loadlib.rs` removed; LOADLIB functionality was already migrated to user-mode LOAD.NXE.
+
 ## v0.39.1 — 2026-06-21
 
 ### Added

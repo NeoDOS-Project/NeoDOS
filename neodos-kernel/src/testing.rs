@@ -2379,6 +2379,8 @@ pub fn register_tests() {
     register_stress_tests();
     // A5.1 Unified block I/O layer (IoStack) tests
     crate::vfs::io::register_tests();
+    // B4.4 B2 ANSI terminal tests
+    crate::console::register_ansi_tests();
 }
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────

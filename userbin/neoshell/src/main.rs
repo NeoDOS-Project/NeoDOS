@@ -8,7 +8,7 @@ const HISTORY_SIZE: usize = 32;
 const MAX_ENV: usize = 16;
 const ARGS_ADDR: u64 = 0x41F000;
 static BUILTINS: &[&[u8]] = &[
-    b"CLS", b"CWD",
+    b"CWD",
     b"SET", b"EXIT", b"POWEROFF",
 ];
 
@@ -415,7 +415,6 @@ impl Shell {
         };
 
         match &cmd_upper[..cmd_upper_len] {
-            b"CLS" => self.cmd_cls(),
             b"CWD" => self.cmd_cwd(),
             b"SET" => self.cmd_set(),
             b"EXIT" => self.cmd_exit(),
@@ -479,10 +478,6 @@ impl Shell {
                 }
             }
         }
-    }
-
-    fn cmd_cls(&self) {
-        write_str(b"\x1b[2J\x1b[H");
     }
 
     fn cmd_cwd(&self) {

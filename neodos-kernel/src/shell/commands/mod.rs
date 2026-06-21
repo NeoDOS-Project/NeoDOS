@@ -19,7 +19,6 @@ mod help;
 mod keyb;
 mod kill;
 mod label;
-mod loadlib;
 mod md;
 mod ndreg;
 mod ren;

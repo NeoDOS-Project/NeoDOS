@@ -961,7 +961,9 @@ fn handler_waitpid(regs: Registers) -> u64 {
 
 fn handler_open(regs: Registers) -> u64 {
     let path_ptr = regs.rbx as *const u8;
-    let _flags = regs.rcx;
+    let flags = regs.rcx;
+
+    const O_CREAT: u64 = 1;
 
     if !is_user_ptr_valid(regs.rbx, 1) {
         return err_to_u64(SyscallError::Fault);
@@ -988,7 +990,7 @@ fn handler_open(regs: Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Inval),
     };
 
-    let (drive_idx, node) = match crate::globals::with_vfs(|vfs| {
+    fn resolve_path_inner(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Result<(usize, crate::fs::vfs::VfsNode), crate::fs::vfs::VfsError> {
         let has_drive = path.contains(':');
         let starts_with_sep = path.starts_with('\\') || path.starts_with('/');
         if has_drive || starts_with_sep {
@@ -999,9 +1001,42 @@ fn handler_open(regs: Registers) -> u64 {
             let abs = alloc::format!("{}:{}\\{}", drive_char, cwd_path, path);
             vfs.resolve_path(&abs)
         }
-    }) {
+    }
+
+    let (drive_idx, node) = match crate::globals::with_vfs(|vfs| resolve_path_inner(vfs, path)) {
         Ok(result) => result,
-        Err(_) => return err_to_u64(SyscallError::NoEnt),
+        Err(_) => {
+            if (flags & O_CREAT) != 0 {
+                match crate::globals::with_vfs(|vfs| vfs.create(path)) {
+                    Ok(_) => {}
+                    Err(_) => return err_to_u64(SyscallError::Io),
+                }
+                match crate::globals::with_vfs(|vfs| resolve_path_inner(vfs, path)) {
+                    Ok((drv, created_node)) => {
+                        let entry = if (created_node.mode & crate::fs::vfs::MODE_FILE) != 0 {
+                            crate::handle::HandleEntry::file(drv as u8, created_node.inode)
+                        } else {
+                            return err_to_u64(SyscallError::Inval);
+                        };
+                        let fd = crate::hal::without_interrupts(|| {
+                            let s = scheduler::current_scheduler();
+                            let mut lock = s.lock();
+                            if let Some(ep) = lock.current_eprocess_mut() {
+                                crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                            } else {
+                                None
+                            }
+                        });
+                        return match fd {
+                            Some(fd) => fd as u64,
+                            None => err_to_u64(SyscallError::NoMem),
+                        };
+                    }
+                    Err(_) => return err_to_u64(SyscallError::Io),
+                }
+            }
+            return err_to_u64(SyscallError::NoEnt);
+        }
     };
 
     let entry = if (node.mode & crate::fs::vfs::MODE_FILE) != 0 {
