@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.5 (441 kernel tests + 11 user-mode binaries + 34 LSP tests).
+> Versión actual: v0.39.6 (441 kernel tests + 22 user-mode binaries + 34 LSP tests).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 120 / ~131 items completados. Próximo milestone: **A3.1** (Bugcheck / Crash Dump).
+**Progreso:** 135 / ~130 items completados. Próximo milestone: **B9** (Ring 0→Ring 3 shell migration).
 
 ---
 
@@ -144,13 +144,22 @@
 105. **NT5.3. Path resolution API** — `src/kobj/lookup.rs`: API unificada `ob_lookup_by_path()` para paths absolutos y relativos, seguimiento de symlinks, normalización y errores `OB_*`. 5 tests.
 106. **NT5.4. VFS mount points integration** — `src/vfs/mount.rs`: integración VFS + namespace de objetos, mount points sobre `\Device`, symlink `\DosDevices\C:` y resolución de paths NT-style hacia NeoFS/FAT32/ISO9660. 5 tests.
 107. **B8.1. DIR.NXE** — `userbin/coredir/`: lista directorio con `sys_open` (dir) + `sys_readdir`. Columnas, `/W` (wide), `/P` (pausa).
-108. **B8.3. ECHO.NXE** — `userbin/coreecho/`: imprime argumentos a stdout via `sys_write`.
+108. **B8.3. ECHO.NXE** — `userbin/echo/`: imprime argumentos a stdout via `sys_write`.
 109. **B8.4. VER.NXE** — `userbin/ver/`: muestra versión del sistema via `sys_get_version` (RAX=43).
-110. **B8.6. HELP.NXE** — `userbin/corehelp/`: lista coretools disponibles escaneando `C:\BIN\*.NXE` con `sys_readdir`.
+110. **B8.6. HELP.NXE** — `userbin/corehelp/`: lista .NXE disponibles escaneando `C:\Programs\*.NXE` con `sys_readdir`.
 111. **B8.12. DATETIME.NXE** — `userbin/datetime/`: muestra fecha/hora RTC via `sys_get_datetime` (RAX=44). Flags `/D`, `/T`.
 112. **B8.13. MEM.NXE** — `userbin/mem/`: muestra uso de memoria via `sys_get_meminfo` (RAX=45). Migrado de Ring 0.
 113. **B8.14. TREE.NXE** — `userbin/tree/`: muestra árbol de directorios con `├──`/`└──`, recursivo hasta 6 niveles. Directorios primero, orden alfabético case-insensitive. Path opcional (default: CWD).
 114. **NeoDOS LSP** — `neodos-lsp/`: Language Server Protocol implementation for NeoDOS development. Full LSP features (completion, goto-def, hover, references, rename, documentSymbol, diagnostics). Background indexing with rayon-parallel parsing. NeoDOS-aware: detects syscall handlers, capability constants, shell command entries, driver states. `dashmap`-backed database. 8 MCP tools for AI-level code analysis. `opencode.json` integration. 34 unit tests.
+115. **B8.2. TYPE.NXE** — `userbin/coretype/`: muestra contenido de archivo con `sys_open` + `sys_readfile`. Búfer 512 B.
+116. **B8.5. CLS.NXE** — `userbin/corecls/`: limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
+117. **B8.7. COPY.NXE** — `userbin/corecopy/`: copia archivo con `sys_open` + `sys_writefile`. Búfer 4 KB.
+118. **B8.8. DEL.NXE** — `userbin/coredel/`: elimina archivo via `sys_unlink`.
+119. **B8.9. REN.NXE** — `userbin/coreren/`: renombra via `sys_rename`.
+120. **B8.10. MD.NXE** — `userbin/coremd/`: crea directorio via `sys_mkdir`.
+121. **B8.11. RD.NXE** — `userbin/corerd/`: elimina directorio vacío via `sys_rmdir`.
+122. **B4.1. PATH resolution** — `userbin/neoshell/`: búsqueda de `.NXE` en PATH. neoshell itera directorios PATH y ejecuta via `sys_spawn`. Prioridad `.NXE` > `.COM` > `.EXE`.
+123. **B8.15. Build + integración** — `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\Programs\`.
 
 ---
 
@@ -482,6 +491,20 @@ Prereqs: NT5 (objects need security descriptors).
 
 ---
 
+### NT5 extensions — Object Namespace (continues from COMPLETED)
+
+- [ ] **NT5.5 Z2. Unified resource namespace (URN)** | NT: Ob (Object Manager namespace) | Prereqs: NT5.3 | Files: `src/urn/mod.rs`
+  - **Descripción:** Capa de abstracción sobre NT5 Ob que unifica el acceso a recursos heterogéneos (devices, archivos VFS, claves registry, objetos kernel) bajo un esquema de URN único. Formato: `neodos://device/Harddisk0/Partition1`, `neodos://file/C:/System/boot.cfg`, `neodos://registry/Machine/System`. El URN resolver parsea el esquema, delega al subsistema correspondiente (ObNamespace para devices, VFS para files, Registry para config). Permite que user-mode acceda a cualquier recurso con una API unificada (`urn_open()`, `urn_read()`, `urn_write()`).
+  - **Criterio:** `urn_open("neodos://file/C:/System/boot.cfg")` retorna handle válido.
+  - **Tests:** `urn_parse_scheme`, `urn_resolve_file`, `urn_resolve_device`.
+
+- [ ] **NT5.6 Z3. Virtual FS objects (`K:\` drive)** | NT: `\GLOBAL??\` (Win32 device namespace) | Prereqs: NT5.4 | Files: `src/vfs/kdrive.rs`
+  - **Descripción:** Drive virtual `K:\` que expone objetos NT5 internos como archivos de solo lectura via VFS. Estructura: `K:\Processes\` (PIDs con estado), `K:\Drivers\` (NEM drivers), `K:\Memory\` (estadísticas), `K:\Interrupts\` (contadores). Implementa `FileSystem` trait con `read()` dinámico. Análogo al namespace `\GLOBAL??\` de NT que expone objetos del sistema como archivos.
+  - **Criterio:** `TYPE K:\Processes\1` muestra info del PID 1. `DIR K:\Drivers\` lista drivers cargados.
+  - **Tests:** `kdrive_list_processes`, `kdrive_read_driver_info`, `kdrive_memory_stats`.
+
+---
+
 ### FASE B — Features (userland + servicios)
 
 Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguridad.
@@ -498,127 +521,118 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   - **Criterio:** `NEOTRACE START` + ejecutar proceso + `NEOTRACE DUMP 32` muestra últimas 32 entradas con timestamps.
   - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`.
 
-#### B2. Service Layer
 
 
-- [ ] **B2.2 Z2. Unified resource namespace (URN)** | Prereqs: NT5.3 | Files: `src/urn/mod.rs`
-  - **Descripción:** Capa de abstracción que unifica el acceso a recursos heterogéneos (devices, archivos VFS, claves registry, objetos kernel) bajo un esquema de URN único. Formato: `neodos://device/Harddisk0/Partition1`, `neodos://file/C:/System/boot.cfg`, `neodos://registry/Machine/System`. El URN resolver parsea el esquema, delega al subsistema correspondiente (ObNamespace para devices, VFS para files, Registry para config). Permite que user-mode acceda a cualquier recurso con una API unificada (`urn_open()`, `urn_read()`, `urn_write()`).
-  - **Criterio:** `urn_open("neodos://file/C:/System/boot.cfg")` retorna handle válido.
-  - **Tests:** `urn_parse_scheme`, `urn_resolve_file`, `urn_resolve_device`.
+#### B2. NeoReg & Configuration Infrastructure
 
-- [ ] **B2.3 Z3. Virtual FS objects (`K:\` drive)** | Prereqs: NT5.4 | Files: `src/vfs/kdrive.rs`
-  - **Descripción:** Drive virtual `K:\` que expone objetos kernel internos como archivos de solo lectura accesibles via VFS estándar. Estructura: `K:\Processes\` (lista PIDs con estado, threads, memoria), `K:\Drivers\` (NEM drivers cargados con caps y estado), `K:\Memory\` (estadísticas buddy allocator, slab, page cache), `K:\Interrupts\` (contadores IRQ, APIC stats). Implementa el trait `FileSystem` con `read()` que genera contenido dinámicamente al momento de la lectura (no almacena datos). Similar a `/proc` y `/sys` de Linux.
-  - **Criterio:** `TYPE K:\Processes\1` muestra info del PID 1. `DIR K:\Drivers\` lista drivers cargados.
-  - **Tests:** `kdrive_list_processes`, `kdrive_read_driver_info`, `kdrive_memory_stats`.
-
-#### B3. Networking
-
-- [ ] **B3.1 D9. Socket API** | Prereqs: A4.1, A4.2 | Files: `src/net/socket.rs`, `src/syscall.rs`
-  - **Descripción:** API de sockets BSD-like expuesta como syscalls (RAX 30–39). Tipos: `SOCK_STREAM` (TCP), `SOCK_DGRAM` (UDP). Syscalls: `sys_socket(domain, type, proto)`, `sys_bind(fd, addr, len)`, `sys_listen(fd, backlog)`, `sys_accept(fd)`, `sys_connect(fd, addr, len)`, `sys_send(fd, buf, len, flags)`, `sys_recv(fd, buf, len, flags)`, `sys_shutdown(fd, how)`. Cada socket es un `HandleEntry` tipo `HANDLE_SOCKET` en la handle table del proceso. Buffers internos: TX ring 8 KB, RX ring 8 KB. Blocking via `ThreadState::Blocked` con wake desde IRQ del NIC.
-  - **Criterio:** User-mode puede crear socket, bind, listen, accept conexión TCP entrante.
-  - **Tests:** `socket_create_tcp`, `socket_bind_listen`, `socket_send_recv_loopback`.
-
-- [ ] **B3.2 E3. TCP/IP stack** | Prereqs: B3.1 | Files: `src/net/`
-  - **Descripción:** Stack de red completo en kernel. Capas: Ethernet (frame TX/RX, MAC addressing), ARP (tabla 64 entries, request/reply, timeout 300s), IPv4 (header parse/build, checksum, TTL decrement, fragmentation básica), ICMP (echo request/reply para `PING`), UDP (connectionless, checksum opcional), TCP (3-way handshake, sequence numbers, sliding window 16 KB, retransmit timer, FIN/RST). NIC driver via VirtIO-net o e1000 (QEMU). Se prueba con QEMU `-netdev user,hostfwd=tcp::8080-:80`.
-  - **Criterio:** `PING 10.0.2.2` recibe reply. TCP connection a host funciona.
-  - **Tests:** `tcp_handshake_3way`, `udp_send_recv`, `arp_table_lookup`, `icmp_echo_reply`.
-
-- [ ] **B3.3 D8. DHCP client** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
-  - **Descripción:** Cliente DHCP (RFC 2131) que obtiene configuración de red automáticamente al boot. Envía DHCPDISCOVER broadcast (UDP 68→67), recibe DHCPOFFER, envía DHCPREQUEST, recibe DHCPACK. Configura: IP address, subnet mask, default gateway, DNS server. Lease renewal timer via HPET. En QEMU `-netdev user`, el DHCP server integrado de QEMU asigna 10.0.2.15.
-  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automáticamente sin configuración manual.
-  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
-
-- [ ] **B3.4 D7. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
-  - **Descripción:** Cliente NTP (RFC 5905, modo SNTP simplificado) que sincroniza el RTC del sistema con un servidor NTP externo. Envía NTP request (UDP puerto 123), parsea respuesta (timestamps T1–T4), calcula offset y round-trip delay, ajusta RTC via `rtc_bridge.rs`. Servidor configurable en registry o `C:\System\Config\system.cfg`. Sincronización periódica cada 3600 segundos.
-  - **Criterio:** Tras boot con red, RTC sincronizado con servidor NTP (offset < 1s).
-  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`.
-
-#### B2 — NeoReg & Configuration Infrastructure
-* [ ] **B2.1 Z6. Registry hive database** | NT: `\Registry\Machine\...` | Prereqs: NT5, A5.1 | Files: `src/registry/mod.rs`
+* [ ] **B2.1 Z6. Registry hive database | NT: Cm (Configuration Manager), cell-based hive** | Prereqs: NT5 (Ob), NT6 (SID/ACL), A5.1 (IoStack) | Files: `src/cm/`, `src/cm/hive.rs`, `src/cm/cell.rs`, `src/cm/key.rs`, `src/cm/cache.rs`
   * **Descripción:**
-    Implementar NeoReg, sistema de configuración jerárquico persistente inspirado en Windows NT Registry.
-    Sustituye el modelo actual de configuración plana (`CONFIG.REG`) por una estructura en árbol navegable mediante rutas.
-    Namespace inicial:
+    Implementar NeoReg, sistema de configuración jerárquico persistente como el Cm de Windows NT. El diseño sigue el modelo NT de células (cells) y bins, con integración directa en el Object Manager NT5.
+    **Cell-based hive format** (en vez de árbol simple):
     ```text
+    Hive
+    ├─ Base Block (4 KB) — magic "neoR", seq numbers, checksum
+    ├─ Bins (4 KB cada uno)
+    │  ├─ Cell — Key: name, parent_cell, subkeys_list, values_list, class, sec_desc, last_write
+    │  ├─ Cell — Value: name, type (REG_SZ/DWORD/BINARY), data
+    │  └─ Cell — Security descriptor (SID + ACL, reutilizado entre keys)
+    └─ Free cells (linked list for reuse)
+    ```
+    Cada celda tiene un índice dentro del bin, y los bins se numeran secuencialmente. Esto permite crecimiento incremental y recovery por bin, no por hive completo.
+    **ObNamespace integration** — cada key registry es un objeto en NT5:
+    ```text
+    KObj type KEY
     \Registry
-      \Machine
-        \System
-        \Software
-        \Drivers
-        \Environment
+      \Machine           → KObj::Directory
+        \System           → KObj::Key (backed by SYSTEM.HIV)
+          \BootShell      → KObj::Key
+        \Drivers          → KObj::Key (backed by DRIVERS.HIV)
       \User
-        \Default
+        \Default          → KObj::Key (backed by DEFAULT.HIV)
     ```
-    Ejemplos:
+    `sys_open("\\Registry\\Machine\\System\\BootShell")` funciona via NT5 path resolution. Key objects tienen SecurityDescriptor del NT6 SRM.
+    **Cell cache** — hash table LRU de 512 celdas en memoria. Evita leer disco en cada acceso. Las celdas sucias (dirty) se marcan y se flushed periódicamente.
+    **Syscall API** — expuesta como syscalls NT-style:
     ```text
-    \Registry\Machine\Environment\PATH
-    \Registry\Machine\System\BootShell
-    \Registry\User\Default\Prompt
+    RAX 50  sys_open_key(path)        → handle (NtOpenKey)
+    RAX 51  sys_create_key(path)      → handle (NtCreateKey)
+    RAX 52  sys_query_value(key, name, buf, len) → value (NtQueryValueKey)
+    RAX 53  sys_set_value(key, name, type, data, len) (NtSetValueKey)
+    RAX 54  sys_enum_key(key, index, buf) → subkey name (NtEnumerateKey)
+    RAX 55  sys_enum_value(key, index, buf) → value name (NtEnumerateValueKey)
+    RAX 56  sys_delete_key(key)               (NtDeleteKey)
+    RAX 57  sys_flush_key(key)                (NtFlushKey)
+    RAX 58  sys_load_hive(path, mount_point)  (NtLoadKey, admin)
+    RAX 59  sys_unload_hive(mount_point)      (NtUnloadKey, admin)
     ```
-    Tipos soportados:
-    ```rust
-    REG_SZ
-    REG_DWORD
-    REG_BINARY
-    ```
-    API inicial:
-    ```rust
-    reg_create_key()
-    reg_open_key()
-    reg_query_value()
-    reg_set_value()
-    reg_delete_key()
-    reg_enum_keys()
-    reg_enum_values()
-    ```
-    Persistencia:
+    Valores: `REG_NONE=0`, `REG_SZ=1`, `REG_DWORD=4`, `REG_BINARY=3`, `REG_MULTI_SZ=7`.
+    **Boot sequence:**
     ```text
-    C:\SYSTEM\CONFIG\SYSTEM.HIV
+    PHASE 3.87  Init Cm subsystem
+    PHASE 3.88  Mount SYSTEM.HIV → \Registry\Machine\System
+    PHASE 3.89  Mount SOFTWARE.HIV → \Registry\Machine\Software
+    PHASE 3.90  Mount DRIVERS.HIV → \Registry\Machine\Drivers
+    PHASE 3.91  Mount DEFAULT.HIV → \Registry\User\Default
     ```
-    Formato inicial:
-    ```text
-    Header
-    Registry Tree
-    Values
-    Checksum
-    ```
-    Mantener una capa de abstracción para permitir migración futura a:
-    * múltiples hives
-    * journaling
-    * transacciones atómicas
-    * recovery
-    sin romper la API pública.
+  * **Criterio:**
+    - Keys y values expuestos como objetos en NT5 namespace
+    - `sys_open("\\Registry\\Machine\\System")` devuelve handle a la key raíz de SYSTEM.HIV
+    - `sys_set_value(key, "PATH", REG_SZ, "C:\\Programs")` persiste y es recuperable tras reboot
+    - Cell cache: 2da lectura de misma key no toca disco (cache hit)
+    - Hive persistente: tras reboot, valores anteriores siguen presentes
+    - Format cell-based: corrupción de un bin no invalida el hive completo
+  * **Tests:**
+    `cm_create_key_ob`, `cm_query_value_cache_hit`, `cm_set_value_persist`,
+    `cm_enum_keys_multi`, `cm_hive_reload_integrity`, `cm_cell_corruption_isolated`,
+    `cm_syscall_open_key`, `cm_syscall_set_get_value` (8 tests)
 
-* **Integración inicial**
-  NeoShell:
-  ```text
-  PATH
-  ```
-  obtenido desde:
-  ```text
-  \Registry\Machine\Environment\PATH
-  ```
-  Boot:
-  ```text
-  \Registry\Machine\System\BootShell
-  ```
-* **Criterio**
-  * Crear keys mediante rutas completas.
-  * Leer/escribir valores.
-  * Enumerar subclaves.
-  * Persistir hive a NeoFS.
-  * Recargar hive correctamente durante boot.
-  * NeoShell obtiene PATH desde NeoReg.
-* **Tests**
-  ```text
-  registry_create_key
+* [ ] **B2.2 Z6. Registry transaction journal | NT: Hive LOG (.LOG1/.LOG2)** | Prereqs: B2.1 | Files: `src/cm/journal.rs`
+  * **Descripción:**
+    Write-Ahead Log (WAL) para cada hive. Sigue el modelo NT de `.LOG` / `.LOG1` / `.LOG2`:
+    ```text
+    SYSTEM.HIV     — hive principal
+    SYSTEM.LOG     — WAL primario (cambios desde último flush)
+    SYSTEM.LOG1    — WAL secundario (NT usa .LOG1 como respaldo)
+    ```
+    Formato: cada entrada de log es un `JournalEntry { seq, op: CmOp, cell_id, old_data, new_data, crc32 }`.
+    Las operaciones son: `CreateKey`, `DeleteKey`, `SetValue`, `DeleteValue`, `RenameKey`.
+    Recovery al boot: si `SYSTEM.HIV.seq != SYSTEM.LOG.seq`, replay todas las entradas desde la última secuencia confirmada. Si `.LOG` está corrupto (crc32 mismatch), probar `.LOG1`. En NT, si ambos logs fallan, se carga el hive en modo read-only.
+  * **Criterio:** Apagado durante `reg_set_value` — al boot se replay el log y el valor aparece. Ambos logs corruptos → hive carga en read-only.
+  * **Tests:** `cm_journal_commit_replay`, `cm_journal_corrupt_log1_fallback`, `cm_journal_crc_mismatch`, `cm_journal_dual_recovery` (4 tests)
 
-  registry_set_query_value
-  registry_delete_key
-  registry_enum_keys
-  registry_hive_persist_reload
-  registry_load_shell_path
-  ```
+* [ ] **B2.3 Z6. Multi-Hive Architecture | NT: SYSTEM/SOFTWARE/SECURITY/DEFAULT hives** | Prereqs: B2.1, B2.2 | Files: `src/cm/hive.rs`, `src/cm/manager.rs`
+  * **Descripción:**
+    Múltiples hives bajo `\Registry` con independencia de carga, persistencia y recovery:
+    ```text
+    \Registry\Machine\System     → C:\SYSTEM\CONFIG\SYSTEM.HIV
+    \Registry\Machine\Software   → C:\SYSTEM\CONFIG\SOFTWARE.HIV
+    \Registry\Machine\Drivers    → C:\SYSTEM\CONFIG\DRIVERS.HIV
+    \Registry\User\Default       → C:\SYSTEM\CONFIG\DEFAULT.HIV
+    \Registry\Machine\Security   → C:\SYSTEM\CONFIG\SECURITY.HIV (B2.4)
+    ```
+    `HiveManager` central gestiona carga cíclica, resolución de rutas y carga diferida (lazy load). Fallback: hive faltante → empty, hive corrupto → intenta recovery → backup → empty. Cada hive tiene su propio cache de celdas y su propio journal.
+  * **Criterio:** `\Registry\Machine\System` resuelve SYSTEM.HIV. SOFTWARE.HIV corrupto → SYSTEM.HIV sigue funcionando.
+  * **Tests:** `cm_multi_hive_resolve`, `cm_hive_independent_recovery`, `cm_hive_lazy_load`, `cm_missing_hive_empty` (4 tests)
+
+* [ ] **B2.4 Z6. Registry Security | NT: SECURITY.HIVE, Key ACLs (NT6)** | Prereqs: B2.3, NT6 | Files: `src/cm/security.rs`
+  * **Descripción:**
+    Control de acceso sobre keys registry usando el NT6 Security Reference Monitor directamente (SID + ACL + SeAccessCheck), no un sistema ad-hoc. Cada key object tiene un `SecurityDescriptor` (owner SID, group SID, DACL). Al abrir una key, `SeAccessCheck` valida el token del caller contra la DACL de la key. Hive `SECURITY.HIV` en `\Registry\Machine\Security` para políticas.
+    Protecciones iniciales:
+    ```text
+    \Registry\Machine\System     → SYSTEM:FULL_CONTROL, USER:READ
+    \Registry\Machine\Drivers    → SYSTEM:FULL_CONTROL, USER:READ
+    \Registry\Machine\Security   → SYSTEM:FULL_CONTROL (USER: denied)
+    \Registry\User\Default       → USER:FULL_CONTROL
+    ```
+  * **Criterio:** `sys_set_value` en `\Registry\Machine\Security` desde USER → `-EACCES`. `sys_open_key` en `\Registry\User\Default` desde USER → OK.
+  * **Tests:** `cm_security_system_write_allowed`, `cm_security_user_read_denied`, `cm_security_admin_bypass`, `cm_security_acl_inheritance` (4 tests)
+
+* [ ] **B2.5 Z6. Registry notification + load/unload | NT: RegNotifyChangeKeyValue, NtLoadKey, NtUnloadKey** | Prereqs: B2.3, Event Bus | Files: `src/cm/notify.rs`
+  * **Descripción:**
+    **Key change notifications:** cuando una key o valor cambia, se publica un evento `EVENT_REG_KEY_CHANGED (type 0x2001)` al Event Bus con `data0=key_id`, `data1=change_type`. Permite que drivers y procesos user-mode reaccionen a cambios de configuración sin polling. `sys_notify_reg_key(key_handle, subscribe)` (RAX=60) registra interés; el kernel entrega eventos via el mecanismo de APC (A4.5).
+    **Hive load/unload:** `sys_load_hive(path, mount_point)` (RAX=58, admin) carga un hive externo (ej. perfil de usuario) bajo una ruta en `\Registry`. `sys_unload_hive(mount_point)` (RAX=59, admin) lo descarga y persiste. Útil para profiles de usuario: `sys_load_hive("C:\\Users\\Alejandro\\NTUSER.HIV", "\\Registry\\User\\Alejandro")`.
+  * **Criterio:** `reg_set_value(key, ...)` → subscriber recibe `EVENT_REG_KEY_CHANGED`. `sys_load_hive(path, mount)` carga hive externo y keys aparecen bajo `\Registry\User\Alejandro`.
+  * **Tests:** `cm_notify_key_change_apc`, `cm_notify_subscribe_unsubscribe`, `cm_load_hive_external`, `cm_unload_hive_persist`, `cm_load_hive_admin_required` (5 tests)
 
 
 * [ ] **B2.2 Z6. Registry transaction journal** | NT: Registry Transaction Log (`*.LOG1`, `*.LOG2`) | Prereqs: B2.1 | Files: `src/registry/journal.rs`, `src/registry/mod.rs`
@@ -1166,14 +1180,33 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   registry_user_read
   registry_security_persist
   ```
+---
+
+#### B3. Networking
+
+- [ ] **B3.1 D9. Network I/O | NT: Winsock (ws2_32.dll) → NtCreateFile(\Device\Tcp)** | Prereqs: A4.1, A4.2 | Files: `src/net/`, `src/syscall.rs`
+  - **Descripción:** Modelo NT: el kernel expone `\Device\Tcp` y `\Device\Udp` como objetos de dispositivo en el namespace NT5. La API de red user-mode va en `libneodos/src/net.rs` como wrapper que abre `\Device\Tcp` via `sys_open` y opera via `sys_ioctl` (NtDeviceIoControlFile). No hay syscalls socket-style — se usa el modelo NT de File + IoControl. `sys_ioctl` (RAX=14) se extiende con códigos como `IOCTL_TCP_CONNECT`, `IOCTL_TCP_SEND`, `IOCTL_TCP_RECV`. El kernel tiene un stack TCP/IP interno (Ethernet, ARP, IPv4, ICMP, UDP, TCP) que se conecta al NIC via IRP. Winsock-like API en user-mode: `net_open()`, `net_bind()`, `net_connect()`, `net_send()`, `net_recv()`, `net_close()`.
+  - **Criterio:** User-mode puede hacer `net_open(b"\\Device\\Tcp")`, `net_connect(fd, ip, port)`, `net_send(fd, buf)`. `PING` funciona via ICMP.
+  - **Tests:** `net_open_device_tcp`, `net_tcp_connect_send_recv`, `net_icmp_ping`.
+
+- [ ] **B3.2 E3. TCP/IP stack | NT: AFD (Ancillary Function Driver)** | Prereqs: B3.1 | Files: `src/net/`
+  - **Descripción:** Stack de red completo en kernel como driver de dispositivo `\Device\Tcp` y `\Device\Udp`. Capas: Ethernet (frame TX/RX, MAC addressing), ARP (tabla 64 entries, request/reply, timeout 300s), IPv4 (header parse/build, checksum, TTL decrement, fragmentation básica), ICMP (echo request/reply para `PING`), UDP (connectionless, checksum opcional), TCP (3-way handshake, sequence numbers, sliding window 16 KB, retransmit timer, FIN/RST). NIC driver via VirtIO-net o e1000 (QEMU). Se prueba con QEMU `-netdev user,hostfwd=tcp::8080-:80`.
+  - **Criterio:** `PING 10.0.2.2` recibe reply. TCP connection a host funciona.
+  - **Tests:** `tcp_handshake_3way`, `udp_send_recv`, `arp_table_lookup`, `icmp_echo_reply`.
+
+- [ ] **B3.3 D8. DHCP client | NT: DHCP Client Service** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
+  - **Descripción:** Cliente DHCP (RFC 2131) que obtiene configuración de red automáticamente al boot. Envía DHCPDISCOVER broadcast (UDP 68→67), recibe DHCPOFFER, envía DHCPREQUEST, recibe DHCPACK. Configura: IP address, subnet mask, default gateway, DNS server. Lease renewal timer via HPET. En QEMU `-netdev user`, el DHCP server integrado de QEMU asigna 10.0.2.15.
+  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automáticamente sin configuración manual.
+  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
+
+- [ ] **B3.4 D7. NTP client | NT: W32Time (Windows Time Service)** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
+  - **Descripción:** Cliente NTP (RFC 5905, modo SNTP simplificado) que sincroniza el RTC del sistema con un servidor NTP externo. Envía NTP request (UDP puerto 123), parsea respuesta (timestamps T1–T4), calcula offset y round-trip delay, ajusta RTC via `rtc_bridge.rs`. Servidor configurable en registry o `C:\System\Config\system.cfg`. Sincronización periódica cada 3600 segundos.
+  - **Criterio:** Tras boot con red, RTC sincronizado con servidor NTP (offset < 1s).
+  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`.
 
 ---
-#### B4. Userland Usable System
 
-- [ ] **B4.1 S8. PATH resolution** | Prereqs: A4.7 | Files: `userbin/neoshell/`
-  - **Descripción:** Implementar búsqueda de ejecutables en múltiples directorios PATH en neoshell. Cuando el usuario escribe un comando sin ruta absoluta (ej. `DIR`), neoshell itera sobre los directorios de la variable `PATH` (ej. `C:\Programs;C:\BIN`) buscando `DIR.NXE`, `DIR.COM` o `DIR.EXE` via `sys_open` + `sys_readdir`. El primer match se ejecuta via `sys_spawn`. Prioridad de extensión: `.NXE` > `.COM` > `.EXE`. PATH se inicializa desde env vars (`SET PATH=...`).
-  - **Criterio:** `SET PATH=C:\Programs;C:\BIN` + `DIR` encuentra y ejecuta `C:\BIN\DIR.NXE`.
-  - **Tests:** `path_search_first_match`, `path_extension_priority`, `path_not_found_error`.
+#### B4. Userland Usable System
 
 - [ ] **B4.2 S9. Shell pipes (`|`)** | Prereqs: A4.7, S2 | Files: `userbin/neoshell/`
   - **Descripción:** Soporte de pipelines en neoshell. Parser tokeniza `cmd1 | cmd2 | cmd3`, crea pipes via `sys_pipe` (RAX=5) para cada conexión, y spawna cada comando con `sys_spawn` usando `sys_dup2` (RAX=6) para redirigir stdout del productor al stdin del consumidor. El `PipeManager` existente (16 buffers × 4 KB) soporta blocking reads via `ThreadState::Blocked`. Neoshell hace `sys_waitpid` en el último comando del pipeline.
@@ -1200,7 +1233,7 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   - **Criterio:** `NEOEDIT C:\System\Config\system.cfg` abre, edita, guarda correctamente.
   - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`.
 
-- [ ] **B4.7 B6b-v2. Shared library per-process binding** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/`
+- [ ] **B4.7 B6b-v2. Shared library per-process binding | NT: Ldr (Loader, PEB->LdrData)** | Prereqs: A1.5, sys_loadlib | Files: `src/elf.rs`, `libneodos/`
   - **Descripción:** Evolucionar el sistema NXL actual (slots globales fijos en 0x1E000000–0x1E200000 compartidos entre procesos) a binding per-process. Cada EPROCESS mantiene su propia tabla de NXLs cargadas (`nxl_table: [Option<NxlBinding>; 8]` en `Eprocess`). `sys_loadlib` (RAX=21) mapea la NXL en el address space del proceso caller (no global). Al hacer `sys_exit`, se desmapean las NXLs del proceso. Esto permite versiones diferentes de la misma NXL en procesos distintos.
   - **Criterio:** Dos procesos cargan versiones distintas de `libmath.nxl` sin interferencia.
   - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`.
@@ -1246,47 +1279,131 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   - **Criterio:** Padre e hijo comparten memoria al nacer y divergen solo al escribir.
   - **Tests:** `cow_fork_shares_pages`, `cow_write_triggers_copy`, `cow_fork_isolated_writes`.
 
-#### B8. Coretools (comandos .NXE independientes)
 
-Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con libneodos, compilado como `.NXE` y ubicado en `C:\BIN\`.
 
-- [ ] **B8.2. TYPE.NXE** | `userbin/coretype/` | Muestra contenido de archivo con `sys_open` + `sys_readfile`. Búfer 512 B.
-  - **Descripción:** Versión minimalista del `TYPE` clásico: abre el archivo en modo lectura, vuelca el contenido a stdout por bloques pequeños y gestiona correctamente archivos vacíos o más largos que el búfer. Debe ser utilizable desde el shell y desde scripts `.BAT`.
-  - **Criterio:** `TYPE archivo.txt` imprime el contenido completo sin truncar ni corromper líneas.
-- [ ] **B8.5. CLS.NXE** | `userbin/corecls/` | Limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
-  - **Descripción:** Comando de limpieza de terminal que emite secuencias ANSI estándar para borrar pantalla y reposicionar el cursor al origen. Debe funcionar tanto en consola framebuffer como en cualquier terminal compatible con el parser ANSI del sistema.
-  - **Criterio:** `CLS` deja la pantalla limpia y el prompt vuelve a la esquina superior izquierda.
-- [ ] **B8.7. COPY.NXE** | `userbin/corecopy/` | Copia archivo: `sys_open` src (read) + `sys_open`/`sys_writefile` dst. Búfer 4 KB.
-  - **Descripción:** Utilidad de copia de archivos con progreso implícito por bloques. Lee el origen en chunks de 4 KB para no depender de archivos pequeños, crea o sobrescribe el destino y preserva el contenido exacto. Es la base para backups simples y para validar el camino completo de lectura/escritura de FS.
-  - **Criterio:** `COPY a.txt b.txt` produce un destino idéntico al origen.
-- [ ] **B8.8. DEL.NXE** | `userbin/coredel/` | Elimina archivo via `sys_unlink`.
-  - **Descripción:** Eliminación segura de archivos vía VFS. Debe resolver la ruta, comprobar que el target es un archivo y no un directorio, y delegar al kernel para liberar inodos y bloques asociados.
-  - **Criterio:** `DEL archivo.txt` borra el archivo y libera su entrada en el directorio.
-- [ ] **B8.9. REN.NXE** | `userbin/coreren/` | Renombra via `sys_rename`.
-  - **Descripción:** Renombrado dentro del mismo directorio o entre rutas compatibles. Tiene que preservar atributos del archivo y fallar de forma limpia si el destino ya existe o si el movimiento cruza límites no soportados.
-  - **Criterio:** `REN viejo.txt nuevo.txt` actualiza el nombre sin perder contenido.
-- [ ] **B8.10. MD.NXE** | `userbin/coremd/` | Crea directorio via `sys_mkdir`.
-  - **Descripción:** Crea directorios con permisos por defecto, valida que la ruta padre exista y evita crear nodos duplicados. Es importante para preparar el árbol de `Programs`, `System` y estructuras de usuario.
-  - **Criterio:** `MD C:\TMP` crea el directorio y queda visible en `DIR`.
-- [ ] **B8.11. RD.NXE** | `userbin/corerd/` | Elimina directorio vacío via `sys_rmdir`.
-  - **Descripción:** Elimina directorios únicamente si están vacíos y si no son puntos de montaje ni rutas protegidas. Debe reportar error claro si el directorio contiene entradas o si la ruta no existe.
-  - **Criterio:** `RD C:\TMP` solo funciona cuando el directorio está vacío.
-- [ ] **B8.14. Build + integración** | `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\BIN\`. CONFIG.SYS incluye `RUN C:\BIN\NEOSHELL.NXE`.
-  - **Descripción:** Paso de empaquetado final que asegura que todos los coretools, neoshell y dependencias queden colocados en la imagen NeoDOS antes de arrancar. Debe actualizar el árbol `C:\BIN\`, incluir los binarios nuevos y dejar la imagen lista para arrancar sin intervención manual.
-  - **Criterio:** La imagen generada contiene todos los `.NXE` listados y `NeoShell` arranca desde `CONFIG.SYS`.
+#### B9. Shell command migration Ring 0 → Ring 3
 
-#### B7. Experimental
+Migrar los comandos del kernel shell Ring 0 (`src/shell/commands/`) a `.NXE` en Ring 3. El Ring 0 solo mantiene `RUN` (bootstrap) y `CRASH` (crash dump). Se añaden 11 syscalls (RAX 29–39). Post-migración: toda interacción de operador pasa por `neoshell.nxe` vía PATH dispatch.
 
-- [ ] **B7.1 E4. Full GUI system** | Prereqs: B4.10 | Files: `userbin/gui/` | Done when: desktop con iconos, menú, ventanas redimensionables.
-- [ ] **B7.2 E5. Advanced secure boot (TPM)** | Prereqs: B5.3 | Files: `src/boot/tpm.rs` | Done when: medición PCR + sealed storage.
-- [ ] **B7.3 E6. Package manager** | Prereqs: B5.1, A5.1 | Files: `userbin/neopkg/` | Done when: install/remove paquetes `.NPK` firmados.
-- [ ] **B7.4 T4. Time-travel debugging** | Prereqs: A3.2, B1.1 | Files: `src/debugger/timetravel.rs` | Done when: replay de trace buffer en debugger.
-- [ ] **B7.5 T5. Live kernel patching** | Prereqs: A2.4, A3.2 | Files: `src/patch/mod.rs` | Done when: hot-patch de función kernel sin reboot.
-- [ ] **B7.6 T2. Distributed NeoDOS nodes** | Prereqs: B3.2 | Files: `src/cluster/` | Done when: 2 nodos QEMU se descubren y comparten FS read-only.
+**Nota sobre HELP:** coexisten Ring 0 (`commands/help.rs`) y Ring 3 (`corehelp.nxe`). El Ring 0 se transforma en un stub mínimo que solo muestra los comandos kernel (RUN, CRASH) y redirige al usuario a usar `HELP` desde `neoshell` para la lista completa de .NXE disponibles.
+
+**Syscalls nuevas (RAX 29–39):**
+```text
+RAX 29  sys_get_process_list(buf, max)       — PS
+RAX 30  sys_kill(pid)                        — KILL (admin)
+RAX 31  sys_set_priority(pid, prio)          — PRI (admin)
+RAX 32  sys_set_volume_label(drive, buf)     — LABEL
+RAX 33  sys_get_drives(buf, max)             — DRIVES
+RAX 34  sys_fsck(drive, flags)               — FSCK
+RAX 35  sys_set_keyboard_layout(layout_id)   — KEYB
+RAX 36  sys_driver_enum(buf, max)            — NDREG / NEMLIST
+RAX 37  sys_driver_load(path)                — LOADNEM (admin)
+RAX 38  sys_driver_unload(name)              — NDREG UNLOAD (admin)
+RAX 39  sys_batch_exec(path)                 — CALL (admin)
+```
+
+**Fase 1 — Trivial (ya existe .NXE equivalente):**
+
+- [ ] **B9.1. HELP** | `src/shell/commands/help.rs`, `userbin/corehelp/`
+  - **Descripción:** Ring 0 HELP = stub (RUN, CRASH + redirigir a neoshell).
+    Ring 3 al estilo NT:
+    - Cada `.NXE` embebe en `.rodata` una descripción corta entre marcadores `::D::` y `::ED::`, y además responde al flag `/?` imprimiendo su ayuda completa por stdout y saliendo.
+    - `HELP` escanea `C:\Programs\*.NXE`, lee cada binario buscando `::D::`, extrae la descripción, y lista todos los comandos con su descripción.
+    - `HELP <cmd>` spawnea `<cmd>.NXE /?` via `sys_spawn` con pipe, captura la salida y la muestra.
+    - Cada `.NXE` implementa `/?` parsing en su `_start`.
+    Formato embebido en `.rodata` de cada .NXE:
+    ```rust
+    #[used]
+    #[link_section = ".rodata"]
+    static HELP_DESC: &[u8] = b"::D::Clears the terminal screen.::ED::";
+    ```
+  - **Criterio:** `HELP` lista todos los .NXE con descripción corta. `HELP CLS` ejecuta `CLS.NXE /?` y muestra su ayuda. `.NXE` sin `::D::` se lista sin descripción.
+  - **Tests:** `help_ring0_stub_output`, `help_ring3_list_descriptions`, `help_ring3_detail_spawn_slash_question`, `help_ring3_no_description`.
+
+Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri, label, drives, fsck, keyb, ndreg, loadnem, call — cada uno responde a `/?` con su sintaxis.
+
+- [ ] **B9.2. SET** | `src/shell/commands/set.rs`, `neoshell.nxe` (ya existe)
+  - **Descripción:** Eliminar el SET de Ring 0. El neoshell Ring 3 ya tiene SET incorporado como built-in con soporte para variables de entorno persistentes. No necesita syscall nueva.
+  - **Criterio:** Ring 0 ya no responde a SET. neoshell responde a SET correctamente.
+  - **Tests:** `ring0_set_removed`, `ring3_set_get_env`.
+
+- [ ] **B9.3. EXIT** | `src/shell/commands/shutdown.rs`, `neoshell.nxe` (ya existe)
+  - **Descripción:** Eliminar el EXIT/SHUTDOWN de Ring 0. El neoshell Ring 3 ya tiene POWEROFF/EXIT como built-ins que invocan `sys_poweroff` (RAX=42). El shutdown.rs del Ring 0 desaparece.
+  - **Criterio:** EXIT en Ring 0 ya no existe (el comando no se reconoce). POWEROFF en neoshell apaga la máquina.
+  - **Tests:** `ring0_exit_removed`, `ring3_poweroff_invokes_syscall`.
+
+**Fase 2 — Syscall 1:1 (nuevo .NXE + syscall específica):**
+
+- [ ] **B9.4. PS** | `userbin/ps/` → `ps.nxe`
+  - **Descripción:** Lista de procesos en Ring 3. Usa `sys_get_process_list(RAX=29)` que devuelve un array de entradas con PID, TID, estado (Running/Ready/Blocked/Terminated), prioridad (0–3), nombre del proceso y ticks de CPU. Muestra en columnas formateadas con cabecera. Admite `/A` (todos los procesos, no solo los del caller). El .NXE replica la funcionalidad del actual `commands/ps.rs`.
+  - **Criterio:** `PS` desde neoshell muestra PID, TID, estado y prioridad de todos los procesos activos.
+  - **Tests:** `ring3_ps_list_all`, `ring3_ps_format_columns`.
+
+- [ ] **B9.5. KILL** | `userbin/kill/` → `kill.nxe`
+  - **Descripción:** Termina un proceso por PID desde Ring 3. Usa `sys_kill(pid, RAX=30)` que ejecuta `Scheduler::kill_pid()`. La syscall verifica que el caller tenga token admin (`is_admin_token()`) o que el PID objetivo sea hijo del caller. El .NXE muestra confirmación antes de matar. Error si el PID no existe o no tiene permiso.
+  - **Criterio:** `KILL 5` desde neoshell termina el PID 5. `KILL 1` sin admin falla con "Access denied".
+  - **Tests:** `ring3_kill_admin_success`, `ring3_kill_user_denied`, `ring3_kill_nonexistent_pid`.
+
+- [ ] **B9.6. PRI** | `userbin/pri/` → `pri.nxe`
+  - **Descripción:** Cambia la prioridad de scheduling de un proceso desde Ring 3. Usa `sys_set_priority(pid, prio, RAX=31)`. La syscall es admin-only. Prioridades: 0=HIGH, 1=ABOVE_NORMAL, 2=NORMAL (default), 3=IDLE. El .NXE parsea el nombre del nivel (ej. `PRI 5 HIGH`). Replica la funcionalidad del actual `commands/pri.rs`.
+  - **Criterio:** `PRI 5 0` o `PRI 5 HIGH` cambia prioridad del PID 5 a HIGH. Usuario sin admin recibe "Access denied".
+  - **Tests:** `ring3_pri_set_high`, `ring3_pri_invalid_level`, `ring3_pri_admin_required`.
+
+- [ ] **B9.7. LABEL** | `userbin/label/` → `label.nxe`
+  - **Descripción:** Muestra o cambia la etiqueta de volumen de una unidad desde Ring 3. Usa `sys_set_volume_label(drive, buf, RAX=32)`. Sin argumentos: muestra la etiqueta actual via `sys_get_volume_label` (RAX=46, ya existe). Con argumento: establece la nueva etiqueta (máximo 11 caracteres, ASCII mayúsculas). Replica el actual `commands/label.rs`.
+  - **Criterio:** `LABEL C:MIVOL` cambia la etiqueta de C:. `LABEL C:` muestra la etiqueta actual.
+  - **Tests:** `ring3_label_set`, `ring3_label_get`, `ring3_label_invalid_chars`.
+
+- [ ] **B9.8. DRIVES** | `userbin/drives/` → `drives.nxe`
+  - **Descripción:** Lista las unidades montadas desde Ring 3. Usa `sys_get_drives(buf, max, RAX=33)` que devuelve un array con letra de unidad, tipo de FS (NeoDOS, FAT32, ISO9660), etiqueta y tamaño. Muestra en columnas. El .NXE replica el actual `commands/drives.rs`.
+  - **Criterio:** `DRIVES` desde neoshell muestra C: (NeoDOS), A: (FAT32/ESP) con etiquetas y tamaños.
+  - **Tests:** `ring3_drives_list`, `ring3_drives_format`.
+
+- [ ] **B9.9. FSCK** | `userbin/fsck/` → `fsck.nxe`
+  - **Descripción:** Verificación y reparación del sistema de archivos NeoDOS desde Ring 3. Usa `sys_fsck(drive, flags, RAX=34)`. Sin `/F`: solo comprobación (reporta errores sin modificar). Con `/F`: repara errores (reconecta inodos huérfanos, corrige block pointers, actualiza bitmap). Replica `commands/fsck.rs` (~300 líneas de lógica).
+  - **Criterio:** `FSCK C:` comprueba e informa. `FSCK C: /F` repara errores encontrados. Requiere admin para `/F`.
+  - **Tests:** `ring3_fsck_check_only`, `ring3_fsck_repair`, `ring3_fsck_admin_required`.
+
+- [ ] **B9.10. KEYB** | `userbin/keyb/` → `keyb.nxe`
+  - **Descripción:** Cambia la distribución del teclado desde Ring 3. Usa `sys_set_keyboard_layout(layout_id, RAX=35)`. Layouts: 0=US, 1=SP (Spanish). La syscall envía un evento `EVENT_KEYB_LAYOUT` (type 9) al Event Bus, que el driver ps2kbd NEM consume para cambiar las tablas de scan code → ASCII. Replica `commands/keyb.rs`.
+  - **Criterio:** `KEYB SP` cambia a teclado español. `KEYB US` vuelve a inglés.
+  - **Tests:** `ring3_keyb_switch_us`, `ring3_keyb_switch_sp`, `ring3_keyb_invalid_layout`.
+
+**Fase 3 — Driver registry (NDREG + NEMLIST fusionado):**
+
+- [ ] **B9.11. NDREG** | `userbin/ndreg/` → `ndreg.nxe`
+  - **Descripción:** CLI del registro de drivers NEM desde Ring 3. NEMLIST se fusiona como subcomando `NDREG LIST`. Usa `sys_driver_enum(buf, max, RAX=36)` para listar y `sys_driver_unload(name, RAX=38, admin)` para descargar. Subcomandos: LIST (ex-NEMLIST), SHOW <name>, QUERY, RUNTIME, HEALTH, DEBUG <name>, LOAD <path> (via `sys_driver_load`), UNLOAD <name> [/F], RELOAD <path>. Replica ~550 líneas de `commands/ndreg.rs`. Los subcomandos LOAD/UNLOAD/RELOAD requieren admin token.
+  - **Criterio:** `NDREG LIST` muestra drivers con estado y pipeline. `NDREG UNLOAD ps2kbd` descarga driver (admin). `NDREG LOAD C:\System\Drivers\foo.nem` carga driver (admin).
+  - **Tests:** `ring3_ndreg_list`, `ring3_ndreg_show`, `ring3_ndreg_unload_admin`, `ring3_ndreg_load_admin`, `ring3_ndreg_user_denied`.
+
+**Fase 4 — Admin-only (syscall con token check):**
+
+- [ ] **B9.12. LOADNEM** | `userbin/loadnem/` → `loadnem.nxe`
+  - **Descripción:** Carga un driver NEM desde Ring 3. Usa `sys_driver_load(path, RAX=37)`. La syscall verifica token admin (`is_admin_token()`), lee el archivo .nem desde NeoFS a través de VFS, parsea el header NEM v3, lo carga en la región de aislamiento X4, y lo pasa por el pipeline de certificación (Loaded→Initialized→Registered→Bound→Active). Muestra progreso paso a paso. Reemplaza el inline shim `load_nem()` en `handler.rs`.
+  - **Criterio:** `LOADNEM C:\System\Drivers\foo.nem` carga, certifica y activa el driver (admin). Usuario sin admin recibe "Access denied".
+  - **Tests:** `ring3_loadnem_activate`, `ring3_loadnem_invalid_path`, `ring3_loadnem_admin_required`.
+
+- [ ] **B9.13. CALL** | `userbin/call/` → `call.nxe`
+  - **Descripción:** Ejecuta un archivo batch .BAT desde Ring 3. Usa `sys_batch_exec(path, RAX=39)`. La syscall (admin) abre el .BAT, lee líneas, y para cada línea que no sea REM o esté vacía, la ejecuta como un comando del shell (via `sys_spawn` para comandos externos, o parseando built-ins simples). Soporta `@ECHO OFF`, `REM`, y llamadas a otros .NXE. Replica la funcionalidad básica del actual `commands/call.rs`.
+  - **Criterio:** `CALL C:\test.bat` ejecuta las líneas del batch secuencialmente (admin).
+  - **Tests:** `ring3_call_basic_bat`, `ring3_call_with_args`, `ring3_call_admin_required`.
+
+**Permanecen en Ring 0:**
+- **RUN** — bootstrap loader necesario para lanzar el primer binario Ring 3 (NeoInit/neoshell) desde el kernel.
+- **CRASH** — crash dump management; es inherentemente kernel-level (manejo de page faults, triple faults, stack traces).
 
 ---
 
-## RESUMEN ARQUITECTÓNICO (Dave Cutler Checklist)
+#### B7. Experimental
+
+- [ ] **B7.1 E4. Full GUI system** | NT: Desktop Window Manager | Prereqs: B4.10 | Files: `userbin/gui/` | Desktop con iconos, menú, ventanas redimensionables.
+- [ ] **B7.2 E5. Advanced secure boot (TPM)** | NT: BitLocker / TPM | Prereqs: B5.3 | Files: `src/boot/tpm.rs` | Medición PCR + sealed storage.
+- [ ] **B7.3 E6. Package manager** | NT: MSI / Windows Update | Prereqs: B5.1, A5.1 | Files: `userbin/neopkg/` | Install/remove paquetes `.NPK` firmados.
+- [ ] **B7.4 T4. Time-travel debugging** | NT: WinDbg time travel | Prereqs: A3.2, B1.1 | Files: `src/debugger/timetravel.rs` | Replay de trace buffer en debugger.
+- [ ] **B7.5 T5. Live kernel patching** | NT: Windows Hotpatch | Prereqs: A2.4, A3.2 | Files: `src/patch/mod.rs` | Hot-patch de función kernel sin reboot.
+- [ ] **B7.6 T2. Distributed NeoDOS nodes** | NT: DFS | Prereqs: B3.2 | Files: `src/cluster/` | 2 nodos QEMU se descubren y comparten FS read-only.
+
+---
 
 | # | Problema | Fase | NT ref | Estado | Riesgo si no se hace |
 |---|----------|------|--------|--------|---------------------|
@@ -1314,7 +1431,7 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 | 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | Completado | Ambos usan IoStack para I/O |
 | 23 | Ob flat (no namespace) | NT5 | Ob | Completado | Hardcode C:, sin symlinks |
 | 24 | SRM ausente | NT6 | Se | Pendiente | Sin control de acceso real |
-| 25 | Registry flat | B2.1 Z6 | Cm | Pendiente | Sin config jerárquica transaccional |
+| 25 | Registry flat → cell-based hive + Ob integration | B2.1–B2.5 | Cm | Pendiente | Sin config jerárquica transaccional, notificaciones, ni load/unload |
 
 ---
 
