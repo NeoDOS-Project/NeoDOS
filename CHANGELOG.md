@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.39.10 — 2026-06-21
+
+### Added
+- **B9.1 HELP command (Ring 0→Ring 3)** (`neodos-kernel/src/shell/commands/help.rs`, `userbin/corehelp/`):
+  - Ring 0 HELP → stub que redirige a neoshell.
+  - Ring 3 HELP NT-style: cada `.NXE` embebe descripción en `.rodata` entre `::HELP::`/`::END::` y responde a `/?`.
+  - `HELP` escanea `C:\Programs\*.NXE` buscando `::HELP::`, extrae descripciones y lista comandos.
+  - `HELP <cmd>` spawnea `<cmd>.NXE /?` via sys_spawn con pipe y captura la salida.
+  - 17 `.NXE` actualizados con `/?` flag handling y `::HELP::` markers.
+  - 4 kernel tests: `help_ring0_stub_output`, `help_ring0_stub_output_detail`, `help_ring0_stub_no_old_behavior`, `help_ring0_slash_question`.
+- **B9.8 DRIVES syscall + user binary** (`neodos-kernel/src/syscall/mod.rs`, `userbin/drives/`):
+  - `sys_get_drives` (RAX=33) handler: enumera unidades montadas con tipo de FS, etiqueta y tamaño.
+  - `DriveInfo` struct ABI-stable en kernel y libneodos.
+  - `FileSystem` trait extendido con `fs_type()` / `total_sectors()` (FAT32, NeoDOS, ISO9660, KDrive).
+  - `drives.nxe`: Ring 3 DRIVES command que lista letra, FS type, label y tamaño.
+- **libneodos wrappers**: `sys_pipe()` (RAX=5) y `sys_dup2()` (RAX=6) añadidos a `libneodos/src/syscall.rs`.
+
+### Changed
+- **AGENTS.md**: Updated to 467 tests in 46 suites. Added HELP (4), DRIVES binary. Updated corehelp description.
+- **IMPROVEMENTS.md**: Marked B9.1 HELP and B9.8 DRIVES as completed.
+- **testing.rs**: Registered 4 help tests.
+
 ## v0.39.9 — 2026-06-21
 
 ### Added

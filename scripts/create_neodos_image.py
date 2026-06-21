@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -324,6 +324,7 @@ Happy hacking!
         coremd_blocks     = alloc_blocks(52, len(nxe_files['coremd']))
         corerd_blocks     = alloc_blocks(53, len(nxe_files['corerd']))
         cmdtest_blocks    = alloc_blocks(54, len(nxe_files['cmdtest']))
+        drives_blocks     = alloc_blocks(55, len(nxe_files['drives']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
@@ -344,7 +345,7 @@ Happy hacking!
         lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
-        prog_dir_blocks   = alloc_blocks(25, 5376)   # Programs dir (21 entries)
+        prog_dir_blocks   = alloc_blocks(25, 5632)   # Programs dir (22 entries)
         pkg_dir_blocks    = alloc_blocks(37, 256)    # Packages dir (empty)
         usr_dir_blocks    = alloc_blocks(38, 768)    # Users dir
         def_dir_blocks    = alloc_blocks(39, 256)    # Users\Default (empty)
@@ -391,6 +392,7 @@ Happy hacking!
               52: (MODE_FILE | default_perms_for_filename("md.nxe"), len(nxe_files['coremd']), pad_blocks(coremd_blocks)),
               53: (MODE_FILE | default_perms_for_filename("rd.nxe"), len(nxe_files['corerd']), pad_blocks(corerd_blocks)),
               54: (MODE_FILE | default_perms_for_filename("cmdtest.nxe"), len(nxe_files['cmdtest']), pad_blocks(cmdtest_blocks)),
+              55: (MODE_FILE | default_perms_for_filename("drives.nxe"), len(nxe_files['drives']), pad_blocks(drives_blocks)),
               37: (dir_mode, 256,  pad_blocks(pkg_dir_blocks)),
             38: (dir_mode, 768,  pad_blocks(usr_dir_blocks)),
             39: (dir_mode, 256,  pad_blocks(def_dir_blocks)),
@@ -577,6 +579,7 @@ Happy hacking!
         image[offset+4608:offset+4864]= create_dir_entry(52, 1, "md.nxe")
         image[offset+4864:offset+5120]= create_dir_entry(53, 1, "rd.nxe")
         image[offset+5120:offset+5376]= create_dir_entry(54, 1, "cmdtest.nxe")
+        image[offset+5376:offset+5632]= create_dir_entry(55, 1, "drives.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -601,6 +604,7 @@ Happy hacking!
              52: ('md.nxe', nxe_files['coremd']),
               53: ('rd.nxe', nxe_files['corerd']),
               54: ('cmdtest.nxe', nxe_files['cmdtest']),
+              55: ('drives.nxe', nxe_files['drives']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

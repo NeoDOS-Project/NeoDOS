@@ -20,6 +20,7 @@ pub struct BootSector {
     pub sectors_per_fat: u32,
     pub root_cluster: u32,
     pub volume_label: [u8; 11],
+    pub total_sectors_32: u32,
 }
 
 impl BootSector {
@@ -46,6 +47,7 @@ impl BootSector {
             sectors_per_fat: u32::from_le_bytes([data[36], data[37], data[38], data[39]]),
             root_cluster: u32::from_le_bytes([data[44], data[45], data[46], data[47]]),
             volume_label: data[71..82].try_into().ok()?,
+            total_sectors_32: u32::from_le_bytes([data[32], data[33], data[34], data[35]]),
         })
     }
 
@@ -509,5 +511,13 @@ impl FileSystem for Fat32Driver {
         let label = core::str::from_utf8(&self.boot_sector.volume_label[..len])
             .unwrap_or("");
         Ok(alloc::string::String::from(label))
+    }
+
+    fn fs_type(&self) -> &'static str {
+        "FAT32"
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.boot_sector.total_sectors_32 as u64
     }
 }

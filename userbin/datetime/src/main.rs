@@ -43,12 +43,46 @@ DATETIME [/D] [/T]\r\n\
   (no flags = show both date and time)\r\n\
 ::END::";
 
+fn print_help() {
+    write_str(b"\r\nDATETIME [/D] [/T]\r\n  Shows the current date and/or time.\r\n  /D     Show date only\r\n  /T     Show time only\r\n  (no flags = show both date and time)\r\n\r\n");
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    // Parse flags from command line (when arg passing is available).
-    // For now, default to showing both.
-    let show_d = true;
-    let show_t = true;
+    let ptr = 0x41F000 as *const u8;
+    let mut arg_buf = [0u8; 64];
+    unsafe {
+        let mut i = 0;
+        while i < 63 {
+            let b = ptr.add(i).read();
+            arg_buf[i] = b;
+            if b == 0 { break; }
+            i += 1;
+        }
+    }
+    let args = core::str::from_utf8(&arg_buf).unwrap_or("");
+    let trimmed = args.trim();
+    if trimmed == "/?" || trimmed == "-h" || trimmed == "--help" {
+        print_help();
+        syscall::sys_exit(0);
+    }
+    // Parse flags from command line
+    let mut show_d = false;
+    let mut show_t = false;
+    for token in trimmed.split_whitespace() {
+        let bytes = token.as_bytes();
+        if bytes.len() >= 2 {
+            let flag = bytes[0] == b'/' || bytes[0] == b'-';
+            if flag {
+                match bytes[1].to_ascii_uppercase() {
+                    b'D' => show_d = true,
+                    b'T' => show_t = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    if !show_d && !show_t { show_d = true; show_t = true; }
 
     let mut dt = DateTime {
         second: 0, minute: 0, hour: 0,

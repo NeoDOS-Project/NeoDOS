@@ -1,14 +1,14 @@
-# NeoDOS — Roadmap v3.0 (NT Alignment + Features)
+# NeoDOS — Roadmap v4.0 (Visión Arquitectónica)
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.6 (441 kernel tests + 22 user-mode binaries + 34 LSP tests).
+> Versión actual: v0.39.9 (463 kernel tests + 23 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
+> **NUEVA GUÍA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
-> Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 132 / ~145 items completados. Próximo milestone: **B9** (Ring 0→Ring 3 shell migration).
+**Progreso:** 132 / ~145 items completados. Próximo milestone: **v0.40** (Maduración estructural).
 
 ---
 
@@ -172,51 +172,40 @@
 
 ---
 
-## ROADMAP PENDIENTE
+## ROADMAP PENDIENTE (v0.40 → v1.0)
 
-> Prioriza deuda técnica estructural (fases A/NT) sobre funcionalidades de usuario (fase B).
-> Regla: ninguna feature B se considera hasta que sus prereqs arquitectónicos estén completos.
+> Basado en el análisis completo de `docs/ARCHITECTURAL_VISION.md`.
+> **Regla de oro:** No añadir features nuevas antes de completar la fase de maduración (v0.40–v0.45).
+> Cada feature nueva se apoya en abstracciones existentes; si esas abstracciones son frágiles, la feature será frágil.
 
-### Diagrama de dependencias
+---
 
-```mermaid
-flowchart TD
-    A0["A0 Memory COMPLETED"]
-    A1["A1 Execution Model"]
-    A2["A2 Sync and HAL"]
-    A3["A3 Fault Tolerance"]
-    A4["A4 Kernel/User Split"]
-    A5["A5 Storage Unification"]
-    NT5["NT5 Object Namespace"]
-    NT6["NT6 Security SRM"]
-    B["B Features Userland"]
+### 🟢 Fase 1: Maduración (v0.40 – v0.45)
+*Resolver limitaciones estructurales antes de expandir. Prioridad máxima.*
 
-    A0 --> A1
-    A1 --> A2
-    A2 --> A3
-    A2 --> A4
-    A4 --> NT5
-    NT5 --> NT6
-    A3 --> B
-    A4 --> B
-    A5 --> B
-    NT6 --> B
-```
+Orden de implementación dentro de la fase:
 
-### Orden de ejecución recomendado (path-to-NT)
+1. **v0.40** — Buddy bitmap dinámico (>4GB RAM), User window 4MB→32MB, Static buffers→heap
+2. **v0.41** — Slab<T> contenedor, Scheduler Vec<EPROCESS>/Vec<KTHREAD>, Pipe buffers dinámicos
+3. **v0.42** — Unified Wait Engine (KWait), Congelar ABI: eventos 0–15, capability flags, IOAPIC
+4. **v0.43** — SeAccessCheck NT-compatible (completar con ACE order NT-correct), sys_poll(), Congelar pipe/IRP protocols
+5. **v0.44** — ASLR v1 (base aleatoria), FileSystem trait freeze, Registry v1 (B2.1)
+6. **v0.45** — Device Tree + Resource Manager, Driver state machine freeze
 
-1. **A1.5** Threads — base del modelo NT de ejecución
-2. **A2.4 + A2.5** IRQL + DPC — reemplaza cli/sti parcial y work queue high-priority
-3. **A4.2 + A4.3** Syscall table + ELF validation — seguridad antes de userland
-4. **A4.1 + Z1** NeoInit + shell userland — mayor impacto arquitectónico
-5. **A4.5** APC — completa el modelo I/O NT
-6. **A1.1–A1.4** SMP — seguro con threads + IRQL
-7. **A3.x** Fault tolerance + SEH
-8. **NT5 → NT6** Object namespace + Security
-9. **A5.x** Storage unification
-10. **B1–B7** Features userland (paralelizable tras A4.1)
+> **Regla:** No se pasa a la Fase 2 hasta que v0.45 esté completo y todos los tests pasen.
 
-Paralelizable sin bloquear NT core: **A2.1–A2.3** (HAL/PCI), **A5.2** VirtIO.
+---
+
+### 🟡 Fase 2: Expansión (v0.46 – v0.50)
+*Añadir funcionalidades transformadoras. Ejecución secuencial dentro de la fase.*
+
+Orden de implementación dentro de la fase:
+
+1. **v0.46** — Device Tree + Resource Manager completo, PCI auto-vinculación, sys_ioctl(), VirtIO (A5.2), Input subsystem (A4.4)
+2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1–B3.2)
+3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, AHCI NCQ (A5.3), DHCP (B3.3)
+4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
+5. **v0.50** — Namespace por proceso (chroot-lite), Symlinks en VFS, Audit trail SACL, Shell pipes (B4.2), Redirection (B4.3), VT (B4.5)
 
 ---
 
@@ -437,6 +426,21 @@ Prereqs: A2.1
     - Time to complete 32 reads: ~0.1 ms (paralelo) vs 3.2 ms (serial). ~30x faster.
     - Stress: NCQ bajo carga, sin comando perdido, IRP_DONE count = 32.
   - **Tests:** `ahci_ncq_32_concurrent_dispatch`, `ahci_ncq_tag_based_completion`, `ahci_ncq_fallback_to_legacy`, `ahci_ncq_out_of_order_completion`, `ahci_ncq_stress_load` (5 tests).
+
+---
+
+### 🔴 Fase 3: Estabilización (v0.51 – v1.0.0)
+*Bugfixes, hardening, documentación, y preparación para API estable.*
+
+Orden de implementación dentro de la fase:
+
+1. **v0.51** — sys_fork/clone (bajo demanda), sys_signal mínimo
+2. **v0.52** — Stack de red completo (UDP, DNS, DHCP), TFTP/NFS básico
+3. **v0.53** — Rendimiento: per-CPU heaps NUMA-aware, scheduler lock-free, zero-copy pipes (B6.1), COW fork (B6.2)
+4. **v0.54–0.59** — Documentación API completa, test coverage >95%, fuzzing, module signatures (B5.1), secure boot (B5.3)
+5. **v1.0.0** — Primera API estable. Todo lo anterior debe estar COMPLETED.
+
+---
 
 ### FASE B — Features (userland + servicios)
 
@@ -1231,21 +1235,12 @@ RAX 39  sys_batch_exec(path)                 — CALL (admin)
 
 **Fase 1 — Trivial (ya existe .NXE equivalente):**
 
-- [ ] **B9.1. HELP** | `src/shell/commands/help.rs`, `userbin/corehelp/`
-  - **Descripción:** Ring 0 HELP = stub (RUN, CRASH + redirigir a neoshell).
-    Ring 3 al estilo NT:
-    - Cada `.NXE` embebe en `.rodata` una descripción corta entre marcadores `::D::` y `::ED::`, y además responde al flag `/?` imprimiendo su ayuda completa por stdout y saliendo.
-    - `HELP` escanea `C:\Programs\*.NXE`, lee cada binario buscando `::D::`, extrae la descripción, y lista todos los comandos con su descripción.
-    - `HELP <cmd>` spawnea `<cmd>.NXE /?` via `sys_spawn` con pipe, captura la salida y la muestra.
-    - Cada `.NXE` implementa `/?` parsing en su `_start`.
-    Formato embebido en `.rodata` de cada .NXE:
-    ```rust
-    #[used]
-    #[link_section = ".rodata"]
-    static HELP_DESC: &[u8] = b"::D::Clears the terminal screen.::ED::";
-    ```
-  - **Criterio:** `HELP` lista todos los .NXE con descripción corta. `HELP CLS` ejecuta `CLS.NXE /?` y muestra su ayuda. `.NXE` sin `::D::` se lista sin descripción.
-  - **Tests:** `help_ring0_stub_output`, `help_ring3_list_descriptions`, `help_ring3_detail_spawn_slash_question`, `help_ring3_no_description`.
+- [x] **B9.1. HELP** | `src/shell/commands/help.rs`, `userbin/corehelp/`
+  - **Descripción:** Ring 0 HELP = stub que redirige a neoshell.
+    Ring 3 al estilo NT: cada `.NXE` embebe en `.rodata` una descripción entre marcadores `::HELP::`/`::END::` y responde a `/?`. `HELP` escanea `C:\Programs\*.NXE` buscando `::HELP::`, extrae la descripción y lista comandos. `HELP <cmd>` spawnea `<cmd>.NXE /?` via `sys_spawn` con pipe y muestra la salida.
+  - **Archivos:** `neodos-kernel/src/shell/commands/help.rs`, `userbin/corehelp/src/main.rs`, 17 `.NXE` con `/?` y `::HELP::`.
+  - **Criterio:** 4 tests kernel pasan. HELP desde neoshell lista .NXE con descripciones extraídas de los propios binarios. HELP <cmd> muestra detalle vía pipe.
+  - **Tests:** `help_ring0_stub_output`, `help_ring0_stub_output_detail`, `help_ring0_stub_no_old_behavior`, `help_ring0_slash_question`.
 
 Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri, label, drives, fsck, keyb, ndreg, loadnem, call — cada uno responde a `/?` con su sintaxis.
 
@@ -1281,10 +1276,10 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
   - **Criterio:** `LABEL C:MIVOL` cambia la etiqueta de C:. `LABEL C:` muestra la etiqueta actual.
   - **Tests:** `ring3_label_set`, `ring3_label_get`, `ring3_label_invalid_chars`.
 
-- [ ] **B9.8. DRIVES** | `userbin/drives/` → `drives.nxe`
-  - **Descripción:** Lista las unidades montadas desde Ring 3. Usa `sys_get_drives(buf, max, RAX=33)` que devuelve un array con letra de unidad, tipo de FS (NeoDOS, FAT32, ISO9660), etiqueta y tamaño. Muestra en columnas. El .NXE replica el actual `commands/drives.rs`.
+- [x] **B9.8. DRIVES** | `userbin/drives/` → `drives.nxe`
+  - **Descripción:** DRIVES desde neoshell lista unidades montadas via sys_get_drives (RAX=33). Muestra letra, tipo (NeoDOS/FAT32/ISO9660/KDrive), etiqueta y tamaño en columnas.
+  - **Archivos:** `userbin/drives/src/main.rs`, `neodos-kernel/src/syscall/mod.rs` (handler_get_drives), `neodos-kernel/src/fs/vfs.rs` (fs_type/total_sectors trait), `libneodos/src/syscall.rs` (DriveInfo + wrapper).
   - **Criterio:** `DRIVES` desde neoshell muestra C: (NeoDOS), A: (FAT32/ESP) con etiquetas y tamaños.
-  - **Tests:** `ring3_drives_list`, `ring3_drives_format`.
 
 - [ ] **B9.9. FSCK** | `userbin/fsck/` → `fsck.nxe`
   - **Descripción:** Verificación y reparación del sistema de archivos NeoDOS desde Ring 3. Usa `sys_fsck(drive, flags, RAX=34)`. Sin `/F`: solo comprobación (reporta errores sin modificar). Con `/F`: repara errores (reconecta inodos huérfanos, corrige block pointers, actualiza bitmap). Replica `commands/fsck.rs` (~300 líneas de lógica).

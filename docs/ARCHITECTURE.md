@@ -2,6 +2,12 @@
 
 This document describes the *current* NeoDOS boot/runtime architecture as implemented in the repository.
 
+> **⚠️ NUEVA GUÍA ARQUITECTÓNICA:** Para la visión a largo plazo (v0.40 → v1.0), el plan director,
+> el diagnóstico de arquitectura, el roadmap por versiones y las decisiones de diseño estratégicas,
+> consultar [`ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md).
+>
+> Este documento describe el estado actual. El documento de visión describe hacia dónde vamos.
+
 ## Boot Flow
 
 ```
@@ -603,3 +609,24 @@ The provided script `scripts/qemu-debug.sh` runs QEMU with:
 - GDB server on `tcp::1234`
 
 See `docs/DEBUG.md` for a walkthrough.
+
+---
+
+## Current vs. Ideal Architecture Summary
+
+| Aspecto | Actual | Ideal (v1.0) | Prioridad |
+|---------|--------|---------------|-----------|
+| **Arrays fijos** | 8 subsistemas con límites duros (16 EPROCESS, 32 KTHREAD, 16 pipes, etc.) | Slab<T> dinámico + Vec overflow | **ALTA — v0.41** |
+| **Buddy bitmap** | 16384 words → 4GB máximo | Bitmap dinámico por rango o radix tree | **ALTA — v0.40** |
+| **User window** | 4 MB (0x400000..0x800000) | 32+ MB mínimo | **ALTA — v0.40** |
+| **Static buffers** | BIN_BUF[64KB], CMD_BUF[64KB] globales | Allocación dinámica por llamada | **ALTA — v0.40** |
+| **ASLR** | No existe | ASLR v1 base, v2 pila+heap, v3 full | MEDIA — v0.44 |
+| **Scheduler lookup** | O(n) linear scan | Hash map o radix tree por TID | MEDIA — v0.41 |
+| **Seguridad** | SID+Token+ACL, admin bypass completo | Grupos, privilegios, SACL, audit | MEDIA — v0.43 |
+| **KWait** | Ad-hoc: pipe STI/HLT, waitpid STI/HLT, IRP blocking | Unified Wait Engine (WaitAny/All) | **ALTA — v0.42** |
+| **Device Tree** | Detección ad-hoc (PCI scan, ACPI, HPET, IOAPIC) | Árbol jerárquico + Resource Manager | MEDIA — v0.45 |
+| **Registry** | boot.cfg, system.cfg, input.cfg textuales | Hive persistente cell-based (NT Cm) | MEDIA — v0.44 |
+| **Networking** | No existe | NIC driver NEM + TCP/IP stack | MEDIA — v0.47 |
+| **IOCP** | No existe (IRP sí, pero sin completion ports) | IoCompletionPort para apps async | BAJA — v0.48 |
+
+Forward-looking architecture reference: [`ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md).

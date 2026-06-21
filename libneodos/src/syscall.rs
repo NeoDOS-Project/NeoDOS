@@ -356,6 +356,48 @@ pub fn sys_open_with_flags(path: &str, flags: u64) -> Result<u8, i64> {
     ret(r).map(|v| v as u8)
 }
 
+/// sys_pipe (RAX=5): create a pipe.
+/// fds is a 2-element u64 array: [read_fd, write_fd].
+pub fn sys_pipe(fds: &mut [u64; 2]) -> Result<(), i64> {
+    let ptr = fds.as_mut_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 5",
+            "mov rbx, {ptr}",
+            "int 0x80",
+            "pop rbx",
+            ptr = in(reg) ptr as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_dup2 (RAX=6): duplicate a file descriptor.
+pub fn sys_dup2(old_fd: u8, new_fd: u8) -> Result<u8, i64> {
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 6",
+            "mov rbx, {old}",
+            "mov rcx, {new}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            old = in(reg) old_fd as u64,
+            new = in(reg) new_fd as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(r as u8) }
+}
+
 /// sys_get_volume_label (RAX=46): get the volume label for a drive.
 /// drive = ASCII drive letter (e.g. b'C'). Returns label string in buf (null-terminated).
 pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
@@ -383,6 +425,55 @@ pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
         );
     }
     ret(r).map(|v| v as usize)
+}
+
+/// DriveInfo — matches kernel's DriveInfoRaw (RAX=33).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DriveInfo {
+    pub letter: u8,
+    pub present: u8,
+    pub fs_type: [u8; 16],
+    pub label: [u8; 32],
+    pub total_sectors: u64,
+}
+
+impl DriveInfo {
+    pub fn fs_type_str(&self) -> &str {
+        let end = self.fs_type.iter().position(|&b| b == 0).unwrap_or(16);
+        core::str::from_utf8(&self.fs_type[..end]).unwrap_or("Unknown")
+    }
+
+    pub fn label_str(&self) -> &str {
+        let end = self.label.iter().position(|&b| b == 0).unwrap_or(32);
+        if end == 0 { return "(no label)"; }
+        core::str::from_utf8(&self.label[..end]).unwrap_or("")
+    }
+}
+
+/// sys_get_drives (RAX=33): enumerate mounted drives.
+/// Returns number of drives written.
+pub fn sys_get_drives(buf: &mut [DriveInfo]) -> Result<usize, i64> {
+    let buf_ptr = buf.as_mut_ptr() as *mut u8;
+    let max = buf.len() as u64;
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 33",
+            "mov rbx, {ptr}",
+            "mov rcx, {max}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            ptr = in(reg) buf_ptr as u64,
+            max = in(reg) max,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(r as usize) }
 }
 
 /// KObjEntryRaw — matches kernel's KObjEntryRaw (RAX=48).

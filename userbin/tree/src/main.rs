@@ -282,6 +282,7 @@ pub extern "C" fn _start() -> ! {
 
     let arg_slice_ref = trim_ascii(&arg_slice);
     if arg_slice_ref == b"/?" || arg_slice_ref == b"-h" || arg_slice_ref == b"--help" {
+        write_str(b"\r\nTREE [drive:][path]\r\n  Display directory tree.\r\n  TREE            shows tree of current directory\r\n  TREE C:\\        shows tree of C:\\\r\n  TREE \\Programs  shows tree of \\Programs\r\n\r\n");
         syscall::sys_exit(0);
     }
 

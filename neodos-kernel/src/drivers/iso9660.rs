@@ -341,4 +341,12 @@ impl FileSystem for Iso9660Driver {
         let end = self.volume_label.iter().rposition(|&b| b != b' ').map(|i| i + 1).unwrap_or(0);
         Ok(core::str::from_utf8(&self.volume_label[..end]).unwrap_or("").into())
     }
+
+    fn fs_type(&self) -> &'static str {
+        "ISO9660"
+    }
+
+    fn total_sectors(&self) -> u64 {
+        0
+    }
 }

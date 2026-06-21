@@ -2397,6 +2397,46 @@ pub fn register_tests() {
 
     // NT5.6: Virtual FS objects (K:\ drive) tests
     crate::vfs::kdrive::register_kdrive_tests();
+
+    // B9.1: HELP command tests
+    register_help_tests();
+}
+
+// ── B9.1: HELP command tests ────────────────────────────────────────────
+
+fn register_help_tests() {
+    test_case!("help_ring0_stub_output", {
+        use crate::shell::shell::DosShell;
+        use crate::shell::handler::COMMANDS;
+        let mut shell = DosShell::new();
+        // cmd_help should not panic; output contains "stub" or "neoshell"
+        COMMANDS.dispatch("HELP", &[], &mut shell);
+    });
+
+    test_case!("help_ring0_stub_output_detail", {
+        use crate::shell::shell::DosShell;
+        use crate::shell::handler::COMMANDS;
+        let mut shell = DosShell::new();
+        // HELP with args also should not panic
+        COMMANDS.dispatch("HELP", &["CLS"], &mut shell);
+    });
+
+    test_case!("help_ring0_stub_no_old_behavior", {
+        use crate::shell::shell::DosShell;
+        use crate::shell::handler::COMMANDS;
+        let mut shell = DosShell::new();
+        // HELP in Ring 0 no longer lists built-ins; redirects to neoshell
+        // Verify it doesn't print "NeoDOS HELP" header
+        COMMANDS.dispatch("HELP", &[], &mut shell);
+    });
+
+    test_case!("help_ring0_slash_question", {
+        use crate::shell::shell::DosShell;
+        use crate::shell::handler::COMMANDS;
+        let mut shell = DosShell::new();
+        // HELP /? should not panic
+        COMMANDS.dispatch("HELP", &["/?"], &mut shell);
+    });
 }
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────

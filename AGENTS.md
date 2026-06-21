@@ -1,13 +1,29 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.8
+v0.39.9
 
 ## Architecture Governance
 
 See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — all architectural invariants are
 enforceable rules, not suggestions. Run `python3 scripts/auto_test.py` and
 `scripts/check_deps.py` before any commit.
+
+**IMPORTANTE:** Antes de implementar cualquier cambio, leer
+[ARCHITECTURAL_VISION.md](docs/ARCHITECTURAL_VISION.md). Este documento define
+la estrategia a largo plazo (v0.40 → v1.0) y las decisiones de no-cambio. Las
+prioridades actuales son:
+
+1. **v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap
+2. **v0.41**: Slab<T> contenedor para arrays fijos, scheduler Vec dinámico
+3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI
+4. **v0.43**: SeAccessCheck NT-compatible, sys_poll()
+5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree
+6. **v0.47**: Networking (TCP/IP stack)
+
+**Regla de oro:** No añadir features nuevas antes de completar la fase de
+maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
+existentes; si esas abstracciones son frágiles, la feature será frágil.
 
 ## Build & Run
 
@@ -510,6 +526,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 26 | `sys_unlink` | RBX=path_ptr | Elimina archivo via VFS |
 | 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
 | 28 | `sys_rename` | RBX=old_path, RCX=new_path | Renombra archivo/directorio via VFS |
+| 33 | `sys_get_drives` | RBX=buf_ptr, RCX=max_entries | Enumerates mounted drives into DriveInfo array. Returns count written |
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
 | 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
@@ -642,7 +659,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
-| `corehelp.nxe` | Rust `userbin/corehelp/` | ~8 KB | Standalone HELP command: scans `C:\BIN\*.NXE` via `sys_readdir`, lists available core tools |
+| `corehelp.nxe` | Rust `userbin/corehelp/` | ~14 KB | NT-style HELP: scans `C:\Programs\*.NXE` for embedded `::HELP::` markers, lists all commands with descriptions. `HELP <cmd>` spawns `<cmd>.NXE /?` via pipe and shows output |
 | `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | sys_get_datetime (RAX=44): muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
 | `ver.nxe` | Rust `userbin/ver/` | ~5 KB | sys_get_version (RAX=43): muestra versión del kernel NeoDOS |
 | `mem.nxe` | Rust `userbin/mem/` | ~6 KB | sys_get_meminfo (RAX=45): muestra uso de memoria. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
@@ -656,7 +673,8 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 463 tests de kernel |
+| `drives.nxe` | Rust `userbin/drives/` | ~14 KB | Lists mounted drives: letter, FS type, label, size via sys_get_drives (RAX=33) |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 467 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -782,7 +800,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-463 tests en 45 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+467 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -805,6 +823,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
+| HELP | 4 | Ring 0 stub output, Ring 3 command scan, detail pipe spawn |
 | Isolation | 12 | X4 Driver Isolation Layer: constants, bounds, alloc/free, driver_id lookup, layout, pointer validation, overflow, max slots, str ptr, mode for category, mode string |
 | Boot Loader | 8 | Boot driver loader: scan, load, init, activate, unload, category ordering |
 | ABI Negotiation | 10 | ABI version negotiation, window overlap, compatibility warnings, edge cases |
@@ -832,7 +851,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (463 tests kernel)
+1. Ejecuta `testing::run_all()` (467 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

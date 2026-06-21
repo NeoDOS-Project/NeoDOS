@@ -29,9 +29,18 @@ fn get_args<'a>() -> &'a [u8] {
     }
 }
 
+fn print_help() {
+    write_str(b"\r\nECHO [text]\r\n  Print text.\r\n  ECHO               prints a blank line.\r\n  ECHO Hello world   prints \"Hello world\".\r\n\r\n");
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let args = get_args();
+    let trimmed = core::str::from_utf8(args).unwrap_or("").trim();
+    if trimmed == "/?" || trimmed == "-h" || trimmed == "--help" {
+        print_help();
+        syscall::sys_exit(0);
+    }
     write_str(b"\r\n");
     if !args.is_empty() {
         write_str(args);

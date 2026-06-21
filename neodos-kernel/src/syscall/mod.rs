@@ -69,10 +69,11 @@ pub enum SyscallNum {
     GetVolumeLabel = 46,
     ChDirParent = 47,
     KObjEnum = 48,
+    GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 48;
+    pub const MAX_VALID: u64 = 50;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -111,6 +112,7 @@ impl SyscallNum {
             43 => Some(Self::GetVersion),
             44 => Some(Self::GetDateTime),
             45 => Some(Self::GetMemInfo),
+             33 => Some(Self::GetDrives),
             46 => Some(Self::GetVolumeLabel),
             47 => Some(Self::ChDirParent),
             48 => Some(Self::KObjEnum),
@@ -154,6 +156,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28,
+        33,
         40, 41, 42, 43, 44, 45, 46, 47, 48,
         50,
     ];
@@ -2074,6 +2077,82 @@ fn handler_get_volume_label(regs: Registers) -> u64 {
     }
 }
 
+/// ABI-stable drive info for sys_get_drives (RAX=33).
+#[repr(C)]
+struct DriveInfoRaw {
+    letter: u8,
+    present: u8,
+    fs_type: [u8; 16],
+    label: [u8; 32],
+    total_sectors: u64,
+}
+
+/// sys_get_drives (RAX=33): enumerate mounted drives.
+/// RBX = buffer ptr, RCX = max entries.
+/// Returns number of entries written.
+fn handler_get_drives(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    let max_entries = regs.rcx as usize;
+
+    if buf_ptr == 0 || max_entries == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let entry_size = core::mem::size_of::<DriveInfoRaw>() as u64;
+    if !is_user_ptr_valid(buf_ptr, entry_size.saturating_mul(max_entries as u64)) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    crate::globals::with_vfs(|vfs| {
+        let mut count = 0usize;
+        for i in 0..26 {
+            if count >= max_entries {
+                break;
+            }
+            if vfs.drives[i].is_some() {
+                let letter = (b'A' + i as u8) as char;
+                let label = vfs.volume_label(letter).unwrap_or_default();
+
+                // Get fs_type and total_sectors from the filesystem trait
+                let (fs_type_str, total_sectors) = {
+                    let fs = vfs.drives[i].as_ref().unwrap();
+                    let ft = fs.fs_type();
+                    let ts = fs.total_sectors();
+                    (ft, ts)
+                };
+
+                let mut fs_type_bytes = [0u8; 16];
+                let fst = fs_type_str.as_bytes();
+                let copy_len = fst.len().min(15);
+                fs_type_bytes[..copy_len].copy_from_slice(&fst[..copy_len]);
+
+                let mut label_bytes = [0u8; 32];
+                let lbl = label.as_bytes();
+                let lbl_len = lbl.len().min(31);
+                label_bytes[..lbl_len].copy_from_slice(&lbl[..lbl_len]);
+
+                let raw = DriveInfoRaw {
+                    letter: i as u8 + b'A',
+                    present: 1,
+                    fs_type: fs_type_bytes,
+                    label: label_bytes,
+                    total_sectors,
+                };
+
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const DriveInfoRaw as *const u8,
+                        (buf_ptr as *mut u8).add(count * core::mem::size_of::<DriveInfoRaw>()),
+                        core::mem::size_of::<DriveInfoRaw>(),
+                    );
+                }
+                count += 1;
+            }
+        }
+        count as u64
+    })
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -2110,6 +2189,7 @@ lazy_static! {
         t[26] = Some(handler_unlink as SyscallFn);
         t[27] = Some(handler_rmdir as SyscallFn);
         t[28] = Some(handler_rename as SyscallFn);
+        t[33] = Some(handler_get_drives as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
         t[42] = Some(handler_poweroff as SyscallFn);
@@ -2154,6 +2234,7 @@ lazy_static! {
         t[26] = SyscallPermission::user();
         t[27] = SyscallPermission::user();
         t[28] = SyscallPermission::user();
+        t[33] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();
@@ -2293,7 +2374,8 @@ pub fn register_syscall_table_tests() {
             0, 1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28,
-            40, 41, 42, 43, 44, 45, 46,
+            33,
+            40, 41, 42, 43, 44, 45, 46, 47, 48,
             50,
         ];
         const RESERVED: &[u64] = &[];

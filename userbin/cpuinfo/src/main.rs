@@ -2,6 +2,7 @@
 #![no_main]
 
 use libneodos::println;
+use libneodos::syscall;
 
 #[repr(C)]
 struct CpuInfoFull {
@@ -116,8 +117,38 @@ fn type_name_str(t: u32) -> &'static str {
     }
 }
 
+#[used]
+#[link_section = ".rodata"]
+static CPUINFO_HELP: &[u8] = b"::HELP::\
+CPUINFO\r\n\
+  Displays CPU information: vendor, brand, features, topology, timers.\r\n\
+::END::";
+
+fn print_help() {
+    libneodos::println!("CPUINFO");
+    libneodos::println!("  Displays CPU information: vendor, brand, features, topology, timers.");
+    libneodos::println!("  Requires cpuinfo.nxl to be loaded.");
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    let ptr = 0x41F000 as *const u8;
+    let mut arg_buf = [0u8; 32];
+    unsafe {
+        let mut i = 0;
+        while i < 31 {
+            let b = ptr.add(i).read();
+            arg_buf[i] = b;
+            if b == 0 { break; }
+            i += 1;
+        }
+    }
+    let args = core::str::from_utf8(&arg_buf).unwrap_or("");
+    let trimmed = args.trim();
+    if trimmed == "/?" || trimmed == "-h" || trimmed == "--help" {
+        print_help();
+        syscall::sys_exit(0);
+    }
 
     println!("======================================================");
     println!("              CPU INFORMATION");

@@ -323,6 +323,14 @@ impl FileSystem for KDrive {
     fn remove_dir(&mut self, _dir_inode: u32, _name: &str) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
+
+    fn fs_type(&self) -> &'static str {
+        "KDrive"
+    }
+
+    fn total_sectors(&self) -> u64 {
+        0
+    }
 }
 
 /// Mount K:\ drive (virtual kernel object filesystem).

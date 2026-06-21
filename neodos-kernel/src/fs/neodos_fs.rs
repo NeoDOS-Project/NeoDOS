@@ -1323,4 +1323,12 @@ impl FileSystem for NeoDosFs {
         self.set_volume_label(label, cache, dev)?;
         Ok(())
     }
+
+    fn fs_type(&self) -> &'static str {
+        "NeoDOS"
+    }
+
+    fn total_sectors(&self) -> u64 {
+        self.superblock.num_blocks as u64 * (BLOCK_SIZE as u64 / 512)
+    }
 }

@@ -71,6 +71,12 @@ pub trait FileSystem: Send {
     fn set_volume_label(&mut self, _label: &str) -> Result<(), VfsError> {
         Err(VfsError::PermissionDenied)
     }
+    fn fs_type(&self) -> &'static str {
+        "Unknown"
+    }
+    fn total_sectors(&self) -> u64 {
+        0
+    }
 }
 
 const MAX_MOUNTS: usize = 8;
