@@ -8,7 +8,7 @@
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 135 / ~130 items completados. Próximo milestone: **B9** (Ring 0→Ring 3 shell migration).
+**Progreso:** 132 / ~145 items completados. Próximo milestone: **B9** (Ring 0→Ring 3 shell migration).
 
 ---
 
@@ -30,7 +30,7 @@
 
 ---
 
-## COMPLETED (115 items)
+## COMPLETED (132 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -160,6 +160,15 @@
 121. **B8.11. RD.NXE** — `userbin/corerd/`: elimina directorio vacío via `sys_rmdir`.
 122. **B4.1. PATH resolution** — `userbin/neoshell/`: búsqueda de `.NXE` en PATH. neoshell itera directorios PATH y ejecuta via `sys_spawn`. Prioridad `.NXE` > `.COM` > `.EXE`.
 123. **B8.15. Build + integración** — `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\Programs\`.
+124. **NT6.1. SID + Access Token** — `src/security/token.rs`, `src/security/sid.rs`: Define la identidad de seguridad de cada proceso y thread mediante SID y token. Token admin por defecto para boot, heredado en spawn. Tests: `token_inherit`, `sid_format`, `token_admin_boot_default`.
+125. **NT6.2. ACL/ACE on objects** — `src/security/acl.rs`: Añade descriptors de seguridad a cada objeto del namespace. Define `Ace` (allow/deny, access_mask, SID), `Acl`, `SecurityDescriptor`. Tests: `acl_deny_access`, `acl_allow_access`, `acl_inherit_parent`.
+126. **NT6.3. Access check on open** — `src/security/access.rs`: `se_access_check()` compara token SID contra DACL del SD con admin bypass. Tests: `se_access_check_deny`, `se_access_check_allow`, `se_access_check_admin_override`.
+127. **NT6.4. Admin vs user token** — `src/security/token.rs`: Separa tokens de sistema y usuario. Syscall 50 requiere admin. 12 tests de seguridad integrados.
+128. **NT5.5 Z2. Unified resource namespace (URN)** — `src/urn/mod.rs`: Abstracción sobre NT5 Ob que unifica acceso a recursos heterogéneos bajo esquema `neodos://<scheme>/<path>`. Soporta `device` (ObNamespace), `file` (VFS), `registry`/`kobj` (stubs). API: `urn_open()`, `urn_read()`, `urn_write()`, `urn_seek()`. 11 tests.
+129. **NT5.6 Z3. Virtual FS objects (K:\ drive)** — `src/vfs/kdrive.rs`: Drive virtual K:\ que expone objetos NT5 internos como archivos de solo lectura via VFS. Directorios: Processes, Drivers, Memory, Interrupts. 12 tests.
+130. **A2.1. MMIO ECAM PCI config space** — `src/hal/pci.rs`, `src/drivers/pci.rs`: ECAM-based PCI config space access via MMIO from ACPI MCFG table. Auto-selects ECAM or legacy PIO fallback. Tests: 5.
+131. **A2.2. IOAPIC + MSI-X como modelo primario** — `src/interrupts/ioapic.rs`, `src/interrupts/msi.rs`: I/O APIC detected from MADT, replaces legacy PIC. MSI-X per-entry table programming. IOAPIC init at PHASE 2.91. Tests: 5.
+132. **B4.4 B2. ANSI terminal** — `userbin/neoshell/`, framebuffer driver: Emulador de terminal ANSI básico en framebuffer. Interpreta secuencias de escape: color, clear screen, cursor position. Tests: `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
 
 ---
 
@@ -208,32 +217,6 @@ flowchart TD
 10. **B1–B7** Features userland (paralelizable tras A4.1)
 
 Paralelizable sin bloquear NT core: **A2.1–A2.3** (HAL/PCI), **A5.2** VirtIO.
-
----
-
-### FASE A2 — Sync & HAL (NT: IRQL, HAL, interrupts)
-
-La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bloquear todas las interrupciones.
-
-
-- [x] **A2.1. MMIO ECAM PCI config space** | NT: MCFG (PCI Express Config Access Mechanism) | Prereqs: A0
-  - **Archivos:** `src/hal/pci.rs` (ECAM primitives), `src/drivers/pci.rs` (refactor + PIO fallback), `src/timers/hpet.rs` (MCFG/MADT ACPI scanning)
-  - **Descripción:** ECAM-based PCI config space access via MMIO from ACPI MCFG table. `src/hal/pci.rs` provides 8 functions: `set_ecam_base`, `ecam_is_active`, `ecam_read/write_config_dword/word/byte`. `src/drivers/pci.rs` auto-selects ECAM or legacy PIO (0xCF8/0xCFC). `init_ecam()` at PHASE 2.3 maps ECAM region as UC-. MCFG not found → PIO fallback with log warning. Added `read_bar()`, `read_bar64()`, `map_bar_mmio()` utilities.
-  - **Criterio:**
-    - Leer vendor ID de host bridge @ PCI 0:0:0 vía PIO → 0x8086 ✓
-    - Misma lectura vía ECAM cuando MCFG disponible → mismo valor ✓
-    - Detección MCFG desde ACPI → corre sin error en QEMU ✓
-  - **Tests:** `ecam_base_default`, `ecam_address_calc`, `ecam_mcfg_table_parse`, `ecam_fallback_to_pio_if_no_mcfg`, `ecam_read_match_legacy_pio` (5 tests).
-
-- [x] **A2.2. IOAPIC + MSI-X como modelo primario** | NT: IOAPIC routing, MSI delivery | Prereqs: A2.1
-  - **Archivos:** `src/interrupts/ioapic.rs` (new), `src/interrupts/msi.rs` (MSI-X per-entry tables), `src/hal/x64/irq.rs` (APIC EOI + IOAPIC-aware ack), `src/timers/hpet.rs` (MADT parsing)
-  - **Descripción:** I/O APIC detected from MADT, replaces legacy PIC. Routes ISA IRQs 0/1/4/12 to vectors 32/33/36/44; all other IRQs masked. PIC disabled via OCW1 mask. `ack_irq()` sends APIC EOI for all vectors when IOAPIC active, skips PIC PIO EOI. MSI-X per-entry table programming: `configure_msix_entry()` maps BAR MMIO as UC-, writes 16-byte table entry (addr+data+ctrl). IOAPIC init at PHASE 2.91.
-  - **Criterio:**
-    - IOAPIC detectado desde MADT en QEMU + OVMF ✓
-    - PIC masked cuando IOAPIC activo (verified via ports 0x21/0xA1 = 0xFF) ✓
-    - 24 redirection entries en QEMU PIIX3 + OVMF ✓
-    - ISA IRQ overrides parsed from MADT correctly ✓
-  - **Tests:** `ioapic_has_valid_pin_count`, `ioapic_resolve_gsi_no_override`, `ioapic_resolve_gsi_with_override`, `ioapic_mask_unmask_safe`, `ioapic_pic_disabled_when_ioapic_active` (5 tests).
 
 ---
 
@@ -454,56 +437,6 @@ Prereqs: A2.1
     - Time to complete 32 reads: ~0.1 ms (paralelo) vs 3.2 ms (serial). ~30x faster.
     - Stress: NCQ bajo carga, sin comando perdido, IRP_DONE count = 32.
   - **Tests:** `ahci_ncq_32_concurrent_dispatch`, `ahci_ncq_tag_based_completion`, `ahci_ncq_fallback_to_legacy`, `ahci_ncq_out_of_order_completion`, `ahci_ncq_stress_load` (5 tests).
-
----
-
-### FASE NT6 — Security Reference Monitor (NT: Se) — COMPLETED ✓
-
-Prereqs: NT5 (objects need security descriptors).
-
-- [x] **NT6.1. SID + Access Token** | NT: `TOKEN` | Prereqs: NT5.1
-  - **Archivos:** `src/security/token.rs`, `src/security/sid.rs`
-  - **Descripción:** Define la identidad de seguridad de cada proceso y thread mediante SID y token. El token arranca en modo admin para el entorno de boot y luego se hereda al crear procesos/hilos, permitiendo más adelante distinguir entre contexto privilegiado y usuario normal.
-  - **Criterio:** Thread nuevo hereda el token del proceso padre sin perder el SID base.
-  - **Tests:** `token_inherit`, `sid_format`, `token_admin_boot_default`.
-  - **Implementado:** Define `Sid` struct con formato `S-R-I-S*` y funciones `sid_builtin_admin()`/`sid_builtin_user()`. Define `Token` struct con `is_admin`. Token añadido a `Eprocess`. Procesos heredan token del padre en `add_ring3_process()`. Token admin por defecto para boot.
-
-- [x] **NT6.2. ACL/ACE on objects** | NT: `SECURITY_DESCRIPTOR` | Prereqs: NT6.1
-  - **Archivos:** `src/security/acl.rs`
-  - **Descripción:** Añade descriptors de seguridad a cada objeto del namespace. Cada ACL contiene ACEs con SID + máscara de acceso, de forma que un objeto puede permitir lectura, escritura, ejecución o administración de manera explícita.
-  - **Criterio:** Un objeto con ACL restrictiva rechaza accesos no permitidos y acepta los autorizados.
-  - **Tests:** `acl_deny_access`, `acl_allow_access`, `acl_inherit_parent`.
-  - **Implementado:** Define `Ace` (allow/deny, access_mask, SID), `Acl` (vec de ACEs), `SecurityDescriptor` (owner, group, dacl). Creación programática de ACLs con ACEs allow/deny.
-
-- [x] **NT6.3. Access check on open** | NT: `SeAccessCheck` | Prereqs: NT6.2
-  - **Archivos:** `src/security/access.rs`, integración `src/syscall.rs`
-  - **Descripción:** Inserta el chequeo de permisos en el momento de apertura de objetos y creación de handles. Antes de devolver un fd, el kernel compara el token del caller con la ACL del objeto y corta la operación si no hay permisos suficientes.
-  - **Criterio:** `sys_open` devuelve `-EACCES` cuando el token no cumple la ACL.
-  - **Tests:** `se_access_check_deny`, `se_access_check_allow`, `se_access_check_admin_override`.
-  - **Implementado:** `se_access_check()` compara token SID contra DACL del SD. Admin bypass. Sin SD → allow. Sin DACL → allow. Sin match → deny. Infraestructura lista para integración con sys_open cuando objetos tengan SDs.
-
-- [x] **NT6.4. Admin vs user token** | NT: `SeTokenIsAdmin` | Prereqs: NT6.3
-  - **Archivos:** `src/security/token.rs`
-  - **Descripción:** Separa explícitamente los tokens de sistema y los de usuario. NeoInit y el shell administrativo arrancan con token admin, mientras que procesos normales nacen como user; las syscalls marcadas con `CAP_ADMIN` solo deben pasar si el token activo está elevado.
-  - **Criterio:** Un proceso user no puede invocar syscalls de administración ni cargar drivers privilegiados.
-  - **Tests:** `se_admin_required`, `se_user_denied_admin_syscall`, `se_admin_token_isolation`.
-  - **Implementado:** `is_current_admin()` ahora usa `ep.token.is_admin_token()` en lugar de PID check. Syscall 50 (ndreg) requiere admin. Token admin se hereda en spawn. 12 tests de seguridad integrados.
-
----
-
-### NT5 extensions — Object Namespace (continues from COMPLETED)
-
-- [ ] **NT5.5 Z2. Unified resource namespace (URN)** | NT: Ob (Object Manager namespace) | Prereqs: NT5.3 | Files: `src/urn/mod.rs`
-  - **Descripción:** Capa de abstracción sobre NT5 Ob que unifica el acceso a recursos heterogéneos (devices, archivos VFS, claves registry, objetos kernel) bajo un esquema de URN único. Formato: `neodos://device/Harddisk0/Partition1`, `neodos://file/C:/System/boot.cfg`, `neodos://registry/Machine/System`. El URN resolver parsea el esquema, delega al subsistema correspondiente (ObNamespace para devices, VFS para files, Registry para config). Permite que user-mode acceda a cualquier recurso con una API unificada (`urn_open()`, `urn_read()`, `urn_write()`).
-  - **Criterio:** `urn_open("neodos://file/C:/System/boot.cfg")` retorna handle válido.
-  - **Tests:** `urn_parse_scheme`, `urn_resolve_file`, `urn_resolve_device`.
-
-- [ ] **NT5.6 Z3. Virtual FS objects (`K:\` drive)** | NT: `\GLOBAL??\` (Win32 device namespace) | Prereqs: NT5.4 | Files: `src/vfs/kdrive.rs`
-  - **Descripción:** Drive virtual `K:\` que expone objetos NT5 internos como archivos de solo lectura via VFS. Estructura: `K:\Processes\` (PIDs con estado), `K:\Drivers\` (NEM drivers), `K:\Memory\` (estadísticas), `K:\Interrupts\` (contadores). Implementa `FileSystem` trait con `read()` dinámico. Análogo al namespace `\GLOBAL??\` de NT que expone objetos del sistema como archivos.
-  - **Criterio:** `TYPE K:\Processes\1` muestra info del PID 1. `DIR K:\Drivers\` lista drivers cargados.
-  - **Tests:** `kdrive_list_processes`, `kdrive_read_driver_info`, `kdrive_memory_stats`.
-
----
 
 ### FASE B — Features (userland + servicios)
 
@@ -1217,12 +1150,6 @@ Prereqs globales: A4.7 mínimo para items userland; NT5/NT6 para items de seguri
   - **Descripción:** Redirección de I/O en neoshell. Parser detecta tokens `>` (write), `>>` (append), `<` (read). Para `cmd > file`: neoshell abre/crea `file` via `sys_open`, luego spawna `cmd` con `sys_dup2` redirigiendo fd 1 (stdout) al handle del archivo. Para `cmd < file`: abre archivo y redirige fd 0 (stdin). Para `>>`: abre con flag append. Tras `sys_waitpid`, cierra el handle del archivo via `sys_close`.
   - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
-
-- [x] **B4.4 B2. ANSI terminal** | Prereqs: A4.7 | Files: `userbin/neoshell/`, framebuffer driver
-  - **Descripción:** Emulador de terminal ANSI básico en el framebuffer driver del kernel. Interpreta secuencias de escape ANSI: `\x1b[Nm` (color foreground/background, 16 colores), `\x1b[2J` (clear screen), `\x1b[H` (cursor home), `\x1b[row;colH` (posicionar cursor), `\x1b[K` (clear to EOL). El console driver (`console.rs`) parsea el stream de bytes y aplica atributos al renderizar caracteres VGA 8×16 en el framebuffer GOP 1280×800. User-mode usa `sys_write` con secuencias ANSI embedded.
-  - **Criterio:** `ECHO \x1b[31mRed\x1b[0m` muestra "Red" en rojo. `CLS` limpia pantalla via ANSI.
-  - **Tests:** `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
-
 - [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/`
   - **Descripción:** Multiplexar el framebuffer y el input en hasta 4 terminales virtuales (VTs). Depende de A4.4 (input subsystem rediseñado con `InputManager` y `vt_queues[4]`). Cada VT tiene su propio buffer de framebuffer (back-buffer 1280×800), cola de input independiente, y PID foreground. Alt+F1–F4 cambia VT activo: el kernel copia el back-buffer del VT seleccionado al framebuffer visible y redirige IRQ1 (PS/2) a la cola correspondiente. NeoInit spawna una instancia de neoshell por VT.
   - **Criterio:** Alt+F1 y Alt+F2 muestran shells independientes. Input en un VT no afecta al otro.

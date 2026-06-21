@@ -48,6 +48,7 @@ pub mod panic_classification;
 pub mod boot_benchmark;
 mod crash;
 mod security;
+mod urn;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -346,6 +347,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[+] FAT32 ESP mounted on A:");
         let _ = vfs::mount::vfs_mount("\\Device\\EspVolume0", 'A', vfs::mount::FilesystemType::Fat32);
     }
+
+    // ============================================
+    // NT5.6: Mount K:\ virtual kernel object drive
+    // ============================================
+    vfs::kdrive::init_kdrive();
 
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 

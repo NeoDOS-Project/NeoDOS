@@ -656,7 +656,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 441 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 463 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -679,6 +679,76 @@ Binarios flat cargados en `0x400000`.
 | **Sync helpers** | `irp_sync_read()`/`irp_sync_write()` — allocate IRP, submit, block, free. For code that wants synchronous IRP path |
 | **BlockDevice** | Trait extended with `submit_irp(irp_id)` and `poll_irp(irp_id)`. All 5 implementors (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implement `submit_irp` via `irp_get_params()` → sync I/O → `irp_complete_result()` |
 | **Tests** | 11 tests: alloc/free, status transitions, error codes, unique IDs, slot reuse, queue FIFO/wraparound, callback dispatch via work queue, flush/ioctl ops, params extraction |
+
+## NT5.5 Unified Resource Namespace (URN)
+
+`src/urn/mod.rs` — Abstraction layer over NT5 Ob unifying access to heterogeneous resources (devices, VFS files, registry keys, kernel objects) under a URN scheme: `neodos://<scheme>/<path>`.
+
+### Supported Schemes
+
+| Scheme | Delegates to | Example |
+|--------|-------------|---------|
+| `device` | ObNamespace (`\Device\*`) | `neodos://device/Harddisk0/Partition1` |
+| `file` | VFS | `neodos://file/C:/System/boot.cfg` |
+| `registry` | (stub — not implemented) | `neodos://registry/Machine/System` |
+| `kobj` | (stub — not implemented) | `neodos://kobj/Driver/ahci` |
+
+### API
+
+```rust
+pub fn urn_parse(urn_str: &str) -> Result<Urn, &'static str>
+pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str>
+pub fn urn_read(handle: &mut UrnHandle, buf: &mut [u8]) -> Result<usize, &'static str>
+pub fn urn_write(handle: &mut UrnHandle, buf: &[u8]) -> Result<usize, &'static str>
+pub fn urn_seek(handle: &mut UrnHandle, pos: u64)
+```
+
+### Tests
+
+11 tests: parse scheme (4 variants), invalid prefix, missing scheme, unknown scheme, missing path, resolve file (nonexistent), resolve device (nonexistent), roundtrip to_string/parse.
+
+## NT5.6 Virtual FS Objects (K:\ drive)
+
+`src/vfs/kdrive.rs` — Virtual `K:\` drive exposing internal NT5 objects as read-only files via the VFS `FileSystem` trait. Analogous to NT's `\GLOBAL??\` namespace.
+
+### Directory Structure
+
+```
+K:\
+├── Processes\         (dir) — lists active PIDs
+│   ├── 1              (file) — PID 1 state, parent, threads, priority, CWD, heap
+│   └── ...
+├── Drivers\           (dir) — lists loaded NEM drivers
+│   ├── keyboard.nem   (file) — driver name, state, category, ABI, caps, errors
+│   └── ...
+├── Memory             (file) — memory stats (phys_max, total, usable, free, used, reserved)
+└── Interrupts         (file) — per-CPU interrupt counters
+```
+
+### Inode Encoding
+
+| Range | Type |
+|-------|------|
+| 0 | Root directory |
+| 1 | Processes directory |
+| 2 | Drivers directory |
+| 3 | Memory stats file |
+| 4 | Interrupts file |
+| 1000–1255 | PID info files (inode = 1000 + pid) |
+| 2000–2063 | Driver info files (inode = 2000 + slot_index) |
+
+### Implementation
+
+- `KDrive` unit struct implements `FileSystem` trait
+- `read()` generates content dynamically from scheduler/driver_runtime/memory/cpu_local
+- Content format: CRLF text lines with key: value pairs
+- `init_kdrive()` mounted at boot phase 3 (after VFS + FAT32)
+- Case-insensitive lookup for root entries
+- Write/create/mkdir all return `Err(VfsError::NotImplemented)`
+
+### Tests
+
+12 tests: root readdir, lookup root entries, case-insensitive lookup, not-found, memory stats read, interrupts stats, write rejected, stat root is dir, read at offset, PID inode encoding, driver inode encoding.
 
 ## Deferred Work Queue (X5)
 
@@ -712,7 +782,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-441 tests en 43 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+463 tests en 45 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -758,9 +828,11 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 | ANSI | 3 | ANSI terminal: color fg/bg, cursor position, clear screen |
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
+| URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, invalid/missing paths, resolve file/device, roundtrip |
+| KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (441 tests kernel)
+1. Ejecuta `testing::run_all()` (463 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

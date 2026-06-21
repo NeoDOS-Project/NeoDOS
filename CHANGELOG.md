@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.39.9 — 2026-06-21
+
+### Added
+- **NT5.5 Unified Resource Namespace (URN)** (`neodos-kernel/src/urn/mod.rs`): Abstracción sobre NT5 Ob que unifica acceso a recursos heterogéneos bajo esquema `neodos://<scheme>/<path>`. Soporta schemas `device` (ObNamespace), `file` (VFS), `registry` y `kobj` (stubs). API: `urn_open()`, `urn_read()`, `urn_write()`, `urn_seek()`. 11 tests.
+- **NT5.6 Virtual K:\ drive** (`neodos-kernel/src/vfs/kdrive.rs`): Drive virtual `K:\` que expone objetos NT5 internos como archivos de solo lectura via VFS. Directorios: `K:\Processes\` (info de PIDs), `K:\Drivers\` (info de NEM drivers), `K:\Memory\` (estadísticas), `K:\Interrupts\` (contadores). 12 tests.
+
+### Changed
+- **AGENTS.md**: Updated test count to 463 in 45 suites. Added URN and KDrive sections.
+- **IMPROVEMENTS.md**: Marked NT5.5 y NT5.6 as completed.
+- **testing.rs**: Registered URN (11 tests) + KDrive (12 tests).
+
 ## v0.39.8 — 2026-06-21
 
 ### Fixed
