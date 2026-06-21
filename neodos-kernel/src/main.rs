@@ -350,11 +350,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // ============================================
-    // PHASE 3.75: Driver Runtime + Built-in Drivers
-    // ============================================
-    drivers::builtin_drivers::init();
-
-    // ============================================
     // PHASE 3.80: X4 — Driver Isolation Layer
     // Initialize isolated driver region at 0x30000000
     // for loading NEM drivers with restricted permissions.

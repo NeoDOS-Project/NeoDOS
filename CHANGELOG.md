@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.39.8 — 2026-06-21
+
+### Fixed
+- **sys_exit GPF on `exit` command** (`neodos-kernel/src/syscall/mod.rs`, `neodos-kernel/src/arch/x64/idt.rs`):
+  - `handler_exit` only called `request_exit_to_kernel()` when `pid == current_wait_pid()` (someone waiting via `sys_waitpid`). When no process was waiting, the asm trampoline returned to user mode via `iretq`, and the NXL's `nxl_sys_exit` executed the privileged `HLT` instruction, causing a GPF (error=0x0) at RIP in the DLL region.
+  - **Fix 1**: Always call `request_exit_to_kernel()` when the last thread exits, regardless of `sys_waitpid` state. This ensures the asm handler always takes the `exit_to_kernel` path on `sys_exit`.
+  - **Fix 2**: Added `is_thread_terminated()` check in the asm handler for non-last thread exits. When a non-last thread is terminated, `syscall_try_resched` is called to switch to the next runnable thread instead of returning to user mode.
+
+### Changed
+- **AGENTS.md**: Version bumped to v0.39.8. Clarified that neoshell Ring 3 TAB completion only covers built-in commands (CWD, SET, EXIT, POWEROFF), not PATH scanning for `.NXE` files.
+
+### Removed
+- **builtin_drivers.rs** (`neodos-kernel/src/drivers/builtin_drivers.rs`): Removed legacy stub built-in driver callbacks (null, echo, timer_listener). These were development stubs from the early NEM driver model. All actual drivers are now loaded as `.nem` files from NeoDOS FS.
+
+## v0.39.7 — 2026-06-21
+
+### Changed
+- **IMPROVEMENTS.md**: Complete rewrite of NT alignment section. Restructured formatting and improved readability.
+
+## v0.39.6 — 2026-06-21
+
+### Changed
+- **NeoDOS LSP refinements** (`neodos-lsp/src/cache.rs`, `database.rs`, `indexer.rs`):
+  - `NeodosItemKind` enum replaces raw string type tags for better type safety.
+  - Removed `ImportInfo` struct (unused).
+  - Fixed whitespace and minor cleanup.
+  - `main.rs`: Reduced dependency on `unwrap()`, improved fault tolerance.
+
+## v0.39.5 — 2026-06-21
+
+### Added
+- **NeoDOS LSP** (`neodos-lsp/`): Language Server Protocol implementation for NeoDOS. See v0.39.4 entry for full description (merged concurrently).
+
 ## v0.39.4 — 2026-06-21
 
 ### Added

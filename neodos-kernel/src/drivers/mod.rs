@@ -3,7 +3,7 @@ pub mod ata;
 pub mod boot_ahci;
 pub mod block;
 pub mod boot_loader;
-pub mod builtin_drivers;
+
 pub mod caps;
 pub mod dependency;
 pub mod driver_loader;

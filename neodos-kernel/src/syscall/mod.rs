@@ -236,6 +236,25 @@ pub extern "C" fn clear_need_resched() -> bool {
     prev_global
 }
 
+/// Called from asm syscall handler. Returns 1 if the current thread was
+/// terminated by the exit syscall but exit_to_kernel was not requested
+/// (non-last thread in a multi-threaded process). Returns 0 otherwise.
+/// Used to determine whether to reschedule instead of returning to user mode.
+#[no_mangle]
+pub extern "C" fn is_thread_terminated() -> u64 {
+    use crate::scheduler::ThreadState;
+    let s = scheduler::current_scheduler();
+    let mut scheduler = s.lock();
+    if scheduler.current_tid > 0 {
+        if let Some(k) = scheduler.current_kthread_mut() {
+            if k.state == ThreadState::Terminated {
+                return 1;
+            }
+        }
+    }
+    0
+}
+
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
     if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
@@ -666,18 +685,18 @@ fn handler_exit(regs: Registers) -> u64 {
             }
             //crate::serial_println!("[EXIT] wake_thread_joiner");
             scheduler.wake_blocked_on_magic(tid | 0x8000_0000);
-            //crate::serial_println!("[EXIT] checking: pid={} wait_pid={}", pid, crate::usermode::current_wait_pid());
-            if pid > 0 && pid == crate::usermode::current_wait_pid() {
+            //crate::serial_println!("[EXIT] checking: pid={} thread_count", pid);
+            // Always request exit_to_kernel when the last thread exits,
+            // regardless of whether someone is waiting via sys_waitpid.
+            // Without this, the asm handler returns to user mode and the
+            // NXL's nxl_sys_exit hits the privileged HLT instruction → GPF.
+            if pid > 0 {
                 let eproc = scheduler.current_eprocess();
                 if eproc.map_or(true, |ep| ep.thread_count == 0) {
                     //crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
                     crate::usermode::request_exit_to_kernel();
                     //crate::serial_println!("[EXIT] after request_exit_to_kernel");
-                } else {
-                    //crate::serial_println!("[EXIT] NOT calling: thread_count != 0");
                 }
-            } else {
-                //crate::serial_println!("[EXIT] NOT calling: pid={} wait_pid={}", pid, crate::usermode::current_wait_pid());
             }
         }
         //crate::serial_println!("[EXIT] done (after if tid > 0 block)");

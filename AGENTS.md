@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.4
+v0.39.8
 
 ## Architecture Governance
 
@@ -351,10 +351,8 @@ Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_
 
 ## Shell: TAB autocomplete + history
 
-El shell tiene autocompletado con **TAB** (`shell.rs:try_complete`):
-- **Primera palabra**: completa comandos built-in (HELP, DIR, etc.) y `.NXE` del PATH
-- **Argumentos**: completa nombres de archivo/directorio desde el directorio actual
-- **Rutas**: soporta rutas con separador (`DIR \\Programs\\Te` → `\\Programs\\TEST`)
+La shell Ring 3 (`userbin/neoshell/src/main.rs`) tiene autocompletado con **TAB** (`try_complete`):
+- **Primera palabra**: completa comandos built-in (CWD, SET, EXIT, POWEROFF). No escanea PATH para `.NXE`.
 - Match único: reemplaza y añade espacio (comandos)
 - Múltiples matches: lista todos y redibuja prompt + línea
 
@@ -640,7 +638,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CLS, CWD, SET, POWEROFF, EXIT; TAB completion; PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CLS, CWD, SET, POWEROFF, EXIT; TAB completion (builtins only); PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change |
 | `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |

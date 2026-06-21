@@ -49,6 +49,7 @@ core::arch::global_asm!(
     ".extern syscall_dispatch",
     ".extern syscall_try_resched",
     ".extern apc_dispatch_on_syscall_return",
+    ".extern is_thread_terminated",
     ".global syscall_handler_asm",
     "syscall_handler_asm:",
     "push rbp",
@@ -82,11 +83,23 @@ core::arch::global_asm!(
     "xor rax, rax",
     "mov al, gs:[0xB98]",                  // OFFSET_EXIT_NOW in KPRCB
     "test al, al",
-    "jz 1f",
+    "jz 4f",
     // Clear exit_now and jump to exit_to_kernel
     "mov byte ptr gs:[0xB98], 0",          // OFFSET_EXIT_NOW
     ".extern exit_to_kernel",
     "jmp exit_to_kernel",
+    // Non-last thread exit: check if thread was terminated
+    "4:",
+    "push rsp",
+    "call is_thread_terminated",
+    "add rsp, 8",
+    "test rax, rax",
+    "jz 1f",
+    // Thread terminated but not last → reschedule (switch to next thread)
+    "mov rdi, rsp",
+    "call syscall_try_resched",
+    "mov rsp, rax",
+    "jmp 3f",
     "1:",
     // Check per-CPU NEED_RESCHED via GS segment (offset 0x015 in KPRCB)
     "xor rax, rax",
