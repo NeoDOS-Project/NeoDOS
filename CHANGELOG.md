@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.39.3 — 2026-06-21
+
+### Fixed
+- **libneodos inline asm register clobber** (`libneodos/src/syscall.rs`): `sys_open_with_flags`, `sys_get_volume_label`, `sys_kobj_enum` used direct `int 0x80` inline asm that wrote to `rbx`/`rcx`/`rdx` without saving them. The Rust compiler, unaware of the clobber, reused those registers for local variables, corrupting fd values (e.g. fd=5 became fd=216). Fixed by adding explicit `push`/`pop` around `int 0x80`.
+- **NeoDOS FS write sets inode.size prematurely** (`neodos_fs.rs`): `write_file` set `inode.size = BLOCK_SIZE` (4096) during block allocation, before data was written. A 33-byte write left size=4096, causing reads to return garbage after EOF. Removed premature size assignment.
+- **Page cache evicts unnecessarily** (`buffer/page_cache.rs`): `evict_lru()` always evicted the LRU tail even when free slots existed, discarding in-use pages and causing writes to be lost on subsequent reads. Fixed by checking for free slots first.
+- **Handle leaks in cmdtest** (`userbin/cmdtest/src/main.rs`): `file_exists`/`dir_exists` opened fds via `sys_open` without closing them. Fixed to close fds after checking existence.
+
+### Changed
+- **Debug traces removed** from kernel syscall handlers (`syscall/mod.rs`), page cache (`page_cache.rs`), and NeoDOS FS (`neodos_fs.rs`).
+
 ## v0.39.2 — 2026-06-21
 
 ### Added

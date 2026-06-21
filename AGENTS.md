@@ -212,6 +212,13 @@ The NeoDOS filesystem uses the following directory layout:
 │   ├─ cpuinfo.nxe       # CPU info tool
 │   ├─ dir.nxe           # Directory listing
 │   ├─ help.nxe          # Help system
+│   ├─ cls.nxe           # Clear screen
+│   ├─ copy.nxe          # Copy files
+│   ├─ del.nxe           # Delete files
+│   ├─ ren.nxe           # Rename files
+│   ├─ md.nxe            # Create directories
+│   ├─ rd.nxe            # Remove directories
+│   ├─ cmdtest.nxe       # Command test suite
 │   ├─ hello.nxe         # Hello world test
 │   ├─ systest.nxe       # Syscall test
 │   ├─ filetest.nxe      # File I/O test
@@ -645,6 +652,13 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: muestra etiqueta del volumen. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
 | `type.nxe` | Rust `userbin/coretype/` | ~6 KB | TYPE command: muestra contenido de archivo de texto. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
 | `tree.nxe` | Rust `userbin/tree/` | ~7 KB | TREE command: muestra árbol de directorios con `├──`/`└──`. Recursivo hasta 6 niveles. Directorios primero, orden alfabético case-insensitive. Path opcional (default: CWD) |
+| `cls.nxe` | Rust `userbin/corecls/` | ~4 KB | CLS command: limpia la pantalla via ANSI escape codes. Sustituye el CLS del shell bootstrap |
+| `copy.nxe` | Rust `userbin/corecopy/` | ~8 KB | COPY command: copia un archivo origen → destino usando `sys_readfile`/`sys_writefile`. Argumentos: `COPY src dst` |
+| `del.nxe` | Rust `userbin/coredel/` | ~4 KB | DEL command: elimina un archivo via `sys_unlink`. Argumentos: `DEL file` |
+| `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
+| `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
+| `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 419 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
