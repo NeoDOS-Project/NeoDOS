@@ -72,7 +72,7 @@ mod tests {
         let p = PathBuf::from("test.rs");
 
         cache.insert(p.clone(), "fn foo() {}".to_string(), 1, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
         let src = cache.get_source(&p).expect("should be cached");
         assert_eq!(src, "fn foo() {}");
@@ -83,11 +83,11 @@ mod tests {
         let cache = DocumentCache::new(10);
         let p = PathBuf::from("v.rs");
         cache.insert(p.clone(), "old".to_string(), 1, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
         assert_eq!(cache.get_source(&p), Some("old".to_string()));
         cache.insert(p.clone(), "new".to_string(), 2, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
         assert_eq!(cache.get_source(&p), Some("new".to_string()));
     }
@@ -100,13 +100,13 @@ mod tests {
         let p3 = PathBuf::from("c.rs");
 
         cache.insert(p1.clone(), "a".to_string(), 1, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
         cache.insert(p2.clone(), "b".to_string(), 1, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
         cache.insert(p3.clone(), "c".to_string(), 1, ParsedFile {
-            symbols: vec![], references: vec![], imports: vec![], neodos_items: vec![],
+            symbols: vec![], references: vec![], neodos_items: vec![],
         });
 
         // At capacity 2, the 3rd insert evicts the oldest.

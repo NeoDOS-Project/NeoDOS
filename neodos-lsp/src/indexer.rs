@@ -6,7 +6,7 @@ use walkdir::WalkDir;
 
 use crate::config::NeodosLspConfig;
 use crate::database::{
-self, Database, FileIndex, ImportInfo, NeodosItem, Symbol,
+self, Database, FileIndex, NeodosItem, NeodosItemKind, Symbol,
 };
 
 /// Result of parsing a single file.
@@ -14,7 +14,6 @@ self, Database, FileIndex, ImportInfo, NeodosItem, Symbol,
 pub struct ParsedFile {
     pub symbols: Vec<database::Symbol>,
     pub references: Vec<database::Reference>,
-    pub imports: Vec<database::ImportInfo>,
     pub neodos_items: Vec<database::NeodosItem>,
 }
 
@@ -160,7 +159,6 @@ impl Indexer {
     pub fn parse_file(path: &PathBuf, content: &str) -> ParsedFile {
         let mut symbols: Vec<database::Symbol> = Vec::new();
         let references: Vec<database::Reference> = Vec::new();
-        let mut imports: Vec<database::ImportInfo> = Vec::new();
         let mut neodos_items: Vec<database::NeodosItem> = Vec::new();
 
         let lines: Vec<&str> = content.lines().collect();
@@ -220,12 +218,6 @@ impl Indexer {
                 continue;
             }
 
-            // ── use / import ──
-            if let Some(imp) = Self::parse_use(trimmed, i) {
-                imports.push(imp);
-                continue;
-            }
-
             // ── Methods inside impl blocks ──
             // Check this BEFORE standalone fn, so methods get SymbolKind::METHOD.
             if in_impl_block.is_some() {
@@ -244,6 +236,7 @@ impl Indexer {
 
                         if name == "read" || name == "write" || name == "open" || name == "close" {
                             neodos_items.push(NeodosItem {
+                                kind: NeodosItemKind::FileSystemImpl,
                                 name: name.clone(),
                                 detail: format!("impl {}::{}",
                                     in_impl_block.as_ref().unwrap(), name),
@@ -297,12 +290,14 @@ impl Indexer {
                     match ndk {
                         Some(database::NeodosKind::Syscall(num)) => {
                             neodos_items.push(NeodosItem {
+                                kind: NeodosItemKind::SyscallHandler,
                                 name: name.clone(),
                                 detail: format!("syscall #{num}: {name}"),
                             });
                         }
                         Some(database::NeodosKind::BootPhase) => {
                             neodos_items.push(NeodosItem {
+                                kind: NeodosItemKind::BootPhaseFn,
                                 name: name.clone(),
                                 detail: format!("Boot phase: {name}"),
                             });
@@ -380,6 +375,7 @@ impl Indexer {
                     if name.starts_with("CAP_") {
                         let val = trimmed.split('=').nth(1).unwrap_or("?").trim().trim_end_matches(';').to_string();
                         neodos_items.push(NeodosItem {
+                            kind: NeodosItemKind::CapabilityFlag,
                             name: name.clone(),
                             detail: format!("Capability: {name} = {val}"),
                         });
@@ -433,6 +429,7 @@ impl Indexer {
             // ── NeoDOS-specific pattern: SyscallNum enum variants ──
             if let Some(var) = Self::parse_syscallnum_variant(trimmed) {
                 neodos_items.push(NeodosItem {
+                    kind: NeodosItemKind::SyscallHandler,
                     name: format!("SyscallNum::{} ({})", var.name, var.number),
                     detail: format!("syscall #{}: {}", var.number, var.name),
                 });
@@ -443,6 +440,7 @@ impl Indexer {
             if trimmed.contains("CommandEntry {") || trimmed.contains("CommandEntry::new") {
                 if let Some(cmd) = Self::parse_command_entry(trimmed, &lines, i as usize) {
                     neodos_items.push(NeodosItem {
+                        kind: NeodosItemKind::ShellCommand,
                         name: cmd.name,
                         detail: cmd.detail,
                     });
@@ -453,6 +451,7 @@ impl Indexer {
             // ── NeoDOS-specific pattern: DriverState enum ──
             if Self::is_driver_state_enum(trimmed) {
                 neodos_items.push(NeodosItem {
+                    kind: NeodosItemKind::DriverState,
                     name: trimmed.trim().trim_end_matches(',').to_string(),
                     detail: "DriverState variant".into(),
                 });
@@ -465,7 +464,7 @@ impl Indexer {
             }
         }
 
-        ParsedFile { symbols, references, imports, neodos_items }
+        ParsedFile { symbols, references, neodos_items }
     }
 
     // ─── Helper parsing functions ──────────────────────────────────────────
@@ -478,23 +477,6 @@ impl Indexer {
             }
         }
         None
-    }
-
-    fn parse_use(trimmed: &str, _line: u32) -> Option<ImportInfo> {
-        if trimmed.starts_with("use ") || trimmed.starts_with("pub use ") {
-            let use_str = if trimmed.starts_with("pub use ") { &trimmed[8..] } else { &trimmed[4..] };
-            let use_str = use_str.trim_end_matches(';').trim();
-            let path: Vec<String> = use_str.split("as ")
-                .next()
-                .unwrap_or("")
-                .trim()
-                .split("::")
-                .map(|s| s.to_string())
-                .collect();
-            Some(ImportInfo { path })
-        } else {
-            None
-        }
     }
 
     fn extract_name(trimmed: &str, keyword: &str) -> Option<String> {
@@ -678,6 +660,7 @@ impl Indexer {
                         .trim_matches('"')
                         .to_string();
                     return Some(NeodosItem {
+                        kind: NeodosItemKind::ShellCommand,
                         name: cmd_name,
                         detail: description,
                     });
@@ -785,14 +768,6 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_use() {
-        let p = index_code("use crate::scheduler;\npub use core::fmt::Write;\nuse alloc::boxed::Box as MyBox;");
-        assert_eq!(p.imports.len(), 3);
-        assert_eq!(p.imports[0].path, vec!["crate", "scheduler"]);
-        assert_eq!(p.imports[1].path, vec!["core", "fmt", "Write"]);
-        assert_eq!(p.imports[2].path, vec!["alloc", "boxed", "Box"]);
-    }
-
     #[test]
     fn test_cap_constants() {
         let p = index_code("pub const CAP_IRQ: u64 = 1 << 0;\npub const CAP_DMA: u64 = 1 << 1;\nconst CAP_MMIO: u64 = 1 << 2;");

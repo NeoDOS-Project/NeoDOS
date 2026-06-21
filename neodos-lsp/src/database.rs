@@ -126,13 +126,32 @@ pub struct FileIndex {
     pub neodos_items: Vec<NeodosItem>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ImportInfo {
-    pub path: Vec<String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NeodosItemKind {
+    SyscallHandler,
+    ShellCommand,
+    BootPhaseFn,
+    FileSystemImpl,
+    CapabilityFlag,
+    DriverState,
+}
+
+impl std::fmt::Display for NeodosItemKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NeodosItemKind::SyscallHandler => write!(f, "SyscallHandler"),
+            NeodosItemKind::ShellCommand => write!(f, "ShellCommand"),
+            NeodosItemKind::BootPhaseFn => write!(f, "BootPhaseFn"),
+            NeodosItemKind::FileSystemImpl => write!(f, "FileSystemImpl"),
+            NeodosItemKind::CapabilityFlag => write!(f, "CapabilityFlag"),
+            NeodosItemKind::DriverState => write!(f, "DriverState"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct NeodosItem {
+    pub kind: NeodosItemKind,
     pub name: String,
     pub detail: String,
 }
@@ -303,6 +322,21 @@ impl Database {
         }
         for rf in &index.references {
             self.insert_reference(rf.clone());
+        }
+        for item in &index.neodos_items {
+            match item.kind {
+                NeodosItemKind::SyscallHandler => {
+                    if let Some(num_str) = item.name.strip_prefix("SyscallNum::") {
+                        if let Some(num) = num_str.split('(').next().and_then(|s| s.trim().parse::<u64>().ok()) {
+                            self.syscalls.insert(num, item.clone());
+                        }
+                    }
+                }
+                NeodosItemKind::ShellCommand => {
+                    self.shell_commands.insert(item.name.clone(), item.clone());
+                }
+                _ => {}
+            }
         }
     }
 

@@ -103,7 +103,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Check bootloader version compatibility
     let bootloader_version = boot_info.version;
     if bootloader_version != KERNEL_VERSION_CODE {
-        serial_println!("[!] Version mismatch: bootloader v{:x}, kernel v{:x}", bootloader_version, KERNEL_VERSION_CODE);
+        serial_println!("[!] Version mismatch: bootloader v{:x}, kernel v{:x}",
+            bootloader_version, KERNEL_VERSION_CODE);
     } else {
         serial_println!("[+] Bootloader version: v0.10.1 (compatible)");
     }
@@ -123,13 +124,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing GDT...");
     arch::x64::init_gdt();
-    
+
     println!("[+] Initializing IDT...");
     arch::x64::init_idt();
-    
+
     println!("[+] Initializing MSI subsystem...");
     interrupts::msi::init();
-    
+
     println!("[+] Initializing PIC...");
     arch::x64::init_pic();
 
