@@ -199,6 +199,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     arch::x64::ipi::init();
 
+    // ============================================
+    // PHASE 2.91: I/O APIC initialization
+    // Detect from MADT, disable legacy PIC, route ISA IRQs.
+    // ============================================
+    if interrupts::ioapic::init() {
+        println!("[+] I/O APIC active, legacy PIC disabled");
+    } else {
+        println!("[!] I/O APIC not found, using legacy PIC");
+    }
+
     println!("[+] Enabling interrupts...");
     hal::enable_interrupts();
 
@@ -213,6 +223,12 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     arch::x64::paging::init_heap_demand_paging();
     // Split mmap region huge pages for lazy file/anonymous mapping
     arch::x64::paging::init_mmap_demand_paging();
+
+    // ============================================
+    // PHASE 2.3 (after custom page tables): PCIe ECAM
+    // Read MCFG from ACPI, map ECAM MMIO region as UC-.
+    // ============================================
+    drivers::pci::init_ecam();
 
     // ============================================
     // PHASE 3 (after custom page tables): Storage stack

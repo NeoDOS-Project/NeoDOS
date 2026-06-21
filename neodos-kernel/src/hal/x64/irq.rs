@@ -12,19 +12,19 @@ pub extern "C" fn register_irq(_vector: u8, _handler: IrqHandler) -> i32 {
 #[inline(never)]
 pub extern "C" fn ack_irq(vector: u8) {
     unsafe {
-        if vector >= 0xF0 {
-            if let Some(base) = apic_eoi_base() {
-                let eoi_ptr = (base + 0x0B0) as *mut u32;
-                core::ptr::write_volatile(eoi_ptr, 0);
-            }
+        // Always send APIC EOI for all vectors when Local APIC is present.
+        if let Some(base) = apic_eoi_base() {
+            let eoi_ptr = (base + 0x0B0) as *mut u32;
+            core::ptr::write_volatile(eoi_ptr, 0);
+        }
+
+        // If I/O APIC is active, the PIC is disabled — no PIO EOI needed.
+        if crate::interrupts::ioapic::is_active() {
             return;
         }
 
-        if vector == 32 && crate::timers::active() == crate::timers::TimerSource::ApicTimer {
-            if let Some(base) = apic_eoi_base() {
-                let eoi_ptr = (base + 0x0B0) as *mut u32;
-                core::ptr::write_volatile(eoi_ptr, 0);
-            }
+        // Legacy PIC EOI (only when IOAPIC is not active)
+        if vector >= 0xF0 {
             return;
         }
 

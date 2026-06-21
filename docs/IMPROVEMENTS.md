@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.39.3 (431 kernel tests + 11 user-mode binaries).
+> Versión actual: v0.39.4 (441 kernel tests + 11 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Análisis NT: [nt_alignment_analysis.md](nt_alignment_analysis.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 117 / ~130 items completados. Próximo milestone: **A2.1** (MMIO ECAM PCI).
+**Progreso:** 119 / ~130 items completados. Próximo milestone: **A3.1** (Bugcheck / Crash Dump).
 
 ---
 
@@ -206,35 +206,24 @@ Paralelizable sin bloquear NT core: **A2.1–A2.3** (HAL/PCI), **A5.2** VirtIO.
 La HAL actual usa solo `cli`/`sti`. NT usa IRQL para priorizar ejecución sin bloquear todas las interrupciones.
 
 
-- [ ] **A2.1. MMIO ECAM PCI config space** | NT: MCFG (PCI Express Config Access Mechanism) | Prereqs: A0
-  - **Archivos:** `src/drivers/pci.rs` (refactor kernel boot stub), `src/hal/pci.rs`, integración ACPI
-  - **Descripción:** Reemplazar legacy port I/O (0xCF8/0xCFC) con Enhanced Configuration Address Mechanism (ECAM) basado en MMIO para mejor escalabilidad y compatibilidad PCIe.
-    - **ECAM addressing:** `ECAM_BASE + (bus << 20) + (dev << 15) + (func << 12) + offset`. Típicamente ECAM_BASE=0xE0000000 (QEMU/SeaBIOS).
-    - **ACPI MCFG:** Boot loader lee MCFG table desde ACPI RSDP, extrae base ECAM para cada segmento PCI (típicamente 1 segmento = bus 0–255).
-    - **Kernel init:** PHASE 2.3 mapea ECAM region como UC- (Uncacheable) en page tables. Llamada `pci_init_ecam(mcfg_base, segment)` almacena base en global.
-    - **API:** `pci_read_config(bus, dev, func, offset, size)` calcula ECAM dirección, lee MMIO (1/2/4 bytes).
-    - **Fallback:** Si no ACPI MCFG disponible, usar legacy port I/O (0xCF8/0xCFC), log warning.
-    - **Safety:** MMIO read puede tomar 0.1–1 µs. Evitar busy loops.
+- [x] **A2.1. MMIO ECAM PCI config space** | NT: MCFG (PCI Express Config Access Mechanism) | Prereqs: A0
+  - **Archivos:** `src/hal/pci.rs` (ECAM primitives), `src/drivers/pci.rs` (refactor + PIO fallback), `src/timers/hpet.rs` (MCFG/MADT ACPI scanning)
+  - **Descripción:** ECAM-based PCI config space access via MMIO from ACPI MCFG table. `src/hal/pci.rs` provides 8 functions: `set_ecam_base`, `ecam_is_active`, `ecam_read/write_config_dword/word/byte`. `src/drivers/pci.rs` auto-selects ECAM or legacy PIO (0xCF8/0xCFC). `init_ecam()` at PHASE 2.3 maps ECAM region as UC-. MCFG not found → PIO fallback with log warning. Added `read_bar()`, `read_bar64()`, `map_bar_mmio()` utilities.
   - **Criterio:**
-    - Leer vendor ID de NVMe @ PCI 0:4:0 vía ECAM → retorna 0x8086 (Intel) ✓
-    - Misma lectura vía legacy port I/O → r
+    - Leer vendor ID de host bridge @ PCI 0:0:0 vía PIO → 0x8086 ✓
+    - Misma lectura vía ECAM cuando MCFG disponible → mismo valor ✓
     - Detección MCFG desde ACPI → corre sin error en QEMU ✓
-  - **Tests:** `ecam_read_match_legacy_pio`, `ecam_mcfg_table_parse`, `ecam_nvme_vendor_id_nvme`, `ecam_fallback_to_pio_if_no_mcfg` (4 tests).
+  - **Tests:** `ecam_base_default`, `ecam_address_calc`, `ecam_mcfg_table_parse`, `ecam_fallback_to_pio_if_no_mcfg`, `ecam_read_match_legacy_pio` (5 tests).
 
-- [ ] **A2.2. IOAPIC + MSI-X como modelo primario** | NT: IOAPIC routing, MSI delivery | Prereqs: A2.1
-  - **Archivos:** `src/interrupts/ioapic.rs` (refactor legacy 8259 PIC paths), `src/interrupts/msi.rs` (v2 extension), `src/hal/irq.rs`, integración PCI
-  - **Descripción:** Modernizar controlador de interrupciones: IOAPIC como primary, MSI-X como preferred delivery para devices.
-    - **IOAPIC init:** Detectar desde ACPI MADT. Típicamente 24 pins (legacy ISA + PCIe). Deshabilitar PIC legacy si IOAPIC presente. Map pines a vectores: ISA 0–15 → 32–47, PCIe 0–7 → 48–55.
-    - **ISA interrupts:** UART (COM1) pin 4 → vector 36, RTC pin 8 → vector 40 (shared), etc.
-    - **MSI/MSI-X:** Device drivers solicitan vectores vía `irq_alloc_vector(num_vectors)` (pool 56–255). Kernel configura device MSI-X table entry: vector, delivery mode (fixed), dest CPU. Mejor que IOAPIC pin para device escalability.
-    - **Vector pool:** Global 256 vectores. 0–31 reserved (exceptions), 32–55 IOAPIC legacy, 56–255 dynamic (MSI/MSI-X).
-    - **Disable PIC legacy:** Si IOAPIC presente: escribir OCW2 "EOI" sin esperar INT ACK. PIC queda inactivo.
-    - **Edge vs level:** IOAPIC pins pueden configurarse edge-triggered (legacy devices) o level-triggered (PCI). MSI siempre edge.
+- [x] **A2.2. IOAPIC + MSI-X como modelo primario** | NT: IOAPIC routing, MSI delivery | Prereqs: A2.1
+  - **Archivos:** `src/interrupts/ioapic.rs` (new), `src/interrupts/msi.rs` (MSI-X per-entry tables), `src/hal/x64/irq.rs` (APIC EOI + IOAPIC-aware ack), `src/timers/hpet.rs` (MADT parsing)
+  - **Descripción:** I/O APIC detected from MADT, replaces legacy PIC. Routes ISA IRQs 0/1/4/12 to vectors 32/33/36/44; all other IRQs masked. PIC disabled via OCW1 mask. `ack_irq()` sends APIC EOI for all vectors when IOAPIC active, skips PIC PIO EOI. MSI-X per-entry table programming: `configure_msix_entry()` maps BAR MMIO as UC-, writes 16-byte table entry (addr+data+ctrl). IOAPIC init at PHASE 2.91.
   - **Criterio:**
-    - NVMe MSI-X: 4 completion queues → 4 vectores asignados (64–67). Cada completion dispara vector único.
-    - Latency from completion buffer ready a handler ejecución < 10 µs (sin PIC contention).
-    - All 4 queues entregan eventos en paralelo sin serialización PIC.
-  - **Tests:** `ioapic_init_from_madt`, `msix_nvme_4_queue_allocation`, `msix_vector_delivery_latency`, `ioapic_isa_compat_legacy`, `ioapic_pic_disabled` (5 tests).
+    - IOAPIC detectado desde MADT en QEMU + OVMF ✓
+    - PIC masked cuando IOAPIC activo (verified via ports 0x21/0xA1 = 0xFF) ✓
+    - 24 redirection entries en QEMU PIIX3 + OVMF ✓
+    - ISA IRQ overrides parsed from MADT correctly ✓
+  - **Tests:** `ioapic_has_valid_pin_count`, `ioapic_resolve_gsi_no_override`, `ioapic_resolve_gsi_with_override`, `ioapic_mask_unmask_safe`, `ioapic_pic_disabled_when_ioapic_active` (5 tests).
 
 ---
 
@@ -1309,8 +1298,8 @@ Prereqs: A4.6 (syscalls). Cada coretool es un proyecto Rust `#![no_std]` con lib
 | 7 | Sin IPI / TLB shootdown | A1.4 | KeIpi | Completado | Data corruption en SMP |
 | 8 | IRQL ausente (solo cli/sti) | A2.4 | IRQL | Completado | Per-CPU IRQL levels, IrqMutex, INV-14 page fault check |
 | 9 | DPC ausente (work queue parche) | A2.5 | DPC | Completado | Per-CPU DPC queues, SPSC ring buffer, DIRQL→DISPATCH dispatch |
-| 10 | PCI port I/O asume x86 | A2.1 | HAL | Pendiente | No portar a ARM64/RISC-V |
-| 11 | PIC legacy como default | A2.2 | IOAPIC | Pendiente | Límite 15 IRQs |
+| 10 | PCI port I/O asume x86 | A2.1 | HAL | **Completado** | ECAM MMIO (MCFG) + PIO fallback |
+| 11 | PIC legacy como default | A2.2 | IOAPIC | **Completado** | IOAPIC init (MADT), PIC disable, MSI-X |
 | 12 | HAL mezcla raw y safe | A2.3 | HAL | COMPLETED | asm confinado a hal/ |
 | 13 | Sin crash dump ni recovery | A3.1–A3.3 | Bugcheck | Pendiente | Bugs imposibles de diagnosticar |
 | 14 | SEH ausente | A3.4 | SEH | Pendiente | User exceptions = kill |

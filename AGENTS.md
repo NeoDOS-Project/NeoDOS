@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.3
+v0.39.4
 
 ## Architecture Governance
 
@@ -658,7 +658,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 431 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 441 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -714,7 +714,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-431 tests en 43 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+441 tests en 43 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -762,7 +762,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (431 tests kernel)
+1. Ejecuta `testing::run_all()` (441 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.
@@ -1342,6 +1342,7 @@ Cada feature completada debe añadir entrada en `CHANGELOG.md` con formato:
 |--------|-------------|
 | `hal/raw/` | Bare asm primitives: MSR, CPUID, TSC, I/O ports, control registers, segment regs, GS-segment, interrupt flags, pause, TLB |
 | `hal/safe/` | Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants with `IsSafe` flag, `read_cr2()` |
+| `hal/pci/` | PCIe ECAM MMIO config space: `ecam_read_config_*`, `ecam_write_config_*`, `set_ecam_base` |
 | `hal/x64/` | Extern "C" ABI surface for bootloader/kernel, delegates to `hal/raw` |
 
 ### Audit constraint
@@ -1359,6 +1360,54 @@ use crate::hal::safe::{read_msr, write_msr, Msr, GsBase, GS_BASE};
 let gs_base: u64 = read_msr(&GS_BASE);
 unsafe { write_msr(&GS_BASE, new_base); }
 ```
+
+## PCIe ECAM (A2.1)
+
+`src/hal/pci.rs` — Enhanced Configuration Access Mechanism (MMIO).
+
+| Function | Description |
+|----------|-------------|
+| `set_ecam_base(base)` | Set ECAM base from MCFG, activate ECAM mode |
+| `ecam_is_active()` | Check if ECAM mode is active |
+| `ecam_read_config_dword/bus/dev/func/offset)` | MMIO read PCI config (unsafe) |
+| `ecam_read_config_word/byte` | 16/8-bit MMIO reads |
+| `ecam_write_config_dword/word/byte` | MMIO PCI config writes |
+
+`src/drivers/pci.rs` — auto-selects ECAM or legacy PIO:
+- `pci_config_read_dword/write_dword/word/byte` — ECAM if active, else 0xCF8/0xCFC
+- `find_capability(bus, dev, func, cap_id)` — scan capability list (MSI 0x05, MSI-X 0x11)
+- `read_bar/bus/dev/func/bar_index)` — read BAR value
+- `map_bar_mmio(bus, dev, func, bar_index)` — map BAR MMIO region with size detection
+- `init_ecam()` — called at Phase 2.3, reads MCFG, maps ECAM region as UC-
+
+MCFG parsing in `src/timers/hpet.rs`:
+- `get_ecam_info()` returns `(base_addr, segment_group, start_bus, end_bus)` from ACPI MCFG
+
+## I/O APIC (A2.2)
+
+`src/interrupts/ioapic.rs` — I/O APIC interrupt controller replacing legacy 8259A PIC.
+
+| Function | Description |
+|----------|-------------|
+| `init()` | Find IOAPIC via MADT, mask PIC, route ISA IRQs 0/1/4/12 to vectors 32/33/36/44 |
+| `is_active()` | IOAPIC initialized and active |
+| `mask_irq(irq)` / `unmask_irq(irq)` | Mask/unmask IOAPIC redirection entry |
+| `ioapic_addr()` | MMIO base address (0 if not found) |
+| `ioapic_pin_count()` | Number of redirection entries |
+| `eoi_irq(vector)` | No-op (LAPIC handles EOI for edge-triggered) |
+
+MADT parsing in `src/timers/hpet.rs`:
+- `find_ioapic()` returns `(ioapic_addr, gsi_base)` from MADT
+- `get_isa_overrides()` returns `Vec<(source, gsi, flags)>` from MADT ISA override entries
+
+## MSI-X (A2.2 extension)
+
+`src/interrupts/msi.rs` — per-entry MSI-X table programming:
+
+| Function | Description |
+|----------|-------------|
+| `configure_msix_entry(bus, dev, func, entry_index, vector)` | Map BAR, write 16-byte table entry (addr+data+ctrl), enable MSI-X |
+| `configure_msix_entries(bus, dev, func, num_entries, handler)` | Configure N entries with auto-vector allocation |
 
 ## HAL v0.3 (Hardware Abstraction Layer)
 

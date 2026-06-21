@@ -16,7 +16,7 @@ bootloader → kernel → NeoInit (PID 1) startup sequence.
 - **User processes**: loads at `0x400000`, heap at `0x10000000`, mmap at `0x20000000`.
 - **Drivers**: NEM format (`.nem`), loaded from NeoFS at boot or on demand.
 - **NeoInit (PID 1)**: userland supervisor, started by kernel after boot.
-- **Interrupts**: PIC → APIC, INT 0x80 for syscalls.
+- **Interrupts**: IOAPIC (MADT-detected) replacing legacy PIC, MSI-X for PCIe devices, APIC timer, INT 0x80 for syscalls. `ack_irq()` sends APIC EOI for all vectors when IOAPIC active, skipping PIC PIO EOI.
 - **Command execution**: all interactive commands MUST run in Ring 3 as `.NXE`/`.BAT` user binaries. Ring 0 may only perform bootstrap, validation, loading, and kernel-internal maintenance; it MUST NOT host user-facing shell commands.
 
 ---
@@ -91,11 +91,17 @@ The kernel boot sequence is a strict linear pipeline of phases:
 
 ```
 PHASE 1     Serial init, GDT, IDT (early exceptions)
-PHASE 2     PIC → APIC, PIT/HPET timer
-PHASE 2.5   Heap init (buddy → slab → global allocator)
-PHASE 3     Boot storage (A0 scan: NVMe > AHCI > ATA PIO), GPT parse
-PHASE 3.5   Block cache init, NeoFS mount
-PHASE 3.7   RamDisk init
+PHASE 2     CPU structures: IDT, MSI, PIC remap, HPET/PIT/APIC timer
+PHASE 2.3   PCIe ECAM: read MCFG, map MMIO as UC-, activate ECAM (after heap + pagetables)
+PHASE 2.5   Memory init: UEFI map → buddy allocator, crash dump area
+PHASE 2.75  Heap allocator: slab + linked_list fallback
+PHASE 2.77  Security subsystem: admin/user tokens, SIDs, ACLs
+PHASE 2.8   SMP: INIT-SIPI-SIPI, per-CPU KPRCB
+PHASE 2.9   IPI: reschedule, TLB shootdown, call-function
+PHASE 2.91  I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12
+PHASE 3     Custom page tables, demand paging (heap + mmap 4K)
+PHASE 3.5   Boot storage (A0 scan: NVMe > AHCI > ATA PIO), GPT parse
+PHASE 3.7   Block cache init, NeoFS mount
 PHASE 3.8   VFS init, working directory
 PHASE 3.80  Driver isolation region init (0x30000000)
 PHASE 3.85  Boot driver loader (from C:\System\Drivers, dependency-sorted)

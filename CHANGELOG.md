@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.39.4 — 2026-06-21
+
+### Added
+- **A2.1 — PCIe ECAM config space** (`src/hal/pci.rs`, `src/drivers/pci.rs`, `src/timers/hpet.rs`):
+  - **MMIO ECAM**: Enhanced Configuration Access Mechanism (ECAM) based on ACPI MCFG table. Addressing: `ECAM_BASE + (bus<<20) + (dev<<15) + (func<<12) + offset`.
+  - **MCFG table parsing**: Extended ACPI scanner in `hpet.rs` to locate MCFG table via RSDP → RSDT/XSDT. `get_ecam_info()` returns ECAM base address, segment, bus range.
+  - **ECAM mapping**: `drivers::pci::init_ecam()` maps ECAM region as UC- (uncacheable) in page tables at Phase 2.3. Splits 2 MB huge pages into 4 KB PTEs for precise MMIO caching control.
+  - **Dual path**: `drivers::pci::pci_config_read/write_*()` auto-select ECAM MMIO or legacy PIO (0xCF8/0xCFC) via `ecam_is_active()`. No MCFG → silent fallback with log warning.
+  - **BAR utilities**: `read_bar()`, `read_bar64()`, `map_bar_mmio()` for PCI BAR MMIO mapping with size detection.
+  - **Tests**: `ecam_base_default`, `ecam_address_calc`, `ecam_mcfg_table_parse`, `ecam_fallback_to_pio_if_no_mcfg`, `ecam_read_match_legacy_pio` (5 integration + 2 unit).
+- **A2.2 — I/O APIC + MSI-X** (`src/interrupts/ioapic.rs`, `src/interrupts/msi.rs`, `src/hal/x64/irq.rs`):
+  - **I/O APIC init**: Detects I/O APIC from ACPI MADT table. Reads IOAPICID/IOAPICVER for version and pin count. Masks all redirection entries initially.
+  - **ISA IRQ routing**: Routes timer (IRQ0→vec32), keyboard (IRQ1→vec33), serial (IRQ4→vec36), PS/2 mouse (IRQ12→vec44) via IOAPIC pins. Respects MADT ISA interrupt source overrides (polarity, trigger mode). Unused IRQs stay masked.
+  - **PIC disable**: On IOAPIC init success, masks all PIC IRQs via ports 0x21/0xA1. `ack_irq()` uses APIC EOI (via Local APIC MMIO) for all vectors when IOAPIC is active, skipping PIC PIO EOI.
+  - **MSI-X per-entry table**: `configure_msix_entry()` reads MSI-X capability (BAR index + table offset from BIR), maps BAR MMIO as UC-, writes per-entry message address/data/vector_control. `configure_msix_entries()` configures N entries with vector allocation and handler registration.
+  - **Integration**: IOAPIC init at Phase 2.91 (after heap, before SMP). Toggle in main.rs log message.
+  - **Tests**: `ioapic_has_valid_pin_count`, `ioapic_resolve_gsi_no_override`, `ioapic_resolve_gsi_with_override`, `ioapic_mask_unmask_safe`, `ioapic_pic_disabled_when_ioapic_active` (5 tests).
+
 ## v0.39.3 — 2026-06-21
 
 ### Added

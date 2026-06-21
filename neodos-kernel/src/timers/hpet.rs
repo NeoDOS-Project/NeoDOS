@@ -6,6 +6,8 @@ const RSDP_SIGNATURE: [u8; 8] = *b"RSD PTR ";
 const HPET_SIGNATURE: [u8; 4] = *b"HPET";
 const RSDT_SIGNATURE: [u8; 4] = *b"RSDT";
 const XSDT_SIGNATURE: [u8; 4] = *b"XSDT";
+const MCFG_SIGNATURE: [u8; 4] = *b"MCFG";
+const APIC_SIGNATURE: [u8; 4] = *b"APIC";
 
 // ── HPET MMIO register offsets ─────────────────────────────────────
 const HPET_GEN_CAP_ID: u64       = 0x000;
@@ -212,6 +214,213 @@ fn find_table_in_xsdt(xsdt: &'static [u64], signature: &[u8; 4]) -> Option<&'sta
         }
     }
     None
+}
+
+// ── ACPI MCFG (PCI Express MMIO config space) table ────────────────
+
+#[repr(C, packed)]
+struct AcpiMcfg {
+    header: AcpiSdtHeader,
+    reserved: [u8; 8],
+    // Followed by one or more McfgEntry
+}
+
+#[repr(C, packed)]
+struct McfgEntry {
+    base_addr: u64,
+    segment_group: u16,
+    start_bus: u8,
+    end_bus: u8,
+    reserved: [u8; 4],
+}
+
+/// Find the MCFG table by scanning RSDP → RSDT/XSDT.
+fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
+    let rsdp = find_rsdp()?;
+    let sdt: Option<&'static AcpiSdtHeader>;
+
+    if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
+        let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
+        unsafe {
+            let xsdt = &*xsdt_ptr;
+            if xsdt.signature != XSDT_SIGNATURE { return None; }
+            let entry_count = (xsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 8;
+            let entries = core::slice::from_raw_parts(
+                (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
+                entry_count,
+            );
+            sdt = find_table_in_xsdt(entries, &MCFG_SIGNATURE);
+        }
+    } else {
+        let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
+        unsafe {
+            let rsdt = &*rsdt_ptr;
+            if rsdt.signature != RSDT_SIGNATURE { return None; }
+            let entry_count = (rsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 4;
+            let entries = core::slice::from_raw_parts(
+                (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
+                entry_count,
+            );
+            sdt = find_table_in_rsdt(entries, &MCFG_SIGNATURE);
+        }
+    }
+
+    unsafe {
+        let header = sdt?;
+        Some(&*(header as *const AcpiSdtHeader as *const AcpiMcfg))
+    }
+}
+
+/// Extract the first ECAM base address from the MCFG table.
+/// Returns (base_addr, segment_group, start_bus, end_bus) or None.
+pub fn get_ecam_info() -> Option<(u64, u16, u8, u8)> {
+    let mcfg = find_mcfg_table()?;
+    let header_size = core::mem::size_of::<AcpiSdtHeader>() as u32;
+    let mcfg_fixed = core::mem::size_of::<AcpiMcfg>() as u32;
+    let entry_size = core::mem::size_of::<McfgEntry>() as u32;
+    let data_avail = mcfg.header.length.saturating_sub(header_size);
+    let entries_bytes = data_avail.saturating_sub(mcfg_fixed - header_size);
+    if entries_bytes < entry_size {
+        return None;
+    }
+    unsafe {
+        let entry_ptr = (mcfg as *const AcpiMcfg as u64 + mcfg_fixed as u64) as *const McfgEntry;
+        let entry = &*entry_ptr;
+        if entry.base_addr == 0 {
+            return None;
+        }
+        Some((entry.base_addr, entry.segment_group, entry.start_bus, entry.end_bus))
+    }
+}
+
+// ── ACPI MADT (Multiple APIC Description Table) ────────────────────
+
+#[repr(C, packed)]
+struct AcpiMadt {
+    header: AcpiSdtHeader,
+    local_apic_addr: u32,
+    flags: u32,
+    // Followed by interrupt controller structures (MADT entries)
+}
+
+#[repr(C, packed)]
+struct MadtEntryHeader {
+    entry_type: u8,
+    record_length: u8,
+}
+
+#[repr(C, packed)]
+struct MadtIoApic {
+    header: MadtEntryHeader,
+    ioapic_id: u8,
+    _reserved: u8,
+    ioapic_addr: u32,
+    gsi_base: u32,
+}
+
+#[repr(C, packed)]
+struct MadtIsoOverride {
+    header: MadtEntryHeader,
+    bus: u8,
+    source: u8,
+    gsi: u32,
+    flags: u16,
+}
+
+/// Find the MADT table.
+fn find_madt_table() -> Option<&'static AcpiMadt> {
+    let rsdp = find_rsdp()?;
+    let sdt: Option<&'static AcpiSdtHeader>;
+
+    if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
+        let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
+        unsafe {
+            let xsdt = &*xsdt_ptr;
+            if xsdt.signature != XSDT_SIGNATURE { return None; }
+            let entry_count = (xsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 8;
+            let entries = core::slice::from_raw_parts(
+                (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
+                entry_count,
+            );
+            sdt = find_table_in_xsdt(entries, &APIC_SIGNATURE);
+        }
+    } else {
+        let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
+        unsafe {
+            let rsdt = &*rsdt_ptr;
+            if rsdt.signature != RSDT_SIGNATURE { return None; }
+            let entry_count = (rsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 4;
+            let entries = core::slice::from_raw_parts(
+                (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
+                entry_count,
+            );
+            sdt = find_table_in_rsdt(entries, &APIC_SIGNATURE);
+        }
+    }
+
+    unsafe {
+        let header = sdt?;
+        Some(&*(header as *const AcpiSdtHeader as *const AcpiMadt))
+    }
+}
+
+/// Iterate MADT entries and return the first I/O APIC found.
+/// Returns (ioapic_addr, gsi_base).
+pub fn find_ioapic() -> Option<(u32, u32)> {
+    let madt = find_madt_table()?;
+    let madt_header_size = core::mem::size_of::<AcpiMadt>() as u32;
+    let total_len = madt.header.length;
+    if total_len <= madt_header_size {
+        return None;
+    }
+    let data_ptr = madt as *const AcpiMadt as u64;
+    let mut offset = madt_header_size as u64;
+    while offset + 2 <= total_len as u64 {
+        unsafe {
+            let entry = (data_ptr + offset) as *const MadtEntryHeader;
+            let entry_type = (*entry).entry_type;
+            let record_length = (*entry).record_length as u64;
+            if record_length < 2 { break; }
+            if entry_type == 1 && record_length >= 12 {
+                let ioapic = (data_ptr + offset) as *const MadtIoApic;
+                if (*ioapic).ioapic_addr != 0 {
+                    return Some(((*ioapic).ioapic_addr, (*ioapic).gsi_base));
+                }
+            }
+            offset += record_length;
+        }
+    }
+    None
+}
+
+/// Return all ISA interrupt source overrides from the MADT.
+pub fn get_isa_overrides() -> alloc::vec::Vec<(u8, u32, u16)> {
+    let mut overrides = alloc::vec::Vec::new();
+    let madt = match find_madt_table() {
+        Some(m) => m,
+        None => return overrides,
+    };
+    let madt_header_size = core::mem::size_of::<AcpiMadt>() as u32;
+    let total_len = madt.header.length;
+    if total_len <= madt_header_size {
+        return overrides;
+    }
+    let data_ptr = madt as *const AcpiMadt as u64;
+    let mut offset = madt_header_size as u64;
+    while offset + 2 <= total_len as u64 {
+        unsafe {
+            let entry = (data_ptr + offset) as *const MadtEntryHeader;
+            let entry_type = (*entry).entry_type;
+            let record_length = (*entry).record_length as u64;
+            if record_length < 2 { break; }
+            if entry_type == 2 && record_length >= 10 {
+                let iso = (data_ptr + offset) as *const MadtIsoOverride;
+                overrides.push(((*iso).source, (*iso).gsi, (*iso).flags));
+            }
+            offset += record_length;
+        }
+    }
+    overrides
 }
 
 /// Find the HPET ACPI table by scanning RSDP → RSDT/XSDT → HPET.

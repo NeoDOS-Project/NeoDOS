@@ -19,15 +19,20 @@ NeoDOS Bootloader (UEFI application)
        ↓
 NeoDOS Kernel (x86_64-unknown-none)
   - graphics init + RAM disk + serial + VGA console
-  - CPU structures (GDT/IDT/PIC) + PS/2 + USB HID
-  - physical memory init (UEFI mem map → frame allocator bitmap)
-   - kernel heap allocator init (linked_list_allocator + slab allocator)
-   - enable interrupts (STI)
-   - ATA boot stub PIO (BootAta) + AHCI probe + NVMe probe
-   - GPT scan → NeoDOS partition → base_lba → block cache → mount NeoDOS FS on C:
-  - FAT32 ESP mount on A:
+  - CPU structures (GDT/IDT/MSI/PIC) + IOAPIC init (MADT) + legacy PIC disable
+  - timers: HPET (ACPI) → APIC timer calibration → APIC timer active
+  - PS/2 + USB HID init
+  - physical memory init (UEFI mem map → buddy frame allocator)
+  - kernel heap allocator init (slab allocator + linked_list_allocator fallback)
+  - SMP: INIT-SIPI-SIPI + per-CPU KPRCB + IPI infrastructure
+  - I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12
+  - enable interrupts (STI)
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
-  - DOS-like shell (371 kernel tests + user commands)
+  - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback)
+  - ATA boot stub (BootAta) + AHCI probe + NVMe probe
+  - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
+  - FAT32 ESP mount on A:
+  - DOS-like shell (441 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -486,7 +491,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI | `drivers/ahci.rs` | DMA polling, per-port, ATA + ATAPI, PRDT scatter-gather |
 | PS/2 | `drivers/ps2.rs` | IRQ1, scan code → ASCII via KLC layouts |
-| PCI | `drivers/pci.rs` | Config space primitives via 0xCF8/0xCFC (scanning via NEM driver) |
+| PCI | `drivers/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
 | GPT | `drivers/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
 | RTC | `drivers/rtc.rs` | CMOS RTC |
@@ -495,6 +500,9 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
 | Block Device | `drivers/block.rs` | Trait + block device manager |
 | USB HID | `drivers/usb_hid/` | UHCI (non-functional on PIIX3) |
+| ECAM PCIe | `hal/pci.rs` | MMIO ECAM config space: set_ecam_base, ecam_is_active, ecam_read/write_config_dword/word/byte |
+| IOAPIC | `interrupts/ioapic.rs` | MADT-detected I/O APIC: init, mask/unmask, ISA IRQ routing, PIC disable |
+| MSI-X | `interrupts/msi.rs` | Per-entry MSI-X table programming: configure_msix_entry/configures |
 
 ---
 

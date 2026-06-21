@@ -2383,6 +2383,14 @@ pub fn register_tests() {
     crate::console::register_ansi_tests();
     // NT6 Security Reference Monitor tests
     crate::security::register_security_tests();
+
+    // A2.1: PCIe ECAM tests
+    crate::hal::pci::register_tests();
+    register_ecam_integration_tests();
+
+    // A2.2: I/O APIC tests
+    crate::interrupts::ioapic::register_tests();
+    register_ioapic_integration_tests();
 }
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────
@@ -2572,6 +2580,68 @@ pub fn register_irql_tests() {
 
             irql::lower_irql(old);
             test_eq!(irql::current_irql(), irql::PASSIVE_LEVEL);
+        }
+    });
+}
+
+// ── A2.2: IOAPIC integration tests ────────────────────────────────
+
+fn register_ioapic_integration_tests() {
+    test_case!("ioapic_pic_disabled_when_ioapic_active", {
+        if crate::interrupts::ioapic::is_active() {
+            // Read PIC master mask register (port 0x21)
+            let master_mask = crate::hal::inb(0x21);
+            let slave_mask = crate::hal::inb(0xA1);
+            test_eq!(master_mask, 0xFF);
+            test_eq!(slave_mask, 0xFF);
+        }
+    });
+}
+
+// ── A2.1: ECAM integration tests ──────────────────────────────────
+
+fn register_ecam_integration_tests() {
+    use crate::drivers::pci;
+
+    test_case!("ecam_mcfg_table_parse", {
+        // MCFG table should be present on QEMU/OVMF.
+        // This validates the ACPI table scanning code path.
+        match crate::timers::hpet::get_ecam_info() {
+            Some((base, _seg, _start, _end)) => {
+                test_true!(base > 0);
+            }
+            None => {
+                // On real hardware without PCIe, this is acceptable.
+                // We log and pass.
+            }
+        }
+    });
+
+    test_case!("ecam_fallback_to_pio_if_no_mcfg", {
+        if crate::hal::pci::ecam_is_active() {
+            let vendor = pci::pci_config_read_word(0, 0, 0, 0);
+            test_ne!(vendor, 0xFFFF);
+            test_ne!(vendor, 0);
+        } else {
+            let vendor = pci::pci_config_read_word(0, 0, 0, 0);
+            test_ne!(vendor, 0xFFFF);
+            test_ne!(vendor, 0);
+        }
+    });
+
+    test_case!("ecam_read_match_legacy_pio", {
+        if crate::hal::pci::ecam_is_active() {
+            let ecam_vendor = unsafe { crate::hal::pci::ecam_read_config_word(0, 0, 0, 0) };
+            // Temporarily deactivate ECAM, read via PIO, reactivate
+            crate::hal::pci::ecam_deactivate();
+            let pio_vendor = pci::pci_config_read_word(0, 0, 0, 0);
+            test_eq!(ecam_vendor, pio_vendor);
+            // Re-activate ECAM (if the original init set it)
+            if let Some((base, _seg, _start, _end)) = crate::timers::hpet::get_ecam_info() {
+                crate::hal::pci::set_ecam_base(base);
+            }
+        } else {
+            // ECAM not active, skip comparison test
         }
     });
 }

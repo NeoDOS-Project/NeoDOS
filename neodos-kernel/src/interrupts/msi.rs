@@ -129,26 +129,141 @@ fn configure_msi_via_eventbus(bus: u8, dev: u8, func: u8, cap: u8, vector: u8) {
     );
 }
 
-// ─── MSI-X enable stub ────────────────────────────────────────────────────────
+// ─── MSI-X per-entry table support ────────────────────────────────────────────
 
-/// Minimal MSI-X enable: sets the MSI-X Enable bit and Function Mask so the
-/// device stops asserting its legacy INTx# line. Per-entry table writes require
-/// BAR mapping, which is not yet available — this is clearly documented as a
-/// TODO for when a generic PCI BAR mapping utility is added.
-pub fn configure_msix_enable_only(
-    bus: u8, dev: u8, func: u8, cap: u8,
+/// MSI-X table entry in a device's MMIO BAR (16 bytes each).
+#[repr(C, packed)]
+struct MsixTableEntry {
+    msg_addr_low: u32,
+    msg_addr_high: u32,
+    msg_data: u32,
+    vector_ctrl: u32,
+}
+
+const MSIX_VECTOR_CTRL_MASK: u32 = 1;
+
+/// Configure a single MSI-X table entry for a device.
+///
+/// Reads the MSI-X capability to find the BAR index and table offset,
+/// maps the BAR MMIO region, writes the per-entry message address + data,
+/// and clears the entry's mask bit.
+pub fn configure_msix_entry(
+    bus: u8, dev: u8, func: u8, entry_index: u16, vector: u8,
 ) -> Result<(), &'static str> {
-    use crate::drivers::pci::{pci_config_read_word, pci_config_write_word};
+    use crate::drivers::pci::{pci_config_read_word, pci_config_read_dword, pci_config_write_word};
 
-    let ctrl = pci_config_read_word(bus, dev, func, cap + 2);
-    // Set Enable (bit 15) + Function Mask (bit 14) — masks all entries globally
-    // until the driver has programmed each table entry.
-    let new_ctrl = ctrl | (1 << 15) | (1 << 14);
+    let cap = crate::drivers::pci::find_capability(bus, dev, func, 0x11)
+        .ok_or("Device has no MSI-X capability")?;
+
+    let msg_ctrl = pci_config_read_word(bus, dev, func, cap + 2);
+    let table_size = (msg_ctrl & 0x7FF) + 1;
+    if entry_index >= table_size {
+        return Err("MSI-X entry index out of range");
+    }
+
+    let bir_offset = pci_config_read_dword(bus, dev, func, cap + 4);
+    let bir = (bir_offset & 0x7) as u8;
+    let table_offset = (bir_offset & 0xFFFF_FFF8) as u64;
+
+    let bar_raw = crate::drivers::pci::read_bar(bus, dev, func, bir);
+    if bar_raw == 0 || (bar_raw & 1) != 0 {
+        return Err("MSI-X BAR is I/O space or not present");
+    }
+    let is_64bit = (bar_raw & 0x6) == 0x4;
+    let bar_base = if is_64bit {
+        let high = crate::drivers::pci::read_bar(bus, dev, func, bir + 1) as u64;
+        ((bar_raw & 0xFFFF_FFF0) as u64) | (high << 32)
+    } else {
+        (bar_raw & 0xFFFF_FFF0) as u64
+    };
+
+    let table_phys = bar_base + table_offset;
+
+    let table_size_bytes = (table_size as u64) * 16;
+    let page_aligned = table_phys & !0xFFF;
+    let table_end = table_phys + table_size_bytes;
+    let map_size = ((table_end + 0xFFF) & !0xFFF) - page_aligned;
+
+    unsafe {
+        if !map_msix_table_mmio(page_aligned, map_size) {
+            return Err("Failed to map MSI-X table MMIO");
+        }
+    }
+
+    if table_phys >= 0x1_0000_0000 {
+        return Err("MSI-X table above 4 GiB not yet supported");
+    }
+
+    let virt_table = table_phys;
+    let entry_addr = virt_table + (entry_index as u64) * 16;
+    unsafe {
+        let entry = entry_addr as *mut MsixTableEntry;
+        (*entry).msg_addr_low = 0xFEE0_0000;
+        (*entry).msg_addr_high = 0;
+        (*entry).msg_data = vector as u32;
+        (*entry).vector_ctrl = 0;
+    }
+
+    let new_ctrl = msg_ctrl | (1 << 15);
     pci_config_write_word(bus, dev, func, cap + 2, new_ctrl);
 
-    // TODO: map BAR[BIR], iterate table, write per-entry address/data,
-    //       then clear Function Mask (bit 14).
-    Err("MSI-X per-entry table write requires BAR mapping (not yet implemented)")
+    crate::serial_println!(
+        "[MSI-X] Entry {} configured: vector {:#04x}, BAR{} + 0x{:x}",
+        entry_index, vector, bir, table_offset
+    );
+
+    Ok(())
+}
+
+/// Map the MSI-X table MMIO region as UC- (uncacheable).
+unsafe fn map_msix_table_mmio(phys: u64, size: u64) -> bool {
+    use x86_64::structures::paging::PageTableFlags;
+
+    if phys + size > 0x1_0000_0000 {
+        return false;
+    }
+
+    let start_aligned = phys & !0x1F_FFFF;
+    let end_aligned = ((phys + size + 0x1F_FFFF) & !0x1F_FFFF).min(0x1_0000_0000);
+
+    let mut addr = start_aligned;
+    while addr < end_aligned {
+        if crate::arch::x64::paging::split_2mb_page(addr).is_err() {
+            return false;
+        }
+        addr += 0x200_000;
+    }
+
+    let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;
+    crate::arch::x64::paging::map_mmio_4k(phys, phys, size, flags)
+}
+
+/// Configure a range of MSI-X entries for a device.
+/// All entries share the same handler function.
+pub fn configure_msix_entries(
+    bus: u8, dev: u8, func: u8, num_entries: u16,
+    handler: fn(vector: u8),
+) -> Result<alloc::vec::Vec<u8>, &'static str> {
+    let cap = crate::drivers::pci::find_capability(bus, dev, func, 0x11)
+        .ok_or("Device has no MSI-X capability")?;
+    let msg_ctrl = crate::drivers::pci::pci_config_read_word(bus, dev, func, cap + 2);
+    let table_size = (msg_ctrl & 0x7FF) + 1;
+    let count = num_entries.min(table_size);
+
+    let mut vectors = alloc::vec::Vec::with_capacity(count as usize);
+    for i in 0..count {
+        let vector = msi_alloc_vector().ok_or("No free MSI-X vectors")?;
+        configure_msix_entry(bus, dev, func, i, vector)?;
+        crate::arch::x64::idt::msi_register_handler(vector, handler);
+        vectors.push(vector);
+    }
+
+    crate::serial_println!(
+        "[MSI-X] Configured {} entries for {:02x}:{:02x}.{}: vectors {:?}",
+        count, bus, dev, func, vectors
+    );
+
+    Ok(vectors)
 }
 
 // ─── EVENT_MSI_CONFIGURED kernel-side listener ────────────────────────────────

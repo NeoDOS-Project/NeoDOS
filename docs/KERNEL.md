@@ -20,12 +20,20 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 1. **Graphics + RAM disk** — init GOP framebuffer renderer, set Caps Lock LED, store RAM disk base/size from bootloader
 2. **Serial** — init serial output, print bootloader version (compatibility check)
 3. **Console** — init VGA text mode fallback, set Caps+Num Lock LEDs, print kernel banner
-4. **CPU structures** — GDT, IDT (exception + IRQ handlers + INT 0x80 trampoline), PIC remap/enable
-5. **Input** — init PS/2 controller, init USB HID keyboard
-6. **Physical memory** — parse UEFI memory map, init frame allocator bitmap (`memory::init`)
-7. **Kernel heap** — init `linked_list_allocator` (`allocator::init`) — enables `Box`/`Vec`/`String`
-8. **Enable interrupts** — STI (timer IRQ0 can fire immediately)
-9. **Storage — ATA boot stub** — init ATA PIO boot stub (`BootAta`), probe AHCI controller, probe NVMe controller. NEM v3 standalone ATA driver (DMA+PIO) loaded later at PHASE 3.85.
+4. **CPU structures** — GDT, IDT (exception + IRQ handlers + INT 0x80 trampoline), MSI subsystem init, PIC remap
+5. **Timers** — HPET init (ACPI RSDP → HPET table), APIC timer calibration → APIC timer active
+6. **Input** — init PS/2 controller, init USB HID keyboard
+7. **Physical memory** — parse UEFI memory map, init buddy frame allocator (`memory::init`)
+8. **Kernel heap** — init slab allocator + `linked_list_allocator` fallback (`allocator::init`)
+9. **SMP** — INIT-SIPI-SIPI sequence, per-CPU KPRCB via GS base
+10. **IPI** — cross-CPU reschedule, TLB shootdown, call-function
+11. **I/O APIC** — detect from MADT, disable legacy PIC, route ISA IRQs 0/1/4/12 to vectors 32/33/36/44
+12. **Enable interrupts** — STI (timer IRQ0 can fire immediately, via APIC timer LVT)
+13. **Custom page tables** — 4 GiB identity-map via 2 MB huge pages, user window, framebuffer UC-, framebuffer >4 GiB
+14. **PCIe ECAM** — read MCFG from ACPI, map ECAM MMIO region as UC-, activate ECAM (PIO fallback if no MCFG)
+15. **Heap demand paging** — split all 16 × 2 MB heap huge pages → 4 KB PTEs
+16. **Mmap demand paging** — split mmap region → 4 KB PTEs
+17. **Storage — ATA boot stub** — init ATA PIO boot stub (`BootAta`), probe AHCI controller, probe NVMe controller. NEM v3 standalone ATA driver (DMA+PIO) loaded later at PHASE 3.85.
 10. **Storage — GPT** — scan GPT on disk 0 (and disk 1), find NeoDOS partition, set `base_lba` on block device driver
 11. **Storage — NeoDOS FS** — init block cache and page cache, read superblock from LBA 0 (relative), mount NeoDOS FS on `C:` via VFS
 12. **Storage — FAT32** — init FAT32 driver from ESP partition (absolute LBA), mount on `A:` via VFS
@@ -35,7 +43,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
 17. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
 18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
-19. **Shell** — set all keyboard LEDs ON, register kernel tests (371), create and run `DosShell`
+19. **Shell** — set all keyboard LEDs ON, register kernel tests (441), create and run `DosShell`
 
 ### GPT Layout (single disk)
 

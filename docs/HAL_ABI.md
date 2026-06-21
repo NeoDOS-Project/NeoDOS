@@ -353,9 +353,65 @@ It is a Rust generic function, NOT `extern "C"`, and is not part of the binary A
 
 ---
 
-## 6. Future Extensions (Non-Binding)
+## 5.5 `ack_irq` — Updated contract (v0.39.4+)
 
-### 6.1 Proposed additions for later versions
+`ack_irq(vector: u8)` acknowledges an interrupt at the interrupt controller level.
+Now supports three modes:
+
+1. **APIC EOI** (always): Write 0 to Local APIC EOI register (MMIO base + 0x0B0) for ALL vectors, when APIC is present.
+2. **IOAPIC active** (`interrupts::ioapic::is_active()`): Return immediately after APIC EOI — legacy PIC is disabled, no PIO EOI.
+3. **Legacy PIC fallback** (IOAPIC not active):
+   - Vector 0xF0–0xF2 (IPI): APIC EOI only
+   - Vector 32 (timer with APIC timer active): APIC EOI
+   - Vector 32–39: PIC master EOI (port 0x20)
+   - Vector 40–47: PIC slave (0xA0) + master (0x20) EOI
+
+## 6. Current Extensions (since v0.39.4)
+
+These were previously proposed and are now implemented:
+
+### 6.1 PCI Express ECAM (`src/hal/pci.rs`, `src/drivers/pci.rs`)
+
+```rust
+// HAL-level ECAM primitives
+pub fn set_ecam_base(base: u64);
+pub fn ecam_base() -> u64;
+pub fn ecam_is_active() -> bool;
+pub unsafe fn ecam_read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32;
+pub unsafe fn ecam_read_config_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16;
+pub unsafe fn ecam_read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u8;
+pub unsafe fn ecam_write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32);
+pub unsafe fn ecam_write_config_word(bus: u8, dev: u8, func: u8, offset: u8, value: u16);
+pub unsafe fn ecam_write_config_byte(bus: u8, dev: u8, func: u8, offset: u8, value: u8);
+```
+
+ECAM addressing: `ECAM_BASE + (bus<<20) + (dev<<15) + (func<<12) + offset`. Activated at Phase 2.3 from ACPI MCFG table. `init_ecam()` in `drivers/pci.rs` maps the MMIO region as UC- and activates ECAM; if no MCFG found, transparently falls back to PIO.
+
+### 6.2 I/O APIC (`src/interrupts/ioapic.rs`)
+
+```rust
+pub fn init() -> bool;              // MADT detection, PIC disable, ISA IRQ routing
+pub fn is_active() -> bool;         // IOAPIC initialised?
+pub fn mask_irq(irq: u8);           // Mask IOAPIC redirection entry
+pub fn unmask_irq(irq: u8);         // Unmask IOAPIC redirection entry
+pub fn ioapic_addr() -> u64;        // MMIO base (0 if not initialised)
+pub fn ioapic_pin_count() -> u8;    // Number of pins
+```
+
+ISA IRQs routed: IRQ0 (timer) → vec32, IRQ1 (keyboard) → vec33, IRQ4 (serial) → vec36, IRQ12 (PS/2 mouse) → vec44. All other pins stay masked.
+
+### 6.3 MSI-X per-entry table (`src/interrupts/msi.rs`)
+
+```rust
+pub fn configure_msix_entry(bus, dev, func, entry_index, vector) -> Result<(), &'static str>;
+pub fn configure_msix_entries(bus, dev, func, num_entries, handler) -> Result<Vec<u8>, &'static str>;
+```
+
+Reads MSI-X capability (BAR + table offset from BIR), maps BAR MMIO as UC-, writes 16-byte table entry (message address + data + vector control), enables MSI-X. `configure_msix_entries` allocates vectors and registers IDT handlers.
+
+## 7. Future Extensions (Non-Binding)
+
+### 7.1 Proposed additions for later versions
 
 | Proposed function     | Signature                                        | Rationale |
 |-----------------------|--------------------------------------------------|-----------|
@@ -363,9 +419,8 @@ It is a Rust generic function, NOT `extern "C"`, and is not part of the binary A
 | `set_timer_freq`      | `(hz: u32) -> i32`                               | Reprogram PIT/APIC timer frequency |
 | `get_cpu_count`       | `() -> u32`                                      | Return number of online CPUs |
 | `irq_enable` / `irq_disable` | `(vector: u8) -> i32`                    | Per-IRQ mask/unmask via IMR |
-| `increment_ticks`     | `() -> void`                                     | v0.3 added this; listed for completeness |
 
-### 6.2 Proposed dispatch table
+### 7.2 Proposed dispatch table
 
 A future revision MAY introduce a fixed-address dispatch table for dynamic HAL lookups:
 
