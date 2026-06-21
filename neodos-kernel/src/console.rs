@@ -13,6 +13,12 @@ use core::sync::atomic::{AtomicUsize, AtomicU8, AtomicBool, Ordering};
 static ROW: AtomicUsize = AtomicUsize::new(0);
 static COL: AtomicUsize = AtomicUsize::new(0);
 
+// ── Cursor blink ──
+static CURSOR_VISIBLE: AtomicBool = AtomicBool::new(true);
+static CURSOR_BLINK_ENABLED: AtomicBool = AtomicBool::new(false);
+static CURSOR_BLINK_COUNTER: AtomicUsize = AtomicUsize::new(0);
+const CURSOR_BLINK_INTERVAL: usize = 18; // ticks (~every 18ms at 1KHz = ~55 Hz)
+
 // ── ANSI color table (16 standard VGA/ANSI colors) ─────────────────────────
 const ANSI_COLORS: [u32; 16] = [
     0x000000, //  0: Black
@@ -365,6 +371,34 @@ pub fn draw_cursor(visible: bool) {
     } else {
         font::draw_char(b' ', c * font::FONT_WIDTH, r * font::FONT_HEIGHT, bg, bg);
     }
+}
+
+/// Enable or disable automatic cursor blinking.
+/// When enabled, the blink state toggles on each timer tick.
+pub fn set_cursor_blink(enabled: bool) {
+    CURSOR_BLINK_ENABLED.store(enabled, Ordering::SeqCst);
+    CURSOR_VISIBLE.store(true, Ordering::SeqCst);
+    CURSOR_BLINK_COUNTER.store(0, Ordering::SeqCst);
+    draw_cursor(true);
+}
+
+/// Called from the timer IRQ every tick.
+/// Toggles cursor visibility when blink is enabled.
+pub fn cursor_timer_tick() {
+    if !CURSOR_BLINK_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let cnt = CURSOR_BLINK_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if cnt % CURSOR_BLINK_INTERVAL == 0 {
+        let visible = !CURSOR_VISIBLE.load(Ordering::Relaxed);
+        CURSOR_VISIBLE.store(visible, Ordering::Relaxed);
+        draw_cursor(visible);
+    }
+}
+
+/// Check if cursor blink is currently enabled.
+pub fn cursor_blink_enabled() -> bool {
+    CURSOR_BLINK_ENABLED.load(Ordering::SeqCst)
 }
 
 pub fn clear_screen() {

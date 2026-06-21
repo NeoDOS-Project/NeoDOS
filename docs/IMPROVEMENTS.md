@@ -8,7 +8,7 @@
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 132 / ~145 items completados. Próximo milestone: **v0.40** (Maduración estructural).
+**Progreso:** 136 / ~145 items completados. Próximo milestone: **v0.40** (Maduración estructural).
 
 ---
 
@@ -1255,20 +1255,20 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
   - **Tests:** `ring0_exit_removed`, `ring3_poweroff_invokes_syscall`.
 
 **Fase 2 — Syscall 1:1 (nuevo .NXE + syscall específica):**
+- [x] **B9.4. PS** | `userbin/ps/` → `ps.nxe`
 
-- [ ] **B9.4. PS** | `userbin/ps/` → `ps.nxe`
-  - **Descripción:** Lista de procesos en Ring 3. Usa `sys_get_process_list(RAX=29)` que devuelve un array de entradas con PID, TID, estado (Running/Ready/Blocked/Terminated), prioridad (0–3), nombre del proceso y ticks de CPU. Muestra en columnas formateadas con cabecera. Admite `/A` (todos los procesos, no solo los del caller). El .NXE replica la funcionalidad del actual `commands/ps.rs`.
-  - **Criterio:** `PS` desde neoshell muestra PID, TID, estado y prioridad de todos los procesos activos.
+  - **Descripción:** Lista de procesos en Ring 3. Usa `sys_kobj_enum` (RAX=48) filtrando por tipo PROCESS. Muestra TID, PID, nombre y estado. El .NXE replica la funcionalidad del actual `commands/ps.rs`.
+  - **Criterio:** `PS` desde neoshell muestra PID, TID y nombre de todos los procesos activos.
   - **Tests:** `ring3_ps_list_all`, `ring3_ps_format_columns`.
+- [x] **B9.5. KILL** | `userbin/kill/` → `kill.nxe`
 
-- [ ] **B9.5. KILL** | `userbin/kill/` → `kill.nxe`
-  - **Descripción:** Termina un proceso por PID desde Ring 3. Usa `sys_kill(pid, RAX=30)` que ejecuta `Scheduler::kill_pid()`. La syscall verifica que el caller tenga token admin (`is_admin_token()`) o que el PID objetivo sea hijo del caller. El .NXE muestra confirmación antes de matar. Error si el PID no existe o no tiene permiso.
-  - **Criterio:** `KILL 5` desde neoshell termina el PID 5. `KILL 1` sin admin falla con "Access denied".
+  - **Descripción:** Termina un proceso por PID desde Ring 3. Usa `sys_kill_process` (RAX=52, admin) que ejecuta `Scheduler::kill_pid()`. La syscall verifica token admin. El .NXE replica el actual `commands/kill.rs`.
+  - **Criterio:** `KILL 5` desde neoshell termina el PID 5.
   - **Tests:** `ring3_kill_admin_success`, `ring3_kill_user_denied`, `ring3_kill_nonexistent_pid`.
+- [x] **B9.6. PRI** | `userbin/pri/` → `pri.nxe`
 
-- [ ] **B9.6. PRI** | `userbin/pri/` → `pri.nxe`
-  - **Descripción:** Cambia la prioridad de scheduling de un proceso desde Ring 3. Usa `sys_set_priority(pid, prio, RAX=31)`. La syscall es admin-only. Prioridades: 0=HIGH, 1=ABOVE_NORMAL, 2=NORMAL (default), 3=IDLE. El .NXE parsea el nombre del nivel (ej. `PRI 5 HIGH`). Replica la funcionalidad del actual `commands/pri.rs`.
-  - **Criterio:** `PRI 5 0` o `PRI 5 HIGH` cambia prioridad del PID 5 a HIGH. Usuario sin admin recibe "Access denied".
+  - **Descripción:** Cambia la prioridad de scheduling de un proceso desde Ring 3. Usa `sys_set_priority` (RAX=51, admin). Prioridades: 0=HIGH, 1=ABOVE_NORMAL, 2=NORMAL (default), 3=IDLE. Replica el actual `commands/pri.rs`.
+  - **Criterio:** `PRI 5 0` cambia prioridad del PID 5 a HIGH.
   - **Tests:** `ring3_pri_set_high`, `ring3_pri_invalid_level`, `ring3_pri_admin_required`.
 
 - [ ] **B9.7. LABEL** | `userbin/label/` → `label.nxe`
@@ -1285,9 +1285,9 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
   - **Descripción:** Verificación y reparación del sistema de archivos NeoDOS desde Ring 3. Usa `sys_fsck(drive, flags, RAX=34)`. Sin `/F`: solo comprobación (reporta errores sin modificar). Con `/F`: repara errores (reconecta inodos huérfanos, corrige block pointers, actualiza bitmap). Replica `commands/fsck.rs` (~300 líneas de lógica).
   - **Criterio:** `FSCK C:` comprueba e informa. `FSCK C: /F` repara errores encontrados. Requiere admin para `/F`.
   - **Tests:** `ring3_fsck_check_only`, `ring3_fsck_repair`, `ring3_fsck_admin_required`.
+- [x] **B9.10. KEYB** | `userbin/keyb/` → `keyb.nxe`
 
-- [ ] **B9.10. KEYB** | `userbin/keyb/` → `keyb.nxe`
-  - **Descripción:** Cambia la distribución del teclado desde Ring 3. Usa `sys_set_keyboard_layout(layout_id, RAX=35)`. Layouts: 0=US, 1=SP (Spanish). La syscall envía un evento `EVENT_KEYB_LAYOUT` (type 9) al Event Bus, que el driver ps2kbd NEM consume para cambiar las tablas de scan code → ASCII. Replica `commands/keyb.rs`.
+  - **Descripción:** Cambia la distribución del teclado desde Ring 3. Usa `sys_set_keyboard_layout` (RAX=49). Layouts: 0=US, 1=SP (Spanish). La syscall envía un evento `EVENT_KEYB_LAYOUT` (type 9) al Event Bus. Replica `commands/keyb.rs`.
   - **Criterio:** `KEYB SP` cambia a teclado español. `KEYB US` vuelve a inglés.
   - **Tests:** `ring3_keyb_switch_us`, `ring3_keyb_switch_sp`, `ring3_keyb_invalid_layout`.
 
@@ -1304,10 +1304,10 @@ Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri,
   - **Descripción:** Carga un driver NEM desde Ring 3. Usa `sys_driver_load(path, RAX=37)`. La syscall verifica token admin (`is_admin_token()`), lee el archivo .nem desde NeoFS a través de VFS, parsea el header NEM v3, lo carga en la región de aislamiento X4, y lo pasa por el pipeline de certificación (Loaded→Initialized→Registered→Bound→Active). Muestra progreso paso a paso. Reemplaza el inline shim `load_nem()` en `handler.rs`.
   - **Criterio:** `LOADNEM C:\System\Drivers\foo.nem` carga, certifica y activa el driver (admin). Usuario sin admin recibe "Access denied".
   - **Tests:** `ring3_loadnem_activate`, `ring3_loadnem_invalid_path`, `ring3_loadnem_admin_required`.
+- [x] **B9.13. CALL** | `userbin/neoshell/` (built-in)
 
-- [ ] **B9.13. CALL** | `userbin/call/` → `call.nxe`
-  - **Descripción:** Ejecuta un archivo batch .BAT desde Ring 3. Usa `sys_batch_exec(path, RAX=39)`. La syscall (admin) abre el .BAT, lee líneas, y para cada línea que no sea REM o esté vacía, la ejecuta como un comando del shell (via `sys_spawn` para comandos externos, o parseando built-ins simples). Soporta `@ECHO OFF`, `REM`, y llamadas a otros .NXE. Replica la funcionalidad básica del actual `commands/call.rs`.
-  - **Criterio:** `CALL C:\test.bat` ejecuta las líneas del batch secuencialmente (admin).
+  - **Descripción:** Ejecuta un archivo batch .BAT desde la shell Ring 3. Implementado como built-in en neoshell. Lee el .BAT via `sys_open`/`sys_readfile`, itera líneas, y ejecuta cada una via `execute_line()`. Soporta `PAUSE`, omite líneas vacías, `:` labels y `@`. Replica el actual `commands/call.rs`.
+  - **Criterio:** `CALL C:\test.bat` ejecuta las líneas del batch secuencialmente.
   - **Tests:** `ring3_call_basic_bat`, `ring3_call_with_args`, `ring3_call_admin_required`.
 
 **Permanecen en Ring 0:**

@@ -513,6 +513,83 @@ impl KObjEntryRaw {
     }
 }
 
+/// sys_set_keyboard_layout (RAX=49): change keyboard layout.
+/// layout = 0 (US) or 1 (SP).
+pub fn sys_set_keyboard_layout(layout: u8) -> Result<(), i64> {
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 49",
+            "mov rbx, {layout}",
+            "int 0x80",
+            "pop rbx",
+            layout = in(reg) layout as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_set_priority (RAX=51): set process scheduling priority (admin).
+pub fn sys_set_priority(pid: u32, priority: u8) -> Result<(), i64> {
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 51",
+            "mov rbx, {pid}",
+            "mov rcx, {priority}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            pid = in(reg) pid as u64,
+            priority = in(reg) priority as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_kill (RAX=52): terminate a process by PID (admin).
+pub fn sys_kill(pid: u32) -> Result<(), i64> {
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 52",
+            "mov rbx, {pid}",
+            "int 0x80",
+            "pop rbx",
+            pid = in(reg) pid as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_cursor_blink (RAX=53): enable/disable automatic cursor blinking.
+pub fn sys_cursor_blink(enabled: bool) -> Result<(), i64> {
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 53",
+            "mov rbx, {enable}",
+            "int 0x80",
+            "pop rbx",
+            enable = in(reg) enabled as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
 /// sys_kobj_enum (RAX=48): enumerate kernel objects.
 /// buf must be large enough for max_entries entries (each 48 bytes).
 /// Returns number of entries written.

@@ -9,7 +9,7 @@ const MAX_ENV: usize = 16;
 const ARGS_ADDR: u64 = 0x41F000;
 static BUILTINS: &[&[u8]] = &[
     b"CWD",
-    b"SET", b"EXIT", b"POWEROFF",
+    b"SET", b"EXIT", b"POWEROFF", b"CALL",
 ];
 
 fn make_ascii_uppercase(buf: &mut [u8]) {
@@ -145,7 +145,7 @@ impl Shell {
         let mut cwd_buf = [0u8; 256];
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
-                let s = core::str::from_utf8(&cwd_buf[..n - 1]).unwrap_or("C:\\");
+                let s = core::str::from_utf8(&cwd_buf[..n]).unwrap_or("C:\\");
                 write_str(s.as_bytes());
             }
             _ => {
@@ -155,34 +155,96 @@ impl Shell {
         write_str(b"> ");
     }
 
-    fn backspace(&mut self) {
-        if self.pos > 0 {
-            self.pos -= 1;
-            write_str(b"\x08 \x08");
-        }
+    fn write_cursor(&self) {
+        write_str(b"\x5F");
     }
 
-    fn insert_char(&mut self, c: u8) {
-        if self.pos < LINE_BUF_SIZE - 1 {
-            self.line[self.pos] = c;
-            self.pos += 1;
-            write_str(&[c]);
-        }
+    fn erase_cursor(&self) {
+        write_str(b"\x08 \x08");
     }
 
-    fn try_complete(&mut self) {
-        let trimmed = trim_ascii(&self.line[..self.pos]);
-        if trimmed.is_empty() {
-            return;
+    fn readline(&mut self) {
+        self.pos = 0;
+        let _ = syscall::sys_cursor_blink(true);
+        self.write_cursor();
+        let mut done = false;
+        while !done {
+            let mut byte = [0u8; 1];
+            let n = match syscall::sys_read(0, &mut byte) {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if n == 0 {
+                continue;
+            }
+            self.erase_cursor();
+            match byte[0] {
+                b'\r' | b'\n' => {
+                    write_str(b"\r\n");
+                    done = true;
+                }
+                0x08 | 0x7F => {
+                    if self.pos > 0 {
+                        self.pos -= 1;
+                        write_str(b"\x08 \x08");
+                    }
+                }
+                0x09 => {
+                    let line_copy = {
+                        let t = trim_ascii(&self.line[..self.pos]);
+                        let mut buf = [0u8; LINE_BUF_SIZE];
+                        let n = t.len().min(LINE_BUF_SIZE - 1);
+                        buf[..n].copy_from_slice(&t[..n]);
+                        (buf, n)
+                    };
+                    if line_copy.1 > 0 {
+                        let word = first_token(&line_copy.0[..line_copy.1]);
+                        let word_len = word.len();
+                        let is_first = !line_copy.0[..word_len]
+                            .iter()
+                            .any(|&b| b == b' ' || b == b'\t');
+                        if is_first {
+                            self.try_complete_cmd(word, word_len);
+                            self.write_cursor();
+                            continue;
+                        }
+                    }
+                    self.write_cursor();
+                }
+                0x01 => {
+                    if self.history_count > 0 && self.history_pos > 0 {
+                        self.history_pos -= 1;
+                        self.load_history();
+                    }
+                }
+                0x02 => {
+                    if self.history_pos < self.history_count {
+                        self.history_pos += 1;
+                        if self.history_pos >= self.history_count {
+                            self.clear_echo();
+                            self.pos = 0;
+                        } else {
+                            self.load_history();
+                        }
+                    }
+                }
+                c if c >= 0x20 => {
+                    if self.pos < LINE_BUF_SIZE - 1 {
+                        self.line[self.pos] = c;
+                        self.pos += 1;
+                        write_str(&[c]);
+                    }
+                }
+                _ => {}
+            }
+            if !done {
+                self.write_cursor();
+            }
         }
-        let word = first_token(trimmed);
-        let word_len = word.len();
-        let is_first = !trimmed[..word_len]
-            .iter()
-            .any(|&b| b == b' ' || b == b'\t');
-        if !is_first {
-            return;
-        }
+        let _ = syscall::sys_cursor_blink(false);
+    }
+
+    fn try_complete_cmd(&mut self, word: &[u8], word_len: usize) {
         let mut word_upper = [0u8; 32];
         let word_upper_len = {
             let n = word_len.min(31);
@@ -211,7 +273,10 @@ impl Shell {
 
         if match_count == 1 {
             for _ in 0..word_len {
-                self.backspace();
+                if self.pos > 0 {
+                    self.pos -= 1;
+                    write_str(b"\x08 \x08");
+                }
             }
             self.pos = 0;
             let m = &matches[0];
@@ -230,7 +295,7 @@ impl Shell {
                     write_str(&[c]);
                 }
             }
-            self.insert_char(b' ');
+            self.insert_char_no_cursor(b' ');
             return;
         }
 
@@ -244,44 +309,11 @@ impl Shell {
         write_str(&self.line[..self.pos]);
     }
 
-    fn readline(&mut self) {
-        self.pos = 0;
-        loop {
-            let mut byte = [0u8; 1];
-            let n = match syscall::sys_read(0, &mut byte) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
-            if n == 0 {
-                continue;
-            }
-            match byte[0] {
-                b'\r' | b'\n' => {
-                    write_str(b"\r\n");
-                    return;
-                }
-                0x08 | 0x7F => self.backspace(),
-                0x09 => self.try_complete(),
-                0x01 => {
-                    if self.history_count > 0 && self.history_pos > 0 {
-                        self.history_pos -= 1;
-                        self.load_history();
-                    }
-                }
-                0x02 => {
-                    if self.history_pos < self.history_count {
-                        self.history_pos += 1;
-                        if self.history_pos >= self.history_count {
-                            self.clear_echo();
-                            self.pos = 0;
-                        } else {
-                            self.load_history();
-                        }
-                    }
-                }
-                c if c >= 0x20 => self.insert_char(c),
-                _ => {}
-            }
+    fn insert_char_no_cursor(&mut self, c: u8) {
+        if self.pos < LINE_BUF_SIZE - 1 {
+            self.line[self.pos] = c;
+            self.pos += 1;
+            write_str(&[c]);
         }
     }
 
@@ -388,13 +420,28 @@ impl Shell {
     }
 
     fn execute(&mut self) {
-        let line = self.line_trimmed();
-        if line.is_empty() {
+        let line_len = self.pos;
+        if line_len == 0 {
+            return;
+        }
+        let mut line_buf = [0u8; LINE_BUF_SIZE];
+        let n = line_len.min(LINE_BUF_SIZE - 1);
+        line_buf[..n].copy_from_slice(&self.line[..n]);
+        let trimmed = trim_ascii(&line_buf[..n]);
+        if trimmed.is_empty() {
+            return;
+        }
+        self.execute_line(trimmed);
+    }
+
+    fn execute_line(&mut self, line: &[u8]) {
+        let trimmed = trim_ascii(line);
+        if trimmed.is_empty() {
             return;
         }
 
-        if line.len() == 2 && line[1] == b':' {
-            let drive_char = if line[0] >= b'a' && line[0] <= b'z' { line[0] - 32 } else { line[0] };
+        if trimmed.len() == 2 && trimmed[1] == b':' {
+            let drive_char = if trimmed[0] >= b'a' && trimmed[0] <= b'z' { trimmed[0] - 32 } else { trimmed[0] };
             let mut path = [0u8; 4];
             path[0] = drive_char;
             path[1] = b':';
@@ -405,7 +452,7 @@ impl Shell {
             return;
         }
 
-        let upper = first_token(line);
+        let upper = first_token(trimmed);
         let mut cmd_upper = [0u8; 32];
         let cmd_upper_len = {
             let n = upper.len().min(31);
@@ -416,14 +463,13 @@ impl Shell {
 
         match &cmd_upper[..cmd_upper_len] {
             b"CWD" => self.cmd_cwd(),
-            b"SET" => self.cmd_set(),
+            b"SET" => self.cmd_set_line(trimmed),
             b"EXIT" => self.cmd_exit(),
             b"POWEROFF" => self.cmd_poweroff(),
+            b"CALL" => self.cmd_call(trimmed),
             _ => {
                 write_str(b"\r\n");
-                let line = self.line_trimmed();
-                let rest = after_first_token(line);
-                // Write arguments to shared buffer for the spawned process
+                let rest = after_first_token(trimmed);
                 unsafe {
                     let dst = ARGS_ADDR as *mut u8;
                     let copy_len = rest.len().min(255);
@@ -480,12 +526,88 @@ impl Shell {
         }
     }
 
+    fn cmd_call(&mut self, line: &[u8]) {
+        let rest = after_first_token(line);
+        if rest.is_empty() {
+            write_str(b"\r\nUsage: CALL batchfile\r\n");
+            return;
+        }
+        let drive = self.get_drive_letter();
+        let mut full_path = [0u8; 260];
+        let mut pos = 0;
+        full_path[pos] = drive; pos += 1;
+        full_path[pos] = b':'; pos += 1;
+        if rest[0] != b'\\' && rest[0] != b'/' {
+            let mut cwd_buf = [0u8; 256];
+            if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
+                if n > 0 {
+                    let cwd = &cwd_buf[..n - 1];
+                    if cwd.len() > 2 {
+                        for &b in cwd.iter().skip(2) {
+                            if pos < 255 { full_path[pos] = b; pos += 1; }
+                        }
+                    }
+                    if pos > 2 && full_path[pos - 1] != b'\\' {
+                        if pos < 255 { full_path[pos] = b'\\'; pos += 1; }
+                    }
+                }
+            }
+        }
+        for &b in rest {
+            if pos < 255 { full_path[pos] = b; pos += 1; }
+        }
+        let path_str = core::str::from_utf8(&full_path[..pos]).unwrap_or("");
+        let fd = match syscall::sys_open(path_str) {
+            Ok(fd) => fd,
+            Err(_) => {
+                write_err(b"\r\nBatch file not found\r\n");
+                return;
+            }
+        };
+        let mut content = [0u8; 4096];
+        let read_len = match syscall::sys_readfile(fd, &mut content) {
+            Ok(n) => n,
+            Err(_) => {
+                let _ = syscall::sys_close(fd);
+                write_err(b"\r\nError reading batch file\r\n");
+                return;
+            }
+        };
+        let _ = syscall::sys_close(fd);
+        let content = &content[..read_len];
+
+        let mut line_start = 0usize;
+        while line_start < content.len() {
+            let mut line_end = line_start;
+            while line_end < content.len() && content[line_end] != b'\n' {
+                line_end += 1;
+            }
+            let raw_line = &content[line_start..line_end];
+            let trimmed = trim_ascii(raw_line);
+            line_start = line_end + 1;
+
+            if trimmed.is_empty() {
+                continue;
+            }
+            if trimmed[0] == b':' || trimmed[0] == b'@' {
+                continue;
+            }
+            if trimmed.eq_ignore_ascii_case(b"pause") {
+                write_str(b"Press any key to continue . . .\r\n");
+                let mut byte = [0u8; 1];
+                let _ = syscall::sys_read(0, &mut byte);
+                continue;
+            }
+            self.execute_line(trimmed);
+        }
+    }
+
     fn cmd_cwd(&self) {
         let mut buf = [0u8; 256];
         match syscall::sys_getcwd(&mut buf) {
             Ok(n) if n > 0 => {
                 write_str(b"\r\n");
-                write_str(&buf[..n - 1]);
+                write_str(&buf[..n]);
                 write_str(b"\r\n");
             }
             _ => {
@@ -494,9 +616,8 @@ impl Shell {
         }
     }
 
-    fn cmd_set(&mut self) {
-        let trimmed = trim_ascii(&self.line[..self.pos]);
-        let rest_raw = after_first_token(trimmed);
+    fn cmd_set_line(&mut self, line: &[u8]) {
+        let rest_raw = after_first_token(line);
         let mut rest_buf = [0u8; 128];
         let rest_len = rest_raw.len().min(127);
         rest_buf[..rest_len].copy_from_slice(&rest_raw[..rest_len]);
@@ -543,8 +664,17 @@ impl Shell {
     }
 
     fn run(&mut self) -> ! {
-        write_str(b"neoshell v0.1.0 (Ring 3)\r\n");
-        write_str(b"Type HELP for commands.\r\n\r\n");
+        let mut ver = [0u8; 32];
+        let ver_str = match syscall::sys_get_version(&mut ver) {
+            Ok(n) if n > 0 => {
+                let end = ver.iter().position(|&b| b == 0).unwrap_or(n.min(ver.len()));
+                core::str::from_utf8(&ver[..end]).unwrap_or("?.?.?")
+            }
+            _ => "?.?.?",
+        };
+        write_str(ver_str.as_bytes());
+        write_str(b" - RING3\r\n");
+        write_str(b"Type HELP for a list of commands.\r\n");
 
         loop {
             self.prompt();

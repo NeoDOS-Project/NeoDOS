@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.11
+v0.40.0
 
 ## Architecture Governance
 
@@ -80,7 +80,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 36 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 40 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -536,8 +536,11 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 46 | `sys_get_volume_label` | RBX=drive_char, RCX=buf_ptr, RDX=buf_size | Obtiene la etiqueta del volumen de una unidad |
 | 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre que lanzó el binario |
 | 48 | `sys_kobj_enum` | RBX=buf_ptr, RCX=max_entries | Enumerates kernel objects into user buffer (KObjEntryRaw array). Returns count written |
-
+| 49 | `sys_set_keyboard_layout` | RBX=layout (0=US,1=SP) | Change keyboard layout via Event Bus |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
+| 51 | `sys_set_priority` | RBX=pid, RCX=priority (0-3) | Set process scheduling priority (admin) |
+| 52 | `sys_kill_process` | RBX=pid | Terminate process by PID (admin) |
+| 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -655,7 +658,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CLS, CWD, SET, POWEROFF, EXIT; TAB completion (builtins only); PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CWD, SET, POWEROFF, EXIT, CALL; TAB completion (builtins only); PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change; batch file execution via CALL |
 | `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
@@ -674,6 +677,10 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
 | `drives.nxe` | Rust `userbin/drives/` | ~14 KB | Lists mounted drives: letter, FS type, label, size via sys_get_drives (RAX=33) |
+| `ps.nxe` | Rust `userbin/ps/` | ~4 KB | PS command: lists processes via sys_kobj_enum (RAX=48). Shows PID, TID, name |
+| `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: change keyboard layout via sys_set_keyboard_layout (RAX=49). US or SP |
+| `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: terminate a process by PID via sys_kill_process (RAX=52, admin) |
+| `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: set process scheduling priority via sys_set_priority (RAX=51, admin). Levels 0-3 |
 | `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 469 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.

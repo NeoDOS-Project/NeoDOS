@@ -401,6 +401,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::irq_enter_check(32);
 
     crate::hal::increment_ticks();
+    crate::console::cursor_timer_tick();
     let current_tick = crate::hal::get_ticks();
 
     // Increment per-CPU timer tick count

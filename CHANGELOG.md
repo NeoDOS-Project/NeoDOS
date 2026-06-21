@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.40.0 — 2026-06-21
+
+### Added
+- **B9.4 PS** (`userbin/ps/`): Ring 3 `ps.nxe` — process listing via `sys_kobj_enum` (RAX=48). Shows PID, TID, name.
+- **B9.5 KILL** (`userbin/kill/`): Ring 3 `kill.nxe` — terminate process by PID via `sys_kill_process` (RAX=52, admin).
+- **B9.6 PRI** (`userbin/pri/`): Ring 3 `pri.nxe` — set process priority via `sys_set_priority` (RAX=51, admin).
+- **B9.10 KEYB** (`userbin/keyb/`): Ring 3 `keyb.nxe` — change keyboard layout via `sys_set_keyboard_layout` (RAX=49).
+- **B9.13 CALL**: Built-in batch execution in neoshell. Reads `.BAT` files via `sys_open`/`sys_readfile`, executes lines sequentially.
+- **Syscall 49** (`handler_set_keyboard_layout`): Push `EVENT_KEYB_LAYOUT` event to Event Bus from Ring 3.
+- **Syscall 51** (`handler_set_priority`, admin): Set process scheduling priority (0–3) from Ring 3.
+- **Syscall 52** (`handler_kill_process`, admin): Terminate a process by PID from Ring 3.
+
+### Changed
+- **nEX**: `execute()` refactored into `execute_line()` for reuse by CALL batch execution.
+- **AGENTS.md**: Updated syscall table with RAX 49, 51, 52, 53.
+- **IMPROVEMENTS.md**: Marked B9.4, B9.5, B9.6, B9.10, B9.13 as completed (136/145 items).
+
+## v0.40.1 — 2026-06-21
+
+### Added
+- **Cursor blink** (`neodos-kernel/src/console.rs`, `arch/x64/idt.rs`): Autoblink driven by the 1 KHz timer IRQ. Toggles `_` cursor every 18 ticks (~55 Hz) while enabled.
+- **Syscall 53** (`sys_cursor_blink`): Enable/disable cursor blinking from Ring 3.
+- **neoshell**: Calls `sys_cursor_blink(true)` on readline entry, `false` on exit.
+
+### Fixed
+- **Prompt** `C:>` → `C:\>`: `sys_getcwd` returns `n` bytes (no null), but `buf[..n-1]` stripped the trailing `\`. Fixed to `buf[..n]`.
+- **Inode conflict**: NXE files at 37-40 collided with Packages/Users dirs. Moved to 56-59.
+
 ## v0.39.11 — 2026-06-21
 
 ### Removed

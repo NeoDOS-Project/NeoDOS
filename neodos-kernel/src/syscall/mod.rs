@@ -69,11 +69,15 @@ pub enum SyscallNum {
     GetVolumeLabel = 46,
     ChDirParent = 47,
     KObjEnum = 48,
+    SetKeyboardLayout = 49,
+    SetPriority = 51,
+    KillProcess = 52,
+    CursorBlink = 53,
     GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 50;
+    pub const MAX_VALID: u64 = 53;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -115,7 +119,11 @@ impl SyscallNum {
              33 => Some(Self::GetDrives),
             46 => Some(Self::GetVolumeLabel),
             47 => Some(Self::ChDirParent),
-            48 => Some(Self::KObjEnum),
+             48 => Some(Self::KObjEnum),
+             49 => Some(Self::SetKeyboardLayout),
+             51 => Some(Self::SetPriority),
+             52 => Some(Self::KillProcess),
+             53 => Some(Self::CursorBlink),
             _ => None,
         }
     }
@@ -157,8 +165,8 @@ pub fn validate_abi() {
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28,
         33,
-        40, 41, 42, 43, 44, 45, 46, 47, 48,
-        50,
+         40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+        50, 51, 52, 53,
     ];
     // Reserved syscall slots that MUST be None
     const RESERVED: &[u64] = &[];
@@ -1909,6 +1917,71 @@ fn handler_ndreg(_regs: Registers) -> u64 {
     0
 }
 
+/// sys_set_keyboard_layout (RAX=49): change keyboard layout.
+/// RBX = layout (0=US, 1=SP).
+fn handler_set_keyboard_layout(regs: Registers) -> u64 {
+    let layout = regs.rbx;
+    if layout > 1 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    match crate::eventbus::EVENT_BUS.push_event(
+        crate::eventbus::EVENT_KEYB_LAYOUT,
+        crate::eventbus::SOURCE_KERNEL,
+        3, layout, 0, 0
+    ) {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Again),
+    }
+}
+
+/// sys_set_priority (RAX=51): set process scheduling priority (admin).
+/// RBX = pid, RCX = priority (0-3).
+fn handler_set_priority(regs: Registers) -> u64 {
+    let pid = regs.rbx as u32;
+    let priority = regs.rcx as u8;
+    if priority > 3 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if lock.set_process_priority(pid, priority) {
+            0
+        } else {
+            err_to_u64(SyscallError::NoEnt)
+        }
+    })
+}
+
+/// sys_kill_process (RAX=52): terminate a process by PID (admin).
+/// RBX = pid.
+fn handler_kill_process(regs: Registers) -> u64 {
+    let pid = regs.rbx as u32;
+    if pid == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if lock.kill_pid(pid) {
+            lock.wake_waiters(pid);
+            0
+        } else {
+            err_to_u64(SyscallError::NoEnt)
+        }
+    })
+}
+
+/// sys_cursor_blink (RAX=53): enable or disable automatic cursor blinking.
+/// RBX = 0 (disable) or 1 (enable).
+fn handler_cursor_blink(regs: Registers) -> u64 {
+    match regs.rbx {
+        0 => { crate::console::set_cursor_blink(false); 0 }
+        1 => { crate::console::set_cursor_blink(true); 0 }
+        _ => err_to_u64(SyscallError::Inval),
+    }
+}
+
 /// sys_getcpuinfo (RAX=24): copy CpuInfoFull to user buffer.
 /// RBX = pointer to user buffer, RCX = buffer size (for validation).
 fn handler_get_cpuinfo(regs: Registers) -> u64 {
@@ -2199,7 +2272,11 @@ lazy_static! {
         t[46] = Some(handler_get_volume_label as SyscallFn);
         t[47] = Some(handler_chdir_parent as SyscallFn);
         t[48] = Some(handler_kobj_enum as SyscallFn);
+        t[49] = Some(handler_set_keyboard_layout as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
+        t[51] = Some(handler_set_priority as SyscallFn);
+        t[52] = Some(handler_kill_process as SyscallFn);
+        t[53] = Some(handler_cursor_blink as SyscallFn);
         t
     };
 
@@ -2244,7 +2321,11 @@ lazy_static! {
         t[46] = SyscallPermission::user();
         t[47] = SyscallPermission::user();
         t[48] = SyscallPermission::user();
+        t[49] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
+        t[51] = SyscallPermission::admin();
+        t[52] = SyscallPermission::admin();
+        t[53] = SyscallPermission::user();
         t
     };
 }
@@ -2375,8 +2456,8 @@ pub fn register_syscall_table_tests() {
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28,
             33,
-            40, 41, 42, 43, 44, 45, 46, 47, 48,
-            50,
+            40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+        50, 51, 52, 53,
         ];
         const RESERVED: &[u64] = &[];
         for &n in ASSIGNED {
