@@ -1244,12 +1244,12 @@ RAX 39  sys_batch_exec(path)                 — CALL (admin)
 
 Además, implementar el flag `/?` en los .NXE afectados (Fase 2): ps, kill, pri, label, drives, fsck, keyb, ndreg, loadnem, call — cada uno responde a `/?` con su sintaxis.
 
-- [ ] **B9.2. SET** | `src/shell/commands/set.rs`, `neoshell.nxe` (ya existe)
+- [x] **B9.2. SET** | `src/shell/commands/set.rs`, `neoshell.nxe` (ya existe)
   - **Descripción:** Eliminar el SET de Ring 0. El neoshell Ring 3 ya tiene SET incorporado como built-in con soporte para variables de entorno persistentes. No necesita syscall nueva.
   - **Criterio:** Ring 0 ya no responde a SET. neoshell responde a SET correctamente.
   - **Tests:** `ring0_set_removed`, `ring3_set_get_env`.
 
-- [ ] **B9.3. EXIT** | `src/shell/commands/shutdown.rs`, `neoshell.nxe` (ya existe)
+- [x] **B9.3. EXIT** | `src/shell/commands/shutdown.rs`, `neoshell.nxe` (ya existe)
   - **Descripción:** Eliminar el EXIT/SHUTDOWN de Ring 0. El neoshell Ring 3 ya tiene POWEROFF/EXIT como built-ins que invocan `sys_poweroff` (RAX=42). El shutdown.rs del Ring 0 desaparece.
   - **Criterio:** EXIT en Ring 0 ya no existe (el comando no se reconoce). POWEROFF en neoshell apaga la máquina.
   - **Tests:** `ring0_exit_removed`, `ring3_poweroff_invokes_syscall`.

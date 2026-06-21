@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.39.11 — 2026-06-21
+
+### Removed
+- **B9.2 SET command from Ring 0**: Deleted `neodos-kernel/src/shell/commands/set.rs`. Ring 0 no longer responds to SET. Ring 3 `neoshell.nxe` handles SET as built-in.
+- **B9.3 EXIT/SHUTDOWN from Ring 0**: Deleted `neodos-kernel/src/shell/commands/shutdown.rs`. Ring 0 no longer responds to EXIT. Ring 3 `neoshell.nxe` handles EXIT and POWEROFF as built-ins invoking `sys_poweroff` (RAX=42).
+
+### Added
+- **Tests**: `ring0_set_removed` and `ring0_exit_removed` verify Ring 0 no longer dispatches SET/EXIT.
+
+### Changed
+- **AGENTS.md**: Updated test count to 469. Updated KERNEL.md to reflect Ring 3-only EXIT/POWEROFF.
+- **IMPROVEMENTS.md**: Marked B9.2 and B9.3 as completed.
+
 ## v0.39.10 — 2026-06-21
 
 ### Added

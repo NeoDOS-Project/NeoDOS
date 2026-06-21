@@ -77,7 +77,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `NDREG LIST|SHOW|QUERY|RUNTIME|HEALTH|DEBUG|LOAD` (driver registry CLI)
 - `LOADLIB <path>` (load shared library NXL)
 - `FSCK [drive:] [/F]` (filesystem integrity check)
-- `SHUTDOWN` / `POWEROFF` / `EXIT` (system shutdown via ACPI)
+- `POWEROFF` / `EXIT` (Ring 3-only via neoshell.nxe, invoke `sys_poweroff` RAX=42)
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`

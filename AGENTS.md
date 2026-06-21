@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.39.9
+v0.39.11
 
 ## Architecture Governance
 
@@ -674,7 +674,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
 | `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
 | `drives.nxe` | Rust `userbin/drives/` | ~14 KB | Lists mounted drives: letter, FS type, label, size via sys_get_drives (RAX=33) |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 467 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 469 tests de kernel |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -800,7 +800,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-467 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+469 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -851,7 +851,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (467 tests kernel)
+1. Ejecuta `testing::run_all()` (469 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

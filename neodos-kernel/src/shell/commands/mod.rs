@@ -17,8 +17,6 @@ mod keyb;
 mod kill;
 mod label;
 mod ndreg;
-mod set;
-mod shutdown;
 mod crash;
 mod pri;
 mod ps;

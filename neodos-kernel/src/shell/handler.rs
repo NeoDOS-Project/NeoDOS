@@ -117,8 +117,6 @@ fn print_usage(entry: &CommandEntry) {
 
 // Command shims
 pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
-#[allow(deprecated)]
-pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
 pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
 pub fn cmd_drives(shell: &mut DosShell, _args: &[&str]) { shell.cmd_drives(); }
@@ -128,7 +126,6 @@ pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
-pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
 pub fn cmd_loadnem(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadnem(args); }
 pub fn cmd_nemlist(shell: &mut DosShell, _args: &[&str]) { shell.cmd_nemlist(); }
@@ -141,11 +138,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  Show general help listing or detailed help for a\n",
                        "  specific command.\n",
                        "  HELP DIR     shows detailed help for DIR."), },
-    CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
-        usage: concat!("Syntax:  SET [var[=value]]\n",
-                       "  SET                lists all environment variables.\n",
-                        "  SET PATH=C:\\Programs    sets PATH to C:\\Programs.\n",
-                       "  SET PATH=          removes the PATH variable."), },
     CommandEntry { name: "KEYB",     category: "CONFIG",   handler: cmd_keyb,    description: "Change keyboard layout",
         usage: concat!("Syntax:  KEYB US|SP\n",
                        "  Change the active keyboard layout.\n",
@@ -184,10 +176,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
         usage: concat!("Syntax:  KILL pid\n",
                        "  Terminate a running process by its PID number.\n",
                        "  Use PS to list running processes and their PIDs."), },
-    CommandEntry { name: "EXIT",     category: "SHUTDOWN", handler: cmd_exit,    description: "Sync disk and halt",
-        usage: concat!("Syntax:  EXIT\n",
-                       "  Sync disk cache and halt the system.\n",
-                       "  Equivalent to SYNC followed by HLT."), },
     CommandEntry { name: "NDREG",    category: "INFO",     handler: cmd_ndreg,   description: "Driver Registry CLI",
         usage: concat!("Syntax:  NDREG <subcommand> [args]\n",
                        "  NeoDOS Driver Registry — inspect driver metadata.\n",

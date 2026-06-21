@@ -1,6 +1,6 @@
 # NeoDOS — Un Sistema Operativo Moderno en Rust para x86-64
 
-[![Version](https://img.shields.io/badge/version-v0.39.9-blue.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v0.39.11-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-463-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
 
@@ -30,7 +30,7 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 |---------|--------|
-| **Kernel** | v0.39.9 — 463 tests, 36 syscalls, 11 fases de boot |
+| **Kernel** | v0.39.11 — 469 tests, 36 syscalls, 11 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) |
 | **User-mode** | NeoShell Ring 3, 23 binarios .NXE, 3 DLLs .NXL |
 | **SMP** | 16 CPUs, per-CPU KPRCB, IPI (reschedule, TLB shootdown, call-function) |

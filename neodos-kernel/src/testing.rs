@@ -2400,6 +2400,9 @@ pub fn register_tests() {
 
     // B9.1: HELP command tests
     register_help_tests();
+
+    // B9.2/B9.3: Ring 0 SET/EXIT removed tests
+    register_shell_removed_tests();
 }
 
 // ── B9.1: HELP command tests ────────────────────────────────────────────
@@ -2436,6 +2439,26 @@ fn register_help_tests() {
         let mut shell = DosShell::new();
         // HELP /? should not panic
         COMMANDS.dispatch("HELP", &["/?"], &mut shell);
+    });
+}
+
+// ── B9.2/B9.3: Ring 0 SET/EXIT removed tests ─────────────────────────────
+
+fn register_shell_removed_tests() {
+    test_case!("ring0_set_removed", {
+        use crate::shell::handler::COMMANDS;
+        use crate::shell::shell::DosShell;
+        let mut shell = DosShell::new();
+        let handled = COMMANDS.dispatch("SET", &[], &mut shell);
+        test_eq!(handled, false);
+    });
+
+    test_case!("ring0_exit_removed", {
+        use crate::shell::handler::COMMANDS;
+        use crate::shell::shell::DosShell;
+        let mut shell = DosShell::new();
+        let handled = COMMANDS.dispatch("EXIT", &[], &mut shell);
+        test_eq!(handled, false);
     });
 }
 
