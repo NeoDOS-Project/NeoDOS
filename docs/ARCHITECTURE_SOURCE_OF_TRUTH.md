@@ -17,6 +17,7 @@ bootloader → kernel → NeoInit (PID 1) startup sequence.
 - **Drivers**: NEM format (`.nem`), loaded from NeoFS at boot or on demand.
 - **NeoInit (PID 1)**: userland supervisor, started by kernel after boot.
 - **Interrupts**: PIC → APIC, INT 0x80 for syscalls.
+- **Command execution**: all interactive commands MUST run in Ring 3 as `.NXE`/`.BAT` user binaries. Ring 0 may only perform bootstrap, validation, loading, and kernel-internal maintenance; it MUST NOT host user-facing shell commands.
 
 ---
 
@@ -74,6 +75,11 @@ register state. The INT 0x80 handler is the sole entry point.
 
 **INV-10. NeoInit (PID 1) MUST NEVER BE KILLED.**
 `sched::kill_pid(1)` panics. `sys_exit` from PID 1 is equivalent to kernel panic.
+
+**INV-11. NO USER-FACING COMMANDS IN RING 0.**
+The legacy Ring 0 shell exists only as bootstrap glue. It MUST NOT expose or execute user-facing commands.
+All commands intended for operator interaction MUST be implemented as Ring 3 `.NXE`/`.BAT` binaries under `userbin/`
+and launched via NeoInit / neoshell.
 
 ---
 

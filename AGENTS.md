@@ -582,7 +582,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 ### Implementation
 - `Kthread` struct: `priority` (u8), `time_slice_remaining` (u16), `ticks_since_scheduled` (u64), `tid`, `pid`, `teb_base`, `kernel_stack_top`, `cpu_ticks`, `cpu` (target CPU for local queue)
 - `timer_handler_inner`: lee CS del stack frame, solo preemptea si interrumpió Ring 3
-- Afecta solo threads user-mode (Ring 3); el shell corre en Ring 0 y no pasa por schedule()
+- Afecta solo threads user-mode (Ring 3); el shell Ring 0 es bootstrap heredado y no debe ejecutar comandos de operador ni pasar por schedule()
 - 7 tests de scheduler: prioridad, round-robin, time-slice, aging
 
 ## ELF64 Loader (A4.3)
@@ -640,9 +640,13 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `corehelp.nxe` | Rust `userbin/corehelp/` | ~8 KB | Standalone HELP command: scans `C:\BIN\*.NXE` via `sys_readdir`, lists available core tools |
 | `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | sys_get_datetime (RAX=44): muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
 | `ver.nxe` | Rust `userbin/ver/` | ~5 KB | sys_get_version (RAX=43): muestra versión del kernel NeoDOS |
-| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | sys_get_meminfo (RAX=45): muestra uso de memoria. Reemplaza el comando MEM de Ring 0 |
-| `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto. Reemplaza el comando ECHO de Ring 0 |
-| `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: muestra etiqueta del volumen. Reemplaza el comando VOL de Ring 0 |
+| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | sys_get_meminfo (RAX=45): muestra uso de memoria. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
+| `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
+| `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: muestra etiqueta del volumen. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
+| `type.nxe` | Rust `userbin/coretype/` | ~6 KB | TYPE command: muestra contenido de archivo de texto. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
+| `tree.nxe` | Rust `userbin/tree/` | ~7 KB | TREE command: muestra árbol de directorios con `├──`/`└──`. Recursivo hasta 6 niveles. Directorios primero, orden alfabético case-insensitive. Path opcional (default: CWD) |
+
+**Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
 User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)

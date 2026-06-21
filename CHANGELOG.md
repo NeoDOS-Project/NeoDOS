@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.39.1 — 2026-06-21
+
+### Added
+- **TREE.NXE** — `userbin/tree/`: Ring 3 TREE command showing directory tree with `├──`/`└──` connectors. Recursive up to 6 levels, directories first, case-insensitive alphabetical sort. Optional path argument (default: CWD).
+
+### Changed
+- **Shell commands removed from Ring 0**: TYPE, LOAD, TEST commands removed from kernel shell (`handler.rs`), migrated to Ring 3 as `type.nxe`, `run.nxe`, and auto-run from NeoInit respectively.
+- **userbin/coretype/**: New Ring 3 TYPE command replacing the built-in kernel TYPE.
+
 ## v0.39.0 — 2026-06-20
 
 ### Added

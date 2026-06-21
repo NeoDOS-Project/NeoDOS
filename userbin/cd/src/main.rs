@@ -79,7 +79,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
                 out[1] = b':';
                 pos = 2;
             }
-            let mut i = 0usize;
+            let mut i = 2usize;
             while i < cwd_bytes.len() {
                 let b = cwd_bytes[i];
                 if (b == b'\\' || b == b'/') && pos > 0 && out[pos - 1] != b'\\' {

@@ -8,8 +8,8 @@
 
 ## 1. Arquitectura General
 
-La shell Ring 0 actual (`DosShell`) se ejecuta en Ring 0 y tiene acceso directo al VFS,
-scheduler, y memoria del kernel. **neoshell** es un binario `.NXE` (Rust `#![no_std]`) que
+La shell Ring 0 actual (`DosShell`) existe solo como bootstrap heredado y no debe exponer
+comandos interactivos de usuario. **neoshell** es un binario `.NXE` (Rust `#![no_std]`) que
 se ejecuta en Ring 3 y accede al sistema solo a través de syscalls (`INT 0x80`).
 
 ```
@@ -45,7 +45,8 @@ se ejecuta en Ring 3 y accede al sistema solo a través de syscalls (`INT 0x80`)
 - **Piping natural**: cada coretool lee stdin (fd 0) y escribe stdout (fd 1). neoshell
   conecta procesos con `sys_pipe` + `sys_dup2` + `sys_spawn`.
 - **La shell Ring 0 es bootstrap**: arranca, procesa CONFIG.SYS, lanza neoshell via
-  `RUN`, y se bloquea. Cuando neoshell hace `EXIT`, se vuelve a Ring 0.
+  `RUN`, y no ofrece comandos de operador. Cuando neoshell hace `EXIT`, el control vuelve
+  al flujo de bootstrap, no a una shell interactiva Ring 0.
 
 ---
 

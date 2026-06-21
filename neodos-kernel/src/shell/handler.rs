@@ -119,7 +119,6 @@ fn print_usage(entry: &CommandEntry) {
 pub fn cmd_help(shell: &mut DosShell, _args: &[&str]) { shell.cmd_help(_args); }
 #[allow(deprecated)]
 pub fn cmd_dir(shell: &mut DosShell, args: &[&str]) { shell.cmd_dir(args); }
-pub fn cmd_type(shell: &mut DosShell, args: &[&str]) { shell.cmd_type(args); }
 pub fn cmd_set(shell: &mut DosShell, args: &[&str]) { shell.cmd_set(args); }
 pub fn cmd_keyb(shell: &mut DosShell, args: &[&str]) { shell.cmd_keyb(args); }
 pub fn cmd_call(shell: &mut DosShell, args: &[&str]) { shell.cmd_call(args); }
@@ -130,13 +129,11 @@ pub fn cmd_label(shell: &mut DosShell, args: &[&str]) { shell.cmd_label(args); }
 pub fn cmd_del(shell: &mut DosShell, args: &[&str]) { shell.cmd_del(args); }
 pub fn cmd_ren(shell: &mut DosShell, args: &[&str]) { shell.cmd_rename(args); }
 pub fn cmd_rd(shell: &mut DosShell, args: &[&str]) { shell.cmd_rd(args); }
-pub fn cmd_test(shell: &mut DosShell, args: &[&str]) { shell.cmd_test(args); }
 pub fn cmd_ps(shell: &mut DosShell, _args: &[&str]) { shell.cmd_ps(); }
 pub fn cmd_pri(shell: &mut DosShell, args: &[&str]) { shell.cmd_pri(args); }
 pub fn cmd_kill(shell: &mut DosShell, args: &[&str]) { shell.cmd_kill(args); }
 pub fn cmd_cls(_shell: &mut DosShell, _args: &[&str]) { crate::console::clear_screen(); }
 pub fn cmd_run(shell: &mut DosShell, args: &[&str]) { shell.cmd_run(args); }
-pub fn cmd_load(shell: &mut DosShell, args: &[&str]) { shell.cmd_load(args); }
 pub fn cmd_loadlib(shell: &mut DosShell, args: &[&str]) { shell.cmd_loadlib(args); }
 pub fn cmd_exit(shell: &mut DosShell, args: &[&str]) { shell.cmd_shutdown(args); }
 pub fn cmd_ndreg(shell: &mut DosShell, args: &[&str]) { shell.cmd_ndreg(args); }
@@ -158,9 +155,6 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
                        "  [DEPRECATED] Use the Ring 3 shell (neoshell) for DIR.\n",
                        "  Shows name, permissions (RWXSD), and size.\n",
                         "  DIR C:\\Programs   lists the contents of C:\\Programs."), },
-    CommandEntry { name: "TYPE",     category: "FILE",     handler: cmd_type,    description: "Display file contents",
-        usage: concat!("Syntax:  TYPE [drive:][path]filename\n",
-                       "  Display the contents of a text file on screen."), },
     CommandEntry { name: "SET",      category: "CONFIG",   handler: cmd_set,     description: "Display/set environment variables",
         usage: concat!("Syntax:  SET [var[=value]]\n",
                        "  SET                lists all environment variables.\n",
@@ -223,20 +217,10 @@ pub const COMMANDS: CommandRegistry = CommandRegistry::new(&[
     CommandEntry { name: "RMDIR",    category: "FILE",     handler: cmd_rd,      description: "Remove empty directory",
         usage: concat!("Syntax:  RMDIR directory\n",
                        "  Alias for RD."), },
-    CommandEntry { name: "TEST",     category: "CTRL",     handler: cmd_test,    description: "Run kernel self-tests",
-        usage: concat!("Syntax:  TEST\n",
-                        "  Run all kernel self-tests (403 tests across 40 suites).\n",
-                        "  If all pass, runs 8 user-mode binaries:\n",
-                        "  HELLO.NXE, SYSTEST.NXE, FILETEST.NXE, ALLTEST.NXE,\n",
-                        "  CPUTEST.NXE, TEST.NXE, CPUINFO.NXE, DIR.NXE"), },
     CommandEntry { name: "RUN",      category: "CTRL",     handler: cmd_run,     description: "Run flat binary in Ring 3",
         usage: concat!("Syntax:  RUN file.nxe\n",
                        "  Load and execute a flat binary in user mode (Ring 3).\n",
                        "  RUN HELLO.NXE   runs the hello binary."), },
-    CommandEntry { name: "LOAD",      category: "CTRL",     handler: cmd_load,   description: "Load and run flat binary",
-        usage: concat!("Syntax:  LOAD file.nxe [args]\n",
-                       "  Load and execute a flat binary. Accepts optional\n",
-                       "  command-line arguments passed to the program."), },
     CommandEntry { name: "LOADLIB",   category: "CTRL",     handler: cmd_loadlib, description: "Load a shared library (NXL)",
         usage: concat!("Syntax:  LOADLIB path\n",
                        "  Load a shared library (NXL) from the filesystem.\n",
