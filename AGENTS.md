@@ -470,15 +470,15 @@ Al crear un archivo o directorio en NeoFS, se asignan permisos RWXSD según el t
 
 La asignación se realiza en `NeoDosFs::create_file_at()` (vía `default_perms_for_filename()`) y `create_directory_at()`. El script `create_neodos_image.py` aplica los mismos criterios al generar la imagen inicial del FS.
 
-## Shell: FSCK
+## Shell: FSCK (Ring 3)
 
-Comando de verificación de integridad del sistema de archivos NeoDOS:
+Comando de verificación de integridad del sistema de archivos NeoDOS (implementado como `fsck.nxe`):
 
 | Comando | Descripción |
 |---------|-------------|
-| `FSCK [drive:] [/F]` | Verifica integridad del FS. Sin /F: solo comprueba. Con /F: repara errores |
+| `FSCK [drive:] [/F]` | Verifica integridad del FS vía `sys_fsck` (RAX=55). Sin /F: solo comprueba. Con /F: repara errores |
 
-Checks: superblock (magic, block_size, num_blocks, label), inode table (mode, inode_num mismatch, block pointers, cross-links), directory tree walk (orphans, dangling entries, entry-type vs mode mismatches). 6 unit tests.
+Checks: superblock (magic, block_size, num_blocks, label), inode table (mode, inode_num mismatch, block pointers, cross-links), directory tree walk (orphans, dangling entries, entry-type vs mode mismatches). 6 unit tests (kernel-side).
 
 ## Shell: LOADLIB
 
@@ -554,6 +554,10 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 52 | `sys_kill_process` | RBX=pid | Terminate process by PID (admin) |
 | 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 |
 | 54 | `sys_set_volume_label` | RBX=drive_char, RCX=label_ptr | Set volume label for a drive |
+| 55 | `sys_fsck` | RBX=buf_ptr, RCX=drive_char, RDX=repair_flag | Run filesystem integrity check. Returns FsckStats |
+| 56 | `sys_driver_enum` | RBX=index, RCX=buf_ptr | Enumerate registered NEM drivers by index. Returns 1 if entry written |
+| 57 | `sys_driver_load` | RBX=path_ptr | Load a NEM driver from filesystem path (admin) |
+| 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -694,7 +698,11 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: change keyboard layout via sys_set_keyboard_layout (RAX=49). US or SP |
 | `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: terminate a process by PID via sys_kill_process (RAX=52, admin) |
 | `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: set process scheduling priority via sys_set_priority (RAX=51, admin). Levels 0-3 |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 469 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 512 tests de kernel |
+| `label.nxe` | Rust `userbin/label/` | ~4 KB | LABEL command: display or change volume label via sys_set_volume_label (RAX=54) |
+| `fsck.nxe` | Rust `userbin/fsck/` | ~6 KB | FSCK command: filesystem integrity check via sys_fsck (RAX=55). /F for repair |
+| `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via sys_driver_enum (RAX=56). LIST, SHOW, QUERY, RUNTIME |
+| `loadnem.nxe` | Rust `userbin/loadnem/` | ~4 KB | LOADNEM command: load/unload NEM drivers via sys_driver_load (RAX=57) and sys_driver_unload (RAX=58, admin) |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -820,28 +828,10 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-469 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+512 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
-| Environment | 6 | Variables de entorno |
-| Input | 5 | Input buffer (ring buffer) |
-| Keyboard | 5 | UTF-8 encoding, compose keys |
-| Process/Thread | 4 | Kthread struct, ThreadState, Eprocess constructor |
-| Scheduler | 7 | Priority scheduling, time-slice, round-robin, aging |
-| UTF-8 | 6 | Validación UTF-8 |
-| Allocator | 8 | Box, Vec, String |
-| Sync | 4 | Atomic flags (NEED_RESCHED) |
-| NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
-| NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
-| ELF | 15 | ELF64 loader: header validation, segment loading, edge cases |
-| Capability | 11 | X3 Capability flags, CapabilitySet, category defaults, check/enforce, escalation policy |
-| Event Bus | 17 | Unified v2: priority queues, subscription filters (type/source/device), dynamic payload, backpressure, 17 tests |
-| Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
-| Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
-| Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
-| IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
-| Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 | FSCK | 6 | Inode validation helpers, block pointer logic, mode checks, range checks |
 | HELP | 4 | Ring 0 stub output, Ring 3 command scan, detail pipe spawn |
 | Isolation | 12 | X4 Driver Isolation Layer: constants, bounds, alloc/free, driver_id lookup, layout, pointer validation, overflow, max slots, str ptr, mode for category, mode string |
@@ -870,9 +860,25 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
 | URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, invalid/missing paths, resolve file/device, roundtrip |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
-
+| Input | 5 | Input buffer (ring buffer) |
+| Keyboard | 5 | UTF-8 encoding, compose keys |
+| Process/Thread | 4 | Kthread struct, ThreadState, Eprocess constructor |
+| Scheduler | 7 | Priority scheduling, time-slice, round-robin, aging |
+| UTF-8 | 6 | Validación UTF-8 |
+| Allocator | 8 | Box, Vec, String |
+| Sync | 4 | Atomic flags (NEED_RESCHED) |
+| NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
+| NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
+| ELF | 15 | ELF64 loader: header validation, segment loading, edge cases |
+| Capability | 11 | X3 Capability flags, CapabilitySet, category defaults, check/enforce, escalation policy |
+| Event Bus | 17 | Unified v2: priority queues, subscription filters (type/source/device), dynamic payload, backpressure, 17 tests |
+| Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
+| Driver State | 21 | Driver certification pipeline: 7-state lifecycle, transition matrix, certify_and_activate(), last_error tracking, inactive_reason debug |
+| Pipe | 13 | IPC pipes: alloc/free, write/read, EOF, EPIPE, blocking, fd table |
+| IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
+| Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 Comando `test`:
-1. Ejecuta `testing::run_all()` (501 tests kernel)
+1. Ejecuta `testing::run_all()` (512 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

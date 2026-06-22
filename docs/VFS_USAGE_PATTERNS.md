@@ -415,7 +415,7 @@ fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
 ```
 
 ### 3. Shell Command - `TYPE` (Display File)
-[`neodos-kernel/src/shell/commands/type.rs`](neodos-kernel/src/shell/commands/type.rs)
+[`userbin/coretype/src/main.rs`](userbin/coretype/src/main.rs)
 ```rust
 crate::globals::with_vfs(|vfs| {
     let (drive_idx, node) = vfs.resolve_path(path)?;

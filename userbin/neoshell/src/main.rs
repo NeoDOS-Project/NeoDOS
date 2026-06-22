@@ -266,6 +266,68 @@ impl Shell {
         let _ = syscall::sys_cursor_blink(false);
     }
 
+    fn scan_path_for_completion(&self, word_upper: &[u8], word_upper_len: usize, matches: &mut [[u8; 32]; 64], match_lens: &mut [usize; 64], match_count: &mut usize) {
+        let path_val = self.env_get(b"PATH").unwrap_or(b"\\Programs");
+        let drive = self.get_drive_letter();
+        let mut start = 0usize;
+        loop {
+            while start < path_val.len() && path_val[start] == b';' {
+                start += 1;
+            }
+            if start >= path_val.len() { break; }
+            let mut end = start;
+            while end < path_val.len() && path_val[end] != b';' {
+                end += 1;
+            }
+            let dir = &path_val[start..end];
+            let mut dir_path = [0u8; 260];
+            let mut pos = 0;
+            dir_path[pos] = drive; pos += 1;
+            dir_path[pos] = b':'; pos += 1;
+            for &b in dir {
+                if pos < 255 { dir_path[pos] = b; pos += 1; }
+            }
+            let dir_str = core::str::from_utf8(&dir_path[..pos]).unwrap_or("");
+            if let Ok(fd) = syscall::sys_open(dir_str) {
+                let mut entry = syscall::DirEntry {
+                    inode: 0, mode: 0, size: 0, name: [0u8; 260],
+                };
+                loop {
+                    match syscall::sys_readdir(fd, &mut entry) {
+                        Ok(1) => {
+                            let name = entry.name_str();
+                            let name_bytes = name.as_bytes();
+                            if name_bytes.len() > 4
+                                && name_bytes[name_bytes.len()-4..].eq_ignore_ascii_case(b".NXE")
+                                && name_bytes.len() - 4 >= word_upper_len
+                            {
+                                let stem_upper = {
+                                    let mut b = [0u8; 32];
+                                    let n = (name_bytes.len() - 4).min(31);
+                                    b[..n].copy_from_slice(&name_bytes[..n]);
+                                    make_ascii_uppercase(&mut b[..n]);
+                                    b
+                                };
+                                if stem_upper[..word_upper_len] == word_upper[..word_upper_len] {
+                                    if *match_count < 64 {
+                                        let stem = &name_bytes[..name_bytes.len() - 4];
+                                        let n = stem.len().min(31);
+                                        matches[*match_count][..n].copy_from_slice(stem);
+                                        match_lens[*match_count] = n;
+                                        *match_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+                let _ = syscall::sys_close(fd);
+            }
+            start = end + 1;
+        }
+    }
+
     fn try_complete_cmd(&mut self, word: &[u8], word_len: usize) {
         let mut word_upper = [0u8; 32];
         let word_upper_len = {
@@ -288,6 +350,8 @@ impl Shell {
                 }
             }
         }
+
+        self.scan_path_for_completion(&word_upper, word_upper_len, &mut matches, &mut match_lens, &mut match_count);
 
         if match_count == 0 {
             return;

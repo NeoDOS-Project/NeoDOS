@@ -40,7 +40,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 21. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
 22. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
 23. **Syscall ABI + freeze validation** — validate syscall dispatch table coverage, verify frozen event/capability/IOAPIC ABIs at boot
-24. **Shell** — set all keyboard LEDs ON, register kernel tests (501), create and run `DosShell`
+24. **Shell** — set all keyboard LEDs ON, register kernel tests (512), launch NeoInit (PID 1, Ring 3)
 
 ### GPT Layout (single disk)
 
@@ -62,25 +62,11 @@ sector reads/writes are transparently offset to the correct partition location.
 
 ## Shell
 
-The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins include:
+The shell runs entirely in Ring 3 as `neoshell.nxe` (spawned by NeoInit, PID 1). All interactive commands are `.NXE` binaries dispatched via PATH resolution. The kernel has no Ring 0 shell.
 
-- `HELP`, `DIR`, `TYPE`, `COPY`, `MD`, `VOL`, `DRIVES`, `SYNC`, `CALL`, `RD`, `DEL`, `REN`
-- `CD.NXE` is now a Ring 3 tool; it changes the parent shell cwd via `sys_chdir_parent`.
-- `CPUINFO` (CPUID vendor/brand)
-- `MEM` (memory stats derived from UEFI memory map, migrado a Ring 3 como MEM.NXE)
-- `PS` (list processes with PID, state, priority, handles)
-- `PRI <pid> <level>` (set process priority 0-3)
-- `KOBJ` (list kernel objects via Ring 3 kobj.nxe)
-- `NDREG LIST|SHOW|QUERY|RUNTIME|HEALTH|DEBUG|LOAD` (driver registry CLI)
-- `LOADLIB <path>` (load shared library NXL)
-- `FSCK [drive:] [/F]` (filesystem integrity check)
-- `POWEROFF` / `EXIT` (Ring 3-only via neoshell.nxe, invoke `sys_poweroff` RAX=42)
-- `KILL <pid>` (terminate process)
-- `KEYB US|SP` (switch keyboard layout)
-- `DATE`, `TIME`, `VER`
-- `test` (run 501 kernel self-tests + user-mode binaries)
+Commands available via `neoshell` (built-in): `CWD`, `SET`, `EXIT`, `POWEROFF`, `CALL`. External commands (`.NXE` resolved from `C:\Programs\`): `CD`, `DIR`, `HELP`, `CPUINFO`, `MEM`, `VOL`, `TYPE`, `CLS`, `ECHO`, `COPY`, `DEL`, `REN`, `MD`, `RD`, `TREE`, `VER`, `DATETIME`, `DRIVES`, `PS`, `KILL`, `PRI`, `KEYB`, `KOBJ`, `LABEL`, `FSCK`, `NDREG`, `LOADNEM`.
 
-Commands are implemented as one file per command under `src/shell/commands/`.
+All commands are implemented as individual Rust projects under `userbin/`.
 
 ## Scheduler / Timer
 

@@ -3,6 +3,10 @@
 ## v0.42.0 — 2026-06-22
 
 ### Added
+- **B9.9 FSCK syscall (RAX=55)** — `sys_fsck`: Run filesystem integrity check from Ring 3 via `userbin/fsck/` → `fsck.nxe`. Wrapper en `libneodos::syscall::sys_fsck()`. Retorna `FsckStats` struct.
+- **B9.11 NDREG syscall (RAX=56)** — `sys_driver_enum`: Enumerate registered NEM drivers from Ring 3 via `userbin/ndreg/` → `ndreg.nxe`. Soporta LIST, SHOW, QUERY, RUNTIME.
+- **B9.12 LOADNEM syscalls** — `sys_driver_load` (RAX=57) + `sys_driver_unload` (RAX=58, admin): Load/unload NEM drivers from Ring 3 via `userbin/loadnem/` → `loadnem.nxe`.
+- **Ring 0 cleanup**: Eliminados comandos CALL, NDREG, LOADNEM, NEMLIST, FSCK del kernel shell. Solo RUN y CRASH permanecen en Ring 0.
 - **Unified Wait Engine (KWait)** — `src/kwait/mod.rs`: Nueva abstracción de espera bloqueante que unifica todos los mecanismos ad-hoc. `WaitReason` enum con 7 variantes (PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable). `kwait_block(reason)` / `kwait_wake(reason)` API. Magic encoding único por tipo. 10 tests.
 - **ABI Freeze v0.42** — `src/abi_freeze.rs`: Sistema de verificación de interfaces congeladas. Verifica valores de 15 event types (0–15), 12 capability flags (bits 0–11), y KWait magic tags. Llamado en boot Phase 3.9 (panic si hay violación). 4 tests.
 - **ABI freeze markers** — `src/eventbus/mod.rs`: Event types 0–15 marcados FROZEN v0.42. `src/drivers/caps.rs`: Capability flags bits 0–11 marcados FROZEN v0.42. `src/interrupts/ioapic.rs`: API pública marcada FROZEN v0.42.

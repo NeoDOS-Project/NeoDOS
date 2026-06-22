@@ -600,6 +600,194 @@ pub fn sys_set_volume_label(drive: u8, label: &[u8]) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+/// FsckStats — mirrors kernel's FsckStatsRaw (RAX=55).
+#[repr(C)]
+pub struct FsckStats {
+    pub total_inodes: u32,
+    pub used_inodes: u32,
+    pub valid_inodes: u32,
+    pub corrupted_inodes: u32,
+    pub cross_linked_blocks: u32,
+    pub orphan_inodes: u32,
+    pub dangling_entries: u32,
+    pub dir_errors: u32,
+    pub superblock_errors: u32,
+    pub repairs_applied: u32,
+}
+
+/// sys_fsck (RAX=55): Run filesystem integrity check.
+/// drive = ASCII drive letter (e.g. b'C'), repair = true to repair errors.
+pub fn sys_fsck(drive: u8, repair: bool) -> Result<FsckStats, i64> {
+    let mut stats = FsckStats {
+        total_inodes: 0, used_inodes: 0, valid_inodes: 0,
+        corrupted_inodes: 0, cross_linked_blocks: 0,
+        orphan_inodes: 0, dangling_entries: 0, dir_errors: 0,
+        superblock_errors: 0, repairs_applied: 0,
+    };
+    let ptr = &mut stats as *mut FsckStats as *mut u8;
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "push rdx",
+            "mov rax, 55",
+            "mov rbx, {ptr}",
+            "mov rcx, {drive}",
+            "mov rdx, {repair}",
+            "int 0x80",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
+            ptr = in(reg) ptr as u64,
+            drive = in(reg) drive as u64,
+            repair = in(reg) repair as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(stats) }
+}
+
+/// DriverInfo — mirrors kernel's DriverInfoRaw (RAX=56).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct DriverInfo {
+    pub id: u32,
+    pub state: u8,
+    pub category: u8,
+    pub driver_type: u8,
+    pub api_version: u16,
+    pub abi_min: u16,
+    pub abi_target: u16,
+    pub abi_max: u16,
+    pub last_error: u32,
+    pub caps: u64,
+    pub isolation_mode: u8,
+    pub events_received: u64,
+    pub tick_count: u64,
+    pub registered_at_tick: u64,
+    pub name: [u8; 8],
+}
+
+impl DriverInfo {
+    pub fn name_str(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(8);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
+    }
+
+    pub fn state_str(&self) -> &'static str {
+        match self.state {
+            0 => "Loaded",
+            1 => "Initialized",
+            2 => "Registered",
+            3 => "Bound",
+            4 => "Active",
+            5 => "Faulted",
+            6 => "Unloaded",
+            7 => "Unloading",
+            _ => "Unknown",
+        }
+    }
+
+    pub fn category_str(&self) -> &'static str {
+        match self.category {
+            0 => "Boot",
+            1 => "System",
+            2 => "Demand",
+            _ => "Unknown",
+        }
+    }
+}
+
+/// sys_driver_enum (RAX=56): enumerate registered drivers by index.
+/// index = 0-based driver index. Returns Some(info) if entry exists, None at end.
+pub fn sys_driver_enum(index: usize) -> Result<Option<DriverInfo>, i64> {
+    let mut info = DriverInfo {
+        id: 0, state: 0, category: 0, driver_type: 0,
+        api_version: 0, abi_min: 0, abi_target: 0, abi_max: 0,
+        last_error: 0, caps: 0, isolation_mode: 0,
+        events_received: 0, tick_count: 0, registered_at_tick: 0,
+        name: [0; 8],
+    };
+    let ptr = &mut info as *mut DriverInfo as *mut u8;
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 56",
+            "mov rbx, {idx}",
+            "mov rcx, {ptr}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            idx = in(reg) index as u64,
+            ptr = in(reg) ptr as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 {
+        Err(r)
+    } else if r == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(info))
+    }
+}
+
+/// sys_driver_load (RAX=57): load a NEM driver from a filesystem path (admin).
+pub fn sys_driver_load(path: &str) -> Result<u32, i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 57",
+            "mov rbx, {ptr}",
+            "int 0x80",
+            "pop rbx",
+            ptr = in(reg) ptr as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(r as u32) }
+}
+
+/// sys_driver_unload (RAX=58): unload a NEM driver by name (admin).
+/// force = true to force unload without waiting for ACK.
+pub fn sys_driver_unload(name: &str, force: bool) -> Result<(), i64> {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov rax, 58",
+            "mov rbx, {ptr}",
+            "mov rcx, {force}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            ptr = in(reg) ptr as u64,
+            force = in(reg) force as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
 /// sys_cursor_blink (RAX=53): enable/disable automatic cursor blinking.
 pub fn sys_cursor_blink(enabled: bool) -> Result<(), i64> {
     let r: i64;

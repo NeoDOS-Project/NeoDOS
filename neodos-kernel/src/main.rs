@@ -22,7 +22,6 @@ mod buffer;
 mod fs;
 mod vfs;
 mod input;
-mod shell;
 mod graphics;
 mod font;
 mod nem;
@@ -510,12 +509,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Loads NEOINIT.NXE as the init process. NeoInit spawns NEOSHELL.NXE
     // via sys_spawn (RAX=7). When the shell exits, sys_spawn restores
     // NeoInit's code and returns, and NeoInit respawns the shell.
-    // Set NEOINIT=0 in C:\System\Kernel\boot.cfg to skip NeoInit for testing.
-    if !boot_benchmark::NEOINIT_ENABLED.load(core::sync::atomic::Ordering::Relaxed) {
-        println!("[+] NeoInit disabled (BOOT.CFG). Starting kernel shell.");
-        let mut sh = shell::DosShell::new();
-        sh.run();
-    }
     println!("[+] Loading NeoInit (PID 1, Ring 3)...");
 
     let mut addr_space = scheduler::address_space::AddressSpace::new();
@@ -560,17 +553,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     };
 
     if !loaded {
-        println!("[!] NEOINIT.NXE not found or invalid. Starting kernel shell.");
-        let mut sh = shell::DosShell::new();
-        sh.run();
+        panic!("NEOINIT.NXE not found or invalid. Ring 3 shell required.");
     }
 
     let slot = match arch::x64::paging::alloc_user_slot() {
         Some(s) => s,
         None => {
-            println!("[!] No free user slots. Starting kernel shell.");
-            let mut sh = shell::DosShell::new();
-            sh.run();
+            panic!("No free user slots for NeoInit.");
         }
     };
 
@@ -590,10 +579,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     usermode::wait_for_process(pid);
 
     // If we get here, NeoInit exited (shouldn't happen)
-    println!("[!] NeoInit PID {} exited! This should not occur.", pid);
-    scheduler::cleanup_terminated_process(pid);
-    let mut sh = shell::DosShell::new();
-    sh.run();
+    panic!("NeoInit PID {} exited! Ring 3 shell required.", pid);
 }
 
 #[panic_handler]

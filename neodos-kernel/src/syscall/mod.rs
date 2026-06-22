@@ -75,11 +75,15 @@ pub enum SyscallNum {
     SetExceptionHandler = 29,
     CursorBlink = 53,
     SetVolumeLabel = 54,
+    Fsck = 55,
+    DriverEnum = 56,
+    DriverLoad = 57,
+    DriverUnload = 58,
     GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 54;
+    pub const MAX_VALID: u64 = 58;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -128,6 +132,10 @@ impl SyscallNum {
              52 => Some(Self::KillProcess),
               53 => Some(Self::CursorBlink),
               54 => Some(Self::SetVolumeLabel),
+              55 => Some(Self::Fsck),
+              56 => Some(Self::DriverEnum),
+              57 => Some(Self::DriverLoad),
+              58 => Some(Self::DriverUnload),
             _ => None,
         }
     }
@@ -170,7 +178,7 @@ pub fn validate_abi() {
         25, 26, 27, 28, 29,
         33,
          40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-         50, 51, 52, 53, 54,
+         50, 51, 52, 53, 54, 55, 56, 57, 58,
     ];
     // Reserved syscall slots that MUST be None
     const RESERVED: &[u64] = &[];
@@ -2213,6 +2221,104 @@ fn handler_set_volume_label(regs: Registers) -> u64 {
     }
 }
 
+/// sys_fsck (RAX=55): Run filesystem integrity check.
+/// RBX = buf_ptr (&mut FsckStatsRaw), RCX = drive_char (e.g. 'C'), RDX = repair_flag (0=check, 1=repair).
+/// Returns 0 on success, error code on failure.
+#[repr(C)]
+struct FsckStatsRaw {
+    total_inodes: u32,
+    used_inodes: u32,
+    valid_inodes: u32,
+    corrupted_inodes: u32,
+    cross_linked_blocks: u32,
+    orphan_inodes: u32,
+    dangling_entries: u32,
+    dir_errors: u32,
+    superblock_errors: u32,
+    repairs_applied: u32,
+}
+
+fn handler_fsck(regs: Registers) -> u64 {
+    let buf_ptr = regs.rbx;
+    let _drive_char = (regs.rcx & 0xFF) as u8 as char;
+    let repair_flag = regs.rdx != 0;
+
+    if buf_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let stats_size = core::mem::size_of::<FsckStatsRaw>() as u64;
+    if !is_user_ptr_valid(buf_ptr, stats_size) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let mode = if repair_flag {
+        crate::fs::fsck::FsckMode::Repair
+    } else {
+        crate::fs::fsck::FsckMode::CheckOnly
+    };
+
+    let result = core::cell::UnsafeCell::new(FsckStatsRaw {
+        total_inodes: 0, used_inodes: 0, valid_inodes: 0,
+        corrupted_inodes: 0, cross_linked_blocks: 0,
+        orphan_inodes: 0, dangling_entries: 0, dir_errors: 0,
+        superblock_errors: 0, repairs_applied: 0,
+    });
+
+    // Run FSCK with access to block cache and devices
+    let res = crate::hal::without_interrupts(|| {
+        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
+        let cache = match cache_lock.as_mut() {
+            Some(c) => c,
+            None => return err_to_u64(SyscallError::Io),
+        };
+        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+        let dev = match bdevs_lock.get(0) {
+            Some(d) => d,
+            None => return err_to_u64(SyscallError::NoDev),
+        };
+        let partition_base = crate::globals::PRIMARY_PARTITION_BASE.load(core::sync::atomic::Ordering::Relaxed) as u32;
+
+        let stats = crate::fs::fsck::run(cache, dev, mode, partition_base);
+
+        // Write stats to the raw struct
+        let raw = unsafe { &mut *result.get() };
+        raw.total_inodes = stats.total_inodes;
+        raw.used_inodes = stats.used_inodes;
+        raw.valid_inodes = stats.valid_inodes;
+        raw.corrupted_inodes = stats.corrupted_inodes;
+        raw.cross_linked_blocks = stats.cross_linked_blocks;
+        raw.orphan_inodes = stats.orphan_inodes;
+        raw.dangling_entries = stats.dangling_entries;
+        raw.dir_errors = stats.dir_errors;
+        raw.superblock_errors = stats.superblock_errors;
+        raw.repairs_applied = stats.repairs_applied;
+
+        // Flush if repairs were applied
+        if stats.repairs_applied > 0 {
+            crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        0u64
+    });
+
+    if res != 0 {
+        return res;
+    }
+
+    // Copy stats to user buffer
+    let raw = unsafe { &*result.get() };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            raw as *const FsckStatsRaw as *const u8,
+            buf_ptr as *mut u8,
+            core::mem::size_of::<FsckStatsRaw>(),
+        );
+    }
+
+    0
+}
+
 /// ABI-stable drive info for sys_get_drives (RAX=33).
 #[repr(C)]
 struct DriveInfoRaw {
@@ -2289,6 +2395,113 @@ fn handler_get_drives(regs: Registers) -> u64 {
     })
 }
 
+/// sys_driver_enum (RAX=56): enumerate registered drivers by index.
+/// RBX = index (0-based), RCX = buf_ptr (&mut DriverInfoRaw).
+/// Returns 1 if entry written, 0 if no more entries, negative on error.
+#[repr(C)]
+struct DriverInfoRaw {
+    id: u32,
+    state: u8,
+    category: u8,
+    driver_type: u8,
+    api_version: u16,
+    abi_min: u16,
+    abi_target: u16,
+    abi_max: u16,
+    last_error: u32,
+    caps: u64,
+    isolation_mode: u8,
+    events_received: u64,
+    tick_count: u64,
+    registered_at_tick: u64,
+    name: [u8; 8],
+}
+
+fn handler_driver_enum(regs: Registers) -> u64 {
+    let index = regs.rbx as usize;
+    let buf_ptr = regs.rcx;
+    if buf_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    let entry_size = core::mem::size_of::<DriverInfoRaw>() as u64;
+    if !is_user_ptr_valid(buf_ptr, entry_size) {
+        return err_to_u64(SyscallError::Fault);
+    }
+
+    let ids = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock().driver_ids();
+    if index >= ids.len() {
+        return 0u64;
+    }
+    let id = ids[index];
+    // Lock is released here (ids goes out of scope)
+
+    let drv = crate::drivers::driver_runtime::get_driver(id);
+    match drv {
+        Some(d) => {
+            let raw = DriverInfoRaw {
+                id: d.id as u32, state: d.state as u8, category: d.category as u8,
+                driver_type: d.driver_type as u8, api_version: d.api_version,
+                abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
+                last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
+                events_received: d.events_received, tick_count: d.tick_count,
+                registered_at_tick: d.registered_at_tick, name: d.name,
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &raw as *const DriverInfoRaw as *const u8,
+                    buf_ptr as *mut u8,
+                    core::mem::size_of::<DriverInfoRaw>(),
+                );
+            }
+            1u64
+        }
+        None => 0u64,
+    }
+}
+
+/// sys_driver_load (RAX=57): load a NEM driver from a filesystem path (admin).
+/// RBX = path_ptr (null-terminated path string).
+/// Returns driver_id on success, negative on error.
+fn handler_driver_load(regs: Registers) -> u64 {
+    let path_ptr = regs.rbx;
+
+    if path_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let path = match copy_user_string(path_ptr) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+
+    match crate::drivers::nem::load_nem_driver(&path) {
+        Ok(id) => id as u64,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
+/// sys_driver_unload (RAX=58): unload a NEM driver by name (admin).
+/// RBX = name_ptr (driver name string), RCX = force_flag (0=graceful, 1=force).
+/// Returns 0 on success, negative on error.
+fn handler_driver_unload(regs: Registers) -> u64 {
+    let name_ptr = regs.rbx;
+    let force = regs.rcx != 0;
+
+    if name_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let name = match copy_user_string(name_ptr) {
+        Ok(s) => s,
+        Err(_) => return err_to_u64(SyscallError::Fault),
+    };
+
+    match crate::drivers::hotreload::unload_driver(&name, force) {
+        Ok(_) => 0,
+        Err(_) => err_to_u64(SyscallError::Io),
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -2342,6 +2555,10 @@ lazy_static! {
         t[52] = Some(handler_kill_process as SyscallFn);
         t[53] = Some(handler_cursor_blink as SyscallFn);
         t[54] = Some(handler_set_volume_label as SyscallFn);
+        t[55] = Some(handler_fsck as SyscallFn);
+        t[56] = Some(handler_driver_enum as SyscallFn);
+        t[57] = Some(handler_driver_load as SyscallFn);
+        t[58] = Some(handler_driver_unload as SyscallFn);
         t
     };
 
@@ -2393,6 +2610,10 @@ lazy_static! {
         t[52] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
         t[54] = SyscallPermission::user();
+        t[55] = SyscallPermission::user();
+        t[56] = SyscallPermission::user();
+        t[57] = SyscallPermission::admin();
+        t[58] = SyscallPermission::admin();
         t
     };
 }

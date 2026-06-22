@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -330,6 +330,9 @@ Happy hacking!
         kill_blocks       = alloc_blocks(58, len(nxe_files['kill']))
         pri_blocks        = alloc_blocks(59, len(nxe_files['pri']))
         label_blocks      = alloc_blocks(60, len(nxe_files['label']))
+        fsck_blocks       = alloc_blocks(61, len(nxe_files['fsck']))
+        ndreg_blocks      = alloc_blocks(62, len(nxe_files['ndreg']))
+        loadnem_blocks    = alloc_blocks(63, len(nxe_files['loadnem']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
@@ -350,7 +353,7 @@ Happy hacking!
         lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
-        prog_dir_blocks   = alloc_blocks(25, 6656)   # Programs dir (26 entries)
+        prog_dir_blocks   = alloc_blocks(25, 7424)   # Programs dir (29 entries)
         pkg_dir_blocks    = alloc_blocks(37, 256)    # Packages dir (empty)
         usr_dir_blocks    = alloc_blocks(38, 768)    # Users dir
         def_dir_blocks    = alloc_blocks(39, 256)    # Users\Default (empty)
@@ -406,7 +409,10 @@ Happy hacking!
              57: (MODE_FILE | default_perms_for_filename("keyb.nxe"), len(nxe_files['keyb']), pad_blocks(keyb_blocks)),
              58: (MODE_FILE | default_perms_for_filename("kill.nxe"), len(nxe_files['kill']), pad_blocks(kill_blocks)),
               59: (MODE_FILE | default_perms_for_filename("pri.nxe"), len(nxe_files['pri']), pad_blocks(pri_blocks)),
-              60: (MODE_FILE | default_perms_for_filename("label.nxe"), len(nxe_files['label']), pad_blocks(label_blocks)),
+               60: (MODE_FILE | default_perms_for_filename("label.nxe"), len(nxe_files['label']), pad_blocks(label_blocks)),
+              61: (MODE_FILE | default_perms_for_filename("fsck.nxe"), len(nxe_files['fsck']), pad_blocks(fsck_blocks)),
+              62: (MODE_FILE | default_perms_for_filename("ndreg.nxe"), len(nxe_files['ndreg']), pad_blocks(ndreg_blocks)),
+              63: (MODE_FILE | default_perms_for_filename("loadnem.nxe"), len(nxe_files['loadnem']), pad_blocks(loadnem_blocks)),
             41: (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             42: (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             43: (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -595,6 +601,9 @@ Happy hacking!
         image[offset+6144:offset+6400]= create_dir_entry(58, 1, "kill.nxe")
         image[offset+6400:offset+6656]= create_dir_entry(59, 1, "pri.nxe")
         image[offset+6656:offset+6912]= create_dir_entry(60, 1, "label.nxe")
+        image[offset+6912:offset+7168]= create_dir_entry(61, 1, "fsck.nxe")
+        image[offset+7168:offset+7424]= create_dir_entry(62, 1, "ndreg.nxe")
+        image[offset+7424:offset+7680]= create_dir_entry(63, 1, "loadnem.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -625,6 +634,9 @@ Happy hacking!
               58: ('kill.nxe', nxe_files['kill']),
                59: ('pri.nxe', nxe_files['pri']),
                60: ('label.nxe', nxe_files['label']),
+            61: ('fsck.nxe', nxe_files['fsck']),
+            62: ('ndreg.nxe', nxe_files['ndreg']),
+            63: ('loadnem.nxe', nxe_files['loadnem']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

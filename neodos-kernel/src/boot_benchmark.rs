@@ -334,9 +334,7 @@ pub static ENABLE_BOOT_BENCHMARK_REPORT: AtomicBool = AtomicBool::new(true);
 /// Default: true. Can be disabled by setting AHCI_DEBUG=0 in BOOT.CFG.
 pub static ENABLE_AHCI_DEBUG_OUTPUT: AtomicBool = AtomicBool::new(true);
 
-/// Controls whether NeoInit (PID 1) is loaded.
-/// Default: true. Set NEOINIT=0 in BOOT.CFG for kernel shell (testing).
-pub static NEOINIT_ENABLED: AtomicBool = AtomicBool::new(true);
+
 
 /// Initialize boot configuration with default values.
 /// Configuration can be changed at runtime using the BENCH shell command.
@@ -414,13 +412,7 @@ fn parse_boot_config(content: &str) {
                         ENABLE_AHCI_DEBUG_OUTPUT.store(false, Ordering::Relaxed);
                     }
                 }
-                "NEOINIT" => {
-                    if value == "1" || value.eq_ignore_ascii_case("ON") || value.eq_ignore_ascii_case("YES") {
-                        NEOINIT_ENABLED.store(true, Ordering::Relaxed);
-                    } else if value == "0" || value.eq_ignore_ascii_case("OFF") || value.eq_ignore_ascii_case("NO") {
-                        NEOINIT_ENABLED.store(false, Ordering::Relaxed);
-                    }
-                }
+
                 _ => {} // Ignore unknown keys
             }
         }

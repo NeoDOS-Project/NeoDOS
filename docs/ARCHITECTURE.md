@@ -38,7 +38,7 @@ NeoDOS Kernel (x86_64-unknown-none)
   - ATA boot stub (BootAta) + AHCI probe + NVMe probe
   - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
-  - DOS-like shell (501 kernel tests + user commands)
+  - Ring 3 shell (neoshell.nxe via NeoInit, 512 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -87,7 +87,7 @@ stub (or NEM ATA driver once loaded).
 
 ## RAM Disk
 
-The bootloader loads the NeoDOS filesystem image into memory (as a raw byte buffer) and passes the address/size in `BootInfo`. The kernel stores these in `globals::RAM_DISK_BASE` / `RAM_DISK_SIZE` and provides `globals::ram_disk_buf() -> Option<&[u8]>`. The RAM disk is used by the shell's `run` command to load user binaries (flat `.NXE` files) without reading from the disk.
+The bootloader loads the NeoDOS filesystem image into memory (as a raw byte buffer) and passes the address/size in `BootInfo`. The kernel stores these in `globals::RAM_DISK_BASE` / `RAM_DISK_SIZE` and provides `globals::ram_disk_buf() -> Option<&[u8]>`. The RAM disk is used during boot to load the NeoDOS FS and user binaries.
 
 ## Boot ABI (`BootInfo`)
 
@@ -447,7 +447,7 @@ Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init o
 
 - `load_nem(path)` — loads and registers, emits `EVENT_DRIVER_LOADED`
 - `unload_driver(id)` — removes from runtime
-- `cmd_loadnem(path)` / `cmd_nemlist()` — shell commands
+- `LOADNEM` / `NDREG` — Ring 3 commands via `sys_driver_load` (RAX=57) and `sys_driver_enum` (RAX=56)
 - `cmd_unloadnem(id)` — unload by ID
 
 **`LOADNEM <path>` command**: loads but does NOT activate.
@@ -474,7 +474,7 @@ Shared library (NXL) loading subsystem for user-mode processes.
 
 ---
 
-### 9. NDREG — Registry CLI (`src/shell/commands/ndreg.rs`)
+### 9. NDREG — Registry CLI (`userbin/ndreg/` → `ndreg.nxe`)
 
 A `regedit`-style tool for inspecting the driver registry.
 
@@ -554,7 +554,7 @@ The kernel testing framework includes **501 tests** (46+ suites) with suites ded
 | URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
-Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`C:\Programs\hello.nxe`, `C:\Programs\systest.nxe`, `C:\Programs\filetest.nxe`, `C:\Programs\alltest.nxe`, `C:\Programs\cputest.nxe`, `C:\Programs\test.nxe`, `C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`).
+Tests run automatically at boot. The kernel runs 512 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
 
 ---
 
@@ -578,7 +578,7 @@ Tests run via the shell `test` command, which after passing kernel tests execute
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `kobj_id` (optional KOBJ reference)
 - **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), max 16 processes, idle process (PID 0) always present. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.
-- **shell**: DOS-like shell with 30+ built-in commands (including `KOBJ`), TAB autocomplete, environment variables
+- **shell**: Ring 3 shell (`neoshell.nxe`) via NeoInit (PID 1), PATH dispatch to .NXE commands, TAB autocomplete, pipeline support, environment variables
 
 ## Kernel Safety and Synchronization (v0.10.4+)
 The kernel architecture prioritizes memory safety and reentrancy:

@@ -85,51 +85,7 @@ macro_rules! test_true {
     };
 }
 
-// ===== Environment tests =====
 
-pub fn register_env_tests() {
-    test_case!("env_set_get", {
-        let mut env = crate::shell::environment::Environment::new();
-        env.set("PATH", "/bin");
-        test_eq!(env.get("PATH"), Some("/bin"));
-    });
-
-    test_case!("env_overwrite", {
-        let mut env = crate::shell::environment::Environment::new();
-        env.set("FOO", "bar");
-        env.set("FOO", "baz");
-        test_eq!(env.get("FOO"), Some("baz"));
-    });
-
-    test_case!("env_missing_key", {
-        let env = crate::shell::environment::Environment::new();
-        test_eq!(env.get("NONEXIST"), None);
-    });
-
-    test_case!("env_empty_value", {
-        let mut env = crate::shell::environment::Environment::new();
-        env.set("EMPTY", "");
-        test_eq!(env.get("EMPTY"), Some(""));
-    });
-
-    test_case!("env_case_sensitive", {
-        let mut env = crate::shell::environment::Environment::new();
-        env.set("Path", "/usr/bin");
-        test_eq!(env.get("PATH"), None);
-        test_eq!(env.get("Path"), Some("/usr/bin"));
-    });
-
-    test_case!("env_multiple_vars", {
-        let mut env = crate::shell::environment::Environment::new();
-        env.set("A", "1");
-        env.set("B", "2");
-        env.set("C", "3");
-        test_eq!(env.get("A"), Some("1"));
-        test_eq!(env.get("B"), Some("2"));
-        test_eq!(env.get("C"), Some("3"));
-        test_eq!(env.get("D"), None);
-    });
-}
 
 // ===== Input buffer tests =====
 
@@ -2423,7 +2379,6 @@ pub fn register_pci_enum_tests() {
 
 pub fn register_tests() {
     crate::crash::register_crash_tests();
-    register_env_tests();
     register_input_tests();
     register_process_tests();
     register_sched_priority_tests();
@@ -2492,12 +2447,6 @@ pub fn register_tests() {
     // NT5.6: Virtual FS objects (K:\ drive) tests
     crate::vfs::kdrive::register_kdrive_tests();
 
-    // B9.1: HELP command tests
-    register_ring0_remaining_tests();
-
-    // B9.2/B9.3: Ring 0 SET/EXIT removed tests
-    register_shell_removed_tests();
-
     // A3.3: Watchdog subsystem tests
     crate::watchdog::register_watchdog_tests();
 
@@ -2511,53 +2460,7 @@ pub fn register_tests() {
     crate::abi_freeze::register_abi_freeze_tests();
 }
 
-// ── B9.1: Ring 0 commands still present (moved to Ring 3 no longer here) ──
 
-fn register_ring0_remaining_tests() {
-    test_case!("ring0_call_still_dispatched", {
-        use crate::shell::shell::DosShell;
-        use crate::shell::handler::COMMANDS;
-        let mut shell = DosShell::new();
-        let handled = COMMANDS.dispatch("CALL", &[], &mut shell);
-        test_eq!(handled, true);
-    });
-
-    test_case!("ring0_run_still_dispatched", {
-        use crate::shell::shell::DosShell;
-        use crate::shell::handler::COMMANDS;
-        let mut shell = DosShell::new();
-        let handled = COMMANDS.dispatch("RUN", &[], &mut shell);
-        test_eq!(handled, true);
-    });
-
-    test_case!("ring0_ndreg_still_dispatched", {
-        use crate::shell::shell::DosShell;
-        use crate::shell::handler::COMMANDS;
-        let mut shell = DosShell::new();
-        let handled = COMMANDS.dispatch("NDREG", &[], &mut shell);
-        test_eq!(handled, true);
-    });
-}
-
-// ── B9.2/B9.3: Ring 0 SET/EXIT removed tests ─────────────────────────────
-
-fn register_shell_removed_tests() {
-    test_case!("ring0_set_removed", {
-        use crate::shell::handler::COMMANDS;
-        use crate::shell::shell::DosShell;
-        let mut shell = DosShell::new();
-        let handled = COMMANDS.dispatch("SET", &[], &mut shell);
-        test_eq!(handled, false);
-    });
-
-    test_case!("ring0_exit_removed", {
-        use crate::shell::handler::COMMANDS;
-        use crate::shell::shell::DosShell;
-        let mut shell = DosShell::new();
-        let handled = COMMANDS.dispatch("EXIT", &[], &mut shell);
-        test_eq!(handled, false);
-    });
-}
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────
 

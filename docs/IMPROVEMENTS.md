@@ -208,6 +208,15 @@ Orden de implementación dentro de la fase:
 
 ---
 
+### 🟢 Code Quality & Maintenance
+
+* [ ] **CQ1. Reorganizar libneodos-nxl en módulos separados** | Prereqs: — | Files: `libneodos-nxl/src/main.rs` → `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
+  - **Descripción:** Dividir `libneodos-nxl/src/main.rs` (461 líneas monolíticas) en 7+ módulos separados. Cada módulo agrupa funciones por dominio: `syscall.rs` (raw `int 0x80` wrappers), `io.rs` (stdout/stderr/stdin, _print, _eprint), `fs.rs` (file_open/read/write + sys_mkdir/unlink/rmdir/rename), `process.rs` (pipe/dup2/waitpid/spawn/readdir/chdir/getcwd), `mem.rs` (brk/sbrk/mmap/munmap), `info.rs` (get_version/datetime/meminfo/cpuinfo), `error.rs` (consts + ret helper). `main.rs` solo mantiene `nxl_entry`, el `AbiTable` struct, `EXPORT_TABLE` static, y `nxl_panic`. Zero cambios en ABI: el NXL binario resultante es idéntico, .export_table en offset 0 con mismos valores. No requiere recompilar user binaries ni cambiar kernel/libneodos/build.
+  - **Criterio:** `sha256sum` del NXL antes/después idéntica. 501 kernel tests + 27 user binaries funcionan sin cambios.
+  - **Tests:** Ninguno nuevo (el binario es idéntico).
+
+---
+
 ### 🟡 Fase 2: Expansión (v0.46 – v0.50)
 *Añadir funcionalidades transformadoras. Ejecución secuencial dentro de la fase.*
 
@@ -708,13 +717,7 @@ Migrar los comandos del kernel shell Ring 0 (`src/shell/commands/`) a `.NXE` en 
 - **RUN** — bootstrap loader necesario para lanzar el primer binario Ring 3 (NeoInit/neoshell) desde el kernel.
 - **CRASH** — crash dump management; es inherentemente kernel-level (manejo de page faults, triple faults, stack traces).
 
-**Completados (movidos a COMPLETED):** HELP, SET, EXIT, PS, KILL, PRI, DRIVES, KEYB, CALL — todos migrados a Ring 3 como `.NXE`.
-
-**Pendientes:**
-- [ ] **B9.7. LABEL** | `userbin/label/` → `label.nxe` — `sys_set_volume_label`
-- [ ] **B9.9. FSCK** | `userbin/fsck/` → `fsck.nxe` — `sys_fsck`
-- [ ] **B9.11. NDREG** | `userbin/ndreg/` → `ndreg.nxe` — `sys_driver_enum`/`unload`
-- [ ] **B9.12. LOADNEM** | `userbin/loadnem/` → `loadnem.nxe` — `sys_driver_load`
+**Completados (movidos a COMPLETED):** HELP, SET, EXIT, PS, KILL, PRI, DRIVES, KEYB, CALL, LABEL, FSCK, NDREG, LOADNEM — todos migrados a Ring 3 como `.NXE`.
 
 **Permanecen en Ring 0:**
 - **RUN** — bootstrap loader necesario para lanzar el primer binario Ring 3 (NeoInit/neoshell) desde el kernel.
