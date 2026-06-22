@@ -1,12 +1,12 @@
 use crate::{test_case, test_eq, test_true};
-use spin::Mutex;
-use lazy_static::lazy_static;
+use crate::object::{self, ObType, ObId, ObObject};
 
 pub const MAX_KOBJ_ENTRIES_HINT: usize = 64;
 const KOBJ_NAME_LEN: usize = 24;
 
-pub type KObjId = u64;
+pub type KObjId = ObId;
 
+/// Legacy KObjType — mirrors ObType for shared values.
 #[repr(u32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KObjType {
@@ -25,24 +25,47 @@ pub enum KObjType {
 }
 
 impl KObjType {
-    pub fn to_str(self) -> &'static str {
+    fn to_ob_type(self) -> ObType {
         match self {
-            KObjType::Unknown => "UNKNOWN",
-            KObjType::Process => "PROCESS",
-            KObjType::Driver => "DRIVER",
-            KObjType::Device => "DEVICE",
-            KObjType::Pipe => "PIPE",
-            KObjType::EventBus => "EVENTBUS",
-            KObjType::BlockDevice => "BLOCKDEV",
-            KObjType::Filesystem => "FILESYSTEM",
-            KObjType::MemoryRegion => "MEMREGION",
-            KObjType::Symlink => "SYMLINK",
-            KObjType::MountPoint => "MOUNTPOINT",
-            KObjType::Directory => "DIRECTORY",
+            KObjType::Unknown => ObType::Unknown,
+            KObjType::Process => ObType::Process,
+            KObjType::Driver => ObType::Driver,
+            KObjType::Device => ObType::Device,
+            KObjType::Pipe => ObType::Pipe,
+            KObjType::EventBus => ObType::EventBus,
+            KObjType::BlockDevice => ObType::BlockDevice,
+            KObjType::Filesystem => ObType::Filesystem,
+            KObjType::MemoryRegion => ObType::MemoryRegion,
+            KObjType::Symlink => ObType::Symlink,
+            KObjType::MountPoint => ObType::MountPoint,
+            KObjType::Directory => ObType::Directory,
         }
+    }
+
+    fn from_ob_type(t: ObType) -> Self {
+        match t {
+            ObType::Unknown => KObjType::Unknown,
+            ObType::Process => KObjType::Process,
+            ObType::Driver => KObjType::Driver,
+            ObType::Device => KObjType::Device,
+            ObType::Pipe => KObjType::Pipe,
+            ObType::EventBus => KObjType::EventBus,
+            ObType::BlockDevice => KObjType::BlockDevice,
+            ObType::Filesystem => KObjType::Filesystem,
+            ObType::MemoryRegion => KObjType::MemoryRegion,
+            ObType::Symlink => KObjType::Symlink,
+            ObType::MountPoint => KObjType::MountPoint,
+            ObType::Directory => KObjType::Directory,
+            _ => KObjType::Unknown,
+        }
+    }
+
+    pub fn to_str(self) -> &'static str {
+        self.to_ob_type().to_str()
     }
 }
 
+/// Legacy KObjEntry — now a snapshot wrapper around ObObject.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct KObjEntry {
     pub id: KObjId,
@@ -60,140 +83,44 @@ impl KObjEntry {
         core::str::from_utf8(&self.name[..len]).unwrap_or("<?>")
     }
 
-    fn set_name(&mut self, s: &str) {
-        let bytes = s.as_bytes();
-        let len = bytes.len().min(KOBJ_NAME_LEN - 1);
-        self.name[..len].copy_from_slice(&bytes[..len]);
-        self.name[len] = 0;
-    }
-
-    fn set_name_from_bytes(&mut self, src: &[u8; KOBJ_NAME_LEN]) {
-        self.name.copy_from_slice(src);
-    }
-}
-
-pub struct KObjRegistry {
-    entries: alloc::vec::Vec<Option<KObjEntry>>,
-    count: usize,
-    next_id: KObjId,
-}
-
-impl KObjRegistry {
-    pub fn new() -> Self {
-        KObjRegistry {
-            entries: alloc::vec::Vec::new(),
-            count: 0,
-            next_id: 1,
+    fn from_ob_object(obj: &ObObject) -> Self {
+        let mut name = [0u8; KOBJ_NAME_LEN];
+        let src = obj.name;
+        let len = src.iter().position(|&b| b == 0).unwrap_or(KOBJ_NAME_LEN).min(KOBJ_NAME_LEN - 1);
+        name[..len].copy_from_slice(&src[..len]);
+        name[len] = 0;
+        KObjEntry {
+            id: obj.id,
+            refcount: obj.refcount,
+            obj_type: KObjType::from_ob_type(obj.obj_type),
+            name,
+            flags: obj.flags,
+            creation_tick: 0,
+            native_id: obj.native_id,
         }
     }
-
-    pub fn register(
-        &mut self,
-        obj_type: KObjType,
-        name: &str,
-        native_id: u64,
-    ) -> Result<KObjId, &'static str> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        let mut entry = KObjEntry {
-            id,
-            refcount: 1,
-            obj_type,
-            name: [0u8; KOBJ_NAME_LEN],
-            flags: 0,
-            creation_tick: crate::hal::get_ticks(),
-            native_id,
-        };
-        entry.set_name(name);
-
-        for slot in self.entries.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(entry);
-                self.count += 1;
-                return Ok(id);
-            }
-        }
-        self.entries.push(Some(entry));
-        self.count += 1;
-        Ok(id)
-    }
-
-    pub fn unregister(&mut self, id: KObjId) -> bool {
-        for slot in self.entries.iter_mut() {
-            if let Some(entry) = slot {
-                if entry.id == id {
-                    *slot = None;
-                    self.count -= 1;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    pub fn lookup(&self, id: KObjId) -> Option<&KObjEntry> {
-        self.entries.iter().flatten().find(|e| e.id == id)
-    }
-
-    pub fn lookup_mut(&mut self, id: KObjId) -> Option<&mut KObjEntry> {
-        self.entries.iter_mut().flatten().find(|e| e.id == id)
-    }
-
-    pub fn ref_inc(&mut self, id: KObjId) -> Option<u32> {
-        self.lookup_mut(id).map(|e| {
-            e.refcount = e.refcount.saturating_add(1);
-            e.refcount
-        })
-    }
-
-    pub fn ref_dec(&mut self, id: KObjId) -> Option<u32> {
-        self.lookup_mut(id).map(|e| {
-            if e.refcount > 0 {
-                e.refcount -= 1;
-            }
-            e.refcount
-        })
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = &KObjEntry> {
-        self.entries.iter().flatten()
-    }
-
-    pub fn len(&self) -> usize {
-        self.count
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    pub fn iter_entries_mut(&mut self) -> impl Iterator<Item = &mut KObjEntry> {
-        self.entries.iter_mut().filter_map(|s| s.as_mut())
-    }
 }
 
-lazy_static! {
-    pub static ref KOBJ_REGISTRY: Mutex<KObjRegistry> = Mutex::new(KObjRegistry::new());
-}
+// ── Public API (unchanged signatures) ──
 
 pub fn kobj_register(obj_type: KObjType, name: &str, native_id: u64) -> Result<KObjId, &'static str> {
-    let id = KOBJ_REGISTRY.lock().register(obj_type, name, native_id)?;
+    let ob_type = obj_type.to_ob_type();
+    let id = object::ob_create_object(ob_type, name, native_id, 0, None)
+        .map_err(|_| "kobj_register: ob_create_object failed")?;
     let _ = namespace::ob_insert_object_auto(obj_type, name, id);
     Ok(id)
 }
 
 pub fn kobj_unregister(id: KObjId) -> bool {
-    let (obj_type, name) = {
-        let reg = KOBJ_REGISTRY.lock();
-        reg.lookup(id).map(|e| (e.obj_type, e.name)).unwrap_or((KObjType::Unknown, [0u8; KOBJ_NAME_LEN]))
-    };
-    if KOBJ_REGISTRY.lock().unregister(id) {
+    let obj = object::ob_lookup(id);
+    let (obj_type, name_bytes) = obj.map(|o| (o.obj_type, o.name)).unwrap_or((ObType::Unknown, [0u8; 32]));
+
+    if object::ob_destroy_object(id).is_ok() {
         let name_str = {
-            let len = name.iter().position(|&b| b == 0).unwrap_or(KOBJ_NAME_LEN);
-            core::str::from_utf8(&name[..len]).unwrap_or("?")
+            let len = name_bytes.iter().position(|&b| b == 0).unwrap_or(32);
+            core::str::from_utf8(&name_bytes[..len]).unwrap_or("?")
         };
-        namespace::ob_remove_object_auto(obj_type, name_str);
+        namespace::ob_remove_object_auto(KObjType::from_ob_type(obj_type), name_str);
         true
     } else {
         false
@@ -201,38 +128,37 @@ pub fn kobj_unregister(id: KObjId) -> bool {
 }
 
 pub fn kobj_ref(id: KObjId) -> Option<u32> {
-    KOBJ_REGISTRY.lock().ref_inc(id)
+    object::ob_reference(id).ok()
 }
 
 pub fn kobj_unref(id: KObjId) -> Option<u32> {
-    KOBJ_REGISTRY.lock().ref_dec(id)
+    object::ob_dereference(id).ok()
 }
 
 pub fn kobj_lookup(id: KObjId) -> Option<KObjEntry> {
-    KOBJ_REGISTRY.lock().lookup(id).copied()
+    object::ob_lookup(id).as_ref().map(KObjEntry::from_ob_object)
 }
 
 pub fn kobj_count() -> usize {
-    KOBJ_REGISTRY.lock().len()
+    object::ob_count()
 }
 
 pub fn kobj_iter_snapshot() -> alloc::vec::Vec<(KObjId, KObjType, [u8; KOBJ_NAME_LEN], u32, u64)> {
-    let reg = KOBJ_REGISTRY.lock();
-    let mut res = alloc::vec::Vec::new();
-    for e in reg.iter() {
-        res.push((e.id, e.obj_type, e.name, e.refcount, e.native_id));
-    }
-    res
+    let snap = object::ob_enum_snapshot();
+    snap.iter().map(|s| {
+        let mut name = [0u8; KOBJ_NAME_LEN];
+        let src = s.name.as_bytes();
+        let len = src.len().min(KOBJ_NAME_LEN - 1);
+        name[..len].copy_from_slice(&src[..len]);
+        name[len] = 0;
+        (s.id, KObjType::from_ob_type(s.obj_type), name, s.refcount, s.native_id)
+    }).collect()
 }
 
-pub fn kobj_update_name(id: KObjId, name: &str) -> bool {
-    let mut reg = KOBJ_REGISTRY.lock();
-    if let Some(entry) = reg.lookup_mut(id) {
-        entry.set_name(name);
-        true
-    } else {
-        false
-    }
+pub fn kobj_update_name(_id: KObjId, _name: &str) -> bool {
+    // For now, destroy + recreate is not supported via the Ob API.
+    // This is a no-op until ObObjectTable supports rename.
+    false
 }
 
 pub fn kobj_iter_mut_snapshot() -> alloc::vec::Vec<(u64, &'static mut [u8])> {

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.41.0 — 2026-06-22
+
+### Added
+- **OB-001. Módulo base Object Manager** — `src/object/mod.rs`, `src/object/types.rs`: `ObObject`, `ObObjectTable`, `ObOperations` trait, `ObType` (16 tipos), `ObId`, `ObError`. API: `ob_create_object`, `ob_destroy_object`, `ob_lookup`, `ob_open_object`, `ob_close_object`, `ob_reference`, `ob_dereference`, `ob_enum_snapshot`. 10 tests.
+- **OB-002. HandleEntry object_id** — `src/handle.rs`: nuevo campo `object_id: u64` en `HandleEntry`. Inicializado a 0 en todos los constructores. Migración progresiva hacia Object Manager.
+- **OB-003. KOBJ → ObObjectTable** — `src/kobj/mod.rs`: refactorizado para delegar en `ObObjectTable` internamente. `kobj_register()` crea `ObObject`, `kobj_unregister()` lo destruye. API pública sin cambios. 8 tests legacy intactos.
+
+### Changed
+- `src/object/mod.rs`: re-exporta `ObError`, `ObId`, `ObType`, `OB_NAME_LEN`, `ObObjectSnapshot`.
+- `src/kobj/mod.rs`: `KObjType` convertido a `ObType` internamente; `KObjEntry` es wrapper snapshot de `ObObject`; `KObjId = ObId`.
+
 ## v0.40.3 — 2026-06-22
 
 ### Fixed

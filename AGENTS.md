@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.40.0
+v0.41.0
 
 ## Architecture Governance
 
@@ -16,9 +16,9 @@ before any commit.
 la estrategia a largo plazo (v0.40 → v1.0) y las decisiones de no-cambio. Las
 prioridades actuales son:
 
-1. **v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap
-2. **v0.41**: Slab<T> contenedor para arrays fijos, scheduler Vec dinámico, **ObObjectTable (refactor KOBJ → Object Manager)**
-3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI, **HandleEntry refactor (object_id field)**
+1. ~~**v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap~~ **COMPLETADO**
+2. ~~**v0.41**: ObObjectTable (refactor KOBJ → Object Manager), HandleEntry object_id field~~ **COMPLETADO**
+3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI
 4. **v0.43**: SeAccessCheck NT-compatible, sys_poll()
 5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree, **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**
 6. **v0.47**: Networking (TCP/IP stack)

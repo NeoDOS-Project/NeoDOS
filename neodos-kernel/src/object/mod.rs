@@ -1,9 +1,12 @@
 pub mod types;
 
+pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
+pub use types::ObObjectSnapshot;
+
 use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::object::types::{ObError, ObId, ObObjectSnapshot, ObType, OB_NAME_LEN};
+
 
 /// Operations trait — each object type can provide callbacks.
 pub trait ObOperations: Send + Sync {

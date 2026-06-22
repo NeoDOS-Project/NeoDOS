@@ -14,6 +14,7 @@ pub const HANDLE_DIR: u8 = 9;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandleEntry {
+    pub object_id: u64, // ObId — 0 if not migrated (OB-002)
     pub kind: u8,
     pub id: u32,
     pub extra: u32,
@@ -22,43 +23,43 @@ pub struct HandleEntry {
 
 impl HandleEntry {
     pub const fn closed() -> Self {
-        HandleEntry { kind: HANDLE_CLOSED, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_CLOSED, id: 0, extra: 0, offset: 0 }
     }
 
     pub const fn stdin() -> Self {
-        HandleEntry { kind: HANDLE_STDIN, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_STDIN, id: 0, extra: 0, offset: 0 }
     }
 
     pub const fn stdout() -> Self {
-        HandleEntry { kind: HANDLE_STDOUT, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_STDOUT, id: 0, extra: 0, offset: 0 }
     }
 
     pub const fn stderr() -> Self {
-        HandleEntry { kind: HANDLE_STDERR, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_STDERR, id: 0, extra: 0, offset: 0 }
     }
 
     pub fn pipe_read(pipe_id: u8) -> Self {
-        HandleEntry { kind: HANDLE_PIPE_READ, id: pipe_id as u32, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_PIPE_READ, id: pipe_id as u32, extra: 0, offset: 0 }
     }
 
     pub fn pipe_write(pipe_id: u8) -> Self {
-        HandleEntry { kind: HANDLE_PIPE_WRITE, id: pipe_id as u32, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_PIPE_WRITE, id: pipe_id as u32, extra: 0, offset: 0 }
     }
 
     pub fn file(drive: u8, inode: u32) -> Self {
-        HandleEntry { kind: HANDLE_FILE, id: inode, extra: drive as u32, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_FILE, id: inode, extra: drive as u32, offset: 0 }
     }
 
     pub fn device(device_id: u32) -> Self {
-        HandleEntry { kind: HANDLE_DEVICE, id: device_id, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_DEVICE, id: device_id, extra: 0, offset: 0 }
     }
 
     pub fn event(event_type: u32) -> Self {
-        HandleEntry { kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
     }
 
     pub fn dir(drive: u8, inode: u32) -> Self {
-        HandleEntry { kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
+        HandleEntry { object_id: 0, kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
     }
 }
 
