@@ -19,7 +19,7 @@ struct ProtectedRegion {
 }
 
 const PROTECTED_REGIONS: &[ProtectedRegion] = &[
-    ProtectedRegion { start: 0x4000_0000, end: 0x4020_0000, name: "kernel_image" },
+    ProtectedRegion { start: 0x400_0000, end: 0x402_0000, name: "kernel_image" },
     ProtectedRegion { start: 0x0240_0000, end: 0x0340_0000, name: "kernel_heap" },
     ProtectedRegion { start: 0x1000_0000, end: 0x1200_0000, name: "user_heap" },
     ProtectedRegion { start: 0x1E00_0000, end: 0x1E20_0000, name: "nxl_region" },
