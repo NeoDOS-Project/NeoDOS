@@ -184,7 +184,23 @@ lazy_static! {
 }
 
 pub fn init_object_manager() {
-    let _ = OB_TABLE.lock();
+    let mut table = OB_TABLE.lock();
+    // Create the root namespace directory
+    let _ = table.create(ObType::Directory, "\\", 0, 0, None);
+    // Register base type directory entries for the namespace
+    for (name, typ, native_id) in &[
+        ("Process", ObType::Process, 1u64),
+        ("Driver", ObType::Driver, 2),
+        ("Device", ObType::Device, 3),
+        ("Pipe", ObType::Pipe, 4),
+        ("Filesystem", ObType::Filesystem, 5),
+        ("Directory", ObType::Directory, 6),
+        ("Key", ObType::Key, 7),
+        ("Event", ObType::Event, 8),
+        ("MemoryRegion", ObType::MemoryRegion, 9),
+    ] {
+        let _ = table.create(*typ, name, *native_id, 0, None);
+    }
 }
 
 // ── Public API ──
@@ -213,7 +229,11 @@ pub fn ob_open_object(id: ObId, _access: u32) -> Result<(), ObError> {
 }
 
 pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
-    OB_TABLE.lock().dereference(id)?;
+    let mut table = OB_TABLE.lock();
+    let new_count = table.dereference(id)?;
+    if new_count == 0 {
+        table.destroy(id).ok();
+    }
     Ok(())
 }
 
@@ -319,5 +339,46 @@ pub fn register_object_tests() {
         test_eq!(ObError::Success.as_err_code(), 0);
         test_eq!(ObError::Success.to_str(), "SUCCESS");
         test_eq!(ObError::RefCountHeld.to_str(), "REFCOUNT_HELD");
+    });
+
+    // ── OB-004: ob_close_object auto-destroy ──
+
+    test_case!("ob_close_object_auto_destroy", {
+        let id = ob_create_object(ObType::Filesystem, "close_file", 0, 0, None).unwrap();
+        let before = ob_count();
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
+        test_eq!(ob_count(), before - 1);
+    });
+
+    test_case!("ob_close_object_keeps_alive_with_refs", {
+        let id = ob_create_object(ObType::Pipe, "close_pipe", 0, 0, None).unwrap();
+        ob_open_object(id, 0).unwrap(); // refcount 1→2
+        ob_close_object(id).unwrap();   // refcount 2→1 (kept alive)
+        test_true!(ob_lookup(id).is_some());
+        test_eq!(ob_lookup(id).unwrap().refcount, 1);
+        ob_close_object(id).unwrap();   // refcount 1→0 → auto-destroy
+        test_true!(ob_lookup(id).is_none());
+    });
+
+    // ── OB-005: init_object_manager creates root + base types ──
+
+    test_case!("ob_init_root_directory", {
+        let snap = ob_enum_snapshot();
+        test_true!(ob_count() >= 10);
+        let root = snap.iter().find(|s| s.name == "\\");
+        test_true!(root.is_some());
+        if let Some(r) = root {
+            test_eq!(r.obj_type, ObType::Directory);
+        }
+    });
+
+    test_case!("ob_init_type_entries", {
+        let snap = ob_enum_snapshot();
+        let names: alloc::vec::Vec<&str> = snap.iter().map(|s| s.name.as_str()).collect();
+        test_true!(names.contains(&"Process"));
+        test_true!(names.contains(&"Pipe"));
+        test_true!(names.contains(&"Device"));
+        test_true!(names.contains(&"Filesystem"));
     });
 }

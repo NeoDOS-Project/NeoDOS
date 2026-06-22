@@ -55,7 +55,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 479 kernel tests (auto-run at boot) + user-mode binaries
+2. `python3 scripts/auto_test.py` — 487 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -369,7 +369,7 @@ On `sys_exit` (INT 0x80, RAX=0): `syscall_dispatch` marks the calling KTHREAD `T
 
 Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_handler_asm exit path), `syscall/mod.rs` (dispatch & Terminated marking, sys_thread_create/join), `scheduler/mod.rs` (EPROCESS/KTHREAD lifecycle, kill_pid).
 
-## Shell: TAB autocomplete + history
+## Shell: TAB autocomplete + history + pipeline
 
 La shell Ring 3 (`userbin/neoshell/src/main.rs`) tiene autocompletado con **TAB** (`try_complete`):
 - **Primera palabra**: completa comandos built-in (CWD, SET, EXIT, POWEROFF). No escanea PATH para `.NXE`.
@@ -380,6 +380,12 @@ El shell tiene historial de comandos con **↑/↓** (`shell.rs`, `keyboard.rs`)
 - Buffer circular de 32 entradas
 - Las flechas se emiten como bytes sentinela 0x01 (up) / 0x02 (down) desde el driver PS/2
 - `history` se almacena como `Vec<String>` en `DosShell`, se inicializa en `new()`
+
+La shell tiene soporte de **pipeline** (operador `|`):
+- `cmd1 | cmd2 | cmd3` — hasta 16 comandos encadenados
+- Crea pipes nativos via `sys_pipe`, redirige stdin/stdout con `sys_spawn`
+- Built-ins no son pipeables (error explícito)
+- Cierre limpio de fds en cada etapa del pipeline
 
 ## Shell: DEL, REN, RD
 
@@ -846,6 +852,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
 | KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
+| Object (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy (OB-004), init root + type entries (OB-005) |
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
 | Work Queue | 6 | Deferred work queue: push/pop, FIFO, empty, overflow, high/low isolation, pending flag |
@@ -856,7 +863,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions, unload/reload, error codes |
 | Per-CPU (KPRCB) | 5 | KPRCB size, slab cache count, run queue ops, init, offset sanity |
-| Syscall | 11 | SSDT dispatch, permissions, A4.6 spawn/readdir/mkdir/unlink/rmdir/rename |
+| Syscall | 13 | SSDT dispatch, permissions, A4.6 spawn/readdir/mkdir/unlink/rmdir/rename, OB-004 handler_close file+pipe |
 | SMP | 3 | Constants, trampoline size, BSP is CPU 0 |
 | ANSI | 3 | ANSI terminal: color fg/bg, cursor position, clear screen |
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
@@ -864,7 +871,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (469 tests kernel)
+1. Ejecuta `testing::run_all()` (487 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

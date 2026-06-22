@@ -5,6 +5,7 @@ use crate::scheduler::{self, ThreadState};
 use crate::kobj::{self, KObjType};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
+pub const MAX_PIPES: usize = 16;
 
 // ── Pipe buffer (heap-allocated, v0.41) ──
 
@@ -122,8 +123,11 @@ impl PipeManager {
                     pipe.in_use = true;
                     pipe.reset();
                     drop(pipe);
+                    // Drop pipes *before* set_kobj_id to avoid reentrancy:
+                    // set_kobj_id → ensure_idx → pipes.lock() would deadlock.
+                    drop(pipes);
                     let name = alloc::format!("pipe/{}", i);
-                    if let Ok(kid) = kobj::kobj_register(KObjType::Pipe, &name, i as u64) {
+                                if let Ok(kid) = kobj::kobj_register(KObjType::Pipe, &name, i as u64) {
                         self.set_kobj_id(i, Some(kid));
                     }
                     return Some(i as u8);
@@ -131,6 +135,9 @@ impl PipeManager {
             }
         }
         // No free slot found — create a new one
+        if pipes.len() >= MAX_PIPES {
+            return None;
+        }
         let i = pipes.len();
         let inner = Mutex::new(PipeInner::new_unused());
         // Mark as in_use
@@ -169,15 +176,27 @@ impl PipeManager {
 
     fn maybe_free_pipe(&self, pipe_id: u8) {
         let idx = pipe_id as usize;
-        let pipes = self.pipes.lock();
-        if let Some(Some(ref mp)) = pipes.get(idx) {
-            let mut pipe = mp.lock();
-            if pipe.read_refs == 0 && pipe.write_refs == 0 {
-                pipe.in_use = false;
-                if let Some(kid) = self.get_kobj_id(idx) {
-                    kobj::kobj_unregister(kid);
-                    self.set_kobj_id(idx, None);
+        // Extract kobj_id *before* the pipes lock to avoid reentrancy:
+        // get_kobj_id calls ensure_idx which tries to lock self.pipes.
+        let kid = self.get_kobj_id(idx);
+        let should_free = {
+            let pipes = self.pipes.lock();
+            if let Some(Some(ref mp)) = pipes.get(idx) {
+                let mut pipe = mp.lock();
+                if pipe.read_refs == 0 && pipe.write_refs == 0 {
+                    pipe.in_use = false;
+                    true
+                } else {
+                    false
                 }
+            } else {
+                false
+            }
+        };
+        if should_free {
+            if let Some(kobj_id) = kid {
+                kobj::kobj_unregister(kobj_id);
+                self.set_kobj_id(idx, None);
             }
         }
     }

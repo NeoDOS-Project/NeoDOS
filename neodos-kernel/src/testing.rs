@@ -2125,6 +2125,106 @@ pub fn register_pipe_tests() {
         test_eq!(f.extra, 2);
         test_eq!(f.offset, 0);
     });
+
+    // ── Pipeline tests ──────────────────────────────────────────────
+
+    test_case!("pipe_two_commands", {
+        // Simulate: cmd1 | cmd2
+        // Refcount flow: shell creates pipe → cmd1 writes → cmd1 exits
+        // → shell closes write → cmd2 reads until EOF
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid); // shell holds read
+        PIPE_MANAGER.inc_write_ref(pid); // shell holds write
+        PIPE_MANAGER.inc_write_ref(pid); // cmd1 gets write via spawn
+
+        let data = b"pipeline two commands";
+        PIPE_MANAGER.write(pid, data).unwrap();
+        PIPE_MANAGER.dec_write_ref(pid); // cmd1 exits, drops write
+        PIPE_MANAGER.dec_write_ref(pid); // shell closes write end → pipe write-closed
+
+        // cmd2 gets read via spawn
+        PIPE_MANAGER.inc_read_ref(pid);
+        let mut buf = [0u8; 64];
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, data.len());
+        test_eq!(&buf[..n], data);
+        let n2 = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n2, 0); // EOF
+
+        PIPE_MANAGER.dec_read_ref(pid); // cmd2 exits
+        PIPE_MANAGER.dec_read_ref(pid); // shell closes read end
+    });
+
+    test_case!("pipe_chain_three", {
+        // Simulate: cmd1 | cmd2 | cmd3
+        // Two pipes chained
+        let p1 = PIPE_MANAGER.alloc().unwrap();
+        let p2 = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(p1); PIPE_MANAGER.inc_write_ref(p1); // shell
+        PIPE_MANAGER.inc_read_ref(p2); PIPE_MANAGER.inc_write_ref(p2); // shell
+
+        // cmd1 writes to pipe1
+        PIPE_MANAGER.inc_write_ref(p1); // cmd1 gets write via spawn
+        PIPE_MANAGER.write(p1, b"data1").unwrap();
+        PIPE_MANAGER.dec_write_ref(p1); // cmd1 exits
+        PIPE_MANAGER.dec_write_ref(p1); // shell closes write → pipe1 write-closed
+
+        // cmd2 reads pipe1, writes to pipe2
+        PIPE_MANAGER.inc_read_ref(p1); // cmd2 gets read via spawn
+        PIPE_MANAGER.inc_write_ref(p2); // cmd2 gets write via spawn
+        let mut tmp = [0u8; 16];
+        let n = PIPE_MANAGER.read(p1, &mut tmp).unwrap();
+        test_eq!(n, 5);
+        test_eq!(&tmp[..n], b"data1");
+        test_eq!(PIPE_MANAGER.read(p1, &mut tmp).unwrap(), 0); // EOF
+
+        PIPE_MANAGER.write(p2, b"data2").unwrap();
+        PIPE_MANAGER.dec_read_ref(p1); // cmd2 exits, drops pipe1 read
+        PIPE_MANAGER.dec_write_ref(p2); // cmd2 exits, drops pipe2 write
+
+        // shell cleans up
+        PIPE_MANAGER.dec_read_ref(p1); // shell closes pipe1 read
+        PIPE_MANAGER.dec_write_ref(p2); // shell closes pipe2 write → write-closed
+
+        // cmd3 reads pipe2
+        PIPE_MANAGER.inc_read_ref(p2); // cmd3 gets read via spawn
+        let mut out = [0u8; 16];
+        let n2 = PIPE_MANAGER.read(p2, &mut out).unwrap();
+        test_eq!(n2, 5);
+        test_eq!(&out[..n2], b"data2");
+        test_eq!(PIPE_MANAGER.read(p2, &mut out).unwrap(), 0); // EOF
+
+        PIPE_MANAGER.dec_read_ref(p2); // cmd3 exits
+        PIPE_MANAGER.dec_read_ref(p2); // shell closes pipe2 read
+    });
+
+    test_case!("pipe_blocking_read", {
+        // Reading from an empty pipe with write end still open blocks.
+        // PipeManager::read returns Err() in this case.
+        let pid = PIPE_MANAGER.alloc().unwrap();
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+
+        let mut buf = [0u8; 16];
+        // Empty pipe with write end open → should Err (blocking)
+        test_true!(PIPE_MANAGER.read(pid, &mut buf).is_err());
+
+        // After writing data, read succeeds
+        PIPE_MANAGER.write(pid, b"now data").unwrap();
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, 8);
+        test_eq!(&buf[..n], b"now data");
+
+        // With write end still open but buffer drained → Err again
+        test_true!(PIPE_MANAGER.read(pid, &mut buf).is_err());
+
+        // After closing write end → EOF (0 bytes)
+        PIPE_MANAGER.dec_write_ref(pid);
+        let n2 = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n2, 0); // EOF
+
+        PIPE_MANAGER.dec_read_ref(pid);
+    });
 }
 
 // ===== Page Cache tests =====

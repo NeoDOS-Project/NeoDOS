@@ -1214,15 +1214,8 @@ fn handler_writefile(regs: Registers) -> u64 {
 fn handler_close(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
     let entry = current_handle_entry(fd);
-    match entry.kind {
-        crate::handle::HANDLE_PIPE_READ => {
-            crate::pipe::PIPE_MANAGER.dec_read_ref(entry.id as u8);
-        }
-        crate::handle::HANDLE_PIPE_WRITE => {
-            crate::pipe::PIPE_MANAGER.dec_write_ref(entry.id as u8);
-        }
-        crate::handle::HANDLE_FILE | crate::handle::HANDLE_DEVICE | crate::handle::HANDLE_EVENT | crate::handle::HANDLE_DIR => {}
-        _ => {}
+    if entry.object_id != 0 {
+        let _ = crate::object::ob_close_object(entry.object_id);
     }
     set_current_handle(fd, crate::handle::HandleEntry::closed());
     0
@@ -2728,5 +2721,27 @@ pub fn register_syscall_table_tests() {
         let _ = crate::globals::with_vfs(|vfs| {
             vfs.remove_file(new_full)
         });
+    });
+
+    // ── OB-004: handler_close via ObObject ──
+
+    test_case!("handler_close_file", {
+        let id = crate::object::ob_create_object(
+            crate::object::ObType::Filesystem, "hclose_file", 0, 0, None
+        ).unwrap();
+        let result = crate::object::ob_close_object(id);
+        test_true!(result.is_ok());
+        test_true!(crate::object::ob_lookup(id).is_none());
+    });
+
+    test_case!("handler_close_pipe", {
+        let id = crate::object::ob_create_object(
+            crate::object::ObType::Pipe, "hclose_pipe", 0, 0, None
+        ).unwrap();
+        crate::object::ob_open_object(id, 0).unwrap();  // refcount 2
+        crate::object::ob_close_object(id).unwrap();     // refcount 1 (kept alive)
+        test_true!(crate::object::ob_lookup(id).is_some());
+        crate::object::ob_close_object(id).unwrap();     // refcount 0 → destroyed
+        test_true!(crate::object::ob_lookup(id).is_none());
     });
 }

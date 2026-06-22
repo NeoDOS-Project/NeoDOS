@@ -20,6 +20,8 @@ fn make_ascii_uppercase(buf: &mut [u8]) {
     }
 }
 
+const MAX_PIPELINE: usize = 16;
+
 fn trim_ascii(s: &[u8]) -> &[u8] {
     let mut start = 0;
     while start < s.len() && (s[start] == b' ' || s[start] == b'\t' || s[start] == b'\r' || s[start] == b'\n') {
@@ -30,6 +32,26 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
         end -= 1;
     }
     &s[start..end]
+}
+
+/// Find pipe (`|`) positions in a trimmed line. Returns number of pipes found.
+/// pipe_pos is filled with byte offsets into `line`.
+fn parse_pipeline(line: &[u8], pipe_pos: &mut [usize; MAX_PIPELINE]) -> usize {
+    let mut count = 0;
+    for i in 0..line.len() {
+        if line[i] == b'|' && count < MAX_PIPELINE {
+            pipe_pos[count] = i;
+            count += 1;
+        }
+    }
+    count
+}
+
+fn is_builtin(upper_cmd: &[u8]) -> bool {
+    for b in BUILTINS {
+        if *b == upper_cmd { return true; }
+    }
+    false
 }
 
 fn first_token(s: &[u8]) -> &[u8] {
@@ -434,9 +456,122 @@ impl Shell {
         self.execute_line(trimmed);
     }
 
+    fn execute_pipeline(&mut self, line: &[u8], pipe_pos: &[usize], num_pipes: usize) {
+        let num_cmds = num_pipes + 1;
+        let mut read_fds = [0u8; MAX_PIPELINE];
+        let mut write_fds = [0u8; MAX_PIPELINE];
+
+        // Create all pipes upfront
+        for i in 0..num_pipes {
+            let mut fds = [0u64; 2];
+            if syscall::sys_pipe(&mut fds).is_err() {
+                write_err(b"\r\nPipe error\r\n");
+                return;
+            }
+            read_fds[i] = fds[0] as u8;
+            write_fds[i] = fds[1] as u8;
+        }
+
+        let mut error = false;
+        let mut cmd_start = 0;
+        for cmd_idx in 0..num_cmds {
+            let cmd_end = if cmd_idx < num_pipes { pipe_pos[cmd_idx] } else { line.len() };
+            let cmd_slice = trim_ascii(&line[cmd_start..cmd_end]);
+            cmd_start = cmd_end + 1;
+
+            if cmd_slice.is_empty() {
+                write_err(b"\r\nInvalid pipe syntax\r\n");
+                error = true;
+                break;
+            }
+
+            let cmd_name = first_token(cmd_slice);
+            let cmd_args = after_first_token(cmd_slice);
+
+            let mut cmd_upper = [0u8; 32];
+            let cmd_upper_len = {
+                let n = cmd_name.len().min(31);
+                cmd_upper[..n].copy_from_slice(&cmd_name[..n]);
+                make_ascii_uppercase(&mut cmd_upper[..n]);
+                n
+            };
+
+            if is_builtin(&cmd_upper[..cmd_upper_len]) {
+                write_err(b"\r\nCannot pipe built-in commands\r\n");
+                error = true;
+                break;
+            }
+
+            match self.resolve_command_path(&cmd_upper[..cmd_upper_len]) {
+                Ok(full_path) => {
+                    let path_str = core::str::from_utf8(
+                        &full_path[..full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len())]
+                    ).unwrap_or("");
+
+                    unsafe {
+                        let dst = ARGS_ADDR as *mut u8;
+                        let copy_len = cmd_args.len().min(255);
+                        dst.write_bytes(0, 256);
+                        core::ptr::copy_nonoverlapping(cmd_args.as_ptr(), dst, copy_len);
+                        dst.add(copy_len).write(0);
+                    }
+
+                    let stdin_fd = if cmd_idx == 0 { 0xFF } else { read_fds[cmd_idx - 1] };
+                    let stdout_fd = if cmd_idx == num_cmds - 1 { 0xFF } else { write_fds[cmd_idx] };
+
+                    match syscall::sys_spawn(path_str, stdin_fd, stdout_fd, 0xFF) {
+                        Ok(pid) => {
+                            write_str(b"\r\n[PID ");
+                            write_u64(pid as u64);
+                            write_str(b"] ");
+                            write_str(cmd_name);
+                            write_str(b"\r\n");
+                        }
+                        Err(_) => {
+                            write_err(b"\r\nBad command or file name\r\n");
+                            error = true;
+                            break;
+                        }
+                    }
+                }
+                Err(_) => {
+                    write_err(b"\r\nBad command or file name\r\n");
+                    error = true;
+                    break;
+                }
+            }
+
+            // Close pipe fds: previous command's read end (consumed) and
+            // this command's write end (signals EOF to next reader).
+            // Must happen before spawning the next command so the pipe
+            // is write-closed for the next reader.
+            if cmd_idx > 0 {
+                let _ = syscall::sys_close(read_fds[cmd_idx - 1]);
+            }
+            if cmd_idx < num_pipes {
+                let _ = syscall::sys_close(write_fds[cmd_idx]);
+            }
+        }
+
+        // On error, close any remaining pipe fds (safe on already-closed handles)
+        if error {
+            for i in 0..num_pipes {
+                let _ = syscall::sys_close(read_fds[i]);
+                let _ = syscall::sys_close(write_fds[i]);
+            }
+        }
+    }
+
     fn execute_line(&mut self, line: &[u8]) {
         let trimmed = trim_ascii(line);
         if trimmed.is_empty() {
+            return;
+        }
+
+        let mut pipe_pos = [0usize; MAX_PIPELINE];
+        let num_pipes = parse_pipeline(trimmed, &mut pipe_pos);
+        if num_pipes > 0 {
+            self.execute_pipeline(trimmed, &pipe_pos[..num_pipes], num_pipes);
             return;
         }
 

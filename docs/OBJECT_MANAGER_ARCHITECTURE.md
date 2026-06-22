@@ -813,41 +813,44 @@ pub struct HandleEntry {
 
 ---
 
-#### Issue OB-004: sys_close como primer wrapper Ob
+#### Issue OB-004: sys_close como primer wrapper Ob **[COMPLETED]**
 
 **Descripción:** Refactorizar `handler_close` para que llame a `ob_close_object(handle.object_id)` antes de marcar el handle como CLOSED. Esto es seguro porque:
-- `ob_close_object` para archivos es no-op (solo decrementa refcount)
+- `ob_close_object` para archivos es no-op (solo decrementa refcount y auto-destroy)
 - `ob_close_object` para pipes decrementa refcount y libera si llega a 0
 - Elimina la lógica manual de `match entry.kind` en handler_close
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_close, ~20 líneas refactorizadas)
+- `src/syscall/mod.rs` (handler_close, ~10 líneas)
+- `src/object/mod.rs` (ob_close_object auto-destroy, ~5 líneas)
 
 **Criterio:**
 - `sys_close` en pipe decrementa refcount via ObObject (comportamiento idéntico)
 - `sys_close` en file decrementa refcount via ObObject (no-op, mantiene compat)
-- Tests: 2 (close file, close pipe)
+- `ob_close_object` auto-destroy al llegar a refcount 0
+- Tests: 4 (ob_close_object_auto_destroy, ob_close_object_keeps_alive_with_refs, handler_close_file, handler_close_pipe)
 
 **Prerequisitos:** OB-002, OB-003
-**Estimación:** ~20 líneas, 0.5 días
+**Estimación:** ~15 líneas, 0.5 días
 
 ---
 
-#### Issue OB-005: init_object_manager en boot phase
+#### Issue OB-005: init_object_manager en boot phase **[COMPLETED]**
 
 **Descripción:** Añadir `object::init()` llamado desde `main.rs` (Phase 3.x) que inicializa el Object Manager, registra los tipos de objeto base, y crea el directorio raíz del namespace Ob.
 
 **Archivos:**
-- `src/object/mod.rs` (init, ~30 líneas)
-- `src/main.rs` (llamada, ~3 líneas)
+- `src/object/mod.rs` (init, ~18 líneas)
+- `src/main.rs` (llamada existente en Phase 2.759)
 
 **Criterio:**
-- Al boot, el Object Manager está inicializado
+- Al boot, el Object Manager está inicializado con 10 objetos base
 - `ob_lookup` funciona antes de que cualquier driver cargue
-- La integración con KOBJ namespace funciona
+- La integración con KOBJ namespace funciona (kobj_register crea ObObject automáticamente)
+- Tests: 2 (ob_init_root_directory, ob_init_type_entries)
 
 **Prerequisitos:** OB-001, OB-003
-**Estimación:** ~33 líneas, 0.5 días
+**Estimación:** ~20 líneas, 0.5 días
 
 ---
 

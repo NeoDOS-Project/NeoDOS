@@ -6,13 +6,16 @@
 - **OB-001. Módulo base Object Manager** — `src/object/mod.rs`, `src/object/types.rs`: `ObObject`, `ObObjectTable`, `ObOperations` trait, `ObType` (16 tipos), `ObId`, `ObError`. API: `ob_create_object`, `ob_destroy_object`, `ob_lookup`, `ob_open_object`, `ob_close_object`, `ob_reference`, `ob_dereference`, `ob_enum_snapshot`. 10 tests.
 - **OB-002. HandleEntry object_id** — `src/handle.rs`: nuevo campo `object_id: u64` en `HandleEntry`. Inicializado a 0 en todos los constructores. Migración progresiva hacia Object Manager.
 - **OB-003. KOBJ → ObObjectTable** — `src/kobj/mod.rs`: refactorizado para delegar en `ObObjectTable` internamente. `kobj_register()` crea `ObObject`, `kobj_unregister()` lo destruye. API pública sin cambios. 8 tests legacy intactos.
+- **OB-004. sys_close como primer wrapper Ob** — `src/syscall/mod.rs`: `handler_close` refactorizado para llamar a `ob_close_object(handle.object_id)` eliminando el `match entry.kind`. `ob_close_object` auto-destroy al llegar a refcount 0. Tests: 4 (ob_close_object_auto_destroy, ob_close_object_keeps_alive_with_refs, handler_close_file, handler_close_pipe).
+- **OB-005. init_object_manager en boot phase** — `src/object/mod.rs`: `init_object_manager()` ahora crea el directorio raíz `\` y 9 entradas de tipo base en el Object Manager. Llamado desde Phase 2.759. Tests: 2 (ob_init_root_directory, ob_init_type_entries).
 
 ### Changed
 - `src/object/mod.rs`: re-exporta `ObError`, `ObId`, `ObType`, `OB_NAME_LEN`, `ObObjectSnapshot`.
 - `src/kobj/mod.rs`: `KObjType` convertido a `ObType` internamente; `KObjEntry` es wrapper snapshot de `ObObject`; `KObjId = ObId`.
 - **Slab&lt;T&gt; contenedor** — `src/slab_container.rs`: nuevo, generic slab container con `insert`, `get_by_idx`, `remove_by_idx`, `set`, `iter`. 5 tests.
 - **Scheduler Vec dinámico** — `src/scheduler/mod.rs`: `eprocesses` y `kthreads` cambiados de `[Option<...>; N]` a `Vec<Option<...>>`. Sin límites fijos (antes 16/32). `alloc_eprocess_slot`/`alloc_kthread_slot` crecen el Vec si lleno.
-- **Pipe buffers dinámicos** — `src/pipe.rs`: `PipeInner.buf` es `Box<[u8; 4096]>` (heap). `PipeManager.pipes` es `Vec<Option<Mutex<PipeInner>>>`. Sin límite de 16 pipes. Eliminada constante `MAX_PIPES`.
+- **Pipe buffers dinámicos + MAX_PIPES** — `src/pipe.rs`: `PipeInner.buf` es `Box<[u8; 4096]>` (heap). `PipeManager.pipes` es `Vec<Option<Mutex<PipeInner>>>`. Añadido `MAX_PIPES = 16` para evitar heap exhaustion. Fix reentrancy deadlock en `alloc()` y `maybe_free_pipe()`.
+- **Shell pipeline (pipe operator `|`)** — `userbin/neoshell/src/main.rs`: soporte para pipelines `cmd1 | cmd2 | cmd3` con pipes nativos, redirección de stdin/stdout, hasta 16 comandos encadenados.
 
 ## v0.40.3 — 2026-06-22
 
