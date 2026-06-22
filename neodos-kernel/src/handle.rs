@@ -1,5 +1,8 @@
 use alloc::vec::Vec;
 use core::ops::{Index, IndexMut};
+use crate::object::{ObId, ObType, ob_create_object, ob_close_object};
+
+// ── Handle type constants (LEGACY — kept for backward compat during migration) ──
 
 pub const HANDLE_CLOSED: u8 = 0;
 pub const HANDLE_STDIN: u8 = 1;
@@ -14,10 +17,16 @@ pub const HANDLE_DIR: u8 = 9;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandleEntry {
-    pub object_id: u64, // ObId — 0 if not migrated (OB-002)
+    /// Object Manager ID (primary reference, OB-002).
+    /// 0 means this entry is not backed by Ob — used only for stdin/stdout/stderr.
+    pub object_id: ObId,
+    /// Legacy type discriminator (deprecated, will be removed in v0.43+).
     pub kind: u8,
+    /// Legacy type-specific id (deprecated).
     pub id: u32,
+    /// Legacy extra field (deprecated).
     pub extra: u32,
+    /// Per-handle offset for file-like objects.
     pub offset: u64,
 }
 
@@ -38,28 +47,101 @@ impl HandleEntry {
         HandleEntry { object_id: 0, kind: HANDLE_STDERR, id: 0, extra: 0, offset: 0 }
     }
 
+    /// Create a pipe read handle, registered in the Object Manager.
     pub fn pipe_read(pipe_id: u8) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_PIPE_READ, id: pipe_id as u32, extra: 0, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Pipe,
+            core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'R', pipe_id + b'0']).unwrap_or("PIPE_R"),
+            pipe_id as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_PIPE_READ, id: pipe_id as u32, extra: 0, offset: 0 }
     }
 
+    /// Create a pipe write handle, registered in the Object Manager.
     pub fn pipe_write(pipe_id: u8) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_PIPE_WRITE, id: pipe_id as u32, extra: 0, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Pipe,
+            core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'W', pipe_id + b'0']).unwrap_or("PIPE_W"),
+            pipe_id as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_PIPE_WRITE, id: pipe_id as u32, extra: 0, offset: 0 }
     }
 
+    /// Create a file handle, registered in the Object Manager.
     pub fn file(drive: u8, inode: u32) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_FILE, id: inode, extra: drive as u32, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Filesystem, "FILE", inode as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_FILE, id: inode, extra: drive as u32, offset: 0 }
     }
 
+    /// Create a device handle.
     pub fn device(device_id: u32) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_DEVICE, id: device_id, extra: 0, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Device, "DEVICE", device_id as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_DEVICE, id: device_id, extra: 0, offset: 0 }
     }
 
+    /// Create an event handle.
     pub fn event(event_type: u32) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Event, "EVENT", event_type as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
     }
 
+    /// Create a directory handle.
     pub fn dir(drive: u8, inode: u32) -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
+        let ob_id = ob_create_object(
+            ObType::Directory, "DIR", inode as u64, 0, None,
+        ).unwrap_or(0);
+        HandleEntry { object_id: ob_id, kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
+    }
+
+    /// Close this handle: release the Ob reference.
+    pub fn close(&mut self) {
+        if self.object_id != 0 {
+            let _ = ob_close_object(self.object_id);
+            self.object_id = 0;
+        }
+        *self = HandleEntry::closed();
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.kind != HANDLE_CLOSED
+    }
+
+    pub fn is_pipe(&self) -> bool {
+        self.kind == HANDLE_PIPE_READ || self.kind == HANDLE_PIPE_WRITE
+    }
+
+    pub fn is_file(&self) -> bool {
+        self.kind == HANDLE_FILE
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.kind == HANDLE_DIR
+    }
+
+    pub fn pipe_id(&self) -> Option<u8> {
+        if self.is_pipe() { Some(self.id as u8) } else { None }
+    }
+
+    pub fn file_inode(&self) -> Option<u32> {
+        if self.is_file() { Some(self.id) } else { None }
+    }
+
+    pub fn file_drive(&self) -> u8 {
+        self.extra as u8
+    }
+
+    pub fn dir_inode(&self) -> Option<u32> {
+        if self.is_dir() { Some(self.id) } else { None }
+    }
+
+    pub fn dir_drive(&self) -> u8 {
+        self.extra as u8
     }
 }
 

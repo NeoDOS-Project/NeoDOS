@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.42.0 — 2026-06-22
+
+### Added
+- **Unified Wait Engine (KWait)** — `src/kwait/mod.rs`: Nueva abstracción de espera bloqueante que unifica todos los mecanismos ad-hoc. `WaitReason` enum con 7 variantes (PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable). `kwait_block(reason)` / `kwait_wake(reason)` API. Magic encoding único por tipo. 10 tests.
+- **ABI Freeze v0.42** — `src/abi_freeze.rs`: Sistema de verificación de interfaces congeladas. Verifica valores de 15 event types (0–15), 12 capability flags (bits 0–11), y KWait magic tags. Llamado en boot Phase 3.9 (panic si hay violación). 4 tests.
+- **ABI freeze markers** — `src/eventbus/mod.rs`: Event types 0–15 marcados FROZEN v0.42. `src/drivers/caps.rs`: Capability flags bits 0–11 marcados FROZEN v0.42. `src/interrupts/ioapic.rs`: API pública marcada FROZEN v0.42.
+- **HandleEntry full Object Manager integration** — `src/handle.rs`: Todos los constructores de HandleEntry (`pipe_read`, `pipe_write`, `file`, `device`, `event`, `dir`) ahora crean objetos en el Object Manager via `ob_create_object()`. Nuevo método `HandleEntry::close()` que llama `ob_close_object()`. Helper methods `is_open()`, `is_pipe()`, `is_file()`, `is_dir()`, etc.
+
+### Changed
+- `Cargo.toml`: version `0.40.0` → `0.42.0`
+- `src/handle.rs`: HandleEntry.set_object_id() añadido para migración progresiva. Todos los constructores establecen `object_id` automáticamente.
+- `src/eventbus/mod.rs`: Comentarios ABI FROZEN, valores 0–15 protegidos.
+- `src/drivers/caps.rs`: Comentarios ABI FROZEN, bits 0–11 protegidos.
+- `src/interrupts/ioapic.rs`: Comentarios ABI FROZEN en cabecera del módulo.
+
+### ABI Freeze (v0.42)
+| Interfaz | Estado | Notas |
+|----------|--------|-------|
+| Event types 0–15 | FROZEN | No reasignar. Añadir nuevos en 16+. |
+| Event struct (56 bytes) | FROZEN | No cambiar layout repr(C). |
+| Capability flags (bits 0–11) | FROZEN | No reasignar bits. Añadir en bit 12+. |
+| IOAPIC public API | FROZEN | init, is_active, mask/unmask_irq, route_pci_vector, eoi_irq. |
+| KWait WaitReason variants | FROZEN | No reordenar/eliminar. Añadir al final. |
+
 ## v0.41.0 — 2026-06-22
 
 ### Added

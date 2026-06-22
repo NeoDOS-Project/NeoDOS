@@ -2511,6 +2511,12 @@ pub fn register_tests() {
 
     // A3.4: SEH + Exception Dispatcher tests
     crate::exception::dispatcher::register_exception_tests();
+
+    // v0.42: KWait Unified Wait Engine tests
+    crate::kwait::register_kwait_tests();
+
+    // v0.42: ABI Freeze verification tests
+    crate::abi_freeze::register_abi_freeze_tests();
 }
 
 // ── B9.1: Ring 0 commands still present (moved to Ring 3 no longer here) ──

@@ -29,7 +29,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 **Fortalezas actuales:**
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
-- 463 tests automáticos en kernel
+- 501 tests automáticos en kernel
 - Certificación de drivers con 7 estados
 - Sistema de capacidades para control de acceso granular
 - IRQL framework para prioridad de interrupciones
@@ -93,7 +93,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 6. **La compatibilidad es un contrato.** Una vez que una syscall, una estructura ABI, o un formato de driver se declara estable, no cambia. El versionado semántico se aplica a nivel de kernel, no solo de API.
 
-7. **Los tests son especificación.** 463 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
+7. **Los tests son especificación.** 501 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
 
 ---
 
@@ -262,7 +262,9 @@ Security Descriptor (por objeto)
 | Capability system | ✅ Bien | 12 flags, defaults por categoría |
 | NEM v3 format | ✅ Bien | 80B header, relocs, symbols, ABI |
 | ABI negotiation | ✅ Bien | min/target/max version |
-| KOBJ registry | ✅ Bien | Objeto único para todo recurso |
+| KOBJ registry + ObObjectTable | ✅ Bien | Object Manager con ObId, refcount, close auto-destroy |
+| ABI freeze validation | ✅ Bien | Boot-time verification of event/capability/IOAPIC frozen interfaces |
+| HandleEntry full Ob | ✅ Bien | All handle types register as Ob objects with close() cleanup |
 | Event Bus v2 | ✅ Bien | Lock-free SPSC, filtros, prioridades |
 | IRP system | ✅ Bien | Pool de 64 slots, blocking, chaining |
 | APC/DPC engines | ✅ Correcto | Per-CPU, nesting limit |
@@ -272,6 +274,7 @@ Security Descriptor (por objeto)
 | Per-CPU slab | ✅ Bien | GS-segment hot cache, lock-free fast path |
 | ELF64 loader | ✅ Bien | 5 validaciones de seguridad |
 | Dependency resolver | ✅ Bien | Topological sort, cycle detection |
+| KWait Unified Wait Engine | ✅ Bien | 7 WaitReason variants, kwait_block/wake |
 | Crash dump framework | ✅ Bien | Lock-free ring, serial dump |
 | FSCK | ✅ Bien | Superblock + inode + directory walk |
 | Driver isolation (X4) | ✅ Bien | Pointer validation, sandbox mode |
@@ -599,10 +602,12 @@ PATCH: Bugfixes, optimizaciones, tests
 | | — Scheduler: Vec<EPROCESS>, Vec<KTHREAD> | ⚠️ Breaking |
 | | — Pipe: Vec de buffers, 4KB → 16KB por defecto | ✅ Medio |
 | | — Driver slots: Vec dinámico | ✅ Medio |
-| **v0.42** | — IOAPIC/MSI-X: congelar ABI | ✅ Bajo |
-| | — Event Bus: congelar tipos 0–15 | ✅ Bajo |
-| | — Capability flags: congelar bits | ✅ Bajo |
-| | — Unified Wait Engine (KWait) v1 | ✅ Alto |
+| **v0.42** | — IOAPIC/MSI-X: congelar ABI | ✅ COMPLETADO |
+| | — Event Bus: congelar tipos 0–15 | ✅ COMPLETADO |
+| | — Capability flags: congelar bits | ✅ COMPLETADO |
+| | — Unified Wait Engine (KWait) v1 | ✅ COMPLETADO |
+| | — HandleEntry full Ob integration (OB-004) | ✅ COMPLETADO |
+| | — ABI freeze validation en boot | ✅ COMPLETADO |
 | **v0.43** | — SeAccessCheck NT-compatible | ✅ Medio |
 | | — Driver error codes: congelar | ✅ Bajo |
 | | — Pipe/IRP: congelar protocolos | ✅ Bajo |
@@ -770,9 +775,9 @@ HAL ─── Arch (x86_64)
 | Métrica | Actual | Objetivo v1.0 |
 |---------|--------|---------------|
 | Líneas de código kernel | ~50K | <60K |
-| Tests automáticos | 463 | >800 |
+| Tests automáticos | 501 | >800 |
 | Cobertura de líneas | ~60% | >90% |
-| Syscalls | 36 | 50–60 |
+| Syscalls | 40+ | 50–60 |
 | Procesos simultáneos | 16 | Ilimitado |
 | RAM máxima | 4 GB | 64 GB+ (teórico) |
 | Disco máximo | ~8 GB | 2 TB+ |

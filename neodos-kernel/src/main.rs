@@ -53,6 +53,8 @@ mod security;
 mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
 mod object;
+mod kwait;
+mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
@@ -408,10 +410,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     nxl::load_nxl();
 
     // ============================================
-    // PHASE 3.9: Validate syscall ABI
+    // PHASE 3.9: Validate syscall ABI + ABI freeze
     // ============================================
     println!("[+] Validating syscall ABI...");
     syscall::validate_abi();
+    println!("[+] Validating frozen ABIs (v0.42)...");
+    if let Err(e) = abi_freeze::verify_all_frozen_abis() {
+        panic!("ABI freeze violation: {}", e);
+    }
+    println!("[+] All frozen ABIs validated");
 
     // ============================================
     // PHASE 4: Start DOS Shell

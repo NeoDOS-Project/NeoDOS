@@ -9,20 +9,26 @@
 use crate::nem::DriverCategory;
 
 // ── Capability flag constants ──
+//
+// ╔═══════════════════════════════════════════════════════════════════╗
+// ║  ABI FROZEN at v0.42                                            ║
+// ║  Capability bits 0–11 MUST NOT be reassigned.                   ║
+// ║  New capabilities MUST use bit 12+.                             ║
+// ╚═══════════════════════════════════════════════════════════════════╝
 
 pub const CAP_NONE: u64 = 0;
-pub const CAP_IRQ: u64 = 1 << 0;
-pub const CAP_DMA: u64 = 1 << 1;
-pub const CAP_MMIO: u64 = 1 << 2;
-pub const CAP_PORTIO: u64 = 1 << 3;
-pub const CAP_ALLOC_PAGE: u64 = 1 << 4;
-pub const CAP_BLOCK_DEVICE: u64 = 1 << 5;
-pub const CAP_EVENT_BUS: u64 = 1 << 6;
-pub const CAP_INPUT: u64 = 1 << 7;
-pub const CAP_LOG: u64 = 1 << 8;
-pub const CAP_TIMING: u64 = 1 << 9;
-pub const CAP_MEMORY: u64 = 1 << 10;
-pub const CAP_ISOLATION: u64 = 1 << 11;
+pub const CAP_IRQ: u64 = 1 << 0;          // FROZEN v0.42 — bit 0
+pub const CAP_DMA: u64 = 1 << 1;          // FROZEN v0.42 — bit 1
+pub const CAP_MMIO: u64 = 1 << 2;         // FROZEN v0.42 — bit 2
+pub const CAP_PORTIO: u64 = 1 << 3;       // FROZEN v0.42 — bit 3
+pub const CAP_ALLOC_PAGE: u64 = 1 << 4;   // FROZEN v0.42 — bit 4
+pub const CAP_BLOCK_DEVICE: u64 = 1 << 5; // FROZEN v0.42 — bit 5
+pub const CAP_EVENT_BUS: u64 = 1 << 6;    // FROZEN v0.42 — bit 6
+pub const CAP_INPUT: u64 = 1 << 7;        // FROZEN v0.42 — bit 7
+pub const CAP_LOG: u64 = 1 << 8;          // FROZEN v0.42 — bit 8
+pub const CAP_TIMING: u64 = 1 << 9;       // FROZEN v0.42 — bit 9
+pub const CAP_MEMORY: u64 = 1 << 10;      // FROZEN v0.42 — bit 10
+pub const CAP_ISOLATION: u64 = 1 << 11;   // FROZEN v0.42 — bit 11
 
 pub const CAP_ALL: u64 = u64::MAX;
 

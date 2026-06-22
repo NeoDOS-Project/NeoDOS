@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.41.0
+v0.42.0
 
 ## Architecture Governance
 
@@ -18,7 +18,7 @@ prioridades actuales son:
 
 1. ~~**v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap~~ **COMPLETADO**
 2. ~~**v0.41**: ObObjectTable (refactor KOBJ → Object Manager), HandleEntry object_id field~~ **COMPLETADO**
-3. **v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI
+3. ~~**v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI~~ **COMPLETADO**
 4. **v0.43**: SeAccessCheck NT-compatible, sys_poll()
 5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree, **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**
 6. **v0.47**: Networking (TCP/IP stack)
@@ -55,7 +55,7 @@ QEMU_ACCEL=kvm python3 scripts/auto_test.py
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-2. `python3 scripts/auto_test.py` — 487 kernel tests (auto-run at boot) + user-mode binaries
+  2. `python3 scripts/auto_test.py` — 501 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -871,7 +871,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
 
 Comando `test`:
-1. Ejecuta `testing::run_all()` (487 tests kernel)
+1. Ejecuta `testing::run_all()` (501 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

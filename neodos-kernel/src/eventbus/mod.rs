@@ -7,26 +7,34 @@ use crate::test_eq;
 use crate::test_true;
 
 // ── Event type constants ──
+//
+// ╔═══════════════════════════════════════════════════════════════════╗
+// ║  ABI FROZEN at v0.42                                            ║
+// ║  Event types 0–15 MUST NOT be reassigned.                       ║
+// ║  New event types MUST start at 16+.                             ║
+// ║  PCI events at 0x1000+ are reserved for hardware subsystems.    ║
+// ║  User events at 0x2000+ are for NEM driver use.                ║
+// ╚═══════════════════════════════════════════════════════════════════╝
 
 pub type EventType = u32;
 pub type EventSource = u32;
 
-pub const EVENT_TIMER_TICK: EventType = 0;
-pub const EVENT_KEYBOARD_INPUT: EventType = 1;
-pub const EVENT_SERIAL_DATA: EventType = 2;
-pub const EVENT_DISK_IO_COMPLETE: EventType = 3;
-pub const EVENT_PROCESS_EXIT: EventType = 4;
-pub const EVENT_DRIVER_LOADED: EventType = 5;
-pub const EVENT_DRIVER_CRASH: EventType = 6;
-pub const EVENT_POLICY_VIOLATION: EventType = 7;
-pub const EVENT_FS_MOUNTED: EventType = 8;
-pub const EVENT_KEYB_LAYOUT: EventType = 9;
-pub const EVENT_RTC_READ: EventType = 10;
-pub const EVENT_RTC_DATA: EventType = 11;
-pub const EVENT_SHUTDOWN: EventType = 12;
-pub const EVENT_DRIVER_UNLOAD: EventType = 13;
-pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;
-pub const EVENT_NMI_WATCHDOG: EventType = 15;
+pub const EVENT_TIMER_TICK: EventType = 0;        // FROZEN v0.42
+pub const EVENT_KEYBOARD_INPUT: EventType = 1;    // FROZEN v0.42
+pub const EVENT_SERIAL_DATA: EventType = 2;       // FROZEN v0.42
+pub const EVENT_DISK_IO_COMPLETE: EventType = 3;  // FROZEN v0.42
+pub const EVENT_PROCESS_EXIT: EventType = 4;      // FROZEN v0.42
+pub const EVENT_DRIVER_LOADED: EventType = 5;     // FROZEN v0.42
+pub const EVENT_DRIVER_CRASH: EventType = 6;      // FROZEN v0.42
+pub const EVENT_POLICY_VIOLATION: EventType = 7;  // FROZEN v0.42
+pub const EVENT_FS_MOUNTED: EventType = 8;        // FROZEN v0.42
+pub const EVENT_KEYB_LAYOUT: EventType = 9;       // FROZEN v0.42
+pub const EVENT_RTC_READ: EventType = 10;         // FROZEN v0.42
+pub const EVENT_RTC_DATA: EventType = 11;         // FROZEN v0.42
+pub const EVENT_SHUTDOWN: EventType = 12;         // FROZEN v0.42
+pub const EVENT_DRIVER_UNLOAD: EventType = 13;    // FROZEN v0.42
+pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;// FROZEN v0.42
+pub const EVENT_NMI_WATCHDOG: EventType = 15;     // FROZEN v0.42
 // ── PCI / MSI events (must match pci.nem constants) ──
 /// Kernel → pci.nem: read a config dword.  data0[31:0] = packed BDF+offset.
 pub const EVENT_PCI_READ_CONFIG: EventType    = 0x1000;

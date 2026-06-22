@@ -6,6 +6,13 @@
 //!
 //! When the I/O APIC is present and successfully initialized, the legacy 8259A
 //! PIC is disabled (all IRQ lines masked, no EOI sent to PIC).
+//!
+//! ╔═══════════════════════════════════════════════════════════════════╗
+//! ║  ABI FROZEN at v0.42                                            ║
+//! ║  Public API functions (init, is_active, mask/unmask_irq,        ║
+//! ║  route_pci_vector, eoi_irq) MUST NOT change signature.          ║
+//! ║  Internal register constants MUST NOT be reassigned.            ║
+//! ╚═══════════════════════════════════════════════════════════════════╝
 
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};

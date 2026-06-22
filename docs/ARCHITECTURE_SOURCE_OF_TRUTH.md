@@ -487,9 +487,72 @@ the `KEYB` shell command.
 
 ---
 
-## 12. Syscall ABI Contract
+## 12. Unified Wait Engine (KWait) Contract
 
-### 12.1 Calling Convention
+### 12.1 KWait Architecture
+
+KWait unifies all kernel blocking/wake mechanisms (pipe, IRP, thread join, child exit,
+event, timer, alertable wait) under a single API. It replaces ad-hoc magic constants
+with typed WaitReason variants.
+
+```rust
+enum WaitReason {
+    PipeRead(u32),     // Waiting for pipe data (pipe_id in lower bits)
+    IrpComplete(u32),  // Waiting for IRP completion (irp_id in lower bits)
+    ThreadJoin(u32),   // Waiting for thread exit (tid in lower bits)
+    ChildExit(u32),    // Waiting for child process exit (pid in lower bits)
+    Event(u32),        // Waiting for event bus event (event_type in lower bits)
+    Timer(u32),        // Waiting for timer expiry (ms in lower bits)
+    Alertable,         // Alertable wait (APC dispatch)
+}
+```
+
+**Rule 12.1.1**: KWait encodes the reason type as a 16-bit tag in the upper half
+(0x0001–0x0007) and the instance ID in the lower 16 bits: `magic = (tag << 16) | id`.
+
+**Rule 12.1.2**: `kwait_block(reason)` sets the current thread's state to `Blocked`
+with the encoded magic as `waiting_for`, then sets `NEED_RESCHED`.
+
+**Rule 12.1.3**: `kwait_wake(reason)` scans all threads and transitions any thread
+whose `waiting_for` matches the reason from `Blocked` → `Ready`.
+
+**Rule 12.1.4**: WaitReason variants MUST NOT be reordered or removed. New variants
+MUST be appended to the end.
+
+### 12.2 Migration Path (v0.42+)
+
+| Original mechanism | Replaced by | Status |
+|-------------------|-------------|--------|
+| Pipe blocking (0xFFFF_0000 magic) | `kwait_block(PipeRead(id))` | API ready |
+| IRP wait (0xAAAA_0000 magic) | `kwait_block(IrpComplete(id))` | API ready |
+| Thread join (scheduler ad-hoc) | `kwait_block(ThreadJoin(tid))` | API ready |
+| Child exit (scheduler ad-hoc) | `kwait_block(ChildExit(pid))` | API ready |
+| `sys_wait_alertable` | `kwait_block(Alertable)` | Planned v0.50 |
+| `sys_sleep_ex` | `kwait_block(Timer(ms))` | Planned v0.50 |
+
+### 12.3 ABI Freeze
+
+**Rule 12.3.1**: `abi_freeze::verify_all_frozen_abis()` MUST run at boot Phase 3.9
+and panic on any mismatch.
+
+**Rule 12.3.2**: The following interfaces are FROZEN at v0.42:
+
+| Interface | Frozen values | Rule |
+|-----------|--------------|------|
+| Event types 0–15 | 16 named constants | MUST NOT reassign |
+| Event struct layout | 56-byte `#[repr(C)]` | MUST NOT change |
+| Capability flags (bits 0–11) | 12 named constants | MUST NOT reassign |
+| IOAPIC public API | init, is_active, mask/unmask, route_pci_vector, eoi_irq | MUST NOT change signatures |
+| KWait WaitReason variants | 7 variants (tag 0x0001–0x0007) | MUST NOT reorder/remove |
+
+**Rule 12.3.3**: New event types MUST start at 16+. New capability flags MUST use
+bit 12+. New WaitReason variants MUST be appended after `Alertable`.
+
+---
+
+## 13. Syscall ABI Contract
+
+### 13.1 Calling Convention
 
 ```
 RAX = syscall number
@@ -501,10 +564,10 @@ R9  = arg4
 Return: RAX (≥ 0 success, < 0 error)
 ```
 
-**Rule 12.1.1**: This convention is frozen. New syscalls MUST use this convention.
-**Rule 12.1.2**: Error is encoded as negative `u64`. `err_to_u64(SyscallError::NoEnt)`
+**Rule 13.1.1**: This convention is frozen. New syscalls MUST use this convention.
+**Rule 13.1.2**: Error is encoded as negative `u64`. `err_to_u64(SyscallError::NoEnt)`
 produces `0xFFFF_FFFF_FFFF_FFFE`. User code checks `cmp rax, -1`.
-**Rule 12.1.3**: `validate_abi()` at boot confirms every SSDT entry (0..=MAX_SYSCALL) has a handler
+**Rule 13.1.3**: `validate_abi()` at boot confirms every SSDT entry (0..=MAX_SYSCALL) has a handler
 and error encoding is correct.
 
 ### 12.1.1 SSDT Architecture
@@ -516,9 +579,9 @@ pub static SYSCALL_TABLE: [Option<SyscallFn>; 256]  // handler dispatch
 pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permissions
 ```
 
-**Rule 12.1.1.1**: All syscalls 0..=MAX_SYSCALL MUST have entries in both tables.
-**Rule 12.1.1.2**: Adding a new syscall requires: 1 handler function + 1 SSDT entry + 1 permission entry.
-**Rule 12.1.1.3**: Unknown syscalls (None in SSDT) return ENOSYS without panic.
+**Rule 13.1.1.1**: All syscalls 0..=MAX_SYSCALL MUST have entries in both tables.
+**Rule 13.1.1.2**: Adding a new syscall requires: 1 handler function + 1 SSDT entry + 1 permission entry.
+**Rule 13.1.1.3**: Unknown syscalls (None in SSDT) return ENOSYS without panic.
 
 ### 12.2 Syscall Table
 
@@ -550,19 +613,19 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permission
 | 23 | `thread_join` | `(tid)` | STABLE |
 | 50 | `ndreg` | `()` | ADMIN-ONLY |
 
-**Rule 12.2.1**: Reserved slots (7, 8) MUST NOT be assigned without a breaking
+**Rule 13.2.1**: Reserved slots (7, 8) MUST NOT be assigned without a breaking
 change version bump.
-**Rule 12.2.2**: Adding a new syscall at the next available RAX is NOT a breaking change.
-**Rule 12.2.3**: Changing the signature, return convention, or semantics of a STABLE syscall
+**Rule 13.2.2**: Adding a new syscall at the next available RAX is NOT a breaking change.
+**Rule 13.2.3**: Changing the signature, return convention, or semantics of a STABLE syscall
 IS a breaking change.
 
 ---
 
-## 13. Failure & Recovery Rules
+## 14. Failure & Recovery Rules
 
-### 13.1 Process Crash
+### 14.1 Process Crash
 
-**Rule 13.1.1**: If a user process (Ring 3) triggers a page fault, general protection fault,
+**Rule 14.1.1**: If a user process (Ring 3) triggers a page fault, general protection fault,
 or any other exception:
 
 1. The exception handler in `idt.rs` calls `syscall_dispatch` with RAX=0 (forced exit).
@@ -570,41 +633,41 @@ or any other exception:
 3. `waitpid` unblocks the parent (if any) with the exit code.
 4. The scheduler slot is recycled.
 
-**Rule 13.1.2**: An exception in Ring 0 is always a kernel panic.
-**Rule 13.1.3**: The only exception to 13.1.2 is a page fault in the driver isolation region
+**Rule 14.1.2**: An exception in Ring 0 is always a kernel panic.
+**Rule 14.1.3**: The only exception to 14.1.2 is a page fault in the driver isolation region
 with `Sandbox` mode — the driver is marked `Faulted` but the kernel continues.
 
-### 13.2 Driver Failure
+### 14.2 Driver Failure
 
-**Rule 13.2.1**: If a driver crashes (page fault, GPF) in its isolation slot:
+**Rule 14.2.1**: If a driver crashes (page fault, GPF) in its isolation slot:
 - `Sandbox` mode: driver → `Faulted`, `handle_isolated_page_fault` returns true.
 - `Basic` or `None` mode: kernel panics.
 
-**Rule 13.2.2**: A `Faulted` driver can only transition to `Unloaded`.
-**Rule 13.2.3**: `NDREG UNLOAD` on a Faulted driver cleans up isolation slot, unregisters
+**Rule 14.2.2**: A `Faulted` driver can only transition to `Unloaded`.
+**Rule 14.2.3**: `NDREG UNLOAD` on a Faulted driver cleans up isolation slot, unregisters
 from event bus, and marks `Unloaded`.
 
-### 13.3 OOM Policy
+### 14.3 OOM Policy
 
-**Rule 13.3.1**: If the frame allocator cannot satisfy a request, the kernel panics.
+**Rule 14.3.1**: If the frame allocator cannot satisfy a request, the kernel panics.
 No OOM killer.
-**Rule 13.3.2**: If `irp_alloc` returns `None` (pool exhausted), the caller receives
+**Rule 14.3.2**: If `irp_alloc` returns `None` (pool exhausted), the caller receives
 `Err(ERR_OUT_OF_MEMORY)` propagated to user as `-ENOMEM`.
-**Rule 13.3.3**: If the slab allocator cannot grow (heap frame allocation fails), the
+**Rule 14.3.3**: If the slab allocator cannot grow (heap frame allocation fails), the
 kernel panics.
 
-### 13.4 Blocking Pipe Read Timeout
+### 14.4 Blocking Pipe Read Timeout
 
-**Rule 13.4.1**: A process reading from an empty pipe with the write end still open
+**Rule 14.4.1**: A process reading from an empty pipe with the write end still open
 transitions to `Blocked { waiting_for: 0xFFFF_0000 | pipe_id }`.
-**Rule 13.4.2**: On pipe write, `wake_pipe_readers()` scans scheduler processes and
+**Rule 14.4.2**: On pipe write, `wake_pipe_readers()` scans scheduler processes and
 transitions Blocked→Ready.
-**Rule 13.4.3**: There is no timeout on pipe reads. If the writer never writes, the
+**Rule 14.4.3**: There is no timeout on pipe reads. If the writer never writes, the
 reader blocks indefinitely.
 
 ---
 
-## 14. Forbidden Behaviors (ANTI-PATTERNS)
+## 15. Forbidden Behaviors (ANTI-PATTERNS)
 
 **AP-1**: ATA or AHCI driver calling `schedule()` or any VFS function. (Block driver
 MUST NOT depend on scheduler or filesystem.)
@@ -638,7 +701,7 @@ syscall; use `KILL` command or `kill_pid` internal.)
 
 ---
 
-## 15. Versioning & Breaking Change Policy
+## 16. Versioning & Breaking Change Policy
 
 ### 15.1 Version Format
 
@@ -666,15 +729,15 @@ The following changes are ALWAYS breaking (MAJOR bump):
 | Process states | Add/remove states or transition rules |
 | Boot phases | Reorder, remove, or add mandatory phases between existing ones |
 
-**Rule 15.2.1**: Breaking changes MUST be documented in `CHANGELOG.md` with a `### Breaking`
+**Rule 16.2.1**: Breaking changes MUST be documented in `CHANGELOG.md` with a `### Breaking`
 header.
-**Rule 15.2.2**: New syscalls at the next available RAX are NOT breaking.
-**Rule 15.2.3**: New event types are NOT breaking.
-**Rule 15.2.4**: Increasing `MAX_PROCESSES`, pool sizes, or queue depths are NOT breaking.
+**Rule 16.2.2**: New syscalls at the next available RAX are NOT breaking.
+**Rule 16.2.3**: New event types are NOT breaking.
+**Rule 16.2.4**: Increasing `MAX_PROCESSES`, pool sizes, or queue depths are NOT breaking.
 
 ---
 
-## 16. Testable Invariants (MANDATORY TESTS)
+## 17. Testable Invariants (MANDATORY TESTS)
 
 Every invariant below MUST have a corresponding automated test in `testing.rs`.
 The test suite MUST be run before every release.

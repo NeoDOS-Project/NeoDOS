@@ -34,16 +34,13 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 15. **Heap demand paging** — split all 16 × 2 MB heap huge pages → 4 KB PTEs
 16. **Mmap demand paging** — split mmap region → 4 KB PTEs
 17. **Storage — ATA boot stub** — init ATA PIO boot stub (`BootAta`), probe AHCI controller, probe NVMe controller. NEM v3 standalone ATA driver (DMA+PIO) loaded later at PHASE 3.85.
-10. **Storage — GPT** — scan GPT on disk 0 (and disk 1), find NeoDOS partition, set `base_lba` on block device driver
-11. **Storage — NeoDOS FS** — init block cache and page cache, read superblock from LBA 0 (relative), mount NeoDOS FS on `C:` via VFS
-12. **Storage — FAT32** — init FAT32 driver from ESP partition (absolute LBA), mount on `A:` via VFS
-13. **Page tables** — init custom 4-level page tables: 4 GiB identity-map via 2 MB huge pages, user window (`0x400000..0x800000`) marked `USER_ACCESSIBLE`, framebuffer marked uncacheable (`NO_CACHE`), map framebuffer >4 GiB if needed
-14. **Heap demand paging** — split all 16 × 2 MB heap huge pages (`0x10000000..0x12000000`) into 4 KB page tables via `init_heap_demand_paging()`
-15. **Mmap demand paging** — split mmap region (`0x20000000..0x22000000`) into 4 KB page tables via `init_mmap_demand_paging()`
-16. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
-17. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
-18. **Syscall ABI validation** — validate syscall dispatch table coverage at boot
-19. **Shell** — set all keyboard LEDs ON, register kernel tests (441), create and run `DosShell`
+18. **Storage — GPT** — scan GPT on disk 0 (and disk 1), find NeoDOS partition, set `base_lba` on block device driver
+19. **Storage — NeoDOS FS** — init block cache and page cache, read superblock from LBA 0 (relative), mount NeoDOS FS on `C:` via VFS
+20. **Storage — FAT32** — init FAT32 driver from ESP partition (absolute LBA), mount on `A:` via VFS
+21. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
+22. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
+23. **Syscall ABI + freeze validation** — validate syscall dispatch table coverage, verify frozen event/capability/IOAPIC ABIs at boot
+24. **Shell** — set all keyboard LEDs ON, register kernel tests (501), create and run `DosShell`
 
 ### GPT Layout (single disk)
 
@@ -81,7 +78,7 @@ The shell provides DOS-like commands backed by the NeoDOS filesystem. Built-ins 
 - `KILL <pid>` (terminate process)
 - `KEYB US|SP` (switch keyboard layout)
 - `DATE`, `TIME`, `VER`
-- `test` (run 416 kernel self-tests + user-mode binaries)
+- `test` (run 501 kernel self-tests + user-mode binaries)
 
 Commands are implemented as one file per command under `src/shell/commands/`.
 

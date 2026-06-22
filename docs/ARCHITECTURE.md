@@ -38,7 +38,7 @@ NeoDOS Kernel (x86_64-unknown-none)
   - ATA boot stub (BootAta) + AHCI probe + NVMe probe
   - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
   - FAT32 ESP mount on A:
-  - DOS-like shell (441 kernel tests + user commands)
+  - DOS-like shell (501 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -215,7 +215,7 @@ struct Event {
 }
 ```
 
-**13 event types:**
+**16 event types (FROZEN v0.42 — types 0–15 MUST NOT be reassigned):**
 
 | Constant | Value | Description |
 |-----------|-------|-------------|
@@ -229,7 +229,12 @@ struct Event {
 | `EVENT_POLICY_VIOLATION` | 7 | Policy violation |
 | `EVENT_FS_MOUNTED` | 8 | Filesystem mounted |
 | `EVENT_KEYB_LAYOUT` | 9 | Keyboard layout switch |
-| `EVENT_SHUTDOWN` | 10 | System shutdown request |
+| `EVENT_RTC_READ` | 10 | RTC read request |
+| `EVENT_RTC_DATA` | 11 | RTC data ready |
+| `EVENT_SHUTDOWN` | 12 | System shutdown request |
+| `EVENT_DRIVER_UNLOAD` | 13 | Driver unload request |
+| `EVENT_DRIVER_UNLOAD_ACK` | 14 | Driver unload acknowledgement |
+| `EVENT_NMI_WATCHDOG` | 15 | NMI watchdog timeout |
 | `EVENT_USER` | 0x1000 | User-defined event base |
 | `EVENT_WILDCARD` | 0xFFFFFFFF | Matches any type |
 
@@ -514,7 +519,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **386 tests** (39 suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **501 tests** (46+ suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -534,6 +539,20 @@ The kernel testing framework includes **386 tests** (39 suites) with suites dedi
 | IRQL | 5 | IRQL raise/lower, page fault invariant, spinlock implicit raise, nesting, preemption threshold |
 | DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order, stress 100 IRQs |
 | APC | 5 | APC engine: kernel dispatch, alertable wait, queue overflow, IRP→APC completion, stress 100 concurrent IRPs |
+| KWait | 10 | Unified Wait Engine: block/wake 7 WaitReason variants, PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable |
+| ABI Freeze | 4 | Frozen event types 0–15, capability bits 0–11, IOAPIC API |
+| KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, lookup |
+| Object (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy |
+| Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback |
+| Per-CPU Slab | 5 | Per-CPU slab alloc/free, refill/drain batching, scaling |
+| IPI | 5 | Inter-processor interrupts: constants, TLB shootdown, call function |
+| Work Queue | 6 | Deferred work queue: push/pop, FIFO, empty, overflow, isolation |
+| DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order |
+| Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
+| Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions |
+| Security | 12 | NT6 Security: SID format, Token, ACL allow/deny, SeAccessCheck, admin bypass |
+| URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device |
+| KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
 Tests run via the shell `test` command, which after passing kernel tests executes user-mode binaries (`C:\Programs\hello.nxe`, `C:\Programs\systest.nxe`, `C:\Programs\filetest.nxe`, `C:\Programs\alltest.nxe`, `C:\Programs\cputest.nxe`, `C:\Programs\test.nxe`, `C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`).
 
@@ -623,7 +642,7 @@ See `docs/DEBUG.md` for a walkthrough.
 | **ASLR** | No existe | ASLR v1 base, v2 pila+heap, v3 full | MEDIA — v0.44 |
 | **Scheduler lookup** | O(n) linear scan | Hash map o radix tree por TID | MEDIA — v0.41 |
 | **Seguridad** | SID+Token+ACL, admin bypass completo | Grupos, privilegios, SACL, audit | MEDIA — v0.43 |
-| **KWait** | Ad-hoc: pipe STI/HLT, waitpid STI/HLT, IRP blocking | Unified Wait Engine (WaitAny/All) | **ALTA — v0.42** |
+| **KWait** | Ad-hoc: pipe STI/HLT, waitpid STI/HLT, IRP blocking | Unified Wait Engine v1 (7 WaitReason variants, kwait_block/wake) | **COMPLETADO — v0.42** |
 | **Device Tree** | Detección ad-hoc (PCI scan, ACPI, HPET, IOAPIC) | Árbol jerárquico + Resource Manager | MEDIA — v0.45 |
 | **Registry** | boot.cfg, system.cfg, input.cfg textuales | Hive persistente cell-based (NT Cm) | MEDIA — v0.44 |
 | **Networking** | No existe | NIC driver NEM + TCP/IP stack | MEDIA — v0.47 |
