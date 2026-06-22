@@ -100,12 +100,17 @@ pub unsafe fn ecam_write_config_byte(bus: u8, dev: u8, func: u8, offset: u8, val
 pub fn register_tests() {
     use crate::test_case;
     use crate::test_eq;
-    use crate::test_true;
+    use crate::test_ne;
     test_case!("ecam_base_default", {
+        // ECAM may be active (Q35 with MCFG) or inactive (PIIX3 without MCFG).
+        // Invariant: if active → base != 0, if inactive → base == 0.
         let active = ecam_is_active();
         let base = ecam_base();
-        test_true!(!active);
-        test_eq!(base, 0);
+        if active {
+            test_ne!(base, 0);
+        } else {
+            test_eq!(base, 0);
+        }
     });
 
     test_case!("ecam_address_calc", {

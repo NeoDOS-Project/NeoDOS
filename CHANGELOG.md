@@ -7,6 +7,7 @@
 - **ABI Freeze v0.42** — `src/abi_freeze.rs`: Sistema de verificación de interfaces congeladas. Verifica valores de 15 event types (0–15), 12 capability flags (bits 0–11), y KWait magic tags. Llamado en boot Phase 3.9 (panic si hay violación). 4 tests.
 - **ABI freeze markers** — `src/eventbus/mod.rs`: Event types 0–15 marcados FROZEN v0.42. `src/drivers/caps.rs`: Capability flags bits 0–11 marcados FROZEN v0.42. `src/interrupts/ioapic.rs`: API pública marcada FROZEN v0.42.
 - **HandleEntry full Object Manager integration** — `src/handle.rs`: Todos los constructores de HandleEntry (`pipe_read`, `pipe_write`, `file`, `device`, `event`, `dir`) ahora crean objetos en el Object Manager via `ob_create_object()`. Nuevo método `HandleEntry::close()` que llama `ob_close_object()`. Helper methods `is_open()`, `is_pipe()`, `is_file()`, `is_dir()`, etc.
+- **pci.nem ECAM MMIO** — `drivers/pci/src/lib.rs`: Migrado de legacy PIO (0xCF8/0xCFC) a ECAM MMIO. 3 nuevas exportaciones `hst_ecam_is_active/read_dword/write_dword` en `v3loader.rs` con check `CAP_MMIO`. `driver_init()` detecta ECAM al arranque, fallback PIO transparente. QEMU actualizado a `-machine q35` para ECAM real. Tests de máquina actualizados para Q35.
 
 ### Changed
 - `Cargo.toml`: version `0.40.0` → `0.42.0`

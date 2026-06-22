@@ -11,7 +11,7 @@ use crate::nem::{
     R_NEM_64, R_NEM_PC32, R_NEM_32, R_NEM_32S, R_NEM_PLT32,
     NEM_SECT_TEXT, NEM_SECT_RODATA, NEM_SECT_DATA, NEM_SECT_UNDEF,
 };
-use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_BLOCK_DEVICE};
+use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_MMIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_BLOCK_DEVICE};
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
 use crate::drivers::isolation;
@@ -173,6 +173,26 @@ unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
     0
 }
 
+unsafe extern "C" fn hst_ecam_is_active() -> u64 {
+    if crate::hal::pci::ecam_is_active() { 1 } else { 0 }
+}
+
+unsafe extern "C" fn hst_ecam_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    if !check_cap(CAP_MMIO) { return 0xFFFFFFFF; }
+    if crate::hal::pci::ecam_is_active() {
+        crate::hal::pci::ecam_read_config_dword(bus, dev, func, offset)
+    } else {
+        0xFFFFFFFF
+    }
+}
+
+unsafe extern "C" fn hst_ecam_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+    if !check_cap(CAP_MMIO) { return; }
+    if crate::hal::pci::ecam_is_active() {
+        crate::hal::pci::ecam_write_config_dword(bus, dev, func, offset, value);
+    }
+}
+
 static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_push_input_byte),
     export_entry!(hst_log),
@@ -185,6 +205,9 @@ static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_outw),
     export_entry!(hst_inl),
     export_entry!(hst_outl),
+    export_entry!(hst_ecam_is_active),
+    export_entry!(hst_ecam_read_dword),
+    export_entry!(hst_ecam_write_dword),
     export_entry!(hst_register_block_device),
     export_entry!(hst_unregister_block_device),
 ];
@@ -617,9 +640,12 @@ pub fn register_v3_loader_tests() {
 
     test_case!("v3_kernel_export_table_size", {
         let exports = kernel_exports();
-        test_true!(exports.len() >= 10);
+        test_true!(exports.len() >= 16);
         test_true!(exports.iter().any(|e| e.name == "hst_inb"));
         test_true!(exports.iter().any(|e| e.name == "hst_outb"));
+        test_true!(exports.iter().any(|e| e.name == "hst_ecam_read_dword"));
+        test_true!(exports.iter().any(|e| e.name == "hst_ecam_write_dword"));
+        test_true!(exports.iter().any(|e| e.name == "hst_ecam_is_active"));
     });
 
     test_case!("v3_parse_valid_nem", {

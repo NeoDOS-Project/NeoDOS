@@ -28,6 +28,9 @@ extern "C" {
     fn hst_inl(port: u16) -> u32;
     fn hst_log(level: u32, msg: *const u8, len: usize);
     fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64;
+    fn hst_ecam_is_active() -> u64;
+    fn hst_ecam_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32;
+    fn hst_ecam_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32);
 }
 
 const CONFIG_ADDRESS: u16 = 0xCF8;
@@ -46,16 +49,21 @@ const SOURCE_DRIVER: u32 = 1;
 
 static INITIALIZED: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
+static USE_ECAM: AtomicU8 = AtomicU8::new(0);
 
 fn pci_config_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
-    let addr = 0x8000_0000u32
-        | ((bus as u32) << 16)
-        | ((dev as u32) << 11)
-        | ((func as u32) << 8)
-        | (offset as u32 & 0xFC);
-    unsafe {
-        hst_outl(CONFIG_ADDRESS, addr);
-        hst_inl(CONFIG_DATA)
+    if USE_ECAM.load(Ordering::Relaxed) != 0 {
+        unsafe { hst_ecam_read_dword(bus, dev, func, offset) }
+    } else {
+        let addr = 0x8000_0000u32
+            | ((bus as u32) << 16)
+            | ((dev as u32) << 11)
+            | ((func as u32) << 8)
+            | (offset as u32 & 0xFC);
+        unsafe {
+            hst_outl(CONFIG_ADDRESS, addr);
+            hst_inl(CONFIG_DATA)
+        }
     }
 }
 
@@ -65,14 +73,18 @@ fn pci_config_read_word(bus: u8, dev: u8, func: u8, offset: u8) -> u16 {
 }
 
 fn pci_config_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
-    let addr = 0x8000_0000u32
-        | ((bus as u32) << 16)
-        | ((dev as u32) << 11)
-        | ((func as u32) << 8)
-        | (offset as u32 & 0xFC);
-    unsafe {
-        hst_outl(CONFIG_ADDRESS, addr);
-        hst_outl(CONFIG_DATA, value);
+    if USE_ECAM.load(Ordering::Relaxed) != 0 {
+        unsafe { hst_ecam_write_dword(bus, dev, func, offset, value) }
+    } else {
+        let addr = 0x8000_0000u32
+            | ((bus as u32) << 16)
+            | ((dev as u32) << 11)
+            | ((func as u32) << 8)
+            | (offset as u32 & 0xFC);
+        unsafe {
+            hst_outl(CONFIG_ADDRESS, addr);
+            hst_outl(CONFIG_DATA, value);
+        }
     }
 }
 
@@ -253,8 +265,15 @@ pub extern "C" fn driver_init() -> i32 {
     }
     INITIALIZED.store(1, Ordering::Release);
 
-    let msg = b"pci.nem: enumerating PCI buses\r\n";
-    unsafe { hst_log(2, msg.as_ptr(), msg.len()) };
+    // Probe ECAM availability (set by kernel Phase 2.3)
+    if unsafe { hst_ecam_is_active() != 0 } {
+        USE_ECAM.store(1, Ordering::Release);
+        let msg = b"pci.nem: using ECAM MMIO\r\n";
+        unsafe { hst_log(2, msg.as_ptr(), msg.len()) };
+    } else {
+        let msg = b"pci.nem: ECAM not available, using legacy PIO\r\n";
+        unsafe { hst_log(2, msg.as_ptr(), msg.len()) };
+    }
 
     let mut bus_arr = [0u8; 256];
     let bus_list = bus_arr.as_mut_ptr();

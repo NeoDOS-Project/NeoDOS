@@ -2337,12 +2337,10 @@ pub fn register_pci_enum_tests() {
     test_case!("pci_bus0_has_qemu_devices", {
         use crate::drivers::pci;
         let mut count = 0u16;
-        let mut found_isa = false;
         let mut found_vga = false;
-        let mut found_ide = false;
-        let mut found_piix = false;
+        let mut found_ahci = false;
         let mut found_net = false;
-        let mut bridge_count = 0u16;
+        let mut found_isa = false;
         for dev in 0..32 {
             let vendor = pci::pci_config_read_word(0, dev, 0, 0);
             if vendor == 0xFFFF || vendor == 0 {
@@ -2357,29 +2355,23 @@ pub fn register_pci_enum_tests() {
                     continue;
                 }
                 let device = pci::pci_config_read_word(0, dev, func, 2);
-                let class_rev = pci::pci_config_read_dword(0, dev, func, 0x08);
-                let class = ((class_rev >> 24) & 0xFF) as u8;
-                let subclass = ((class_rev >> 16) & 0xFF) as u8;
-                // Check for well-known QEMU PIIX3 devices
+                // Machine-agnostic QEMU device detection:
+                // Works on both PIIX3 (-machine pc) and Q35 (-machine q35)
+                if vendor == 0x1234 && device == 0x1111 { found_vga = true; }  // QEMU VGA (both machines)
+                if vendor == 0x8086 && device == 0x100E { found_net = true; }  // QEMU e1000 (PIIX3 only)
+                if vendor == 0x8086 && device == 0x10D3 { found_net = true; }  // QEMU e1000e (Q35 only)
+                if vendor == 0x8086 && device == 0x2922 { found_ahci = true; } // ICH9 AHCI (added via -device ahci)
+                if vendor == 0x8086 && device == 0x2918 { found_isa = true; }  // Q35 ISA/LPC bridge
                 if vendor == 0x8086 && device == 0x1237 { found_isa = true; }  // PIIX3 ISA bridge
-                if vendor == 0x8086 && device == 0x7000 { found_piix = true; } // PIIX3 IDE
-                if vendor == 0x1234 && device == 0x1111 { found_vga = true; }  // QEMU VGA
-                if vendor == 0x8086 && device == 0x7010 { found_ide = true; }  // PIIX3 IDE controller
-                if vendor == 0x8086 && device == 0x100E { found_net = true; }  // QEMU e1000
-                // Count PCI-to-PCI bridges
-                if class == 0x06 && subclass == 0x04 {
-                    bridge_count += 1;
-                }
+                if vendor == 0x8086 && device == 0x7000 { found_isa = true; }  // PIIX3 ISA bridge (function)
                 count += 1;
             }
         }
-        test_true!(found_isa);
         test_true!(found_vga);
-        test_true!(found_piix);
-        test_true!(found_ide);
+        test_true!(found_ahci);
         test_true!(found_net);
-        test_eq!(bridge_count, 0);
-        test_true!(count >= 6);
+        test_true!(found_isa);
+        test_true!(count >= 5);
     });
     test_case!("pci_bus1_empty", {
         use crate::drivers::pci;

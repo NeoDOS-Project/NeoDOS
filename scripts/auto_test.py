@@ -72,7 +72,7 @@ def run_test():
     
     cmd = [
         "qemu-system-x86_64",
-        "-machine", f"pc,accel={accel}",
+        "-machine", f"q35,accel={accel}",
         "-monitor", "telnet:127.0.0.1:4446,server,nowait",
         "-display", "none",
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",

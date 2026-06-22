@@ -47,8 +47,9 @@ QEMU_ACCEL=kvm bash scripts/qemu-debug.sh
 QEMU_ACCEL=kvm python3 scripts/auto_test.py
 ```
 
-**Note**: KVM works with `-machine pc` (PIIX3). Q35 machine type produces
-`KVM: entry failed, hardware error 0x0` with OVMF on some hosts. Use TCG for Q35.
+**Note**: Default machine is now `-machine q35` (PCIe with ECAM). Q35 + TCG
+works reliably. If KVM produces `KVM: entry failed, hardware error 0x0` with
+OVMF, override with `-machine pc` (PIIX3, legacy PIO).
 
 ## Git workflow (testing primero)
 

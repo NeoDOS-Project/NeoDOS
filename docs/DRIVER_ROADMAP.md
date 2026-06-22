@@ -77,13 +77,13 @@ del kernel.
 
 ### 2.3 `pci.nem` — Soporte ECAM
 
-Actualmente usa legacy PIO (0xCF8/0xCFC). Migrar a ECAM:
+~~Actualmente usa legacy PIO (0xCF8/0xCFC). Migrar a ECAM:~~
 
-- [ ] Recibir la dirección ECAM del kernel (ya configurada en Phase 2.3)
-- [ ] Usar `hst_*` MMIO para leer config space vía ECAM
-- [ ] Mayor velocidad de enumeración
+- [x] Recibir la dirección ECAM del kernel (ya configurada en Phase 2.3)
+- [x] Usar `hst_*` MMIO para leer config space vía ECAM (`hst_ecam_read_dword` / `hst_ecam_write_dword`)
+- [x] Mayor velocidad de enumeración (MMIO en lugar de PIO)
 
-**Complejidad**: Media (~100 líneas). La base ECAM ya está mapeada por el kernel.
+**Completado en v0.42.0** — 3 nuevas exportaciones `hst_ecam_*`, ECAM detectado en `driver_init()`, fallback PIO transparente. QEMU con `-machine q35` para ECAM real.
 
 ### 2.4 `ata.nem` — Soporte ATAPI
 
