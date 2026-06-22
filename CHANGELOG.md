@@ -10,6 +10,9 @@
 ### Changed
 - `src/object/mod.rs`: re-exporta `ObError`, `ObId`, `ObType`, `OB_NAME_LEN`, `ObObjectSnapshot`.
 - `src/kobj/mod.rs`: `KObjType` convertido a `ObType` internamente; `KObjEntry` es wrapper snapshot de `ObObject`; `KObjId = ObId`.
+- **Slab&lt;T&gt; contenedor** — `src/slab_container.rs`: nuevo, generic slab container con `insert`, `get_by_idx`, `remove_by_idx`, `set`, `iter`. 5 tests.
+- **Scheduler Vec dinámico** — `src/scheduler/mod.rs`: `eprocesses` y `kthreads` cambiados de `[Option<...>; N]` a `Vec<Option<...>>`. Sin límites fijos (antes 16/32). `alloc_eprocess_slot`/`alloc_kthread_slot` crecen el Vec si lleno.
+- **Pipe buffers dinámicos** — `src/pipe.rs`: `PipeInner.buf` es `Box<[u8; 4096]>` (heap). `PipeManager.pipes` es `Vec<Option<Mutex<PipeInner>>>`. Sin límite de 16 pipes. Eliminada constante `MAX_PIPES`.
 
 ## v0.40.3 — 2026-06-22
 

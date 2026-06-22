@@ -2357,6 +2357,7 @@ pub fn register_tests() {
     crate::fs::fsck::register_fsck_tests();
     crate::kobj::register_kobj_tests();
     crate::object::register_object_tests();
+    crate::slab_container::register_slab_container_tests();
     crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();
     crate::dpc::register_tests();

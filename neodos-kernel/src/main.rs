@@ -10,6 +10,7 @@ use core::panic::PanicInfo;
 
 mod allocator;
 mod slab;
+mod slab_container;
 mod arch;
 mod hal;
 mod console;

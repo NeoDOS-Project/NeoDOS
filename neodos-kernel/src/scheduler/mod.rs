@@ -18,8 +18,6 @@ use crate::security::token::Token;
 
 // ── Constants ──
 
-pub const MAX_EPROCESSES: usize = 16;
-pub const MAX_THREADS: usize = 32;
 pub const KERNEL_STACK_SIZE: usize = 16384;
 const IDLE_STACK_SIZE: usize = 4096;
 
@@ -317,8 +315,8 @@ impl Eprocess {
 // ── Scheduler ──
 
 pub struct Scheduler {
-    pub eprocesses: [Option<Eprocess>; MAX_EPROCESSES],
-    pub kthreads: [Option<Kthread>; MAX_THREADS],
+    pub eprocesses: Vec<Option<Eprocess>>,
+    pub kthreads: Vec<Option<Kthread>>,
     pub current_tid: u32,
     pub next_pid: u32,
     pub next_tid: u32,
@@ -376,14 +374,28 @@ impl Scheduler {
             .collect()
     }
 
-    /// Find the first free slot index in eprocesses array.
+    /// Find the first free slot index in eprocesses vec, growing if full.
     pub fn alloc_eprocess_slot(&mut self) -> Option<usize> {
-        self.eprocesses.iter().position(|e| e.is_none())
+        let pos = self.eprocesses.iter().position(|e| e.is_none());
+        if pos.is_some() {
+            pos
+        } else {
+            let idx = self.eprocesses.len();
+            self.eprocesses.push(None);
+            Some(idx)
+        }
     }
 
-    /// Find the first free slot index in kthreads array.
+    /// Find the first free slot index in kthreads vec, growing if full.
     pub fn alloc_kthread_slot(&mut self) -> Option<usize> {
-        self.kthreads.iter().position(|t| t.is_none())
+        let pos = self.kthreads.iter().position(|t| t.is_none());
+        if pos.is_some() {
+            pos
+        } else {
+            let idx = self.kthreads.len();
+            self.kthreads.push(None);
+            Some(idx)
+        }
     }
 
     /// Current TID convenience
@@ -409,16 +421,8 @@ impl Scheduler {
     // ── Construction ──
 
     pub fn new() -> Self {
-        const NONE_EP: Option<Eprocess> = None;
-        const NONE_TH: Option<Kthread> = None;
-        let mut sched = Scheduler {
-            eprocesses: [NONE_EP; MAX_EPROCESSES],
-            kthreads: [NONE_TH; MAX_THREADS],
-            current_tid: 0,
-            next_pid: 1,
-            next_tid: 1,
-            timer_ticks: 0,
-        };
+        let mut eprocesses = Vec::with_capacity(32);
+        let mut kthreads = Vec::with_capacity(64);
 
         // Idle EPROCESS (PID 0) + idle KTHREAD (TID 0)
         let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
@@ -428,10 +432,17 @@ impl Scheduler {
             idle_task as *const () as u64,
             idle_stack_top,
         );
-        sched.eprocesses[0] = Some(idle_eproc);
-        sched.kthreads[0] = Some(idle_thread);
+        eprocesses.push(Some(idle_eproc));
+        kthreads.push(Some(idle_thread));
 
-        sched
+        Scheduler {
+            eprocesses,
+            kthreads,
+            current_tid: 0,
+            next_pid: 1,
+            next_tid: 1,
+            timer_ticks: 0,
+        }
     }
 
     pub fn has_non_idle_processes(&self) -> bool {
