@@ -258,7 +258,7 @@ pub extern "C" fn nxl_sys_get_meminfo(buf: *mut u8) -> i64 {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Object Manager (Ob) wrappers — RAX 60–64
+// Object Manager (Ob) wrappers — RAX 60–65
 // ═══════════════════════════════════════════════════════════════════
 
 #[no_mangle]
@@ -284,6 +284,13 @@ pub extern "C" fn nxl_sys_ob_set_info(fd: u8, info_class: u32, buf: *const u8, b
 #[no_mangle]
 pub extern "C" fn nxl_sys_ob_enum(dir_fd: u8, buf: *mut u8, max_entries: usize) -> i64 {
     ret(unsafe { syscall_3(64, dir_fd as u64, buf as u64, max_entries as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_wait(fd: u8) -> i64 {
+    // ObWait takes (handle_count=1, &fd, wait_type=0)
+    let handles: [u64; 1] = [fd as u64];
+    ret(unsafe { syscall_3(65, 1, &handles as *const u64 as u64, 0) })
 }
 
 // ============================================================
@@ -438,12 +445,13 @@ pub struct AbiTable {
     pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
     pub sys_get_meminfo: extern "C" fn(*mut u8) -> i64,
-    // Object Manager (Ob) API — RAX 60–64
+    // Object Manager (Ob) API — RAX 60–65
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
     pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64) -> i64,
     pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,
     pub sys_ob_set_info: extern "C" fn(u8, u32, *const u8, usize) -> i64,
     pub sys_ob_enum: extern "C" fn(u8, *mut u8, usize) -> i64,
+    pub sys_ob_wait: extern "C" fn(u8) -> i64,
     pub version: u32,
 }
 
@@ -511,5 +519,6 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_ob_query_info: nxl_sys_ob_query_info,
     sys_ob_set_info: nxl_sys_ob_set_info,
     sys_ob_enum: nxl_sys_ob_enum,
+    sys_ob_wait: nxl_sys_ob_wait,
     version: 5,
 };

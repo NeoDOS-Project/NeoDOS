@@ -70,6 +70,7 @@ pub struct AbiTable {
     pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,
     pub sys_ob_set_info: extern "C" fn(u8, u32, *const u8, usize) -> i64,
     pub sys_ob_enum: extern "C" fn(u8, *mut u8, usize) -> i64,
+    pub sys_ob_wait: extern "C" fn(u8) -> i64,
     pub version: u32,
 }
 
