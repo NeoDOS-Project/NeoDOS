@@ -2,7 +2,7 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.44.0 (520 kernel tests + 27 user-mode binaries).
+> Versión actual: v0.44.1 (520 kernel tests + 27 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > **NUEVA GUÍA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
@@ -182,12 +182,20 @@
 139. **B9.1. HELP → corehelp.nxe** — Ring 0 HELP reducido a stub, `corehelp.nxe` escanea `C:\Programs\*.NXE` buscando marcadores `::HELP::`.
 140. **B9.2. SET → neoshell built-in** — Variables de entorno en Ring 3, Ring 0 SET eliminado.
 141. **B9.3. EXIT → neoshell built-in** — POWEROFF/EXIT en Ring 3 vía `sys_poweroff` (RAX=42), Ring 0 EXIT eliminado.
-142. **B9.4. PS → ps.nxe** — Lista procesos vía `sys_kobj_enum` (RAX=48), filtro PROCESS.
-143. **B9.5. KILL → kill.nxe** — Termina proceso por PID vía `sys_kill_process` (RAX=52, admin).
-144. **B9.6. PRI → pri.nxe** — Cambia prioridad scheduling vía `sys_set_priority` (RAX=51, admin). Niveles 0-3.
+142. **B9.4. PS → ps.nxe** — Lista procesos vía `sys_ob_enum("\Ob\Process")` + `ObQueryInfo(Process)` con datos reales (PID, PPID, prioridad, thread_count, estado). Migrado de `sys_kobj_enum` a Ob.
+143. **B9.5. KILL → kill.nxe** — Termina proceso por PID vía `ObOpen` + `ObSetInfo(fd, ProcessTerminate)`. Migrado de `sys_kill_process` a Ob.
+144. **B9.6. PRI → pri.nxe** — Cambia prioridad scheduling vía `ObOpen` + `ObSetInfo(fd, ProcessPriority)`. Migrado de `sys_set_priority` a Ob.
 145. **B9.8. DRIVES → drives.nxe** — Lista unidades montadas vía `sys_get_drives` (RAX=33). Letra, tipo, etiqueta, tamaño.
 146. **B9.10. KEYB → keyb.nxe** — Cambia layout teclado vía `sys_set_keyboard_layout` (RAX=49). US/SP.
 147. **B9.13. CALL → neoshell built-in** — Ejecuta `.BAT` batch desde Ring 3, replica `commands/call.rs`.
+148. **v0.44.1 — libneodos Ob API** — 5 wrappers Ob en `libneodos/src/syscall.rs` con macros asm seguras (temp register copy). `ObBasicInfo`, `ObEnumEntry`, `ObProcessInfo` structs + `ob_access` constants. AbiTable v5 en `libneodos-nxl` y `libneodos/src/export.rs`.
+149. **v0.44.1 — ob_open_path auto-create dirs** — `src/object/mod.rs`: `ob_open_path()` crea dir objects on-the-fly para paths namespace que son directorios sin object entry.
+150. **v0.44.1 — ob_is_directory()** — `src/kobj/namespace.rs`: pública para detectar directorios namespace sin entry.
+151. **v0.44.1 — ProcessTerminate (ObSetInfo class 4)** — `src/syscall/mod.rs`: termina proceso via `ObSetInfo(fd, 4)`. `handler_kill_process` migrable.
+152. **v0.44.1 — kobj.nxe migrado a Ob** — usa `ObOpen("\Ob")` + `ObEnum` para mostrar namespace Ob jerárquico.
+153. **v0.44.1 — ps.nxe migrado a Ob** — usa `ObOpen("\Ob\Process")` + `ObEnum` + `ObQueryInfo(Process)` por proceso. Datos reales.
+154. **v0.44.1 — pri.nxe migrado a Ob** — usa `ObOpen` + `ObSetInfo(ProcessPriority)`.
+155. **v0.44.1 — kill.nxe migrado a Ob** — usa `ObOpen` + `ObSetInfo(ProcessTerminate)`.
 
 ---
 
@@ -205,7 +213,7 @@
 Orden de implementación dentro de la fase:
 
 1. ~~**v0.43** — SeAccessCheck NT-compatible, sys_poll(), Congelar pipe/IRP protocols~~ **COMPLETADO**
-2. ~~**v0.44** — ASLR v1 (base aleatoria)~~ **COMPLETADO**, FileSystem trait freeze, Registry v1 (B2.1)
+2. ~~**v0.44** — ASLR v1 (base aleatoria), Ob syscalls RAX 60–64~~ **COMPLETADO** (v0.44.1: 4 binarios migrados a Ob: ps, kobj, pri, kill)**
 3. **v0.45** — Device Tree + Resource Manager, Driver state machine freeze
 
 > **Regla:** No se pasa a la Fase 2 hasta que v0.45 esté completo y todos los tests pasen.

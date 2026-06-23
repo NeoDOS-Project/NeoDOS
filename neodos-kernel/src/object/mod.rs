@@ -318,21 +318,36 @@ pub fn ob_open_path(
     token: &crate::security::token::Token,
     desired_access: u32,
 ) -> Result<ObId, ObError> {
-    let kobj_id = crate::kobj::namespace::ob_lookup_path(path_str)
-        .map_err(|_| ObError::NotFound)?;
-
-    // Verify the object exists in the Object Manager
-    ob_lookup(kobj_id).ok_or(ObError::NotFound)?;
-
-    // Security check: retrieve the object's SecurityDescriptor (if any)
-    let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
-    if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
-        return Err(ObError::AccessDenied);
+    // First try a regular lookup (finds object entries).
+    if let Ok(kobj_id) = crate::kobj::namespace::ob_lookup_path(path_str) {
+        if let Some(_obj) = ob_lookup(kobj_id) {
+            // Security check
+            let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
+            if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
+                return Err(ObError::AccessDenied);
+            }
+            ob_reference(kobj_id)?;
+            return Ok(kobj_id);
+        }
     }
 
-    // Reference the object so the handle holds a reference
-    ob_reference(kobj_id)?;
-    Ok(kobj_id)
+    // If not found as an object entry, check if it's a namespace directory
+    // that exists but has no object entry yet. If so, create a directory
+    // object for it on the fly.
+    if crate::kobj::namespace::ob_is_directory(path_str) {
+        let dir_id = ob_create_object(ObType::Directory, path_str, 0, 0, None)?;
+        let _ = crate::kobj::namespace::ob_insert_object(path_str, dir_id);
+        let sd = OB_SECURITY.lock().get(&dir_id).cloned();
+        if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
+            let _ = ob_destroy_object(dir_id);
+            return Err(ObError::AccessDenied);
+        }
+        // ob_create_object starts with refcount 1; ob_reference for the handle
+        ob_reference(dir_id)?;
+        return Ok(dir_id);
+    }
+
+    Err(ObError::NotFound)
 }
 
 /// Create an object and register it in the Ob namespace at the specified path.

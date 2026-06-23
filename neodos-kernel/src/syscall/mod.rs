@@ -2743,8 +2743,6 @@ fn handler_ob_open(regs: Registers) -> u64 {
 
     match fd {
         Some(fd) => {
-            crate::serial_println!("[OB_OPEN] fd={} path='{}' ob_id={} access=0x{:x}",
-                fd, path, ob_id, desired_access);
             fd as u64
         }
         None => {
@@ -2842,8 +2840,6 @@ fn handler_ob_create(regs: Registers) -> u64 {
                 (fds_out as *mut u64).write(rfd);
                 (fds_out as *mut u64).add(1).write(wfd);
             }
-            serial_println!("[OB_CREATE] pipe '{}' ob_id={} pipe_id={} rfd={} wfd={}",
-                path_str, ob_id, pipe_id, rfd, wfd);
             rfd
         }
         crate::object::ObType::Directory => {
@@ -2866,7 +2862,6 @@ fn handler_ob_create(regs: Registers) -> u64 {
             });
             match fd {
                 Some(fd) => {
-                    serial_println!("[OB_CREATE] dir '{}' ob_id={} fd={}", path_str, ob_id, fd);
                     fd as u64
                 }
                 None => {
@@ -2895,7 +2890,6 @@ fn handler_ob_create(regs: Registers) -> u64 {
             });
             match fd {
                 Some(fd) => {
-                    serial_println!("[OB_CREATE] event '{}' ob_id={} fd={}", path_str, ob_id, fd);
                     fd as u64
                 }
                 None => {
@@ -3338,6 +3332,33 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
         3 => {
             // SecurityInfo: set SecurityDescriptor
             return err_to_u64(SyscallError::NoSys);
+        }
+        4 => {
+            // ProcessTerminate: terminate the process by PID
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Process {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let pid = obj.native_id as u32;
+            if pid == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if lock.kill_pid(pid) {
+                    lock.wake_waiters(pid);
+                    0
+                } else {
+                    err_to_u64(SyscallError::NoEnt)
+                }
+            })
         }
         _ => err_to_u64(SyscallError::Inval),
     }

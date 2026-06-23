@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.44.1 — 2026-06-23
+
+### Added
+- **OB-001/OB-010/OB-011/OB-012/OB-013/OB-014 (Object Manager syscalls)** — `sys_ob_open` (RAX=60), `sys_ob_create` (61), `sys_ob_query_info` (62), `sys_ob_set_info` (63), `sys_ob_enum` (64) fully implemented and callable from user mode.
+- **libneodos Ob API** — `ObBasicInfo`, `ObEnumEntry`, `ObProcessInfo` structs + `sys_ob_open/create/query/set/enum` wrappers + `ob_access` constants.
+- **libneodos-nxl Ob exports** — 5 new AbiTable entries + version 5.
+- **`ob_open_path` auto-create directories** — `src/object/mod.rs`: when a namespace path is a valid directory without an object entry, an `ObObject` is created on-the-fly and inserted, enabling `ObOpen` on namespace directories.
+- **`ob_is_directory()`** — `src/kobj/namespace.rs`: public method to check if a namespace path exists as a directory node.
+- **ProcessTerminate info class** — `handler_ob_set_info` class 4 terminates a process via `ObSetInfo(fd, ProcessTerminate)`.
+- **`ps.nxe` migrado a Ob** — usa `ObOpen("\Ob\Process")` + `ObEnum` + `ObQueryInfo(Process)` para mostrar datos reales (PID, PPID, prioridad, thread_count, estado).
+- **`kobj.nxe` migrado a Ob** — usa `ObOpen("\Ob")` + `ObEnum` para mostrar el namespace Ob jerárquico.
+- **`pri.nxe` migrado a Ob** — usa `ObOpen("\Ob\Process\eproc/<pid>")` + `ObSetInfo(ProcessPriority)`.
+- **`kill.nxe` migrado a Ob** — usa `ObOpen(...)` + `ObSetInfo(ProcessTerminate)`.
+
+### Changed
+- `libneodos/src/syscall.rs`: all Ob wrappers use safe asm macros with temp register copy to prevent register overlap in PIE mode.
+
 ## v0.44.0 — 2026-06-23
 
 ### Added

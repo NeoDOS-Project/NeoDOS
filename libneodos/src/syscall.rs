@@ -120,28 +120,23 @@ pub fn sys_loadlib(path: &str) -> Result<u64, i64> {
 
 #[repr(C)]
 pub struct CpuInfoFull {
-    // Identity
     pub vendor_id: [u8; 12],
     pub brand: [u8; 48],
     pub family: u32,
     pub model: u32,
     pub stepping: u32,
     pub cpu_type: u32,
-    // Feature flags
     pub features_edx: u32,
     pub features_ecx: u32,
     pub ext_features_edx: u32,
     pub ext_features_ecx: u32,
     pub features_ebx_leaf7: u32,
-    // Addressing
     pub phys_addr_bits: u8,
     pub virt_addr_bits: u8,
-    // SMP / Topology
     pub cpu_count: u32,
     pub apic_id: u32,
     pub cpu_id: u32,
     pub is_bsp: bool,
-    // Timer / Frequency
     pub tsc_khz: u64,
     pub timer_source: u8,
     pub tick_rate_hz: u64,
@@ -887,143 +882,189 @@ impl ObEnumEntry {
     }
 }
 
+/// ObProcessInfo — ABI-compatible with kernel's ObProcessInfo (RAX=62, class=3).
+/// Layout: u32 + u32 + u8 + 3pad + u32 + u8 + 2pad = 20 bytes.
+#[repr(C)]
+pub struct ObProcessInfo {
+    pub pid: u32,
+    pub parent_pid: u32,
+    pub priority: u8,
+    _align1: [u8; 3],
+    pub thread_count: u32,
+    pub state: u8,
+    _align2: [u8; 2],
+}
+
+impl ObProcessInfo {
+    pub fn state_str(&self) -> &'static str {
+        match self.state {
+            0 => "Ready",
+            1 => "Running",
+            2 => "Blocked",
+            3 => "Terminated",
+            _ => "?",
+        }
+    }
+
+    pub fn priority_str(&self) -> &'static str {
+        match self.priority {
+            0 => "HIGH",
+            1 => "ABOVE_NORMAL",
+            2 => "NORMAL",
+            3 => "IDLE",
+            _ => "?",
+        }
+    }
+}
+
+// ── Inline asm helpers for Ob syscalls ──
+// The kernel ABI: RAX=syscall, RBX=arg0, RCX=arg1, RDX=arg2, R8=arg3.
+// We use push/pop to save rbx/rcx/rdx/r8 and write syscall registers
+// in an order that prevents register overlap (read ptr/tmp registers
+// first, then move to syscall registers).
+
+// Safe syscall wrappers for Ob (RAX 60-64).
+// Strategy: copy all args to temp registers (r8-r10) first, then
+// move to the syscall arg registers (rbx/rcx/rdx/r8). This prevents
+// the situation where reading an input register overwrites another
+// input register due to register allocation overlap.
+
+macro_rules! ob_syscall_2 {
+    ($rax:literal, $rbx:expr, $rcx:expr) => {{
+        let r: i64;
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "mov r8, {a0}",
+            "mov r9, {a1}",
+            "mov rbx, r8",
+            "mov rcx, r9",
+            "mov rax, {n}",
+            "int 0x80",
+            "pop rcx",
+            "pop rbx",
+            a0 = in(reg) $rbx,
+            a1 = in(reg) $rcx,
+            n = const $rax,
+            out("rax") r,
+            out("r8") _, out("r9") _,
+            options(nostack),
+        );
+        r
+    }}
+}
+
+macro_rules! ob_syscall_3 {
+    ($rax:literal, $rbx:expr, $rcx:expr, $rdx:expr) => {{
+        let r: i64;
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "push rdx",
+            "mov r8, {a0}",
+            "mov r9, {a1}",
+            "mov r10, {a2}",
+            "mov rbx, r8",
+            "mov rcx, r9",
+            "mov rdx, r10",
+            "mov rax, {n}",
+            "int 0x80",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
+            a0 = in(reg) $rbx,
+            a1 = in(reg) $rcx,
+            a2 = in(reg) $rdx,
+            n = const $rax,
+            out("rax") r,
+            out("r8") _, out("r9") _, out("r10") _,
+            options(nostack),
+        );
+        r
+    }}
+}
+
+macro_rules! ob_syscall_4 {
+    ($rax:literal, $rbx:expr, $rcx:expr, $rdx:expr, $r8:expr) => {{
+        let r: i64;
+        core::arch::asm!(
+            "push rbx",
+            "push rcx",
+            "push rdx",
+            "push r8",
+            "mov r9, {a0}",
+            "mov r10, {a1}",
+            "mov r11, {a2}",
+            "mov r12, {a3}",
+            "mov rbx, r9",
+            "mov rcx, r10",
+            "mov rdx, r11",
+            "mov r8, r12",
+            "mov rax, {n}",
+            "int 0x80",
+            "pop r8",
+            "pop rdx",
+            "pop rcx",
+            "pop rbx",
+            a0 = in(reg) $rbx,
+            a1 = in(reg) $rcx,
+            a2 = in(reg) $rdx,
+            a3 = in(reg) $r8,
+            n = const $rax,
+            out("rax") r,
+            out("r9") _, out("r10") _, out("r11") _, out("r12") _,
+            options(nostack),
+        );
+        r
+    }}
+}
+
 /// sys_ob_open (RAX=60): open an Ob namespace object.
-/// path = Ob namespace path, e.g. "\\Driver\\ps2kbd"
-/// access_mask = bitmask from ob_access module
-/// Returns fd (≥ 3) on success.
 pub fn sys_ob_open(path: &str, access_mask: u32) -> Result<u8, i64> {
     let bytes = path.as_bytes();
     if bytes.len() >= 255 { return Err(EINVAL); }
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
-    let ptr = buf.as_ptr();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx", "push rcx",
-            "mov rax, 60",
-            "mov rbx, {ptr}",
-            "mov rcx, {access}",
-            "int 0x80",
-            "pop rcx", "pop rbx",
-            ptr = in(reg) ptr as u64,
-            access = in(reg) access_mask as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
+    let ptr = buf.as_ptr() as u64;
+    let r = unsafe { ob_syscall_2!(60, ptr, access_mask as u64) };
     ret(r).map(|v| v as u8)
 }
 
-/// sys_ob_create (RAX=61): create an object and register it in the namespace.
-/// obj_type: 4=Pipe, 11=Directory, 13=Event
-/// For Pipe: fds_out receives [reader_fd, writer_fd]
-/// Returns fd on success.
+/// sys_ob_create (RAX=61): create an object.
 pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>) -> Result<u8, i64> {
     let bytes = path.as_bytes();
     if bytes.len() >= 255 { return Err(EINVAL); }
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
-    let ptr = buf.as_ptr();
+    let ptr = buf.as_ptr() as u64;
     let fds_ptr = match fds_out {
         Some(f) => f.as_mut_ptr() as u64,
         None => 0u64,
     };
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx", "push rcx", "push rdx", "push r8",
-            "mov rax, 61",
-            "mov rbx, {ptr}",
-            "mov rcx, {ty}",
-            "mov rdx, {fds}",
-            "mov r8, 0",
-            "int 0x80",
-            "pop r8", "pop rdx", "pop rcx", "pop rbx",
-            ptr = in(reg) ptr as u64,
-            ty = in(reg) obj_type as u64,
-            fds = in(reg) fds_ptr,
-            out("rax") r,
-            options(nostack),
-        );
-    }
+    let r = unsafe { ob_syscall_4!(61, ptr, obj_type as u64, fds_ptr, 0u64) };
     ret(r).map(|v| v as u8)
 }
 
 /// sys_ob_query_info (RAX=62): query metadata for an object by fd.
-/// Returns bytes written on success.
 pub fn sys_ob_query_info(fd: u8, info_class: ObInfoClass, buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx", "push rcx", "push rdx", "push r8",
-            "mov rax, 62",
-            "mov rbx, {fd}",
-            "mov rcx, {cls}",
-            "mov rdx, {ptr}",
-            "mov r8, {len}",
-            "int 0x80",
-            "pop r8", "pop rdx", "pop rcx", "pop rbx",
-            fd = in(reg) fd as u64,
-            cls = in(reg) info_class as u64,
-            ptr = in(reg) ptr as u64,
-            len = in(reg) len as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
+    let ptr = buf.as_mut_ptr() as u64;
+    let len = buf.len() as u64;
+    let r = unsafe { ob_syscall_4!(62, fd as u64, info_class as u64, ptr, len) };
     ret(r).map(|v| v as usize)
 }
 
 /// sys_ob_set_info (RAX=63): set metadata for an object by fd.
 pub fn sys_ob_set_info(fd: u8, info_class: u32, buf: &[u8]) -> Result<(), i64> {
-    let ptr = buf.as_ptr();
-    let len = buf.len();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx", "push rcx", "push rdx", "push r8",
-            "mov rax, 63",
-            "mov rbx, {fd}",
-            "mov rcx, {cls}",
-            "mov rdx, {ptr}",
-            "mov r8, {len}",
-            "int 0x80",
-            "pop r8", "pop rdx", "pop rcx", "pop rbx",
-            fd = in(reg) fd as u64,
-            cls = in(reg) info_class as u64,
-            ptr = in(reg) ptr as u64,
-            len = in(reg) len as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
+    let ptr = buf.as_ptr() as u64;
+    let len = buf.len() as u64;
+    let r = unsafe { ob_syscall_4!(63, fd as u64, info_class as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
 /// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.
-/// Returns count of entries written.
 pub fn sys_ob_enum(dir_fd: u8, entries: &mut [ObEnumEntry]) -> Result<usize, i64> {
-    let ptr = entries.as_mut_ptr() as *mut u8;
+    let ptr = entries.as_mut_ptr() as *mut u8 as u64;
     let max = entries.len() as u64;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx", "push rcx", "push rdx",
-            "mov rax, 64",
-            "mov rbx, {fd}",
-            "mov rcx, {ptr}",
-            "mov rdx, {max}",
-            "int 0x80",
-            "pop rdx", "pop rcx", "pop rbx",
-            fd = in(reg) dir_fd as u64,
-            ptr = in(reg) ptr as u64,
-            max = in(reg) max,
-            out("rax") r,
-            options(nostack),
-        );
-    }
+    let r = unsafe { ob_syscall_3!(64, dir_fd as u64, ptr, max) };
     ret(r).map(|v| v as usize)
 }

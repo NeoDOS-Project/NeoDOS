@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.44.0
+v0.44.1
 
 ## Architecture Governance
 
@@ -21,6 +21,9 @@ prioridades actuales son:
 3. ~~**v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI~~ **COMPLETADO**
 4. ~~**v0.43**: SeAccessCheck NT-compatible, sys_poll()~~ **COMPLETADO**
 5. ~~**v0.44–v0.45**: ASLR v1~~ ~~ObOpen (RAX 60)~~ **v0.44 COMPLETADO**, **v0.45**: Registry persistente, Device Tree
+   - ~~**OB-010 (ObOpen RAX 60), OB-011 (ObCreate RAX 61), OB-012 (ObQueryInfo RAX 62), OB-013 (ObSetInfo RAX 63), OB-014 (ObEnum RAX 64)**~~ COMPLETADO en v0.44.1
+   - ~~**OB-021 (ps.nxe), OB-022 (kill.nxe), OB-023 (pri.nxe), parcial OB-021 (kobj.nxe)**~~ 4 binarios migrados a Ob en v0.44.1
+   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum), ObBasicInfo/ObEnumEntry/ObProcessInfo structs, AbiTable v5
 6. **v0.47**: Networking (TCP/IP stack)
 7. **v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob
 8. **v1.0**: **Security integration in ObOpen**, **Full Ob API stable**

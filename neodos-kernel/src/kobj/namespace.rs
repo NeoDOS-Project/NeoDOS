@@ -291,6 +291,27 @@ impl ObNamespace {
     }
 
     /// Enumerate children of a directory by path.
+    /// Check whether a path exists as a directory node in the namespace.
+    pub fn is_directory(&self, path: &str) -> bool {
+        let components = match Self::parse_path(path) {
+            Ok(c) => c,
+            Err(_) => return false,
+        };
+        if components.is_empty() {
+            return true; // root is always a directory
+        }
+        let mut current = &self.root;
+        for &comp in &components {
+            let key = name_to_key(comp);
+            if let Some(subdir) = current.child_dirs.get(&key) {
+                current = subdir;
+            } else {
+                return false;
+            }
+        }
+        true
+    }
+
     pub fn enumerate(&self, path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
         let components = Self::parse_path(path)?;
         let mut dir = &self.root;
@@ -667,6 +688,10 @@ pub fn ob_rename_directory(old_path: &str, new_name: &str) -> Result<(), &'stati
 
 pub fn ob_enumerate_namespace(path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
     OB_NAMESPACE.lock().enumerate(path)
+}
+
+pub fn ob_is_directory(path: &str) -> bool {
+    OB_NAMESPACE.lock().is_directory(path)
 }
 
 pub fn ob_find_path_by_id(target_id: ObId) -> Option<String> {
