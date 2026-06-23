@@ -216,7 +216,7 @@ Orden de implementación dentro de la fase:
 
 * [ ] **CQ1. Reorganizar libneodos-nxl en módulos separados** | Prereqs: — | Files: `libneodos-nxl/src/main.rs` → `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
   - **Descripción:** Dividir `libneodos-nxl/src/main.rs` (461 líneas monolíticas) en 7+ módulos separados. Cada módulo agrupa funciones por dominio: `syscall.rs` (raw `int 0x80` wrappers), `io.rs` (stdout/stderr/stdin, _print, _eprint), `fs.rs` (file_open/read/write + sys_mkdir/unlink/rmdir/rename), `process.rs` (pipe/dup2/waitpid/spawn/readdir/chdir/getcwd), `mem.rs` (brk/sbrk/mmap/munmap), `info.rs` (get_version/datetime/meminfo/cpuinfo), `error.rs` (consts + ret helper). `main.rs` solo mantiene `nxl_entry`, el `AbiTable` struct, `EXPORT_TABLE` static, y `nxl_panic`. Zero cambios en ABI: el NXL binario resultante es idéntico, .export_table en offset 0 con mismos valores. No requiere recompilar user binaries ni cambiar kernel/libneodos/build.
-  - **Criterio:** `sha256sum` del NXL antes/después idéntica. 509 kernel tests + 27 user binaries funcionan sin cambios.
+  - **Criterio:** `sha256sum` del NXL antes/después idéntica. 520 kernel tests + 27 user binaries funcionan sin cambios.
   - **Tests:** Ninguno nuevo (el binario es idéntico).
 
 ---

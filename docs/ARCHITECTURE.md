@@ -519,7 +519,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **509 tests** (49+ suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **520 tests** (49+ suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -530,7 +530,7 @@ The kernel testing framework includes **509 tests** (49+ suites) with suites ded
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver |
 | Framebuffer Ref | 8 | Reference framebuffer driver |
 | Storage Ref | 14 | Reference storage driver |
-| ELF | 15 | ELF64 loader with A4.3 address space validation |
+| ELF | 20 | ELF64 loader with A4.3 address space validation, PIE/ASLR support |
 | Pipe | 13 | IPC pipes |
 | Mmap | 6 | Memory mapping |
 | FSCK | 6 | Filesystem integrity |
@@ -554,7 +554,7 @@ The kernel testing framework includes **509 tests** (49+ suites) with suites ded
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
-Tests run automatically at boot. The kernel runs 509 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
+Tests run automatically at boot. The kernel runs 520 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
 
 ---
 

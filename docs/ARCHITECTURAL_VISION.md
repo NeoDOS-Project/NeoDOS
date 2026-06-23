@@ -29,7 +29,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 **Fortalezas actuales:**
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
-- 509 tests automáticos en kernel
+- 520 tests automáticos en kernel
 - Certificación de drivers con 7 estados
 - Sistema de capacidades para control de acceso granular
 - IRQL framework para prioridad de interrupciones
@@ -93,7 +93,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 6. **La compatibilidad es un contrato.** Una vez que una syscall, una estructura ABI, o un formato de driver se declara estable, no cambia. El versionado semántico se aplica a nivel de kernel, no solo de API.
 
-7. **Los tests son especificación.** 509 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
+7. **Los tests son especificación.** 520 tests no son una métrica de calidad — son la especificación ejecutable del comportamiento del kernel. Si no hay test, el comportamiento no está definido.
 
 ---
 
@@ -560,10 +560,9 @@ pub struct IoCompletionPort {
 | Event types (0–15) | v0.42 | No reasignar types existentes. Añadir nuevos en 16+. |
 | Event struct (56 bytes) | v0.42 | Formato ABI de eventos. |
 | Capability flags (1–2048) | v0.42 | No reasignar bits existentes. Añadir en bit 12+. |
-| Driver error codes | v0.43 | 12 códigos existentes no se reasignan. |
+| Driver error codes | v0.43 | 12 códigos existentes no se reasignan. ✅ CONGELADO |
 | Pipe refcount protocol | v0.43 | Comportamiento de dup2/close con pipes. ✅ CONGELADO |
 | IRP pool (64 slots) | v0.43 | Límite fijo. Aumentar solo con nueva versión. ✅ CONGELADO |
-| Driver error codes | v0.43 | 12 códigos existentes no se reasignan. ✅ CONGELADO |
 | FileSystem trait | v0.44 | Métodos existentes no se modifican. Añadir default. |
 | Security SID format | v0.44 | Formato S-R-I-S* congelado. |
 | Driver state machine | v0.45 | 8 estados existentes + transiciones. Nuevos estados solo al final. |
