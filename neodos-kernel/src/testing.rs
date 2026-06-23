@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 512;
+const MAX_TESTS: usize = 520;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -2180,6 +2180,41 @@ pub fn register_pipe_tests() {
         test_eq!(n2, 0); // EOF
 
         PIPE_MANAGER.dec_read_ref(pid);
+    });
+
+    // ── OB-016: Pipe via ObObject ──
+
+    test_case!("pipe_ob_create_destroy", {
+        let pid = PIPE_MANAGER.alloc().expect("pipe alloc");
+        let name = alloc::format!("OBPIPE{}", pid);
+        let ob_id = crate::object::ob_create_object(
+            crate::object::ObType::Pipe, &name, pid as u64, 0, Some(&crate::pipe::PIPE_OPS),
+        ).expect("ob create");
+        test_true!(ob_id > 0);
+        let obj = crate::object::ob_lookup(ob_id).expect("ob lookup");
+        test_eq!(obj.obj_type, crate::object::ObType::Pipe);
+        test_eq!(obj.native_id, pid as u64);
+        // ob_close_object with refcount 1 → auto-destroy → on_destroy → free_pipe
+        crate::object::ob_close_object(ob_id).unwrap();
+        test_true!(crate::object::ob_lookup(ob_id).is_none());
+        // Pipe slot should be reusable
+        let pid2 = PIPE_MANAGER.alloc().expect("reuse after ob free");
+        test_eq!(pid, pid2);
+    });
+
+    test_case!("pipe_ob_read_write", {
+        let pid = PIPE_MANAGER.alloc().expect("pipe alloc");
+        PIPE_MANAGER.inc_read_ref(pid);
+        PIPE_MANAGER.inc_write_ref(pid);
+        let data = b"OB-016 rw test";
+        let n = PIPE_MANAGER.write(pid, data).unwrap();
+        test_eq!(n, data.len());
+        let mut buf = [0u8; 64];
+        let n = PIPE_MANAGER.read(pid, &mut buf).unwrap();
+        test_eq!(n, data.len());
+        test_eq!(&buf[..n], data);
+        PIPE_MANAGER.dec_read_ref(pid);
+        PIPE_MANAGER.dec_write_ref(pid);
     });
 }
 

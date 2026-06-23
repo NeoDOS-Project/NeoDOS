@@ -116,22 +116,73 @@ pub fn free_heap_slot(index: u8) {
 }
 
 /// Allocate a free user slot, returning its base addresses.
+/// Uses ASLR v0.44: picks a random free slot instead of sequential first-free.
 /// Returns `None` if all slots are in use.
 pub fn alloc_user_slot() -> Option<UserSlot> {
-    for i in 0..USER_SLOT_COUNT as usize {
-        unsafe {
-            if !SLOT_USED[i] {
-                SLOT_USED[i] = true;
-                let base = USER_BASE + i as u64 * USER_SLOT_SIZE;
-                return Some(UserSlot {
-                    code_base: base,
-                    stack_top: base + MAX_BIN_SIZE + USER_STACK_SIZE,
-                    slot_idx: i as u8,
-                });
+    let count = USER_SLOT_COUNT as usize;
+
+    // Count free slots first
+    let free_count = unsafe {
+        SLOT_USED[..count].iter().filter(|&&used| !used).count()
+    };
+    if free_count == 0 {
+        return None;
+    }
+
+    // Pick a random free slot: use RDRAND if available, fallback to sequential
+    let mut target_idx: usize = 0;
+    if free_count == 1 {
+        // Only one free slot — find it directly
+        for i in 0..count {
+            unsafe {
+                if !SLOT_USED[i] {
+                    target_idx = i;
+                    break;
+                }
+            }
+        }
+    } else if let Some(r) = crate::hal::rdrand() {
+        // Random offset within the free slots
+        let pick = (r as usize) % free_count;
+        let mut seen = 0;
+        for i in 0..count {
+            unsafe {
+                if !SLOT_USED[i] {
+                    if seen == pick {
+                        target_idx = i;
+                        break;
+                    }
+                    seen += 1;
+                }
+            }
+        }
+    } else {
+        // No RDRAND — use TSC-based fallback
+        let tsc = unsafe { crate::hal::raw::raw_read_tsc() };
+        let pick = (tsc as usize) % free_count;
+        let mut seen = 0;
+        for i in 0..count {
+            unsafe {
+                if !SLOT_USED[i] {
+                    if seen == pick {
+                        target_idx = i;
+                        break;
+                    }
+                    seen += 1;
+                }
             }
         }
     }
-    None
+
+    unsafe {
+        SLOT_USED[target_idx] = true;
+        let base = USER_BASE + target_idx as u64 * USER_SLOT_SIZE;
+        Some(UserSlot {
+            code_base: base,
+            stack_top: base + MAX_BIN_SIZE + USER_STACK_SIZE,
+            slot_idx: target_idx as u8,
+        })
+    }
 }
 
 /// Free a previously allocated user slot by index.

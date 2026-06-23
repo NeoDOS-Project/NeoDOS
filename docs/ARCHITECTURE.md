@@ -519,7 +519,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **501 tests** (46+ suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **509 tests** (49+ suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -551,10 +551,10 @@ The kernel testing framework includes **501 tests** (46+ suites) with suites ded
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions |
 | Security | 12 | NT6 Security: SID format, Token, ACL allow/deny, SeAccessCheck, admin bypass |
-| URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device |
+| URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
-Tests run automatically at boot. The kernel runs 512 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
+Tests run automatically at boot. The kernel runs 509 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
 
 ---
 

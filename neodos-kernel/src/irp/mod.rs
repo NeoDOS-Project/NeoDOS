@@ -1,5 +1,26 @@
 //! Async I/O Request Packet (IRP) system.
 //!
+//! ─── FROZEN ABI (v0.43) ──────────────────────────────────────────────
+//! The following APIs are stable and will not change:
+//!   - irp_alloc() / irp_free() / irp_get_params()
+//!   - irp_complete() / irp_complete_result()
+//!   - irp_block_current() / irp_submit_and_wait()
+//!   - irp_sync_read() / irp_sync_write()
+//!   - irp_get_status() / irp_set_chain()
+//!   - IrpQueue (per-device FIFO)
+//!   - BlockDevice trait: submit_irp() / poll_irp()
+//!
+//! Protocol invariants:
+//!   - IRP IDs are global u32 (monotonic via AtomicU32)
+//!   - Pool index = id % 64; slot collision returns None
+//!   - Drivers MUST call irp_get_params() to extract fields under pool lock
+//!   - Completion: irp_complete() sets status, wakes waiter, dispatches callback
+//!   - Callbacks are dispatched via high-priority work queue (never in IRQ)
+//!   - Blocking: magic = IRP_WAIT_MAGIC | irp_id, ThreadState::Blocked
+//!   - Chain: irp_set_chain() links IRPs; auto-submits chain_next on complete
+//!   - All 5 BlockDevice implementors complete synchronously in submit_irp()
+//! ─────────────────────────────────────────────────────────────────────
+//!
 //! Unified asynchronous I/O model for all kernel block operations.
 //! Every I/O operation is represented as an IRP with a unique ID,
 //! operation type, buffer, completion callback, and state.

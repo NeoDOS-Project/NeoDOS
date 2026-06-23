@@ -1140,7 +1140,7 @@ pub struct HandleEntry {
 
 ---
 
-#### Issue OB-025: URN rewrite completo como frontend de Ob
+#### ~~Issue OB-025: URN rewrite completo como frontend de Ob~~ **[COMPLETED]**
 
 **Descripción:** Reescribir `urn/mod.rs` para que todos los schemes sean frontends de Ob:
 - `urn_open("neodos://file/...")` → `ob_open("\Global\FileSystem\...")`

@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Versión actual: v0.42.0 (501 kernel tests + 27 user-mode binaries).
+> Versión actual: v0.44.0 (520 kernel tests + 27 user-mode binaries).
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > **NUEVA GUÍA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectónica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Última revisión: Junio 2026.
 
-**Progreso:** 153 / ~170 items completados (+17 planificados: v0.43+ milestones). Próximo milestone: **v0.43** (SeAccessCheck NT-compatible, sys_poll()).
+**Progreso:** 157 / ~170 items completados (+16 planificados: v0.45+ milestones). Próximo milestone: **v0.45** (Registry persistente, Device Tree).
 
 ---
 
@@ -30,7 +30,7 @@
 
 ---
 
-## COMPLETED (153 items)
+## COMPLETED (154 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode vía UEFI bootloader.
@@ -49,6 +49,7 @@
 14. **V1. Global page cache (advanced)** — `src/buffer/page_cache.rs`: hash map O(1) index for `(inode, block_num)` lookups. LRU doubly-linked list for O(1) access updates. Adaptive readahead. 13 tests.
 15. **MSI/MSI-X** — `src/interrupts/msi.rs` (232 lines): MSI and MSI-X interrupt support. Direct mode (kernel port I/O) and Delegated mode (Event Bus to `pci.nem`). 256-entry vector allocator. Dynamic IDT dispatch via `msi_dispatch`. Integrated with PCI and NVMe.
 16. **C3. HPET / APIC timers** — `src/timers/hpet.rs`, `src/timers/apic.rs`: HPET 1 KHz periodic mode with legacy replacement to IRQ0. Local APIC timer calibrated against HPET, activated as primary source. APIC mode disables HPET legacy replacement and masks PIC IRQ0. Fallback to PIT 18.2 Hz. `sleep_hint()` uses HPET counter. 320 kernel tests.
+17. **ASLR v1 (v0.44)** — PIE user binaries (ET_DYN) loaded at random slot base addresses via RDRAND/TSC entropy. `src/elf.rs`: `load_offset` parameter, RELA relocation support (R_X86_64_RELATIVE). `src/arch/x64/paging.rs`: ASLR-aware slot allocator. All 30+ user binaries compiled as PIE (`. = 0`, `-pie`, `relocation-model=pie`). 520 kernel tests (+5 PIE-specific ELF tests).
 
 ### Storage
 17. **P1. Default file permissions by context** — `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD según extensión.
@@ -164,15 +165,18 @@
 125. **NT6.2. ACL/ACE on objects** — `src/security/acl.rs`: Añade descriptors de seguridad a cada objeto del namespace. Define `Ace` (allow/deny, access_mask, SID), `Acl`, `SecurityDescriptor`. Tests: `acl_deny_access`, `acl_allow_access`, `acl_inherit_parent`.
 126. **NT6.3. Access check on open** — `src/security/access.rs`: `se_access_check()` compara token SID contra DACL del SD con admin bypass. Tests: `se_access_check_deny`, `se_access_check_allow`, `se_access_check_admin_override`.
 127. **NT6.4. Admin vs user token** — `src/security/token.rs`: Separa tokens de sistema y usuario. Syscall 50 requiere admin. 12 tests de seguridad integrados.
-128. **NT5.5 Z2. Unified resource namespace (URN)** — `src/urn/mod.rs`: Abstracción sobre NT5 Ob que unifica acceso a recursos heterogéneos bajo esquema `neodos://<scheme>/<path>`. Soporta `device` (ObNamespace), `file` (VFS), `registry`/`kobj` (stubs). API: `urn_open()`, `urn_read()`, `urn_write()`, `urn_seek()`. 11 tests.
+128. **NT5.5 Z2. Unified resource namespace (URN) — OB-025 rewrite** — `src/urn/mod.rs`: URN rewrite completo como frontend de Ob. Todos los schemes (`file`, `device`, `registry`, `kobj`) se resuelven mediante `ob_open_path()` en el namespace Ob. `UrnHandle` simplificado a wrapper sobre kernel fd (handle table index). `urn_read`/`urn_write` operan via handle table con VFS. Tests: 15 (8 parse + 2 open error + 1 roundtrip + 3 OB-025 scheme mapping + 1 OB-018 Ob integration).
 129. **NT5.6 Z3. Virtual FS objects (K:\ drive)** — `src/vfs/kdrive.rs`: Drive virtual K:\ que expone objetos NT5 internos como archivos de solo lectura via VFS. Directorios: Processes, Drivers, Memory, Interrupts. 12 tests.
 130. **A2.1. MMIO ECAM PCI config space** — `src/hal/pci.rs`, `src/drivers/pci.rs`: ECAM-based PCI config space access via MMIO from ACPI MCFG table. Auto-selects ECAM or legacy PIO fallback. Tests: 5.
 131. **A2.2. IOAPIC + MSI-X como modelo primario** — `src/interrupts/ioapic.rs`, `src/interrupts/msi.rs`: I/O APIC detected from MADT, replaces legacy PIC. MSI-X per-entry table programming. IOAPIC init at PHASE 2.91. Tests: 5.
 132. **B4.4 B2. ANSI terminal** — `userbin/neoshell/`, framebuffer driver: Emulador de terminal ANSI básico en framebuffer. Interpreta secuencias de escape: color, clear screen, cursor position. Tests: `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
 133. **v0.40 — Buddy bitmap dinámico, User window 32MB, Static buffers→heap** — `src/memory/buddy.rs`: bitmap dinámico (>4GB RAM) en vez de `[u64; 16384]`. `src/arch/x64/paging.rs`, `src/scheduler/address_space.rs`, `src/memory/layout.rs`: user window 4MB→32MB (0x400000..0x2400000), kernel heap reubicado (0x2400000). `kernel.ld`: kernel movido a 0x4000000 (64MB). `src/drivers/boot_ahci.rs`: búferes AHCI heap-allocados. `src/main.rs`: CMD_BUF/BIN_BUF heap-allocados. 479 tests.
 134. **v0.41 — Slab&lt;T&gt; contenedor, Scheduler Vec, Pipe buffers dinámicos, ObObjectTable** — `src/slab_container.rs`: Generic Slab&lt;T&gt; contenedor con insert/get/remove. `src/scheduler/mod.rs`: eprocesses/kthreads migrados a Vec dinámico. `src/pipe.rs`: Pipe buffers Box&lt;[u8; 4096]&gt; heap-allocados, MAX_PIPES=16. `src/object/mod.rs`: ObObjectTable base, init_object_manager en boot Phase 2.759, 10 tests. HandleEntry con object_id field. KOBJ delegado en ObObjectTable. 487 tests.
-135. **v0.42 — Unified Wait Engine (KWait), ABI Freeze, HandleEntry full Ob integration** — `src/kwait/mod.rs`: KWait engine con WaitReason (7 variantes: PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable), `kwait_block()`/`kwait_wake()` unified API, 10 tests. `src/abi_freeze.rs`: Verify frozen event types 0–15, capability flags bits 0–11, IOAPIC API, 4 tests. `src/handle.rs`: Todos los constructores crean objetos Ob via `ob_create_object()`, nuevo método `close()` llama `ob_close_object()`, helper methods `is_open()`/`is_pipe()`/etc. Marcas FROZEN v0.42 en eventbus, caps, ioapic. ABI freeze validation en boot Phase 3.9. 501 tests.
-136. **A3.3. Watchdog subsystem** — `src/watchdog/mod.rs`: Software watchdog basado en HPET. `watchdog_pet()` desde timer tick (1 KHz). 5s timeout → crash dump con CAUSE_WATCHDOG, EVENT_NMI_WATCHDOG, reset. Re-entry guard MAX_NMI_RECOVERIES=3. 5 tests.
+135. **v0.42 — Unified Wait Engine (KWait), ABI Freeze, HandleEntry full Ob integration** — `src/kwait/mod.rs`: KWait engine con WaitReason (7 variantes: PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable), `kwait_block()`/`kwait_wake()` unified API, 10 tests. `src/abi_freeze.rs`: Verify frozen event types 0–15, capability flags bits 0–11, IOAPIC API, 4 tests. `src/handle.rs`: Todos los constructores crean objetos Ob via `ob_create_object()`, nuevo método `close()` llama `ob_close_object()`, helper methods `is_open()`/`is_pipe()`/etc. Marcas FROZEN v0.42 en eventbus, caps, ioapic. ABI freeze validation en boot Phase 3.9. 509 tests.
+136. **v0.43 — SeAccessCheck NT-compatible (ACE order NT-correct)** — `src/security/access.rs`: NT-correct `check_dacl()` evalua primero todos los Deny ACEs, luego todos los Allow ACEs (two-pass). `src/security/acl.rs`: `insert_ace_canonical()` mantiene orden canónico (deny first, allow second). 3 tests nuevos: `se_deny_first_allow_after_deny`, `se_deny_first_mixed_aces`, `se_insert_ace_canonical`. 509 tests.
+137. **v0.43 — sys_poll() (RAX=59)** — `src/syscall/mod.rs`: Nuevo handler `handler_poll()` con PollFd struct (fd, events, revents). POLLIN/POLLOUT/POLLHUP/POLLERR flags. Soporta stdin, stdout/stderr, pipe read/write, files, dirs. `src/pipe.rs`: 3 nuevas funciones públicas `pipe_peek_read_ready()`, `pipe_peek_write_closed()`, `pipe_peek_read_closed()` para poll sin bloqueo. SSDT slot 59, permission user-level.
+138. **v0.43 — Pipe/IRP protocol freeze** — `src/pipe.rs`: Doc comment con FROZEN ABI v0.43, protocol invariants documentados (read EOF semantics, EPIPE, inc_ref/dec_ref balance, blocking magic 0xFFFF_0000). `src/irp/mod.rs`: Doc comment con FROZEN ABI v0.43, protocol invariants (IRP ID global, pool index id%64, irp_get_params lock discipline, chain semantics).
+139. **A3.3. Watchdog subsystem** — `src/watchdog/mod.rs`: Software watchdog basado en HPET. `watchdog_pet()` desde timer tick (1 KHz). 5s timeout → crash dump con CAUSE_WATCHDOG, EVENT_NMI_WATCHDOG, reset. Re-entry guard MAX_NMI_RECOVERIES=3. 5 tests.
 137. **A3.4. SEH + exception dispatcher** — `src/exception/mod.rs`: Mecanismo unificado `exception_dispatch()` para Ring 0 (crash dump+panic) vs Ring 3 (TEB exception handler chain). TEB en 0x7000 con `Teb { teb_self, pid, tid, exception_list }`. sys_set_exception_handler (RAX=29). 5 tests.
 138. **B4.2. Shell pipes (`|`)** — `userbin/neoshell/`: pipelines de hasta 16 comandos con pipes nativos vía `sys_pipe` + `sys_dup2` + `sys_spawn`. PipeManager con 16 buffers × 4 KB, blocking reads.
 139. **B9.1. HELP → corehelp.nxe** — Ring 0 HELP reducido a stub, `corehelp.nxe` escanea `C:\Programs\*.NXE` buscando marcadores `::HELP::`.
@@ -200,8 +204,8 @@
 
 Orden de implementación dentro de la fase:
 
-1. **v0.43** — SeAccessCheck NT-compatible (completar con ACE order NT-correct), sys_poll(), Congelar pipe/IRP protocols
-2. **v0.44** — ASLR v1 (base aleatoria), FileSystem trait freeze, Registry v1 (B2.1)
+1. ~~**v0.43** — SeAccessCheck NT-compatible, sys_poll(), Congelar pipe/IRP protocols~~ **COMPLETADO**
+2. ~~**v0.44** — ASLR v1 (base aleatoria)~~ **COMPLETADO**, FileSystem trait freeze, Registry v1 (B2.1)
 3. **v0.45** — Device Tree + Resource Manager, Driver state machine freeze
 
 > **Regla:** No se pasa a la Fase 2 hasta que v0.45 esté completo y todos los tests pasen.
@@ -212,7 +216,7 @@ Orden de implementación dentro de la fase:
 
 * [ ] **CQ1. Reorganizar libneodos-nxl en módulos separados** | Prereqs: — | Files: `libneodos-nxl/src/main.rs` → `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
   - **Descripción:** Dividir `libneodos-nxl/src/main.rs` (461 líneas monolíticas) en 7+ módulos separados. Cada módulo agrupa funciones por dominio: `syscall.rs` (raw `int 0x80` wrappers), `io.rs` (stdout/stderr/stdin, _print, _eprint), `fs.rs` (file_open/read/write + sys_mkdir/unlink/rmdir/rename), `process.rs` (pipe/dup2/waitpid/spawn/readdir/chdir/getcwd), `mem.rs` (brk/sbrk/mmap/munmap), `info.rs` (get_version/datetime/meminfo/cpuinfo), `error.rs` (consts + ret helper). `main.rs` solo mantiene `nxl_entry`, el `AbiTable` struct, `EXPORT_TABLE` static, y `nxl_panic`. Zero cambios en ABI: el NXL binario resultante es idéntico, .export_table en offset 0 con mismos valores. No requiere recompilar user binaries ni cambiar kernel/libneodos/build.
-  - **Criterio:** `sha256sum` del NXL antes/después idéntica. 501 kernel tests + 27 user binaries funcionan sin cambios.
+  - **Criterio:** `sha256sum` del NXL antes/después idéntica. 509 kernel tests + 27 user binaries funcionan sin cambios.
   - **Tests:** Ninguno nuevo (el binario es idéntico).
 
 ---
@@ -226,7 +230,7 @@ Orden de implementación dentro de la fase:
 2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1–B3.2)
 3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, AHCI NCQ (A5.3), DHCP (B3.3)
 4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
-5. **v0.50** — **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**, Namespace por proceso (chroot-lite), Symlinks en VFS, Audit trail SACL, Shell pipes (B4.2), Redirection (B4.3), VT (B4.5), URN rewrite como frontend de Ob
+5. **v0.50** — **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**, Namespace por proceso (chroot-lite), Symlinks en VFS, Audit trail SACL, Shell pipes (B4.2), Redirection (B4.3), VT (B4.5)
 
 ---
 

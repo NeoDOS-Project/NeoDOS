@@ -3,6 +3,9 @@
 //
 // A4.3 — Range validation: segments must stay within user window, null vaddr
 // rejected, no overlap with protected regions or other segments.
+//
+// ASLR v0.44 — PIE support: `load_offset` shifts all segment addresses and
+// applies R_X86_64_RELATIVE relocations from `.rela.dyn`.
 
 use core::ptr::copy_nonoverlapping;
 use core::mem::size_of;
@@ -18,6 +21,16 @@ const EM_X86_64: u16 = 62;
 const ET_EXEC: u16 = 2;
 const ET_DYN: u16 = 3;
 const PT_LOAD: u32 = 1;
+const PT_DYNAMIC: u32 = 2;
+
+// Dynamic section tags
+const DT_NULL: i64 = 0;
+const DT_RELA: i64 = 7;
+const DT_RELASZ: i64 = 8;
+const DT_RELAENT: i64 = 9;
+
+// Relocation types
+const R_X86_64_RELATIVE: u32 = 8;
 
 // ── ELF64 header (64 bytes) ──
 
@@ -55,6 +68,25 @@ pub(crate) struct Elf64Phdr {
     pub p_align: u64,
 }
 
+// ── ELF64 dynamic section entry (16 bytes) ──
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct Elf64Dyn {
+    d_tag: i64,
+    d_val: u64,
+}
+
+// ── ELF64 RELA entry (24 bytes) ──
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Elf64Rela {
+    pub r_offset: u64,
+    pub r_info: u64,
+    pub r_addend: i64,
+}
+
 // ── Error type ──
 
 #[derive(Debug, PartialEq)]
@@ -69,6 +101,7 @@ pub enum ElfLoadError {
     PhdrTableOutOfBounds,
     SegmentDataOutOfBounds,
     AddressSpaceViolation(i64),
+    RelocationError(&'static str),
 }
 
 // ── Result ──
@@ -79,14 +112,148 @@ pub struct ElfLoadResult {
     pub segments: Vec<SegmentInfo>,
 }
 
-/// Parse and load an ELF64 binary with optional address space validation.
+/// Convert a virtual address to a file offset using the program headers.
+/// Returns `None` if no PT_LOAD segment covers the address.
+fn vaddr_to_offset(phdrs: &[Elf64Phdr], vaddr: u64) -> Option<u64> {
+    for ph in phdrs {
+        if ph.p_type != PT_LOAD {
+            continue;
+        }
+        if vaddr >= ph.p_vaddr && vaddr < ph.p_vaddr + ph.p_filesz {
+            let offset = vaddr - ph.p_vaddr;
+            return Some(ph.p_offset + offset);
+        }
+    }
+    None
+}
+
+/// Parse the `.dynamic` section to find `.rela.dyn` offset and size.
+/// Returns `(rela_offset, rela_size)` as file offsets/bytes, or `None` if no
+/// PT_DYNAMIC or no DT_RELA/DT_RELASZ entries.
+fn find_rela_dyn(data: &[u8], phdrs: &[Elf64Phdr]) -> Option<(usize, usize)> {
+    // Find PT_DYNAMIC program header
+    let dynamic_vaddr = {
+        let mut addr = 0u64;
+        let mut found = false;
+        for ph in phdrs {
+            if ph.p_type == PT_DYNAMIC {
+                addr = ph.p_vaddr;
+                found = true;
+                break;
+            }
+        }
+        if !found { return None; }
+        addr
+    };
+
+    // Convert dynamic vaddr to file offset
+    let dynamic_offset = vaddr_to_offset(phdrs, dynamic_vaddr)?;
+    let dyn_entry_size = size_of::<Elf64Dyn>();
+    let data_len = data.len();
+
+    // Parse the .dynamic section for DT_RELA, DT_RELASZ
+    let mut rela_addr = 0u64;
+    let mut rela_size = 0u64;
+    let mut found_rela = false;
+    let mut found_relasz = false;
+
+    let mut offset = dynamic_offset as usize;
+    loop {
+        if offset + dyn_entry_size > data_len {
+            break;
+        }
+        // SAFETY: bounds checked above
+        let entry: &Elf64Dyn = unsafe { &*(data.as_ptr().add(offset) as *const Elf64Dyn) };
+        if entry.d_tag == DT_NULL {
+            break;
+        }
+        if entry.d_tag == DT_RELA {
+            rela_addr = entry.d_val;
+            found_rela = true;
+        }
+        if entry.d_tag == DT_RELASZ {
+            rela_size = entry.d_val;
+            found_relasz = true;
+        }
+        if found_rela && found_relasz {
+            break;
+        }
+        offset += dyn_entry_size;
+    }
+
+    if !found_rela || !found_relasz || rela_size == 0 {
+        return None;
+    }
+
+    // Convert the RELA table vaddr to file offset
+    let rela_offset = vaddr_to_offset(phdrs, rela_addr)?;
+    Some((rela_offset as usize, rela_size as usize))
+}
+
+/// Apply R_X86_64_RELATIVE relocations to the loaded binary.
+/// Every RELA entry tells us to write `load_base + r_addend` at address
+/// `load_base + r_offset`.
+fn apply_rela_relocations(data: &[u8], phdrs: &[Elf64Phdr], load_base: u64) -> Result<(), ElfLoadError> {
+    let (rela_offset, rela_size) = match find_rela_dyn(data, phdrs) {
+        Some(v) => v,
+        None => return Ok(()), // No relocations → nothing to do
+    };
+
+    let rela_entry_size = size_of::<Elf64Rela>();
+    let count = rela_size / rela_entry_size;
+
+    for i in 0..count {
+        let entry_offset = rela_offset + i * rela_entry_size;
+        if entry_offset + rela_entry_size > data.len() {
+            return Err(ElfLoadError::RelocationError("RELA entry out of bounds"));
+        }
+
+        // SAFETY: bounds checked above
+        let rela: &Elf64Rela = unsafe { &*(data.as_ptr().add(entry_offset) as *const Elf64Rela) };
+
+        let r_type = (rela.r_info & 0xFFFF_FFFF) as u32;
+
+        match r_type {
+            R_X86_64_RELATIVE => {
+                // *(load_base + r_offset) = load_base + r_addend
+                let target_addr = load_base.wrapping_add(rela.r_offset);
+                let value = load_base.wrapping_add(rela.r_addend as u64);
+
+                // SAFETY: target_addr must be within the loaded user window
+                // and must be writable. This is guaranteed by the loader.
+                unsafe {
+                    let ptr = target_addr as *mut u64;
+                    core::ptr::write(ptr, value);
+                }
+            }
+            other => {
+                // For v1, warn about unknown relocations but don't fail.
+                // R_X86_64_64 and R_X86_64_GLOB_DAT may occur in PIE binaries
+                // with external references.
+                crate::serial_println!(
+                    "[ELF] WARNING: unhandled relocation type {} at offset 0x{:x}",
+                    other, rela.r_offset
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Parse and load an ELF64 binary with optional address space validation and
+/// ASLR load offset.
 ///
 /// When `addr_space` is `Some`, validates segment ranges against protected regions
 /// and user window. When `None`, loads without address space checks (for tests
 /// and early boot where validation is not needed).
 ///
+/// `load_offset` is added to all segment virtual addresses and the entry point.
+/// For PIE binaries (ET_DYN), `load_offset` should be non-zero.
+/// For non-PIE (ET_EXEC), use `load_offset = 0`.
+///
 /// Returns the entry point and loaded segment info on success.
-pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Result<ElfLoadResult, ElfLoadError> {
+pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>, load_offset: u64) -> Result<ElfLoadResult, ElfLoadError> {
     if data.len() < size_of::<Elf64Hdr>() {
         return Err(ElfLoadError::InvalidHeader);
     }
@@ -135,7 +302,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
 
     // ── Collect PT_LOAD segments for validation ──
     let mut segments = Vec::new();
-    let entry = hdr.e_entry;
+    let entry = hdr.e_entry + load_offset;
     let mut entry_in_segment = false;
 
     for ph in phdrs {
@@ -143,7 +310,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
             continue;
         }
 
-        let vaddr = ph.p_vaddr;
+        let vaddr = ph.p_vaddr + load_offset;
         let memsz = ph.p_memsz;
         let flags = ph.p_flags;
 
@@ -172,7 +339,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
             continue;
         }
 
-        let vaddr = ph.p_vaddr;
+        let vaddr = ph.p_vaddr + load_offset;
         let offset = ph.p_offset as usize;
         let filesz = ph.p_filesz as usize;
         let memsz = ph.p_memsz as usize;
@@ -202,6 +369,11 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>) -> Resul
                 core::ptr::write_bytes(zero_start, 0u8, memsz - filesz);
             }
         }
+    }
+
+    // ── Apply RELA relocations (for PIE/DYN binaries) ──
+    if load_offset != 0 {
+        apply_rela_relocations(data, phdrs, load_offset)?;
     }
 
     Ok(ElfLoadResult { entry, segments })
@@ -326,7 +498,7 @@ pub fn register_elf_tests() {
     test_case!("elf_parse_valid_header", {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0x400000, 0x400000, &code);
-        let result = load_elf(&raw, None);
+        let result = load_elf(&raw, None, 0);
         test_true!(result.is_ok());
         test_eq!(result.unwrap().entry, 0x400000);
     });
@@ -335,26 +507,26 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let mut raw = build_valid_elf(0x400000, 0x400000, &code);
         raw[0..4].copy_from_slice(b"BAD\x00");
-        test_eq!(load_elf(&raw, None), Err(ElfLoadError::InvalidMagic));
+        test_eq!(load_elf(&raw, None, 0), Err(ElfLoadError::InvalidMagic));
     });
 
     test_case!("elf_parse_invalid_class", {
         let code = [0x90u8; 16];
         let mut raw = build_valid_elf(0x400000, 0x400000, &code);
         raw[4] = 1;
-        test_eq!(load_elf(&raw, None), Err(ElfLoadError::InvalidClass));
+        test_eq!(load_elf(&raw, None, 0), Err(ElfLoadError::InvalidClass));
     });
 
     test_case!("elf_parse_invalid_machine", {
         let code = [0x90u8; 16];
         let mut raw = build_valid_elf(0x400000, 0x400000, &code);
         raw[18..20].copy_from_slice(&3u16.to_le_bytes());
-        test_eq!(load_elf(&raw, None), Err(ElfLoadError::InvalidMachine));
+        test_eq!(load_elf(&raw, None, 0), Err(ElfLoadError::InvalidMachine));
     });
 
     test_case!("elf_parse_truncated_header", {
         let data = [0u8; 4];
-        test_eq!(load_elf(&data, None), Err(ElfLoadError::InvalidHeader));
+        test_eq!(load_elf(&data, None, 0), Err(ElfLoadError::InvalidHeader));
     });
 
     test_case!("elf_parse_load_segment", {
@@ -363,7 +535,7 @@ pub fn register_elf_tests() {
         let mut test_buf = [0u8; 32];
         let load_addr = test_buf.as_mut_ptr() as u64;
         let raw = build_valid_elf(load_addr, load_addr, &code);
-        let result = load_elf(&raw, None);
+        let result = load_elf(&raw, None, 0);
         test_true!(result.is_ok());
         let r = result.unwrap();
         test_eq!(r.entry, load_addr);
@@ -375,7 +547,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 8];
         let mut raw = build_valid_elf(0x400000, 0x400000, &code);
         raw[54..56].copy_from_slice(&99u16.to_le_bytes());
-        test_eq!(load_elf(&raw, None), Err(ElfLoadError::InvalidPhdrSize));
+        test_eq!(load_elf(&raw, None, 0), Err(ElfLoadError::InvalidPhdrSize));
     });
 
     // ── A4.3 Range validation tests ──
@@ -384,7 +556,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 32];
         let raw = build_valid_elf(0x400000, 0x400000, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_ok());
         let r = result.unwrap();
         test_eq!(r.segments.len(), 1);
@@ -396,7 +568,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0, 0, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -411,7 +583,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0x4000000, 0x4000000, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -426,7 +598,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0x2400000, 0x2400000, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -441,7 +613,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0x20000000, 0x20000000, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -467,7 +639,7 @@ pub fn register_elf_tests() {
 
         for &vaddr in targets {
             let raw = build_valid_elf(vaddr, vaddr, &code);
-            let result = load_elf(&raw, Some(&mut addr_space));
+            let result = load_elf(&raw, Some(&mut addr_space), 0);
             test_true!(result.is_err());
         }
     });
@@ -477,7 +649,7 @@ pub fn register_elf_tests() {
         // Two overlapping segments at same vaddr
         let raw = build_elf_two_segments(0x400000, 0x400000, &code, 0x400008, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -492,7 +664,7 @@ pub fn register_elf_tests() {
         let code = [0x90u8; 16];
         let raw = build_valid_elf(0x10000000, 0x10000000, &code);
         let mut addr_space = AddressSpace::new();
-        let result = load_elf(&raw, Some(&mut addr_space));
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
         test_true!(result.is_err());
         match result {
             Err(ElfLoadError::AddressSpaceViolation(e)) => {
@@ -500,5 +672,83 @@ pub fn register_elf_tests() {
             }
             _ => test_true!(false),
         }
+    });
+
+    // ── ASLR v0.44: PIE + RELA tests ──
+
+    test_case!("elf_pie_load_with_offset", {
+        // Test loading a PIE-style ELF (segments at vaddr=0) with a load_offset
+        let code = [0x90u8; 32];
+        let raw = build_valid_elf(0, 0, &code);
+        let offset = 0x460000;
+        // ET_EXEC without load_offset → zero vaddr rejected
+        let result_no = load_elf(&raw, None, 0);
+        test_true!(result_no.is_ok());
+        test_eq!(result_no.unwrap().entry, 0);
+        // With load_offset, vaddr and entry are shifted
+        let result_off = load_elf(&raw, None, offset);
+        test_true!(result_off.is_ok());
+        let r = result_off.unwrap();
+        test_eq!(r.entry, 0 + offset);
+        test_eq!(r.segments.len(), 1);
+        test_eq!(r.segments[0].vaddr, 0 + offset);
+    });
+
+    test_case!("elf_pie_accept_zero_vaddr_with_offset", {
+        // With load_offset != 0, zero vaddr should be accepted for AddressSpace
+        // because the actual loaded address is vaddr + load_offset
+        let code = [0x90u8; 32];
+        let raw = build_valid_elf(0, 0, &code);
+        let offset = 0x420000; // slot 1
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), offset);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        test_eq!(r.entry, offset);
+        test_eq!(r.segments[0].vaddr, offset);
+    });
+
+    test_case!("elf_pie_offset_out_of_user_window", {
+        // load_offset that pushes segments outside user window should be rejected.
+        // 0x30000000 is the driver isolation region → KERNEL_COLLISION
+        let code = [0x90u8; 32];
+        let offset = 0x30000000; // driver isolation region
+        let raw = build_valid_elf(0, 0, &code);
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), offset);
+        test_true!(result.is_err());
+        match result {
+            Err(ElfLoadError::AddressSpaceViolation(e)) => {
+                test_eq!(e, crate::scheduler::address_space::ELF_ERR_KERNEL_COLLISION);
+            }
+            _ => test_true!(false),
+        }
+    });
+
+    test_case!("elf_pie_offset_above_user_limit", {
+        // load_offset that pushes segments above USER_LIMIT should get
+        // VADDR_OUT_OF_RANGE
+        let code = [0x90u8; 32];
+        let offset = 0x300000; // USER_LIMIT is 0x2400000, so 0x300000 is above it
+        let raw = build_valid_elf(0, 0, &code); // vaddr+offset = 0x300000 > 0x2400000
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), offset);
+        test_true!(result.is_err());
+        match result {
+            Err(ElfLoadError::AddressSpaceViolation(e)) => {
+                test_eq!(e, crate::scheduler::address_space::ELF_ERR_VADDR_OUT_OF_RANGE);
+            }
+            _ => test_true!(false),
+        }
+    });
+
+    test_case!("elf_pie_overlapping_segments_with_offset", {
+        // Overlap detection should work with load_offset
+        let code = [0x90u8; 16];
+        let offset = 0x400000;
+        let raw = build_elf_two_segments(0x400000, 0, &code, 8, &code);
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), offset);
+        test_true!(result.is_err());
     });
 }

@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.44.0 — 2026-06-23
+
+### Added
+- **ASLR v1 (Address Space Layout Randomization)** — PIE user binaries (ET_DYN) loaded at random slot base addresses within the user window (0x400000..0x2400000, 32 slots × 128 KB).
+- **RDRAND entropy source** — `src/hal/raw/cpu.rs`: `raw_rdrand()` + `raw_has_rdrand()` inline asm. Safe wrapper `hal::rdrand()` with 10-retry loop and TSC fallback.
+- **PIE ELF loading** — `src/elf.rs`: `load_offset: u64` parameter on `load_elf()`, `Elf64Dyn`/`Elf64Rela` structs, `find_rela_dyn()`/`apply_rela_relocations()` helpers, `R_X86_64_RELATIVE` relocation support (3 entries in neoshell binary).
+- **ASLR slot allocator** — `src/arch/x64/paging.rs`: `alloc_user_slot()` picks random free slot via RDRAND/TSC, `free_user_slot()` for error cleanup.
+- **PIE user binaries** — All 30+ user binaries compiled as position-independent (`. = 0` in linker script, `relocation-model=pie`, `-pie` flag). `user.ld` base address changed from 0x400000 to 0.
+- **Per-slot process loading** — NeoInit and `handler_spawn` allocate random slots; no save/restore needed (each process lives in its own slot).
+- **5 new ELF tests** — 4 PIE-specific (load with offset, accept zero vaddr with offset, offset out of user window, overlapping segments with offset) + 1 additional coverage.
+
+### Changed
+- **ELF loader** — `load_elf()` now takes `load_offset: u64` parameter (backward compatible, existing callers pass 0).
+- **User window slot allocation** — `alloc_user_slot()` uses RDRAND (entropy) with TSC fallback instead of first-fit sequential.
+- **Shell `spawn` flow** — `handler_spawn` allocates slot before loading, passes `slot.code_base` as load_offset, applies RELA relocations at load time.
+- **Cmdtest loading** — `main.rs` loads cmdtest via slot instead of raw offset 0, fixing PIE loading for user-mode tests.
+
+### ABI Notes
+- ASLR v1 uses shared identity-mapped page table (single CR3) — no per-process page tables in v1.
+- User window: 0x400000..0x2400000 (32 MB), 32 slots of 128 KB each (64 KB code + 64 KB stack).
+- Heap slots extend from 0x10000000 (16 × 2 MB), unchanged.
+
+---
+
+## v0.43.0 — 2026-06-23
+
+### Added
+- **SeAccessCheck NT-compatible (ACE order NT-correct)** — `src/security/access.rs`: `check_dacl()` two-pass: Deny ACEs evaluated first, Allow ACEs second. `src/security/acl.rs`: `insert_ace_canonical()` maintains canonical deny-first order. 3 new tests.
+- **sys_poll (RAX=59)** — `handler_poll()` with PollFd struct (fd, events, revents). POLLIN/POLLOUT/POLLHUP/POLLERR. Supports stdin, stdout/stderr, pipes, files, dirs. User-level syscall.
+- **Pipe/IRP protocol freeze** — FROZEN ABI v0.43 markers in `pipe.rs` and `irp/mod.rs` with documented protocol invariants.
+- **Pipe poll helpers** — `pipe_peek_read_ready()`, `pipe_peek_write_closed()`, `pipe_peek_read_closed()` public functions for non-blocking pipe state inspection.
+- **509 kernel tests** (+8 from v0.42: 3 security, 5 frozen ABI).
+
+### Changed
+- **SeAccessCheck**: ACE iteration now NT-correct — all Deny ACEs processed first regardless of position in ACL.
+
+### ABI Freeze (v0.43)
+- Pipe protocol: alloc/read/write/refcount/blocking magic (0xFFFF_0000)
+- IRP protocol: pool (64 slots), completion/dispatch/blocking magic (0xAAAA_0000)
+- Driver error codes (12 existing codes frozen)
+- Pipe refcount protocol (dup2/close behavior)
+
+---
+
 ## v0.42.0 — 2026-06-22
 
 ### Added

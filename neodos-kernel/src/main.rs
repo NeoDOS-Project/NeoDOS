@@ -438,44 +438,44 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ── Run user-mode command tests (cmdtest.nxe) ──
     {
         println!("[CMDTEST] Loading cmdtest.nxe...");
-        let saved_entry = {
-            let mut cmd_buf = alloc::vec![0u8; 65536];
-            let mut entry: u64 = 0;
-            let mut loaded = false;
-            crate::globals::with_vfs(|vfs| {
-                if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
-                    if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                    let size = match vfs.read(drive_idx, node.inode, 0, &mut cmd_buf) {
-                        Ok(n) => n,
-                        Err(_) => 0,
-                    };
-                    if size >= 4 {
-                        let data = &cmd_buf[..size];
-                        match elf::load_elf(data, None) {
-                            Ok(r) => {
-                                entry = r.entry;
-                                loaded = true;
-                            }
-                            Err(err) => {
-                                println!("[CMDTEST] ELF load failed: {:?}", err);
-                            }
-                        }
-                    }
-                } else {
-                    println!("[CMDTEST] cmdtest.nxe not found, skipping");
+        let mut cmd_buf = alloc::vec![0u8; 65536];
+        let mut bin_size = 0usize;
+        let mut file_loaded = false;
+        crate::globals::with_vfs(|vfs| {
+            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
+                if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
+                let size = match vfs.read(drive_idx, node.inode, 0, &mut cmd_buf) {
+                    Ok(n) => n,
+                    Err(_) => 0,
+                };
+                if size >= 4 {
+                    bin_size = size;
+                    file_loaded = true;
                 }
-            });
-            (entry, loaded)
-        };
-        if saved_entry.1 {
+            } else {
+                println!("[CMDTEST] cmdtest.nxe not found, skipping");
+            }
+        });
+        if file_loaded {
             if let Some(slot) = arch::x64::paging::alloc_user_slot() {
-                let pid = usermode::spawn_usermode(
-                    saved_entry.0, slot.stack_top, slot.slot_idx, 2, "\\", 0,
-                );
-                println!("[CMDTEST] PID {} entered", pid);
-                usermode::wait_for_process(pid);
-                println!("[CMDTEST] PID {} exited, cleaning up", pid);
-                scheduler::cleanup_terminated_process(pid);
+                let data = &cmd_buf[..bin_size];
+                let entry = match elf::load_elf(data, None, slot.code_base) {
+                    Ok(r) => r.entry,
+                    Err(err) => {
+                        println!("[CMDTEST] ELF load failed: {:?}", err);
+                        arch::x64::paging::free_user_slot(slot.slot_idx);
+                        0
+                    }
+                };
+                if entry != 0 {
+                    let pid = usermode::spawn_usermode(
+                        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+                    );
+                    println!("[CMDTEST] PID {} entered", pid);
+                    usermode::wait_for_process(pid);
+                    println!("[CMDTEST] PID {} exited, cleaning up", pid);
+                    scheduler::cleanup_terminated_process(pid);
+                }
             } else {
                 println!("[CMDTEST] no free user slot, skipping");
             }
@@ -511,6 +511,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // NeoInit's code and returns, and NeoInit respawns the shell.
     println!("[+] Loading NeoInit (PID 1, Ring 3)...");
 
+    // Allocate random slot first (ASLR v0.44)
+    let slot = match arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => {
+            panic!("No free user slots for NeoInit.");
+        }
+    };
+    crate::serial_println!("[NEOINIT] allocated slot {} at code_base=0x{:x}",
+        slot.slot_idx, slot.code_base);
+
     let mut addr_space = scheduler::address_space::AddressSpace::new();
     let (entry, loaded) = {
         let mut bin_buf = alloc::vec![0u8; 65536];
@@ -535,7 +545,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                     return;
                 }
                 let data = &bin_buf[..size];
-                match elf::load_elf(data, Some(&mut addr_space)) {
+                match elf::load_elf(data, Some(&mut addr_space), slot.code_base) {
                     Ok(r) => {
                         entry = r.entry;
                         loaded = true;
@@ -555,13 +565,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     if !loaded {
         panic!("NEOINIT.NXE not found or invalid. Ring 3 shell required.");
     }
-
-    let slot = match arch::x64::paging::alloc_user_slot() {
-        Some(s) => s,
-        None => {
-            panic!("No free user slots for NeoInit.");
-        }
-    };
 
     let pid = usermode::spawn_usermode(
         entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,

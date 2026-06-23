@@ -831,3 +831,199 @@ pub fn sys_kobj_enum(buf: &mut [KObjEntryRaw]) -> Result<usize, i64> {
     }
     ret(r).map(|v| v as usize)
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// Object Manager (Ob) — RAX 60–64
+// ═══════════════════════════════════════════════════════════════════════
+
+/// ObAccess — access mask bits (matches kernel `ObAccess`)
+pub mod ob_access {
+    pub const READ: u32    = 1 << 0;
+    pub const WRITE: u32   = 1 << 1;
+    pub const EXECUTE: u32 = 1 << 2;
+    pub const DELETE: u32  = 1 << 3;
+    pub const ALL: u32     = READ | WRITE | EXECUTE | DELETE;
+}
+
+/// ObInfoClass — info classes for sys_ob_query_info (RAX=62).
+#[repr(u32)]
+pub enum ObInfoClass {
+    Basic = 0,
+    Name = 1,
+    File = 2,
+    Process = 3,
+    Thread = 4,
+    Pipe = 5,
+    Device = 6,
+}
+
+/// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
+#[repr(C)]
+pub struct ObBasicInfo {
+    pub obj_type: u32,
+    pub refcount: u32,
+    pub name: [u8; 32],
+}
+
+impl ObBasicInfo {
+    pub fn name_str(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(32);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
+    }
+}
+
+/// ObEnumEntry — ABI-compatible with kernel's ObEnumEntry (RAX=64).
+#[repr(C)]
+pub struct ObEnumEntry {
+    pub id: u64,
+    pub obj_type: u32,
+    pub name: [u8; 32],
+}
+
+impl ObEnumEntry {
+    pub fn name_str(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(32);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
+    }
+}
+
+/// sys_ob_open (RAX=60): open an Ob namespace object.
+/// path = Ob namespace path, e.g. "\\Driver\\ps2kbd"
+/// access_mask = bitmask from ob_access module
+/// Returns fd (≥ 3) on success.
+pub fn sys_ob_open(path: &str, access_mask: u32) -> Result<u8, i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx", "push rcx",
+            "mov rax, 60",
+            "mov rbx, {ptr}",
+            "mov rcx, {access}",
+            "int 0x80",
+            "pop rcx", "pop rbx",
+            ptr = in(reg) ptr as u64,
+            access = in(reg) access_mask as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as u8)
+}
+
+/// sys_ob_create (RAX=61): create an object and register it in the namespace.
+/// obj_type: 4=Pipe, 11=Directory, 13=Event
+/// For Pipe: fds_out receives [reader_fd, writer_fd]
+/// Returns fd on success.
+pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>) -> Result<u8, i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr();
+    let fds_ptr = match fds_out {
+        Some(f) => f.as_mut_ptr() as u64,
+        None => 0u64,
+    };
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx", "push rcx", "push rdx", "push r8",
+            "mov rax, 61",
+            "mov rbx, {ptr}",
+            "mov rcx, {ty}",
+            "mov rdx, {fds}",
+            "mov r8, 0",
+            "int 0x80",
+            "pop r8", "pop rdx", "pop rcx", "pop rbx",
+            ptr = in(reg) ptr as u64,
+            ty = in(reg) obj_type as u64,
+            fds = in(reg) fds_ptr,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as u8)
+}
+
+/// sys_ob_query_info (RAX=62): query metadata for an object by fd.
+/// Returns bytes written on success.
+pub fn sys_ob_query_info(fd: u8, info_class: ObInfoClass, buf: &mut [u8]) -> Result<usize, i64> {
+    let ptr = buf.as_mut_ptr();
+    let len = buf.len();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx", "push rcx", "push rdx", "push r8",
+            "mov rax, 62",
+            "mov rbx, {fd}",
+            "mov rcx, {cls}",
+            "mov rdx, {ptr}",
+            "mov r8, {len}",
+            "int 0x80",
+            "pop r8", "pop rdx", "pop rcx", "pop rbx",
+            fd = in(reg) fd as u64,
+            cls = in(reg) info_class as u64,
+            ptr = in(reg) ptr as u64,
+            len = in(reg) len as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as usize)
+}
+
+/// sys_ob_set_info (RAX=63): set metadata for an object by fd.
+pub fn sys_ob_set_info(fd: u8, info_class: u32, buf: &[u8]) -> Result<(), i64> {
+    let ptr = buf.as_ptr();
+    let len = buf.len();
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx", "push rcx", "push rdx", "push r8",
+            "mov rax, 63",
+            "mov rbx, {fd}",
+            "mov rcx, {cls}",
+            "mov rdx, {ptr}",
+            "mov r8, {len}",
+            "int 0x80",
+            "pop r8", "pop rdx", "pop rcx", "pop rbx",
+            fd = in(reg) fd as u64,
+            cls = in(reg) info_class as u64,
+            ptr = in(reg) ptr as u64,
+            len = in(reg) len as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.
+/// Returns count of entries written.
+pub fn sys_ob_enum(dir_fd: u8, entries: &mut [ObEnumEntry]) -> Result<usize, i64> {
+    let ptr = entries.as_mut_ptr() as *mut u8;
+    let max = entries.len() as u64;
+    let r: i64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx", "push rcx", "push rdx",
+            "mov rax, 64",
+            "mov rbx, {fd}",
+            "mov rcx, {ptr}",
+            "mov rdx, {max}",
+            "int 0x80",
+            "pop rdx", "pop rcx", "pop rbx",
+            fd = in(reg) dir_fd as u64,
+            ptr = in(reg) ptr as u64,
+            max = in(reg) max,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    ret(r).map(|v| v as usize)
+}

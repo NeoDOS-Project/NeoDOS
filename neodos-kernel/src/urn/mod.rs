@@ -1,10 +1,21 @@
+//! Unified Resource Namespace (URN) — OB-025
+//!
+//! All URN schemes are frontends to the Ob (Object Manager) namespace:
+//! - neodos://file/...        → resolves via VFS, backed by ObObject + handle table fd
+//! - neodos://device/...      → ob_open("\Device\...")
+//! - neodos://registry/...    → ob_open("\Registry\...")
+//! - neodos://kobj/...        → ob_open("\Ob\...")
+//!
+//! UrnHandle is a simple wrapper over a kernel fd (handle table index).
+
 use crate::test_case;
 use crate::test_eq;
 use crate::test_true;
 use alloc::string::String;
 use alloc::format;
 use crate::globals::with_vfs;
-use crate::kobj::namespace as ns;
+use crate::handle::HandleEntry;
+use crate::object::{self, ObType, ob_open_path, ob_lookup};
 
 const URN_PREFIX: &str = "neodos://";
 
@@ -49,39 +60,68 @@ impl Urn {
     }
 }
 
-/// A handle to an opened URN resource.
-#[derive(Debug, Clone)]
+/// URN handle — a simple wrapper over a kernel fd (handle table index).
+/// OB-025: Unified with Ob; all URN schemes resolve through Ob.
+#[derive(Debug, Clone, Copy)]
 pub struct UrnHandle {
-    pub scheme: UrnScheme,
-    pub drive: u8,
-    pub inode: u32,
-    pub offset: u64,
-    pub device_ob_path: String,
+    pub fd: u8,
 }
 
 impl UrnHandle {
-    fn new_file(drive: u8, inode: u32) -> Self {
-        UrnHandle {
-            scheme: UrnScheme::File,
-            drive,
-            inode,
-            offset: 0,
-            device_ob_path: String::new(),
-        }
-    }
-
-    fn new_device(path: &str) -> Self {
-        UrnHandle {
-            scheme: UrnScheme::Device,
-            drive: 0,
-            inode: 0,
-            offset: 0,
-            device_ob_path: String::from(path),
-        }
+    pub fn new(fd: u8) -> Self {
+        UrnHandle { fd }
     }
 }
 
-/// Parse a URN string into its scheme and path components.
+// ── Kernel-internal helpers ──
+
+fn current_token() -> crate::security::token::Token {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        lock.current_eprocess()
+            .map(|ep| ep.token)
+            .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+    })
+}
+
+fn alloc_handle(entry: HandleEntry) -> Result<u8, &'static str> {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        lock.current_eprocess_mut()
+            .and_then(|ep| ep.handle_table.alloc_handle(entry))
+    }).ok_or("No process context for handle allocation")
+}
+
+fn update_handle_offset(fd: u8, delta: u64) {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            ep.handle_table[fd as usize].offset += delta;
+        }
+    });
+}
+
+fn extract_file_params(fd: u8) -> (usize, u32, u64) {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        if let Some(ep) = lock.current_eprocess() {
+            let entry = ep.handle_table.get(fd);
+            if entry.is_file() {
+                if let Some(obj) = ob_lookup(entry.object_id) {
+                    return (entry.file_drive() as usize, obj.native_id as u32, entry.offset);
+                }
+            }
+        }
+        (usize::MAX, 0, 0)
+    })
+}
+
+// ── Public API ──
+
 pub fn urn_parse(urn_str: &str) -> Result<Urn, &'static str> {
     if !urn_str.starts_with(URN_PREFIX) {
         return Err("URN must start with neodos://");
@@ -101,31 +141,37 @@ pub fn urn_parse(urn_str: &str) -> Result<Urn, &'static str> {
     Ok(Urn { scheme, path: String::from(path) })
 }
 
-/// Open a resource identified by a URN.
-/// Returns an UrnHandle that can be used for read/write operations.
+/// Open a resource identified by a URN via the Ob namespace.
+/// Returns an UrnHandle (wrapper over a kernel fd).
 pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str> {
     let urn = urn_parse(urn_str)?;
     match urn.scheme {
         UrnScheme::File => {
-            let path = &urn.path;
-            // Normalize forward slashes to backslashes for VFS
-            let vfs_path = path.replace('/', "\\");
-            // Ensure drive letter format (e.g., "C:/..." -> "C:\...")
-            let vfs_path = if vfs_path.len() >= 2 && vfs_path.as_bytes()[1] == b':' {
-                vfs_path
-            } else {
-                return Err("File URN path must include drive letter (e.g., C:/path)");
-            };
-            with_vfs(|vfs| {
+            let vfs_path = urn.path.replace('/', "\\");
+            let (drive, inode) = with_vfs(|vfs| {
                 let (drive_idx, node) = vfs.resolve_path(&vfs_path)
                     .map_err(|_| "File not found")?;
-                Ok(UrnHandle::new_file(drive_idx as u8, node.inode))
-            })
+                Ok((drive_idx as u8, node.inode))
+            })?;
+            let entry = HandleEntry::file(drive, inode);
+            alloc_handle(entry).map(UrnHandle::new)
         }
         UrnScheme::Device => {
             let ob_path = format!("\\Device\\{}", urn.path);
-            match ns::ob_lookup_path(&ob_path) {
-                Ok(_) => Ok(UrnHandle::new_device(&ob_path)),
+            let token = current_token();
+            let desired = crate::security::acl::ACCESS_READ
+                | crate::security::acl::ACCESS_WRITE;
+            match ob_open_path(&ob_path, &token, desired) {
+                Ok(ob_id) => {
+                    let entry = HandleEntry::ob_object(ob_id, desired);
+                    match alloc_handle(entry) {
+                        Ok(fd) => Ok(UrnHandle::new(fd)),
+                        Err(e) => {
+                            let _ = object::ob_close_object(ob_id);
+                            Err(e)
+                        }
+                    }
+                }
                 Err(_) => Err("Device not found in Ob namespace"),
             }
         }
@@ -139,45 +185,52 @@ pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str> {
 }
 
 /// Read from an open URN handle into a buffer.
-/// Returns the number of bytes read.
 pub fn urn_read(handle: &mut UrnHandle, buf: &mut [u8]) -> Result<usize, &'static str> {
-    match handle.scheme {
-        UrnScheme::File => {
-            let mut bytes_read = 0usize;
-            with_vfs(|vfs| {
-                bytes_read = vfs.read(handle.drive as usize, handle.inode, handle.offset, buf)
-                    .map_err(|_| "VFS read failed")?;
-                Ok(())
-            })?;
-            handle.offset += bytes_read as u64;
-            Ok(bytes_read)
-        }
-        _ => Err("Read not supported for this URN scheme"),
+    let (drive, inode, offset) = extract_file_params(handle.fd);
+    if drive == usize::MAX {
+        return Err("URN read: not a file handle");
     }
+    let mut bytes_read = 0usize;
+    with_vfs(|vfs| {
+        bytes_read = vfs.read(drive, inode, offset, buf)
+            .map_err(|_| "VFS read failed")?;
+        Ok(())
+    })?;
+    update_handle_offset(handle.fd, bytes_read as u64);
+    Ok(bytes_read)
 }
 
 /// Write to an open URN handle from a buffer.
-/// Returns the number of bytes written.
 pub fn urn_write(handle: &mut UrnHandle, buf: &[u8]) -> Result<usize, &'static str> {
-    match handle.scheme {
-        UrnScheme::File => {
-            with_vfs(|vfs| {
-                let written = vfs.write(handle.drive as usize, handle.inode, handle.offset, buf)
-                    .map_err(|_| "VFS write failed")?;
-                handle.offset += written as u64;
-                Ok(written)
-            })
-        }
-        _ => Err("Write not supported for this URN scheme"),
+    let (drive, inode, offset) = extract_file_params(handle.fd);
+    if drive == usize::MAX {
+        return Err("URN write: not a file handle");
     }
+    let written = with_vfs(|vfs| {
+        vfs.write(drive, inode, offset, buf)
+            .map_err(|_| "VFS write failed")
+    })?;
+    update_handle_offset(handle.fd, written as u64);
+    Ok(written)
 }
 
 /// Seek to a position in an open URN handle.
 pub fn urn_seek(handle: &mut UrnHandle, pos: u64) {
-    handle.offset = pos;
+    let fd = handle.fd;
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            ep.handle_table[fd as usize].offset = pos;
+        }
+    });
 }
 
+// ── Tests ──
+
 pub fn register_urn_tests() {
+    // ── Parse tests (no process context needed) ──
+
     test_case!("urn_parse_scheme", {
         let urn = urn_parse("neodos://file/C:/System/boot.cfg").unwrap();
         test_eq!(urn.scheme, UrnScheme::File);
@@ -218,17 +271,19 @@ pub fn register_urn_tests() {
         test_true!(urn_parse("neodos://file/").is_err());
     });
 
+    // ── Open tests — error paths (fail before handle allocation) ──
+
     test_case!("urn_resolve_file_nonexistent", {
-        // VFS not mounted in tests, should fail with file not found
         let r = urn_open("neodos://file/C:/nonexistent/file.txt");
         test_true!(r.is_err());
     });
 
     test_case!("urn_resolve_device_nonexistent", {
-        // No device registered in Ob namespace in tests
         let r = urn_open("neodos://device/NonexistentDevice");
         test_true!(r.is_err());
     });
+
+    // ── Roundtrip ──
 
     test_case!("urn_to_string_roundtrip", {
         let urn = Urn { scheme: UrnScheme::File, path: String::from("C:/test.txt") };
@@ -237,5 +292,36 @@ pub fn register_urn_tests() {
         let parsed = urn_parse(&s).unwrap();
         test_eq!(parsed.scheme, UrnScheme::File);
         test_eq!(parsed.path, "C:/test.txt");
+    });
+
+    // ── OB-025: new tests — scheme mapping ──
+
+    test_case!("urn_open_registry_not_implemented", {
+        let r = urn_open("neodos://registry/Machine/System");
+        test_true!(r.is_err());
+    });
+
+    test_case!("urn_open_kobj_not_implemented", {
+        let r = urn_open("neodos://kobj/Driver/ahci");
+        test_true!(r.is_err());
+    });
+
+    test_case!("urn_handle_create", {
+        let h = UrnHandle::new(3);
+        test_eq!(h.fd, 3);
+    });
+
+    // ── OB-018: ObObjectTable integration ──
+
+    test_case!("urn_file_ob_open", {
+        let inode = 77u32;
+        let name = alloc::format!("URNFILE{}", inode);
+        let ob_id = object::ob_create_object(ObType::Filesystem, &name, inode as u64, 0, None)
+            .expect("ob create");
+        test_true!(ob_id > 0);
+        let obj = ob_lookup(ob_id).unwrap();
+        test_eq!(obj.obj_type, ObType::Filesystem);
+        test_eq!(obj.native_id, inode as u64);
+        object::ob_destroy_object(ob_id).unwrap();
     });
 }

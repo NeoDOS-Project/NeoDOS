@@ -14,6 +14,7 @@ pub const HANDLE_FILE: u8 = 6;
 pub const HANDLE_DEVICE: u8 = 7;
 pub const HANDLE_EVENT: u8 = 8;
 pub const HANDLE_DIR: u8 = 9;
+pub const HANDLE_OBJECT: u8 = 10;
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandleEntry {
@@ -97,6 +98,12 @@ impl HandleEntry {
             ObType::Directory, "DIR", inode as u64, 0, None,
         ).unwrap_or(0);
         HandleEntry { object_id: ob_id, kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
+    }
+
+    /// Create an Object Manager handle (backed by an existing ObObject).
+    /// Used by ObOpen (RAX=60) to reference kernel objects via the namespace.
+    pub fn ob_object(object_id: ObId, access_mask: u32) -> Self {
+        HandleEntry { object_id, kind: HANDLE_OBJECT, id: 0, extra: access_mask, offset: 0 }
     }
 
     /// Close this handle: release the Ob reference.

@@ -95,3 +95,42 @@ pub struct ObObjectSnapshot {
     pub flags: u32,
     pub native_id: u64,
 }
+
+// ═══════════════════════════════════════════════════════════════════════
+// OB-012: ObQueryInfo — Info Classes
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Info classes for sys_ob_query_info (RAX=62).
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObInfoClass {
+    Basic = 0,
+    Name = 1,
+    File = 2,
+    Process = 3,
+    Thread = 4,
+    Pipe = 5,
+    Device = 6,
+}
+
+/// Info classes for sys_ob_set_info (RAX=63).
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObSetInfoClass {
+    ProcessPriority = 0,
+    ThreadPriority = 1,
+    ObjectName = 2,
+    Security = 3,
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OB-014: ObEnum — Directory Entry
+// ═══════════════════════════════════════════════════════════════════════
+
+/// ABI-stable entry written by sys_ob_enum (RAX=64).
+#[repr(C)]
+pub struct ObEnumEntry {
+    pub id: ObId,
+    pub obj_type: u32,
+    pub name: [u8; 32],
+}

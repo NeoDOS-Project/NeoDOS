@@ -42,6 +42,20 @@ impl Acl {
         self.aces.push(ace);
     }
 
+    /// Insert ACE in NT-canonical order: all Deny ACEs before all Allow ACEs.
+    /// Maintains insertion order within each group.
+    pub fn insert_ace_canonical(&mut self, ace: Ace) {
+        if ace.ace_type == ACE_TYPE_ACCESS_DENIED {
+            // Insert at the first Allow position (or end if no Allow exists)
+            let pos = self.aces.iter().position(|a| a.ace_type == ACE_TYPE_ACCESS_ALLOWED)
+                .unwrap_or(self.aces.len());
+            self.aces.insert(pos, ace);
+        } else {
+            // Allow: append at end
+            self.aces.push(ace);
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.aces.is_empty()
     }

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.42.0
+v0.44.0
 
 ## Architecture Governance
 
@@ -19,8 +19,8 @@ prioridades actuales son:
 1. ~~**v0.40**: Buddy bitmap >4GB, user window 4MB→32MB, static buffers→heap~~ **COMPLETADO**
 2. ~~**v0.41**: ObObjectTable (refactor KOBJ → Object Manager), HandleEntry object_id field~~ **COMPLETADO**
 3. ~~**v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI~~ **COMPLETADO**
-4. **v0.43**: SeAccessCheck NT-compatible, sys_poll()
-5. **v0.44–v0.45**: ASLR v1, Registry persistente, Device Tree, **ObOpen/ObCreate/ObQueryInfo/ObSetInfo/ObEnum (RAX 60–64)**
+4. ~~**v0.43**: SeAccessCheck NT-compatible, sys_poll()~~ **COMPLETADO**
+5. ~~**v0.44–v0.45**: ASLR v1~~ ~~ObOpen (RAX 60)~~ **v0.44 COMPLETADO**, **v0.45**: Registry persistente, Device Tree
 6. **v0.47**: Networking (TCP/IP stack)
 7. **v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob
 8. **v1.0**: **Security integration in ObOpen**, **Full Ob API stable**
@@ -56,7 +56,7 @@ OVMF, override with `-machine pc` (PIIX3, legacy PIO).
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-  2. `python3 scripts/auto_test.py` — 501 kernel tests (auto-run at boot) + user-mode binaries
+  2. `python3 scripts/auto_test.py` — 520 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -558,6 +558,8 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 56 | `sys_driver_enum` | RBX=index, RCX=buf_ptr | Enumerate registered NEM drivers by index. Returns 1 if entry written |
 | 57 | `sys_driver_load` | RBX=path_ptr | Load a NEM driver from filesystem path (admin) |
 | 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) |
+| 59 | `sys_poll` | RBX=pfds_ptr, RCX=nfds, RDX=timeout_ms | Poll fds for ready I/O. Returns ready count. PollFd struct: fd:i32, events:i16, revents:i16 |
+| 60 | `sys_ob_open` | RBX=path_ptr, RCX=desired_access | Open an Ob namespace object by path. Resolves path via namespace, performs security access check (SeAccessCheck), allocates a handle entry referencing the Ob object. Returns fd (≥3) on success, negative on error |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -633,9 +635,11 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 
 ### Core Loading
 - Validates ELF magic (`\x7fELF`), class (64-bit), endianness (LSB), machine (x86-64), type (EXEC or DYN)
-- Parses program headers; loads `PT_LOAD` segments at their specified virtual addresses
+- Parses program headers; loads `PT_LOAD` segments at `p_vaddr + load_offset`
 - Zero-fills `.bss` (`p_memsz - p_filesz`)
-- Entry point returned via `ElfLoadResult { entry, segments }` (segments: `Vec<SegmentInfo>`)
+- Load offset: `load_offset: u64` parameter — used for ASLR v1; PIE binaries (ET_DYN) loaded at random slot base, all segment vaddrs shifted by load_offset
+- RELA relocations: parses `.rela.dyn` section via `PT_DYNAMIC`, applies `R_X86_64_RELATIVE` at load time (3 entries in typical neoshell binary)
+- Entry point returned via `ElfLoadResult { entry, segments }` (entry = `e_entry + load_offset`)
 - Backward compatible: `cmd_run` detects ELF vs flat binary by checking the first 4 bytes
 
 ### A4.3 Address Space Validation
@@ -655,7 +659,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 
 ### API
 ```rust
-pub fn load_elf(data: &[u8], addr_space: Option<&mut AddressSpace>) -> Result<ElfLoadResult, ElfLoadError>
+pub fn load_elf(data: &[u8], addr_space: Option<&mut AddressSpace>, load_offset: u64) -> Result<ElfLoadResult, ElfLoadError>
 pub struct ElfLoadResult { pub entry: u64, pub segments: Vec<SegmentInfo> }
 pub enum ElfLoadError { InvalidHeader, InvalidMagic, ..., AddressSpaceViolation(i64) }
 ```
@@ -698,7 +702,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: change keyboard layout via sys_set_keyboard_layout (RAX=49). US or SP |
 | `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: terminate a process by PID via sys_kill_process (RAX=52, admin) |
 | `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: set process scheduling priority via sys_set_priority (RAX=51, admin). Levels 0-3 |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 512 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 520 tests de kernel |
 | `label.nxe` | Rust `userbin/label/` | ~4 KB | LABEL command: display or change volume label via sys_set_volume_label (RAX=54) |
 | `fsck.nxe` | Rust `userbin/fsck/` | ~6 KB | FSCK command: filesystem integrity check via sys_fsck (RAX=55). /F for repair |
 | `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via sys_driver_enum (RAX=56). LIST, SHOW, QUERY, RUNTIME |
@@ -706,9 +710,10 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
-User window (code+stack): `0x400000` .. `0x800000` (4 MB, 32 slots de 128 KB)
+User window (code+stack): `0x400000` .. `0x2400000` (32 MB, 32 slots de 128 KB).
+Con ASLR v1 (v0.44): cada proceso carga su binario PIE (ET_DYN) en un slot
+aleatorio. `alloc_user_slot()` usa RDRAND con fallback TSC.
 User heap (demand-paged 4 KB): `0x10000000` .. `0x12000000` (32 MB, 16 slots de 2 MB)
-Binarios flat cargados en `0x400000`.
 
 ## Async I/O (IRP System, X6)
 
@@ -726,22 +731,27 @@ Binarios flat cargados en `0x400000`.
 | **BlockDevice** | Trait extended with `submit_irp(irp_id)` and `poll_irp(irp_id)`. All 5 implementors (RamDisk, BootAta, AhciDriver, NvmeDriver, NemBlockDevice) implement `submit_irp` via `irp_get_params()` → sync I/O → `irp_complete_result()` |
 | **Tests** | 11 tests: alloc/free, status transitions, error codes, unique IDs, slot reuse, queue FIFO/wraparound, callback dispatch via work queue, flush/ioctl ops, params extraction |
 
-## NT5.5 Unified Resource Namespace (URN)
+## NT5.5 Unified Resource Namespace (URN) — OB-025
 
-`src/urn/mod.rs` — Abstraction layer over NT5 Ob unifying access to heterogeneous resources (devices, VFS files, registry keys, kernel objects) under a URN scheme: `neodos://<scheme>/<path>`.
+`src/urn/mod.rs` — OB-025 rewrite: URN es un frontend completo del Ob (Object Manager).
+Todos los schemes se resuelven mediante `ob_open_path()` en el namespace Ob.
+`UrnHandle` es un wrapper sobre un kernel fd (handle table index).
 
 ### Supported Schemes
 
-| Scheme | Delegates to | Example |
-|--------|-------------|---------|
-| `device` | ObNamespace (`\Device\*`) | `neodos://device/Harddisk0/Partition1` |
-| `file` | VFS | `neodos://file/C:/System/boot.cfg` |
-| `registry` | (stub — not implemented) | `neodos://registry/Machine/System` |
-| `kobj` | (stub — not implemented) | `neodos://kobj/Driver/ahci` |
+| Scheme | Mapping | Example |
+|--------|---------|---------|
+| `file` | VFS resolve → `HandleEntry::file(drive, inode)` + fd | `neodos://file/C:/System/boot.cfg` |
+| `device` | `ob_open_path("\\Device\\...")` → `HandleEntry::ob_object` + fd | `neodos://device/Harddisk0/Partition1` |
+| `registry` | stub (no implementado en namespace) | `neodos://registry/Machine/System` |
+| `kobj` | stub (no implementado en namespace) | `neodos://kobj/Driver/ahci` |
 
 ### API
 
 ```rust
+pub struct UrnHandle { pub fd: u8 }
+impl UrnHandle { pub fn new(fd: u8) -> Self }
+
 pub fn urn_parse(urn_str: &str) -> Result<Urn, &'static str>
 pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str>
 pub fn urn_read(handle: &mut UrnHandle, buf: &mut [u8]) -> Result<usize, &'static str>
@@ -751,7 +761,7 @@ pub fn urn_seek(handle: &mut UrnHandle, pos: u64)
 
 ### Tests
 
-11 tests: parse scheme (4 variants), invalid prefix, missing scheme, unknown scheme, missing path, resolve file (nonexistent), resolve device (nonexistent), roundtrip to_string/parse.
+15 tests: parse (4 scheme variants + 4 error cases), open error (2: file not found, device not found), roundtrip, OB-025 new (3: registry stub, kobj stub, UrnHandle constructor), OB-018 ObObjectTable integration.
 
 ## NT5.6 Virtual FS Objects (K:\ drive)
 
@@ -828,7 +838,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-512 tests en 46 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+520 tests en 49 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -869,7 +879,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Sync | 4 | Atomic flags (NEED_RESCHED) |
 | NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering |
 | NEM | 23 | NEM v1+v2 driver format parsing (header, types, v2 ABI fields, categories) |
-| ELF | 15 | ELF64 loader: header validation, segment loading, edge cases |
+| ELF | 20 | ELF64 loader: header validation, segment loading, edge cases, PIE offset/relocation |
 | Capability | 11 | X3 Capability flags, CapabilitySet, category defaults, check/enforce, escalation policy |
 | Event Bus | 17 | Unified v2: priority queues, subscription filters (type/source/device), dynamic payload, backpressure, 17 tests |
 | Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback, reuse |
@@ -878,7 +888,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 Comando `test`:
-1. Ejecuta `testing::run_all()` (512 tests kernel)
+1. Ejecuta `testing::run_all()` (520 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

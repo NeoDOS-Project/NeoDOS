@@ -174,4 +174,52 @@ pub fn register_security_tests() {
         // Admin bypasses all
         test_true!(se_access_check(&admin, Some(&sd), ACCESS_ALL));
     });
+
+    // ── NT6.5: NT-correct deny-first semantics ──
+
+    test_case!("se_deny_first_allow_after_deny", {
+        // Deny ACE after Allow ACE in the list — deny must still win
+        let user = sid_builtin_user();
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(user, ACCESS_READ));
+        acl.add_ace(Ace::deny(user, ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+
+        let token = Token::new_user();
+        // Deny occurs later in the list but must be evaluated first
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
+    });
+
+    test_case!("se_deny_first_mixed_aces", {
+        let user = sid_builtin_user();
+        let admin_s = sid_builtin_admin();
+        let mut acl = Acl::new();
+        acl.add_ace(Ace::allow(admin_s, ACCESS_ALL));
+        acl.add_ace(Ace::allow(user, ACCESS_WRITE));
+        acl.add_ace(Ace::deny(user, ACCESS_READ));
+        acl.add_ace(Ace::allow(user, ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+
+        let token = Token::new_user();
+        // Deny ACE for READ is checked first (before Allow READ at end)
+        test_true!(!se_access_check(&token, Some(&sd), ACCESS_READ));
+        // No deny for WRITE → Allow wins
+        test_true!(se_access_check(&token, Some(&sd), ACCESS_WRITE));
+    });
+
+    test_case!("se_insert_ace_canonical", {
+        let user = sid_builtin_user();
+        let mut acl = Acl::new();
+        acl.insert_ace_canonical(Ace::allow(user, ACCESS_READ));
+        acl.insert_ace_canonical(Ace::deny(user, ACCESS_WRITE));
+        acl.insert_ace_canonical(Ace::allow(user, ACCESS_EXECUTE));
+        // Order should be: deny(WRITE), allow(READ), allow(EXECUTE)
+        test_eq!(acl.aces.len(), 3);
+        test_eq!(acl.aces[0].ace_type, ACE_TYPE_ACCESS_DENIED);
+        test_eq!(acl.aces[1].ace_type, ACE_TYPE_ACCESS_ALLOWED);
+        test_eq!(acl.aces[2].ace_type, ACE_TYPE_ACCESS_ALLOWED);
+        test_eq!(acl.aces[0].access_mask, ACCESS_WRITE);
+        test_eq!(acl.aces[1].access_mask, ACCESS_READ);
+        test_eq!(acl.aces[2].access_mask, ACCESS_EXECUTE);
+    });
 }

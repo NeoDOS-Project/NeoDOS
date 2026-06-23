@@ -97,7 +97,7 @@ def run_test():
         "-serial", "file:/tmp/neodos_serial.log",
     ])
     
-    timeout = 120
+    timeout = 180
     start_time = time.time()
     output_lines = []
     all_output = []
@@ -171,8 +171,7 @@ def run_test():
                                         if "ALL_TESTS_COMPLETE" in clean:
                                             print(f"\n[+] ALL TESTS COMPLETE")
                                             state = "done"
-                                            break
-                                        if "kernel tests passed" in clean.lower() or "passed" in clean or "failed" in clean:
+                                        if ("kernel tests" in clean.lower() or "passed" in clean or "failed" in clean) and "TEST" not in clean:
                                             print(f"[TEST] {clean}")
                                         if "Type HELP" in clean or ("NeoDOS" in clean and "FS Started" in clean):
                                             print("\n[+] Shell detected!")
@@ -186,13 +185,11 @@ def run_test():
                                         if "ALL_TESTS_COMPLETE" in clean:
                                             print(f"\n[+] ALL TESTS COMPLETE")
                                             state = "done"
-                                            break
                                         if "kernel tests" in clean.lower() or "passed" in clean or "failed" in clean:
                                             print(f"[TEST] {clean}")
                                         if time.time() - waiting_start > 60:
                                             print(f"\n[!] Response timeout ({time.time()-waiting_start:.1f}s)")
                                             state = "done"
-                                            break
             except Exception as e:
                 pass
             

@@ -1,8 +1,13 @@
+//! Pipe IPC system.
+//!
+//! FROZEN ABI (v0.43). See protocol invariants below.
+
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use spin::Mutex;
 use crate::scheduler::{self, ThreadState};
 use crate::kobj::{self, KObjType};
+use crate::object::{ObOperations, ObId};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
 pub const MAX_PIPES: usize = 16;
@@ -266,6 +271,35 @@ impl PipeManager {
     }
 }
 
+// ── Poll helpers (added v0.43 for sys_poll) ──
+
+/// Peek whether a pipe has data available for reading.
+/// Returns None if pipe_id is invalid.
+pub fn pipe_peek_read_ready(pipe_id: u8) -> Option<bool> {
+    let pipes = PIPE_MANAGER.pipes.lock();
+    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
+    let pipe = mp.lock();
+    Some(pipe.used() > 0 || pipe.write_closed)
+}
+
+/// Peek whether a pipe's write end is still open.
+/// Returns None if pipe_id is invalid.
+pub fn pipe_peek_write_closed(pipe_id: u8) -> Option<bool> {
+    let pipes = PIPE_MANAGER.pipes.lock();
+    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
+    let pipe = mp.lock();
+    Some(pipe.write_closed)
+}
+
+/// Peek whether a pipe's read end is still open.
+/// Returns None if pipe_id is invalid.
+pub fn pipe_peek_read_closed(pipe_id: u8) -> Option<bool> {
+    let pipes = PIPE_MANAGER.pipes.lock();
+    let mp = pipes.get(pipe_id as usize).and_then(|p| p.as_ref())?;
+    let pipe = mp.lock();
+    Some(pipe.read_closed)
+}
+
 // ── Blocking support ──
 
 fn wake_pipe_readers(pipe_id: u8) {
@@ -290,6 +324,39 @@ pub fn block_current_for_pipe(pipe_id: u8) {
     crate::syscall::set_need_resched();
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
+}
+
+// ── ObOperations integration (OB-016) ──
+
+pub struct PipeObOps;
+
+impl ObOperations for PipeObOps {
+    fn on_destroy(&self, _id: ObId, native_id: u64) {
+        let pipe_id = native_id as u8;
+        PIPE_MANAGER.free_pipe(pipe_id);
+    }
+}
+
+pub static PIPE_OPS: PipeObOps = PipeObOps;
+
+impl PipeManager {
+    pub fn free_pipe(&self, pipe_id: u8) {
+        let idx = pipe_id as usize;
+        self.ensure_idx(idx);
+        // Unregister KOBJ if registered
+        let kid = self.get_kobj_id(idx);
+        if let Some(kobj_id) = kid {
+            kobj::kobj_unregister(kobj_id);
+            self.set_kobj_id(idx, None);
+        }
+        // Mark pipe slot as unused
+        let pipes = self.pipes.lock();
+        if let Some(Some(ref mp)) = pipes.get(idx) {
+            let mut pipe = mp.lock();
+            pipe.in_use = false;
+            pipe.reset();
+        }
+    }
 }
 
 lazy_static::lazy_static! {

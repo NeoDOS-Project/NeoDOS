@@ -1,8 +1,9 @@
 pub mod types;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
-pub use types::ObObjectSnapshot;
+pub use types::{ObObjectSnapshot, ObEnumEntry};
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -10,7 +11,7 @@ use lazy_static::lazy_static;
 
 /// Operations trait — each object type can provide callbacks.
 pub trait ObOperations: Send + Sync {
-    fn on_destroy(&self, _id: ObId) {}
+    fn on_destroy(&self, _id: ObId, _native_id: u64) {}
 }
 
 // ── Per-object metadata ──
@@ -141,16 +142,45 @@ impl ObObjectTable {
             return Err(ObError::RefCountHeld);
         }
 
-        // Extract ops before dropping the slot
+        // Extract ops and native_id before dropping the slot
         let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
+        let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
 
         if let Some(cb) = ops {
-            cb.on_destroy(id);
+            cb.on_destroy(id, native_id);
         }
 
         self.slots[idx] = None;
         self.count -= 1;
         Ok(())
+    }
+
+    /// Extract destroy info (ops + native_id) without clearing the slot.
+    /// Used by ob_close_object to call the callback outside the lock.
+    pub fn extract_destroy_info(&mut self, id: ObId) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
+        let idx = match self.slots.iter().position(|s| {
+            s.as_ref().map_or(false, |o| o.id == id)
+        }) {
+            Some(i) => i,
+            None => return Err(ObError::NotFound),
+        };
+        let refcount = self.slots[idx].as_ref().map_or(0, |o| o.refcount);
+        if refcount > 0 {
+            return Err(ObError::RefCountHeld);
+        }
+        let ops = self.slots[idx].as_ref().and_then(|o| o.ops);
+        let native_id = self.slots[idx].as_ref().map_or(0, |o| o.native_id);
+        Ok((ops, native_id))
+    }
+
+    /// Finalize destroy — clear the slot after the callback has been called.
+    pub fn finalize_destroy(&mut self, id: ObId) {
+        if let Some(idx) = self.slots.iter().position(|s| {
+            s.as_ref().map_or(false, |o| o.id == id)
+        }) {
+            self.slots[idx] = None;
+            self.count -= 1;
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -180,7 +210,12 @@ impl ObObjectTable {
 // ── Global table ──
 
 lazy_static! {
-    static ref OB_TABLE: Mutex<ObObjectTable> = Mutex::new(ObObjectTable::new());
+    pub(crate) static ref OB_TABLE: Mutex<ObObjectTable> = Mutex::new(ObObjectTable::new());
+
+    /// Separate store for SecurityDescriptors, keyed by ObId.
+    /// Kept separate from ObObject to preserve Copy on ObObject.
+    pub(crate) static ref OB_SECURITY: Mutex<BTreeMap<ObId, crate::security::acl::SecurityDescriptor>> =
+        Mutex::new(BTreeMap::new());
 }
 
 pub fn init_object_manager() {
@@ -229,11 +264,27 @@ pub fn ob_open_object(id: ObId, _access: u32) -> Result<(), ObError> {
 }
 
 pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
-    let mut table = OB_TABLE.lock();
-    let new_count = table.dereference(id)?;
-    if new_count == 0 {
-        table.destroy(id).ok();
-    }
+    let new_count = {
+        let mut table = OB_TABLE.lock();
+        let cnt = table.dereference(id)?;
+        if cnt > 0 {
+            return Ok(());
+        }
+        // Refcount reached 0 — extract destroy info and drop lock before callback
+        let (ops, native_id) = table.extract_destroy_info(id)?;
+        if ops.is_none() && native_id == 0 {
+            // No callback, simple cleanup
+            table.finalize_destroy(id);
+            return Ok(());
+        }
+        drop(table);
+        // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with kobj_unregister)
+        if let Some(cb) = ops {
+            cb.on_destroy(id, native_id);
+        }
+        let mut table = OB_TABLE.lock();
+        table.finalize_destroy(id);
+    };
     Ok(())
 }
 
@@ -251,6 +302,130 @@ pub fn ob_count() -> usize {
 
 pub fn ob_enum_snapshot() -> Vec<ObObjectSnapshot> {
     OB_TABLE.lock().snapshot()
+}
+
+// ── OB-010: ObOpen path-based lookup with security ──
+
+/// Open an object by Ob namespace path.
+/// 1. Resolves `path_str` through the Ob namespace
+/// 2. Verifies the object exists in the Object Manager
+/// 3. Performs security access check against `token` with `desired_access`
+/// 4. References the object (caller must later dereference via ob_close_object)
+///
+/// Returns the ObId on success, or an ObError.
+pub fn ob_open_path(
+    path_str: &str,
+    token: &crate::security::token::Token,
+    desired_access: u32,
+) -> Result<ObId, ObError> {
+    let kobj_id = crate::kobj::namespace::ob_lookup_path(path_str)
+        .map_err(|_| ObError::NotFound)?;
+
+    // Verify the object exists in the Object Manager
+    ob_lookup(kobj_id).ok_or(ObError::NotFound)?;
+
+    // Security check: retrieve the object's SecurityDescriptor (if any)
+    let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
+    if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
+        return Err(ObError::AccessDenied);
+    }
+
+    // Reference the object so the handle holds a reference
+    ob_reference(kobj_id)?;
+    Ok(kobj_id)
+}
+
+/// Create an object and register it in the Ob namespace at the specified path.
+/// Used by sys_ob_create (RAX=61).
+/// For Pipe objects, also creates the underlying pipe buffer.
+pub fn ob_create_object_path(
+    path_str: &str,
+    obj_type: ObType,
+    attrs: u32,
+    ops: Option<&'static dyn ObOperations>,
+) -> Result<ObId, ObError> {
+    let normalized = crate::kobj::namespace::normalize_path(path_str);
+    let leaf = match normalized.rfind('\\') {
+        Some(idx) => &normalized[idx + 1..],
+        None => return Err(ObError::InvalidParam),
+    };
+    if leaf.is_empty() || leaf == "\\" {
+        return Err(ObError::InvalidParam);
+    }
+
+    // Reject Unknown type — only concrete types are valid for path creation
+    if obj_type == ObType::Unknown {
+        return Err(ObError::InvalidType);
+    }
+
+    let native_id = match obj_type {
+        ObType::Pipe => {
+            let pipe_id = crate::pipe::PIPE_MANAGER.alloc()
+                .ok_or(ObError::OutOfMemory)?;
+            pipe_id as u64
+        }
+        _ => attrs as u64,
+    };
+
+    let id = ob_create_object(obj_type, leaf, native_id, attrs, ops)?;
+
+    // Insert into namespace (create parent directories as needed)
+    {
+        let parent_path = match normalized.rfind('\\') {
+            Some(idx) if idx > 0 => &normalized[..idx],
+            _ => "\\",
+        };
+        if parent_path != "\\" {
+            let _ = crate::kobj::namespace::ob_create_directory(parent_path);
+        }
+    }
+    match crate::kobj::namespace::ob_insert_object(&normalized, id) {
+        Ok(_) => Ok(id),
+        Err(_) => {
+            let _ = ob_destroy_object(id);
+            Err(ObError::AlreadyExists)
+        }
+    }
+}
+
+/// Enumerate objects in a namespace directory by path.
+/// Returns a list of ObEnumEntry values.
+pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObError> {
+    let entries = crate::kobj::namespace::ob_enumerate_namespace(path)
+        .map_err(|_| ObError::NotFound)?;
+    Ok(entries.iter().map(|e| {
+        let mut name = [0u8; 32];
+        let len = e.name.iter().position(|&b| b == 0).unwrap_or(32).min(31);
+        name[..len].copy_from_slice(&e.name[..len]);
+        name[len] = 0;
+        ObEnumEntry {
+            id: e.obj_id,
+            obj_type: e.obj_type,
+            name,
+        }
+    }).collect())
+}
+
+/// Attach a SecurityDescriptor to an existing Object Manager object.
+/// Used to enable access checks for ObOpen.
+/// Set the name of an ObObject (used by ObSetInfo).
+pub fn ob_set_object_name(id: ObId, name: &str) -> Result<(), ObError> {
+    let mut table = OB_TABLE.lock();
+    let obj = table.lookup_mut(id).ok_or(ObError::NotFound)?;
+    let bytes = name.as_bytes();
+    let len = bytes.len().min(OB_NAME_LEN - 1);
+    obj.name[..len].copy_from_slice(&bytes[..len]);
+    obj.name[len] = 0;
+    Ok(())
+}
+
+pub fn ob_set_security(
+    id: ObId,
+    sd: crate::security::acl::SecurityDescriptor,
+) -> Result<(), ObError> {
+    ob_lookup(id).ok_or(ObError::NotFound)?;
+    OB_SECURITY.lock().insert(id, sd);
+    Ok(())
 }
 
 // ── Tests ──
@@ -380,5 +555,76 @@ pub fn register_object_tests() {
         test_true!(names.contains(&"Pipe"));
         test_true!(names.contains(&"Device"));
         test_true!(names.contains(&"Filesystem"));
+    });
+
+    // ── OB-010: ob_open_path tests ──
+
+    test_case!("ob_open_path_existing_object", {
+        // Register an object and insert it into the namespace
+        let id = ob_create_object(ObType::Driver, "test_drv", 42, 0, None).unwrap();
+        let _ = crate::kobj::namespace::ob_create_directory("\\Driver"); // ensure dir exists
+        let _ = crate::kobj::namespace::ob_insert_object("\\Driver\\test_drv", id);
+
+        let admin_token = crate::security::token::Token::new_admin();
+        let opened_id = ob_open_path("\\Driver\\test_drv", &admin_token,
+            crate::security::acl::ACCESS_READ).unwrap();
+        test_eq!(opened_id, id);
+        // refcount should be 2 (1 from create + 1 from open)
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.refcount, 2);
+
+        // Cleanup: close releases the open reference
+        ob_close_object(id).unwrap();
+        ob_destroy_object(id).unwrap();
+        let _ = crate::kobj::namespace::ob_remove_object("\\Driver\\test_drv");
+    });
+
+    test_case!("ob_open_path_not_found", {
+        let admin_token = crate::security::token::Token::new_admin();
+        let result = ob_open_path("\\NonExistent\\Path", &admin_token,
+            crate::security::acl::ACCESS_READ);
+        test_true!(result.is_err());
+        test_eq!(result.unwrap_err(), ObError::NotFound);
+    });
+
+    test_case!("ob_open_path_access_denied", {
+        // Create an object with a restrictive SD (deny user access)
+        let id = ob_create_object(ObType::Driver, "secure_drv", 0, 0, None).unwrap();
+        let _ = crate::kobj::namespace::ob_create_directory("\\Driver");
+        let _ = crate::kobj::namespace::ob_insert_object("\\Driver\\secure_drv", id);
+
+        // Set a SD that denies user tokens ACCESS_READ
+        use crate::security::acl::{Acl, Ace, SecurityDescriptor};
+        let mut acl = Acl::new();
+        let user_sid = crate::security::sid::sid_builtin_user();
+        acl.add_ace(Ace::deny(user_sid, crate::security::acl::ACCESS_READ));
+        let sd = SecurityDescriptor::new().with_dacl(acl);
+        ob_set_security(id, sd).unwrap();
+
+        // Try to open with a user token → should be denied
+        let user_token = crate::security::token::Token::new_user();
+        let result = ob_open_path("\\Driver\\secure_drv", &user_token,
+            crate::security::acl::ACCESS_READ);
+        test_true!(result.is_err());
+        test_eq!(result.unwrap_err(), ObError::AccessDenied);
+
+        // Admin should still be able to open (admin bypass)
+        let admin_token = crate::security::token::Token::new_admin();
+        let opened_id = ob_open_path("\\Driver\\secure_drv", &admin_token,
+            crate::security::acl::ACCESS_READ).unwrap();
+        test_eq!(opened_id, id);
+
+        ob_close_object(id).unwrap();
+        ob_destroy_object(id).unwrap();
+        let _ = crate::kobj::namespace::ob_remove_object("\\Driver\\secure_drv");
+    });
+
+    test_case!("ob_open_path_non_existent_object_in_namespace", {
+        // Path exists in namespace but ObId doesn't match any ObObject
+        let admin_token = crate::security::token::Token::new_admin();
+        let result = ob_open_path("\\Driver\\nonexistent", &admin_token,
+            crate::security::acl::ACCESS_READ);
+        test_true!(result.is_err());
+        test_eq!(result.unwrap_err(), ObError::NotFound);
     });
 }

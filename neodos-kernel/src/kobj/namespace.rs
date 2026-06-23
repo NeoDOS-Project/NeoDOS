@@ -1,7 +1,8 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use crate::kobj::{KObjId, KObjType};
+use crate::object::{ObId, ObType};
 use crate::{test_case, test_eq, test_true};
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -34,7 +35,7 @@ fn key_to_str(key: &[u8; MAX_NAME_LEN]) -> &str {
     core::str::from_utf8(&key[..len]).unwrap_or("<?>")
 }
 
-fn normalize_path(path: &str) -> alloc::string::String {
+pub fn normalize_path(path: &str) -> alloc::string::String {
     if path.is_empty() {
         return "\\".to_string();
     }
@@ -103,6 +104,14 @@ impl SymlinkEntry {
     }
 }
 
+/// Entry returned by namespace enumeration.
+#[derive(Debug, Clone)]
+pub struct NamespaceEntry {
+    pub name: [u8; 32],
+    pub obj_type: u32,
+    pub obj_id: ObId,
+}
+
 #[derive(Debug, Clone)]
 pub struct DirectoryObject {
     pub name: [u8; MAX_NAME_LEN],
@@ -163,7 +172,10 @@ impl ObNamespace {
     pub fn create_directory(&mut self, path: &str) -> Result<(), &'static str> {
         let components = Self::parse_path(path)?;
         if components.is_empty() {
-            return Err(OB_CANNOT_CREATE_ROOT);
+            if let Some(&_id) = self.root.children.get(&name_to_key("\\")) {
+                return Ok(());
+            }
+            return Err(OB_NOT_FOUND);
         }
         Self::create_dir_internal(&mut self.root, &components)
     }
@@ -276,6 +288,43 @@ impl ObNamespace {
         }
         current.symlinks.insert(key, SymlinkEntry::new(sl_name, target));
         Ok(())
+    }
+
+    /// Enumerate children of a directory by path.
+    pub fn enumerate(&self, path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
+        let components = Self::parse_path(path)?;
+        let mut dir = &self.root;
+        for comp in &components {
+            let key = name_to_key(comp);
+            dir = dir.child_dirs.get(&key).ok_or(OB_NOT_FOUND)?;
+        }
+        let mut result = Vec::new();
+        // Add child directories
+        for (_key, subdir) in &dir.child_dirs {
+            let name_str = subdir.name_str();
+            let mut name = [0u8; 32];
+            let bytes = name_str.as_bytes();
+            let len = bytes.len().min(31);
+            name[..len].copy_from_slice(&bytes[..len]);
+            result.push(NamespaceEntry {
+                name,
+                obj_type: ObType::Directory as u32,
+                obj_id: 0,
+            });
+        }
+        // Add objects
+        for (_key, &obj_id) in &dir.children {
+            let name_str = key_to_str(_key);
+            let mut name = [0u8; 32];
+            let bytes = name_str.as_bytes();
+            let len = bytes.len().min(31);
+            name[..len].copy_from_slice(&bytes[..len]);
+            let obj_type = crate::object::ob_lookup(obj_id)
+                .map(|o| o.obj_type as u32)
+                .unwrap_or(0);
+            result.push(NamespaceEntry { name, obj_type, obj_id });
+        }
+        Ok(result)
     }
 
     fn resolve_symlink_internal<'a>(&self, path: &str, depth: u32) -> Result<KObjId, &'static str> {
@@ -530,6 +579,35 @@ impl ObNamespace {
         }
         self.resolve_symlink_internal(&normalized, 0)
     }
+
+    /// Find the namespace path for a given ObId by searching the tree.
+    /// Returns None if the ObId is not found in the namespace.
+    pub fn find_path_by_id(&self, target_id: ObId) -> Option<String> {
+        fn search(dir: &DirectoryObject, prefix: &str, target_id: ObId) -> Option<String> {
+            for (key, &id) in &dir.children {
+                if id == target_id {
+                    let name = key_to_str(key);
+                    if prefix.is_empty() {
+                        return Some(alloc::format!("\\{}", name));
+                    }
+                    return Some(alloc::format!("{}\\{}", prefix, name));
+                }
+            }
+            for (key, subdir) in &dir.child_dirs {
+                let name = key_to_str(key);
+                let sub_prefix = if prefix.is_empty() {
+                    alloc::format!("\\{}", name)
+                } else {
+                    alloc::format!("{}\\{}", prefix, name)
+                };
+                if let Some(path) = search(subdir, &sub_prefix, target_id) {
+                    return Some(path);
+                }
+            }
+            None
+        }
+        search(&self.root, "", target_id)
+    }
 }
 
 lazy_static! {
@@ -549,6 +627,13 @@ pub fn init_object_namespace() {
     let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob"];
     for dir in root_dirs {
         let _ = crate::kobj::kobj_register(KObjType::Directory, dir, 0);
+    }
+    // Register root "\" in the namespace so ObOpen("\") works
+    let root_id = crate::object::ob_create_object(
+        ObType::Directory, "\\", 0, 0, None,
+    ).unwrap_or(0);
+    if root_id != 0 {
+        let _ = OB_NAMESPACE.lock().insert_object("\\", root_id);
     }
 }
 
@@ -578,6 +663,14 @@ pub fn ob_create_directory(path: &str) -> Result<(), &'static str> {
 
 pub fn ob_rename_directory(old_path: &str, new_name: &str) -> Result<(), &'static str> {
     OB_NAMESPACE.lock().rename_directory(old_path, new_name)
+}
+
+pub fn ob_enumerate_namespace(path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
+    OB_NAMESPACE.lock().enumerate(path)
+}
+
+pub fn ob_find_path_by_id(target_id: ObId) -> Option<String> {
+    OB_NAMESPACE.lock().find_path_by_id(target_id)
 }
 
 pub fn ob_insert_symlink(path: &str, target: &str) -> Result<(), &'static str> {

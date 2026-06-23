@@ -258,7 +258,7 @@ impl Vfs {
         {
             let fs = self.drives[resolved_drive].as_mut().ok_or(VfsError::NotFound)?;
             let node = fs.stat(resolved_inode)?;
-            if node.mode != MODE_DIR {
+            if node.mode & MODE_DIR == 0 {
                 return Err(VfsError::NotADirectory);
             }
         }

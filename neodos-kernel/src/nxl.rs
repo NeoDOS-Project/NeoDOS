@@ -110,7 +110,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
     let base = unsafe { NXL_REGISTRY[slot_idx].base };
     serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
 
-    let result = match crate::elf::load_elf(data, None) {
+    let result = match crate::elf::load_elf(data, None, 0) {
         Ok(r) => r,
         Err(e) => {
             serial_println!("[NXL] ELF load failed: {:?}", e);

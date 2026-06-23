@@ -75,6 +75,20 @@ unsafe fn syscall_3(n: u64, a0: u64, a1: u64, a2: u64) -> u64 {
     r
 }
 
+unsafe fn syscall_4(n: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> u64 {
+    let r: u64;
+    asm!(
+        "push rbx", "push rcx", "push rdx", "push r8",
+        "mov rax, {n}", "mov rbx, {a0}", "mov rcx, {a1}", "mov rdx, {a2}",
+        "mov r8, {a3}", "int 0x80",
+        "pop r8", "pop rdx", "pop rcx", "pop rbx",
+        n = in(reg) n, a0 = in(reg) a0, a1 = in(reg) a1,
+        a2 = in(reg) a2, a3 = in(reg) a3,
+        out("rax") r,
+    );
+    r
+}
+
 unsafe fn syscall_5(n: u64, a0: u64, a1: u64, a2: u64, a3: u64, a4: u64) -> u64 {
     let r: u64;
     asm!(
@@ -243,6 +257,35 @@ pub extern "C" fn nxl_sys_get_meminfo(buf: *mut u8) -> i64 {
     ret(unsafe { syscall_1(45, buf as u64) })
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Object Manager (Ob) wrappers — RAX 60–64
+// ═══════════════════════════════════════════════════════════════════
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_open(path: *const u8, access_mask: u32) -> i64 {
+    ret(unsafe { syscall_2(60, path as u64, access_mask as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_create(path: *const u8, obj_type: u32, fds_out: *mut u64) -> i64 {
+    ret(unsafe { syscall_4(61, path as u64, obj_type as u64, fds_out as u64, 0) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_query_info(fd: u8, info_class: u32, buf: *mut u8, buf_size: usize) -> i64 {
+    ret(unsafe { syscall_4(62, fd as u64, info_class as u64, buf as u64, buf_size as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_set_info(fd: u8, info_class: u32, buf: *const u8, buf_size: usize) -> i64 {
+    ret(unsafe { syscall_4(63, fd as u64, info_class as u64, buf as u64, buf_size as u64) })
+}
+
+#[no_mangle]
+pub extern "C" fn nxl_sys_ob_enum(dir_fd: u8, buf: *mut u8, max_entries: usize) -> i64 {
+    ret(unsafe { syscall_3(64, dir_fd as u64, buf as u64, max_entries as u64) })
+}
+
 // ============================================================
 // IO: stdout, stdin, stderr, _print, _eprint
 // ============================================================
@@ -395,6 +438,12 @@ pub struct AbiTable {
     pub sys_get_version: extern "C" fn(*mut u8, usize) -> i64,
     pub sys_get_datetime: extern "C" fn(*mut u8) -> i64,
     pub sys_get_meminfo: extern "C" fn(*mut u8) -> i64,
+    // Object Manager (Ob) API — RAX 60–64
+    pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
+    pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64) -> i64,
+    pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,
+    pub sys_ob_set_info: extern "C" fn(u8, u32, *const u8, usize) -> i64,
+    pub sys_ob_enum: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub version: u32,
 }
 
@@ -457,5 +506,10 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_get_version: nxl_sys_get_version,
     sys_get_datetime: nxl_sys_get_datetime,
     sys_get_meminfo: nxl_sys_get_meminfo,
-    version: 4,
+    sys_ob_open: nxl_sys_ob_open,
+    sys_ob_create: nxl_sys_ob_create,
+    sys_ob_query_info: nxl_sys_ob_query_info,
+    sys_ob_set_info: nxl_sys_ob_set_info,
+    sys_ob_enum: nxl_sys_ob_enum,
+    version: 5,
 };
