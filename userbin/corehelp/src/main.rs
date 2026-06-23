@@ -6,6 +6,17 @@ use libneodos::syscall::DirEntry;
 
 const PROGRAMS_DIR: &str = "C:\\Programs";
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -77,7 +88,9 @@ fn cmd_list_all() {
     write_str(b"NeoDOS Core Tools\r\n");
     write_str(b"------------------\r\n\r\n");
 
-    match syscall::sys_open(PROGRAMS_DIR) {
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(PROGRAMS_DIR, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
             let mut raw = DirEntry {
                 inode: 0, mode: 0, size: 0, name: [0u8; 260],
@@ -128,7 +141,9 @@ fn cmd_list_all() {
                 let mut desc = [0u8; 80];
                 let desc_len: usize;
 
-                if let Ok(nxe_fd) = syscall::sys_open(path_str) {
+                let mut ob_buf2 = [0u8; 512];
+                let ob_path2 = to_ob_path(path_str, &mut ob_buf2);
+                if let Ok(nxe_fd) = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ) {
                     // Read file in 4096-byte chunks (kernel max per sys_readfile)
                     let mut accumulated = [0u8; 32768];
                     let mut total = 0usize;
@@ -239,7 +254,9 @@ fn extract_full_help(data: &[u8]) -> Option<&[u8]> {
 }
 
 fn read_file_content(path_str: &str, buf: &mut [u8]) -> usize {
-    if let Ok(fd) = syscall::sys_open(path_str) {
+    let mut ob_buf3 = [0u8; 512];
+    let ob_path3 = to_ob_path(path_str, &mut ob_buf3);
+    if let Ok(fd) = syscall::sys_ob_open(ob_path3, libneodos::syscall::ob_access::READ) {
         let mut total = 0usize;
         loop {
             let mut chunk = [0u8; 4096];

@@ -19,19 +19,34 @@ fn fail(label: &[u8], detail: &[u8]) {
     let _ = syscall::sys_write(1, b"\r\n");
 }
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
 fn file_exists(path: &str) -> bool {
-    match syscall::sys_open(path) {
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(path, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => { let _ = syscall::sys_close(fd); true }
         Err(_) => false,
     }
 }
 
 fn dir_exists(path: &str) -> bool {
-    match syscall::sys_open(path) {
+    let mut ob_buf1 = [0u8; 512];
+    let ob_path1 = to_ob_path(path, &mut ob_buf1);
+    match syscall::sys_ob_open(ob_path1, libneodos::syscall::ob_access::READ) {
         Ok(fd) => { let _ = syscall::sys_close(fd); true }
         Err(_) => false,
     }
@@ -166,7 +181,9 @@ pub extern "C" fn _start() -> ! {
 
     // ── COPY: copy source to destination ──
     {
-        let src_fd = syscall::sys_open("C:\\Temp\\cmdtest_src.txt");
+        let mut ob_buf2 = [0u8; 512];
+        let ob_path2 = to_ob_path("C:\\Temp\\cmdtest_src.txt", &mut ob_buf2);
+        let src_fd = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ);
         if let Ok(sf) = src_fd {
             let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_dst.txt");
             let dst_fd = syscall::sys_open_with_flags("C:\\Temp\\cmdtest_dst.txt", 1);
@@ -210,7 +227,9 @@ pub extern "C" fn _start() -> ! {
 
     // ── Verify copy content ──
     {
-        let fd = syscall::sys_open("C:\\Temp\\cmdtest_dst.txt");
+        let mut ob_buf3 = [0u8; 512];
+        let ob_path3 = to_ob_path("C:\\Temp\\cmdtest_dst.txt", &mut ob_buf3);
+        let fd = syscall::sys_ob_open(ob_path3, libneodos::syscall::ob_access::READ);
         if let Ok(f) = fd {
             let mut buf = [0u8; 128];
             match syscall::sys_readfile(f, &mut buf) {

@@ -3,6 +3,17 @@
 
 use libneodos::syscall;
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -118,7 +129,9 @@ pub extern "C" fn _start() -> ! {
     let end_dst = normalized_dst.iter().position(|&b| b == 0).unwrap_or(normalized_dst.len());
     let dst_path = core::str::from_utf8(&normalized_dst[..end_dst]).unwrap_or("C:\\");
 
-    let src_fd = match syscall::sys_open(src_path) {
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(src_path, &mut ob_buf);
+    let src_fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
             write_err(b"\r\nCOPY: source file not found\r\n");

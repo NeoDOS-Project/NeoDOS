@@ -190,8 +190,8 @@ pub fn validate_abi() {
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
         25, 26, 27, 28, 29,
         33,
-         40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-           50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+         40, 41, 42, 43, 44, 45, 46, 47, 49,
+           50, 53, 54, 55, 56, 57, 58, 59,
            60, 61, 62, 63, 64,
     ];
     // Reserved syscall slots that MUST be None
@@ -1168,16 +1168,14 @@ fn handler_readfile(regs: Registers) -> u64 {
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
-            if entry.obj_type() == Some(crate::object::ObType::Filesystem) && entry.object_id != 0 {
-                // OB-017: Use ObQueryInfo pattern — look up ObObject for file info
-                if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
-                    let inode = obj.native_id as u32;
-                    (entry.drive().unwrap_or(0) as usize, inode, entry.offset)
-                } else {
-                    (usize::MAX, 0, 0)
+            if !entry.has_ob_object() { return (usize::MAX, 0, 0); }
+            if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
+                if obj.obj_type != crate::object::ObType::Filesystem {
+                    return (usize::MAX, 0, 0);
                 }
+                (obj.flags as usize, obj.native_id as u32, entry.offset)
             } else {
-                return (usize::MAX, 0, 0);
+                (usize::MAX, 0, 0)
             }
         } else {
             (usize::MAX, 0, 0)
@@ -1227,16 +1225,14 @@ fn handler_writefile(regs: Registers) -> u64 {
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
-            if entry.obj_type() == Some(crate::object::ObType::Filesystem) && entry.object_id != 0 {
-                // OB-017: Use ObQueryInfo pattern — look up ObObject for file info
-                if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
-                    let inode = obj.native_id as u32;
-                    (entry.drive().unwrap_or(0) as usize, inode, entry.offset)
-                } else {
-                    (usize::MAX, 0, 0)
+            if !entry.has_ob_object() { return (usize::MAX, 0, 0); }
+            if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
+                if obj.obj_type != crate::object::ObType::Filesystem {
+                    return (usize::MAX, 0, 0);
                 }
+                (obj.flags as usize, obj.native_id as u32, entry.offset)
             } else {
-                return (usize::MAX, 0, 0);
+                (usize::MAX, 0, 0)
             }
         } else {
             (usize::MAX, 0, 0)
@@ -3490,11 +3486,11 @@ lazy_static! {
         t[45] = Some(handler_get_meminfo as SyscallFn);
         t[46] = Some(handler_get_volume_label as SyscallFn);
         t[47] = Some(handler_chdir_parent as SyscallFn);
-        t[48] = Some(handler_kobj_enum as SyscallFn);
+        t[48] = None;
         t[49] = Some(handler_set_keyboard_layout as SyscallFn);
         t[50] = Some(handler_ndreg as SyscallFn);
-        t[51] = Some(handler_set_priority as SyscallFn);
-        t[52] = Some(handler_kill_process as SyscallFn);
+        t[51] = None;
+        t[52] = None;
         t[53] = Some(handler_cursor_blink as SyscallFn);
         t[54] = Some(handler_set_volume_label as SyscallFn);
         t[55] = Some(handler_fsck as SyscallFn);
@@ -3552,11 +3548,8 @@ lazy_static! {
         t[45] = SyscallPermission::user();
         t[46] = SyscallPermission::user();
         t[47] = SyscallPermission::user();
-        t[48] = SyscallPermission::user();
         t[49] = SyscallPermission::user();
         t[50] = SyscallPermission::admin();
-        t[51] = SyscallPermission::admin();
-        t[52] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
         t[54] = SyscallPermission::user();
         t[55] = SyscallPermission::user();

@@ -74,6 +74,17 @@ fn after_first_token(s: &[u8]) -> &[u8] {
     &[]
 }
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -288,7 +299,9 @@ impl Shell {
                 if pos < 255 { dir_path[pos] = b; pos += 1; }
             }
             let dir_str = core::str::from_utf8(&dir_path[..pos]).unwrap_or("");
-            if let Ok(fd) = syscall::sys_open(dir_str) {
+            let mut ob_buf = [0u8; 512];
+            let ob_path = to_ob_path(dir_str, &mut ob_buf);
+            if let Ok(fd) = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
                 let mut entry = syscall::DirEntry {
                     inode: 0, mode: 0, size: 0, name: [0u8; 260],
                 };
@@ -495,7 +508,9 @@ impl Shell {
                 pos += 4;
             }
             let path_str = core::str::from_utf8(&full[..pos]).unwrap_or("");
-            let fd = syscall::sys_open(path_str);
+            let mut ob_buf = [0u8; 512];
+            let ob_path = to_ob_path(path_str, &mut ob_buf);
+            let fd = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ);
             if fd.is_ok() {
                 let _ = syscall::sys_close(fd.unwrap());
                 return Ok(full);
@@ -756,7 +771,9 @@ impl Shell {
             if pos < 255 { full_path[pos] = b; pos += 1; }
         }
         let path_str = core::str::from_utf8(&full_path[..pos]).unwrap_or("");
-        let fd = match syscall::sys_open(path_str) {
+        let mut ob_buf = [0u8; 512];
+        let ob_path = to_ob_path(path_str, &mut ob_buf);
+        let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
             Ok(fd) => fd,
             Err(_) => {
                 write_err(b"\r\nBatch file not found\r\n");

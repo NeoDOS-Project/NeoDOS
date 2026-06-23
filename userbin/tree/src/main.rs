@@ -9,6 +9,17 @@ const ARGS_ADDR: u64 = 0x41F000;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 64;
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -89,7 +100,9 @@ struct Entry {
 }
 
 fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize {
-    match syscall::sys_open(dir_path) {
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(dir_path, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
             let mut count = 0;
             let mut raw = DirEntry { inode: 0, mode: 0, size: 0, name: [0u8; 260] };

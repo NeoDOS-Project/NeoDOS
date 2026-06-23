@@ -13,6 +13,17 @@ const PERM_D: u16 = 0x0010;
 const PAGE_LINES: usize = 23;
 const ARGS_ADDR: u64 = 0x41F000;
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -205,7 +216,9 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
     }
     let clean_path = core::str::from_utf8(&dir_path[..path_end]).unwrap_or("C:\\");
 
-    match syscall::sys_open(clean_path) {
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(clean_path, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
             let mut entries: [Info; 256] = [Info { name: [0u8; 260], dir: false, mode: 0, size: 0 }; 256];
             let mut count = 0usize;

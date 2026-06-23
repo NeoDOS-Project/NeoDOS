@@ -347,6 +347,31 @@ pub fn ob_open_path(
         return Ok(dir_id);
     }
 
+    // Attempt VFS resolution for paths under \Global\FileSystem\
+    // This enables ObOpen("\Global\FileSystem\C:\path\to\file") to work
+    // by resolving the VFS path, creating an ObObject, and inserting it
+    // into the namespace.
+    if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
+        if !vfs_path.is_empty() && vfs_path.contains(':') {
+            let result = crate::globals::with_vfs(|vfs| vfs.resolve_path(vfs_path));
+            if let Ok((drive_idx, node)) = result {
+                let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
+                let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
+                let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, None)?;
+                let _ = crate::kobj::namespace::ob_insert_object(path_str, obj_id);
+                // Ensure parent directories exist in namespace
+                if let Some(parent_end) = path_str.rfind('\\') {
+                    let parent = &path_str[..parent_end];
+                    if !crate::kobj::namespace::ob_is_directory(parent) {
+                        let _ = crate::kobj::namespace::ob_create_directory(parent);
+                    }
+                }
+                ob_reference(obj_id)?;
+                return Ok(obj_id);
+            }
+        }
+    }
+
     Err(ObError::NotFound)
 }
 
