@@ -25,6 +25,33 @@ fn parse_u32(s: &[u8]) -> Option<u32> {
     Some(n)
 }
 
+fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
+    let prefix = b"\\Ob\\Process\\eproc/";
+    let plen = prefix.len();
+    buf[..plen].copy_from_slice(prefix);
+    let mut i = plen;
+    let mut n = pid;
+    if n == 0 {
+        buf[i] = b'0';
+        i += 1;
+    } else {
+        let mut digits = [0u8; 10];
+        let mut di = 10;
+        while n > 0 {
+            di -= 1;
+            digits[di] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+        while di < 10 {
+            buf[i] = digits[di];
+            i += 1;
+            di += 1;
+        }
+    }
+    buf[i] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..i]) }
+}
+
 #[used]
 #[link_section = ".rodata"]
 static PRI_HELP: &[u8] = b"::HELP::\
@@ -112,7 +139,21 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    match syscall::sys_set_priority(pid, priority) {
+    // Open the process via Ob namespace
+    let mut path_buf = [0u8; 128];
+    let proc_path = build_proc_path(pid, &mut path_buf);
+
+    let proc_fd = match syscall::sys_ob_open(proc_path, libneodos::syscall::ob_access::WRITE) {
+        Ok(f) => f,
+        Err(_) => {
+            write_err(b"\r\nProcess not found.\r\n");
+            syscall::sys_exit(1);
+        }
+    };
+
+    // ObSetInfo class 0 = ProcessPriority
+    let priority_bytes = [priority as u8, 0, 0, 0];
+    match syscall::sys_ob_set_info(proc_fd, 0, &priority_bytes) {
         Ok(()) => {
             let names: &[&[u8]] = &[b"HIGH", b"ABOVE_NORMAL", b"NORMAL", b"IDLE"];
             write_str(b"\r\nProcess ");
@@ -124,10 +165,11 @@ pub extern "C" fn _start() -> ! {
             write_str(b")\r\n");
         }
         Err(_) => {
-            write_err(b"\r\nProcess not found.\r\n");
+            write_err(b"\r\nFailed to set priority.\r\n");
         }
     }
 
+    let _ = syscall::sys_close(proc_fd);
     syscall::sys_exit(0)
 }
 
