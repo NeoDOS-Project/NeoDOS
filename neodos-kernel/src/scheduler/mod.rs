@@ -714,6 +714,8 @@ impl Scheduler {
                 }
             }
         }
+        // Also wake via KWait (OB-020)
+        crate::kwait::kwait_wake(&crate::kwait::WaitReason::ChildExit { pid });
     }
 
     pub fn wake_blocked_on_magic(&mut self, magic: u32) {

@@ -85,11 +85,12 @@ pub enum SyscallNum {
     ObQueryInfo = 62,
     ObSetInfo = 63,
     ObEnum = 64,
+    ObWait = 65,
     GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 64;
+    pub const MAX_VALID: u64 = 65;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -3424,6 +3425,58 @@ fn handler_ob_enum(regs: Registers) -> u64 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// OB-020: ObWait — RAX=65
+// ═══════════════════════════════════════════════════════════════════════
+
+/// sys_ob_wait (RAX=65): wait on one or more Ob objects.
+/// RBX = handle_count (1 for now)
+/// RCX = handles_ptr (pointer to array of fd u64 values)
+/// RDX = wait_type (0=ANY)
+/// R8 = timeout_ms (0 = infinite)
+/// Returns index of signaled handle, negative on error.
+fn handler_ob_wait(regs: Registers) -> u64 {
+    let handle_count = regs.rbx as usize;
+    let handles_ptr = regs.rcx;
+    let wait_type = regs.rdx as u32;
+    let _timeout_ms = regs.r8 as u64;
+
+    if handle_count == 0 || handles_ptr == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+    if !is_user_ptr_valid(handles_ptr, (handle_count as u64) * 8) {
+        return err_to_u64(SyscallError::Fault);
+    }
+    if handle_count > 1 || wait_type != 0 {
+        // Multi-handle and WAIT_TYPE_ALL not yet supported
+        return err_to_u64(SyscallError::NoSys);
+    }
+
+    let fd = unsafe { (handles_ptr as *const u64).read() } as u8;
+    let entry = current_handle_entry(fd);
+
+    if entry.object_id == 0 {
+        return err_to_u64(SyscallError::BadF);
+    }
+
+    let obj = match crate::object::ob_lookup(entry.object_id) {
+        Some(o) => o,
+        None => return err_to_u64(SyscallError::BadF),
+    };
+
+    let reason = match obj.obj_type {
+        crate::object::ObType::Process => {
+            let pid = obj.native_id as u32;
+            crate::kwait::WaitReason::ChildExit { pid }
+        }
+        _ => return err_to_u64(SyscallError::NoSys),
+    };
+
+    // Block the current thread via KWait
+    crate::kwait::kwait_block(reason);
+    0
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -3486,6 +3539,7 @@ lazy_static! {
         t[62] = Some(handler_ob_query_info as SyscallFn);
         t[63] = Some(handler_ob_set_info as SyscallFn);
         t[64] = Some(handler_ob_enum as SyscallFn);
+        t[65] = Some(handler_ob_wait as SyscallFn);
         t
     };
 
@@ -3547,6 +3601,7 @@ lazy_static! {
         t[62] = SyscallPermission::user();
         t[63] = SyscallPermission::user();
         t[64] = SyscallPermission::user();
+        t[65] = SyscallPermission::user();
         t
     };
 }
@@ -3679,7 +3734,7 @@ pub fn register_syscall_table_tests() {
             33,
             40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
             50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
-            60, 61, 62, 63, 64,
+            60, 61, 62, 63, 64, 65,
         ];
         const RESERVED: &[u64] = &[];
         for &n in ASSIGNED {

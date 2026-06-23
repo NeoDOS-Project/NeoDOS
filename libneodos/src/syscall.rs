@@ -1068,3 +1068,13 @@ pub fn sys_ob_enum(dir_fd: u8, entries: &mut [ObEnumEntry]) -> Result<usize, i64
     let r = unsafe { ob_syscall_3!(64, dir_fd as u64, ptr, max) };
     ret(r).map(|v| v as usize)
 }
+
+/// sys_ob_wait (RAX=65): wait on an Ob object (process, thread).
+/// Waits for the object to be signaled (e.g. process exit).
+/// Returns 0 on success, negative on error.
+pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
+    let handles = [fd as u64];
+    let fd_ptr = handles.as_ptr() as u64;
+    let r = unsafe { ob_syscall_3!(65, 1u64, fd_ptr, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
