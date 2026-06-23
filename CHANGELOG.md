@@ -5,6 +5,9 @@
 ### Added
 - **OB-020 (sys_ob_wait RAX=65)** — `handler_ob_wait` con integración KWait. Soporta wait simple sobre objetos Process (ChildExit). `kwait_wake` llamado desde scheduler `wake_waiters`.
 - **libneodos sys_ob_wait** + NXL export.
+
+### Changed
+- **OB-024 (HandleEntry cleanup)** — Eliminados campos `kind`, `id`, `extra` de `HandleEntry`. Stdio fds usan ObId sentinel. Pipe read/write discriminados via offset (0=read, 1=write). Drive index almacenado en flags del ObObject. Todos los consumidores migrados a métodos helper (`is_pipe_read()`, `obj_type()`, `native_id()`, `drive()`).
 - **OB-001/OB-010/OB-011/OB-012/OB-013/OB-014 (Object Manager syscalls)** — `sys_ob_open` (RAX=60), `sys_ob_create` (61), `sys_ob_query_info` (62), `sys_ob_set_info` (63), `sys_ob_enum` (64) fully implemented and callable from user mode.
 - **libneodos Ob API** — `ObBasicInfo`, `ObEnumEntry`, `ObProcessInfo` structs + `sys_ob_open/create/query/set/enum` wrappers + `ob_access` constants.
 - **libneodos-nxl Ob exports** — 5 new AbiTable entries + version 5.
