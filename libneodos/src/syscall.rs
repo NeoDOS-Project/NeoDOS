@@ -868,11 +868,15 @@ impl ObBasicInfo {
 }
 
 /// ObEnumEntry — ABI-compatible with kernel's ObEnumEntry (RAX=64).
+/// Backward compatible: first 44 bytes same as v0.44, new fields mode+size at end.
 #[repr(C)]
 pub struct ObEnumEntry {
     pub id: u64,
     pub obj_type: u32,
     pub name: [u8; 32],
+    pub mode: u16,
+    pub _pad: [u8; 2],
+    pub size: u32,
 }
 
 impl ObEnumEntry {

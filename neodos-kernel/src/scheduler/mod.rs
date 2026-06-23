@@ -14,6 +14,7 @@ use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::kobj::{self, KObjType};
+use crate::object::{self, ObType, ObId};
 use crate::security::token::Token;
 
 // ── Constants ──
@@ -156,6 +157,7 @@ pub struct Eprocess {
     pub thread_count: u32,
     pub exit_code: i64,
     pub kobj_id: Option<kobj::KObjId>,
+    pub ob_id: Option<ObId>,
     pub address_space: address_space::AddressSpace,
     pub token: Token,
 }
@@ -286,6 +288,7 @@ impl Eprocess {
             thread_count: 0,
             exit_code: 0,
             kobj_id: None,
+            ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
         }
@@ -306,6 +309,7 @@ impl Eprocess {
             thread_count: 1,
             exit_code: 0,
             kobj_id: None,
+            ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
         }
@@ -486,6 +490,15 @@ impl Scheduler {
             eproc.kobj_id = Some(kid);
         }
 
+        // OB-046: Register process in Ob namespace
+        let ob_name = alloc::format!("proc/{}", pid);
+        if let Ok(ob_id) = object::ob_create_object(ObType::Process, &ob_name, pid as u64, 0, None) {
+            let ns_path = alloc::format!("\\Process\\{}", pid);
+            let _ = crate::kobj::namespace::ob_create_directory("\\Process");
+            let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
+            eproc.ob_id = Some(ob_id);
+        }
+
         let tname = alloc::format!("kthread/{}", tid);
         if let Ok(kid) = kobj::kobj_register(KObjType::Process, &tname, tid as u64) {
             thread.kobj_id = Some(kid);
@@ -549,12 +562,17 @@ impl Scheduler {
     pub fn kill_pid(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
 
-        // Unregister EPROCESS from KOBJ
+        // Unregister EPROCESS from KOBJ and Ob (OB-046)
         for e in self.eprocesses.iter() {
             if let Some(ep) = e {
                 if ep.pid == pid {
                     if let Some(kid) = ep.kobj_id {
                         kobj::kobj_unregister(kid);
+                    }
+                    if let Some(ob_id) = ep.ob_id {
+                        let _ = object::ob_close_object(ob_id);
+                        let ns_path = alloc::format!("\\Process\\{}", pid);
+                        let _ = crate::kobj::namespace::ob_remove_object(&ns_path);
                     }
                     break;
                 }
@@ -630,12 +648,17 @@ impl Scheduler {
     pub fn recycle_terminated(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
 
-        // Unregister from KOBJ
+        // Unregister from KOBJ and Ob (OB-046)
         for e in self.eprocesses.iter() {
             if let Some(ep) = e {
                 if ep.pid == pid {
                     if let Some(kid) = ep.kobj_id {
                         kobj::kobj_unregister(kid);
+                    }
+                    if let Some(ob_id) = ep.ob_id {
+                        let _ = object::ob_close_object(ob_id);
+                        let ns_path = alloc::format!("\\Process\\{}", pid);
+                        let _ = crate::kobj::namespace::ob_remove_object(&ns_path);
                     }
                     break;
                 }
@@ -696,22 +719,21 @@ impl Scheduler {
     // ── Wake helpers ──
 
     pub fn wake_waiters(&mut self, pid: u32) {
-        let magic = pid | 0x8000_0000;
+        // Legacy magic waitpid (0x8000_0000 | pid)
+        let legacy_magic = pid | 0x8000_0000;
+        // KWait ChildExit magic
+        let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
         for th in self.kthreads.iter_mut() {
             if let Some(k) = th {
-                // Also wake threads waiting on this PID (used by waitpid)
-                if k.waiting_for == Some(magic) {
+                if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
                     k.waiting_for = None;
                     if matches!(k.state, ThreadState::Blocked { .. }) {
                         k.state = ThreadState::Ready;
-                        // Enqueue to its CPU's run queue
                         Self::enqueue_to_cpu_run_queue(k);
                     }
                 }
             }
         }
-        // Also wake via KWait (OB-020)
-        crate::kwait::kwait_wake(&crate::kwait::WaitReason::ChildExit { pid });
     }
 
     pub fn wake_blocked_on_magic(&mut self, magic: u32) {
@@ -1100,24 +1122,12 @@ pub fn current_tid() -> u32 {
     result
 }
 
-/// For thread_join: block current thread until target TID terminates.
+/// For thread_join: block current thread until target TID terminates (via KWait, OB-031).
 pub fn block_current_for_thread(tid: u32) {
-    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    let mut lock = SCHEDULER.lock();
-    if let Some(k) = lock.current_kthread_mut() {
-        k.state = ThreadState::Blocked { waiting_for: tid | 0x8000_0000 };
-        k.waiting_for = Some(tid | 0x8000_0000);
-    }
-    crate::syscall::set_need_resched();
-    drop(lock);
-    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    crate::kwait::kwait_block(crate::kwait::WaitReason::ThreadJoin { tid });
 }
 
-/// Wake a thread blocked on join.
+/// Wake a thread blocked on join (via KWait, OB-031).
 pub fn wake_thread_joiner(tid: u32) {
-    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    let mut lock = SCHEDULER.lock();
-    lock.wake_blocked_on_magic(tid | 0x8000_0000);
-    drop(lock);
-    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    crate::kwait::kwait_wake(&crate::kwait::WaitReason::ThreadJoin { tid });
 }

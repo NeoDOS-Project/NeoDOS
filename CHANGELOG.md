@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.44.2 — 2026-06-23
+
+### Added
+- **OB-015 (legacy paths via Ob)** — `sys_open` ahora convierte `C:\...` paths a `\Global\FileSystem\C:\...` y resuelve mediante `ob_open_path`, aplicando SeAccessCheck.
+- **OB-018 (URN todos schemes via Ob)** — `urn_open` implementado para todos los 4 schemes (file, device, registry, kobj) mediante `ob_open_path`. Namespace `\Registry` creado en `init_object_namespace`.
+- **OB-020 (ObWait multi-type)** — `handler_ob_wait` extendido para soportar `PipeRead`, `Event`, `Timer` además de `ChildExit`. Quick non-blocking peek para pipes.
+- **OB-025 (URN frontend completo)** — File scheme migrado de VFS directo a `ob_open_path("\Global\FileSystem\...")`. Registry/kobj schemes implementados via Ob namespace.
+- **OB-030 (SeAccessCheck en todas las rutas)** — `check_legacy_path_access()` helper añadido. Security checks en `sys_spawn` (ACCESS_EXECUTE), `sys_mkdir` (ACCESS_WRITE), `sys_unlink`/`sys_rmdir` (ACCESS_DELETE), `sys_rename` (ACCESS_WRITE|DELETE).
+- **OB-031 (KWait full integration)** — Pipe blocking (`block_current_for_pipe`, `wake_pipe_readers`) y ThreadJoin (`block_current_for_thread`, `wake_thread_joiner`) migrados de ad-hoc magic numbers a KWait. `handler_thread_join` refactorizado.
+- **OB-046 (processes as ObObjects)** — `Eprocess.ob_id` añadido. Procesos registrados como `ObType::Process` en `\Process\<pid>`. Cleanup en `recycle_terminated` y `kill_pid`.
+
+### Changed
+- **URN file scheme** — Ya no usa VFS directamente; todo resuelve via `ob_open_path` con security checks.
+- **Scheduler** — `add_ring3_process` registra EPROCESS en Ob namespace. `recycle_terminated`/`kill_pid` limpian ObObject.
+- **Pipe blocking** — Usa `kwait_block/kwait_wake` con `WaitReason::PipeRead` en vez de ad-hoc `0xFFFF_0000` magic.
+- **Thread join** — Usa `kwait_block/kwait_wake` con `WaitReason::ThreadJoin` en vez de ad-hoc `0x8000_0000` magic.
+- **Syscall table test** — Actualizado: RAX 48, 51, 52 marcados como RESERVED (migrados a Ob).
+- **Test count** — `pipe_block_current_wake` → `pipe_block_current_wake_kwait` (usa KWait magic).
+
 ## v0.44.1 — 2026-06-23
 
 ### Added

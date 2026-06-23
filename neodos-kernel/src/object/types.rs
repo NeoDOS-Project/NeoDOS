@@ -128,9 +128,14 @@ pub enum ObSetInfoClass {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// ABI-stable entry written by sys_ob_enum (RAX=64).
+/// Compatible extension: old code can read id+obj_type+name (first 44 bytes),
+/// new code additionally reads mode+size (52 bytes total).
 #[repr(C)]
 pub struct ObEnumEntry {
     pub id: ObId,
     pub obj_type: u32,
     pub name: [u8; 32],
+    pub mode: u16,
+    pub _pad: [u8; 2],
+    pub size: u32,
 }

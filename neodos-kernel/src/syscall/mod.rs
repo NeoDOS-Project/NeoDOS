@@ -16,6 +16,7 @@
 pub mod table;
 pub mod permission;
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -428,6 +429,12 @@ fn handler_spawn(regs: Registers) -> u64 {
     if path_str.is_empty() {
         return err_to_u64(SyscallError::NoEnt);
     }
+
+    // Security check: require ACCESS_EXECUTE on the binary (OB-030)
+    if let Err(e) = check_legacy_path_access(&path_str, crate::security::acl::ACCESS_EXECUTE) {
+        return e;
+    }
+
     let stdin_fd = regs.rcx as u8;
     let stdout_fd = regs.rdx as u8;
     let stderr_fd = regs.r8 as u8;
@@ -639,28 +646,28 @@ fn handler_poweroff(_regs: Registers) -> u64 {
 fn handler_exit(regs: Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
-        //crate::serial_println!("[EXIT] enter");
+        crate::serial_println!("[EXIT] enter code={}", code);
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
         if tid > 0 {
-            //crate::serial_println!("[EXIT] tid={} start", tid);
+            crate::serial_println!("[EXIT] tid={} start", tid);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.state = ThreadState::Terminated;
             }
-            //crate::serial_println!("[EXIT] marked Terminated");
+            crate::serial_println!("[EXIT] marked Terminated");
             let pid = scheduler.current_pid();
-            //crate::serial_println!("[EXIT] pid={}", pid);
+            crate::serial_println!("[EXIT] pid={}", pid);
             if pid > 0 {
-                //crate::serial_println!("[EXIT] getting eproc");
+                crate::serial_println!("[EXIT] getting eproc");
                 let eproc = scheduler.current_eprocess_mut();
-                //crate::serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
+                crate::serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
                 if let Some(ep) = eproc {
                     ep.thread_count = ep.thread_count.saturating_sub(1);
                     ep.exit_code = code as i64;
-                    //crate::serial_println!("[EXIT] thread_count={}", ep.thread_count);
+                    crate::serial_println!("[EXIT] thread_count={}", ep.thread_count);
                     if ep.thread_count == 0 {
-                        //crate::serial_println!("[EXIT] freeing resources");
+                        crate::serial_println!("[EXIT] freeing resources");
                         if let Some(slot) = ep.user_slot.take() {
                             //crate::serial_println!("[EXIT] free_user_slot");
                             crate::arch::x64::paging::free_user_slot(slot);
@@ -698,12 +705,23 @@ fn handler_exit(regs: Registers) -> u64 {
                         }
                         scheduler.wake_waiters(pid);
                     }
-                    //crate::serial_println!("[EXIT] after resource freeing");
+                    crate::serial_println!("[EXIT] after resource freeing");
                 }
             }
-            //crate::serial_println!("[EXIT] wake_thread_joiner");
-            scheduler.wake_blocked_on_magic(tid | 0x8000_0000);
-            //crate::serial_println!("[EXIT] checking: pid={} thread_count", pid);
+            crate::serial_println!("[EXIT] wake_thread_joiner via KWait (OB-031)");
+            // Directly iterate kthreads to avoid re-locking scheduler
+            let tj_magic = crate::kwait::WaitReason::ThreadJoin { tid }.encode_magic();
+            for th in scheduler.kthreads.iter_mut() {
+                if let Some(k) = th {
+                    if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                        k.waiting_for = None;
+                        k.state = ThreadState::Ready;
+                        scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                        crate::syscall::set_need_resched();
+                    }
+                }
+            }
+            crate::serial_println!("[EXIT] checking: pid={} thread_count", pid);
             // Always request exit_to_kernel when the last thread exits,
             // regardless of whether someone is waiting via sys_waitpid.
             // Without this, the asm handler returns to user mode and the
@@ -711,15 +729,15 @@ fn handler_exit(regs: Registers) -> u64 {
             if pid > 0 {
                 let eproc = scheduler.current_eprocess();
                 if eproc.map_or(true, |ep| ep.thread_count == 0) {
-                    //crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
+                    crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
                     crate::usermode::request_exit_to_kernel();
-                    //crate::serial_println!("[EXIT] after request_exit_to_kernel");
+                    crate::serial_println!("[EXIT] after request_exit_to_kernel");
                 }
             }
         }
-        //crate::serial_println!("[EXIT] done (after if tid > 0 block)");
+        crate::serial_println!("[EXIT] done (after if tid > 0 block)");
     });
-    //crate::serial_println!("[EXIT] returned from without_interrupts");
+    crate::serial_println!("[EXIT] returned from without_interrupts");
     code
 }
 
@@ -1036,9 +1054,17 @@ fn handler_open(regs: Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Inval),
     };
 
-    // Try ObOpen first for Ob namespace paths (starting with \ without drive letter)
-    let is_ob_path = path.starts_with('\\') && !path.contains(':');
-    if is_ob_path {
+    // Try ObOpen first for all paths (OB-015): namespace paths → direct, drive paths → \Global\FileSystem\ bridge
+    let try_ob_path: Option<alloc::string::String> = if path.starts_with('\\') && !path.contains(':') {
+        Some(path.to_string())
+    } else if path.contains(':') {
+        // Convert C:\... to \Global\FileSystem\C:\... for Ob namespace resolution
+        let normalized = path.replace('/', "\\");
+        Some(format!("\\Global\\FileSystem\\{}", normalized))
+    } else {
+        None
+    };
+    if let Some(ref ob_path) = try_ob_path {
         let token = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();
@@ -1048,7 +1074,7 @@ fn handler_open(regs: Registers) -> u64 {
         });
         let desired_access = crate::security::acl::ACCESS_READ |
             crate::security::acl::ACCESS_WRITE;
-        if let Ok(ob_id) = crate::object::ob_open_path(path, &token, desired_access) {
+        if let Ok(ob_id) = crate::object::ob_open_path(ob_path, &token, desired_access) {
             let entry = crate::handle::HandleEntry::ob_object(ob_id, desired_access);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
@@ -1355,6 +1381,37 @@ fn handler_readdir(regs: Registers) -> u64 {
     }
 }
 
+/// Check legacy VFS path access via Ob namespace (OB-030).
+/// Returns Ok if access is granted or no security policy exists, Err(AccessDenied) if denied.
+fn check_legacy_path_access(path: &str, access: u32) -> Result<(), u64> {
+    if !path.contains(':') {
+        return Ok(());
+    }
+    let normalized = path.replace('/', "\\");
+    let ob_path = alloc::format!("\\Global\\FileSystem\\{}", normalized);
+    let token = crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        lock.current_eprocess()
+            .map(|ep| ep.token)
+            .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+    });
+    match crate::object::ob_open_path(&ob_path, &token, access) {
+        Ok(ob_id) => {
+            // Path exists with matching security → access granted, close reference
+            let _ = crate::object::ob_close_object(ob_id);
+            Ok(())
+        }
+        Err(crate::object::ObError::AccessDenied) => {
+            Err(err_to_u64(SyscallError::Acces))
+        }
+        Err(_) => {
+            // Path not found in Ob namespace or no security descriptor → grant access
+            Ok(())
+        }
+    }
+}
+
 fn handler_mkdir(regs: Registers) -> u64 {
     let path_str = match copy_user_string(regs.rbx) {
         Ok(s) => s,
@@ -1362,6 +1419,10 @@ fn handler_mkdir(regs: Registers) -> u64 {
     };
     if path_str.is_empty() {
         return err_to_u64(SyscallError::NoEnt);
+    }
+
+    if let Err(e) = check_legacy_path_access(&path_str, crate::security::acl::ACCESS_WRITE) {
+        return e;
     }
 
     let result = crate::globals::with_vfs(|vfs| {
@@ -1383,6 +1444,10 @@ fn handler_unlink(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::NoEnt);
     }
 
+    if let Err(e) = check_legacy_path_access(&path_str, crate::security::acl::ACCESS_DELETE) {
+        return e;
+    }
+
     let result = crate::globals::with_vfs(|vfs| {
         vfs.remove_file(&path_str)
     });
@@ -1400,6 +1465,10 @@ fn handler_rmdir(regs: Registers) -> u64 {
     };
     if path_str.is_empty() {
         return err_to_u64(SyscallError::NoEnt);
+    }
+
+    if let Err(e) = check_legacy_path_access(&path_str, crate::security::acl::ACCESS_DELETE) {
+        return e;
     }
 
     let result = crate::globals::with_vfs(|vfs| {
@@ -1423,6 +1492,12 @@ fn handler_rename(regs: Registers) -> u64 {
     };
     if old_path.is_empty() || new_path.is_empty() {
         return err_to_u64(SyscallError::NoEnt);
+    }
+
+    // Security check: require WRITE + DELETE access on old path (OB-030)
+    if let Err(e) = check_legacy_path_access(&old_path,
+        crate::security::acl::ACCESS_WRITE | crate::security::acl::ACCESS_DELETE) {
+        return e;
     }
 
     // Extract leaf name from new_path (strip directory part if present)
@@ -1887,20 +1962,20 @@ fn handler_thread_create(regs: Registers) -> u64 {
 fn handler_thread_join(regs: Registers) -> u64 {
     let target_tid = regs.rbx as u32;
 
-    loop {
-        let is_done = crate::hal::without_interrupts(|| {
-            let s = scheduler::current_scheduler();
-            let lock = s.lock();
-            if let Some(k) = lock.find_kthread(target_tid) {
-                k.state == ThreadState::Terminated
-            } else {
-                true
-            }
-        });
+    // Check if thread already terminated
+    let is_done = crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let lock = s.lock();
+        if let Some(k) = lock.find_kthread(target_tid) {
+            k.state == ThreadState::Terminated
+        } else {
+            true
+        }
+    });
 
-        if is_done { break; }
-
-        crate::scheduler::block_current_for_thread(target_tid);
+    if !is_done {
+        // Block via KWait (OB-031)
+        crate::kwait::kwait_block(crate::kwait::WaitReason::ThreadJoin { tid: target_tid });
         return err_to_u64(SyscallError::Again);
     }
 
@@ -3357,23 +3432,76 @@ fn handler_ob_enum(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::BadF);
     }
 
-    // Resolve the namespace path for this directory object
+    // Try VFS-backed enumeration first (handle has drive+inode from ObObject)
+    let drive = entry.drive();
+    let inode = entry.native_id();
+    if let (Some(drv), Some(nid)) = (drive, inode) {
+        let drive_idx = drv as usize;
+        let dir_inode = nid as u32;
+        let mut entries = alloc::vec::Vec::new();
+        let result: Result<(), ()> = crate::globals::with_vfs(|vfs| {
+            let mut idx = 0usize;
+            loop {
+                match vfs.readdir(drive_idx, dir_inode, idx) {
+                    Ok(Some(vfs_entry)) => {
+                        let name_bytes = vfs_entry.name.as_bytes();
+                        let mut name_arr = [0u8; 32];
+                        let len = name_bytes.len().min(31);
+                        name_arr[..len].copy_from_slice(&name_bytes[..len]);
+                        let obj_type = if (vfs_entry.node.mode & crate::fs::vfs::MODE_DIR) != 0 {
+                            crate::object::ObType::Directory
+                        } else {
+                            crate::object::ObType::Filesystem
+                        };
+                        entries.push(crate::object::ObEnumEntry {
+                            id: vfs_entry.node.inode as u64,
+                            obj_type: obj_type as u32,
+                            name: name_arr,
+                            mode: vfs_entry.node.mode,
+                            _pad: [0u8; 2],
+                            size: vfs_entry.node.size,
+                        });
+                        idx += 1;
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            Ok(())
+        });
+        return match result {
+            Ok(()) => {
+                let count = core::cmp::min(max_entries, entries.len());
+                for i in 0..count {
+                    let raw = &entries[i];
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            raw as *const crate::object::ObEnumEntry as *const u8,
+                            (buf_ptr as *mut u8).add(i * core::mem::size_of::<crate::object::ObEnumEntry>()),
+                            core::mem::size_of::<crate::object::ObEnumEntry>(),
+                        );
+                    }
+                }
+                count as u64
+            }
+            Err(_) => err_to_u64(SyscallError::Inval),
+        };
+    }
+
+    // Fallback: Ob namespace enumeration via path resolution
     let path = if entry.object_id != 0 {
         crate::kobj::namespace::ob_find_path_by_id(entry.object_id)
     } else {
         None
     };
-
     let dir_path = match path {
         Some(p) => p,
         None => return err_to_u64(SyscallError::Inval),
     };
-
     let ob_entries = match crate::object::ob_enum_directory(&dir_path) {
         Ok(e) => e,
         Err(_) => return err_to_u64(SyscallError::Inval),
     };
-
     let count = core::cmp::min(max_entries, ob_entries.len());
     for i in 0..count {
         let raw = &ob_entries[i];
@@ -3393,9 +3521,9 @@ fn handler_ob_enum(regs: Registers) -> u64 {
 // ═══════════════════════════════════════════════════════════════════════
 
 /// sys_ob_wait (RAX=65): wait on one or more Ob objects.
-/// RBX = handle_count (1 for now)
+/// RBX = handle_count
 /// RCX = handles_ptr (pointer to array of fd u64 values)
-/// RDX = wait_type (0=ANY)
+/// RDX = wait_type (0=ANY, 1=ALL)
 /// R8 = timeout_ms (0 = infinite)
 /// Returns index of signaled handle, negative on error.
 fn handler_ob_wait(regs: Registers) -> u64 {
@@ -3410,9 +3538,11 @@ fn handler_ob_wait(regs: Registers) -> u64 {
     if !is_user_ptr_valid(handles_ptr, (handle_count as u64) * 8) {
         return err_to_u64(SyscallError::Fault);
     }
-    if handle_count > 1 || wait_type != 0 {
-        // Multi-handle and WAIT_TYPE_ALL not yet supported
+    if handle_count > 1 {
         return err_to_u64(SyscallError::NoSys);
+    }
+    if wait_type > 1 {
+        return err_to_u64(SyscallError::Inval);
     }
 
     let fd = unsafe { (handles_ptr as *const u64).read() } as u8;
@@ -3431,6 +3561,21 @@ fn handler_ob_wait(regs: Registers) -> u64 {
         crate::object::ObType::Process => {
             let pid = obj.native_id as u32;
             crate::kwait::WaitReason::ChildExit { pid }
+        }
+        crate::object::ObType::Pipe => {
+            let pipe_id = obj.native_id as u8;
+            // Quick non-blocking check: if pipe has data, return immediately
+            if let Some(true) = crate::pipe::pipe_peek_read_ready(pipe_id) {
+                return 0;
+            }
+            crate::kwait::WaitReason::PipeRead { pipe_id: pipe_id as u16 }
+        }
+        crate::object::ObType::Event => {
+            let event_type = obj.native_id as u32;
+            crate::kwait::WaitReason::Event { event_type }
+        }
+        crate::object::ObType::Timer => {
+            crate::kwait::WaitReason::Timer { timeout_ms: 0 }
         }
         _ => return err_to_u64(SyscallError::NoSys),
     };
@@ -3693,11 +3838,12 @@ pub fn register_syscall_table_tests() {
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28,
             33,
-            40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
-            50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+            40, 41, 42, 43, 44, 45, 46, 47, 49,
+            50, 53, 54, 55, 56, 57, 58, 59,
             60, 61, 62, 63, 64, 65,
         ];
-        const RESERVED: &[u64] = &[];
+        // Removed syscalls (migrated to Ob): 48(kobj_enum), 51(set_priority), 52(kill_process)
+        const RESERVED: &[u64] = &[48, 51, 52];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }

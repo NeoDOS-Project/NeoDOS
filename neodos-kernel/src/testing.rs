@@ -2006,38 +2006,28 @@ pub fn register_pipe_tests() {
         }
     });
 
-    test_case!("pipe_block_current_wake", {
+    test_case!("pipe_block_current_wake_kwait", {
         use crate::scheduler::ThreadState;
 
         let pid = PIPE_MANAGER.alloc().unwrap();
         PIPE_MANAGER.inc_read_ref(pid);
         PIPE_MANAGER.inc_write_ref(pid);
 
-        // Block current (idle) thread on this pipe
+        // Block current (idle) thread on this pipe — now uses KWait (OB-031)
         crate::pipe::block_current_for_pipe(pid);
 
         // Verify we're now blocked — idle thread is at kthreads[0]
+        // KWait uses MAGIC_PIPE_BASE (0x0001_0000) | pipe_id
+        let expected_magic = 0x0001_0000u32 | pid as u32;
         let state = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();
             lock.kthreads[0].as_ref().unwrap().state
         });
-        test_eq!(state, ThreadState::Blocked { waiting_for: 0xFFFF_0000 | pid as u32 });
+        test_eq!(state, ThreadState::Blocked { waiting_for: expected_magic });
 
-        // Manually wake
-        let magic = 0xFFFF_0000u32 | (pid as u32);
-        crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let mut lock = s.lock();
-            for th in lock.kthreads.iter_mut() {
-                if let Some(k) = th {
-                    if k.waiting_for == Some(magic) {
-                        k.waiting_for = None;
-                        k.state = ThreadState::Ready;
-                    }
-                }
-            }
-        });
+        // Wake via KWait
+        crate::kwait::kwait_wake(&crate::kwait::WaitReason::PipeRead { pipe_id: pid as u16 });
 
         let state2 = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();

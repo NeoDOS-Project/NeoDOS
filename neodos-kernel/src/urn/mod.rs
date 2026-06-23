@@ -147,14 +147,25 @@ pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str> {
     let urn = urn_parse(urn_str)?;
     match urn.scheme {
         UrnScheme::File => {
+            // Resolve through Ob namespace via \Global\FileSystem\... bridge
             let vfs_path = urn.path.replace('/', "\\");
-            let (drive, inode) = with_vfs(|vfs| {
-                let (drive_idx, node) = vfs.resolve_path(&vfs_path)
-                    .map_err(|_| "File not found")?;
-                Ok((drive_idx as u8, node.inode))
-            })?;
-            let entry = HandleEntry::file(drive, inode);
-            alloc_handle(entry).map(UrnHandle::new)
+            let ob_path = format!("\\Global\\FileSystem\\{}", vfs_path);
+            let token = current_token();
+            let desired = crate::security::acl::ACCESS_READ
+                | crate::security::acl::ACCESS_WRITE;
+            match ob_open_path(&ob_path, &token, desired) {
+                Ok(ob_id) => {
+                    let entry = HandleEntry::ob_object(ob_id, desired);
+                    match alloc_handle(entry) {
+                        Ok(fd) => Ok(UrnHandle::new(fd)),
+                        Err(e) => {
+                            let _ = object::ob_close_object(ob_id);
+                            Err(e)
+                        }
+                    }
+                }
+                Err(_) => Err("File not found in Ob namespace"),
+            }
         }
         UrnScheme::Device => {
             let ob_path = format!("\\Device\\{}", urn.path);
@@ -176,10 +187,40 @@ pub fn urn_open(urn_str: &str) -> Result<UrnHandle, &'static str> {
             }
         }
         UrnScheme::Registry => {
-            Err("Registry URN scheme not yet implemented")
+            let ob_path = format!("\\Registry\\{}", urn.path);
+            let token = current_token();
+            let desired = crate::security::acl::ACCESS_READ;
+            match ob_open_path(&ob_path, &token, desired) {
+                Ok(ob_id) => {
+                    let entry = HandleEntry::ob_object(ob_id, desired);
+                    match alloc_handle(entry) {
+                        Ok(fd) => Ok(UrnHandle::new(fd)),
+                        Err(e) => {
+                            let _ = object::ob_close_object(ob_id);
+                            Err(e)
+                        }
+                    }
+                }
+                Err(_) => Err("Registry path not found in Ob namespace"),
+            }
         }
         UrnScheme::KObj => {
-            Err("KObj URN scheme not yet implemented")
+            let ob_path = format!("\\Ob\\{}", urn.path);
+            let token = current_token();
+            let desired = crate::security::acl::ACCESS_READ;
+            match ob_open_path(&ob_path, &token, desired) {
+                Ok(ob_id) => {
+                    let entry = HandleEntry::ob_object(ob_id, desired);
+                    match alloc_handle(entry) {
+                        Ok(fd) => Ok(UrnHandle::new(fd)),
+                        Err(e) => {
+                            let _ = object::ob_close_object(ob_id);
+                            Err(e)
+                        }
+                    }
+                }
+                Err(_) => Err("KObj path not found in Ob namespace"),
+            }
         }
     }
 }
@@ -294,15 +335,36 @@ pub fn register_urn_tests() {
         test_eq!(parsed.path, "C:/test.txt");
     });
 
-    // ── OB-025: new tests — scheme mapping ──
+    // ── OB-025: scheme mapping via Ob namespace ──
 
-    test_case!("urn_open_registry_not_implemented", {
+    test_case!("urn_open_registry_not_found", {
+        // Registry path resolved via Ob namespace, but \Registry\Machine\System doesn't exist
         let r = urn_open("neodos://registry/Machine/System");
         test_true!(r.is_err());
     });
 
-    test_case!("urn_open_kobj_not_implemented", {
+    test_case!("urn_open_kobj_not_found", {
+        // KObj path resolved via Ob namespace, but \Ob\Driver\ahci doesn't exist
         let r = urn_open("neodos://kobj/Driver/ahci");
+        test_true!(r.is_err());
+    });
+
+    test_case!("urn_open_registry_ob_namespace", {
+        // \Registry directory exists in namespace → lookup reaches Ob
+        use crate::kobj::namespace;
+        test_true!(namespace::ob_is_directory("\\Registry"));
+    });
+
+    test_case!("urn_open_kobj_ob_namespace", {
+        // \Ob directory exists in namespace
+        use crate::kobj::namespace;
+        test_true!(namespace::ob_is_directory("\\Ob"));
+    });
+
+    test_case!("urn_open_file_via_ob", {
+        // File scheme now routes through ob_open_path(\Global\FileSystem\...)
+        // Non-existent file should still fail via Ob
+        let r = urn_open("neodos://file/C:/nonexistent_file_xyz.txt");
         test_true!(r.is_err());
     });
 

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.44.1
+v0.44.2
 
 ## Architecture Governance
 
@@ -20,13 +20,17 @@ prioridades actuales son:
 2. ~~**v0.41**: ObObjectTable (refactor KOBJ → Object Manager), HandleEntry object_id field~~ **COMPLETADO**
 3. ~~**v0.42**: Unified Wait Engine (KWait), congelar interfaces ABI~~ **COMPLETADO**
 4. ~~**v0.43**: SeAccessCheck NT-compatible, sys_poll()~~ **COMPLETADO**
-5. ~~**v0.44–v0.45**: ASLR v1~~ ~~ObOpen (RAX 60)~~ **v0.44 COMPLETADO**, **v0.45**: Registry persistente, Device Tree
+5. ~~**v0.44–v0.45**: ASLR v1~~ ~~**v0.44–v0.45 COMPLETADO**~~
    - ~~**OB-010 (ObOpen RAX 60), OB-011 (ObCreate RAX 61), OB-012 (ObQueryInfo RAX 62), OB-013 (ObSetInfo RAX 63), OB-014 (ObEnum RAX 64)**~~ COMPLETADO en v0.44.1
-   - ~~**OB-021 (ps.nxe), OB-022 (kill.nxe), OB-023 (pri.nxe), parcial OB-021 (kobj.nxe)**~~ 4 binarios migrados a Ob en v0.44.1
-   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum), ObBasicInfo/ObEnumEntry/ObProcessInfo structs, AbiTable v5
-6. **v0.47**: Networking (TCP/IP stack)
-7. **v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob
-8. **v1.0**: **Security integration in ObOpen**, **Full Ob API stable**
+   - ~~**OB-015 (legacy paths via Ob), OB-016 (pipe via Ob), OB-017 (readfile/writefile via Ob), OB-018 (URN todos schemes via Ob)**~~ COMPLETADO en v0.44.2
+   - ~~**OB-021 (ps.nxe), OB-022 (kill.nxe), OB-023 (pri.nxe)**~~ COMPLETADO en v0.44.1
+6. ~~**v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob~~
+   - ~~**OB-020 (ObWait multi-type), OB-025 (URN frontend), OB-031 (KWait full integration), OB-046 (processes as ObObjects)**~~ COMPLETADO en v0.44.2
+   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait), ObBasicInfo/ObEnumEntry/ObProcessInfo/ObPipeInfo structs, AbiTable v5
+7. ~~**v1.0**: **Security integration in ObOpen**, **Full Ob API stable**~~
+   - ~~**OB-030 (SeAccessCheck en todas las rutas)**~~ COMPLETADO en v0.44.2
+   - **OB-032 (Documentación de API)** 🔶 PARCIAL
+8. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
@@ -744,10 +748,10 @@ Todos los schemes se resuelven mediante `ob_open_path()` en el namespace Ob.
 
 | Scheme | Mapping | Example |
 |--------|---------|---------|
-| `file` | VFS resolve → `HandleEntry::file(drive, inode)` + fd | `neodos://file/C:/System/boot.cfg` |
-| `device` | `ob_open_path("\\Device\\...")` → `HandleEntry::ob_object` + fd | `neodos://device/Harddisk0/Partition1` |
-| `registry` | stub (no implementado en namespace) | `neodos://registry/Machine/System` |
-| `kobj` | stub (no implementado en namespace) | `neodos://kobj/Driver/ahci` |
+| `file` | `ob_open_path("\\Global\\FileSystem\\...")` → ObObject + fd | `neodos://file/C:/System/boot.cfg` |
+| `device` | `ob_open_path("\\Device\\...")` → ObObject + fd | `neodos://device/Harddisk0/Partition1` |
+| `registry` | `ob_open_path("\\Registry\\...")` → ObObject + fd | `neodos://registry/Machine/System` |
+| `kobj` | `ob_open_path("\\Ob\\...")` → ObObject + fd | `neodos://kobj/Driver/ahci` |
 
 ### API
 
@@ -764,7 +768,7 @@ pub fn urn_seek(handle: &mut UrnHandle, pos: u64)
 
 ### Tests
 
-15 tests: parse (4 scheme variants + 4 error cases), open error (2: file not found, device not found), roundtrip, OB-025 new (3: registry stub, kobj stub, UrnHandle constructor), OB-018 ObObjectTable integration.
+19 tests: parse (4 scheme variants + 4 error cases), open error (2: file not found, device not found), roundtrip, OB-025 (5: registry/kobj namespace + file via Ob + UrnHandle), OB-018 ObObjectTable integration.
 
 ## NT5.6 Virtual FS Objects (K:\ drive)
 

@@ -5,7 +5,6 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use spin::Mutex;
-use crate::scheduler::{self, ThreadState};
 use crate::kobj::{self, KObjType};
 use crate::object::{ObOperations, ObId};
 
@@ -300,30 +299,14 @@ pub fn pipe_peek_read_closed(pipe_id: u8) -> Option<bool> {
     Some(pipe.read_closed)
 }
 
-// ── Blocking support ──
+// ── Blocking support (via KWait, OB-031) ──
 
 fn wake_pipe_readers(pipe_id: u8) {
-    let magic = 0xFFFF_0000u32 | (pipe_id as u32);
-    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    let s = scheduler::current_scheduler();
-    let mut scheduler = s.lock();
-    scheduler.wake_blocked_on_magic(magic);
-    crate::syscall::set_need_resched();
-    drop(scheduler);
-    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    crate::kwait::kwait_wake(&crate::kwait::WaitReason::PipeRead { pipe_id: pipe_id as u16 });
 }
 
 pub fn block_current_for_pipe(pipe_id: u8) {
-    let magic = 0xFFFF_0000u32 | (pipe_id as u32);
-    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    let mut lock = scheduler::current_scheduler().lock();
-    if let Some(k) = lock.current_kthread_mut() {
-        k.state = ThreadState::Blocked { waiting_for: magic };
-        k.waiting_for = Some(magic);
-    }
-    crate::syscall::set_need_resched();
-    drop(lock);
-    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    crate::kwait::kwait_block(crate::kwait::WaitReason::PipeRead { pipe_id: pipe_id as u16 });
 }
 
 // ── ObOperations integration (OB-016) ──

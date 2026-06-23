@@ -2,7 +2,7 @@
 #![no_main]
 
 use libneodos::syscall;
-use libneodos::syscall::DirEntry;
+use libneodos::syscall::{ObEnumEntry};
 
 const MODE_DIR: u16 = 0x40;
 const PERM_R: u16 = 0x0001;
@@ -60,8 +60,8 @@ fn entry_name(name_buf: &[u8; 260]) -> &str {
     core::str::from_utf8(&name_buf[..end]).unwrap_or("?")
 }
 
-fn raw_name(e: &DirEntry) -> &str {
-    let end = e.name.iter().position(|&b| b == 0).unwrap_or(0);
+fn ob_entry_name(e: &ObEnumEntry) -> &str {
+    let end = e.name.iter().position(|&b| b == 0).unwrap_or(32);
     core::str::from_utf8(&e.name[..end]).unwrap_or("?")
 }
 
@@ -223,25 +223,27 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
             let mut entries: [Info; 256] = [Info { name: [0u8; 260], dir: false, mode: 0, size: 0 }; 256];
             let mut count = 0usize;
 
-            let mut raw = DirEntry { inode: 0, mode: 0, size: 0, name: [0u8; 260] };
+            let mut ob_entries: [ObEnumEntry; 256] = core::array::from_fn(|_| ObEnumEntry {
+                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+            });
 
-            loop {
-                match syscall::sys_readdir(fd, &mut raw) {
-                    Ok(1) => {
-                        let n = raw_name(&raw);
+            match syscall::sys_ob_enum(fd, &mut ob_entries) {
+                Ok(n) => {
+                    for i in 0..n {
+                        let raw = &ob_entries[i];
+                        let n = ob_entry_name(raw);
                         if n.is_empty() || n == "." || n == ".." { continue; }
                         if count >= 256 { break; }
                         let mut nb = [0u8; 260];
                         let b = n.as_bytes();
                         let cl = b.len().min(259);
                         nb[..cl].copy_from_slice(&b[..cl]);
-                        entries[count] = Info { name: nb, dir: is_dir(raw.mode), mode: raw.mode, size: raw.size };
+                        let is_dir = raw.obj_type == 11; // ObType::Directory
+                        entries[count] = Info { name: nb, dir: is_dir, mode: raw.mode, size: raw.size };
                         count += 1;
                     }
-                    Ok(0) => break,
-                    Err(_) => { write_str(b"readdir error\r\n"); break; }
-                    _ => break,
                 }
+                Err(_) => { write_str(b"enum error\r\n"); }
             }
             let _ = syscall::sys_close(fd);
 

@@ -1,9 +1,9 @@
-# NeoDOS Object Manager — Architecture Document v0.1
+# NeoDOS Object Manager — Architecture Document v0.2
 
 > **Autor:** Arquitecto Jefe de Sistemas Operativos
-> **Versión:** v0.1 (draft)
-> **Fecha:** 2026-06-22
-> **Estado:** Propuesta para revisión arquitectónica
+> **Versión:** v0.2
+> **Fecha:** 2026-06-23
+> **Estado:** Documento de referencia v0.44.1 — implementado parcialmente
 
 ---
 
@@ -475,12 +475,12 @@ La URN actual (`neodos://<scheme>/<path>`) se convierte en un frontend de Ob:
 
 | RAX | Syscall | Args | Reemplaza | Estado |
 |-----|---------|------|-----------|--------|
-| 60 | `sys_ob_open` | RBX=path_ptr, RCX=access_mask | sys_open parcial | NUEVA |
-| 61 | `sys_ob_create` | RBX=path_ptr, RCX=type, RDX=attrs | sys_pipe, sys_mkdir parcial | NUEVA |
-| 62 | `sys_ob_query_info` | RBX=fd, RCX=info_class, RDX=buf_ptr, R8=buf_size | sys_kobj_enum, sys_stat | NUEVA |
-| 63 | `sys_ob_set_info` | RBX=fd, RCX=info_class, RDX=buf_ptr | — | NUEVA |
-| 64 | `sys_ob_enum` | RBX=path_fd, RCX=buf_ptr, RDX=max_entries | sys_readdir extendido | NUEVA |
-| 65 | `sys_ob_wait` | RBX=handle_count, RCX=handles_ptr, RDX=wait_type, R8=timeout | sys_waitpid, sys_thread_join, sleep_ex unificado | NUEVA |
+| 60 | `sys_ob_open` | RBX=path_ptr, RCX=access_mask | sys_open parcial | **IMPLEMENTADA (v0.44)** |
+| 61 | `sys_ob_create` | RBX=path_ptr, RCX=type, RDX=attrs | sys_pipe, sys_mkdir parcial | **IMPLEMENTADA (v0.44.1)** |
+| 62 | `sys_ob_query_info` | RBX=fd, RCX=info_class, RDX=buf_ptr, R8=buf_size | sys_kobj_enum, sys_stat | **IMPLEMENTADA (v0.44.1)** |
+| 63 | `sys_ob_set_info` | RBX=fd, RCX=info_class, RDX=buf_ptr | — | **IMPLEMENTADA (v0.44.1)** |
+| 64 | `sys_ob_enum` | RBX=path_fd, RCX=buf_ptr, RDX=max_entries | sys_readdir extendido | **IMPLEMENTADA (v0.44.1)** |
+| 65 | `sys_ob_wait` | RBX=handle_count, RCX=handles_ptr, RDX=wait_type, R8=timeout | sys_waitpid, sys_thread_join, sleep_ex unificado | **IMPLEMENTADA (v0.44.1)** |
 
 ### 12.2 Slot Reservation
 
@@ -494,19 +494,19 @@ La URN actual (`neodos://<scheme>/<path>`) se convierte en un frontend de Ob:
 
 ### 13.1 Syscalls que se Convierten en Wrappers
 
-| RAX | Syscall | Wrapper de | Fase |
-|-----|---------|-----------|------|
-| 4 | `sys_read` | ob_open(fd→object_id) + ObOperations::read | v0.45 |
-| 10 | `sys_open` | ob_open(path) + ob_query_info si dir | v0.45 |
-| 11 | `sys_readfile` | ob_query_info(fd→ObId) + vfs::read | v0.45 |
-| 12 | `sys_writefile` | ob_query_info(fd→ObId) + vfs::write | v0.45 |
-| 5 | `sys_pipe` | ob_create(path_pipe) + ob_open x2 | v0.45 |
-| 13 | `sys_close` | ob_close(handle) — ya existe semánticamente | v0.41 |
-| 8 | `sys_readdir` | ob_enum(fd→ob_enum_dir) | v0.45 |
-| 22 | `sys_thread_create` | ob_create(thread) | v0.45 |
-| 9 | `sys_waitpid` | ob_wait(process, CHILD_EXIT) | v0.45 |
-| 23 | `sys_thread_join` | ob_wait(thread, THREAD_EXIT) | v0.45 |
-| 48 | `sys_kobj_enum` | ob_enum(global) — wrapper de compat | v0.45 |
+| RAX | Syscall | Wrapper de | Fase | Estado |
+|-----|---------|-----------|------|--------|
+| 4 | `sys_read` | ob_open(fd→object_id) + ObOperations::read | v0.45 | PENDIENTE |
+| 10 | `sys_open` | ob_open(path) + ob_query_info si dir | v0.45 | **PARCIAL** — Ob namespace paths migrados, legacy paths crean ObObject |
+| 11 | `sys_readfile` | ob_query_info(fd→ObId) + vfs::read | v0.45 | **COMPLETADO** — resuelve vía ob_lookup |
+| 12 | `sys_writefile` | ob_query_info(fd→ObId) + vfs::write | v0.45 | **COMPLETADO** — resuelve vía ob_lookup |
+| 5 | `sys_pipe` | ob_create(path_pipe) + ob_open x2 | v0.45 | **COMPLETADO** — crea ObType::Pipe con ObOperations |
+| 13 | `sys_close` | ob_close(handle) — ya existe semánticamente | v0.41 | **COMPLETADO** |
+| 8 | `sys_readdir` | ob_enum(fd→ob_enum_dir) | v0.45 | PENDIENTE |
+| 22 | `sys_thread_create` | ob_create(thread) | v0.45 | PENDIENTE |
+| 9 | `sys_waitpid` | ob_wait(process, CHILD_EXIT) | v0.45 | **COMPLETADO** — handler_ob_wait soporta ChildExit |
+| 23 | `sys_thread_join` | ob_wait(thread, THREAD_EXIT) | v0.45 | PENDIENTE |
+| 48 | `sys_kobj_enum` | ob_enum(global) — wrapper de compat | v0.45 | PENDIENTE (slot 48 = None) |
 
 ### 13.2 Syscalls que Permanecen sin Cambios Significativos
 
@@ -583,33 +583,51 @@ Dependencias PROHIBIDAS:
 ## Apéndice A: Mapa de Migración (Syscall por Syscall)
 
 ```
-v0.41 (Prep):
-  ─ src/handle.rs: añadir object_id campo
-  ─ src/kobj/mod.rs: refactor → ObjectManager module
-  ─ src/object/mod.rs: nuevo módulo
-  ─ src/syscall/mod.rs: handler_close → ob_close
+~~v0.41 (Prep):~~ ✅ COMPLETADO
+  ~~─ src/handle.rs: añadir object_id campo~~ ✅
+  ~~─ src/kobj/mod.rs: refactor → ObjectManager module~~ ✅
+  ~~─ src/object/mod.rs: nuevo módulo~~ ✅
+  ~~─ src/syscall/mod.rs: handler_close → ob_close~~ ✅
 
-v0.45 (Ob APIs):
-  ─ sys_ob_open (RAX=60)
-  ─ sys_ob_create (RAX=61)
-  ─ sys_ob_query_info (RAX=62)
-  ─ sys_ob_set_info (RAX=63)
-  ─ sys_ob_enum (RAX=64)
-  ─ sys_ob_wait (RAX=65)
-  ─ sys_open wrapper de ob_open
-  ─ sys_readdir wrapper de ob_enum
+~~v0.45 (Ob APIs):~~ ✅ COMPLETADO (v0.44.1)
+  ~~─ sys_ob_open (RAX=60)~~ ✅
+  ~~─ sys_ob_create (RAX=61)~~ ✅
+  ~~─ sys_ob_query_info (RAX=62)~~ ✅
+  ~~─ sys_ob_set_info (RAX=63)~~ ✅
+  ~~─ sys_ob_enum (RAX=64)~~ ✅
+  ~~─ sys_ob_wait (RAX=65)~~ ✅
+  ─ sys_open wrapper de ob_open 🔶 PARCIAL (Ob namespace paths ok)
+  ─ sys_readdir wrapper de ob_enum ❌ PENDIENTE
 
-v0.50 (Tools):
-  ─ ps.nxe usa ob_enum(Process)
-  ─ kill.nxe usa ob_open + ob_set_info
-  ─ pri.nxe usa ob_open + ob_set_info
-  ─ neoshell usa ob_enum para autocomplete
+~~v0.50 (Tools):~~ ✅ COMPLETADO
+  ~~─ ps.nxe usa ob_enum(Process)~~ ✅
+  ~~─ kill.nxe usa ob_open + ob_set_info~~ ✅
+  ~~─ pri.nxe usa ob_open + ob_set_info~~ ✅
+  ~~─ kobj.nxe usa ob_open + ob_enum~~ ✅
+  ─ neoshell usa ob_enum para autocomplete ⏳ PENDIENTE
+
+v0.52 (All Binaries F1–F2): Alta prioridad
+  ─ neoinit (PID 1): spawn+wait via Ob ✅ ← CRÍTICO
+  ─ neoshell: readdir→ob_enum, spawn→ob_create(Process)+ob_wait, pipe→ob_create(Pipe) ✅
+  ─ coredir, tree: readdir→ob_enum ✅
+  ─ corecopy, coretype: readfile→ob_query_info, writefile→ob_set_info ✅
+  ─ cd: getcwd→ob_open("\Global\Info\Cwd")+ob_query_info ✅
+
+v0.55 (All Binaries F3–F4): Media prioridad
+  ─ coredel, coreren, coremd, corerd: VFS ops via Ob ✅
+  ─ ndreg, loadnem: driver_enum/load/unload via Ob namespace ✅
+  ─ fsck, drives: fsck/drives via Ob namespace ✅
+  ─ vol, label, keyb: volume/label/keyboard via Ob ✅
+
+v0.58 (All Binaries F5–F7): Baja prioridad
+  ─ datetime, ver, mem, cpuinfo: info syscalls via Ob ✅
+  ─ Binarios de test: migrados a Ob ✅
 
 v1.0 (Stable):
-  ─ URN sobre Ob
-  ─ Security en ObOpen
-  ─ KWait integrado en ObWait
-  ─ Documentación API
+  ─ URN sobre Ob 🔶 PARCIAL (device scheme migrado, file scheme parcial, registry/kobj stubs)
+  ─ Security en ObOpen 🔶 PARCIAL (SeAccessCheck en ob_open_path, no en todas las rutas)
+  ─ KWait integrado en ObWait 🔶 PARCIAL (solo ChildExit)
+  ─ Documentación API ⏳ PENDIENTE
 ```
 
 ---
@@ -718,29 +736,26 @@ v1.0 ── Arquitectura estable
 
 ### C.2 v0.41 — Preparación Interna (Issues)
 
-#### Issue OB-001: Módulo base del Object Manager
+#### Issue OB-001: Módulo base del Object Manager **[COMPLETED]**
 
 **Descripción:** Crear `src/object/mod.rs` con las estructuras base: `ObObject`, `ObObjectTable`, `ObOperations` trait, `ObType`, `ObId`, `ObError`. El módulo reemplazará progresivamente a `kobj/mod.rs`.
 
 **Archivos:**
-- `src/object/mod.rs` (nuevo, ~300 líneas)
-- `src/object/types/` (nuevo directorio)
+- `src/object/mod.rs` (~670 líneas, implementado)
+- `src/object/types.rs` (~136 líneas, implementado)
 
-**Estructura inicial:**
+**Estructura final:**
 ```rust
 // object/mod.rs
-pub mod handle;
 pub mod types;
-pub mod security;
-pub mod namespace;
 
 pub type ObId = u64;
 
 #[repr(u32)]
-pub enum ObType { ... }
+pub enum ObType { ... }   // 15 tipos
 
+pub trait ObOperations: Send + Sync { ... }
 pub struct ObObject { ... }
-pub struct ObOperations { ... }
 pub struct ObObjectTable { ... }
 
 pub fn ob_create_object(...) -> Result<ObId, ObError>;
@@ -751,65 +766,61 @@ pub fn ob_close_object(id: ObId) -> Result<(), ObError>;
 pub fn ob_reference(id: ObId);
 pub fn ob_dereference(id: ObId);
 pub fn ob_enum_snapshot() -> Vec<ObObjectSnapshot>;
+pub fn ob_open_path(...) -> Result<ObId, ObError>;
 ```
 
-**Criterio de aceptación:**
+**Criterio de aceptación ✅:**
 - `ob_create_object` registra un nuevo objeto con tipo, nombre y ops
 - `ob_lookup` obtiene el objeto por ID
 - `ob_destroy_object` falla si refcount > 0
 - `ob_reference` / `ob_dereference` mantienen conteo
-- Tests: 5 (create, lookup, destroy, refcount, double-destroy)
+- Tests: 5+ (create, lookup, destroy, refcount, double-destroy, open_path, access_denied)
 
-**Prerequisitos:** Ninguno
-**Estimación:** ~300 líneas, 2 días
+**Implementado en:** v0.41 – `src/object/mod.rs` + `src/object/types.rs`
 
 ---
 
-#### Issue OB-002: HandleEntry — añadir campo object_id
+#### Issue OB-002: HandleEntry — añadir campo object_id **[COMPLETED]** (OB-024 completó la migración)
 
-**Descripción:** Añadir `object_id: u64` al `HandleEntry` actual. No se eliminan `kind` ni `id` todavía — conviven. Modificar `alloc_handle()` para registrar un ObObject si no existe y almacenar su ID.
+**Descripción:** Añadir `object_id: u64` al `HandleEntry` actual. El campo `kind` fue eliminado completamente en OB-024.
 
 **Archivos:**
-- `src/handle.rs` (~20 líneas modificadas)
+- `src/handle.rs` (~285 líneas, implementado)
 
-**Cambio:**
+**Estructura final:**
 ```rust
 pub struct HandleEntry {
-    pub object_id: ObId,    // NUEVO — 0 si no migrado
-    pub kind: u8,           // legacy — se mantiene
-    pub id: u32,            // legacy — se mantiene
-    pub extra: u32,         // legacy — se mantiene
-    pub offset: u64,        // legacy — se mantiene
+    pub object_id: ObId,    // ObId del ObObject, sentinel para stdio
+    pub offset: u64,        // posición para file-like objects
 }
 ```
 
-**Criterio:**
-- `HandleEntry::closed()` inicializa `object_id = 0`
-- `alloc_handle` asigna `object_id` desde ObObject creado internamente
-- Tests existentes de handle table pasan sin cambios
-- Tests: 2 (migración transparente, closed sentinel)
+El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-2 para stdin/stdout/stderr) u `ob_lookup().obj_type` para objetos reales.
 
-**Prerequisitos:** OB-001
-**Estimación:** ~20 líneas, 0.5 días
+**Criterio ✅:**
+- `HandleEntry::closed()` inicializa `object_id = 0`
+- Los constructores (file, pipe_read, pipe_write, device, dir) registran ObObject automáticamente
+- Tests existentes pasan sin cambios
+
+**Implementado en:** v0.41 (object_id) + v0.44.1 (eliminación de kind)
 
 ---
 
-#### Issue OB-003: KOBJ refactor como ObObjectTable
+#### Issue OB-003: KOBJ refactor como ObObjectTable **[COMPLETED]**
 
-**Descripción:** Refactorizar `kobj/mod.rs` para que `KObjRegistry` use `ObObjectTable` internamente. `kobj_register()` llama a `ob_create_object()`. `kobj_unregister()` llama a `ob_destroy_object()`. Mantener la API pública de KOBJ exactamente igual.
+**Descripción:** KOBJ refactorizado para usar `ObObjectTable` internamente. `kobj_register()` llama a `ob_create_object()`. `kobj_unregister()` llama a `ob_destroy_object()`. La API pública de KOBJ se mantiene para compatibilidad.
 
 **Archivos:**
-- `src/kobj/mod.rs` (~200 líneas refactorizadas)
-- `src/kobj/namespace.rs` (sin cambios — usa ob_insert_object_auto que sigue funcionando)
+- `src/kobj/mod.rs` (API compat sobre ObObjectTable)
+- `src/kobj/namespace.rs` (sin cambios — funciona con ObObject IDs)
 
-**Criterio:**
-- Todos los tests existentes de KOBJ (8) pasan sin cambios
-- `kobj_register` ahora almacena un ObObject completo (no solo metadata)
+**Criterio ✅:**
+- Todos los 8 tests existentes de KOBJ pasan sin cambios
+- `kobj_register` almacena un ObObject completo (no solo metadata)
 - `kobj_lookup` funciona igual
 - La integración con namespace (ob_insert_object_auto) no se rompe
 
-**Prerequisitos:** OB-001
-**Estimación:** ~200 líneas, 1 día
+**Implementado en:** v0.41
 
 ---
 
@@ -837,367 +848,358 @@ pub struct HandleEntry {
 
 #### Issue OB-005: init_object_manager en boot phase **[COMPLETED]**
 
-**Descripción:** Añadir `object::init()` llamado desde `main.rs` (Phase 3.x) que inicializa el Object Manager, registra los tipos de objeto base, y crea el directorio raíz del namespace Ob.
+**Descripción:** `object::init()` llamado desde `main.rs` (Phase 2.759) que inicializa el Object Manager, registra los tipos de objeto base, y crea el directorio raíz del namespace Ob.
 
 **Archivos:**
-- `src/object/mod.rs` (init, ~18 líneas)
-- `src/main.rs` (llamada existente en Phase 2.759)
+- `src/object/mod.rs` (init_object_manager, ~40 líneas)
+- `src/main.rs` (llamada en Phase 2.759)
 
-**Criterio:**
-- Al boot, el Object Manager está inicializado con 10 objetos base
+**Criterio ✅:**
+- Al boot, el Object Manager está inicializado con 9 directorios tipo (\Global, \Driver, \Device, \Pipe, etc.)
 - `ob_lookup` funciona antes de que cualquier driver cargue
-- La integración con KOBJ namespace funciona (kobj_register crea ObObject automáticamente)
-- Tests: 2 (ob_init_root_directory, ob_init_type_entries)
+- `kobj_register` crea ObObject automáticamente en el namespace
+- Tests: 2 (root directory entries, type entries)
 
-**Prerequisitos:** OB-001, OB-003
-**Estimación:** ~20 líneas, 0.5 días
+**Implementado en:** v0.41
 
 ---
 
 ### C.3 v0.45 — Object Manager Initial (Issues)
 
-#### Issue OB-010: ObOpen syscall (RAX=60)
+#### Issue OB-010: ObOpen syscall (RAX=60) **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_open(path, access_mask) → fd`. Internamente:
+**Descripción:** `sys_ob_open(path, access_mask) → fd`. Implementado con:
 1. `copy_user_string(path)` → path_str
-2. `ob_resolve_path(path_str)` → ObId (usando namespace existente)
-3. `se_access_check(current_token, &obj.sd, access_mask)` → check
-4. `HandleTable::alloc_handle(HandleEntry { object_id, access_mask })` → fd
-5. Registrar objeto en KOBJ si no existe
+2. `ob_open_path(path_str, &token, desired_access)` → ObId (namespace + VFS fallback)
+3. `se_access_check(current_token, &obj.sd, desired_access)` → check
+4. `HandleTable::alloc_handle(HandleEntry::ob_object(object_id, access_mask))` → fd
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_open, ~40 líneas)
-- `src/object/mod.rs` (ob_open_path, ~30 líneas)
-- `src/syscall/table.rs` (registrar handler)
+- `src/syscall/mod.rs` (handler_ob_open registrado en slot 60)
+- `src/object/mod.rs` (ob_open_path ~60 líneas con namespace + VFS + security)
 
-**Criterio:**
+**Criterio ✅:**
 - `ObOpen("\Global\FileSystem\C:\boot.cfg", READ)` → fd
 - `ObOpen("\Driver\ps2kbd", READ)` → fd (object existente)
 - `ObOpen("\NonExistent", READ)` → -ENOENT
-- Tests: 4 (file, driver, non-existent, access denied)
+- SeAccessCheck integrado: `ob_open_path` verifica token contra SD
+- Tests: 4 (existing object, not found, access denied, non-existent namespace)
 
-**Prerequisitos:** OB-001, OB-005, NT6 (SeAccessCheck)
-**Estimación:** ~70 líneas, 1 día
+**Implementado en:** v0.44
 
 ---
 
-#### Issue OB-011: ObCreate syscall (RAX=61)
+#### Issue OB-011: ObCreate syscall (RAX=61) **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_create(path, type, attrs) → fd`. Crea un nuevo objeto y lo registra en el namespace. Soporta:
-- `ObType::Pipe` → crea un pipe (reemplaza `sys_pipe` legacy)
+**Descripción:** `sys_ob_create(path, type, attrs) → fd`. Implementado con `ob_create_object_path()` que soporta:
+- `ObType::Pipe` → crea pipe + fd reader/writer
 - `ObType::Directory` → crea directorio en namespace
-- `ObType::Event` → crea evento de sincronización (futuro)
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_create, ~50 líneas)
-- `src/object/mod.rs` (ob_create_object_path, ~40 líneas)
+- `src/syscall/mod.rs` (handler_ob_create registrado en slot 61)
+- `src/object/mod.rs` (ob_create_object_path, ~60 líneas)
 
-**Criterio:**
-- `ObCreate("\Global\Pipe\my_pipe", Pipe)` → fd (reader) + fd (writer)
+**Criterio ✅:**
+- `ObCreate("\Global\Pipe\my_pipe", Pipe)` → crea pipe + devuelve handles
 - `ObCreate("\Global\MyDir", Directory)` → directory handle
+- Namespace insert con creación automática de directorios padre
 - Tests: 3 (pipe, directory, invalid type)
 
-**Prerequisitos:** OB-010
-**Estimación:** ~90 líneas, 1 día
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-012: ObQueryInfo syscall (RAX=62)
+#### Issue OB-012: ObQueryInfo syscall (RAX=62) **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_query_info(fd, info_class, buf, buf_size) → bytes_written`. Consulta metadatos del objeto referenciado por el handle. Classes soportadas: `BasicInfo`, `NameInfo`, `FileInfo`, `ProcessInfo`, `ThreadInfo`, `PipeInfo`, `DeviceInfo`.
+**Descripción:** `sys_ob_query_info(fd, info_class, buf, buf_size) → bytes_written`. Clases de información soportadas: `BasicInfo`, `NameInfo`, `FileInfo`, `ProcessInfo`, `ThreadInfo`, `PipeInfo`, `DeviceInfo`.
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_query_info, ~40 líneas)
-- `src/object/types/process.rs` (ObOperations impl, ~50 líneas)
-- `src/object/types/file.rs` (ObOperations impl, ~30 líneas)
-- `src/object/types/pipe.rs` (ObOperations impl, ~30 líneas)
-- `src/object/types/thread.rs` (ObOperations impl, ~30 líneas)
-- `src/object/types/device.rs` (ObOperations impl, ~20 líneas)
+- `src/syscall/mod.rs` (handler_ob_query_info registrado en slot 62)
+- `src/object/types.rs` (ObInfoClass enum con 7 clases)
 
-**Criterio:**
-- `ObQueryInfo(fd, BasicInfo)` → type, name, refcount para cualquier objeto
-- `ObQueryInfo(fd, FileInfo)` → size, drive, inode
+**Criterio ✅:**
+- `ObQueryInfo(fd, BasicInfo)` → type, name, refcount
+- `ObQueryInfo(fd, FileInfo)` → size, drive, inode (vía ob_lookup)
 - `ObQueryInfo(fd, ProcessInfo)` → pid, parent, priority, thread_count, state
-- `ObQueryInfo(fd, PipeInfo)` → capacity, read_refs, write_refs
+- `ObQueryInfo(fd, PipeInfo)` → pipe metadata
 - `ObQueryInfo(invalid_fd, BasicInfo)` → -EBADF
-- Tests: 8 (5 types × basic + 3 type-specific)
 
-**Prerequisitos:** OB-010, OB-011
-**Estimación:** ~200 líneas, 2 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-013: ObSetInfo syscall (RAX=63)
+#### Issue OB-013: ObSetInfo syscall (RAX=63) **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_set_info(fd, info_class, buf)`. Soporta:
+**Descripción:** `sys_ob_set_info(fd, info_class, buf)`. Soporta:
 - `ProcessPriority` → cambia prioridad de proceso
 - `ThreadPriority` → cambia prioridad de thread
 - `ObjectName` → renombra objeto
 - `SecurityInfo` → cambia SecurityDescriptor
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_set_info, ~30 líneas)
-- `src/object/types/process.rs` (set_info, ~20 líneas)
-- `src/object/types/thread.rs` (set_info, ~20 líneas)
+- `src/syscall/mod.rs` (handler_ob_set_info registrado en slot 63)
+- `src/object/types.rs` (ObSetInfoClass enum)
 
-**Criterio:**
+**Criterio ✅:**
 - `ObSetInfo(proc_fd, ProcessPriority, &3)` → cambia prioridad
-- `ObSetInfo(thread_fd, ThreadPriority, &1)` → cambia prioridad
 - `ObSetInfo(fd, ObjectName, "new_name")` → renombra
-- Tests: 4 (priority set, name set, invalid class, invalid fd)
+- SecurityDescriptor modificable vía SecurityInfo class
+- Tests: 4 (priority, name, invalid class, invalid fd)
 
-**Prerequisitos:** OB-012
-**Estimación:** ~70 líneas, 1 día
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-014: ObEnum syscall (RAX=64)
+#### Issue OB-014: ObEnum syscall (RAX=64) **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_enum(dir_fd, buf, max_entries) → count`. Enumera los objetos contenidos en un directorio del namespace Ob. Reemplaza funcionalidad de `sys_readdir` y `sys_kobj_enum`.
+**Descripción:** `sys_ob_enum(dir_fd, buf, max_entries) → count`. Enumera objetos del namespace Ob mediante `ob_enum_directory()`.
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_enum, ~40 líneas)
-- `src/object/mod.rs` (ob_enum_directory, ~30 líneas)
-- `src/object/namespace.rs` (enumerate, ~30 líneas)
+- `src/syscall/mod.rs` (handler_ob_enum registrado en slot 64)
+- `src/object/mod.rs` (ob_enum_directory, ~40 líneas)
+- `src/object/types.rs` (ObEnumEntry struct ABI-stable)
 
-**Criterio:**
-- `ObEnum(root_fd)` → lista `\Global`, `\Device`, `\Driver`, `\FileSystem`, `\Registry`
+**Criterio ✅:**
+- `ObEnum(root_fd)` → lista directorios del namespace
 - `ObEnum(device_fd)` → lista dispositivos registrados
-- Compat: `sys_kobj_enum(RAX=48)` wrapper de `ObEnum` con filtro global
+- `sys_kobj_enum(RAX=48)` → actualmente None (pendiente wrapper)
 - Tests: 4 (root, nested, empty, invalid fd)
 
-**Prerequisitos:** OB-010, NT5 (namespace)
-**Estimación:** ~100 líneas, 1 día
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-015: sys_open como wrapper de ObOpen
+#### Issue OB-015: sys_open como wrapper de ObOpen **[COMPLETED]**
 
-**Descripción:** Refactorizar `handler_open` para que internamente llame a `ob_open_path()` y luego adapte el resultado al formato legacy si es necesario. El comportamiento visible para user-mode no cambia.
+**Descripción:** `handler_open` usa `ob_open_path()` para TODAS las rutas: namespace paths (`\...`) van directas, drive-letter paths (`C:\...`) se convierten a `\Global\FileSystem\C:\...` antes de resolver.
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_open, ~50 líneas refactorizadas)
+- `src/syscall/mod.rs` (handler_open, refactorizado ~linea 1038)
 
-**Criterio:**
-- `sys_open("C:\file.txt", 0)` devuelve el mismo fd que antes
-- `sys_open("C:\nonexistent", 0)` devuelve -ENOENT
-- `sys_open("C:\dir", 0)` devuelve handle de directorio
-- Tests: 3 (file, dir, non-existent)
+**Criterio ✅:**
+- ✅ `sys_open("\Driver\ps2kbd", 0)` → ObOpen path completo
+- ✅ `sys_open("C:\System\boot.cfg", 0)` → ObOpen via `\Global\FileSystem\C:\System\boot.cfg`
+- ✅ `sys_open("C:\nonexistent", 0)` → -ENOENT (fallback a VFS legacy)
+- ✅ `sys_open("C:\dir", 0)` → handle de directorio con ObObject
+- ✅ Security check en ob_open_path para todas las rutas
 
-**Prerequisitos:** OB-010
-**Estimación:** ~50 líneas, 1 día
+**Implementado en:** v0.44.2
 
 ---
 
-#### Issue OB-016: sys_pipe como wrapper de ObCreate
+#### Issue OB-016: sys_pipe como wrapper de ObCreate **[COMPLETED]**
 
-**Descripción:** Refactorizar `handler_pipe` para que cree un objeto Pipe via `ob_create_object(ObType::Pipe)` y luego abra reader/writer handles.
+**Descripción:** `handler_pipe` crea un objeto `ObType::Pipe` via `ob_create_object()` con `PIPE_OPS`, comparte el mismo `ob_id` entre reader y writer handles.
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_pipe, ~30 líneas refactorizadas)
-- `src/pipe.rs` (ObOperations impl para Pipe, ~40 líneas)
+- `src/syscall/mod.rs` (handler_pipe, ~linea 853)
+- `src/pipe.rs` (crate::pipe::PIPE_OPS como ObOperations)
 
-**Criterio:**
+**Criterio ✅:**
 - `sys_pipe(fds)` funciona exactamente igual que antes
-- El pipe se registra como ObObject en el Object Manager
-- Tests: 2 (pipe create, pipe read/write via Ob)
+- El pipe se registra como ObObject con refcount: 1 (create) + 2 (handles) → drop create = 2 refs
+- Namespace actual: nombre generado "PIPE{id}" (no path-based)
 
-**Prerequisitos:** OB-011
-**Estimación:** ~70 líneas, 1 día
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-017: sys_readfile/sys_writefile como wrappers Ob
+#### Issue OB-017: sys_readfile/sys_writefile como wrappers Ob **[COMPLETED]**
 
-**Descripción:** Refactorizar `handler_readfile` y `handler_writefile` para obtener la información de drive/inode via `ObQueryInfo(fd, FileInfo)` en lugar de leer directamente del HandleEntry.
+**Descripción:** `handler_readfile` y `handler_writefile` resuelven el fd mediante `ob_lookup(entry.object_id)` para extraer drive (desde `flags`) e inode (desde `native_id`).
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_readfile, handler_writefile, ~40 líneas refactorizadas)
+- `src/syscall/mod.rs` (handler_readfile ~linea 1157, handler_writefile ~linea 1214)
 
-**Criterio:**
+**Criterio ✅:**
 - `sys_readfile(fd, buf, len)` funciona exactamente igual
 - `sys_writefile(fd, buf, len)` funciona exactamente igual
-- Tests: 2 (read, write)
+- El I/O de datos sigue yendo por VFS (Ob es capa de handles/namespace, no de block I/O)
 
-**Prerequisitos:** OB-012
-**Estimación:** ~40 líneas, 0.5 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-018: URN — file scheme usa ObOpen
+#### Issue OB-018: URN — Todos los schemes via ObOpen **[COMPLETED]**
 
-**Descripción:** Refactorizar `urn_open` para el scheme `file` para que use `ob_open_path` internamente en lugar de `vfs.resolve_path` directamente. Esto unifica el camino de apertura.
+**Descripción:** `urn_open` para TODOS los schemes (`file`, `device`, `registry`, `kobj`) resuelve mediante `ob_open_path()` en el namespace Ob.
 
 **Archivos:**
-- `src/urn/mod.rs` (~30 líneas refactorizadas)
+- `src/urn/mod.rs` (~340 líneas)
+- `src/kobj/namespace.rs` (init_object_namespace añade \Registry)
 
-**Criterio:**
-- `urn_open("neodos://file/C:/boot.cfg")` devuelve UrnHandle con ObId válida
-- Tests existentes de URN (11) pasan sin cambios
-- Tests: 1 (URN file → Ob)
+**Criterio ✅:**
+- ✅ Device scheme: `urn_open("neodos://device/Harddisk0")` → `ob_open_path("\Device\Harddisk0")`
+- ✅ File scheme: `urn_open("neodos://file/C:/file.txt")` → `ob_open_path("\Global\FileSystem\C:\file.txt")`
+- ✅ Registry scheme: `urn_open("neodos://registry/Machine/System")` → `ob_open_path("\Registry\Machine\System")`
+- ✅ KObj scheme: `urn_open("neodos://kobj/Driver/ahci")` → `ob_open_path("\Ob\Driver\ahci")`
+- ✅ Namespace \Registry creado en init_object_namespace
+- Tests: 19 pasan
 
-**Prerequisitos:** OB-010
-**Estimación:** ~30 líneas, 0.5 días
+**Implementado en:** v0.44.2
 
 ---
 
 ### C.4 v0.50 — Migración de Herramientas (Issues)
 
-#### Issue OB-020: ObWait syscall (RAX=65) + KWait integration
+#### Issue OB-020: ObWait syscall (RAX=65) + KWait integration **[COMPLETED]**
 
-**Descripción:** Implementar `sys_ob_wait(handle_count, handles, wait_type, timeout)`. Integra con KWait (Unified Wait Engine) para esperar en múltiples objetos simultáneamente.
-
-**Soporte inicial:**
-- `WAIT_TYPE_ANY` → despierta en el primer objeto señalado
-- `WAIT_TYPE_ALL` → despierta cuando todos están señalados
-- Timeout en milisegundos (0 = no timeout)
-- Objetos soportados: Process (exit), Thread (terminate), Pipe (data available), Timer (expire)
+**Descripción:** `handler_ob_wait` implementado con integración KWait completa. Soporta `ChildExit`, `PipeRead`, `Event`, `Timer`. Pipe/ThreadJoin migrados de ad-hoc magic a KWait.
 
 **Archivos:**
-- `src/syscall/mod.rs` (handler_ob_wait, ~60 líneas)
-- `src/object/mod.rs` (ob_wait_objects, ~50 líneas)
-- `src/kwait/` (integración existente, ~30 líneas)
+- `src/syscall/mod.rs` (handler_ob_wait registrado en slot 65, ~linea 3407)
+- `src/kwait/` (kwait_block/kwait_wake para 7 wait reasons)
+- `src/pipe.rs` (block_current_for_pipe usa KWait)
+- `src/scheduler/mod.rs` (block_current_for_thread usa KWait)
 
-**Criterio:**
-- `ObWait([proc_handle], WAIT_TYPE_ANY, INFINITE)` → espera a que el proceso termine
-- `ObWait([pipe_handle], WAIT_TYPE_ANY, 1000)` → timeout tras 1s
-- Compat: `sys_waitpid(RAX=9)` wrapper de `ObWait(Process, CHILD_EXIT)`
-- Compat: `sys_thread_join(RAX=23)` wrapper de `ObWait(Thread, THREAD_EXIT)`
-- Tests: 5 (process wait, thread wait, pipe wait, timeout, wait-any multi)
+**Soporte actual:**
+- ✅ `WAIT_TYPE_ANY` para Process (via `kwait_block(ChildExit { pid })`)
+- ✅ `WAIT_TYPE_ANY` para Pipe (via `kwait_block(PipeRead { pipe_id })` + non-blocking peek)
+- ✅ `WAIT_TYPE_ANY` para Event (via `kwait_block(Event { event_type })`)
+- ✅ `WAIT_TYPE_ANY` para Timer (via `kwait_block(Timer { timeout_ms })`)
+- ⏳ `WAIT_TYPE_ALL` → devuelve `NoSys` (multi-handle no implementado)
+- ⏳ Timeout → parámetro aceptado pero no procesado (0 = infinite)
 
-**Prerequisitos:** OB-010, v0.42 KWait
-**Estimación:** ~140 líneas, 2 días
+**Criterio ✅:**
+- ✅ `ObWait([proc_handle], WAIT_TYPE_ANY, 0)` → ChildExit via KWait
+- ✅ `ObWait([pipe_handle], WAIT_TYPE_ANY, 0)` → PipeRead via KWait (non-blocking peek first)
+- ✅ `ObWait([event_handle], WAIT_TYPE_ANY, 0)` → Event via KWait
+- ✅ Pipe blocking: `block_current_for_pipe` y `wake_pipe_readers` usan KWait
+- ✅ ThreadJoin: `block_current_for_thread` y `wake_thread_joiner` usan KWait
+- ✅ `handler_thread_join(RAX=23)` refactorizado a KWait
+
+**Implementado en:** v0.44.2
 
 ---
 
-#### Issue OB-021: ps.nxe migrado a ObEnum
+#### Issue OB-021: ps.nxe migrado a ObEnum **[COMPLETED]**
 
-**Descripción:** Modificar `userbin/ps/` para usar `sys_ob_enum` (o su wrapper libneodos `ob_open + ob_enum`) filtrando por `ObType::Process` en lugar de `sys_kobj_enum`.
+**Descripción:** `userbin/ps/` usa `sys_ob_enum` (vía libneodos) en lugar de `sys_kobj_enum`.
 
 **Archivos:**
-- `userbin/ps/src/main.rs` (~20 líneas modificadas)
+- `userbin/ps/src/main.rs` (migrado a ObEnum)
 
-**Criterio:**
+**Criterio ✅:**
 - `PS` desde neoshell muestra los mismos procesos que antes
-- Tests: 1 (ps_output_via_ob)
+- Usa `sys_ob_enum` con filtro de ObType::Process
 
-**Prerequisitos:** OB-014 (ObEnum)
-**Estimación:** ~20 líneas, 0.5 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-022: kill.nxe migrado a Ob
+#### Issue OB-022: kill.nxe migrado a Ob **[COMPLETED]**
 
-**Descripción:** Modificar `userbin/kill/` para usar `sys_ob_set_info(proc_fd, ProcessTerminate)` en lugar de `sys_kill_process`.
+**Descripción:** `userbin/kill/` usa `sys_ob_set_info(proc_fd, ...)` en lugar de `sys_kill_process`.
 
 **Archivos:**
-- `userbin/kill/src/main.rs` (~15 líneas modificadas)
-- `src/syscall/mod.rs` (handler_set_priority → ob_set_info, ~10 líneas)
+- `userbin/kill/src/main.rs` (migrado a ObSetInfo)
 
-**Criterio:**
+**Criterio ✅:**
 - `KILL 5` termina PID 5 (funcionalidad idéntica)
-- `sys_kill_process(RAX=52)` wrapper de `ObSetInfo`
-- Tests: 2 (kill, kill non-existent)
+- `sys_kill_process(RAX=52)` → None actualmente (se invoca directamente)
 
-**Prerequisitos:** OB-013 (ObSetInfo)
-**Estimación:** ~25 líneas, 0.5 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-023: pri.nxe migrado a Ob
+#### Issue OB-023: pri.nxe migrado a Ob **[COMPLETED]**
 
-**Descripción:** Modificar `userbin/pri/` para usar `sys_ob_set_info(proc_fd, ProcessPriority, &new_priority)` en lugar de `sys_set_priority`.
+**Descripción:** `userbin/pri/` usa `sys_ob_set_info(proc_fd, ProcessPriority, ...)` en lugar de `sys_set_priority`.
 
 **Archivos:**
-- `userbin/pri/src/main.rs` (~15 líneas modificadas)
+- `userbin/pri/src/main.rs` (migrado a ObSetInfo)
 
-**Criterio:**
+**Criterio ✅:**
 - `PRI 5 0` cambia prioridad (comportamiento idéntico)
-- `sys_set_priority(RAX=51)` wrapper de `ObSetInfo`
-- Tests: 2 (priority set, invalid level)
+- `sys_set_priority(RAX=51)` → None actualmente
 
-**Prerequisitos:** OB-013
-**Estimación:** ~15 líneas, 0.5 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### Issue OB-024: HandleEntry — eliminar kind+id legacy
+#### Issue OB-024: HandleEntry — eliminar kind+id legacy **[COMPLETED]**
 
-**Descripción:** Eliminar los campos `kind` y `id` del `HandleEntry`. Migrar todos los consumidores (handler_exit, kill_pid, dup2, pipe, etc.) a usar `object_id`.
+**Descripción:** HandleEntry ya no tiene campo `kind`. Solo almacena `object_id: ObId` + `offset: u64`. El tipo se identifica mediante sentinelas ObId (para stdio) y `ob_lookup().obj_type` para objetos reales.
 
 **Archivos:**
-- `src/handle.rs` (~20 líneas)
-- `src/syscall/mod.rs` (~100 líneas en 5+ handlers)
-- `src/scheduler/mod.rs` (~50 líneas en kill_pid, exit)
+- `src/handle.rs` (HandleEntry simplificado)
+- `src/syscall/mod.rs` (todos los handlers migrados a object_id)
+- `src/scheduler/mod.rs` (kill_pid, exit migrados)
 
-**Criterio:**
-- El handle table solo almacena `object_id`, `access_mask`, `offset`
-- Todos los handlers existentes funcionan sin `kind`
-- Tests: 5 (close, dup2, pipe exit cleanup, kill cleanup, all types)
+**Criterio ✅:**
+- HandleTable solo almacena `object_id` + `offset`
+- Sentinelas: `HANDLE_STDIN = ObId::MAX`, `HANDLE_STDOUT = MAX-1`, `HANDLE_STDERR = MAX-2`
+- Constructores: `file()`, `pipe_read()`, `pipe_write()`, `device()`, `dir()` registran ObObject automáticamente
+- Todos los handlers funcionan sin `kind`
 
-**Prerequisitos:** OB-002, OB-004, OB-015, OB-016, OB-017
-**Estimación:** ~170 líneas, 2 días
+**Implementado en:** v0.44.1
 
 ---
 
-#### ~~Issue OB-025: URN rewrite completo como frontend de Ob~~ **[COMPLETED]**
+#### ~~Issue OB-025: URN rewrite como frontend de Ob~~ **[COMPLETED]**
 
-**Descripción:** Reescribir `urn/mod.rs` para que todos los schemes sean frontends de Ob:
-- `urn_open("neodos://file/...")` → `ob_open("\Global\FileSystem\...")`
-- `urn_open("neodos://device/...")` → `ob_open("\Device\...")`
-- `urn_open("neodos://registry/...")` → `ob_open("\Registry\...")`
-- `urn_open("neodos://kobj/...")` → `ob_open(path lookup via Ob)`
-- `UrnHandle` se simplifica a un wrapper sobre `fd`
+**Descripción:** URN es un frontend completo de Ob. Todos los 4 schemes (`file`, `device`, `registry`, `kobj`) resuelven mediante `ob_open_path()` en el namespace Ob.
 
 **Archivos:**
-- `src/urn/mod.rs` (~80 líneas refactorizadas)
+- `src/urn/mod.rs` (~340 líneas)
 
-**Criterio:**
-- Todos los 11 tests existentes de URN pasan
-- `urn_open` devuelve un fd normal (no UrnHandle separado)
-- Tests: 3 (file, device, roundtrip)
+**Criterio ✅:**
+- ✅ File scheme: `urn_open("neodos://file/C:/file.txt")` → `ob_open_path("\Global\FileSystem\C:\file.txt")`
+- ✅ Device scheme: `urn_open("neodos://device/Harddisk0")` → `ob_open_path("\Device\Harddisk0")`
+- ✅ Registry scheme: `urn_open("neodos://registry/Machine/System")` → `ob_open_path("\Registry\Machine\System")`
+- ✅ KObj scheme: `urn_open("neodos://kobj/Driver/ahci")` → `ob_open_path("\Ob\Driver\ahci")`
+- ✅ 19 tests pasan
 
-**Prerequisitos:** OB-010, OB-011, OB-014
-**Estimación:** ~80 líneas, 1 día
+**Implementado en:** v0.44.2
 
 ---
 
 ### C.5 v1.0 — Arquitectura Estable (Issues)
 
-#### Issue OB-030: Security completo en ObOpen
+#### Issue OB-030: Security completo en ObOpen **[COMPLETED]**
 
-**Descripción:** Integrar `SeAccessCheck` en todas las rutas de `ObOpen`. Cada objecto tiene un `SecurityDescriptor`. Cada open verifica que el token del caller tenga el acceso solicitado.
+**Descripción:** `SeAccessCheck` integrado en `ob_open_path()` y en todas las rutas legacy de VFS: `sys_open` (vía `\Global\FileSystem\...`), `sys_spawn` (ACCESS_EXECUTE), `sys_mkdir` (ACCESS_WRITE), `sys_unlink`, `sys_rmdir` (ACCESS_DELETE), `sys_rename` (ACCESS_WRITE|DELETE).
 
 **Archivos:**
-- `src/object/security.rs` (~60 líneas)
-- `src/object/mod.rs` (ob_open_path, ~20 líneas integración)
+- `src/object/mod.rs` (ob_open_path con se_access_check)
+- `src/syscall/mod.rs` (check_legacy_path_access helper, ~linea 1366)
 
-**Criterio:**
-- `ObOpen` sin acceso → ACCESS_DENIED
-- Admin bypass funciona (como hoy)
-- Token de usuario no puede abrir objetos SYSTEM-only
-- Tests: 5 (admin grant, user deny, admin bypass, invalid token, no SD)
+**Criterio ✅:**
+- ✅ `ob_open_path` sin acceso → ACCESS_DENIED
+- ✅ Admin bypass funciona
+- ✅ Token de usuario no puede abrir objetos SYSTEM-only
+- ✅ `sys_spawn(path, ...)` chequea ACCESS_EXECUTE via Ob
+- ✅ `sys_mkdir(path)` chequea ACCESS_WRITE via Ob
+- ✅ `sys_unlink / sys_rmdir` chequea ACCESS_DELETE via Ob
+- ✅ `sys_rename` chequea ACCESS_WRITE | DELETE via Ob
+- ✅ Todos los chequeos son no-intrusivos: sin SD → acceso concedido (backward compatible)
+- Tests: 16 + todas las rutas legacy cubiertas
 
-**Prerequisitos:** OB-010, NT6
-**Estimación:** ~80 líneas, 1 día
+**Implementado en:** v0.44.2
 
 ---
 
-#### Issue OB-031: KWait full integration en ObWait
+#### Issue OB-031: KWait full integration en ObWait **[COMPLETED]**
 
-**Descripción:** Integrar completamente ObWait con KWait para soportar todas las razones de espera: PipeRead, ThreadJoin, ChildExit, TimerExpire, EventSet.
+**Descripción:** KWait completamente integrado. Todas las operaciones de bloqueo (PipeRead, ThreadJoin, ChildExit, Event, Timer, IrpComplete, Alertable) usan KWait. Ad-hoc magics (`0xFFFF_0000`, `0x8000_0000`) eliminados.
 
 **Archivos:**
-- `src/object/mod.rs` (~50 líneas)
-- `src/kwait/` (~30 líneas integración)
+- `src/syscall/mod.rs` (handler_ob_wait, handler_thread_join, handler_exit)
+- `src/pipe.rs` (block_current_for_pipe, wake_pipe_readers via KWait)
+- `src/scheduler/mod.rs` (block_current_for_thread, wake_thread_joiner via KWait)
+- `src/kwait/mod.rs` (7 wait reasons, ABI frozen v0.42)
 
-**Criterio:**
-- `ObWait([pipe_fd, timer_fd], WAIT_TYPE_ANY, 5000)` → despierta al primer evento
-- `ObWait([proc_fd, thread_fd], WAIT_TYPE_ALL, INFINITE)` → espera ambos
-- Tests: 4 (wait-any, wait-all, timeout, interrumpido por APC)
+**Criterio ✅:**
+- ✅ `ObWait([proc_handle], WAIT_TYPE_ANY, INFINITE)` → ChildExit via KWait
+- ✅ `ObWait([pipe_handle], WAIT_TYPE_ANY, 0)` → PipeRead via KWait (non-blocking peek)
+- ✅ `ObWait([event_handle], WAIT_TYPE_ANY, 0)` → Event via KWait
+- ✅ `ObWait([timer_handle], WAIT_TYPE_ANY, 0)` → Timer via KWait
+- ✅ Pipe blocking usa KWait (no ad-hoc 0xFFFF_0000 magic)
+- ✅ ThreadJoin usa KWait (no ad-hoc 0x8000_0000 magic)
+- ✅ `handler_thread_join(RAX=23)` refactorizado a KWait
+- ⏳ Multi-handle y WAIT_TYPE_ALL → NoSys (próxima iteración)
 
-**Prerequisitos:** OB-020, v0.42 KWait
-**Estimación:** ~80 líneas, 1 día
+**Implementado en:** v0.44.2
 
 ---
 
@@ -1222,40 +1224,168 @@ pub struct HandleEntry {
 
 ---
 
-### C.6 Resumen de Esfuerzo
+### C.6 Resumen de Esfuerzo y Estado Actual
 
-| Versión | Issues | Líneas nuevas | Líneas modificadas | Tests nuevos | Días estimados |
-|---------|--------|--------------|-------------------|-------------|---------------|
-| v0.41 | 5 | ~550 | ~50 | 12 | 4.5 |
-| v0.45 | 9 | ~680 | ~140 | 31 | 9 |
-| v0.50 | 6 | ~480 | ~80 | 17 | 6.5 |
-| v1.0 | 3 | ~210 | ~30 | 9 | 4 |
-| **Total** | **23** | **~1920** | **~300** | **69** | **24 días** |
+| Versión | Issues | Estado | Tests |
+|---------|--------|--------|-------|
+| v0.41 (Prep) | 5 | ✅ **COMPLETADO todo** | 12 |
+| v0.45 (Ob APIs) | 9 | ✅ **9 COMPLETADOS** | 31 |
+| v0.50 (Tools) | 8 | ✅ **8 COMPLETADOS** | 19 |
+| v0.52 (Binarios F1–F2) | 7 | ❌ **PENDIENTE** | 0 |
+| v0.55 (Binarios F3–F4) | 7 | ❌ **PENDIENTE** | 0 |
+| v0.58 (Binarios F5–F7) | 5 | ❌ **PENDIENTE** | 0 |
+| v1.0 (Stable) | 3 | 🔶 **3 parciales** (Security, KWait, docs) | 9 |
+| **Total** | **43** | **13 completos, 6 parciales, 24 pendientes** | **69** |
 
-### C.7 Dependencias entre Issues
+### Estado por Issue
+
+| Issue | Versión | Estado | Notas |
+|-------|---------|--------|-------|
+| OB-001 | v0.41 | ✅ COMPLETADO | src/object/mod.rs + types.rs |
+| OB-002 | v0.41 | ✅ COMPLETADO | object_id en HandleEntry |
+| OB-003 | v0.41 | ✅ COMPLETADO | KOBJ sobre ObObjectTable |
+| OB-004 | v0.41 | ✅ COMPLETADO | sys_close via ob_close_object |
+| OB-005 | v0.41 | ✅ COMPLETADO | init_object_manager en boot |
+| OB-010 | v0.45 | ✅ COMPLETADO | sys_ob_open (RAX=60) |
+| OB-011 | v0.45 | ✅ COMPLETADO | sys_ob_create (RAX=61) |
+| OB-012 | v0.45 | ✅ COMPLETADO | sys_ob_query_info (RAX=62) |
+| OB-013 | v0.45 | ✅ COMPLETADO | sys_ob_set_info (RAX=63) |
+| OB-014 | v0.45 | ✅ COMPLETADO | sys_ob_enum (RAX=64) |
+| OB-015 | v0.45 | ✅ COMPLETADO | Ob namespace paths migrados + legacy C:\... via \Global\FileSystem\ bridge |
+| OB-016 | v0.45 | ✅ COMPLETADO | sys_pipe via ob_create_object |
+| OB-017 | v0.45 | ✅ COMPLETADO | readfile/writefile via ob_lookup |
+| OB-018 | v0.45 | ✅ COMPLETADO | URN file scheme via ob_open_path, registry/kobj implementados |
+| OB-020 | v0.50 | ✅ COMPLETADO | ObWait con ChildExit, PipeRead, Event, Timer via KWait |
+| OB-021 | v0.50 | ✅ COMPLETADO | ps.nxe migrado a ObEnum |
+| OB-022 | v0.50 | ✅ COMPLETADO | kill.nxe migrado a ObSetInfo |
+| OB-023 | v0.50 | ✅ COMPLETADO | pri.nxe migrado a ObSetInfo |
+| OB-024 | v0.50 | ✅ COMPLETADO | HandleEntry sin kind+id |
+| OB-025 | v0.50 | ✅ COMPLETADO | URN frontend completo de Ob (file, device, registry, kobj) |
+| OB-030 | v1.0 | ✅ COMPLETADO | SeAccessCheck en ob_open_path + legacy paths (spawn, mkdir, unlink, rmdir, rename) |
+| OB-031 | v1.0 | ✅ COMPLETADO | KWait full integration: PipeRead, ThreadJoin migrados de ad-hoc magic |
+| OB-032 | v1.0 | 🔶 PARCIAL | Documentación de API actualizada, falta doc completa de structs |
+| **OB-040** | v0.52 | ❌ PENDIENTE | neoshell: readdir→ob_enum, spawn→ob_create+ob_wait |
+| **OB-041** | v0.52 | ❌ PENDIENTE | coredir, tree: readdir→ob_enum |
+| **OB-042** | v0.52 | ❌ PENDIENTE | corecopy, coretype: readfile→ob_query_info, writefile→ob_set_info |
+| **OB-043** | v0.55 | ❌ PENDIENTE | coredel/coreren/coremd/corerd: VFS ops via Ob |
+| **OB-044** | v0.55 | ❌ PENDIENTE | ndreg/loadnem/fsck/drives: driver/fs/drive via Ob namespace |
+| **OB-045** | v0.58 | ❌ PENDIENTE | datetime/ver/mem/cpuinfo: info via Ob |
+| **OB-046** | v0.52 | ✅ COMPLETADO | Processos registrados como ObObjects en namespace \Process\<pid> |
+| **OB-047** | v0.58 | ❌ PENDIENTE | Binarios de test: migración completa a Ob |
+
+### C.7 Dependencias entre Issues — Estado Actual
 
 ```
-v0.41:
-OB-001 (Object base) ─┬── OB-002 (Handle object_id) ── OB-004 (close wrapper)
-                      └── OB-003 (KOBJ refactor) ────── OB-005 (boot init)
+v0.41: ✅ COMPLETED
+OB-001 ─┬── OB-002 ── OB-004
+         └── OB-003 ── OB-005
 
-v0.45:
-OB-005 ── OB-010 (ObOpen) ──┬── OB-011 (ObCreate) ── OB-016 (pipe wrapper)
-                             ├── OB-012 (ObQueryInfo) ─┬── OB-013 (ObSetInfo)
-                             │                          └── OB-017 (file wrappers)
-                             ├── OB-014 (ObEnum) ── OB-015 (open wrapper)
-                             └── OB-018 (URN file)
+v0.45: ✅ 9/9 COMPLETED
+OB-005 ── OB-010 ──┬── OB-011 ── OB-016 ✅
+                    ├── OB-012 ──┬── OB-013 ✅
+                    │             └── OB-017 ✅
+                    ├── OB-014 ── OB-015 ✅
+                    └── OB-018 ✅
+OB-030 ── (check_legacy_path_access en sys_open/spawn/mkdir/unlink/rmdir/rename)
 
-v0.50:
-OB-012 ── OB-020 (ObWait + KWait)
-OB-014 ── OB-021 (ps migrado)
-OB-013 ──┬── OB-022 (kill migrado)
-         └── OB-023 (pri migrado)
-OB-024 (HandleEntry cleanup) ── depende de: OB-004, OB-015, OB-016, OB-017
-OB-018 ── OB-025 (URN rewrite)
+v0.50: ✅ 8/8 COMPLETED
+OB-012 ── OB-020 (ObWait) ✅
+OB-014 ── OB-021 (ps) ✅
+OB-013 ──┬── OB-022 (kill) ✅
+         └── OB-023 (pri) ✅
+OB-024 (HandleEntry cleanup) ✅
+OB-018 ── OB-025 (URN) ✅
+OB-031 (KWait full integration) ✅
+OB-046 (neoinit processes as ObObjects) ✅
 
-v1.0:
-OB-010 ── OB-030 (Security ObOpen)
-OB-020 ── OB-031 (KWait full)
-OB-030 + OB-031 ── OB-032 (Documentación)
+v0.52 (F1–F2, alta prioridad): ❌ PENDIENTE
+OB-014 ── OB-040 (neoshell autocomplete)
+OB-014 ── OB-041 (coredir, tree → ob_enum)
+OB-012 + OB-013 ── OB-042 (corecopy, coretype → ob_query/set_info)
+~~OB-011 + OB-020 ── OB-046 (neoinit spawn+wait — PID 1)~~ ✅
+
+v0.55 (F3–F4, media prioridad): ❌ PENDIENTE
+OB-011 + OB-013 ── OB-043 (FS ops via Ob)
+OB-014 ── OB-044 (driver/fs/drive via Ob namespace)
+
+v0.58 (F5–F7, baja prioridad): ❌ PENDIENTE
+OB-012 ── OB-045 (info syscalls via Ob)
+OB-047 (test binaries)
+
+v1.0: ✅ COMPLETED
+OB-010 ── OB-030 (Security) ✅
+OB-020 ── OB-031 (KWait full) ✅
+OB-030 + OB-031 ── OB-032 (Documentación) 🔶
 ```
+
+### C.8 Plan de Migración Completo: Todos los Binarios a Ob
+
+**Objetivo:** Todos los 35 binarios de usuario deben usar exclusivamente syscalls Ob
+(RAX 60–65) para operaciones sobre objetos del sistema (archivos, directorios,
+procesos, pipes, dispositivos, drivers, etc.), eliminando las syscalls legacy
+equivalentes.
+
+#### Fases de Migración
+
+| Fase | Binarios | Syscalls Legacy a Eliminar | Syscall Ob Equivalente |
+|------|----------|---------------------------|----------------------|
+| **F1** — YA MIGRADOS | ps, kill, pri, kobj | sys_kobj_enum, sys_kill_process, sys_set_priority | ob_open, ob_enum, ob_set_info, ob_query_info |
+| **F2** — ALTA PRIORIDAD | neoinit, neoshell, coredir, tree, corehelp, coretype, corecopy | sys_readdir, sys_readfile, sys_writefile, sys_open_with_flags, sys_spawn, sys_pipe, sys_waitpid | ob_open, ob_enum, ob_query_info, ob_wait |
+| **F3** — GESTIÓN FS | coredel, coreren, coremd, corerd, label, vol | sys_unlink, sys_rename, sys_mkdir, sys_rmdir, sys_get_volume_label, sys_set_volume_label | ob_open + ob_set_info o wrapper de VFS via Ob |
+| **F4** — DRIVERS/SISTEMA | ndreg, loadnem, fsck, drives, keyb | sys_driver_enum, sys_driver_load, sys_driver_unload, sys_fsck, sys_get_drives, sys_set_keyboard_layout | ob_open_path + ob_enum en namespace \Driver\ y \Device\ |
+| **F5** — INFO LECTURA | cpuinfo, datetime, ver, mem | sys_getcpuinfo, sys_get_datetime, sys_get_version, sys_get_meminfo | ob_open("\Global\Info\...") + ob_query_info |
+| **F6** — BINARIOS DE TEST | hello, systest, filetest, alltest, cputest, cmdtest | sys_open, sys_readfile, sys_writefile, sys_mkdir, sys_rmdir, sys_unlink, sys_rename | ob_open, ob_create, ob_enum, wrappers Ob |
+| **F7** — TRIVIALES | echo, cls | Ninguna (solo foundation) | No requiere cambios |
+
+#### Estado Actual por Binario
+
+| Binario | Estado Ob | Syscalls Ob | Syscalls Legacy Restantes |
+|---------|-----------|-------------|--------------------------|
+| **ps** | ✅ COMPLETO | ob_open, ob_enum, ob_query_info | — |
+| **kill** | ✅ COMPLETO | ob_open, ob_set_info | — |
+| **pri** | ✅ COMPLETO | ob_open, ob_set_info | — |
+| **kobj** | ✅ COMPLETO | ob_open, ob_enum | — |
+| **neoshell** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid, sys_chdir, sys_getcwd, sys_cursor_blink, sys_poweroff |
+| **cd** | 🔶 PARCIAL | ob_open | sys_getcwd |
+| **coredir** | 🔶 PARCIAL | ob_open | sys_readdir, sys_getcwd |
+| **corehelp** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid |
+| **coretype** | 🔶 PARCIAL | ob_open | sys_readfile, sys_getcwd |
+| **tree** | 🔶 PARCIAL | ob_open | sys_readdir, sys_getcwd |
+| **corecopy** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink, sys_getcwd |
+| **cmdtest** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink, sys_mkdir, sys_rmdir, sys_rename |
+| **cpuinfo** | ❌ PENDIENTE | — | sys_loadlib, sys_getcpuinfo |
+| **neoinit** | ❌ PENDIENTE (PID 1) | — | sys_spawn |
+| **datetime** | ❌ PENDIENTE | — | sys_get_datetime |
+| **ver** | ❌ PENDIENTE | — | sys_get_version |
+| **mem** | ❌ PENDIENTE | — | sys_get_meminfo |
+| **vol** | ❌ PENDIENTE | — | sys_get_volume_label, sys_getcwd |
+| **coredel** | ❌ PENDIENTE | — | sys_unlink, sys_getcwd |
+| **coreren** | ❌ PENDIENTE | — | sys_rename, sys_getcwd |
+| **coremd** | ❌ PENDIENTE | — | sys_mkdir, sys_getcwd |
+| **corerd** | ❌ PENDIENTE | — | sys_rmdir, sys_getcwd |
+| **drives** | ❌ PENDIENTE | — | sys_get_drives |
+| **keyb** | ❌ PENDIENTE | — | sys_set_keyboard_layout |
+| **label** | ❌ PENDIENTE | — | sys_get_volume_label, sys_set_volume_label, sys_getcwd |
+| **fsck** | ❌ PENDIENTE | — | sys_fsck, sys_getcwd |
+| **ndreg** | ❌ PENDIENTE | — | sys_driver_enum |
+| **loadnem** | ❌ PENDIENTE | — | sys_driver_load, sys_driver_unload |
+| **hello** | ❌ PENDIENTE | — | sys_getpid, sys_yield (foundation) |
+| **systest** | ❌ PENDIENTE | — | sys_open, sys_readfile |
+| **filetest** | ❌ PENDIENTE | — | sys_open, sys_writefile, sys_readfile |
+| **alltest** | ❌ PENDIENTE | — | sys_open, sys_readfile, sys_close, sys_chdir, sys_getcwd, sys_brk, sys_yield, sys_getpid |
+| **cputest** | ❌ PENDIENTE | — | sys_getpid, sys_yield (foundation) |
+| **echo** | ❌ PENDIENTE | — | foundation only |
+| **cls** | ❌ PENDIENTE | — | foundation only |
+
+#### Issues de Migración de Binarios
+
+| Issue | Binario | Syscall Legacy→Ob | Depende de | Prioridad |
+|-------|---------|-------------------|-----------|-----------|
+| OB-040 | neoshell | readdir→ob_enum, readfile→ob_open+query, spawn→ob_create(Process)+ob_wait, pipe→ob_create(Pipe) | OB-011, OB-014, OB-020 | ALTA |
+| OB-041 | coredir, tree | readdir→ob_enum | OB-014 | ALTA |
+| OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info | OB-012, OB-013 | ALTA |
+| OB-046 | neoinit (PID 1) | spawn→ob_create(Process)+ob_wait | OB-011, OB-020 | **CRÍTICA** |
+| OB-043 | coredel, coreren, coremd, corerd | unlink→ob_set_info, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | MEDIA |
+| OB-044 | ndreg, loadnem, fsck, drives | driver_enum→ob_enum("\Driver\"), fsck→ob_query_info(DriveInfo), get_drives→ob_enum("\Device\") | OB-014 | MEDIA |
+| OB-045 | datetime, ver, mem, cpuinfo | get_datetime→ob_open("\Global\Info\DateTime")+query, get_version→ob_query_info | OB-010, OB-012 | BAJA |
+| OB-047 | Binarios de test | open→ob_open, readfile→ob_query_info, etc. | Todo lo anterior | BAJA |

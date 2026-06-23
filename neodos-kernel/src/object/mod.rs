@@ -264,27 +264,25 @@ pub fn ob_open_object(id: ObId, _access: u32) -> Result<(), ObError> {
 }
 
 pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
-    let new_count = {
-        let mut table = OB_TABLE.lock();
-        let cnt = table.dereference(id)?;
-        if cnt > 0 {
-            return Ok(());
-        }
-        // Refcount reached 0 — extract destroy info and drop lock before callback
-        let (ops, native_id) = table.extract_destroy_info(id)?;
-        if ops.is_none() && native_id == 0 {
-            // No callback, simple cleanup
-            table.finalize_destroy(id);
-            return Ok(());
-        }
-        drop(table);
-        // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with kobj_unregister)
-        if let Some(cb) = ops {
-            cb.on_destroy(id, native_id);
-        }
-        let mut table = OB_TABLE.lock();
+    let mut table = OB_TABLE.lock();
+    let cnt = table.dereference(id)?;
+    if cnt > 0 {
+        return Ok(());
+    }
+    // Refcount reached 0 — extract destroy info and drop lock before callback
+    let (ops, native_id) = table.extract_destroy_info(id)?;
+    if ops.is_none() && native_id == 0 {
+        // No callback, simple cleanup
         table.finalize_destroy(id);
-    };
+        return Ok(());
+    }
+    drop(table);
+    // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with kobj_unregister)
+    if let Some(cb) = ops {
+        cb.on_destroy(id, native_id);
+    }
+    let mut table = OB_TABLE.lock();
+    table.finalize_destroy(id);
     Ok(())
 }
 
@@ -440,8 +438,11 @@ pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObE
         name[len] = 0;
         ObEnumEntry {
             id: e.obj_id,
-            obj_type: e.obj_type,
+            obj_type: e.obj_type as u32,
             name,
+            mode: 0,
+            _pad: [0u8; 2],
+            size: 0,
         }
     }).collect())
 }

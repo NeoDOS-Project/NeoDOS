@@ -638,14 +638,14 @@ lazy_static! {
 pub fn init_object_namespace() {
     {
         let mut ns = OB_NAMESPACE.lock();
-        let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob"];
+        let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry"];
         for dir in root_dirs {
             let path = alloc::format!("\\{}", dir);
             let _ = ns.create_directory(&path);
         }
     }
     // Register KObjs outside the lock to avoid deadlock with kobj_register → ob_insert_object_auto
-    let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob"];
+    let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry"];
     for dir in root_dirs {
         let _ = crate::kobj::kobj_register(KObjType::Directory, dir, 0);
     }

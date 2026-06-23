@@ -2,7 +2,7 @@
 #![no_main]
 
 use libneodos::syscall;
-use libneodos::syscall::DirEntry;
+use libneodos::syscall::ObEnumEntry;
 
 const MODE_DIR: u16 = 0x40;
 const ARGS_ADDR: u64 = 0x41F000;
@@ -105,11 +105,14 @@ fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize 
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
             let mut count = 0;
-            let mut raw = DirEntry { inode: 0, mode: 0, size: 0, name: [0u8; 260] };
+            let mut ob_entries: [ObEnumEntry; MAX_ENTRIES] = core::array::from_fn(|_| ObEnumEntry {
+                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+            });
 
-            loop {
-                match syscall::sys_readdir(fd, &mut raw) {
-                    Ok(1) => {
+            match syscall::sys_ob_enum(fd, &mut ob_entries) {
+                Ok(n) => {
+                    for i in 0..n {
+                        let raw = &ob_entries[i];
                         let name_str = raw.name_str();
                         if name_str.is_empty() || name_str == "." || name_str == ".." {
                             continue;
@@ -119,16 +122,15 @@ fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize 
                         let b = name_str.as_bytes();
                         let cl = b.len().min(259);
                         nb[..cl].copy_from_slice(&b[..cl]);
+                        let is_dir = raw.obj_type == 11; // ObType::Directory
                         entries[count] = Entry {
                             name: nb,
-                            is_directory: is_dir(raw.mode),
+                            is_directory: is_dir,
                         };
                         count += 1;
                     }
-                    Ok(0) => break,
-                    Err(_) => { write_str(b"\r\nreaddir error\r\n"); break; }
-                    _ => break,
                 }
+                Err(_) => { write_str(b"\r\nenum error\r\n"); }
             }
             let _ = syscall::sys_close(fd);
             count

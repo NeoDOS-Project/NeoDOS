@@ -81,6 +81,9 @@ pub extern "C" fn _start() -> ! {
         id: 0,
         obj_type: 0,
         name: [0u8; 32],
+        mode: 0,
+        _pad: [0u8; 2],
+        size: 0,
     });
 
     match syscall::sys_ob_enum(fd, &mut entries) {
