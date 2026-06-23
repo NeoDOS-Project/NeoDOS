@@ -1,79 +1,71 @@
 use alloc::vec::Vec;
 use core::ops::{Index, IndexMut};
-use crate::object::{ObId, ObType, ob_create_object, ob_close_object};
+use crate::object::{ObId, ObType, ob_create_object, ob_close_object, ob_lookup};
 
-// ── Handle type constants (LEGACY — kept for backward compat during migration) ──
-
-pub const HANDLE_CLOSED: u8 = 0;
-pub const HANDLE_STDIN: u8 = 1;
-pub const HANDLE_STDOUT: u8 = 2;
-pub const HANDLE_STDERR: u8 = 3;
-pub const HANDLE_PIPE_READ: u8 = 4;
-pub const HANDLE_PIPE_WRITE: u8 = 5;
-pub const HANDLE_FILE: u8 = 6;
-pub const HANDLE_DEVICE: u8 = 7;
-pub const HANDLE_EVENT: u8 = 8;
-pub const HANDLE_DIR: u8 = 9;
-pub const HANDLE_OBJECT: u8 = 10;
+/// Sentinel values for special file descriptors (stdin/stdout/stderr).
+/// These are not real ObObject IDs; they sit in object_id to identify
+/// the stream type without needing a separate `kind` field.
+pub const HANDLE_CLOSED: ObId = 0;
+pub const HANDLE_STDIN: ObId  = ObId::MAX;       // 0xFFFF_FFFF_FFFF_FFFF
+pub const HANDLE_STDOUT: ObId = ObId::MAX - 1;   // 0xFFFF_FFFF_FFFF_FFFE
+pub const HANDLE_STDERR: ObId = ObId::MAX - 2;   // 0xFFFF_FFFF_FFFF_FFFD
 
 #[derive(Debug, Clone, Copy)]
 pub struct HandleEntry {
-    /// Object Manager ID (primary reference, OB-002).
-    /// 0 means this entry is not backed by Ob — used only for stdin/stdout/stderr.
+    /// Object Manager ID. 0 = closed.
+    /// HANDLE_STDIN/STDOUT/STDERR sentinels for standard streams.
+    /// All other values reference an ObObject in the Object Manager.
     pub object_id: ObId,
-    /// Legacy type discriminator (deprecated, will be removed in v0.43+).
-    pub kind: u8,
-    /// Legacy type-specific id (deprecated).
-    pub id: u32,
-    /// Legacy extra field (deprecated).
-    pub extra: u32,
-    /// Per-handle offset for file-like objects.
+    /// Per-handle offset for file-like objects (read/write position).
     pub offset: u64,
 }
 
 impl HandleEntry {
     pub const fn closed() -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_CLOSED, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: HANDLE_CLOSED, offset: 0 }
     }
 
     pub const fn stdin() -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_STDIN, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDIN, offset: 0 }
     }
 
     pub const fn stdout() -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_STDOUT, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDOUT, offset: 0 }
     }
 
     pub const fn stderr() -> Self {
-        HandleEntry { object_id: 0, kind: HANDLE_STDERR, id: 0, extra: 0, offset: 0 }
+        HandleEntry { object_id: HANDLE_STDERR, offset: 0 }
     }
 
     /// Create a pipe read handle, registered in the Object Manager.
+    /// offset=0 marks this as a read end.
     pub fn pipe_read(pipe_id: u8) -> Self {
         let ob_id = ob_create_object(
             ObType::Pipe,
             core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'R', pipe_id + b'0']).unwrap_or("PIPE_R"),
             pipe_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_PIPE_READ, id: pipe_id as u32, extra: 0, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0 }
     }
 
     /// Create a pipe write handle, registered in the Object Manager.
+    /// offset=1 marks this as a write end.
     pub fn pipe_write(pipe_id: u8) -> Self {
         let ob_id = ob_create_object(
             ObType::Pipe,
             core::str::from_utf8(&[b'P', b'I', b'P', b'E', b'_', b'W', pipe_id + b'0']).unwrap_or("PIPE_W"),
             pipe_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_PIPE_WRITE, id: pipe_id as u32, extra: 0, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 1 }
     }
 
     /// Create a file handle, registered in the Object Manager.
+    /// The drive index is stored in the ObObject's flags field.
     pub fn file(drive: u8, inode: u32) -> Self {
         let ob_id = ob_create_object(
-            ObType::Filesystem, "FILE", inode as u64, 0, None,
+            ObType::Filesystem, "FILE", inode as u64, drive as u32, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_FILE, id: inode, extra: drive as u32, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0 }
     }
 
     /// Create a device handle.
@@ -81,7 +73,7 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Device, "DEVICE", device_id as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_DEVICE, id: device_id, extra: 0, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0 }
     }
 
     /// Create an event handle.
@@ -89,66 +81,83 @@ impl HandleEntry {
         let ob_id = ob_create_object(
             ObType::Event, "EVENT", event_type as u64, 0, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_EVENT, id: event_type, extra: 0, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0 }
     }
 
     /// Create a directory handle.
+    /// The drive index is stored in the ObObject's flags field.
     pub fn dir(drive: u8, inode: u32) -> Self {
         let ob_id = ob_create_object(
-            ObType::Directory, "DIR", inode as u64, 0, None,
+            ObType::Directory, "DIR", inode as u64, drive as u32, None,
         ).unwrap_or(0);
-        HandleEntry { object_id: ob_id, kind: HANDLE_DIR, id: inode, extra: drive as u32, offset: 0 }
+        HandleEntry { object_id: ob_id, offset: 0 }
     }
 
     /// Create an Object Manager handle (backed by an existing ObObject).
     /// Used by ObOpen (RAX=60) to reference kernel objects via the namespace.
-    pub fn ob_object(object_id: ObId, access_mask: u32) -> Self {
-        HandleEntry { object_id, kind: HANDLE_OBJECT, id: 0, extra: access_mask, offset: 0 }
+    pub fn ob_object(object_id: ObId, _access_mask: u32) -> Self {
+        HandleEntry { object_id, offset: 0 }
     }
 
     /// Close this handle: release the Ob reference.
     pub fn close(&mut self) {
-        if self.object_id != 0 {
+        if self.has_ob_object() {
             let _ = ob_close_object(self.object_id);
-            self.object_id = 0;
         }
         *self = HandleEntry::closed();
     }
 
+    /// True if this handle references a real ObObject (not a standard stream).
+    pub fn has_ob_object(&self) -> bool {
+        self.object_id > HANDLE_STDERR || (self.object_id > 0 && self.object_id < HANDLE_STDERR)
+    }
+
     pub fn is_open(&self) -> bool {
-        self.kind != HANDLE_CLOSED
+        self.object_id != HANDLE_CLOSED
     }
 
-    pub fn is_pipe(&self) -> bool {
-        self.kind == HANDLE_PIPE_READ || self.kind == HANDLE_PIPE_WRITE
+    pub fn is_stdio(&self) -> bool {
+        self.object_id >= HANDLE_STDERR
     }
 
-    pub fn is_file(&self) -> bool {
-        self.kind == HANDLE_FILE
+    pub fn is_stdin(&self) -> bool {
+        self.object_id == HANDLE_STDIN
     }
 
-    pub fn is_dir(&self) -> bool {
-        self.kind == HANDLE_DIR
+    pub fn is_stdout(&self) -> bool {
+        self.object_id == HANDLE_STDOUT
     }
 
-    pub fn pipe_id(&self) -> Option<u8> {
-        if self.is_pipe() { Some(self.id as u8) } else { None }
+    pub fn is_stderr(&self) -> bool {
+        self.object_id == HANDLE_STDERR
     }
 
-    pub fn file_inode(&self) -> Option<u32> {
-        if self.is_file() { Some(self.id) } else { None }
+    /// True if this handle is a pipe read end (offset=0).
+    pub fn is_pipe_read(&self) -> bool {
+        self.obj_type() == Some(ObType::Pipe) && self.offset == 0
     }
 
-    pub fn file_drive(&self) -> u8 {
-        self.extra as u8
+    /// True if this handle is a pipe write end (offset=1).
+    pub fn is_pipe_write(&self) -> bool {
+        self.obj_type() == Some(ObType::Pipe) && self.offset == 1
     }
 
-    pub fn dir_inode(&self) -> Option<u32> {
-        if self.is_dir() { Some(self.id) } else { None }
+    /// Look up the associated ObObject, if any.
+    pub fn obj_type(&self) -> Option<ObType> {
+        if !self.has_ob_object() { return None; }
+        ob_lookup(self.object_id).map(|o| o.obj_type)
     }
 
-    pub fn dir_drive(&self) -> u8 {
-        self.extra as u8
+    /// Get the native_id from the ObObject (pipe_id, inode, pid, etc.)
+    pub fn native_id(&self) -> Option<u64> {
+        if !self.has_ob_object() { return None; }
+        ob_lookup(self.object_id).map(|o| o.native_id)
+    }
+
+    /// Get the drive index from a file/dir ObObject (stored in flags).
+    pub fn drive(&self) -> Option<u8> {
+        if !self.has_ob_object() { return None; }
+        ob_lookup(self.object_id).map(|o| (o.flags & 0xFF) as u8)
     }
 }
 
@@ -203,7 +212,7 @@ impl HandleTable {
 
     pub fn alloc_handle(&mut self, entry: HandleEntry) -> Option<u8> {
         for i in 3..self.entries.len() {
-            if self.entries[i].kind == HANDLE_CLOSED {
+            if !self.entries[i].is_open() {
                 self.entries[i] = entry;
                 return Some(i as u8);
             }
@@ -217,7 +226,7 @@ impl HandleTable {
         let mut first: Option<u8> = None;
         let mut second: Option<u8> = None;
         for i in 3..self.entries.len() {
-            if self.entries[i].kind == HANDLE_CLOSED {
+            if !self.entries[i].is_open() {
                 if first.is_none() {
                     first = Some(i as u8);
                 } else if second.is_none() {

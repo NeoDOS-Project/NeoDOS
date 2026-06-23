@@ -595,14 +595,10 @@ impl Scheduler {
                 // Close all handles
                 for i in 0..eproc.handle_table.len() {
                     let h = eproc.handle_table[i];
-                    match h.kind {
-                        crate::handle::HANDLE_PIPE_READ => {
-                            crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
-                        }
-                        crate::handle::HANDLE_PIPE_WRITE => {
-                            crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
-                        }
-                        _ => {}
+                    if h.is_pipe_read() {
+                        crate::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+                    } else if h.is_pipe_write() {
+                        crate::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
                     }
                     eproc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                 }

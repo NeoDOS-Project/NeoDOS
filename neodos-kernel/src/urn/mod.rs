@@ -110,9 +110,9 @@ fn extract_file_params(fd: u8) -> (usize, u32, u64) {
         let lock = s.lock();
         if let Some(ep) = lock.current_eprocess() {
             let entry = ep.handle_table.get(fd);
-            if entry.is_file() {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem) {
                 if let Some(obj) = ob_lookup(entry.object_id) {
-                    return (entry.file_drive() as usize, obj.native_id as u32, entry.offset);
+                    return (entry.drive().unwrap_or(0) as usize, obj.native_id as u32, entry.offset);
                 }
             }
         }

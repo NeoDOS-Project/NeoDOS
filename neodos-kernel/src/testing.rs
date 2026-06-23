@@ -735,8 +735,9 @@ fn register_mem_stress() {
         test_eq!(ht.len(), 3 + 250);
         for i in 0..250 {
             let entry = ht.get((3 + i) as u8);
-            test_eq!(entry.kind, crate::handle::HANDLE_FILE);
-            test_eq!(entry.id, i);
+            test_eq!(entry.obj_type(), Some(crate::object::ObType::Filesystem));
+            let nid = entry.native_id().unwrap_or(0xFFFFFFFF);
+            test_eq!(nid, i as u64);
         }
     });
 
@@ -754,7 +755,7 @@ fn register_mem_stress() {
         // New alloc should reuse fd 3
         let fd = ht.alloc_handle(crate::handle::HandleEntry::file(1, 42));
         test_eq!(fd, Some(3));
-        test_eq!(ht.get(3).id, 42);
+        test_eq!(ht.get(3).native_id().unwrap_or(0), 42);
     });
 
     test_case!("stress_mem_alloc_free_storm", {
@@ -1894,9 +1895,7 @@ pub fn register_mmap_tests() {
 
 pub fn register_pipe_tests() {
     use crate::pipe::PIPE_MANAGER;
-    use crate::handle::{HandleEntry, default_handle_table, closed_handle_table,
-                        HANDLE_PIPE_READ, HANDLE_PIPE_WRITE, HANDLE_STDIN, HANDLE_STDOUT, HANDLE_STDERR,
-                        HANDLE_FILE, HANDLE_CLOSED};
+    use crate::handle::{HandleEntry, default_handle_table, closed_handle_table};
 
     test_case!("pipe_alloc_free", {
         let pid = PIPE_MANAGER.alloc().expect("pipe alloc failed");
@@ -2053,32 +2052,32 @@ pub fn register_pipe_tests() {
 
     test_case!("handle_table_default", {
         let table = default_handle_table();
-        test_eq!(table[0].kind, HANDLE_STDIN);
-        test_eq!(table[1].kind, HANDLE_STDOUT);
-        test_eq!(table[2].kind, HANDLE_STDERR);
+        test_true!(table[0].is_stdin());
+        test_true!(table[1].is_stdout());
+        test_true!(table[2].is_stderr());
         for i in 3..16 {
-            test_eq!(table[i].kind, HANDLE_CLOSED);
+            test_true!(!table[i].is_open());
         }
     });
 
     test_case!("handle_table_closed", {
         let table = closed_handle_table();
         for i in 0..16 {
-            test_eq!(table[i].kind, HANDLE_CLOSED);
+            test_true!(!table[i].is_open());
         }
     });
 
     test_case!("handle_entry_constructors", {
         let r = HandleEntry::pipe_read(5);
-        test_eq!(r.kind, HANDLE_PIPE_READ);
-        test_eq!(r.id, 5);
+        test_true!(r.is_pipe_read());
+        test_eq!(r.native_id(), Some(5));
         let w = HandleEntry::pipe_write(3);
-        test_eq!(w.kind, HANDLE_PIPE_WRITE);
-        test_eq!(w.id, 3);
+        test_true!(w.is_pipe_write());
+        test_eq!(w.native_id(), Some(3));
         let f = HandleEntry::file(2, 42);
-        test_eq!(f.kind, HANDLE_FILE);
-        test_eq!(f.id, 42);
-        test_eq!(f.extra, 2);
+        test_eq!(f.obj_type(), Some(crate::object::ObType::Filesystem));
+        test_eq!(f.native_id(), Some(42));
+        test_eq!(f.drive(), Some(2));
         test_eq!(f.offset, 0);
     });
 

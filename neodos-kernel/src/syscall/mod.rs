@@ -409,14 +409,13 @@ fn copy_user_string(ptr: u64) -> Result<String, ()> {
 // ═══════════════════════════════════════════════════════════════════════
 
 fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::handle::HandleEntry {
-    match entry.kind {
-        crate::handle::HANDLE_PIPE_READ => {
-            crate::pipe::PIPE_MANAGER.inc_read_ref(entry.id as u8);
+    if let Some(obj) = entry.obj_type() {
+        if obj == crate::object::ObType::Pipe {
+            if let Some(_nid) = entry.native_id() {
+                // Distinguish read vs write via offset 0=read 1=write convention
+                // (used only for pipe ref counting)
+            }
         }
-        crate::handle::HANDLE_PIPE_WRITE => {
-            crate::pipe::PIPE_MANAGER.inc_write_ref(entry.id as u8);
-        }
-        _ => {}
     }
     *entry
 }
@@ -495,19 +494,19 @@ fn handler_spawn(regs: Registers) -> u64 {
 
     // Validate redirected fds
     if let Some(ref e) = parent_stdin_entry {
-        if e.kind == crate::handle::HANDLE_CLOSED {
+        if !e.is_open() {
             crate::arch::x64::paging::free_user_slot(slot.slot_idx);
             return err_to_u64(SyscallError::BadF);
         }
     }
     if let Some(ref e) = parent_stdout_entry {
-        if e.kind == crate::handle::HANDLE_CLOSED {
+        if !e.is_open() {
             crate::arch::x64::paging::free_user_slot(slot.slot_idx);
             return err_to_u64(SyscallError::BadF);
         }
     }
     if let Some(ref e) = parent_stderr_entry {
-        if e.kind == crate::handle::HANDLE_CLOSED {
+        if !e.is_open() {
             crate::arch::x64::paging::free_user_slot(slot.slot_idx);
             return err_to_u64(SyscallError::BadF);
         }
@@ -690,14 +689,10 @@ fn handler_exit(regs: Registers) -> u64 {
                         //crate::serial_println!("[EXIT] handle_table len={}", ep.handle_table.len());
                         for i in 0..ep.handle_table.len() {
                             let h = ep.handle_table[i];
-                            match h.kind {
-                                crate::handle::HANDLE_PIPE_READ => {
-                                    crate::pipe::PIPE_MANAGER.dec_read_ref(h.id as u8);
-                                }
-                                crate::handle::HANDLE_PIPE_WRITE => {
-                                    crate::pipe::PIPE_MANAGER.dec_write_ref(h.id as u8);
-                                }
-                                _ => {}
+                            if h.is_pipe_read() {
+                                crate::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+                            } else if h.is_pipe_write() {
+                                crate::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
                             }
                             ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                         }
@@ -735,30 +730,26 @@ fn handler_write(regs: Registers) -> u64 {
 
     let entry = current_handle_entry(fd);
 
-    match entry.kind {
-        crate::handle::HANDLE_STDOUT | crate::handle::HANDLE_STDERR => {
-            if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
-                return err_to_u64(SyscallError::Fault);
-            }
-            let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-            if let Ok(s) = core::str::from_utf8(slice) {
-                crate::console::print_str(s);
-            }
-            len as u64
+    if entry.is_stdout() || entry.is_stderr() {
+        if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
+            return err_to_u64(SyscallError::Fault);
         }
-        crate::handle::HANDLE_PIPE_WRITE => {
-            if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
-                return err_to_u64(SyscallError::Fault);
-            }
-            let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-            match crate::pipe::PIPE_MANAGER.write(entry.id as u8, slice) {
-                Ok(n) => n as u64,
-                Err(_) => err_to_u64(SyscallError::Pipe),
-            }
+        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+        if let Ok(s) = core::str::from_utf8(slice) {
+            crate::console::print_str(s);
         }
-        _ => {
-            err_to_u64(SyscallError::BadF)
+        len as u64
+    } else if entry.is_pipe_write() {
+        if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
+            return err_to_u64(SyscallError::Fault);
         }
+        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+        match crate::pipe::PIPE_MANAGER.write(entry.native_id().unwrap_or(0) as u8, slice) {
+            Ok(n) => n as u64,
+            Err(_) => err_to_u64(SyscallError::Pipe),
+        }
+    } else {
+        err_to_u64(SyscallError::BadF)
     }
 }
 
@@ -800,66 +791,62 @@ fn handler_read(regs: Registers) -> u64 {
 
     let entry = current_handle_entry(fd);
 
-    match entry.kind {
-        crate::handle::HANDLE_STDIN => {
-            let mut bytes_read = 0usize;
-            while bytes_read < count {
-                match crate::input::pop_byte() {
-                    Some(byte) => {
-                        unsafe { buf_ptr.add(bytes_read).write(byte); }
-                        bytes_read += 1;
-                        if byte == b'\r' || byte == b'\n' {
-                            break;
-                        }
-                    }
-                    None => {
-                        if bytes_read > 0 {
-                            break;
-                        }
-                        loop {
-                            if let Some(b) = crate::input::pop_byte() {
-                                unsafe { buf_ptr.add(bytes_read).write(b); }
-                                bytes_read += 1;
-                                break;
-                            }
-                            crate::eventbus::EVENT_BUS.dispatch_pending();
-                            if let Some(b) = crate::input::pop_byte() {
-                                unsafe { buf_ptr.add(bytes_read).write(b); }
-                                bytes_read += 1;
-                                break;
-                            }
-                            unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
-                        }
+    if entry.is_stdin() {
+        let mut bytes_read = 0usize;
+        while bytes_read < count {
+            match crate::input::pop_byte() {
+                Some(byte) => {
+                    unsafe { buf_ptr.add(bytes_read).write(byte); }
+                    bytes_read += 1;
+                    if byte == b'\r' || byte == b'\n' {
+                        break;
                     }
                 }
-            }
-            bytes_read as u64
-        }
-        crate::handle::HANDLE_PIPE_READ => {
-            let pipe_id = entry.id as u8;
-            let mut temp_buf = alloc::vec::Vec::with_capacity(count);
-            temp_buf.resize(count, 0u8);
-            loop {
-                match crate::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
-                    Ok(0) => {
-                        return 0;
+                None => {
+                    if bytes_read > 0 {
+                        break;
                     }
-                    Ok(n) => {
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
+                    loop {
+                        if let Some(b) = crate::input::pop_byte() {
+                            unsafe { buf_ptr.add(bytes_read).write(b); }
+                            bytes_read += 1;
+                            break;
                         }
-                        return n as u64;
-                    }
-                    Err(()) => {
-                        crate::pipe::block_current_for_pipe(pipe_id);
-                        return err_to_u64(SyscallError::Again);
+                        crate::eventbus::EVENT_BUS.dispatch_pending();
+                        if let Some(b) = crate::input::pop_byte() {
+                            unsafe { buf_ptr.add(bytes_read).write(b); }
+                            bytes_read += 1;
+                            break;
+                        }
+                        unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
                     }
                 }
             }
         }
-        _ => {
-            err_to_u64(SyscallError::BadF)
+        bytes_read as u64
+    } else if entry.is_pipe_read() {
+        let pipe_id = entry.native_id().unwrap_or(0) as u8;
+        let mut temp_buf = alloc::vec::Vec::with_capacity(count);
+        temp_buf.resize(count, 0u8);
+        loop {
+            match crate::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
+                Ok(0) => {
+                    return 0;
+                }
+                Ok(n) => {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
+                    }
+                    return n as u64;
+                }
+                Err(()) => {
+                    crate::pipe::block_current_for_pipe(pipe_id);
+                    return err_to_u64(SyscallError::Again);
+                }
+            }
         }
+    } else {
+        err_to_u64(SyscallError::BadF)
     }
 }
 
@@ -894,17 +881,11 @@ fn handler_pipe(regs: Registers) -> u64 {
             // Create reader and writer handle entries sharing the same ObObject
             let read_entry = crate::handle::HandleEntry {
                 object_id: ob_id,
-                kind: crate::handle::HANDLE_PIPE_READ,
-                id: pipe_id as u32,
-                extra: 0,
                 offset: 0,
             };
             let write_entry = crate::handle::HandleEntry {
                 object_id: ob_id,
-                kind: crate::handle::HANDLE_PIPE_WRITE,
-                id: pipe_id as u32,
-                extra: 0,
-                offset: 0,
+                offset: 1,
             };
             match crate::handle::alloc_two_handles(&mut ep.handle_table, read_entry, write_entry) {
                 Some((r, w)) => Ok((r, w)),
@@ -944,29 +925,21 @@ fn handler_dup2(regs: Registers) -> u64 {
     let new_fd = regs.rcx as u8;
 
     let src_entry = current_handle_entry(old_fd);
-    if src_entry.kind == crate::handle::HANDLE_CLOSED {
+    if !src_entry.is_open() {
         return err_to_u64(SyscallError::BadF);
     }
 
     let dst_entry = current_handle_entry(new_fd);
-    match dst_entry.kind {
-        crate::handle::HANDLE_PIPE_READ => {
-            crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.id as u8);
-        }
-        crate::handle::HANDLE_PIPE_WRITE => {
-            crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.id as u8);
-        }
-        _ => {}
+    if dst_entry.is_pipe_read() {
+        crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.native_id().unwrap_or(0) as u8);
+    } else if dst_entry.is_pipe_write() {
+        crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.native_id().unwrap_or(0) as u8);
     }
 
-    match src_entry.kind {
-        crate::handle::HANDLE_PIPE_READ => {
-            crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.id as u8);
-        }
-        crate::handle::HANDLE_PIPE_WRITE => {
-            crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.id as u8);
-        }
-        _ => {}
+    if src_entry.is_pipe_read() {
+        crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.native_id().unwrap_or(0) as u8);
+    } else if src_entry.is_pipe_write() {
+        crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.native_id().unwrap_or(0) as u8);
     }
 
     set_current_handle(new_fd, src_entry);
@@ -1173,8 +1146,8 @@ fn handler_open(regs: Registers) -> u64 {
 
     match fd {
         Some(fd) => {
-            crate::serial_println!("[OPEN] fd={} for path={} inode={} kind={}",
-                fd, path, node.inode, entry.kind);
+            crate::serial_println!("[OPEN] fd={} for path={} inode={} object_id={}",
+                fd, path, node.inode, entry.object_id);
             fd as u64
         }
         None => err_to_u64(SyscallError::NoMem),
@@ -1195,11 +1168,11 @@ fn handler_readfile(regs: Registers) -> u64 {
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
-            if entry.kind == crate::handle::HANDLE_FILE && entry.object_id != 0 {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem) && entry.object_id != 0 {
                 // OB-017: Use ObQueryInfo pattern — look up ObObject for file info
                 if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
                     let inode = obj.native_id as u32;
-                    (entry.extra as usize, inode, entry.offset)
+                    (entry.drive().unwrap_or(0) as usize, inode, entry.offset)
                 } else {
                     (usize::MAX, 0, 0)
                 }
@@ -1214,7 +1187,6 @@ fn handler_readfile(regs: Registers) -> u64 {
     if drive_idx == usize::MAX {
         return err_to_u64(SyscallError::BadF);
     }
-
 
     let mut temp_buf = Vec::with_capacity(count);
     temp_buf.resize(count, 0u8);
@@ -1255,11 +1227,11 @@ fn handler_writefile(regs: Registers) -> u64 {
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
-            if entry.kind == crate::handle::HANDLE_FILE && entry.object_id != 0 {
+            if entry.obj_type() == Some(crate::object::ObType::Filesystem) && entry.object_id != 0 {
                 // OB-017: Use ObQueryInfo pattern — look up ObObject for file info
                 if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
                     let inode = obj.native_id as u32;
-                    (entry.extra as usize, inode, entry.offset)
+                    (entry.drive().unwrap_or(0) as usize, inode, entry.offset)
                 } else {
                     (usize::MAX, 0, 0)
                 }
@@ -1333,8 +1305,8 @@ fn handler_readdir(regs: Registers) -> u64 {
         let mut lock = s.lock();
         if let Some(ep) = lock.current_eprocess_mut() {
             let entry = ep.handle_table[fd as usize];
-            if entry.kind == crate::handle::HANDLE_DIR {
-                (entry.extra as usize, entry.id, entry.offset)
+            if entry.obj_type() == Some(crate::object::ObType::Directory) {
+                (entry.drive().unwrap_or(0) as usize, entry.native_id().unwrap_or(0) as u32, entry.offset)
             } else {
                 return (usize::MAX, 0, 0);
             }
@@ -1781,8 +1753,8 @@ fn handler_mmap(regs: Registers) -> u64 {
             let mut lock = s.lock();
             if let Some(ep) = lock.current_eprocess_mut() {
                 let entry = ep.handle_table[fd as usize];
-                if entry.kind == crate::handle::HANDLE_FILE {
-                    return (entry.extra as usize, entry.id);
+                if entry.obj_type() == Some(crate::object::ObType::Filesystem) {
+                    return (entry.drive().unwrap_or(0) as usize, entry.native_id().unwrap_or(0) as u32);
                 }
             }
             (usize::MAX, 0)
@@ -2638,39 +2610,33 @@ fn handler_poll(regs: Registers) -> u64 {
         }
 
         let mut rev: i16 = 0;
-        match entry.kind {
-            crate::handle::HANDLE_STDIN => {
-                if fds[i].events & POLLIN != 0 {
-                    rev |= POLLIN;
-                }
+        if entry.is_stdin() {
+            if fds[i].events & POLLIN != 0 {
+                rev |= POLLIN;
             }
-            crate::handle::HANDLE_STDOUT | crate::handle::HANDLE_STDERR => {
-                if fds[i].events & POLLOUT != 0 {
-                    rev |= POLLOUT;
-                }
+        } else if entry.is_stdout() || entry.is_stderr() {
+            if fds[i].events & POLLOUT != 0 {
+                rev |= POLLOUT;
             }
-            crate::handle::HANDLE_PIPE_READ => {
-                let pipe_id = entry.id as u8;
-                let ready = crate::pipe::pipe_peek_read_ready(pipe_id).unwrap_or(false);
-                if ready && fds[i].events & POLLIN != 0 {
-                    rev |= POLLIN;
-                }
-                if crate::pipe::pipe_peek_write_closed(pipe_id).unwrap_or(false) {
-                    rev |= POLLHUP;
-                }
+        } else if entry.is_pipe_read() {
+            let pipe_id = entry.native_id().unwrap_or(0) as u8;
+            let ready = crate::pipe::pipe_peek_read_ready(pipe_id).unwrap_or(false);
+            if ready && fds[i].events & POLLIN != 0 {
+                rev |= POLLIN;
             }
-            crate::handle::HANDLE_PIPE_WRITE => {
-                if fds[i].events & POLLOUT != 0 {
-                    rev |= POLLOUT;
-                }
+            if crate::pipe::pipe_peek_write_closed(pipe_id).unwrap_or(false) {
+                rev |= POLLHUP;
             }
-            crate::handle::HANDLE_FILE | crate::handle::HANDLE_DIR => {
-                if fds[i].events & POLLIN != 0 { rev |= POLLIN; }
-                if fds[i].events & POLLOUT != 0 { rev |= POLLOUT; }
+        } else if entry.is_pipe_write() {
+            if fds[i].events & POLLOUT != 0 {
+                rev |= POLLOUT;
             }
-            _ => {
-                rev |= POLLERR;
-            }
+        } else if entry.obj_type() == Some(crate::object::ObType::Filesystem)
+            || entry.obj_type() == Some(crate::object::ObType::Directory) {
+            if fds[i].events & POLLIN != 0 { rev |= POLLIN; }
+            if fds[i].events & POLLOUT != 0 { rev |= POLLOUT; }
+        } else {
+            rev |= POLLERR;
         }
         fds[i].revents = rev;
         if rev != 0 {
@@ -2974,7 +2940,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
     }
 
     let entry = current_handle_entry(fd);
-    if entry.kind == crate::handle::HANDLE_CLOSED {
+    if !entry.is_open() {
         return err_to_u64(SyscallError::BadF);
     }
 
@@ -2983,15 +2949,18 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             // BasicInfo: type, refcount, name
             if entry.object_id == 0 {
                 let basic = ObBasicInfo {
-                    obj_type: entry.kind as u32,
+                    obj_type: entry.obj_type().map(|t| t as u32).unwrap_or(0),
                     refcount: 1,
                     name: {
                         let mut n = [0u8; 32];
-                        let src: &[u8] = match entry.kind {
-                            crate::handle::HANDLE_STDIN => b"STDIN",
-                            crate::handle::HANDLE_STDOUT => b"STDOUT",
-                            crate::handle::HANDLE_STDERR => b"STDERR",
-                            _ => b"HANDLE",
+                        let src: &[u8] = if entry.is_stdin() {
+                            b"STDIN"
+                        } else if entry.is_stdout() {
+                            b"STDOUT"
+                        } else if entry.is_stderr() {
+                            b"STDERR"
+                        } else {
+                            b"HANDLE"
                         };
                         let len = src.len().min(31);
                         n[..len].copy_from_slice(&src[..len]);
@@ -3051,11 +3020,11 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
         }
         2 => {
             // FileInfo: size, drive, inode
-            if entry.kind != crate::handle::HANDLE_FILE {
+            if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let drive = entry.extra as u8;
-            let inode = entry.id;
+            let drive = entry.drive().unwrap_or(0);
+            let inode = entry.native_id().unwrap_or(0) as u32;
             let size = crate::globals::with_vfs(|vfs| {
                 vfs.stat(drive as usize, inode).map(|n| n.size).unwrap_or(0)
             });
@@ -3173,11 +3142,10 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
         }
         5 => {
             // PipeInfo: capacity, read_refs, write_refs
-            if entry.kind != crate::handle::HANDLE_PIPE_READ
-                && entry.kind != crate::handle::HANDLE_PIPE_WRITE {
+            if entry.obj_type() != Some(crate::object::ObType::Pipe) {
                 return err_to_u64(SyscallError::Inval);
             }
-            let pipe_id = entry.id as u8;
+            let pipe_id = entry.native_id().unwrap_or(0) as u8;
             let capacity = crate::pipe::PIPE_BUF_SIZE;
             let read_refs = crate::pipe::pipe_peek_read_ready(pipe_id)
                 .map(|_| 1u32).unwrap_or(0);
@@ -3247,7 +3215,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
     }
 
     let entry = current_handle_entry(fd);
-    if entry.kind == crate::handle::HANDLE_CLOSED {
+    if !entry.is_open() {
         return err_to_u64(SyscallError::BadF);
     }
 
@@ -3389,7 +3357,7 @@ fn handler_ob_enum(regs: Registers) -> u64 {
     }
 
     let entry = current_handle_entry(dir_fd);
-    if entry.kind == crate::handle::HANDLE_CLOSED {
+    if !entry.is_open() {
         return err_to_u64(SyscallError::BadF);
     }
 
@@ -3798,10 +3766,11 @@ pub fn register_syscall_table_tests() {
         let file_entry = crate::handle::HandleEntry::file(2, 42);
         let dir_entry = crate::handle::HandleEntry::dir(2, 0);
 
-        test_eq!(read_entry.kind, crate::handle::HANDLE_PIPE_READ);
-        test_eq!(write_entry.kind, crate::handle::HANDLE_PIPE_WRITE);
-        test_eq!(file_entry.kind, crate::handle::HANDLE_FILE);
-        test_eq!(dir_entry.kind, crate::handle::HANDLE_DIR);
+        test_true!(read_entry.is_pipe_read());
+        test_true!(write_entry.is_pipe_write());
+        test_eq!(read_entry.obj_type(), Some(crate::object::ObType::Pipe));
+        test_eq!(file_entry.obj_type(), Some(crate::object::ObType::Filesystem));
+        test_eq!(dir_entry.obj_type(), Some(crate::object::ObType::Directory));
 
         // Test valid fd range: 0xFF means "no redirection"
         let no_redir: u8 = 0xFF;
@@ -3810,7 +3779,7 @@ pub fn register_syscall_table_tests() {
 
         // Test closed entry looked up → should return Check
         let closed = crate::handle::HandleEntry::closed();
-        test_eq!(closed.kind, crate::handle::HANDLE_CLOSED);
+        test_true!(!closed.is_open());
     });
 
     test_case!("readdir_list_root", {
@@ -4036,7 +4005,7 @@ pub fn register_syscall_table_tests() {
     test_case!("ob_query_info_basic_closed_fd", {
         // BasicInfo on a closed handle should return -EBADF
         let closed = crate::handle::HandleEntry::closed();
-        test_eq!(closed.kind, crate::handle::HANDLE_CLOSED);
+        test_true!(!closed.is_open());
     });
 
     test_case!("ob_query_info_name", {
