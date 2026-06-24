@@ -161,8 +161,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Initializing PS/2 controller...");
     drivers::ps2::init_ps2();
 
-    println!("[+] Scanning for USB HID keyboards...");
-    drivers::usb_hid::init_usb_keyboard();
 
     // ============================================
     // PHASE 2.5: Physical memory map / allocator
@@ -195,6 +193,18 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing Object Manager namespace...");
     kobj::namespace::init_object_namespace();
+
+    // Create virtual info objects in Ob namespace (Memory, Interrupts)
+    {
+        use crate::object::{self, ObType};
+        let _ = kobj::namespace::ob_create_directory("\\Global\\Info");
+        if let Ok(mem_id) = object::ob_create_object(ObType::Key, "Memory", 1, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Memory", mem_id);
+        }
+        if let Ok(int_id) = object::ob_create_object(ObType::Key, "Interrupts", 2, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Interrupts", int_id);
+        }
+    }
 
     // ============================================
     // PHASE 2.77: Security subsystem initialization

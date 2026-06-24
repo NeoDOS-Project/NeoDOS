@@ -1,8 +1,10 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall;
-use libneodos::syscall::MemInfo;
+use libneodos::syscall::{
+    self, ob_access, ObEnumEntry,
+    sys_ob_open, sys_readfile, sys_close,
+};
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -40,6 +42,14 @@ fn write_u64_hex(v: u64) {
     write_str(&buf[i..]);
 }
 
+fn read_u64_le(buf: &[u8], offset: usize) -> u64 {
+    let mut v = 0u64;
+    for i in 0..8 {
+        v |= (buf[offset + i] as u64) << (i * 8);
+    }
+    v
+}
+
 #[used]
 #[link_section = ".rodata"]
 static MEM_HELP: &[u8] = b"::HELP::\
@@ -57,36 +67,58 @@ pub extern "C" fn _start() -> ! {
         print_help();
         syscall::sys_exit(0);
     }
-    let mut info = MemInfo {
-        phys_max: 0, total_kib: 0, usable_kib: 0,
-        free_kib: 0, used_kib: 0, reserved_kib: 0,
-    };
 
-    match syscall::sys_get_meminfo(&mut info) {
-        Ok(_) => {
-            write_str(b"\r\n");
-            write_str(b"Physical max: 0x");
-            write_u64_hex(info.phys_max);
-            write_str(b"\r\n");
-            write_str(b"Total:    ");
-            write_u64(info.total_kib);
-            write_str(b" KiB\r\n");
-            write_str(b"Usable:   ");
-            write_u64(info.usable_kib);
-            write_str(b" KiB\r\n");
-            write_str(b"Free:     ");
-            write_u64(info.free_kib);
-            write_str(b" KiB\r\n");
-            write_str(b"Used:     ");
-            write_u64(info.used_kib);
-            write_str(b" KiB\r\n");
-            write_str(b"Reserved: ");
-            write_u64(info.reserved_kib);
-            write_str(b" KiB\r\n\r\n");
-        }
+    let fd = match sys_ob_open("\\Global\\Info\\Memory", ob_access::READ) {
+        Ok(f) => f,
         Err(_) => {
             write_str(b"\r\nMemory info not available\r\n\r\n");
+            syscall::sys_exit(1);
         }
+    };
+
+    let mut buf = [0u8; 48];
+    let n = match sys_readfile(fd, &mut buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let _ = sys_close(fd);
+            write_str(b"\r\nMemory info read failed\r\n\r\n");
+            syscall::sys_exit(1);
+        }
+    };
+
+    let _ = sys_close(fd);
+
+    if n < 48 {
+        write_str(b"\r\nMemory info truncated\r\n\r\n");
+        syscall::sys_exit(1);
     }
+
+    let phys_max = read_u64_le(&buf, 0);
+    let total_kib = read_u64_le(&buf, 8);
+    let usable_kib = read_u64_le(&buf, 16);
+    let free_kib = read_u64_le(&buf, 24);
+    let used_kib = read_u64_le(&buf, 32);
+    let reserved_kib = read_u64_le(&buf, 40);
+
+    write_str(b"\r\n");
+    write_str(b"Physical max: 0x");
+    write_u64_hex(phys_max);
+    write_str(b"\r\n");
+    write_str(b"Total:    ");
+    write_u64(total_kib);
+    write_str(b" KiB\r\n");
+    write_str(b"Usable:   ");
+    write_u64(usable_kib);
+    write_str(b" KiB\r\n");
+    write_str(b"Free:     ");
+    write_u64(free_kib);
+    write_str(b" KiB\r\n");
+    write_str(b"Used:     ");
+    write_u64(used_kib);
+    write_str(b" KiB\r\n");
+    write_str(b"Reserved: ");
+    write_u64(reserved_kib);
+    write_str(b" KiB\r\n\r\n");
+
     syscall::sys_exit(0)
 }

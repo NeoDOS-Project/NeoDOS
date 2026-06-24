@@ -189,14 +189,14 @@ pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29,
+        25, 26, 27, 28,
         33,
-         40, 41, 42, 43, 44, 45, 46, 47, 49,
+        40, 41, 42, 43, 44, 46, 47, 49,
            50, 53, 54, 55, 56, 57, 58, 59,
            60, 61, 62, 63, 64,
     ];
     // Reserved syscall slots that MUST be None
-    const RESERVED: &[u64] = &[];
+    const RESERVED: &[u64] = &[45];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -1180,6 +1180,40 @@ fn handler_open(regs: Registers) -> u64 {
     }
 }
 
+/// Generate binary content for virtual info ObObjects.
+/// Returns (bytes, len). Type 1 = MemInfo struct, type 2 = CPU interrupt counts array.
+fn generate_info_content(info_type: u32) -> Option<alloc::vec::Vec<u8>> {
+    match info_type {
+        1 => {
+            let stats = crate::memory::stats();
+            let mut buf = alloc::vec::Vec::with_capacity(48);
+            buf.extend_from_slice(&stats.phys_max.to_le_bytes());
+            buf.extend_from_slice(&stats.total_kib.to_le_bytes());
+            buf.extend_from_slice(&stats.usable_kib.to_le_bytes());
+            buf.extend_from_slice(&stats.free_kib.to_le_bytes());
+            buf.extend_from_slice(&stats.used_kib.to_le_bytes());
+            buf.extend_from_slice(&stats.reserved_kib.to_le_bytes());
+            Some(buf)
+        }
+        2 => {
+            let count = crate::arch::x64::cpu_local::cpu_count() as usize;
+            let mut buf = alloc::vec::Vec::with_capacity(count * 8);
+            for cpu in 0..count {
+                let kprcb_base = crate::arch::x64::cpu_local::kprcb_page(cpu)
+                    .unwrap_or(0);
+                let ic = if kprcb_base != 0 {
+                    unsafe { core::ptr::read_volatile(
+                        (kprcb_base + 0xB40) as *const u64
+                    )}
+                } else { 0 };
+                buf.extend_from_slice(&ic.to_le_bytes());
+            }
+            Some(buf)
+        }
+        _ => None,
+    }
+}
+
 fn handler_readfile(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
     let buf_ptr = regs.rcx as *mut u8;
@@ -1189,6 +1223,9 @@ fn handler_readfile(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::Fault);
     }
 
+    let mut is_info_obj = false;
+    let mut info_type = 0u32;
+    let mut info_offset = 0u64;
     let (drive_idx, inode_num, offset) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
@@ -1196,6 +1233,12 @@ fn handler_readfile(regs: Registers) -> u64 {
             let entry = ep.handle_table[fd as usize];
             if !entry.has_ob_object() { return (usize::MAX, 0, 0); }
             if let Some(obj) = crate::object::ob_lookup(entry.object_id) {
+                if obj.obj_type == crate::object::ObType::Key {
+                    is_info_obj = true;
+                    info_type = obj.native_id as u32;
+                    info_offset = entry.offset;
+                    return (usize::MAX, 0, entry.offset);
+                }
                 if obj.obj_type != crate::object::ObType::Filesystem {
                     return (usize::MAX, 0, 0);
                 }
@@ -1207,6 +1250,30 @@ fn handler_readfile(regs: Registers) -> u64 {
             (usize::MAX, 0, 0)
         }
     });
+
+    if is_info_obj {
+        let content = generate_info_content(info_type);
+        if content.is_none() { return err_to_u64(SyscallError::Inval); }
+        let content = content.unwrap();
+        let content_len = content.len();
+        let copy_len = core::cmp::min(count, content_len.saturating_sub(info_offset as usize));
+        if copy_len > 0 {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    content.as_ptr().add(info_offset as usize),
+                    buf_ptr, copy_len,
+                );
+            }
+        }
+        crate::hal::without_interrupts(|| {
+            let s = scheduler::current_scheduler();
+            let mut lock = s.lock();
+            if let Some(ep) = lock.current_eprocess_mut() {
+                ep.handle_table[fd as usize].offset += copy_len as u64;
+            }
+        });
+        return copy_len as u64;
+    }
 
     if drive_idx == usize::MAX {
         return err_to_u64(SyscallError::BadF);
@@ -2238,46 +2305,7 @@ fn handler_get_datetime(regs: Registers) -> u64 {
     0
 }
 
-/// ABI-stable MemInfo struct for sys_get_meminfo (RAX=45).
-#[repr(C)]
-pub struct MemInfo {
-    pub phys_max: u64,
-    pub total_kib: u64,
-    pub usable_kib: u64,
-    pub free_kib: u64,
-    pub used_kib: u64,
-    pub reserved_kib: u64,
-}
 
-/// sys_get_meminfo (RAX=45): copy memory stats to user buffer.
-/// RBX = user buffer ptr.
-fn handler_get_meminfo(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    if buf_ptr == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    let sz = core::mem::size_of::<MemInfo>() as u64;
-    if !is_user_ptr_valid(buf_ptr, sz) {
-        return err_to_u64(SyscallError::Fault);
-    }
-    let stats = crate::memory::stats();
-    let info = MemInfo {
-        phys_max: stats.phys_max,
-        total_kib: stats.total_kib,
-        usable_kib: stats.usable_kib,
-        free_kib: stats.free_kib,
-        used_kib: stats.used_kib,
-        reserved_kib: stats.reserved_kib,
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &info as *const MemInfo as *const u8,
-            buf_ptr as *mut u8,
-            sz as usize,
-        );
-    }
-    0
-}
 
 /// sys_get_volume_label (RAX=46): get the volume label for a drive.
 /// RBX = drive_char (ASCII, e.g. 'C'), RCX = user buffer ptr, RDX = buffer size.
@@ -3638,7 +3666,7 @@ lazy_static! {
         t[42] = Some(handler_poweroff as SyscallFn);
         t[43] = Some(handler_get_version as SyscallFn);
         t[44] = Some(handler_get_datetime as SyscallFn);
-        t[45] = Some(handler_get_meminfo as SyscallFn);
+        t[45] = None; // migrated to Ob: \Global\Info\Memory
         t[46] = Some(handler_get_volume_label as SyscallFn);
         t[47] = Some(handler_chdir_parent as SyscallFn);
         t[48] = None;
@@ -3848,12 +3876,12 @@ pub fn register_syscall_table_tests() {
             9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28,
             33,
-            40, 41, 42, 43, 44, 45, 46, 47, 49,
+            40, 41, 42, 43, 44, 46, 47, 49,
             50, 53, 54, 55, 56, 57, 58, 59,
             60, 61, 62, 63, 64, 65,
         ];
-        // Removed syscalls (migrated to Ob): 48(kobj_enum), 51(set_priority), 52(kill_process)
-        const RESERVED: &[u64] = &[48, 51, 52];
+        // Removed syscalls (migrated to Ob): 45(get_meminfo), 48(kobj_enum), 51(set_priority), 52(kill_process)
+        const RESERVED: &[u64] = &[45, 48, 51, 52];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
