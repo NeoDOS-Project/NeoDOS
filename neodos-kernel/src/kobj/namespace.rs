@@ -638,14 +638,14 @@ lazy_static! {
 pub fn init_object_namespace() {
     {
         let mut ns = OB_NAMESPACE.lock();
-        let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry"];
+        let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry", "Process"];
         for dir in root_dirs {
             let path = alloc::format!("\\{}", dir);
             let _ = ns.create_directory(&path);
         }
     }
     // Register KObjs outside the lock to avoid deadlock with kobj_register → ob_insert_object_auto
-    let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry"];
+    let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry", "Process"];
     for dir in root_dirs {
         let _ = crate::kobj::kobj_register(KObjType::Directory, dir, 0);
     }
@@ -656,6 +656,7 @@ pub fn init_object_namespace() {
     if root_id != 0 {
         let _ = OB_NAMESPACE.lock().insert_object("\\", root_id);
     }
+    ob_namespace_debug();
 }
 
 pub fn ob_insert_object(path: &str, kobj_id: KObjId) -> Result<(), &'static str> {
@@ -688,6 +689,29 @@ pub fn ob_rename_directory(old_path: &str, new_name: &str) -> Result<(), &'stati
 
 pub fn ob_enumerate_namespace(path: &str) -> Result<Vec<NamespaceEntry>, &'static str> {
     OB_NAMESPACE.lock().enumerate(path)
+}
+
+pub fn ob_namespace_debug() {
+    let ns = OB_NAMESPACE.lock();
+    fn dump(dir: &DirectoryObject, prefix: &str) {
+        for (key, &id) in &dir.children {
+            let mut name_buf = [0u8; 25];
+            let mut i = 0;
+            while i < 24 && key[i] != 0 { name_buf[i] = key[i]; i += 1; }
+            let name = core::str::from_utf8(&name_buf[..i]).unwrap_or("<?>");
+            crate::serial_println!("[NS] {}children['{}'] = {}", prefix, name, id);
+        }
+        for (key, subdir) in &dir.child_dirs {
+            let mut name_buf = [0u8; 25];
+            let mut i = 0;
+            while i < 24 && key[i] != 0 { name_buf[i] = key[i]; i += 1; }
+            let name = core::str::from_utf8(&name_buf[..i]).unwrap_or("<?>");
+            let sub_prefix = alloc::format!("{}{}/", prefix, name);
+            crate::serial_println!("[NS] {}dir (enter)", sub_prefix);
+            dump(subdir, &sub_prefix);
+        }
+    }
+    dump(&ns.root, "\\");
 }
 
 pub fn ob_is_directory(path: &str) -> bool {

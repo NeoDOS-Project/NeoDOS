@@ -492,11 +492,23 @@ impl Scheduler {
 
         // OB-046: Register process in Ob namespace
         let ob_name = alloc::format!("proc/{}", pid);
-        if let Ok(ob_id) = object::ob_create_object(ObType::Process, &ob_name, pid as u64, 0, None) {
-            let ns_path = alloc::format!("\\Process\\{}", pid);
-            let _ = crate::kobj::namespace::ob_create_directory("\\Process");
-            let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
-            eproc.ob_id = Some(ob_id);
+        match object::ob_create_object(ObType::Process, &ob_name, pid as u64, 0, None) {
+            Ok(ob_id) => {
+                let ns_path = alloc::format!("\\Process\\{}", pid);
+                match crate::kobj::namespace::ob_insert_object(&ns_path, ob_id) {
+                    Ok(_) => {
+                        crate::serial_println!("[SCHED] PID {} -> \\Process\\{} OK (ob_id={})", pid, pid, ob_id);
+                        eproc.ob_id = Some(ob_id);
+                    }
+                    Err(e) => {
+                        crate::serial_println!("[SCHED] PID {} -> \\Process\\{} FAILED: {}", pid, pid, e);
+                        let _ = object::ob_close_object(ob_id);
+                    }
+                }
+            }
+            Err(e) => {
+                crate::serial_println!("[SCHED] PID {} ob_create FAILED: {:?}", pid, e);
+            }
         }
 
         let tname = alloc::format!("kthread/{}", tid);

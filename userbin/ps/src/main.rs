@@ -45,7 +45,7 @@ fn pad_right(s: &[u8], width: usize) -> [u8; 32] {
 
 /// Build an Ob namespace path like "\\Ob\\Process\\eproc/N" into a fixed buffer.
 fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
-    let prefix = b"\\Ob\\Process\\eproc/";
+    let prefix = b"\\Process\\";
     let plen = prefix.len();
     buf[..plen].copy_from_slice(prefix);
     let mut i = plen;
@@ -105,7 +105,7 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
 
-    let dir_fd = match syscall::sys_ob_open("\\Ob\\Process", libneodos::syscall::ob_access::READ) {
+    let dir_fd = match syscall::sys_ob_open("\\Process", libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
             write_str(b"\r\nPS: cannot open process list\r\n");
@@ -147,10 +147,6 @@ pub extern "C" fn _start() -> ! {
     for i in 0..count.min(64) {
         let e = &entries[i];
         let name_str = e.name_str();
-        if !name_str.starts_with("eproc/") {
-            continue;
-        }
-
         let pid = match parse_pid_from_name(&name_str) {
             Some(p) => p,
             None => continue,

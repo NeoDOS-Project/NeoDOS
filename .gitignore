@@ -16,3 +16,4 @@ target/
 *.nxl
 *.nem
 __pycache__/
+/tmp/

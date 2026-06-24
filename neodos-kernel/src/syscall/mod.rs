@@ -3432,10 +3432,20 @@ fn handler_ob_enum(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::BadF);
     }
 
-    // Try VFS-backed enumeration first (handle has drive+inode from ObObject)
-    let drive = entry.drive();
-    let inode = entry.native_id();
-    if let (Some(drv), Some(nid)) = (drive, inode) {
+    // Try VFS-backed enumeration only if the fd has ObType that came from \Global\FileSystem\...
+    // Pure namespace directories (like \Process) have no VFS backing.
+    let use_vfs = if entry.object_id != 0 {
+        matches!(entry.obj_type(), Some(crate::object::ObType::Filesystem) | Some(crate::object::ObType::Directory))
+            && crate::object::ob_lookup(entry.object_id).map_or(false, |obj| {
+                let s = obj.name_str();
+                s.starts_with("\\Global\\FileSystem\\") || s.starts_with("dir/") || s.starts_with("file/")
+            })
+    } else {
+        false
+    };
+    if use_vfs {
+        let drv = entry.drive().unwrap_or(0);
+        let nid = entry.native_id().unwrap_or(0);
         let drive_idx = drv as usize;
         let dir_inode = nid as u32;
         let mut entries = alloc::vec::Vec::new();

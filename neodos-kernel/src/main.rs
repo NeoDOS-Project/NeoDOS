@@ -577,6 +577,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     });
 
     println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
+    crate::kobj::namespace::ob_namespace_debug();
 
     // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)
     usermode::wait_for_process(pid);
