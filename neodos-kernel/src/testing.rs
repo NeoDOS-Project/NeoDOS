@@ -2468,9 +2468,6 @@ pub fn register_tests() {
     // NT5.5: Unified resource namespace (URN) tests
     crate::urn::register_urn_tests();
 
-    // NT5.6: Virtual FS objects (K:\ drive) tests
-    crate::vfs::kdrive::register_kdrive_tests();
-
     // A3.3: Watchdog subsystem tests
     crate::watchdog::register_watchdog_tests();
 

@@ -373,7 +373,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     // NT5.6: Mount K:\ virtual kernel object drive
     // ============================================
-    vfs::kdrive::init_kdrive();
 
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
