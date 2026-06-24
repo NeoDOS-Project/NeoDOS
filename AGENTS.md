@@ -223,7 +223,6 @@ The NeoDOS filesystem uses the following directory layout:
 │   │   ├─ fs.nxl        # Filesystem library (libneodos)
 │   │   ├─ io.nxl        # I/O library (libneodos)
 │   │   ├─ process.nxl   # Process library (libneodos)
-│   │   ├─ cpuinfo.nxl   # CPU info library
 │   │   └─ math.nxl      # Math library (libmath)
 │   │
 │   ├─ Layouts/

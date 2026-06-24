@@ -245,19 +245,6 @@ Happy hacking!
         else:
             print(f"[!] libmath.nxl not found — NXL not included")
 
-        cpuinfo_nxl_candidates = [
-            os.path.join(os.path.dirname(__file__), '..', 'cpuinfo.nxl'),
-            os.path.join(os.path.dirname(__file__), '..', 'userbin', 'cpuinfo_nxl', 'target', 'x86_64-unknown-none', 'release', 'cpuinfo_nxl'),
-        ]
-        cpuinfo_nxl_path = next((path for path in cpuinfo_nxl_candidates if os.path.exists(path)), None)
-        cpuinfo_nxl_data = b''
-        if cpuinfo_nxl_path is not None:
-            with open(cpuinfo_nxl_path, 'rb') as f:
-                cpuinfo_nxl_data = f.read()
-            print(f"[*] Including cpuinfo.nxl from {os.path.relpath(cpuinfo_nxl_path, os.path.dirname(__file__))} ({len(cpuinfo_nxl_data)} bytes)")
-        else:
-            print(f"[!] cpuinfo.nxl not found — NXL not included")
-
         # ── Dynamic block allocator ──
         next_block = 6
         block_allocs = {}
@@ -334,7 +321,6 @@ Happy hacking!
         ndreg_blocks      = alloc_blocks(62, len(nxe_files['ndreg']))
         loadnem_blocks    = alloc_blocks(63, len(nxe_files['loadnem']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
-        cpuinfo_nxl_blocks2= alloc_blocks(18, len(cpuinfo_nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
         bootcfg_blocks    = alloc_blocks(5, len(bootcfg_content))
         system_cfg_blocks = alloc_blocks(23, len(system_cfg_content))
@@ -370,7 +356,6 @@ Happy hacking!
             6:  (dir_mode, 2048, pad_blocks(drv_dir_blocks)),
             14: (dir_mode, 1536, pad_blocks(lib_dir_blocks)),
             15: (MODE_FILE | default_perms_for_filename("fs.nxl"), len(nxl_data), pad_blocks(fs_nxl_blocks)),
-            18: (MODE_FILE | default_perms_for_filename("cpuinfo.nxl"), len(cpuinfo_nxl_data), pad_blocks(cpuinfo_nxl_blocks2)),
             44: (MODE_FILE | default_perms_for_filename("math.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
             19: (dir_mode, 768,  pad_blocks(lay_dir_blocks)),
             20: (MODE_FILE | default_perms_for_filename("es-ES.nkb"), len(es_nkb_content), pad_blocks(es_nkb_blocks)),
@@ -506,7 +491,6 @@ Happy hacking!
         blk = lib_dir_blocks[0]
         offset = (200 + blk * 8) * 512
         image[offset:offset+256]     = create_dir_entry(15, 1, "fs.nxl")
-        image[offset+768:offset+1024]= create_dir_entry(18, 1, "cpuinfo.nxl")
         image[offset+1024:offset+1280]= create_dir_entry(44, 1, "math.nxl")
 
         # fs.nxl (libneodos) data blocks
@@ -523,15 +507,6 @@ Happy hacking!
             print(f"[*] Writing System\\Libraries\\math.nxl ({len(math_nxl_data)} bytes)...")
             for bi, blk in enumerate(math_nxl_blocks):
                 chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
-                image[off:off+len(chunk)] = chunk
-
-        # cpuinfo.nxl data blocks
-        if cpuinfo_nxl_data:
-            blks = cpuinfo_nxl_blocks2
-            print(f"[*] Writing System\\Libraries\\cpuinfo.nxl ({len(cpuinfo_nxl_data)} bytes)...")
-            for bi, blk in enumerate(blks):
-                chunk = cpuinfo_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 off = (200 + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
