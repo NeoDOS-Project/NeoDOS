@@ -850,6 +850,7 @@ pub enum ObInfoClass {
     Thread = 4,
     Pipe = 5,
     Device = 6,
+    Cpu = 7,
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).

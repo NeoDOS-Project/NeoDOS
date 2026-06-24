@@ -204,6 +204,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(int_id) = object::ob_create_object(ObType::Key, "Interrupts", 2, 0, None) {
             let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Interrupts", int_id);
         }
+        if let Ok(cpu_id) = object::ob_create_object(ObType::Key, "CpuInfo", 3, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\CpuInfo", cpu_id);
+        }
     }
 
     // ============================================

@@ -3286,6 +3286,29 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
+        7 => {
+            // CpuInfo: return CpuInfoFull struct from \Global\Info\CpuInfo object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 3 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<crate::cpu::CpuInfoFull>();
+            if buf_size < (sz as usize) { return err_to_u64(SyscallError::Inval); }
+            let info = crate::cpu::get_cpu_info_full();
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &info as *const crate::cpu::CpuInfoFull as *const u8,
+                    buf_ptr as *mut u8, sz as usize,
+                );
+            }
+            sz as u64
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
