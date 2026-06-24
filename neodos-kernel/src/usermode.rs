@@ -104,7 +104,6 @@ core::arch::global_asm!(
     const OFFSET_EXIT_RIP as u64,
 );
 
-#[allow(dead_code)]
 extern "C" {
     fn execute_usermode_asm(entry: u64, stack: u64, cs: u64, ss: u64);
     fn exit_to_kernel();

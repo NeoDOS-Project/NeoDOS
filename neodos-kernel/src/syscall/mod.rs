@@ -188,7 +188,7 @@ pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+        9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23,
         25, 26, 27, 28,
         33,
         40, 41, 42, 43, 44, 46, 47, 49,
@@ -196,7 +196,7 @@ pub fn validate_abi() {
            60, 61, 62, 63, 64,
     ];
     // Reserved syscall slots that MUST be None
-    const RESERVED: &[u64] = &[45];
+        const RESERVED: &[u64] = &[14, 15, 24, 45];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -228,33 +228,6 @@ pub fn validate_abi() {
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
 
 // Device handler registry - max 8 devices
-const MAX_DEVICES: usize = 8;
-
-#[derive(Clone, Copy)]
-pub struct DeviceHandler {
-    pub device_id: u32,
-    pub owner_pid: u32,
-}
-
-static mut DEVICE_HANDLERS: [Option<DeviceHandler>; MAX_DEVICES] = [None; MAX_DEVICES];
-
-pub fn register_device(device_id: u32, owner_pid: u32) -> bool {
-    if device_id as usize >= MAX_DEVICES {
-        return false;
-    }
-    unsafe {
-        DEVICE_HANDLERS[device_id as usize] = Some(DeviceHandler { device_id, owner_pid });
-    }
-    true
-}
-
-pub fn get_device_handler(device_id: u32) -> Option<DeviceHandler> {
-    if device_id as usize >= MAX_DEVICES {
-        return None;
-    }
-    unsafe { DEVICE_HANDLERS[device_id as usize] }
-}
-
 pub fn set_need_resched() {
     NEED_RESCHED.store(true, Ordering::SeqCst);
     // Also set per-CPU flag via GS
@@ -1586,61 +1559,7 @@ fn handler_rename(regs: Registers) -> u64 {
     }
 }
 
-fn handler_ioctl(regs: Registers) -> u64 {
-    let device_id = regs.rbx as u32;
-    let cmd = regs.rcx as u32;
-    let buf_ptr = regs.rdx as *mut u8;
-    let count = 4;
 
-    let handler = get_device_handler(device_id);
-    match handler {
-        Some(_h) => {
-            let addr = buf_ptr as u64;
-
-            if addr == 0 {
-                let pending = unsafe {
-                    crate::drivers::DEVICE_EVENTS[device_id as usize]
-                        .pending
-                        .load(core::sync::atomic::Ordering::Relaxed)
-                };
-                if pending {
-                    unsafe {
-                        crate::drivers::DEVICE_EVENTS[device_id as usize]
-                            .pending
-                            .store(false, core::sync::atomic::Ordering::Relaxed)
-                    };
-                    return 1;
-                }
-                return 0;
-            }
-
-            if !is_user_ptr_valid(addr, count as u64) || count > 4096 {
-                return err_to_u64(SyscallError::Fault);
-            }
-
-            let data = [cmd as u8, (cmd >> 8) as u8,
-                        (cmd >> 16) as u8, (cmd >> 24) as u8];
-            unsafe {
-                core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr, count);
-            }
-            count as u64
-        }
-        None => err_to_u64(SyscallError::NoDev),
-    }
-}
-
-fn handler_register_device(regs: Registers) -> u64 {
-    let device_id = regs.rbx as u32;
-    let current_pid = crate::hal::without_interrupts(|| {
-        crate::scheduler::current_scheduler().lock().current_pid()
-    });
-
-    if register_device(device_id, current_pid) {
-        0
-    } else {
-        err_to_u64(SyscallError::Busy)
-    }
-}
 
 fn handler_chdir(regs: Registers) -> u64 {
     let path_str = match copy_user_string(regs.rbx) {
@@ -2216,26 +2135,6 @@ fn handler_cursor_blink(regs: Registers) -> u64 {
 
 /// sys_getcpuinfo (RAX=24): copy CpuInfoFull to user buffer.
 /// RBX = pointer to user buffer, RCX = buffer size (for validation).
-fn handler_get_cpuinfo(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    let _buf_size = regs.rcx as u64;
-    let struct_size = core::mem::size_of::<crate::cpu::CpuInfoFull>() as u64;
-
-    if buf_ptr == 0 || !is_user_ptr_valid(buf_ptr, struct_size) {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    let info = crate::cpu::get_cpu_info_full();
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &info as *const crate::cpu::CpuInfoFull as *const u8,
-            buf_ptr as *mut u8,
-            struct_size as usize,
-        );
-    }
-    0
-}
-
 /// sys_get_version (RAX=43): copy kernel version string to user buffer.
 /// RBX = user buffer ptr, RCX = buffer size.
 fn handler_get_version(regs: Registers) -> u64 {
@@ -3667,8 +3566,8 @@ lazy_static! {
         t[11] = Some(handler_readfile as SyscallFn);
         t[12] = Some(handler_writefile as SyscallFn);
         t[13] = Some(handler_close as SyscallFn);
-        t[14] = Some(handler_ioctl as SyscallFn);
-        t[15] = Some(handler_register_device as SyscallFn);
+        t[14] = None; // unused
+        t[15] = None; // unused
         t[16] = Some(handler_chdir as SyscallFn);
         t[17] = Some(handler_getcwd as SyscallFn);
         t[18] = Some(handler_brk as SyscallFn);
@@ -3677,7 +3576,7 @@ lazy_static! {
         t[21] = Some(handler_loadlib as SyscallFn);
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
-        t[24] = Some(handler_get_cpuinfo as SyscallFn);
+        t[24] = None; // migrated to Ob: \Global\Info\CpuInfo
         t[25] = Some(handler_mkdir as SyscallFn);
         t[26] = Some(handler_unlink as SyscallFn);
         t[27] = Some(handler_rmdir as SyscallFn);
@@ -3729,8 +3628,8 @@ lazy_static! {
         t[11] = SyscallPermission::user();
         t[12] = SyscallPermission::user();
         t[13] = SyscallPermission::user();
-        t[14] = SyscallPermission::user();
-        t[15] = SyscallPermission::user();
+        t[14] = SyscallPermission::free(); // unused
+        t[15] = SyscallPermission::free(); // unused
         t[16] = SyscallPermission::user();
         t[17] = SyscallPermission::user();
         t[18] = SyscallPermission::user();
@@ -3739,7 +3638,7 @@ lazy_static! {
         t[21] = SyscallPermission::user();
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
-        t[24] = SyscallPermission::user();
+        t[24] = SyscallPermission::free(); // unused
         t[25] = SyscallPermission::user();
         t[26] = SyscallPermission::user();
         t[27] = SyscallPermission::user();
@@ -3896,15 +3795,16 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6, 7, 8,
-            9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23,
             25, 26, 27, 28,
             33,
             40, 41, 42, 43, 44, 46, 47, 49,
             50, 53, 54, 55, 56, 57, 58, 59,
             60, 61, 62, 63, 64, 65,
         ];
-        // Removed syscalls (migrated to Ob): 45(get_meminfo), 48(kobj_enum), 51(set_priority), 52(kill_process)
-        const RESERVED: &[u64] = &[45, 48, 51, 52];
+        // Removed syscalls: 14(ioctl), 15(register_device), 24(getcpuinfo→Ob),
+        // 45(get_meminfo→Ob), 48(kobj_enum→Ob), 51(set_priority→Ob), 52(kill_process→Ob)
+        const RESERVED: &[u64] = &[14, 15, 24, 45, 48, 51, 52];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }

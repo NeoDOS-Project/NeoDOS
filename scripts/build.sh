@@ -106,13 +106,6 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     cp "target/x86_64-unknown-none/release/libmath-nxl" "$MATH_NXL_BIN"
     echo "[✓] libmath NXL: $MATH_NXL_BIN ($(stat -c%s "$MATH_NXL_BIN") bytes)"
 
-    echo "[+] Building cpuinfo NXL (CPU information library)..."
-    cd "$PROJECT_ROOT/libcpu-nxl"
-    cargo build --release 2>&1 || { echo "[!] Failed to build cpuinfo NXL"; exit 1; }
-    CPUINFO_NXL_BIN="$PROJECT_ROOT/cpuinfo.nxl"
-    cp "target/x86_64-unknown-none/release/libcpu-nxl" "$CPUINFO_NXL_BIN"
-    echo "[✓] cpuinfo NXL: $CPUINFO_NXL_BIN ($(stat -c%s "$CPUINFO_NXL_BIN") bytes)"
-
     echo "[+] Compiling NEM v3 standalone driver (ps2kbd)..."
     DRV_DIR="$PROJECT_ROOT/drivers/ps2kbd"
     if [ -f "$DRV_DIR/build_nem.py" ]; then

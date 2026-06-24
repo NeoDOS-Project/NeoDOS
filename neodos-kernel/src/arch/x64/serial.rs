@@ -36,20 +36,6 @@ impl SerialPort {
         crate::hal::outb(self.port, data);
     }
     
-    #[allow(dead_code)]
-    fn data_ready(&self) -> bool {
-        unsafe { self.read_reg(5) & 1 != 0 }
-    }
-    
-    #[allow(dead_code)]
-    pub fn recv(&self) -> Option<u8> {
-        let lsr: u8 = unsafe { self.read_reg(5) };
-        if lsr & 1 != 0 {
-            Some(crate::hal::inb(self.port))
-        } else {
-            None
-        }
-    }
 }
 
 impl fmt::Write for SerialPort {

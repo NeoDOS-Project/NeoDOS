@@ -69,7 +69,6 @@ impl BlockBitmap {
 
 #[repr(packed)]
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct Inode {
     pub inode_num: u32,          // 0-255
     pub mode: u16,               // File type + permissions (0x40 = dir, 0x80 = file)
@@ -99,7 +98,6 @@ pub const PERM_D: u16 = 0x0010;
 pub const ATTR_READONLY: u8 = 0x01;
 pub const ATTR_HIDDEN: u8   = 0x02;
 pub const ATTR_SYSTEM: u8   = 0x04;
-#[allow(dead_code)]
 pub const ATTR_VOLUME: u8   = 0x08;
 pub const ATTR_DIR: u8      = 0x10;
 pub const ATTR_ARCHIVE: u8  = 0x20;
@@ -110,7 +108,6 @@ pub struct DirectoryEntry {
     pub inode_num: u32,
     pub name_len: u8,
     pub entry_type: u8,          // 1=file, 2=dir
-    #[allow(dead_code)]
     pub attributes: u8,          // DOS attributes (R=1, H=2, S=4, A=16)
     pub name: [u8; 249],         // Adjusted to fit 256 bytes total
 }
@@ -124,8 +121,6 @@ pub enum FsError {
     NotADirectory,
     NotAFile,
     FileNotFound,
-    #[allow(dead_code)]
-    BlockReadError,
     NoInodeAvailable,
     NoBlockAvailable,
     BlockDeviceError,
@@ -321,70 +316,6 @@ impl NeoDosFs {
         })
     }
     
-    #[allow(dead_code)]
-    pub fn list_root(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
-        -> Result<(), FsError> 
-    {
-        let root_inode = *self.inode_cache.load_inode(ROOT_INODE as usize, cache, dev, self.abs_lba(0))?;
-        let mode = root_inode.mode;
-        
-        if (mode & MODE_DIR) == 0 {
-            return Err(FsError::NotADirectory);
-        }
-        
-        let mut bytes_to_read = Self::directory_byte_span(&root_inode);
-        for block_idx in 0..self.inode_data_block_count(&root_inode) {
-            if bytes_to_read == 0 {
-                break;
-            }
-
-            let Some(current_block) = self.get_inode_block_ptr(&root_inode, block_idx) else {
-                continue;
-            };
-            let block_sector = 200 + (current_block * 8);
-            let to_read_in_block = if bytes_to_read > BLOCK_SIZE { BLOCK_SIZE } else { bytes_to_read };
-            
-            for sector_offset in 0..8 {
-                let sector_data = cache.get_sector(self.abs_lba(block_sector + sector_offset), dev)?;
-                
-                for entry_offset in (0..512).step_by(256) {
-                    // Skip deleted entries (first byte 0xE5)
-                    let first_byte = sector_data[entry_offset];
-                    if first_byte == 0xE5 {
-                        continue;
-                    }
-                    
-                    let entry: DirectoryEntry = unsafe {
-                        core::ptr::read_unaligned(
-                            sector_data.as_ptr().add(entry_offset) as *const _
-                        )
-                    };
-                    
-                    if entry.inode_num != 0 {
-                        let name_len = entry.name_len;
-                        if name_len == 0 || name_len as usize > entry.name.len() {
-                            continue;
-                        }
-                        let name_slice = &entry.name[..name_len as usize];
-                        if let Ok(name) = core::str::from_utf8(name_slice) {
-                            // Skip volume labels (they appear as directory entries with ATTR_VOLUME)
-                            if entry.attributes & ATTR_VOLUME != 0 {
-                                continue;
-                            }
-                            crate::console::print_str("  ");
-                            crate::console::print_str(name);
-                            crate::console::print_str("\r\n");
-                            crate::serial_println!("  {}", name);
-                        }
-                    }
-                }
-            }
-            bytes_to_read -= to_read_in_block;
-        }
-        
-        Ok(())
-    }
-
     pub fn list_directory(&mut self, inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<(), FsError> 
     {
@@ -498,18 +429,6 @@ impl NeoDosFs {
         -> Result<u32, FsError> 
     {
         self.find_file_in_directory(ROOT_INODE, filename, cache, dev)
-    }
-
-    #[allow(dead_code)]
-    pub fn find_directory(&mut self, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
-        -> Result<u32, FsError> 
-    {
-        let (inode, entry_type) = self.find_entry_in_directory(ROOT_INODE, dirname, cache, dev)?;
-        if entry_type == 2 {
-            Ok(inode)
-        } else {
-            Err(FsError::NotADirectory)
-        }
     }
 
     pub fn find_dir_in_dir(&mut self, parent_inode: u32, dirname: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
@@ -723,13 +642,6 @@ impl NeoDosFs {
         self.block_bitmap.free(block);
     }
 
-    #[allow(dead_code)]
-    pub fn create_file(&mut self, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
-        -> Result<u32, FsError> 
-    {
-        self.create_file_at(ROOT_INODE, filename, cache, dev)
-    }
-
     fn ext_eq(name: &str, ext: &str) -> bool {
         let name = name.as_bytes();
         let ext = ext.as_bytes();
@@ -765,7 +677,6 @@ impl NeoDosFs {
         }
     }
 
-    #[allow(dead_code)]
     pub fn create_file_at(&mut self, parent_inode_num: u32, filename: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
         -> Result<u32, FsError> 
     {
@@ -919,7 +830,6 @@ impl NeoDosFs {
         Ok(written)
     }
 
-    #[allow(dead_code)]
     pub fn delete_file_by_inode(&mut self, parent_inode: u32, _filename: &str, file_inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         // Free the file's data blocks – copy pointers first to avoid borrow conflict
         let mut blocks_to_free = [0u32; 12];

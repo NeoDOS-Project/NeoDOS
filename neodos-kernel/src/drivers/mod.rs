@@ -24,15 +24,12 @@ use core::sync::atomic::AtomicBool;
 
 pub struct DeviceEvent {
     pub pending: AtomicBool,
-    #[allow(dead_code)]
-    pub cmd: AtomicBool,
 }
 
 impl DeviceEvent {
     pub const fn new() -> Self {
         Self {
             pending: AtomicBool::new(false),
-            cmd: AtomicBool::new(false),
         }
     }
 }

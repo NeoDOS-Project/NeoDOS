@@ -91,8 +91,6 @@ static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
 
 pub struct HeapSlot {
     pub base: u64,
-    #[allow(dead_code)]
-    pub index: u8,
 }
 
 pub fn alloc_heap_slot() -> Option<HeapSlot> {
@@ -101,7 +99,7 @@ pub fn alloc_heap_slot() -> Option<HeapSlot> {
             if !HEAP_SLOT_USED[i] {
                 HEAP_SLOT_USED[i] = true;
                 let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
-                return Some(HeapSlot { base, index: i as u8 });
+                return Some(HeapSlot { base });
             }
         }
     }
@@ -335,50 +333,6 @@ fn is_user_range(addr: u64) -> bool {
 ///
 /// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
 /// This function updates the PD entries in-place and flushes the TLB via CR3
-/// reload (simple but correct for a single-core system).
-///
-/// # Safety
-/// Must be called while paging is active (after `init_custom_page_tables`).
-/// The caller must ensure no other CPU is running.
-#[allow(dead_code)]
-pub unsafe fn map_user_range(base: u64, size: u64) {
-    let end = base.saturating_add(size);
-    if end > 0x1_0000_0000 {
-        serial_println!("[!] map_user_range: range 0x{:x}..0x{:x} exceeds 4 GiB, clamping", base, end);
-    }
-    let end = end.min(0x1_0000_0000);
-
-    // Align down/up to 2 MB boundaries.
-    let base_aligned = base & !(HUGE_PAGE_SIZE - 1);
-    let end_aligned   = (end + HUGE_PAGE_SIZE - 1) & !(HUGE_PAGE_SIZE - 1);
-
-    let mut mapped = 0u64;
-    let mut addr = base_aligned;
-    while addr < end_aligned {
-        let pd_idx   = (addr / HUGE_PAGE_SIZE) as usize / 512; // which PD (0..4)
-        let entry_idx = ((addr / HUGE_PAGE_SIZE) as usize) % 512; // entry inside that PD
-
-        if pd_idx < 4 {
-            let entry = &mut PD[pd_idx].0[entry_idx];
-            // Add USER_ACCESSIBLE without disturbing other flags.
-            let flags = entry.flags() | PageTableFlags::USER_ACCESSIBLE;
-            let phys  = entry.addr();
-            entry.set_addr(phys, flags);
-            mapped += HUGE_PAGE_SIZE;
-        }
-        addr += HUGE_PAGE_SIZE;
-    }
-
-    // Flush TLB: reload CR3 with the same value.
-    let cr3 = crate::hal::read_cr3();
-    crate::hal::write_cr3(cr3);
-
-    serial_println!(
-        "[PAG] map_user_range: 0x{:x}..0x{:x} ({} MB) -> USER_ACCESSIBLE",
-        base_aligned, end_aligned, mapped / (1024 * 1024)
-    );
-}
-
 // ─────────────────────────────────────────────────────────
 // 4 KB page-level heap management (on-demand paging)
 // ─────────────────────────────────────────────────────────
@@ -635,22 +589,6 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
     Ok(())
 }
 
-#[allow(dead_code)]
-pub fn set_page_user_accessible(virt: u64, user: bool) -> Result<(), ()> {
-    let entry = crate::hal::walk_ptes_4k(virt).ok_or(())?;
-    let phys = entry.addr();
-    let mut flags = entry.flags();
-    if user {
-        flags |= PageTableFlags::USER_ACCESSIBLE;
-    } else {
-        flags.remove(PageTableFlags::USER_ACCESSIBLE);
-    }
-    entry.set_addr(phys, flags);
-    crate::hal::flush_tlb(virt);
-    shootdown_single_page(virt);
-    Ok(())
-}
-
 /// Set USER_ACCESSIBLE on the PD entry covering `virt`.
 /// Required when `split_2mb_page` creates a new page table for a non-heap/mmap address,
 /// because the PD entry gates user access for all 512 PTEs it covers.
@@ -845,38 +783,4 @@ pub fn map_mmio_4k(virt: u64, phys: u64, size: u64, flags: PageTableFlags) -> bo
     true
 }
 
-/// Remove the `USER_ACCESSIBLE` flag from a 2 MB-aligned range.
-/// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
-#[allow(dead_code)]
-pub fn unmap_user_range(base: u64, size: u64) {
-    let end = base.saturating_add(size).min(0x1_0000_0000);
 
-    let base_aligned = base & !(HUGE_PAGE_SIZE - 1);
-    let end_aligned = (end + HUGE_PAGE_SIZE - 1) & !(HUGE_PAGE_SIZE - 1);
-
-    let mut unmapped = 0u64;
-    let mut addr = base_aligned;
-    while addr < end_aligned {
-        let pd_idx = (addr / HUGE_PAGE_SIZE) as usize / 512;
-        let entry_idx = ((addr / HUGE_PAGE_SIZE) as usize) % 512;
-
-        if pd_idx < 4 {
-            unsafe {
-                let entry = &mut PD[pd_idx].0[entry_idx];
-                let flags = entry.flags() & !PageTableFlags::USER_ACCESSIBLE;
-                let phys = entry.addr();
-                entry.set_addr(phys, flags);
-            }
-            unmapped += HUGE_PAGE_SIZE;
-        }
-        addr += HUGE_PAGE_SIZE;
-    }
-
-    let cr3 = crate::hal::read_cr3();
-    crate::hal::write_cr3(cr3);
-
-    serial_println!(
-        "[PAG] unmap_user_range: 0x{:x}..0x{:x} ({} MB) -> kernel-only",
-        base_aligned, end_aligned, unmapped / (1024 * 1024)
-    );
-}

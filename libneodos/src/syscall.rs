@@ -273,14 +273,6 @@ pub fn sys_poweroff() -> ! {
     }
 }
 
-/// sys_getcpuinfo: fill a CpuInfoFull buffer from the kernel.
-pub fn sys_getcpuinfo(buf: &mut CpuInfoFull) -> Result<(), i64> {
-    ret_unit((export::get_table().sys_getcpuinfo)(
-        buf as *mut CpuInfoFull as *mut u8,
-        core::mem::size_of::<CpuInfoFull>(),
-    ))
-}
-
 /// DateTime — matches kernel's SysDateTime (RAX=44).
 #[repr(C)]
 pub struct DateTime {

@@ -340,18 +340,6 @@ fn scroll() {
     }
 }
 
-#[allow(dead_code)]
-pub fn print_decimal(value: u64) {
-    let mut writer = VgaWriter;
-    let _ = write!(writer, "{}", value);
-}
-
-#[allow(dead_code)]
-pub fn print_hex(value: u64) {
-    let mut writer = VgaWriter;
-    let _ = write!(writer, "0x{:x}", value);
-}
-
 pub fn print_str(s: &str) {
     for c in s.chars() {
         write_codepoint(c as u32);

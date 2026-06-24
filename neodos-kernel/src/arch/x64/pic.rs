@@ -1,7 +1,6 @@
 use spin::Mutex;
 use lazy_static::lazy_static;
 
-#[allow(dead_code)]
 pub struct Pic {
     offset: u8,
     command_port: u16,
@@ -17,14 +16,6 @@ impl Pic {
         }
     }
 
-    pub fn handles_interrupt(&self, interrupt_id: u8) -> bool {
-        self.offset <= interrupt_id && interrupt_id < self.offset + 8
-    }
-
-    pub unsafe fn end_of_interrupt(&mut self) {
-        self.write_command(0x20);
-    }
-
     pub unsafe fn write_command(&mut self, cmd: u8) {
         crate::hal::outb(self.command_port, cmd);
     }
@@ -32,18 +23,12 @@ impl Pic {
     pub unsafe fn write_data(&mut self, data: u8) {
         crate::hal::outb(self.data_port, data);
     }
-
-    #[allow(dead_code)]
-    pub unsafe fn read_data(&mut self) -> u8 {
-        crate::hal::inb(self.data_port)
-    }
 }
 
 pub struct ChainedPics {
     pics: [Pic; 2],
 }
 
-#[allow(dead_code)]
 impl ChainedPics {
     pub const fn new(offset1: u8, offset2: u8) -> Self {
         ChainedPics {
@@ -89,19 +74,6 @@ impl ChainedPics {
         self.pics[0].write_data(0xE8);
         // Slave mask: mask all (8-15)
         self.pics[1].write_data(0xFF);
-    }
-
-    pub fn handles_interrupt(&self, interrupt_id: u8) -> bool {
-        self.pics.iter().any(|p| p.handles_interrupt(interrupt_id))
-    }
-
-    pub unsafe fn notify_end_of_interrupt(&mut self, interrupt_id: u8) {
-        if self.handles_interrupt(interrupt_id) {
-            if self.pics[1].handles_interrupt(interrupt_id) {
-                self.pics[1].end_of_interrupt();
-            }
-            self.pics[0].end_of_interrupt();
-        }
     }
 }
 

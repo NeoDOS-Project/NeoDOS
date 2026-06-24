@@ -538,7 +538,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
 | 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
 | 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
-| 24 | `sys_getcpuinfo` | RBX=buf_ptr, RCX=buf_size | Copia CpuInfoFull al buffer de usuario (CPUID + SMP + timers) |
+| 24 | `sys_getcpuinfo` | — | REMOVED — migrado a `ob_open("\Global\Info\CpuInfo")` + `ob_query_info(class=7)` |
 | 25 | `sys_mkdir` | RBX=path_ptr | Crea directorio via VFS |
 | 26 | `sys_unlink` | RBX=path_ptr | Elimina archivo via VFS |
 | 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
@@ -684,7 +684,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
-| `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~19 KB | sys_getcpuinfo: CPU vendor, brand, family/model/stepping, features (30 flags), SMP topology, timers |
+| `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~6 KB | CPU info via `ob_open("\Global\Info\CpuInfo")` + `ob_query_info(class=7)`: vendor, brand, features, topology, timers |
 | `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CWD, SET, POWEROFF, EXIT, CALL; TAB completion (builtins only); PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change; batch file execution via CALL |
 | `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |

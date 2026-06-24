@@ -26,7 +26,6 @@ pub fn ecam_is_active() -> bool {
 }
 
 /// Deactivate ECAM (fall back to legacy PIO).
-#[allow(dead_code)]
 pub fn ecam_deactivate() {
     ECAM_ACTIVE.store(false, Ordering::SeqCst);
 }
