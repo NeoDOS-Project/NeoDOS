@@ -194,11 +194,13 @@ impl ObNamespace {
             dir.child_dirs.insert(key, DirectoryObject::new(name));
             Ok(())
         } else {
-            if let Some(subdir) = dir.child_dirs.get_mut(&key) {
-                Self::create_dir_internal(subdir, &components[1..])
-            } else {
-                Err(OB_NOT_FOUND)
+            if !dir.child_dirs.contains_key(&key) {
+                dir.child_dirs.insert(key, DirectoryObject::new(name));
             }
+            Self::create_dir_internal(
+                dir.child_dirs.get_mut(&key).unwrap(),
+                &components[1..]
+            )
         }
     }
 

@@ -113,7 +113,7 @@ pub fn kobj_register(obj_type: KObjType, name: &str, native_id: u64) -> Result<K
 
 pub fn kobj_unregister(id: KObjId) -> bool {
     let obj = object::ob_lookup(id);
-    let (obj_type, name_bytes) = obj.map(|o| (o.obj_type, o.name)).unwrap_or((ObType::Unknown, [0u8; 32]));
+    let (obj_type, name_bytes) = obj.map(|o| (o.obj_type, o.name)).unwrap_or((ObType::Unknown, [0u8; crate::object::OB_NAME_LEN]));
 
     if object::ob_destroy_object(id).is_ok() {
         let name_str = {

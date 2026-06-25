@@ -1,6 +1,6 @@
 use alloc::string::String;
 
-pub const OB_NAME_LEN: usize = 32;
+pub const OB_NAME_LEN: usize = 128;
 
 pub type ObId = u64;
 

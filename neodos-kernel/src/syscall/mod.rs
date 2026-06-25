@@ -190,15 +190,14 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
         const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 16, 18, 19, 20, 21, 22, 23,
-        25, 26, 27, 28,
-        40, 41, 42, 46, 47,
-            50, 53, 54, 55, 57, 58, 59,
-            60, 61, 62, 63, 64, 65, 66,
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        10, 13, 16, 18, 19, 20, 21, 22, 23,
+        29,
+        40, 41, 42, 47, 50, 53, 55, 58, 59,
+        60, 61, 62, 63, 64, 65, 66,
     ];
-    // Reserved syscall slots that MUST be None
-        const RESERVED: &[u64] = &[14, 15, 17, 24, 33, 43, 44, 45, 49, 56];
+    // Reserved/migrated syscall slots that MUST be None
+        const RESERVED: &[u64] = &[11, 12, 14, 15, 17, 24, 25, 26, 27, 28, 33, 43, 44, 45, 46, 49, 54, 56, 57];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -2579,13 +2578,21 @@ fn handler_ob_create(regs: Registers) -> u64 {
                     }
                 }
             }
-            let ob_id = match crate::object::ob_create_object_path(
-                &path_str, obj_type, 0, None,
+            // Create ObObject with full path as name so ob_destroy can strip \Global\FileSystem\
+            let ob_id = match crate::object::ob_create_object(
+                obj_type, &path_str, 0, 0, None,
             ) {
                 Ok(id) => id,
-                Err(crate::object::ObError::AlreadyExists) => return err_to_u64(SyscallError::Exist),
-                Err(_) => return err_to_u64(SyscallError::Inval),
+                Err(_) => return err_to_u64(SyscallError::NoMem),
             };
+            // Insert into namespace (ensure parent dirs exist)
+            if let Some(parent_end) = path_str.rfind('\\') {
+                let parent = &path_str[..parent_end];
+                if parent != "\\" {
+                    let _ = crate::kobj::namespace::ob_create_directory(parent);
+                }
+            }
+            let _ = crate::kobj::namespace::ob_insert_object(&path_str, ob_id);
             let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
@@ -3284,7 +3291,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             written
         }
         12 => {
-            // Drivers: return array of DriverInfoRaw entries from \Global\Info\Drivers object
+            // Drivers: return array of DriverInfoRaw entries
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
             }
@@ -3292,11 +3299,38 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),
             };
+
+            // Individual driver query via \Driver\<name> objects (ObType::Driver)
+            if obj.obj_type == crate::object::ObType::Driver {
+                let driver_id = obj.native_id as u32;
+                let entry_size = core::mem::size_of::<DriverInfoRaw>();
+                if buf_size < entry_size { return 0u64; }
+                if let Some(d) = crate::drivers::driver_runtime::get_driver(driver_id) {
+                    let raw = DriverInfoRaw {
+                        id: d.id as u32, state: d.state as u8, category: d.category as u8,
+                        driver_type: d.driver_type as u8, api_version: d.api_version,
+                        abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
+                        last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
+                        events_received: d.events_received, tick_count: d.tick_count,
+                        registered_at_tick: d.registered_at_tick, name: d.name,
+                    };
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            &raw as *const DriverInfoRaw as *const u8,
+                            buf_ptr as *mut u8,
+                            entry_size,
+                        );
+                    }
+                    return entry_size as u64;
+                }
+                return err_to_u64(SyscallError::NoEnt);
+            }
+
             if obj.obj_type != crate::object::ObType::Key || obj.native_id != 7 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let entry_size = core::mem::size_of::<DriverInfoRaw>();
-            let max_entries = buf_size / entry_size;
+            let entry_size_bulk = core::mem::size_of::<DriverInfoRaw>();
+            let max_entries = buf_size / entry_size_bulk;
             if max_entries == 0 { return 0u64; }
             let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             let ids = runtime.driver_ids();
@@ -3314,14 +3348,14 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             &raw as *const DriverInfoRaw as *const u8,
-                            (buf_ptr as *mut u8).add(i * entry_size),
-                            entry_size,
+                            (buf_ptr as *mut u8).add(i * entry_size_bulk),
+                            entry_size_bulk,
                         );
                     }
                 }
             }
             drop(runtime);
-            (count * entry_size) as u64
+            (count * entry_size_bulk) as u64
         }
         13 => {
             // Cwd: return current process working directory string
@@ -4040,8 +4074,8 @@ lazy_static! {
         t[8] = Some(handler_readdir as SyscallFn);
         t[9] = Some(handler_waitpid as SyscallFn);
         t[10] = Some(handler_open as SyscallFn);
-        t[11] = Some(handler_readfile as SyscallFn);
-        t[12] = Some(handler_writefile as SyscallFn);
+        t[11] = None; // migrated to Ob: ob_query_info(ReadContent)
+        t[12] = None; // migrated to Ob: ob_set_info(WriteContent)
         t[13] = Some(handler_close as SyscallFn);
         t[14] = None; // unused
         t[15] = None; // unused
@@ -4054,10 +4088,10 @@ lazy_static! {
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
         t[24] = None; // migrated to Ob: \Global\Info\CpuInfo
-        t[25] = Some(handler_mkdir as SyscallFn);
-        t[26] = Some(handler_unlink as SyscallFn);
-        t[27] = Some(handler_rmdir as SyscallFn);
-        t[28] = Some(handler_rename as SyscallFn);
+        t[25] = None; // migrated to Ob: ob_create(Directory)
+        t[26] = None; // migrated to Ob: ob_destroy
+        t[27] = None; // migrated to Ob: ob_destroy
+        t[28] = None; // migrated to Ob: ob_set_info(VfsRename)
         t[29] = Some(handler_set_exception_handler as SyscallFn);
         t[33] = None; // migrated to Ob: \Global\Info\Drives
         t[40] = Some(handler_wait_alertable as SyscallFn);
@@ -4066,7 +4100,7 @@ lazy_static! {
         t[43] = None; // migrated to Ob: \Global\Info\Version
         t[44] = None; // migrated to Ob: \Global\Info\DateTime
         t[45] = None; // migrated to Ob: \Global\Info\Memory
-        t[46] = Some(handler_get_volume_label as SyscallFn);
+        t[46] = None; // migrated to Ob: ob_query_info(VolumeLabel)
         t[47] = Some(handler_chdir_parent as SyscallFn);
         t[48] = None; // migrated to Ob: sys_kobj_enum → ob_enum
         t[49] = None; // migrated to Ob: \Global\Info\Keyboard + ob_set_info
@@ -4074,11 +4108,11 @@ lazy_static! {
         t[51] = None; // migrated to Ob: sys_set_priority → ob_set_info
         t[52] = None; // migrated to Ob: sys_kill_process → ob_set_info
         t[53] = Some(handler_cursor_blink as SyscallFn);
-        t[54] = Some(handler_set_volume_label as SyscallFn);
+        t[54] = None; // migrated to Ob: ob_set_info(SetVolumeLabel)
         t[55] = Some(handler_fsck as SyscallFn);
         t[56] = None; // migrated to Ob: \Global\Info\Drivers
-        t[57] = Some(handler_driver_load as SyscallFn);
-        t[58] = Some(handler_driver_unload as SyscallFn);
+        t[57] = None; // migrated to Ob: ob_create(Driver)
+        t[58] = Some(handler_driver_unload as SyscallFn); // kept for loadnem /U
         t[59] = Some(handler_poll as SyscallFn);
         t[60] = Some(handler_ob_open as SyscallFn);
         t[61] = Some(handler_ob_create as SyscallFn);
@@ -4103,8 +4137,8 @@ lazy_static! {
         t[8] = SyscallPermission::user();
         t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();
-        t[11] = SyscallPermission::user();
-        t[12] = SyscallPermission::user();
+        t[11] = SyscallPermission::free(); // migrated to Ob
+        t[12] = SyscallPermission::free(); // migrated to Ob
         t[13] = SyscallPermission::user();
         t[14] = SyscallPermission::free(); // unused
         t[15] = SyscallPermission::free(); // unused
@@ -4117,10 +4151,10 @@ lazy_static! {
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
         t[24] = SyscallPermission::free(); // unused
-        t[25] = SyscallPermission::user();
-        t[26] = SyscallPermission::user();
-        t[27] = SyscallPermission::user();
-        t[28] = SyscallPermission::user();
+        t[25] = SyscallPermission::free(); // migrated to Ob
+        t[26] = SyscallPermission::free(); // migrated to Ob
+        t[27] = SyscallPermission::free(); // migrated to Ob
+        t[28] = SyscallPermission::free(); // migrated to Ob
         t[29] = SyscallPermission::user();
         t[33] = SyscallPermission::free(); // migrated to Ob
         t[40] = SyscallPermission::user();
@@ -4129,15 +4163,15 @@ lazy_static! {
         t[43] = SyscallPermission::free(); // migrated to Ob
         t[44] = SyscallPermission::free(); // migrated to Ob
         t[45] = SyscallPermission::free(); // migrated to Ob
-        t[46] = SyscallPermission::user();
+        t[46] = SyscallPermission::free(); // migrated to Ob
         t[47] = SyscallPermission::user();
         t[49] = SyscallPermission::free(); // migrated to Ob
         t[50] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
-        t[54] = SyscallPermission::user();
+        t[54] = SyscallPermission::free(); // migrated to Ob
         t[55] = SyscallPermission::user();
         t[56] = SyscallPermission::free(); // migrated to Ob
-        t[57] = SyscallPermission::admin();
+        t[57] = SyscallPermission::free(); // migrated to Ob
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::user();
         t[60] = SyscallPermission::user();
