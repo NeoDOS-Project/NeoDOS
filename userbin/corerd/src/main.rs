@@ -19,6 +19,17 @@ RD [drive:]path\r\n\
   RD C:\\EmptyFolder\r\n\
 ::END::";
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn normalize_path(input: &[u8]) -> [u8; 260] {
     let path_str = core::str::from_utf8(input).unwrap_or("");
     if path_str.is_empty() {
@@ -78,23 +89,24 @@ pub extern "C" fn _start() -> ! {
     let end = normalized.iter().position(|&b| b == 0).unwrap_or(normalized.len());
     let path = core::str::from_utf8(&normalized[..end]).unwrap_or("C:\\");
 
-    match syscall::sys_rmdir(path) {
-        Ok(_) => {
-            write_str(b"\r\n");
-            syscall::sys_exit(0);
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(path, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+        Ok(fd) => {
+            match syscall::sys_ob_destroy(fd) {
+                Ok(_) => {
+                    write_str(b"\r\n");
+                    syscall::sys_exit(0);
+                }
+                Err(_) => {
+                    let _ = syscall::sys_close(fd);
+                    write_err(b"\r\nRD: cannot remove directory (destroy failed)\r\n");
+                    syscall::sys_exit(1);
+                }
+            }
         }
-        Err(e) => {
-            write_err(b"\r\nRD: cannot remove directory: ");
-            let err_str: &[u8] = match e {
-                -1 => b"EINVAL",
-                -2 => b"ENOENT",
-                -4 => b"EACCES",
-                -13 => b"EIO",
-                -15 => b"EBUSY",
-                _ => b"UNKNOWN",
-            };
-            write_err(err_str);
-            write_err(b"\r\n");
+        Err(_) => {
+            write_err(b"\r\nRD: cannot open directory\r\n");
             syscall::sys_exit(1);
         }
     }

@@ -11,6 +11,17 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 #[used]
 #[link_section = ".rodata"]
 static DEL_HELP: &[u8] = b"::HELP::\
@@ -78,24 +89,24 @@ pub extern "C" fn _start() -> ! {
     let end = normalized.iter().position(|&b| b == 0).unwrap_or(normalized.len());
     let path = core::str::from_utf8(&normalized[..end]).unwrap_or("C:\\");
 
-    match syscall::sys_unlink(path) {
-        Ok(_) => {
-            write_str(b"\r\n");
-            syscall::sys_exit(0);
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(path, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+        Ok(fd) => {
+            match syscall::sys_ob_destroy(fd) {
+                Ok(_) => {
+                    write_str(b"\r\n");
+                    syscall::sys_exit(0);
+                }
+                Err(_) => {
+                    let _ = syscall::sys_close(fd);
+                    write_err(b"\r\nDEL: cannot delete\r\n");
+                    syscall::sys_exit(1);
+                }
+            }
         }
-        Err(e) => {
-            write_err(b"\r\nDEL: cannot delete: ");
-            let err_str: &[u8] = match e {
-                -1 => b"EINVAL",
-                -2 => b"ENOENT",
-                -4 => b"EACCES",
-                -11 => b"ENOTDIR",
-                -12 => b"EISDIR",
-                -13 => b"EIO",
-                _ => b"UNKNOWN",
-            };
-            write_err(err_str);
-            write_err(b"\r\n");
+        Err(_) => {
+            write_err(b"\r\nDEL: file not found\r\n");
             syscall::sys_exit(1);
         }
     }

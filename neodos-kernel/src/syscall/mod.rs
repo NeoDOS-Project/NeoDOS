@@ -150,8 +150,10 @@ impl SyscallNum {
                  61 => Some(Self::ObCreate),
                  62 => Some(Self::ObQueryInfo),
                  63 => Some(Self::ObSetInfo),
-                 64 => Some(Self::ObEnum),
-              _ => None,
+                  64 => Some(Self::ObEnum),
+                  65 => Some(Self::ObWait),
+                  66 => Some(Self::ObDestroy),
+               _ => None,
         }
     }
 }
@@ -2565,6 +2567,16 @@ fn handler_ob_create(regs: Registers) -> u64 {
             rfd
         }
         crate::object::ObType::Directory => {
+            // If this is a VFS path, create the actual directory in the filesystem
+            if path_str.starts_with("\\Global\\FileSystem\\") {
+                let vfs_path = &path_str["\\Global\\FileSystem\\".len()..];
+                if !vfs_path.is_empty() {
+                    match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
+                        Ok(_) => {},
+                        Err(_) => return err_to_u64(SyscallError::Io),
+                    }
+                }
+            }
             let ob_id = match crate::object::ob_create_object_path(
                 &path_str, obj_type, 0, None,
             ) {
@@ -3346,6 +3358,40 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Again),
             }
         }
+        6 => {
+            // VfsRename: rename a VFS file/directory
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            let obj_name = obj.name_str();
+            if !obj_name.starts_with("\\Global\\FileSystem\\") {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let old_vfs_path = &obj_name["\\Global\\FileSystem\\".len()..];
+            if old_vfs_path.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let new_path = match copy_user_string(buf_ptr) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Fault),
+            };
+            if new_path.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            match crate::globals::with_vfs(|vfs| vfs.rename(old_vfs_path, &new_path)) {
+                Ok(_) => {
+                    // Update the ObObject name to reflect the new path
+                    let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
+                    let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
+                    0
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -3542,6 +3588,86 @@ fn handler_ob_wait(regs: Registers) -> u64 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// OB-066: ObDestroy — RAX=66
+// ═══════════════════════════════════════════════════════════════════════
+
+/// sys_ob_destroy (RAX=66): destroy/delete an object by fd.
+/// RBX = fd (handle referencing the object to destroy)
+/// Returns 0 on success, negative on error.
+///
+/// For \Global\FileSystem\ objects: performs VFS remove_file (Filesystem)
+/// or remove_dir (Directory). For namespace-only objects: removes from
+/// Ob namespace and frees the ObObject.
+fn handler_ob_destroy(regs: Registers) -> u64 {
+    let fd = regs.rbx as u8;
+
+    // Read handle entry and close it atomically
+    let (object_id, obj_type, name) = crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            let entry = ep.handle_table[fd as usize];
+            if !entry.is_open() {
+                return (0, crate::object::ObType::Unknown, alloc::string::String::new());
+            }
+            let oid = entry.object_id;
+            let ot = entry.obj_type().unwrap_or(crate::object::ObType::Unknown);
+            // Close the handle
+            ep.handle_table[fd as usize] = crate::handle::HandleEntry::closed();
+
+            if oid == 0 {
+                return (0, crate::object::ObType::Unknown, alloc::string::String::new());
+            }
+
+            // Lookup object name
+            let obj_name = match crate::object::ob_lookup(oid) {
+                Some(o) => o.name_str().to_string(),
+                None => alloc::string::String::new(),
+            };
+            (oid, ot, obj_name)
+        } else {
+            (0, crate::object::ObType::Unknown, alloc::string::String::new())
+        }
+    });
+
+    if object_id == 0 {
+        return err_to_u64(SyscallError::BadF);
+    }
+
+    // If this is a VFS-backed path, perform VFS operation
+    if name.starts_with("\\Global\\FileSystem\\") {
+        let vfs_path = &name["\\Global\\FileSystem\\".len()..];
+        if vfs_path.is_empty() {
+            let _ = crate::object::ob_destroy_object(object_id);
+            return err_to_u64(SyscallError::Inval);
+        }
+
+        let result = match obj_type {
+            crate::object::ObType::Directory => {
+                crate::globals::with_vfs(|vfs| vfs.remove_dir(vfs_path))
+            }
+            _ => {
+                crate::globals::with_vfs(|vfs| vfs.remove_file(vfs_path))
+            }
+        };
+
+        // Destroy Ob object regardless (the VFS handles the actual FS operation)
+        let _ = crate::object::ob_destroy_object(object_id);
+
+        match result {
+            Ok(_) => 0,
+            Err(_) => err_to_u64(SyscallError::Io),
+        }
+    } else {
+        // Pure namespace object — just destroy the ObObject
+        match crate::object::ob_destroy_object(object_id) {
+            Ok(_) => 0,
+            Err(_) => err_to_u64(SyscallError::Inval),
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -3605,6 +3731,7 @@ lazy_static! {
         t[63] = Some(handler_ob_set_info as SyscallFn);
         t[64] = Some(handler_ob_enum as SyscallFn);
         t[65] = Some(handler_ob_wait as SyscallFn);
+        t[66] = Some(handler_ob_destroy as SyscallFn);
         t
     };
 
@@ -3664,6 +3791,7 @@ lazy_static! {
         t[63] = SyscallPermission::user();
         t[64] = SyscallPermission::user();
         t[65] = SyscallPermission::user();
+        t[66] = SyscallPermission::user();
         t
     };
 }

@@ -2,7 +2,7 @@
 #![no_main]
 
 use libneodos::syscall;
-use libneodos::syscall::DirEntry;
+use libneodos::syscall::ObEnumEntry;
 
 const PROGRAMS_DIR: &str = "C:\\Programs";
 
@@ -36,11 +36,6 @@ fn write_u64(mut v: u64) {
         i -= 1;
     }
     write_str(&buf[i + 1..=19]);
-}
-
-fn entry_name(name_buf: &[u8; 260]) -> &str {
-    let end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_buf.len());
-    core::str::from_utf8(&name_buf[..end]).unwrap_or("?")
 }
 
 fn is_nxe(name: &str) -> bool {
@@ -92,9 +87,6 @@ fn cmd_list_all() {
     let ob_path = to_ob_path(PROGRAMS_DIR, &mut ob_buf);
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
-            let mut raw = DirEntry {
-                inode: 0, mode: 0, size: 0, name: [0u8; 260],
-            };
             let mut count = 0u64;
 
             // Collect .NXE file names
@@ -102,10 +94,14 @@ fn cmd_list_all() {
             let mut name_lens: [usize; 128] = [0; 128];
             let mut name_count = 0usize;
 
-            loop {
-                match syscall::sys_readdir(fd, &mut raw) {
-                    Ok(1) => {
-                        let n = entry_name(&raw.name);
+            let mut ob_entries: [ObEnumEntry; 128] = core::array::from_fn(|_| ObEnumEntry {
+                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+            });
+            match syscall::sys_ob_enum(fd, &mut ob_entries) {
+                Ok(n) => {
+                    for i in 0..n {
+                        let raw = &ob_entries[i];
+                        let n = raw.name_str();
                         if n.is_empty() || n == "." || n == ".." { continue; }
                         if !is_nxe(n) { continue; }
                         if name_count >= 128 { break; }
@@ -115,10 +111,8 @@ fn cmd_list_all() {
                         name_lens[name_count] = len;
                         name_count += 1;
                     }
-                    Ok(0) => break,
-                    Err(_) => { write_str(b"  (error reading directory)\r\n"); break; }
-                    _ => break,
                 }
+                Err(_) => { write_str(b"  (error reading directory)\r\n"); }
             }
             let _ = syscall::sys_close(fd);
 

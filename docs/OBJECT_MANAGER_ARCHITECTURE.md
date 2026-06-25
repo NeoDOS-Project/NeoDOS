@@ -481,12 +481,13 @@ La URN actual (`neodos://<scheme>/<path>`) se convierte en un frontend de Ob:
 | 63 | `sys_ob_set_info` | RBX=fd, RCX=info_class, RDX=buf_ptr | — | **IMPLEMENTADA (v0.44.1)** |
 | 64 | `sys_ob_enum` | RBX=path_fd, RCX=buf_ptr, RDX=max_entries | sys_readdir extendido | **IMPLEMENTADA (v0.44.1)** |
 | 65 | `sys_ob_wait` | RBX=handle_count, RCX=handles_ptr, RDX=wait_type, R8=timeout | sys_waitpid, sys_thread_join, sleep_ex unificado | **IMPLEMENTADA (v0.44.1)** |
+| 66 | `sys_ob_destroy` | RBX=fd | sys_unlink, sys_rmdir | **IMPLEMENTADA (v0.44.2)** |
 
 ### 12.2 Slot Reservation
 
 | RAX | Syscall | Nota |
 |-----|---------|------|
-| 66–79 | Reservados para Object Manager | 14 slots para futuro |
+| 67–79 | Reservados para Object Manager | 13 slots para futuro |
 
 ---
 
@@ -1267,7 +1268,7 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 | **OB-040** | v0.52 | ❌ PENDIENTE | neoshell: readdir→ob_enum, spawn→ob_create+ob_wait |
 | **OB-041** | v0.52 | ✅ COMPLETADO | coredir, tree: readdir→ob_enum |
 | **OB-042** | v0.52 | ❌ PENDIENTE | corecopy, coretype: readfile→ob_query_info, writefile→ob_set_info |
-| **OB-043** | v0.55 | ❌ PENDIENTE | coredel/coreren/coremd/corerd: VFS ops via Ob |
+| **OB-043** | v0.55 | ✅ COMPLETADO | coredel/coreren/coremd/corerd: VFS ops via Ob |
 | **OB-044** | v0.55 | ❌ PENDIENTE | ndreg/loadnem/fsck/drives: driver/fs/drive via Ob namespace |
 | **OB-045** | v0.58 | ❌ PENDIENTE | datetime/ver/mem/cpuinfo: info via Ob |
 | **OB-046** | v0.52 | ✅ COMPLETADO | Processos registrados como ObObjects en namespace \Process\<pid> |
@@ -1304,8 +1305,8 @@ OB-014 ── OB-041 (coredir, tree → ob_enum)
 OB-012 + OB-013 ── OB-042 (corecopy, coretype → ob_query/set_info)
 ~~OB-011 + OB-020 ── OB-046 (neoinit spawn+wait — PID 1)~~ ✅
 
-v0.55 (F3–F4, media prioridad): ❌ PENDIENTE
-OB-011 + OB-013 ── OB-043 (FS ops via Ob)
+v0.55 (F3–F4, media prioridad): ~~❌ PENDIENTE~~ ✅ COMPLETADO
+~~OB-011 + OB-013 ── OB-043 (FS ops via Ob)~~ ✅
 OB-014 ── OB-044 (driver/fs/drive via Ob namespace)
 
 v0.58 (F5–F7, baja prioridad): ❌ PENDIENTE
@@ -1348,7 +1349,7 @@ equivalentes.
 | **neoshell** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid, sys_chdir, sys_cursor_blink, sys_poweroff |
 | **cd** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **coredir** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **corehelp** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid |
+| **corehelp** | 🔶 PARCIAL | ob_open, ob_enum | sys_readfile, sys_spawn, sys_pipe, sys_waitpid |
 | **coretype** | 🔶 PARCIAL | ob_open | sys_readfile |
 | **tree** | ✅ COMPLETO | ob_open, ob_enum | — |
 | **corecopy** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink |
@@ -1359,10 +1360,10 @@ equivalentes.
 | **ver** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **mem** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **vol** | ❌ PENDIENTE | — | sys_get_volume_label |
-| **coredel** | ❌ PENDIENTE | — | sys_unlink |
-| **coreren** | ❌ PENDIENTE | — | sys_rename |
-| **coremd** | ❌ PENDIENTE | — | sys_mkdir |
-| **corerd** | ❌ PENDIENTE | — | sys_rmdir |
+| **coredel** | ✅ COMPLETO | ob_open, ob_destroy | — |
+| **coreren** | ✅ COMPLETO | ob_open, ob_set_info | — |
+| **coremd** | ✅ COMPLETO | ob_create(Directory) | — |
+| **corerd** | ✅ COMPLETO | ob_open, ob_destroy | — |
 | **drives** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **keyb** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **label** | ❌ PENDIENTE | — | sys_get_volume_label, sys_set_volume_label |
@@ -1380,6 +1381,6 @@ equivalentes.
 | ~~OB-041~~ | coredir, tree | readdir→ob_enum | OB-014 | ✅ COMPLETADO |
 | OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info | OB-012, OB-013 | ALTA |
 | OB-046 | neoinit (PID 1) | spawn→ob_create(Process)+ob_wait | OB-011, OB-020 | **CRÍTICA** |
-| OB-043 | coredel, coreren, coremd, corerd | unlink→ob_set_info, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | MEDIA |
+| ~~OB-043~~ | coredel, coreren, coremd, corerd | unlink→ob_destroy, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | ✅ COMPLETADO |
 | OB-044 | ndreg, loadnem, fsck, drives | driver_enum→ob_enum("\Driver\"), fsck→ob_query_info(DriveInfo), get_drives→ob_enum("\Device\") | OB-014 | MEDIA |
 | OB-045 | datetime, ver, mem, cpuinfo | get_datetime→ob_open("\Global\Info\DateTime")+query, get_version→ob_query_info | OB-010, OB-012 | BAJA |

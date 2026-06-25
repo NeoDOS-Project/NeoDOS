@@ -1083,3 +1083,11 @@ pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
     let r = unsafe { ob_syscall_3!(65, 1u64, fd_ptr, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
+
+/// sys_ob_destroy (RAX=66): destroy/delete an object by fd.
+/// For \Global\FileSystem\ objects: removes file or directory via VFS.
+/// For namespace objects: removes from Ob namespace.
+pub fn sys_ob_destroy(fd: u8) -> Result<(), i64> {
+    let r = unsafe { ob_syscall_2!(66, fd as u64, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
