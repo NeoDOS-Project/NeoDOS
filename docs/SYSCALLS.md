@@ -207,21 +207,17 @@ Powers off the machine. Flushes caches, sends EVENT_SHUTDOWN, and attempts hardw
 - **Args**: None.
 - **Returns (`RAX`)**: Does not return.
 
-### 43 — `sys_get_version`
-Copies the kernel version string (e.g., `NeoDOS v0.38.2`) to the user buffer.
-- **Arg0 (`RBX`)**: Pointer to output buffer (`*mut u8`).
-- **Arg1 (`RCX`)**: Buffer size (`usize`).
-- **Returns (`RAX`)**: Full version string length (may exceed buffer size), or error code.
+### 43 — `sys_get_version` (REMOVED)
+Migrated to `ob_open("\Global\Info\Version")` + `ob_query_info(class=8)`.
+See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
 
-### 44 — `sys_get_datetime`
-Copies a `SysDateTime` structure (second, minute, hour, day, month, year, valid) from the RTC bridge to the user buffer.
-- **Arg0 (`RBX`)**: Pointer to a `SysDateTime` output buffer (`*mut u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
+### 44 — `sys_get_datetime` (REMOVED)
+Migrated to `ob_open("\Global\Info\DateTime")` + `ob_query_info(class=9)`.
+See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
 
-### 45 — `sys_get_meminfo`
-Copies a `MemInfo` structure (phys_max, total_kib, usable_kib, free_kib, used_kib, reserved_kib) from the kernel memory stats to the user buffer.
-- **Arg0 (`RBX`)**: Pointer to a `MemInfo` output buffer (`*mut u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
+### 45 — `sys_get_meminfo` (REMOVED)
+Migrated to `ob_open("\Global\Info\Memory")` + `ob_query_info(class=10)`.
+See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
 
 ### 47 — `sys_chdir_parent`
 Changes the current directory of the parent process that launched the calling program. This is the mechanism used by the Ring 3 `CD.NXE` tool.

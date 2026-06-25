@@ -93,9 +93,10 @@ pub fn sys_chdir_parent(path: &str) -> Result<(), i64> {
 }
 
 pub fn sys_getcwd(buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    ret((export::get_table().sys_getcwd)(ptr, len)).map(|v| v as usize)
+    let fd = sys_ob_open("\\Global\\Info\\Cwd", ob_access::READ)?;
+    let n = sys_ob_query_info(fd, ObInfoClass::Cwd, buf)?;
+    let _ = sys_close(fd);
+    Ok(n)
 }
 
 pub fn sys_brk(new_break: u64) -> Result<u64, i64> {
@@ -843,6 +844,13 @@ pub enum ObInfoClass {
     Pipe = 5,
     Device = 6,
     Cpu = 7,
+    Version = 8,
+    DateTime = 9,
+    Memory = 10,
+    Drives = 11,
+    Drivers = 12,
+    Cwd = 13,
+    KeyboardLayout = 14,
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).

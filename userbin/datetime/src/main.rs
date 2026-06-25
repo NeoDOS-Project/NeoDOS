@@ -3,6 +3,7 @@
 
 use libneodos::syscall;
 use libneodos::syscall::DateTime;
+use libneodos::syscall::ObInfoClass;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -47,6 +48,15 @@ fn print_help() {
     write_str(b"\r\nDATETIME [/D] [/T]\r\n  Shows the current date and/or time.\r\n  /D     Show date only\r\n  /T     Show time only\r\n  (no flags = show both date and time)\r\n\r\n");
 }
 
+fn get_datetime_via_ob(dt: &mut DateTime) -> Result<(), i64> {
+    let fd = syscall::sys_ob_open("\\Global\\Info\\DateTime", libneodos::syscall::ob_access::READ)?;
+    let sz = core::mem::size_of::<DateTime>();
+    let buf = unsafe { core::slice::from_raw_parts_mut(dt as *mut DateTime as *mut u8, sz) };
+    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf)?;
+    let _ = syscall::sys_close(fd);
+    if n >= sz { Ok(()) } else { Err(-1) }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let raw = libneodos::args::read_args();
@@ -56,7 +66,6 @@ pub extern "C" fn _start() -> ! {
     }
     let arglen = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
     let trimmed = core::str::from_utf8(libneodos::args::trim_ascii(&raw[..arglen])).unwrap_or("");
-    // Parse flags from command line
     let mut show_d = false;
     let mut show_t = false;
     for token in trimmed.split_whitespace() {
@@ -79,7 +88,7 @@ pub extern "C" fn _start() -> ! {
         day: 0, month: 0, year: 0, valid: 0,
     };
 
-    match syscall::sys_get_datetime(&mut dt) {
+    match get_datetime_via_ob(&mut dt) {
         Ok(_) => {
             if dt.valid == 0 {
                 write_str(b"\r\nRTC not available\r\n");

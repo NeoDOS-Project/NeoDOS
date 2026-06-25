@@ -1265,7 +1265,7 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 | OB-031 | v1.0 | ✅ COMPLETADO | KWait full integration: PipeRead, ThreadJoin migrados de ad-hoc magic |
 | OB-032 | v1.0 | 🔶 PARCIAL | Documentación de API actualizada, falta doc completa de structs |
 | **OB-040** | v0.52 | ❌ PENDIENTE | neoshell: readdir→ob_enum, spawn→ob_create+ob_wait |
-| **OB-041** | v0.52 | ❌ PENDIENTE | coredir, tree: readdir→ob_enum |
+| **OB-041** | v0.52 | ✅ COMPLETADO | coredir, tree: readdir→ob_enum |
 | **OB-042** | v0.52 | ❌ PENDIENTE | corecopy, coretype: readfile→ob_query_info, writefile→ob_set_info |
 | **OB-043** | v0.55 | ❌ PENDIENTE | coredel/coreren/coremd/corerd: VFS ops via Ob |
 | **OB-044** | v0.55 | ❌ PENDIENTE | ndreg/loadnem/fsck/drives: driver/fs/drive via Ob namespace |
@@ -1345,47 +1345,41 @@ equivalentes.
 | **kill** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **pri** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **kobj** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **neoshell** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid, sys_chdir, sys_getcwd, sys_cursor_blink, sys_poweroff |
-| **cd** | 🔶 PARCIAL | ob_open | sys_getcwd |
-| **coredir** | 🔶 PARCIAL | ob_open | sys_readdir, sys_getcwd |
+| **neoshell** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid, sys_chdir, sys_cursor_blink, sys_poweroff |
+| **cd** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **coredir** | ✅ COMPLETO | ob_open, ob_enum | — |
 | **corehelp** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid |
-| **coretype** | 🔶 PARCIAL | ob_open | sys_readfile, sys_getcwd |
-| **tree** | 🔶 PARCIAL | ob_open | sys_readdir, sys_getcwd |
-| **corecopy** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink, sys_getcwd |
+| **coretype** | 🔶 PARCIAL | ob_open | sys_readfile |
+| **tree** | ✅ COMPLETO | ob_open, ob_enum | — |
+| **corecopy** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink |
 | **cmdtest** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink, sys_mkdir, sys_rmdir, sys_rename |
-| **cpuinfo** | ❌ PENDIENTE | — | sys_loadlib, sys_getcpuinfo |
-| **neoinit** | ❌ PENDIENTE (PID 1) | — | sys_spawn |
-| **datetime** | ❌ PENDIENTE | — | sys_get_datetime |
-| **ver** | ❌ PENDIENTE | — | sys_get_version |
-| **mem** | ❌ PENDIENTE | — | sys_get_meminfo |
-| **vol** | ❌ PENDIENTE | — | sys_get_volume_label, sys_getcwd |
-| **coredel** | ❌ PENDIENTE | — | sys_unlink, sys_getcwd |
-| **coreren** | ❌ PENDIENTE | — | sys_rename, sys_getcwd |
-| **coremd** | ❌ PENDIENTE | — | sys_mkdir, sys_getcwd |
-| **corerd** | ❌ PENDIENTE | — | sys_rmdir, sys_getcwd |
-| **drives** | ❌ PENDIENTE | — | sys_get_drives |
-| **keyb** | ❌ PENDIENTE | — | sys_set_keyboard_layout |
-| **label** | ❌ PENDIENTE | — | sys_get_volume_label, sys_set_volume_label, sys_getcwd |
-| **fsck** | ❌ PENDIENTE | — | sys_fsck, sys_getcwd |
-| **ndreg** | ❌ PENDIENTE | — | sys_driver_enum |
+| **cpuinfo** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **neoinit** | ⛔ N/A (PID 1) | — | sys_spawn (no migrable — creación de procesos no es objeto) |
+| **datetime** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **ver** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **mem** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **vol** | ❌ PENDIENTE | — | sys_get_volume_label |
+| **coredel** | ❌ PENDIENTE | — | sys_unlink |
+| **coreren** | ❌ PENDIENTE | — | sys_rename |
+| **coremd** | ❌ PENDIENTE | — | sys_mkdir |
+| **corerd** | ❌ PENDIENTE | — | sys_rmdir |
+| **drives** | ✅ COMPLETO | ob_open, ob_query_info | — |
+| **keyb** | ✅ COMPLETO | ob_open, ob_set_info | — |
+| **label** | ❌ PENDIENTE | — | sys_get_volume_label, sys_set_volume_label |
+| **fsck** | ⛔ N/A | — | sys_fsck (no migrable — comando de reparación con argumentos) |
+| **ndreg** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **loadnem** | ❌ PENDIENTE | — | sys_driver_load, sys_driver_unload |
-| **hello** | ❌ PENDIENTE | — | sys_getpid, sys_yield (foundation) |
-| **systest** | ❌ PENDIENTE | — | sys_open, sys_readfile |
-| **filetest** | ❌ PENDIENTE | — | sys_open, sys_writefile, sys_readfile |
-| **alltest** | ❌ PENDIENTE | — | sys_open, sys_readfile, sys_close, sys_chdir, sys_getcwd, sys_brk, sys_yield, sys_getpid |
-| **cputest** | ❌ PENDIENTE | — | sys_getpid, sys_yield (foundation) |
-| **echo** | ❌ PENDIENTE | — | foundation only |
-| **cls** | ❌ PENDIENTE | — | foundation only |
+| **echo** | ✅ N/A | — | (foundation only, solo sys_write) |
+| **cls** | ✅ N/A | — | (foundation only, solo sys_write) |
 
 #### Issues de Migración de Binarios
 
 | Issue | Binario | Syscall Legacy→Ob | Depende de | Prioridad |
 |-------|---------|-------------------|-----------|-----------|
 | OB-040 | neoshell | readdir→ob_enum, readfile→ob_open+query, spawn→ob_create(Process)+ob_wait, pipe→ob_create(Pipe) | OB-011, OB-014, OB-020 | ALTA |
-| OB-041 | coredir, tree | readdir→ob_enum | OB-014 | ALTA |
+| ~~OB-041~~ | coredir, tree | readdir→ob_enum | OB-014 | ✅ COMPLETADO |
 | OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info | OB-012, OB-013 | ALTA |
 | OB-046 | neoinit (PID 1) | spawn→ob_create(Process)+ob_wait | OB-011, OB-020 | **CRÍTICA** |
 | OB-043 | coredel, coreren, coremd, corerd | unlink→ob_set_info, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | MEDIA |
 | OB-044 | ndreg, loadnem, fsck, drives | driver_enum→ob_enum("\Driver\"), fsck→ob_query_info(DriveInfo), get_drives→ob_enum("\Device\") | OB-014 | MEDIA |
 | OB-045 | datetime, ver, mem, cpuinfo | get_datetime→ob_open("\Global\Info\DateTime")+query, get_version→ob_query_info | OB-010, OB-012 | BAJA |
-| OB-047 | Binarios de test | open→ob_open, readfile→ob_query_info, etc. | Todo lo anterior | BAJA |

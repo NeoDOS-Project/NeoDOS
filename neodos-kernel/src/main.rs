@@ -207,6 +207,24 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(cpu_id) = object::ob_create_object(ObType::Key, "CpuInfo", 3, 0, None) {
             let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\CpuInfo", cpu_id);
         }
+        if let Ok(ver_id) = object::ob_create_object(ObType::Key, "Version", 4, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Version", ver_id);
+        }
+        if let Ok(dt_id) = object::ob_create_object(ObType::Key, "DateTime", 5, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\DateTime", dt_id);
+        }
+        if let Ok(drv_id) = object::ob_create_object(ObType::Key, "Drives", 6, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Drives", drv_id);
+        }
+        if let Ok(drv_id) = object::ob_create_object(ObType::Key, "Drivers", 7, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Drivers", drv_id);
+        }
+        if let Ok(cwd_id) = object::ob_create_object(ObType::Key, "Cwd", 8, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Cwd", cwd_id);
+        }
+        if let Ok(kbd_id) = object::ob_create_object(ObType::Key, "Keyboard", 9, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Keyboard", kbd_id);
+        }
     }
 
     // ============================================

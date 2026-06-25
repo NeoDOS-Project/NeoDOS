@@ -19,7 +19,7 @@ pub mod permission;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use lazy_static::lazy_static;
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
@@ -87,11 +87,12 @@ pub enum SyscallNum {
     ObSetInfo = 63,
     ObEnum = 64,
     ObWait = 65,
+    ObDestroy = 66,
     GetDrives = 33,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 65;
+    pub const MAX_VALID: u64 = 66;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -188,15 +189,14 @@ pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23,
+        9, 10, 11, 12, 13, 16, 18, 19, 20, 21, 22, 23,
         25, 26, 27, 28,
-        33,
-        40, 41, 42, 43, 44, 46, 47, 49,
-           50, 53, 54, 55, 56, 57, 58, 59,
-           60, 61, 62, 63, 64,
+        40, 41, 42, 46, 47,
+            50, 53, 54, 55, 57, 58, 59,
+            60, 61, 62, 63, 64,
     ];
     // Reserved syscall slots that MUST be None
-        const RESERVED: &[u64] = &[14, 15, 24, 45];
+        const RESERVED: &[u64] = &[14, 15, 17, 24, 33, 43, 44, 45, 49, 56];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -226,6 +226,7 @@ pub fn validate_abi() {
 }
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
+pub static KEYBOARD_LAYOUT: AtomicU8 = AtomicU8::new(1); // SP default
 
 // Device handler registry - max 8 devices
 pub fn set_need_resched() {
@@ -1616,44 +1617,6 @@ struct KObjEntryRaw {
 
 /// sys_kobj_enum (RAX=48): enumerate kernel objects.
 /// RBX = buffer ptr, RCX = max entries.
-/// Returns number of entries written (0 = none).
-fn handler_kobj_enum(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    let max_entries = regs.rcx as usize;
-
-    if buf_ptr == 0 || max_entries == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-
-    let entry_size = core::mem::size_of::<KObjEntryRaw>() as u64;
-    if !is_user_ptr_valid(buf_ptr, entry_size.saturating_mul(max_entries as u64)) {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    let snapshot = crate::kobj::kobj_iter_snapshot();
-    let count = core::cmp::min(max_entries, snapshot.len());
-
-    for i in 0..count {
-        let (id, obj_type, name, refcount, native_id) = &snapshot[i];
-        let raw = KObjEntryRaw {
-            id: *id,
-            obj_type: *obj_type as u32,
-            padding: 0,
-            name: *name,
-            refcount: *refcount,
-            native_id: *native_id,
-        };
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                &raw as *const KObjEntryRaw as *const u8,
-                (buf_ptr as *mut u8).add(i * core::mem::size_of::<KObjEntryRaw>()),
-                core::mem::size_of::<KObjEntryRaw>(),
-            );
-        }
-    }
-    count as u64
-}
-
 fn handler_getcwd(regs: Registers) -> u64 {
     let buf_ptr = regs.rbx as *mut u8;
     let buf_len = regs.rcx as usize;
@@ -2051,42 +2014,6 @@ fn handler_set_keyboard_layout(regs: Registers) -> u64 {
 
 /// sys_set_priority (RAX=51): set process scheduling priority (admin).
 /// RBX = pid, RCX = priority (0-3).
-fn handler_set_priority(regs: Registers) -> u64 {
-    let pid = regs.rbx as u32;
-    let priority = regs.rcx as u8;
-    if priority > 3 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let mut lock = s.lock();
-        if lock.set_process_priority(pid, priority) {
-            0
-        } else {
-            err_to_u64(SyscallError::NoEnt)
-        }
-    })
-}
-
-/// sys_kill_process (RAX=52): terminate a process by PID (admin).
-/// RBX = pid.
-fn handler_kill_process(regs: Registers) -> u64 {
-    let pid = regs.rbx as u32;
-    if pid == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let mut lock = s.lock();
-        if lock.kill_pid(pid) {
-            lock.wake_waiters(pid);
-            0
-        } else {
-            err_to_u64(SyscallError::NoEnt)
-        }
-    })
-}
-
 /// sys_set_exception_handler (RAX=29): set the current thread's SEH handler.
 /// RBX = handler_fn address (0 to clear), or user-space pointer to callback.
 /// The handler receives (exception_type, fault_addr, fault_code) and must return
@@ -2133,28 +2060,7 @@ fn handler_cursor_blink(regs: Registers) -> u64 {
     }
 }
 
-/// sys_getcpuinfo (RAX=24): copy CpuInfoFull to user buffer.
-/// RBX = pointer to user buffer, RCX = buffer size (for validation).
-/// sys_get_version (RAX=43): copy kernel version string to user buffer.
-/// RBX = user buffer ptr, RCX = buffer size.
-fn handler_get_version(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    let buf_size = regs.rcx;
-    if buf_ptr == 0 || buf_size == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    let ver = crate::KERNEL_VERSION.as_bytes();
-    let copy_len = ver.len().min(buf_size as usize);
-    if !is_user_ptr_valid(buf_ptr, copy_len as u64) {
-        return err_to_u64(SyscallError::Fault);
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(ver.as_ptr(), buf_ptr as *mut u8, copy_len);
-    }
-    ver.len() as u64
-}
-
-/// ABI-stable DateTime struct for sys_get_datetime (RAX=44).
+/// ABI-stable DateTime struct for sys_get_datetime (RAX=44 — migrated to Ob).
 #[repr(C)]
 pub struct SysDateTime {
     pub second: u8,
@@ -2164,44 +2070,6 @@ pub struct SysDateTime {
     pub month: u8,
     pub year: u8,
     pub valid: u8,
-}
-
-/// sys_get_datetime (RAX=44): copy RTC date/time to user buffer.
-/// RBX = user buffer ptr.
-fn handler_get_datetime(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    if buf_ptr == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    let sz = core::mem::size_of::<SysDateTime>() as u64;
-    if !is_user_ptr_valid(buf_ptr, sz) {
-        return err_to_u64(SyscallError::Fault);
-    }
-    let dt = crate::drivers::rtc_bridge::request_datetime();
-    let sysdt = match dt {
-        Some(d) => SysDateTime {
-            second: d.second,
-            minute: d.minute,
-            hour: d.hour,
-            day: d.day,
-            month: d.month,
-            year: d.year,
-            valid: 1,
-        },
-        None => SysDateTime {
-            second: 0, minute: 0, hour: 0,
-            day: 0, month: 0, year: 0,
-            valid: 0,
-        },
-    };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &sysdt as *const SysDateTime as *const u8,
-            buf_ptr as *mut u8,
-            sz as usize,
-        );
-    }
-    0
 }
 
 
@@ -2380,75 +2248,6 @@ struct DriveInfoRaw {
     total_sectors: u64,
 }
 
-/// sys_get_drives (RAX=33): enumerate mounted drives.
-/// RBX = buffer ptr, RCX = max entries.
-/// Returns number of entries written.
-fn handler_get_drives(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    let max_entries = regs.rcx as usize;
-
-    if buf_ptr == 0 || max_entries == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-
-    let entry_size = core::mem::size_of::<DriveInfoRaw>() as u64;
-    if !is_user_ptr_valid(buf_ptr, entry_size.saturating_mul(max_entries as u64)) {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    crate::globals::with_vfs(|vfs| {
-        let mut count = 0usize;
-        for i in 0..26 {
-            if count >= max_entries {
-                break;
-            }
-            if vfs.drives[i].is_some() {
-                let letter = (b'A' + i as u8) as char;
-                let label = vfs.volume_label(letter).unwrap_or_default();
-
-                // Get fs_type and total_sectors from the filesystem trait
-                let (fs_type_str, total_sectors) = {
-                    let fs = vfs.drives[i].as_ref().unwrap();
-                    let ft = fs.fs_type();
-                    let ts = fs.total_sectors();
-                    (ft, ts)
-                };
-
-                let mut fs_type_bytes = [0u8; 16];
-                let fst = fs_type_str.as_bytes();
-                let copy_len = fst.len().min(15);
-                fs_type_bytes[..copy_len].copy_from_slice(&fst[..copy_len]);
-
-                let mut label_bytes = [0u8; 32];
-                let lbl = label.as_bytes();
-                let lbl_len = lbl.len().min(31);
-                label_bytes[..lbl_len].copy_from_slice(&lbl[..lbl_len]);
-
-                let raw = DriveInfoRaw {
-                    letter: i as u8 + b'A',
-                    present: 1,
-                    fs_type: fs_type_bytes,
-                    label: label_bytes,
-                    total_sectors,
-                };
-
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        &raw as *const DriveInfoRaw as *const u8,
-                        (buf_ptr as *mut u8).add(count * core::mem::size_of::<DriveInfoRaw>()),
-                        core::mem::size_of::<DriveInfoRaw>(),
-                    );
-                }
-                count += 1;
-            }
-        }
-        count as u64
-    })
-}
-
-/// sys_driver_enum (RAX=56): enumerate registered drivers by index.
-/// RBX = index (0-based), RCX = buf_ptr (&mut DriverInfoRaw).
-/// Returns 1 if entry written, 0 if no more entries, negative on error.
 #[repr(C)]
 struct DriverInfoRaw {
     id: u32,
@@ -2466,48 +2265,6 @@ struct DriverInfoRaw {
     tick_count: u64,
     registered_at_tick: u64,
     name: [u8; 8],
-}
-
-fn handler_driver_enum(regs: Registers) -> u64 {
-    let index = regs.rbx as usize;
-    let buf_ptr = regs.rcx;
-    if buf_ptr == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    let entry_size = core::mem::size_of::<DriverInfoRaw>() as u64;
-    if !is_user_ptr_valid(buf_ptr, entry_size) {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    let ids = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock().driver_ids();
-    if index >= ids.len() {
-        return 0u64;
-    }
-    let id = ids[index];
-    // Lock is released here (ids goes out of scope)
-
-    let drv = crate::drivers::driver_runtime::get_driver(id);
-    match drv {
-        Some(d) => {
-            let raw = DriverInfoRaw {
-                id: d.id as u32, state: d.state as u8, category: d.category as u8,
-                driver_type: d.driver_type as u8, api_version: d.api_version,
-                abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
-                last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
-                events_received: d.events_received, tick_count: d.tick_count,
-                registered_at_tick: d.registered_at_tick, name: d.name,
-            };
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    &raw as *const DriverInfoRaw as *const u8,
-                    buf_ptr as *mut u8,
-                    core::mem::size_of::<DriverInfoRaw>(),
-                );
-            }
-            1u64
-        }
-        None => 0u64,
-    }
 }
 
 /// sys_driver_load (RAX=57): load a NEM driver from a filesystem path (admin).
@@ -3208,6 +2965,220 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
+        8 => {
+            // Version: return KERNEL_VERSION string from \Global\Info\Version object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 4 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let ver = crate::KERNEL_VERSION.as_bytes();
+            let copy_len = ver.len().min(buf_size as usize);
+            unsafe {
+                core::ptr::copy_nonoverlapping(ver.as_ptr(), buf_ptr as *mut u8, copy_len);
+            }
+            ver.len() as u64
+        }
+        9 => {
+            // DateTime: return SysDateTime struct from \Global\Info\DateTime object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 5 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<SysDateTime>() as usize;
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let dt = crate::drivers::rtc_bridge::request_datetime();
+            let sysdt = match dt {
+                Some(d) => SysDateTime {
+                    second: d.second,
+                    minute: d.minute,
+                    hour: d.hour,
+                    day: d.day,
+                    month: d.month,
+                    year: d.year,
+                    valid: 1,
+                },
+                None => SysDateTime {
+                    second: 0, minute: 0, hour: 0,
+                    day: 0, month: 0, year: 0, valid: 0,
+                },
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &sysdt as *const SysDateTime as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        10 => {
+            // Memory: return MemInfo (MemoryStats) struct from \Global\Info\Memory object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 1 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<crate::memory::MemoryStats>() as usize;
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let stats = crate::memory::stats();
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &stats as *const crate::memory::MemoryStats as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        11 => {
+            // Drives: return array of DriveInfoRaw entries from \Global\Info\Drives object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 6 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let entry_size = core::mem::size_of::<DriveInfoRaw>();
+            let max_entries = buf_size / entry_size;
+            if max_entries == 0 { return 0u64; }
+            let written = crate::globals::with_vfs(|vfs| {
+                let mut count = 0usize;
+                for i in 0..26 {
+                    if count >= max_entries { break; }
+                    if vfs.drives[i].is_some() {
+                        let letter = (b'A' + i as u8) as char;
+                        let label = vfs.volume_label(letter).unwrap_or_default();
+                        let (fs_type_str, total_sectors) = {
+                            let fs = vfs.drives[i].as_ref().unwrap();
+                            (fs.fs_type(), fs.total_sectors())
+                        };
+                        let mut fs_type_bytes = [0u8; 16];
+                        let fst = fs_type_str.as_bytes();
+                        let copy_len = fst.len().min(15);
+                        fs_type_bytes[..copy_len].copy_from_slice(&fst[..copy_len]);
+                        let mut label_bytes = [0u8; 32];
+                        let lbl = label.as_bytes();
+                        let lbl_len = lbl.len().min(31);
+                        label_bytes[..lbl_len].copy_from_slice(&lbl[..lbl_len]);
+                        let raw = DriveInfoRaw {
+                            letter: i as u8 + b'A',
+                            present: 1,
+                            fs_type: fs_type_bytes,
+                            label: label_bytes,
+                            total_sectors,
+                        };
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(
+                                &raw as *const DriveInfoRaw as *const u8,
+                                (buf_ptr as *mut u8).add(count * entry_size),
+                                entry_size,
+                            );
+                        }
+                        count += 1;
+                    }
+                }
+                (count * entry_size) as u64
+            });
+            written
+        }
+        12 => {
+            // Drivers: return array of DriverInfoRaw entries from \Global\Info\Drivers object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 7 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let entry_size = core::mem::size_of::<DriverInfoRaw>();
+            let max_entries = buf_size / entry_size;
+            if max_entries == 0 { return 0u64; }
+            let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
+            let ids = runtime.driver_ids();
+            let count = ids.len().min(max_entries);
+            for i in 0..count {
+                if let Some(d) = crate::drivers::driver_runtime::get_driver(ids[i]) {
+                    let raw = DriverInfoRaw {
+                        id: d.id as u32, state: d.state as u8, category: d.category as u8,
+                        driver_type: d.driver_type as u8, api_version: d.api_version,
+                        abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
+                        last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
+                        events_received: d.events_received, tick_count: d.tick_count,
+                        registered_at_tick: d.registered_at_tick, name: d.name,
+                    };
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            &raw as *const DriverInfoRaw as *const u8,
+                            (buf_ptr as *mut u8).add(i * entry_size),
+                            entry_size,
+                        );
+                    }
+                }
+            }
+            drop(runtime);
+            (count * entry_size) as u64
+        }
+        13 => {
+            // Cwd: return current process working directory string
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 8 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let (drive, path) = crate::scheduler::get_current_cwd();
+            let full = alloc::format!("{}:{}", (b'A' + drive) as char, path);
+            let bytes = full.as_bytes();
+            let copy_len = bytes.len().min(buf_size.saturating_sub(1));
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, copy_len);
+                (buf_ptr as *mut u8).add(copy_len).write(0);
+            }
+            copy_len as u64
+        }
+        14 => {
+            // KeyboardLayout: return current layout (0=US, 1=SP) from \Global\Info\Keyboard
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 9 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let layout = KEYBOARD_LAYOUT.load(core::sync::atomic::Ordering::Relaxed);
+            unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, layout); }
+            1u64
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -3349,6 +3320,31 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                     err_to_u64(SyscallError::NoEnt)
                 }
             })
+        }
+        5 => {
+            // KeyboardLayout: set keyboard layout from \Global\Info\Keyboard object
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 9 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let layout = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            if layout > 1 { return err_to_u64(SyscallError::Inval); }
+            KEYBOARD_LAYOUT.store(layout, core::sync::atomic::Ordering::Relaxed);
+            match crate::eventbus::EVENT_BUS.push_event(
+                crate::eventbus::EVENT_KEYB_LAYOUT,
+                crate::eventbus::SOURCE_KERNEL,
+                3, layout as u64, 0, 0
+            ) {
+                Ok(_) => 0,
+                Err(_) => err_to_u64(SyscallError::Again),
+            }
         }
         _ => err_to_u64(SyscallError::Inval),
     }
@@ -3569,7 +3565,7 @@ lazy_static! {
         t[14] = None; // unused
         t[15] = None; // unused
         t[16] = Some(handler_chdir as SyscallFn);
-        t[17] = Some(handler_getcwd as SyscallFn);
+        t[17] = None; // migrated to Ob: \Global\Info\Cwd
         t[18] = Some(handler_brk as SyscallFn);
         t[19] = Some(handler_mmap as SyscallFn);
         t[20] = Some(handler_munmap as SyscallFn);
@@ -3582,24 +3578,24 @@ lazy_static! {
         t[27] = Some(handler_rmdir as SyscallFn);
         t[28] = Some(handler_rename as SyscallFn);
         t[29] = Some(handler_set_exception_handler as SyscallFn);
-        t[33] = Some(handler_get_drives as SyscallFn);
+        t[33] = None; // migrated to Ob: \Global\Info\Drives
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
         t[42] = Some(handler_poweroff as SyscallFn);
-        t[43] = Some(handler_get_version as SyscallFn);
-        t[44] = Some(handler_get_datetime as SyscallFn);
+        t[43] = None; // migrated to Ob: \Global\Info\Version
+        t[44] = None; // migrated to Ob: \Global\Info\DateTime
         t[45] = None; // migrated to Ob: \Global\Info\Memory
         t[46] = Some(handler_get_volume_label as SyscallFn);
         t[47] = Some(handler_chdir_parent as SyscallFn);
-        t[48] = None;
-        t[49] = Some(handler_set_keyboard_layout as SyscallFn);
+        t[48] = None; // migrated to Ob: sys_kobj_enum → ob_enum
+        t[49] = None; // migrated to Ob: \Global\Info\Keyboard + ob_set_info
         t[50] = Some(handler_ndreg as SyscallFn);
-        t[51] = None;
-        t[52] = None;
+        t[51] = None; // migrated to Ob: sys_set_priority → ob_set_info
+        t[52] = None; // migrated to Ob: sys_kill_process → ob_set_info
         t[53] = Some(handler_cursor_blink as SyscallFn);
         t[54] = Some(handler_set_volume_label as SyscallFn);
         t[55] = Some(handler_fsck as SyscallFn);
-        t[56] = Some(handler_driver_enum as SyscallFn);
+        t[56] = None; // migrated to Ob: \Global\Info\Drivers
         t[57] = Some(handler_driver_load as SyscallFn);
         t[58] = Some(handler_driver_unload as SyscallFn);
         t[59] = Some(handler_poll as SyscallFn);
@@ -3631,7 +3627,7 @@ lazy_static! {
         t[14] = SyscallPermission::free(); // unused
         t[15] = SyscallPermission::free(); // unused
         t[16] = SyscallPermission::user();
-        t[17] = SyscallPermission::user();
+        t[17] = SyscallPermission::free(); // migrated to Ob
         t[18] = SyscallPermission::user();
         t[19] = SyscallPermission::user();
         t[20] = SyscallPermission::user();
@@ -3644,21 +3640,21 @@ lazy_static! {
         t[27] = SyscallPermission::user();
         t[28] = SyscallPermission::user();
         t[29] = SyscallPermission::user();
-        t[33] = SyscallPermission::user();
+        t[33] = SyscallPermission::free(); // migrated to Ob
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();
-        t[43] = SyscallPermission::user();
-        t[44] = SyscallPermission::user();
-        t[45] = SyscallPermission::user();
+        t[43] = SyscallPermission::free(); // migrated to Ob
+        t[44] = SyscallPermission::free(); // migrated to Ob
+        t[45] = SyscallPermission::free(); // migrated to Ob
         t[46] = SyscallPermission::user();
         t[47] = SyscallPermission::user();
-        t[49] = SyscallPermission::user();
+        t[49] = SyscallPermission::free(); // migrated to Ob
         t[50] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
         t[54] = SyscallPermission::user();
         t[55] = SyscallPermission::user();
-        t[56] = SyscallPermission::user();
+        t[56] = SyscallPermission::free(); // migrated to Ob
         t[57] = SyscallPermission::admin();
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::user();
@@ -3795,16 +3791,16 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6, 7, 8,
-            9, 10, 11, 12, 13, 16, 17, 18, 19, 20, 21, 22, 23,
+        9, 10, 11, 12, 13, 16, 18, 19, 20, 21, 22, 23,
             25, 26, 27, 28,
-            33,
-            40, 41, 42, 43, 44, 46, 47, 49,
-            50, 53, 54, 55, 56, 57, 58, 59,
+        40, 41, 42, 46, 47,
+            50, 53, 54,         55, 57, 58, 59,
             60, 61, 62, 63, 64, 65,
         ];
         // Removed syscalls: 14(ioctl), 15(register_device), 24(getcpuinfo→Ob),
-        // 45(get_meminfo→Ob), 48(kobj_enum→Ob), 51(set_priority→Ob), 52(kill_process→Ob)
-        const RESERVED: &[u64] = &[14, 15, 24, 45, 48, 51, 52];
+        // 43(get_version→Ob), 44(get_datetime→Ob), 45(get_meminfo→Ob), 48(kobj_enum→Ob),
+        // 51(set_priority→Ob), 52(kill_process→Ob)
+        const RESERVED: &[u64] = &[14, 15, 17, 24, 33, 43, 44, 45, 48, 49, 51, 52, 56];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }

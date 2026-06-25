@@ -531,7 +531,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 12 | `sys_writefile` | RBX=fd, RCX=buf, RDX=count | Escribe a archivo (usa offset del handle) |
 | 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) |
 | 16 | `sys_chdir` | RBX=path_ptr | Cambia directorio actual |
-| 17 | `sys_getcwd` | RBX=buf, RCX=len | Obtiene directorio actual |
+| 17 | `sys_getcwd` | — | REMOVED — migrado a `ob_open("\Global\Info\Cwd")` + `ob_query_info(class=13)` |
 | 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
 | 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
 | 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
@@ -544,24 +544,24 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
 | 28 | `sys_rename` | RBX=old_path, RCX=new_path | Renombra archivo/directorio via VFS |
 | 29 | `sys_set_exception_handler` | RBX=handler_fn | Sets SEH handler for current thread (A3.4). handler_fn=0 clears chain. Returns 0 success, -1 TEB not ready |
-| 33 | `sys_get_drives` | RBX=buf_ptr, RCX=max_entries | Enumerates mounted drives into DriveInfo array. Returns count written |
+| 33 | `sys_get_drives` | — | REMOVED — migrado a `ob_open("\Global\Info\Drives")` + `ob_query_info(class=11)` |
 | 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
 | 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
 | 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
-| 43 | `sys_get_version` | RBX=buf_ptr, RCX=buf_size | Copia versión del kernel (KERNEL_VERSION) al buffer de usuario |
-| 44 | `sys_get_datetime` | RBX=buf_ptr | Copia fecha/hora RTC a `SysDateTime` (seg, min, hora, día, mes, año, valid) |
-| 45 | `sys_get_meminfo` | RBX=buf_ptr | Copia `MemInfo` (phys_max, total_kib, usable_kib, free_kib, used_kib, reserved_kib) |
+| 43 | `sys_get_version` | — | REMOVED — migrado a `ob_open("\Global\Info\Version")` + `ob_query_info(class=8)` |
+| 44 | `sys_get_datetime` | — | REMOVED — migrado a `ob_open("\Global\Info\DateTime")` + `ob_query_info(class=9)` |
+| 45 | `sys_get_meminfo` | — | REMOVED — migrado a `ob_open("\Global\Info\Memory")` + `ob_query_info(class=10)` |
 | 46 | `sys_get_volume_label` | RBX=drive_char, RCX=buf_ptr, RDX=buf_size | Obtiene la etiqueta del volumen de una unidad |
 | 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre que lanzó el binario |
 | 48 | `sys_kobj_enum` | RBX=buf_ptr, RCX=max_entries | Enumerates kernel objects into user buffer (KObjEntryRaw array). Returns count written |
-| 49 | `sys_set_keyboard_layout` | RBX=layout (0=US,1=SP) | Change keyboard layout via Event Bus |
+| 49 | `sys_set_keyboard_layout` | — | REMOVED — migrado a `ob_open("\Global\Info\Keyboard")` + `ob_set_info(class=5)` |
 | 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
 | 51 | `sys_set_priority` | RBX=pid, RCX=priority (0-3) | Set process scheduling priority (admin) |
 | 52 | `sys_kill_process` | RBX=pid | Terminate process by PID (admin) |
 | 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 |
 | 54 | `sys_set_volume_label` | RBX=drive_char, RCX=label_ptr | Set volume label for a drive |
 | 55 | `sys_fsck` | RBX=buf_ptr, RCX=drive_char, RDX=repair_flag | Run filesystem integrity check. Returns FsckStats |
-| 56 | `sys_driver_enum` | RBX=index, RCX=buf_ptr | Enumerate registered NEM drivers by index. Returns 1 if entry written |
+| 56 | `sys_driver_enum` | — | REMOVED — migrado a `ob_open("\Global\Info\Drivers")` + `ob_query_info(class=12)` |
 | 57 | `sys_driver_load` | RBX=path_ptr | Load a NEM driver from filesystem path (admin) |
 | 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) |
 | 59 | `sys_poll` | RBX=pfds_ptr, RCX=nfds, RDX=timeout_ms | Poll fds for ready I/O. Returns ready count. PollFd struct: fd:i32, events:i16, revents:i16 |

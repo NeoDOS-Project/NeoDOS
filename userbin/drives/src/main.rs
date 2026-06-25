@@ -2,6 +2,7 @@
 #![no_main]
 
 use libneodos::syscall;
+use libneodos::syscall::{ObInfoClass, ob_access};
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -22,29 +23,6 @@ struct DriveInfo {
     fs_type: [u8; 16],
     label: [u8; 32],
     total_sectors: u64,
-}
-
-fn sys_get_drives(buf: &mut [DriveInfo]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr() as *mut u8;
-    let max = buf.len() as u64;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 33",
-            "mov rbx, {ptr}",
-            "mov rcx, {max}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            ptr = in(reg) ptr as u64,
-            max = in(reg) max,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(r as usize) }
 }
 
 fn fs_type_str(fs_type: &[u8; 16]) -> &str {
@@ -107,41 +85,54 @@ pub extern "C" fn _start() -> ! {
         print_help();
         syscall::sys_exit(0);
     }
-    let mut drives = [DriveInfo {
-        letter: 0,
-        present: 0,
-        fs_type: [0u8; 16],
-        label: [0u8; 32],
-        total_sectors: 0,
-    }; 26];
 
-    match sys_get_drives(&mut drives) {
-        Ok(count) => {
-            write_str(b"\r\nMounted drives:\r\n");
-            for i in 0..count {
-                let d = &drives[i];
-                if d.present == 0 {
-                    continue;
-                }
-                let letter = d.letter as char;
-                let fstype = fs_type_str(&d.fs_type);
-                let label = label_str(&d.label);
-
-                write_str(b"  ");
-                write_str(&[letter as u8, b':']);
-                write_str(b"  ");
-                write_str(fstype.as_bytes());
-                write_str(b"  ");
-                write_str(label.as_bytes());
-                write_str(b"  ");
-                write_size(d.total_sectors);
-                write_str(b"\r\n");
-            }
-            write_str(b"\r\n");
-        }
+    let fd = match syscall::sys_ob_open("\\Global\\Info\\Drives", ob_access::READ) {
+        Ok(f) => f,
         Err(_) => {
             write_str(b"\r\nError listing drives\r\n\r\n");
+            syscall::sys_exit(1);
         }
+    };
+
+    let mut buf = [0u8; 58 * 26]; // 26 drives max
+    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::Drives, &mut buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let _ = syscall::sys_close(fd);
+            write_str(b"\r\nError listing drives\r\n\r\n");
+            syscall::sys_exit(1);
+        }
+    };
+    let _ = syscall::sys_close(fd);
+
+    if n == 0 {
+        write_str(b"\r\nNo drives found\r\n\r\n");
+        syscall::sys_exit(0);
     }
+
+    let entry_size = core::mem::size_of::<DriveInfo>();
+    let count = n / entry_size;
+
+    write_str(b"\r\nMounted drives:\r\n");
+    let drives = unsafe {
+        core::slice::from_raw_parts(buf.as_ptr() as *const DriveInfo, count)
+    };
+    for d in drives {
+        if d.present == 0 { continue; }
+        let letter = d.letter as char;
+        let fstype = fs_type_str(&d.fs_type);
+        let label = label_str(&d.label);
+
+        write_str(b"  ");
+        write_str(&[letter as u8, b':']);
+        write_str(b"  ");
+        write_str(fstype.as_bytes());
+        write_str(b"  ");
+        write_str(label.as_bytes());
+        write_str(b"  ");
+        write_size(d.total_sectors);
+        write_str(b"\r\n");
+    }
+    write_str(b"\r\n");
     syscall::sys_exit(0)
 }

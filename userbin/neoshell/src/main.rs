@@ -880,13 +880,18 @@ impl Shell {
     }
 
     fn run(&mut self) -> ! {
-        let mut ver = [0u8; 32];
-        let ver_str = match syscall::sys_get_version(&mut ver) {
-            Ok(n) if n > 0 => {
-                let end = ver.iter().position(|&b| b == 0).unwrap_or(n.min(ver.len()));
-                core::str::from_utf8(&ver[..end]).unwrap_or("?.?.?")
+        let mut ver_buf = [0u8; 128];
+        let ver_str = if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Version", libneodos::syscall::ob_access::READ) {
+            if let Ok(n) = syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Version, &mut ver_buf) {
+                let _ = syscall::sys_close(fd);
+                let end = ver_buf.iter().position(|&b| b == 0).unwrap_or(n.min(ver_buf.len()));
+                core::str::from_utf8(&ver_buf[..end]).unwrap_or("?.?.?")
+            } else {
+                let _ = syscall::sys_close(fd);
+                "?.?.?"
             }
-            _ => "?.?.?",
+        } else {
+            "?.?.?"
         };
         write_str(ver_str.as_bytes());
         write_str(b" - RING3\r\n");

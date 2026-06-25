@@ -250,7 +250,7 @@ fn translate_scancode(scancode: u8) -> Option<u8> {
 }
 
 fn encode_utf8_first(codepoint: u16) -> u8 {
-    if codepoint < 0x80 {
+    if codepoint < 0x100 {
         return codepoint as u8;
     }
     if codepoint < 0x800 {

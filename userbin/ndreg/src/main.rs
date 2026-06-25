@@ -1,7 +1,9 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall;
+use libneodos::syscall::{self, DriverInfo, ob_access, ObInfoClass};
+
+const MAX_DRIVERS: usize = 64;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -103,6 +105,28 @@ fn error_str(e: u32) -> &'static str {
     }
 }
 
+fn read_all_drivers() -> Result<[DriverInfo; MAX_DRIVERS], i64> {
+    let fd = syscall::sys_ob_open("\\Global\\Info\\Drivers", ob_access::READ)?;
+    let entry_size = core::mem::size_of::<DriverInfo>();
+    let mut buf = [0u8; 4096];
+    let n = syscall::sys_ob_query_info(fd, ObInfoClass::Drivers, &mut buf)?;
+    let _ = syscall::sys_close(fd);
+    let count = n / entry_size;
+    let count = count.min(MAX_DRIVERS);
+    let mut drivers = [DriverInfo {
+        id: 0, state: 0, category: 0, driver_type: 0,
+        api_version: 0, abi_min: 0, abi_target: 0, abi_max: 0,
+        last_error: 0, caps: 0, isolation_mode: 0,
+        events_received: 0, tick_count: 0, registered_at_tick: 0,
+        name: [0; 8],
+    }; MAX_DRIVERS];
+    let src = unsafe {
+        core::slice::from_raw_parts(buf.as_ptr() as *const DriverInfo, count)
+    };
+    drivers[..count].copy_from_slice(src);
+    Ok(drivers)
+}
+
 #[used]
 #[link_section = ".rodata"]
 static NDREG_HELP: &[u8] = b"::HELP::\
@@ -114,94 +138,92 @@ NDREG [LIST|SHOW <name>|QUERY|RUNTIME]\r\n\
   NDREG RUNTIME         Show runtime state snapshot\r\n\
 ::END::";
 
+fn driver_count(drivers: &[DriverInfo; MAX_DRIVERS]) -> usize {
+    let mut count = 0;
+    for d in drivers {
+        if d.id == 0 && d.name[0] == 0 { break; }
+        count += 1;
+    }
+    count
+}
+
 fn cmd_list() {
+    let drivers = match read_all_drivers() {
+        Ok(d) => d,
+        Err(_) => { write_err(b"\r\nError enumerating drivers\r\n\r\n"); return; }
+    };
+    let count = driver_count(&drivers);
     write_str(b"\r\nLoaded drivers:\r\n");
     write_str(b"-----------------------------\r\n");
-    let mut found = false;
-    for i in 0..64 {
-        match syscall::sys_driver_enum(i) {
-            Ok(Some(info)) => {
-                found = true;
-                write_str(b"  ID:"); write_u32(info.id);
-                write_str(b"  "); write_str(info.name_str().as_bytes());
-                write_str(b"  ["); write_str(info.state_str().as_bytes());
-                write_str(b"]");
-                if info.last_error != 0 {
-                    write_str(b"  ERR:"); write_str(error_str(info.last_error).as_bytes());
-                }
-                write_str(b"\r\n");
-            }
-            Ok(None) => break,
-            Err(_) => { write_err(b"\r\nError enumerating drivers\r\n"); break; }
+    for info in &drivers[..count] {
+        write_str(b"  ID:"); write_u32(info.id);
+        write_str(b"  "); write_str(info.name_str().as_bytes());
+        write_str(b"  ["); write_str(info.state_str().as_bytes());
+        write_str(b"]");
+        if info.last_error != 0 {
+            write_str(b"  ERR:"); write_str(error_str(info.last_error).as_bytes());
         }
+        write_str(b"\r\n");
     }
-    if !found {
+    if count == 0 {
         write_str(b"  No drivers loaded.\r\n");
     }
     write_str(b"\r\n");
 }
 
 fn cmd_show(name: &[u8]) {
-    let mut found = false;
-    for i in 0..64 {
-        match syscall::sys_driver_enum(i) {
-            Ok(Some(info)) => {
-                if info.name_str().as_bytes().eq_ignore_ascii_case(name) {
-                    found = true;
-                    write_str(b"\r\n========================================\r\n");
-                    write_str(b"  Driver: "); write_str(info.name_str().as_bytes()); write_str(b"\r\n");
-                    write_str(b"========================================\r\n");
-                    write_str(b"  ID:              "); write_u32(info.id); write_str(b"\r\n");
-                    write_str(b"  State:           "); write_str(info.state_str().as_bytes()); write_str(b"\r\n");
-                    write_str(b"  Category:        "); write_str(info.category_str().as_bytes()); write_str(b"\r\n");
-                    write_str(b"  Type:            "); write_u32(info.driver_type as u32); write_str(b"\r\n");
-                    write_str(b"  API Version:     "); write_u32(info.api_version as u32); write_str(b"\r\n");
-                    write_str(b"  ABI:             "); write_u32(info.abi_min as u32); write_str(b"-"); write_u32(info.abi_target as u32); write_str(b"-"); write_u32(info.abi_max as u32); write_str(b"\r\n");
-                    write_str(b"  Caps:            "); write_hex64(info.caps); write_str(b"\r\n");
-                    write_str(b"  Last Error:      "); write_str(error_str(info.last_error).as_bytes()); write_str(b"\r\n");
-                    write_str(b"  Isolation:       "); write_u32(info.isolation_mode as u32); write_str(b"\r\n");
-                    write_str(b"  Events Received: "); write_u64(info.events_received); write_str(b"\r\n");
-                    write_str(b"  Tick Count:      "); write_u64(info.tick_count); write_str(b"\r\n");
-                    write_str(b"  Registered at:   "); write_u64(info.registered_at_tick); write_str(b"\r\n");
-                    write_str(b"\r\n");
-                    break;
-                }
-            }
-            Ok(None) => break,
-            Err(_) => break,
+    let drivers = match read_all_drivers() {
+        Ok(d) => d,
+        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
+    };
+    let count = driver_count(&drivers);
+    for info in &drivers[..count] {
+        if info.name_str().as_bytes().eq_ignore_ascii_case(name) {
+            write_str(b"\r\n========================================\r\n");
+            write_str(b"  Driver: "); write_str(info.name_str().as_bytes()); write_str(b"\r\n");
+            write_str(b"========================================\r\n");
+            write_str(b"  ID:              "); write_u32(info.id); write_str(b"\r\n");
+            write_str(b"  State:           "); write_str(info.state_str().as_bytes()); write_str(b"\r\n");
+            write_str(b"  Category:        "); write_str(info.category_str().as_bytes()); write_str(b"\r\n");
+            write_str(b"  Type:            "); write_u32(info.driver_type as u32); write_str(b"\r\n");
+            write_str(b"  API Version:     "); write_u32(info.api_version as u32); write_str(b"\r\n");
+            write_str(b"  ABI:             "); write_u32(info.abi_min as u32); write_str(b"-"); write_u32(info.abi_target as u32); write_str(b"-"); write_u32(info.abi_max as u32); write_str(b"\r\n");
+            write_str(b"  Caps:            "); write_hex64(info.caps); write_str(b"\r\n");
+            write_str(b"  Last Error:      "); write_str(error_str(info.last_error).as_bytes()); write_str(b"\r\n");
+            write_str(b"  Isolation:       "); write_u32(info.isolation_mode as u32); write_str(b"\r\n");
+            write_str(b"  Events Received: "); write_u64(info.events_received); write_str(b"\r\n");
+            write_str(b"  Tick Count:      "); write_u64(info.tick_count); write_str(b"\r\n");
+            write_str(b"  Registered at:   "); write_u64(info.registered_at_tick); write_str(b"\r\n");
+            write_str(b"\r\n");
+            return;
         }
     }
-    if !found {
-        write_str(b"\r\nDriver '");
-        write_str(name);
-        write_str(b"' not found.\r\n\r\n");
-    }
+    write_str(b"\r\nDriver '");
+    write_str(name);
+    write_str(b"' not found.\r\n\r\n");
 }
 
 fn cmd_query() {
+    let drivers = match read_all_drivers() {
+        Ok(d) => d,
+        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
+    };
+    let count = driver_count(&drivers);
     let mut total = 0u32;
     let mut active = 0u32;
     let mut loaded = 0u32;
     let mut faulted = 0u32;
     let mut unloaded = 0u32;
-
-    for i in 0..64 {
-        match syscall::sys_driver_enum(i) {
-            Ok(Some(info)) => {
-                total += 1;
-                match info.state {
-                    4 => active += 1,
-                    0 | 1 | 2 | 3 => loaded += 1,
-                    5 => faulted += 1,
-                    6 | 7 => unloaded += 1,
-                    _ => {}
-                }
-            }
-            Ok(None) => break,
-            Err(_) => break,
+    for info in &drivers[..count] {
+        total += 1;
+        match info.state {
+            4 => active += 1,
+            0 | 1 | 2 | 3 => loaded += 1,
+            5 => faulted += 1,
+            6 | 7 => unloaded += 1,
+            _ => {}
         }
     }
-
     write_str(b"\r\nDriver Registry Summary:\r\n");
     write_str(b"  Total:  "); write_u32(total); write_str(b"\r\n");
     write_str(b"  Active: "); write_u32(active); write_str(b"\r\n");
@@ -212,24 +234,23 @@ fn cmd_query() {
 }
 
 fn cmd_runtime() {
+    let drivers = match read_all_drivers() {
+        Ok(d) => d,
+        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
+    };
+    let count = driver_count(&drivers);
     write_str(b"\r\nRuntime Snapshot:\r\n");
     write_str(b"-----------------------------\r\n");
-    for i in 0..64 {
-        match syscall::sys_driver_enum(i) {
-            Ok(Some(info)) => {
-                write_str(b"  ["); write_str(info.state_str().as_bytes());
-                write_str(b"] "); write_str(info.name_str().as_bytes());
-                write_str(b" (ID:"); write_u32(info.id); write_str(b", ");
-                write_str(info.category_str().as_bytes());
-                if info.isolation_mode > 0 {
-                    write_str(b", ISO:");
-                    write_u32(info.isolation_mode as u32);
-                }
-                write_str(b")\r\n");
-            }
-            Ok(None) => break,
-            Err(_) => { write_err(b"Error reading driver info\r\n"); break; }
+    for info in &drivers[..count] {
+        write_str(b"  ["); write_str(info.state_str().as_bytes());
+        write_str(b"] "); write_str(info.name_str().as_bytes());
+        write_str(b" (ID:"); write_u32(info.id); write_str(b", ");
+        write_str(info.category_str().as_bytes());
+        if info.isolation_mode > 0 {
+            write_str(b", ISO:");
+            write_u32(info.isolation_mode as u32);
         }
+        write_str(b")\r\n");
     }
     write_str(b"\r\n");
 }

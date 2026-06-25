@@ -2,6 +2,7 @@
 #![no_main]
 
 use libneodos::syscall;
+use libneodos::syscall::ObInfoClass;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -37,6 +38,35 @@ fn args_to_slice(buf: &[u8; 256]) -> &[u8] {
     &buf[..end]
 }
 
+fn set_layout_via_ob(layout: u8) -> Result<(), i64> {
+    let fd = syscall::sys_ob_open("\\Global\\Info\\Keyboard", libneodos::syscall::ob_access::READ)?;
+    let r = syscall::sys_ob_set_info(fd, 5, &[layout]);
+    let _ = syscall::sys_close(fd);
+    r
+}
+
+fn get_layout_via_ob() -> Result<u8, i64> {
+    let fd = syscall::sys_ob_open("\\Global\\Info\\Keyboard", libneodos::syscall::ob_access::READ)?;
+    let mut buf = [0u8; 1];
+    let n = syscall::sys_ob_query_info(fd, ObInfoClass::KeyboardLayout, &mut buf)?;
+    let _ = syscall::sys_close(fd);
+    if n >= 1 { Ok(buf[0]) } else { Err(-1) }
+}
+
+fn show_info() {
+    match get_layout_via_ob() {
+        Ok(l) => {
+            let name = if l == 0 { "US" } else { "SP" };
+            write_str(b"\r\nKeyboard layout: ");
+            write_str(name.as_bytes());
+            write_str(b"\r\n");
+        }
+        Err(_) => {
+            write_err(b"\r\nError reading keyboard layout.\r\n");
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     let raw = libneodos::args::read_args();
@@ -45,10 +75,16 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
     let args = args_to_slice(&raw);
-    if args.is_empty() {
-        write_str(b"\r\nUsage: KEYB US|SP\r\n");
-        write_str(b"  US = English (United States)\r\n");
-        write_str(b"  SP = Spanish\r\n\r\n");
+
+    if args.is_empty() || (args.len() >= 2 && args[0] == b'/') {
+        if args.len() >= 2 && args[1] == b'I' {
+            show_info();
+        } else {
+            write_str(b"\r\nUsage: KEYB US|SP\r\n");
+            write_str(b"  KEYB /I    Show current layout\r\n");
+            write_str(b"  US = English (United States)\r\n");
+            write_str(b"  SP = Spanish\r\n\r\n");
+        }
         syscall::sys_exit(0);
     }
 
@@ -66,7 +102,7 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    match syscall::sys_set_keyboard_layout(layout) {
+    match set_layout_via_ob(layout) {
         Ok(()) => {
             let name = if layout == 0 { "US" } else { "SP" };
             write_str(b"\r\nKeyboard layout changed to ");

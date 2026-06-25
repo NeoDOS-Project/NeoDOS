@@ -2,8 +2,8 @@
 #![no_main]
 
 use libneodos::syscall::{
-    self, ob_access, ObEnumEntry,
-    sys_ob_open, sys_readfile, sys_close,
+    self, ob_access,
+    sys_ob_open, sys_close, ObInfoClass,
 };
 
 fn write_str(s: &[u8]) {
@@ -42,14 +42,6 @@ fn write_u64_hex(v: u64) {
     write_str(&buf[i..]);
 }
 
-fn read_u64_le(buf: &[u8], offset: usize) -> u64 {
-    let mut v = 0u64;
-    for i in 0..8 {
-        v |= (buf[offset + i] as u64) << (i * 8);
-    }
-    v
-}
-
 #[used]
 #[link_section = ".rodata"]
 static MEM_HELP: &[u8] = b"::HELP::\
@@ -76,8 +68,15 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    let mut buf = [0u8; 48];
-    let n = match sys_readfile(fd, &mut buf) {
+    let mut info = syscall::MemInfo {
+        phys_max: 0, total_kib: 0, usable_kib: 0,
+        free_kib: 0, used_kib: 0, reserved_kib: 0,
+    };
+    let info_sz = core::mem::size_of::<syscall::MemInfo>();
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(&mut info as *mut syscall::MemInfo as *mut u8, info_sz)
+    };
+    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::Memory, buf) {
         Ok(n) => n,
         Err(_) => {
             let _ = sys_close(fd);
@@ -88,17 +87,17 @@ pub extern "C" fn _start() -> ! {
 
     let _ = sys_close(fd);
 
-    if n < 48 {
+    if n < info_sz {
         write_str(b"\r\nMemory info truncated\r\n\r\n");
         syscall::sys_exit(1);
     }
 
-    let phys_max = read_u64_le(&buf, 0);
-    let total_kib = read_u64_le(&buf, 8);
-    let usable_kib = read_u64_le(&buf, 16);
-    let free_kib = read_u64_le(&buf, 24);
-    let used_kib = read_u64_le(&buf, 32);
-    let reserved_kib = read_u64_le(&buf, 40);
+    let phys_max = info.phys_max;
+    let total_kib = info.total_kib;
+    let usable_kib = info.usable_kib;
+    let free_kib = info.free_kib;
+    let used_kib = info.used_kib;
+    let reserved_kib = info.reserved_kib;
 
     write_str(b"\r\n");
     write_str(b"Physical max: 0x");
