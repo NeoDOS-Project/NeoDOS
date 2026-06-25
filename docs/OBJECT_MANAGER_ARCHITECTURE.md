@@ -1269,8 +1269,8 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 | **OB-041** | v0.52 | ✅ COMPLETADO | coredir, tree: readdir→ob_enum |
 | **OB-042** | v0.52 | 🔶 PARCIAL | corecopy: unlink→ob_destroy ✅. coretype/corecopy: readfile/writefile sin equivalente Ob |
 | **OB-043** | v0.55 | ✅ COMPLETADO | coredel/coreren/coremd/corerd: VFS ops via Ob |
-| **OB-044** | v0.55 | ❌ PENDIENTE | ndreg/loadnem/fsck/drives: driver/fs/drive via Ob namespace |
-| **OB-045** | v0.58 | ❌ PENDIENTE | datetime/ver/mem/cpuinfo: info via Ob |
+| **OB-044** | v0.55 | 🔶 PARCIAL | ndreg/drives ✅, fsck ⛔ N/A, loadnem pendiente (sys_driver_load/unload sin equivalente Ob) |
+| **OB-045** | v0.58 | ✅ COMPLETADO | datetime/ver/mem/cpuinfo: info via Ob |
 | **OB-046** | v0.52 | ✅ COMPLETADO | Processos registrados como ObObjects en namespace \Process\<pid> |
 | **OB-047** | v0.58 | ❌ PENDIENTE | Binarios de test: migración completa a Ob |
 
@@ -1305,13 +1305,14 @@ OB-014 ── OB-041 (coredir, tree → ob_enum)
 OB-012 + OB-013 ── OB-042 (corecopy, coretype → ob_query/set_info)
 ~~OB-011 + OB-020 ── OB-046 (neoinit spawn+wait — PID 1)~~ ✅
 
-v0.55 (F3–F4, media prioridad): ~~❌ PENDIENTE~~ ✅ COMPLETADO
-~~OB-011 + OB-013 ── OB-043 (FS ops via Ob)~~ ✅
+v0.55 (F3–F4, media prioridad): ✅ PARCIAL
+OB-011 + OB-013 ── ~~OB-043 (FS ops via Ob)~~ ✅
+OB-014 ── OB-044 (loadnem: driver load/unload sin equivalente Ob) ❌
 OB-014 ── OB-044 (driver/fs/drive via Ob namespace)
 
-v0.58 (F5–F7, baja prioridad): ❌ PENDIENTE
-OB-012 ── OB-045 (info syscalls via Ob)
-OB-047 (test binaries)
+v0.58 (F5–F7, baja prioridad): ✅ PARCIAL
+OB-012 ── ~~OB-045 (info syscalls via Ob)~~ ✅
+OB-047 (test binaries — cmdtest parcialmente migrado)
 
 v1.0: ✅ COMPLETED
 OB-010 ── OB-030 (Security) ✅
