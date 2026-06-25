@@ -91,7 +91,7 @@ pub extern "C" fn _start() -> ! {
 
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(path, &mut ob_buf);
-    match syscall::sys_ob_create(ob_path, 11, None) {
+    match syscall::sys_ob_create(ob_path, 11, None, 0) {
         Ok(_) => {
             write_str(b"\r\n");
             syscall::sys_exit(0);

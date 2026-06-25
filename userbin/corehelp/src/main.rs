@@ -143,7 +143,7 @@ fn cmd_list_all() {
                     let mut total = 0usize;
                     loop {
                         let mut chunk = [0u8; 4096];
-                        match syscall::sys_readfile(nxe_fd, &mut chunk) {
+                        match syscall::sys_ob_query_info(nxe_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut chunk) {
                             Ok(0) => break,
                             Ok(n) => {
                                 let copy = n.min(accumulated.len() - total);
@@ -254,7 +254,7 @@ fn read_file_content(path_str: &str, buf: &mut [u8]) -> usize {
         let mut total = 0usize;
         loop {
             let mut chunk = [0u8; 4096];
-            match syscall::sys_readfile(fd, &mut chunk) {
+            match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::ReadContent, &mut chunk) {
                 Ok(0) => break,
                 Ok(n) => {
                     let copy = n.min(buf.len() - total);
@@ -301,12 +301,15 @@ fn cmd_show_detail(cmd_name: &str) {
     write_str(b"\r\n");
     // First try to spawn CMD.NXE /? with pipe capture
     let mut fds = [0u64; 2];
-    if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds)).is_ok() {
+    if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds), 0).is_ok() {
         let read_fd = fds[0] as u8;
         let write_fd = fds[1] as u8;
 
-        match syscall::sys_spawn(path_str, 0xFF, write_fd, 0xFF) {
-            Ok(pid) => {
+        let packed = (0xFFu64) | ((write_fd as u64) << 8) | ((0xFFu64) << 16);
+        let mut ob_buf2 = [0u8; 512];
+        let ob_cmd_path = to_ob_path(path_str, &mut ob_buf2);
+        match syscall::sys_ob_create(ob_cmd_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
+            Ok(proc_fd) => {
                 let _ = syscall::sys_close(write_fd);
                 let mut buf = [0u8; 512];
                 loop {
@@ -317,7 +320,8 @@ fn cmd_show_detail(cmd_name: &str) {
                     }
                 }
                 let _ = syscall::sys_close(read_fd);
-                let _ = syscall::sys_waitpid(pid);
+                let _ = syscall::sys_ob_wait(proc_fd);
+                let _ = syscall::sys_close(proc_fd);
                 write_str(b"\r\n");
                 return;
             }

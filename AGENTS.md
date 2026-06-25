@@ -566,6 +566,12 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) |
 | 59 | `sys_poll` | RBX=pfds_ptr, RCX=nfds, RDX=timeout_ms | Poll fds for ready I/O. Returns ready count. PollFd struct: fd:i32, events:i16, revents:i16 |
 | 60 | `sys_ob_open` | RBX=path_ptr, RCX=desired_access | Open an Ob namespace object by path. Resolves path via namespace, performs security access check (SeAccessCheck), allocates a handle entry referencing the Ob object. Returns fd (≥3) on success, negative on error |
+| 61 | `sys_ob_create` | RBX=path_ptr, RCX=type, RDX=fds_out, R8=attrs | Create Ob object. type=1 Process, 2 Driver, 4 Pipe, 11 Directory, 13 Event. Returns fd |
+| 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Query object info. class=15 ReadContent, 16 VolumeLabel |
+| 63 | `sys_ob_set_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Set object info. class=6 VfsRename, 7 WriteContent, 8 SetCwd, 9 SetVolumeLabel |
+| 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory |
+| 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on objects |
+| 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd |
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.

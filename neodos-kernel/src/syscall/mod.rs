@@ -189,13 +189,13 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 
 pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
-    const ASSIGNED: &[u64] = &[
+        const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 16, 18, 19, 20, 21, 22, 23,
         25, 26, 27, 28,
         40, 41, 42, 46, 47,
             50, 53, 54, 55, 57, 58, 59,
-            60, 61, 62, 63, 64,
+            60, 61, 62, 63, 64, 65, 66,
     ];
     // Reserved syscall slots that MUST be None
         const RESERVED: &[u64] = &[14, 15, 17, 24, 33, 43, 44, 45, 49, 56];
@@ -2514,6 +2514,8 @@ fn handler_ob_create(regs: Registers) -> u64 {
     }
 
     let obj_type = match obj_type_val {
+        1 => crate::object::ObType::Process,
+        2 => crate::object::ObType::Driver,
         4 => crate::object::ObType::Pipe,
         11 => crate::object::ObType::Directory,
         13 => crate::object::ObType::Event,
@@ -2602,6 +2604,175 @@ fn handler_ob_create(regs: Registers) -> u64 {
                     let _ = crate::object::ob_close_object(ob_id);
                     err_to_u64(SyscallError::NoMem)
                 }
+            }
+        }
+        crate::object::ObType::Process => {
+            let stdin_fd = (_attrs & 0xFF) as u8;
+            let stdout_fd = ((_attrs >> 8) & 0xFF) as u8;
+            let stderr_fd = ((_attrs >> 16) & 0xFF) as u8;
+
+            // Read binary from VFS
+            const MAX_BIN: usize = 65536;
+            let bin_data = {
+                let mut buf = alloc::vec::Vec::with_capacity(MAX_BIN);
+                buf.resize(MAX_BIN, 0u8);
+                let bin_size = crate::globals::with_vfs(|vfs| {
+                    match vfs.resolve_path(&path_str) {
+                        Ok((drive_idx, node)) => {
+                            if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
+                            match vfs.read(drive_idx, node.inode, 0, &mut buf) {
+                                Ok(n) => { if n > MAX_BIN { 0 } else { n } }
+                                Err(_) => 0,
+                            }
+                        }
+                        Err(_) => 0,
+                    }
+                });
+                if bin_size < 4 {
+                    return err_to_u64(SyscallError::NoEnt);
+                }
+                buf.truncate(bin_size);
+                buf
+            };
+
+            let slot = match crate::arch::x64::paging::alloc_user_slot() {
+                Some(s) => s,
+                None => return err_to_u64(SyscallError::NoMem),
+            };
+
+            let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
+                Ok(r) => r,
+                Err(_) => {
+                    crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+                    return err_to_u64(SyscallError::Inval);
+                }
+            };
+
+            let (cwd_drive, cwd_path, parent_pid) = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler().lock();
+                let pid = s.current_pid();
+                let cwd = if let Some(ep) = s.find_eprocess(pid) {
+                    (ep.cwd_drive, ep.cwd_path.clone())
+                } else {
+                    (2u8, alloc::string::String::from("\\"))
+                };
+                (cwd.0, cwd.1, pid)
+            });
+
+            let child_pid = crate::usermode::spawn_usermode(
+                result.entry, slot.stack_top, slot.slot_idx,
+                cwd_drive, &cwd_path, parent_pid,
+            );
+
+            // Apply fd redirection
+            if stdin_fd != 0xFF || stdout_fd != 0xFF || stderr_fd != 0xFF {
+                let (parent_stdin_entry, parent_stdout_entry, parent_stderr_entry) = crate::hal::without_interrupts(|| {
+                    let s = crate::scheduler::current_scheduler();
+                    let lock = s.lock();
+                    let get_parent_entry = |fd: u8| -> Option<crate::handle::HandleEntry> {
+                        if let Some(ep) = lock.current_eprocess() {
+                            Some(ep.handle_table.get(fd))
+                        } else { None }
+                    };
+                    let sin = if stdin_fd != 0xFF { get_parent_entry(stdin_fd) } else { None };
+                    let sout = if stdout_fd != 0xFF { get_parent_entry(stdout_fd) } else { None };
+                    let serr = if stderr_fd != 0xFF { get_parent_entry(stderr_fd) } else { None };
+                    (sin, sout, serr)
+                });
+                crate::hal::without_interrupts(|| {
+                    let s = crate::scheduler::current_scheduler();
+                    let mut lock = s.lock();
+                    if let Some(ep) = lock.find_eprocess_mut(child_pid) {
+                        if let Some(ref entry) = parent_stdin_entry {
+                            let child_entry = copy_handle_entry_for_child(entry);
+                            ep.handle_table.set(0, child_entry);
+                        }
+                        if let Some(ref entry) = parent_stdout_entry {
+                            let child_entry = copy_handle_entry_for_child(entry);
+                            ep.handle_table.set(1, child_entry);
+                        }
+                        if let Some(ref entry) = parent_stderr_entry {
+                            let child_entry = copy_handle_entry_for_child(entry);
+                            ep.handle_table.set(2, child_entry);
+                        }
+                    }
+                });
+            }
+
+            let ob_id = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler().lock();
+                if let Some(ep) = s.find_eprocess(child_pid) {
+                    ep.ob_id
+                } else {
+                    None
+                }
+            });
+            let actual_ob_id = match ob_id {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::Io),
+            };
+
+            if let Err(_) = crate::object::ob_open_object(actual_ob_id, 0) {
+                return err_to_u64(SyscallError::Io);
+            }
+
+            let entry = crate::handle::HandleEntry::ob_object(actual_ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(actual_ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Driver => {
+            // Strip \Global\FileSystem\ prefix if present to get VFS path
+            let driver_path = if path_str.starts_with("\\Global\\FileSystem\\") {
+                &path_str["\\Global\\FileSystem\\".len()..]
+            } else {
+                &path_str
+            };
+            match crate::drivers::nem::load_nem_driver(driver_path) {
+                Ok(driver_id) => {
+                    let driver_name = alloc::format!("driver/{}", driver_id);
+                    let ob_id = match crate::object::ob_create_object(
+                        crate::object::ObType::Driver, &driver_name,
+                        driver_id as u64, 0, None,
+                    ) {
+                        Ok(id) => id,
+                        Err(_) => return err_to_u64(SyscallError::Io),
+                    };
+                    let ns_path = alloc::format!("\\Driver\\{}", driver_id);
+                    let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
+
+                    let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+                    let fd = crate::hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                        } else {
+                            None
+                        }
+                    });
+                    match fd {
+                        Some(fd) => fd as u64,
+                        None => {
+                            let _ = crate::object::ob_close_object(ob_id);
+                            err_to_u64(SyscallError::NoMem)
+                        }
+                    }
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
             }
         }
         crate::object::ObType::Event => {
@@ -3191,6 +3362,82 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, layout); }
             1u64
         }
+        15 => {
+            // ReadContent: read file content via VFS
+            // Supports both ObObject handles and legacy file handles
+            let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    let e = ep.handle_table[fd as usize];
+                    // Try ObObject first
+                    if e.has_ob_object() {
+                        if let Some(obj) = crate::object::ob_lookup(e.object_id) {
+                            if obj.obj_type == crate::object::ObType::Filesystem {
+                                return (obj.flags as usize, obj.native_id as u32, e.offset);
+                            }
+                        }
+                    }
+                    // Fallback: legacy file handle
+                    if let Some(ot) = e.obj_type() {
+                        if ot == crate::object::ObType::Filesystem {
+                            return (e.drive().unwrap_or(0) as usize, e.native_id().unwrap_or(0) as u32, e.offset);
+                        }
+                    }
+                }
+                (usize::MAX, 0, 0)
+            });
+            if drive_idx == usize::MAX {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut temp_buf = Vec::with_capacity(buf_size);
+            temp_buf.resize(buf_size, 0u8);
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.read(drive_idx, inode_num, handle_offset, &mut temp_buf)
+            });
+            match result {
+                Ok(bytes_read) => {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr as *mut u8, bytes_read);
+                    }
+                    crate::hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            ep.handle_table[fd as usize].offset += bytes_read as u64;
+                        }
+                    });
+                    bytes_read as u64
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        16 => {
+            // VolumeLabel: return volume label string via VFS
+            if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_byte = entry.drive().unwrap_or(0xFF);
+            if drive_byte == 0xFF {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_char = (b'A' + drive_byte) as char;
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.volume_label(drive_char)
+            });
+            match result {
+                Ok(label) => {
+                    let bytes = label.as_bytes();
+                    let copy_len = bytes.len().min(buf_size.saturating_sub(1));
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, copy_len);
+                        (buf_ptr as *mut u8).add(copy_len).write(0);
+                    }
+                    copy_len as u64
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -3389,6 +3636,104 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                     let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
                     0
                 }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        7 => {
+            // WriteContent: write file content via VFS
+            // Supports both ObObject handles and legacy file handles
+            let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    let e = ep.handle_table[fd as usize];
+                    if e.has_ob_object() {
+                        if let Some(obj) = crate::object::ob_lookup(e.object_id) {
+                            if obj.obj_type == crate::object::ObType::Filesystem {
+                                return (obj.flags as usize, obj.native_id as u32, e.offset);
+                            }
+                        }
+                    }
+                    // Fallback: legacy file handle
+                    if let Some(ot) = e.obj_type() {
+                        if ot == crate::object::ObType::Filesystem {
+                            return (e.drive().unwrap_or(0) as usize, e.native_id().unwrap_or(0) as u32, e.offset);
+                        }
+                    }
+                }
+                (usize::MAX, 0, 0)
+            });
+            if drive_idx == usize::MAX {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut temp_buf = Vec::with_capacity(buf_size);
+            temp_buf.resize(buf_size, 0u8);
+            unsafe {
+                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp_buf.as_mut_ptr(), buf_size);
+            }
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.write(drive_idx, inode_num, handle_offset, &temp_buf)
+            });
+            match result {
+                Ok(bytes_written) => {
+                    crate::hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            ep.handle_table[fd as usize].offset += bytes_written as u64;
+                        }
+                    });
+                    bytes_written as u64
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        8 => {
+            // SetCwd: change current working directory via \Global\Info\Cwd
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 8 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let path_str = match copy_user_string(buf_ptr) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Fault),
+            };
+            if path_str.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            match resolve_chdir_target(path_str) {
+                Ok((new_drive, new_cwd_path)) => {
+                    crate::scheduler::set_current_cwd(new_drive, &new_cwd_path);
+                    0
+                }
+                Err(_) => err_to_u64(SyscallError::NoEnt),
+            }
+        }
+        9 => {
+            // SetVolumeLabel: set volume label via VFS
+            if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_byte = entry.drive().unwrap_or(0xFF);
+            if drive_byte == 0xFF {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_char = (b'A' + drive_byte) as char;
+            let label = match copy_user_string(buf_ptr) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Fault),
+            };
+            if label.len() > 31 || label.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            match crate::globals::with_vfs(|vfs| vfs.set_volume_label(drive_char, &label)) {
+                Ok(_) => 0,
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
@@ -3658,6 +4003,16 @@ fn handler_ob_destroy(regs: Registers) -> u64 {
             Ok(_) => 0,
             Err(_) => err_to_u64(SyscallError::Io),
         }
+    } else if obj_type == crate::object::ObType::Driver {
+        // Driver object — unload via hotreload
+        let driver_name = if name.ends_with('\0') {
+            &name[..name.len() - 1]
+        } else {
+            &name
+        };
+        let _ = crate::drivers::hotreload::unload_driver(driver_name, false);
+        let _ = crate::object::ob_destroy_object(object_id);
+        0
     } else {
         // Pure namespace object — just destroy the ObObject
         match crate::object::ob_destroy_object(object_id) {
@@ -3744,7 +4099,7 @@ lazy_static! {
         t[4] = SyscallPermission::user();
         t[5] = SyscallPermission::user();
         t[6] = SyscallPermission::user();
-        t[7] = SyscallPermission::user();
+        t[7] = SyscallPermission::user(); // kept for neoinit
         t[8] = SyscallPermission::user();
         t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();

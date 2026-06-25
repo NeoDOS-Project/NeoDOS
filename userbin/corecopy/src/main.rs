@@ -169,10 +169,10 @@ pub extern "C" fn _start() -> ! {
 
     let mut buf = [0u8; 4096];
     loop {
-        match syscall::sys_readfile(src_fd, &mut buf) {
+        match syscall::sys_ob_query_info(src_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut buf) {
             Ok(0) => break,
             Ok(n) => {
-                if syscall::sys_writefile(dst_fd, &buf[..n]).is_err() {
+                if syscall::sys_ob_set_info(dst_fd, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, &buf[..n]).is_err() {
                     write_err(b"\r\nCOPY: write error\r\n");
                     break;
                 }

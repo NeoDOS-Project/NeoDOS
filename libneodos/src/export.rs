@@ -66,7 +66,7 @@ pub struct AbiTable {
     pub sys_get_meminfo: extern "C" fn(*mut u8) -> i64,
     // Object Manager (Ob) API
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
-    pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64) -> i64,
+    pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64, u64) -> i64,
     pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,
     pub sys_ob_set_info: extern "C" fn(u8, u32, *const u8, usize) -> i64,
     pub sys_ob_enum: extern "C" fn(u8, *mut u8, usize) -> i64,

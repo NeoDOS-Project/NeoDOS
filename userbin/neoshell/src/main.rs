@@ -559,7 +559,7 @@ impl Shell {
             }
             pname[pos] = 0;
             let pstr = unsafe { core::str::from_utf8_unchecked(&pname[..pos]) };
-            if syscall::sys_ob_create(pstr, 4, Some(&mut fds)).is_err() {
+            if syscall::sys_ob_create(pstr, 4, Some(&mut fds), 0).is_err() {
                 write_err(b"\r\nPipe error\r\n");
                 return;
             }
@@ -614,10 +614,13 @@ impl Shell {
                     let stdin_fd = if cmd_idx == 0 { 0xFF } else { read_fds[cmd_idx - 1] };
                     let stdout_fd = if cmd_idx == num_cmds - 1 { 0xFF } else { write_fds[cmd_idx] };
 
-                    match syscall::sys_spawn(path_str, stdin_fd, stdout_fd, 0xFF) {
-                        Ok(pid) => {
-                            write_str(b"\r\n[PID ");
-                            write_u64(pid as u64);
+                    let packed = (stdin_fd as u64) | ((stdout_fd as u64) << 8) | ((0xFFu64) << 16);
+                    let mut ob_spawn_buf = [0u8; 512];
+                    let ob_spawn_path = to_ob_path(path_str, &mut ob_spawn_buf);
+                    match syscall::sys_ob_create(ob_spawn_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
+                        Ok(proc_fd) => {
+                            write_str(b"\r\n[OB ");
+                            write_u64(proc_fd as u64);
                             write_str(b"] ");
                             write_str(cmd_name);
                             write_str(b"\r\n");
@@ -676,7 +679,11 @@ impl Shell {
             path[0] = drive_char;
             path[1] = b':';
             path[2] = b'\\';
-            if syscall::sys_chdir(core::str::from_utf8(&path[..3]).unwrap_or("C:\\")).is_err() {
+            if let Ok(cwd_fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", libneodos::syscall::ob_access::WRITE) {
+                let path_bytes = &path[..3];
+                let _ = syscall::sys_ob_set_info(cwd_fd, libneodos::syscall::ob_set_info_class::SET_CWD, path_bytes);
+                let _ = syscall::sys_close(cwd_fd);
+            } else {
                 write_err(b"\r\nInvalid drive\r\n");
             }
             return;
@@ -714,15 +721,18 @@ impl Shell {
                         ).unwrap_or("");
                         let is_cd_tool = path_str.ends_with("\\CD.NXE")
                             || path_str.eq_ignore_ascii_case("CD.NXE");
-                        match syscall::sys_spawn(path_str, 0xFF, 0xFF, 0xFF) {
-                            Ok(pid) => {
-                                write_str(b"[PID ");
-                                write_u64(pid as u64);
+                        let packed = (0xFFu64) | ((0xFFu64) << 8) | ((0xFFu64) << 16);
+                        let mut ob_spawn_buf = [0u8; 512];
+                        let ob_spawn_path = to_ob_path(path_str, &mut ob_spawn_buf);
+                        match syscall::sys_ob_create(ob_spawn_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
+                            Ok(proc_fd) => {
+                                write_str(b"[OB ");
+                                write_u64(proc_fd as u64);
                                 write_str(b"] ");
                                 write_str(upper);
                                 write_str(b"\r\n");
-                                if syscall::sys_waitpid(pid).is_err() {
-                                    write_err(b"waitpid error\r\n");
+                                if syscall::sys_ob_wait(proc_fd).is_err() {
+                                    write_err(b"ob_wait error\r\n");
                                 } else if is_cd_tool {
                                     let mut buf = [0u8; 256];
                                     unsafe {
@@ -737,11 +747,16 @@ impl Shell {
                                         }
                                     } else if !result.is_empty() {
                                         let path = core::str::from_utf8(result).unwrap_or("");
-                                        if syscall::sys_chdir(path).is_err() {
+                                        let path_bytes = path.as_bytes();
+                                        if let Ok(cwd_fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", libneodos::syscall::ob_access::WRITE) {
+                                            let _ = syscall::sys_ob_set_info(cwd_fd, libneodos::syscall::ob_set_info_class::SET_CWD, path_bytes);
+                                            let _ = syscall::sys_close(cwd_fd);
+                                        } else {
                                             write_err(b"cd: directory not found\r\n");
                                         }
                                     }
                                 }
+                                let _ = syscall::sys_close(proc_fd);
                             }
                             Err(_) => {
                                 write_err(b"Bad command or file name\r\n");
@@ -797,7 +812,7 @@ impl Shell {
             }
         };
         let mut content = [0u8; 4096];
-        let read_len = match syscall::sys_readfile(fd, &mut content) {
+        let read_len = match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::ReadContent, &mut content) {
             Ok(n) => n,
             Err(_) => {
                 let _ = syscall::sys_close(fd);

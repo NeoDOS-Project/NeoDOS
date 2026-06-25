@@ -851,6 +851,28 @@ pub enum ObInfoClass {
     Drivers = 12,
     Cwd = 13,
     KeyboardLayout = 14,
+    ReadContent = 15,
+    VolumeLabel = 16,
+}
+
+pub mod ob_type {
+    pub const PROCESS: u32 = 1;
+    pub const DRIVER: u32 = 2;
+    pub const PIPE: u32 = 4;
+    pub const DIRECTORY: u32 = 11;
+    pub const EVENT: u32 = 13;
+}
+
+pub mod ob_set_info_class {
+    pub const PROCESS_PRIORITY: u32 = 0;
+    pub const THREAD_PRIORITY: u32 = 1;
+    pub const OBJECT_NAME: u32 = 2;
+    pub const PROCESS_TERMINATE: u32 = 4;
+    pub const KEYBOARD_LAYOUT: u32 = 5;
+    pub const VFS_RENAME: u32 = 6;
+    pub const WRITE_CONTENT: u32 = 7;
+    pub const SET_CWD: u32 = 8;
+    pub const SET_VOLUME_LABEL: u32 = 9;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
@@ -1036,7 +1058,7 @@ pub fn sys_ob_open(path: &str, access_mask: u32) -> Result<u8, i64> {
 }
 
 /// sys_ob_create (RAX=61): create an object.
-pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>) -> Result<u8, i64> {
+pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>, attrs: u64) -> Result<u8, i64> {
     let bytes = path.as_bytes();
     if bytes.len() >= 255 { return Err(EINVAL); }
     let mut buf = [0u8; 256];
@@ -1046,7 +1068,7 @@ pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>) 
         Some(f) => f.as_mut_ptr() as u64,
         None => 0u64,
     };
-    let r = unsafe { ob_syscall_4!(61, ptr, obj_type as u64, fds_ptr, 0u64) };
+    let r = unsafe { ob_syscall_4!(61, ptr, obj_type as u64, fds_ptr, attrs) };
     ret(r).map(|v| v as u8)
 }
 

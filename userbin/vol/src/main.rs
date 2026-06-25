@@ -5,6 +5,17 @@ use libneodos::syscall;
 
 const ARGS_ADDR: u64 = 0x41F000;
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -64,15 +75,30 @@ pub extern "C" fn _start() -> ! {
     let drive = parse_drive_from_args().unwrap_or_else(|| current_drive());
 
     let mut label_buf = [0u8; 64];
-    match syscall::sys_get_volume_label(drive, &mut label_buf) {
-        Ok(n) if n > 0 => {
-            write_str(b"\r\n Volume in drive ");
-            write_str(&[drive]);
-            write_str(b" is ");
-            write_str(&label_buf[..n]);
-            write_str(b"\r\n\r\n");
+    let vfs_bytes = [drive, b':', b'\\'];
+    let vfs_str = core::str::from_utf8(&vfs_bytes).unwrap_or("C:\\");
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(vfs_str, &mut ob_buf);
+    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+        Ok(fd) => {
+            match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::VolumeLabel, &mut label_buf) {
+                Ok(n) if n > 0 => {
+                    let actual = label_buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
+                    write_str(b"\r\n Volume in drive ");
+                    write_str(&[drive]);
+                    write_str(b" is ");
+                    write_str(&label_buf[..actual]);
+                    write_str(b"\r\n\r\n");
+                }
+                _ => {
+                    write_str(b"\r\n Volume in drive ");
+                    write_str(&[drive]);
+                    write_str(b" has no label\r\n\r\n");
+                }
+            }
+            let _ = syscall::sys_close(fd);
         }
-        _ => {
+        Err(_) => {
             write_str(b"\r\n Volume in drive ");
             write_str(&[drive]);
             write_str(b" has no label\r\n\r\n");

@@ -3,6 +3,17 @@
 
 use libneodos::syscall;
 
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -104,10 +115,12 @@ fn cmd_load(path: &[u8]) {
     write_str(full_path_str.as_bytes());
     write_str(b"...\r\n");
 
-    match syscall::sys_driver_load(full_path_str) {
-        Ok(id) => {
-            write_str(b"Driver loaded successfully with ID ");
-            write_u32(id);
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(full_path_str, &mut ob_buf);
+    match syscall::sys_ob_create(ob_path, libneodos::syscall::ob_type::DRIVER, None, 0) {
+        Ok(fd) => {
+            write_str(b"Driver loaded successfully, fd=");
+            write_u32(fd as u32);
             write_str(b"\r\n");
         }
         Err(e) => {

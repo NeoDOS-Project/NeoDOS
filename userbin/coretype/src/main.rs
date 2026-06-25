@@ -124,7 +124,7 @@ pub extern "C" fn _start() -> ! {
 
     let mut buf = [0u8; 512];
     loop {
-        match syscall::sys_readfile(fd, &mut buf) {
+        match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::ReadContent, &mut buf) {
             Ok(0) => break,
             Ok(n) => {
                 let _ = syscall::sys_write(1, &buf[..n]);

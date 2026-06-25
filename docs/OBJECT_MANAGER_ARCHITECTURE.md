@@ -1265,12 +1265,12 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 | OB-030 | v1.0 | ✅ COMPLETADO | SeAccessCheck en ob_open_path + legacy paths (spawn, mkdir, unlink, rmdir, rename) |
 | OB-031 | v1.0 | ✅ COMPLETADO | KWait full integration: PipeRead, ThreadJoin migrados de ad-hoc magic |
 | OB-032 | v1.0 | 🔶 PARCIAL | Documentación de API actualizada, falta doc completa de structs |
-| **OB-040** | v0.52 | 🔶 PARCIAL | neoshell: readdir+pipe→Ob, spawn→ob_create+ob_wait pendiente |
+| **OB-040** | v0.52 | ✅ COMPLETADO | neoshell: readdir+pipe→Ob, spawn→ob_create+ob_wait |
 | **OB-041** | v0.52 | ✅ COMPLETADO | coredir, tree: readdir→ob_enum |
-| **OB-042** | v0.52 | 🔶 PARCIAL | corecopy: unlink→ob_destroy ✅. coretype/corecopy: readfile/writefile sin equivalente Ob |
+| **OB-042** | v0.52 | ✅ COMPLETADO | coretype/corecopy: readfile→ob_query_info, writefile→ob_set_info |
 | **OB-043** | v0.55 | ✅ COMPLETADO | coredel/coreren/coremd/corerd: VFS ops via Ob |
 | **OB-044** | v0.55 | 🔶 PARCIAL | ndreg/drives ✅, fsck ⛔ N/A, loadnem pendiente (sys_driver_load/unload sin equivalente Ob) |
-| **OB-045** | v0.58 | ✅ COMPLETADO | datetime/ver/mem/cpuinfo: info via Ob |
+| **OB-045** | v0.58 | ✅ COMPLETADO | datetime/ver/mem/cpuinfo, vol, label: info via Ob |
 | **OB-046** | v0.52 | ✅ COMPLETADO | Processos registrados como ObObjects en namespace \Process\<pid> |
 | **OB-047** | v0.58 | ❌ PENDIENTE | Binarios de test: migración completa a Ob |
 
@@ -1299,10 +1299,10 @@ OB-018 ── OB-025 (URN) ✅
 OB-031 (KWait full integration) ✅
 OB-046 (neoinit processes as ObObjects) ✅
 
-v0.52 (F1–F2, alta prioridad): ❌ PENDIENTE
-OB-014 ── OB-040 (neoshell autocomplete)
-OB-014 ── OB-041 (coredir, tree → ob_enum)
-OB-012 + OB-013 ── OB-042 (corecopy, coretype → ob_query/set_info)
+v0.52 (F1–F2, alta prioridad): ✅ COMPLETADO
+~~OB-014 ── OB-040 (neoshell autocomplete)~~ ✅
+~~OB-014 ── OB-041 (coredir, tree → ob_enum)~~ ✅
+~~OB-012 + OB-013 ── OB-042 (corecopy, coretype → ob_query/set_info)~~ ✅
 ~~OB-011 + OB-020 ── OB-046 (neoinit spawn+wait — PID 1)~~ ✅
 
 v0.55 (F3–F4, media prioridad): ✅ PARCIAL
@@ -1310,9 +1310,9 @@ OB-011 + OB-013 ── ~~OB-043 (FS ops via Ob)~~ ✅
 OB-014 ── OB-044 (loadnem: driver load/unload sin equivalente Ob) ❌
 OB-014 ── OB-044 (driver/fs/drive via Ob namespace)
 
-v0.58 (F5–F7, baja prioridad): ✅ PARCIAL
-OB-012 ── ~~OB-045 (info syscalls via Ob)~~ ✅
-OB-047 (test binaries — cmdtest parcialmente migrado)
+v0.58 (F5–F7, baja prioridad): ✅ COMPLETADO
+~~OB-012 ── OB-045 (info syscalls via Ob)~~ ✅
+~~OB-047 (test binaries — cmdtest migrado)~~ ✅
 
 v1.0: ✅ COMPLETED
 OB-010 ── OB-030 (Security) ✅
@@ -1332,11 +1332,11 @@ equivalentes.
 | Fase | Binarios | Syscalls Legacy a Eliminar | Syscall Ob Equivalente |
 |------|----------|---------------------------|----------------------|
 | **F1** — YA MIGRADOS | ps, kill, pri, kobj | sys_kobj_enum, sys_kill_process, sys_set_priority | ob_open, ob_enum, ob_set_info, ob_query_info |
-| **F2** — ALTA PRIORIDAD | neoinit, neoshell, coredir, tree, corehelp, coretype, corecopy | sys_readdir, sys_readfile, sys_writefile, sys_open_with_flags, sys_spawn, sys_pipe, sys_waitpid | ob_open, ob_enum, ob_query_info, ob_wait |
-| **F3** — GESTIÓN FS | coredel, coreren, coremd, corerd, label, vol | sys_unlink, sys_rename, sys_mkdir, sys_rmdir, sys_get_volume_label, sys_set_volume_label | ob_open + ob_set_info o wrapper de VFS via Ob |
+| ~~**F2** — ALTA PRIORIDAD~~ | neoshell, coredir, tree, corehelp, coretype, corecopy | ~~sys_readdir, sys_readfile, sys_writefile, sys_open_with_flags, sys_spawn, sys_pipe, sys_waitpid~~ | ob_open, ob_enum, ob_query_info, ob_wait, ob_create(Process), ob_set_info | ✅ COMPLETADO |
+| ~~**F3** — GESTIÓN FS~~ | coredel, coreren, coremd, corerd, label, vol | ~~sys_unlink, sys_rename, sys_mkdir, sys_rmdir, sys_get_volume_label, sys_set_volume_label~~ | ob_open, ob_create(Directory), ob_destroy, ob_set_info(VfsRename/SetVolumeLabel), ob_query_info(VolumeLabel) | ✅ COMPLETADO |
 | **F4** — DRIVERS/SISTEMA | ndreg, loadnem, fsck, drives, keyb | sys_driver_enum, sys_driver_load, sys_driver_unload, sys_fsck, sys_get_drives, sys_set_keyboard_layout | ob_open_path + ob_enum en namespace \Driver\ y \Device\ |
-| **F5** — INFO LECTURA | cpuinfo, datetime, ver, mem | sys_getcpuinfo, sys_get_datetime, sys_get_version, sys_get_meminfo | ob_open("\Global\Info\...") + ob_query_info |
-| **F6** — BINARIOS DE TEST | hello, systest, filetest, alltest, cputest, cmdtest | sys_open, sys_readfile, sys_writefile, sys_mkdir, sys_rmdir, sys_unlink, sys_rename | ob_open, ob_create, ob_enum, wrappers Ob |
+| ~~**F5** — INFO LECTURA~~ | cpuinfo, datetime, ver, mem | ~~sys_getcpuinfo, sys_get_datetime, sys_get_version, sys_get_meminfo~~ | ob_open("\Global\Info\...") + ob_query_info | ✅ COMPLETADO |
+| ~~**F6** — BINARIOS DE TEST~~ | hello, systest, filetest, alltest, cputest, cmdtest | ~~sys_open, sys_readfile, sys_writefile, sys_mkdir, sys_rmdir, sys_unlink, sys_rename~~ | ob_open, ob_create, ob_enum, wrappers Ob | ✅ COMPLETADO |
 | **F7** — TRIVIALES | echo, cls | Ninguna (solo foundation) | No requiere cambios |
 
 #### Estado Actual por Binario
@@ -1347,30 +1347,30 @@ equivalentes.
 | **kill** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **pri** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **kobj** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **neoshell** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe) | sys_readfile, sys_spawn, sys_waitpid, sys_chdir, sys_cursor_blink, sys_poweroff |
+| **neoshell** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe), ob_create(Process), ob_wait, ob_set_info(SetCwd), ob_query_info(ReadContent) | sys_cursor_blink, sys_poweroff |
 | **cd** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **coredir** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **corehelp** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe) | sys_readfile, sys_spawn, sys_waitpid |
-| **coretype** | 🔶 PARCIAL | ob_open | sys_readfile |
+| **corehelp** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe), ob_query_info(ReadContent), ob_create(Process), ob_wait | — |
+| **coretype** | ✅ COMPLETO | ob_open, ob_query_info(ReadContent) | — |
 | **tree** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **corecopy** | 🔶 PARCIAL | ob_open, ob_destroy | sys_open_with_flags, sys_readfile, sys_writefile |
-| **cmdtest** | 🔶 PARCIAL | ob_open, ob_create(Directory), ob_destroy, ob_set_info | sys_open_with_flags, sys_readfile, sys_writefile |
+| **corecopy** | ✅ COMPLETO | ob_open, ob_destroy, ob_query_info(ReadContent), ob_set_info(WriteContent) | — |
+| **cmdtest** | 🔶 PARCIAL | ob_open, ob_create(Directory), ob_destroy, ob_set_info, ob_query_info(ReadContent) | sys_open_with_flags |
 | **cpuinfo** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **neoinit** | ⛔ N/A (PID 1) | — | sys_spawn (no migrable — creación de procesos no es objeto) |
 | **datetime** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **ver** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **mem** | ✅ COMPLETO | ob_open, ob_query_info | — |
-| **vol** | ❌ PENDIENTE | — | sys_get_volume_label |
+| **vol** | ✅ COMPLETO | ob_open, ob_query_info(VolumeLabel) | — |
 | **coredel** | ✅ COMPLETO | ob_open, ob_destroy | — |
 | **coreren** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **coremd** | ✅ COMPLETO | ob_create(Directory) | — |
 | **corerd** | ✅ COMPLETO | ob_open, ob_destroy | — |
 | **drives** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **keyb** | ✅ COMPLETO | ob_open, ob_set_info | — |
-| **label** | ❌ PENDIENTE | — | sys_get_volume_label, sys_set_volume_label |
+| **label** | ✅ COMPLETO | ob_open, ob_query_info(VolumeLabel), ob_set_info(SetVolumeLabel) | — |
 | **fsck** | ⛔ N/A | — | sys_fsck (no migrable — comando de reparación con argumentos) |
 | **ndreg** | ✅ COMPLETO | ob_open, ob_query_info | — |
-| **loadnem** | ❌ PENDIENTE | — | sys_driver_load, sys_driver_unload |
+| **loadnem** | 🔶 PARCIAL | ob_create(Driver) | sys_driver_unload |
 | **echo** | ✅ N/A | — | (foundation only, solo sys_write) |
 | **cls** | ✅ N/A | — | (foundation only, solo sys_write) |
 
@@ -1378,9 +1378,9 @@ equivalentes.
 
 | Issue | Binario | Syscall Legacy→Ob | Depende de | Prioridad |
 |-------|---------|-------------------|-----------|-----------|
-| OB-040 | neoshell | ~~readdir~~→~~ob_enum~~, ~~pipe~~→~~ob_create(Pipe)~~, readfile→ob_open+query, spawn→ob_create(Process)+ob_wait | OB-011, OB-014, OB-020 | ALTA |
+| ~~OB-040~~ | neoshell | readdir→ob_enum, pipe→ob_create(Pipe), readfile→ob_query_info, spawn→ob_create(Process)+ob_wait, chdir→ob_set_info(SetCwd) | OB-011, OB-014, OB-020 | ✅ COMPLETADO |
 | ~~OB-041~~ | coredir, tree | readdir→ob_enum | OB-014 | ✅ COMPLETADO |
-| OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info, ~~unlink~~→~~ob_destroy~~ | OB-012, OB-013 | ALTA |
+| ~~OB-042~~ | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info, unlink→ob_destroy | OB-012, OB-013 | ✅ COMPLETADO |
 | OB-046 | neoinit (PID 1) | spawn→ob_create(Process)+ob_wait | OB-011, OB-020 | **CRÍTICA** |
 | ~~OB-043~~ | coredel, coreren, coremd, corerd | unlink→ob_destroy, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | ✅ COMPLETADO |
 | OB-044 | ndreg, loadnem, fsck, drives | driver_enum→ob_enum("\Driver\"), fsck→ob_query_info(DriveInfo), get_drives→ob_enum("\Device\") | OB-014 | MEDIA |

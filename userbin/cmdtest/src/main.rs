@@ -142,7 +142,7 @@ pub extern "C" fn _start() -> ! {
     {
         let mut b = [0u8; 512];
         let ob = to_ob_path("C:\\Temp\\cmdtest_dir", &mut b);
-        let r = syscall::sys_ob_create(ob, 11, None);
+        let r = syscall::sys_ob_create(ob, 11, None, 0);
         check!(b"MD create", r.is_ok());
     }
 
@@ -177,7 +177,7 @@ pub extern "C" fn _start() -> ! {
         const CREAT: u64 = 1;
         let fd = syscall::sys_open_with_flags("C:\\Temp\\cmdtest_src.txt", CREAT);
         if let Ok(f) = fd {
-            let r = syscall::sys_writefile(f, content);
+            let r = syscall::sys_ob_set_info(f, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, content);
             check!(b"CREATE file", r.is_ok());
             let _ = syscall::sys_close(f);
         } else {
@@ -208,10 +208,10 @@ pub extern "C" fn _start() -> ! {
                 let mut copy_ok = true;
                 let mut copy_err = b"" as &[u8];
                 loop {
-                    match syscall::sys_readfile(sf, &mut buf) {
+                    match syscall::sys_ob_query_info(sf, libneodos::syscall::ObInfoClass::ReadContent, &mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            if let Err(e) = syscall::sys_writefile(df, &buf[..n]) {
+                            if let Err(e) = syscall::sys_ob_set_info(df, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, &buf[..n]) {
                                 copy_ok = false;
                                 copy_err = err_code_str(e);
                                 break;
@@ -248,7 +248,7 @@ pub extern "C" fn _start() -> ! {
         let fd = syscall::sys_ob_open(ob_path3, libneodos::syscall::ob_access::READ);
         if let Ok(f) = fd {
             let mut buf = [0u8; 128];
-            match syscall::sys_readfile(f, &mut buf) {
+            match syscall::sys_ob_query_info(f, libneodos::syscall::ObInfoClass::ReadContent, &mut buf) {
                 Ok(n) => {
                     let expected = b"Hello from cmdtest! NeoDOS rules!";
                     let content_match = n == expected.len() && &buf[..n] == expected;
