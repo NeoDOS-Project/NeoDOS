@@ -396,7 +396,10 @@ impl Vfs {
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
 
+        // Extract just the leaf name from new_name (user may pass full path)
+        let new_leaf = new_name.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(new_name);
+
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
-        fs.rename(parent_inode, leaf, new_name)
+        fs.rename(parent_inode, leaf, new_leaf)
     }
 }

@@ -53,31 +53,24 @@ pub enum SyscallNum {
     Ioctl = 14,
     RegisterDevice = 15,
     ChDir = 16,
-    GetCwd = 17,
     Brk = 18,
     Mmap = 19,
     Munmap = 20,
     LoadLib = 21,
     ThreadCreate = 22,
     ThreadJoin = 23,
-    GetCpuInfo = 24,
     WaitAlertable = 40,
     SleepEx = 41,
     Poweroff = 42,
-    GetVersion = 43,
-    GetDateTime = 44,
-    GetMemInfo = 45,
     GetVolumeLabel = 46,
     ChDirParent = 47,
     KObjEnum = 48,
-    SetKeyboardLayout = 49,
     SetPriority = 51,
     KillProcess = 52,
     SetExceptionHandler = 29,
     CursorBlink = 53,
     SetVolumeLabel = 54,
     Fsck = 55,
-    DriverEnum = 56,
     DriverLoad = 57,
     DriverUnload = 58,
     Poll = 59,
@@ -88,7 +81,6 @@ pub enum SyscallNum {
     ObEnum = 64,
     ObWait = 65,
     ObDestroy = 66,
-    GetDrives = 33,
 }
 
 impl SyscallNum {
@@ -113,14 +105,12 @@ impl SyscallNum {
             14 => Some(Self::Ioctl),
             15 => Some(Self::RegisterDevice),
             16 => Some(Self::ChDir),
-            17 => Some(Self::GetCwd),
             18 => Some(Self::Brk),
             19 => Some(Self::Mmap),
             20 => Some(Self::Munmap),
             21 => Some(Self::LoadLib),
             22 => Some(Self::ThreadCreate),
             23 => Some(Self::ThreadJoin),
-            24 => Some(Self::GetCpuInfo),
             25 => Some(Self::MkDir),
             26 => Some(Self::Unlink),
             27 => Some(Self::RmDir),
@@ -129,21 +119,15 @@ impl SyscallNum {
              40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
             42 => Some(Self::Poweroff),
-            43 => Some(Self::GetVersion),
-            44 => Some(Self::GetDateTime),
-            45 => Some(Self::GetMemInfo),
-             33 => Some(Self::GetDrives),
             46 => Some(Self::GetVolumeLabel),
             47 => Some(Self::ChDirParent),
              48 => Some(Self::KObjEnum),
-             49 => Some(Self::SetKeyboardLayout),
-             51 => Some(Self::SetPriority),
+            51 => Some(Self::SetPriority),
              52 => Some(Self::KillProcess),
               53 => Some(Self::CursorBlink),
               54 => Some(Self::SetVolumeLabel),
               55 => Some(Self::Fsck),
-              56 => Some(Self::DriverEnum),
-              57 => Some(Self::DriverLoad),
+            57 => Some(Self::DriverLoad),
                58 => Some(Self::DriverUnload),
                  59 => Some(Self::Poll),
                  60 => Some(Self::ObOpen),
@@ -704,9 +688,9 @@ fn handler_exit(regs: Registers) -> u64 {
             if pid > 0 {
                 let eproc = scheduler.current_eprocess();
                 if eproc.map_or(true, |ep| ep.thread_count == 0) {
-                    crate::serial_println!("[EXIT] calling request_exit_to_kernel()");
-                    crate::usermode::request_exit_to_kernel();
-                    crate::serial_println!("[EXIT] after request_exit_to_kernel");
+                    if pid == crate::usermode::current_wait_pid() {
+                        crate::usermode::request_exit_to_kernel();
+                    }
                 }
             }
         }
@@ -1618,28 +1602,6 @@ struct KObjEntryRaw {
 
 /// sys_kobj_enum (RAX=48): enumerate kernel objects.
 /// RBX = buffer ptr, RCX = max entries.
-fn handler_getcwd(regs: Registers) -> u64 {
-    let buf_ptr = regs.rbx as *mut u8;
-    let buf_len = regs.rcx as usize;
-
-    if !is_user_ptr_valid(regs.rbx, buf_len as u64) || buf_len > 4096 {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    let (drive, path) = crate::scheduler::get_current_cwd();
-    let full = alloc::format!("{}:{}", (b'A' + drive) as char, path);
-
-    let bytes = full.as_bytes();
-    let to_copy = core::cmp::min(bytes.len(), buf_len.saturating_sub(1));
-
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr, to_copy);
-        buf_ptr.add(to_copy).write(0);
-    }
-
-    to_copy as u64
-}
-
 fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
     let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
 
@@ -1998,21 +1960,6 @@ fn handler_ndreg(_regs: Registers) -> u64 {
 
 /// sys_set_keyboard_layout (RAX=49): change keyboard layout.
 /// RBX = layout (0=US, 1=SP).
-fn handler_set_keyboard_layout(regs: Registers) -> u64 {
-    let layout = regs.rbx;
-    if layout > 1 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    match crate::eventbus::EVENT_BUS.push_event(
-        crate::eventbus::EVENT_KEYB_LAYOUT,
-        crate::eventbus::SOURCE_KERNEL,
-        3, layout, 0, 0
-    ) {
-        Ok(_) => 0,
-        Err(_) => err_to_u64(SyscallError::Again),
-    }
-}
-
 /// sys_set_priority (RAX=51): set process scheduling priority (admin).
 /// RBX = pid, RCX = priority (0-3).
 /// sys_set_exception_handler (RAX=29): set the current thread's SEH handler.
@@ -2623,8 +2570,13 @@ fn handler_ob_create(regs: Registers) -> u64 {
             let bin_data = {
                 let mut buf = alloc::vec::Vec::with_capacity(MAX_BIN);
                 buf.resize(MAX_BIN, 0u8);
+                let vfs_path = if path_str.starts_with("\\Global\\FileSystem\\") {
+                    &path_str["\\Global\\FileSystem\\".len()..]
+                } else {
+                    &path_str
+                };
                 let bin_size = crate::globals::with_vfs(|vfs| {
-                    match vfs.resolve_path(&path_str) {
+                    match vfs.resolve_path(vfs_path) {
                         Ok((drive_idx, node)) => {
                             if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
                             match vfs.read(drive_idx, node.inode, 0, &mut buf) {
@@ -3656,18 +3608,27 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
             if old_vfs_path.is_empty() {
                 return err_to_u64(SyscallError::Inval);
             }
-            let new_path = match copy_user_string(buf_ptr) {
-                Ok(s) => s,
-                Err(_) => return err_to_u64(SyscallError::Fault),
+            let new_path = {
+                let mut tmp = [0u8; 256];
+                let copy_len = buf_size.min(255);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(buf_ptr as *const u8, tmp.as_mut_ptr(), copy_len);
+                }
+                match core::str::from_utf8(&tmp[..copy_len]) {
+                    Ok(s) => s.to_string(),
+                    Err(_) => return err_to_u64(SyscallError::Inval),
+                }
             };
             if new_path.is_empty() {
                 return err_to_u64(SyscallError::Inval);
             }
             match crate::globals::with_vfs(|vfs| vfs.rename(old_vfs_path, &new_path)) {
                 Ok(_) => {
-                    // Update the ObObject name to reflect the new path
+                    // Remove old namespace entry, update ObObject, insert new namespace entry
+                    let _ = crate::kobj::namespace::ob_remove_object(&obj_name);
                     let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
                     let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
+                    let _ = crate::kobj::namespace::ob_insert_object(&new_ob_name, entry.object_id);
                     0
                 }
                 Err(_) => err_to_u64(SyscallError::Io),
@@ -4032,6 +3993,8 @@ fn handler_ob_destroy(regs: Registers) -> u64 {
 
         // Destroy Ob object regardless (the VFS handles the actual FS operation)
         let _ = crate::object::ob_destroy_object(object_id);
+        // Remove stale namespace entry so future ob_open re-checks VFS
+        let _ = crate::kobj::namespace::ob_remove_object(&name);
 
         match result {
             Ok(_) => 0,
@@ -4308,16 +4271,19 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 11, 12, 13, 16, 18, 19, 20, 21, 22, 23,
-            25, 26, 27, 28,
-        40, 41, 42, 46, 47,
-            50, 53, 54,         55, 57, 58, 59,
-            60, 61, 62, 63, 64, 65,
+        9, 10, 13, 16, 18, 19, 20, 21, 22, 23,
+            29, 40, 41, 42, 47,
+            50, 53, 55, 58, 59,
+            60, 61, 62, 63, 64, 65, 66,
         ];
-        // Removed syscalls: 14(ioctl), 15(register_device), 24(getcpuinfo→Ob),
-        // 43(get_version→Ob), 44(get_datetime→Ob), 45(get_meminfo→Ob), 48(kobj_enum→Ob),
+        // Migrated to Ob: 11(sys_readfile→ob_query_info), 12(sys_writefile→ob_set_info),
+        // 25(sys_mkdir→ob_create), 26(sys_unlink→ob_destroy), 27(sys_rmdir→ob_destroy),
+        // 28(sys_rename→ob_set_info), 46(sys_get_volume_label→ob_query_info),
+        // 54(sys_set_volume_label→ob_set_info), 57(sys_driver_load→ob_create)
+        // Removed (migrated to Ob): 14(ioctl), 15(register_device), 48(kobj_enum→Ob),
         // 51(set_priority→Ob), 52(kill_process→Ob)
-        const RESERVED: &[u64] = &[14, 15, 17, 24, 33, 43, 44, 45, 48, 49, 51, 52, 56];
+        const RESERVED: &[u64] = &[11, 12, 14, 15, 25, 26, 27, 28,
+            46, 48, 51, 52, 54, 57];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
@@ -4349,12 +4315,9 @@ pub fn register_syscall_table_tests() {
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
         test_eq!(SYSCALL_PERMISSIONS[50].admin, true);
 
-        // Verify new syscall entries exist
+        // Verify new syscall entries exist (those with direct handlers)
         test_true!(SYSCALL_TABLE[8].is_some());   // readdir
-        test_true!(SYSCALL_TABLE[25].is_some());  // mkdir
-        test_true!(SYSCALL_TABLE[26].is_some());  // unlink
-        test_true!(SYSCALL_TABLE[27].is_some());  // rmdir
-        test_true!(SYSCALL_TABLE[28].is_some());  // rename
+        // mkdir(25), unlink(26), rmdir(27), rename(28) migrated to Ob API
     });
 
     // ── A4.6 Integration tests ──
@@ -4657,7 +4620,7 @@ pub fn register_syscall_table_tests() {
         let long_name = "a".repeat(64);
         crate::object::ob_set_object_name(id, &long_name).unwrap();
         let obj = crate::object::ob_lookup(id).unwrap();
-        test_eq!(obj.name_str().len(), 31); // truncated to OB_NAME_LEN - 1
+        test_eq!(obj.name_str().len(), 64); // 64 < OB_NAME_LEN - 1, no truncation
         crate::object::ob_destroy_object(id).unwrap();
     });
 

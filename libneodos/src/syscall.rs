@@ -286,19 +286,6 @@ pub struct DateTime {
     pub valid: u8,
 }
 
-/// sys_get_version (RAX=43): copy kernel version string to buf.
-/// Returns the full string length (may be larger than buf).
-pub fn sys_get_version(buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    ret((export::get_table().sys_get_version)(ptr, len)).map(|v| v as usize)
-}
-
-/// sys_get_datetime (RAX=44): fill a DateTime struct from the kernel RTC.
-pub fn sys_get_datetime(dt: &mut DateTime) -> Result<(), i64> {
-    ret_unit((export::get_table().sys_get_datetime)(dt as *mut DateTime as *mut u8))
-}
-
 /// MemInfo — matches kernel's MemInfo (RAX=45).
 #[repr(C)]
 pub struct MemInfo {
@@ -308,11 +295,6 @@ pub struct MemInfo {
     pub free_kib: u64,
     pub used_kib: u64,
     pub reserved_kib: u64,
-}
-
-/// sys_get_meminfo (RAX=45): fill a MemInfo struct from the kernel.
-pub fn sys_get_meminfo(info: &mut MemInfo) -> Result<(), i64> {
-    ret_unit((export::get_table().sys_get_meminfo)(info as *mut MemInfo as *mut u8))
 }
 
 /// sys_open_with_flags (RAX=10): open a file with creation flags.
@@ -439,31 +421,6 @@ impl DriveInfo {
     }
 }
 
-/// sys_get_drives (RAX=33): enumerate mounted drives.
-/// Returns number of drives written.
-pub fn sys_get_drives(buf: &mut [DriveInfo]) -> Result<usize, i64> {
-    let buf_ptr = buf.as_mut_ptr() as *mut u8;
-    let max = buf.len() as u64;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 33",
-            "mov rbx, {ptr}",
-            "mov rcx, {max}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            ptr = in(reg) buf_ptr as u64,
-            max = in(reg) max,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(r as usize) }
-}
-
 /// KObjEntryRaw — matches kernel's KObjEntryRaw (RAX=48).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -499,25 +456,6 @@ impl KObjEntryRaw {
             _ => "?",
         }
     }
-}
-
-/// sys_set_keyboard_layout (RAX=49): change keyboard layout.
-/// layout = 0 (US) or 1 (SP).
-pub fn sys_set_keyboard_layout(layout: u8) -> Result<(), i64> {
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov rax, 49",
-            "mov rbx, {layout}",
-            "int 0x80",
-            "pop rbx",
-            layout = in(reg) layout as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(()) }
 }
 
 /// sys_set_priority (RAX=51): set process scheduling priority (admin).
@@ -685,43 +623,6 @@ impl DriverInfo {
             2 => "Demand",
             _ => "Unknown",
         }
-    }
-}
-
-/// sys_driver_enum (RAX=56): enumerate registered drivers by index.
-/// index = 0-based driver index. Returns Some(info) if entry exists, None at end.
-pub fn sys_driver_enum(index: usize) -> Result<Option<DriverInfo>, i64> {
-    let mut info = DriverInfo {
-        id: 0, state: 0, category: 0, driver_type: 0,
-        api_version: 0, abi_min: 0, abi_target: 0, abi_max: 0,
-        last_error: 0, caps: 0, isolation_mode: 0,
-        events_received: 0, tick_count: 0, registered_at_tick: 0,
-        name: [0; 8],
-    };
-    let ptr = &mut info as *mut DriverInfo as *mut u8;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 56",
-            "mov rbx, {idx}",
-            "mov rcx, {ptr}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            idx = in(reg) index as u64,
-            ptr = in(reg) ptr as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 {
-        Err(r)
-    } else if r == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(info))
     }
 }
 

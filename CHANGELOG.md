@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.44.2 — 2026-06-26
+
+### Fixed
+- **exit_to_kernel race** — `request_exit_to_kernel()` ahora solo se activa cuando `pid == current_wait_pid()`. Evita que procesos hijo (ej. help.nxe, ndreg.nxe) al hacer `sys_exit` activen `exit_to_kernel` y hagan creer a NeoInit que el shell terminó. El shell ya no respawnea tras cada comando.
+- **handler_ob_create(PROCESS) path** — Se añadió `strip_prefix("\\Global\\FileSystem\\")` antes de llamar `vfs.resolve_path()`. Los comandos .NXE ya no daban "Bad command or file name" cuando el shell los invocaba con paths Ob completos.
+- **ob_set_info(VfsRename) namespace** — Al renombrar, ahora limpia la entrada namespace anterior y crea la nueva. Usa `buf_size` en vez de `copy_user_string` (sin null terminator). Previene entradas huérfanas en `\Global\FileSystem\`.
+- **handler_ob_destroy stale namespace** — Remueve la entrada namespace después de destruir un objeto VFS. `dir_exists`/`file_exists` ya no encuentran entradas obsoletas.
+- **create_directory no auto-crea padres** — Si un directorio padre no existe, retorna `OB_NOT_FOUND` en vez de crearlo automáticamente.
+- **vfs::rename leaf extraction** — Extrae solo el nombre de archivo (leaf) del `new_name`, en vez de pasar el path completo al FS subyacente.
+- **rename_file OOB bounds** — Los límites `min(255)` cambiados a `min(DIR_ENTRY_SIZE - 7)`. Previene `range end index 518 out of range for slice of length 512` al renombrar archivos.
+- **ObType::Driver queryable** — `handler_ob_query_info(class=12)` ahora acepta `ObType::Driver` individual (no solo el bulk `\Global\Info\Drivers`).
+- **Test corrections** — `syscall_table_validation_boot` actualizado con ASSIGNED/RESERVED correctos. `ob_set_info_name_too_long` espera 64 (OB_NAME_LEN=128).
+
 ## v0.44.2 — 2026-06-23
 
 ### Added

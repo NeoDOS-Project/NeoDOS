@@ -177,6 +177,17 @@ impl ObNamespace {
             }
             return Err(OB_NOT_FOUND);
         }
+        // Ensure all parent directories exist (do not auto-create)
+        if components.len() > 1 {
+            let mut current = &self.root;
+            for &comp in &components[..components.len() - 1] {
+                let key = name_to_key(comp);
+                match current.child_dirs.get(&key) {
+                    Some(dir) => current = dir,
+                    None => return Err(OB_NOT_FOUND),
+                }
+            }
+        }
         Self::create_dir_internal(&mut self.root, &components)
     }
 
