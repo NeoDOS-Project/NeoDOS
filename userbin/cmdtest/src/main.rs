@@ -118,11 +118,18 @@ pub extern "C" fn _start() -> ! {
     }
 
     // ── CLEANUP: remove leftovers from previous tests ──
+    fn cleanup(path: &str) {
+        let mut b = [0u8; 512];
+        let ob = to_ob_path(path, &mut b);
+        if let Ok(fd) = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ) {
+            let _ = syscall::sys_ob_destroy(fd);
+        }
+    }
     {
-        let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_src.txt");
-        let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_dst.txt");
-        let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_renamed.txt");
-        let _ = syscall::sys_rmdir("C:\\Temp\\cmdtest_dir");
+        cleanup("C:\\Temp\\cmdtest_src.txt");
+        cleanup("C:\\Temp\\cmdtest_dst.txt");
+        cleanup("C:\\Temp\\cmdtest_renamed.txt");
+        cleanup("C:\\Temp\\cmdtest_dir");
     }
 
     // ── CLS: just verify escape sequence doesn't crash ──
@@ -133,7 +140,9 @@ pub extern "C" fn _start() -> ! {
 
     // ── MD: create directory ──
     {
-        let r = syscall::sys_mkdir("C:\\Temp\\cmdtest_dir");
+        let mut b = [0u8; 512];
+        let ob = to_ob_path("C:\\Temp\\cmdtest_dir", &mut b);
+        let r = syscall::sys_ob_create(ob, 11, None);
         check!(b"MD create", r.is_ok());
     }
 
@@ -145,7 +154,14 @@ pub extern "C" fn _start() -> ! {
 
     // ── RD: remove empty directory ──
     {
-        let r = syscall::sys_rmdir("C:\\Temp\\cmdtest_dir");
+        let mut b = [0u8; 512];
+        let ob = to_ob_path("C:\\Temp\\cmdtest_dir", &mut b);
+        let r = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ)
+            .and_then(|fd| {
+                let r = syscall::sys_ob_destroy(fd);
+                let _ = syscall::sys_close(fd);
+                r
+            });
         check!(b"RD remove", r.is_ok());
     }
 
@@ -185,7 +201,7 @@ pub extern "C" fn _start() -> ! {
         let ob_path2 = to_ob_path("C:\\Temp\\cmdtest_src.txt", &mut ob_buf2);
         let src_fd = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ);
         if let Ok(sf) = src_fd {
-            let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_dst.txt");
+            cleanup("C:\\Temp\\cmdtest_dst.txt");
             let dst_fd = syscall::sys_open_with_flags("C:\\Temp\\cmdtest_dst.txt", 1);
             if let Ok(df) = dst_fd {
                 let mut buf = [0u8; 4096];
@@ -252,10 +268,14 @@ pub extern "C" fn _start() -> ! {
 
     // ── REN: rename destination ──
     {
-        let r = syscall::sys_rename(
-            "C:\\Temp\\cmdtest_dst.txt",
-            "C:\\Temp\\cmdtest_renamed.txt",
-        );
+        let mut b = [0u8; 512];
+        let ob = to_ob_path("C:\\Temp\\cmdtest_dst.txt", &mut b);
+        let r = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ)
+            .and_then(|fd| {
+                let r = syscall::sys_ob_set_info(fd, 6, b"C:\\Temp\\cmdtest_renamed.txt");
+                let _ = syscall::sys_close(fd);
+                r
+            });
         check!(b"REN", r.is_ok());
     }
 
@@ -269,7 +289,14 @@ pub extern "C" fn _start() -> ! {
 
     // ── DEL: delete source file ──
     {
-        let r = syscall::sys_unlink("C:\\Temp\\cmdtest_src.txt");
+        let mut b = [0u8; 512];
+        let ob = to_ob_path("C:\\Temp\\cmdtest_src.txt", &mut b);
+        let r = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ)
+            .and_then(|fd| {
+                let r = syscall::sys_ob_destroy(fd);
+                let _ = syscall::sys_close(fd);
+                r
+            });
         check!(b"DEL", r.is_ok());
     }
 
@@ -281,7 +308,7 @@ pub extern "C" fn _start() -> ! {
 
     // ── Final cleanup ──
     {
-        let _ = syscall::sys_unlink("C:\\Temp\\cmdtest_renamed.txt");
+        cleanup("C:\\Temp\\cmdtest_renamed.txt");
     }
 
     // ── Report ──

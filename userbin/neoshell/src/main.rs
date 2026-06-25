@@ -302,37 +302,34 @@ impl Shell {
             let mut ob_buf = [0u8; 512];
             let ob_path = to_ob_path(dir_str, &mut ob_buf);
             if let Ok(fd) = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-                let mut entry = syscall::DirEntry {
-                    inode: 0, mode: 0, size: 0, name: [0u8; 260],
-                };
-                loop {
-                    match syscall::sys_readdir(fd, &mut entry) {
-                        Ok(1) => {
-                            let name = entry.name_str();
-                            let name_bytes = name.as_bytes();
-                            if name_bytes.len() > 4
-                                && name_bytes[name_bytes.len()-4..].eq_ignore_ascii_case(b".NXE")
-                                && name_bytes.len() - 4 >= word_upper_len
-                            {
-                                let stem_upper = {
-                                    let mut b = [0u8; 32];
-                                    let n = (name_bytes.len() - 4).min(31);
-                                    b[..n].copy_from_slice(&name_bytes[..n]);
-                                    make_ascii_uppercase(&mut b[..n]);
-                                    b
-                                };
-                                if stem_upper[..word_upper_len] == word_upper[..word_upper_len] {
-                                    if *match_count < 64 {
-                                        let stem = &name_bytes[..name_bytes.len() - 4];
-                                        let n = stem.len().min(31);
-                                        matches[*match_count][..n].copy_from_slice(stem);
-                                        match_lens[*match_count] = n;
-                                        *match_count += 1;
-                                    }
+                let mut ob_entries: [syscall::ObEnumEntry; 64] = core::array::from_fn(|_| syscall::ObEnumEntry {
+                    id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+                });
+                if let Ok(n) = syscall::sys_ob_enum(fd, &mut ob_entries) {
+                    for i in 0..n {
+                        let name = ob_entries[i].name_str();
+                        let name_bytes = name.as_bytes();
+                        if name_bytes.len() > 4
+                            && name_bytes[name_bytes.len()-4..].eq_ignore_ascii_case(b".NXE")
+                            && name_bytes.len() - 4 >= word_upper_len
+                        {
+                            let stem_upper = {
+                                let mut b = [0u8; 32];
+                                let n = (name_bytes.len() - 4).min(31);
+                                b[..n].copy_from_slice(&name_bytes[..n]);
+                                make_ascii_uppercase(&mut b[..n]);
+                                b
+                            };
+                            if stem_upper[..word_upper_len] == word_upper[..word_upper_len] {
+                                if *match_count < 64 {
+                                    let stem = &name_bytes[..name_bytes.len() - 4];
+                                    let n = stem.len().min(31);
+                                    matches[*match_count][..n].copy_from_slice(stem);
+                                    match_lens[*match_count] = n;
+                                    *match_count += 1;
                                 }
                             }
                         }
-                        _ => break,
                     }
                 }
                 let _ = syscall::sys_close(fd);
@@ -540,10 +537,29 @@ impl Shell {
         let mut read_fds = [0u8; MAX_PIPELINE];
         let mut write_fds = [0u8; MAX_PIPELINE];
 
-        // Create all pipes upfront
+        // Create all pipes upfront (unique Ob namespace names)
         for i in 0..num_pipes {
             let mut fds = [0u64; 2];
-            if syscall::sys_pipe(&mut fds).is_err() {
+            let mut pname = [0u8; 16];
+            pname[..7].copy_from_slice(b"\\Pipe/p");
+            let mut pos = 7;
+            let mut v = i as u64;
+            if v == 0 { pname[pos] = b'0'; pos += 1; }
+            else {
+                let mut digits = [0u8; 4];
+                let mut nd = 0;
+                while v > 0 && nd < 4 {
+                    digits[nd] = b'0' + (v % 10) as u8;
+                    v /= 10;
+                    nd += 1;
+                }
+                for d in (0..nd).rev() {
+                    pname[pos] = digits[d]; pos += 1;
+                }
+            }
+            pname[pos] = 0;
+            let pstr = unsafe { core::str::from_utf8_unchecked(&pname[..pos]) };
+            if syscall::sys_ob_create(pstr, 4, Some(&mut fds)).is_err() {
                 write_err(b"\r\nPipe error\r\n");
                 return;
             }

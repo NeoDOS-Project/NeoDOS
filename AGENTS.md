@@ -26,7 +26,7 @@ prioridades actuales son:
    - ~~**OB-021 (ps.nxe), OB-022 (kill.nxe), OB-023 (pri.nxe)**~~ COMPLETADO en v0.44.1
 6. ~~**v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob~~
    - ~~**OB-020 (ObWait multi-type), OB-025 (URN frontend), OB-031 (KWait full integration), OB-046 (processes as ObObjects)**~~ COMPLETADO en v0.44.2
-   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait), ObBasicInfo/ObEnumEntry/ObProcessInfo/ObPipeInfo structs, AbiTable v5
+   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait, ob_destroy), ObBasicInfo/ObEnumEntry/ObProcessInfo/ObPipeInfo structs, AbiTable v5
 7. ~~**v1.0**: **Security integration in ObOpen**, **Full Ob API stable**~~
    - ~~**OB-030 (SeAccessCheck en todas las rutas)**~~ COMPLETADO en v0.44.2
    - **OB-032 (Documentación de API)** 🔶 PARCIAL

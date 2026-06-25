@@ -301,7 +301,7 @@ fn cmd_show_detail(cmd_name: &str) {
     write_str(b"\r\n");
     // First try to spawn CMD.NXE /? with pipe capture
     let mut fds = [0u64; 2];
-    if syscall::sys_pipe(&mut fds).is_ok() {
+    if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds)).is_ok() {
         let read_fd = fds[0] as u8;
         let write_fd = fds[1] as u8;
 

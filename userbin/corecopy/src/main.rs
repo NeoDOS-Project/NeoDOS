@@ -139,7 +139,14 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    let _ = syscall::sys_unlink(dst_path);
+    // Remove destination if it exists (via Ob)
+    {
+        let mut ob_buf2 = [0u8; 512];
+        let ob_dst = to_ob_path(dst_path, &mut ob_buf2);
+        if let Ok(old_fd) = syscall::sys_ob_open(ob_dst, libneodos::syscall::ob_access::READ) {
+            let _ = syscall::sys_ob_destroy(old_fd);
+        }
+    }
 
     let dst_fd = match syscall::sys_open_with_flags(dst_path, 1) {
         Ok(f) => f,

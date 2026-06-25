@@ -1265,9 +1265,9 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 | OB-030 | v1.0 | ✅ COMPLETADO | SeAccessCheck en ob_open_path + legacy paths (spawn, mkdir, unlink, rmdir, rename) |
 | OB-031 | v1.0 | ✅ COMPLETADO | KWait full integration: PipeRead, ThreadJoin migrados de ad-hoc magic |
 | OB-032 | v1.0 | 🔶 PARCIAL | Documentación de API actualizada, falta doc completa de structs |
-| **OB-040** | v0.52 | ❌ PENDIENTE | neoshell: readdir→ob_enum, spawn→ob_create+ob_wait |
+| **OB-040** | v0.52 | 🔶 PARCIAL | neoshell: readdir+pipe→Ob, spawn→ob_create+ob_wait pendiente |
 | **OB-041** | v0.52 | ✅ COMPLETADO | coredir, tree: readdir→ob_enum |
-| **OB-042** | v0.52 | ❌ PENDIENTE | corecopy, coretype: readfile→ob_query_info, writefile→ob_set_info |
+| **OB-042** | v0.52 | 🔶 PARCIAL | corecopy: unlink→ob_destroy ✅. coretype/corecopy: readfile/writefile sin equivalente Ob |
 | **OB-043** | v0.55 | ✅ COMPLETADO | coredel/coreren/coremd/corerd: VFS ops via Ob |
 | **OB-044** | v0.55 | ❌ PENDIENTE | ndreg/loadnem/fsck/drives: driver/fs/drive via Ob namespace |
 | **OB-045** | v0.58 | ❌ PENDIENTE | datetime/ver/mem/cpuinfo: info via Ob |
@@ -1346,14 +1346,14 @@ equivalentes.
 | **kill** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **pri** | ✅ COMPLETO | ob_open, ob_set_info | — |
 | **kobj** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **neoshell** | 🔶 PARCIAL | ob_open | sys_readdir, sys_readfile, sys_spawn, sys_pipe, sys_waitpid, sys_chdir, sys_cursor_blink, sys_poweroff |
+| **neoshell** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe) | sys_readfile, sys_spawn, sys_waitpid, sys_chdir, sys_cursor_blink, sys_poweroff |
 | **cd** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **coredir** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **corehelp** | 🔶 PARCIAL | ob_open, ob_enum | sys_readfile, sys_spawn, sys_pipe, sys_waitpid |
+| **corehelp** | 🔶 PARCIAL | ob_open, ob_enum, ob_create(Pipe) | sys_readfile, sys_spawn, sys_waitpid |
 | **coretype** | 🔶 PARCIAL | ob_open | sys_readfile |
 | **tree** | ✅ COMPLETO | ob_open, ob_enum | — |
-| **corecopy** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink |
-| **cmdtest** | 🔶 PARCIAL | ob_open | sys_open_with_flags, sys_readfile, sys_writefile, sys_unlink, sys_mkdir, sys_rmdir, sys_rename |
+| **corecopy** | 🔶 PARCIAL | ob_open, ob_destroy | sys_open_with_flags, sys_readfile, sys_writefile |
+| **cmdtest** | 🔶 PARCIAL | ob_open, ob_create(Directory), ob_destroy, ob_set_info | sys_open_with_flags, sys_readfile, sys_writefile |
 | **cpuinfo** | ✅ COMPLETO | ob_open, ob_query_info | — |
 | **neoinit** | ⛔ N/A (PID 1) | — | sys_spawn (no migrable — creación de procesos no es objeto) |
 | **datetime** | ✅ COMPLETO | ob_open, ob_query_info | — |
@@ -1377,9 +1377,9 @@ equivalentes.
 
 | Issue | Binario | Syscall Legacy→Ob | Depende de | Prioridad |
 |-------|---------|-------------------|-----------|-----------|
-| OB-040 | neoshell | readdir→ob_enum, readfile→ob_open+query, spawn→ob_create(Process)+ob_wait, pipe→ob_create(Pipe) | OB-011, OB-014, OB-020 | ALTA |
+| OB-040 | neoshell | ~~readdir~~→~~ob_enum~~, ~~pipe~~→~~ob_create(Pipe)~~, readfile→ob_open+query, spawn→ob_create(Process)+ob_wait | OB-011, OB-014, OB-020 | ALTA |
 | ~~OB-041~~ | coredir, tree | readdir→ob_enum | OB-014 | ✅ COMPLETADO |
-| OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info | OB-012, OB-013 | ALTA |
+| OB-042 | corecopy, coretype | readfile→ob_query_info, writefile→ob_set_info, ~~unlink~~→~~ob_destroy~~ | OB-012, OB-013 | ALTA |
 | OB-046 | neoinit (PID 1) | spawn→ob_create(Process)+ob_wait | OB-011, OB-020 | **CRÍTICA** |
 | ~~OB-043~~ | coredel, coreren, coremd, corerd | unlink→ob_destroy, rename→ob_set_info, mkdir→ob_create(Directory), rmdir→ob_destroy | OB-011, OB-013 | ✅ COMPLETADO |
 | OB-044 | ndreg, loadnem, fsck, drives | driver_enum→ob_enum("\Driver\"), fsck→ob_query_info(DriveInfo), get_drives→ob_enum("\Device\") | OB-014 | MEDIA |
