@@ -225,6 +225,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(kbd_id) = object::ob_create_object(ObType::Key, "Keyboard", 9, 0, None) {
             let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Keyboard", kbd_id);
         }
+        if let Ok(vt_id) = object::ob_create_object(ObType::Key, "VtInfo", 11, 0, None) {
+            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\VtInfo", vt_id);
+        }
     }
 
     // ============================================
@@ -406,6 +409,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
 
     drivers::ps2::set_leds(0b111); // All ON = storage ready
+
+    // A4.4: Initialize Input Manager (VT subsystem)
+    input::init();
 
     // ============================================
     // PHASE 3.80: X4 — Driver Isolation Layer

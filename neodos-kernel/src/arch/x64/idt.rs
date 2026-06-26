@@ -715,6 +715,18 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
             }
         }
 
+        // A4.4: Alt+F1-F4 → VT switching (scancodes 0x3B-0x3E)
+        if !released && code >= 0x3B && code <= 0x3E {
+            let alt;
+            unsafe { alt = ALT_PRESSED; }
+            if alt {
+                let vt_num = (code - 0x3B) as usize;
+                crate::input::switch_vt(vt_num);
+                crate::hal::ack_irq(33);
+                return;
+            }
+        }
+
         // Push KeyboardInput event — the NEM ps2kbd driver will
         // translate the scancode and push the resulting byte(s)
         // into the input ring buffer via HST push_input_byte.

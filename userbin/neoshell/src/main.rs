@@ -93,6 +93,20 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
+fn get_vt_num() -> u8 {
+    let mut buf = [0u8; 4];
+    if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\VtInfo", libneodos::syscall::ob_access::READ) {
+        if let Ok(n) = syscall::sys_readfile(fd, &mut buf) {
+            if n >= 1 {
+                let _ = syscall::sys_close(fd);
+                return buf[0];
+            }
+        }
+        let _ = syscall::sys_close(fd);
+    }
+    0
+}
+
 fn write_u64(v: u64) {
     let mut buf = [0u8; 20];
     let mut i = 19;
@@ -925,7 +939,10 @@ impl Shell {
             "?.?.?"
         };
         write_str(ver_str.as_bytes());
-        write_str(b" - RING3\r\n");
+        write_str(b" [VT");
+        let vt = get_vt_num();
+        write_str(&[b'0' + vt]);
+        write_str(b"]\r\n");
         write_str(b"Type HELP for a list of commands.\r\n");
 
         loop {

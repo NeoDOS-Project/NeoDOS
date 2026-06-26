@@ -76,7 +76,7 @@ unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u6
 }
 unsafe extern "C" fn hst_push_input(byte: u8) {
     if !check_cap(CAP_INPUT) { return; }
-    input::push_byte(byte);
+    let _ = input::push_byte(byte);
     crate::syscall::wake_blocked_readers();
 }
 unsafe extern "C" fn hst_get_ticks() -> u64 {

@@ -160,6 +160,7 @@ pub struct Eprocess {
     pub ob_id: Option<ObId>,
     pub address_space: address_space::AddressSpace,
     pub token: Token,
+    pub vt_num: u8,
 }
 
 // ── Frame init helpers ──
@@ -291,6 +292,7 @@ impl Eprocess {
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            vt_num: 0,
         }
     }
 
@@ -312,6 +314,7 @@ impl Eprocess {
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            vt_num: 0,
         }
     }
 }
@@ -522,6 +525,7 @@ impl Scheduler {
         if parent_pid > 0 {
             if let Some(parent_ep) = self.find_eprocess(parent_pid) {
                 eproc.token = parent_ep.token;
+                eproc.vt_num = parent_ep.vt_num;
             }
         }
 
@@ -1045,6 +1049,15 @@ pub fn current_process_heap_range() -> (u64, u64) {
     } else {
         (0, 0)
     };
+    drop(lock);
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
+    result
+}
+
+pub fn current_vt_num() -> u8 {
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+    let lock = SCHEDULER.lock();
+    let result = if let Some(ep) = lock.current_eprocess() { ep.vt_num } else { 0 };
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result

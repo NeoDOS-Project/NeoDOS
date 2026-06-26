@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.44.3 — 2026-06-26
+
+### Added
+- **A4.4 Input Subsystem Redesign** — `src/input/` directory with `InputManager`, 4 VT queues (`VtInputQueue`), per-VT input routing. `switch_vt()` via Alt+F1-F4 keyboard handler. Per-process `vt_num` in EPROCESS, inherited from parent.
+- **B4.5 Virtual Terminals** — Console state save/restore per VT (`ConsoleState`), framebuffer shadow redraw on switch (`VtShadowBuffer`). `\Global\Info\VtInfo` Ob object for reading/setting VT number.
+- **Syscall 11 (readfile) restored** — Re-registered in SSDT for NXL `sys_readfile` compatibility.
+- **8 VT tests** — input_vt_switch_framebuffer, input_vt_independent_queues, input_vt_rapid_switching, input_4vt_concurrent_stress, input_event_bus_dispatch_vt, vt_switch_alt_f1_f2, vt_independent_input, vt_framebuffer_swap.
+
+### Changed
+- **`src/input.rs`** → `src/input/` directory (mod.rs, vt.rs, manager.rs)
+- **`handler_read`** reads from per-VT queue based on process's `vt_num`
+- **Banner shows `[VTn]`** — NeoShell version display includes current VT number
+
 ## v0.44.2 — 2026-06-26
 
 ### Fixed

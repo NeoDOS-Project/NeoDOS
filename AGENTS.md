@@ -63,7 +63,7 @@ OVMF, override with `-machine pc` (PIIX3, legacy PIO).
 **IMPORTANTE: nunca subir código sin testear antes.**
 
 1. `cargo build` en `neodos-kernel/` — comprueba que compila
-  2. `python3 scripts/auto_test.py` — 520 kernel tests (auto-run at boot) + user-mode binaries
+  2. `python3 scripts/auto_test.py` — 528 kernel tests (auto-run at boot) + user-mode binaries
 3. Solo si todo pasa: `git commit && git push`
 
 **Antes de decidir sobre arquitectura:** consultar primero
@@ -170,9 +170,20 @@ Bootloader loads ELF segments manually, calls `ExitBootServices` (memory map lea
 
 `neodos/drivers/ps2kbd/build.rs` parses `KBDUS.klc`/`KBDSP.klc` (UTF-16LE keyboard layouts) at build time into `$OUT_DIR/kbd_layout.rs` with scan code → ASCII tables. Copied to `neodos-kernel/src/drivers/nem/drivers/kbd_layout.rs` for reference. Two layouts: US (index 0), SP (index 1, default). Layout switching at runtime via Event Bus (`EVENT_KEYB_LAYOUT` type 9) sent from the `KEYB US|SP` shell command to the NEM ps2kbd driver.
 
-## Input system
+## Input system (A4.4)
 
-Solo **PS/2** (IRQ1). `input.rs` tiene un ring-buffer lock-free de 1024 bytes, productor = IRQ1, consumidor = shell loop. Driver UHCI para USB no funcional en PIIX3.
+Solo **PS/2** (IRQ1). `src/input/` directory con 3 módulos (`mod.rs`, `vt.rs`, `manager.rs`). `InputManager` con 4 VT queues (`VtInputQueue`, ring buffer de 4 KB por VT). Per-VT input routing: PS/2 IRQ1 handler inserta bytes en `vt_queues[active_vt]`. Productor = IRQ1, consumidor = proceso foreground del VT activo via `handler_read`.
+
+### Virtual Terminal Switching (B4.5)
+
+| Atajo | Acción |
+|-------|--------|
+| **Alt+F1** | Cambia a VT 0 (NeoShell principal) |
+| **Alt+F2** | Cambia a VT 1 (sesión secundaria) |
+| **Alt+F3** | Cambia a VT 2 |
+| **Alt+F4** | Cambia a VT 3 |
+
+Detectado en `arch/x64/idt.rs` PS/2 handler: scan code de Alt+F1-F4 → `input::switch_vt(vt)`. Cada VT mantiene su propio `VtShadowBuffer` (caracteres en pantalla) y `ConsoleState` (cursor, color, scroll). Al cambiar de VT se restaura el framebuffer desde la shadow buffer del VT destino. El banner de NeoShell muestra `[VTn]` indicando el terminal activo.
 
 ## Adding a shell command
 
@@ -706,7 +717,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: change keyboard layout via sys_set_keyboard_layout (RAX=49). US or SP |
 | `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: terminate a process by PID via sys_kill_process (RAX=52, admin) |
 | `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: set process scheduling priority via sys_set_priority (RAX=51, admin). Levels 0-3 |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 520 tests de kernel |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 528 tests de kernel |
 | `label.nxe` | Rust `userbin/label/` | ~4 KB | LABEL command: display or change volume label via sys_set_volume_label (RAX=54) |
 | `fsck.nxe` | Rust `userbin/fsck/` | ~6 KB | FSCK command: filesystem integrity check via sys_fsck (RAX=55). /F for repair |
 | `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via sys_driver_enum (RAX=56). LIST, SHOW, QUERY, RUNTIME |
@@ -842,7 +853,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-520 tests en 49 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+528 tests en 50 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -874,7 +885,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
 | URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, invalid/missing paths, resolve file/device, roundtrip |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
-| Input | 5 | Input buffer (ring buffer) |
+| Input | 13 | Input buffer (ring buffer), VT switching, independent queues, framebuffer swap |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
 | Process/Thread | 4 | Kthread struct, ThreadState, Eprocess constructor |
 | Scheduler | 7 | Priority scheduling, time-slice, round-robin, aging |
@@ -892,7 +903,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 Comando `test`:
-1. Ejecuta `testing::run_all()` (520 tests kernel)
+1. Ejecuta `testing::run_all()` (528 tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

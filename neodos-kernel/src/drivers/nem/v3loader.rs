@@ -53,7 +53,7 @@ fn check_cap(required: u64) -> bool {
 // HAL functions exported to NEM drivers
 unsafe extern "C" fn hst_push_input_byte(byte: u8) {
     if !check_cap(CAP_INPUT) { return; }
-    crate::input::push_byte(byte);
+    let _ = crate::input::push_byte(byte);
     crate::syscall::wake_blocked_readers();
 }
 

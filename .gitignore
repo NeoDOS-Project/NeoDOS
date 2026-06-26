@@ -1,7 +1,6 @@
 .aider*
 
 # Rust build artifacts
-
 target/
 */target/
 
@@ -17,3 +16,4 @@ target/
 *.nem
 __pycache__/
 /tmp/
+*.bin

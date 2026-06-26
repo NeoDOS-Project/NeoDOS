@@ -112,6 +112,55 @@ pub fn _print(args: Arguments) {
 
 pub fn init() {}
 
+#[derive(Clone, Copy)]
+pub struct ConsoleState {
+    pub row: usize,
+    pub col: usize,
+    pub fg: u8,
+    pub bg: u8,
+    pub bold: bool,
+    pub cursor_visible: bool,
+}
+
+impl ConsoleState {
+    pub const fn new() -> Self {
+        ConsoleState { row: 0, col: 0, fg: 7, bg: 0, bold: false, cursor_visible: true }
+    }
+}
+
+pub fn save_state() -> ConsoleState {
+    ConsoleState {
+        row: ROW.load(Ordering::SeqCst),
+        col: COL.load(Ordering::SeqCst),
+        fg: ANSI_FG.load(Ordering::Relaxed),
+        bg: ANSI_BG.load(Ordering::Relaxed),
+        bold: ANSI_BOLD.load(Ordering::Relaxed),
+        cursor_visible: CURSOR_VISIBLE.load(Ordering::Relaxed),
+    }
+}
+
+pub fn restore_state(state: &ConsoleState) {
+    ROW.store(state.row, Ordering::SeqCst);
+    COL.store(state.col, Ordering::SeqCst);
+    ANSI_FG.store(state.fg, Ordering::Relaxed);
+    ANSI_BG.store(state.bg, Ordering::Relaxed);
+    ANSI_BOLD.store(state.bold, Ordering::Relaxed);
+    CURSOR_VISIBLE.store(state.cursor_visible, Ordering::Relaxed);
+    draw_cursor(state.cursor_visible);
+}
+
+pub fn redraw_from_shadow(shadow: &crate::input::vt::VtShadowBuffer) {
+    if let Some(ref r) = *RENDERER.lock() { r.clear(ANSI_COLORS[0]); }
+    for row in 0..console_max_row().min(crate::input::vt::VT_CONSOLE_ROWS) {
+        for col in 0..console_width().min(crate::input::vt::VT_CONSOLE_COLS) {
+            let ch = shadow.chars[row][col];
+            if ch != 0 {
+                font::draw_char(ch, col * font::FONT_WIDTH, row * font::FONT_HEIGHT, ANSI_COLORS[7], ANSI_COLORS[0]);
+            }
+        }
+    }
+}
+
 fn console_max_row() -> usize {
     if let Some(ref r) = *RENDERER.lock() {
         let max_rows = r.fb.height / font::FONT_HEIGHT;
@@ -312,7 +361,15 @@ pub fn write_char(c: u8) {
 fn draw_char_at(c: u8, row: usize, col: usize) {
     let x = col * font::FONT_WIDTH;
     let y = row * font::FONT_HEIGHT;
-    font::draw_char(c, x, y, current_fg_rgb(), current_bg_rgb());
+    let fg = current_fg_rgb();
+    let bg = current_bg_rgb();
+    font::draw_char(c, x, y, fg, bg);
+    let act = crate::input::active_vt();
+    if let Some(im) = crate::input::manager::input_manager_mut() {
+        if row < crate::input::vt::VT_CONSOLE_ROWS && col < crate::input::vt::VT_CONSOLE_COLS {
+            im.vt_shadow[act].chars[row][col] = c;
+        }
+    }
 }
 
 fn scroll() {

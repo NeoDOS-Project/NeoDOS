@@ -174,14 +174,14 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 pub fn validate_abi() {
     // Assigned syscall numbers that MUST have handlers
         const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-        10, 13, 16, 18, 19, 20, 21, 22, 23,
-        29,
-        40, 41, 42, 47, 50, 53, 55, 58, 59,
-        60, 61, 62, 63, 64, 65, 66,
-    ];
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+            10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
+            29,
+            40, 41, 42, 47, 50, 53, 55, 58, 59,
+            60, 61, 62, 63, 64, 65, 66,
+        ];
     // Reserved/migrated syscall slots that MUST be None
-        const RESERVED: &[u64] = &[11, 12, 14, 15, 17, 24, 25, 26, 27, 28, 33, 43, 44, 45, 46, 49, 54, 56, 57];
+        const RESERVED: &[u64] = &[12, 14, 15, 17, 24, 25, 26, 27, 28, 33, 43, 44, 45, 46, 49, 54, 56, 57];
 
     // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
@@ -769,9 +769,10 @@ fn handler_read(regs: Registers) -> u64 {
     let entry = current_handle_entry(fd);
 
     if entry.is_stdin() {
+        let vt = crate::scheduler::current_vt_num();
         let mut bytes_read = 0usize;
         while bytes_read < count {
-            match crate::input::pop_byte() {
+            match crate::input::pop_byte_from_vt(vt as usize) {
                 Some(byte) => {
                     unsafe { buf_ptr.add(bytes_read).write(byte); }
                     bytes_read += 1;
@@ -784,13 +785,13 @@ fn handler_read(regs: Registers) -> u64 {
                         break;
                     }
                     loop {
-                        if let Some(b) = crate::input::pop_byte() {
+                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
                             unsafe { buf_ptr.add(bytes_read).write(b); }
                             bytes_read += 1;
                             break;
                         }
                         crate::eventbus::EVENT_BUS.dispatch_pending();
-                        if let Some(b) = crate::input::pop_byte() {
+                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
                             unsafe { buf_ptr.add(bytes_read).write(b); }
                             bytes_read += 1;
                             break;
@@ -1167,6 +1168,14 @@ fn generate_info_content(info_type: u32) -> Option<alloc::vec::Vec<u8>> {
                 } else { 0 };
                 buf.extend_from_slice(&ic.to_le_bytes());
             }
+            Some(buf)
+        }
+        11 => {
+            let vt_num = crate::scheduler::current_vt_num();
+            let active_vt = crate::input::active_vt();
+            let mut buf = alloc::vec::Vec::with_capacity(4);
+            buf.push(vt_num);
+            buf.push(active_vt as u8);
             Some(buf)
         }
         _ => None,
@@ -3732,6 +3741,26 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
+        17 => {
+            // SetProcessVt: set current process vt_num via \Global\Info\VtInfo
+            if entry.object_id == 0 { return err_to_u64(SyscallError::Inval); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 11 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let new_vt = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            if new_vt >= crate::input::vt::VT_COUNT as u8 { return err_to_u64(SyscallError::Inval); }
+            crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() { ep.vt_num = new_vt; }
+            });
+            0
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -4037,7 +4066,7 @@ lazy_static! {
         t[8] = Some(handler_readdir as SyscallFn);
         t[9] = Some(handler_waitpid as SyscallFn);
         t[10] = Some(handler_open as SyscallFn);
-        t[11] = None; // migrated to Ob: ob_query_info(ReadContent)
+        t[11] = Some(handler_readfile as SyscallFn); // legacy compat
         t[12] = None; // migrated to Ob: ob_set_info(WriteContent)
         t[13] = Some(handler_close as SyscallFn);
         t[14] = None; // unused
@@ -4282,7 +4311,7 @@ pub fn register_syscall_table_tests() {
         // 54(sys_set_volume_label→ob_set_info), 57(sys_driver_load→ob_create)
         // Removed (migrated to Ob): 14(ioctl), 15(register_device), 48(kobj_enum→Ob),
         // 51(set_priority→Ob), 52(kill_process→Ob)
-        const RESERVED: &[u64] = &[11, 12, 14, 15, 25, 26, 27, 28,
+        const RESERVED: &[u64] = &[12, 14, 15, 25, 26, 27, 28,
             46, 48, 51, 52, 54, 57];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());

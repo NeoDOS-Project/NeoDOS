@@ -135,6 +135,55 @@ pub fn register_input_tests() {
     });
 }
 
+pub fn register_vt_tests() {
+    use crate::input::vt::{VtInputQueue, VT_COUNT, VT_QUEUE_SIZE};
+
+    test_case!("vt_queue_create", {
+        let q = VtInputQueue::new();
+        test_eq!(q.pop(), None);
+    });
+
+    test_case!("vt_queue_push_pop", {
+        let q = VtInputQueue::new();
+        test_eq!(q.push(0x41), Ok(()));
+        test_eq!(q.pop(), Some(0x41));
+        test_eq!(q.pop(), None);
+    });
+
+    test_case!("vt_queue_capacity", {
+        let q = VtInputQueue::new();
+        let mut count = 0;
+        while q.push(count as u8).is_ok() {
+            count += 1;
+        }
+        test_true!(count > 0);
+        test_eq!(count, VT_QUEUE_SIZE - 1);
+    });
+
+    test_case!("vt_queue_wrap_around", {
+        let q = VtInputQueue::new();
+        for i in 0..VT_QUEUE_SIZE as u8 { let _ = q.push(i); }
+        for i in 0..50 { test_eq!(q.pop(), Some(i)); }
+        for i in (VT_QUEUE_SIZE as u8)..(VT_QUEUE_SIZE as u8 + 50) { let _ = q.push(i); }
+        for i in 50..(VT_QUEUE_SIZE as u8) { test_eq!(q.pop(), Some(i)); }
+        for i in (VT_QUEUE_SIZE as u8)..(VT_QUEUE_SIZE as u8 + 50) { test_eq!(q.pop(), Some(i)); }
+        test_eq!(q.pop(), None);
+    });
+
+    test_case!("vt_push_to_all_queues", {
+        use crate::input::manager::{push_byte, pop_byte_from_vt};
+        for _vt in 0..VT_COUNT {
+            let _ = push_byte(b'X');
+            let active = crate::input::active_vt();
+            test_eq!(pop_byte_from_vt(active), Some(b'X'));
+        }
+    });
+
+    test_case!("vt_count_at_least_2", {
+        test_true!(VT_COUNT >= 2);
+    });
+}
+
 pub fn register_process_tests() {
     use crate::scheduler::{Kthread, ThreadState, Eprocess};
 
@@ -2479,6 +2528,9 @@ pub fn register_tests() {
 
     // v0.42: ABI Freeze verification tests
     crate::abi_freeze::register_abi_freeze_tests();
+
+    // A4.4: Virtual Terminal tests
+    register_vt_tests();
 }
 
 

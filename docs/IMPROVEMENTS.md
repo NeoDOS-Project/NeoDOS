@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Version actual: v0.44.2 (520 kernel tests + 27 user-mode binaries, full Ob migration).
+> Version actual: v0.44.3 (528 kernel tests + 27 user-mode binaries, full Ob migration + A4.4 Input + B4.5 VTs).
 > Objetivo: v1.0 — executive NT-like arquitectonicamente solido.
 > **GUIA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Ultima revision: Junio 2026.
 
-**Progreso:** 167 / ~175 items completados (+8 planificados: v0.46+ milestones). Proximo milestone: **v0.46** (Device Tree, VirtIO).
+**Progreso:** 169 / ~177 items completados (+6 planificados: v0.46+ milestones). Proximo milestone: **v0.46** (Device Tree, VirtIO).
 
 ---
 
@@ -30,7 +30,7 @@
 
 ---
 
-## COMPLETED (167 items)
+## COMPLETED (169 items)
 
 ### Boot & Core Kernel
 1. **x86_64 boot** — entry `_start` en 0x200000, long mode via UEFI bootloader.
@@ -221,6 +221,8 @@
 181. **v0.44.2 — loadnem.nxe partial Ob migration** — ob_create(Driver) for driver loading. Legacy sys_driver_unload (RAX 58) kept for /U (unload) flag.
 182. **v0.44.2 — cmdtest.nxe Ob migration** — All test operations migrated: ob_create(Directory) replaces sys_mkdir, ob_destroy replaces sys_rmdir/sys_unlink, ob_set_info(VfsRename) replaces sys_rename, ob_query_info(ReadContent) replaces sys_readfile.
 183. **v0.44.2 — neoinit.nxe Ob spawning** — Uses ob_create(Process) + ob_wait for spawning neoshell with respawn on exit. Legacy sys_spawn (RAX 7) kept for backward compat.
+184. **v0.44.3 — A4.4 Input subsystem redesign** — `src/input/` directory con `InputManager`, 4 VT queues (`VtInputQueue` de 4 KB), per-VT input routing. `switch_vt()` via Alt+F1-F4. Console state save/restore per VT (`ConsoleState`), framebuffer shadow redraw (`VtShadowBuffer`). Per-process `vt_num` en EPROCESS, inherited from parent. 8 tests.
+185. **v0.44.3 — B4.5 Virtual terminals** — NeoInit spawns shell on VT0. NeoShell banner shows `[VTn]`. `\Global\Info\VtInfo` Ob object for VT number query/set. Syscall 11 (readfile) re-registered in SSDT. handler_read reads from per-VT queue.
 
 ---
 
@@ -244,9 +246,59 @@
 
 ### Code Quality & Maintenance
 
-* [ ] **CQ1. Reorganizar libneodos-nxl en modulos separados** | Prereqs: -- | Files: `libneodos-nxl/src/main.rs` -> `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
+### Critical Bugs (SMP-unsafe static mut)
+
+* [ ] **CB1. Fix WAIT_PID static mut SMP-unsafe** | Prereqs: KWait | Files: `src/usermode.rs`
+  - **Descripcion:** `WAIT_PID` es un `static mut` en usermode.rs usado para comunicacion entre sys_waitpid y el manejador de terminacion de proceso. En SMP, dos CPUs pueden ejecutar sys_waitpid concurrentemente. Migrar a KWait: `kwait_block(ChildExit(pid))` + `kwait_wake(ChildExit(pid))`.
+  - **Severidad:** CRITICO — data corruption en sistemas multicore
+  - **Tests:** `smp_waitpid_concurrent`, `smp_waitpid_no_race`
+
+* [ ] **CB2. Fix ISOLATED_REGIONS static mut sin sincronizacion** | Prereqs: -- | Files: `src/drivers/driver_runtime.rs`
+  - **Descripcion:** `ISOLATED_REGIONS` es un array estatico mutable accedido desde boot loader, NDREG y hot reload sin Mutex. Envolver en `spin::Mutex<[Option<IsolatedRegion>; MAX_ISOLATED_DRIVERS]>`.
+  - **Severidad:** CRITICO — data corruption si 2 CPUs hacen operaciones de driver concurrentes
+  - **Tests:** `smp_isolated_region_concurrent_access`
+
+* [ ] **CB3. Fix NXL_REGISTRY static mut sin proteccion SMP** | Prereqs: -- | Files: `src/nxl.rs`
+  - **Descripcion:** `NXL_REGISTRY` es array fijo de 8 slots accedido desde sys_loadlib sin sincronizacion. Envolver en `spin::Mutex<[Option<NxlEntry>; 8]>`.
+  - **Severidad:** ALTA — dos procesos cargando NXLs concurrentemente pueden corromper el registry
+  - **Tests:** `smp_nxl_concurrent_load`
+
+### Documentation & Housekeeping
+
+* [ ] **DH1. Actualizar README.md a v0.44.3** | Prereqs: -- | Files: `README.md`
+  - **Descripcion:** README actual muestra v0.39.11 con 320+ tests y 36 syscalls. Actualizar a v0.44.3: 528 tests, 66 syscalls, Ob API, input subsystem, virtual terminals.
+  - **Criterio:** README refleja estado real del sistema (version, tests, syscalls, arquitectura)
+
+* [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Prereqs: -- | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
+  - **Descripcion:** El documento menciona MAX_PROCESSES como limite fijo, pero el scheduler usa Vec. Menciona 320+ tests (real 528). Boot phases incompletas (falta Phase 3.86 NXL load, Phase 3.9 ABI freeze).
+  - **Accion:** Corregir Rule 6.3.1 (MAX_PROCESSES -> Vec dinamico), actualizar test counts, completar boot phase list.
+
+* [ ] **DH3. Completar libneodos syscall wrappers** | Prereqs: -- | Files: `libneodos/src/syscall.rs`
+  - **Descripcion:** Faltan wrappers para: `sys_thread_create` (RAX 22), `sys_thread_join` (RAX 23), `sys_sleep_ex` (RAX 41), `sys_poll` (RAX 59), `sys_ob_destroy` (RAX 66), `sys_driver_unload` (RAX 57). Anadir con macros asm igual que los wrappers existentes.
+  - **Criterio:** Cada wrapper nuevo tiene test en cmdtest.nxe. 528 kernel tests + cmdtest pasan.
+  - **Tests:** 6 nuevos (uno por wrapper)
+
+### Architectural Issues (No criticos)
+
+* [ ] **AI-1. Completar ObInfoClass/ObSetInfoClass enums** | Prereqs: -- | Files: `src/object/types.rs`
+  - **Descripcion:** Anadir clases faltantes: `ObInfoClass::ReadContent = 15`, `ObInfoClass::VolumeLabel = 16`, `ObSetInfoClass::ProcessTerminate = 4`, `ObSetInfoClass::VfsRename = 6`, `ObSetInfoClass::WriteContent = 7`, `ObSetInfoClass::SetCwd = 8`, `ObSetInfoClass::SetVolumeLabel = 9`.
+  - **Criterio:** Enums reflejan implementacion real del handler. Tests verifican mapping.
+
+* [ ] **AI-2. Consolidar exports duplicados v3loader.rs / hst.rs** | Prereqs: -- | Files: `src/drivers/v3loader.rs`, `src/drivers/hst.rs`
+  - **Descripcion:** 7 funciones `hst_*` estan exportadas en ambos archivos. Unificar en hst.rs como unico punto de exportacion. v3loader.rs solo llama a hst.rs.
+  - **Criterio:** Zero exports duplicados. Todos los drivers NEM cargan correctamente.
+
+* [ ] **AI-3. Unificar codigos de error ObError y SyscallError** | Prereqs: -- | Files: `src/object/types.rs`, `src/syscall/mod.rs`
+  - **Descripcion:** ObError (-1 a -9) y SyscallError (16 codigos) son conjuntos independientes con traduccion manual en handler_ob_*. Unificar en un solo enum NeoDosError reutilizado por ambas capas.
+  - **Criterio:** Mapping formal verificado por tests. No hay traduccion manual.
+
+* [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Prereqs: -- | Files: `src/kobj/mod.rs`
+  - **Descripcion:** `kobj_register()` checkea si el object existe (read lock) y luego inserta (write lock) sin atomicidad. Convertir a operacion atomica: `registry.iter_mut().find(|e| e.is_none())` + insert en un solo lock scope.
+  - **Criterio:** Dos CPUs registrando el mismo objeto no pueden resultar en duplicados.
+
+* [ ] **AI-5. CQ1. Reorganizar libneodos-nxl en modulos separados** | Prereqs: -- | Files: `libneodos-nxl/src/main.rs` -> `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
   - **Descripcion:** Dividir `libneodos-nxl/src/main.rs` (461 lineas monoliticas) en 7+ modulos separados. Cada modulo agrupa funciones por dominio: `syscall.rs` (raw `int 0x80` wrappers), `io.rs` (stdout/stderr/stdin, _print, _eprint), `fs.rs` (file_open/read/write + sys_mkdir/unlink/rmdir/rename), `process.rs` (pipe/dup2/waitpid/spawn/readdir/chdir/getcwd), `mem.rs` (brk/sbrk/mmap/munmap), `info.rs` (get_version/datetime/meminfo/cpuinfo), `error.rs` (consts + ret helper). `main.rs` solo mantiene `nxl_entry`, el `AbiTable` struct, `EXPORT_TABLE` static, y `nxl_panic`. Zero cambios en ABI: el NXL binario resultante es identico, .export_table en offset 0 con mismos valores. No requiere recompilar user binaries ni cambiar kernel/libneodos/build.
-  - **Criterio:** `sha256sum` del NXL antes/despues identica. 520 kernel tests + 27 user binaries funcionan sin cambios.
+  - **Criterio:** `sha256sum` del NXL antes/despues identica. 528 kernel tests + 27 user binaries funcionan sin cambios.
   - **Tests:** Ninguno nuevo (el binario es identico).
 
 ---
@@ -260,7 +312,7 @@ Orden de implementacion dentro de la fase:
 2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1-B3.2)
 3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, AHCI NCQ (A5.3), DHCP (B3.3)
 4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
-5. **v0.50** — Registry hive database (B2.1-B2.5), full Input subsystem redisenado (A4.4), Virtual Terminals (B4.5)
+5. **v0.50** — Registry hive database (B2.1-B2.5)
 
 > **Regla:** No se pasa a la Fase 3 hasta que v0.50 este completo y todos los tests pasen.
 
@@ -298,29 +350,29 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
 
 ---
 
-- [ ] **A4.4. Input subsystem redesign** | NT: ConDrv (Console Driver) | Prereqs: A4.7
-  - **Archivos:** `src/input/mod.rs` (reescritura), `src/input/manager.rs` (new), `src/input/vt.rs` (new), integracion `arch/x64/idt.rs` (PS/2 delivery)
-  - **Descripcion:** Sistema de entrada multiplexado soportando multiples terminales virtuales (VTs) con independencia de input. En vez de enviar bytes directamente al shell activo, el kernel clasifica y enruta el input a una cola por VT, permitiendo que varias sesiones coexistan sin pisarse entre si.
-    - **Virtual Terminals:** Max 4 VTs (Alt+F1-F4). Cada VT tiene:
+- ~~**[COMPLETED] A4.4. Input subsystem redesign** | NT: ConDrv (Console Driver) | Prereqs: A4.7~~
+  - ~~**Archivos:** `src/input/mod.rs` (reescritura), `src/input/manager.rs` (new), `src/input/vt.rs` (new), integracion `arch/x64/idt.rs` (PS/2 delivery)~~
+  - ~~**Descripcion:** Sistema de entrada multiplexado soportando multiples terminales virtuales (VTs) con independencia de input. En vez de enviar bytes directamente al shell activo, el kernel clasifica y enruta el input a una cola por VT, permitiendo que varias sesiones coexistan sin pisarse entre si.~~
+    - ~~**Virtual Terminals:** Max 4 VTs (Alt+F1-F4). Cada VT tiene:
       - Input queue (ring buffer 4 KB) independiente
       - Output buffer (attached framebuffer) independiente
       - Foreground pid (proces que recibe input)
-      - Session leader (PID 1 NeoInit es sesion leader de todas)
-    - **Keyboard IRQ (PS/2 IRQ1):** Nueva ruta:
+      - Session leader (PID 1 NeoInit es sesion leader de todas)~~
+    - ~~**Keyboard IRQ (PS/2 IRQ1):** Nueva ruta:
       1. IRQ1 handler lee scancode
       2. Convierte a ASCII (KBDUS/KBDSP layout)
       3. Chequea `active_vt`
       4. Inserta en `vt_queues[active_vt]`
-      5. Envia event `EVENT_KEYBOARD_INPUT` al event bus (data0 = byte, data1 = vt_num)
-    - **VT switching:** Alt+F1 scancode detectado -> `InputManager::switch_vt(1)` -> `active_vt=0` -> framebuffer renderiza VT0, input lo recibe VT0 pid.
-    - **sys_read(fd=0, buf, len) stdin:** Bloquea en `vt_queues[active_vt].read()` hasta bytes disponibles.
-    - **Foreground policy:** solo el VT foreground recibe el teclado fisico; los demas conservan su cola y su framebuffer en pausa para poder volver sin perder estado.
-  - **Criterio:**
+      5. Envia event `EVENT_KEYBOARD_INPUT` al event bus (data0 = byte, data1 = vt_num)~~
+    - ~~**VT switching:** Alt+F1 scancode detectado -> `InputManager::switch_vt(1)` -> `active_vt=0` -> framebuffer renderiza VT0, input lo recibe VT0 pid.~~
+    - ~~**sys_read(fd=0, buf, len) stdin:** Bloquea en `vt_queues[active_vt].read()` hasta bytes disponibles.~~
+    - ~~**Foreground policy:** solo el VT foreground recibe el teclado fisico; los demas conservan su cola y su framebuffer en pausa para poder volver sin perder estado.~~
+  - ~~**Criterio:**
     - Alt+F1: pantalla cambia a VT0, teclado entrega a shell en VT0.
     - Alt+F2: pantalla cambia a VT1 (vacia), input sin proc -> silent (no error).
     - Type en VT1, Alt+F1, type en VT0: ambos buffers almacenan independiente.
-    - El cambio de VT no altera el proceso foreground salvo que el propio scheduler o shell lo decida.
-  - **Tests:** `input_vt_switch_framebuffer`, `input_vt_independent_queues`, `input_vt_rapid_switching`, `input_4vt_concurrent_stress`, `input_event_bus_dispatch_vt` (5 tests).
+    - El cambio de VT no altera el proceso foreground salvo que el propio scheduler o shell lo decida.~~
+  - ~~**Tests:** `input_vt_switch_framebuffer`, `input_vt_independent_queues`, `input_vt_rapid_switching`, `input_4vt_concurrent_stress`, `input_event_bus_dispatch_vt` (5 tests).~~
 
 ---
 
@@ -502,10 +554,10 @@ Prereqs globales: A4.7 minimo para items userland; NT5/NT6 para items de segurid
   - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
 
-- [ ] **B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/`
-  - **Descripcion:** Multiplexar el framebuffer y el input en hasta 4 terminales virtuales (VTs). Depende de A4.4 (input subsystem redisenado con `InputManager` y `vt_queues[4]`). Cada VT tiene su propio buffer de framebuffer, cola de input independiente, y PID foreground.
-  - **Criterio:** Alt+F1 y Alt+F2 muestran shells independientes. Input en un VT no afecta al otro.
-  - **Tests:** `vt_switch_alt_f1_f2`, `vt_independent_input`, `vt_framebuffer_swap`.
+- ~~**[COMPLETED] B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/`~~
+  - ~~**Descripcion:** Multiplexar el framebuffer y el input en hasta 4 terminales virtuales (VTs). Depende de A4.4 (input subsystem redisenado con `InputManager` y `vt_queues[4]`). Cada VT tiene su propio buffer de framebuffer, cola de input independiente, y PID foreground.~~
+  - ~~**Criterio:** Alt+F1 y Alt+F2 muestran shells independientes. Input en un VT no afecta al otro.~~
+  - ~~**Tests:** `vt_switch_alt_f1_f2`, `vt_independent_input`, `vt_framebuffer_swap`.~~
 
 - [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
   - **Descripcion:** Editor de texto modal Ring 3 (`.NXE`). Usa `ob_open` + `ob_query_info(ReadContent)` para cargar archivos y `ob_set_info(WriteContent)` para guardar. Renderiza via `sys_write` con secuencias ANSI.
@@ -775,7 +827,7 @@ ObDirectory (namespace)
 | 18 | Syscall dispatch manual | A4.2 | SSDT | COMPLETED | SSDT table-based, permission check |
 | 19 | ELF loader sin validacion | A4.3 | Ldr | COMPLETED | Triple fault con binarios maliciosos |
 | 20 | APC ausente | A4.5 | APC | COMPLETED v0.34.0 | I/O completion en contexto incorrecto |
-| 21 | Input sin multiplexion | A4.4 | ConDrv | [PENDING] | No escalar a multiples terminales |
+| 21 | Input sin multiplexion | A4.4 | ConDrv | COMPLETED | -- |
 | 22 | FAT32 + NeoFS duplicados | A5.1 | IoStack | COMPLETED | Ambos usan IoStack para I/O |
 | 23 | Ob flat (no namespace) | NT5 | Ob | COMPLETED | Hardcode C:, sin symlinks |
 | 24 | SRM ausente | NT6 | Se | COMPLETED | SID, Token, ACL, SeAccessCheck |
@@ -841,12 +893,11 @@ Priorizados por impacto y dependencias:
 | 2 | **Device Tree + Resource Manager** | v0.46 | NT5, Driver Runtime | 600-800 lineas |
 | 3 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
 | 4 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
-| 5 | **Input subsystem redesign (A4.4)** | v0.51 | A4.7 | 800-1000 lineas |
-| 6 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
-| 7 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
-| 8 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
-| 9 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
-| 10 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
+| 5 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
+| 6 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
+| 7 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
+| 8 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
+| 9 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
 
 Items pequenos de baja prioridad pero alto valor:
 - **AI-1**: Actualizar enums ObInfoClass/ObSetInfoClass (~15 min)
