@@ -3,7 +3,7 @@ use crate::arch::x64::gdt::get_selectors;
 use crate::scheduler;
 use crate::arch::x64::cpu_local::{OFFSET_EXIT_RSP, OFFSET_EXIT_RIP, OFFSET_EXIT_RBX,
     OFFSET_EXIT_R12, OFFSET_EXIT_R13, OFFSET_EXIT_R14, OFFSET_EXIT_R15, OFFSET_EXIT_RBP};
-use core::sync::atomic::{AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 // ── Per-CPU exit trampoline ──────────────────────────────────────────────
 //
@@ -33,7 +33,7 @@ static mut EXIT_RBP: u64 = 0;
 
 #[no_mangle]
 static EXIT_NOW: AtomicU8 = AtomicU8::new(0);
-static mut WAIT_PID: u32 = 0;
+static WAIT_PID: AtomicU32 = AtomicU32::new(0);
 
 core::arch::global_asm!(
     ".global execute_usermode_asm",
@@ -138,7 +138,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
 }
 
 pub fn wait_for_process(pid: u32) {
-    unsafe { WAIT_PID = pid; }
+    WAIT_PID.store(pid, Ordering::SeqCst);
 
     let (entry, user_stack_top, kernel_stack_top) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
@@ -205,13 +205,13 @@ pub fn request_exit_to_kernel() {
 }
 
 pub fn current_wait_pid() -> u32 {
-    unsafe { WAIT_PID }
+    WAIT_PID.load(Ordering::SeqCst)
 }
 
 pub fn set_wait_pid(pid: u32) {
-    unsafe { WAIT_PID = pid; }
+    WAIT_PID.store(pid, Ordering::SeqCst);
 }
 
 pub fn clear_wait_pid() {
-    unsafe { WAIT_PID = 0; }
+    WAIT_PID.store(0, Ordering::SeqCst);
 }

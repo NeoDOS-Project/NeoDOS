@@ -2,6 +2,9 @@ use crate::arch::x64::paging;
 use crate::serial_println;
 use crate::globals;
 use crate::fs::vfs::{VfsNode, MODE_DIR, MODE_FILE};
+use spin::Mutex;
+use lazy_static::lazy_static;
+use alloc::vec::Vec;
 
 const NXL_REGION_BASE: u64 = 0x1e00_0000;
 const NXL_REGION_SIZE: u64 = 0x20_0000;
@@ -17,16 +20,21 @@ struct NxlSlot {
     name: [u8; 24],
 }
 
-static mut NXL_REGISTRY: [NxlSlot; NXL_SLOT_COUNT] = [
-    NxlSlot { loaded: false, base: 0x1e00_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e04_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e08_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e0c_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e10_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e14_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e18_0000, size: 0, name: [0u8; 24] },
-    NxlSlot { loaded: false, base: 0x1e1c_0000, size: 0, name: [0u8; 24] },
-];
+lazy_static! {
+    static ref NXL_REGISTRY: Mutex<[NxlSlot; NXL_SLOT_COUNT]> = {
+        const SLOT: NxlSlot = NxlSlot { loaded: false, base: 0, size: 0, name: [0u8; 24] };
+        Mutex::new([
+            NxlSlot { loaded: false, base: 0x1e00_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e04_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e08_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e0c_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e10_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e14_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e18_0000, size: 0, name: [0u8; 24] },
+            NxlSlot { loaded: false, base: 0x1e1c_0000, size: 0, name: [0u8; 24] },
+        ])
+    };
+}
 
 pub fn init_nxl_region() -> bool {
     serial_println!("[NXL] Initializing shared library region 0x{:x}..0x{:x}",
@@ -60,11 +68,9 @@ pub fn load_nxl() -> bool {
     }
 }
 
-static mut NXL_IMAGE_BUF: [u8; NXL_MAX_SIZE] = [0u8; NXL_MAX_SIZE];
-
 pub fn nxl_load(path: &str) -> Option<u64> {
-    let buf: &mut [u8] = unsafe { &mut NXL_IMAGE_BUF };
-    buf.fill(0);
+    let mut buf_vec: Vec<u8> = alloc::vec![0u8; NXL_MAX_SIZE];
+    let buf = buf_vec.as_mut_slice();
 
     let image_size = {
         let mut size = 0usize;
@@ -94,7 +100,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         size
     };
 
-    let data = unsafe { &*core::ptr::slice_from_raw_parts(NXL_IMAGE_BUF.as_ptr(), image_size) };
+    let data = &buf[..image_size];
 
     // Parse ELF to find the compiled vaddr base (first PT_LOAD vaddr aligned to slot boundary)
     let compiled_base = match elf_compiled_base(data) {
@@ -107,7 +113,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
 
     // Find a slot whose base matches the compiled base
     let slot_idx = find_slot_for_base(compiled_base)?;
-    let base = unsafe { NXL_REGISTRY[slot_idx].base };
+    let base = NXL_REGISTRY.lock()[slot_idx].base;
     serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
 
     let result = match crate::elf::load_elf(data, None, 0) {
@@ -124,20 +130,18 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
     }
 
-    unsafe {
-        NXL_REGISTRY[slot_idx] = NxlSlot {
-            loaded: true,
-            base,
-            size: image_size,
-            name: {
-                let mut n = [0u8; 24];
-                let b = path.as_bytes();
-                let l = core::cmp::min(b.len(), 23);
-                n[..l].copy_from_slice(&b[..l]);
-                n
-            },
-        };
-    }
+    NXL_REGISTRY.lock()[slot_idx] = NxlSlot {
+        loaded: true,
+        base,
+        size: image_size,
+        name: {
+            let mut n = [0u8; 24];
+            let b = path.as_bytes();
+            let l = core::cmp::min(b.len(), 23);
+            n[..l].copy_from_slice(&b[..l]);
+            n
+        },
+    };
 
     serial_println!("[NXL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
@@ -237,9 +241,7 @@ fn search_directory(
 
 /// Find a slot whose base address matches the given compiled_base.
 fn find_slot_for_base(compiled_base: u64) -> Option<usize> {
-    unsafe {
-        NXL_REGISTRY.iter().position(|s| s.base == compiled_base && !s.loaded)
-    }
+    NXL_REGISTRY.lock().iter().position(|s| s.base == compiled_base && !s.loaded)
 }
 
 /// Mark pages for an ELF segment with USER_ACCESSIBLE and WRITABLE (if PF_W).

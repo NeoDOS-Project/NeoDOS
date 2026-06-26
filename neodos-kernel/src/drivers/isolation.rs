@@ -21,6 +21,9 @@ use crate::arch::x64::paging::{split_2mb_page, HUGE_PAGE_SIZE};
 pub use crate::arch::x64::paging::PAGE_4K;
 use crate::hal;
 use x86_64::structures::paging::PageTableFlags;
+use spin::Mutex;
+use lazy_static::lazy_static;
+use alloc::vec::Vec;
 
 // ── Constants ──
 
@@ -74,7 +77,12 @@ const EMPTY_REGION: DriverMemoryRegion = DriverMemoryRegion {
     data_size: 0, bss_size: 0, driver_id: 0, in_use: false,
 };
 
-pub static mut ISOLATED_REGIONS: [DriverMemoryRegion; MAX_ISOLATED_DRIVERS] = [EMPTY_REGION; MAX_ISOLATED_DRIVERS];
+lazy_static! {
+    pub static ref ISOLATED_REGIONS: Mutex<[DriverMemoryRegion; MAX_ISOLATED_DRIVERS]> = {
+        const INIT: DriverMemoryRegion = EMPTY_REGION;
+        Mutex::new([INIT; MAX_ISOLATED_DRIVERS])
+    };
+}
 
 // ── Region helpers ──
 
@@ -85,12 +93,10 @@ pub fn is_in_isolated_region(virt: u64) -> bool {
 
 /// Check if a virtual address falls within a specific driver's allocated region.
 pub fn is_in_driver_region(virt: u64, driver_id: u32) -> bool {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter() {
-            if region.in_use && region.driver_id == driver_id {
-                if virt >= region.base && virt < region.base + region.size {
-                    return true;
-                }
+    for region in ISOLATED_REGIONS.lock().iter() {
+        if region.in_use && region.driver_id == driver_id {
+            if virt >= region.base && virt < region.base + region.size {
+                return true;
             }
         }
     }
@@ -99,11 +105,9 @@ pub fn is_in_driver_region(virt: u64, driver_id: u32) -> bool {
 
 /// Find which driver owns a given virtual address.
 pub fn driver_id_for_address(virt: u64) -> Option<u32> {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter() {
-            if region.in_use && virt >= region.base && virt < region.base + region.size {
-                return Some(region.driver_id);
-            }
+    for region in ISOLATED_REGIONS.lock().iter() {
+        if region.in_use && virt >= region.base && virt < region.base + region.size {
+            return Some(region.driver_id);
         }
     }
     None
@@ -131,26 +135,20 @@ pub fn validate_driver_ptr(
     // Allow pointers into the isolated driver region
     if is_in_driver_region(addr, driver_id) && is_in_driver_region(end.wrapping_sub(1), driver_id) {
         if writable {
-            // Check the pointer is not in RX/R-only sub-regions
-            // .text (base..base+text_size) should not be written to
-            // .rodata (base+text_size..base+text_size+rodata_size) should not be written to
-            unsafe {
-                for region in ISOLATED_REGIONS.iter() {
-                    if region.in_use && region.driver_id == driver_id {
-                        let text_end = region.base + region.text_size;
-                        let rodata_end = text_end + region.rodata_size;
-                        // If the range overlaps text or rodata, reject
-                        if addr < text_end && end > region.base {
-                            return Err("Write to read-only code section denied");
-                        }
-                        if addr >= text_end && addr < rodata_end {
-                            return Err("Write to read-only data section denied");
-                        }
-                        if addr < rodata_end && end > rodata_end {
-                            return Err("Write spans read-only data section");
-                        }
-                        break;
+            for region in ISOLATED_REGIONS.lock().iter() {
+                if region.in_use && region.driver_id == driver_id {
+                    let text_end = region.base + region.text_size;
+                    let rodata_end = text_end + region.rodata_size;
+                    if addr < text_end && end > region.base {
+                        return Err("Write to read-only code section denied");
                     }
+                    if addr >= text_end && addr < rodata_end {
+                        return Err("Write to read-only data section denied");
+                    }
+                    if addr < rodata_end && end > rodata_end {
+                        return Err("Write spans read-only data section");
+                    }
+                    break;
                 }
             }
         }
@@ -359,22 +357,21 @@ pub fn allocate_driver_slot(driver_id: u32, size: u64) -> Option<u64> {
         return None;
     }
 
-    unsafe {
-        for i in 0..MAX_ISOLATED_DRIVERS {
-            if !ISOLATED_REGIONS[i].in_use {
-                let base = DRIVER_ISO_BASE + i as u64 * DRIVER_SLOT_SIZE;
-                ISOLATED_REGIONS[i] = DriverMemoryRegion {
-                    base,
-                    size,
-                    text_size: 0,
-                    rodata_size: 0,
-                    data_size: 0,
-                    bss_size: 0,
-                    driver_id,
-                    in_use: true,
-                };
-                return Some(base);
-            }
+    let mut regions = ISOLATED_REGIONS.lock();
+    for i in 0..MAX_ISOLATED_DRIVERS {
+        if !regions[i].in_use {
+            let base = DRIVER_ISO_BASE + i as u64 * DRIVER_SLOT_SIZE;
+            regions[i] = DriverMemoryRegion {
+                base,
+                size,
+                text_size: 0,
+                rodata_size: 0,
+                data_size: 0,
+                bss_size: 0,
+                driver_id,
+                in_use: true,
+            };
+            return Some(base);
         }
     }
     None
@@ -388,15 +385,13 @@ pub fn set_driver_layout(
     data_size: u64,
     bss_size: u64,
 ) -> bool {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter_mut() {
-            if region.in_use && region.driver_id == driver_id {
-                region.text_size = text_size;
-                region.rodata_size = rodata_size;
-                region.data_size = data_size;
-                region.bss_size = bss_size;
-                return true;
-            }
+    for region in ISOLATED_REGIONS.lock().iter_mut() {
+        if region.in_use && region.driver_id == driver_id {
+            region.text_size = text_size;
+            region.rodata_size = rodata_size;
+            region.data_size = data_size;
+            region.bss_size = bss_size;
+            return true;
         }
     }
     false
@@ -404,27 +399,23 @@ pub fn set_driver_layout(
 
 /// Free a driver slot and release all allocated pages.
 pub fn free_driver_slot(driver_id: u32) {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter_mut() {
-            if region.in_use && region.driver_id == driver_id {
-                let start = region.base;
-                let end = region.base + DRIVER_SLOT_SIZE; // Free whole slot
-                free_isolated_range(start, end);
-                *region = EMPTY_REGION;
-                crate::serial_println!("[ISO] Freed driver slot: id={} @ 0x{:x}", driver_id, start);
-                return;
-            }
+    for region in ISOLATED_REGIONS.lock().iter_mut() {
+        if region.in_use && region.driver_id == driver_id {
+            let start = region.base;
+            let end = region.base + DRIVER_SLOT_SIZE;
+            free_isolated_range(start, end);
+            *region = EMPTY_REGION;
+            crate::serial_println!("[ISO] Freed driver slot: id={} @ 0x{:x}", driver_id, start);
+            return;
         }
     }
 }
 
 /// Get the base address of a driver in the isolated region.
 pub fn driver_base(driver_id: u32) -> Option<u64> {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter() {
-            if region.in_use && region.driver_id == driver_id {
-                return Some(region.base);
-            }
+    for region in ISOLATED_REGIONS.lock().iter() {
+        if region.in_use && region.driver_id == driver_id {
+            return Some(region.base);
         }
     }
     None
@@ -448,20 +439,17 @@ pub fn isolation_mode_str(mode: IsolationMode) -> &'static str {
     }
 }
 
-/// Iterator over all active isolated regions.
-pub fn iter_isolated_regions() -> core::iter::FilterMap<
-    core::slice::Iter<'static, DriverMemoryRegion>,
-    fn(&DriverMemoryRegion) -> Option<(u32, u64, u64)>,
-> {
-    unsafe {
-        ISOLATED_REGIONS.iter().filter_map(|r| {
+/// Snapshot of all active isolated regions.
+pub fn iter_isolated_regions() -> Vec<(u32, u64, u64)> {
+    ISOLATED_REGIONS.lock().iter()
+        .filter_map(|r| {
             if r.in_use {
                 Some((r.driver_id, r.base, r.size))
             } else {
                 None
             }
         })
-    }
+        .collect()
 }
 
 // ── Page fault integration for sandbox mode ──
@@ -491,13 +479,11 @@ pub fn handle_isolated_page_fault(virt: u64, _user: bool, _write: bool) -> bool 
         !hal::walk_ptes_4k(aligned).unwrap().flags().contains(PageTableFlags::PRESENT)
     {
         // Check which section this address falls in
-        let is_code = unsafe {
-            ISOLATED_REGIONS.iter().any(|r| {
-                r.in_use && r.driver_id == driver_id
-                    && aligned >= r.base
-                    && aligned < r.base + r.text_size
-            })
-        };
+        let is_code = ISOLATED_REGIONS.lock().iter().any(|r| {
+            r.in_use && r.driver_id == driver_id
+                && aligned >= r.base
+                && aligned < r.base + r.text_size
+        });
 
         let flags = if is_code { 0x0 } else { 0x2 }; // RX for code, RW for data
         match alloc_isolated_page(aligned, flags) {
@@ -577,14 +563,12 @@ pub fn validate_driver_data_ptr(ptr: *const u8, size: usize) -> Result<(), &'sta
         return Err("Pointer wraps");
     }
 
-    unsafe {
-        for region in ISOLATED_REGIONS.iter() {
-            if region.in_use && region.driver_id == driver_id {
-                let data_start = region.base + region.text_size + region.rodata_size;
-                let data_end = data_start + region.data_size + region.bss_size;
-                if addr >= data_start && end <= data_end {
-                    return Ok(());
-                }
+    for region in ISOLATED_REGIONS.lock().iter() {
+        if region.in_use && region.driver_id == driver_id {
+            let data_start = region.base + region.text_size + region.rodata_size;
+            let data_end = data_start + region.data_size + region.bss_size;
+            if addr >= data_start && end <= data_end {
+                return Ok(());
             }
         }
     }
@@ -595,16 +579,14 @@ pub fn validate_driver_data_ptr(ptr: *const u8, size: usize) -> Result<(), &'sta
 
 /// Format isolated region info for display (used by NDREG).
 pub fn format_isolation_info(driver_id: u32) -> alloc::string::String {
-    unsafe {
-        for region in ISOLATED_REGIONS.iter() {
-            if region.in_use && region.driver_id == driver_id {
-                return alloc::format!(
-                    "ISO @ 0x{:x} ({} KB): .text={}, .rodata={}, .data={}, .bss={}",
-                    region.base, region.size / 1024,
-                    region.text_size, region.rodata_size,
-                    region.data_size, region.bss_size,
-                );
-            }
+    for region in ISOLATED_REGIONS.lock().iter() {
+        if region.in_use && region.driver_id == driver_id {
+            return alloc::format!(
+                "ISO @ 0x{:x} ({} KB): .text={}, .rodata={}, .data={}, .bss={}",
+                region.base, region.size / 1024,
+                region.text_size, region.rodata_size,
+                region.data_size, region.bss_size,
+            );
         }
     }
     alloc::string::String::from("Not isolated")
@@ -679,15 +661,13 @@ pub fn register_isolation_tests() {
         test_true!(allocate_driver_slot(2005, 0x100000).is_some());
         test_true!(set_driver_layout(2005, 0x4000, 0x2000, 0x8000, 0x1000));
 
-        unsafe {
-            let region = ISOLATED_REGIONS.iter().find(|r| r.in_use && r.driver_id == 2005);
-            test_ne!(region, None);
-            let r = region.unwrap();
-            test_eq!(r.text_size, 0x4000);
-            test_eq!(r.rodata_size, 0x2000);
-            test_eq!(r.data_size, 0x8000);
-            test_eq!(r.bss_size, 0x1000);
-        }
+        let region = ISOLATED_REGIONS.lock().iter().find(|r| r.in_use && r.driver_id == 2005).copied();
+        test_ne!(region, None);
+        let r = region.unwrap();
+        test_eq!(r.text_size, 0x4000);
+        test_eq!(r.rodata_size, 0x2000);
+        test_eq!(r.data_size, 0x8000);
+        test_eq!(r.bss_size, 0x1000);
 
         free_driver_slot(2005);
     });
@@ -733,9 +713,7 @@ pub fn register_isolation_tests() {
 
     test_case!("iso_driver_max_slots", {
         // Count already-used slots (boot drivers may occupy some slots)
-        let used_before = unsafe {
-            ISOLATED_REGIONS.iter().filter(|r| r.in_use).count()
-        };
+        let used_before = ISOLATED_REGIONS.lock().iter().filter(|r| r.in_use).count();
         let available = MAX_ISOLATED_DRIVERS - used_before;
         let mut ids = alloc::vec::Vec::new();
 

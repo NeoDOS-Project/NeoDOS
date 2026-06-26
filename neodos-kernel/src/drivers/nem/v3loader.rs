@@ -403,12 +403,10 @@ pub fn bind_isolated_driver(driver_id: u32, result: &NemV3LoadResult) {
     // free the old slot and re-allocate with the real ID.
     // Since re-allocation with the same address isn't directly supported,
     // we directly update the region table.
-    unsafe {
-        for region in isolation::ISOLATED_REGIONS.iter_mut() {
-            if region.in_use && region.driver_id == old_id && region.base == slot_base {
-                region.driver_id = driver_id;
-                break;
-            }
+    for region in isolation::ISOLATED_REGIONS.lock().iter_mut() {
+        if region.in_use && region.driver_id == old_id && region.base == slot_base {
+            region.driver_id = driver_id;
+            break;
         }
     }
 
