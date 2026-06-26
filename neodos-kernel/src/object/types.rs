@@ -23,6 +23,7 @@ pub enum ObType {
     Event = 13,
     Semaphore = 14,
     Timer = 15,
+    Thread = 16,
 }
 
 impl ObType {
@@ -44,6 +45,7 @@ impl ObType {
             ObType::Event => "EVENT",
             ObType::Semaphore => "SEMAPHORE",
             ObType::Timer => "TIMER",
+            ObType::Thread => "THREAD",
         }
     }
 }

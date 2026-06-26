@@ -668,4 +668,52 @@ pub fn register_object_tests() {
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), ObError::NotFound);
     });
+
+    // ── OBF-03: ObType::Thread ──
+
+    test_case!("ob_type_thread_enum", {
+        let t = ObType::Thread;
+        test_eq!(t as u32, 16);
+        test_eq!(t.to_str(), "THREAD");
+    });
+
+    // ── OBF-01: ObInfoClass variants ──
+
+    test_case!("ob_info_class_variants", {
+        test_eq!(crate::object::types::ObInfoClass::CpuInfo as u32, 7);
+        test_eq!(crate::object::types::ObInfoClass::ReadContent as u32, 15);
+        test_eq!(crate::object::types::ObInfoClass::VolumeLabel as u32, 16);
+        test_eq!(crate::object::types::ObInfoClass::Basic as u32, 0);
+        test_eq!(crate::object::types::ObInfoClass::Process as u32, 3);
+    });
+
+    // ── OBF-02: ObSetInfoClass variants ──
+
+    test_case!("ob_set_info_class_variants", {
+        test_eq!(crate::object::types::ObSetInfoClass::ProcessTerminate as u32, 4);
+        test_eq!(crate::object::types::ObSetInfoClass::VfsRename as u32, 6);
+        test_eq!(crate::object::types::ObSetInfoClass::WriteContent as u32, 7);
+        test_eq!(crate::object::types::ObSetInfoClass::SetCwd as u32, 8);
+        test_eq!(crate::object::types::ObSetInfoClass::SetVolumeLabel as u32, 9);
+        test_eq!(crate::object::types::ObSetInfoClass::ProcessPriority as u32, 0);
+    });
+
+    // ── OBF-04: Thread ObObject lifecycle ──
+
+    test_case!("ob_thread_create_and_destroy", {
+        let id = ob_create_object(ObType::Thread, "\\Ob\\Thread\\42", 42, 0, None).unwrap();
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.obj_type, ObType::Thread);
+        test_eq!(obj.native_id, 42);
+        ob_destroy_object(id).unwrap();
+    });
+
+    test_case!("ob_thread_type_in_enum_snapshot", {
+        let id = ob_create_object(ObType::Thread, "\\Ob\\Thread\\99", 99, 0, None).unwrap();
+        let snap = ob_enum_snapshot();
+        let found = snap.iter().find(|s| s.id == id).unwrap();
+        test_eq!(found.obj_type, ObType::Thread);
+        test_eq!(found.native_id, 99);
+        ob_destroy_object(id).unwrap();
+    });
 }

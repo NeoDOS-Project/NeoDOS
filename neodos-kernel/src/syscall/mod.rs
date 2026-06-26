@@ -174,7 +174,7 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-        10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
+        10, 11, 13, 16, 18, 19, 20, 21,
         29,
         40, 41, 42, 47, 53, 55, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
@@ -2394,7 +2394,7 @@ fn handler_ob_create(regs: Registers) -> u64 {
     let path_ptr = regs.rbx;
     let obj_type_val = regs.rcx as u32;
     let fds_out = regs.rdx;
-    let _attrs = regs.r8 as u32;
+    let attrs = regs.r8;
 
     if path_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
@@ -2415,6 +2415,7 @@ fn handler_ob_create(regs: Registers) -> u64 {
         4 => crate::object::ObType::Pipe,
         11 => crate::object::ObType::Directory,
         13 => crate::object::ObType::Event,
+        16 => crate::object::ObType::Thread,
         _ => return err_to_u64(SyscallError::Inval),
     };
 
@@ -2511,9 +2512,9 @@ fn handler_ob_create(regs: Registers) -> u64 {
             }
         }
         crate::object::ObType::Process => {
-            let stdin_fd = (_attrs & 0xFF) as u8;
-            let stdout_fd = ((_attrs >> 8) & 0xFF) as u8;
-            let stderr_fd = ((_attrs >> 16) & 0xFF) as u8;
+            let stdin_fd = (attrs & 0xFF) as u8;
+            let stdout_fd = ((attrs >> 8) & 0xFF) as u8;
+            let stderr_fd = ((attrs >> 16) & 0xFF) as u8;
 
             // Read binary from VFS
             const MAX_BIN: usize = 65536;
@@ -2706,6 +2707,66 @@ fn handler_ob_create(regs: Registers) -> u64 {
                 Some(fd) => {
                     fd as u64
                 }
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Thread => {
+            let entry = attrs;
+            let tid = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                let pid = lock.current_pid();
+                if pid == 0 {
+                    return None;
+                }
+                let stack = if let Some(ep) = lock.find_eprocess(pid) {
+                    if let Some(slot_idx) = ep.user_slot {
+                        let slot_size = 0x20000u64;
+                        let max_bin = 0x10000u64;
+                        let user_stack_size = 0x10000u64;
+                        let stack_top = crate::arch::x64::paging::USER_BASE
+                            + slot_idx as u64 * slot_size
+                            + max_bin + user_stack_size;
+                        stack_top - 0x1000
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+                if stack == 0 {
+                    return None;
+                }
+                lock.add_thread_to_process(pid, entry, stack)
+            });
+            let tid = match tid {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::NoMem),
+            };
+            let ns_path = alloc::format!("\\Ob\\Thread\\{}", tid);
+            let ob_id = match crate::object::ob_create_object(
+                crate::object::ObType::Thread, &ns_path,
+                tid as u64, 0, None,
+            ) {
+                Ok(id) => id,
+                Err(_) => return err_to_u64(SyscallError::NoMem),
+            };
+            let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
                 None => {
                     let _ = crate::object::ob_close_object(ob_id);
                     err_to_u64(SyscallError::NoMem)
@@ -3485,7 +3546,7 @@ _ if info_class == ObSetInfoClass::ThreadPriority as u32 => {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),
             };
-            if obj.obj_type != crate::object::ObType::Process {
+            if obj.obj_type != crate::object::ObType::Process && obj.obj_type != crate::object::ObType::Thread {
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 4 {
@@ -3495,16 +3556,22 @@ _ if info_class == ObSetInfoClass::ThreadPriority as u32 => {
             if priority > 3 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let pid = obj.native_id as u32;
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut lock = s.lock();
-                // Set priority for all threads of this process
-                for kt in lock.kthreads.iter_mut() {
-                    if let Some(k) = kt {
-                        if k.pid == pid {
-                            k.priority = priority as u8;
+                if obj.obj_type == crate::object::ObType::Process {
+                    let pid = obj.native_id as u32;
+                    for kt in lock.kthreads.iter_mut() {
+                        if let Some(k) = kt {
+                            if k.pid == pid {
+                                k.priority = priority as u8;
+                            }
                         }
+                    }
+                } else {
+                    let tid = obj.native_id as u32;
+                    if let Some(k) = lock.find_kthread_mut(tid) {
+                        k.priority = priority as u8;
                     }
                 }
             });
@@ -3931,6 +3998,10 @@ fn handler_ob_wait(regs: Registers) -> u64 {
         crate::object::ObType::Timer => {
             crate::kwait::WaitReason::Timer { timeout_ms: 0 }
         }
+        crate::object::ObType::Thread => {
+            let tid = obj.native_id as u32;
+            crate::kwait::WaitReason::ThreadJoin { tid }
+        }
         _ => return err_to_u64(SyscallError::NoSys),
     };
 
@@ -4056,8 +4127,7 @@ lazy_static! {
         t[19] = Some(handler_mmap as SyscallFn);
         t[20] = Some(handler_munmap as SyscallFn);
         t[21] = Some(handler_loadlib as SyscallFn);
-        t[22] = Some(handler_thread_create as SyscallFn);
-        t[23] = Some(handler_thread_join as SyscallFn);
+        // RAX 22, 23 (thread_create/join) removed — use ob_create(Thread)/ob_wait(Thread) instead
         t[29] = Some(handler_set_exception_handler as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
@@ -4097,8 +4167,7 @@ lazy_static! {
         t[19] = SyscallPermission::user();
         t[20] = SyscallPermission::user();
         t[21] = SyscallPermission::user();
-        t[22] = SyscallPermission::user();
-        t[23] = SyscallPermission::user();
+        // RAX 22, 23 (thread_create/join) removed — use ob_create(Thread)/ob_wait(Thread)
         t[29] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
@@ -4241,7 +4310,7 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
             0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-            10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
+            10, 11, 13, 16, 18, 19, 20, 21,
             29, 40, 41, 42, 47,
             53, 55, 58, 59,
             60, 61, 62, 63, 64, 65, 66,
@@ -4249,7 +4318,9 @@ pub fn register_syscall_table_tests() {
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
-        // All other slots are free (no reserved/migrated)
+        // RAX 22, 23 (thread_create/join) were removed — use ob_create(Thread)/ob_wait(Thread)
+        test_true!(SYSCALL_TABLE[22].is_none());
+        test_true!(SYSCALL_TABLE[23].is_none());
         test_true!(SYSCALL_TABLE[12].is_none());
         test_true!(SYSCALL_TABLE[99].is_none());
         test_true!(SYSCALL_TABLE[255].is_none());
@@ -4271,8 +4342,8 @@ pub fn register_syscall_table_tests() {
         // Verify that existing syscalls work through SSDT.
         test_true!(SYSCALL_TABLE[0].is_some());   // exit
         test_true!(SYSCALL_TABLE[1].is_some());   // write
-        test_true!(SYSCALL_TABLE[22].is_some());  // thread_create
-        test_true!(SYSCALL_TABLE[23].is_some());  // thread_join
+        test_true!(SYSCALL_TABLE[22].is_none());  // thread_create (removed, use ob_create(Thread))
+        test_true!(SYSCALL_TABLE[23].is_none());  // thread_join (removed, use ob_wait(Thread))
 
         // Verify permission entries exist
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);

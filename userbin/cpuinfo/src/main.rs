@@ -2,7 +2,7 @@
 #![no_main]
 
 use libneodos::println;
-use libneodos::syscall::{self, ob_access, ObInfoClass, sys_ob_open, sys_ob_query_info, sys_close};
+use libneodos::syscall::{self, ob_access, ObInfoClass, sys_ob_open, sys_ob_query_info, sys_close, sys_getpid, ObProcessInfo};
 use core::mem::size_of;
 
 #[repr(C)]
@@ -159,6 +159,48 @@ pub extern "C" fn _start() -> ! {
 
     println!();
     println!("  {} features detected", detected);
+    println!("======================================================");
+    println!();
+    println!("======================================================");
+    println!("              PROCESS INFORMATION");
+    println!("======================================================");
+
+    let pid = sys_getpid();
+    println!("PID:          {}", pid);
+
+    let mut path_buf = [0u8; 64];
+    let prefix = b"\\Ob\\Process\\";
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+    let mut pos = prefix.len();
+    let mut n = pid;
+    let mut digits = [0u8; 10];
+    let mut nd = 0;
+    if n == 0 { digits[nd] = b'0'; nd = 1; }
+    while n > 0 {
+        digits[nd] = b'0' + (n % 10) as u8;
+        n /= 10;
+        nd += 1;
+    }
+    for i in (0..nd).rev() {
+        path_buf[pos] = digits[i];
+        pos += 1;
+    }
+    let ob_path = unsafe { core::str::from_utf8_unchecked(&path_buf[..pos]) };
+
+    if let Ok(fd) = sys_ob_open(ob_path, ob_access::READ) {
+        let mut pi: ObProcessInfo = unsafe { core::mem::zeroed() };
+        let buf = unsafe {
+            core::slice::from_raw_parts_mut(&mut pi as *mut ObProcessInfo as *mut u8, size_of::<ObProcessInfo>())
+        };
+        if sys_ob_query_info(fd, ObInfoClass::Process, buf).is_ok() {
+            println!("Parent PID:   {}", pi.parent_pid);
+            println!("Priority:     {} ({})", pi.priority, pi.priority_str());
+            println!("Threads:      {}", pi.thread_count);
+            println!("State:        {}", pi.state_str());
+        }
+        let _ = sys_close(fd);
+    }
+
     println!("======================================================");
 
     syscall::sys_exit(0)

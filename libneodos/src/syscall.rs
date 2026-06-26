@@ -704,6 +704,7 @@ pub mod ob_type {
     pub const PIPE: u32 = 4;
     pub const DIRECTORY: u32 = 11;
     pub const EVENT: u32 = 13;
+    pub const THREAD: u32 = 16;
 }
 
 pub mod ob_set_info_class {
@@ -947,6 +948,30 @@ pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
     let fd_ptr = handles.as_ptr() as u64;
     let r = unsafe { ob_syscall_3!(65, 1u64, fd_ptr, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// ob_thread_create: create a thread in the current process via ob_create(Thread).
+/// `path` = Ob namespace path (e.g. "\\WorkerThread")
+/// `entry` = entry point address for the new thread
+/// Returns fd on success.
+pub fn ob_thread_create(path: &str, entry: u64) -> Result<u8, i64> {
+    sys_ob_create(path, ob_type::THREAD, None, entry)
+}
+
+/// ob_thread_join: wait for a thread to exit via ob_wait(Thread).
+/// `thread_fd` = fd from ob_thread_create.
+pub fn ob_thread_join(thread_fd: u8) -> Result<(), i64> {
+    sys_ob_wait(thread_fd)
+}
+
+/// ob_set_thread_priority: set scheduling priority for a thread via ob_set_info.
+/// `thread_fd` = fd from ob_thread_create (or ob_open on a Thread object).
+/// `priority` = 0 (HIGH) .. 3 (IDLE).
+pub fn ob_set_thread_priority(thread_fd: u8, priority: u8) -> Result<(), i64> {
+    if priority > 3 { return Err(EINVAL); }
+    let p = [priority as u32];
+    let buf = unsafe { core::slice::from_raw_parts(p.as_ptr() as *const u8, 4) };
+    sys_ob_set_info(thread_fd, ob_set_info_class::THREAD_PRIORITY, buf)
 }
 
 /// sys_ob_destroy (RAX=66): destroy/delete an object by fd.
