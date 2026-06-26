@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.44.3
+v0.44.3 (auditoría arquitectónica completada — ver `docs/AUDIT_REPORT.md`)
 
 ## Architecture Governance
 
@@ -30,11 +30,19 @@ prioridades actuales son:
 7. ~~**v1.0**: **Security integration in ObOpen**, **Full Ob API stable**~~
    - ~~**OB-030 (SeAccessCheck en todas las rutas)**~~ COMPLETADO en v0.44.2
    - **OB-032 (Documentación de API)** 🔶 PARCIAL
-8. **v0.47**: Networking (TCP/IP stack)
+8. **v0.44.4**: **Fix 3 bugs SMP-unsafe** (WAIT_PID, ISOLATED_REGIONS, NXL_REGISTRY)
+9. **v0.44.5**: **Actualizar documentación** (README, ARCHITECTURE_SOURCE_OF_TRUTH)
+10. **v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)
+11. **v0.44.7**: **Arreglos arquitectónicos menores** (InfoClass enums, exports duplicados, TOCTOU race, unificar errores)
+12. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
 existentes; si esas abstracciones son frágiles, la feature será frágil.
+
+**Regla de oro 2 (auditoría v0.44.3):** Los bugs SMP-unsafe (WAIT_PID,
+ISOLATED_REGIONS, NXL_REGISTRY) tienen prioridad CRÍTICA sobre cualquier
+otra tarea. Estos 3 bugs deben corregirse antes de continuar con la Fase 2.
 
 ## Build & Run
 

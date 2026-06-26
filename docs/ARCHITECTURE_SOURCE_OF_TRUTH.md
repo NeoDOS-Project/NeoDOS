@@ -18,6 +18,7 @@ bootloader → kernel → NeoInit (PID 1) startup sequence.
 - **NeoInit (PID 1)**: userland supervisor, started by kernel after boot.
 - **Interrupts**: IOAPIC (MADT-detected) replacing legacy PIC, MSI-X for PCIe devices, APIC timer, INT 0x80 for syscalls. `ack_irq()` sends APIC EOI for all vectors when IOAPIC active, skipping PIC PIO EOI.
 - **Command execution**: all interactive commands MUST run in Ring 3 as `.NXE`/`.BAT` user binaries. Ring 0 may only perform bootstrap, validation, loading, and kernel-internal maintenance; it MUST NOT host user-facing shell commands.
+- **Virtual Terminals**: 4 VTs (VT0–VT3) with independent input queues, console state, and shadow buffers. Alt+F1–F4 switches between VTs. Each process has a `vt_num` inherited from its parent. See §11.
 
 ---
 
@@ -458,32 +459,84 @@ was intentional).
 
 ---
 
-## 11. TTY / Terminal Model Contract
+## 11. Virtual Terminal (VT) Model Contract
 
-### 11.1 TTY Lifecycle
+### 11.1 VT Architecture (A4.4)
 
-```
-Unclaimed ──→ Claimed (driver binds via EventBus)
-Claimed ──→ Active (input/output flow enabled)
-Active ──→ Drained (device disconnect / driver unload)
-Drained ──→ Unclaimed (resources cleaned)
-```
+**Rule 11.1.1**: The kernel manages exactly 4 Virtual Terminals (VT0–VT3), each with:
+- Independent `VtInputQueue` (4 KB lock-free ring buffer accessed via atomics)
+- Independent console state (`ConsoleState`: cursor row/col, foreground/background color, bold, cursor visibility)
+- Independent shadow buffer (`VtShadowBuffer`: 160×50 char array for framebuffer redraw)
+- Foreground PID tracking (which process receives keyboard input when this VT is active)
 
-**Rule 11.1.1**: A TTY is identified by `device_id` matching the keyboard/graphics driver.
-**Rule 11.1.2**: Input flow: PS/2 IRQ1 → lock-free ring buffer (1024 bytes) → event bus
-(`KEYBOARD_INPUT` type) → TTY subscriber → shell input loop.
-**Rule 11.1.3**: Output flow: shell write → `hst_write(device_id, buf)` → framebuffer/serial.
-**Rule 11.1.4**: There is exactly one active TTY at any time. Switching requires event
-(`KEYB_LAYOUT` type 9) or explicit command.
+**Rule 11.1.2**: `InputManager` (global singleton in `src/input/manager.rs`) owns all VT state:
+- `active_vt: AtomicUsize` — which VT is currently displayed
+- `vt_queues[4]` — per-VT input ring buffers
+- `vt_states[4]` — per-VT console state snapshots
+- `vt_shadow[4]` — per-VT framebuffer shadow buffers
 
-### 11.2 Keyboard Layout
+### 11.2 Input Flow
 
-**Rule 11.2.1**: The PS/2 keyboard driver stores scan code → ASCII tables generated at
+**Rule 11.2.1**: Input flow: PS/2 IRQ1 → scancode → event bus (`EVENT_KEYBOARD_INPUT`) →
+NEM ps2kbd driver translates scancode to ASCII → `hst_push_input_byte(byte)` →
+`VtInputQueue::push(byte)` on the **currently active VT's queue**.
+
+**Rule 11.2.2**: `sys_read(fd=0)` reads from the **calling process's VT queue**, determined by
+`eprocess.vt_num`. Each process has a `vt_num` field (u8) inherited from its parent at
+spawn time.
+
+**Rule 11.2.3**: The keyboard layout tables (US index 0, SP index 1) produce `u16` Unicode
+codepoints from scancodes. Layout switching is via event bus (`EVENT_KEYB_LAYOUT` type 9).
+
+**Rule 11.2.4**: The input system produces sentinel bytes `0x01` (up arrow) and `0x02`
+(down arrow) for shell history navigation.
+
+### 11.3 Output Flow
+
+**Rule 11.3.1**: `sys_write(fd=1, buf)` writes to the physical framebuffer via the
+console module. The console writes characters to both the framebuffer AND the active VT's
+shadow buffer (`VtShadowBuffer.chars[row][col]`).
+
+**Rule 11.3.2**: When the calling process's `vt_num` does not match the active VT, characters
+are written only to the shadow buffer, not to the physical framebuffer. This prevents
+inactive VT processes from corrupting the visible display.
+
+### 11.4 VT Switching
+
+**Rule 11.4.1**: VT switching is triggered by Alt+F1–F4 in the PS/2 IRQ1 handler:
+- Alt+F1 → VT0 (scancode 0x3B)
+- Alt+F2 → VT1 (scancode 0x3C)
+- Alt+F3 → VT2 (scancode 0x3D)
+- Alt+F4 → VT3 (scancode 0x3E)
+
+**Rule 11.4.2**: On VT switch, the kernel:
+1. Saves the current VT's `ConsoleState` (cursor, colors, visibility)
+2. Restores the target VT's saved `ConsoleState`
+3. Clears the physical framebuffer
+4. Redraws all non-zero characters from the target VT's `VtShadowBuffer`
+
+**Rule 11.4.3**: VT switching does NOT alter the foreground process or scheduler state.
+The process on the new VT remains in whatever state it was (Running, Ready, Blocked).
+
+### 11.5 Per-Process VT Association
+
+**Rule 11.5.1**: Every `Eprocess` has a `vt_num: u8` field (default 0). This is inherited
+from the parent process at spawn time in `add_ring3_process()`.
+
+**Rule 11.5.2**: A process can read its VT number by opening `\Global\Info\VtInfo` and
+either reading the file content (returns `[vt_num, active_vt, ...]`) or calling
+`ob_query_info`.
+
+**Rule 11.5.3**: A process can change its own VT number by opening `\Global\Info\VtInfo`
+with WRITE access and calling `ob_set_info(fd, 17, &[new_vt])`.
+This affects which VT queue `sys_read(fd=0)` reads from for that process.
+
+### 11.6 Keyboard Layout
+
+**Rule 11.6.1**: The PS/2 keyboard driver stores scan code → ASCII tables generated at
 build time from `.klc` files. Two layouts: US (index 0), SP (index 1, default).
-**Rule 11.2.2**: Layout switching is via Event Bus (`EVENT_KEYB_LAYOUT` type 9) sent by
+**Rule 11.6.2**: Layout switching is via Event Bus (`EVENT_KEYB_LAYOUT` type 9) sent by
 the `KEYB` shell command.
-**Rule 11.2.3**: The input system produces sentinel bytes `0x01` (up arrow) and `0x02`
-(down arrow) for history navigation.
 
 ---
 

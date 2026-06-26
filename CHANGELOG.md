@@ -7,6 +7,7 @@
 - **B4.5 Virtual Terminals** — Console state save/restore per VT (`ConsoleState`), framebuffer shadow redraw on switch (`VtShadowBuffer`). `\Global\Info\VtInfo` Ob object for reading/setting VT number.
 - **Syscall 11 (readfile) restored** — Re-registered in SSDT for NXL `sys_readfile` compatibility.
 - **8 VT tests** — input_vt_switch_framebuffer, input_vt_independent_queues, input_vt_rapid_switching, input_4vt_concurrent_stress, input_event_bus_dispatch_vt, vt_switch_alt_f1_f2, vt_independent_input, vt_framebuffer_swap.
+- **docs/AUDIT_REPORT.md** — Comprehensive architectural audit covering 11 areas: architecture, kernel core, syscalls, Ob, URN, userland, drivers, VFS, documentation, testing. Identifies 3 critical SMP-unsafe bugs, 7 architectural issues, and 4 documentation gaps.
 
 ### Changed
 - **`src/input.rs`** → `src/input/` directory (mod.rs, vt.rs, manager.rs)

@@ -8,7 +8,7 @@
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Ultima revision: Junio 2026.
 
-**Progreso:** 169 / ~177 items completados (+6 planificados: v0.46+ milestones). Proximo milestone: **v0.46** (Device Tree, VirtIO).
+**Progreso:** 169 / ~186 items completados (+17 planificados: v0.44.4-v0.50). Proximo milestone: **v0.44.4** (Fix 3 bugs SMP-unsafe).
 
 ---
 
@@ -885,25 +885,30 @@ Actualmente `ObError` tiene su propio conjunto de codigos (-1 a -9), y `SyscallE
 
 ## Recommended Next Steps
 
-Priorizados por impacto y dependencias:
+Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 
 | Prioridad | Item | Fase | Dependencias | Esfuerzo estimado |
 |-----------|------|------|-------------|-------------------|
-| 1 | **VirtIO block driver (A5.2)** | v0.46 | A2.1 (ECAM) | 400-500 lineas |
-| 2 | **Device Tree + Resource Manager** | v0.46 | NT5, Driver Runtime | 600-800 lineas |
-| 3 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
-| 4 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
-| 5 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
-| 6 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
-| 7 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
-| 8 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
-| 9 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
-
-Items pequenos de baja prioridad pero alto valor:
-- **AI-1**: Actualizar enums ObInfoClass/ObSetInfoClass (~15 min)
-- **CQ1**: Reorganizar libneodos-nxl en modulos (~2 horas)
-- **AI-3**: Evaluar lock contention en ObObjectTable (~1 dia)
-- **AI-4**: Unificar codigos de error (~1 dia)
+| 0 | **CB1: Fix WAIT_PID SMP-unsafe** | v0.44.4 | KWait | 2-3 horas |
+| 0 | **CB2: Fix ISOLATED_REGIONS sin sync** | v0.44.4 | -- | 1 hora |
+| 0 | **CB3: Fix NXL_REGISTRY sin sync** | v0.44.4 | -- | 30 min |
+| 1 | **DH1: Actualizar README** | v0.44.5 | -- | 30 min |
+| 2 | **DH2: Corregir ARCHITECTURE_SOURCE_OF_TRUTH** | v0.44.5 | -- | 1 hora |
+| 3 | **DH3: Completar libneodos wrappers** | v0.44.6 | -- | 3-4 horas |
+| 4 | **AI-1: Completar ObInfoClass/ObSetInfoClass enums** | v0.44.7 | -- | 15 min |
+| 5 | **AI-4: Arreglar TOCTOU race en kobj_register** | v0.44.7 | -- | 30 min |
+| 6 | **AI-2: Consolidar exports duplicados** | v0.44.7 | -- | 1 hora |
+| 7 | **AI-3: Unificar codigos de error** | v0.44.7 | -- | 1 dia |
+| 8 | **AI-5/CQ1: Reorganizar libneodos-nxl** | v0.44.8 | -- | 2 horas |
+| 9 | **VirtIO block driver (A5.2)** | v0.46 | A2.1 (ECAM) | 400-500 lineas |
+| 10 | **Device Tree + Resource Manager** | v0.46 | NT5, Driver Runtime | 600-800 lineas |
+| 11 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
+| 12 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
+| 13 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
+| 14 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
+| 15 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
+| 16 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
+| 17 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
 
 ---
 

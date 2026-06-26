@@ -1,7 +1,7 @@
 # NeoDOS — Un Sistema Operativo Moderno en Rust para x86-64
 
-[![Version](https://img.shields.io/badge/version-v0.39.11-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-463-green.svg)](neodos-kernel/src/testing.rs)
+[![Version](https://img.shields.io/badge/version-v0.44.3-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-528-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
 
 NeoDOS es un sistema operativo de 64 bits escrito en Rust con arquitectura híbrida: kernel monolítico con subsistema de drivers aislados estilo microkernel. Arranca en UEFI, soporta SMP, tiene un planificador prioritario estilo NT, drivers con certificación y capacidades, un sistema de archivos propio, y un modelo de seguridad ACL-based.
@@ -22,7 +22,7 @@ El kernel se organiza en 5 capas verticales:
 2. **HAL v0.4** — raw/safe split, 26 primitivas extern "C", asm confinado
 3. **System Services** — scheduler (4 prioridades, aging, work stealing), memory (buddy+slab, demand paging), KOBJ, VFS, IPC/pipes, IRP async I/O, Event Bus, seguridad NT6
 4. **NEM Driver Runtime** — pipeline de certificación (8 estados), capacidades (12 flags), aislamiento X4 (16 slots × 1 MB), ABI versionado
-5. **Syscall SSDT** — 36 syscalls, tabla de 256 slots, O(1) dispatch, tabla de permisos separada
+5. **Syscall SSDT** — 66 syscalls (40 activos + 26 legacy migrados a Ob), tabla de 256 slots, O(1) dispatch, tabla de permisos separada
 
 ---
 
@@ -30,9 +30,12 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 |---------|--------|
-| **Kernel** | v0.39.11 — 469 tests, 36 syscalls, 11 fases de boot |
-| **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) |
-| **User-mode** | NeoShell Ring 3, 23 binarios .NXE, 3 DLLs .NXL |
+| **Kernel** | v0.44.3 — 528 tests, 66 syscalls (40 SSDT activos), 13 fases de boot |
+| **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
+| **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
+| **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |
+| **Input** | 4 Virtual Terminals (Alt+F1-F4), per-VT input queues, shadow buffers |
+| **Virtual Terminals** | Console state save/restore per VT, framebuffer shadow redraw |
 | **SMP** | 16 CPUs, per-CPU KPRCB, IPI (reschedule, TLB shootdown, call-function) |
 | **Seguridad** | NT6 SRM: SID, Token, ACL, ACE, SeAccessCheck |
 | **Rendimiento** | HPET → APIC timer 1 KHz, slab con per-CPU hot cache, work stealing |
@@ -55,7 +58,8 @@ python3 scripts/auto_test.py             # Test runner automático headless
 
 | Documento | Descripción |
 |-----------|-------------|
-| [Visión Arquitectónica](docs/ARCHITECTURAL_VISION.md) | **NUEVO** — Plan director, diagnóstico, roadmap v0.40→v1.0 |
+| [Visión Arquitectónica](docs/ARCHITECTURAL_VISION.md) | Plan director, diagnóstico, roadmap v0.40→v1.0 |
+| [Auditoría Arquitectónica](docs/AUDIT_REPORT.md) | **NUEVO** — Análisis completo 11 áreas, bugs críticos, roadmap |
 | [Arquitectura](docs/ARCHITECTURE.md) | Arquitectura actual del sistema |
 | [Source of Truth](docs/ARCHITECTURE_SOURCE_OF_TRUTH.md) | Invariantes y contratos arquitectónicos |
 | [Kernel](docs/KERNEL.md) | Especificación del kernel |
