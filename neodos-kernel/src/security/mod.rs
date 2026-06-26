@@ -139,17 +139,17 @@ pub fn register_security_tests() {
 
     test_case!("se_admin_required", {
         let (tx, _rx) = {
-            let perm = crate::syscall::SYSCALL_PERMISSIONS[50];
+            let perm = crate::syscall::SYSCALL_PERMISSIONS[58];
             (perm.admin, perm.ring_min)
         };
-        test_true!(tx);  // syscall 50 requires admin
+        test_true!(tx);  // syscall 58 (driver_unload) requires admin
     });
 
     test_case!("se_user_denied_admin_syscall", {
         let user_token = Token::new_user();
         test_true!(!user_token.is_admin_token());
 
-        let result = crate::syscall::check_syscall_permission(50, false);
+        let result = crate::syscall::check_syscall_permission(58, false);
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), crate::syscall::err_to_u64(crate::syscall::SyscallError::Perm));
     });

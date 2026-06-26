@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.44.7 — 2026-06-27
+
+### Added
+- **ObInfoClass enums completados** — `CpuInfo=7`, `ReadContent=15`, `VolumeLabel=16` añadidos a `ObInfoClass` (kernel + libneodos).
+- **ObSetInfoClass enums completados** — `ProcessTerminate=4`, `VfsRename=6`, `WriteContent=7`, `SetCwd=8`, `SetVolumeLabel=9` añadidos.
+- **KWait integration in waitpid** — `handler_waitpid` now uses `kwait_block(ChildExit)` instead of busy-loop `sti; hlt`, enabling proper blocking and wake via `ChildExit` magic.
+- **SSDT ABI v7 cleanup** — Removed dead syscall slots (RAX 14, 15, 50) from SSDT and `SyscallNum` enum. `validate_abi()` simplified — no more reserved slot checks. 32 active handlers down from 40.
+- **Exit-to-kernel wakes KWait waiters** — `handler_exit` now broadcasts `WaitReason::ChildExit` to any thread blocking on the exiting PID, enabling proper process join.
+
+### Changed
+- **Kernel handlers use enum variants** — `handler_ob_query_info` and `handler_ob_set_info` match arms replaced from raw `0..16` literals to `_ if info_class == ObInfoClass::Name as u32 =>` pattern guards.
+- **libneodos ABI_VERSION 6→7** — Dead wrappers removed: `sys_writefile`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`, `sys_waitpid`. AbiTable struct trimmed from 62→46 fields.
+- **libneodos-nxl modularized** — `libneodos-nxl/src/main.rs` split into separate modules (`syscall.rs`, `io.rs`, `fs.rs`, `process.rs`, `mem.rs`, `error.rs`). Dead nxl_sys_* function stubs removed.
+- **NXL AbiTable v7** — Mirrors libneodos: removed dead syscall entries (`sys_writefile`, `sys_pipe`, `sys_dup2`, `sys_waitpid`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`). Fields trimmed from 62→46.
+- **AGENTS.md** — Syscall table updated with "Estado" column. "Estado Objectification" table added. User binaries descriptions updated to Ob API.
+- **docs/ARCHITECTURE.md** — KOBJ, LOADNEM, NDREG descriptions updated to Ob API.
+- **docs/IMPROVEMENTS.md** — Items 117-121 updated. AI-5 marked completed. "Objectification Roadmap" section added (~190 lines).
+- **docs/SYSCALLS.md** — ABI v7: removed dead syscalls, documented all remaining with correct ABI.
+
+### Removed
+- **Dead syscall handlers** — `handler_ndreg` (RAX 50), `Ioctl` (RAX 14), `RegisterDevice` (RAX 15) removed from SSDT.
+- **Dead structs** — `KObjEntryRaw`, `DriveInfoRaw`, `DriverInfoRaw` moved to local scope near their sole users in `handler_ob_query_info`.
+- **libneodos wrappers (9)** — `sys_writefile`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`, `sys_waitpid`.
+
 ## v0.44.5 — 2026-06-26
 
 ### Added

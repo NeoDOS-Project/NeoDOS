@@ -26,15 +26,16 @@ prioridades actuales son:
    - ~~**OB-021 (ps.nxe), OB-022 (kill.nxe), OB-023 (pri.nxe)**~~ COMPLETADO en v0.44.1
 6. ~~**v0.50**: **ObWait (RAX 65) + KWait integration**, URN rewrite como frontend de Ob~~
    - ~~**OB-020 (ObWait multi-type), OB-025 (URN frontend), OB-031 (KWait full integration), OB-046 (processes as ObObjects)**~~ COMPLETADO en v0.44.2
-   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait, ob_destroy), ObBasicInfo/ObEnumEntry/ObProcessInfo/ObPipeInfo structs, AbiTable v5
+   - **libneodos**: wrappers Ob (ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait, ob_destroy), ObBasicInfo/ObEnumEntry/ObProcessInfo/ObPipeInfo structs, AbiTable v7 (legacy dead entries removed, ABI_VERSION 7)
 7. ~~**v1.0**: **Security integration in ObOpen**, **Full Ob API stable**~~
    - ~~**OB-030 (SeAccessCheck en todas las rutas)**~~ COMPLETADO en v0.44.2
    - **OB-032 (Documentación de API)** 🔶 PARCIAL
 8. **v0.44.4**: **Fix 3 bugs SMP-unsafe** (WAIT_PID, ISOLATED_REGIONS, NXL_REGISTRY)
 9. **v0.44.5**: **Actualizar documentación** (README, ARCHITECTURE_SOURCE_OF_TRUTH)
 10. **v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)
-11. **v0.44.7**: **Arreglos arquitectónicos menores** (InfoClass enums, exports duplicados, TOCTOU race, unificar errores)
-12. **v0.47**: Networking (TCP/IP stack)
+11. **v0.44.7**: **Arreglos arquitectónicos menores + Fase 1 Objectification** (ObType::Thread, InfoClass enums completos, ObError/SyscallError unificado, exports duplicados, TOCTOU race)
+12. **v0.46**: **Fase 2 Objectification** (Timer Object, Semaphore Object, Section Object, Device Tree)
+13. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
@@ -43,6 +44,11 @@ existentes; si esas abstracciones son frágiles, la feature será frágil.
 **Regla de oro 2 (auditoría v0.44.3):** Los bugs SMP-unsafe (WAIT_PID,
 ISOLATED_REGIONS, NXL_REGISTRY) tienen prioridad CRÍTICA sobre cualquier
 otra tarea. Estos 3 bugs deben corregirse antes de continuar con la Fase 2.
+
+**Objectification Roadmap:** Ver `docs/IMPROVEMENTS.md` sección **"Objectification
+Roadmap"** para el plan completo de migración de syscalls a Objects del Object
+Manager (Ob): Fase 1 (v0.44.7: Thread Object), Fase 2 (v0.46: Timer/Semaphore/
+Section Objects), Fase 3 (v0.47+: Token/Network/Registry Objects).
 
 ## Build & Run
 
@@ -100,7 +106,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 
 | Module | File | Contents |
 |--------|------|----------|
-| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 40 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
+| Syscall | `src/syscall/mod.rs` | SSDT dispatch table (256-slot `lazy_static!`), permission table, 32 handlers. `table.rs` = Registers/SyscallFn types. `permission.rs` = SyscallPermission/CAP_ADMIN. All return `Result<T, i64>` |
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
@@ -539,68 +545,61 @@ Para usar desde user-mode: llamar a `libneodos::loadlib(path)` que invoca `sys_l
 
 Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8 = arg3, R9 = arg4. Return in RAX.
 
-| RAX | Syscall | Args | Descripción |
-|-----|---------|------|-------------|
-| 0 | `sys_exit` | RBX=code | Termina proceso |
-| 1 | `sys_write` | RBX=fd, RCX=ptr, RDX=len | Escribe a fd (1=consola, pipe writer) |
-| 2 | `sys_yield` | — | Cede CPU |
-| 3 | `sys_getpid` | — | Retorna PID actual |
-| 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de fd (0=stdin, pipe reader); bloquea con -EAGAIN |
-| 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr |
-| 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) |
-| 7 | `sys_spawn` | RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd | Carga y ejecuta un binario ELF64 desde NeoFS. stdfd=0xFF hereda. Retorna PID del hijo |
-| 8 | `sys_readdir` | RBX=fd, RCX=buf_ptr | Lee entrada de directorio del handle fd; retorna 1 si hay entrada, 0 si fin |
-| 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo |
-| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle); directorios → HANDLE_DIR |
-| 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle) |
-| 12 | `sys_writefile` | RBX=fd, RCX=buf, RDX=count | Escribe a archivo (usa offset del handle) |
-| 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) |
-| 16 | `sys_chdir` | RBX=path_ptr | Cambia directorio actual |
-| 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) |
-| 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) |
-| 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap |
-| 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs |
-| 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID |
-| 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine |
-| 25 | `sys_mkdir` | RBX=path_ptr | Crea directorio via VFS |
-| 26 | `sys_unlink` | RBX=path_ptr | Elimina archivo via VFS |
-| 27 | `sys_rmdir` | RBX=path_ptr | Elimina directorio vacío via VFS |
-| 28 | `sys_rename` | RBX=old_path, RCX=new_path | Renombra archivo/directorio via VFS |
-| 29 | `sys_set_exception_handler` | RBX=handler_fn | Sets SEH handler for current thread (A3.4). handler_fn=0 clears chain. Returns 0 success, -1 TEB not ready |
-| 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea en estado alertable |
-| 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs antes y después. Retorna `APC_ALERTED` si APC fue entregado |
-| 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) |
-| 46 | `sys_get_volume_label` | RBX=drive_char, RCX=buf_ptr, RDX=buf_size | Obtiene la etiqueta del volumen de una unidad |
-| 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre que lanzó el binario |
-| 48 | `sys_kobj_enum` | RBX=buf_ptr, RCX=max_entries | Enumerates kernel objects into user buffer (KObjEntryRaw array). Returns count written |
-| 50 | `sys_ndreg` | — | Admin-only stub para operaciones NDREG (requiere admin token) |
-| 51 | `sys_set_priority` | RBX=pid, RCX=priority (0-3) | Set process scheduling priority (admin) |
-| 52 | `sys_kill_process` | RBX=pid | Terminate process by PID (admin) |
-| 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 |
-| 54 | `sys_set_volume_label` | RBX=drive_char, RCX=label_ptr | Set volume label for a drive |
-| 55 | `sys_fsck` | RBX=buf_ptr, RCX=drive_char, RDX=repair_flag | Run filesystem integrity check. Returns FsckStats |
-| 57 | `sys_driver_load` | RBX=path_ptr | Load a NEM driver from filesystem path (admin) |
-| 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) |
-| 59 | `sys_poll` | RBX=pfds_ptr, RCX=nfds, RDX=timeout_ms | Poll fds for ready I/O. Returns ready count. PollFd struct: fd:i32, events:i16, revents:i16 |
-| 60 | `sys_ob_open` | RBX=path_ptr, RCX=desired_access | Open an Ob namespace object by path. Resolves path via namespace, performs security access check (SeAccessCheck), allocates a handle entry referencing the Ob object. Returns fd (≥3) on success, negative on error |
-| 61 | `sys_ob_create` | RBX=path_ptr, RCX=type, RDX=fds_out, R8=attrs | Create Ob object. type=1 Process, 2 Driver, 4 Pipe, 11 Directory, 13 Event. Returns fd |
-| 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Query object info. class=15 ReadContent, 16 VolumeLabel |
-| 63 | `sys_ob_set_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Set object info. class=6 VfsRename, 7 WriteContent, 8 SetCwd, 9 SetVolumeLabel |
-| 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory |
-| 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on objects |
-| 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd |
-| 67 | `sys_ob_logon` | RBX=username_ptr, RCX=hash_ptr, RDX=hash_len | Authenticate user via SAM. Creates LogonSession with split tokens, returns fd to \Security\Session\{id} Ob object |
-| 68 | `sys_ob_logoff` | RBX=fd | Close LogonSession fd, destroy session, revert to self |
-| 69 | `sys_ob_query_token` | RBX=fd, RCX=info_class, RDX=buf, R8=size | Query token info via fd from \Security\Token\{pid} Ob object. Classes: TokenUser=1, TokenGroups=2, TokenPrivileges=3, TokenSessionId=4, TokenIntegrityLevel=6 |
-| 70 | `sys_ob_impersonate` | RBX=fd | Impersonate token via fd from \Security\Session\{id} Ob object (admin only) |
-| 71 | `sys_ob_revert_to_self` | — | Restore original process token |
-| 72 | `sys_ob_set_security` | RBX=fd, RCX=sd_ptr, RDX=sd_len | Set SecurityDescriptor on an Ob object by fd |
-| 73 | `sys_ob_query_security` | RBX=fd, RCX=sd_buf, RDX=sd_len | Get SecurityDescriptor from an Ob object by fd |
-| 74 | `sys_ob_elevate` | RBX=fd, RCX=password_or_null | Elevate token via \Security\Elevation\{pid} Ob object. Returns ELEVATION_REQUIRED (-42) if consent needed |
-| 75 | `sys_ob_check_access` | RBX=path_ptr, RCX=desired_access | Check access to Ob namespace path without opening |
-| 76 | `sys_ob_consent_response` | RBX=fd, RCX=response | Respond to elevation prompt via \Security\Consent\{elev_id} Ob object |
+| RAX | Syscall | Args | Descripción | Estado |
+|-----|---------|------|-------------|--------|
+| 0 | `sys_exit` | RBX=code | Termina proceso | Activo |
+| 1 | `sys_write` | RBX=fd, RCX=ptr, RDX=len | Escribe a fd (1=consola, pipe writer) | Activo |
+| 2 | `sys_yield` | — | Cede CPU | Activo |
+| 3 | `sys_getpid` | — | Retorna PID actual | Activo |
+| 4 | `sys_read` | RBX=fd, RCX=buf, RDX=count | Lee de fd (0=stdin, pipe reader); bloquea con -EAGAIN | Activo |
+| 5 | `sys_pipe` | RBX=fds_ptr | Crea pipe, escribe [read_fd, write_fd] en fds_ptr. Usar `ob_create(Pipe)` | Activo (Ob wrapper) |
+| 6 | `sys_dup2` | RBX=old_fd, RCX=new_fd | Duplica old_fd a new_fd (redirección) | Activo |
+| 7 | `sys_spawn` | RBX=path_ptr, RCX=stdin_fd, RDX=stdout_fd, R8=stderr_fd | Carga y ejecuta un binario ELF64 desde NeoFS. stdfd=0xFF hereda. Retorna PID del hijo | Activo |
+| 8 | `sys_readdir` | RBX=fd, RCX=buf_ptr | Lee entrada de directorio del handle fd; retorna 1 si hay entrada, 0 si fin | Legacy |
+| 9 | `sys_waitpid` | RBX=pid | Espera proceso hijo | Legacy |
+| 10 | `sys_open` | RBX=path_ptr, RCX=flags | Abre archivo → fd (handle); directorios → HANDLE_DIR | Activo |
+| 11 | `sys_readfile` | RBX=fd, RCX=buf, RDX=count | Lee desde archivo (usa offset del handle). Delega en Ob internamente | Activo |
+| 13 | `sys_close` | RBX=fd | Cierra handle (pipe, file, device, event) | Activo |
+| 16 | `sys_chdir` | RBX=path_ptr | Cambia directorio actual | Legacy |
+| 18 | `sys_brk` | RBX=new_break | Ajusta program break (paginación bajo demanda) | Activo |
+| 19 | `sys_mmap` | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Mapeo lazy: anónimo (flags=1) o file-backed (flags=0, R9=fd) | Activo |
+| 20 | `sys_munmap` | RBX=addr, RCX=len | Libera mapeo mmap | Activo |
+| 21 | `sys_loadlib` | RBX=path_ptr | Carga un DLL desde NeoFS en un slot libre de la región de DLLs | Activo |
+| 22 | `sys_thread_create` | RBX=entry, RCX=stack | Crea un nuevo thread en el EPROCESS actual; retorna TID | Activo |
+| 23 | `sys_thread_join` | RBX=tid | Espera a que un thread termine | Activo |
+| 29 | `sys_set_exception_handler` | RBX=handler_fn | Sets SEH handler for current thread (A3.4). handler_fn=0 clears chain | Activo |
+| 40 | `sys_wait_alertable` | — | Alertable wait: si APC pendiente, despacha y retorna `APC_ALERTED` (1). Si no, bloquea | Activo |
+| 41 | `sys_sleep_ex` | — | Yield alertable: cede CPU, chequea APCs | Activo |
+| 42 | `sys_poweroff` | — | Apaga la máquina (QEMU debug port + ACPI S5 + PS/2 reset) | Activo |
+| 47 | `sys_chdir_parent` | RBX=path_ptr | Cambia el directorio actual del proceso padre | Legacy |
+| 53 | `sys_cursor_blink` | RBX=0 (disable), 1 (enable) | Enable/disable automatic cursor blinking from Ring 3 | Activo |
+| 55 | `sys_fsck` | RBX=buf_ptr, RCX=drive_char, RDX=repair_flag | Run filesystem integrity check. Returns FsckStats | Activo |
+| 58 | `sys_driver_unload` | RBX=name_ptr, RCX=force_flag | Unload a NEM driver by name (admin) | Activo |
+| 59 | `sys_poll` | RBX=pfds_ptr, RCX=nfds, RDX=timeout_ms | Poll fds for ready I/O. Returns ready count | Activo |
+| 60 | `sys_ob_open` | RBX=path_ptr, RCX=desired_access | Open an Ob namespace object by path. Security access check (SeAccessCheck), allocates handle. Returns fd (≥3) | Activo |
+| 61 | `sys_ob_create` | RBX=path_ptr, RCX=type, RDX=fds_out, R8=attrs | Create Ob object. type=1 Process, 2 Driver, 4 Pipe, 11 Directory, 13 Event. Returns fd | Activo |
+| 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Query object info. class=15 ReadContent, 16 VolumeLabel | Activo |
+| 63 | `sys_ob_set_info` | RBX=fd, RCX=class, RDX=buf, R8=size | Set object info. class=6 VfsRename, 7 WriteContent, 8 SetCwd, 9 SetVolumeLabel | Activo |
+| 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory | Activo |
+| 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on objects | Activo |
+| 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd | Activo |
 
-**Regla de arquitectura:** Toda syscall nueva (RAX ≥ 67) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe/fd entrega fds obtenidos via `ob_open`/`ob_create`, y se apoya en el Object Manager para lifecycle y seguridad. No se aceptan syscalls planas legacy para funcionalidad nueva. Ver sección USR en `docs/IMPROVEMENTS.md`.
+**Syscalls legacy eliminadas del SSDT (RAX 12, 25–28, 46, 48, 50–52, 54, 57):** migradas a la API Object Manager (Ob). Ver secuencia `ob_open → ob_query_info/ob_set_info/ob_create/ob_destroy`.
+
+**Estado Objectification:**
+| Estado | Syscalls |
+|--------|----------|
+| ✅ Ya Objects (Ob API RAX 60-66) | ob_open, ob_create, ob_query_info, ob_set_info, ob_enum, ob_wait, ob_destroy |
+| 🔶 Fase 1 (v0.44.7) — Thread como Object | Thread create/wait/priority via Ob (RAX 61/65/63) |
+| 🔶 Fase 2 (v0.46) — Timer/Semaphore/Section | Timer create/wait, Semaphore create/release/wait, Section create/map |
+| ❌ Legacy removed (SSDT=None, usar Ob) | sys_pipe, sys_spawn, sys_open, sys_close, sys_readfile, sys_readdir, sys_waitpid, sys_chdir, sys_writefile, sys_mkdir, sys_unlink, sys_rmdir, sys_rename, sys_chdir_parent |
+| ⬜ Foundation (no Object, mecanismos puros) | sys_exit, sys_write, sys_read, sys_yield, sys_getpid, sys_brk, sys_mmap, sys_munmap, sys_loadlib, sys_poweroff, sys_cursor_blink, sys_fsck, sys_poll, sys_set_exception_handler, sys_wait_alertable, sys_sleep_ex |
+| 🆕 Futuras (RAX ≥ 67, DEBEN ser Ob) | sys_ob_logon, sys_ob_query_token, sys_ob_set_security, sys_ob_create_timer, sys_ob_create_section, sys_ob_socket, etc. |
+
+Ver `docs/IMPROVEMENTS.md` sección **"Objectification Roadmap"** para plan detallado por fases.
+
+**Regla de arquitectura:** Toda syscall nueva (RAX ≥ 67) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe/entrega fds obtenidos via `ob_open`/`ob_create`, y se apoya en el Object Manager para lifecycle y seguridad. No se aceptan syscalls planas legacy para funcionalidad nueva. Ver secciones USR y **Objectification Roadmap** en `docs/IMPROVEMENTS.md`.
+
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -721,33 +720,33 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 |---------|-----------|--------|--------|
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~6 KB | CPU info via `ob_open("\Global\Info\CpuInfo")` + `ob_query_info(class=7)`: vendor, brand, features, topology, timers |
 | `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CWD, SET, POWEROFF, EXIT, CALL; TAB completion via `console.nxl`; PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history via `console.nxl` (32); drive change; batch file execution via CALL |
-| `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
-| `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
-| `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
+| `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: writes result to ARGS_ADDR for parent neoshell to read; validates via ob_open; no shell integration required |
+| `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via ob_create(Process) + ob_wait, respawns on EXIT |
+| `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `ob_open` (dir) + `ob_enum`, multi-column output, `/W` (wide), `/P` (pause) |
 | `corehelp.nxe` | Rust `userbin/corehelp/` | ~14 KB | NT-style HELP: scans `C:\Programs\*.NXE` for embedded `::HELP::` markers, lists all commands with descriptions. `HELP <cmd>` spawns `<cmd>.NXE /?` via pipe and shows output |
-| `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | sys_get_datetime (RAX=44): muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
-| `ver.nxe` | Rust `userbin/ver/` | ~5 KB | sys_get_version (RAX=43): muestra versión del kernel NeoDOS |
-| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | sys_get_meminfo (RAX=45): muestra uso de memoria. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
-| `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
-| `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: muestra etiqueta del volumen. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
-| `type.nxe` | Rust `userbin/coretype/` | ~6 KB | TYPE command: muestra contenido de archivo de texto. Solo disponible como binario Ring 3; sustituye la funcionalidad heredada del shell bootstrap |
+| `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | ob_open("\Global\Info\DateTime") + ob_query_info: muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
+| `ver.nxe` | Rust `userbin/ver/` | ~5 KB | ob_open("\Global\Info\Version") + ob_query_info: muestra versión del kernel NeoDOS |
+| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | ob_open("\Global\Info\Memory") + ob_query_info: muestra uso de memoria |
+| `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto via sys_write |
+| `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: ob_open("\Global\Info\VolumeLabel") + ob_query_info |
+| `type.nxe` | Rust `userbin/coretype/` | ~6 KB | TYPE command: ob_open + ob_query_info(ReadContent) |
 | `tree.nxe` | Rust `userbin/tree/` | ~7 KB | TREE command: muestra árbol de directorios con `├──`/`└──`. Recursivo hasta 6 niveles. Directorios primero, orden alfabético case-insensitive. Path opcional (default: CWD) |
-| `cls.nxe` | Rust `userbin/corecls/` | ~4 KB | CLS command: limpia la pantalla via ANSI escape codes. Sustituye el CLS del shell bootstrap |
-| `copy.nxe` | Rust `userbin/corecopy/` | ~8 KB | COPY command: copia un archivo origen → destino usando `sys_readfile`/`sys_writefile`. Argumentos: `COPY src dst` |
-| `del.nxe` | Rust `userbin/coredel/` | ~4 KB | DEL command: elimina un archivo via `sys_unlink`. Argumentos: `DEL file` |
-| `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: renombra un archivo via `sys_rename`. Argumentos: `REN old new` |
-| `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: crea un directorio via `sys_mkdir`. Argumentos: `MD path` |
-| `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: elimina un directorio vacío via `sys_rmdir`. Argumentos: `RD path` |
-| `drives.nxe` | Rust `userbin/drives/` | ~14 KB | Lists mounted drives: letter, FS type, label, size via sys_get_drives (RAX=33) |
-| `ps.nxe` | Rust `userbin/ps/` | ~4 KB | PS command: lists processes via sys_kobj_enum (RAX=48). Shows PID, TID, name |
-| `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: change keyboard layout via sys_set_keyboard_layout (RAX=49). US or SP |
-| `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: terminate a process by PID via sys_kill_process (RAX=52, admin) |
-| `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: set process scheduling priority via sys_set_priority (RAX=51, admin). Levels 0-3 |
-| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático: ejecuta tests de syscalls (CLS, MD, RD, CREATE, COPY, REN, DEL) y reporta resultados. Se lanza automáticamente tras los 528 tests de kernel |
-| `label.nxe` | Rust `userbin/label/` | ~4 KB | LABEL command: display or change volume label via sys_set_volume_label (RAX=54) |
+| `cls.nxe` | Rust `userbin/corecls/` | ~4 KB | CLS command: limpia la pantalla via ANSI escape codes |
+| `copy.nxe` | Rust `userbin/corecopy/` | ~8 KB | COPY command: ob_query_info(ReadContent) + ob_set_info(WriteContent) |
+| `del.nxe` | Rust `userbin/coredel/` | ~4 KB | DEL command: ob_destroy |
+| `ren.nxe` | Rust `userbin/coreren/` | ~4 KB | REN command: ob_set_info(VfsRename) |
+| `md.nxe` | Rust `userbin/coremd/` | ~4 KB | MD command: ob_create(Directory) |
+| `rd.nxe` | Rust `userbin/corerd/` | ~4 KB | RD command: ob_destroy |
+| `drives.nxe` | Rust `userbin/drives/` | ~14 KB | Lists mounted drives via ob_open("\Global\Info\Drives") + ob_query_info |
+| `ps.nxe` | Rust `userbin/ps/` | ~4 KB | PS command: ob_enum("\Ob\Process") + ob_query_info(Process) per process. Shows PID, PPID, priority, thread_count, state |
+| `keyb.nxe` | Rust `userbin/keyb/` | ~4 KB | KEYB command: ob_set_info(KeyboardLayout=5) via \Global\Info\Keyboard object. US or SP |
+| `kill.nxe` | Rust `userbin/kill/` | ~4 KB | KILL command: ob_open("\Ob\Process\{pid}") + ob_set_info(ProcessTerminate) |
+| `pri.nxe` | Rust `userbin/pri/` | ~4 KB | PRI command: ob_open("\Ob\Process\{pid}") + ob_set_info(ProcessPriority). Levels 0-3 |
+| `cmdtest.nxe` | Rust `userbin/cmdtest/` | ~14 KB | Comando de testeo automático via Ob API: ob_create(Directory), ob_destroy, ob_set_info(VfsRename), ob_query_info(ReadContent). Se lanza automáticamente tras los 528 tests de kernel |
+| `label.nxe` | Rust `userbin/label/` | ~4 KB | LABEL command: ob_open + ob_query_info(VolumeLabel) + ob_set_info(SetVolumeLabel) |
 | `fsck.nxe` | Rust `userbin/fsck/` | ~6 KB | FSCK command: filesystem integrity check via sys_fsck (RAX=55). /F for repair |
-| `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via sys_driver_enum (RAX=56). LIST, SHOW, QUERY, RUNTIME |
-| `loadnem.nxe` | Rust `userbin/loadnem/` | ~4 KB | LOADNEM command: load/unload NEM drivers via sys_driver_load (RAX=57) and sys_driver_unload (RAX=58, admin) |
+| `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via ob_open("\Global\Info\Drivers") + ob_query_info(Drivers) |
+| `loadnem.nxe` | Rust `userbin/loadnem/` | ~4 KB | LOADNEM command: ob_create(Driver) to load, sys_driver_unload (RAX=58) for /U unload flag |
 | `progress.nxe` | Rust `userbin/progress/` | ~4 KB | Progress bar demo: tests console.nxl progress_create/update/finish API |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
@@ -1008,11 +1007,11 @@ La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins
 | **KObjRegistry** | Dynamic `Vec<Option<KObjEntry>>` registry (no hard limit) protected by `spin::Mutex`. Global via `lazy_static!` |
 | **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
 | **Integration** | Processes (scheduler.rs), drivers (driver_runtime.rs), pipes (pipe.rs) — auto-register on create, auto-unregister on destroy |
-| **Shell** | `KOBJ` command via Ring 3 `kobj.nxe` (sys_kobj_enum RAX=48) |
+| **Shell** | `KOBJ` command via Ring 3 `kobj.nxe` (ob_enum RAX=64) |
 
 ### KOBJ Command
 
-This command is implemented as a Ring 3 user-mode binary (`userbin/kobj/`, produces `kobj.nxe`). It uses `sys_kobj_enum` (RAX=48) to enumerate the KObj registry. The kernel's built-in KOBJ shell command has been removed in favor of the `.NXE` dispatched via PATH.
+This command is implemented as a Ring 3 user-mode binary (`userbin/kobj/`, produces `kobj.nxe`). It uses `ob_enum` (RAX=64) to enumerate the Ob namespace. The kernel's built-in KOBJ shell command has been removed in favor of the `.NXE` dispatched via PATH.
 
 | Subcommand | Description |
 |-----------|-------------|

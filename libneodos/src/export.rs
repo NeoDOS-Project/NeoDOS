@@ -3,11 +3,12 @@
 
 pub const NXL_BASE: u64 = 0x1e00_0000;
 pub const EXPORT_TABLE_OFFSET: u64 = 0x00;
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
-/// Mirrors `AbiTable` from libneodos-nxl
+/// Mirrors `AbiTable` (v7) from libneodos-nxl — Ob-based ABI, legacy dead entries removed
 #[repr(C)]
 pub struct AbiTable {
+    // Core syscall wrappers
     pub sys_exit: extern "C" fn(u32) -> !,
     pub sys_write: extern "C" fn(u8, *const u8, usize) -> i64,
     pub sys_read: extern "C" fn(u8, *mut u8, usize) -> i64,
@@ -15,26 +16,26 @@ pub struct AbiTable {
     pub sys_yield: extern "C" fn(),
     pub sys_open: extern "C" fn(*const u8) -> i64,
     pub sys_readfile: extern "C" fn(u8, *mut u8, usize) -> i64,
-    pub sys_writefile: extern "C" fn(u8, *const u8, usize) -> i64,
     pub sys_close: extern "C" fn(u8) -> i64,
     pub sys_brk: extern "C" fn(u64) -> i64,
     pub sys_mmap: extern "C" fn(u64, u64, u16, u16, u64) -> i64,
     pub sys_munmap: extern "C" fn(u64, u64) -> i64,
-    pub sys_pipe: extern "C" fn(*mut u64) -> i64,
-    pub sys_dup2: extern "C" fn(u8, u8) -> i64,
-    pub sys_waitpid: extern "C" fn(u32) -> i64,
+    // I/O helpers
     pub stdout_write: extern "C" fn(*const u8, usize) -> i64,
     pub stderr_write: extern "C" fn(*const u8, usize) -> i64,
     pub stdin_read: extern "C" fn(*mut u8, usize) -> i64,
     pub dll_print: extern "C" fn(*const u8, usize),
     pub dll_eprint: extern "C" fn(*const u8, usize),
+    // Ob-based file I/O
     pub file_open: extern "C" fn(*const u8) -> i64,
     pub file_read: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub file_write: extern "C" fn(u8, *const u8, usize) -> i64,
+    // Memory helpers
     pub brk: extern "C" fn(u64) -> i64,
     pub sbrk: extern "C" fn(i64) -> i64,
     pub mmap: extern "C" fn(u64, u16, u16) -> i64,
     pub munmap: extern "C" fn(u64, u64) -> i64,
+    // Error constants
     pub err_einval: i64,
     pub err_enonet: i64,
     pub err_enomem: i64,
@@ -50,16 +51,10 @@ pub struct AbiTable {
     pub err_eio: i64,
     pub err_enodev: i64,
     pub err_ebusy: i64,
-    pub sys_chdir: extern "C" fn(*const u8) -> i64,
-    pub sys_chdir_parent: extern "C" fn(*const u8) -> i64,
+    // Process / library
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub sys_spawn: extern "C" fn(*const u8, u8, u8, u8) -> i64,
-    pub sys_readdir: extern "C" fn(u8, *mut u8) -> i64,
-    pub sys_mkdir: extern "C" fn(*const u8) -> i64,
-    pub sys_unlink: extern "C" fn(*const u8) -> i64,
-    pub sys_rmdir: extern "C" fn(*const u8) -> i64,
-    pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
-    // Object Manager (Ob) API
+    // Object Manager (Ob) API — RAX 60–66
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
     pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64, u64) -> i64,
     pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,

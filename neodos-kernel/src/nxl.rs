@@ -111,26 +111,43 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         }
     };
 
-    // If already loaded at this base, reuse (avoids double-load on repeated sys_loadlib)
-    {
-        let registry = NXL_REGISTRY.lock();
+    // Find a free slot under lock (atomic find + reserve, CB3)
+    let (slot_idx, base) = {
+        let mut registry = NXL_REGISTRY.lock();
+
+        // Check if already loaded at this base, reuse
         for slot in registry.iter() {
             if slot.loaded && slot.base == compiled_base {
                 serial_println!("[NXL] '{}' already loaded at 0x{:x}, reusing", path, slot.base);
                 return Some(slot.base);
             }
         }
-    }
 
-    // Find a free slot whose base matches the compiled base
-    let slot_idx = find_slot_for_base(compiled_base)?;
-    let base = NXL_REGISTRY.lock()[slot_idx].base;
+        // Find a free slot whose base matches the compiled base
+        let idx = match registry.iter().position(|s| s.base == compiled_base && !s.loaded) {
+            Some(i) => i,
+            None => {
+                serial_println!("[NXL] No free slot for compiled base 0x{:x}", compiled_base);
+                return None;
+            }
+        };
+
+        let slot_base = registry[idx].base;
+        // Mark as taken immediately — prevents TOCTOU race (CB3)
+        registry[idx].loaded = true;
+
+        (idx, slot_base)
+    };
+
     serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
 
     let result = match crate::elf::load_elf(data, None, 0) {
         Ok(r) => r,
         Err(e) => {
             serial_println!("[NXL] ELF load failed: {:?}", e);
+            // Release the reserved slot on failure
+            let mut registry = NXL_REGISTRY.lock();
+            registry[slot_idx].loaded = false;
             return None;
         }
     };
@@ -141,18 +158,22 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         mark_segment_user_accessible(seg.vaddr, seg.memsz, seg.flags);
     }
 
-    NXL_REGISTRY.lock()[slot_idx] = NxlSlot {
-        loaded: true,
-        base,
-        size: image_size,
-        name: {
-            let mut n = [0u8; 24];
-            let b = path.as_bytes();
-            let l = core::cmp::min(b.len(), 23);
-            n[..l].copy_from_slice(&b[..l]);
-            n
-        },
-    };
+    // Update slot metadata under lock
+    {
+        let mut registry = NXL_REGISTRY.lock();
+        registry[slot_idx] = NxlSlot {
+            loaded: true,
+            base,
+            size: image_size,
+            name: {
+                let mut n = [0u8; 24];
+                let b = path.as_bytes();
+                let l = core::cmp::min(b.len(), 23);
+                n[..l].copy_from_slice(&b[..l]);
+                n
+            },
+        };
+    }
 
     serial_println!("[NXL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
@@ -248,11 +269,6 @@ fn search_directory(
     }
 
     None
-}
-
-/// Find a slot whose base address matches the given compiled_base.
-fn find_slot_for_base(compiled_base: u64) -> Option<usize> {
-    NXL_REGISTRY.lock().iter().position(|s| s.base == compiled_base && !s.loaded)
 }
 
 /// Mark pages for an ELF segment with USER_ACCESSIBLE and WRITABLE (if PF_W).

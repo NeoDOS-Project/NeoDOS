@@ -21,7 +21,7 @@ def configure(root_dir: str):
 # ── AbiTable specification (mirrors libneodos/src/export.rs) ──
 
 ABI_TABLE_FIELDS = [
-    # (field_name, rust_type, c_type, size_bytes)
+    # (field_name, rust_type, c_type, size_bytes) — ABI v7
     ("sys_exit", "extern \"C\" fn(u32) -> !", "void (*)(uint32_t)", 8),
     ("sys_write", "extern \"C\" fn(u8, *const u8, usize) -> i64", "int64_t (*)(uint8_t, const uint8_t*, size_t)", 8),
     ("sys_read", "extern \"C\" fn(u8, *mut u8, usize) -> i64", "int64_t (*)(uint8_t, uint8_t*, size_t)", 8),
@@ -29,14 +29,10 @@ ABI_TABLE_FIELDS = [
     ("sys_yield", "extern \"C\" fn()", "void (*)()", 8),
     ("sys_open", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
     ("sys_readfile", "extern \"C\" fn(u8, *mut u8, usize) -> i64", "int64_t (*)(uint8_t, uint8_t*, size_t)", 8),
-    ("sys_writefile", "extern \"C\" fn(u8, *const u8, usize) -> i64", "int64_t (*)(uint8_t, const uint8_t*, size_t)", 8),
     ("sys_close", "extern \"C\" fn(u8) -> i64", "int64_t (*)(uint8_t)", 8),
     ("sys_brk", "extern \"C\" fn(u64) -> i64", "int64_t (*)(uint64_t)", 8),
     ("sys_mmap", "extern \"C\" fn(u64, u64, u16, u16, u64) -> i64", "int64_t (*)(uint64_t, uint64_t, uint16_t, uint16_t, uint64_t)", 8),
     ("sys_munmap", "extern \"C\" fn(u64, u64) -> i64", "int64_t (*)(uint64_t, uint64_t)", 8),
-    ("sys_pipe", "extern \"C\" fn(*mut u64) -> i64", "int64_t (*)(uint64_t*)", 8),
-    ("sys_dup2", "extern \"C\" fn(u8, u8) -> i64", "int64_t (*)(uint8_t, uint8_t)", 8),
-    ("sys_waitpid", "extern \"C\" fn(u32) -> i64", "int64_t (*)(uint32_t)", 8),
     ("stdout_write", "extern \"C\" fn(*const u8, usize) -> i64", "int64_t (*)(const uint8_t*, size_t)", 8),
     ("stderr_write", "extern \"C\" fn(*const u8, usize) -> i64", "int64_t (*)(const uint8_t*, size_t)", 8),
     ("stdin_read", "extern \"C\" fn(*mut u8, usize) -> i64", "int64_t (*)(uint8_t*, size_t)", 8),
@@ -64,15 +60,8 @@ ABI_TABLE_FIELDS = [
     ("err_eio", "i64", "int64_t", 8),
     ("err_enodev", "i64", "int64_t", 8),
     ("err_ebusy", "i64", "int64_t", 8),
-    ("sys_chdir", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
-    ("sys_chdir_parent", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
     ("sys_loadlib", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
     ("sys_spawn", "extern \"C\" fn(*const u8, u8, u8, u8) -> i64", "int64_t (*)(const uint8_t*, uint8_t, uint8_t, uint8_t)", 8),
-    ("sys_readdir", "extern \"C\" fn(u8, *mut u8) -> i64", "int64_t (*)(uint8_t, uint8_t*)", 8),
-    ("sys_mkdir", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
-    ("sys_unlink", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
-    ("sys_rmdir", "extern \"C\" fn(*const u8) -> i64", "int64_t (*)(const uint8_t*)", 8),
-    ("sys_rename", "extern \"C\" fn(*const u8, *const u8) -> i64", "int64_t (*)(const uint8_t*, const uint8_t*)", 8),
     ("sys_ob_open", "extern \"C\" fn(*const u8, u32) -> i64", "int64_t (*)(const uint8_t*, uint32_t)", 8),
     ("sys_ob_create", "extern \"C\" fn(*const u8, u32, *mut u64, u64) -> i64", "int64_t (*)(const uint8_t*, uint32_t, uint64_t*, uint64_t)", 8),
     ("sys_ob_query_info", "extern \"C\" fn(u8, u32, *mut u8, usize) -> i64", "int64_t (*)(uint8_t, uint32_t, uint8_t*, size_t)", 8),

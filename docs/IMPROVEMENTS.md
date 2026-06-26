@@ -8,7 +8,7 @@
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Ultima revision: Junio 2026.
 
-**Progreso:** 169 / ~186 items completados (+17 planificados: v0.44.4-v0.50). Proximo milestone: **v0.44.4** (Fix 3 bugs SMP-unsafe).
+**Progreso:** 171 / ~188 items completados (+17 planificados: v0.44.4-v0.50). Proximo milestone: **v0.44.4** (Fix 3 bugs SMP-unsafe).
 
 ---
 
@@ -154,11 +154,11 @@
 114. **NeoDOS LSP** — `neodos-lsp/`: Language Server Protocol implementation for NeoDOS development. Full LSP features (completion, goto-def, hover, references, rename, documentSymbol, diagnostics). Background indexing with rayon-parallel parsing. NeoDOS-aware: detects syscall handlers, capability constants, shell command entries, driver states. `dashmap`-backed database. 8 MCP tools for AI-level code analysis. `opencode.json` integration. 34 unit tests.
 115. **B8.2. TYPE.NXE** — `userbin/coretype/`: muestra contenido de archivo con `sys_open` + `sys_readfile`. Buffer 512 B.
 116. **B8.5. CLS.NXE** — `userbin/corecls/`: limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
-117. **B8.7. COPY.NXE** — `userbin/corecopy/`: copia archivo con `sys_open` + `sys_writefile`. Buffer 4 KB.
-118. **B8.8. DEL.NXE** — `userbin/coredel/`: elimina archivo via `sys_unlink`.
-119. **B8.9. REN.NXE** — `userbin/coreren/`: renombra via `sys_rename`.
-120. **B8.10. MD.NXE** — `userbin/coremd/`: crea directorio via `sys_mkdir`.
-121. **B8.11. RD.NXE** — `userbin/corerd/`: elimina directorio vacio via `sys_rmdir`.
+117. **B8.7. COPY.NXE** — `userbin/corecopy/`: copia archivo via `ob_query_info(ReadContent)` + `ob_set_info(WriteContent)`. Buffer 4 KB.
+118. **B8.8. DEL.NXE** — `userbin/coredel/`: elimina archivo via `ob_destroy`.
+119. **B8.9. REN.NXE** — `userbin/coreren/`: renombra via `ob_set_info(VfsRename)`.
+120. **B8.10. MD.NXE** — `userbin/coremd/`: crea directorio via `ob_create(Directory)`.
+121. **B8.11. RD.NXE** — `userbin/corerd/`: elimina directorio vacio via `ob_destroy`.
 122. **B4.1. PATH resolution** — `userbin/neoshell/`: busqueda de `.NXE` en PATH. neoshell itera directorios PATH y ejecuta via `sys_spawn`. Prioridad `.NXE` > `.COM` > `.EXE`.
 123. **B8.15. Build + integracion** — `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\Programs\`.
 124. **NT6.1. SID + Access Token** — `src/security/token.rs`, `src/security/sid.rs`: Define la identidad de seguridad de cada proceso y thread mediante SID y token. Token admin por defecto para boot, heredado en spawn. Tests: `token_inherit`, `sid_format`, `token_admin_boot_default`.
@@ -223,6 +223,7 @@
 183. **v0.44.2 — neoinit.nxe Ob spawning** — Uses ob_create(Process) + ob_wait for spawning neoshell with respawn on exit. Legacy sys_spawn (RAX 7) kept for backward compat.
 184. **v0.44.3 — A4.4 Input subsystem redesign** — `src/input/` directory con `InputManager`, 4 VT queues (`VtInputQueue` de 4 KB), per-VT input routing. `switch_vt()` via Alt+F1-F4. Console state save/restore per VT (`ConsoleState`), framebuffer shadow redraw (`VtShadowBuffer`). Per-process `vt_num` en EPROCESS, inherited from parent. 8 tests.
 185. **v0.44.3 — B4.5 Virtual terminals** — NeoInit spawns shell on VT0. NeoShell banner shows `[VTn]`. `\Global\Info\VtInfo` Ob object for VT number query/set. Syscall 11 (readfile) re-registered in SSDT. handler_read reads from per-VT queue.
+186. **v0.44.3 — Syscall ABI cleanup: SSDT + NXL AbiTable v7** — `src/syscall/mod.rs`: removed handler_ndreg (RAX=50) and all dead `None` slots. SSDT reduced from 256 to only active handlers. `libneodos-nxl/src/main.rs`: AbiTable struct trimmed from 62→46 fields, removed `sys_writefile`, `sys_pipe`, `sys_dup2`, `sys_waitpid`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`. `libneodos/src/export.rs`: mirror struct updated, ABI_VERSION bumped 6→7. `libneodos/src/syscall.rs`: removed 9 dead wrapper functions. `libneodos-nxl/src/process.rs`: removed 6 dead `nxl_sys_*` functions. All 31 user binaries compile clean on v7.
 
 ---
 
@@ -296,10 +297,7 @@
   - **Descripcion:** `kobj_register()` checkea si el object existe (read lock) y luego inserta (write lock) sin atomicidad. Convertir a operacion atomica: `registry.iter_mut().find(|e| e.is_none())` + insert en un solo lock scope.
   - **Criterio:** Dos CPUs registrando el mismo objeto no pueden resultar en duplicados.
 
-* [ ] **AI-5. CQ1. Reorganizar libneodos-nxl en modulos separados** | Prereqs: -- | Files: `libneodos-nxl/src/main.rs` -> `libneodos-nxl/src/{syscall,io,fs,process,mem,info,error}.rs`
-  - **Descripcion:** Dividir `libneodos-nxl/src/main.rs` (461 lineas monoliticas) en 7+ modulos separados. Cada modulo agrupa funciones por dominio: `syscall.rs` (raw `int 0x80` wrappers), `io.rs` (stdout/stderr/stdin, _print, _eprint), `fs.rs` (file_open/read/write + sys_mkdir/unlink/rmdir/rename), `process.rs` (pipe/dup2/waitpid/spawn/readdir/chdir/getcwd), `mem.rs` (brk/sbrk/mmap/munmap), `info.rs` (get_version/datetime/meminfo/cpuinfo), `error.rs` (consts + ret helper). `main.rs` solo mantiene `nxl_entry`, el `AbiTable` struct, `EXPORT_TABLE` static, y `nxl_panic`. Zero cambios en ABI: el NXL binario resultante es identico, .export_table en offset 0 con mismos valores. No requiere recompilar user binaries ni cambiar kernel/libneodos/build.
-  - **Criterio:** `sha256sum` del NXL antes/despues identica. 528 kernel tests + 27 user binaries funcionan sin cambios.
-  - **Tests:** Ninguno nuevo (el binario es identico).
+* ~~**[COMPLETED] AI-5. CQ1. Libneodos-nxl ya modularizado** — `libneodos-nxl/src/` ya usa modulos separados (`syscall.rs`, `io.rs`, `fs.rs`, `process.rs`, `mem.rs`, `error.rs`). Con la limpieza ABI v7, se eliminaron las funciones `nxl_sys_pipe/dup2/waitpid/chdir/chdir_parent/readdir` (process.rs) y `nxl_sys_mkdir/unlink/rmdir/rename/writefile` (fs.rs). No requiere mas reorganizacion.~~
 
 ---
 
@@ -880,6 +878,169 @@ El `ObObjectTable` usa un unico `spin::Mutex` global. Bajo carga de multiple pro
 Actualmente `ObError` tiene su propio conjunto de codigos (-1 a -9), y `SyscallError` tiene otro conjunto separado. La capa de syscall traduce entre ellos manualmente. Esto puede producir discrepancias (e.g., `ObError::NotFound` -> `SyscallError::NoEnt` y `ObError::InvalidParam` -> `SyscallError::Inval`).
 
 **Propuesta:** Unificar en un solo conjunto de codigos de error reutilizado por ambas capas, o anadir un mapping formal verificado por tests.
+
+---
+
+## Objectification Roadmap — Syscall → Object Migration Plan
+
+> **Documento de diseño:** [`docs/OBJECT_MANAGER_ARCHITECTURE.md`](OBJECT_MANAGER_ARCHITECTURE.md)
+> **Visión arquitectónica:** [`docs/ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md) §4.2
+> **Versión actual:** v0.44.3 (7 Ob syscalls: RAX 60-66, 16 ObTypes definidos)
+> **Objetivo:** v1.0 — toda syscall que gestione un recurso del sistema debe ser un Object accesible via Ob.
+
+### Principios
+
+1. **Todo recurso del sistema es un objeto** administrado por el Object Manager (Ob).
+2. **Toda syscall nueva** (RAX ≥ 67) DEBE implementarse como `sys_ob_*`.
+3. **Retrocompatibilidad**: Las syscalls legacy permanecen activas en SSDT mientras existan binarios que las usen.
+4. **Migración gradual**: Cada fase es autónoma y testeable.
+5. **Unificación de errores**: `ObError` y `SyscallError` se fusionan en `NeoDosError` antes de v1.0.
+
+### Mapa Actual: 16 ObTypes Definidos vs 7 con API Completa
+
+```
+ObType::Unknown  = 0  ⬜ Sin uso
+ObType::Process  = 1  ✅ ob_create(Process), ob_query_info, ob_set_info, ob_wait
+ObType::Driver   = 2  ✅ ob_create(Driver), ob_query_info, ob_set_info, ob_destroy
+ObType::Device   = 3  ⚠️ abierto via ob_open(\Device\*) pero no create/set
+ObType::Pipe     = 4  ✅ ob_create(Pipe), ob_query_info, ob_wait, auto-destroy
+ObType::EventBus = 5  ⬜ Solo kernel, no expuesto a user-mode
+ObType::BlockDevice = 6  ⬜ Solo kernel, no expuesto a user-mode
+ObType::Filesystem  = 7  ⬜ Solo interno, handle files via ob_open
+ObType::MemoryRegion= 8  ⬜ Solo kernel
+ObType::Symlink  = 9  ⚠️ Usado internamente por namespace
+ObType::MountPoint=10  ⬜ Solo kernel
+ObType::Directory=11  ✅ ob_create(Directory), ob_enum, ob_destroy
+ObType::Key     =12  ⚠️ Info objects virtuales, no registry persistente
+ObType::Event   =13  ✅ ob_create(Event), ob_wait
+ObType::Semaphore=14  ❌ Definido pero sin API
+ObType::Timer   =15  ⚠️ ob_wait(Timer) soportado, falta ob_create(Timer)
+```
+
+### Fase 1: Completar ObTypes existentes (v0.44.7 — Prioridad Inmediata)
+
+Syscalls que ya tienen toda la infraestructura Ob necesaria. Solo falta:
+- Completar enums
+- Añadir `ObType::Thread = 16`
+- Implementar thread como objeto
+
+| ID | Tarea | Archivos | Esfuerzo | Dependencias |
+|----|-------|----------|----------|-------------|
+| OBF-01 | Añadir `ObInfoClass::ReadContent=15`, `VolumeLabel=16` al enum | `src/object/types.rs` | 5 min | — |
+| OBF-02 | Añadir `ObSetInfoClass::ProcessTerminate=4`, `VfsRename=6`, `WriteContent=7`, `SetCwd=8`, `SetVolumeLabel=9` al enum | `src/object/types.rs` | 5 min | — |
+| OBF-03 | Añadir `ObType::Thread = 16` al enum + `to_str()` | `src/object/types.rs` | 5 min | — |
+| OBF-04 | Implementar `ob_create(Thread)` en handler_ob_create (type=16): crea KTHREAD, devuelve fd | `src/syscall/mod.rs` | 2-3h | OBF-03 |
+| OBF-05 | Implementar `ob_wait(Thread)` en handler_ob_wait: kwait_block(ThreadJoin) | `src/syscall/mod.rs` | 1h | OBF-03 |
+| OBF-06 | Implementar `ob_set_info(ThreadPriority)` usando fd thread | `src/syscall/mod.rs` | 30 min | OBF-03 |
+| OBF-06b | Eliminar `handler_thread_create` (RAX 22) y `handler_thread_join` (RAX 23) del SSDT → `None` | `src/syscall/mod.rs` | 5 min | OBF-04, OBF-05 |
+| OBF-07 | Unificar ObError y SyscallError en NeoDosError | `src/object/types.rs`, `src/syscall/mod.rs` | 1 día | — |
+| OBF-08 | Migrar `sys_waitpid` a KWait nativo (eliminar `WAIT_PID` static mut) | `src/usermode.rs`, `src/syscall/mod.rs` | 2-3h | CB1 |
+| OBF-09 | Tests kernel: 8 tests (thread create/wait/kill via Ob, enum completos, error unificado) | `src/testing.rs` | ~150 líneas | OBF-01..08 |
+
+**Criterio de aceptación:**
+- `sys_ob_create("\\MyThread", Thread)` devuelve fd
+- `sys_ob_wait(thread_fd)` espera terminación
+- `sys_ob_set_info(thread_fd, ThreadPriority, &prio)` funciona
+- `ObInfoClass::ReadContent` y `VolumeLabel` están en el enum
+- `ObSetInfoClass::ProcessTerminate`, `VfsRename`, `WriteContent`, `SetCwd`, `SetVolumeLabel` están en el enum
+- `ObError` y `SyscallError` comparten base común
+- 528 kernel tests + cmdtest siguen pasando
+
+### Fase 2: Nuevos Object Types (v0.46 — Device Tree + Resource Manager)
+
+Requieren nuevos tipos en el Object Manager y extensión de las syscalls Ob existentes.
+
+| ID | Tarea | Object Type | Syscalls | Esfuerzo |
+|----|-------|------------|----------|----------|
+| OBF-10 | Implementar Timer Object: create (oneshot/periodic, period_ms), set, cancel | `ObType::Timer=15` | ob_create(Timer) via RAX 61, ob_set_info(TimerStart/TimerCancel), ob_wait(Timer) | ~300 líneas |
+| OBF-11 | Implementar Semaphore Object: create (initial_count, max_count), release, wait | `ObType::Semaphore=14` | ob_create(Semaphore) via RAX 61, ob_set_info(SemaphoreRelease), ob_wait(Semaphore) | ~300 líneas |
+| OBF-12 | Implementar Section Object: create (size, prot), map_view, unmap | `ObType::Section=17` (nuevo) | ob_create(Section) via RAX 61, ob_set_info(MapView), ob_set_info(UnmapView) → reemplaza sys_mmap/munmap | ~500 líneas |
+| OBF-13 | Registry Key Object: open, create key, query/set value, enum | `ObType::Key=12` | ob_open(\Registry\*), ob_query_info(RegGetValue), ob_set_info(RegSetValue) | v0.50 (B2.1) |
+
+**Criterio de aceptación:**
+- Timer: `ob_create(Timer, 1000)` + `ob_wait(timer_fd)` → despierta en ~1s
+- Semaphore: `ob_create(Semaphore, 0, 5)` + `ob_set_info(sem_fd, SemaphoreRelease, &1)` + `ob_wait(sem_fd)` → OK
+- Section: `ob_create(Section, 4096, RW)` → fd → `ob_set_info(section_fd, MapView)` → dirección mapeada
+- 540+ kernel tests pasan
+
+### Fase 3: Syscalls Futuras como Objects (v0.47+) — RAX 67+
+
+Todas las syscalls NUEVAS deben implementarse como `sys_ob_*`.
+
+| RAX | Syscall Propuesta | Object Type | NT Equivalent | Versión |
+|-----|-------------------|-------------|---------------|---------|
+| 67 | `sys_ob_logon` | Session | `LsaLogonUser` | v0.48 |
+| 68 | `sys_ob_logoff` | Session | `LsaLogoffUser` | v0.48 |
+| 69 | `sys_ob_query_token` | Token | `NtQueryInformationToken` | v0.48 |
+| 70 | `sys_ob_impersonate` | Token | `NtImpersonateThread` | v0.49 |
+| 71 | `sys_ob_revert_to_self` | Token | `RevertToSelf` | v0.49 |
+| 72 | `sys_ob_set_security` | Generic | `NtSetSecurityObject` | v0.48 |
+| 73 | `sys_ob_query_security` | Generic | `NtQuerySecurityObject` | v0.48 |
+| 74 | `sys_ob_elevate` | Token | Elevar token | v0.49 |
+| 75 | `sys_ob_check_access` | Generic | Check ACL sin open | v0.49 |
+| 76 | `sys_ob_consent_response` | Elevation | UAC consent | v0.49 |
+| 77 | `sys_ob_create_section` | Section | `NtCreateSection` | v0.47 |
+| 78 | `sys_ob_map_view_section` | Section | `NtMapViewOfSection` | v0.47 |
+| 79 | `sys_ob_socket` | Network | `NtCreateFile(\Device\Tcp)` | v0.47 |
+| 80 | `sys_ob_bind` | Network | `NtDeviceIoControlFile` | v0.47 |
+| 81 | `sys_ob_connect` | Network | `NtDeviceIoControlFile` | v0.47 |
+| 82 | `sys_ob_send` | Network | `NtWriteFile` | v0.47 |
+| 83 | `sys_ob_recv` | Network | `NtReadFile` | v0.47 |
+| 84 | `sys_ob_create_timer` | Timer | `NtCreateTimer` | v0.46 |
+| 85 | `sys_ob_set_timer` | Timer | `NtSetTimer` | v0.46 |
+| 86 | `sys_ob_create_semaphore` | Semaphore | `NtCreateSemaphore` | v0.46 |
+| 87 | `sys_ob_release_semaphore` | Semaphore | `NtReleaseSemaphore` | v0.46 |
+| 88 | `sys_ob_ioctl` | Device | `NtDeviceIoControlFile` | v0.46 |
+
+### Tabla Evolución de Syscalls (v0.44.3 → v1.0)
+
+| Estado | v0.44.3 | v0.47 | v1.0 |
+|--------|---------|-------|------|
+| Foundation (non-Object) | 19 | 15 | 12 |
+| Ob syscalls (RAX 60-66) | 7 | 10 | 10 |
+| Legacy parallel (compat) | 6 | 3 | 0 |
+| Fase 1 nuevos Ob | 0 | 3 (Thread, Timer, Semaphore) | 3 |
+| Fase 2+ nuevos Ob (token, section, net, registry) | 0 | 8 | 21 |
+| **Total syscalls** | **35** | **45** | **55+** |
+
+### Reglas de no-cambio
+
+1. **RAX 0-29**: No se reasignan. Los números congelados en v0.40 permanecen como `None` en SSDT.
+2. **sys_exit/write/read/yield/getpid**: Permanecen directas. Son mecanismos, no recursos.
+3. **sys_mmap/munmap/brk**: Se mantienen directas. El Section Object (Fase 2) es una abstracción *nueva* que convive con mmap.
+4. **sys_open/close/readfile/pipe/dup2/spawn**: Se eliminan del SSDT. El usuario DEBE usar `ob_open`, `ob_close`, `ob_query_info(ReadContent)`, `ob_create(Pipe)`, `ob_create(Process)`, `ob_wait(Process)`. Sin wrappers legacy.
+5. **thread_create/join (RAX 22-23)**: Se eliminan del SSDT en Fase 1. El usuario DEBE usar `ob_create(Thread)`, `ob_wait(Thread)`. **No hay wrapper legacy.**
+
+### Dependencias entre fases
+
+```
+Fase 1 (v0.44.7) ← No tiene prerequisitos externos
+Fase 2 (v0.46)   ← Fase 1 completa + Device Tree
+Fase 3 (v0.47+)  ← Fase 2 completa + Networking/Registry
+```
+
+### Tests Planificados (18 nuevos)
+
+| Test | Fase | Descripción |
+|------|------|-------------|
+| T-OBF-01 | F1 | ob_create(Thread): thread creado via Ob devuelve fd válido |
+| T-OBF-02 | F1 | ob_wait(Thread): espera thread terminar |
+| T-OBF-03 | F1 | ob_set_info(ThreadPriority): cambiar prioridad thread |
+| T-OBF-04 | F1 | ObInfoClass enums completos (ReadContent, VolumeLabel) |
+| T-OBF-05 | F1 | ObSetInfoClass enums completos (ProcessTerminate, VfsRename, WriteContent, SetCwd, SetVolumeLabel) |
+| T-OBF-06 | F1 | NeoDosError unificado: ObError → SyscallError mapping automático |
+| T-OBF-07 | F2 | ob_create(Timer): crear timer oneshot |
+| T-OBF-08 | F2 | ob_wait(Timer): timer expires y despierta |
+| T-OBF-09 | F2 | ob_create(Semaphore): crear semáforo con count inicial |
+| T-OBF-10 | F2 | ob_set_info(SemaphoreRelease): incrementa count |
+| T-OBF-11 | F2 | ob_wait(Semaphore): bloquea hasta count > 0 |
+| T-OBF-12 | F2 | ob_create(Section): section anónima |
+| T-OBF-13 | F2 | ob_set_info(MapView): mapear vista de sección |
+| T-OBF-14 | F2 | ob_set_info(UnmapView): desmapear vista |
+| T-OBF-15 | F3 | ob_wait(Thread) + KWait: múltiples threads WAIT_ALL |
+| T-OBF-16 | F3 | ob_wait(Process, Pipe, Event, Timer) WAIT_ANY |
+| T-OBF-17 | F3 | ob_set_info(SecuritySet): cambiar SD de objeto |
+| T-OBF-18 | F3 | ob_query_info(Security): leer SD de objeto |
 
 ---
 

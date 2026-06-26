@@ -1,230 +1,200 @@
-# NeoDOS 1.0 Stable Syscall ABI
+# NeoDOS Syscall ABI
 
-This document defines the System Call Application Binary Interface (ABI) for NeoDOS.
+NeoDOS user-mode applications execute in Ring 3. To request a kernel service, applications trigger software interrupt `INT 0x80`.
 
 ## Calling Convention
 
-NeoDOS user-mode applications execute in Ring 3. To request a kernel service, applications must trigger the software interrupt `INT 0x80`.
+| Register | Purpose |
+|----------|---------|
+| `RAX` | Syscall number |
+| `RBX` | Argument 0 |
+| `RCX` | Argument 1 |
+| `RDX` | Argument 2 |
+| `R8` | Argument 3 |
+| `R9` | Argument 4 |
 
-The registers used to pass arguments and receive the return value are:
-- `RAX`: System call number (specifies which operation to perform).
-- `RBX`: Argument 0
-- `RCX`: Argument 1
-- `RDX`: Argument 2
-- `R8`:  Argument 3
-- `R9`:  Argument 4
-
-Upon return from `INT 0x80`, the kernel places the return value in `RAX`. Return convention: `≥ 0` success, `< 0` error (user checks `cmp rax, -1`).
-
-All other general-purpose registers are preserved across system calls.
+Return in `RAX`: `≥ 0` success, `< 0` error. All other GPRs preserved.
 
 ---
 
 ## Syscall Index
 
 ### 0 — `sys_exit`
-Terminates the calling process and frees all allocated resources (heap, mmap, pipes, handles, kernel stack).
-- **Arg0 (`RBX`)**: Exit code (`u64`). By convention, 0 means success.
-- **Returns (`RAX`)**: Does not return to the caller.
+Terminates the calling process and frees all allocated resources.
+- **Args**: `RBX` = exit code (`u64`). 0 = success.
+- **Returns**: Does not return.
 
 ### 1 — `sys_write`
-Writes a buffer of bytes to a file descriptor (stdout or pipe writer).
-- **Arg0 (`RBX`)**: File descriptor (`u64`, 1=stdout, 2=stderr, pipe writer fd).
-- **Arg1 (`RCX`)**: Pointer to the output buffer (`*const u8`).
-- **Arg2 (`RDX`)**: Number of bytes to write (`usize`).
-- **Returns (`RAX`)**: Number of bytes written, or error code on failure.
+Writes a buffer to a file descriptor (stdout, stderr, pipe writer).
+- **Args**: `RBX`=fd, `RCX`=buf, `RDX`=len.
+- **Returns**: Bytes written, or error code.
 
 ### 2 — `sys_yield`
-Voluntarily yields the CPU to the next ready process. The current process transitions Running→Ready, resets its time slice, and forces a reschedule.
+Voluntarily yields the CPU. Running→Ready, resets time slice, forces reschedule.
 - **Args**: None.
-- **Returns (`RAX`)**: `0`.
+- **Returns**: `0`.
 
 ### 3 — `sys_getpid`
 Retrieves the Process ID (PID) of the calling process.
 - **Args**: None.
-- **Returns (`RAX`)**: The current PID (`u64`).
+- **Returns**: PID (`u32`).
 
 ### 4 — `sys_read`
-Reads data from a file descriptor (stdin or pipe reader).
-- **Arg0 (`RBX`)**: File descriptor (`u64`, 0=stdin, pipe reader fd).
-- **Arg1 (`RCX`)**: Pointer to the output buffer (`*mut u8`).
-- **Arg2 (`RDX`)**: Maximum number of bytes to read (`usize`).
-- **Returns (`RAX`)**: Number of bytes read, `-EAGAIN` if pipe empty (caller retries), or error.
+Reads data from a file descriptor (stdin, pipe reader). Blocks with `-EAGAIN` if pipe empty.
+- **Args**: `RBX`=fd, `RCX`=buf, `RDX`=count.
+- **Returns**: Bytes read, or error.
 
 ### 5 — `sys_pipe`
-Creates a unidirectional data pipe for inter-process communication.
-- **Arg0 (`RBX`)**: Pointer to a `[u64; 2]` array to receive `[read_fd, write_fd]`.
-- **Returns (`RAX`)**: `0` on success, or error code.
+Creates a unidirectional data pipe.
+- **Args**: `RBX` = pointer to `[read_fd, write_fd]` (`*mut u64`).
+- **Returns**: `0` on success, or error code.
 
 ### 6 — `sys_dup2`
-Duplicates an existing file descriptor to a target slot (used for redirection).
-- **Arg0 (`RBX`)**: Source file descriptor to duplicate.
-- **Arg1 (`RCX`)**: Target file descriptor number.
-- **Returns (`RAX`)**: `0` on success, or error code.
+Duplicates an fd to a target slot (redirection).
+- **Args**: `RBX`=old_fd, `RCX`=new_fd.
+- **Returns**: `0` on success, or error code.
 
 ### 7 — `sys_spawn`
-Loads a user-mode binary from the NeoDOS filesystem and executes it in a new child process. Supports file descriptor redirection via `stdin_fd`, `stdout_fd`, `stderr_fd` (pass `0xFF` to inherit the parent's fd).
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 file path (`*const u8`).
-- **Arg1 (`RCX`)**: Stdin fd to redirect (`u8`, `0xFF` = inherit).
-- **Arg2 (`RDX`)**: Stdout fd to redirect (`u8`, `0xFF` = inherit).
-- **Arg3 (`R8`)**: Stderr fd to redirect (`u8`, `0xFF` = inherit).
-- **Returns (`RAX`)**: PID of the child process on success, or error code.
+Loads and executes a user-mode binary in a new child process.
+- **Args**: `RBX`=path_ptr, `RCX`=stdin_fd(0xFF=inherit), `RDX`=stdout_fd, `R8`=stderr_fd.
+- **Returns**: PID on success, or error code.
 
 ### 8 — `sys_readdir`
-Reads one directory entry from a HANDLE_DIR file descriptor. Returns a `DirEntryRaw` struct (inode, mode, size, name[260]) into the user buffer.
-- **Arg0 (`RBX`)**: Directory fd (`u8`) obtained from `sys_open`.
-- **Arg1 (`RCX`)**: Pointer to a `DirEntryRaw` output buffer (`*mut u8`).
-- **Returns (`RAX`)**: `1` if an entry was read, `0` if end of directory, or error code.
+Reads one directory entry from a HANDLE_DIR fd.
+- **Args**: `RBX`=fd, `RCX`=buf_ptr (`*mut DirEntryRaw`).
+- **Returns**: `1` = entry read, `0` = end of dir, or error.
 
 ### 9 — `sys_waitpid`
-Blocks the calling process until the specified child process terminates.
-- **Arg0 (`RBX`)**: PID of the process to wait for (`u32`).
-- **Returns (`RAX`)**: The exit code of the child process.
+Blocks until the specified child process terminates.
+- **Args**: `RBX` = PID (`u32`).
+- **Returns**: Exit code on success, or error.
 
 ### 10 — `sys_open`
-Opens a file on the Virtual File System (VFS) and returns a file descriptor (handle index 0–15).
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 string containing the file path (`*const u8`).
-- **Arg1 (`RCX`)**: Open flags (`u64`, reserved).
-- **Returns (`RAX`)**: File descriptor (`u8`) on success, or error code.
+Opens a file on the VFS and returns an fd.
+- **Args**: `RBX`=path_ptr, `RCX`=flags (reserved).
+- **Returns**: fd (`u8`) on success, or error code.
 
 ### 11 — `sys_readfile`
-Reads data from an open file descriptor at the current offset.
-- **Arg0 (`RBX`)**: File descriptor (`u8` returned by `sys_open`).
-- **Arg1 (`RCX`)**: Pointer to the output buffer (`*mut u8`).
-- **Arg2 (`RDX`)**: Number of bytes to read (`usize`).
-- **Returns (`RAX`)**: Number of bytes successfully read, or error code.
-
-### 12 — `sys_writefile`
-Writes data to an open file descriptor at the current offset.
-- **Arg0 (`RBX`)**: File descriptor (`u8` returned by `sys_open`).
-- **Arg1 (`RCX`)**: Pointer to the input buffer (`*const u8`).
-- **Arg2 (`RDX`)**: Number of bytes to write (`usize`).
-- **Returns (`RAX`)**: Number of bytes written, or error code.
+Reads from an open file at the current offset.
+- **Args**: `RBX`=fd, `RCX`=buf, `RDX`=count.
+- **Returns**: Bytes read, or error code.
 
 ### 13 — `sys_close`
-Closes a file descriptor (file, pipe, device, event). For pipes, decrements the reference count; the pipe buffer is freed when all references reach 0.
-- **Arg0 (`RBX`)**: File descriptor to close (`u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
+Closes an fd (file, pipe, device, event). For pipes, decrements refcount.
+- **Args**: `RBX`=fd.
+- **Returns**: `0` on success, or error code.
 
-### 14 — `sys_ioctl`
-Performs device-specific I/O control (legacy, may be deprecated).
-- **Arg0 (`RBX`)**: Device ID (`u32`).
-- **Arg1 (`RCX`)**: Command code (`u32`).
-- **Arg2 (`RDX`)**: Pointer to data buffer (`*mut u8`).
-- **Returns (`RAX`)**: Device-specific response, or error code.
-
-### 15 — `sys_register_device`
-Registers the current process as the handler for a hardware device (legacy, may be deprecated).
-- **Arg0 (`RBX`)**: Device ID to register (`u32`).
-- **Returns (`RAX`)**: `0` on success, or error code.
-
-### 16 — `sys_chdir`
-Changes the current working directory of the calling process.
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
-
-### 17 — `sys_getcwd`
-Returns the absolute path of the current working directory.
-- **Arg0 (`RBX`)**: Pointer to the output buffer (`*mut u8`).
-- **Arg1 (`RCX`)**: Buffer size (`usize`).
-- **Returns (`RAX`)**: Number of bytes written (including null terminator), or error code.
+### 16 — `sys_chdir` (LEGACY)
+Changes CWD of the calling process. Prefer `ob_set_info(SetCwd=8)`.
+- **Args**: `RBX` = path_ptr.
+- **Returns**: `0` on success, or error code.
 
 ### 18 — `sys_brk`
-Adjusts the program break (end of the data segment). Physical pages are allocated on demand by the page fault handler — this syscall only moves the break pointer. Pages are touched (read+write) to trigger fault-based allocation.
-- **Arg0 (`RBX`)**: New program break address. Pass `0` to query the current break.
-- **Returns (`RAX`)**: The new (or current) program break on success, or error code.
+Adjusts program break. Pages allocated on demand via page fault handler.
+- **Args**: `RBX` = new break (0 = query).
+- **Returns**: New/current break, or error code.
 
 ### 19 — `sys_mmap`
-Lazy memory mapping — registers a Virtual Memory Area (VMA) but does not allocate pages immediately. Pages are allocated on first access via the page fault handler. Supports anonymous mappings (flags=1) and file-backed mappings (flags=0, R9=fd). Region: `0x20000000..0x22000000` (32 MB).
-- **Arg0 (`RBX`)**: Hint address (unused, reserved).
-- **Arg1 (`RCX`)**: Length in bytes (`usize`).
-- **Arg2 (`RDX`)**: Protection flags (1=R, 2=W).
-- **Arg3 (`R8`)**: Flags (1=anonymous, 0=file-backed).
-- **Arg4 (`R9`)**: File descriptor (for file-backed mappings).
-- **Returns (`RAX`)**: Base address of the mapped region, or error code.
+Lazy mapping: registers VMA without pages. Allocated on first access.
+- **Args**: `RBX`=hint, `RCX`=len, `RDX`=prot, `R8`=flags(1=anon), `R9`=fd.
+- **Returns**: Base address, or error code.
 
 ### 20 — `sys_munmap`
-Unmaps a previously mmap'd region, freeing all physical pages and removing the VMA entry.
-- **Arg0 (`RBX`)**: Base address of the region to unmap.
-- **Arg1 (`RCX`)**: Length in bytes.
-- **Returns (`RAX`)**: `0` on success, or error code.
+Unmaps a previously mmap'd region.
+- **Args**: `RBX`=addr, `RCX`=len.
+- **Returns**: `0` on success, or error code.
 
 ### 21 — `sys_loadlib`
-Loads a NeoDOS shared library (NXL) from the filesystem into a free slot in the NXL region (`0x1e000000..0x1e200000`, 8 × 256 KB slots). The ELF is parsed, sections mapped as read-only USER_ACCESSIBLE, and the export table becomes accessible at the returned base address.
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 file path (`*const u8`).
-- **Returns (`RAX`)**: Base address of the loaded NXL, or error code.
+Loads an NXL shared library from filesystem into a free slot.
+- **Args**: `RBX`=path_ptr.
+- **Returns**: Base address, or error code.
 
 ### 22 — `sys_thread_create`
-Creates a new thread within the current process. The new thread begins executing at the given entry point with the provided stack.
-- **Arg0 (`RBX`)**: Entry point address (`*const fn()`).
-- **Arg1 (`RCX`)**: Stack base address.
-- **Returns (`RAX`)**: Thread ID (TID), or error code.
+Creates a new thread in the current process.
+- **Args**: `RBX`=entry, `RCX`=stack.
+- **Returns**: TID, or error code.
 
 ### 23 — `sys_thread_join`
-Blocks the calling thread until the specified thread terminates.
-- **Arg0 (`RBX`)**: Thread ID (TID) to wait for.
-- **Returns (`RAX`)**: `0` on success, or error code.
+Blocks until the specified thread terminates.
+- **Args**: `RBX`=tid.
+- **Returns**: `0` on success, or error code.
 
-### 24 — `sys_getcpuinfo`
-Copies a `CpuInfoFull` structure (CPUID vendor, brand, features, SMP topology, timer info) to the user buffer.
-- **Arg0 (`RBX`)**: Pointer to output buffer (`*mut u8`).
-- **Arg1 (`RCX`)**: Buffer size (`usize`).
-- **Returns (`RAX`)**: Number of bytes written, or error code.
-
-### 25 — `sys_mkdir`
-Creates a new directory via the Virtual File System (VFS).
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
-
-### 26 — `sys_unlink`
-Deletes a file via the Virtual File System (VFS). The file is removed from the directory tree and its data blocks are freed.
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
-
-### 27 — `sys_rmdir`
-Removes an empty directory via the Virtual File System (VFS).
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
-
-### 28 — `sys_rename`
-Renames a file or directory via the Virtual File System (VFS). The new name (leaf) is extracted from the second path argument.
-- **Arg0 (`RBX`)**: Pointer to the current path (`*const u8`).
-- **Arg1 (`RCX`)**: Pointer to the new path (leaf name extracted automatically) (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
+### 29 — `sys_set_exception_handler`
+Sets SEH handler for current thread (A3.4). handler_fn=0 clears chain.
+- **Args**: `RBX`=handler_fn.
+- **Returns**: 0 success, -1 TEB not ready.
 
 ### 40 — `sys_wait_alertable`
-Alertable wait. If a user APC is pending, dispatches it immediately and returns `APC_ALERTED` (1). Otherwise, blocks the calling thread in an alertable state — it can be woken by a queued APC.
+Alertable wait. If APC pending, dispatches and returns `APC_ALERTED` (1).
 - **Args**: None.
-- **Returns (`RAX`)**: `1` (`APC_ALERTED`) if an APC was delivered, `0` if wait completed normally.
+- **Returns**: `1` if APC delivered, `0` otherwise.
 
 ### 41 — `sys_sleep_ex`
-Alertable yield. Yields the CPU, checking for pending APCs before and after the yield. If an APC was received, returns `APC_ALERTED` (1).
+Alertable yield. Checks APCs before/after yield.
 - **Args**: None.
-- **Returns (`RAX`)**: `1` (`APC_ALERTED`) if an APC was delivered, `0` otherwise.
+- **Returns**: `1` if APC delivered, `0` otherwise.
 
 ### 42 — `sys_poweroff`
-Powers off the machine. Flushes caches, sends EVENT_SHUTDOWN, and attempts hardware poweroff via QEMU debug port, ACPI S5, and PS/2 reset.
+Powers off the machine (QEMU debug port + ACPI S5 + PS/2 reset).
 - **Args**: None.
-- **Returns (`RAX`)**: Does not return.
+- **Returns**: Does not return.
 
-### 43 — `sys_get_version` (REMOVED)
-Migrated to `ob_open("\Global\Info\Version")` + `ob_query_info(class=8)`.
-See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
+### 47 — `sys_chdir_parent` (LEGACY)
+Changes CWD of the parent process. Used by `CD.NXE` via ARGS_ADDR.
+- **Args**: `RBX` = path_ptr.
+- **Returns**: `0` on success, or error code.
 
-### 44 — `sys_get_datetime` (REMOVED)
-Migrated to `ob_open("\Global\Info\DateTime")` + `ob_query_info(class=9)`.
-See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
+### 53 — `sys_cursor_blink`
+Enable/disable automatic cursor blinking.
+- **Args**: `RBX`=0 (disable), 1 (enable).
+- **Returns**: `0` on success, or error code.
 
-### 45 — `sys_get_meminfo` (REMOVED)
-Migrated to `ob_open("\Global\Info\Memory")` + `ob_query_info(class=10)`.
-See `ob_open` (RAX=60) and `ob_query_info` (RAX=62).
+### 55 — `sys_fsck`
+Run filesystem integrity check. Returns `FsckStats`.
+- **Args**: `RBX`=buf_ptr, `RCX`=drive_char, `RDX`=repair_flag.
+- **Returns**: `FsckStats` filled on success, or error.
 
-### 47 — `sys_chdir_parent`
-Changes the current directory of the parent process that launched the calling program. This is the mechanism used by the Ring 3 `CD.NXE` tool.
-- **Arg0 (`RBX`)**: Pointer to a null-terminated UTF-8 path string (`*const u8`).
-- **Returns (`RAX`)**: `0` on success, or error code.
+### 58 — `sys_driver_unload`
+Unload a NEM driver by name (admin).
+- **Args**: `RBX`=name_ptr, `RCX`=force_flag.
+- **Returns**: `0` on success, or error code.
 
-### 50 — `sys_ndreg`
-Admin-only syscall for NDREG operations (kernel driver registry). Requires admin token.
-- **Args**: Reserved.
-- **Returns (`RAX`)**: Reserved.
+### 59 — `sys_poll`
+Poll fds for ready I/O.
+- **Args**: `RBX`=pfds_ptr, `RCX`=nfds, `RDX`=timeout_ms.
+- **Returns**: Ready count, or error code.
+
+### 60 — `sys_ob_open`
+Open an Ob namespace object by path. Security access check, allocates handle.
+- **Args**: `RBX`=path_ptr, `RCX`=desired_access.
+- **Returns**: fd (≥3), or error code.
+
+### 61 — `sys_ob_create`
+Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event.
+- **Args**: `RBX`=path_ptr, `RCX`=type, `RDX`=fds_out, `R8`=attrs.
+- **Returns**: fd, or error code.
+
+### 62 — `sys_ob_query_info`
+Query object info. Classes: 15=ReadContent, 16=VolumeLabel.
+- **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
+- **Returns**: Bytes written, or error code.
+
+### 63 — `sys_ob_set_info`
+Set object info. Classes: 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel.
+- **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
+- **Returns**: `0` on success, or error code.
+
+### 64 — `sys_ob_enum`
+Enumerate contents of an Ob directory by fd.
+- **Args**: `RBX`=dir_fd, `RCX`=buf, `RDX`=max_entries.
+- **Returns**: Entries written, or error code.
+
+### 65 — `sys_ob_wait`
+Wait on one or more Ob objects to become signaled.
+- **Args**: `RBX`=count, `RCX`=handles, `RDX`=type, `R8`=timeout.
+- **Returns**: `0` on success, or error code.
+
+### 66 — `sys_ob_destroy`
+Destroy/delete an Ob object by fd (file, directory, namespace object).
+- **Args**: `RBX`=fd.
+- **Returns**: `0` on success, or error code.

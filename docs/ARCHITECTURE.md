@@ -164,7 +164,7 @@ Unified kernel object system for tracking, referencing, and enumerating kernel o
 | **Mount points** | `src/vfs/mount.rs` — `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
 | **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()`, `ob_insert_object_auto()`, `ob_remove_object_auto()`, `ob_lookup_by_path()` |
 | **Integration** | Processes, drivers, pipes auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
-| **CLI** | `KOBJ` via Ring 3 `kobj.nxe` (sys_kobj_enum RAX=48) — lists all live objects (ID, type, name, refcount, native_id) |
+| **CLI** | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=64) — lists all namespace objects |
 
 The KOBJ registry is populated at boot by driver loading and at runtime by process/pipe creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close). Directory KObjs for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob` are registered at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
 
@@ -447,7 +447,7 @@ Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init o
 
 - `load_nem(path)` — loads and registers, emits `EVENT_DRIVER_LOADED`
 - `unload_driver(id)` — removes from runtime
-- `LOADNEM` / `NDREG` — Ring 3 commands via `sys_driver_load` (RAX=57) and `sys_driver_enum` (RAX=56)
+- `LOADNEM` / `NDREG` — Ring 3 commands via `ob_create(Driver)` and `ob_query_info(Drivers)`
 - `cmd_unloadnem(id)` — unload by ID
 
 **`LOADNEM <path>` command**: loads but does NOT activate.
@@ -602,22 +602,31 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 5 | sys_pipe | RBX=fds_ptr | Create pipe, returns [read_fd, write_fd] |
 | 6 | sys_dup2 | RBX=old_fd, RCX=new_fd | Duplicate file descriptor |
 | 9 | sys_waitpid | RBX=pid | Wait for child process |
-| 10 | sys_open | RBX=path_ptr, RCX=flags | Open file → fd (handle index 0-15) |
+| 10 | sys_open | RBX=path_ptr, RCX=flags | Open file → fd |
 | 11 | sys_readfile | RBX=fd, RCX=buf, RDX=count | Read from file (uses handle offset) |
-| 12 | sys_writefile | RBX=fd, RCX=buf, RDX=count | Write to file (uses handle offset) |
 | 13 | sys_close | RBX=fd | Close handle (pipe, file, device, event) |
-| 16 | sys_chdir | RBX=path_ptr | Change current directory |
-| 17 | sys_getcwd | RBX=buf, RCX=len | Get current directory |
-| 47 | sys_chdir_parent | RBX=path_ptr | Change parent process current directory |
+| 16 | sys_chdir | RBX=path_ptr | Change current directory (legacy) |
 | 18 | sys_brk | RBX=new_break | Set program break (demand-paged) |
 | 19 | sys_mmap | RBX=hint, RCX=len, RDX=prot, R8=flags, R9=fd | Lazy mapping (anonymous or file-backed) |
 | 20 | sys_munmap | RBX=addr, RCX=len | Free mmap mapping |
 | 21 | sys_loadlib | RBX=path_ptr | Load NXL from NeoFS into NXL region slot |
 | 22 | sys_thread_create | RBX=entry, RCX=stack | Create thread in current process |
 | 23 | sys_thread_join | RBX=tid | Wait for thread termination |
-| 24 | sys_getcpuinfo | RBX=buf_ptr, RCX=buf_size | Copy CpuInfoFull to user buffer |
 | 40 | sys_wait_alertable | — | Alertable wait: dispatch pending APC or block |
 | 41 | sys_sleep_ex | — | Alertable yield: check APC before/after yielding |
+| 42 | sys_poweroff | — | Power off the machine |
+| 47 | sys_chdir_parent | RBX=path_ptr | Change parent process cwd (legacy) |
+| 53 | sys_cursor_blink | RBX=0/1 | Enable/disable cursor blink |
+| 55 | sys_fsck | RBX=buf, RCX=drive, RDX=repair | Filesystem integrity check |
+| 58 | sys_driver_unload | RBX=name, RCX=force | Unload NEM driver (admin) |
+| 59 | sys_poll | RBX=pfds, RCX=nfds, RDX=timeout | Poll fds for ready I/O |
+| 60 | sys_ob_open | RBX=path, RCX=access | Open Ob namespace object |
+| 61 | sys_ob_create | RBX=path, RCX=type, RDX=fds, R8=attrs | Create Ob object |
+| 62 | sys_ob_query_info | RBX=fd, RCX=class, RDX=buf, R8=size | Query Ob object info |
+| 63 | sys_ob_set_info | RBX=fd, RCX=class, RDX=buf, R8=size | Set Ob object info |
+| 64 | sys_ob_enum | RBX=dir_fd, RCX=buf, RDX=max | Enumerate Ob directory |
+| 65 | sys_ob_wait | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on Ob objects |
+| 66 | sys_ob_destroy | RBX=fd | Destroy/delete Ob object |
 
 ## Debug Interfaces
 

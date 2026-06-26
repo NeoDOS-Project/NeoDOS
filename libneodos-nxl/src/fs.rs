@@ -3,6 +3,8 @@ use crate::syscall::{syscall_1, syscall_2, syscall_3, syscall_4};
 
 // ============================================================
 // Raw syscall wrappers — Filesystem domain
+// ---------------------------------------------------------------
+// All FS operations go through the Ob API (RAX 60-66).
 // ============================================================
 #[no_mangle]
 pub extern "C" fn nxl_sys_open(path: *const u8) -> i64 {
@@ -15,37 +17,12 @@ pub extern "C" fn nxl_sys_readfile(fd: u8, buf: *mut u8, len: usize) -> i64 {
 }
 
 #[no_mangle]
-pub extern "C" fn nxl_sys_writefile(fd: u8, buf: *const u8, len: usize) -> i64 {
-    ret(unsafe { syscall_3(12, fd as u64, buf as u64, len as u64) })
-}
-
-#[no_mangle]
 pub extern "C" fn nxl_sys_close(fd: u8) -> i64 {
     ret(unsafe { syscall_1(13, fd as u64) })
 }
 
-#[no_mangle]
-pub extern "C" fn nxl_sys_mkdir(path: *const u8) -> i64 {
-    ret(unsafe { syscall_1(25, path as u64) })
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_sys_unlink(path: *const u8) -> i64 {
-    ret(unsafe { syscall_1(26, path as u64) })
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_sys_rmdir(path: *const u8) -> i64 {
-    ret(unsafe { syscall_1(27, path as u64) })
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_sys_rename(old_path: *const u8, new_path: *const u8) -> i64 {
-    ret(unsafe { syscall_2(28, old_path as u64, new_path as u64) })
-}
-
 // ============================================================
-// Object Manager (Ob) wrappers — RAX 60–65
+// Object Manager (Ob) wrappers — RAX 60–66
 // ============================================================
 #[no_mangle]
 pub extern "C" fn nxl_sys_ob_open(path: *const u8, access_mask: u32) -> i64 {
@@ -79,19 +56,22 @@ pub extern "C" fn nxl_sys_ob_wait(fd: u8) -> i64 {
 }
 
 // ============================================================
-// FS: File open/read/write
+// Ob-based file I/O (replaces legacy RAX 12/25-28)
 // ============================================================
+/// File read via ob_query_info(ReadContent=15)
+#[no_mangle]
+pub extern "C" fn nxl_file_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
+    nxl_sys_ob_query_info(fd, 15, buf, len)
+}
+
+/// File write via ob_set_info(WriteContent=7)
+#[no_mangle]
+pub extern "C" fn nxl_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
+    nxl_sys_ob_set_info(fd, 7, buf, len)
+}
+
+/// File open via sys_open (RAX=10, legacy compat for O_CREAT)
 #[no_mangle]
 pub extern "C" fn nxl_file_open(path: *const u8) -> i64 {
     nxl_sys_open(path)
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_file_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
-    nxl_sys_readfile(fd, buf, len)
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
-    nxl_sys_writefile(fd, buf, len)
 }

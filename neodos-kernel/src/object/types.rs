@@ -111,6 +111,7 @@ pub enum ObInfoClass {
     Thread = 4,
     Pipe = 5,
     Device = 6,
+    CpuInfo = 7,
     Version = 8,
     DateTime = 9,
     Memory = 10,
@@ -118,6 +119,8 @@ pub enum ObInfoClass {
     Drivers = 12,
     Cwd = 13,
     KeyboardLayout = 14,
+    ReadContent = 15,
+    VolumeLabel = 16,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -128,7 +131,12 @@ pub enum ObSetInfoClass {
     ThreadPriority = 1,
     ObjectName = 2,
     Security = 3,
+    ProcessTerminate = 4,
     KeyboardLayout = 5,
+    VfsRename = 6,
+    WriteContent = 7,
+    SetCwd = 8,
+    SetVolumeLabel = 9,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

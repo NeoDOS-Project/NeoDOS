@@ -22,7 +22,7 @@ El kernel se organiza en 5 capas verticales:
 2. **HAL v0.4** — raw/safe split, 26 primitivas extern "C", asm confinado
 3. **System Services** — scheduler (4 prioridades, aging, work stealing), memory (buddy+slab, demand paging), KOBJ, VFS, IPC/pipes, IRP async I/O, Event Bus, seguridad NT6
 4. **NEM Driver Runtime** — pipeline de certificación (8 estados), capacidades (12 flags), aislamiento X4 (16 slots × 1 MB), ABI versionado
-5. **Syscall SSDT** — 66 syscalls (40 activos + 26 legacy migrados a Ob), tabla de 256 slots, O(1) dispatch, tabla de permisos separada
+5. **Syscall SSDT** — 32 syscalls activos, tabla de 256 slots, O(1) dispatch, tabla de permisos separada
 
 ---
 
@@ -30,7 +30,7 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 |---------|--------|
-| **Kernel** | v0.44.3 — 528 tests, 66 syscalls (40 SSDT activos), 13 fases de boot |
+| **Kernel** | v0.44.3 — 528 tests, 32 syscalls SSDT activos, 13 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
 | **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |

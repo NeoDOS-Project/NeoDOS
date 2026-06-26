@@ -23,6 +23,7 @@ use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use lazy_static::lazy_static;
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
+use crate::object::types::{ObInfoClass, ObSetInfoClass};
 
 pub use table::{Registers, SyscallFn, MAX_SYSCALL};
 pub use permission::{SyscallPermission, CAP_ADMIN};
@@ -50,8 +51,6 @@ pub enum SyscallNum {
     ReadFile = 11,
     WriteFile = 12,
     Close = 13,
-    Ioctl = 14,
-    RegisterDevice = 15,
     ChDir = 16,
     Brk = 18,
     Mmap = 19,
@@ -86,6 +85,9 @@ pub enum SyscallNum {
 impl SyscallNum {
     pub const MAX_VALID: u64 = 66;
 
+    /// Returns the number of contiguous syscall numbers in use: 0..=HIGHEST_ASSIGNED
+    pub const HIGHEST_ASSIGNED: u64 = 66;
+
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
             0 => Some(Self::Exit),
@@ -102,8 +104,6 @@ impl SyscallNum {
             11 => Some(Self::ReadFile),
             12 => Some(Self::WriteFile),
             13 => Some(Self::Close),
-            14 => Some(Self::Ioctl),
-            15 => Some(Self::RegisterDevice),
             16 => Some(Self::ChDir),
             18 => Some(Self::Brk),
             19 => Some(Self::Mmap),
@@ -172,18 +172,14 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 // ── ABI validation ──
 
 pub fn validate_abi() {
-    // Assigned syscall numbers that MUST have handlers
-        const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-            10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
-            29,
-            40, 41, 42, 47, 50, 53, 55, 58, 59,
-            60, 61, 62, 63, 64, 65, 66,
-        ];
-    // Reserved/migrated syscall slots that MUST be None
-        const RESERVED: &[u64] = &[12, 14, 15, 17, 24, 25, 26, 27, 28, 33, 43, 44, 45, 46, 49, 54, 56, 57];
+    const ASSIGNED: &[u64] = &[
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+        10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
+        29,
+        40, 41, 42, 47, 53, 55, 58, 59,
+        60, 61, 62, 63, 64, 65, 66,
+    ];
 
-    // Verify assigned syscalls have handlers
     for &n in ASSIGNED {
         assert!(
             SYSCALL_TABLE[n as usize].is_some(),
@@ -192,22 +188,11 @@ pub fn validate_abi() {
         );
     }
 
-    // Verify reserved slots are empty
-    for &n in RESERVED {
-        assert!(
-            SYSCALL_TABLE[n as usize].is_none(),
-            "SSDT reserved slot {} must be None",
-            n
-        );
-    }
-
-    // Verify error encoding
     assert!((err_to_u64(SyscallError::Inval) as i64) < 0);
     assert!((err_to_u64(SyscallError::NoEnt) as i64) < 0);
     assert!((err_to_u64(SyscallError::Perm) as i64) < 0);
 
-    crate::serial_println!("[SYS] SSDT validated ({} assigned, {} reserved)",
-        ASSIGNED.len(), RESERVED.len());
+    crate::serial_println!("[SYS] SSDT validated ({} assigned syscalls)", ASSIGNED.len());
 }
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
@@ -681,6 +666,20 @@ fn handler_exit(regs: Registers) -> u64 {
                 }
             }
             crate::serial_println!("[EXIT] checking: pid={} thread_count", pid);
+            // Wake any thread waiting on ChildExit via KWait (CB1)
+            if pid > 0 {
+                let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
+                for th in scheduler.kthreads.iter_mut() {
+                    if let Some(k) = th {
+                        if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                            k.waiting_for = None;
+                            k.state = ThreadState::Ready;
+                            scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                            set_need_resched();
+                        }
+                    }
+                }
+            }
             // Always request exit_to_kernel when the last thread exits,
             // regardless of whether someone is waiting via sys_waitpid.
             // Without this, the asm handler returns to user mode and the
@@ -963,23 +962,23 @@ fn handler_waitpid(regs: Registers) -> u64 {
         set_need_resched();
         return 0;
     } else {
-        loop {
-            let is_terminated = crate::hal::without_interrupts(|| {
-                let s = crate::scheduler::current_scheduler();
-                let scheduler = s.lock();
-                if let Some(ep) = scheduler.find_eprocess(wait_pid) {
-                    ep.thread_count == 0
-                } else {
-                    true
-                }
-            });
+        let is_terminated = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let scheduler = s.lock();
+            if let Some(ep) = scheduler.find_eprocess(wait_pid) {
+                ep.thread_count == 0
+            } else {
+                true
+            }
+        });
 
-            if is_terminated { break; }
-            unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
+        if is_terminated {
+            crate::scheduler::cleanup_terminated_process(wait_pid);
+            0
+        } else {
+            crate::kwait::kwait_block(crate::kwait::WaitReason::ChildExit { pid: wait_pid });
+            err_to_u64(SyscallError::Again)
         }
-
-        crate::scheduler::cleanup_terminated_process(wait_pid);
-        0
     }
 }
 
@@ -1598,18 +1597,7 @@ fn handler_chdir_parent(regs: Registers) -> u64 {
     }
 }
 
-/// ABI-stable KOBJ entry for sys_kobj_enum (RAX=48).
-#[repr(C)]
-struct KObjEntryRaw {
-    id: u64,
-    obj_type: u32,
-    padding: u32,
-    name: [u8; 24],
-    refcount: u32,
-    native_id: u64,
-}
-
-/// sys_kobj_enum (RAX=48): enumerate kernel objects.
+/// Resolve a chdir target path (shared by chdir and chdir_parent).
 /// RBX = buffer ptr, RCX = max entries.
 fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
     let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
@@ -1961,13 +1949,7 @@ fn handler_sleep_ex(_regs: Registers) -> u64 {
     0
 }
 
-/// Admin syscall stub (RAX=50). Placeholder for NDREG operations from user-space.
-fn handler_ndreg(_regs: Registers) -> u64 {
-    serial_println!("[SYS] sys_ndreg (RAX=50) called - admin stub");
-    0
-}
-
-/// sys_set_keyboard_layout (RAX=49): change keyboard layout.
+/// sys_set_exception_handler (RAX=29): set the current thread's SEH handler.
 /// RBX = layout (0=US, 1=SP).
 /// sys_set_priority (RAX=51): set process scheduling priority (admin).
 /// RBX = pid, RCX = priority (0-3).
@@ -2015,18 +1997,6 @@ fn handler_cursor_blink(regs: Registers) -> u64 {
         1 => { crate::console::set_cursor_blink(true); 0 }
         _ => err_to_u64(SyscallError::Inval),
     }
-}
-
-/// ABI-stable DateTime struct for sys_get_datetime (RAX=44 — migrated to Ob).
-#[repr(C)]
-pub struct SysDateTime {
-    pub second: u8,
-    pub minute: u8,
-    pub hour: u8,
-    pub day: u8,
-    pub month: u8,
-    pub year: u8,
-    pub valid: u8,
 }
 
 
@@ -2193,35 +2163,6 @@ fn handler_fsck(regs: Registers) -> u64 {
     }
 
     0
-}
-
-/// ABI-stable drive info for sys_get_drives (RAX=33).
-#[repr(C)]
-struct DriveInfoRaw {
-    letter: u8,
-    present: u8,
-    fs_type: [u8; 16],
-    label: [u8; 32],
-    total_sectors: u64,
-}
-
-#[repr(C)]
-struct DriverInfoRaw {
-    id: u32,
-    state: u8,
-    category: u8,
-    driver_type: u8,
-    api_version: u16,
-    abi_min: u16,
-    abi_target: u16,
-    abi_max: u16,
-    last_error: u32,
-    caps: u64,
-    isolation_mode: u8,
-    events_received: u64,
-    tick_count: u64,
-    registered_at_tick: u64,
-    name: [u8; 8],
 }
 
 /// sys_driver_load (RAX=57): load a NEM driver from a filesystem path (admin).
@@ -2826,6 +2767,48 @@ struct ObDeviceInfo {
     reserved: u32,
 }
 
+// ── Serialization structs for ObInfoClass query results ──
+// These must match the consumer-side structs in libneodos/src/syscall.rs.
+
+#[repr(C)]
+struct SysDateTime {
+    second: u8,
+    minute: u8,
+    hour: u8,
+    day: u8,
+    month: u8,
+    year: u8,
+    valid: u8,
+}
+
+#[repr(C)]
+struct DriveInfoRaw {
+    letter: u8,
+    present: u8,
+    fs_type: [u8; 16],
+    label: [u8; 32],
+    total_sectors: u64,
+}
+
+#[repr(C)]
+struct DriverInfoRaw {
+    id: u32,
+    state: u8,
+    category: u8,
+    driver_type: u8,
+    api_version: u16,
+    abi_min: u16,
+    abi_target: u16,
+    abi_max: u16,
+    last_error: u32,
+    caps: u64,
+    isolation_mode: u8,
+    events_received: u64,
+    tick_count: u64,
+    registered_at_tick: u64,
+    name: [u8; 8],
+}
+
 /// sys_ob_query_info (RAX=62): query metadata for an object by fd.
 /// RBX = fd
 /// RCX = info_class (u32, ObInfoClass enum)
@@ -2851,7 +2834,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
     }
 
     match info_class {
-        0 => {
+        _ if info_class == ObInfoClass::Basic as u32 => {
             // BasicInfo: type, refcount, name
             if entry.object_id == 0 {
                 let basic = ObBasicInfo {
@@ -2906,7 +2889,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
                 err_to_u64(SyscallError::BadF)
             }
         }
-        1 => {
+        _ if info_class == ObInfoClass::Name as u32 => {
             // NameInfo: return the object's name as a string
             if entry.object_id == 0 {
                 return 0u64;
@@ -2924,7 +2907,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
                 err_to_u64(SyscallError::BadF)
             }
         }
-        2 => {
+_ if info_class == ObInfoClass::File as u32 => {
             // FileInfo: size, drive, inode
             if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
@@ -2950,7 +2933,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        3 => {
+_ if info_class == ObInfoClass::Process as u32 => {
             // ProcessInfo: pid, parent, priority, thread_count, state
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3004,7 +2987,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        4 => {
+_ if info_class == ObInfoClass::Thread as u32 => {
             // ThreadInfo: tid, pid, state, priority
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3046,7 +3029,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        5 => {
+_ if info_class == ObInfoClass::Pipe as u32 => {
             // PipeInfo: capacity, read_refs, write_refs
             if entry.obj_type() != Some(crate::object::ObType::Pipe) {
                 return err_to_u64(SyscallError::Inval);
@@ -3070,7 +3053,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        6 => {
+_ if info_class == ObInfoClass::Device as u32 => {
             // DeviceInfo: device_id
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3093,7 +3076,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        7 => {
+_ if info_class == ObInfoClass::CpuInfo as u32 => {
             // CpuInfo: return CpuInfoFull struct from \Global\Info\CpuInfo object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3116,7 +3099,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        8 => {
+_ if info_class == ObInfoClass::Version as u32 => {
             // Version: return KERNEL_VERSION string from \Global\Info\Version object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3135,7 +3118,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             ver.len() as u64
         }
-        9 => {
+_ if info_class == ObInfoClass::DateTime as u32 => {
             // DateTime: return SysDateTime struct from \Global\Info\DateTime object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3173,7 +3156,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        10 => {
+_ if info_class == ObInfoClass::Memory as u32 => {
             // Memory: return MemInfo (MemoryStats) struct from \Global\Info\Memory object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3196,7 +3179,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             sz as u64
         }
-        11 => {
+_ if info_class == ObInfoClass::Drives as u32 => {
             // Drives: return array of DriveInfoRaw entries from \Global\Info\Drives object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3251,7 +3234,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             });
             written
         }
-        12 => {
+_ if info_class == ObInfoClass::Drivers as u32 => {
             // Drivers: return array of DriverInfoRaw entries
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3318,7 +3301,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             drop(runtime);
             (count * entry_size_bulk) as u64
         }
-        13 => {
+_ if info_class == ObInfoClass::Cwd as u32 => {
             // Cwd: return current process working directory string
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3340,7 +3323,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             }
             copy_len as u64
         }
-        14 => {
+_ if info_class == ObInfoClass::KeyboardLayout as u32 => {
             // KeyboardLayout: return current layout (0=US, 1=SP) from \Global\Info\Keyboard
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3357,7 +3340,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
             unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, layout); }
             1u64
         }
-        15 => {
+_ if info_class == ObInfoClass::ReadContent as u32 => {
             // ReadContent: read file content via VFS
             // Supports both ObObject handles and legacy file handles
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
@@ -3407,7 +3390,7 @@ fn handler_ob_query_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
-        16 => {
+_ if info_class == ObInfoClass::VolumeLabel as u32 => {
             // VolumeLabel: return volume label string via VFS
             if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
@@ -3466,7 +3449,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
     }
 
     match info_class {
-        0 => {
+_ if info_class == ObSetInfoClass::ProcessPriority as u32 => {
             // ProcessPriority: buf contains a u32 priority value
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3493,7 +3476,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
             });
             0
         }
-        1 => {
+_ if info_class == ObSetInfoClass::ThreadPriority as u32 => {
             // ThreadPriority: buf contains a u32 priority value
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3527,7 +3510,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
             });
             0
         }
-        2 => {
+_ if info_class == ObSetInfoClass::ObjectName as u32 => {
             // ObjectName: rename the object
             let name = match copy_user_string(buf_ptr) {
                 Ok(s) => s,
@@ -3544,11 +3527,11 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::BadF),
             }
         }
-        3 => {
+_ if info_class == ObSetInfoClass::Security as u32 => {
             // SecurityInfo: set SecurityDescriptor
             return err_to_u64(SyscallError::NoSys);
         }
-        4 => {
+_ if info_class == ObSetInfoClass::ProcessTerminate as u32 => {
             // ProcessTerminate: terminate the process by PID
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3575,7 +3558,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 }
             })
         }
-        5 => {
+_ if info_class == ObSetInfoClass::KeyboardLayout as u32 => {
             // KeyboardLayout: set keyboard layout from \Global\Info\Keyboard object
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3600,7 +3583,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Again),
             }
         }
-        6 => {
+_ if info_class == ObSetInfoClass::VfsRename as u32 => {
             // VfsRename: rename a VFS file/directory
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3643,7 +3626,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
-        7 => {
+_ if info_class == ObSetInfoClass::WriteContent as u32 => {
             // WriteContent: write file content via VFS
             // Supports both ObObject handles and legacy file handles
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
@@ -3692,7 +3675,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
-        8 => {
+_ if info_class == ObSetInfoClass::SetCwd as u32 => {
             // SetCwd: change current working directory via \Global\Info\Cwd
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
@@ -3719,7 +3702,7 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::NoEnt),
             }
         }
-        9 => {
+_ if info_class == ObSetInfoClass::SetVolumeLabel as u32 => {
             // SetVolumeLabel: set volume label via VFS
             if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
                 return err_to_u64(SyscallError::Inval);
@@ -4066,45 +4049,23 @@ lazy_static! {
         t[8] = Some(handler_readdir as SyscallFn);
         t[9] = Some(handler_waitpid as SyscallFn);
         t[10] = Some(handler_open as SyscallFn);
-        t[11] = Some(handler_readfile as SyscallFn); // legacy compat
-        t[12] = None; // migrated to Ob: ob_set_info(WriteContent)
+        t[11] = Some(handler_readfile as SyscallFn);
         t[13] = Some(handler_close as SyscallFn);
-        t[14] = None; // unused
-        t[15] = None; // unused
         t[16] = Some(handler_chdir as SyscallFn);
-        t[17] = None; // migrated to Ob: \Global\Info\Cwd
         t[18] = Some(handler_brk as SyscallFn);
         t[19] = Some(handler_mmap as SyscallFn);
         t[20] = Some(handler_munmap as SyscallFn);
         t[21] = Some(handler_loadlib as SyscallFn);
         t[22] = Some(handler_thread_create as SyscallFn);
         t[23] = Some(handler_thread_join as SyscallFn);
-        t[24] = None; // migrated to Ob: \Global\Info\CpuInfo
-        t[25] = None; // migrated to Ob: ob_create(Directory)
-        t[26] = None; // migrated to Ob: ob_destroy
-        t[27] = None; // migrated to Ob: ob_destroy
-        t[28] = None; // migrated to Ob: ob_set_info(VfsRename)
         t[29] = Some(handler_set_exception_handler as SyscallFn);
-        t[33] = None; // migrated to Ob: \Global\Info\Drives
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
         t[42] = Some(handler_poweroff as SyscallFn);
-        t[43] = None; // migrated to Ob: \Global\Info\Version
-        t[44] = None; // migrated to Ob: \Global\Info\DateTime
-        t[45] = None; // migrated to Ob: \Global\Info\Memory
-        t[46] = None; // migrated to Ob: ob_query_info(VolumeLabel)
         t[47] = Some(handler_chdir_parent as SyscallFn);
-        t[48] = None; // migrated to Ob: sys_kobj_enum → ob_enum
-        t[49] = None; // migrated to Ob: \Global\Info\Keyboard + ob_set_info
-        t[50] = Some(handler_ndreg as SyscallFn);
-        t[51] = None; // migrated to Ob: sys_set_priority → ob_set_info
-        t[52] = None; // migrated to Ob: sys_kill_process → ob_set_info
         t[53] = Some(handler_cursor_blink as SyscallFn);
-        t[54] = None; // migrated to Ob: ob_set_info(SetVolumeLabel)
         t[55] = Some(handler_fsck as SyscallFn);
-        t[56] = None; // migrated to Ob: \Global\Info\Drivers
-        t[57] = None; // migrated to Ob: ob_create(Driver)
-        t[58] = Some(handler_driver_unload as SyscallFn); // kept for loadnem /U
+        t[58] = Some(handler_driver_unload as SyscallFn);
         t[59] = Some(handler_poll as SyscallFn);
         t[60] = Some(handler_ob_open as SyscallFn);
         t[61] = Some(handler_ob_create as SyscallFn);
@@ -4125,45 +4086,26 @@ lazy_static! {
         t[4] = SyscallPermission::user();
         t[5] = SyscallPermission::user();
         t[6] = SyscallPermission::user();
-        t[7] = SyscallPermission::user(); // kept for neoinit
+        t[7] = SyscallPermission::user();
         t[8] = SyscallPermission::user();
         t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();
-        t[11] = SyscallPermission::free(); // migrated to Ob
-        t[12] = SyscallPermission::free(); // migrated to Ob
+        t[11] = SyscallPermission::user();
         t[13] = SyscallPermission::user();
-        t[14] = SyscallPermission::free(); // unused
-        t[15] = SyscallPermission::free(); // unused
         t[16] = SyscallPermission::user();
-        t[17] = SyscallPermission::free(); // migrated to Ob
         t[18] = SyscallPermission::user();
         t[19] = SyscallPermission::user();
         t[20] = SyscallPermission::user();
         t[21] = SyscallPermission::user();
         t[22] = SyscallPermission::user();
         t[23] = SyscallPermission::user();
-        t[24] = SyscallPermission::free(); // unused
-        t[25] = SyscallPermission::free(); // migrated to Ob
-        t[26] = SyscallPermission::free(); // migrated to Ob
-        t[27] = SyscallPermission::free(); // migrated to Ob
-        t[28] = SyscallPermission::free(); // migrated to Ob
         t[29] = SyscallPermission::user();
-        t[33] = SyscallPermission::free(); // migrated to Ob
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();
-        t[43] = SyscallPermission::free(); // migrated to Ob
-        t[44] = SyscallPermission::free(); // migrated to Ob
-        t[45] = SyscallPermission::free(); // migrated to Ob
-        t[46] = SyscallPermission::free(); // migrated to Ob
         t[47] = SyscallPermission::user();
-        t[49] = SyscallPermission::free(); // migrated to Ob
-        t[50] = SyscallPermission::admin();
         t[53] = SyscallPermission::user();
-        t[54] = SyscallPermission::free(); // migrated to Ob
         t[55] = SyscallPermission::user();
-        t[56] = SyscallPermission::free(); // migrated to Ob
-        t[57] = SyscallPermission::free(); // migrated to Ob
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::user();
         t[60] = SyscallPermission::user();
@@ -4277,48 +4219,40 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_table_sparse_dispatch", {
         // SSDT has entries for valid syscalls, None for unused slots
         test_true!(SYSCALL_TABLE[0].is_some());   // exit
-        test_true!(SYSCALL_TABLE[50].is_some());  // ndreg (admin)
         test_true!(SYSCALL_TABLE[99].is_none());  // sparse: no handler
         test_true!(SYSCALL_TABLE[255].is_none()); // end of table
     });
 
     test_case!("syscall_permission_admin_check", {
-        // Admin syscall without admin token → EPERM (Perm error)
-        let result = check_syscall_permission(50, false);
+        // Admin syscall (58 = driver_unload) without admin token → EPERM
+        let result = check_syscall_permission(58, false);
         test_true!(result.is_err());
         test_eq!(result.unwrap_err(), err_to_u64(SyscallError::Perm));
 
         // Admin syscall WITH admin token → OK
-        let result = check_syscall_permission(50, true);
+        let result = check_syscall_permission(58, true);
         test_true!(result.is_ok());
 
-        // Normal user syscall without admin token → OK (no admin flag)
+        // Normal user syscall without admin token → OK
         let result = check_syscall_permission(1, false);
         test_true!(result.is_ok());
     });
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8,
-        9, 10, 13, 16, 18, 19, 20, 21, 22, 23,
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+            10, 11, 13, 16, 18, 19, 20, 21, 22, 23,
             29, 40, 41, 42, 47,
-            50, 53, 55, 58, 59,
+            53, 55, 58, 59,
             60, 61, 62, 63, 64, 65, 66,
         ];
-        // Migrated to Ob: 11(sys_readfile→ob_query_info), 12(sys_writefile→ob_set_info),
-        // 25(sys_mkdir→ob_create), 26(sys_unlink→ob_destroy), 27(sys_rmdir→ob_destroy),
-        // 28(sys_rename→ob_set_info), 46(sys_get_volume_label→ob_query_info),
-        // 54(sys_set_volume_label→ob_set_info), 57(sys_driver_load→ob_create)
-        // Removed (migrated to Ob): 14(ioctl), 15(register_device), 48(kobj_enum→Ob),
-        // 51(set_priority→Ob), 52(kill_process→Ob)
-        const RESERVED: &[u64] = &[12, 14, 15, 25, 26, 27, 28,
-            46, 48, 51, 52, 54, 57];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
-        for &n in RESERVED {
-            test_true!(SYSCALL_TABLE[n as usize].is_none());
-        }
+        // All other slots are free (no reserved/migrated)
+        test_true!(SYSCALL_TABLE[12].is_none());
+        test_true!(SYSCALL_TABLE[99].is_none());
+        test_true!(SYSCALL_TABLE[255].is_none());
     });
 
     test_case!("syscall_enosys_unknown", {
@@ -4342,11 +4276,11 @@ pub fn register_syscall_table_tests() {
 
         // Verify permission entries exist
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
-        test_eq!(SYSCALL_PERMISSIONS[50].admin, true);
+        test_eq!(SYSCALL_PERMISSIONS[58].admin, true);
 
-        // Verify new syscall entries exist (those with direct handlers)
+        // Verify syscall entries exist
         test_true!(SYSCALL_TABLE[8].is_some());   // readdir
-        // mkdir(25), unlink(26), rmdir(27), rename(28) migrated to Ob API
+        test_true!(SYSCALL_TABLE[66].is_some());  // ob_destroy
     });
 
     // ── A4.6 Integration tests ──

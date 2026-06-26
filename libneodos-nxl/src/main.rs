@@ -32,10 +32,11 @@ fn nxl_panic(info: &core::panic::PanicInfo) -> ! {
 }
 
 // ============================================================
-// Export Table — placed in .export_table section at known offset
+// Export Table v7 — Ob-based ABI, removed legacy dead entries
 // ============================================================
 #[repr(C)]
 pub struct AbiTable {
+    // Core syscall wrappers
     pub sys_exit: extern "C" fn(u32) -> !,
     pub sys_write: extern "C" fn(u8, *const u8, usize) -> i64,
     pub sys_read: extern "C" fn(u8, *mut u8, usize) -> i64,
@@ -43,26 +44,26 @@ pub struct AbiTable {
     pub sys_yield: extern "C" fn(),
     pub sys_open: extern "C" fn(*const u8) -> i64,
     pub sys_readfile: extern "C" fn(u8, *mut u8, usize) -> i64,
-    pub sys_writefile: extern "C" fn(u8, *const u8, usize) -> i64,
     pub sys_close: extern "C" fn(u8) -> i64,
     pub sys_brk: extern "C" fn(u64) -> i64,
     pub sys_mmap: extern "C" fn(u64, u64, u16, u16, u64) -> i64,
     pub sys_munmap: extern "C" fn(u64, u64) -> i64,
-    pub sys_pipe: extern "C" fn(*mut u64) -> i64,
-    pub sys_dup2: extern "C" fn(u8, u8) -> i64,
-    pub sys_waitpid: extern "C" fn(u32) -> i64,
+    // I/O helpers
     pub stdout_write: extern "C" fn(*const u8, usize) -> i64,
     pub stderr_write: extern "C" fn(*const u8, usize) -> i64,
     pub stdin_read: extern "C" fn(*mut u8, usize) -> i64,
     pub nxl_print: extern "C" fn(*const u8, usize),
     pub nxl_eprint: extern "C" fn(*const u8, usize),
+    // Ob-based file I/O (replaces legacy RAX 12/25-28)
     pub file_open: extern "C" fn(*const u8) -> i64,
     pub file_read: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub file_write: extern "C" fn(u8, *const u8, usize) -> i64,
+    // Memory helpers
     pub brk: extern "C" fn(u64) -> i64,
     pub sbrk: extern "C" fn(i64) -> i64,
     pub mmap: extern "C" fn(u64, u16, u16) -> i64,
     pub munmap: extern "C" fn(u64, u64) -> i64,
+    // Error constants
     pub err_einval: i64,
     pub err_enonet: i64,
     pub err_enomem: i64,
@@ -78,16 +79,10 @@ pub struct AbiTable {
     pub err_eio: i64,
     pub err_enodev: i64,
     pub err_ebusy: i64,
-    pub sys_chdir: extern "C" fn(*const u8) -> i64,
-    pub sys_chdir_parent: extern "C" fn(*const u8) -> i64,
+    // Process / library
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
     pub sys_spawn: extern "C" fn(*const u8, u8, u8, u8) -> i64,
-    pub sys_readdir: extern "C" fn(u8, *mut u8) -> i64,
-    pub sys_mkdir: extern "C" fn(*const u8) -> i64,
-    pub sys_unlink: extern "C" fn(*const u8) -> i64,
-    pub sys_rmdir: extern "C" fn(*const u8) -> i64,
-    pub sys_rename: extern "C" fn(*const u8, *const u8) -> i64,
-    // Object Manager (Ob) API — RAX 60–65
+    // Object Manager (Ob) API — RAX 60–66
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
     pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64, u64) -> i64,
     pub sys_ob_query_info: extern "C" fn(u8, u32, *mut u8, usize) -> i64,
@@ -107,14 +102,10 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_yield: crate::process::nxl_sys_yield,
     sys_open: crate::fs::nxl_sys_open,
     sys_readfile: crate::fs::nxl_sys_readfile,
-    sys_writefile: crate::fs::nxl_sys_writefile,
     sys_close: crate::fs::nxl_sys_close,
     sys_brk: crate::mem::nxl_sys_brk,
     sys_mmap: crate::mem::nxl_sys_mmap,
     sys_munmap: crate::mem::nxl_sys_munmap,
-    sys_pipe: crate::process::nxl_sys_pipe,
-    sys_dup2: crate::process::nxl_sys_dup2,
-    sys_waitpid: crate::process::nxl_sys_waitpid,
     stdout_write: crate::io::nxl_stdout_write,
     stderr_write: crate::io::nxl_stderr_write,
     stdin_read: crate::io::nxl_stdin_read,
@@ -142,20 +133,13 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     err_eio: crate::error::EIO,
     err_enodev: crate::error::ENODEV,
     err_ebusy: crate::error::EBUSY,
-    sys_chdir: crate::process::nxl_sys_chdir,
-    sys_chdir_parent: crate::process::nxl_sys_chdir_parent,
     sys_loadlib: crate::process::nxl_sys_loadlib,
     sys_spawn: crate::process::nxl_sys_spawn,
-    sys_readdir: crate::process::nxl_sys_readdir,
-    sys_mkdir: crate::fs::nxl_sys_mkdir,
-    sys_unlink: crate::fs::nxl_sys_unlink,
-    sys_rmdir: crate::fs::nxl_sys_rmdir,
-    sys_rename: crate::fs::nxl_sys_rename,
     sys_ob_open: crate::fs::nxl_sys_ob_open,
     sys_ob_create: crate::fs::nxl_sys_ob_create,
     sys_ob_query_info: crate::fs::nxl_sys_ob_query_info,
     sys_ob_set_info: crate::fs::nxl_sys_ob_set_info,
     sys_ob_enum: crate::fs::nxl_sys_ob_enum,
     sys_ob_wait: crate::fs::nxl_sys_ob_wait,
-    version: 6,
+    version: 7,
 };

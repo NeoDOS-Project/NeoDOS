@@ -57,7 +57,7 @@ NeoDOS v0.44.2 es un sistema operativo funcional con una base arquitectónica s�
 │       │            │             │                    │              │
 │  ┌────┴────────────┴─────────────┴────────────────────┴──────────┐  │
 │  │                  SYSCALL GATE (INT 0x80, SSDT 256 slots)      │  │
-│  │              40 handlers activos, 26 None (legacy migrados)    │  │
+│  │              32 handlers activos, resto None (legacy removed)   │  │
 │  └────────────────────────────┬──────────────────────────────────┘  │
 ├───────────────────────────────┼─────────────────────────────────────┤
 │                      KERNEL (Ring 0)                                 │
@@ -249,12 +249,12 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 4.1 SSDT Architecture
 
 ```rust
-pub static SYSCALL_TABLE: [Option<SyscallFn>; 256]       // 40 handlers
+pub static SYSCALL_TABLE: [Option<SyscallFn>; 256]       // 32 handlers
 pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]   // parallel table
 ```
 
-**Slots activos:** 0-6, 9-13, 16, 18-23, 25-29, 40-42, 46-48, 50-55, 57-66
-**Slots None (legacy migrados):** 7, 8, 11, 12, 14, 15, 17, 24, 25, 26, 27, 28, 33, 43, 44, 45, 46, 48, 49, 51, 52, 54, 56, 57
+**Slots activos:** 0-11, 13, 16, 18-23, 29, 40-42, 47, 53, 55, 58-66
+**Slots None:** resto (legacy migrados a Ob API, handlers eliminados del SSDT)
 
 ### 4.2 Syscall Coverage
 

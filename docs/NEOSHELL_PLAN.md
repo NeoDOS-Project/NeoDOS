@@ -562,11 +562,11 @@ Primer lote (no requieren gestión de archivos):
 ### Fase 4: Coretools archivos (B8.7–B8.11)
 
 Segundo lote (operaciones de archivos):
-- `COPY.NXE`: `sys_open` + `sys_readfile` + `sys_writefile`
-- `DEL.NXE`: `sys_unlink`
-- `REN.NXE`: `sys_rename`
-- `MD.NXE`: `sys_mkdir`
-- `RD.NXE`: `sys_rmdir`
+- `COPY.NXE`: `ob_query_info(ReadContent)` + `ob_set_info(WriteContent)`
+- `DEL.NXE`: `ob_destroy`
+- `REN.NXE`: `ob_set_info(VfsRename)`
+- `MD.NXE`: `ob_create(Directory)`
+- `RD.NXE`: `ob_destroy`
 
 ### Fase 5: Integración (B8.12)
 
