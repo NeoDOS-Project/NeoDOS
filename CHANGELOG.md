@@ -23,6 +23,10 @@
 - **Dead syscall handlers** — `handler_ndreg` (RAX 50), `Ioctl` (RAX 14), `RegisterDevice` (RAX 15) removed from SSDT.
 - **Dead structs** — `KObjEntryRaw`, `DriveInfoRaw`, `DriverInfoRaw` moved to local scope near their sole users in `handler_ob_query_info`.
 - **libneodos wrappers (9)** — `sys_writefile`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`, `sys_waitpid`.
+- **Thread Object via Ob API** — `ob_create(Thread)` crea KTHREAD, `ob_wait(Thread)` via KWait, `ob_set_info(ThreadPriority)` para thread específico. RAX 22/23 eliminados del SSDT. `libneodos::ob_thread_create/join/set_priority` wrappers.
+- **cpuinfo.nxe** — ahora muestra PROCESS INFORMATION (PID, PPID, prioridad, threads, estado) via `ob_open("\Ob\Process\{pid}")`.
+- **neotop.nxe** — monitor de sistema Ring 3: lista procesos con PID/PPID/prioridad/threads/estado + barra de memoria vía console.nxl. Modo `/W` watch con refresco cada ~1s. Inode 67.
+- **libmath-nxl modularizado** — `src/main.rs` dividido en `main.rs` (entry+export table) + `math.rs` (funciones puras + `MathAbiTable`). Misma ABI, mismo binario.
 
 ## v0.44.5 — 2026-06-26
 

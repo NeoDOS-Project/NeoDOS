@@ -748,6 +748,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via ob_open("\Global\Info\Drivers") + ob_query_info(Drivers) |
 | `loadnem.nxe` | Rust `userbin/loadnem/` | ~4 KB | LOADNEM command: ob_create(Driver) to load, sys_driver_unload (RAX=58) for /U unload flag |
 | `progress.nxe` | Rust `userbin/progress/` | ~4 KB | Progress bar demo: tests console.nxl progress_create/update/finish API |
+| `neotop.nxe` | Rust `userbin/neotop/` | ~24 KB | System monitor: lista procesos con PID/PPID/prioridad/threads/estado + barra de memoria via console.nxl + `/W` watch mode |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 

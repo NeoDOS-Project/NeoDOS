@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -286,7 +286,7 @@ Happy hacking!
         # 14=Libraries, 15-18,44,64=NXL files
         # 19=Layouts, 20-21=NKB files
         # 22=Config, 23-24=cfg files
-        # 25=Programs, 26-36,45-53,65=NXE files
+        # 25=Programs, 26-36,45-53,65,67=NXE files
         # 37=Packages, 38=Users, 39=Default, 40=Alejandro
         # 41=Temp, 42=Data, 43=Logs, 46=type.nxe, 47=tree.nxe
         # 48=cls.nxe, 49=copy.nxe, 50=del.nxe, 51=ren.nxe, 52=md.nxe, 53=rd.nxe
@@ -334,6 +334,7 @@ Happy hacking!
         ndreg_blocks      = alloc_blocks(62, len(nxe_files['ndreg']))
         loadnem_blocks    = alloc_blocks(63, len(nxe_files['loadnem']))
         progress_blocks   = alloc_blocks(65, len(nxe_files['progress']))
+        neotop_blocks     = alloc_blocks(67, len(nxe_files['neotop']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
         console_nxl_blocks = alloc_blocks(64, len(console_nxl_data))
@@ -354,7 +355,7 @@ Happy hacking!
         lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
-        prog_dir_blocks   = alloc_blocks(25, 7424)   # Programs dir (29 entries)
+        prog_dir_blocks   = alloc_blocks(25, 8192)   # Programs dir (32 entries)
         pkg_dir_blocks    = alloc_blocks(37, 256)    # Packages dir (empty)
         usr_dir_blocks    = alloc_blocks(38, 768)    # Users dir
         def_dir_blocks    = alloc_blocks(39, 256)    # Users\Default (empty)
@@ -415,6 +416,7 @@ Happy hacking!
               62: (MODE_FILE | default_perms_for_filename("ndreg.nxe"), len(nxe_files['ndreg']), pad_blocks(ndreg_blocks)),
               63: (MODE_FILE | default_perms_for_filename("loadnem.nxe"), len(nxe_files['loadnem']), pad_blocks(loadnem_blocks)),
               65: (MODE_FILE | default_perms_for_filename("progress.nxe"), len(nxe_files['progress']), pad_blocks(progress_blocks)),
+              67: (MODE_FILE | default_perms_for_filename("neotop.nxe"), len(nxe_files['neotop']), pad_blocks(neotop_blocks)),
             41: (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             42: (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             43: (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -606,6 +608,7 @@ Happy hacking!
         image[offset+7168:offset+7424]= create_dir_entry(62, 1, "ndreg.nxe")
         image[offset+7424:offset+7680]= create_dir_entry(63, 1, "loadnem.nxe")
         image[offset+7680:offset+7936]= create_dir_entry(65, 1, "progress.nxe")
+        image[offset+7936:offset+8192]= create_dir_entry(67, 1, "neotop.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -640,6 +643,7 @@ Happy hacking!
             62: ('ndreg.nxe', nxe_files['ndreg']),
             63: ('loadnem.nxe', nxe_files['loadnem']),
             65: ('progress.nxe', nxe_files['progress']),
+            67: ('neotop.nxe', nxe_files['neotop']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:
