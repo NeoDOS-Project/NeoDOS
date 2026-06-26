@@ -799,11 +799,10 @@ impl Scheduler {
             if let Some(k) = th {
                 if k.tid > 0 && k.state == ThreadState::Ready {
                     k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
-                    if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
-                        k.priority -= 1;
-                        k.ticks_since_scheduled = 0;
-                        crate::serial_println!("[SCHED] Aging: TID {} boosted to priority {}", k.tid, k.priority);
-                    }
+                if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
+                    k.priority -= 1;
+                    k.ticks_since_scheduled = 0;
+                }
                 }
             }
         }

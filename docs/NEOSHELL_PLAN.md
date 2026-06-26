@@ -1,8 +1,15 @@
 # neoshell — Ring 3 Shell Plan
 
-> **Versión:** 1.0 (esbozo)
-> **Dependencias:** A4.6 (syscalls), libneodos-nxl, libneodos
+> **Versión:** 1.0 (esbozo, implementación v0.44.5)
+> **Dependencias:** A4.6 (syscalls), libneodos-nxl, libneodos, console.nxl
 > **Ver también:** `docs/IMPROVEMENTS.md` items A4.6, A4.7, B8
+>
+> **Nota de implementación (v0.44.5):** El módulo `lineedit.rs` descrito abajo no fue
+> implementado como un archivo separado. En su lugar, la history y TAB completion se
+> delegaron a `console.nxl` (NXL slot 2, `0x1e080000`), cargada automáticamente vía
+> `sys_loadlib` desde `libneodos::console`. La shell maneja el display (eco, cursor,
+> backspace) directamente con `sys_write`, mientras que console.nxl provee la lógica
+> reusable (history circular buffer, completion callback registry, read_byte).
 
 ---
 

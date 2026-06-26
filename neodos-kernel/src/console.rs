@@ -284,6 +284,38 @@ fn execute_ansi_csi(cmd: u8) {
                 // mode 0 and 1 are not implemented
             }
 
+            b'A' => { // CUU — cursor up
+                let n = if count >= 1 { params[0].max(1) as usize } else { 1 };
+                let row = ROW.load(Ordering::SeqCst);
+                ROW.store(row.saturating_sub(n), Ordering::SeqCst);
+            }
+
+            b'B' => { // CUD — cursor down
+                let n = if count >= 1 { params[0].max(1) as usize } else { 1 };
+                let row = ROW.load(Ordering::SeqCst);
+                let max_row = console_max_row();
+                ROW.store(core::cmp::min(row.saturating_add(n), max_row - 1), Ordering::SeqCst);
+            }
+
+            b'C' => { // CUF — cursor right
+                let n = if count >= 1 { params[0].max(1) as usize } else { 1 };
+                let col = COL.load(Ordering::SeqCst);
+                let max_col = console_width();
+                COL.store(core::cmp::min(col.saturating_add(n), max_col - 1), Ordering::SeqCst);
+            }
+
+            b'D' => { // CUB — cursor left
+                let n = if count >= 1 { params[0].max(1) as usize } else { 1 };
+                let col = COL.load(Ordering::SeqCst);
+                COL.store(col.saturating_sub(n), Ordering::SeqCst);
+            }
+
+            b'G' => { // CHA — cursor horizontal absolute
+                let col = if count >= 1 { params[0].max(1).saturating_sub(1) as usize } else { 0 };
+                let max_col = console_width();
+                COL.store(core::cmp::min(col, max_col - 1), Ordering::SeqCst);
+            }
+
             b'K' => { // EL — erase in line
                 let mode = if count >= 1 { params[0] } else { 0 };
                 if mode == 0 || mode == 2 {

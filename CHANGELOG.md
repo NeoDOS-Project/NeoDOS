@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.44.5 — 2026-06-26
+
+### Added
+- **libconsole-nxl** (`console.nxl`, inode 64) — reusable Ring 3 console library: readline, history (32-entry circular buffer), TAB completion handler registry, progress bars. Export table v2.
+- **libneodos::console** — lazy-loaded wrapper (`libneodos/src/console.rs`) for console.nxl. Provides `read_byte()`, `history_add/prev/next/reset/get_count/get_entry`, `register_completion`, `progress_*`.
+- **progress.nxe** — standalone progress bar demo binary (inode 65).
+- **ANSI escape support** — CUU (ESC[A), CUD (ESC[B), CUF (ESC[C), CUB (ESC[D), CHA (ESC[G) in kernel console (`neodos-kernel/src/console.rs`).
+- **NXL reuse check** — `nxl_load()` returns existing base if NXL already loaded, preventing double-load on repeated `sys_loadlib`.
+- **Serial flush()** — `SerialPort::flush()` waits for transmitter empty (LSR bit 6). Called after every `write_str`.
+- **Syscalls 67–76 documented** — `sys_ob_logon` through `sys_ob_consent_response` with architecture rule in AGENTS.md.
+
+### Changed
+- **neoshell refactored** — history (↑/↓) and TAB completion migrated from inline code to `console.nxl`. Shell still handles echo/display directly (proven reliable). Internal `history` arrays removed.
+- **Serial FIFO disabled** — FCR set to 0x06 (disable FIFO, clear TX+RX) instead of 0xC7 (14-byte threshold) to prevent serial output buffering loss in QEMU.
+- **Scheduler aging** — `serial_println!` removed from timer ISR to eliminate `[SCHED]` serial log interleaving.
+
+### Fixed
+- **Serial output loss in QEMU** — small writes (<150 bytes) no longer lost due to FIFO buffering. `flush()` ensures transmitter is empty before releasing lock.
+
 ## v0.44.3 — 2026-06-26
 
 ### Added

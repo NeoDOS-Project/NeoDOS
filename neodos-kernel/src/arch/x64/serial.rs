@@ -15,7 +15,7 @@ impl SerialPort {
         self.write_reg(0, 0x03);    // Set divisor to 3 (38400 baud)
         self.write_reg(1, 0x00);    // (hi byte)
         self.write_reg(3, 0x03);    // 8 bits, no parity, one stop bit
-        self.write_reg(2, 0xC7);    // Enable FIFO, clear them, with 14-byte threshold
+        self.write_reg(2, 0x06);    // Disable FIFO, clear TX+RX (no buffering)
         self.write_reg(4, 0x0B);    // IRQs enabled, RTS/DSR set
     }
 
@@ -35,6 +35,11 @@ impl SerialPort {
         while (self.line_status() & 0x20) == 0 {}
         crate::hal::outb(self.port, data);
     }
+
+    pub fn flush(&self) {
+        // Wait until transmitter is completely empty
+        while (self.line_status() & 0x40) == 0 {}
+    }
     
 }
 
@@ -43,6 +48,8 @@ impl fmt::Write for SerialPort {
         for byte in s.bytes() {
             self.send(byte);
         }
+        // Ensure all bytes are transmitted before releasing the lock
+        self.flush();
         Ok(())
     }
 }

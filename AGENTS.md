@@ -104,6 +104,7 @@ Each has its own `Cargo.toml`, `Cargo.lock`, `.gitignore`. No root workspace.
 | IO | `src/io.rs` | `Stdout`/`Stdin`/`Stderr` structs with `write()`/`read().` `core::fmt::Write` impls. Stack-buffered `_print()`/`_eprint()` (1024 bytes) |
 | FS | `src/fs.rs` | `File::open(path)` → handle, `File::read(buf)`, `File::write(buf)` |
 | Mem | `src/mem.rs` | `brk()`, `sbrk()`, `mmap()`, `munmap()`. Constants: `PROT_READ`, `PROT_WRITE`, `MAP_ANONYMOUS` |
+| Console | `src/console.rs` | `read_byte()`, `history_add_raw()`, `history_prev/next/reset/get_count/get_entry()`, `register_completion()`, `progress_*()`. Lazy-loaded via `sys_loadlib` on first use |
 | Macros | `src/macros.rs` | `print!`, `println!`, `eprint!`, `eprintln!` with CRLF (`\r\n`) |
 
 ### Using libneodos
@@ -242,7 +243,8 @@ The NeoDOS filesystem uses the following directory layout:
 │   │   ├─ fs.nxl        # Filesystem library (libneodos)
 │   │   ├─ io.nxl        # I/O library (libneodos)
 │   │   ├─ process.nxl   # Process library (libneodos)
-│   │   └─ math.nxl      # Math library (libmath)
+│   │   ├─ math.nxl      # Math library (libmath)
+│   │   └─ console.nxl   # Console library (readline, history, completion, progress)
 │   │
 │   ├─ Layouts/
 │   │   ├─ es-ES.nkb     # Spanish keyboard layout
@@ -397,15 +399,18 @@ Key files: `usermode.rs` (trampoline & context save/restore), `idt.rs` (syscall_
 
 ## Shell: TAB autocomplete + history + pipeline
 
-La shell Ring 3 (`userbin/neoshell/src/main.rs`) tiene autocompletado con **TAB** (`try_complete`):
-- **Primera palabra**: completa comandos built-in (CWD, SET, EXIT, POWEROFF). No escanea PATH para `.NXE`.
-- Match único: reemplaza y añade espacio (comandos)
-- Múltiples matches: lista todos y redibuja prompt + línea
+La shell Ring 3 (`userbin/neoshell/src/main.rs`) usa `console.nxl` para historial y
+autocompletado:
 
-El shell tiene historial de comandos con **↑/↓** (`shell.rs`, `keyboard.rs`):
-- Buffer circular de 32 entradas
-- Las flechas se emiten como bytes sentinela 0x01 (up) / 0x02 (down) desde el driver PS/2
-- `history` se almacena como `Vec<String>` en `DosShell`, se inicializa en `new()`
+- **TAB completion**: La shell registra `shell_complete()` como callback via
+  `console::register_completion()`. console.nxl invoca el callback que busca en PATH
+  comandos `.NXE` que matcheen el token actual.
+- **Historial ↑/↓**: console.nxl mantiene un buffer circular de 32 entradas.
+  La shell llama `console::history_add_raw()` al ejecutar un comando y
+  `console::history_prev/next()` al presionar ↑/↓ (bytes sentinela 0x01/0x02).
+- **Display**: La shell maneja directamente el eco de caracteres, cursor `_` y
+  backspace con `sys_write` (no routing through console.nxl) — probado como fiable
+  con serial QEMU.
 
 La shell tiene soporte de **pipeline** (operador `|`):
 - `cmd1 | cmd2 | cmd3` — hasta 16 comandos encadenados
@@ -518,6 +523,7 @@ El DLL se carga en la región `0x1e000000..0x1e200000` (8 slots de 256 KB cada u
 DLLs disponibles:
 - `libneodos.nxl` — Librería estándar (slot 0, `0x1e000000`), cargada automáticamente en boot
 - `libmath.nxl` — Librería de matemáticas (slot 1, `0x1e040000`), carga manual con `LOADLIB C:\System\Libraries\math.nxl`
+- `console.nxl` — Librería de consola (slot 2, `0x1e080000`), cargada automáticamente por `libneodos::console` en primer uso
 
 Para usar desde user-mode: llamar a `libneodos::loadlib(path)` que invoca `sys_loadlib` (RAX=21) y devuelve la dirección base del DLL.
 
@@ -583,6 +589,18 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory |
 | 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on objects |
 | 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd |
+| 67 | `sys_ob_logon` | RBX=username_ptr, RCX=hash_ptr, RDX=hash_len | Authenticate user via SAM. Creates LogonSession with split tokens, returns fd to \Security\Session\{id} Ob object |
+| 68 | `sys_ob_logoff` | RBX=fd | Close LogonSession fd, destroy session, revert to self |
+| 69 | `sys_ob_query_token` | RBX=fd, RCX=info_class, RDX=buf, R8=size | Query token info via fd from \Security\Token\{pid} Ob object. Classes: TokenUser=1, TokenGroups=2, TokenPrivileges=3, TokenSessionId=4, TokenIntegrityLevel=6 |
+| 70 | `sys_ob_impersonate` | RBX=fd | Impersonate token via fd from \Security\Session\{id} Ob object (admin only) |
+| 71 | `sys_ob_revert_to_self` | — | Restore original process token |
+| 72 | `sys_ob_set_security` | RBX=fd, RCX=sd_ptr, RDX=sd_len | Set SecurityDescriptor on an Ob object by fd |
+| 73 | `sys_ob_query_security` | RBX=fd, RCX=sd_buf, RDX=sd_len | Get SecurityDescriptor from an Ob object by fd |
+| 74 | `sys_ob_elevate` | RBX=fd, RCX=password_or_null | Elevate token via \Security\Elevation\{pid} Ob object. Returns ELEVATION_REQUIRED (-42) if consent needed |
+| 75 | `sys_ob_check_access` | RBX=path_ptr, RCX=desired_access | Check access to Ob namespace path without opening |
+| 76 | `sys_ob_consent_response` | RBX=fd, RCX=response | Respond to elevation prompt via \Security\Consent\{elev_id} Ob object |
+
+**Regla de arquitectura:** Toda syscall nueva (RAX ≥ 67) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe/fd entrega fds obtenidos via `ob_open`/`ob_create`, y se apoya en el Object Manager para lifecycle y seguridad. No se aceptan syscalls planas legacy para funcionalidad nueva. Ver sección USR en `docs/IMPROVEMENTS.md`.
 ## IPC / Pipes
 
 `src/pipe.rs` — Pipe IPC implementation for inter-process communication.
@@ -702,7 +720,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | Binario | Generador | Tamaño | Prueba |
 |---------|-----------|--------|--------|
 | `cpuinfo.nxe` | Rust `userbin/cpuinfo/` | ~6 KB | CPU info via `ob_open("\Global\Info\CpuInfo")` + `ob_query_info(class=7)`: vendor, brand, features, topology, timers |
-| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CWD, SET, POWEROFF, EXIT, CALL; TAB completion (builtins only); PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history (32); drive change; batch file execution via CALL |
+| `neoshell.nxe` | Rust `userbin/neoshell/` | ~27 KB | Ring 3 shell: built-in CWD, SET, POWEROFF, EXIT, CALL; TAB completion via `console.nxl`; PATH dispatch for external .NXE commands (CD, ECHO, DIR, HELP, MEM, VOL...); history via `console.nxl` (32); drive change; batch file execution via CALL |
 | `cd.nxe` | Rust `userbin/cd/` | ~4 KB | Ring 3 cwd changer: updates the parent shell cwd via `sys_chdir_parent`; no shell integration required |
 | `neoinit.nxe` | Rust `userbin/neoinit/` | ~8 KB | PID 1 init process: spawns NEOSHELL.NXE via sys_spawn, respawns on EXIT |
 | `coredir.nxe` | Rust `userbin/coredir/` | ~11 KB | Standalone DIR command: `sys_open` (dir) + `sys_readdir`, multi-column output, `/W` (wide), `/P` (pause) |
@@ -730,6 +748,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `fsck.nxe` | Rust `userbin/fsck/` | ~6 KB | FSCK command: filesystem integrity check via sys_fsck (RAX=55). /F for repair |
 | `ndreg.nxe` | Rust `userbin/ndreg/` | ~7 KB | NDREG command: driver registry inspector via sys_driver_enum (RAX=56). LIST, SHOW, QUERY, RUNTIME |
 | `loadnem.nxe` | Rust `userbin/loadnem/` | ~4 KB | LOADNEM command: load/unload NEM drivers via sys_driver_load (RAX=57) and sys_driver_unload (RAX=58, admin) |
+| `progress.nxe` | Rust `userbin/progress/` | ~4 KB | Progress bar demo: tests console.nxl progress_create/update/finish API |
 
 **Regla operativa:** no se deben añadir nuevos comandos interactivos al shell Ring 0. Toda interacción de operador debe ir a `userbin/` y ejecutarse en Ring 3 vía `neoshell` o `NeoInit`.
 
@@ -1750,6 +1769,7 @@ fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
 | AHCI NEM driver | `neodos/drivers/ahci/ahci.nem` | NEM v3 standalone AHCI driver (SYSTEM, DMA polling, ATA+ATAPI) |
 | Driver Isolation | `neodos-kernel/src/drivers/isolation.rs` | X4 driver isolation layer (16 MB region, 16 × 1 MB slots, pointer validation, sandbox mode) |
 | libmath NXL | `neodos/libmath.nxl` | Math library NXL (slot 1, 0x1e040000) — abs, min, max, pow, sqrt, sin, cos, log, exp |
+| libconsole NXL | `neodos/console.nxl` | Console library NXL (slot 2, 0x1e080000) — readline, history, completion, progress bars |
 | Serial log | `neodos/qemu_output.log` | Última sesión QEMU |
 
 ## NeoDOS LSP

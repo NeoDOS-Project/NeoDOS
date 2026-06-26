@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -245,6 +245,19 @@ Happy hacking!
         else:
             print(f"[!] libmath.nxl not found — NXL not included")
 
+        console_nxl_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'console.nxl'),
+            os.path.join(os.path.dirname(__file__), '..', 'libconsole-nxl', 'target', 'x86_64-unknown-none', 'release', 'libconsole-nxl'),
+        ]
+        console_nxl_path = next((path for path in console_nxl_candidates if os.path.exists(path)), None)
+        console_nxl_data = b''
+        if console_nxl_path is not None:
+            with open(console_nxl_path, 'rb') as f:
+                console_nxl_data = f.read()
+            print(f"[*] Including console.nxl from {os.path.relpath(console_nxl_path, os.path.dirname(__file__))} ({len(console_nxl_data)} bytes)")
+        else:
+            print(f"[!] console.nxl not found — NXL not included")
+
         # ── Dynamic block allocator ──
         next_block = 6
         block_allocs = {}
@@ -270,10 +283,10 @@ Happy hacking!
         # 0=Root, 1=readme.txt, 2=test.bat
         # 3=System, 4=Kernel, 5=boot.cfg
         # 6=Drivers, 7-13=NEM drivers
-        # 14=Libraries, 15-18,44=NXL files
+        # 14=Libraries, 15-18,44,64=NXL files
         # 19=Layouts, 20-21=NKB files
         # 22=Config, 23-24=cfg files
-        # 25=Programs, 26-36,45-53=NXE files
+        # 25=Programs, 26-36,45-53,65=NXE files
         # 37=Packages, 38=Users, 39=Default, 40=Alejandro
         # 41=Temp, 42=Data, 43=Logs, 46=type.nxe, 47=tree.nxe
         # 48=cls.nxe, 49=copy.nxe, 50=del.nxe, 51=ren.nxe, 52=md.nxe, 53=rd.nxe
@@ -320,8 +333,10 @@ Happy hacking!
         fsck_blocks       = alloc_blocks(61, len(nxe_files['fsck']))
         ndreg_blocks      = alloc_blocks(62, len(nxe_files['ndreg']))
         loadnem_blocks    = alloc_blocks(63, len(nxe_files['loadnem']))
+        progress_blocks   = alloc_blocks(65, len(nxe_files['progress']))
         fs_nxl_blocks     = alloc_blocks(15, len(nxl_data))
         math_nxl_blocks   = alloc_blocks(44, len(math_nxl_data))
+        console_nxl_blocks = alloc_blocks(64, len(console_nxl_data))
         bootcfg_blocks    = alloc_blocks(5, len(bootcfg_content))
         system_cfg_blocks = alloc_blocks(23, len(system_cfg_content))
         input_cfg_blocks  = alloc_blocks(24, len(input_cfg_content))
@@ -357,6 +372,7 @@ Happy hacking!
             14: (dir_mode, 1536, pad_blocks(lib_dir_blocks)),
             15: (MODE_FILE | default_perms_for_filename("fs.nxl"), len(nxl_data), pad_blocks(fs_nxl_blocks)),
             44: (MODE_FILE | default_perms_for_filename("math.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
+            64: (MODE_FILE | default_perms_for_filename("console.nxl"), len(console_nxl_data), pad_blocks(console_nxl_blocks)),
             19: (dir_mode, 768,  pad_blocks(lay_dir_blocks)),
             20: (MODE_FILE | default_perms_for_filename("es-ES.nkb"), len(es_nkb_content), pad_blocks(es_nkb_blocks)),
             21: (MODE_FILE | default_perms_for_filename("en-US.nkb"), len(en_nkb_content), pad_blocks(en_nkb_blocks)),
@@ -398,6 +414,7 @@ Happy hacking!
               61: (MODE_FILE | default_perms_for_filename("fsck.nxe"), len(nxe_files['fsck']), pad_blocks(fsck_blocks)),
               62: (MODE_FILE | default_perms_for_filename("ndreg.nxe"), len(nxe_files['ndreg']), pad_blocks(ndreg_blocks)),
               63: (MODE_FILE | default_perms_for_filename("loadnem.nxe"), len(nxe_files['loadnem']), pad_blocks(loadnem_blocks)),
+              65: (MODE_FILE | default_perms_for_filename("progress.nxe"), len(nxe_files['progress']), pad_blocks(progress_blocks)),
             41: (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             42: (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             43: (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -491,6 +508,7 @@ Happy hacking!
         blk = lib_dir_blocks[0]
         offset = (200 + blk * 8) * 512
         image[offset:offset+256]     = create_dir_entry(15, 1, "fs.nxl")
+        image[offset+512:offset+768]  = create_dir_entry(64, 1, "console.nxl")
         image[offset+1024:offset+1280]= create_dir_entry(44, 1, "math.nxl")
 
         # fs.nxl (libneodos) data blocks
@@ -507,6 +525,14 @@ Happy hacking!
             print(f"[*] Writing System\\Libraries\\math.nxl ({len(math_nxl_data)} bytes)...")
             for bi, blk in enumerate(math_nxl_blocks):
                 chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (200 + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
+
+        # console.nxl data blocks
+        if console_nxl_data:
+            print(f"[*] Writing System\\Libraries\\console.nxl ({len(console_nxl_data)} bytes)...")
+            for bi, blk in enumerate(console_nxl_blocks):
+                chunk = console_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 off = (200 + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
@@ -579,6 +605,7 @@ Happy hacking!
         image[offset+6912:offset+7168]= create_dir_entry(61, 1, "fsck.nxe")
         image[offset+7168:offset+7424]= create_dir_entry(62, 1, "ndreg.nxe")
         image[offset+7424:offset+7680]= create_dir_entry(63, 1, "loadnem.nxe")
+        image[offset+7680:offset+7936]= create_dir_entry(65, 1, "progress.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -612,6 +639,7 @@ Happy hacking!
             61: ('fsck.nxe', nxe_files['fsck']),
             62: ('ndreg.nxe', nxe_files['ndreg']),
             63: ('loadnem.nxe', nxe_files['loadnem']),
+            65: ('progress.nxe', nxe_files['progress']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

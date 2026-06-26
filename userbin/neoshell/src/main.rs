@@ -1,144 +1,166 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall;
+use libneodos::{console, syscall};
 
 const LINE_BUF_SIZE: usize = 256;
-const HISTORY_SIZE: usize = 32;
 const MAX_ENV: usize = 16;
 const ARGS_ADDR: u64 = 0x41F000;
+const MAX_PIPELINE: usize = 16;
+
 static BUILTINS: &[&[u8]] = &[
-    b"CWD",
-    b"SET", b"EXIT", b"POWEROFF", b"CALL",
+    b"CWD", b"SET", b"EXIT", b"POWEROFF", b"CALL",
 ];
 
-fn make_ascii_uppercase(buf: &mut [u8]) {
-    for b in buf.iter_mut() {
-        if *b >= b'a' && *b <= b'z' {
-            *b -= 32;
-        }
+// ── Completion context ─────────────────────────
+
+static mut COMPL_PATH: [u8; 256] = [0; 256];
+static mut COMPL_PATH_LEN: usize = 0;
+
+fn set_completion_ctx(_drive: u8, path: &[u8]) {
+    unsafe {
+        let n = path.len().min(255);
+        COMPL_PATH[..n].copy_from_slice(&path[..n]);
+        COMPL_PATH_LEN = n;
     }
 }
 
-const MAX_PIPELINE: usize = 16;
+// ── Utilities ──────────────────────────────────
+
+fn make_ascii_uppercase(buf: &mut [u8]) {
+    for b in buf.iter_mut() { if *b >= b'a' && *b <= b'z' { *b -= 32; } }
+}
 
 fn trim_ascii(s: &[u8]) -> &[u8] {
     let mut start = 0;
-    while start < s.len() && (s[start] == b' ' || s[start] == b'\t' || s[start] == b'\r' || s[start] == b'\n') {
-        start += 1;
-    }
+    while start < s.len() && matches!(s[start], b' ' | b'\t' | b'\r' | b'\n') { start += 1; }
     let mut end = s.len();
-    while end > start && (s[end - 1] == b' ' || s[end - 1] == b'\t' || s[end - 1] == b'\r' || s[end - 1] == b'\n') {
-        end -= 1;
-    }
+    while end > start && matches!(s[end - 1], b' ' | b'\t' | b'\r' | b'\n') { end -= 1; }
     &s[start..end]
 }
 
-/// Find pipe (`|`) positions in a trimmed line. Returns number of pipes found.
-/// pipe_pos is filled with byte offsets into `line`.
-fn parse_pipeline(line: &[u8], pipe_pos: &mut [usize; MAX_PIPELINE]) -> usize {
-    let mut count = 0;
-    for i in 0..line.len() {
-        if line[i] == b'|' && count < MAX_PIPELINE {
-            pipe_pos[count] = i;
-            count += 1;
-        }
-    }
-    count
-}
-
-fn is_builtin(upper_cmd: &[u8]) -> bool {
-    for b in BUILTINS {
-        if *b == upper_cmd { return true; }
-    }
-    false
-}
-
 fn first_token(s: &[u8]) -> &[u8] {
-    let trimmed = trim_ascii(s);
-    for i in 0..trimmed.len() {
-        if trimmed[i] == b' ' || trimmed[i] == b'\t' {
-            return &trimmed[..i];
-        }
-    }
-    trimmed
+    let t = trim_ascii(s);
+    t.split(|&b| b == b' ' || b == b'\t').next().unwrap_or(t)
 }
 
 fn after_first_token(s: &[u8]) -> &[u8] {
-    let trimmed = trim_ascii(s);
-    for i in 0..trimmed.len() {
-        if trimmed[i] == b' ' || trimmed[i] == b'\t' {
-            return trim_ascii(&trimmed[i + 1..]);
-        }
-    }
-    &[]
+    let t = trim_ascii(s);
+    if let Some(p) = t.iter().position(|&b| b == b' ' || b == b'\t') {
+        trim_ascii(&t[p + 1..])
+    } else { &[] }
 }
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let prefix = b"\\Global\\FileSystem\\";
-    let vfs_bytes = vfs.as_bytes();
-    let total = prefix.len() + vfs_bytes.len();
-    if total > 510 { return vfs; }
-    buf[..prefix.len()].copy_from_slice(prefix);
-    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
-    buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+    let p = b"\\Global\\FileSystem\\";
+    let vb = vfs.as_bytes();
+    let t = p.len() + vb.len();
+    if t > 510 { return vfs; }
+    buf[..p.len()].copy_from_slice(p);
+    buf[p.len()..t].copy_from_slice(vb);
+    buf[t] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..t]) }
 }
 
-fn write_str(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
-}
+fn write_str(s: &[u8]) { let _ = syscall::sys_write(1, s); }
+fn write_err(s: &[u8]) { let _ = syscall::sys_write(2, s); }
 
-fn write_err(s: &[u8]) {
-    let _ = syscall::sys_write(2, s);
+fn write_u64(v: u64) {
+    if v == 0 { write_str(b"0"); return; }
+    let mut b = [0u8; 20]; let mut i = 19; let mut n = v;
+    while n > 0 { b[i] = b'0' + (n % 10) as u8; n /= 10; if i == 0 { break; } i -= 1; }
+    write_str(&b[i..=19]);
 }
 
 fn get_vt_num() -> u8 {
-    let mut buf = [0u8; 4];
-    if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\VtInfo", libneodos::syscall::ob_access::READ) {
-        if let Ok(n) = syscall::sys_readfile(fd, &mut buf) {
-            if n >= 1 {
-                let _ = syscall::sys_close(fd);
-                return buf[0];
-            }
+    let mut b = [0u8; 4];
+    if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\VtInfo", syscall::ob_access::READ) {
+        if let Ok(n) = syscall::sys_readfile(fd, &mut b) {
+            if n >= 1 { let _ = syscall::sys_close(fd); return b[0]; }
         }
         let _ = syscall::sys_close(fd);
     }
     0
 }
 
-fn write_u64(v: u64) {
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    let mut n = v;
-    if n == 0 {
-        write_str(b"0");
-        return;
-    }
-    while n > 0 {
-        buf[i] = b'0' + (n % 10) as u8;
-        n /= 10;
-        if i == 0 { break; }
-        i -= 1;
-    }
-    write_str(&buf[i..=19]);
+fn parse_pipeline(line: &[u8], pos: &mut [usize; MAX_PIPELINE]) -> usize {
+    let mut c = 0;
+    for i in 0..line.len() { if line[i] == b'|' && c < MAX_PIPELINE { pos[c] = i; c += 1; } }
+    c
 }
 
-#[derive(Copy, Clone)]
-struct EnvVar {
-    key: [u8; 32],
-    key_len: usize,
-    val: [u8; 128],
-    val_len: usize,
+// ── TAB completion handler ─────────────────────
+
+extern "C" fn shell_complete(input: *const u8, cursor: i32, cand: *mut u8, max: i32) -> i32 {
+    let t = unsafe { trim_ascii(core::slice::from_raw_parts(input, cursor.max(0) as usize)) };
+    if t.is_empty() { return 0; }
+    let word = first_token(t);
+    let wup = { let mut b = [0u8; 32]; let n = word.len().min(31); b[..n].copy_from_slice(&word[..n]); make_ascii_uppercase(&mut b[..n]); b };
+    let wlen = word.len().min(31);
+    let max = max as usize;
+    let mut p = 0usize; let mut cnt = 0i32;
+    let mut add = |name: &[u8]| {
+        let n = name.len().min(max - p - 1);
+        if n > 0 && p + n + 1 <= max {
+            unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), cand.add(p), n); *cand.add(p + n) = 0; }
+            p += n + 1; cnt += 1;
+        }
+    };
+    for builtin in BUILTINS {
+        if builtin.len() >= wlen && builtin[..wlen] == wup[..wlen] { add(builtin); }
+    }
+    // Scan PATH
+    let path_val = unsafe {
+        let ptr = core::ptr::addr_of!(COMPL_PATH) as *const u8;
+        core::slice::from_raw_parts(ptr, COMPL_PATH_LEN)
+    };
+    let store = if path_val.is_empty() { b"\\Programs" } else { path_val };
+    let drive_byte = b'C'; // simplified
+    let mut s = 0usize;
+    loop {
+        while s < store.len() && store[s] == b';' { s += 1; }
+        if s >= store.len() { break; }
+        let mut e = s;
+        while e < store.len() && store[e] != b';' { e += 1; }
+        let dir = &store[s..e];
+        let mut dp = [0u8; 260]; let mut dp_pos = 0;
+        dp[dp_pos] = drive_byte; dp_pos += 1; dp[dp_pos] = b':'; dp_pos += 1;
+        for &b in dir { if dp_pos < 255 { dp[dp_pos] = b; dp_pos += 1; } }
+        let ds = core::str::from_utf8(&dp[..dp_pos]).unwrap_or("");
+        let mut ob = [0u8; 512];
+        let obp = to_ob_path(ds, &mut ob);
+        if let Ok(fd) = syscall::sys_ob_open(obp, syscall::ob_access::READ) {
+            let mut ents: [syscall::ObEnumEntry; 64] = core::array::from_fn(|_| syscall::ObEnumEntry {
+                id:0, obj_type:0, name:[0;32], mode:0, _pad:[0;2], size:0,
+            });
+            if let Ok(n) = syscall::sys_ob_enum(fd, &mut ents) {
+                for i in 0..n {
+                    let nm = ents[i].name_str(); let nb = nm.as_bytes();
+                    if nb.len() > 4 && nb[nb.len()-4..].eq_ignore_ascii_case(b".NXE") && nb.len()-4 >= wlen {
+                        let su = { let mut b=[0u8;32]; let n=(nb.len()-4).min(31); b[..n].copy_from_slice(&nb[..n]); make_ascii_uppercase(&mut b[..n]); b };
+                        if su[..wlen] == wup[..wlen] { add(&nb[..nb.len()-4]); }
+                    }
+                }
+            }
+            let _ = syscall::sys_close(fd);
+        }
+        s = e + 1;
+    }
+    cnt
 }
+
+// ── Environment ────────────────────────────────
+
+#[derive(Copy, Clone)]
+struct EnvVar { key: [u8; 32], key_len: usize, val: [u8; 128], val_len: usize }
+
+// ── Shell ──────────────────────────────────────
 
 struct Shell {
     line: [u8; LINE_BUF_SIZE],
     pos: usize,
-    history: [[u8; LINE_BUF_SIZE]; HISTORY_SIZE],
-    history_len: [usize; HISTORY_SIZE],
-    history_count: usize,
-    history_pos: usize,
+    pending: [u8; LINE_BUF_SIZE],
+    pending_len: usize,
     env: [EnvVar; MAX_ENV],
     env_count: usize,
 }
@@ -146,132 +168,148 @@ struct Shell {
 impl Shell {
     fn new() -> Self {
         let mut s = Self {
-            line: [0u8; LINE_BUF_SIZE],
-            pos: 0,
-            history: [[0u8; LINE_BUF_SIZE]; HISTORY_SIZE],
-            history_len: [0; HISTORY_SIZE],
-            history_count: 0,
-            history_pos: 0,
-            env: [EnvVar { key: [0u8; 32], key_len: 0, val: [0u8; 128], val_len: 0 }; MAX_ENV],
-            env_count: 0,
+            line: [0; LINE_BUF_SIZE], pos: 0,
+            pending: [0; LINE_BUF_SIZE], pending_len: 0,
+            env: [EnvVar { key: [0;32], key_len:0, val:[0;128], val_len:0 }; MAX_ENV], env_count: 0,
         };
-        s.env_set(b"PATH", b"\\Programs");
-        s
+        s.env_set(b"PATH", b"\\Programs"); s
     }
 
     fn env_get(&self, key: &[u8]) -> Option<&[u8]> {
-        for i in 0..self.env_count {
-            if self.env[i].key_len == key.len() && &self.env[i].key[..key.len()] == key {
-                return Some(&self.env[i].val[..self.env[i].val_len]);
-            }
-        }
+        for i in 0..self.env_count { if self.env[i].key_len == key.len() && &self.env[i].key[..key.len()] == key { return Some(&self.env[i].val[..self.env[i].val_len]); } }
         None
     }
 
     fn env_set(&mut self, key: &[u8], val: &[u8]) {
-        let klen = key.len().min(31);
-        let vlen = val.len().min(127);
+        let kl = key.len().min(31); let vl = val.len().min(127);
         for i in 0..self.env_count {
-            if self.env[i].key_len == klen && &self.env[i].key[..klen] == key {
-                self.env[i].val[..vlen].copy_from_slice(&val[..vlen]);
-                self.env[i].val_len = vlen;
-                return;
-            }
+            if self.env[i].key_len == kl && &self.env[i].key[..kl] == key { self.env[i].val[..vl].copy_from_slice(&val[..vl]); self.env[i].val_len = vl; return; }
         }
         if self.env_count < MAX_ENV {
-            let idx = self.env_count;
-            self.env[idx].key[..klen].copy_from_slice(&key[..klen]);
-            self.env[idx].key_len = klen;
-            self.env[idx].val[..vlen].copy_from_slice(&val[..vlen]);
-            self.env[idx].val_len = vlen;
-            self.env_count += 1;
+            let i = self.env_count; self.env[i].key[..kl].copy_from_slice(&key[..kl]); self.env[i].key_len = kl;
+            self.env[i].val[..vl].copy_from_slice(&val[..vl]); self.env[i].val_len = vl; self.env_count += 1;
         }
     }
 
     fn prompt(&self) {
-        let mut cwd_buf = [0u8; 256];
-        match syscall::sys_getcwd(&mut cwd_buf) {
-            Ok(n) if n > 0 => {
-                let s = core::str::from_utf8(&cwd_buf[..n]).unwrap_or("C:\\");
-                write_str(s.as_bytes());
-            }
-            _ => {
-                write_str(b"C:\\");
-            }
+        let mut b = [0u8; 256];
+        match syscall::sys_getcwd(&mut b) {
+            Ok(n) if n > 0 => write_str(&b[..n]),
+            _ => write_str(b"C:\\"),
         }
         write_str(b"> ");
     }
 
-    fn write_cursor(&self) {
-        write_str(b"\x5F");
+    fn get_drive(&self) -> u8 {
+        let mut b = [0u8; 256];
+        match syscall::sys_getcwd(&mut b) { Ok(n) if n > 0 && b[1] == b':' => b[0], _ => b'C' }
     }
 
-    fn erase_cursor(&self) {
-        write_str(b"\x08 \x08");
-    }
+    // ── Readline ────────────────────────────
 
     fn readline(&mut self) {
         self.pos = 0;
         let _ = syscall::sys_cursor_blink(true);
-        self.write_cursor();
-        let mut done = false;
-        while !done {
-            let mut byte = [0u8; 1];
-            let n = match syscall::sys_read(0, &mut byte) {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
-            if n == 0 {
-                continue;
-            }
-            self.erase_cursor();
-            match byte[0] {
+        write_str(b"\x5F");
+        loop {
+            let b = console::read_byte();
+            if b < 0 { continue; }
+            write_str(b"\x08 \x08");
+            match b as u8 {
                 b'\r' | b'\n' => {
                     write_str(b"\r\n");
-                    done = true;
-                }
-                0x08 | 0x7F => {
                     if self.pos > 0 {
-                        self.pos -= 1;
-                        write_str(b"\x08 \x08");
-                    }
-                }
-                0x09 => {
-                    let line_copy = {
-                        let t = trim_ascii(&self.line[..self.pos]);
-                        let mut buf = [0u8; LINE_BUF_SIZE];
-                        let n = t.len().min(LINE_BUF_SIZE - 1);
-                        buf[..n].copy_from_slice(&t[..n]);
-                        (buf, n)
-                    };
-                    if line_copy.1 > 0 {
-                        let word = first_token(&line_copy.0[..line_copy.1]);
-                        let word_len = word.len();
-                        let is_first = !line_copy.0[..word_len]
-                            .iter()
-                            .any(|&b| b == b' ' || b == b'\t');
-                        if is_first {
-                            self.try_complete_cmd(word, word_len);
-                            self.write_cursor();
-                            continue;
+                        let trimmed = trim_ascii(&self.line[..self.pos]);
+                        if !trimmed.is_empty() {
+                            let mut e = [0u8; 128];
+                            let n = trimmed.len().min(127);
+                            e[..n].copy_from_slice(&trimmed[..n]); e[n] = 0;
+                            console::history_add_raw(e.as_ptr());
                         }
                     }
-                    self.write_cursor();
+                    break;
                 }
-                0x01 => {
-                    if self.history_count > 0 && self.history_pos > 0 {
-                        self.history_pos -= 1;
-                        self.load_history();
+                0x08 | 0x7F => {
+                    if self.pos > 0 { self.pos -= 1; write_str(b"\x08 \x08"); }
+                }
+                0x01 => { // Up
+                    let ptr = console::history_prev();
+                    if !ptr.is_null() {
+                        // Clear echo
+                        write_str(b"\r");
+                        for _ in 0..self.pos { write_str(b" "); }
+                        write_str(b"\r");
+                        // Load
+                        let s = unsafe {
+                            let mut n = 0;
+                            while n < LINE_BUF_SIZE - 1 && *ptr.add(n) != 0 { n += 1; }
+                            core::slice::from_raw_parts(ptr, n)
+                        };
+                        self.pos = s.len().min(LINE_BUF_SIZE - 1);
+                        self.line[..self.pos].copy_from_slice(&s[..self.pos]);
+                        write_str(&self.line[..self.pos]);
                     }
                 }
-                0x02 => {
-                    if self.history_pos < self.history_count {
-                        self.history_pos += 1;
-                        if self.history_pos >= self.history_count {
-                            self.clear_echo();
-                            self.pos = 0;
-                        } else {
-                            self.load_history();
+                0x02 => { // Down
+                    let ptr = console::history_next();
+                    // Clear echo
+                    write_str(b"\r");
+                    for _ in 0..self.pos { write_str(b" "); }
+                    write_str(b"\r");
+                    if !ptr.is_null() {
+                        let s = unsafe {
+                            let mut n = 0;
+                            while n < LINE_BUF_SIZE - 1 && *ptr.add(n) != 0 { n += 1; }
+                            core::slice::from_raw_parts(ptr, n)
+                        };
+                        self.pos = s.len().min(LINE_BUF_SIZE - 1);
+                        self.line[..self.pos].copy_from_slice(&s[..self.pos]);
+                    } else {
+                        // Back to pending
+                        self.pos = self.pending_len;
+                        self.line[..self.pos].copy_from_slice(&self.pending[..self.pos]);
+                    }
+                    write_str(&self.line[..self.pos]);
+                }
+                0x09 => { // TAB
+                    let t = trim_ascii(&self.line[..self.pos]);
+                    if !t.is_empty() {
+                        let word = first_token(t);
+                        let wlen = word.len();
+                        if !t[..wlen].contains(&(b' ')) && !t[..wlen].contains(&(b'\t')) {
+                            // Call completion handler
+                            let mut cbuf = [0u8; 512];
+                            let n = shell_complete(self.line.as_ptr(), self.pos as i32, cbuf.as_mut_ptr(), 512);
+                            if n > 0 {
+                                let mut first = 0;
+                                while first < 512 && cbuf[first] != 0 { first += 1; }
+                                if n == 1 {
+                                    // Replace word
+                                    for _ in 0..wlen {
+                                        if self.pos > 0 { self.pos -= 1; write_str(b"\x08 \x08"); }
+                                    }
+                                    let lower = {
+                                        let mut b = [0u8; 32];
+                                        b[..first].copy_from_slice(&cbuf[..first]);
+                                        for c in b[..first].iter_mut() { if *c >= b'A' && *c <= b'Z' { *c += 32; } }
+                                        b
+                                    };
+                                    self.line[self.pos..self.pos+first].copy_from_slice(&lower[..first]);
+                                    self.pos += first;
+                                    write_str(&lower[..first]);
+                                    if self.pos < LINE_BUF_SIZE - 1 { self.line[self.pos] = b' '; self.pos += 1; write_str(b" "); }
+                                } else {
+                                    write_str(b"\r\n");
+                                    let mut ci = 0usize;
+                                    while ci < 512 && cbuf[ci] != 0 {
+                                        while ci < 512 && cbuf[ci] != 0 { write_str(&[cbuf[ci]]); ci += 1; }
+                                        ci += 1; write_str(b"  ");
+                                    }
+                                    write_str(b"\r\n");
+                                    self.prompt();
+                                    write_str(&self.line[..self.pos]);
+                                }
+                            }
                         }
                     }
                 }
@@ -284,681 +322,232 @@ impl Shell {
                 }
                 _ => {}
             }
-            if !done {
-                self.write_cursor();
-            }
+            if self.pos > 0 { write_str(b"\x5F"); }
         }
         let _ = syscall::sys_cursor_blink(false);
     }
 
-    fn scan_path_for_completion(&self, word_upper: &[u8], word_upper_len: usize, matches: &mut [[u8; 32]; 64], match_lens: &mut [usize; 64], match_count: &mut usize) {
-        let path_val = self.env_get(b"PATH").unwrap_or(b"\\Programs");
-        let drive = self.get_drive_letter();
-        let mut start = 0usize;
+    // ── Command execution ───────────────────
+
+    fn resolve_path(&self, cmd: &[u8]) -> Result<[u8; 260], ()> {
+        let pv = self.env_get(b"PATH").unwrap_or(b"\\Programs");
+        let dr = self.get_drive();
+        let mut s = 0usize;
         loop {
-            while start < path_val.len() && path_val[start] == b';' {
-                start += 1;
-            }
-            if start >= path_val.len() { break; }
-            let mut end = start;
-            while end < path_val.len() && path_val[end] != b';' {
-                end += 1;
-            }
-            let dir = &path_val[start..end];
-            let mut dir_path = [0u8; 260];
-            let mut pos = 0;
-            dir_path[pos] = drive; pos += 1;
-            dir_path[pos] = b':'; pos += 1;
-            for &b in dir {
-                if pos < 255 { dir_path[pos] = b; pos += 1; }
-            }
-            let dir_str = core::str::from_utf8(&dir_path[..pos]).unwrap_or("");
-            let mut ob_buf = [0u8; 512];
-            let ob_path = to_ob_path(dir_str, &mut ob_buf);
-            if let Ok(fd) = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-                let mut ob_entries: [syscall::ObEnumEntry; 64] = core::array::from_fn(|_| syscall::ObEnumEntry {
-                    id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
-                });
-                if let Ok(n) = syscall::sys_ob_enum(fd, &mut ob_entries) {
-                    for i in 0..n {
-                        let name = ob_entries[i].name_str();
-                        let name_bytes = name.as_bytes();
-                        if name_bytes.len() > 4
-                            && name_bytes[name_bytes.len()-4..].eq_ignore_ascii_case(b".NXE")
-                            && name_bytes.len() - 4 >= word_upper_len
-                        {
-                            let stem_upper = {
-                                let mut b = [0u8; 32];
-                                let n = (name_bytes.len() - 4).min(31);
-                                b[..n].copy_from_slice(&name_bytes[..n]);
-                                make_ascii_uppercase(&mut b[..n]);
-                                b
-                            };
-                            if stem_upper[..word_upper_len] == word_upper[..word_upper_len] {
-                                if *match_count < 64 {
-                                    let stem = &name_bytes[..name_bytes.len() - 4];
-                                    let n = stem.len().min(31);
-                                    matches[*match_count][..n].copy_from_slice(stem);
-                                    match_lens[*match_count] = n;
-                                    *match_count += 1;
-                                }
-                            }
-                        }
-                    }
-                }
-                let _ = syscall::sys_close(fd);
-            }
-            start = end + 1;
-        }
-    }
-
-    fn try_complete_cmd(&mut self, word: &[u8], word_len: usize) {
-        let mut word_upper = [0u8; 32];
-        let word_upper_len = {
-            let n = word_len.min(31);
-            word_upper[..n].copy_from_slice(&word[..n]);
-            make_ascii_uppercase(&mut word_upper[..n]);
-            n
-        };
-        let mut matches: [[u8; 32]; 64] = [[0u8; 32]; 64];
-        let mut match_lens: [usize; 64] = [0; 64];
-        let mut match_count = 0usize;
-
-        for builtin in BUILTINS {
-            if builtin.len() >= word_upper_len && &builtin[..word_upper_len] == &word_upper[..word_upper_len] {
-                if match_count < 64 {
-                    let n = builtin.len().min(31);
-                    matches[match_count][..n].copy_from_slice(&builtin[..n]);
-                    match_lens[match_count] = n;
-                    match_count += 1;
-                }
-            }
-        }
-
-        self.scan_path_for_completion(&word_upper, word_upper_len, &mut matches, &mut match_lens, &mut match_count);
-
-        if match_count == 0 {
-            return;
-        }
-
-        if match_count == 1 {
-            for _ in 0..word_len {
-                if self.pos > 0 {
-                    self.pos -= 1;
-                    write_str(b"\x08 \x08");
-                }
-            }
-            self.pos = 0;
-            let m = &matches[0];
-            let ml = match_lens[0];
-            let mut lower = [0u8; 32];
-            lower[..ml].copy_from_slice(&m[..ml]);
-            for b in lower[..ml].iter_mut() {
-                if *b >= b'A' && *b <= b'Z' {
-                    *b += 32;
-                }
-            }
-            for &c in lower[..ml].iter() {
-                if self.pos < LINE_BUF_SIZE - 1 {
-                    self.line[self.pos] = c;
-                    self.pos += 1;
-                    write_str(&[c]);
-                }
-            }
-            self.insert_char_no_cursor(b' ');
-            return;
-        }
-
-        write_str(b"\r\n");
-        for i in 0..match_count {
-            write_str(&matches[i][..match_lens[i]]);
-            write_str(b"  ");
-        }
-        write_str(b"\r\n");
-        self.prompt();
-        write_str(&self.line[..self.pos]);
-    }
-
-    fn insert_char_no_cursor(&mut self, c: u8) {
-        if self.pos < LINE_BUF_SIZE - 1 {
-            self.line[self.pos] = c;
-            self.pos += 1;
-            write_str(&[c]);
-        }
-    }
-
-    fn clear_echo(&self) {
-        write_str(b"\r");
-        for _ in 0..self.pos {
-            write_str(b" ");
-        }
-        write_str(b"\r");
-    }
-
-    fn load_history(&mut self) {
-        self.clear_echo();
-        self.pos = 0;
-        let idx = self.history_pos;
-        let len = self.history_len[idx];
-        if len > 0 {
-            self.line[..len].copy_from_slice(&self.history[idx][..len]);
-            self.pos = len;
-            write_str(&self.history[idx][..len]);
-        }
-    }
-
-    fn add_history(&mut self, line: &[u8]) {
-        let trimmed = trim_ascii(line);
-        if trimmed.is_empty() {
-            return;
-        }
-        if self.history_count > 0 {
-            let last = self.history_len[self.history_count - 1];
-            if last == trimmed.len() && &self.history[self.history_count - 1][..last] == trimmed {
-                self.history_pos = self.history_count;
-                return;
-            }
-        }
-        if self.history_count >= HISTORY_SIZE {
-            for i in 1..HISTORY_SIZE {
-                self.history[i - 1] = self.history[i];
-                self.history_len[i - 1] = self.history_len[i];
-            }
-            self.history_count = HISTORY_SIZE - 1;
-        }
-        let n = trimmed.len().min(LINE_BUF_SIZE - 1);
-        self.history[self.history_count][..n].copy_from_slice(&trimmed[..n]);
-        self.history_len[self.history_count] = n;
-        self.history_count += 1;
-        self.history_pos = self.history_count;
-    }
-
-    fn line_trimmed(&self) -> &[u8] {
-        trim_ascii(&self.line[..self.pos])
-    }
-
-    fn get_drive_letter(&self) -> u8 {
-        let mut cwd_buf = [0u8; 256];
-        match syscall::sys_getcwd(&mut cwd_buf) {
-            Ok(n) if n > 0 && cwd_buf[1] == b':' => cwd_buf[0],
-            _ => b'C',
-        }
-    }
-
-    fn resolve_command_path(&self, cmd_upper: &[u8]) -> Result<[u8; 260], ()> {
-        let path_val = self.env_get(b"PATH").unwrap_or(b"\\Programs");
-        let drive = self.get_drive_letter();
-        let mut start = 0usize;
-        loop {
-            while start < path_val.len() && path_val[start] == b';' {
-                start += 1;
-            }
-            if start >= path_val.len() {
-                break;
-            }
-            let mut end = start;
-            while end < path_val.len() && path_val[end] != b';' {
-                end += 1;
-            }
-            let dir = &path_val[start..end];
-            let mut full = [0u8; 260];
-            let mut pos = 0;
-            full[pos] = drive; pos += 1;
-            full[pos] = b':'; pos += 1;
-            for &b in dir {
-                if pos < 255 { full[pos] = b; pos += 1; }
-            }
-            if pos > 0 && full[pos - 1] != b'\\' {
-                if pos < 255 { full[pos] = b'\\'; pos += 1; }
-            }
-            for &b in cmd_upper {
-                if pos < 255 { full[pos] = b; pos += 1; }
-            }
-            if pos + 4 < 260 {
-                full[pos] = b'.'; full[pos + 1] = b'N'; full[pos + 2] = b'X'; full[pos + 3] = b'E';
-                pos += 4;
-            }
-            let path_str = core::str::from_utf8(&full[..pos]).unwrap_or("");
-            let mut ob_buf = [0u8; 512];
-            let ob_path = to_ob_path(path_str, &mut ob_buf);
-            let fd = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ);
-            if fd.is_ok() {
-                let _ = syscall::sys_close(fd.unwrap());
-                return Ok(full);
-            }
-            start = end + 1;
+            while s < pv.len() && pv[s] == b';' { s += 1; }
+            if s >= pv.len() { break; }
+            let mut e = s; while e < pv.len() && pv[e] != b';' { e += 1; }
+            let dir = &pv[s..e];
+            let mut f = [0u8; 260]; let mut p = 0;
+            f[p] = dr; p += 1; f[p] = b':'; p += 1;
+            for &b in dir { if p < 255 { f[p] = b; p += 1; } }
+            if p > 0 && f[p-1] != b'\\' && p < 255 { f[p] = b'\\'; p += 1; }
+            for &b in cmd { if p < 255 { f[p] = b; p += 1; } }
+            if p+4 < 260 { f[p]=b'.'; f[p+1]=b'N'; f[p+2]=b'X'; f[p+3]=b'E'; p+=4; }
+            let fs = core::str::from_utf8(&f[..p]).unwrap_or("");
+            let mut ob = [0u8; 512];
+            let obp = to_ob_path(fs, &mut ob);
+            if syscall::sys_ob_open(obp, syscall::ob_access::READ).is_ok() { return Ok(f); }
+            s = e + 1;
         }
         Err(())
     }
 
-    fn execute(&mut self) {
-        let line_len = self.pos;
-        if line_len == 0 {
-            return;
-        }
-        let mut line_buf = [0u8; LINE_BUF_SIZE];
-        let n = line_len.min(LINE_BUF_SIZE - 1);
-        line_buf[..n].copy_from_slice(&self.line[..n]);
-        let trimmed = trim_ascii(&line_buf[..n]);
-        if trimmed.is_empty() {
-            return;
-        }
-        self.execute_line(trimmed);
-    }
-
-    fn execute_pipeline(&mut self, line: &[u8], pipe_pos: &[usize], num_pipes: usize) {
-        let num_cmds = num_pipes + 1;
-        let mut read_fds = [0u8; MAX_PIPELINE];
-        let mut write_fds = [0u8; MAX_PIPELINE];
-
-        // Create all pipes upfront (unique Ob namespace names)
-        for i in 0..num_pipes {
-            let mut fds = [0u64; 2];
-            let mut pname = [0u8; 16];
-            pname[..7].copy_from_slice(b"\\Pipe/p");
-            let mut pos = 7;
-            let mut v = i as u64;
-            if v == 0 { pname[pos] = b'0'; pos += 1; }
-            else {
-                let mut digits = [0u8; 4];
-                let mut nd = 0;
-                while v > 0 && nd < 4 {
-                    digits[nd] = b'0' + (v % 10) as u8;
-                    v /= 10;
-                    nd += 1;
-                }
-                for d in (0..nd).rev() {
-                    pname[pos] = digits[d]; pos += 1;
-                }
-            }
-            pname[pos] = 0;
-            let pstr = unsafe { core::str::from_utf8_unchecked(&pname[..pos]) };
-            if syscall::sys_ob_create(pstr, 4, Some(&mut fds), 0).is_err() {
-                write_err(b"\r\nPipe error\r\n");
-                return;
-            }
-            read_fds[i] = fds[0] as u8;
-            write_fds[i] = fds[1] as u8;
-        }
-
-        let mut error = false;
-        let mut cmd_start = 0;
-        for cmd_idx in 0..num_cmds {
-            let cmd_end = if cmd_idx < num_pipes { pipe_pos[cmd_idx] } else { line.len() };
-            let cmd_slice = trim_ascii(&line[cmd_start..cmd_end]);
-            cmd_start = cmd_end + 1;
-
-            if cmd_slice.is_empty() {
-                write_err(b"\r\nInvalid pipe syntax\r\n");
-                error = true;
-                break;
-            }
-
-            let cmd_name = first_token(cmd_slice);
-            let cmd_args = after_first_token(cmd_slice);
-
-            let mut cmd_upper = [0u8; 32];
-            let cmd_upper_len = {
-                let n = cmd_name.len().min(31);
-                cmd_upper[..n].copy_from_slice(&cmd_name[..n]);
-                make_ascii_uppercase(&mut cmd_upper[..n]);
-                n
-            };
-
-            if is_builtin(&cmd_upper[..cmd_upper_len]) {
-                write_err(b"\r\nCannot pipe built-in commands\r\n");
-                error = true;
-                break;
-            }
-
-            match self.resolve_command_path(&cmd_upper[..cmd_upper_len]) {
-                Ok(full_path) => {
-                    let path_str = core::str::from_utf8(
-                        &full_path[..full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len())]
-                    ).unwrap_or("");
-
-                    unsafe {
-                        let dst = ARGS_ADDR as *mut u8;
-                        let copy_len = cmd_args.len().min(255);
-                        dst.write_bytes(0, 256);
-                        core::ptr::copy_nonoverlapping(cmd_args.as_ptr(), dst, copy_len);
-                        dst.add(copy_len).write(0);
-                    }
-
-                    let stdin_fd = if cmd_idx == 0 { 0xFF } else { read_fds[cmd_idx - 1] };
-                    let stdout_fd = if cmd_idx == num_cmds - 1 { 0xFF } else { write_fds[cmd_idx] };
-
-                    let packed = (stdin_fd as u64) | ((stdout_fd as u64) << 8) | ((0xFFu64) << 16);
-                    let mut ob_spawn_buf = [0u8; 512];
-                    let ob_spawn_path = to_ob_path(path_str, &mut ob_spawn_buf);
-                    match syscall::sys_ob_create(ob_spawn_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
-                        Ok(proc_fd) => {
-                            write_str(b"\r\n[OB ");
-                            write_u64(proc_fd as u64);
-                            write_str(b"] ");
-                            write_str(cmd_name);
-                            write_str(b"\r\n");
-                        }
-                        Err(_) => {
-                            write_err(b"\r\nBad command or file name\r\n");
-                            error = true;
-                            break;
-                        }
-                    }
-                }
-                Err(_) => {
-                    write_err(b"\r\nBad command or file name\r\n");
-                    error = true;
-                    break;
-                }
-            }
-
-            // Close pipe fds: previous command's read end (consumed) and
-            // this command's write end (signals EOF to next reader).
-            // Must happen before spawning the next command so the pipe
-            // is write-closed for the next reader.
-            if cmd_idx > 0 {
-                let _ = syscall::sys_close(read_fds[cmd_idx - 1]);
-            }
-            if cmd_idx < num_pipes {
-                let _ = syscall::sys_close(write_fds[cmd_idx]);
-            }
-        }
-
-        // On error, close any remaining pipe fds (safe on already-closed handles)
-        if error {
-            for i in 0..num_pipes {
-                let _ = syscall::sys_close(read_fds[i]);
-                let _ = syscall::sys_close(write_fds[i]);
-            }
-        }
-    }
-
     fn execute_line(&mut self, line: &[u8]) {
         let trimmed = trim_ascii(line);
-        if trimmed.is_empty() {
-            return;
+        if trimmed.is_empty() { return; }
+        let mut pp = [0usize; MAX_PIPELINE];
+        if parse_pipeline(trimmed, &mut pp) > 0 {
+            self.execute_pipeline(trimmed, &pp); return;
         }
-
-        let mut pipe_pos = [0usize; MAX_PIPELINE];
-        let num_pipes = parse_pipeline(trimmed, &mut pipe_pos);
-        if num_pipes > 0 {
-            self.execute_pipeline(trimmed, &pipe_pos[..num_pipes], num_pipes);
-            return;
-        }
-
         if trimmed.len() == 2 && trimmed[1] == b':' {
-            let drive_char = if trimmed[0] >= b'a' && trimmed[0] <= b'z' { trimmed[0] - 32 } else { trimmed[0] };
-            let mut path = [0u8; 4];
-            path[0] = drive_char;
-            path[1] = b':';
-            path[2] = b'\\';
-            if let Ok(cwd_fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", libneodos::syscall::ob_access::WRITE) {
-                let path_bytes = &path[..3];
-                let _ = syscall::sys_ob_set_info(cwd_fd, libneodos::syscall::ob_set_info_class::SET_CWD, path_bytes);
-                let _ = syscall::sys_close(cwd_fd);
-            } else {
-                write_err(b"\r\nInvalid drive\r\n");
-            }
+            let dc = if trimmed[0] >= b'a' && trimmed[0] <= b'z' { trimmed[0] - 32 } else { trimmed[0] };
+            let path = [dc, b':', b'\\'];
+            if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", syscall::ob_access::WRITE) {
+                let _ = syscall::sys_ob_set_info(fd, syscall::ob_set_info_class::SET_CWD, &path);
+                let _ = syscall::sys_close(fd);
+            } else { write_err(b"\r\nInvalid drive\r\n"); }
             return;
         }
-
-        let upper = first_token(trimmed);
-        let mut cmd_upper = [0u8; 32];
-        let cmd_upper_len = {
-            let n = upper.len().min(31);
-            cmd_upper[..n].copy_from_slice(&upper[..n]);
-            make_ascii_uppercase(&mut cmd_upper[..n]);
-            n
-        };
-
-        match &cmd_upper[..cmd_upper_len] {
+        let up = first_token(trimmed);
+        let mut cu = [0u8; 32];
+        let cul = { let n = up.len().min(31); cu[..n].copy_from_slice(&up[..n]); make_ascii_uppercase(&mut cu[..n]); n };
+        match &cu[..cul] {
             b"CWD" => self.cmd_cwd(),
-            b"SET" => self.cmd_set_line(trimmed),
+            b"SET" => self.cmd_set(trimmed),
             b"EXIT" => self.cmd_exit(),
             b"POWEROFF" => self.cmd_poweroff(),
             b"CALL" => self.cmd_call(trimmed),
             _ => {
                 write_str(b"\r\n");
                 let rest = after_first_token(trimmed);
-                unsafe {
-                    let dst = ARGS_ADDR as *mut u8;
-                    let copy_len = rest.len().min(255);
-                    dst.write_bytes(0, 256);
-                    core::ptr::copy_nonoverlapping(rest.as_ptr(), dst, copy_len);
-                    dst.add(copy_len).write(0);
-                }
-                match self.resolve_command_path(&cmd_upper[..cmd_upper_len]) {
-                    Ok(full_path) => {
-                        let path_str = core::str::from_utf8(
-                            &full_path[..full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len())]
-                        ).unwrap_or("");
-                        let is_cd_tool = path_str.ends_with("\\CD.NXE")
-                            || path_str.eq_ignore_ascii_case("CD.NXE");
-                        let packed = (0xFFu64) | ((0xFFu64) << 8) | ((0xFFu64) << 16);
-                        let mut ob_spawn_buf = [0u8; 512];
-                        let ob_spawn_path = to_ob_path(path_str, &mut ob_spawn_buf);
-                        match syscall::sys_ob_create(ob_spawn_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
-                            Ok(proc_fd) => {
-                                write_str(b"[OB ");
-                                write_u64(proc_fd as u64);
-                                write_str(b"] ");
-                                write_str(upper);
-                                write_str(b"\r\n");
-                                if syscall::sys_ob_wait(proc_fd).is_err() {
-                                    write_err(b"ob_wait error\r\n");
-                                } else if is_cd_tool {
-                                    let mut buf = [0u8; 256];
-                                    unsafe {
-                                        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, buf.as_mut_ptr(), buf.len());
-                                    }
-                                    let result = trim_ascii(&buf);
-                                    if rest.is_empty() {
-                                        if !result.is_empty() {
-                                            write_str(b"\r\n");
-                                            write_str(result);
-                                            write_str(b"\r\n");
-                                        }
-                                    } else if !result.is_empty() {
-                                        let path = core::str::from_utf8(result).unwrap_or("");
-                                        let path_bytes = path.as_bytes();
-                                        if let Ok(cwd_fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", libneodos::syscall::ob_access::WRITE) {
-                                            let _ = syscall::sys_ob_set_info(cwd_fd, libneodos::syscall::ob_set_info_class::SET_CWD, path_bytes);
-                                            let _ = syscall::sys_close(cwd_fd);
-                                        } else {
-                                            write_err(b"cd: directory not found\r\n");
-                                        }
+                unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=rest.len().min(255); core::ptr::copy_nonoverlapping(rest.as_ptr(),d,n); d.add(n).write(0); }
+                match self.resolve_path(&cu[..cul]) {
+                    Ok(full) => {
+                        let fs = core::str::from_utf8(&full[..full.iter().position(|&b|b==0).unwrap_or(full.len())]).unwrap_or("");
+                        let iscd = fs.ends_with("\\CD.NXE") || fs.eq_ignore_ascii_case("CD.NXE");
+                        let pk = (0xFFu64)|((0xFFu64)<<8)|((0xFFu64)<<16);
+                        let mut ob = [0u8; 512];
+                        let obp = to_ob_path(fs, &mut ob);
+                        match syscall::sys_ob_create(obp, syscall::ob_type::PROCESS, None, pk) {
+                            Ok(fd) => {
+                                write_str(b"[OB "); write_u64(fd as u64); write_str(b"] "); write_str(up); write_str(b"\r\n");
+                                if syscall::sys_ob_wait(fd).is_err() { write_err(b"ob_wait error\r\n"); }
+                                else if iscd {
+                                    let mut rb = [0u8; 256];
+                                    unsafe { core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, rb.as_mut_ptr(), 256); }
+                                    let r = trim_ascii(&rb);
+                                    if rest.is_empty() { if !r.is_empty() { write_str(b"\r\n"); write_str(r); write_str(b"\r\n"); } }
+                                    else if !r.is_empty() {
+                                        let p = core::str::from_utf8(r).unwrap_or("");
+                                        let pb = p.as_bytes();
+                                        if let Ok(cf) = syscall::sys_ob_open("\\Global\\Info\\Cwd", syscall::ob_access::WRITE) {
+                                            let _ = syscall::sys_ob_set_info(cf, syscall::ob_set_info_class::SET_CWD, pb);
+                                            let _ = syscall::sys_close(cf);
+                                        } else { write_err(b"cd: directory not found\r\n"); }
                                     }
                                 }
-                                let _ = syscall::sys_close(proc_fd);
+                                let _ = syscall::sys_close(fd);
                             }
-                            Err(_) => {
-                                write_err(b"Bad command or file name\r\n");
-                            }
+                            Err(_) => { write_err(b"Bad command or file name\r\n"); }
                         }
                     }
-                    Err(_) => {
-                        write_err(b"Bad command or file name\r\n");
-                    }
+                    Err(_) => { write_err(b"Bad command or file name\r\n"); }
                 }
             }
         }
     }
 
-    fn cmd_call(&mut self, line: &[u8]) {
-        let rest = after_first_token(line);
-        if rest.is_empty() {
-            write_str(b"\r\nUsage: CALL batchfile\r\n");
-            return;
+    fn execute_pipeline(&mut self, line: &[u8], pp: &[usize]) {
+        let nc = pp.len() + 1;
+        let mut rf = [0u8; MAX_PIPELINE];
+        let mut wf = [0u8; MAX_PIPELINE];
+        for i in 0..pp.len() {
+            let mut fds = [0u64;2];
+            let mut pn = [0u8;16]; pn[..7].copy_from_slice(b"\\Pipe/p");
+            let mut pos = 7; let mut v = i as u64;
+            if v==0 { pn[pos]=b'0'; pos+=1; }
+            else { let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; } for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; } }
+            pn[pos]=0;
+            let ps = unsafe { core::str::from_utf8_unchecked(&pn[..pos]) };
+            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() { write_err(b"\r\nPipe error\r\n"); return; }
+            rf[i]=fds[0] as u8; wf[i]=fds[1] as u8;
         }
-        let drive = self.get_drive_letter();
-        let mut full_path = [0u8; 260];
-        let mut pos = 0;
-        full_path[pos] = drive; pos += 1;
-        full_path[pos] = b':'; pos += 1;
-        if rest[0] != b'\\' && rest[0] != b'/' {
-            let mut cwd_buf = [0u8; 256];
-            if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
-                if n > 0 {
-                    let cwd = &cwd_buf[..n - 1];
-                    if cwd.len() > 2 {
-                        for &b in cwd.iter().skip(2) {
-                            if pos < 255 { full_path[pos] = b; pos += 1; }
-                        }
-                    }
-                    if pos > 2 && full_path[pos - 1] != b'\\' {
-                        if pos < 255 { full_path[pos] = b'\\'; pos += 1; }
+        let mut err = false; let mut cs = 0;
+        for ci in 0..nc {
+            let ce = if ci<pp.len() { pp[ci] } else { line.len() };
+            let sl = trim_ascii(&line[cs..ce]); cs = ce+1;
+            if sl.is_empty() { write_err(b"\r\nInvalid pipe syntax\r\n"); err=true; break; }
+            let cn = first_token(sl); let ca = after_first_token(sl);
+            let mut cu=[0u8;32]; let cl={let n=cn.len().min(31); cu[..n].copy_from_slice(&cn[..n]); make_ascii_uppercase(&mut cu[..n]); n};
+            if BUILTINS.iter().any(|&bi| bi == &cu[..cl]) { write_err(b"\r\nCannot pipe built-in\r\n"); err=true; break; }
+            match self.resolve_path(&cu[..cl]) {
+                Ok(full) => {
+                    let fs = core::str::from_utf8(&full[..full.iter().position(|&b|b==0).unwrap_or(full.len())]).unwrap_or("");
+                    unsafe { let d=ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=ca.len().min(255); core::ptr::copy_nonoverlapping(ca.as_ptr(),d,n); d.add(n).write(0); }
+                    let si = if ci==0 { 0xFF } else { rf[ci-1] };
+                    let so = if ci==nc-1 { 0xFF } else { wf[ci] };
+                    let pk = (si as u64)|((so as u64)<<8)|((0xFFu64)<<16);
+                    let mut ob=[0u8;512];
+                    match syscall::sys_ob_create(to_ob_path(fs,&mut ob), syscall::ob_type::PROCESS, None, pk) {
+                        Ok(_) => { write_str(b"\r\n["); write_u64(0); write_str(b"] "); write_str(cn); write_str(b"\r\n"); }
+                        Err(_) => { write_err(b"\r\nBad command or file name\r\n"); err=true; break; }
                     }
                 }
+                Err(_) => { write_err(b"\r\nBad command or file name\r\n"); err=true; break; }
             }
+            if ci>0 { let _=syscall::sys_close(rf[ci-1]); }
+            if ci<pp.len() { let _=syscall::sys_close(wf[ci]); }
         }
-        for &b in rest {
-            if pos < 255 { full_path[pos] = b; pos += 1; }
-        }
-        let path_str = core::str::from_utf8(&full_path[..pos]).unwrap_or("");
-        let mut ob_buf = [0u8; 512];
-        let ob_path = to_ob_path(path_str, &mut ob_buf);
-        let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-            Ok(fd) => fd,
-            Err(_) => {
-                write_err(b"\r\nBatch file not found\r\n");
-                return;
-            }
-        };
-        let mut content = [0u8; 4096];
-        let read_len = match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::ReadContent, &mut content) {
-            Ok(n) => n,
-            Err(_) => {
-                let _ = syscall::sys_close(fd);
-                write_err(b"\r\nError reading batch file\r\n");
-                return;
-            }
-        };
-        let _ = syscall::sys_close(fd);
-        let content = &content[..read_len];
-
-        let mut line_start = 0usize;
-        while line_start < content.len() {
-            let mut line_end = line_start;
-            while line_end < content.len() && content[line_end] != b'\n' {
-                line_end += 1;
-            }
-            let raw_line = &content[line_start..line_end];
-            let trimmed = trim_ascii(raw_line);
-            line_start = line_end + 1;
-
-            if trimmed.is_empty() {
-                continue;
-            }
-            if trimmed[0] == b':' || trimmed[0] == b'@' {
-                continue;
-            }
-            if trimmed.eq_ignore_ascii_case(b"pause") {
-                write_str(b"Press any key to continue . . .\r\n");
-                let mut byte = [0u8; 1];
-                let _ = syscall::sys_read(0, &mut byte);
-                continue;
-            }
-            self.execute_line(trimmed);
-        }
+        if err { for i in 0..pp.len() { let _=syscall::sys_close(rf[i]); let _=syscall::sys_close(wf[i]); } }
     }
 
     fn cmd_cwd(&self) {
-        let mut buf = [0u8; 256];
-        match syscall::sys_getcwd(&mut buf) {
-            Ok(n) if n > 0 => {
-                write_str(b"\r\n");
-                write_str(&buf[..n]);
-                write_str(b"\r\n");
-            }
-            _ => {
-                write_str(b"\r\nC:\\\r\n");
-            }
-        }
+        let mut b = [0u8; 256];
+        match syscall::sys_getcwd(&mut b) { Ok(n) if n>0 => { write_str(b"\r\n"); write_str(&b[..n]); write_str(b"\r\n"); } _ => { write_str(b"\r\nC:\\\r\n"); } }
     }
 
-    fn cmd_set_line(&mut self, line: &[u8]) {
-        let rest_raw = after_first_token(line);
-        let mut rest_buf = [0u8; 128];
-        let rest_len = rest_raw.len().min(127);
-        rest_buf[..rest_len].copy_from_slice(&rest_raw[..rest_len]);
-        let rest = &rest_buf[..rest_len];
-
-        if rest.is_empty() {
+    fn cmd_set(&mut self, line: &[u8]) {
+        let r = after_first_token(line);
+        let mut rb = [0u8; 128]; let rl = r.len().min(127); rb[..rl].copy_from_slice(&r[..rl]);
+        let rs = &rb[..rl];
+        if rs.is_empty() {
             write_str(b"\r\n");
-            for i in 0..self.env_count {
-                write_str(&self.env[i].key[..self.env[i].key_len]);
-                write_str(b"=");
-                write_str(&self.env[i].val[..self.env[i].val_len]);
-                write_str(b"\r\n");
-            }
+            for i in 0..self.env_count { write_str(&self.env[i].key[..self.env[i].key_len]); write_str(b"="); write_str(&self.env[i].val[..self.env[i].val_len]); write_str(b"\r\n"); }
             return;
         }
-        if let Some(eq_pos) = rest.iter().position(|&b| b == b'=') {
-            let key = &rest[..eq_pos];
-            let val = &rest[eq_pos + 1..];
-            let mut key_upper = [0u8; 32];
-            let key_len = key.len().min(31);
-            key_upper[..key_len].copy_from_slice(&key[..key_len]);
-            make_ascii_uppercase(&mut key_upper[..key_len]);
-            self.env_set(&key_upper[..key_len], val);
-            write_str(b"\r\n");
+        if let Some(e) = rs.iter().position(|&b| b==b'=') {
+            let k = &rs[..e]; let v = &rs[e+1..];
+            let mut ku = [0u8; 32]; let kl = k.len().min(31); ku[..kl].copy_from_slice(&k[..kl]); make_ascii_uppercase(&mut ku[..kl]);
+            self.env_set(&ku[..kl], v); write_str(b"\r\n");
         } else {
-            let mut key_upper = [0u8; 32];
-            let key_len = rest.len().min(31);
-            key_upper[..key_len].copy_from_slice(&rest[..key_len]);
-            make_ascii_uppercase(&mut key_upper[..key_len]);
-            match self.env_get(&key_upper[..key_len]) {
-                Some(v) => { write_str(b"\r\n"); write_str(v); write_str(b"\r\n"); }
-                None => { write_str(b"\r\n"); }
-            }
+            let mut ku = [0u8; 32]; let kl = rs.len().min(31); ku[..kl].copy_from_slice(&rs[..kl]); make_ascii_uppercase(&mut ku[..kl]);
+            match self.env_get(&ku[..kl]) { Some(v) => { write_str(b"\r\n"); write_str(v); write_str(b"\r\n"); } None => { write_str(b"\r\n"); } }
         }
     }
 
-    fn cmd_poweroff(&self) -> ! {
-        write_str(b"\r\npowering off...\r\n");
-        syscall::sys_poweroff()
-    }
+    fn cmd_poweroff(&self) -> ! { write_str(b"\r\npowering off...\r\n"); syscall::sys_poweroff() }
+    fn cmd_exit(&self) -> ! { syscall::sys_exit(0) }
 
-    fn cmd_exit(&self) -> ! {
-        syscall::sys_exit(0)
+    fn cmd_call(&mut self, line: &[u8]) {
+        let r = after_first_token(line);
+        if r.is_empty() { write_str(b"\r\nUsage: CALL batchfile\r\n"); return; }
+        let dr = self.get_drive();
+        let mut fp = [0u8; 260]; let mut pos = 0;
+        fp[pos]=dr; pos+=1; fp[pos]=b':'; pos+=1;
+        if r[0]!=b'\\'&&r[0]!=b'/' {
+            let mut cb = [0u8; 256];
+            if let Ok(n) = syscall::sys_getcwd(&mut cb) {
+                if n>0 { let cwd=&cb[..n-1]; if cwd.len()>2 { for &b in cwd.iter().skip(2) { if pos<255 { fp[pos]=b; pos+=1; } } } if pos>2&&fp[pos-1]!=b'\\'&&pos<255 { fp[pos]=b'\\'; pos+=1; } }
+            }
+        }
+        for &b in r { if pos<255 { fp[pos]=b; pos+=1; } }
+        let fs = core::str::from_utf8(&fp[..pos]).unwrap_or("");
+        let mut ob = [0u8; 512];
+        let fd = match syscall::sys_ob_open(to_ob_path(fs,&mut ob), syscall::ob_access::READ) {
+            Ok(f) => f, Err(_) => { write_err(b"\r\nBatch file not found\r\n"); return; }
+        };
+        let mut ct = [0u8; 4096];
+        let rl = match syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut ct) {
+            Ok(n) => n, Err(_) => { let _=syscall::sys_close(fd); write_err(b"\r\nError reading batch\r\n"); return; }
+        };
+        let _ = syscall::sys_close(fd);
+        let mut ls = 0usize;
+        while ls < rl {
+            let mut le = ls; while le < rl && ct[le]!=b'\n' { le+=1; }
+            let rl2 = trim_ascii(&ct[ls..le]); ls = le+1;
+            if rl2.is_empty() || rl2[0]==b':' || rl2[0]==b'@' { continue; }
+            if rl2.eq_ignore_ascii_case(b"pause") { write_str(b"Press any key to continue . . .\r\n"); let _ = syscall::sys_read(0, &mut [0;1]); continue; }
+            self.execute_line(rl2);
+        }
     }
 
     fn run(&mut self) -> ! {
-        let mut ver_buf = [0u8; 128];
-        let ver_str = if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Version", libneodos::syscall::ob_access::READ) {
-            if let Ok(n) = syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Version, &mut ver_buf) {
-                let _ = syscall::sys_close(fd);
-                let end = ver_buf.iter().position(|&b| b == 0).unwrap_or(n.min(ver_buf.len()));
-                core::str::from_utf8(&ver_buf[..end]).unwrap_or("?.?.?")
-            } else {
-                let _ = syscall::sys_close(fd);
-                "?.?.?"
-            }
-        } else {
-            "?.?.?"
-        };
-        write_str(ver_str.as_bytes());
-        write_str(b" [VT");
-        let vt = get_vt_num();
-        write_str(&[b'0' + vt]);
-        write_str(b"]\r\n");
+        let mut vb = [0u8; 128];
+        let ver = if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Version", syscall::ob_access::READ) {
+            let b = if let Ok(n) = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::Version, &mut vb) {
+                let e = vb.iter().position(|&b|b==0).unwrap_or(n.min(vb.len()));
+                &vb[..e]
+            } else { b"?.?.?" };
+            let _ = syscall::sys_close(fd); b
+        } else { b"?.?.?" };
+        write_str(ver); write_str(b" [VT"); write_str(&[b'0'+get_vt_num()]); write_str(b"]\r\n");
         write_str(b"Type HELP for a list of commands.\r\n");
 
+        console::register_completion(Some(shell_complete));
+
         loop {
+            let drive = self.get_drive();
+            let path = self.env_get(b"PATH").unwrap_or(b"\\Programs");
+            set_completion_ctx(drive, path);
+
             self.prompt();
             self.readline();
-            let trimmed = {
-                let t = self.line_trimmed();
-                let mut buf = [0u8; LINE_BUF_SIZE];
-                let n = t.len().min(LINE_BUF_SIZE - 1);
-                buf[..n].copy_from_slice(&t[..n]);
-                (buf, n)
-            };
-            if trimmed.1 > 0 {
-                self.add_history(&trimmed.0[..trimmed.1]);
-            }
-            self.execute();
+            let mut lb = [0u8; LINE_BUF_SIZE];
+            let n = self.pos.min(LINE_BUF_SIZE-1);
+            lb[..n].copy_from_slice(&self.line[..n]);
+            let trimmed = trim_ascii(&lb[..n]);
+            if !trimmed.is_empty() { self.execute_line(trimmed); }
         }
     }
 }

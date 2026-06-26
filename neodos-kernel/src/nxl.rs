@@ -111,7 +111,18 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         }
     };
 
-    // Find a slot whose base matches the compiled base
+    // If already loaded at this base, reuse (avoids double-load on repeated sys_loadlib)
+    {
+        let registry = NXL_REGISTRY.lock();
+        for slot in registry.iter() {
+            if slot.loaded && slot.base == compiled_base {
+                serial_println!("[NXL] '{}' already loaded at 0x{:x}, reusing", path, slot.base);
+                return Some(slot.base);
+            }
+        }
+    }
+
+    // Find a free slot whose base matches the compiled base
     let slot_idx = find_slot_for_base(compiled_base)?;
     let base = NXL_REGISTRY.lock()[slot_idx].base;
     serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);

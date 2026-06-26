@@ -883,6 +883,351 @@ Actualmente `ObError` tiene su propio conjunto de codigos (-1 a -9), y `SyscallE
 
 ---
 
+## USR: Sistema de Usuarios NT-style (SAM + UAC + SUDO)
+
+### Filosofía NT vs Unix
+
+| Concepto | Unix | NT (NeoDOS) |
+|----------|------|-------------|
+| Identidad | UID numérico | **SID** (S-1-5-21-RID) |
+| DB usuarios | `/etc/passwd` texto | **SAM** binario (`C:\System\Config\SAM`) |
+| Hash passwords | SHA-256 | **MD4** (NT hash) + salt |
+| Permisos archivo | rwx bits | **DACL** con ACEs deny/allow por SID+Grupos |
+| Owner | UID en inodo | **SecurityDescriptor** (Owner SID + DACL + Integrity) |
+| Elevación | `sudo` (setuid) | **Split Token** + `sys_elevate` + Consent prompt |
+| Suplantación | `su` | `sys_impersonate` + LogonSession |
+| Cambio permisos | `chmod` | `sys_set_security` (SD completo) |
+| Control acceso | owner/group/other | SID + Group SIDs + Integrity Level + Privileges |
+| Grupos | GID en `/etc/group` | Group SIDs en el token, evaluados en SeAccessCheck |
+| Privilegios | Solo root vs user | **PrivilegeSet** (SeTcbPrivilege, etc.) |
+
+### Token NT-style
+
+```rust
+pub struct Token {
+    pub user_sid: Sid,
+    pub username: [u8; 32],
+    pub groups: Vec<Sid>,
+    pub privileges: PrivilegeSet,
+    pub is_admin: bool,
+    pub impersonation_level: ImpersonationLevel,
+    pub session_id: u32,
+}
+```
+
+### Privilegios NT
+
+| Flag | Nombre | Descripción |
+|------|--------|-------------|
+| 1 | `SeTcbPrivilege` | Actuar como parte del SO |
+| 2 | `SeBackupPrivilege` | Backup (ignora ACLs) |
+| 4 | `SeRestorePrivilege` | Restaurar archivos |
+| 8 | `SeTakeOwnershipPrivilege` | Tomar ownership |
+| 16 | `SeDebugPrivilege` | Depurar procesos |
+| 32 | `SeShutdownPrivilege` | Apagar sistema |
+| 64 | `SeLoadDriverPrivilege` | Cargar drivers |
+| 128 | `SeChangeNotifyPrivilege` | Atravesar directorios |
+
+### Split Token + Elevación (sudo NT-style)
+
+Cada admin tiene **dos tokens vinculados**:
+- **Token filtrado**: Medium integrity, sin privilegios, grupos limitados (sesión normal)
+- **Token completo**: High integrity, todos los privilegios (elevado vía `sys_ob_elevate`)
+
+```
+Login (admin) → Kernel crea split tokens
+  → Shell inicia con token filtrado (Medium)
+  → SUDO COMMAND → sys_ob_elevate(\Security\Elevation\{pid})
+    → Policy check (Consent/Auto/CredUI/Deny)
+    → Returns ELEVATION_REQUIRED (-42) → spawn consent prompt
+    → sys_ob_consent_response(\Security\Consent\{id}, 1)
+    → Kernel swappa al token completo (High)
+    → Spawn COMMAND con token elevado
+  → Al terminar COMMAND → sys_ob_revert_to_self (vuelve a token filtrado)
+```
+
+### SAM (Security Accounts Manager)
+
+`C:\System\Config\SAM` — formato binario:
+
+```
+SAM Header (32 B): magic "SAM\0", version, entry_count, checksum
+SAM Entry (128 B c/u):
+  - rid: u32 (500=admin, 1000+ = users)
+  - username: [u8; 32]
+  - full_name: [u8; 64]
+  - hash_nthash: [u8; 16]     ← MD4 hash
+  - salt: [u8; 16]
+  - flags: u32                 ← ACCOUNT_DISABLED, LOCKOUT, etc.
+  - profile_path: [u8; 64]    ← C:\Users\Username
+```
+
+### Ob Architectural Rule
+
+Toda syscall de seguridad (RAX 67-76) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe fds de objetos Ob y entrega fds obtenidos via `ob_open`/`ob_create`. El Object Manager gestiona lifecycle y seguridad. **No se aceptan syscalls planas legacy para funcionalidad nueva.**
+
+Flujo Ob para el sistema de usuarios:
+
+```
+\Security\                        # Raíz de objetos de seguridad
+├── Session\{id}\                 # LogonSession (sys_ob_logon devuelve fd aquí)
+│   └── LinkedToken               # Token elevado vinculado
+├── Token\{pid}\                  # Token de proceso (sys_ob_query_token lee aquí)
+├── Elevation\{pid}\              # Solicitud de elevación activa
+├── Consent\{elev_id}\            # Prompt de consentimiento pendiente
+└── Policy                        # Política UAC global
+```
+
+### Syscalls Nuevas (Ob-style)
+
+| RAX | Syscall | Args | NT Equivalent |
+|-----|---------|------|---------------|
+| 67 | `sys_ob_logon` | RBX=username, RCX=hash, RDX=hash_len | `LsaLogonUser` |
+| 68 | `sys_ob_logoff` | RBX=fd | `LsaLogoffUser` |
+| 69 | `sys_ob_query_token` | RBX=fd, RCX=info_class, RDX=buf, R8=size | `NtQueryInformationToken` |
+| 70 | `sys_ob_impersonate` | RBX=fd | `NtImpersonateThread` |
+| 71 | `sys_ob_revert_to_self` | — | `RevertToSelf` |
+| 72 | `sys_ob_set_security` | RBX=fd, RCX=sd_ptr, RDX=sd_len | `NtSetSecurityObject` |
+| 73 | `sys_ob_query_security` | RBX=fd, RCX=sd_buf, RDX=sd_len | `NtQuerySecurityObject` |
+| **74** | **`sys_ob_elevate`** | **RBX=fd, RCX=password_or_null** | **Elevar token** |
+| **75** | **`sys_ob_check_access`** | **RBX=path, RCX=desired_access** | **Check ACL sin open** |
+| **76** | **`sys_ob_consent_response`** | **RBX=fd, RCX=response** | **Responder prompt UAC** |
+
+### InfoClass para sys_ob_query_token (RAX 69)
+
+| Class | Value | Returns |
+|-------|-------|---------|
+| `TokenUser` | 1 | User SID |
+| `TokenGroups` | 2 | Group SIDs |
+| `TokenPrivileges` | 3 | PrivilegeSet |
+| `TokenSessionId` | 4 | Session ID |
+| `TokenLogonId` | 5 | Logon ID |
+| `TokenIntegrityLevel` | 6 | Integrity Level |
+| `TokenElevationType` | 7 | Full/Filtered/Default |
+| `TokenLinkedToken` | 8 | Linked (elevated) token handle |
+
+### Integrity Levels
+
+| Level | Value | SID | Default para |
+|-------|-------|-----|-------------|
+| Untrusted | 0 | S-1-16-0 | Guest, sandbox |
+| Low | 1 | S-1-16-4096 | Internet-facing processes |
+| Medium | 2 | S-1-16-8192 | Usuarios normales |
+| High | 3 | S-1-16-12288 | Admin elevado |
+| System | 4 | S-1-16-16384 | PID 1 (NeoInit) |
+
+Regla MIC: un proceso NO puede escribir a un objeto con IL mayor.
+
+### Built-in SIDs
+
+| SID | Nombre | Descripción |
+|-----|--------|-------------|
+| S-1-5-18 | NT AUTHORITY\SYSTEM | Sistema |
+| S-1-5-21-500 | Builtin\Administrator | Admin por defecto |
+| S-1-5-21-0-0-0-1000+ | Usuarios | RID > 1000 = usuario normal |
+| S-1-5-32-544 | BUILTIN\Administrators | Grupo admin |
+| S-1-5-32-545 | BUILTIN\Users | Grupo usuarios |
+| S-1-5-32-546 | BUILTIN\Guests | Grupo invitados |
+| S-1-1-0 | Everyone | Todos los usuarios |
+| S-1-5-11 | NT AUTHORITY\Authenticated Users | Usuarios autenticados |
+
+### Logon Flow
+
+```
+Boot → NeoInit (PID 1, SYSTEM token, IL=System)
+  → Spawn WINLOGON.NXE
+    → Muestra pantalla: "Press Ctrl+Alt+Del to log on"
+    → Lee username + password
+    → sys_ob_logon(user, hash)
+      → Kernel: SAM lookup → verify NT hash
+      → Crea LogonSession como ObObject en \Security\Session\{id}
+      → Retorna fd al objeto LogonSession con split tokens
+    → sys_ob_query_token(fd, TokenLinkedToken, ...)
+      → Obtiene fd del Token vinculado (elevado)
+    → sys_ob_impersonate(fd) → swap al token filtrado de la sesión
+    → Spawn NEOSHELL.NXE con token filtrado
+      → Shell en C:\Users\Alejandro\ con IL=Medium
+
+SUDO COMMAND:
+  → sys_ob_elevate(fd)
+    → Policy: Consent → retorna -42 (ELEVATION_REQUIRED)
+    → sudo spawnea consent.nxe en Secure Desktop
+    → sys_ob_consent_response(elev_fd, 1)
+    → Kernel swappa a token completo (IL=High)
+    → Spawn COMMAND elevado
+  → COMMAND termina → sys_ob_revert_to_self (IL=Medium)
+```
+
+### Políticas de Elevación (en `C:\System\Config\SECURITY`)
+
+```ini
+[NEOUAC]
+DefaultPolicy=Consent
+AutoList=C:\Programs\NeoInit.nxe;C:\Programs\WinLogon.nxe
+DenyList=C:\Programs\Format.nxe
+AdminOnly=C:\Programs\DriverLoad.nxe
+```
+
+| Policy | Comportamiento |
+|--------|----------------|
+| Auto | Elevación automática (sin prompt) |
+| Consent | Mostrar prompt de confirmación (default admin) |
+| CredUI | Pedir contraseña (default no-admin) |
+| Deny | Denegar siempre |
+
+### Archivos de Configuración del Sistema
+
+```
+C:\System\Config\
+├── SAM              # Security Accounts Manager (binario)
+├── SECURITY         # UAC policy + security settings
+└── SUDOERS          # Elevation policy por usuario/comando (opcional)
+```
+
+### Directorio de Usuarios
+
+```
+C:\Users\
+├── Default\         # Perfil template
+│   ├── Desktop\
+│   ├── Documents\
+│   └── ...
+├── Administrator\  # RID 500
+│   └── ...
+└── Alejandro\      # RID 1000
+    └── ...
+```
+
+### Binarios Ring 3
+
+| Binario | NT Eq. | Descripción |
+|---------|--------|-------------|
+| `winlogon.nxe` | winlogon.exe | Login screen + SAS handler |
+| `sudo.nxe` | — | Elevación de privilegios |
+| `consent.nxe` | consent.exe | UAC prompt en Secure Desktop |
+| `samutil.nxe` | — | Gestión de SAM (adduser, deluser, passwd) |
+| `whoami.nxe` | whoami.exe | Mostrar SID, grupos, privilegios |
+| `runas.nxe` | runas.exe | Ejecutar como otro usuario |
+| `secedit.nxe` | secedit.exe | Ver/modificar Security Descriptors |
+
+### SecurityDescriptor en Inodos
+
+Cada inodo puede tener un `security_descriptor_id: u32`:
+- 0 = sin SD (comportamiento legacy: world-accessible)
+- 1..N = índice en `SD_CACHE` global
+
+Al crear archivo, se asigna SD con:
+- Owner = token.user_sid
+- DACL = ACE allow(owner, FULL_CONTROL) + ACE allow(Authenticated Users, READ)
+
+Al abrir archivo, VFS llama a `se_access_check()` con el SD del inodo.
+
+### Plan de Implementación
+
+#### Fase 1 — SAM + Token NT (v0.48)
+
+| ID | Item | Archivos | Esfuerzo |
+|----|------|----------|----------|
+| USR-001 | SAM database: formato binario + parse/save | `src/security/sam.rs` | ~250 líneas |
+| USR-002 | Token NT extendido (SID, grupos, privileges, session_id) | `src/security/token.rs` | +80 líneas |
+| USR-003 | PrivilegeSet struct + verificación | `src/security/privilege.rs` | ~80 líneas |
+| USR-004 | Integrity Levels + verificación MIC | `src/security/integrity.rs` | ~60 líneas |
+| USR-005 | SeAccessCheck con grupos + integrity | `src/security/access.rs` | +100 líneas |
+| USR-006 | SecurityDescriptor por inodo (SD_CACHE) | `src/fs/neodos_fs.rs`, `src/security/acl.rs` | +150 líneas |
+| USR-007 | sys_ob_logon / sys_ob_logoff (RAX 67-68) | `src/syscall/mod.rs` | +80 líneas |
+| USR-008 | sys_ob_query_token (RAX 69) | `src/syscall/mod.rs` | +60 líneas |
+| USR-009 | sys_ob_set_security / sys_ob_query_security (RAX 72-73) | `src/syscall/mod.rs` | +100 líneas |
+| USR-010 | Load SAM en PHASE 2.77.6 | `src/main.rs` | +5 líneas |
+| USR-011 | Tests kernel: 10 tests | `src/testing.rs` | ~150 líneas |
+
+#### Fase 2 — Login + Sesiones + SUDO (v0.49)
+
+| ID | Item | Archivos | Esfuerzo |
+|----|------|----------|----------|
+| USR-012 | winlogon.nxe — login screen | `userbin/winlogon/` | ~300 líneas |
+| USR-013 | NeoInit → spawn WINLOGON.NXE | `userbin/neoinit/` | +5 líneas |
+| USR-014 | LogonSession manager | `src/security/logon.rs` | ~150 líneas |
+| USR-015 | Split token + linked_token | `src/security/linked_token.rs` | ~100 líneas |
+| USR-016 | Elevation manager + cache + policy | `src/security/elevation.rs` | ~250 líneas |
+| USR-017 | SECURITY policy file parser | `src/security/policy.rs` | ~150 líneas |
+| USR-018 | sys_ob_elevate / sys_ob_check_access / sys_ob_consent_response (RAX 74-76) | `src/syscall/mod.rs` | +120 líneas |
+| USR-019 | sudo.nxe — elevation frontend | `userbin/sudo/` | ~300 líneas |
+| USR-020 | consent.nxe — UAC prompt en Secure VT | `userbin/consent/` | ~200 líneas |
+| USR-021 | samutil.nxe — adduser/deluser/passwd | `userbin/samutil/` | ~300 líneas |
+| USR-022 | whoami.nxe — SID/grupos/privilegios/IL | `userbin/whoami/` | ~100 líneas |
+| USR-023 | sys_ob_impersonate / sys_ob_revert_to_self (RAX 70-71) | `src/syscall/mod.rs` | +80 líneas |
+| USR-024 | Tests kernel: 8 tests | `src/testing.rs` | ~120 líneas |
+
+#### Fase 3 — Hardening + Grupos (v0.50)
+
+| ID | Item | Archivos | Esfuerzo |
+|----|------|----------|----------|
+| USR-025 | runas.nxe — ejecutar como otro usuario | `userbin/runas/` | ~200 líneas |
+| USR-026 | secedit.nxe — ver/modificar SD | `userbin/secedit/` | ~200 líneas |
+| USR-027 | group SIDs + group file parser | `src/security/group.rs` | ~100 líneas |
+| USR-028 | Per-process home enforcement | `src/scheduler/mod.rs` | +30 líneas |
+| USR-029 | SUDOERS policy file opcional | `src/security/policy.rs` | +80 líneas |
+| USR-030 | Integrity Level enforcement en VFS writes | `src/fs/vfs.rs` | +40 líneas |
+| USR-031 | Actualizar create_neodos_image.py (SAM template) | `scripts/` | +50 líneas |
+| USR-032 | Tests kernel: 6 tests | `src/testing.rs` | ~80 líneas |
+
+### Totales
+
+| Fase | Líneas Nuevas | Tests |
+|------|--------------|-------|
+| Fase 1 (SAM + Token NT) | ~900 | 10 |
+| Fase 2 (Login + SUDO) | ~1600 | 8 |
+| Fase 3 (Hardening) | ~600 | 6 |
+| **Total** | **~3100** | **24** |
+
+### Variables de Entorno (nuevas)
+
+| Variable | Descripción | Default |
+|----------|-------------|---------|
+| `%USERNAME%` | Nombre del usuario actual | — |
+| `%USERPROFILE%` | Path al perfil del usuario | `C:\Users\%USERNAME%` |
+| `%USERDOMAIN%` | Nombre del dominio/equipo | `NEODOS` |
+| `%LOGONSERVER%` | Servidor de logon | `\\NEODOS` |
+
+### Tests Kernel (24 total)
+
+| Test | Descripción |
+|------|-------------|
+| T-USR-1 | SAM parse: leer entry, verificar rid/username/hash/flags |
+| T-USR-2 | SAM save: escribir y re-leer mantiene integridad |
+| T-USR-3 | SAM add/remove user: cuenta crece/decrece |
+| T-USR-4 | Token NT: user_sid, groups, privileges, session_id |
+| T-USR-5 | PrivilegeSet: set/check/clear bits, deny no-owned |
+| T-USR-6 | Integrity Level: compare, write-denied si IL menor |
+| T-USR-7 | SeAccessCheck con grupos: miembro del grupo accede |
+| T-USR-8 | SeAccessCheck sin grupo: no-miembro denegado |
+| T-USR-9 | sys_ob_logon: usuario válido → fd a Ob object LogonSession |
+| T-USR-10 | sys_ob_logon: hash inválido → denied |
+| T-USR-11 | sys_ob_query_token: TokenUser retorna SID correcto |
+| T-USR-12 | sys_ob_set_security: cambiar SD de archivo via fd, luego verificar |
+| T-USR-13 | Split token: admin login crea filtered + linked |
+| T-USR-14 | sys_ob_elevate: Auto policy → linked token asignado |
+| T-USR-15 | sys_ob_elevate: Deny policy → access denied |
+| T-USR-16 | sys_ob_consent_response: approve → elevation granted |
+| T-USR-17 | sys_ob_impersonate: cambiar token activo via fd |
+| T-USR-18 | sys_ob_revert_to_self: restaurar token original |
+| T-USR-19 | MIC: proceso Medium no escribe a archivo High |
+| T-USR-20 | MIC: proceso High sí escribe a archivo Medium |
+| T-USR-21 | VFS: archivo sin SD es world-accessible (retrocompat) |
+| T-USR-22 | VFS: archivo con SD y DACL restrictivo deniega acceso |
+| T-USR-23 | Owner en creación: archivo nuevo tiene SID del creador |
+| T-USR-24 | Integrity en proceso: NeoInit IL=System, user IL=Medium |
+
+### Dependencias
+
+| Fase | Prerequisito |
+|------|-------------|
+| Fase 1 | Ninguno (base sobre NT6 existente) |
+| Fase 2 | Fase 1 completa |
+| Fase 3 | Fase 2 completa |
+
+---
+
 ## Recommended Next Steps
 
 Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
@@ -905,10 +1250,13 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 11 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
 | 12 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
 | 13 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
-| 14 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
-| 15 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
-| 16 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
-| 17 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
+| 14 | **USR-F1: SAM + Token NT** | v0.48 | NT6 (existente) | 900 lineas |
+| 15 | **USR-F2: Login + SUDO** | v0.49 | USR-F1 | 1600 lineas |
+| 16 | **USR-F3: Hardening + Grupos** | v0.50 | USR-F2 | 600 lineas |
+| 17 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
+| 18 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
+| 19 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
+| 20 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
 
 ---
 

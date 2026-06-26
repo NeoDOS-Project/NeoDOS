@@ -79,7 +79,7 @@ NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
-    for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver mem vol echo label kobj coretype tree corecls corecopy coredel coreren coremd corerd cmdtest drives ps keyb kill pri fsck ndreg loadnem; do
+    for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver mem vol echo label kobj coretype tree corecls corecopy coredel coreren coremd corerd cmdtest drives ps keyb kill pri fsck ndreg loadnem progress; do
     #for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"
@@ -105,6 +105,13 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     MATH_NXL_BIN="$PROJECT_ROOT/libmath.nxl"
     cp "target/x86_64-unknown-none/release/libmath-nxl" "$MATH_NXL_BIN"
     echo "[✓] libmath NXL: $MATH_NXL_BIN ($(stat -c%s "$MATH_NXL_BIN") bytes)"
+
+    echo "[+] Building libconsole NXL (console library)..."
+    cd "$PROJECT_ROOT/libconsole-nxl"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libconsole-nxl"; exit 1; }
+    CONSOLE_NXL_BIN="$PROJECT_ROOT/console.nxl"
+    cp "target/x86_64-unknown-none/release/libconsole-nxl" "$CONSOLE_NXL_BIN"
+    echo "[✓] libconsole NXL: $CONSOLE_NXL_BIN ($(stat -c%s "$CONSOLE_NXL_BIN") bytes)"
 
     echo "[+] Compiling NEM v3 standalone driver (ps2kbd)..."
     DRV_DIR="$PROJECT_ROOT/drivers/ps2kbd"
