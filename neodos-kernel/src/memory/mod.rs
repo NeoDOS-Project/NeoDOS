@@ -24,12 +24,28 @@ struct MemoryDescriptorV1 {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MemoryStats {
+    // Physical memory (6 fields, backward compatible with v0.44)
     pub phys_max: u64,
     pub total_kib: u64,
     pub usable_kib: u64,
     pub free_kib: u64,
     pub used_kib: u64,
     pub reserved_kib: u64,
+
+    // Kernel heap (added in v0.46 / NeoMem v0.1)
+    pub kernel_heap_total_kib: u64,
+    pub kernel_heap_used_kib: u64,
+    pub kernel_heap_free_kib: u64,
+
+    // User memory pools
+    pub user_memory_total_kib: u64,
+    pub user_memory_used_kib: u64,
+    pub user_memory_free_kib: u64,
+
+    // Paging
+    pub total_pages: u64,
+    pub free_pages: u64,
+    pub used_pages: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -227,13 +243,26 @@ pub fn init(boot_info: &crate::BootInfo) {
     }
 
     let free_pages = buddy::free_pages();
+    let _total_frames = total_frames;
+    let _usable_frames = usable_frames;
+    // Boot-time snapshot: dynamic fields (kernel_heap, user, paging) are
+    // recomputed in stats() on each call. Set them to 0 here.
     let stats = MemoryStats {
         phys_max,
-        total_kib: total_frames.saturating_mul(4),
-        usable_kib: usable_frames.saturating_mul(4),
+        total_kib: _total_frames.saturating_mul(4),
+        usable_kib: _usable_frames.saturating_mul(4),
         free_kib: free_pages.saturating_mul(4),
-        used_kib: usable_frames.saturating_mul(4).saturating_sub(free_pages.saturating_mul(4)),
-        reserved_kib: total_frames.saturating_mul(4).saturating_sub(usable_frames.saturating_mul(4)),
+        used_kib: _usable_frames.saturating_mul(4).saturating_sub(free_pages.saturating_mul(4)),
+        reserved_kib: _total_frames.saturating_mul(4).saturating_sub(_usable_frames.saturating_mul(4)),
+        kernel_heap_total_kib: 0,
+        kernel_heap_used_kib: 0,
+        kernel_heap_free_kib: 0,
+        user_memory_total_kib: 0,
+        user_memory_used_kib: 0,
+        user_memory_free_kib: 0,
+        total_pages: 0,
+        free_pages: 0,
+        used_pages: 0,
     };
     *STATS.lock() = stats;
 
@@ -261,7 +290,48 @@ pub fn validate_layout_consistency() {
 }
 
 pub fn stats() -> MemoryStats {
-    *STATS.lock()
+    let base = *STATS.lock();
+
+    // Recompute free/used from buddy allocator (changes dynamically)
+    let free_pages_now = buddy::free_pages();
+    let free_kib = free_pages_now.saturating_mul(4);
+    let used_kib = base.usable_kib.saturating_sub(free_kib);
+
+    // Kernel heap: total from allocator, used from slab allocator
+    let kernel_heap_total = crate::allocator::HEAP_SIZE as u64 / 1024;
+    let (_, _, _, slab_used_bytes) = crate::allocator::ALLOCATOR.usage();
+    let kernel_used = slab_used_bytes / 1024;
+    let kernel_free = kernel_heap_total.saturating_sub(kernel_used);
+
+    // User memory: total pool sizes (heap slots + mmap region)
+    let user_heap_total = crate::arch::x64::paging::MAX_HEAP_SLOTS as u64
+        * crate::arch::x64::paging::PROCESS_HEAP_SIZE / 1024;
+    let mmap_total = crate::arch::x64::paging::MMAP_TOTAL_SIZE / 1024;
+    let user_total = user_heap_total + mmap_total;
+    let used_slots = crate::arch::x64::paging::used_heap_slots() as u64;
+    let user_used = used_slots * crate::arch::x64::paging::PROCESS_HEAP_SIZE / 1024;
+    let user_free = user_total.saturating_sub(user_used);
+
+    // Paging stats from buddy allocator
+    let total_frames = buddy::total_frames();
+
+    MemoryStats {
+        phys_max: base.phys_max,
+        total_kib: base.total_kib,
+        usable_kib: base.usable_kib,
+        free_kib,
+        used_kib,
+        reserved_kib: base.reserved_kib,
+        kernel_heap_total_kib: kernel_heap_total,
+        kernel_heap_used_kib: kernel_used,
+        kernel_heap_free_kib: kernel_free,
+        user_memory_total_kib: user_total,
+        user_memory_used_kib: user_used,
+        user_memory_free_kib: user_free,
+        total_pages: total_frames,
+        free_pages: free_pages_now,
+        used_pages: total_frames.saturating_sub(free_pages_now),
+    }
 }
 
 pub fn memory_map() -> MemoryMap {
@@ -295,3 +365,5 @@ pub fn page_size() -> u64 {
 pub fn max_phys_addr() -> u64 {
     MMAP.lock().highest_addr()
 }
+
+

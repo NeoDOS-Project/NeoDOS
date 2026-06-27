@@ -210,15 +210,32 @@ pub struct DateTime {
     pub valid: u8,
 }
 
-/// MemInfo — matches kernel's MemInfo (RAX=45).
+/// MemInfo — matches kernel's extended MemoryStats (NeoMem v0.1).
+/// Backward compatible: first 6 fields (48 bytes) match the v0.44 layout.
 #[repr(C)]
 pub struct MemInfo {
+    // Physical memory (6 fields, backward compatible)
     pub phys_max: u64,
     pub total_kib: u64,
     pub usable_kib: u64,
     pub free_kib: u64,
     pub used_kib: u64,
     pub reserved_kib: u64,
+
+    // Kernel heap (added in v0.46 / NeoMem v0.1)
+    pub kernel_heap_total_kib: u64,
+    pub kernel_heap_used_kib: u64,
+    pub kernel_heap_free_kib: u64,
+
+    // User memory pools
+    pub user_memory_total_kib: u64,
+    pub user_memory_used_kib: u64,
+    pub user_memory_free_kib: u64,
+
+    // Paging
+    pub total_pages: u64,
+    pub free_pages: u64,
+    pub used_pages: u64,
 }
 
 /// sys_dup2 (RAX=6): duplicate a file descriptor.

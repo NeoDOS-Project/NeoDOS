@@ -6,7 +6,6 @@ pub mod boot_loader;
 
 pub mod caps;
 pub mod dependency;
-pub mod driver_loader;
 pub mod driver_runtime;
 pub mod fat32;
 pub mod gpt;

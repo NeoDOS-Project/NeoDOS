@@ -113,6 +113,12 @@ pub fn free_heap_slot(index: u8) {
     }
 }
 
+pub fn used_heap_slots() -> usize {
+    unsafe {
+        HEAP_SLOT_USED[..MAX_HEAP_SLOTS].iter().filter(|&&used| used).count()
+    }
+}
+
 /// Allocate a free user slot, returning its base addresses.
 /// Uses ASLR v0.44: picks a random free slot instead of sequential first-free.
 /// Returns `None` if all slots are in use.

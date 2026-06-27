@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.46.2 — 2026-06-27
+
+### Added
+- **A5.3 AHCI NCQ** — Native Command Queuing en AHCI: FPDMA QUEUED READ (0x60) / WRITE (0x61), tag-based dispatch con 32 slots, batch issue concurrente, fallback a legacy DMA EXT sin NCQ.
+
+### Removed
+- **`driver_loader.rs` (128 líneas)** — Eliminado del kernel. LOADNEM/UNLOADNEM ya estaban migrados a `loadnem.nxe` (Ring 3, `ob_create(Driver)`/`sys_driver_unload`). NEMLIST migrado a `ndreg.nxe LIST` (Ring 3, `ob_query_info(Drivers)`). La lógica de carga manual ya residía en `nem/loader.rs` + `boot_loader/` + `hotreload.rs`. Todas las funciones eran dead code sin callers.
+  - `irp::IrpTagMap`: per-device [Option<IrpId>; 32] con alloc_tag/free/lookup para dispatch out-of-order.
+  - `boot_ahci.rs`: detección NCQ vía IDENTIFY DEVICE word 76 bit 8, `ncq_batch_xfer()` batch de 32 comandos, `ncq_submit_irp_batch()` batch IRP, tag-based `poll_irp()`.
+  - `drivers/ahci/src/lib.rs` (NEM): per-slot buffers (32×2), NCQ path en read/write, `ahci_ncq_batch_read` export, detección NCQ por puerto.
+  - 5 tests: 32 concurrent dispatch, tag-based completion, fallback, out-of-order, stress 100 cycles.
+
+## v0.46.1 — 2026-06-27
+
+### Added
+- **NeoMem v0.1** — Nueva herramienta de diagnóstico de memoria (`neomem.nxe`) que reemplaza `mem.nxe`. Muestra memoria física, kernel heap, memoria de usuario y estadísticas de paginación.
+- **MemoryStats extendido** — `MemoryStats` struct ampliado de 6 a 15 campos: kernel_heap_total/used/free, user_memory_total/used/free, total/free/used_pages. Backward compatible via size-based dispatch en handler.
+- **Slab allocator stats** — `SlabAllocator::usage()` expone páginas, capacidad, objetos asignados y bytes usados.
+- **Buddy allocator total_frames()** — Nueva API pública para obtener el total de frames gestionados.
+- **used_heap_slots()** — Contador de slots de heap de usuario activos en `paging.rs`.
+- **System Tools roadmap** — Nueva sección en `docs/IMPROVEMENTS.md` con hoja de ruta completa del ecosistema de herramientas administrativas (NeoMem, NeoTop, NeoTask, NeoCfg, NeoLog, NeoStat, NeoFS, NeocCtl, NeoDebug).
+
+### Fixed
+- **GPF handler** — Añadida detección de `cs=0x8 rip=user` (contexto corrompido en salida de proceso). Si el RIP está en la ventana de usuario (0x400000-0x2400000), se trata como excepción de usuario y se mata el proceso en lugar de panic del kernel. El fix previene el kernel panic cuando el scheduler restaura un CS incorrecto tras `sys_exit`.
+
+### Changed
+- **userbin/mem/** → **userbin/neomem/** — El directorio del binario se renombró. `mem.nxe` reemplazado por `neomem.nxe`.
+
 ## v0.46.0 — 2026-06-27
 
 ### Added

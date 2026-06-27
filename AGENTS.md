@@ -40,7 +40,8 @@ prioridades actuales son:
     - ~~**OBF-12 (Section Object)**~~ COMPLETADO — ob_create(Section), ob_set_info(SectionMapView/SectionUnmapView)
     - ~~**OBF-05 (legacy kobj module removal)**~~ COMPLETADO — `kobj/` eliminado, namespace movido a `object/namespace.rs`, todos los callers migrados a `object::ob_*`
     - **OBF-13 (Device Tree / Registry Key)** 🔶 PENDIENTE
-13. **v0.47**: Networking (TCP/IP stack)
+13. **v0.46.2**: **A5.3 AHCI NCQ** — Native Command Queuing AHCI (IrpTagMap, FPDMA batch, 32 tags, detect+fallback). **COMPLETADO**
+14. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
@@ -731,7 +732,7 @@ Ubicados en `userbin/`. Generados por scripts Python (no requieren NASM).
 | `corehelp.nxe` | Rust `userbin/corehelp/` | ~14 KB | NT-style HELP: scans `C:\Programs\*.NXE` for embedded `::HELP::` markers, lists all commands with descriptions. `HELP <cmd>` spawns `<cmd>.NXE /?` via pipe and shows output |
 | `datetime.nxe` | Rust `userbin/datetime/` | ~6 KB | ob_open("\Global\Info\DateTime") + ob_query_info: muestra fecha/hora RTC. Flags `/D` (date), `/T` (time) |
 | `ver.nxe` | Rust `userbin/ver/` | ~5 KB | ob_open("\Global\Info\Version") + ob_query_info: muestra versión del kernel NeoDOS |
-| `mem.nxe` | Rust `userbin/mem/` | ~6 KB | ob_open("\Global\Info\Memory") + ob_query_info: muestra uso de memoria |
+| `neomem.nxe` | Rust `userbin/neomem/` | ~6 KB | NeoMem v0.1: ob_open("\Global\Info\Memory") + ob_query_info: memoria física, kernel heap, user memory, paging. Reemplaza `mem.nxe` |
 | `echo.nxe` | Rust `userbin/echo/` | ~4 KB | ECHO command: imprime texto via sys_write |
 | `vol.nxe` | Rust `userbin/vol/` | ~5 KB | VOL command: ob_open("\Global\Info\VolumeLabel") + ob_query_info |
 | `type.nxe` | Rust `userbin/coretype/` | ~6 KB | TYPE command: ob_open + ob_query_info(ReadContent) |

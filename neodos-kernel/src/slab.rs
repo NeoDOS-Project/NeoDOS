@@ -151,6 +151,23 @@ impl SlabCache {
         SlabCache { head: ptr::null_mut(), slot_size }
     }
 
+    /// Walk the slab pages and count usage.
+    /// Returns (total_pages, total_capacity, total_allocated).
+    fn walk_pages(&self) -> (u64, u64, u64) {
+        let mut pages = 0u64;
+        let mut capacity = 0u64;
+        let mut allocated = 0u64;
+        let mut curr = self.head;
+        while !curr.is_null() {
+            let page = unsafe { &*curr };
+            pages += 1;
+            capacity += page.capacity as u64;
+            allocated += page.allocated as u64;
+            curr = page.next;
+        }
+        (pages, capacity, allocated)
+    }
+
     /// Allocate a single object from the global pool.
     fn alloc(&mut self) -> *mut u8 {
         let mut curr = self.head;
@@ -262,6 +279,24 @@ impl SlabAllocator {
             inner: Mutex::new(new_inner()),
             fallback: LockedHeap::empty(),
         }
+    }
+
+    /// Return aggregate slab allocator usage.
+    /// Returns (total_pages, total_capacity_objects, total_allocated_objects, total_used_bytes).
+    pub fn usage(&self) -> (u64, u64, u64, u64) {
+        let inner = self.inner.lock();
+        let mut pages = 0u64;
+        let mut capacity = 0u64;
+        let mut allocated = 0u64;
+        let mut used_bytes = 0u64;
+        for cache in &inner.caches {
+            let (p, cap, alloc) = cache.walk_pages();
+            pages += p;
+            capacity += cap;
+            allocated += alloc;
+            used_bytes += alloc * cache.slot_size as u64;
+        }
+        (pages, capacity, allocated, used_bytes)
     }
 
     pub fn init(&self, heap_start: *mut u8, heap_size: usize) {

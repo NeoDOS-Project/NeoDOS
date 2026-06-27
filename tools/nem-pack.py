@@ -47,6 +47,8 @@ X86_64_TO_NEM = {
     R_X86_64_PLT32: NEM_R_PLT32,
     R_X86_64_32: NEM_R_32,
     R_X86_64_32S: NEM_R_32S,
+    # GOTPCREL: in static model without GOT, treat as PC-relative to target
+    R_X86_64_GOTPCREL: NEM_R_PC32,
 }
 
 # Section types

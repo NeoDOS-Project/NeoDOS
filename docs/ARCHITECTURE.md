@@ -442,16 +442,16 @@ None execute external driver code — they only update `DriverRuntime` statistic
 
 ---
 
-### 8. Legacy: Driver Loader (`src/drivers/driver_loader.rs`)
+### 8. Legacy: Driver Loading (removed in v0.46.2)
 
-Legacy mechanism for loading NEM drivers from the shell. Does NOT execute init or certification — the driver stays in **Loaded** state (not Active).
+The legacy `driver_loader.rs` was removed in v0.46.2. LOADNEM/UNLOADNEM/NEMLIST
+are now fully Ring 3 commands:
 
-- `load_nem(path)` — loads and registers, emits `EVENT_DRIVER_LOADED`
-- `unload_driver(id)` — removes from runtime
-- `LOADNEM` / `NDREG` — Ring 3 commands via `ob_create(Driver)` and `ob_query_info(Drivers)`
-- `cmd_unloadnem(id)` — unload by ID
+- `loadnem.nxe` — uses `ob_create(Driver)` to load and `sys_driver_unload` to unload
+- `ndreg.nxe LIST` — uses `ob_query_info(Drivers)` to list drivers
 
-**`LOADNEM <path>` command**: loads but does NOT activate.
+The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader,
+and unloading is handled by `hotreload::unload_driver()`.
 
 ---
 

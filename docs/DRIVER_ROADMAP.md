@@ -34,14 +34,15 @@ Verificar que cada driver tiene la categoría correcta:
 antes de Phase 3.85, no hay driver ACPI cargado. El shutdown actual usa QEMU
 debug port + PS/2 reset como fallback, así que no es crítico.
 
-### 1.3 Eliminar `driver_loader.rs` Legacy
+### 1.3 Eliminar `driver_loader.rs` Legacy ✅
 
-- [ ] Migrar comandos `LOADNEM`/`UNLOADNEM`/`NEMLIST` a Ring 3 (.NXE)
-- [ ] Mover la lógica de carga manual al `boot_loader/` o un nuevo `driver_manager`
-- [ ] Eliminar `driver_loader.rs` (128 líneas) del kernel
+- [x] Migrar comandos `LOADNEM`/`UNLOADNEM`/`NEMLIST` a Ring 3 (.NXE) — `loadnem.nxe` + `ndreg.nxe`
+- [x] Mover la lógica de carga manual al `boot_loader/` o un nuevo `driver_manager` — ya en `nem/loader.rs` + `boot_loader/` + `hotreload.rs`
+- [x] Eliminar `driver_loader.rs` (128 líneas) del kernel
 
-**Prioridad**: Baja. Los comandos legacy funcionan pero no usan el pipeline de
-certificación completo.
+**Completado en v0.46.2**: `driver_loader.rs` eliminado. LOADNEM/UNLOADNEM via
+`loadnem.nxe` (Ring 3, `ob_create(Driver)`/`sys_driver_unload`). NEMLIST via
+`ndreg.nxe LIST` (Ring 3, `ob_query_info(Drivers)`).
 
 ### 1.4 Tests de Integración para Drivers .nem
 

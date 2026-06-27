@@ -244,6 +244,10 @@ impl BuddyAllocator {
     pub fn free_pages(&self) -> u64 {
         self.free_pages
     }
+
+    pub fn total_pages(&self) -> u64 {
+        self.total_pages
+    }
 }
 
 lazy_static! {
@@ -280,4 +284,8 @@ pub fn mark_used_region(start: u64, size: u64) {
 
 pub fn free_pages() -> u64 {
     ALLOCATOR.lock().free_pages()
+}
+
+pub fn total_frames() -> u64 {
+    ALLOCATOR.lock().total_pages()
 }

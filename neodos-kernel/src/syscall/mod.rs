@@ -3352,7 +3352,12 @@ _ if info_class == ObInfoClass::DateTime as u32 => {
             sz as u64
         }
 _ if info_class == ObInfoClass::Memory as u32 => {
-            // Memory: return MemInfo (MemoryStats) struct from \Global\Info\Memory object
+            // Memory: return MemoryStats struct (extended, NeoMem v0.1).
+            // Size-based dispatch for backward compatibility:
+            // - buf_size < 48 (old struct minimum): reject
+            // - buf_size >= 48: copy min(buf_size, sizeof(MemoryStats)) bytes
+            // Old callers pass 48 bytes and get only the first 6 physical-memory fields.
+            // New callers pass enough buffer and get all 15 fields.
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);
             }
@@ -3363,16 +3368,18 @@ _ if info_class == ObInfoClass::Memory as u32 => {
             if obj.obj_type != crate::object::ObType::Key || obj.native_id != 1 {
                 return err_to_u64(SyscallError::Inval);
             }
-            let sz = core::mem::size_of::<crate::memory::MemoryStats>() as usize;
-            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            const OLD_SZ: usize = 48; // backward compat: old MemInfo struct
+            let full_sz = core::mem::size_of::<crate::memory::MemoryStats>();
+            if buf_size < OLD_SZ { return err_to_u64(SyscallError::Inval); }
+            let copy_sz = core::cmp::min(buf_size, full_sz);
             let stats = crate::memory::stats();
             unsafe {
                 core::ptr::copy_nonoverlapping(
                     &stats as *const crate::memory::MemoryStats as *const u8,
-                    buf_ptr as *mut u8, sz,
+                    buf_ptr as *mut u8, copy_sz,
                 );
             }
-            sz as u64
+            copy_sz as u64
         }
 _ if info_class == ObInfoClass::Drives as u32 => {
             // Drives: return array of DriveInfoRaw entries from \Global\Info\Drives object

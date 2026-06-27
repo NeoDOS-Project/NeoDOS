@@ -84,7 +84,7 @@ el ecosistema .nem:
 | `isolation.rs` | 795 | Sandbox de aislamiento para drivers .nem (16 MB, 16 slots) |
 | `caps.rs` | 350 | Sistema de capacidades (12 flags), política de seguridad para .nem |
 | `boot_loader/mod.rs` | 375 | Orquestador que carga .nem en Phase 3.85 |
-| `driver_loader.rs` | 128 | Cargador legacy manual (comandos LOADNEM/UNLOADNEM/NEMLIST) |
+| ~~`driver_loader.rs`~~ | ~~128~~ | ~~Cargador legacy manual~~ **Eliminado en v0.46.2** |
 | `abi/` | — | Negociación de versión ABI kernel↔driver |
 | `dependency/` | — | Grafo de dependencias y orden topológico para carga de .nem |
 | `nem/` | — | Parser de formato NEM v3, v3loader, tabla de exports del kernel |

@@ -141,6 +141,13 @@ core::arch::global_asm!(
     "pop r14",
     "pop r15",
     "pop rbp",
+    // Validate CS before iretq: if CS != 0x1B (Ring 3 user code),
+    // force it to 0x1B to prevent kernel-mode-at-user-address GPF.
+    // After pops, RSP points to [RIP, CS, RFLAGS, RSP, SS].
+    "cmp qword ptr [rsp + 8], 0x1B",
+    "je 6f",
+    "mov qword ptr [rsp + 8], 0x1B",
+    "6:",
     "iretq"
 );
 
@@ -380,7 +387,9 @@ crate::hal::get_ticks(),
         );
 
     // Try user-mode dispatch first
-    if is_user_exception(&stack_frame) {
+    let in_user_window = rip >= crate::arch::x64::paging::USER_BASE
+        && rip < crate::arch::x64::paging::USER_LIMIT;
+    if is_user_exception(&stack_frame) || in_user_window {
         // For GPF, the fault_addr is typically RIP (null deref) or a selector
         let fault_addr = rip;
         let result = exception_dispatch(EXCEPTION_GPF, rip, rsp, error_code, true, fault_addr, error_code);

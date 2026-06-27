@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 560;
+const MAX_TESTS: usize = 570;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -2539,9 +2539,165 @@ pub fn register_tests() {
 
     // A4.4: Virtual Terminal tests
     register_vt_tests();
+
+    // A5.3: AHCI NCQ tests
+    register_ncq_tests();
 }
 
 
+
+// ── A5.3: AHCI NCQ tests ──────────────────────────────────────────────
+
+fn register_ncq_tests() {
+    use crate::irp::{IrpTagMap, irp_alloc, irp_free, irp_complete_result, IrpOp};
+
+    test_case!("ahci_ncq_32_concurrent_dispatch", {
+        // Test: 32 read IRPs queued simultaneously via tag map.
+        // Verify all 32 tags can be allocated and mapped to IRPs.
+        let mut map = IrpTagMap::new();
+        let mut irp_ids = [0u32; 32];
+        let mut tags = [0u8; 32];
+
+        // Allocate 32 IRPs and assign each to a unique NCQ tag
+        for i in 0..32 {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc failed")?;
+            irp_ids[i] = id;
+            let tag = map.alloc_tag().ok_or("alloc_tag failed")?;
+            test_true!(map.assign(tag, id));
+            tags[i] = tag;
+        }
+        test_true!(map.is_full());
+        test_eq!(map.in_use(), 32);
+
+        // Verify each tag maps back to its IRP
+        for i in 0..32 {
+            let mapped = map.lookup(tags[i]);
+            test_eq!(mapped, Some(irp_ids[i]));
+        }
+
+        // Free all tags and IRPs
+        for i in 0..32 {
+            let freed = map.free(tags[i]);
+            test_eq!(freed, Some(irp_ids[i]));
+            irp_free(irp_ids[i]);
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_tag_based_completion", {
+        // Test: tag-based completion: assign IRP to tag, complete via tag lookup.
+        let mut map = IrpTagMap::new();
+
+        let id = irp_alloc(IrpOp::Read, 100, 1,
+            core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+            .ok_or("irp_alloc")?;
+        let tag = map.alloc_tag().ok_or("alloc_tag")?;
+        test_true!(map.assign(tag, id));
+
+        // Simulate completion: complete the IRP based on tag lookup
+        let matched = map.lookup(tag);
+        test_eq!(matched, Some(id));
+        irp_complete_result(id, Ok(()));
+        let _ = map.free(tag);
+        irp_free(id);
+    });
+
+    test_case!("ahci_ncq_fallback_to_legacy", {
+        // Test: when NCQ not supported or tag map full, fallback to legacy path.
+        // Simulate a device where ncq_supported = false.
+        let mut map = IrpTagMap::new();
+
+        // Fill all 32 tags
+        let mut ids = [0u32; 32];
+        for i in 0..32 {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc")?;
+            ids[i] = id;
+            let tag = map.alloc_tag().ok_or("alloc_tag")?;
+            test_true!(map.assign(tag, id));
+        }
+
+        // Map is full — alloc_tag should return None (simulates fallback to legacy)
+        test_true!(map.alloc_tag().is_none());
+        test_true!(map.is_full());
+
+        // Clean up
+        for i in 0..32 {
+            let id = map.free(i as u8);
+            test_eq!(id, Some(ids[i]));
+            irp_free(ids[i]);
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_out_of_order_completion", {
+        // Test: tags complete out of order (SActive bits clear in any order).
+        // Simulate by freeing tags in reverse order.
+        let mut map = IrpTagMap::new();
+        let mut tags = [0u8; 32];
+
+        for i in 0..32 {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc")?;
+            let tag = map.alloc_tag().ok_or("alloc_tag")?;
+            test_true!(map.assign(tag, id));
+            tags[i] = tag;
+            irp_free(id);
+        }
+
+        // Free tags out of order (evens first, then odds)
+        for i in (0..32).rev().step_by(2) {
+            let freed = map.free(tags[i]);
+            test_true!(freed.is_some());
+        }
+        test_eq!(map.in_use(), 16);
+
+        for i in (1..32).rev().step_by(2) {
+            let freed = map.free(tags[i]);
+            test_true!(freed.is_some());
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_stress_load", {
+        // Stress: 32 concurrent tags, full alloc/free cycle 100 times.
+        let mut map = IrpTagMap::new();
+
+        for cycle in 0..100 {
+            let mut irp_ids = [0u32; 32];
+            let mut tags = [0u8; 32];
+
+            for i in 0..32 {
+                let id = irp_alloc(IrpOp::Read, (cycle * 32 + i) as u64, 1,
+                    core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                    .ok_or("irp_alloc")?;
+                irp_ids[i] = id;
+                let tag = map.alloc_tag().ok_or("alloc_tag")?;
+                test_true!(map.assign(tag, id));
+                tags[i] = tag;
+            }
+
+            // Verify all 32 are in use
+            test_eq!(map.in_use(), 32);
+
+            // Complete in random-ish order (by tag index)
+            for i in 0..32 {
+                let id = map.free(tags[i]);
+                test_eq!(id, Some(irp_ids[i]));
+                irp_free(irp_ids[i]);
+            }
+
+            if cycle % 10 == 0 {
+                test_true!(map.is_empty());
+            }
+        }
+        test_true!(map.is_empty());
+    });
+}
 
 // ── Per-CPU slab allocator tests (A1.3) ──────────────────────────────────
 

@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'mem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -210,6 +210,8 @@ Happy hacking!
             else:
                 print(f"[!] {name}.nxe not found — skipping")
             nxe_files[name] = data
+
+
 
         nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
         def read_nem(subdir, fname):
@@ -311,7 +313,7 @@ Happy hacking!
         corehelp_blocks   = alloc_blocks(30, len(nxe_files['corehelp']))
         datetime_blocks   = alloc_blocks(31, len(nxe_files['datetime']))
         ver_blocks        = alloc_blocks(32, len(nxe_files['ver']))
-        mem_blocks        = alloc_blocks(33, len(nxe_files['mem']))
+        neomem_blocks     = alloc_blocks(33, len(nxe_files['neomem']))
         vol_blocks        = alloc_blocks(34, len(nxe_files['vol']))
         echo_blocks       = alloc_blocks(35, len(nxe_files['echo']))
         kobj_blocks       = alloc_blocks(45, len(nxe_files['kobj']))
@@ -389,7 +391,7 @@ Happy hacking!
             30: (MODE_FILE | default_perms_for_filename("help.nxe"), len(nxe_files['corehelp']), pad_blocks(corehelp_blocks)),
             31: (MODE_FILE | default_perms_for_filename("datetime.nxe"), len(nxe_files['datetime']), pad_blocks(datetime_blocks)),
             32: (MODE_FILE | default_perms_for_filename("ver.nxe"), len(nxe_files['ver']), pad_blocks(ver_blocks)),
-            33: (MODE_FILE | default_perms_for_filename("mem.nxe"), len(nxe_files['mem']), pad_blocks(mem_blocks)),
+            33: (MODE_FILE | default_perms_for_filename("neomem.nxe"), len(nxe_files['neomem']), pad_blocks(neomem_blocks)),
             34: (MODE_FILE | default_perms_for_filename("vol.nxe"), len(nxe_files['vol']), pad_blocks(vol_blocks)),
             35: (MODE_FILE | default_perms_for_filename("echo.nxe"), len(nxe_files['echo']), pad_blocks(echo_blocks)),
              45: (MODE_FILE | default_perms_for_filename("kobj.nxe"), len(nxe_files['kobj']), pad_blocks(kobj_blocks)),
@@ -584,7 +586,7 @@ Happy hacking!
         image[offset+1024:offset+1280]= create_dir_entry(30, 1, "help.nxe")
         image[offset+1280:offset+1536]= create_dir_entry(31, 1, "datetime.nxe")
         image[offset+1536:offset+1792]= create_dir_entry(32, 1, "ver.nxe")
-        image[offset+1792:offset+2048]= create_dir_entry(33, 1, "mem.nxe")
+        image[offset+1792:offset+2048]= create_dir_entry(33, 1, "neomem.nxe")
         image[offset+2048:offset+2304]= create_dir_entry(34, 1, "vol.nxe")
         image[offset+2304:offset+2560]= create_dir_entry(35, 1, "echo.nxe")
         image[offset+2560:offset+2816]= create_dir_entry(36, 1, "cd.nxe")
@@ -619,7 +621,7 @@ Happy hacking!
             30: ('help.nxe', nxe_files['corehelp']),
             31: ('datetime.nxe', nxe_files['datetime']),
             32: ('ver.nxe', nxe_files['ver']),
-            33: ('mem.nxe', nxe_files['mem']),
+            33: ('neomem.nxe', nxe_files['neomem']),
             34: ('vol.nxe', nxe_files['vol']),
             35: ('echo.nxe', nxe_files['echo']),
             36: ('cd.nxe', nxe_files['cd']),

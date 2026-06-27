@@ -6,7 +6,7 @@ use alloc::alloc::alloc_zeroed;
 
 use crate::drivers::block::BlockDevice;
 use crate::drivers::pci::{pci_config_read_dword, pci_config_read_word, pci_config_write_word};
-use crate::irp::{self, IrpId, IrpOp};
+use crate::irp::{self, IrpId, IrpOp, IrpTagMap, NCQ_MAX_TAGS};
 use crate::serial_println;
 
 /// Saved AHCI port info so we can reclaim the port after NEM AHCI driver overrides it.
@@ -56,6 +56,16 @@ const TFD_DRQ: u32 = 0x08;
 
 const ATA_CMD_READ_DMA_EXT: u8 = 0x25;
 const ATA_CMD_WRITE_DMA_EXT: u8 = 0x35;
+const ATA_CMD_READ_FPDMA_QUEUED: u8 = 0x60;
+const ATA_CMD_WRITE_FPDMA_QUEUED: u8 = 0x61;
+const ATA_CMD_IDENTIFY_DEVICE: u8 = 0xEC;
+/// Per NCQ slot DMA buffer size (4KB = 8 sectors max per PRDT)
+const NCQ_SLOT_BUF_SIZE: usize = DMA_BUF_SIZE;
+
+const PORT_SACT: u64 = 0x34;
+
+/// NCQ capability bit in IDENTIFY DEVICE data word 76.
+const NCQ_SUPPORT_BIT: u16 = 1 << 8;
 
 #[repr(C, packed)]
 struct PrdtEntry {
@@ -126,6 +136,63 @@ fn ahci_alloc_buffers() -> (*mut CmdList, *mut RecvFis, *mut CmdTable, *mut u8) 
     }
 
     (cl_ptr, rf_ptr, ct_ptr, db_ptr)
+}
+
+/// Send IDENTIFY DEVICE command to detect NCQ capability.
+/// Returns true if device supports NCQ (word 76 bit 8).
+fn self_detect_ncq(abar: u64, port: usize, is_atapi: bool,
+    cmd_list: *mut CmdList, cmd_table: *mut CmdTable, dma_buf: *mut u8) -> bool
+{
+    if is_atapi {
+        return false;
+    }
+
+    unsafe {
+        let ct = &mut *cmd_table.add(port);
+        let ct_inner = &mut ct.0;
+        ct_inner.cfis = [0; 64];
+        ct_inner.cfis[0] = 0x27;
+        ct_inner.cfis[1] = 0x80;
+        ct_inner.cfis[2] = ATA_CMD_IDENTIFY_DEVICE;
+        ct_inner.cfis[7] = 0x40;
+
+        for i in 0..MAX_PRD_ENTRIES {
+            ct_inner.prdt[i] = EMPTY_PRD;
+        }
+        let dbuf = dma_buf.add(DMA_BUF_SIZE * port);
+        ct_inner.prdt[0].data_base = dbuf as u32;
+        ct_inner.prdt[0].data_base_hi = 0;
+        ct_inner.prdt[0].count = (512 - 1) | (1 << 31);
+
+        let cl = &mut *cmd_list.add(port);
+        cl.0[0] = CmdHeader {
+            opts: 5 | (1 << 6),
+            prdtl: 1,
+            prdbc: 0,
+            ctba: ct as *mut CmdTable as u32,
+            ctba_hi: 0,
+            reserved: [0; 4],
+        };
+
+        fence(Ordering::SeqCst);
+        port_write32(abar, port, PORT_CI, 1);
+
+        for _ in 0..10_000_000 {
+            let ci = port_read32(abar, port, PORT_CI);
+            if (ci & 1) == 0 { break; }
+            core::hint::spin_loop();
+        }
+
+        let tfd = port_read32(abar, port, PORT_TFD);
+        if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
+            return false;
+        }
+
+        // Read word 76 from IDENTIFY data (512 bytes at dma_buf)
+        let identify = dbuf as *const u16;
+        let word76 = identify.add(76).read_volatile();
+        (word76 & NCQ_SUPPORT_BIT) != 0
+    }
 }
 
 fn mmio_read32(base: u64, offset: u64) -> u32 {
@@ -201,11 +268,18 @@ pub struct BootAhci {
     base_lba: u64,
     num_sectors: u64,
     is_atapi: bool,
+    ncq_supported: bool,
     // Heap-allocated DMA buffers (v0.40)
     cmd_list: *mut CmdList,
     recv_fis: *mut RecvFis,
     cmd_table: *mut CmdTable,
     dma_buf: *mut u8,
+    // NCQ per-slot command tables (32 slots)
+    ncq_cmd_tables: *mut CmdTable,
+    // NCQ per-slot DMA buffers (32 * 4KB)
+    ncq_dma_bufs: *mut u8,
+    // NCQ tag → IRP mapping
+    tag_map: IrpTagMap,
 }
 
 impl Drop for BootAhci {
@@ -236,6 +310,16 @@ impl Drop for BootAhci {
                 alloc::alloc::dealloc(
                     self.dma_buf,
                     Layout::new::<[u8; DMA_BUF_SIZE * MAX_PORTS]>());
+            }
+            if !self.ncq_cmd_tables.is_null() {
+                let ncq_ct_layout = Layout::from_size_align_unchecked(
+                    core::mem::size_of::<CmdTable>() * NCQ_MAX_TAGS, 128);
+                alloc::alloc::dealloc(self.ncq_cmd_tables as *mut u8, ncq_ct_layout);
+            }
+            if !self.ncq_dma_bufs.is_null() {
+                let ncq_db_layout = Layout::from_size_align_unchecked(
+                    NCQ_SLOT_BUF_SIZE * NCQ_MAX_TAGS, 64);
+                alloc::alloc::dealloc(self.ncq_dma_bufs, ncq_db_layout);
             }
         }
     }
@@ -340,11 +424,40 @@ impl BootAhci {
             return None;
         }
 
+        // ── Allocate NCQ per-slot buffers (32 slots) ──
+        let ncq_ct_layout = Layout::from_size_align(
+            core::mem::size_of::<CmdTable>() * NCQ_MAX_TAGS, 128).unwrap();
+        let ncq_db_layout = Layout::from_size_align(
+            NCQ_SLOT_BUF_SIZE * NCQ_MAX_TAGS, 64).unwrap();
+        let ncq_ct_ptr = unsafe { alloc_zeroed(ncq_ct_layout) } as *mut CmdTable;
+        let ncq_db_ptr = unsafe { alloc_zeroed(ncq_db_layout) };
+        if ncq_ct_ptr.is_null() || ncq_db_ptr.is_null() {
+            serial_println!("[AHCI] Failed to allocate NCQ buffers");
+            if !ncq_ct_ptr.is_null() { unsafe { alloc::alloc::dealloc(ncq_ct_ptr as *mut u8, ncq_ct_layout); } }
+            if !ncq_db_ptr.is_null() { unsafe { alloc::alloc::dealloc(ncq_db_ptr, ncq_db_layout); } }
+            return None;
+        }
+
+        // ── Detect NCQ support via IDENTIFY DEVICE ──
+        let ncq_supported = self_detect_ncq(abar, port, is_atapi, cmd_list, cmd_table, dma_buf);
+        if ncq_supported {
+            serial_println!("[AHCI] Device supports NCQ (32 tags)");
+        } else {
+            serial_println!("[AHCI] Device does NOT support NCQ, using legacy path");
+        }
+
         let num_sectors = 0x0012_4F00u64;
         serial_println!("[AHCI] Boot AHCI ready on port {}", port);
         *BOOT_AHCI_INFO.lock() = Some((abar, port, clb_val, fb_val));
 
-        Some(BootAhci { abar, port, base_lba: 0, num_sectors, is_atapi, cmd_list, recv_fis, cmd_table, dma_buf })
+        Some(BootAhci {
+            abar, port, base_lba: 0, num_sectors, is_atapi,
+            ncq_supported,
+            cmd_list, recv_fis, cmd_table, dma_buf,
+            ncq_cmd_tables: ncq_ct_ptr,
+            ncq_dma_bufs: ncq_db_ptr,
+            tag_map: IrpTagMap::new(),
+        })
     }
 
     /// Reclaim the AHCI port after a NEM AHCI driver overrides PORT_CLB/PORT_FB.
@@ -487,6 +600,201 @@ impl BootAhci {
 
         Ok(())
     }
+
+    /// NCQ batch transfer: issue up to 32 concurrent FPDMA QUEUED commands.
+    /// Each entry in `cmds` is (lba, count, buf, is_write).
+    /// Returns number of successfully completed commands.
+    pub fn ncq_batch_xfer(&mut self, cmds: &[(u64, u8, *mut u8, bool)]) -> usize {
+        if !self.ncq_supported || cmds.is_empty() {
+            return 0;
+        }
+
+        let batch_size = cmds.len().min(NCQ_MAX_TAGS);
+        let port = self.port;
+        let abar = self.abar;
+        let mut ci_mask: u32 = 0;
+        let mut tag_of_slot = [0u8; NCQ_MAX_TAGS];
+
+        unsafe {
+            let cl = &mut *self.cmd_list.add(port);
+
+            for slot in 0..batch_size {
+                let (lba, count, buf, is_write) = cmds[slot];
+                let abs_lba = self.base_lba.wrapping_add(lba);
+                let tag = slot as u8;
+
+                let ncq_ct = &mut *self.ncq_cmd_tables.add(tag as usize);
+                let ncq_ct_inner = &mut ncq_ct.0;
+
+                ncq_ct_inner.cfis = [0; 64];
+                ncq_ct_inner.cfis[0] = 0x27;
+                ncq_ct_inner.cfis[1] = 0x80; // C=1 (command FIS)
+                if is_write {
+                    ncq_ct_inner.cfis[2] = ATA_CMD_WRITE_FPDMA_QUEUED;
+                } else {
+                    ncq_ct_inner.cfis[2] = ATA_CMD_READ_FPDMA_QUEUED;
+                }
+                ncq_ct_inner.cfis[4] = (abs_lba & 0xFF) as u8;
+                ncq_ct_inner.cfis[5] = ((abs_lba >> 8) & 0xFF) as u8;
+                ncq_ct_inner.cfis[6] = ((abs_lba >> 16) & 0xFF) as u8;
+                ncq_ct_inner.cfis[7] = 0x40; // LBA bit
+                ncq_ct_inner.cfis[8] = ((abs_lba >> 24) & 0xFF) as u8;
+                ncq_ct_inner.cfis[9] = ((abs_lba >> 32) & 0xFF) as u8;
+                ncq_ct_inner.cfis[10] = ((abs_lba >> 40) & 0xFF) as u8;
+                // NCQ tag in sector count register bits [4:0], FUA in bit 7
+                ncq_ct_inner.cfis[12] = tag << 3;
+                ncq_ct_inner.cfis[13] = 0; // sector count exp
+                // NCQ auxiliary: features_exp = tag >> 3 (for tags > 7)
+                ncq_ct_inner.cfis[3] = tag >> 3;
+
+                // Per-slot DMA buffer
+                let slot_dma = self.ncq_dma_bufs.add(NCQ_SLOT_BUF_SIZE * tag as usize);
+                if is_write {
+                    core::ptr::copy_nonoverlapping(buf, slot_dma, (count as usize) * 512);
+                }
+
+                // PRDT: 1 entry per slot (max 8 sectors = 4096 bytes fits in 4KB buffer)
+                for i in 0..MAX_PRD_ENTRIES {
+                    ncq_ct_inner.prdt[i] = EMPTY_PRD;
+                }
+                ncq_ct_inner.prdt[0].data_base = slot_dma as u32;
+                ncq_ct_inner.prdt[0].data_base_hi = 0;
+                ncq_ct_inner.prdt[0].count = ((count as u32) * 512 - 1) | (1 << 31);
+
+                // Write SActive before CI (AHCI spec: SActive must be written before CI)
+                port_write32(abar, port, PORT_SACT, 1u32 << tag);
+
+                // Set up command header for this slot
+                let ct_phys = self.ncq_cmd_tables.add(tag as usize) as u32;
+                cl.0[tag as usize] = CmdHeader {
+                    opts: 5 | (1 << 6),
+                    prdtl: 1,
+                    prdbc: 0,
+                    ctba: ct_phys,
+                    ctba_hi: 0,
+                    reserved: [0; 4],
+                };
+
+                ci_mask |= 1u32 << tag;
+                tag_of_slot[slot] = tag;
+            }
+
+            fence(Ordering::SeqCst);
+            crate::boot_benchmark::ahci_cmd_start();
+            let cmd_start = crate::boot_benchmark::boot_time_now();
+
+            // Issue all commands at once
+            port_write32(abar, port, PORT_CI, ci_mask);
+
+            // Poll PORT_CI until all bits clear (all commands complete)
+            let mut poll_count: u64 = 0;
+            let mut cmd_timed_out = false;
+            for _ in 0..10_000_000 {
+                let ci = port_read32(abar, port, PORT_CI);
+                poll_count += 1;
+                if (ci & ci_mask) == 0 {
+                    break;
+                }
+                if poll_count % 50_000 == 0 {
+                    if crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 2000 {
+                        cmd_timed_out = true;
+                        break;
+                    }
+                }
+                core::hint::spin_loop();
+            }
+            crate::boot_benchmark::ahci_cmd_polled(poll_count);
+            let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
+            crate::boot_benchmark::ahci_cmd_done(wait);
+
+            if cmd_timed_out {
+                crate::boot_benchmark::ahci_cmd_timeout();
+            }
+
+            // Check for errors and copy back data for reads
+            let tfd = port_read32(abar, port, PORT_TFD);
+            let mut completed = 0;
+            for slot in 0..batch_size {
+                let tag = tag_of_slot[slot];
+                let ci_still = port_read32(abar, port, PORT_CI);
+                if (ci_still & (1u32 << tag)) != 0 {
+                    continue;
+                }
+                let (lba, _count, buf, is_write) = cmds[slot];
+                let abs_lba = self.base_lba.wrapping_add(lba);
+
+                if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
+                    let serr = port_read32(abar, port, PORT_SERR);
+                    serial_println!("[AHCI] NCQ error slot={} tag={} lba={} tfd=0x{:02x} serr=0x{:08x}",
+                        slot, tag, abs_lba, tfd, serr);
+                    continue;
+                }
+
+                if !is_write {
+                    let slot_dma = self.ncq_dma_bufs.add(NCQ_SLOT_BUF_SIZE * tag as usize);
+                    core::ptr::copy_nonoverlapping(slot_dma, buf, (_count as usize) * 512);
+                }
+                completed += 1;
+            }
+
+            completed
+        }
+    }
+}
+
+impl BootAhci {
+    /// Queue multiple IRPs for NCQ batch execution. Up to 32 IRPs can be
+    /// queued; they are dispatched in a single FPDMA QUEUED command batch.
+    /// Returns number of IRPs successfully submitted.
+    pub fn ncq_submit_irp_batch(&mut self, irp_ids: &[IrpId]) -> usize {
+        if !self.ncq_supported || irp_ids.is_empty() {
+            return 0;
+        }
+
+        let batch_size = irp_ids.len().min(NCQ_MAX_TAGS);
+        let mut cmds = [(0u64, 0u8, core::ptr::null_mut(), false); NCQ_MAX_TAGS];
+        let mut tag_for_irp: [u8; NCQ_MAX_TAGS] = [0xFF; NCQ_MAX_TAGS];
+        let mut valid = 0usize;
+
+        for i in 0..batch_size {
+            let irp_id = irp_ids[i];
+            let params = match irp::irp_get_params(irp_id) {
+                Some(p) => p,
+                None => continue,
+            };
+            let tag = match self.tag_map.alloc_tag() {
+                Some(t) => t,
+                None => continue,
+            };
+            if !self.tag_map.assign(tag, irp_id) {
+                continue;
+            }
+            let is_write = matches!(params.op, irp::IrpOp::Write);
+            cmds[valid] = (params.lba, params.count, params.buf, is_write);
+            tag_for_irp[valid] = tag;
+            valid += 1;
+        }
+
+        if valid == 0 {
+            return 0;
+        }
+
+        let completed = self.ncq_batch_xfer(&cmds[..valid]);
+
+        // Complete IRPs based on completion results
+        for i in 0..valid {
+            let tag = tag_for_irp[i];
+            if let Some(irp_id) = self.tag_map.free(tag) {
+                if i < completed {
+                    irp::irp_complete_result(irp_id, Ok(()));
+                } else {
+                    irp::irp_complete_result(irp_id, Err(()));
+                }
+            }
+        }
+
+        completed
+    }
 }
 
 impl BlockDevice for BootAhci {
@@ -494,20 +802,37 @@ impl BlockDevice for BootAhci {
         let params = irp::irp_get_params(irp_id).ok_or(())?;
         match params.op {
             IrpOp::Read => {
-                let buf_slice = unsafe { core::slice::from_raw_parts_mut(params.buf, params.buf_len) };
-                let count = (params.buf_len / 512) as u8;
-                self.read_blocks(params.lba, count, buf_slice)
+                // Use NCQ if supported (single command via NCQ slot 0)
+                if self.ncq_supported {
+                    let tag = self.tag_map.alloc_tag().unwrap_or(0);
+                    self.tag_map.assign(tag, irp_id);
+                    let cmds = [(params.lba, params.count, params.buf, false)];
+                    let completed = self.ncq_batch_xfer(&cmds);
+                    self.tag_map.free(tag);
+                    if completed > 0 {
+                        irp::irp_complete_result(irp_id, Ok(()));
+                    } else {
+                        irp::irp_complete_result(irp_id, Err(()));
+                    }
+                } else {
+                    let buf_slice = unsafe { core::slice::from_raw_parts_mut(params.buf, params.buf_len) };
+                    let count = (params.buf_len / 512) as u8;
+                    let result = self.read_blocks(params.lba, count, buf_slice);
+                    irp::irp_complete_result(irp_id, result);
+                }
             }
             IrpOp::Write => {
                 let buf_slice = unsafe { core::slice::from_raw_parts(params.buf, params.buf_len) };
                 let count = (params.buf_len / 512) as u8;
-                self.write_blocks(params.lba, count, buf_slice)
+                let result = self.write_blocks(params.lba, count, buf_slice);
+                irp::irp_complete_result(irp_id, result);
             }
             _ => {
                 irp::irp_complete_result(irp_id, Ok(()));
                 return Ok(());
             }
         }
+        Ok(())
     }
 
     fn read_blocks(&mut self, lba: u64, count: u8, buf: &mut [u8]) -> Result<(), ()> {
@@ -528,5 +853,24 @@ impl BlockDevice for BootAhci {
 
     fn base_lba(&self) -> u64 {
         self.base_lba
+    }
+
+    /// Poll for NCQ tag-based completion: check if a specific tag has completed.
+    fn poll_irp(&mut self, irp_id: IrpId) -> irp::IrpStatus {
+        if !self.ncq_supported {
+            return irp::irp_get_status(irp_id);
+        }
+        // Check if any completed tag matches this IRP
+        let ci = port_read32(self.abar, self.port, PORT_CI);
+        for t in 0..NCQ_MAX_TAGS as u8 {
+            if (ci & (1u32 << t)) == 0 {
+                if let Some(mapped) = self.tag_map.lookup(t) {
+                    if mapped == irp_id {
+                        return irp::IrpStatus::Completed;
+                    }
+                }
+            }
+        }
+        irp::irp_get_status(irp_id)
     }
 }

@@ -3,12 +3,5 @@
 version = 4
 
 [[package]]
-name = "libneodos"
-version = "0.2.0"
-
-[[package]]
-name = "mem"
+name = "nem-ahci"
 version = "0.1.0"
-dependencies = [
- "libneodos",
-]

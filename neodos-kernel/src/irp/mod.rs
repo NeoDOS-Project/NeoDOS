@@ -607,6 +607,168 @@ fn test_irp_get_params() -> Result<(), &'static str> {
     Ok(())
 }
 
+// ── NCQ Tag Map: per-device tag→IRP mapping for AHCI NCQ ────────────
+
+/// Maximum NCQ tags per device (AHCI supports up to 32).
+pub const NCQ_MAX_TAGS: usize = 32;
+
+/// Per-device tag map: maps NCQ command tags (0-31) to IRP IDs.
+/// Used by AHCI NCQ for out-of-order completion dispatch.
+pub struct IrpTagMap {
+    tags: [Option<IrpId>; NCQ_MAX_TAGS],
+    next_tag_hint: u8,
+}
+
+impl IrpTagMap {
+    pub fn new() -> Self {
+        IrpTagMap {
+            tags: [None; NCQ_MAX_TAGS],
+            next_tag_hint: 0,
+        }
+    }
+
+    /// Assign an IRP ID to a specific tag. Returns false if tag already in use.
+    pub fn assign(&mut self, tag: u8, irp_id: IrpId) -> bool {
+        if (tag as usize) >= NCQ_MAX_TAGS {
+            return false;
+        }
+        if self.tags[tag as usize].is_some() {
+            return false;
+        }
+        self.tags[tag as usize] = Some(irp_id);
+        true
+    }
+
+    /// Look up the IRP ID for a given tag. Returns None if tag is free.
+    pub fn lookup(&self, tag: u8) -> Option<IrpId> {
+        if (tag as usize) >= NCQ_MAX_TAGS {
+            return None;
+        }
+        self.tags[tag as usize]
+    }
+
+    /// Free a tag, returning the IRP ID that was mapped (if any).
+    pub fn free(&mut self, tag: u8) -> Option<IrpId> {
+        if (tag as usize) >= NCQ_MAX_TAGS {
+            return None;
+        }
+        let irp_id = self.tags[tag as usize].take();
+        irp_id
+    }
+
+    /// Allocate the first free tag. Returns None if all tags are in use.
+    pub fn alloc_tag(&mut self) -> Option<u8> {
+        for i in 0..NCQ_MAX_TAGS {
+            let t = ((self.next_tag_hint as usize + i) % NCQ_MAX_TAGS) as u8;
+            if self.tags[t as usize].is_none() {
+                self.next_tag_hint = (t + 1) % (NCQ_MAX_TAGS as u8);
+                return Some(t);
+            }
+        }
+        None
+    }
+
+    /// Number of currently assigned tags.
+    pub fn in_use(&self) -> usize {
+        self.tags.iter().filter(|t| t.is_some()).count()
+    }
+
+    /// Check if all tags are free.
+    pub fn is_empty(&self) -> bool {
+        self.tags.iter().all(|t| t.is_none())
+    }
+
+    /// Check if all tags are in use.
+    pub fn is_full(&self) -> bool {
+        self.tags.iter().all(|t| t.is_some())
+    }
+}
+
+// ── NCQ Tag Map tests ──────────────────────────────────────────────
+
+fn test_ncq_tag_alloc_free() -> Result<(), &'static str> {
+    let mut map = IrpTagMap::new();
+    test_true!(map.is_empty());
+    test_eq!(map.in_use(), 0);
+
+    let tag = map.alloc_tag().ok_or("alloc_tag failed")?;
+    test_eq!(tag, 0);
+    test_true!(map.assign(tag, 42));
+    test_eq!(map.in_use(), 1);
+    test_eq!(map.lookup(tag), Some(42));
+
+    let irp_id = map.free(tag);
+    test_eq!(irp_id, Some(42));
+    test_true!(map.is_empty());
+    Ok(())
+}
+
+fn test_ncq_tag_32_concurrent() -> Result<(), &'static str> {
+    let mut map = IrpTagMap::new();
+    let mut assigned = 0u32;
+
+    // Assign all 32 tags
+    for i in 0..32 {
+        let tag = map.alloc_tag().ok_or("alloc_tag full early")?;
+        test_true!(map.assign(tag, 1000 + i as u32));
+        assigned |= 1 << tag;
+    }
+    test_eq!(assigned, 0xFFFF_FFFF);
+    test_true!(map.is_full());
+
+    // Alloc should return None now
+    test_true!(map.alloc_tag().is_none());
+
+    // Free all tags
+    for t in 0..32 {
+        let irp_id = map.free(t as u8);
+        test_true!(irp_id.is_some());
+    }
+    test_true!(map.is_empty());
+    Ok(())
+}
+
+fn test_ncq_tag_reuse() -> Result<(), &'static str> {
+    let mut map = IrpTagMap::new();
+    let t1 = map.alloc_tag().ok_or("alloc 1")?;
+    test_eq!(t1, 0);
+    let t2 = map.alloc_tag().ok_or("alloc 2")?;
+    test_eq!(t2, 1);
+    test_ne!(t1, t2);
+
+    // Free t1 (tag 0). Round-robin hint is at 2, so next alloc returns 2, not 0.
+    let _ = map.free(t1);
+    let t3 = map.alloc_tag().ok_or("alloc 3")?;
+    test_eq!(t3, 2);  // round-robin: hint=2 → slot 2 free
+
+    // Free t2 (tag 1). Now slots 0 and 1 free.
+    let _ = map.free(t2);
+    // Free t3 (tag 2). All free.
+    let _ = map.free(t3);
+    test_true!(map.is_empty());
+    Ok(())
+}
+
+fn test_ncq_tag_round_robin_hint() -> Result<(), &'static str> {
+    let mut map = IrpTagMap::new();
+
+    // Allocate 32 tags, then free even ones
+    let mut allocated = [0u8; 32];
+    for i in 0..32 {
+        let t = map.alloc_tag().ok_or("alloc")?;
+        allocated[i as usize] = t;
+    }
+    for i in (0..32).step_by(2) {
+        let _ = map.free(allocated[i]);
+    }
+
+    // Allocating again should prefer lower indices (round-robin from freed even)
+    let first_re = map.alloc_tag().ok_or("realloc")?;
+    test_eq!(first_re, allocated[0]);
+
+    Ok(())
+}
+
 pub fn register_tests() {
     test_case!("irp_alloc_free", { test_irp_alloc_free()?; });
     test_case!("irp_complete_updates_status", { test_irp_complete_updates_status()?; });
@@ -619,4 +781,8 @@ pub fn register_tests() {
     test_case!("irp_flush_op", { test_irp_flush_op()?; });
     test_case!("irp_ioctl_op", { test_irp_ioctl_op()?; });
     test_case!("irp_get_params", { test_irp_get_params()?; });
+    test_case!("ncq_tag_alloc_free", { test_ncq_tag_alloc_free()?; });
+    test_case!("ncq_tag_32_concurrent", { test_ncq_tag_32_concurrent()?; });
+    test_case!("ncq_tag_reuse", { test_ncq_tag_reuse()?; });
+    test_case!("ncq_tag_round_robin_hint", { test_ncq_tag_round_robin_hint()?; });
 }

@@ -112,7 +112,7 @@ Orden de implementacion dentro de la fase:
 
 1. **v0.46** — Device Tree + Resource Manager completo, PCI auto-vinculacion, VirtIO block driver (BOOT_DRIVER), sys_ioctl()
 2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1-B3.2)
-3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, AHCI NCQ (A5.3), DHCP (B3.3)
+3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, DHCP (B3.3)
 4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
 5. **v0.50** — Registry hive database (B2.1-B2.5)
 
@@ -218,8 +218,8 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
   * **Tests:**
     `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
 
-- [ ] **A5.3. AHCI NCQ** | NT: Storport Native Command Queuing | Prereqs: A2.2
-  - **Archivos:** `src/drivers/boot_ahci.rs` (extend), `src/drivers/ahci/mod.rs` (NEM driver), `src/irp/mod.rs` (tag-based dispatch)
+- [x] **A5.3. AHCI NCQ** | NT: Storport Native Command Queuing | Prereqs: A2.2
+  - **Archivos:** `src/drivers/boot_ahci.rs` (extend), `drivers/ahci/src/lib.rs` (NEM driver), `src/irp/mod.rs` (tag-based dispatch)
   - **Descripcion:** Native Command Queuing en AHCI permite hasta 32 operaciones simultaneas con finalizacion out-of-order.
     - **NCQ path:**
       1. Host prepara 32 command tables en memoria (FIS buffer per slot).
@@ -229,11 +229,16 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
       5. Host lee Successful NCQ Completion Notification (FIS D2H), extrae tag, localiza IRP via tag.
     - **Tag-based dispatch:** Per-device, map `[Option<IrpId>; 32]` indizado por tag.
     - **Fall back to legacy:** Si device no soporta NCQ (via IDENTIFY), usar single-command path.
+    - **Completado en v0.46.2:**
+      - IrpTagMap: alloc_tag/free/lookup/in_use/is_full/is_empty, 4 tests unitarios.
+      - boot_ahci.rs: IDENTIFY DEVICE para NCQ detection, `ncq_batch_xfer()` 32-slot batch FPDMA, `ncq_submit_irp_batch()` IRP batch, tag-based `poll_irp()`, fallback automatico a legacy DMA EXT.
+      - NEM AHCI driver: per-slot NCQ buffers (32 slots × 2 puertos), NCQ path en `ahci_read`/`ahci_write`, `ahci_ncq_batch_read` export, IDENTIFY per-port en `driver_init`.
   - **Criterio:**
-    - 32 read IRPs encolados simultaneamente. Device AHCI completa out-of-order.
-    - Time to complete 32 reads: ~0.1 ms (paralelo) vs 3.2 ms (serial). ~30x faster.
-    - Stress: NCQ bajo carga, sin comando perdido, IRP_DONE count = 32.
-  - **Tests:** `ahci_ncq_32_concurrent_dispatch`, `ahci_ncq_tag_based_completion`, `ahci_ncq_fallback_to_legacy`, `ahci_ncq_out_of_order_completion`, `ahci_ncq_stress_load` (5 tests).
+    - 32 tags allocados concurrentemente, dispatch via IrpTagMap.
+    - Tag-based completion lookup con out-of-order.
+    - Fallback a legacy cuando tag map full o NCQ no soportado.
+    - Stress 100 cycles con 32 tags sin perdida.
+  - **Tests:** `ahci_ncq_32_concurrent_dispatch`, `ahci_ncq_tag_based_completion`, `ahci_ncq_fallback_to_legacy`, `ahci_ncq_out_of_order_completion`, `ahci_ncq_stress_load` (5 tests, completados + 4 irp tag map tests = 9 total).
 
 ---
 
@@ -372,7 +377,7 @@ Prereqs globales: A4.7 minimo para items userland; NT5/NT6 para items de segurid
   - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`.
 
 - [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/`
-  - **Descripcion:** Monitor de sistema Ring 3 en tiempo real (`.NXE`). Muestra lista de procesos, uso de CPU por core, estadisticas de memoria, drivers cargados. Refresco cada 1 segundo via `sys_sleep`. Renderiza con ANSI escape codes.
+  - **Descripcion:** Monitor de sistema Ring 3 en tiempo real (`.NXE`). Muestra lista de procesos, uso de CPU por core, estadisticas de memoria, drivers cargados. Refresco cada 1 segundo via `sys_sleep`. Renderiza con ANSI escape codes. Ver tambien [System Tools / Administration Suite](#system-tools--administration-suite) para el roadmap completo de NeoTOP.
   - **Criterio:** `NEOTOP` muestra procesos activos actualizandose en tiempo real.
   - **Tests:** `neotop_display_processes`, `neotop_refresh_loop`, `neotop_exit_clean`.
 
@@ -439,7 +444,7 @@ El Ring 0 solo mantiene:
 - LOADNEM -> loadnem.nxe — partial Ob (create(Driver) done, unload via legacy RAX 58)
 - KOBJ -> kobj.nxe — migrado a Ob
 
-Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD, CLS, ECHO, DATE, TIME, VOL, MEM, VER, CPUINFO, DATETIME, VER) tambien estan migrados a Ring 3 como `.NXE`.
+Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD, CLS, ECHO, DATE, TIME, VOL, NEOMEM, VER, CPUINFO, DATETIME, VER) tambien estan migrados a Ring 3 como `.NXE`. El comando `MEM` fue reemplazado por `NEOMEM` (NeoMem v0.1).
 
 ---
 
@@ -1195,6 +1200,259 @@ Al abrir archivo, VFS llama a `se_access_check()` con el SD del inodo.
 
 ---
 
+## System Tools / Administration Suite
+
+> Hoja de ruta del ecosistema de herramientas administrativas de NeoDOS.
+> Todas las herramientas son binarios Ring 3 (`.NXE`) que se comunican con el
+> kernel exclusivamente a traves de la API Object Manager (Ob) y syscalls foundation.
+>
+> **Principio:** Ninguna herramienta accede directamente a estructuras internas
+> del kernel. Toda la informacion se obtiene via Ob info objects o syscalls publicas.
+
+### Dependencias Arquitectonicas
+
+```
+Memory Manager ─── NeoMem
+Scheduler     ─── NeoTop, NeoStat
+Process Mgr   ─── NeoTask, NeoTop
+Registry Mgr  ─── NeoCfg
+Object Mgr    ─── NeoTask, NeoDebug
+VFS / FS Mgr  ─── NeoFS
+Event Bus     ─── NeoLog
+Syscall Layer ─── NeoStat
+```
+
+---
+
+### NeoMem
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **v0.1 IMPLEMENTED** |
+| **Version actual** | v0.1 |
+| **Binario** | `neomem.nxe` (reemplaza `mem.nxe`) |
+| **Path** | `C:\Programs\neomem.nxe` |
+| **Dependencias** | `\Global\Info\Memory` (Ob info object) |
+| **Syscalls** | `ob_open`, `ob_query_info(ObInfoClass::Memory=10)` |
+
+**Descripcion:** Herramienta oficial de diagnostico de memoria. Muestra
+estadisticas de memoria fisica, kernel heap, memoria de usuario y paginacion.
+
+**Roadmap:**
+
+| Version | Funcionalidad | Estado |
+|---------|--------------|--------|
+| v0.1 | Estadisticas basicas: fisica, kernel heap, user, paging | **COMPLETADO** |
+| v0.2 | Memoria por proceso (query por PID) | Planificado |
+| v0.3 | Analisis del heap (fragmentacion, slab por cache) | Planificado |
+| v1.0 | Diagnostico avanzado (leaks, histogramas, tendencias) | Planificado |
+
+**Relacion con el kernel:**
+- `MemoryStats` struct en `src/memory/mod.rs` (extendido con 15 campos)
+- Handler `ob_query_info(class=Memory)` en `src/syscall/mod.rs`
+- `\Global\Info\Memory` ObObject creado en `main.rs` (PHASE 3.0)
+- Slab allocator stats via `allocator::ALLOCATOR.usage()` en `src/slab.rs`
+- Buddy allocator stats via `buddy::free_pages()` / `buddy::total_frames()`
+
+---
+
+### NeoTop
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **v0.1 EXISTENTE** (`neotop.nxe`, migrado a B4.8 como item completado) |
+| **Binario** | `neotop.nxe` |
+| **Dependencias** | Scheduler, Memory Manager, Ob API |
+| **Syscalls** | `ob_enum(\Process)`, `ob_query_info(Process)`, `ob_open(\Global\Info\*)`, `sys_sleep` |
+
+**Descripcion:** Monitor del sistema en tiempo real. Muestra procesos activos,
+uso de CPU por core, estadisticas de memoria, drivers cargados.
+
+**Roadmap:**
+
+| Version | Funcionalidad | Estado |
+|---------|--------------|--------|
+| v0.1 | Lista de procesos, memoria basica, refresco 1s | **EXISTE** |
+| v0.2 | CPU por core, grafico de barras, drivers | Planificado |
+| v0.3 | Filtros interactivos, ordenacion, modo batch | Planificado |
+| v1.0 | Dashboard completo, alertas, exportacion CSV | Planificado |
+
+---
+
+### NeoTask
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | Process Manager (`src/scheduler/`), Ob API, KWait |
+| **Syscalls** | `ob_enum(\Process)`, `ob_query_info(Process)`, `ob_set_info(ProcessTerminate)`, `ob_set_info(ProcessPriority)` |
+
+**Descripcion:** Administrador de procesos. Permite listar, inspeccionar y
+controlar procesos del sistema.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Listar procesos con PID, PPID, estado, prioridad, threads |
+| v0.2 | Informacion detallada: handles, objetos, memoria por proceso |
+| v0.3 | Suspender/reanudar procesos, cambiar prioridad |
+| v1.0 | Arbol de procesos, dependencias, kill graceful |
+
+**Relacion con el kernel:**
+- Enumera procesos via `ob_enum("\Ob\Process")`
+- Obtiene detalles via `ob_query_info(fd, Process)`
+- Terminal procesos via `ob_set_info(fd, ProcessTerminate)`
+- Cambia prioridad via `ob_set_info(fd, ProcessPriority)`
+
+---
+
+### NeoCfg
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** (depende de Registry B2.1) |
+| **Prerequisitos** | B2.1 (Registry hive database), NT5 (Ob namespace para `\Registry`) |
+| **Dependencias** | Registry Manager (`src/cm/`), NT6 Security (SID/ACL) |
+
+**Descripcion:** Administrador de configuracion estilo Registry Editor de
+Windows NT. Opera sobre `\Registry\` en el namespace Ob.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Lectura de claves y valores del Registry |
+| v0.2 | Edicion de valores existentes (REG_SZ, REG_DWORD) |
+| v0.3 | Creacion/eliminacion de claves y valores |
+| v1.0 | Gestion de seguridad (ACL por clave), backup/restore de hives |
+
+---
+
+### NeoLog
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | Event Bus (`src/eventbus/`), TraceBuffer (`src/trace.rs`), B1.1 (tracing infrastructure) |
+| **Syscalls** | `ob_open(\Global\Info\*)`, `ob_query_info` |
+
+**Descripcion:** Sistema de visualizacion de logs. Lee el buffer de eventos
+del kernel y lo presenta filtrado por categoria, severidad y timestamp.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Visualizacion de logs del kernel en tiempo real |
+| v0.2 | Filtrado por categoria (scheduler, VFS, memory, drivers, security) |
+| v0.3 | Niveles de severidad (error, warning, info, debug) |
+| v1.0 | Busqueda, exportacion, log persistente a disco |
+
+---
+
+### NeoStat
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | Syscall dispatch (`src/syscall/`), Scheduler, IPC (`src/pipe.rs`), Ob Manager (`src/object/`) |
+
+**Descripcion:** Estadisticas globales del sistema. Muestra contadores de
+rendimiento del kernel: syscalls, scheduler, IPC, Object Manager.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Contadores de syscalls por tipo (hits/errors) |
+| v0.2 | Estadisticas del scheduler (context switches, CPU time por proceso) |
+| v0.3 | Estadisticas IPC (pipes creados, datos transferidos) |
+| v1.0 | Dashboard de servicios del kernel |
+
+---
+
+### NeoFS
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | VFS (`src/vfs/`), NeoDOS FS driver, FAT32 driver, IoStack |
+| **Syscalls** | `ob_open`, `ob_query_info`, `ob_enum`, `sys_fsck` |
+
+**Descripcion:** Herramientas del sistema de archivos. Opera via VFS y
+proporciona informacion sobre montajes, espacio, y diagnostico.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Informacion del filesystem: tipo, total, usado, libre por unidad |
+| v0.2 | Listado de montajes activos, puntos de montaje, tipo de FS |
+| v0.3 | Diagnostico VFS: cache hits, operaciones por segundo |
+| v1.0 | Gestion de discos y particiones (GPT, MBR) |
+
+---
+
+### NeocCtl
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | Driver runtime, Scheduler, Power management, Ob API |
+| **Syscalls** | `ob_open`, `ob_set_info`, `sys_poweroff`, `sys_driver_unload` |
+
+**Descripcion:** Panel de control del sistema. Proporciona interfaz unificada
+para administracion del sistema: servicios, apagado, reinicio, configuracion.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Apagar, reiniciar, estado del sistema |
+| v0.2 | Gestion de servicios: listar, iniciar, detener |
+| v0.3 | Monitoreo de salud del sistema |
+| v1.0 | Planificacion de tareas, politicas de energia |
+
+---
+
+### NeoDebug
+
+| Campo | Valor |
+|-------|-------|
+| **Estado** | **Planificado** |
+| **Dependencias** | Object Manager, TraceBuffer, B1.1 (tracing), A3.2 (kernel debugger) |
+| **Syscalls** | `ob_open`, `ob_enum`, `ob_query_info`, `sys_kobj_enum` |
+
+**Descripcion:** Herramientas avanzadas de desarrollo y depuracion del kernel.
+
+**Roadmap:**
+
+| Version | Funcionalidad |
+|---------|--------------|
+| v0.1 | Diagnostico de objetos Ob (listar, inspeccionar) |
+| v0.2 | Diagnostico de memoria (slab, buddy, heap) |
+| v0.3 | Tracing de syscalls y scheduler |
+| v1.0 | Debugger integrado, breakpoints, dump de estado |
+
+---
+
+### Resumen del Ecosistema
+
+| Herramienta | Estado v0.46 | Dependencia Principal | Interfaz con Kernel |
+|------------|-------------|----------------------|-------------------|
+| **NeoMem** | **v0.1 COMPLETADO** | Memory Manager | `\Global\Info\Memory` via Ob |
+| **NeoTop** | Existente | Scheduler + Memory | `\Ob\Process` + `\Global\Info\*` |
+| **NeoTask** | Planificado | Process Manager | `\Ob\Process` via Ob |
+| **NeoCfg** | Planificado (B2.1) | Registry Manager | `\Registry\` via Ob |
+| **NeoLog** | Planificado (B1.1) | Event Bus + Trace | `\Global\Info\*` via Ob |
+| **NeoStat** | Planificado | Syscall Layer | Syscalls foundation |
+| **NeoFS** | Planificado | VFS | `ob_open` + `ob_query_info` |
+| **NeoCtl** | Planificado | Driver Runtime | Ob + foundation syscalls |
+| **NeoDebug** | Planificado (A3.2) | Object Manager | `ob_enum` + `ob_query_info` |
+
+---
+
 ## Recommended Next Steps
 
 Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
@@ -1216,7 +1474,7 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 10 | **Device Tree + Resource Manager** | v0.46 | NT5, Driver Runtime | 600-800 lineas |
 | 11 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
 | 12 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
-| 13 | **AHCI NCQ (A5.3)** | v0.48 | A2.2, IRP | 400-600 lineas |
+| 13 | **AHCI NCQ (A5.3)** | v0.46.2 | A2.2, IRP | 900 lineas |
 | 14 | **USR-F1: SAM + Token NT** | v0.48 | NT6 (existente) | 900 lineas |
 | 15 | **USR-F2: Login + SUDO** | v0.49 | USR-F1 | 1600 lineas |
 | 16 | **USR-F3: Hardening + Grupos** | v0.50 | USR-F2 | 600 lineas |
