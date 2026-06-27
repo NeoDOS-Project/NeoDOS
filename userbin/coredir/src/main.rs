@@ -155,7 +155,7 @@ fn resolve_path(path_buf: &[u8; 260]) -> [u8; 260] {
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
                 let mut pos = 0;
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos < 259 { buf[pos] = 0; }

@@ -340,7 +340,10 @@ pub fn ob_open_path(
     // If not found as an object entry, check if it's a namespace directory
     // that exists but has no object entry yet. If so, create a directory
     // object for it on the fly.
-    if crate::object::namespace::ob_is_directory(path_str) {
+    // Skip this for \Global\FileSystem\ paths — they must go through VFS
+    // resolution below which sets the correct drive index (flags).
+    let is_global_fs = path_str.starts_with("\\Global\\FileSystem\\");
+    if !is_global_fs && crate::object::namespace::ob_is_directory(path_str) {
         let dir_id = ob_create_object(ObType::Directory, path_str, 0, 0, None)?;
         // Attempt atomic insert; if another thread created the same entry first,
         // destroy our object and use the existing one.
