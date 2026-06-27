@@ -641,9 +641,9 @@ fn handler_exit(regs: Registers) -> u64 {
                         for i in 0..ep.handle_table.len() {
                             let h = ep.handle_table[i];
                             if h.is_pipe_read() {
-                                crate::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+                                crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
                             } else if h.is_pipe_write() {
-                                crate::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
+                                crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
                             }
                             ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                         }
@@ -720,7 +720,7 @@ fn handler_write(regs: Registers) -> u64 {
             return err_to_u64(SyscallError::Fault);
         }
         let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-        match crate::pipe::PIPE_MANAGER.write(entry.native_id().unwrap_or(0) as u8, slice) {
+        match crate::object::pipe::PIPE_MANAGER.write(entry.native_id().unwrap_or(0) as u8, slice) {
             Ok(n) => n as u64,
             Err(_) => err_to_u64(SyscallError::Pipe),
         }
@@ -806,7 +806,7 @@ fn handler_read(regs: Registers) -> u64 {
         let mut temp_buf = alloc::vec::Vec::with_capacity(count);
         temp_buf.resize(count, 0u8);
         loop {
-            match crate::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
+            match crate::object::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
                 Ok(0) => {
                     return 0;
                 }
@@ -817,7 +817,7 @@ fn handler_read(regs: Registers) -> u64 {
                     return n as u64;
                 }
                 Err(()) => {
-                    crate::pipe::block_current_for_pipe(pipe_id);
+                    crate::object::pipe::block_current_for_pipe(pipe_id);
                     return err_to_u64(SyscallError::Again);
                 }
             }
@@ -833,7 +833,7 @@ fn handler_pipe(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::Fault);
     }
 
-    let pipe_id = match crate::pipe::PIPE_MANAGER.alloc() {
+    let pipe_id = match crate::object::pipe::PIPE_MANAGER.alloc() {
         Some(pid) => pid,
         None => return err_to_u64(SyscallError::NoMem),
     };
@@ -841,12 +841,12 @@ fn handler_pipe(regs: Registers) -> u64 {
     // Register this pipe as an ObObject (OB-016)
     let name = alloc::format!("PIPE{}", pipe_id);
     let ob_id = match crate::object::ob_create_object(
-        crate::object::ObType::Pipe, &name, pipe_id as u64, 0, Some(&crate::pipe::PIPE_OPS),
+        crate::object::ObType::Pipe, &name, pipe_id as u64, 0, Some(&crate::object::pipe::PIPE_OPS),
     ) {
         Ok(id) => id,
         Err(_) => {
             // Free the pipe slot since Ob registration failed
-            crate::pipe::PIPE_MANAGER.free_pipe(pipe_id);
+            crate::object::pipe::PIPE_MANAGER.free_pipe(pipe_id);
             return err_to_u64(SyscallError::NoMem);
         }
     };
@@ -887,8 +887,8 @@ fn handler_pipe(regs: Registers) -> u64 {
     // Drop the creation reference → refcount becomes 2 (one per handle)
     let _ = crate::object::ob_close_object(ob_id);
 
-    crate::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
-    crate::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
+    crate::object::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
+    crate::object::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
 
     unsafe {
         fds_ptr.write(rfd as u64);
@@ -908,15 +908,15 @@ fn handler_dup2(regs: Registers) -> u64 {
 
     let dst_entry = current_handle_entry(new_fd);
     if dst_entry.is_pipe_read() {
-        crate::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.native_id().unwrap_or(0) as u8);
+        crate::object::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.native_id().unwrap_or(0) as u8);
     } else if dst_entry.is_pipe_write() {
-        crate::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.native_id().unwrap_or(0) as u8);
+        crate::object::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.native_id().unwrap_or(0) as u8);
     }
 
     if src_entry.is_pipe_read() {
-        crate::pipe::PIPE_MANAGER.inc_read_ref(src_entry.native_id().unwrap_or(0) as u8);
+        crate::object::pipe::PIPE_MANAGER.inc_read_ref(src_entry.native_id().unwrap_or(0) as u8);
     } else if src_entry.is_pipe_write() {
-        crate::pipe::PIPE_MANAGER.inc_write_ref(src_entry.native_id().unwrap_or(0) as u8);
+        crate::object::pipe::PIPE_MANAGER.inc_write_ref(src_entry.native_id().unwrap_or(0) as u8);
     }
 
     set_current_handle(new_fd, src_entry);
@@ -2273,11 +2273,11 @@ fn handler_poll(regs: Registers) -> u64 {
             }
         } else if entry.is_pipe_read() {
             let pipe_id = entry.native_id().unwrap_or(0) as u8;
-            let ready = crate::pipe::pipe_peek_read_ready(pipe_id).unwrap_or(false);
+            let ready = crate::object::pipe::pipe_peek_read_ready(pipe_id).unwrap_or(false);
             if ready && fds[i].events & POLLIN != 0 {
                 rev |= POLLIN;
             }
-            if crate::pipe::pipe_peek_write_closed(pipe_id).unwrap_or(false) {
+            if crate::object::pipe::pipe_peek_write_closed(pipe_id).unwrap_or(false) {
                 rev |= POLLHUP;
             }
         } else if entry.is_pipe_write() {
@@ -2415,7 +2415,10 @@ fn handler_ob_create(regs: Registers) -> u64 {
         4 => crate::object::ObType::Pipe,
         11 => crate::object::ObType::Directory,
         13 => crate::object::ObType::Event,
+        14 => crate::object::ObType::Semaphore,
+        15 => crate::object::ObType::Timer,
         16 => crate::object::ObType::Thread,
+        17 => crate::object::ObType::Section,
         _ => return err_to_u64(SyscallError::Inval),
     };
 
@@ -2445,8 +2448,8 @@ fn handler_ob_create(regs: Registers) -> u64 {
                 if let Some(ep) = lock.current_eprocess_mut() {
                     match crate::handle::alloc_two_handles(&mut ep.handle_table, read_entry, write_entry) {
                         Some((r, w)) => {
-                            crate::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
-                            crate::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
+                            crate::object::pipe::PIPE_MANAGER.inc_read_ref(pipe_id);
+                            crate::object::pipe::PIPE_MANAGER.inc_write_ref(pipe_id);
                             (r as u64, w as u64)
                         }
                         None => (0u64, 0u64)
@@ -2487,10 +2490,10 @@ fn handler_ob_create(regs: Registers) -> u64 {
             if let Some(parent_end) = path_str.rfind('\\') {
                 let parent = &path_str[..parent_end];
                 if parent != "\\" {
-                    let _ = crate::kobj::namespace::ob_create_directory(parent);
+                    let _ = crate::object::namespace::ob_create_directory(parent);
                 }
             }
-            let _ = crate::kobj::namespace::ob_insert_object(&path_str, ob_id);
+            let _ = crate::object::namespace::ob_insert_object(&path_str, ob_id);
             let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
@@ -2662,7 +2665,7 @@ fn handler_ob_create(regs: Registers) -> u64 {
                         Err(_) => return err_to_u64(SyscallError::Io),
                     };
                     let ns_path = alloc::format!("\\Driver\\{}", driver_id);
-                    let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
+                    let _ = crate::object::namespace::ob_insert_object(&ns_path, ob_id);
 
                     let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
                     let fd = crate::hal::without_interrupts(|| {
@@ -2754,7 +2757,142 @@ fn handler_ob_create(regs: Registers) -> u64 {
                 Ok(id) => id,
                 Err(_) => return err_to_u64(SyscallError::NoMem),
             };
-            let _ = crate::kobj::namespace::ob_insert_object(&ns_path, ob_id);
+            let _ = crate::object::namespace::ob_insert_object(&ns_path, ob_id);
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Semaphore => {
+            let initial_count = (attrs & 0xFFFF) as i32;
+            let max_count = ((attrs >> 16) & 0xFFFF) as i32;
+            let ob_id = match crate::object::ob_create_object_path(
+                &path_str, obj_type, attrs as u32,
+                Some(&crate::object::semaphore::SEMAPHORE_OPS),
+            ) {
+                Ok(id) => id,
+                Err(crate::object::ObError::AlreadyExists) => return err_to_u64(SyscallError::Exist),
+                Err(_) => return err_to_u64(SyscallError::Inval),
+            };
+            let sem_id = match crate::object::semaphore::alloc_semaphore(ob_id, initial_count, max_count) {
+                Some(id) => id,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    return err_to_u64(SyscallError::Inval);
+                }
+            };
+            // Update native_id to point to the semaphore slot
+            {
+                let mut table = crate::object::OB_TABLE.lock();
+                if let Some(obj) = table.lookup_mut(ob_id) {
+                    obj.native_id = sem_id as u64;
+                }
+            }
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Timer => {
+            let period_ms = (attrs & 0x7FFFFFFF) as u64;
+            let periodic = (attrs >> 31) & 1 != 0;
+            if period_ms == 0 || period_ms > 3600000 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let ob_id = match crate::object::ob_create_object_path(
+                &path_str, obj_type, 0,
+                Some(&crate::object::timer::TIMER_OPS),
+            ) {
+                Ok(id) => id,
+                Err(crate::object::ObError::AlreadyExists) => return err_to_u64(SyscallError::Exist),
+                Err(_) => return err_to_u64(SyscallError::Inval),
+            };
+            let timer_id = match crate::object::timer::alloc_timer(ob_id, period_ms, periodic) {
+                Some(id) => id,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
+            // Update native_id to point to the timer slot
+            {
+                let mut table = crate::object::OB_TABLE.lock();
+                if let Some(obj) = table.lookup_mut(ob_id) {
+                    obj.native_id = timer_id as u64;
+                }
+            }
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Section => {
+            let size = (attrs & 0xFFFF_FFFF) as u64;
+            let prot = ((attrs >> 32) & 0xFF) as u32;
+            if size == 0 || size > 0x100000 || prot == 0 || prot > 3 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let ob_id = match crate::object::ob_create_object_path(
+                &path_str, obj_type, 0,
+                Some(&crate::object::section::SECTION_OPS),
+            ) {
+                Ok(id) => id,
+                Err(crate::object::ObError::AlreadyExists) => return err_to_u64(SyscallError::Exist),
+                Err(_) => return err_to_u64(SyscallError::Inval),
+            };
+            let section_id = match crate::object::section::alloc_section(ob_id, size, prot) {
+                Some(id) => id,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
+            // Update native_id to point to the section slot
+            {
+                let mut table = crate::object::OB_TABLE.lock();
+                if let Some(obj) = table.lookup_mut(ob_id) {
+                    obj.native_id = section_id as u64;
+                }
+            }
             let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
@@ -3096,8 +3234,8 @@ _ if info_class == ObInfoClass::Pipe as u32 => {
                 return err_to_u64(SyscallError::Inval);
             }
             let pipe_id = entry.native_id().unwrap_or(0) as u8;
-            let capacity = crate::pipe::PIPE_BUF_SIZE;
-            let read_refs = crate::pipe::pipe_peek_read_ready(pipe_id)
+            let capacity = crate::object::pipe::PIPE_BUF_SIZE;
+            let read_refs = crate::object::pipe::pipe_peek_read_ready(pipe_id)
                 .map(|_| 1u32).unwrap_or(0);
             let info = ObPipeInfo {
                 capacity: capacity as u32,
@@ -3684,10 +3822,10 @@ _ if info_class == ObSetInfoClass::VfsRename as u32 => {
             match crate::globals::with_vfs(|vfs| vfs.rename(old_vfs_path, &new_path)) {
                 Ok(_) => {
                     // Remove old namespace entry, update ObObject, insert new namespace entry
-                    let _ = crate::kobj::namespace::ob_remove_object(&obj_name);
+                    let _ = crate::object::namespace::ob_remove_object(&obj_name);
                     let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
                     let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
-                    let _ = crate::kobj::namespace::ob_insert_object(&new_ob_name, entry.object_id);
+                    let _ = crate::object::namespace::ob_insert_object(&new_ob_name, entry.object_id);
                     0
                 }
                 Err(_) => err_to_u64(SyscallError::Io),
@@ -3811,6 +3949,89 @@ _ if info_class == ObSetInfoClass::SetVolumeLabel as u32 => {
             });
             0
         }
+_ if info_class == ObSetInfoClass::TimerStart as u32 => {
+            // TimerStart: start a timer object
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Timer {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let timer_id = obj.native_id as u32;
+            if crate::object::timer::start_timer(timer_id) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
+_ if info_class == ObSetInfoClass::TimerCancel as u32 => {
+            // TimerCancel: cancel a running timer
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Timer {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let timer_id = obj.native_id as u32;
+            if crate::object::timer::cancel_timer(timer_id) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
+_ if info_class == ObSetInfoClass::SemaphoreRelease as u32 => {
+            // SemaphoreRelease: release (increment) a semaphore
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Semaphore {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sem_id = obj.native_id as u32;
+            let release_count = if buf_size >= 4 {
+                (unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }) as i32
+            } else {
+                1
+            };
+            if crate::object::semaphore::release_semaphore(sem_id, release_count) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
+_ if info_class == ObSetInfoClass::SectionMapView as u32 => {
+            // SectionMapView: map a view of the section into current process
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Section {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let section_id = obj.native_id as u32;
+            match crate::object::section::map_view(section_id) {
+                Some(base) => {
+                    // Write base address to user buffer
+                    if buf_size >= 8 {
+                        unsafe { core::ptr::write_volatile(buf_ptr as *mut u64, base); }
+                    }
+                    base
+                }
+                None => err_to_u64(SyscallError::NoMem),
+            }
+        }
+_ if info_class == ObSetInfoClass::SectionUnmapView as u32 => {
+            // SectionUnmapView: unmap a view of the section
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Section {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let section_id = obj.native_id as u32;
+            let base = if buf_size >= 8 {
+                unsafe { core::ptr::read_volatile(buf_ptr as *const u64) }
+            } else {
+                return err_to_u64(SyscallError::Inval);
+            };
+            if crate::object::section::unmap_view(section_id, base) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -3911,7 +4132,7 @@ fn handler_ob_enum(regs: Registers) -> u64 {
 
     // Fallback: Ob namespace enumeration via path resolution
     let path = if entry.object_id != 0 {
-        crate::kobj::namespace::ob_find_path_by_id(entry.object_id)
+        crate::object::namespace::ob_find_path_by_id(entry.object_id)
     } else {
         None
     };
@@ -3986,7 +4207,7 @@ fn handler_ob_wait(regs: Registers) -> u64 {
         crate::object::ObType::Pipe => {
             let pipe_id = obj.native_id as u8;
             // Quick non-blocking check: if pipe has data, return immediately
-            if let Some(true) = crate::pipe::pipe_peek_read_ready(pipe_id) {
+            if let Some(true) = crate::object::pipe::pipe_peek_read_ready(pipe_id) {
                 return 0;
             }
             crate::kwait::WaitReason::PipeRead { pipe_id: pipe_id as u16 }
@@ -3996,7 +4217,16 @@ fn handler_ob_wait(regs: Registers) -> u64 {
             crate::kwait::WaitReason::Event { event_type }
         }
         crate::object::ObType::Timer => {
-            crate::kwait::WaitReason::Timer { timeout_ms: 0 }
+            let timer_id = obj.native_id as u32;
+            crate::kwait::WaitReason::Timer { timer_id }
+        }
+        crate::object::ObType::Semaphore => {
+            let sem_id = obj.native_id as u32;
+            // Non-blocking check: if count > 0, decrement and return immediately
+            if crate::object::semaphore::try_wait_semaphore(sem_id) {
+                return 0;
+            }
+            crate::kwait::WaitReason::Semaphore { sem_id }
         }
         crate::object::ObType::Thread => {
             let tid = obj.native_id as u32;
@@ -4077,7 +4307,7 @@ fn handler_ob_destroy(regs: Registers) -> u64 {
         // Destroy Ob object regardless (the VFS handles the actual FS operation)
         let _ = crate::object::ob_destroy_object(object_id);
         // Remove stale namespace entry so future ob_open re-checks VFS
-        let _ = crate::kobj::namespace::ob_remove_object(&name);
+        let _ = crate::object::namespace::ob_remove_object(&name);
 
         match result {
             Ok(_) => 0,
@@ -4547,7 +4777,7 @@ pub fn register_syscall_table_tests() {
         let id = id.unwrap();
         test_true!(id > 0);
         // Verify it exists in the namespace
-        let found = crate::kobj::namespace::ob_lookup_path("\\Global\\TestDir");
+        let found = crate::object::namespace::ob_lookup_path("\\Global\\TestDir");
         test_true!(found.is_ok());
         test_eq!(found.unwrap(), id);
         // Cleanup
@@ -4567,8 +4797,8 @@ pub fn register_syscall_table_tests() {
 
     test_case!("ob_create_invalid_type", {
         // Ensure namespace is initialized
-        crate::kobj::namespace::init_object_namespace();
-        let _ = crate::kobj::namespace::ob_create_directory("\\Global");
+        crate::object::namespace::init_object_namespace();
+        let _ = crate::object::namespace::ob_create_directory("\\Global");
         let result = crate::object::ob_create_object_path(
             "\\Global\\BadObj", crate::object::ObType::Unknown, 0, None,
         );
@@ -4587,7 +4817,7 @@ pub fn register_syscall_table_tests() {
         let id1 = id1.unwrap();
         crate::object::ob_close_object(id1).unwrap();
         // Also clean up from namespace
-        let _ = crate::kobj::namespace::ob_remove_object("\\Global\\DupTest");
+        let _ = crate::object::namespace::ob_remove_object("\\Global\\DupTest");
     });
 
     test_case!("ob_create_empty_path_fails", {
@@ -4665,13 +4895,13 @@ pub fn register_syscall_table_tests() {
     test_case!("ob_enum_namespace_root", {
         // Ensure namespace has the expected root directories
         {
-            let mut ns = crate::kobj::namespace::OB_NAMESPACE.lock();
+            let mut ns = crate::object::namespace::OB_NAMESPACE.lock();
             for dir in &["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob"] {
                 let path = alloc::format!("\\{}", dir);
                 let _ = ns.create_directory(&path);
             }
         }
-        let entries = crate::kobj::namespace::ob_enumerate_namespace("\\");
+        let entries = crate::object::namespace::ob_enumerate_namespace("\\");
         test_true!(entries.is_ok());
         let entries = entries.unwrap();
         // Names are stored lowercase (name_to_key converts to lowercase)
@@ -4689,11 +4919,11 @@ pub fn register_syscall_table_tests() {
     test_case!("ob_enum_directory_nested", {
         // Ensure namespace has \Global directory
         {
-            let mut ns = crate::kobj::namespace::OB_NAMESPACE.lock();
+            let mut ns = crate::object::namespace::OB_NAMESPACE.lock();
             let _ = ns.create_directory("\\Global");
         }
-        let _ = crate::kobj::namespace::ob_create_directory("\\Global\\EnumTest");
-        let entries = crate::kobj::namespace::ob_enumerate_namespace("\\Global");
+        let _ = crate::object::namespace::ob_create_directory("\\Global\\EnumTest");
+        let entries = crate::object::namespace::ob_enumerate_namespace("\\Global");
         test_true!(entries.is_ok());
         let entries = entries.unwrap();
         // Names are stored lowercase (name_to_key converts to lowercase)
@@ -4707,7 +4937,7 @@ pub fn register_syscall_table_tests() {
     });
 
     test_case!("ob_enum_invalid_path", {
-        let result = crate::kobj::namespace::ob_enumerate_namespace("\\NonExistent\\Path");
+        let result = crate::object::namespace::ob_enumerate_namespace("\\NonExistent\\Path");
         test_true!(result.is_err());
     });
 

@@ -27,11 +27,10 @@ mod font;
 mod nem;
 mod elf;
 mod handle;
-mod pipe;
 mod eventbus;
 mod work_queue;
 mod dpc;
-mod kobj;
+
 mod memory;
 mod globals;
 pub mod usermode;
@@ -188,45 +187,50 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     object::init_object_manager();
 
     // ============================================
+    // PHASE 2.7595: Timer Manager (Ob Timer Object)
+    // ============================================
+    object::timer::init_timer_manager();
+
+    // ============================================
     // PHASE 2.76: Object Manager (Ob) namespace
     // Create root \ and standard directories.
     // ============================================
     println!("[+] Initializing Object Manager namespace...");
-    kobj::namespace::init_object_namespace();
+    object::namespace::init_object_namespace();
 
     // Create virtual info objects in Ob namespace (Memory, Interrupts)
     {
         use crate::object::{self, ObType};
-        let _ = kobj::namespace::ob_create_directory("\\Global\\Info");
+        let _ = object::namespace::ob_create_directory("\\Global\\Info");
         if let Ok(mem_id) = object::ob_create_object(ObType::Key, "Memory", 1, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Memory", mem_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Memory", mem_id);
         }
         if let Ok(int_id) = object::ob_create_object(ObType::Key, "Interrupts", 2, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Interrupts", int_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Interrupts", int_id);
         }
         if let Ok(cpu_id) = object::ob_create_object(ObType::Key, "CpuInfo", 3, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\CpuInfo", cpu_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\CpuInfo", cpu_id);
         }
         if let Ok(ver_id) = object::ob_create_object(ObType::Key, "Version", 4, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Version", ver_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Version", ver_id);
         }
         if let Ok(dt_id) = object::ob_create_object(ObType::Key, "DateTime", 5, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\DateTime", dt_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\DateTime", dt_id);
         }
         if let Ok(drv_id) = object::ob_create_object(ObType::Key, "Drives", 6, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Drives", drv_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Drives", drv_id);
         }
         if let Ok(drv_id) = object::ob_create_object(ObType::Key, "Drivers", 7, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Drivers", drv_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Drivers", drv_id);
         }
         if let Ok(cwd_id) = object::ob_create_object(ObType::Key, "Cwd", 8, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Cwd", cwd_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Cwd", cwd_id);
         }
         if let Ok(kbd_id) = object::ob_create_object(ObType::Key, "Keyboard", 9, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\Keyboard", kbd_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Keyboard", kbd_id);
         }
         if let Ok(vt_id) = object::ob_create_object(ObType::Key, "VtInfo", 11, 0, None) {
-            let _ = kobj::namespace::ob_insert_object("\\Global\\Info\\VtInfo", vt_id);
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\VtInfo", vt_id);
         }
     }
 
@@ -613,7 +617,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     });
 
     println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
-    crate::kobj::namespace::ob_namespace_debug();
+    crate::object::namespace::ob_namespace_debug();
 
     // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)
     usermode::wait_for_process(pid);

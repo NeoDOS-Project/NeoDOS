@@ -18,6 +18,7 @@ const MAGIC_CHILD_BASE: u32   = 0x0004_0000;
 const MAGIC_EVENT_BASE: u32   = 0x0005_0000;
 const MAGIC_TIMER_BASE: u32   = 0x0006_0000;
 const MAGIC_APC_BASE: u32     = 0x0007_0000;
+const MAGIC_SEMAPHORE_BASE: u32 = 0x0008_0000;
 
 /// WaitReason encodes what a thread is waiting for.
 /// Variants MUST NOT be reordered or removed (ABI freeze v0.42).
@@ -34,10 +35,12 @@ pub enum WaitReason {
     ChildExit { pid: u32 },
     /// Waiting for an event bus event
     Event { event_type: u32 },
-    /// Waiting for a timer to expire (timeout_ms)
-    Timer { timeout_ms: u64 },
+    /// Waiting for a timer to expire (timer_id)
+    Timer { timer_id: u32 },
     /// Waiting for an APC to be delivered
     Alertable,
+    /// Waiting on a semaphore (sem_id)
+    Semaphore { sem_id: u32 },
 }
 
 impl WaitReason {
@@ -50,8 +53,9 @@ impl WaitReason {
             WaitReason::ThreadJoin { tid }     => MAGIC_THREAD_BASE | (tid & 0xFFFF),
             WaitReason::ChildExit { pid }      => MAGIC_CHILD_BASE | (pid & 0xFFFF),
             WaitReason::Event { event_type }   => MAGIC_EVENT_BASE | (event_type & 0xFFFF),
-            WaitReason::Timer { .. }           => MAGIC_TIMER_BASE,
+            WaitReason::Timer { timer_id }      => MAGIC_TIMER_BASE | (timer_id & 0xFFFF),
             WaitReason::Alertable              => MAGIC_APC_BASE,
+            WaitReason::Semaphore { sem_id }   => MAGIC_SEMAPHORE_BASE | (sem_id & 0xFFFF),
         }
     }
 
@@ -64,8 +68,9 @@ impl WaitReason {
             MAGIC_THREAD_BASE => WaitReason::ThreadJoin { tid: id },
             MAGIC_CHILD_BASE  => WaitReason::ChildExit { pid: id },
             MAGIC_EVENT_BASE  => WaitReason::Event { event_type: id },
-            MAGIC_TIMER_BASE  => WaitReason::Timer { timeout_ms: 0 },
+            MAGIC_TIMER_BASE  => WaitReason::Timer { timer_id: id },
             MAGIC_APC_BASE    => WaitReason::Alertable,
+            MAGIC_SEMAPHORE_BASE => WaitReason::Semaphore { sem_id: id },
             _ => return None,
         })
     }
@@ -155,6 +160,20 @@ pub fn register_kwait_tests() {
         test_eq!(d, r);
     });
 
+    test_case!("kwait_magic_timer", {
+        let r = WaitReason::Timer { timer_id: 5 };
+        let m = r.encode_magic();
+        let d = WaitReason::decode_magic(m).unwrap();
+        test_eq!(d, r);
+    });
+
+    test_case!("kwait_magic_semaphore", {
+        let r = WaitReason::Semaphore { sem_id: 3 };
+        let m = r.encode_magic();
+        let d = WaitReason::decode_magic(m).unwrap();
+        test_eq!(d, r);
+    });
+
     test_case!("kwait_magic_unique_tags", {
         let reasons = [
             WaitReason::PipeRead { pipe_id: 1 },
@@ -163,6 +182,7 @@ pub fn register_kwait_tests() {
             WaitReason::ChildExit { pid: 4 },
             WaitReason::Event { event_type: 5 },
             WaitReason::Alertable,
+            WaitReason::Semaphore { sem_id: 1 },
         ];
         let mut magics = alloc::vec::Vec::new();
         for r in &reasons {
@@ -187,5 +207,20 @@ pub fn register_kwait_tests() {
         let a = WaitReason::PipeRead { pipe_id: 1 };
         let b = WaitReason::PipeRead { pipe_id: 2 };
         test_ne!(a.encode_magic(), b.encode_magic());
+    });
+
+    test_case!("kwait_timer_instance_magic", {
+        let a = WaitReason::Timer { timer_id: 1 };
+        let b = WaitReason::Timer { timer_id: 2 };
+        test_ne!(a.encode_magic(), b.encode_magic());
+        test_eq!(a.encode_magic() & 0xFFFF0000, MAGIC_TIMER_BASE);
+    });
+
+    test_case!("kwait_semaphore_instance_magic", {
+        let a = WaitReason::Semaphore { sem_id: 5 };
+        let b = WaitReason::Semaphore { sem_id: 5 };
+        test_eq!(a.encode_magic(), b.encode_magic());
+        let c = WaitReason::Semaphore { sem_id: 6 };
+        test_ne!(a.encode_magic(), c.encode_magic());
     });
 }

@@ -2,13 +2,13 @@
 
 > This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
 
-> Version actual: v0.44.3 (528 kernel tests + 27 user-mode binaries, full Ob migration + A4.4 Input + B4.5 VTs).
+> Version actual: v0.46 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects).
 > Objetivo: v1.0 — executive NT-like arquitectonicamente solido.
 > **GUIA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 > Ultima revision: Junio 2026.
 
-**Progreso:** 171 / ~188 items completados (+17 planificados: v0.44.4-v0.50). Proximo milestone: **v0.44.4** (Fix 3 bugs SMP-unsafe).
+**Progreso:** 174 / ~188 items completados (+14 planificados: v0.47-v0.50). Proximo milestone: **v0.47** (Networking TCP/IP).
 
 ---
 
@@ -946,22 +946,22 @@ Syscalls que ya tienen toda la infraestructura Ob necesaria. Solo falta:
 - `ObError` y `SyscallError` comparten base común
 - 528 kernel tests + cmdtest siguen pasando
 
-### Fase 2: Nuevos Object Types (v0.46 — Device Tree + Resource Manager)
+### Fase 2: Nuevos Object Types (v0.46 — Timer, Semaphore, Section) ~~COMPLETADO~~
 
-Requieren nuevos tipos en el Object Manager y extensión de las syscalls Ob existentes.
+~~Requieren nuevos tipos en el Object Manager y extensión de las syscalls Ob existentes.~~
 
-| ID | Tarea | Object Type | Syscalls | Esfuerzo |
-|----|-------|------------|----------|----------|
-| OBF-10 | Implementar Timer Object: create (oneshot/periodic, period_ms), set, cancel | `ObType::Timer=15` | ob_create(Timer) via RAX 61, ob_set_info(TimerStart/TimerCancel), ob_wait(Timer) | ~300 líneas |
-| OBF-11 | Implementar Semaphore Object: create (initial_count, max_count), release, wait | `ObType::Semaphore=14` | ob_create(Semaphore) via RAX 61, ob_set_info(SemaphoreRelease), ob_wait(Semaphore) | ~300 líneas |
-| OBF-12 | Implementar Section Object: create (size, prot), map_view, unmap | `ObType::Section=17` (nuevo) | ob_create(Section) via RAX 61, ob_set_info(MapView), ob_set_info(UnmapView) → reemplaza sys_mmap/munmap | ~500 líneas |
-| OBF-13 | Registry Key Object: open, create key, query/set value, enum | `ObType::Key=12` | ob_open(\Registry\*), ob_query_info(RegGetValue), ob_set_info(RegSetValue) | v0.50 (B2.1) |
+| ID | Tarea | Estado | Syscalls |
+|----|-------|--------|----------|
+| OBF-10 | Timer Object: create (oneshot/periodic, period_ms), set, cancel | ~~COMPLETADO~~ | ob_create(Timer) via RAX 61, ob_set_info(TimerStart/TimerCancel), ob_wait(Timer) |
+| OBF-11 | Semaphore Object: create (initial_count, max_count), release, wait | ~~COMPLETADO~~ | ob_create(Semaphore) via RAX 61, ob_set_info(SemaphoreRelease), ob_wait(Semaphore) |
+| OBF-12 | Section Object: create (size, prot), map_view, unmap | ~~COMPLETADO~~ | ob_create(Section) via RAX 61, ob_set_info(MapView), ob_set_info(UnmapView) |
+| OBF-13 | Registry Key Object: open, create key, query/set value, enum | 🔶 PENDIENTE | v0.50 (B2.1) |
 
-**Criterio de aceptación:**
-- Timer: `ob_create(Timer, 1000)` + `ob_wait(timer_fd)` → despierta en ~1s
-- Semaphore: `ob_create(Semaphore, 0, 5)` + `ob_set_info(sem_fd, SemaphoreRelease, &1)` + `ob_wait(sem_fd)` → OK
-- Section: `ob_create(Section, 4096, RW)` → fd → `ob_set_info(section_fd, MapView)` → dirección mapeada
-- 540+ kernel tests pasan
+**Criterio de aceptación cumplido:**
+- ✅ Timer: `ob_create(Timer, period_ms=1000)` + `ob_wait(timer_fd)` → despierta al expirar
+- ✅ Semaphore: `ob_create(Semaphore, initial=0, max=5)` + `ob_set_info(SemaphoreRelease)` + `ob_wait(sem_fd)` → OK
+- ✅ Section: `ob_create(Section, size=4096, prot=RW)` → fd → `ob_set_info(MapView)` → dirección mapeada
+- ✅ 560 kernel tests pasan (32 nuevos: 6 timer + 8 semaphore + 5 section + 4 kwait + 9 object)
 
 ### Fase 3: Syscalls Futuras como Objects (v0.47+) — RAX 67+
 
@@ -986,11 +986,13 @@ Todas las syscalls NUEVAS deben implementarse como `sys_ob_*`.
 | 81 | `sys_ob_connect` | Network | `NtDeviceIoControlFile` | v0.47 |
 | 82 | `sys_ob_send` | Network | `NtWriteFile` | v0.47 |
 | 83 | `sys_ob_recv` | Network | `NtReadFile` | v0.47 |
-| 84 | `sys_ob_create_timer` | Timer | `NtCreateTimer` | v0.46 |
-| 85 | `sys_ob_set_timer` | Timer | `NtSetTimer` | v0.46 |
-| 86 | `sys_ob_create_semaphore` | Semaphore | `NtCreateSemaphore` | v0.46 |
-| 87 | `sys_ob_release_semaphore` | Semaphore | `NtReleaseSemaphore` | v0.46 |
-| 88 | `sys_ob_ioctl` | Device | `NtDeviceIoControlFile` | v0.46 |
+| 77 | `sys_ob_create_section` | Section | `NtCreateSection` | v0.47 |
+| 78 | `sys_ob_map_view_section` | Section | `NtMapViewOfSection` | v0.47 |
+| 84 | `sys_ob_create_timer` | Timer | `NtCreateTimer` | v0.47 |
+| 85 | `sys_ob_set_timer` | Timer | `NtSetTimer` | v0.47 |
+| 86 | `sys_ob_create_semaphore` | Semaphore | `NtCreateSemaphore` | v0.47 |
+| 87 | `sys_ob_release_semaphore` | Semaphore | `NtReleaseSemaphore` | v0.47 |
+| 88 | `sys_ob_ioctl` | Device | `NtDeviceIoControlFile` | v0.47 |
 
 ### Tabla Evolución de Syscalls (v0.44.3 → v1.0)
 
@@ -1000,7 +1002,7 @@ Todas las syscalls NUEVAS deben implementarse como `sys_ob_*`.
 | Ob syscalls (RAX 60-66) | 7 | 10 | 10 |
 | Legacy parallel (compat) | 6 | 3 | 0 |
 | Fase 1 nuevos Ob | 0 | 3 (Thread, Timer, Semaphore) | 3 |
-| Fase 2+ nuevos Ob (token, section, net, registry) | 0 | 8 | 21 |
+| Fase 2+ nuevos Ob (token, net, registry) | 0 | 8 | 21 |
 | **Total syscalls** | **35** | **45** | **55+** |
 
 ### Reglas de no-cambio
@@ -1029,14 +1031,14 @@ Fase 3 (v0.47+)  ← Fase 2 completa + Networking/Registry
 | T-OBF-04 | F1 | ObInfoClass enums completos (ReadContent, VolumeLabel) |
 | T-OBF-05 | F1 | ObSetInfoClass enums completos (ProcessTerminate, VfsRename, WriteContent, SetCwd, SetVolumeLabel) |
 | T-OBF-06 | F1 | NeoDosError unificado: ObError → SyscallError mapping automático |
-| T-OBF-07 | F2 | ob_create(Timer): crear timer oneshot |
-| T-OBF-08 | F2 | ob_wait(Timer): timer expires y despierta |
-| T-OBF-09 | F2 | ob_create(Semaphore): crear semáforo con count inicial |
-| T-OBF-10 | F2 | ob_set_info(SemaphoreRelease): incrementa count |
-| T-OBF-11 | F2 | ob_wait(Semaphore): bloquea hasta count > 0 |
-| T-OBF-12 | F2 | ob_create(Section): section anónima |
-| T-OBF-13 | F2 | ob_set_info(MapView): mapear vista de sección |
-| T-OBF-14 | F2 | ob_set_info(UnmapView): desmapear vista |
+| ~~T-OBF-07~~ | ~~F2~~ | ~~ob_create(Timer): crear timer oneshot~~ COMPLETADO |
+| ~~T-OBF-08~~ | ~~F2~~ | ~~ob_wait(Timer): timer expires y despierta~~ COMPLETADO |
+| ~~T-OBF-09~~ | ~~F2~~ | ~~ob_create(Semaphore): crear semáforo con count inicial~~ COMPLETADO |
+| ~~T-OBF-10~~ | ~~F2~~ | ~~ob_set_info(SemaphoreRelease): incrementa count~~ COMPLETADO |
+| ~~T-OBF-11~~ | ~~F2~~ | ~~ob_wait(Semaphore): bloquea hasta count > 0~~ COMPLETADO |
+| ~~T-OBF-12~~ | ~~F2~~ | ~~ob_create(Section): section anónima~~ COMPLETADO |
+| ~~T-OBF-13~~ | ~~F2~~ | ~~ob_set_info(MapView): mapear vista de sección~~ COMPLETADO |
+| ~~T-OBF-14~~ | ~~F2~~ | ~~ob_set_info(UnmapView): desmapear vista~~ COMPLETADO |
 | T-OBF-15 | F3 | ob_wait(Thread) + KWait: múltiples threads WAIT_ALL |
 | T-OBF-16 | F3 | ob_wait(Process, Pipe, Event, Timer) WAIT_ANY |
 | T-OBF-17 | F3 | ob_set_info(SecuritySet): cambiar SD de objeto |

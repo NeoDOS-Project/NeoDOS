@@ -1,7 +1,6 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::string::{String, ToString};
-use crate::kobj::{KObjId, KObjType};
 use crate::object::{ObId, ObType};
 use crate::{test_case, test_eq, test_true};
 use spin::Mutex;
@@ -115,7 +114,7 @@ pub struct NamespaceEntry {
 #[derive(Debug, Clone)]
 pub struct DirectoryObject {
     pub name: [u8; MAX_NAME_LEN],
-    pub children: BTreeMap<[u8; MAX_NAME_LEN], KObjId>,
+    pub children: BTreeMap<[u8; MAX_NAME_LEN], ObId>,
     pub child_dirs: BTreeMap<[u8; MAX_NAME_LEN], DirectoryObject>,
     pub symlinks: BTreeMap<[u8; MAX_NAME_LEN], SymlinkEntry>,
 }
@@ -177,7 +176,6 @@ impl ObNamespace {
             }
             return Err(OB_NOT_FOUND);
         }
-        // Ensure all parent directories exist (do not auto-create)
         if components.len() > 1 {
             let mut current = &self.root;
             for &comp in &components[..components.len() - 1] {
@@ -215,7 +213,7 @@ impl ObNamespace {
         }
     }
 
-    pub fn insert_object(&mut self, path: &str, kobj_id: KObjId) -> Result<(), &'static str> {
+    pub fn insert_object(&mut self, path: &str, obj_id: ObId) -> Result<(), &'static str> {
         let components = Self::parse_path(path)?;
         if components.is_empty() {
             return Err(OB_INVALID_PATH);
@@ -230,7 +228,7 @@ impl ObNamespace {
             if self.root.symlinks.contains_key(&key) {
                 return Err(OB_ALREADY_EXISTS);
             }
-            self.root.children.insert(key, kobj_id);
+            self.root.children.insert(key, obj_id);
             return Ok(());
         }
 
@@ -250,7 +248,7 @@ impl ObNamespace {
         if current.symlinks.contains_key(&key) {
             return Err(OB_ALREADY_EXISTS);
         }
-        current.children.insert(key, kobj_id);
+        current.children.insert(key, obj_id);
         Ok(())
     }
 
@@ -303,15 +301,13 @@ impl ObNamespace {
         Ok(())
     }
 
-    /// Enumerate children of a directory by path.
-    /// Check whether a path exists as a directory node in the namespace.
     pub fn is_directory(&self, path: &str) -> bool {
         let components = match Self::parse_path(path) {
             Ok(c) => c,
             Err(_) => return false,
         };
         if components.is_empty() {
-            return true; // root is always a directory
+            return true;
         }
         let mut current = &self.root;
         for &comp in &components {
@@ -333,7 +329,6 @@ impl ObNamespace {
             dir = dir.child_dirs.get(&key).ok_or(OB_NOT_FOUND)?;
         }
         let mut result = Vec::new();
-        // Add child directories
         for (_key, subdir) in &dir.child_dirs {
             let name_str = subdir.name_str();
             let mut name = [0u8; 32];
@@ -346,7 +341,6 @@ impl ObNamespace {
                 obj_id: 0,
             });
         }
-        // Add objects
         for (_key, &obj_id) in &dir.children {
             let name_str = key_to_str(_key);
             let mut name = [0u8; 32];
@@ -361,7 +355,7 @@ impl ObNamespace {
         Ok(result)
     }
 
-    fn resolve_symlink_internal<'a>(&self, path: &str, depth: u32) -> Result<KObjId, &'static str> {
+    fn resolve_symlink_internal<'a>(&self, path: &str, depth: u32) -> Result<ObId, &'static str> {
         if depth > MAX_SYMLINK_HOPS {
             return Err(OB_SYMLINK_LOOP);
         }
@@ -374,8 +368,8 @@ impl ObNamespace {
             let is_last = i == components.len() - 1;
             let key = name_to_key(components[i]);
             if is_last {
-                if let Some(&kobj_id) = current.children.get(&key) {
-                    return Ok(kobj_id);
+                if let Some(&obj_id) = current.children.get(&key) {
+                    return Ok(obj_id);
                 }
                 if let Some(symlink) = current.symlinks.get(&key) {
                     let target = symlink.target_str();
@@ -421,11 +415,11 @@ impl ObNamespace {
         Err(OB_NOT_FOUND)
     }
 
-    pub fn lookup_path(&self, path: &str) -> Result<KObjId, &'static str> {
+    pub fn lookup_path(&self, path: &str) -> Result<ObId, &'static str> {
         self.resolve_symlink_internal(path, 0)
     }
 
-    pub fn lookup_path_no_follow(&self, path: &str) -> Result<KObjId, &'static str> {
+    pub fn lookup_path_no_follow(&self, path: &str) -> Result<ObId, &'static str> {
         let components = Self::parse_path(path)?;
         if components.is_empty() {
             return Err(OB_NOT_FOUND);
@@ -465,7 +459,7 @@ impl ObNamespace {
         current.symlinks.get(&key).cloned().ok_or(OB_NOT_FOUND)
     }
 
-    pub fn remove_object(&mut self, path: &str) -> Result<KObjId, &'static str> {
+    pub fn remove_object(&mut self, path: &str) -> Result<ObId, &'static str> {
         let components = Self::parse_path(path)?;
         if components.is_empty() {
             return Err(OB_INVALID_PATH);
@@ -605,7 +599,7 @@ impl ObNamespace {
         count
     }
 
-    pub fn lookup_by_path(&self, path: &str) -> Result<KObjId, &'static str> {
+    pub fn lookup_by_path(&self, path: &str) -> Result<ObId, &'static str> {
         let normalized = normalize_path(path);
         let components = Self::parse_path(&normalized)?;
         if components.is_empty() {
@@ -615,7 +609,6 @@ impl ObNamespace {
     }
 
     /// Find the namespace path for a given ObId by searching the tree.
-    /// Returns None if the ObId is not found in the namespace.
     pub fn find_path_by_id(&self, target_id: ObId) -> Option<String> {
         fn search(dir: &DirectoryObject, prefix: &str, target_id: ObId) -> Option<String> {
             for (key, &id) in &dir.children {
@@ -660,7 +653,7 @@ pub fn init_object_namespace() {
     // Register KObjs outside the lock to avoid deadlock with kobj_register → ob_insert_object_auto
     let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry", "Process"];
     for dir in root_dirs {
-        let _ = crate::kobj::kobj_register(KObjType::Directory, dir, 0);
+        let _ = crate::object::ob_create_object(ObType::Directory, dir, 0, 0, None);
     }
     // Register root "\" in the namespace so ObOpen("\") works
     let root_id = crate::object::ob_create_object(
@@ -672,23 +665,23 @@ pub fn init_object_namespace() {
     ob_namespace_debug();
 }
 
-pub fn ob_insert_object(path: &str, kobj_id: KObjId) -> Result<(), &'static str> {
-    OB_NAMESPACE.lock().insert_object(path, kobj_id)
+pub fn ob_insert_object(path: &str, obj_id: ObId) -> Result<(), &'static str> {
+    OB_NAMESPACE.lock().insert_object(path, obj_id)
 }
 
-pub fn ob_lookup_path(path: &str) -> Result<KObjId, &'static str> {
+pub fn ob_lookup_path(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().lookup_path(path)
 }
 
-pub fn ob_lookup_path_no_follow(path: &str) -> Result<KObjId, &'static str> {
+pub fn ob_lookup_path_no_follow(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().lookup_path_no_follow(path)
 }
 
-pub fn ob_lookup_by_path(path: &str) -> Result<KObjId, &'static str> {
+pub fn ob_lookup_by_path(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().lookup_by_path(path)
 }
 
-pub fn ob_remove_object(path: &str) -> Result<KObjId, &'static str> {
+pub fn ob_remove_object(path: &str) -> Result<ObId, &'static str> {
     OB_NAMESPACE.lock().remove_object(path)
 }
 
@@ -747,24 +740,25 @@ pub fn ob_remove_symlink(path: &str) -> Result<SymlinkEntry, &'static str> {
     OB_NAMESPACE.lock().remove_symlink(path)
 }
 
-fn obj_type_to_auto_path(obj_type: KObjType, name: &str) -> alloc::string::String {
+fn obj_type_to_auto_path(obj_type: ObType, name: &str) -> alloc::string::String {
     match obj_type {
-        KObjType::Process => alloc::format!("\\Ob\\Process\\{}", name),
-        KObjType::Driver => alloc::format!("\\Driver\\{}", name),
-        KObjType::Pipe => alloc::format!("\\Ob\\Pipe\\{}", name),
-        KObjType::Device => alloc::format!("\\Device\\{}", name),
-        KObjType::BlockDevice => alloc::format!("\\Device\\{}", name),
-        KObjType::EventBus => alloc::format!("\\Global\\EventBus\\{}", name),
-        KObjType::Filesystem => alloc::format!("\\FileSystem\\{}", name),
-        KObjType::MemoryRegion => alloc::format!("\\Ob\\Memory\\{}", name),
-        KObjType::Symlink => alloc::format!("\\Ob\\Symlink\\{}", name),
-        KObjType::MountPoint => alloc::format!("\\Global\\Mount\\{}", name),
-        KObjType::Directory => alloc::format!("\\Ob\\Dir\\{}", name),
-        KObjType::Unknown => alloc::format!("\\Ob\\Unknown\\{}", name),
+        ObType::Process => alloc::format!("\\Ob\\Process\\{}", name),
+        ObType::Driver => alloc::format!("\\Driver\\{}", name),
+        ObType::Pipe => alloc::format!("\\Ob\\Pipe\\{}", name),
+        ObType::Device => alloc::format!("\\Device\\{}", name),
+        ObType::BlockDevice => alloc::format!("\\Device\\{}", name),
+        ObType::EventBus => alloc::format!("\\Global\\EventBus\\{}", name),
+        ObType::Filesystem => alloc::format!("\\FileSystem\\{}", name),
+        ObType::MemoryRegion => alloc::format!("\\Ob\\Memory\\{}", name),
+        ObType::Symlink => alloc::format!("\\Ob\\Symlink\\{}", name),
+        ObType::MountPoint => alloc::format!("\\Global\\Mount\\{}", name),
+        ObType::Directory => alloc::format!("\\Ob\\Dir\\{}", name),
+        ObType::Unknown => alloc::format!("\\Ob\\Unknown\\{}", name),
+        _ => alloc::format!("\\Ob\\Unknown\\{}", name),
     }
 }
 
-pub fn ob_insert_object_auto(obj_type: KObjType, name: &str, kobj_id: KObjId) -> Result<(), &'static str> {
+pub fn ob_insert_object_auto(obj_type: ObType, name: &str, obj_id: ObId) -> Result<(), &'static str> {
     let path = obj_type_to_auto_path(obj_type, name);
     {
         let mut ns = OB_NAMESPACE.lock();
@@ -775,10 +769,10 @@ pub fn ob_insert_object_auto(obj_type: KObjType, name: &str, kobj_id: KObjId) ->
             }
         }
     }
-    OB_NAMESPACE.lock().insert_object(&path, kobj_id)
+    OB_NAMESPACE.lock().insert_object(&path, obj_id)
 }
 
-pub fn ob_remove_object_auto(obj_type: KObjType, name: &str) {
+pub fn ob_remove_object_auto(obj_type: ObType, name: &str) {
     let path = obj_type_to_auto_path(obj_type, name);
     let _ = OB_NAMESPACE.lock().remove_object(&path);
 }
@@ -797,25 +791,25 @@ pub fn register_namespace_tests() {
         ns.create_directory("\\Device\\Harddisk0").unwrap();
         test_eq!(ns.dir_count(), 3);
 
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "part", 1).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "part", 1, 0, None).unwrap();
         ns.create_directory("\\Device\\Harddisk0\\Partition1").unwrap();
         ns.insert_object("\\Device\\Harddisk0\\Partition1", id).unwrap();
 
         let found = ns.lookup_path("\\Device\\Harddisk0\\Partition1").unwrap();
         test_eq!(found, id);
         test_eq!(ns.object_count(), 1);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_lookup_path_simple", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\DosDevices").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::Device, "C:", 0).unwrap();
+        let id = crate::object::ob_create_object(ObType::Device, "C:", 0, 0, None).unwrap();
         ns.insert_object("\\DosDevices\\C:", id).unwrap();
 
         let found = ns.lookup_path("\\DosDevices\\C:").unwrap();
         test_eq!(found, id);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_lookup_path_nested", {
@@ -823,7 +817,7 @@ pub fn register_namespace_tests() {
         ns.create_directory("\\Device").unwrap();
         ns.create_directory("\\Device\\Harddisk0").unwrap();
 
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "part2", 2).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "part2", 2, 0, None).unwrap();
         ns.insert_object("\\Device\\Harddisk0\\Partition2", id).unwrap();
 
         let found = ns.lookup_path("\\Device\\Harddisk0\\Partition2").unwrap();
@@ -831,7 +825,7 @@ pub fn register_namespace_tests() {
 
         test_true!(ns.lookup_path("\\Device\\Harddisk0\\Partition99").is_err());
         test_true!(ns.lookup_path("\\NonExistent").is_err());
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_rename_directory", {
@@ -853,7 +847,7 @@ pub fn register_namespace_tests() {
         let mut ids = alloc::vec::Vec::new();
         for i in 0..1000 {
             let name = alloc::format!("obj_{}", i);
-            match crate::kobj::kobj_register(crate::kobj::KObjType::Unknown, &name, i as u64) {
+            match crate::object::ob_create_object(ObType::Unknown, &name, i as u64, 0, None) {
                 Ok(id) => {
                     let path = alloc::format!("\\Stress\\{}", name);
                     if ns.insert_object(&path, id).is_ok() {
@@ -873,46 +867,46 @@ pub fn register_namespace_tests() {
         test_eq!(ns.object_count(), 1000);
         test_true!(ns.dir_count() >= 2);
         for (_, id) in &ids {
-            crate::kobj::kobj_unregister(*id);
+            crate::object::ob_destroy_object(*id).unwrap_or(());
         }
     });
 
     test_case!("ob_symlink_create_simple", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\Device").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "hdvol0", 0).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "hdvol0", 0, 0, None).unwrap();
         ns.insert_object("\\Device\\HarddiskVolume0", id).unwrap();
         ns.create_directory("\\DosDevices").unwrap();
         ns.insert_symlink("\\DosDevices\\C:", "\\Device\\HarddiskVolume0").unwrap();
         test_eq!(ns.symlink_count(), 1);
         let symlink = ns.lookup_symlink("\\DosDevices\\C:").unwrap();
         test_eq!(symlink.target_str(), "\\Device\\HarddiskVolume0");
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_symlink_resolve_one_level", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\Device").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "hdvol0", 0).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "hdvol0", 0, 0, None).unwrap();
         ns.insert_object("\\Device\\HarddiskVolume0", id).unwrap();
         ns.create_directory("\\DosDevices").unwrap();
         ns.insert_symlink("\\DosDevices\\C:", "\\Device\\HarddiskVolume0").unwrap();
         let found = ns.lookup_path("\\DosDevices\\C:").unwrap();
         test_eq!(found, id);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_symlink_resolve_chain", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\A").unwrap();
         ns.create_directory("\\A\\B").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::Unknown, "target", 42).unwrap();
+        let id = crate::object::ob_create_object(ObType::Unknown, "target", 42, 0, None).unwrap();
         ns.insert_object("\\A\\B\\Target", id).unwrap();
         ns.insert_symlink("\\A\\Link1", "B\\Target").unwrap();
         ns.insert_symlink("\\Link2", "A\\Link1").unwrap();
         let found = ns.lookup_path("\\Link2").unwrap();
         test_eq!(found, id);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_symlink_loop_detection", {
@@ -927,46 +921,46 @@ pub fn register_namespace_tests() {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\DosDevices").unwrap();
         ns.create_directory("\\Device").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "vol", 0).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "vol", 0, 0, None).unwrap();
         ns.insert_object("\\Device\\RealVol", id).unwrap();
         ns.insert_symlink("\\DosDevices\\X:", "\\Device\\NonExistent").unwrap();
         test_true!(ns.lookup_path("\\DosDevices\\X:").is_err());
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_case_insensitive_lookup", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\Device").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "MYDRV", 7).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "MYDRV", 7, 0, None).unwrap();
         ns.insert_object("\\Device\\MYDRV", id).unwrap();
         let found = ns.lookup_path("\\device\\mydrv").unwrap();
         test_eq!(found, id);
         let found2 = ns.lookup_path("\\Device\\MyDrv").unwrap();
         test_eq!(found2, id);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_normalize_path", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\Device").unwrap();
         ns.create_directory("\\Device\\Harddisk0").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "part", 5).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "part", 5, 0, None).unwrap();
         ns.insert_object("\\Device\\Harddisk0\\Partition1", id).unwrap();
         let found = ns.lookup_by_path("\\Device\\Harddisk0\\Partition1").unwrap();
         test_eq!(found, id);
         let found2 = ns.lookup_by_path("\\Device\\.\\Harddisk0\\..\\Harddisk0\\Partition1").unwrap();
         test_eq!(found2, id);
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 
     test_case!("ob_lookup_by_path_normalized", {
         let mut ns = ObNamespace::new();
         ns.create_directory("\\Device").unwrap();
-        let id = crate::kobj::kobj_register(crate::kobj::KObjType::BlockDevice, "rootdev", 9).unwrap();
+        let id = crate::object::ob_create_object(ObType::BlockDevice, "rootdev", 9, 0, None).unwrap();
         ns.insert_object("\\Device\\RootDev", id).unwrap();
         test_true!(ns.lookup_by_path("\\Device\\RootDev").is_ok());
         test_true!(ns.lookup_by_path("\\Device\\rootdev").is_ok());
         test_true!(ns.lookup_by_path("\\Device\\RootDev\\..\\RootDev").is_ok());
-        crate::kobj::kobj_unregister(id);
+        crate::object::ob_destroy_object(id).unwrap();
     });
 }

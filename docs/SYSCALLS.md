@@ -170,8 +170,11 @@ Open an Ob namespace object by path. Security access check, allocates handle.
 - **Returns**: fd (≥3), or error code.
 
 ### 61 — `sys_ob_create`
-Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event.
+Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section.
 - **Args**: `RBX`=path_ptr, `RCX`=type, `RDX`=fds_out, `R8`=attrs.
+  - `type=14 (Semaphore)`: `attrs[0:15]=initial_count`, `attrs[16:31]=max_count`
+  - `type=15 (Timer)`: `attrs[0:30]=period_ms`, `attrs[31]=1 (periodic) / 0 (oneshot)`
+  - `type=17 (Section)`: `attrs[0:31]=size`, `attrs[32:39]=prot`
 - **Returns**: fd, or error code.
 
 ### 62 — `sys_ob_query_info`
@@ -180,8 +183,13 @@ Query object info. Classes: 15=ReadContent, 16=VolumeLabel.
 - **Returns**: Bytes written, or error code.
 
 ### 63 — `sys_ob_set_info`
-Set object info. Classes: 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel.
+Set object info. Classes: 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=MapView, 14=UnmapView.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
+  - `class=10 (TimerStart)`: Starts the timer. `buf` unused. Returns 0.
+  - `class=11 (TimerCancel)`: Cancels a running timer. `buf` unused. Returns 0.
+  - `class=12 (SemaphoreRelease)`: Releases (increments) the semaphore. `buf`=release_count (u32, default 1). Returns 0.
+  - `class=13 (MapView)`: Maps a Section view. `buf`=output base address (u64). Returns base address.
+  - `class=14 (UnmapView)`: Unmaps a Section view. `buf`=base address to unmap (u64). Returns 0.
 - **Returns**: `0` on success, or error code.
 
 ### 64 — `sys_ob_enum`
@@ -191,7 +199,9 @@ Enumerate contents of an Ob directory by fd.
 
 ### 65 — `sys_ob_wait`
 Wait on one or more Ob objects to become signaled.
-- **Args**: `RBX`=count, `RCX`=handles, `RDX`=type, `R8`=timeout.
+- **Args**: `RBX`=count, `RCX`=handles, `RDX`=type (0=ANY, 1=ALL), `R8`=timeout.
+- **Supported waitable types**: Process (ChildExit), Pipe (PipeRead), Event, Timer (TimerExpired), Thread (ThreadJoin), Semaphore (SemaphoreAvailable).
+- **Non-blocking check**: For Pipe, Semaphore, and Timer, performs an immediate non-blocking check before blocking.
 - **Returns**: `0` on success, or error code.
 
 ### 66 — `sys_ob_destroy`

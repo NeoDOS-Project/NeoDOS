@@ -150,23 +150,24 @@ NeoDOS implements a **layered driver architecture** with full hardware access me
 
 ---
 
-### 0. Kernel Object Manager — KOBJ (`src/kobj/mod.rs`, `src/kobj/namespace.rs`, `src/vfs/mount.rs`)
+### 0. Object Manager — Ob (`src/object/`)
 
-Unified kernel object system for tracking, referencing, and enumerating kernel objects. Includes hierarchical object namespace (NT5) with symbolic links, case-insensitive path lookup, and VFS mount point integration.
+Unified object manager system for creating, tracking, referencing, and enumerating kernel objects. Replaces legacy KOBJ (eliminado en v0.46). Includes hierarchical object namespace with symbolic links (NT5), case-insensitive path lookup, and VFS mount point integration.
 
-| Concept | Description |
-|---------|-------------|
-| **KObjType** | Enum (u32): Unknown(0), Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink(9), MountPoint(10), Directory(11) |
-| **KObjEntry** | Metadata per object: KObjId (u64, global sequential), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
-| **KObjRegistry** | Dynamic `Vec<Option<KObjEntry>>`, no hard limit, protected by `spin::Mutex`, global via `lazy_static!` |
-| **Namespace** | `src/kobj/namespace.rs` — hierarchical `\`-rooted tree with `DirectoryObject` nodes, `BTreeMap`-backed children, case-insensitive keys. Standard dirs: `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob` |
-| **Symlinks** | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
-| **Mount points** | `src/vfs/mount.rs` — `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
-| **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()`, `ob_insert_object_auto()`, `ob_remove_object_auto()`, `ob_lookup_by_path()` |
-| **Integration** | Processes, drivers, pipes auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
+| Concept | Location | Description |
+|---------|----------|-------------|
+| **ObObject** | `src/object/mod.rs` | Per-object metadata: ObId (u64), ObType, 128-byte name, refcount, flags, native_id, ObOperations callbacks |
+| **ObObjectTable** | `src/object/mod.rs` | Dynamic `Vec<Option<ObObject>>`, no hard limit, protected by `spin::Mutex`, global via `lazy_static!` |
+| **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17) |
+| **Namespace** | `src/object/namespace.rs` | Hierarchical `\`-rooted tree with `DirectoryObject` nodes, `BTreeMap`-backed children, case-insensitive keys. Standard dirs: `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` |
+| **Symlinks** | `src/object/namespace.rs` | `SymlinkEntry` in namespace nodes, max 10 hop resolution with loop detection |
+| **Mount points** | `src/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
+| **Public API** | `src/object/mod.rs` | `ob_create_object()`, `ob_destroy_object()`, `ob_lookup()`, `ob_open_object(id)`, `ob_close_object(id)`, `ob_reference()`, `ob_dereference()`, `ob_count()`, `ob_enum_snapshot()`, `ob_open_path(path, token, access)` |
+| **Namespace API** | `src/object/namespace.rs` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()`, `ob_insert_object_auto()`/`ob_remove_object_auto()` |
+| **Integration** | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
 | **CLI** | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=64) — lists all namespace objects |
 
-The KOBJ registry is populated at boot by driver loading and at runtime by process/pipe creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close). Directory KObjs for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob` are registered at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
+The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
 
 ---
 
@@ -519,7 +520,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **520 tests** (49+ suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **560 tests** (53+ suites) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -569,13 +570,13 @@ Tests run automatically at boot. The kernel runs 520 tests, then optionally exec
 
 ## Kernel Subsystems (High-Level)
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
-- **kobj**: `src/kobj/mod.rs` + `src/kobj/namespace.rs` — Kernel Object Manager. Unified object tracking with reference counting, type identification (KObjType=12 variants), 24-byte names, and dynamic Vec-based global registry (no hard limit). Hierarchical object namespace with symlinks, case-insensitive path lookup, and Directory KObjs. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=17 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (128-entry, 512 KB hash map O(1) + LRU cache for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:). **Mount points** (`vfs/mount.rs`) register KObjType::MountPoint entries and DosDevices symlinks via `MountManager`.
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
-- **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `kobj_id` (optional KOBJ reference)
+- **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `ob_id` (optional Ob reference)
 - **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), max 16 processes, idle process (PID 0) always present. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.
 - **shell**: Ring 3 shell (`neoshell.nxe`) via NeoInit (PID 1), PATH dispatch to .NXE commands, TAB autocomplete, pipeline support, environment variables

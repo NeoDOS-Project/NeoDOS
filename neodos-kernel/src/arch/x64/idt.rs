@@ -526,6 +526,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     // A3.3: Watchdog pet + check on every timer tick
     crate::watchdog::watchdog_pet();
+
+    // v0.46: Timer Object tick — decrement running timers
+    crate::object::timer::tick();
     if crate::watchdog::watchdog_check() {
         crate::watchdog::watchdog_trigger();
     }

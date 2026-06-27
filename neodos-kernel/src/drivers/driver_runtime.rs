@@ -17,7 +17,7 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::nem::{NemDriverType, DriverCategory};
 use crate::eventbus::EventType;
-use crate::kobj;
+use crate::object::{self, ObId, ObType};
 
 // ── Constants ──
 
@@ -151,7 +151,7 @@ pub struct DriverInstance {
     pub registered_at_tick: u64,
     pub last_error: u32,                // 0 = no error, non-zero = error code
     pub certification_step: u8,         // PipelineStep value tracking which step failed
-    pub kobj_id: Option<kobj::KObjId>,
+    pub obj_id: Option<ObId>,
     pub caps: u64,                      // Capability bitmap (X3 capability system)
     pub isolation_mode: u8,             // X4: IsolationMode enum value (0=None, 1=Basic, 2=Sandbox)
     pub isolated_base: u64,             // X4: Base address in isolated region, or 0
@@ -178,7 +178,7 @@ impl Default for DriverInstance {
             registered_at_tick: 0,
             last_error: 0,
             certification_step: 0,
-            kobj_id: None,
+            obj_id: None,
             caps: 0,
             isolation_mode: 0,
             isolated_base: 0,
@@ -312,7 +312,7 @@ impl DriverRuntime {
         let len = nb.len().min(8);
         name_bytes[..len].copy_from_slice(&nb[..len]);
 
-        let kobj_id = kobj::kobj_register(kobj::KObjType::Driver, name, id as u64).ok();
+        let obj_id = object::ob_create_object(ObType::Driver, name, id as u64, 0, None).ok();
 
         let caps = crate::drivers::caps::capability_for_category(category).bits;
         let isolation_mode = crate::drivers::isolation::isolation_mode_for_category(category) as u8;
@@ -335,7 +335,7 @@ impl DriverRuntime {
             registered_at_tick: crate::hal::get_ticks(),
             last_error: 0,
             certification_step: PipelineStep::None as u8,
-            kobj_id,
+            obj_id,
             caps,
             isolation_mode,
             isolated_base: 0,
@@ -476,8 +476,8 @@ impl DriverRuntime {
         for slot in self.drivers.iter_mut() {
             if let Some(drv) = slot {
                 if drv.id == id {
-                    if let Some(kid) = drv.kobj_id {
-                        kobj::kobj_unregister(kid);
+                    if let Some(kid) = drv.obj_id {
+                        let _ = object::ob_destroy_object(kid);
                     }
                     let removed = core::mem::take(drv);
                     self.count -= 1;

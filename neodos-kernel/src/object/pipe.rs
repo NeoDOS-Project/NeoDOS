@@ -5,8 +5,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use spin::Mutex;
-use crate::kobj::{self, KObjType};
-use crate::object::{ObOperations, ObId};
+use crate::object::{self, ObOperations, ObId, ObType};
 
 pub const PIPE_BUF_SIZE: usize = 4096;
 pub const MAX_PIPES: usize = 16;
@@ -84,7 +83,7 @@ impl PipeInner {
 
 pub struct PipeManager {
     pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>,
-    kobj_ids: Mutex<Vec<Option<kobj::KObjId>>>,
+    kobj_ids: Mutex<Vec<Option<ObId>>>,
 }
 
 impl PipeManager {
@@ -101,18 +100,18 @@ impl PipeManager {
             pipes.resize_with(idx + 1, || None);
         }
         drop(pipes);
-        let mut kobj = self.kobj_ids.lock();
-        if idx >= kobj.len() {
-            kobj.resize_with(idx + 1, || None);
+        let mut ids = self.kobj_ids.lock();
+        if idx >= ids.len() {
+            ids.resize_with(idx + 1, || None);
         }
     }
 
-    fn set_kobj_id(&self, idx: usize, id: Option<kobj::KObjId>) {
+    fn set_kobj_id(&self, idx: usize, id: Option<ObId>) {
         self.ensure_idx(idx);
         self.kobj_ids.lock()[idx] = id;
     }
 
-    fn get_kobj_id(&self, idx: usize) -> Option<kobj::KObjId> {
+    fn get_kobj_id(&self, idx: usize) -> Option<ObId> {
         self.ensure_idx(idx);
         self.kobj_ids.lock()[idx]
     }
@@ -131,7 +130,7 @@ impl PipeManager {
                     // set_kobj_id → ensure_idx → pipes.lock() would deadlock.
                     drop(pipes);
                     let name = alloc::format!("pipe/{}", i);
-                                if let Ok(kid) = kobj::kobj_register(KObjType::Pipe, &name, i as u64) {
+                                if let Ok(kid) = object::ob_create_object(ObType::Pipe, &name, i as u64, 0, None) {
                         self.set_kobj_id(i, Some(kid));
                     }
                     return Some(i as u8);
@@ -154,7 +153,7 @@ impl PipeManager {
 
         self.ensure_idx(i);
         let name = alloc::format!("pipe/{}", i);
-        if let Ok(kid) = kobj::kobj_register(KObjType::Pipe, &name, i as u64) {
+        if let Ok(kid) = object::ob_create_object(ObType::Pipe, &name, i as u64, 0, None) {
             self.set_kobj_id(i, Some(kid));
         }
         Some(i as u8)
@@ -199,7 +198,7 @@ impl PipeManager {
         };
         if should_free {
             if let Some(kobj_id) = kid {
-                kobj::kobj_unregister(kobj_id);
+                object::ob_destroy_object(kobj_id).ok();
                 self.set_kobj_id(idx, None);
             }
         }
@@ -328,8 +327,8 @@ impl PipeManager {
         self.ensure_idx(idx);
         // Unregister KOBJ if registered
         let kid = self.get_kobj_id(idx);
-        if let Some(kobj_id) = kid {
-            kobj::kobj_unregister(kobj_id);
+        if let Some(obj_id) = kid {
+            let _ = object::ob_destroy_object(obj_id);
             self.set_kobj_id(idx, None);
         }
         // Mark pipe slot as unused

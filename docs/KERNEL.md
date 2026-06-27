@@ -25,7 +25,8 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 6. **Input** — init PS/2 controller, init USB HID keyboard
 7. **Physical memory** — parse UEFI memory map, init buddy frame allocator (`memory::init`)
 8. **Kernel heap** — init slab allocator + `linked_list_allocator` fallback (`allocator::init`)
-9. **SMP** — INIT-SIPI-SIPI sequence, per-CPU KPRCB via GS base
+9. **Object Manager** — init ObObjectTable with root + type directory entries; Timer Manager initialized (64 slots, integrated with timer tick)
+10. **SMP** — INIT-SIPI-SIPI sequence, per-CPU KPRCB via GS base
 10. **IPI** — cross-CPU reschedule, TLB shootdown, call-function
 11. **I/O APIC** — detect from MADT, disable legacy PIC, route ISA IRQs 0/1/4/12 to vectors 32/33/36/44
 12. **Enable interrupts** — STI (timer IRQ0 can fire immediately, via APIC timer LVT)
@@ -40,7 +41,7 @@ The kernel boot flow in `neodos-kernel/src/main.rs` is:
 21. **Driver Bootstrap** — init Driver Runtime, register built-in drivers (null, echo, timer_listener) (PHASE 3.75), load BOOT + SYSTEM NEM v3 drivers via boot loader (PHASE 3.85), reclaim AHCI port after NEM AHCI overwrites HBA PORT_CLB/PORT_FB (PHASE 3.86)
 22. **NXL region init** — split NXL region (`0x1e000000..0x1e200000`) into 4 KB page tables, load `libneodos.nxl` at slot 0 (PHASE 3.87)
 23. **Syscall ABI + freeze validation** — validate syscall dispatch table coverage, verify frozen event/capability/IOAPIC ABIs at boot
-24. **Shell** — set all keyboard LEDs ON, register kernel tests (512), launch NeoInit (PID 1, Ring 3)
+24. **Shell** — set all keyboard LEDs ON, register kernel tests (560), launch NeoInit (PID 1, Ring 3)
 
 ### GPT Layout (single disk)
 
@@ -102,3 +103,28 @@ modelled after NT's `KeInitializeApc` / `KeInsertQueueApc`.
 - **File**: `src/apc/mod.rs`
 - **Tests**: 5 APC-specific tests (kernel dispatch, alertable wait, queue overflow,
   IRP→APC completion, stress 100 concurrent IRPs).
+
+## Object Manager (Ob)
+
+The Object Manager (v0.46 Fase 2 Objectification) provides unified object lifecycle for kernel resources.
+
+### Object Types (17 variants)
+
+| Type | Value | Created via | API |
+|------|-------|-------------|-----|
+| Process | 1 | `ob_create(Process, path, attrs)` | ob_set_info(ProcessPriority), ob_set_info(ProcessTerminate), ob_wait(ChildExit) |
+| Driver | 2 | `ob_create(Driver, path)` | — |
+| Device | 3 | ob_open | — |
+| Pipe | 4 | `ob_create(Pipe, path)` | ob_set_info(WriteContent), ob_query_info(ReadContent), ob_wait(PipeRead) |
+| Directory | 11 | `ob_create(Directory, path)` | ob_enum |
+| Event | 13 | `ob_create(Event, path)` | ob_wait(Event) |
+| Semaphore | 14 | `ob_create(Semaphore, path, attrs)` | ob_set_info(SemaphoreRelease), ob_wait(Semaphore) |
+| Timer | 15 | `ob_create(Timer, path, attrs)` | ob_set_info(TimerStart), ob_set_info(TimerCancel), ob_wait(Timer) |
+| Thread | 16 | `ob_create(Thread, path, attrs)` | ob_set_info(ThreadPriority), ob_wait(ThreadJoin) |
+| Section | 17 | `ob_create(Section, path, attrs)` | ob_set_info(MapView), ob_set_info(UnmapView) |
+
+### New in v0.46 (Fase 2)
+
+- **Timer Object** — Oneshot and periodic timers. `attrs[0]` = period_ms, `attrs[31]` = periodic flag. Timer manager (64 slots) decrements remaining_ms on each timer tick (1 KHz). Expired timers wake waiters via KWait.
+- **Semaphore Object** — Counting semaphores. `attrs[0:15]` = initial_count, `attrs[16:31]` = max_count. Release increments (caps at max), wait decrements (blocks if zero). KWait integration with `WaitReason::Semaphore`.
+- **Section Object** — Memory sections. `attrs[0:31]` = size (max 1 MB), `attrs[32:39]` = protection flags. MapView allocates pages in the mmap region (0x21000000+) and maps them USER_ACCESSIBLE. UnmapView frees pages. Auto-cleanup on object destroy via `SectionObOps::on_destroy`.

@@ -1,7 +1,7 @@
 use alloc::vec::Vec;
 use alloc::string::String;
-use crate::kobj::{self, KObjId, KObjType};
-use crate::kobj::namespace as ns;
+use crate::object::{self, ObId, ObType};
+use crate::object::namespace as ns;
 use spin::Mutex;
 use lazy_static::lazy_static;
 
@@ -30,7 +30,7 @@ pub struct MountPoint {
     pub device_path: String,
     pub volume_path: String,
     pub fs_type: FilesystemType,
-    pub obj_id: Option<KObjId>,
+    pub obj_id: Option<ObId>,
 }
 
 pub struct MountManager {
@@ -52,17 +52,17 @@ impl MountManager {
         let letter_upper = drive_letter.to_ascii_uppercase();
         let name = alloc::format!("{}:", letter_upper);
         let volume_path = alloc::format!("\\Device\\{}:", letter_upper);
-        let kobj_id = kobj::kobj_register(KObjType::MountPoint, &name, mount_id as u64)
-            .map_err(|_| "MountManager: kobj_register failed")?;
+        let obj_id = object::ob_create_object(ObType::MountPoint, &name, mount_id as u64, 0, None)
+            .map_err(|_| "MountManager: ob_create_object failed")?;
         let mount = MountPoint {
             name: name.clone(),
             device_path: alloc::string::String::from(device_path),
             volume_path: volume_path.clone(),
             fs_type,
-            obj_id: Some(kobj_id),
+            obj_id: Some(obj_id),
         };
         let _ = ns::ob_create_directory("\\FileSystem\\Mounts");
-        let _ = ns::ob_insert_object(&volume_path, kobj_id);
+        let _ = ns::ob_insert_object(&volume_path, obj_id);
         let symlink_path = alloc::format!("\\DosDevices\\{}:", letter_upper);
         let _ = ns::ob_create_directory("\\DosDevices");
         let _ = ns::ob_insert_symlink(&symlink_path, &volume_path);
@@ -74,8 +74,8 @@ impl MountManager {
         if index >= self.mounts.len() {
             return false;
         }
-        if let Some(kobj_id) = self.mounts[index].obj_id {
-            let _ = kobj::kobj_unregister(kobj_id);
+        if let Some(obj_id) = self.mounts[index].obj_id {
+            let _ = object::ob_destroy_object(obj_id);
         }
         self.mounts.remove(index);
         true

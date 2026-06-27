@@ -1,13 +1,13 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.44.3 (auditoría arquitectónica completada — ver `docs/AUDIT_REPORT.md`)
+v0.46 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects)
 
 ## Architecture Governance
 
 See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — all architectural invariants are
 enforceable rules, not suggestions. See `docs/OBJECT_MANAGER_ARCHITECTURE.md`
-for the Object Manager (Ob) evolution plan — handles, KOBJ, URN, and security
+for the Object Manager (Ob) evolution plan — handles, URN, and security
 unification. Run `python3 scripts/auto_test.py` and `scripts/check_deps.py`
 before any commit.
 
@@ -34,7 +34,12 @@ prioridades actuales son:
 9. **v0.44.5**: **Actualizar documentación** (README, ARCHITECTURE_SOURCE_OF_TRUTH)
 10. **v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)
 11. **v0.44.7**: **Arreglos arquitectónicos menores + Fase 1 Objectification** (ObType::Thread, InfoClass enums completos, ObError/SyscallError unificado, exports duplicados, TOCTOU race)
-12. **v0.46**: **Fase 2 Objectification** (Timer Object, Semaphore Object, Section Object, Device Tree)
+12. ~~**v0.46**: **Fase 2 Objectification** (Timer Object, Semaphore Object, Section Object, Device Tree)~~ **COMPLETADO**
+    - ~~**OBF-10 (Timer Object)**~~ COMPLETADO — ob_create(Timer), ob_set_info(TimerStart/TimerCancel), ob_wait(Timer)
+    - ~~**OBF-11 (Semaphore Object)**~~ COMPLETADO — ob_create(Semaphore), ob_set_info(SemaphoreRelease), ob_wait(Semaphore)
+    - ~~**OBF-12 (Section Object)**~~ COMPLETADO — ob_create(Section), ob_set_info(SectionMapView/SectionUnmapView)
+    - ~~**OBF-05 (legacy kobj module removal)**~~ COMPLETADO — `kobj/` eliminado, namespace movido a `object/namespace.rs`, todos los callers migrados a `object::ob_*`
+    - **OBF-13 (Device Tree / Registry Key)** 🔶 PENDIENTE
 13. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
@@ -894,7 +899,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IRP | 11 | Async I/O: IRP alloc/free, completion/error, pool reuse, queue FIFO/wraparound, callback dispatch, flush/ioctl ops, get_params |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
-| KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, name, full registry, lookup, unregister edge cases, count |
+| KOBJ (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy (OB-004), init root + type entries (OB-005) |
 | Object (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy (OB-004), init root + type entries (OB-005) |
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
@@ -997,26 +1002,29 @@ La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins
 - **Scheduler integration**: `enqueue_to_cpu_run_queue()` sends `IPI_RESCHEDULE` to remote CPU when thread is enqueued.
 - **EOI**: `ack_irq()` in `hal/x64/irq.rs` sends APIC EOI for ALL vectors >= 32 (fixed bug where IPI vectors were not acknowledged).
 
-## Kernel Object Manager (KOBJ) v1
+## Ob Object Manager (migrated de KOBJ v1)
 
-`src/kobj/mod.rs` — Unified kernel object system with reference counting and common metadata.
+El módulo `kobj/` fue eliminado en v0.46. Todo su contenido se migró a `object/`:
+- `kobj/mod.rs` (compat shim `KObjType`/`kobj_register`/etc.) → eliminado, los callers usan directamente `object::ob_create_object`/`ObType`
+- `kobj/namespace.rs` (namespace tree) → `object/namespace.rs`, los tipos internos `KObjId`/`KObjType` reemplazados por `ObId`/`ObType`
 
-| Concept | Description |
-|---------|-------------|
-| **KObjType** | Enum (u32 repr): Unknown, Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory |
-| **KObjEntry** | Per-object metadata: KObjId (u64), refcount (u32), type, 24-byte name, flags, creation_tick, native_id |
-| **KObjRegistry** | Dynamic `Vec<Option<KObjEntry>>` registry (no hard limit) protected by `spin::Mutex`. Global via `lazy_static!` |
-| **API** | `kobj_register()`, `kobj_unregister()`, `kobj_ref()`, `kobj_unref()`, `kobj_lookup()`, `kobj_count()`, `kobj_iter_snapshot()` |
-| **Integration** | Processes (scheduler.rs), drivers (driver_runtime.rs), pipes (pipe.rs) — auto-register on create, auto-unregister on destroy |
-| **Shell** | `KOBJ` command via Ring 3 `kobj.nxe` (ob_enum RAX=64) |
+Referencias históricas de la API legacy vs actual:
+| Concepto legacy | Equivalente actual |
+|----------------|-------------------|
+| `KObjType::X` | `ObType::X` |
+| `kobj_register(t, n, id)` | `ob_create_object(t, n, id, 0, None)` |
+| `kobj_unregister(id)` | `ob_destroy_object(id)` |
+| `kobj_lookup(id)` | `ob_lookup(id)` |
+| `kobj_ref/id` | `ob_reference/ob_dereference` |
+| `crate::kobj::namespace::ob_*` | `crate::object::namespace::ob_*` |
 
-### KOBJ Command
+### KOBJ Command (Ring 3)
 
-This command is implemented as a Ring 3 user-mode binary (`userbin/kobj/`, produces `kobj.nxe`). It uses `ob_enum` (RAX=64) to enumerate the Ob namespace. The kernel's built-in KOBJ shell command has been removed in favor of the `.NXE` dispatched via PATH.
+Comando de usuario (`userbin/kobj/`, produce `kobj.nxe`). Usa `ob_enum` (RAX=64) para enumerar el namespace Ob.
 
 | Subcommand | Description |
 |-----------|-------------|
-| `KOBJ` | Lists all kernel objects: ID, type, name, refcount, native ID. Shows DRIVER, MOUNTPOINT, DIRECTORY and all other registered types |
+| `KOBJ` | Lists all Ob namespace objects: ID, type, name, refcount, native ID |
 
 ### PRI Command
 

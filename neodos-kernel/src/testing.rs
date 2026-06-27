@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 530;
+const MAX_TESTS: usize = 560;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -1943,7 +1943,7 @@ pub fn register_mmap_tests() {
 // ===== Pipe / IPC tests =====
 
 pub fn register_pipe_tests() {
-    use crate::pipe::PIPE_MANAGER;
+    use crate::object::pipe::PIPE_MANAGER;
     use crate::handle::{HandleEntry, default_handle_table, closed_handle_table};
 
     test_case!("pipe_alloc_free", {
@@ -2063,7 +2063,7 @@ pub fn register_pipe_tests() {
         PIPE_MANAGER.inc_write_ref(pid);
 
         // Block current (idle) thread on this pipe — now uses KWait (OB-031)
-        crate::pipe::block_current_for_pipe(pid);
+        crate::object::pipe::block_current_for_pipe(pid);
 
         // Verify we're now blocked — idle thread is at kthreads[0]
         // KWait uses MAGIC_PIPE_BASE (0x0001_0000) | pipe_id
@@ -2226,7 +2226,7 @@ pub fn register_pipe_tests() {
         let pid = PIPE_MANAGER.alloc().expect("pipe alloc");
         let name = alloc::format!("OBPIPE{}", pid);
         let ob_id = crate::object::ob_create_object(
-            crate::object::ObType::Pipe, &name, pid as u64, 0, Some(&crate::pipe::PIPE_OPS),
+            crate::object::ObType::Pipe, &name, pid as u64, 0, Some(&crate::object::pipe::PIPE_OPS),
         ).expect("ob create");
         test_true!(ob_id > 0);
         let obj = crate::object::ob_lookup(ob_id).expect("ob lookup");
@@ -2475,7 +2475,6 @@ pub fn register_tests() {
     crate::drivers::abi::register_abi_tests();
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
-    crate::kobj::register_kobj_tests();
     crate::object::register_object_tests();
     crate::slab_container::register_slab_container_tests();
     crate::vfs::mount::register_mount_tests();
@@ -2528,6 +2527,15 @@ pub fn register_tests() {
 
     // v0.42: ABI Freeze verification tests
     crate::abi_freeze::register_abi_freeze_tests();
+
+    // v0.46: Timer Object tests
+    crate::object::timer::register_timer_tests();
+
+    // v0.46: Semaphore Object tests
+    crate::object::semaphore::register_semaphore_tests();
+
+    // v0.46: Section Object tests
+    crate::object::section::register_section_tests();
 
     // A4.4: Virtual Terminal tests
     register_vt_tests();

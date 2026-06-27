@@ -24,6 +24,7 @@ pub enum ObType {
     Semaphore = 14,
     Timer = 15,
     Thread = 16,
+    Section = 17,
 }
 
 impl ObType {
@@ -46,6 +47,7 @@ impl ObType {
             ObType::Semaphore => "SEMAPHORE",
             ObType::Timer => "TIMER",
             ObType::Thread => "THREAD",
+            ObType::Section => "SECTION",
         }
     }
 }
@@ -139,6 +141,11 @@ pub enum ObSetInfoClass {
     WriteContent = 7,
     SetCwd = 8,
     SetVolumeLabel = 9,
+    TimerStart = 10,
+    TimerCancel = 11,
+    SemaphoreRelease = 12,
+    SectionMapView = 13,
+    SectionUnmapView = 14,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

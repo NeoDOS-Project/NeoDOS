@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.46.0 — 2026-06-27
+
+### Added
+- **Timer Object (OBF-10)** — `ObType::Timer=15` completado. `ob_create(Timer, period_ms)` via RAX 61, `ob_set_info(TimerStart/TimerCancel)` via RAX 63, `ob_wait(Timer)` via RAX 65. Timer manager con soporte oneshot y periódico, integrado con el tick del timer (HPET/PIT a 1 KHz). 6 tests.
+- **Semaphore Object (OBF-11)** — `ObType::Semaphore=14` completado. `ob_create(Semaphore, initial_count, max_count)` via RAX 61, `ob_set_info(SemaphoreRelease)` via RAX 63, `ob_wait(Semaphore)` via RAX 65. Semaphore manager con wait decrement y release con wake de waiters. 8 tests.
+- **Section Object (OBF-12)** — `ObType::Section=17` completado. `ob_create(Section, size, prot)` via RAX 61, `ob_set_info(SectionMapView/SectionUnmapView)` via RAX 63. Mapea vistas en la región mmap (0x21000000+), con split de 2 MB pages y cleanup automático en destroy. 5 tests.
+- **KWait Semaphore variant** — `WaitReason::Semaphore { sem_id }` con `MAGIC_SEMAPHORE_BASE=0x0008_0000`. Timer variant cambiada de `timeout_ms` a `timer_id` para soporte multi-instancia.
+- **ObSetInfoClass extensions** — `TimerStart=10`, `TimerCancel=11`, `SemaphoreRelease=12`, `SectionMapView=13`, `SectionUnmapView=14`.
+- **32 nuevos tests** — timer (6), semaphore (8), section (5), kwait timer+semaphore (4), ob init (1). Total: 560 tests.
+- **Section mapped pages** — usa `mmap_alloc_page()` en región 0x21000000+ con split de 2 MB pages automático.
+
+### Changed
+- **pipe.rs movido** — de `src/pipe.rs` a `src/object/pipe.rs` como submodule de `object/`. Todas las referencias actualizadas de `crate::pipe::` a `crate::object::pipe::`.
+- **Tres nuevos módulos** — `src/object/timer.rs`, `src/object/semaphore.rs`, `src/object/section.rs` con managers + ObOperations + test suites.
+- **Kernel version bump** — v0.44.0 → v0.46.0.
+- **MAX_TESTS** — 530 → 560.
+- **ObSetInfoClass** — añadidos 5 nuevos valores enum (TimerStart, TimerCancel, SemaphoreRelease, SectionMapView, SectionUnmapView).
+
+### Architecture
+- **Fase 2 Objectification completada** — Timer, Semaphore, Section como ObObjects con lifecycle gestionado por el Object Manager (ObOperations::on_destroy para cleanup automático).
+- **Timer integrado con timer tick** — `object::timer::tick()` llamado desde `timer_handler_inner` en cada interrupción de timer.
+- **Sección mapea en mmap region** — las vistas de sección se alojan en la región mmap compartida, con soporte de split de páginas de 2 MB y TLB shootdown.
+
 ## v0.44.7 — 2026-06-27
 
 ### Added

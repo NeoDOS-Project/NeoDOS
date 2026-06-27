@@ -1,4 +1,9 @@
 pub mod types;
+pub mod pipe;
+pub mod timer;
+pub mod semaphore;
+pub mod section;
+pub mod namespace;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
 pub use types::{ObObjectSnapshot, ObEnumEntry};
@@ -233,6 +238,7 @@ pub fn init_object_manager() {
         ("Key", ObType::Key, 7),
         ("Event", ObType::Event, 8),
         ("MemoryRegion", ObType::MemoryRegion, 9),
+        ("Section", ObType::Section, 10),
     ] {
         let _ = table.create(*typ, name, *native_id, 0, None);
     }
@@ -277,7 +283,7 @@ pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
         return Ok(());
     }
     drop(table);
-    // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with kobj_unregister)
+    // Call on_destroy WITHOUT holding OB_TABLE lock (avoids deadlock with ob_destroy_object)
     if let Some(cb) = ops {
         cb.on_destroy(id, native_id);
     }
@@ -317,7 +323,7 @@ pub fn ob_open_path(
     desired_access: u32,
 ) -> Result<ObId, ObError> {
     // First try a regular lookup (finds object entries).
-    if let Ok(kobj_id) = crate::kobj::namespace::ob_lookup_path(path_str) {
+    if let Ok(kobj_id) = crate::object::namespace::ob_lookup_path(path_str) {
         if let Some(_obj) = ob_lookup(kobj_id) {
             // Security check
             let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
@@ -332,9 +338,9 @@ pub fn ob_open_path(
     // If not found as an object entry, check if it's a namespace directory
     // that exists but has no object entry yet. If so, create a directory
     // object for it on the fly.
-    if crate::kobj::namespace::ob_is_directory(path_str) {
+    if crate::object::namespace::ob_is_directory(path_str) {
         let dir_id = ob_create_object(ObType::Directory, path_str, 0, 0, None)?;
-        let _ = crate::kobj::namespace::ob_insert_object(path_str, dir_id);
+        let _ = crate::object::namespace::ob_insert_object(path_str, dir_id);
         let sd = OB_SECURITY.lock().get(&dir_id).cloned();
         if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
             let _ = ob_destroy_object(dir_id);
@@ -356,12 +362,12 @@ pub fn ob_open_path(
                 let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
                 let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
                 let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, None)?;
-                let _ = crate::kobj::namespace::ob_insert_object(path_str, obj_id);
+                let _ = crate::object::namespace::ob_insert_object(path_str, obj_id);
                 // Ensure parent directories exist in namespace
                 if let Some(parent_end) = path_str.rfind('\\') {
                     let parent = &path_str[..parent_end];
-                    if !crate::kobj::namespace::ob_is_directory(parent) {
-                        let _ = crate::kobj::namespace::ob_create_directory(parent);
+                    if !crate::object::namespace::ob_is_directory(parent) {
+                        let _ = crate::object::namespace::ob_create_directory(parent);
                     }
                 }
                 ob_reference(obj_id)?;
@@ -382,7 +388,7 @@ pub fn ob_create_object_path(
     attrs: u32,
     ops: Option<&'static dyn ObOperations>,
 ) -> Result<ObId, ObError> {
-    let normalized = crate::kobj::namespace::normalize_path(path_str);
+    let normalized = crate::object::namespace::normalize_path(path_str);
     let leaf = match normalized.rfind('\\') {
         Some(idx) => &normalized[idx + 1..],
         None => return Err(ObError::InvalidParam),
@@ -398,7 +404,7 @@ pub fn ob_create_object_path(
 
     let native_id = match obj_type {
         ObType::Pipe => {
-            let pipe_id = crate::pipe::PIPE_MANAGER.alloc()
+            let pipe_id = crate::object::pipe::PIPE_MANAGER.alloc()
                 .ok_or(ObError::OutOfMemory)?;
             pipe_id as u64
         }
@@ -414,10 +420,10 @@ pub fn ob_create_object_path(
             _ => "\\",
         };
         if parent_path != "\\" {
-            let _ = crate::kobj::namespace::ob_create_directory(parent_path);
+            let _ = crate::object::namespace::ob_create_directory(parent_path);
         }
     }
-    match crate::kobj::namespace::ob_insert_object(&normalized, id) {
+    match crate::object::namespace::ob_insert_object(&normalized, id) {
         Ok(_) => Ok(id),
         Err(_) => {
             let _ = ob_destroy_object(id);
@@ -429,7 +435,7 @@ pub fn ob_create_object_path(
 /// Enumerate objects in a namespace directory by path.
 /// Returns a list of ObEnumEntry values.
 pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObError> {
-    let entries = crate::kobj::namespace::ob_enumerate_namespace(path)
+    let entries = crate::object::namespace::ob_enumerate_namespace(path)
         .map_err(|_| ObError::NotFound)?;
     Ok(entries.iter().map(|e| {
         let mut name = [0u8; 32];
@@ -473,6 +479,7 @@ pub fn ob_set_security(
 
 pub fn register_object_tests() {
     use crate::{test_case, test_eq, test_true};
+    namespace::register_namespace_tests();
 
     test_case!("ob_create_lookup", {
         let id = ob_create_object(ObType::Process, "test_proc", 42, 0, None).unwrap();
@@ -547,6 +554,7 @@ pub fn register_object_tests() {
         test_eq!(ObType::Key.to_str(), "REGKEY");
         test_eq!(ObType::Semaphore.to_str(), "SEMAPHORE");
         test_eq!(ObType::Timer.to_str(), "TIMER");
+        test_eq!(ObType::Section.to_str(), "SECTION");
     });
 
     test_case!("ob_error_codes", {
@@ -581,7 +589,7 @@ pub fn register_object_tests() {
 
     test_case!("ob_init_root_directory", {
         let snap = ob_enum_snapshot();
-        test_true!(ob_count() >= 10);
+        test_true!(ob_count() >= 11);
         let root = snap.iter().find(|s| s.name == "\\");
         test_true!(root.is_some());
         if let Some(r) = root {
@@ -603,8 +611,8 @@ pub fn register_object_tests() {
     test_case!("ob_open_path_existing_object", {
         // Register an object and insert it into the namespace
         let id = ob_create_object(ObType::Driver, "test_drv", 42, 0, None).unwrap();
-        let _ = crate::kobj::namespace::ob_create_directory("\\Driver"); // ensure dir exists
-        let _ = crate::kobj::namespace::ob_insert_object("\\Driver\\test_drv", id);
+        let _ = crate::object::namespace::ob_create_directory("\\Driver"); // ensure dir exists
+        let _ = crate::object::namespace::ob_insert_object("\\Driver\\test_drv", id);
 
         let admin_token = crate::security::token::Token::new_admin();
         let opened_id = ob_open_path("\\Driver\\test_drv", &admin_token,
@@ -617,7 +625,7 @@ pub fn register_object_tests() {
         // Cleanup: close releases the open reference
         ob_close_object(id).unwrap();
         ob_destroy_object(id).unwrap();
-        let _ = crate::kobj::namespace::ob_remove_object("\\Driver\\test_drv");
+        let _ = crate::object::namespace::ob_remove_object("\\Driver\\test_drv");
     });
 
     test_case!("ob_open_path_not_found", {
@@ -631,8 +639,8 @@ pub fn register_object_tests() {
     test_case!("ob_open_path_access_denied", {
         // Create an object with a restrictive SD (deny user access)
         let id = ob_create_object(ObType::Driver, "secure_drv", 0, 0, None).unwrap();
-        let _ = crate::kobj::namespace::ob_create_directory("\\Driver");
-        let _ = crate::kobj::namespace::ob_insert_object("\\Driver\\secure_drv", id);
+        let _ = crate::object::namespace::ob_create_directory("\\Driver");
+        let _ = crate::object::namespace::ob_insert_object("\\Driver\\secure_drv", id);
 
         // Set a SD that denies user tokens ACCESS_READ
         use crate::security::acl::{Acl, Ace, SecurityDescriptor};
@@ -657,7 +665,7 @@ pub fn register_object_tests() {
 
         ob_close_object(id).unwrap();
         ob_destroy_object(id).unwrap();
-        let _ = crate::kobj::namespace::ob_remove_object("\\Driver\\secure_drv");
+        let _ = crate::object::namespace::ob_remove_object("\\Driver\\secure_drv");
     });
 
     test_case!("ob_open_path_non_existent_object_in_namespace", {
@@ -715,5 +723,87 @@ pub fn register_object_tests() {
         test_eq!(found.obj_type, ObType::Thread);
         test_eq!(found.native_id, 99);
         ob_destroy_object(id).unwrap();
+    });
+
+    // ── Legacy compat tests (migrated from kobj/mod.rs) ──
+
+    test_case!("kobj_register_unregister", {
+        let id = ob_create_object(ObType::Process, "test_proc", 42, 0, None).unwrap();
+        test_true!(id > 0);
+        ob_destroy_object(id).unwrap();
+    });
+
+    test_case!("kobj_refcount", {
+        let id = ob_create_object(ObType::Driver, "test_drv", 1, 0, None).unwrap();
+        let r1 = ob_reference(id).unwrap();
+        test_eq!(r1, 2);
+        let r2 = ob_dereference(id).unwrap();
+        test_eq!(r2, 1);
+        ob_destroy_object(id).unwrap();
+    });
+
+    test_case!("kobj_type_enum", {
+        test_eq!(ObType::Process.to_str(), "PROCESS");
+        test_eq!(ObType::Driver.to_str(), "DRIVER");
+        test_eq!(ObType::Pipe.to_str(), "PIPE");
+        test_eq!(ObType::Symlink.to_str(), "SYMLINK");
+        test_eq!(ObType::MountPoint.to_str(), "MOUNTPOINT");
+        test_eq!(ObType::Unknown.to_str(), "UNKNOWN");
+    });
+
+    test_case!("kobj_entry_name", {
+        let id = ob_create_object(ObType::Device, "my_device", 0, 0, None).unwrap();
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.name_str(), "my_device");
+        test_eq!(obj.obj_type, ObType::Device);
+        test_eq!(obj.native_id, 0);
+        ob_destroy_object(id).unwrap();
+    });
+
+    test_case!("kobj_registry_dynamic", {
+        let mut ids = alloc::vec::Vec::new();
+        for i in 0..128 {
+            let name = alloc::format!("fill_{}", i);
+            if let Ok(id) = ob_create_object(ObType::Unknown, &name, 0, 0, None) {
+                ids.push(id);
+            } else {
+                break;
+            }
+        }
+        test_eq!(ids.len(), 128);
+        let one_more_id = ob_create_object(ObType::Unknown, "one_more", 0, 0, None).unwrap();
+        let extra_id = ob_create_object(ObType::Unknown, "extra", 0, 0, None).unwrap();
+        test_true!(extra_id > 0);
+        for id in ids {
+            ob_destroy_object(id).unwrap();
+        }
+        ob_destroy_object(one_more_id).unwrap();
+        ob_destroy_object(extra_id).unwrap();
+    });
+
+    test_case!("kobj_lookup", {
+        let id = ob_create_object(ObType::Filesystem, "lookup_test", 99, 0, None).unwrap();
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.native_id, 99);
+        test_eq!(obj.obj_type, ObType::Filesystem);
+        ob_destroy_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
+    });
+
+    test_case!("kobj_double_unregister", {
+        let id = ob_create_object(ObType::MemoryRegion, "double", 0, 0, None).unwrap();
+        test_true!(ob_destroy_object(id).is_ok());
+        test_true!(ob_destroy_object(id).is_err());
+    });
+
+    test_case!("kobj_count", {
+        let start = ob_count();
+        let id1 = ob_create_object(ObType::Process, "cnt1", 0, 0, None).unwrap();
+        let id2 = ob_create_object(ObType::Driver, "cnt2", 0, 0, None).unwrap();
+        test_eq!(ob_count(), start + 2);
+        ob_destroy_object(id1).unwrap();
+        test_eq!(ob_count(), start + 1);
+        ob_destroy_object(id2).unwrap();
+        test_eq!(ob_count(), start);
     });
 }

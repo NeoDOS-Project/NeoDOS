@@ -351,13 +351,13 @@ pub fn register_urn_tests() {
 
     test_case!("urn_open_registry_ob_namespace", {
         // \Registry directory exists in namespace → lookup reaches Ob
-        use crate::kobj::namespace;
+        use crate::object::namespace;
         test_true!(namespace::ob_is_directory("\\Registry"));
     });
 
     test_case!("urn_open_kobj_ob_namespace", {
         // \Ob directory exists in namespace
-        use crate::kobj::namespace;
+        use crate::object::namespace;
         test_true!(namespace::ob_is_directory("\\Ob"));
     });
 

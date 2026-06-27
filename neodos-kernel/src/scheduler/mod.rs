@@ -13,7 +13,6 @@ use alloc::vec::Vec;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::kobj::{self, KObjType};
 use crate::object::{self, ObType, ObId};
 use crate::security::token::Token;
 
@@ -110,7 +109,7 @@ pub struct Kthread {
     pub cpu: u32,
 
     // KOBJ
-    pub kobj_id: Option<kobj::KObjId>,
+    pub obj_id: Option<ObId>,
 
     // A4.5 — APC queues
     pub kernel_apc_queue: VecDeque<crate::apc::ApcEntry>,
@@ -130,7 +129,7 @@ impl fmt::Debug for Kthread {
             .field("priority", &self.priority)
             .field("time_slice_remaining", &self.time_slice_remaining)
             .field("kernel_stack_top", &self.kernel_stack_top)
-            .field("kobj_id", &self.kobj_id)
+            .field("obj_id", &self.obj_id)
             .finish()
     }
 }
@@ -156,7 +155,7 @@ pub struct Eprocess {
     pub mmap_next: u64,
     pub thread_count: u32,
     pub exit_code: i64,
-    pub kobj_id: Option<kobj::KObjId>,
+    pub obj_id: Option<ObId>,
     pub ob_id: Option<ObId>,
     pub address_space: address_space::AddressSpace,
     pub token: Token,
@@ -234,7 +233,7 @@ impl Kthread {
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
-            kobj_id: None,
+            obj_id: None,
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
@@ -265,7 +264,7 @@ impl Kthread {
             kernel_stack: Some(stack),
             teb_base,
             cpu: unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
-            kobj_id: None,
+            obj_id: None,
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
@@ -288,7 +287,7 @@ impl Eprocess {
             mmap_next: 0,
             thread_count: 0,
             exit_code: 0,
-            kobj_id: None,
+            obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
@@ -310,7 +309,7 @@ impl Eprocess {
             mmap_next: crate::arch::x64::paging::MMAP_BASE,
             thread_count: 1,
             exit_code: 0,
-            kobj_id: None,
+            obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
@@ -489,8 +488,8 @@ impl Scheduler {
         let mut thread = Kthread::new_ring3(tid, pid, entry, user_stack_top);
 
         let name = alloc::format!("eproc/{}", pid);
-        if let Ok(kid) = kobj::kobj_register(KObjType::Process, &name, pid as u64) {
-            eproc.kobj_id = Some(kid);
+        if let Ok(kid) = object::ob_create_object(ObType::Process, &name, pid as u64, 0, None) {
+            eproc.obj_id = Some(kid);
         }
 
         // OB-046: Register process in Ob namespace
@@ -498,7 +497,7 @@ impl Scheduler {
         match object::ob_create_object(ObType::Process, &ob_name, pid as u64, 0, None) {
             Ok(ob_id) => {
                 let ns_path = alloc::format!("\\Process\\{}", pid);
-                match crate::kobj::namespace::ob_insert_object(&ns_path, ob_id) {
+                match crate::object::namespace::ob_insert_object(&ns_path, ob_id) {
                     Ok(_) => {
                         crate::serial_println!("[SCHED] PID {} -> \\Process\\{} OK (ob_id={})", pid, pid, ob_id);
                         eproc.ob_id = Some(ob_id);
@@ -515,8 +514,8 @@ impl Scheduler {
         }
 
         let tname = alloc::format!("kthread/{}", tid);
-        if let Ok(kid) = kobj::kobj_register(KObjType::Process, &tname, tid as u64) {
-            thread.kobj_id = Some(kid);
+        if let Ok(kid) = object::ob_create_object(ObType::Process, &tname, tid as u64, 0, None) {
+            thread.obj_id = Some(kid);
         }
 
         eproc.thread_count = 1;
@@ -551,8 +550,8 @@ impl Scheduler {
         let mut thread = Kthread::new_ring3(tid, pid, entry, user_stack);
 
         let tname = alloc::format!("kthread/{}", tid);
-        if let Ok(kid) = kobj::kobj_register(KObjType::Process, &tname, tid as u64) {
-            thread.kobj_id = Some(kid);
+        if let Ok(kid) = object::ob_create_object(ObType::Process, &tname, tid as u64, 0, None) {
+            thread.obj_id = Some(kid);
         }
 
         // Now borrow eprocess to update thread_count and retrieve user_slot
@@ -578,17 +577,17 @@ impl Scheduler {
     pub fn kill_pid(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
 
-        // Unregister EPROCESS from KOBJ and Ob (OB-046)
+        // Unregister EPROCESS from Ob (OB-046)
         for e in self.eprocesses.iter() {
             if let Some(ep) = e {
                 if ep.pid == pid {
-                    if let Some(kid) = ep.kobj_id {
-                        kobj::kobj_unregister(kid);
+                    if let Some(kid) = ep.obj_id {
+                        let _ = object::ob_destroy_object(kid);
                     }
                     if let Some(ob_id) = ep.ob_id {
                         let _ = object::ob_close_object(ob_id);
                         let ns_path = alloc::format!("\\Process\\{}", pid);
-                        let _ = crate::kobj::namespace::ob_remove_object(&ns_path);
+                        let _ = crate::object::namespace::ob_remove_object(&ns_path);
                     }
                     break;
                 }
@@ -630,9 +629,9 @@ impl Scheduler {
                 for i in 0..eproc.handle_table.len() {
                     let h = eproc.handle_table[i];
                     if h.is_pipe_read() {
-                        crate::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+                        crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
                     } else if h.is_pipe_write() {
-                        crate::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
+                        crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
                     }
                     eproc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                 }
@@ -642,8 +641,8 @@ impl Scheduler {
         // Free all kernel stacks and unregister thread KOBJs
         for tid in &tids {
             if let Some(th) = self.find_kthread_mut(*tid) {
-                if let Some(kid) = th.kobj_id {
-                    kobj::kobj_unregister(kid);
+                if let Some(kid) = th.obj_id {
+                    let _ = object::ob_destroy_object(kid);
                 }
                 // Kernel stack freed on drop
             }
@@ -664,17 +663,17 @@ impl Scheduler {
     pub fn recycle_terminated(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
 
-        // Unregister from KOBJ and Ob (OB-046)
+        // Unregister from Ob (OB-046)
         for e in self.eprocesses.iter() {
             if let Some(ep) = e {
                 if ep.pid == pid {
-                    if let Some(kid) = ep.kobj_id {
-                        kobj::kobj_unregister(kid);
+                    if let Some(kid) = ep.obj_id {
+                        let _ = object::ob_destroy_object(kid);
                     }
                     if let Some(ob_id) = ep.ob_id {
                         let _ = object::ob_close_object(ob_id);
                         let ns_path = alloc::format!("\\Process\\{}", pid);
-                        let _ = crate::kobj::namespace::ob_remove_object(&ns_path);
+                        let _ = crate::object::namespace::ob_remove_object(&ns_path);
                     }
                     break;
                 }
@@ -693,10 +692,10 @@ impl Scheduler {
                     t.as_ref().is_some_and(|k| k.tid == *tid)
                 });
                 if let Some(th_idx) = th_idx {
-                    // Unregister thread KOBJ
+                    // Unregister thread Ob
                     if let Some(th) = &self.kthreads[th_idx] {
-                        if let Some(kid) = th.kobj_id {
-                            kobj::kobj_unregister(kid);
+                        if let Some(kid) = th.obj_id {
+                            let _ = object::ob_destroy_object(kid);
                         }
                     }
                     self.kthreads[th_idx] = None;
@@ -714,10 +713,10 @@ impl Scheduler {
     /// Remove a single terminated thread.  Returns true if the thread was found.
     /// Does NOT free EPROCESS resources — only frees the kernel stack.
     pub fn recycle_thread(&mut self, tid: u32) -> bool {
-        // Unregister thread KOBJ
+        // Unregister thread Ob
         if let Some(th) = self.find_kthread(tid) {
-            if let Some(kid) = th.kobj_id {
-                kobj::kobj_unregister(kid);
+            if let Some(kid) = th.obj_id {
+                let _ = object::ob_destroy_object(kid);
             }
         }
         let th_idx = self.kthreads.iter().position(|t| {
