@@ -366,7 +366,7 @@ impl ObNamespace {
         let mut current = &self.root;
         for i in 0..components.len() {
             let is_last = i == components.len() - 1;
-            let key = name_to_key(components[i]);
+                let key = name_to_key(components[i]);
             if is_last {
                 if let Some(&obj_id) = current.children.get(&key) {
                     return Ok(obj_id);
@@ -649,12 +649,17 @@ pub fn init_object_namespace() {
             let path = alloc::format!("\\{}", dir);
             let _ = ns.create_directory(&path);
         }
+        // Create \Global\FileSystem namespace subtree for VFS path resolution
+        // (\Global\FileSystem\C:\path\to\file) — used by ob_open_path and ob_create
+        let _ = ns.create_directory("\\Global\\FileSystem");
     }
     // Register KObjs outside the lock to avoid deadlock with kobj_register → ob_insert_object_auto
     let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry", "Process"];
     for dir in root_dirs {
         let _ = crate::object::ob_create_object(ObType::Directory, dir, 0, 0, None);
     }
+    // Register \Global\FileSystem as a Directory ObObject too
+    let _ = crate::object::ob_create_object(ObType::Directory, "Global\\FileSystem", 0, 0, None);
     // Register root "\" in the namespace so ObOpen("\") works
     let root_id = crate::object::ob_create_object(
         ObType::Directory, "\\", 0, 0, None,
@@ -687,6 +692,32 @@ pub fn ob_remove_object(path: &str) -> Result<ObId, &'static str> {
 
 pub fn ob_create_directory(path: &str) -> Result<(), &'static str> {
     OB_NAMESPACE.lock().create_directory(path)
+}
+
+/// Create parent directories for a namespace path, excluding the leaf (mkdir -p on parents).
+/// Iterates from root down to the parent of the last component, creating each
+/// non-existent directory. The last component (leaf) is NOT created as a directory
+/// since it will be inserted as an object entry instead.
+/// Path is expected to already be a valid Ob namespace path (e.g. \Global\FileSystem\C:\Temp\file.txt).
+pub fn ob_create_directory_tree(path: &str) -> Result<(), &'static str> {
+    if path.len() <= 1 || path == "\\" {
+        return Ok(());
+    }
+    let body = path.trim_start_matches('\\');
+    if body.is_empty() {
+        return Ok(());
+    }
+    let parts: Vec<&str> = body.split('\\').collect();
+    if parts.len() <= 1 {
+        return Ok(());  // Single component, no parents to create
+    }
+    let mut p = alloc::string::String::new();
+    for comp in &parts[..parts.len() - 1] {
+        p.push('\\');
+        p.push_str(comp);
+        let _ = OB_NAMESPACE.lock().create_directory(&p);
+    }
+    Ok(())
 }
 
 pub fn ob_rename_directory(old_path: &str, new_name: &str) -> Result<(), &'static str> {

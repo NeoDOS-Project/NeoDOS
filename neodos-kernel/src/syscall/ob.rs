@@ -256,11 +256,8 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 Ok(id) => id,
                 Err(_) => return err_to_u64(SyscallError::NoMem),
             };
-            if let Some(parent_end) = path_str.rfind('\\') {
-                let parent = &path_str[..parent_end];
-                if parent != "\\" {
-                    let _ = crate::object::namespace::ob_create_directory(parent);
-                }
+            {
+                let _ = crate::object::namespace::ob_create_directory_tree(&path_str);
             }
             let _ = crate::object::namespace::ob_insert_object(&path_str, ob_id);
             let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
@@ -1456,6 +1453,9 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                     let _ = crate::object::namespace::ob_remove_object(&obj_name);
                     let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
                     let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
+                    {
+                        let _ = crate::object::namespace::ob_create_directory_tree(&new_ob_name);
+                    }
                     let _ = crate::object::namespace::ob_insert_object(&new_ob_name, entry.object_id);
                     0
                 }
@@ -1675,6 +1675,9 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Ok(id) => id,
                 Err(_) => return err_to_u64(SyscallError::NoMem),
             };
+            {
+                let _ = crate::object::namespace::ob_create_directory_tree(&ob_name);
+            }
             let _ = crate::object::namespace::ob_insert_object(&ob_name, ob_id);
             let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
             let fd = crate::hal::without_interrupts(|| {

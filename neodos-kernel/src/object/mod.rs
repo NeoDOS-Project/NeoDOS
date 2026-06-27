@@ -325,7 +325,6 @@ pub fn ob_open_path(
     // First try a regular lookup (finds object entries).
     if let Ok(kobj_id) = crate::object::namespace::ob_lookup_path(path_str) {
         if let Some(_obj) = ob_lookup(kobj_id) {
-            // Security check
             let sd = OB_SECURITY.lock().get(&kobj_id).cloned();
             if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
                 return Err(ObError::AccessDenied);
@@ -333,6 +332,9 @@ pub fn ob_open_path(
             ob_reference(kobj_id)?;
             return Ok(kobj_id);
         }
+        // Namespace entry exists but object is gone (destroyed on fd close).
+        // Remove stale entry and continue to VFS resolution.
+        let _ = crate::object::namespace::ob_remove_object(path_str);
     }
 
     // If not found as an object entry, check if it's a namespace directory
@@ -372,12 +374,8 @@ pub fn ob_open_path(
                 let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
                 let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
                 let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, None)?;
-                // Ensure parent directories exist in namespace first
-                if let Some(parent_end) = path_str.rfind('\\') {
-                    let parent = &path_str[..parent_end];
-                    if !crate::object::namespace::ob_is_directory(parent) {
-                        let _ = crate::object::namespace::ob_create_directory(parent);
-                    }
+                {
+                    let _ = crate::object::namespace::ob_create_directory_tree(path_str);
                 }
                 // Atomic insert; if another thread created the same entry first,
                 // destroy our object and use the existing one.
