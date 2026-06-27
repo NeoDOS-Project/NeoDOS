@@ -200,7 +200,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'kobj', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -317,7 +317,7 @@ Happy hacking!
         neomem_blocks     = alloc_blocks(33, len(nxe_files['neomem']))
         vol_blocks        = alloc_blocks(34, len(nxe_files['vol']))
         echo_blocks       = alloc_blocks(35, len(nxe_files['echo']))
-        kobj_blocks       = alloc_blocks(45, len(nxe_files['kobj']))
+        label_blocks      = alloc_blocks(45, len(nxe_files['label']))
         coretype_blocks   = alloc_blocks(46, len(nxe_files['coretype']))
         tree_blocks       = alloc_blocks(47, len(nxe_files['tree']))
         corecls_blocks    = alloc_blocks(48, len(nxe_files['corecls']))
@@ -395,7 +395,7 @@ Happy hacking!
             33: (MODE_FILE | default_perms_for_filename("neomem.nxe"), len(nxe_files['neomem']), pad_blocks(neomem_blocks)),
             34: (MODE_FILE | default_perms_for_filename("vol.nxe"), len(nxe_files['vol']), pad_blocks(vol_blocks)),
             35: (MODE_FILE | default_perms_for_filename("echo.nxe"), len(nxe_files['echo']), pad_blocks(echo_blocks)),
-             45: (MODE_FILE | default_perms_for_filename("kobj.nxe"), len(nxe_files['kobj']), pad_blocks(kobj_blocks)),
+
               46: (MODE_FILE | default_perms_for_filename("type.nxe"), len(nxe_files['coretype']), pad_blocks(coretype_blocks)),
               47: (MODE_FILE | default_perms_for_filename("tree.nxe"), len(nxe_files['tree']), pad_blocks(tree_blocks)),
               48: (MODE_FILE | default_perms_for_filename("cls.nxe"), len(nxe_files['corecls']), pad_blocks(corecls_blocks)),
@@ -592,8 +592,7 @@ Happy hacking!
         image[offset+2048:offset+2304]= create_dir_entry(34, 1, "vol.nxe")
         image[offset+2304:offset+2560]= create_dir_entry(35, 1, "echo.nxe")
         image[offset+2560:offset+2816]= create_dir_entry(36, 1, "cd.nxe")
-        image[offset+2816:offset+3072]= create_dir_entry(45, 1, "kobj.nxe")
-        image[offset+3072:offset+3328]= create_dir_entry(46, 1, "type.nxe")
+        image[offset+2816:offset+3072]= create_dir_entry(46, 1, "type.nxe")
         image[offset+3328:offset+3584]= create_dir_entry(47, 1, "tree.nxe")
         image[offset+3584:offset+3840]= create_dir_entry(48, 1, "cls.nxe")
         image[offset+3840:offset+4096]= create_dir_entry(49, 1, "copy.nxe")
@@ -627,8 +626,7 @@ Happy hacking!
             34: ('vol.nxe', nxe_files['vol']),
             35: ('echo.nxe', nxe_files['echo']),
             36: ('cd.nxe', nxe_files['cd']),
-            45: ('kobj.nxe', nxe_files['kobj']),
-             46: ('type.nxe', nxe_files['coretype']),
+            46: ('type.nxe', nxe_files['coretype']),
              47: ('tree.nxe', nxe_files['tree']),
              48: ('cls.nxe', nxe_files['corecls']),
              49: ('copy.nxe', nxe_files['corecopy']),
