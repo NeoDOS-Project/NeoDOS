@@ -38,17 +38,17 @@ pub enum SyscallNum {
     Yield = 2,
     GetPid = 3,
     Read = 4,
-    Pipe = 5,
+    // RAX 5 (pipe) removed — use ob_create(Pipe)
     Dup2 = 6,
-    Spawn = 7,
+    // RAX 7 (spawn) removed — use ob_create(Process)
     ReadDir = 8,
     WaitPid = 9,
-    Open = 10,
-    MkDir = 25,
-    Unlink = 26,
-    RmDir = 27,
-    Rename = 28,
-    ReadFile = 11,
+    // RAX 10 (open) removed — use ob_open
+    // RAX 11 (readfile) removed — use ob_query_info(ReadContent)
+    // RAX 25 (mkdir) removed — use ob_create(Directory)
+    // RAX 26 (unlink) removed — use ob_destroy
+    // RAX 27 (rmdir) removed — use ob_destroy
+    // RAX 28 (rename) removed — use ob_set_info(VfsRename)
     WriteFile = 12,
     Close = 13,
     ChDir = 16,
@@ -95,13 +95,9 @@ impl SyscallNum {
             2 => Some(Self::Yield),
             3 => Some(Self::GetPid),
             4 => Some(Self::Read),
-            5 => Some(Self::Pipe),
             6 => Some(Self::Dup2),
-            7 => Some(Self::Spawn),
             8 => Some(Self::ReadDir),
             9 => Some(Self::WaitPid),
-            10 => Some(Self::Open),
-            11 => Some(Self::ReadFile),
             12 => Some(Self::WriteFile),
             13 => Some(Self::Close),
             16 => Some(Self::ChDir),
@@ -111,10 +107,10 @@ impl SyscallNum {
             21 => Some(Self::LoadLib),
             22 => Some(Self::ThreadCreate),
             23 => Some(Self::ThreadJoin),
-            25 => Some(Self::MkDir),
-            26 => Some(Self::Unlink),
-            27 => Some(Self::RmDir),
-             28 => Some(Self::Rename),
+             // 25 (mkdir) removed — None in SSDT
+             // 26 (unlink) removed — None in SSDT
+             // 27 (rmdir) removed — None in SSDT
+             // 28 (rename) removed — None in SSDT
              29 => Some(Self::SetExceptionHandler),
              40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
@@ -173,8 +169,8 @@ pub fn err_to_u64(e: SyscallError) -> u64 {
 
 pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-        10, 11, 13, 16, 18, 19, 20, 21,
+        0, 1, 2, 3, 4, 6,
+        13, 16, 18, 19, 20, 21,
         29,
         40, 41, 42, 47, 53, 55, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
@@ -3635,11 +3631,14 @@ fn handler_ob_set_info(regs: Registers) -> u64 {
     let buf_ptr = regs.rdx;
     let buf_size = regs.r8 as usize;
 
-    if buf_ptr == 0 || buf_size == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    if !is_user_ptr_valid(buf_ptr, buf_size as u64) {
-        return err_to_u64(SyscallError::Fault);
+    // FileDelete doesn't need a buffer (operates on fd directly)
+    if info_class != (ObSetInfoClass::FileDelete as u32) {
+        if buf_ptr == 0 || buf_size == 0 {
+            return err_to_u64(SyscallError::Inval);
+        }
+        if !is_user_ptr_valid(buf_ptr, buf_size as u64) {
+            return err_to_u64(SyscallError::Fault);
+        }
     }
 
     let entry = current_handle_entry(fd);
@@ -4032,6 +4031,83 @@ _ if info_class == ObSetInfoClass::SectionUnmapView as u32 => {
             if crate::object::section::unmap_view(section_id, base) { 0 }
             else { err_to_u64(SyscallError::Inval) }
         }
+_ if info_class == ObSetInfoClass::FileCreate as u32 => {
+            // FileCreate: create a file via VFS
+            if buf_size < 3 { return err_to_u64(SyscallError::Inval); }
+            let path_str = match copy_user_string(buf_ptr) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Fault),
+            };
+            if !path_str.contains(':') { return err_to_u64(SyscallError::Inval); }
+            let node = match crate::globals::with_vfs(|vfs| vfs.create(&path_str)) {
+                Ok(n) => n,
+                Err(_) => return err_to_u64(SyscallError::Io),
+            };
+            let drive_idx = {
+                let drive_letter = path_str.as_bytes()[0].to_ascii_uppercase();
+                (drive_letter - b'A') as usize
+            };
+            let inode = node.inode;
+            let ob_name = alloc::format!("\\Global\\FileSystem\\{}", path_str);
+            let ob_id = match crate::object::ob_create_object(
+                crate::object::ObType::Filesystem, &ob_name,
+                inode as u64, drive_idx as u32, None,
+            ) {
+                Ok(id) => id,
+                Err(_) => return err_to_u64(SyscallError::NoMem),
+            };
+            let _ = crate::object::namespace::ob_insert_object(&ob_name, ob_id);
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else { None }
+            });
+            match fd {
+                Some(fd_val) => {
+                    if buf_size >= 1 {
+                        unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, fd_val); }
+                    }
+                    fd_val as u64
+                }
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+_ if info_class == ObSetInfoClass::FileDelete as u32 => {
+            // FileDelete: delete a file by fd (buf may be null/unused)
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Filesystem {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj_name = obj.name_str();
+            if !obj_name.starts_with("\\Global\\FileSystem\\") {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let vfs_path = &obj_name["\\Global\\FileSystem\\".len()..];
+            if vfs_path.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let _ = crate::globals::with_vfs(|vfs| vfs.remove_file(vfs_path));
+            let _ = crate::object::namespace::ob_remove_object(obj_name);
+            // Close handle + deref ObObject
+            crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    ep.handle_table[fd as usize].close();
+                }
+            });
+            0
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -4248,13 +4324,14 @@ fn handler_ob_wait(regs: Registers) -> u64 {
 /// RBX = fd (handle referencing the object to destroy)
 /// Returns 0 on success, negative on error.
 ///
-/// For \Global\FileSystem\ objects: performs VFS remove_file (Filesystem)
-/// or remove_dir (Directory). For namespace-only objects: removes from
-/// Ob namespace and frees the ObObject.
+/// For Directory objects under \Global\FileSystem\: performs VFS remove_dir.
+/// For Driver objects: unloads via hotreload.
+/// For Filesystem (file) objects: use ob_set_info(FileDelete) instead.
+/// Closes the handle and frees the ObObject reference.
 fn handler_ob_destroy(regs: Registers) -> u64 {
     let fd = regs.rbx as u8;
 
-    // Read handle entry and close it atomically
+    // Read handle entry (without closing yet)
     let (object_id, obj_type, name) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
@@ -4265,14 +4342,9 @@ fn handler_ob_destroy(regs: Registers) -> u64 {
             }
             let oid = entry.object_id;
             let ot = entry.obj_type().unwrap_or(crate::object::ObType::Unknown);
-            // Close the handle
-            ep.handle_table[fd as usize] = crate::handle::HandleEntry::closed();
-
             if oid == 0 {
                 return (0, crate::object::ObType::Unknown, alloc::string::String::new());
             }
-
-            // Lookup object name
             let obj_name = match crate::object::ob_lookup(oid) {
                 Some(o) => o.name_str().to_string(),
                 None => alloc::string::String::new(),
@@ -4287,49 +4359,35 @@ fn handler_ob_destroy(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::BadF);
     }
 
-    // If this is a VFS-backed path, perform VFS operation
-    if name.starts_with("\\Global\\FileSystem\\") {
+    // Perform VFS operations BEFORE closing handle (may need object ref)
+    if obj_type == crate::object::ObType::Directory && name.starts_with("\\Global\\FileSystem\\") {
         let vfs_path = &name["\\Global\\FileSystem\\".len()..];
-        if vfs_path.is_empty() {
-            let _ = crate::object::ob_destroy_object(object_id);
-            return err_to_u64(SyscallError::Inval);
-        }
-
-        let result = match obj_type {
-            crate::object::ObType::Directory => {
-                crate::globals::with_vfs(|vfs| vfs.remove_dir(vfs_path))
-            }
-            _ => {
-                crate::globals::with_vfs(|vfs| vfs.remove_file(vfs_path))
-            }
-        };
-
-        // Destroy Ob object regardless (the VFS handles the actual FS operation)
-        let _ = crate::object::ob_destroy_object(object_id);
-        // Remove stale namespace entry so future ob_open re-checks VFS
-        let _ = crate::object::namespace::ob_remove_object(&name);
-
-        match result {
-            Ok(_) => 0,
-            Err(_) => err_to_u64(SyscallError::Io),
+        if !vfs_path.is_empty() {
+            let _ = crate::globals::with_vfs(|vfs| vfs.remove_dir(vfs_path));
         }
     } else if obj_type == crate::object::ObType::Driver {
-        // Driver object — unload via hotreload
         let driver_name = if name.ends_with('\0') {
             &name[..name.len() - 1]
         } else {
             &name
         };
         let _ = crate::drivers::hotreload::unload_driver(driver_name, false);
-        let _ = crate::object::ob_destroy_object(object_id);
-        0
-    } else {
-        // Pure namespace object — just destroy the ObObject
-        match crate::object::ob_destroy_object(object_id) {
-            Ok(_) => 0,
-            Err(_) => err_to_u64(SyscallError::Inval),
-        }
     }
+
+    // Remove from namespace
+    if name.starts_with("\\Global\\FileSystem\\") {
+        let _ = crate::object::namespace::ob_remove_object(&name);
+    }
+
+    // Close handle + deref ObObject (auto-destroys when refcount hits 0)
+    crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let mut lock = s.lock();
+        if let Some(ep) = lock.current_eprocess_mut() {
+            ep.handle_table[fd as usize].close();
+        }
+    });
+    0
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -4344,13 +4402,11 @@ lazy_static! {
         t[2] = Some(handler_yield as SyscallFn);
         t[3] = Some(handler_getpid as SyscallFn);
         t[4] = Some(handler_read as SyscallFn);
-        t[5] = Some(handler_pipe as SyscallFn);
+        // RAX 5 (pipe) removed — use ob_create(Pipe) instead
         t[6] = Some(handler_dup2 as SyscallFn);
-        t[7] = Some(handler_spawn as SyscallFn);
-        t[8] = Some(handler_readdir as SyscallFn);
-        t[9] = Some(handler_waitpid as SyscallFn);
-        t[10] = Some(handler_open as SyscallFn);
-        t[11] = Some(handler_readfile as SyscallFn);
+        // RAX 7 (spawn) removed — use ob_create(Process) instead
+        // RAX 10 (open) removed — use ob_open instead
+        // RAX 11 (readfile) removed — use ob_query_info(ReadContent) instead
         t[13] = Some(handler_close as SyscallFn);
         t[16] = Some(handler_chdir as SyscallFn);
         t[18] = Some(handler_brk as SyscallFn);
@@ -4539,8 +4595,8 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9,
-            10, 11, 13, 16, 18, 19, 20, 21,
+            0, 1, 2, 3, 4, 6,
+            13, 16, 18, 19, 20, 21,
             29, 40, 41, 42, 47,
             53, 55, 58, 59,
             60, 61, 62, 63, 64, 65, 66,
@@ -4548,6 +4604,13 @@ pub fn register_syscall_table_tests() {
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
+        // RAX 5 (pipe), 7 (spawn), 8 (readdir), 9 (waitpid), 10 (open), 11 (readfile) removed
+        test_true!(SYSCALL_TABLE[5].is_none());
+        test_true!(SYSCALL_TABLE[7].is_none());
+        test_true!(SYSCALL_TABLE[8].is_none());
+        test_true!(SYSCALL_TABLE[9].is_none());
+        test_true!(SYSCALL_TABLE[10].is_none());
+        test_true!(SYSCALL_TABLE[11].is_none());
         // RAX 22, 23 (thread_create/join) were removed — use ob_create(Thread)/ob_wait(Thread)
         test_true!(SYSCALL_TABLE[22].is_none());
         test_true!(SYSCALL_TABLE[23].is_none());
@@ -4574,13 +4637,14 @@ pub fn register_syscall_table_tests() {
         test_true!(SYSCALL_TABLE[1].is_some());   // write
         test_true!(SYSCALL_TABLE[22].is_none());  // thread_create (removed, use ob_create(Thread))
         test_true!(SYSCALL_TABLE[23].is_none());  // thread_join (removed, use ob_wait(Thread))
+        test_true!(SYSCALL_TABLE[8].is_none());   // readdir (removed)
+        test_true!(SYSCALL_TABLE[10].is_none());  // open (removed)
 
         // Verify permission entries exist
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
         test_eq!(SYSCALL_PERMISSIONS[58].admin, true);
 
         // Verify syscall entries exist
-        test_true!(SYSCALL_TABLE[8].is_some());   // readdir
         test_true!(SYSCALL_TABLE[66].is_some());  // ob_destroy
     });
 

@@ -3,7 +3,6 @@
 
 use libneodos::syscall;
 
-const SHELL_PATH: &[u8] = b"C:\\Programs\\NeoShell.nxe\0";
 const NEOINIT_VERSION: &str = "NeoInit v0.1.0 (PID 1)";
 
 fn write_str(s: &[u8]) {
@@ -17,29 +16,12 @@ fn set_vt(vt: u8) {
     }
 }
 
-fn spawn(path: &[u8]) -> Result<u32, i64> {
-    let path_ptr = path.as_ptr() as u64;
-    let result: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "push r8",
-            "mov rbx, rsi",
-            "mov rcx, rdx",
-            "mov r8, r9",
-            "int 0x80",
-            "pop r8",
-            "pop rcx",
-            "pop rbx",
-            in("rax") 7u64,
-            in("rsi") path_ptr,
-            in("rdx") 0xFFu64,
-            in("r9") 0xFFu64,
-            lateout("rax") result,
-        );
-    }
-    if result < 0 { Err(result) } else { Ok(result as u32) }
+fn spawn() -> Result<u32, i64> {
+    let path_str = "\\Global\\FileSystem\\C:\\Programs\\NeoShell.nxe";
+    let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
+    let fd = syscall::sys_ob_create(path_str, 1, None, attrs)?;
+    let _ = syscall::sys_ob_wait(fd);
+    Ok(0)
 }
 
 #[no_mangle]
@@ -53,7 +35,7 @@ pub extern "C" fn _start() -> ! {
     loop {
         write_str(b"[neoinit] spawning 'shell' on VT0...\r\n");
         set_vt(0);
-        match spawn(SHELL_PATH) {
+        match spawn() {
             Ok(pid) => {
                 write_str(b"[neoinit] shell PID ");
                 let mut buf = [0u8; 10];

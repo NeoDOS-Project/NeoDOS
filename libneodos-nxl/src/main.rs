@@ -42,8 +42,6 @@ pub struct AbiTable {
     pub sys_read: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub sys_getpid: extern "C" fn() -> u32,
     pub sys_yield: extern "C" fn(),
-    pub sys_open: extern "C" fn(*const u8) -> i64,
-    pub sys_readfile: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub sys_close: extern "C" fn(u8) -> i64,
     pub sys_brk: extern "C" fn(u64) -> i64,
     pub sys_mmap: extern "C" fn(u64, u64, u16, u16, u64) -> i64,
@@ -81,7 +79,6 @@ pub struct AbiTable {
     pub err_ebusy: i64,
     // Process / library
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
-    pub sys_spawn: extern "C" fn(*const u8, u8, u8, u8) -> i64,
     // Object Manager (Ob) API — RAX 60–66
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
     pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64, u64) -> i64,
@@ -100,8 +97,6 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     sys_read: crate::io::nxl_sys_read,
     sys_getpid: crate::process::nxl_sys_getpid,
     sys_yield: crate::process::nxl_sys_yield,
-    sys_open: crate::fs::nxl_sys_open,
-    sys_readfile: crate::fs::nxl_sys_readfile,
     sys_close: crate::fs::nxl_sys_close,
     sys_brk: crate::mem::nxl_sys_brk,
     sys_mmap: crate::mem::nxl_sys_mmap,
@@ -134,7 +129,6 @@ pub static EXPORT_TABLE: AbiTable = AbiTable {
     err_enodev: crate::error::ENODEV,
     err_ebusy: crate::error::EBUSY,
     sys_loadlib: crate::process::nxl_sys_loadlib,
-    sys_spawn: crate::process::nxl_sys_spawn,
     sys_ob_open: crate::fs::nxl_sys_ob_open,
     sys_ob_create: crate::fs::nxl_sys_ob_create,
     sys_ob_query_info: crate::fs::nxl_sys_ob_query_info,

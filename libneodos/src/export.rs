@@ -14,8 +14,6 @@ pub struct AbiTable {
     pub sys_read: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub sys_getpid: extern "C" fn() -> u32,
     pub sys_yield: extern "C" fn(),
-    pub sys_open: extern "C" fn(*const u8) -> i64,
-    pub sys_readfile: extern "C" fn(u8, *mut u8, usize) -> i64,
     pub sys_close: extern "C" fn(u8) -> i64,
     pub sys_brk: extern "C" fn(u64) -> i64,
     pub sys_mmap: extern "C" fn(u64, u64, u16, u16, u64) -> i64,
@@ -53,7 +51,6 @@ pub struct AbiTable {
     pub err_ebusy: i64,
     // Process / library
     pub sys_loadlib: extern "C" fn(*const u8) -> i64,
-    pub sys_spawn: extern "C" fn(*const u8, u8, u8, u8) -> i64,
     // Object Manager (Ob) API — RAX 60–66
     pub sys_ob_open: extern "C" fn(*const u8, u32) -> i64,
     pub sys_ob_create: extern "C" fn(*const u8, u32, *mut u64, u64) -> i64,

@@ -58,17 +58,7 @@ fn path_to_null_terminated(path: &str) -> Result<[u8; 256], i64> {
     Ok(buf)
 }
 
-pub fn sys_open(path: &str) -> Result<u8, i64> {
-    let buf = path_to_null_terminated(path)?;
-    let ptr = buf.as_ptr();
-    ret((export::get_table().sys_open)(ptr)).map(|v| v as u8)
-}
-
-pub fn sys_readfile(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    ret((export::get_table().sys_readfile)(fd, ptr, len)).map(|v| v as usize)
-}
+// NOTE: sys_open and sys_readfile removed — use ob_open/ob_query_info(ReadContent) instead.
 
 pub fn sys_close(fd: u8) -> Result<(), i64> {
     ret_unit((export::get_table().sys_close)(fd))
@@ -197,14 +187,6 @@ impl DirEntry {
     }
 }
 
-/// sys_spawn: spawn a process (RAX=7).
-/// stdin_fd/stdout_fd/stderr_fd = 0xFF means inherit default.
-pub fn sys_spawn(path: &str, stdin_fd: u8, stdout_fd: u8, stderr_fd: u8) -> Result<u32, i64> {
-    let buf = path_to_null_terminated(path)?;
-    let ptr = buf.as_ptr();
-    ret((export::get_table().sys_spawn)(ptr, stdin_fd, stdout_fd, stderr_fd)).map(|v| v as u32)
-}
-
 /// sys_poweroff: power off the machine (RAX=42).
 pub fn sys_poweroff() -> ! {
     unsafe {
@@ -237,55 +219,6 @@ pub struct MemInfo {
     pub free_kib: u64,
     pub used_kib: u64,
     pub reserved_kib: u64,
-}
-
-/// sys_open_with_flags (RAX=10): open a file with creation flags.
-/// flags & 1 = O_CREAT (create file if it doesn't exist).
-/// Uses raw int 0x80 to pass the flags parameter.
-pub fn sys_open_with_flags(path: &str, flags: u64) -> Result<u8, i64> {
-    let bytes = path.as_bytes();
-    let mut buf = [0u8; 256];
-    if bytes.len() >= 255 { return Err(EINVAL); }
-    buf[..bytes.len()].copy_from_slice(bytes);
-    let ptr = buf.as_ptr();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 10",
-            "mov rbx, {ptr}",
-            "mov rcx, {flags}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            ptr = in(reg) ptr as u64,
-            flags = in(reg) flags,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    ret(r).map(|v| v as u8)
-}
-
-/// sys_pipe (RAX=5): create a pipe.
-/// fds is a 2-element u64 array: [read_fd, write_fd].
-pub fn sys_pipe(fds: &mut [u64; 2]) -> Result<(), i64> {
-    let ptr = fds.as_mut_ptr();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov rax, 5",
-            "mov rbx, {ptr}",
-            "int 0x80",
-            "pop rbx",
-            ptr = in(reg) ptr as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(()) }
 }
 
 /// sys_dup2 (RAX=6): duplicate a file descriptor.
@@ -717,6 +650,8 @@ pub mod ob_set_info_class {
     pub const WRITE_CONTENT: u32 = 7;
     pub const SET_CWD: u32 = 8;
     pub const SET_VOLUME_LABEL: u32 = 9;
+    pub const FILE_CREATE: u32 = 15;
+    pub const FILE_DELETE: u32 = 16;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
@@ -975,9 +910,31 @@ pub fn ob_set_thread_priority(thread_fd: u8, priority: u8) -> Result<(), i64> {
 }
 
 /// sys_ob_destroy (RAX=66): destroy/delete an object by fd.
-/// For \Global\FileSystem\ objects: removes file or directory via VFS.
-/// For namespace objects: removes from Ob namespace.
+/// Removes namespace objects (directories, pipes, etc.) from Ob namespace.
+/// For files, use ob_file_delete() instead.
 pub fn sys_ob_destroy(fd: u8) -> Result<(), i64> {
     let r = unsafe { ob_syscall_2!(66, fd as u64, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}
+
+/// ob_file_create: create a file via ob_set_info(FileCreate).
+/// Calls sys_ob_set_info on the process context with FileCreate class.
+/// Returns the new file fd on success.
+pub fn ob_file_create(path: &str) -> Result<u8, i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr() as u64;
+    let len = bytes.len() as u64;
+    let r = unsafe { ob_syscall_4!(63, 1u64, 15u64, ptr, len) };
+    if r < 0 { Err(r) } else { Ok(r as u8) }
+}
+
+/// ob_file_delete: delete a file by fd via ob_set_info(FileDelete).
+/// Calls sys_ob_set_info(fd, FileDelete, null, 0).
+pub fn ob_file_delete(fd: u8) -> Result<(), i64> {
+    let dummy: u64 = 0;
+    let r = unsafe { ob_syscall_4!(63, fd as u64, 16u64, &dummy as *const u64 as u64, 8u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }

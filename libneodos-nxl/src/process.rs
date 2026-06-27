@@ -1,7 +1,7 @@
 use core::arch::asm;
 
 use crate::error::ret;
-use crate::syscall::{syscall_0, syscall_1, syscall_5};
+use crate::syscall::{syscall_0, syscall_1};
 
 // ============================================================
 // Raw syscall wrappers — Process domain
@@ -27,7 +27,4 @@ pub extern "C" fn nxl_sys_loadlib(path: *const u8) -> i64 {
     ret(unsafe { syscall_1(21, path as u64) })
 }
 
-#[no_mangle]
-pub extern "C" fn nxl_sys_spawn(path: *const u8, stdin_fd: u8, stdout_fd: u8, stderr_fd: u8) -> i64 {
-    ret(unsafe { syscall_5(7, path as u64, stdin_fd as u64, stdout_fd as u64, stderr_fd as u64, 0) })
-}
+

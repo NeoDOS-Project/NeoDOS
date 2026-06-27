@@ -7,16 +7,6 @@ use crate::syscall::{syscall_1, syscall_2, syscall_3, syscall_4};
 // All FS operations go through the Ob API (RAX 60-66).
 // ============================================================
 #[no_mangle]
-pub extern "C" fn nxl_sys_open(path: *const u8) -> i64 {
-    ret(unsafe { syscall_2(10, path as u64, 0) })
-}
-
-#[no_mangle]
-pub extern "C" fn nxl_sys_readfile(fd: u8, buf: *mut u8, len: usize) -> i64 {
-    ret(unsafe { syscall_3(11, fd as u64, buf as u64, len as u64) })
-}
-
-#[no_mangle]
 pub extern "C" fn nxl_sys_close(fd: u8) -> i64 {
     ret(unsafe { syscall_1(13, fd as u64) })
 }
@@ -70,8 +60,8 @@ pub extern "C" fn nxl_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
     nxl_sys_ob_set_info(fd, 7, buf, len)
 }
 
-/// File open via sys_open (RAX=10, legacy compat for O_CREAT)
+/// File open via ob_open (RAX=60)
 #[no_mangle]
 pub extern "C" fn nxl_file_open(path: *const u8) -> i64 {
-    nxl_sys_open(path)
+    nxl_sys_ob_open(path, 1) // READ access
 }

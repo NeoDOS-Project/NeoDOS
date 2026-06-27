@@ -118,18 +118,27 @@ pub extern "C" fn _start() -> ! {
     }
 
     // ── CLEANUP: remove leftovers from previous tests ──
-    fn cleanup(path: &str) {
+    fn cleanup_file(path: &str) {
+        let mut b = [0u8; 512];
+        let ob = to_ob_path(path, &mut b);
+        if let Ok(fd) = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ) {
+            let _ = syscall::ob_file_delete(fd);
+            let _ = syscall::sys_close(fd);
+        }
+    }
+    fn cleanup_dir(path: &str) {
         let mut b = [0u8; 512];
         let ob = to_ob_path(path, &mut b);
         if let Ok(fd) = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ) {
             let _ = syscall::sys_ob_destroy(fd);
+            let _ = syscall::sys_close(fd);
         }
     }
     {
-        cleanup("C:\\Temp\\cmdtest_src.txt");
-        cleanup("C:\\Temp\\cmdtest_dst.txt");
-        cleanup("C:\\Temp\\cmdtest_renamed.txt");
-        cleanup("C:\\Temp\\cmdtest_dir");
+        cleanup_file("C:\\Temp\\cmdtest_src.txt");
+        cleanup_file("C:\\Temp\\cmdtest_dst.txt");
+        cleanup_file("C:\\Temp\\cmdtest_renamed.txt");
+        cleanup_dir("C:\\Temp\\cmdtest_dir");
     }
 
     // ── CLS: just verify escape sequence doesn't crash ──
@@ -174,8 +183,7 @@ pub extern "C" fn _start() -> ! {
     // ── CREATE source file for COPY test ──
     {
         let content = b"Hello from cmdtest! NeoDOS rules!";
-        const CREAT: u64 = 1;
-        let fd = syscall::sys_open_with_flags("C:\\Temp\\cmdtest_src.txt", CREAT);
+        let fd = syscall::ob_file_create("C:\\Temp\\cmdtest_src.txt");
         if let Ok(f) = fd {
             let r = syscall::sys_ob_set_info(f, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, content);
             check!(b"CREATE file", r.is_ok());
@@ -201,8 +209,8 @@ pub extern "C" fn _start() -> ! {
         let ob_path2 = to_ob_path("C:\\Temp\\cmdtest_src.txt", &mut ob_buf2);
         let src_fd = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ);
         if let Ok(sf) = src_fd {
-            cleanup("C:\\Temp\\cmdtest_dst.txt");
-            let dst_fd = syscall::sys_open_with_flags("C:\\Temp\\cmdtest_dst.txt", 1);
+            cleanup_file("C:\\Temp\\cmdtest_dst.txt");
+            let dst_fd = syscall::ob_file_create("C:\\Temp\\cmdtest_dst.txt");
             if let Ok(df) = dst_fd {
                 let mut buf = [0u8; 4096];
                 let mut copy_ok = true;
@@ -293,7 +301,7 @@ pub extern "C" fn _start() -> ! {
         let ob = to_ob_path("C:\\Temp\\cmdtest_src.txt", &mut b);
         let r = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ)
             .and_then(|fd| {
-                let r = syscall::sys_ob_destroy(fd);
+                let r = syscall::ob_file_delete(fd);
                 let _ = syscall::sys_close(fd);
                 r
             });
@@ -308,7 +316,7 @@ pub extern "C" fn _start() -> ! {
 
     // ── Final cleanup ──
     {
-        cleanup("C:\\Temp\\cmdtest_renamed.txt");
+        cleanup_file("C:\\Temp\\cmdtest_renamed.txt");
     }
 
     // ── Report ──

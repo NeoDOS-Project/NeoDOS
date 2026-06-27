@@ -93,8 +93,9 @@ pub extern "C" fn _start() -> ! {
     let ob_path = to_ob_path(path, &mut ob_buf);
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
-            match syscall::sys_ob_destroy(fd) {
+            match syscall::ob_file_delete(fd) {
                 Ok(_) => {
+                    let _ = syscall::sys_close(fd);
                     write_str(b"\r\n");
                     syscall::sys_exit(0);
                 }

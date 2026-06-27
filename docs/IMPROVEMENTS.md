@@ -1,14 +1,14 @@
-# NeoDOS — Roadmap v4.1 (Vision Arquitectonica)
+# NeoDOS — Roadmap Pendiente
 
-> This file documents pending improvements and roadmap items for NeoDOS. This document serves as the central roadmap for NeoDOS, capturing all pending improvements, milestones, and architectural tasks. Each entry specifies an ID, related source files, prerequisites, acceptance criteria, and associated tests, providing clear guidance and traceability for developers.
+> Items pendientes del roadmap. Los completados están en
+> [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
 > Version actual: v0.46 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects).
 > Objetivo: v1.0 — executive NT-like arquitectonicamente solido.
 > **GUIA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
-> Ultima revision: Junio 2026.
 
-**Progreso:** 174 / ~188 items completados (+14 planificados: v0.47-v0.50). Proximo milestone: **v0.47** (Networking TCP/IP).
+**Proximo milestone: v0.47** (Networking TCP/IP).
 
 ---
 
@@ -16,7 +16,7 @@
 
 1. Una fase no empieza hasta que sus prerequisitos esten marcados **[COMPLETED]**.
 2. Cada item pendiente incluye: ID, equivalente NT, archivos, prereqs, criterio de aceptacion, tests.
-3. Al completar un item: moverlo a COMPLETED, actualizar `CHANGELOG.md`, `AGENTS.md` y `ARCHITECTURE_SOURCE_OF_TRUTH.md` si cambia un contrato.
+3. Al completar un item: actualizar `CHANGELOG.md`, `AGENTS.md` y moverlo a `IMPROVEMENTS_COMPLETED.md`.
 4. Validar antes de cerrar: `cargo build` en `neodos-kernel/` + `python3 scripts/auto_test.py` + `scripts/check_deps.py`.
 
 ### Checklist por item completado
@@ -27,203 +27,7 @@
 - [ ] `check_deps.py` pasa
 - [ ] `CHANGELOG.md` actualizado
 - [ ] `AGENTS.md` / `ARCHITECTURE_SOURCE_OF_TRUTH.md` si cambia contrato
-
----
-
-## COMPLETED (169 items)
-
-### Boot & Core Kernel
-1. **x86_64 boot** — entry `_start` en 0x200000, long mode via UEFI bootloader.
-2. **GDT/IDT/PIC** — segmentos Ring 0/3, IDT 256 entradas, PIC remapeado IRQ 32–47.
-3. **Identity paging 4 GiB** — paginas enormes 2 MB, identidad hasta 4 GB.
-4. **Heap allocator** — 16 MB @ 0x1000000, `linked_list_allocator`, Box/Vec/String.
-5. **A3. Kernel slab allocator** — 9 size classes (8B–2KB), O(1) alloc/free via per-slot free lists on 4 KB slab pages. Uses `hal::alloc_page()` for page allocation. Falls through to linked-list allocator for >2 KB or >16-byte alignment. 9 self-tests.
-6. **A2. Scheduler prioritario** — 4 niveles de prioridad (HIGH/ABOVE_NORMAL/NORMAL/IDLE), time-slicing dinamico (400/200/100/50 ticks), preemption desde Ring 3, aging cada 100 ticks para evitar starvation. 7 tests.
-7. **A5. Global page cache (base)** — `buffer/page_cache.rs`: central 4 KB page cache (512 entries x 4 KB = 2 MB) for filesystem file data I/O and mmap file-backed pages. LRU eviction with dirty write-back. Indexed by `(inode, block_num)` with stored `data_lba` for safe flush. Timer-driven flush via `NEED_PAGE_CACHE_FLUSH`. 8 unit tests.
-8. **PS/2 keyboard driver** — IRQ1, ring-buffer lock-free 1024 bytes.
-9. **Serial console** — COM1, `serial_print!`/`serial_println!`.
-10. **Framebuffer console** — GOP 1280x800, font VGA 8x16, `println!`.
-11. **X1. Kernel Object Manager (KOBJ)** — `src/kobj/mod.rs`: unified kernel object system with reference counting and common metadata. 64-slot registry, KObjType enum. 8 unit tests.
-12. **X5. Deferred work queues** — `src/work_queue.rs`: bottom-half system for deferred execution outside IRQ context. Two-level architecture (high/low priority). Lock-free SPSC ring buffer (64 slots per level). 6 tests.
-13. **X6. Async I/O (IRP system)** — `src/irp/mod.rs`: unified I/O Request Packet model. Global 64-slot pool, `IrpQueue` per-device (32 entries), completion callbacks via work queue, scheduler integration. 11 tests.
-14. **V1. Global page cache (advanced)** — `src/buffer/page_cache.rs`: hash map O(1) index for `(inode, block_num)` lookups. LRU doubly-linked list for O(1) access updates. Adaptive readahead. 13 tests.
-15. **MSI/MSI-X** — `src/interrupts/msi.rs` (232 lines): MSI and MSI-X interrupt support. Direct mode (kernel port I/O) and Delegated mode (Event Bus to `pci.nem`). 256-entry vector allocator. Dynamic IDT dispatch via `msi_dispatch`. Integrated with PCI and NVMe.
-16. **C3. HPET / APIC timers** — `src/timers/hpet.rs`, `src/timers/apic.rs`: HPET 1 KHz periodic mode with legacy replacement to IRQ0. Local APIC timer calibrated against HPET, activated as primary source. APIC mode disables HPET legacy replacement and masks PIC IRQ0. Fallback to PIT 18.2 Hz. `sleep_hint()` uses HPET counter.
-17. **ASLR v1 (v0.44)** — PIE user binaries (ET_DYN) loaded at random slot base addresses via RDRAND/TSC entropy. `src/elf.rs`: `load_offset` parameter, RELA relocation support (R_X86_64_RELATIVE). `src/arch/x64/paging.rs`: ASLR-aware slot allocator. All 27 user binaries compiled as PIE.
-
-### Storage
-17. **P1. Default file permissions by context** — `NeoDosFs::default_perms_for_filename()` asigna permisos RWXSD segun extension.
-18. **ATA PIO driver** — read/write por puertos 0x1F0/0x3F6.
-19. **AHCI driver** — DMA polling, PRDT scatter-gather, ATA + ATAPI.
-20. **ATA bus-master DMA** — PCI BAR4, buffers alineados, hasta 8 sectores.
-21. **NeoFS** — filesystem propio: inodos 256 B, bloques 4 KB, timestamps, permisos, directorios, 75 tests.
-22. **FAT32 read** — lectura de sector absoluto desde ESP.
-23. **GPT partition parsing** — detecta particion NeoDOS por UUID.
-24. **Unified GPT disk image** — `disk_image.img` (ESP FAT32 + NeoDOS FS).
-25. **VFS layer** — `FileSystem` trait, `resolve_path()`, FAT32 + NeoDOS + ISO9660.
-26. **ISO9660 read** — driver completo con PVD, extent cache, Joliet.
-27. **BlockDevice abstraction** — `BlockDevice` trait, `StorageManager` unifica ATA/AHCI.
-28. **NVMe driver** — `src/drivers/nvme.rs` (837 lines): NVMe block driver as kernel built-in. PCI detection (class 0x01, subclass 0x08, prog-if 0x02). Admin Queue + I/O Queues with doorbell registers. NVM Read/Write with PRP scatter-gather. Integrated as highest boot priority.
-
-### Drivers & Dispositivos
-29. **Module ABI v0 (.NDM)** — header 64 bytes, kernel service table, LOAD command.
-30. **NEM module** — NeoDOS Driver Format v1, 6 tipos, 14 tests parse.
-31. **RTC driver** — CMOS RTC, get_datetime(), usado por DATE/TIME.
-32. **ACPI driver** — NEM v3 standalone ACPI poweroff driver. PCI PIIX4/ICH9 LPC bridge detection. PM1a SLP_TYP_S5 shutdown. `EVENT_SHUTDOWN` event bus constant.
-33. **HAL ABI v0.3** — 26 primitives `extern "C"` (CPU, port I/O, page mem, IRQ, timers).
-34. **Device Model + HAL Binding** — 32-slot registry, handles opacos, 5 boot devices.
-35. **Event Bus v2** — Dual priority queues (high 16 + normal 64), subscription filters, dynamic payload, backpressure. 17 tests.
-36. **Driver Runtime** — DriverInstance con ID/nombre/estado/contadores, built-in callbacks.
-37. **NDREG / LOADNEM / NEMLIST** — driver registry CLI.
-38. **Driver Certification Pipeline v1** — estado Loaded->Initialized->Registered->Bound->Active, state machine con transiciones estrictas. 21 tests.
-39. **A4. Memory-mapped files** — `MmapRegion` + VMA list per-process, sys_mmap lazy (RAX=19), sys_munmap (RAX=20). 6 tests.
-40. **S2. IPC / Pipes** — `src/pipe.rs`: PipeManager con 16 buffers de 4 KB. Per-process handle table dinamico. Syscalls: `sys_pipe` (RAX=5), `sys_dup2` (RAX=6). Blocking reads via `ProcessState::Blocked`. 13 tests.
-41. **S7. Process exit: full cleanup** — `Scheduler::recycle_terminated(pid)` + `cleanup_terminated_process()` reciclan slot y liberan kernel stack.
-42. **S5. FSCK utility** — `src/fs/fsck.rs`: superblock, inode table, directory tree validation + repair. 6 tests.
-43. **BDL1. NEM v2 ABI fields** — NEM v2 48-byte header with ABI validation fields, driver category, 16-byte name. 9 tests.
-44. **BDL2. Boot Driver Loader System** — auto scanning and loading of .nem drivers from `C:\System\Drivers\`. 8 tests.
-45. **BDL3. Driver Instance extended** — `DriverCategory`, ABI fields in `DriverInstance`. `register_ext()`.
-46. **BDL4. ABI Validation Policy** — validate_abi() checks ABI compatibility window. Boot/System require v2 format.
-47. **BDL5. Rust reference .nem drivers** — PS/2 keyboard, framebuffer, storage reference implementations. 32 tests.
-48. **BDL6. NDREG updated** — LIST/SHOW display category and ABI range. RUNTIME snapshot.
-49. **BDL7. NEM v3 standalone serial driver** — UART 16550A, IRQ4, EVENT_SERIAL_DATA. Dispatch-by-event-type fix.
-50. **BDL8. NEM ps2kbd layout switching** — KEYB US|SP via EVENT_KEYB_LAYOUT (type 9).
-51. **W1. ABI negotiation layer** — `AbiVersion` struct, `NegotiationResult`, negotiate() with window overlap check. 10 tests.
-52. **W4. Driver dependency resolver** — `DependencyGraph` with topological sort, cycle detection. `__dep_` symbols. 13 tests.
-53. **Device Model + TSR removal** — Removed legacy devices/mod.rs and tsr/mod.rs. ~530 lines removed.
-54. **X2. Unified handle table** — `src/handle.rs`: unified handle table per-process with HandleEntry types. sys_open returns fd.
-55. **PS/2 double-character fix** — Fixed duplicate event bus handler registration for keyboard input.
-56. **ACPI NEM poweroff driver** — NEM v3 standalone. EVENT_SHUTDOWN (type 12). POWEROFF/SHUTDOWN command.
-57. **PCI NEM driver** — `drivers/pci/` NEM v3 (SYSTEM). Logs devices, config read/write via events 0x1000-0x1003.
-58. **A10. PCIe bus enumeration** — Recursive bridge detection, secondary bus scanning. 3 tests.
-59. **A6. ATA NEM standalone driver** — `drivers/ata/` NEM v3 (SYSTEM). Primary+secondary channels, NemBlockDevice registration.
-60. **A11. AHCI NEM standalone driver** — `drivers/ahci/` NEM v3 (SYSTEM). DMA polling, ATA+ATAPI, PRDT up to 8 entries.
-61. **A12. BootAhci kernel stub** — `boot_ahci.rs` early-boot AHCI. Single port, single command slot, 8-sector PRDT.
-62. **X3. Capability system** — `src/drivers/caps.rs`: 64-bit capability bitmap per driver (11 flags). Category inheritance. 11 tests.
-63. **Demand paging (4 KB)** — frame allocator, split_2mb, heap page fault handler.
-64. **sys_brk / sys_mmap** — ajuste program break, asignacion zero-filled.
-65. **ELF64 loader** — `src/elf.rs`: PT_LOAD segment loading, 7 tests.
-66. **User-mode processes** — IRETQ a Ring 3, EXIT_RSP/EXIT_RIP, scheduler add_ring3_process.
-67. **Kernel private stacks** — TSS.RSP0 por proceso, actualizado en cada context switch.
-68. **Syscall table (INT 0x80)** — 22 syscalls: exit, write, yield, getpid, read, waitpid, open, readfile, writefile, close, chdir, getcwd, brk, mmap, munmap, pipe, dup2, loadlib.
-69. **Scheduler blocking** — ProcessState::Blocked, wake_waiters(), idle HLT.
-70. **S6. libneodos** — `libneodos/`: standard library para Ring 3 Rust processes. Syscall wrappers via `int 0x80`. IO/FS/Mem modules. `print!`/`println!` macros.
-71. **301 kernel self-tests** — 36 suites, comando `test`.
-72. **5 user-mode test binaries** — HELLO.NXE, SYSTEST.NXE, FILETEST.NXE, ALLTEST.NXE, TEST.NXE.
-73. **Command history** — buffer circular 32, up/down navegacion.
-74. **TAB autocomplete** — comandos built-in + archivos del directorio actual.
-75. **Keyboard layouts** — KBDUS.klc / KBDSP.klc compilados en build-time.
-76. **Shell commands basicos** — HELP, DATE, TIME, VER, DEL, REN, RD, SHUTDOWN, EXIT, LOAD.
-77. **S1. Estabilizar syscall ABI** — `SyscallNum` enum, `SyscallError` (16 codes), `err_to_u64()`, `validate_abi()`.
-78. **B6b. Shared library system (libneodos NXL)** — libneodos como NXL standalone con `AbiTable`. Slot 0 en `0x1e000000`. Auto-load en PHASE 3.86.
-79. **Multi-NXL system** — `sys_loadlib` (RAX=21), `LOADLIB` command. libmath.nxl en slot 1 (`0x1e040000`).
-80. **X4. Driver Isolation Layer** — `src/drivers/isolation.rs`: 16 MB region (0x30000000-0x31000000), 16 x 1 MB slots. Pointer validation. Sandbox mode. 12 tests.
-81. **W2. Hot reload drivers** — `src/drivers/hotreload.rs`: runtime unload/reload. State machine: Active->Unloading->Unloaded->Loaded. EVENT_DRIVER_UNLOAD with timeout. 11 tests.
-82. **TEST.EXE — libmath.nxl self-test** — `userbin/test/`: LOAD TEST, BASIC ARITHMETIC, EDGE CASES, STRESS TEST (1M iter), DETERMINISM.
-83. **CPUTEST.NXE — CPU stress test binary** — `userbin/cputest/`: tests CPU arithmetic, loops, and basic instruction throughput.
-84. **A0.1. Buddy system frame allocator** — `src/memory/buddy.rs`: buddy system de 11 ordenes (4 KB -> 4 MB) con free lists O(log n). Bitmap como validacion. `alloc_frames(order)`/`free_frames(addr, order)`.
-85. **A0.2. Dynamic PHYS_MEM_END** — `MemoryMap { total_phys, highest_page }` detectado del memory map UEFI. Frame allocator soporta >4 GB sin modificar constantes.
-86. **A0.3. Dynamic memory layout manager** — `src/memory/layout.rs`: `MemoryLayout { regions: [MemoryRegion; 32] }` con `reserve_region()` dinamico y verificacion de solapamientos.
-87. **A0.4. Dynamic handle table** — `HandleTable` con `Vec<HandleEntry>` interno. Sin limite fijo. 1024+ handles simultaneos por proceso. Migracion transparente.
-88. **Architecture Source of Truth** — `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`: Definicion estricta de invariantes y contratos del sistema (Dave Cutler style) para evitar regresiones de diseno.
-89. **MCP Server — Kernel Introspection & VFS Analysis** — `scripts/mcp_server/`: MCP protocol server (JSON-RPC 2.0) with 18 tools for AI-assisted kernel debugging, VFS inspection, and architectural validation. Parser offline de NeoDOS FS, NEM v3, ELF64. 3 resources, 3 prompts. `scripts/mcp-server.sh` launcher.
-90. **A4.2. Syscall dispatch table (SSDT)** — `src/syscall/mod.rs`: tabla SSDT `[Option<fn(Registers)>; 256]` con `lazy_static!` reemplaza match monolifico. Tabla paralela `[SyscallPermission; 256]` con admin/ring/caps. Admin syscall RAX=50 (`handler_ndreg`). `validate_abi()` itera SSDT para verificar integridad. Dispatcher table-based con permission check antes de cada llamada. 5 tests.
-91. **A1.1. Per-CPU data structures (KPRCB)** — `arch/x64/cpu_local.rs`: Kprcb struct (4 KB page per CPU) con cpu_id, apic_id, current_thread, CpuRunQueue (64-entry ring buffer), PerCpuSlabCache[9], interrupt/context_switch/timer_tick counters, exit trampoline via GS. GS-segment accessors. 20 compile-time offset_of! assertions. 5 tests.
-92. **A1.1b. MSR access module** — `arch/x64/msr.rs`: rdmsr/wrmsr, typed accessors (read_gs_base, write_gs_base, is_bsp, rdtsc, rdtscp).
-93. **A1.1c. SMP boot (INIT-SIPI-SIPI)** — `arch/x64/smp.rs`: AP trampoline (16->32->64-bit), copy to 0x800000, INIT-SIPI-SIPI sequence, per-CPU GS base, AP entry. 3 tests.
-94. **A1.2. Per-CPU run queues + work stealing** — CpuRunQueue in KPRCB. schedule() tries local queue -> work stealing -> global fallback. Threads enqueued on creation/wake/timer. IPI_RESCHEDULE (vector 0xF0). 8 total new tests.
-95. **Bug fix: handler_exit deadlock** — Double-locking SCHEDULER mutex when calling wake_thread_joiner(). Inlined wake call.
-96. **Bug fix: request_exit_to_kernel()** — Read value as pointer instead of using gs_write_u8.
-97. **Bug fix: KPRCB offset constants** — 13 offsets 2 bytes too low due to CpuRunQueue alignment. Fixed with compile-time assertions.
-98. **A1.3. Per-CPU slab allocator** — `src/slab.rs` rewritten with per-CPU fast path: 32-object hot caches in KPRCB via GS-segment, O(1) alloc/free without locks. `refill_from_global()` / `drain_to_global()` with global Mutex for cross-CPU replenishment. 5 tests.
-99. **A1.4. IPI infrastructure + TLB shootdown** — `arch/x64/ipi.rs`: unified IPI module with `send_ipi()`, `send_ipi_mask()`, `send_ipi_all()`. IPI_TLB_SHOOTDOWN (vector 0xF1) with synchronous ACK protocol. IPI_CALL_FUNCTION (vector 0xF2). 5 tests.
-100. **A3.1. Crash dump framework** — `src/crash/mod.rs`: 16 KB CrashDumpHeader, stack walk, GPR snapshot, serial output. `CRASH`/`CRASH DUMP` commands. 5 tests.
-101. **B8. cpuinfo.nxe — user-mode CPU info binary** — `userbin/cpuinfo/`: uses `libcpu-nxl` NXL via sys_loadlib. Displays vendor, brand, topology, timers, features.
-102. **A4.7. neoshell (Ring 3 shell)** — `userbin/neoshell/`: full-featured Ring 3 interactive shell. Built-in commands: HELP, CLS, ECHO, VER, CWD, DIR, SET, POWEROFF, EXIT. `CD` is a separate Ring 3 tool (`cd.nxe`). DIR uses sys_open+sys_readdir. External commands: PATH scan for `.NXE`, sys_spawn + sys_waitpid. TAB completion (built-ins). History (32 entries). Env vars with SET. CWD prompt. Drive change.
-103. **NT5.1. Object directory tree** — `src/kobj/namespace.rs`: transforma el registry plano KOBJ en un arbol jerarquico de objetos con `\` como raiz y directorios estandar (`\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`). Lookup de paths tipo NT con `ob_lookup_path()`, nombres de 24 bytes y `BTreeMap` por nodo. 6 tests.
-104. **NT5.2. Symbolic links** — `src/kobj/symlink.rs`: objetos simbolicos que apuntan a otros objetos o paths. Resuelve `\DosDevices\C:` y similares con limite de 10 saltos para evitar loops. 5 tests.
-105. **NT5.3. Path resolution API** — `src/kobj/lookup.rs`: API unificada `ob_lookup_by_path()` para paths absolutos y relativos, seguimiento de symlinks, normalizacion y errores `OB_*`. 5 tests.
-106. **NT5.4. VFS mount points integration** — `src/vfs/mount.rs`: integracion VFS + namespace de objetos, mount points sobre `\Device`, symlink `\DosDevices\C:` y resolucion de paths NT-style hacia NeoFS/FAT32/ISO9660. 5 tests.
-107. **B8.1. DIR.NXE** — `userbin/coredir/`: lista directorio con `sys_open` (dir) + `sys_readdir`. Columnas, `/W` (wide), `/P` (pausa).
-108. **B8.3. ECHO.NXE** — `userbin/echo/`: imprime argumentos a stdout via `sys_write`.
-109. **B8.4. VER.NXE** — `userbin/ver/`: muestra version del sistema via `sys_get_version` (RAX=43).
-110. **B8.6. HELP.NXE** — `userbin/corehelp/`: lista .NXE disponibles escaneando `C:\Programs\*.NXE` con `sys_readdir`.
-111. **B8.12. DATETIME.NXE** — `userbin/datetime/`: muestra fecha/hora RTC via `sys_get_datetime` (RAX=44). Flags `/D`, `/T`.
-112. **B8.13. MEM.NXE** — `userbin/mem/`: muestra uso de memoria via `sys_get_meminfo` (RAX=45). Migrado de Ring 0.
-113. **B8.14. TREE.NXE** — `userbin/tree/`: muestra arbol de directorios con `+--`/`\--`, recursivo hasta 6 niveles. Directorios primero, orden alfabetico case-insensitive. Path opcional (default: CWD).
-114. **NeoDOS LSP** — `neodos-lsp/`: Language Server Protocol implementation for NeoDOS development. Full LSP features (completion, goto-def, hover, references, rename, documentSymbol, diagnostics). Background indexing with rayon-parallel parsing. NeoDOS-aware: detects syscall handlers, capability constants, shell command entries, driver states. `dashmap`-backed database. 8 MCP tools for AI-level code analysis. `opencode.json` integration. 34 unit tests.
-115. **B8.2. TYPE.NXE** — `userbin/coretype/`: muestra contenido de archivo con `sys_open` + `sys_readfile`. Buffer 512 B.
-116. **B8.5. CLS.NXE** — `userbin/corecls/`: limpia pantalla (ANSI escape `\x1b[2J\x1b[H`).
-117. **B8.7. COPY.NXE** — `userbin/corecopy/`: copia archivo via `ob_query_info(ReadContent)` + `ob_set_info(WriteContent)`. Buffer 4 KB.
-118. **B8.8. DEL.NXE** — `userbin/coredel/`: elimina archivo via `ob_destroy`.
-119. **B8.9. REN.NXE** — `userbin/coreren/`: renombra via `ob_set_info(VfsRename)`.
-120. **B8.10. MD.NXE** — `userbin/coremd/`: crea directorio via `ob_create(Directory)`.
-121. **B8.11. RD.NXE** — `userbin/corerd/`: elimina directorio vacio via `ob_destroy`.
-122. **B4.1. PATH resolution** — `userbin/neoshell/`: busqueda de `.NXE` en PATH. neoshell itera directorios PATH y ejecuta via `sys_spawn`. Prioridad `.NXE` > `.COM` > `.EXE`.
-123. **B8.15. Build + integracion** — `scripts/create_neodos_image.py` compila todos los coretools y neoshell, los copia a `C:\Programs\`.
-124. **NT6.1. SID + Access Token** — `src/security/token.rs`, `src/security/sid.rs`: Define la identidad de seguridad de cada proceso y thread mediante SID y token. Token admin por defecto para boot, heredado en spawn. Tests: `token_inherit`, `sid_format`, `token_admin_boot_default`.
-125. **NT6.2. ACL/ACE on objects** — `src/security/acl.rs`: Anade descriptors de seguridad a cada objeto del namespace. Define `Ace` (allow/deny, access_mask, SID), `Acl`, `SecurityDescriptor`. Tests: `acl_deny_access`, `acl_allow_access`, `acl_inherit_parent`.
-126. **NT6.3. Access check on open** — `src/security/access.rs`: `se_access_check()` compara token SID contra DACL del SD con admin bypass. Tests: `se_access_check_deny`, `se_access_check_allow`, `se_access_check_admin_override`.
-127. **NT6.4. Admin vs user token** — `src/security/token.rs`: Separa tokens de sistema y usuario. Syscall 50 requiere admin. 12 tests de seguridad integrados.
-128. **NT5.5 Z2. Unified resource namespace (URN) — OB-025 rewrite** — `src/urn/mod.rs`: URN rewrite completo como frontend de Ob. Todos los schemes (`file`, `device`, `registry`, `kobj`) se resuelven mediante `ob_open_path()` en el namespace Ob. `UrnHandle` simplificado a wrapper sobre kernel fd (handle table index). `urn_read`/`urn_write` operan via handle table con VFS. Tests: 15 (8 parse + 2 open error + 1 roundtrip + 3 OB-025 scheme mapping + 1 OB-018 Ob integration).
-129. **NT5.6 Z3. Virtual FS objects (K:\ drive)** — `src/vfs/kdrive.rs`: Drive virtual K:\ que expone objetos NT5 internos como archivos de solo lectura via VFS. Directorios: Processes, Drivers, Memory, Interrupts. 12 tests.
-130. **A2.1. MMIO ECAM PCI config space** — `src/hal/pci.rs`, `src/drivers/pci.rs`: ECAM-based PCI config space access via MMIO from ACPI MCFG table. Auto-selects ECAM or legacy PIO fallback.
-131. **A2.2. IOAPIC + MSI-X como modelo primario** — `src/interrupts/ioapic.rs`, `src/interrupts/msi.rs`: I/O APIC detected from MADT, replaces legacy PIC. MSI-X per-entry table programming. IOAPIC init at PHASE 2.91.
-132. **B4.4 B2. ANSI terminal** — `userbin/neoshell/`, framebuffer driver: Emulador de terminal ANSI basico en framebuffer. Interpreta secuencias de escape: color, clear screen, cursor position. Tests: `ansi_color_foreground`, `ansi_cursor_position`, `ansi_clear_screen`.
-133. **v0.40 — Buddy bitmap dinamico, User window 32MB, Static buffers->heap** — `src/memory/buddy.rs`: bitmap dinamico (>4GB RAM) en vez de `[u64; 16384]`. `src/arch/x64/paging.rs`, `src/scheduler/address_space.rs`, `src/memory/layout.rs`: user window 4MB->32MB (0x400000..0x2400000), kernel heap reubicado (0x2400000). `kernel.ld`: kernel movido a 0x4000000 (64MB). `src/drivers/boot_ahci.rs`: buffers AHCI heap-allocados. `src/main.rs`: CMD_BUF/BIN_BUF heap-allocados.
-134. **v0.41 — Slab<T> contenedor, Scheduler Vec, Pipe buffers dinamicos, ObObjectTable** — `src/slab_container.rs`: Generic Slab<T> contenedor con insert/get/remove. `src/scheduler/mod.rs`: eprocesses/kthreads migrados a Vec dinamico. `src/pipe.rs`: Pipe buffers Box<[u8; 4096]> heap-allocados, MAX_PIPES=16. `src/object/mod.rs`: ObObjectTable base, init_object_manager en boot Phase 2.759, 10 tests. HandleEntry con object_id field. KOBJ delegado en ObObjectTable.
-135. **v0.42 — Unified Wait Engine (KWait), ABI Freeze, HandleEntry full Ob integration** — `src/kwait/mod.rs`: KWait engine con WaitReason (7 variantes: PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable), `kwait_block()`/`kwait_wake()` unified API, 10 tests. `src/abi_freeze.rs`: Verify frozen event types 0-15, capability flags bits 0-11, IOAPIC API, 4 tests. `src/handle.rs`: Todos los constructores crean objetos Ob via `ob_create_object()`, nuevo metodo `close()` llama `ob_close_object()`, helper methods `is_open()`/`is_pipe()`/etc. Marcas FROZEN v0.42 en eventbus, caps, ioapic. ABI freeze validation en boot Phase 3.9.
-136. **v0.43 — SeAccessCheck NT-compatible (ACE order NT-correct)** — `src/security/access.rs`: NT-correct `check_dacl()` evalua primero todos los Deny ACEs, luego todos los Allow ACEs (two-pass). `src/security/acl.rs`: `insert_ace_canonical()` mantiene orden canonico (deny first, allow second). 3 tests nuevos.
-137. **v0.43 — sys_poll() (RAX=59)** — `src/syscall/mod.rs`: Nuevo handler `handler_poll()` con PollFd struct (fd, events, revents). POLLIN/POLLOUT/POLLHUP/POLLERR flags. Soporta stdin, stdout/stderr, pipe read/write, files, dirs. SSDT slot 59, permission user-level.
-138. **v0.43 — Pipe/IRP protocol freeze** — `src/pipe.rs`: Doc comment con FROZEN ABI v0.43, protocol invariants documentados (read EOF semantics, EPIPE, inc_ref/dec_ref balance, blocking magic 0xFFFF_0000). `src/irp/mod.rs`: Doc comment con FROZEN ABI v0.43, protocol invariants (IRP ID global, pool index id%64, irp_get_params lock discipline, chain semantics).
-139. **A3.3. Watchdog subsystem** — `src/watchdog/mod.rs`: Software watchdog basado en HPET. `watchdog_pet()` desde timer tick (1 KHz). 5s timeout -> crash dump con CAUSE_WATCHDOG, EVENT_NMI_WATCHDOG, reset. Re-entry guard MAX_NMI_RECOVERIES=3. 5 tests.
-140. **A3.4. SEH + exception dispatcher** — `src/exception/mod.rs`: Mecanismo unificado `exception_dispatch()` para Ring 0 (crash dump+panic) vs Ring 3 (TEB exception handler chain). TEB en 0x7000 con `Teb { teb_self, pid, tid, exception_list }`. sys_set_exception_handler (RAX=29). 5 tests.
-141. **B4.2. Shell pipes (`|`)** — `userbin/neoshell/`: pipelines de hasta 16 comandos con pipes nativos via `sys_pipe` + `sys_dup2` + `sys_spawn`. PipeManager con 16 buffers x 4 KB, blocking reads.
-142. **B9.1. HELP -> corehelp.nxe** — Ring 0 HELP reducido a stub, `corehelp.nxe` escanea `C:\Programs\*.NXE` buscando marcadores `::HELP::`.
-143. **B9.2. SET -> neoshell built-in** — Variables de entorno en Ring 3, Ring 0 SET eliminado.
-144. **B9.3. EXIT -> neoshell built-in** — POWEROFF/EXIT en Ring 3 via `sys_poweroff` (RAX=42), Ring 0 EXIT eliminado.
-145. **B9.4. PS -> ps.nxe** — Lista procesos via `sys_ob_enum("\Ob\Process")` + `ObQueryInfo(Process)` con datos reales (PID, PPID, prioridad, thread_count, estado). Migrado de `sys_kobj_enum` a Ob.
-146. **B9.5. KILL -> kill.nxe** — Termina proceso por PID via `ObOpen` + `ObSetInfo(fd, ProcessTerminate)`. Migrado de `sys_kill_process` a Ob.
-147. **B9.6. PRI -> pri.nxe** — Cambia prioridad scheduling via `ObOpen` + `ObSetInfo(fd, ProcessPriority)`. Migrado de `sys_set_priority` a Ob.
-148. **B9.8. DRIVES -> drives.nxe** — Lista unidades montadas via `sys_get_drives` (RAX=33). Letra, tipo, etiqueta, tamano. Migrado a Ob en v0.44.2.
-149. **B9.10. KEYB -> keyb.nxe** — Cambia layout teclado via `sys_set_keyboard_layout` (RAX=49). US/SP. Migrado a Ob en v0.44.2.
-150. **B9.13. CALL -> neoshell built-in** — Ejecuta `.BAT` batch desde Ring 3, replica `commands/call.rs`.
-151. **v0.44.1 — libneodos Ob API** — 5 wrappers Ob en `libneodos/src/syscall.rs` con macros asm seguras (temp register copy). `ObBasicInfo`, `ObEnumEntry`, `ObProcessInfo` structs + `ob_access` constants. AbiTable v5 en `libneodos-nxl` y `libneodos/src/export.rs`.
-152. **v0.44.1 — ob_open_path auto-create dirs** — `src/object/mod.rs`: `ob_open_path()` crea dir objects on-the-fly para paths namespace que son directorios sin object entry.
-153. **v0.44.1 — ob_is_directory()** — `src/kobj/namespace.rs`: publica para detectar directorios namespace sin entry.
-154. **v0.44.1 — ProcessTerminate (ObSetInfo class 4)** — `src/syscall/mod.rs`: termina proceso via `ObSetInfo(fd, 4)`. `handler_kill_process` migrable.
-155. **v0.44.1 — kobj.nxe migrado a Ob** — usa `ObOpen("\Ob")` + `ObEnum` para mostrar namespace Ob jerarquico.
-156. **v0.44.1 — ps.nxe migrado a Ob** — usa `ObOpen("\Ob\Process")` + `ObEnum` + `ObQueryInfo(Process)` por proceso. Datos reales.
-157. **v0.44.1 — pri.nxe migrado a Ob** — usa `ObOpen` + `ObSetInfo(ProcessPriority)`.
-158. **v0.44.1 — kill.nxe migrado a Ob** — usa `ObOpen` + `ObSetInfo(ProcessTerminate)`.
-159. **v0.44.2 — neoshell full Ob migration (OB-040)** — `userbin/neoshell/`: readdir->ob_enum, pipe->ob_create(Pipe), readfile->ob_query_info(ReadContent), spawn->ob_create(Process)+ob_wait, chdir->ob_set_info(SetCwd). All filesystem operations via Ob. Legacy syscalls readfile/writefile/readdir/mkdir/unlink/rmdir/rename/get_volume_label/set_volume_label now disabled in SSDT (None).
-160. **v0.44.2 — coredir/tree full Ob migration (OB-041)** — readdir->ob_enum. No legacy syscalls remaining.
-161. **v0.44.2 — corecopy/coretype Ob migration (OB-042)** — readfile->ob_query_info(ReadContent), writefile->ob_set_info(WriteContent), unlink->ob_destroy. Legacy readfile/writefile syscalls disabled in SSDT.
-162. **v0.44.2 — coredel/coreren/coremd/corerd Ob migration (OB-043)** — unlink->ob_destroy, rename->ob_set_info(VfsRename), mkdir->ob_create(Directory), rmdir->ob_destroy. Legacy unlink/rename/mkdir/rmdir syscalls disabled in SSDT.
-163. **v0.44.2 — ndreg/drives Ob migration (OB-044, partial)** — ndreg: ob_open("\Global\Info\Drivers") + ob_query_info(Drivers). drives: ob_open("\Global\Info\Drives") + ob_query_info(Drives). loadnem still pending full Ob migration.
-164. **v0.44.2 — datetime/ver/mem/cpuinfo/vol/label Ob migration (OB-045)** — All info syscalls migrated to ob_open("\Global\Info\...") + ob_query_info(). Legacy get_version/get_datetime/get_meminfo/getcpuinfo/get_volume_label disabled in SSDT.
-165. **v0.44.2 — sys_ob_destroy RAX 66 (OB-015 extension)** — New syscall handler_ob_destroy: destroys files (VFS remove), directories (VFS rmdir), namespace objects. Registered in SSDT slot 66 with user permission.
-166. **v0.44.2 — ob_create(Process) for spawning** — `handler_ob_create` supports type=1 (ObType::Process). spawn via Ob: creates ObObject for process, allocates handle, returns fd. Enables ob_create(Process)+ob_wait pattern. `neoinit` and `neoshell` create child processes via Ob.
-167. **v0.44.2 — ob_create(Driver) for driver loading** — `handler_ob_create` supports type=2 (ObType::Driver). Creates ObObject for driver, triggers driver load through the boot loader pipeline. loadnem.nxe uses ob_create(Driver) to load NEM drivers.
-168. **v0.44.2 — ob_query_info(ReadContent) class 15** — New info class 15 in `handler_ob_query_info`: reads file content via VFS. Supports both ObObject handles (ObType::Filesystem) and legacy file handles. Used by coretype, corecopy, neoshell (TYPE command).
-169. **v0.44.2 — ob_query_info(VolumeLabel) class 16** — New info class 16 in `handler_ob_query_info`: returns volume label string via VFS. Used by vol, label, drives binaries.
-170. **v0.44.2 — ob_set_info(WriteContent) class 7** — New info class 7 in `handler_ob_set_info`: writes file content via VFS. Supports both ObObject and legacy handles. Used by corecopy, neoshell (COPY/redirect).
-171. **v0.44.2 — ob_set_info(SetCwd) class 8** — New info class 8 in `handler_ob_set_info`: changes current working directory via \Global\Info\Cwd object. Used by cd.nxe and neoshell (CWD command).
-172. **v0.44.2 — ob_set_info(SetVolumeLabel) class 9** — New info class 9 in `handler_ob_set_info`: sets volume label via VFS. Used by label.nxe.
-173. **v0.44.2 — ob_set_info(VfsRename) class 6** — New info class 6 in `handler_ob_set_info`: renames VFS files/directories. Updates ObObject name to reflect the new path. Used by coreren.nxe.
-174. **v0.44.2 — libneodos AbiTable v5 with attrs param** — `libneodos/src/syscall.rs`: all Ob wrappers updated with attrs parameter. New `ObInfoClass` constants (0-16). Wrappers: `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy`. All 27 user binaries use libneodos Ob API.
-175. **v0.44.2 — OB_NAME_LEN 32->128** — `src/object/types.rs`: OB_NAME_LEN increased from 32 to 128. Fixes path truncation for long namespace paths (e.g., "\Global\FileSystem\C:\System\Libraries\libneodos.nxl"). All ObObject name buffers now 128 bytes.
-176. **v0.44.2 — SeAccessCheck in ObOpen** — `handler_ob_open` calls `ob_open_path(&path, &token, desired_access)` which performs security check. Token extracted from current EPROCESS, falls back to DEFAULT_ADMIN_TOKEN. AccessDenied returned to user on failure (OB-030).
-177. **v0.44.2 — keyb.nxe Ob migration** — ob_open("\Global\Info\Keyboard") + ob_set_info(KeyboardLayout) replaces sys_set_keyboard_layout. Legacy RAX 49 disabled in SSDT.
-178. **v0.44.2 — ndreg.nxe Ob migration** — ob_open("\Global\Info\Drivers") + ob_query_info(Drivers) replaces sys_driver_enum. Legacy RAX 56 disabled in SSDT.
-179. **v0.44.2 — drives.nxe Ob migration** — ob_open("\Global\Info\Drives") + ob_query_info(Drives) replaces sys_get_drives. Legacy RAX 33 disabled in SSDT.
-180. **v0.44.2 — label.nxe Ob migration** — ob_open + ob_query_info(VolumeLabel) + ob_set_info(SetVolumeLabel) replaces sys_get_volume_label/sys_set_volume_label. Legacy RAX 46/54 disabled in SSDT.
-181. **v0.44.2 — loadnem.nxe partial Ob migration** — ob_create(Driver) for driver loading. Legacy sys_driver_unload (RAX 58) kept for /U (unload) flag.
-182. **v0.44.2 — cmdtest.nxe Ob migration** — All test operations migrated: ob_create(Directory) replaces sys_mkdir, ob_destroy replaces sys_rmdir/sys_unlink, ob_set_info(VfsRename) replaces sys_rename, ob_query_info(ReadContent) replaces sys_readfile.
-183. **v0.44.2 — neoinit.nxe Ob spawning** — Uses ob_create(Process) + ob_wait for spawning neoshell with respawn on exit. Legacy sys_spawn (RAX 7) kept for backward compat.
-184. **v0.44.3 — A4.4 Input subsystem redesign** — `src/input/` directory con `InputManager`, 4 VT queues (`VtInputQueue` de 4 KB), per-VT input routing. `switch_vt()` via Alt+F1-F4. Console state save/restore per VT (`ConsoleState`), framebuffer shadow redraw (`VtShadowBuffer`). Per-process `vt_num` en EPROCESS, inherited from parent. 8 tests.
-185. **v0.44.3 — B4.5 Virtual terminals** — NeoInit spawns shell on VT0. NeoShell banner shows `[VTn]`. `\Global\Info\VtInfo` Ob object for VT number query/set. Syscall 11 (readfile) re-registered in SSDT. handler_read reads from per-VT queue.
-186. **v0.44.3 — Syscall ABI cleanup: SSDT + NXL AbiTable v7** — `src/syscall/mod.rs`: removed handler_ndreg (RAX=50) and all dead `None` slots. SSDT reduced from 256 to only active handlers. `libneodos-nxl/src/main.rs`: AbiTable struct trimmed from 62→46 fields, removed `sys_writefile`, `sys_pipe`, `sys_dup2`, `sys_waitpid`, `sys_chdir`, `sys_chdir_parent`, `sys_readdir`, `sys_mkdir`, `sys_unlink`, `sys_rmdir`, `sys_rename`. `libneodos/src/export.rs`: mirror struct updated, ABI_VERSION bumped 6→7. `libneodos/src/syscall.rs`: removed 9 dead wrapper functions. `libneodos-nxl/src/process.rs`: removed 6 dead `nxl_sys_*` functions. All 31 user binaries compile clean on v7.
+- [ ] Movido a `IMPROVEMENTS_COMPLETED.md`
 
 ---
 

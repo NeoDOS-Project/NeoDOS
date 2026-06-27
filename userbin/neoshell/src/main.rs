@@ -75,7 +75,7 @@ fn write_u64(v: u64) {
 fn get_vt_num() -> u8 {
     let mut b = [0u8; 4];
     if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\VtInfo", syscall::ob_access::READ) {
-        if let Ok(n) = syscall::sys_readfile(fd, &mut b) {
+        if let Ok(n) = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut b) {
             if n >= 1 { let _ = syscall::sys_close(fd); return b[0]; }
         }
         let _ = syscall::sys_close(fd);

@@ -146,6 +146,8 @@ pub enum ObSetInfoClass {
     SemaphoreRelease = 12,
     SectionMapView = 13,
     SectionUnmapView = 14,
+    FileCreate = 15,
+    FileDelete = 16,
 }
 
 // ═══════════════════════════════════════════════════════════════════════
