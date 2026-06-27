@@ -35,6 +35,7 @@ pub const EVENT_SHUTDOWN: EventType = 12;         // FROZEN v0.42
 pub const EVENT_DRIVER_UNLOAD: EventType = 13;    // FROZEN v0.42
 pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;// FROZEN v0.42
 pub const EVENT_NMI_WATCHDOG: EventType = 15;     // FROZEN v0.42
+pub const EVENT_MOUSE_INPUT: EventType = 16;      // PS/2 mouse raw bytes
 // ── PCI / MSI events (must match pci.nem constants) ──
 /// Kernel → pci.nem: read a config dword.  data0[31:0] = packed BDF+offset.
 pub const EVENT_PCI_READ_CONFIG: EventType    = 0x1000;

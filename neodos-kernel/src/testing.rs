@@ -162,11 +162,11 @@ pub fn register_vt_tests() {
 
     test_case!("vt_queue_wrap_around", {
         let q = VtInputQueue::new();
-        for i in 0..VT_QUEUE_SIZE as u8 { let _ = q.push(i); }
-        for i in 0..50 { test_eq!(q.pop(), Some(i)); }
-        for i in (VT_QUEUE_SIZE as u8)..(VT_QUEUE_SIZE as u8 + 50) { let _ = q.push(i); }
-        for i in 50..(VT_QUEUE_SIZE as u8) { test_eq!(q.pop(), Some(i)); }
-        for i in (VT_QUEUE_SIZE as u8)..(VT_QUEUE_SIZE as u8 + 50) { test_eq!(q.pop(), Some(i)); }
+        for i in 0..(VT_QUEUE_SIZE - 1) { let _ = q.push(i as u8); }
+        for i in 0..50 { test_eq!(q.pop(), Some(i as u8)); }
+        for i in (VT_QUEUE_SIZE - 1)..(VT_QUEUE_SIZE - 1 + 50) { let _ = q.push(i as u8); }
+        for i in 50..(VT_QUEUE_SIZE - 1) { test_eq!(q.pop(), Some(i as u8)); }
+        for i in (VT_QUEUE_SIZE - 1)..(VT_QUEUE_SIZE - 1 + 50) { test_eq!(q.pop(), Some(i as u8)); }
         test_eq!(q.pop(), None);
     });
 

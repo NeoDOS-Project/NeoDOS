@@ -191,6 +191,7 @@ lazy_static! {
         }
         idt[33].set_handler_fn(keyboard_handler);
         idt[36].set_handler_fn(serial_handler);
+        idt[44].set_handler_fn(mouse_handler);
 
         unsafe {
             idt[0x80]
@@ -767,6 +768,22 @@ extern "x86-interrupt" fn serial_handler(_: InterruptStackFrame) {
         );
     }
     crate::hal::ack_irq(36);
+}
+
+extern "x86-interrupt" fn mouse_handler(_: InterruptStackFrame) {
+    let status: u8 = crate::hal::inb(0x64);
+    if (status & 0x01) != 0 {
+        let byte = crate::hal::inb(0x60);
+        let _ = crate::eventbus::EVENT_BUS.push_event(
+            crate::eventbus::EVENT_MOUSE_INPUT,
+            crate::eventbus::SOURCE_HAL,
+            4,
+            byte as u64,
+            0,
+            0,
+        );
+    }
+    crate::hal::ack_irq(44);
 }
 
 pub fn init() {

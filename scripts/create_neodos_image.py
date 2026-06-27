@@ -302,6 +302,7 @@ Happy hacking!
             11: ("pci.nem",      read_nem("SYSTEM", "pci.nem")),
             12: ("ata.nem",     read_nem("SYSTEM", "ata.nem")),
             13: ("ahci.nem",     read_nem("SYSTEM", "ahci.nem")),
+            16: ("ps2mouse.nem", read_nem("BOOT", "ps2mouse.nem")),
         }
 
         # Allocate blocks for everything
@@ -353,7 +354,7 @@ Happy hacking!
         # Directory blocks (fixed block allocation)
         sys_dir_blocks    = alloc_blocks(3, 2304)    # System dir (9 entries × 256)
         kernel_dir_blocks = alloc_blocks(4, 512)     # Kernel dir
-        drv_dir_blocks    = alloc_blocks(6, 2048)    # Drivers dir (7 entries + padding)
+        drv_dir_blocks    = alloc_blocks(6, 2048)    # Drivers dir (8 entries)
         lib_dir_blocks    = alloc_blocks(14, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(19, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(22, 768)    # Config dir (2 entries + padding)
@@ -495,6 +496,7 @@ Happy hacking!
         image[offset+1024:offset+1280]= create_dir_entry(11, 1, "pci.nem")
         image[offset+1280:offset+1536]= create_dir_entry(12, 1, "ata.nem")
         image[offset+1536:offset+1792]= create_dir_entry(13, 1, "ahci.nem")
+        image[offset+1792:offset+2048]= create_dir_entry(16, 1, "ps2mouse.nem")
 
         # NEM driver data blocks
         for inum, (fname, fdata) in nem_data.items():

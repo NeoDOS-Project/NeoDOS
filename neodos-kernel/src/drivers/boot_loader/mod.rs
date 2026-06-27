@@ -172,6 +172,11 @@ pub fn boot_load_all() {
                                 ).is_ok();
                                 a && b
                             }
+                            "PS2MOUSE" => {
+                                v3loader::register_v3_event_bus_handler(
+                                    load_result.entry_event, crate::eventbus::EVENT_MOUSE_INPUT, id
+                                ).is_ok()
+                            }
                             "SERIAL" => {
                                 v3loader::register_v3_event_bus_handler(
                                     load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA, id

@@ -122,6 +122,15 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
         echo "[!] ps2kbd build script not found"
     fi
 
+    echo "[+] Compiling NEM v3 standalone driver (ps2mouse)..."
+    DRV_DIR="$PROJECT_ROOT/drivers/ps2mouse"
+    if [ -f "$DRV_DIR/build_nem.py" ]; then
+        python3 "$DRV_DIR/build_nem.py" "$NEM_DIR/BOOT"
+        echo "[✓] ps2mouse.nem compiled"
+    else
+        echo "[!] ps2mouse build script not found"
+    fi
+
     echo "[+] Compiling NEM v3 standalone driver (serial)..."
     DRV_DIR="$PROJECT_ROOT/drivers/serial"
     if [ -f "$DRV_DIR/build_nem.py" ]; then

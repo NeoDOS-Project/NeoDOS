@@ -1,7 +1,7 @@
 use crate::eventbus;
 use crate::input;
 use crate::hal;
-use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG};
+use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_MMIO, CAP_BLOCK_DEVICE};
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
 use crate::drivers::isolation;
@@ -43,51 +43,51 @@ fn check_cap(required: u64) -> bool {
     driver_runtime::check_driver_cap(id, required).is_ok()
 }
 
-unsafe extern "C" fn hst_inb(port: u16) -> u8 {
+pub unsafe extern "C" fn hst_inb(port: u16) -> u8 {
     if !check_cap(CAP_PORTIO) { return 0; }
     hal::inb(port)
 }
-unsafe extern "C" fn hst_outb(port: u16, val: u8) {
+pub unsafe extern "C" fn hst_outb(port: u16, val: u8) {
     if !check_cap(CAP_PORTIO) { return; }
     hal::outb(port, val)
 }
-unsafe extern "C" fn hst_inw(port: u16) -> u16 {
+pub unsafe extern "C" fn hst_inw(port: u16) -> u16 {
     if !check_cap(CAP_PORTIO) { return 0; }
     hal::inw(port)
 }
-unsafe extern "C" fn hst_outw(port: u16, val: u16) {
+pub unsafe extern "C" fn hst_outw(port: u16, val: u16) {
     if !check_cap(CAP_PORTIO) { return; }
     hal::outw(port, val)
 }
-unsafe extern "C" fn hst_inl(port: u16) -> u32 {
+pub unsafe extern "C" fn hst_inl(port: u16) -> u32 {
     if !check_cap(CAP_PORTIO) { return 0; }
     hal::inl(port)
 }
-unsafe extern "C" fn hst_outl(port: u16, val: u32) {
+pub unsafe extern "C" fn hst_outl(port: u16, val: u32) {
     if !check_cap(CAP_PORTIO) { return; }
     hal::outl(port, val)
 }
-unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64 {
+pub unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64 {
     if !check_cap(CAP_EVENT_BUS) { return -1; }
     match eventbus::push_event(et, src, dev, d0, d1, fl) {
         Ok(id) => id as i64,
         Err(_) => -1,
     }
 }
-unsafe extern "C" fn hst_push_input(byte: u8) {
+pub unsafe extern "C" fn hst_push_input_byte(byte: u8) {
     if !check_cap(CAP_INPUT) { return; }
     let _ = input::push_byte(byte);
     crate::syscall::wake_blocked_readers();
 }
-unsafe extern "C" fn hst_get_ticks() -> u64 {
+pub unsafe extern "C" fn hst_get_ticks() -> u64 {
     if !check_cap(CAP_TIMING) { return 0; }
     hal::get_ticks()
 }
-unsafe extern "C" fn hst_ack_irq(vec: u8) {
+pub unsafe extern "C" fn hst_ack_irq(vec: u8) {
     if !check_cap(CAP_IRQ) { return; }
     hal::ack_irq(vec);
 }
-unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
+pub unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
     if !check_cap(CAP_LOG) { return; }
     // X4: Validate driver pointer before dereferencing
     let driver_id = current_driver_id();
@@ -101,6 +101,76 @@ unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
     crate::serial_println!("[DRV] {}", s);
 }
 
+pub unsafe extern "C" fn hst_ecam_is_active() -> u64 {
+    if hal::pci::ecam_is_active() { 1 } else { 0 }
+}
+
+pub unsafe extern "C" fn hst_ecam_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
+    if !check_cap(CAP_MMIO) { return 0xFFFFFFFF; }
+    if hal::pci::ecam_is_active() {
+        hal::pci::ecam_read_config_dword(bus, dev, func, offset)
+    } else {
+        0xFFFFFFFF
+    }
+}
+
+pub unsafe extern "C" fn hst_ecam_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
+    if !check_cap(CAP_MMIO) { return; }
+    if hal::pci::ecam_is_active() {
+        hal::pci::ecam_write_config_dword(bus, dev, func, offset, value);
+    }
+}
+
+pub unsafe extern "C" fn hst_register_block_device(
+    name: *const u8,
+    name_len: u32,
+    device_id: u32,
+    num_sectors: u64,
+    sector_size: u32,
+    read_fn: unsafe extern "C" fn(u32, u64, u8, *mut u8) -> i32,
+    write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
+) -> i32 {
+    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
+    // X4: Validate name pointer
+    if current_driver_id() != 0 {
+        if isolation::validate_export_ptr(name, name_len as usize, false).is_err() {
+            crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
+                current_driver_id());
+            return -1;
+        }
+    }
+    let dev = crate::drivers::block::NemBlockDevice::new(
+        device_id, num_sectors, sector_size, read_fn, write_fn,
+    );
+    let idx = crate::drivers::block::register_nem_block_device(dev);
+    if idx >= 0 {
+        let driver_id = current_driver_id();
+        if driver_id != 0 {
+            crate::drivers::hotreload::track_resource(
+                driver_id,
+                crate::drivers::hotreload::ResourceType::BlockDevice,
+                idx as u32,
+            );
+        }
+    }
+    idx
+}
+
+pub unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
+    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
+    if dev_idx < 0 { return -1; }
+    let driver_id = current_driver_id();
+    if driver_id != 0 {
+        crate::drivers::hotreload::untrack_resource(
+            driver_id,
+            crate::drivers::hotreload::ResourceType::BlockDevice,
+            dev_idx as u32,
+        );
+    }
+    crate::drivers::block::unregister_nem_block_device(dev_idx as usize);
+    0
+}
+
 pub fn build_hst() -> HalServiceTable {
     HalServiceTable {
         inb: hst_inb,
@@ -110,7 +180,7 @@ pub fn build_hst() -> HalServiceTable {
         inl: hst_inl,
         outl: hst_outl,
         push_event: hst_push_event,
-        push_input_byte: hst_push_input,
+        push_input_byte: hst_push_input_byte,
         get_ticks: hst_get_ticks,
         ack_irq: hst_ack_irq,
         log: hst_log,

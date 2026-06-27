@@ -340,15 +340,25 @@ pub fn ob_open_path(
     // object for it on the fly.
     if crate::object::namespace::ob_is_directory(path_str) {
         let dir_id = ob_create_object(ObType::Directory, path_str, 0, 0, None)?;
-        let _ = crate::object::namespace::ob_insert_object(path_str, dir_id);
-        let sd = OB_SECURITY.lock().get(&dir_id).cloned();
+        // Attempt atomic insert; if another thread created the same entry first,
+        // destroy our object and use the existing one.
+        let id = match crate::object::namespace::ob_insert_object(path_str, dir_id) {
+            Ok(_) => dir_id,
+            Err(_) => {
+                let _ = ob_destroy_object(dir_id);
+                match crate::object::namespace::ob_lookup_path(path_str) {
+                    Ok(existing_id) => existing_id,
+                    Err(_) => return Err(ObError::NotFound),
+                }
+            }
+        };
+        let sd = OB_SECURITY.lock().get(&id).cloned();
         if !crate::security::access::se_access_check(token, sd.as_ref(), desired_access) {
-            let _ = ob_destroy_object(dir_id);
+            let _ = ob_destroy_object(id);
             return Err(ObError::AccessDenied);
         }
-        // ob_create_object starts with refcount 1; ob_reference for the handle
-        ob_reference(dir_id)?;
-        return Ok(dir_id);
+        ob_reference(id)?;
+        return Ok(id);
     }
 
     // Attempt VFS resolution for paths under \Global\FileSystem\
@@ -362,16 +372,27 @@ pub fn ob_open_path(
                 let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
                 let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
                 let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, None)?;
-                let _ = crate::object::namespace::ob_insert_object(path_str, obj_id);
-                // Ensure parent directories exist in namespace
+                // Ensure parent directories exist in namespace first
                 if let Some(parent_end) = path_str.rfind('\\') {
                     let parent = &path_str[..parent_end];
                     if !crate::object::namespace::ob_is_directory(parent) {
                         let _ = crate::object::namespace::ob_create_directory(parent);
                     }
                 }
-                ob_reference(obj_id)?;
-                return Ok(obj_id);
+                // Atomic insert; if another thread created the same entry first,
+                // destroy our object and use the existing one.
+                let id = match crate::object::namespace::ob_insert_object(path_str, obj_id) {
+                    Ok(_) => obj_id,
+                    Err(_) => {
+                        let _ = ob_destroy_object(obj_id);
+                        match crate::object::namespace::ob_lookup_path(path_str) {
+                            Ok(existing_id) => existing_id,
+                            Err(_) => return Err(ObError::NotFound),
+                        }
+                    }
+                };
+                ob_reference(id)?;
+                return Ok(id);
             }
         }
     }
@@ -704,6 +725,7 @@ pub fn register_object_tests() {
         test_eq!(crate::object::types::ObSetInfoClass::SetCwd as u32, 8);
         test_eq!(crate::object::types::ObSetInfoClass::SetVolumeLabel as u32, 9);
         test_eq!(crate::object::types::ObSetInfoClass::ProcessPriority as u32, 0);
+        test_eq!(crate::object::types::ObSetInfoClass::SetProcessVt as u32, 17);
     });
 
     // ── OBF-04: Thread ObObject lifecycle ──

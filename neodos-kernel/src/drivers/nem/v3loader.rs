@@ -11,9 +11,7 @@ use crate::nem::{
     R_NEM_64, R_NEM_PC32, R_NEM_32, R_NEM_32S, R_NEM_PLT32,
     NEM_SECT_TEXT, NEM_SECT_RODATA, NEM_SECT_DATA, NEM_SECT_UNDEF,
 };
-use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_MMIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_BLOCK_DEVICE};
 use crate::drivers::driver_runtime;
-use crate::drivers::nem::driver::current_driver_id;
 use crate::drivers::isolation;
 
 // ── Kernel Export Table ──
@@ -40,158 +38,13 @@ pub fn resolve_export(name: &str) -> Option<*const ()> {
     KERNEL_EXPORTS.iter().find(|e| e.name == name).map(|e| e.addr)
 }
 
-/// Check that the current driver has the required capability.
-/// Returns true if the capability is held or no driver context is set (kernel code).
-fn check_cap(required: u64) -> bool {
-    let id = current_driver_id();
-    if id == 0 {
-        return true; // kernel context — always allowed
-    }
-    driver_runtime::check_driver_cap(id, required).is_ok()
-}
-
-// HAL functions exported to NEM drivers
-unsafe extern "C" fn hst_push_input_byte(byte: u8) {
-    if !check_cap(CAP_INPUT) { return; }
-    let _ = crate::input::push_byte(byte);
-    crate::syscall::wake_blocked_readers();
-}
-
-unsafe extern "C" fn hst_log(level: u32, msg: *const u8, len: usize) {
-    if !check_cap(CAP_LOG) { return; }
-    // X4: Validate driver pointer before dereferencing
-    if crate::drivers::nem::driver::current_driver_id() != 0 {
-        if isolation::validate_export_ptr(msg, len, false).is_err() {
-            crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", 
-                crate::drivers::nem::driver::current_driver_id());
-            return;
-        }
-    }
-    let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
-    match level {
-        0 => crate::serial_println!("[DRV] {}", s),
-        1 => crate::serial_println!("[DRV] {}", s),
-        _ => crate::serial_println!("[DRV] {}", s),
-    }
-}
-
-unsafe extern "C" fn hst_get_ticks() -> u64 {
-    if !check_cap(CAP_TIMING) { return 0; }
-    crate::hal::get_ticks()
-}
-
-unsafe extern "C" fn hst_ack_irq(vector: u8) {
-    if !check_cap(CAP_IRQ) { return; }
-    crate::hal::ack_irq(vector);
-}
-
-unsafe extern "C" fn hst_push_event(et: u32, src: u32, dev: u32, d0: u64, d1: u64, fl: u32) -> i64 {
-    if !check_cap(CAP_EVENT_BUS) { return -1; }
-    match crate::eventbus::push_event(et, src, dev, d0, d1, fl) {
-        Ok(id) => id as i64,
-        Err(_) => -1,
-    }
-}
-
-unsafe extern "C" fn hst_inb(port: u16) -> u8 {
-    if !check_cap(CAP_PORTIO) { return 0; }
-    crate::hal::inb(port)
-}
-unsafe extern "C" fn hst_outb(port: u16, val: u8) {
-    if !check_cap(CAP_PORTIO) { return; }
-    crate::hal::outb(port, val)
-}
-unsafe extern "C" fn hst_inw(port: u16) -> u16 {
-    if !check_cap(CAP_PORTIO) { return 0; }
-    crate::hal::inw(port)
-}
-unsafe extern "C" fn hst_outw(port: u16, val: u16) {
-    if !check_cap(CAP_PORTIO) { return; }
-    crate::hal::outw(port, val)
-}
-unsafe extern "C" fn hst_inl(port: u16) -> u32 {
-    if !check_cap(CAP_PORTIO) { return 0; }
-    crate::hal::inl(port)
-}
-unsafe extern "C" fn hst_outl(port: u16, val: u32) {
-    if !check_cap(CAP_PORTIO) { return; }
-    crate::hal::outl(port, val)
-}
-
-/// Register a block device from a NEM driver.
-/// The driver provides device_id (its internal identifier), num_sectors, sector_size,
-/// and read/write callbacks. Returns the kernel device index on success, or -1 on error.
-unsafe extern "C" fn hst_register_block_device(
-    name: *const u8,
-    name_len: u32,
-    device_id: u32,
-    num_sectors: u64,
-    sector_size: u32,
-    read_fn: unsafe extern "C" fn(u32, u64, u8, *mut u8) -> i32,
-    write_fn: unsafe extern "C" fn(u32, u64, u8, *const u8) -> i32,
-) -> i32 {
-    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
-    // X4: Validate name pointer
-    if crate::drivers::nem::driver::current_driver_id() != 0 {
-        if isolation::validate_export_ptr(name, name_len as usize, false).is_err() {
-            crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
-                crate::drivers::nem::driver::current_driver_id());
-            return -1;
-        }
-    }
-    let dev = crate::drivers::block::NemBlockDevice::new(
-        device_id, num_sectors, sector_size, read_fn, write_fn,
-    );
-    let idx = crate::drivers::block::register_nem_block_device(dev);
-    // Track resource ownership for hot reload
-    if idx >= 0 {
-        let driver_id = crate::drivers::nem::driver::current_driver_id();
-        if driver_id != 0 {
-            crate::drivers::hotreload::track_resource(
-                driver_id,
-                crate::drivers::hotreload::ResourceType::BlockDevice,
-                idx as u32,
-            );
-        }
-    }
-    idx
-}
-
-/// Unregister a block device previously registered via hst_register_block_device.
-unsafe extern "C" fn hst_unregister_block_device(dev_idx: i32) -> i32 {
-    if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
-    if dev_idx < 0 { return -1; }
-    let driver_id = crate::drivers::nem::driver::current_driver_id();
-    if driver_id != 0 {
-        crate::drivers::hotreload::untrack_resource(
-            driver_id,
-            crate::drivers::hotreload::ResourceType::BlockDevice,
-            dev_idx as u32,
-        );
-    }
-    crate::drivers::block::unregister_nem_block_device(dev_idx as usize);
-    0
-}
-
-unsafe extern "C" fn hst_ecam_is_active() -> u64 {
-    if crate::hal::pci::ecam_is_active() { 1 } else { 0 }
-}
-
-unsafe extern "C" fn hst_ecam_read_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
-    if !check_cap(CAP_MMIO) { return 0xFFFFFFFF; }
-    if crate::hal::pci::ecam_is_active() {
-        crate::hal::pci::ecam_read_config_dword(bus, dev, func, offset)
-    } else {
-        0xFFFFFFFF
-    }
-}
-
-unsafe extern "C" fn hst_ecam_write_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
-    if !check_cap(CAP_MMIO) { return; }
-    if crate::hal::pci::ecam_is_active() {
-        crate::hal::pci::ecam_write_config_dword(bus, dev, func, offset, value);
-    }
-}
+use crate::drivers::nem::hst::{
+    hst_ack_irq, hst_ecam_is_active, hst_ecam_read_dword, hst_ecam_write_dword,
+    hst_get_ticks, hst_inb, hst_inl, hst_inw,
+    hst_log, hst_outb, hst_outl, hst_outw,
+    hst_push_event, hst_push_input_byte,
+    hst_register_block_device, hst_unregister_block_device,
+};
 
 static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_push_input_byte),

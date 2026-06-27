@@ -148,6 +148,7 @@ pub enum ObSetInfoClass {
     SectionUnmapView = 14,
     FileCreate = 15,
     FileDelete = 16,
+    SetProcessVt = 17,
 }
 
 // ═══════════════════════════════════════════════════════════════════════
