@@ -8,7 +8,7 @@ use core::sync::atomic::Ordering;
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
-           current_handle_entry, set_current_handle, NEED_RESCHED, set_need_resched,
+           current_handle_entry, set_current_handle, set_need_resched,
            copy_handle_entry_for_child, check_legacy_path_access,
            resolve_chdir_target, generate_info_content};
 
@@ -1450,7 +1450,7 @@ pub(super) fn handler_sleep_ex(_regs: super::Registers) -> u64 {
             }
         }
     });
-    NEED_RESCHED.store(true, Ordering::SeqCst);
+    set_need_resched();
     if crate::apc::has_pending_user_apcs() {
         crate::apc::dispatch_one_user_apc();
         return crate::apc::APC_ALERTED;
