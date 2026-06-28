@@ -974,6 +974,11 @@ pub(super) fn handler_writefile(regs: super::Registers) -> u64 {
 pub(super) fn handler_close(regs: super::Registers) -> u64 {
     let fd = regs.rbx as u8;
     let entry = current_handle_entry(fd);
+    if entry.is_pipe_read() {
+        crate::object::pipe::PIPE_MANAGER.dec_read_ref(entry.native_id().unwrap_or(0) as u8);
+    } else if entry.is_pipe_write() {
+        crate::object::pipe::PIPE_MANAGER.dec_write_ref(entry.native_id().unwrap_or(0) as u8);
+    }
     if entry.object_id != 0 {
         let _ = crate::object::ob_close_object(entry.object_id);
     }

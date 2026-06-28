@@ -514,7 +514,7 @@ impl Scheduler {
         }
 
         let tname = alloc::format!("kthread/{}", tid);
-        if let Ok(kid) = object::ob_create_object(ObType::Process, &tname, tid as u64, 0, None) {
+        if let Ok(kid) = object::ob_create_object(ObType::Thread, &tname, tid as u64, 0, None) {
             thread.obj_id = Some(kid);
         }
 
@@ -550,7 +550,7 @@ impl Scheduler {
         let mut thread = Kthread::new_ring3(tid, pid, entry, user_stack);
 
         let tname = alloc::format!("kthread/{}", tid);
-        if let Ok(kid) = object::ob_create_object(ObType::Process, &tname, tid as u64, 0, None) {
+        if let Ok(kid) = object::ob_create_object(ObType::Thread, &tname, tid as u64, 0, None) {
             thread.obj_id = Some(kid);
         }
 
