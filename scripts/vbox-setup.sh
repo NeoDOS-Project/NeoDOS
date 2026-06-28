@@ -66,7 +66,7 @@ VBoxManage modifyvm "$VM_NAME" --uart1 0x3F8 4
 VBoxManage modifyvm "$VM_NAME" --uartmode1 file "$PROJECT_ROOT/vbox_serial.log"
 
 echo "[7/8] Adding AHCI controller..."
-VBoxManage storagectl "$VM_NAME" --name "AHCI" --add ahci --controller AHCI
+VBoxManage storagectl "$VM_NAME" --name "AHCI" --add sata --controller IntelAhci
 
 echo "[8/8] Attaching unified disk image..."
 VBoxManage storageattach "$VM_NAME" --storagectl "AHCI" --port 0 --device 0 --type hdd \
