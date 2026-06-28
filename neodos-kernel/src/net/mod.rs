@@ -42,7 +42,7 @@ pub fn init_networking() {
 
     let nic_count = crate::net::nic::nic_count();
     if nic_count > 0 {
-        let first_ip = Ipv4Addr::new([10, 0, 2, 15]);
+        let first_ip = Ipv4Addr::new([10, 0, 1, 80]);
         crate::net::nic::nic_set_ip(0, first_ip);
         crate::serial_println!("[NET] NIC 0 IP set to {}", first_ip);
     }

@@ -11,7 +11,7 @@ pub trait NetworkInterface: Send + Sync {
     fn set_ip_address(&mut self, ip: Ipv4Addr);
     fn ip_address(&self) -> Ipv4Addr;
     fn subnet_mask(&self) -> Ipv4Addr { Ipv4Addr::new([255, 255, 255, 0]) }
-    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::new([10, 0, 2, 2]) }
+    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::new([10, 0, 1, 1]) }
     fn is_link_up(&self) -> bool { true }
     fn mtu(&self) -> usize { 1500 }
 }
