@@ -955,3 +955,32 @@ pub fn ob_file_delete(fd: u8) -> Result<(), i64> {
     let r = unsafe { ob_syscall_4!(63, fd as u64, 16u64, &dummy as *const u64 as u64, 8u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
+
+/// sys_poll: poll file descriptors for readiness (RAX=59).
+/// `fds` — array of PollFd entries.
+/// `timeout_ms` — 0 = non-blocking, u64::MAX = infinite.
+/// Returns number of ready fds.
+#[repr(C)]
+pub struct PollFd {
+    pub fd: i32,
+    pub events: i16,
+    pub revents: i16,
+}
+
+pub const POLLIN: i16 = 1;
+pub const POLLOUT: i16 = 2;
+pub const POLLERR: i16 = 4;
+pub const POLLHUP: i16 = 8;
+
+pub fn sys_poll(fds: &mut [PollFd], timeout_ms: u64) -> Result<usize, i64> {
+    let pfds_ptr = fds.as_ptr() as u64;
+    let nfds = fds.len() as u64;
+    let r = unsafe { ob_syscall_3!(59, pfds_ptr, nfds, timeout_ms) };
+    if r < 0 { Err(r) } else { Ok(r as usize) }
+}
+
+/// sys_sleep_ex: yield alertable — cede CPU, chequea APCs pendientes (RAX=41).
+pub fn sys_sleep_ex() -> Result<(), i64> {
+    let r = unsafe { ob_syscall_2!(41, 0u64, 0u64) };
+    if r < 0 { Err(r) } else { Ok(()) }
+}

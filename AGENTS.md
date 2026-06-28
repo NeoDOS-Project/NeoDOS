@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.46 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects)
+v0.46.1 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects + bugfixes estabilidad)
 
 ## Architecture Governance
 
@@ -32,7 +32,7 @@ prioridades actuales son:
    - **OB-032 (Documentación de API)** 🔶 PARCIAL
 8. **v0.44.4**: **Fix 3 bugs SMP-unsafe** (WAIT_PID, ISOLATED_REGIONS, NXL_REGISTRY)
 9. **v0.44.5**: **Actualizar documentación** (README, ARCHITECTURE_SOURCE_OF_TRUTH)
-10. **v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)
+10. ~~**v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)~~ **COMPLETADO** — `ob_thread_create/join`, `sys_ob_destroy`, `sys_driver_unload` ya existían; añadidos `sys_poll` (RAX 59) y `sys_sleep_ex` (RAX 41) con `PollFd` struct
 11. **v0.44.7**: **Arreglos arquitectónicos menores + Fase 1 Objectification** (ObType::Thread, InfoClass enums completos, ObError/SyscallError unificado, exports duplicados, TOCTOU race)
 12. ~~**v0.46**: **Fase 2 Objectification** (Timer Object, Semaphore Object, Section Object, Device Tree)~~ **COMPLETADO**
     - ~~**OBF-10 (Timer Object)**~~ COMPLETADO — ob_create(Timer), ob_set_info(TimerStart/TimerCancel), ob_wait(Timer)
@@ -40,8 +40,10 @@ prioridades actuales son:
     - ~~**OBF-12 (Section Object)**~~ COMPLETADO — ob_create(Section), ob_set_info(SectionMapView/SectionUnmapView)
     - ~~**OBF-05 (legacy kobj module removal)**~~ COMPLETADO — `kobj/` eliminado, namespace movido a `object/namespace.rs`, todos los callers migrados a `object::ob_*`
     - **OBF-13 (Device Tree / Registry Key)** 🔶 PENDIENTE
-13. **v0.46.2**: **A5.3 AHCI NCQ** — Native Command Queuing AHCI (IrpTagMap, FPDMA batch, 32 tags, detect+fallback). **COMPLETADO**
-14. **v0.47**: Networking (TCP/IP stack)
+13. **v0.46.1**: **Bugfixes estabilidad OB-046** — lifecycle de procesos via Ob (handler_exit recicla EPROCESS, handler_ob_wait check-and-block atomico, handler_close decrementa pipe refs, threads registrados como ObType::Thread). **COMPLETADO**
+    - ~~**Stress test 300 comandos**~~ (`scripts/stress_300.py`) — PASS 300/300 sin crash
+14. **v0.46.2**: **A5.3 AHCI NCQ** — Native Command Queuing AHCI (IrpTagMap, FPDMA batch, 32 tags, detect+fallback). **COMPLETADO**
+15. **v0.47**: Networking (TCP/IP stack)
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones

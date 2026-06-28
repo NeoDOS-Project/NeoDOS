@@ -24,6 +24,10 @@
 
 ### Fixed
 - **GPF handler** — Añadida detección de `cs=0x8 rip=user` (contexto corrompido en salida de proceso). Si el RIP está en la ventana de usuario (0x400000-0x2400000), se trata como excepción de usuario y se mata el proceso en lugar de panic del kernel. El fix previene el kernel panic cuando el scheduler restaura un CS incorrecto tras `sys_exit`.
+- **OB-046 process lifecycle** — `cleanup_terminated_process(pid)` era llamado en `handler_ob_wait` inmediatamente tras `kwait_block()`, pero `kwait_block` retorna antes del context switch — el hijo (recién creado, Ready en run queue) era destruido antes de ejecutarse. Fix: handler_exit difiere reciclaje del EPROCESS vía work_queue; handler_ob_wait hace check-and-block atómico bajo scheduler lock para evitar race condition.
+- **handler_close pipe ref leak** — `handler_close` no decrementaba `PIPE_MANAGER.dec_read_ref`/`dec_write_ref` para pipe handles, causando leak de buffers al hacer close normal. Fix: añadidos decrementos de ref antes de marcar handle como closed.
+- **Thread ObType::Process → ObType::Thread** — `add_ring3_process` y `add_thread_to_process` registraban kthread como `ObType::Process` en vez de `ObType::Thread`.
+- **Stress test** — `scripts/stress_300.py` añadido: 300 comandos variados sobre NeoShell sin crash.
 
 ### Changed
 - **userbin/mem/** → **userbin/neomem/** — El directorio del binario se renombró. `mem.nxe` reemplazado por `neomem.nxe`.
