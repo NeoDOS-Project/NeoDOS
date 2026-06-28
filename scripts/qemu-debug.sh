@@ -68,6 +68,8 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   $DRIVE_OPTS \
+  -netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 \
+  -device e1000,netdev=net0 \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 

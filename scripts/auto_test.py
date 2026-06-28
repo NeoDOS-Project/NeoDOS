@@ -93,6 +93,11 @@ def run_test():
         print("[+] Storage: ATA/IDE Mode")
 
     cmd.extend([
+        "-netdev", "user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1",
+        "-device", "e1000,netdev=net0",
+    ])
+
+    cmd.extend([
         "-m", "512M",
         "-serial", "file:/tmp/neodos_serial.log",
     ])
