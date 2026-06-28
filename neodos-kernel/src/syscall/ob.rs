@@ -195,7 +195,8 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
         14 => crate::object::ObType::Semaphore,
         15 => crate::object::ObType::Timer,
         16 => crate::object::ObType::Thread,
-        17 => crate::object::ObType::Section,
+         17 => crate::object::ObType::Section,
+         18 => crate::object::ObType::Socket,
         _ => return err_to_u64(SyscallError::Inval),
     };
 
@@ -663,6 +664,62 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 Some(fd) => fd as u64,
                 None => {
                     let _ = crate::object::ob_close_object(ob_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Socket => {
+            if !crate::net::net_is_initialized() {
+                return err_to_u64(SyscallError::NoSys);
+            }
+            let socket_type_val = attrs & 0xFF;
+            let sock_type = match socket_type_val {
+                1 => crate::net::types::SocketType::Tcp,
+                2 => crate::net::types::SocketType::Udp,
+                3 => crate::net::types::SocketType::Raw,
+                _ => return err_to_u64(SyscallError::Inval),
+            };
+            let port = ((attrs >> 8) & 0xFFFF) as u16;
+
+            let socket_id = match crate::net::socket::socket_alloc(sock_type) {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::NoMem),
+            };
+
+            if sock_type == crate::net::types::SocketType::Tcp {
+                if let Some(tcp_id) = crate::net::tcp::tcp_alloc_connection() {
+                    crate::net::socket::socket_set_tcp_conn(socket_id, tcp_id);
+                    crate::net::tcp::tcp_bind(tcp_id, crate::net::types::SocketAddrV4::new(
+                        crate::net::types::Ipv4Addr::unspecified(), port,
+                    ));
+                }
+            }
+
+            let ob_id = match crate::object::ob_create_object_path(
+                &path_str, obj_type, socket_id, None,
+            ) {
+                Ok(id) => id,
+                Err(e) => {
+                    crate::net::socket::socket_free(socket_id);
+                    return err_to_u64(ob_err_to_syscall(e));
+                }
+            };
+
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
+                    crate::net::socket::socket_free(socket_id);
                     err_to_u64(SyscallError::NoMem)
                 }
             }
@@ -1255,6 +1312,144 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
+        _ if info_class == ObInfoClass::SocketInfo as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+            let socket = match mgr.get_socket(socket_id) {
+                Some(s) => s,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            #[repr(C)]
+            struct NetSocketInfo {
+                socket_type: u32,
+                direction: u32,
+                local_ip: [u8; 4],
+                local_port: u16,
+                remote_ip: [u8; 4],
+                remote_port: u16,
+            }
+            let info = NetSocketInfo {
+                socket_type: socket.socket_type as u32,
+                direction: socket.direction as u32,
+                local_ip: socket.local.ip.0,
+                local_port: socket.local.port.to_be(),
+                remote_ip: socket.remote.ip.0,
+                remote_port: socket.remote.port.to_be(),
+            };
+            drop(mgr);
+            let sz = core::mem::size_of::<NetSocketInfo>();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &info as *const NetSocketInfo as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::SocketAddr as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+            let socket = match mgr.get_socket(socket_id) {
+                Some(s) => s,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            #[repr(C)]
+            struct NetSocketAddr {
+                local_ip: [u8; 4],
+                local_port: u16,
+                remote_ip: [u8; 4],
+                remote_port: u16,
+            }
+            let addr = NetSocketAddr {
+                local_ip: socket.local.ip.0,
+                local_port: socket.local.port.to_be(),
+                remote_ip: socket.remote.ip.0,
+                remote_port: socket.remote.port.to_be(),
+            };
+            drop(mgr);
+            let sz = core::mem::size_of::<NetSocketAddr>();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &addr as *const NetSocketAddr as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::TcpStatus as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let mgr = crate::net::socket::SOCKET_MANAGER.lock();
+            let socket = match mgr.get_socket(socket_id) {
+                Some(s) => s,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            let tcp_state = if socket.socket_type == crate::net::types::SocketType::Tcp {
+                if let Some(tcp_id) = socket.tcp_conn_id {
+                    crate::net::tcp::tcp_get_state(tcp_id).map(|s| s as u32).unwrap_or(0)
+                } else { 0 }
+            } else { 0 };
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            unsafe { core::ptr::write_volatile(buf_ptr as *mut u32, tcp_state); }
+            4u64
+        }
+        _ if info_class == ObInfoClass::NicInfo as u32 => {
+            #[repr(C)]
+            struct NicInfoRaw {
+                nic_id: u32,
+                mac: [u8; 6],
+                ip: [u8; 4],
+                link_up: u8,
+            }
+            let entry_size = core::mem::size_of::<NicInfoRaw>();
+            let max_entries = buf_size / entry_size;
+            if max_entries == 0 { return 0u64; }
+            let count = crate::net::nic::nic_count().min(max_entries);
+            for i in 0..count {
+                let nic_id = i as u32;
+                let mac = crate::net::nic::NIC_REGISTRY.lock().get(nic_id).map(|n| n.mac_address().0).unwrap_or([0; 6]);
+                let ip = crate::net::nic::nic_get_ip(nic_id).unwrap_or(crate::net::types::Ipv4Addr::unspecified());
+                let raw = NicInfoRaw {
+                    nic_id,
+                    mac,
+                    ip: ip.0,
+                    link_up: 1,
+                };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const NicInfoRaw as *const u8,
+                        (buf_ptr as *mut u8).add(i * entry_size),
+                        entry_size,
+                    );
+                }
+            }
+            (count * entry_size) as u64
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -1726,6 +1921,106 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                     ep.handle_table[fd as usize].close();
                 }
             });
+            0
+        }
+        _ if info_class == ObSetInfoClass::SocketConnect as u32 => {
+            if buf_size < 6 { return err_to_u64(SyscallError::Inval); }
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let ip_bytes = unsafe { core::ptr::read_volatile(buf_ptr as *const [u8; 4]) };
+            let port = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const u16) };
+            let remote = crate::net::types::SocketAddrV4::new(
+                crate::net::types::Ipv4Addr(ip_bytes),
+                u16::from_be(port),
+            );
+            if crate::net::socket::socket_connect(socket_id, remote) {
+                if let Some(nic_id) = crate::net::nic::nic_default_id() {
+                    let mac = crate::net::nic::NIC_REGISTRY.lock().next_hop_mac(remote.ip);
+                    if mac.is_some() {
+                        crate::net::socket::socket_set_connected(socket_id);
+                        let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
+                        mgr.wake_socket_connect_waiters(socket_id);
+                        drop(mgr);
+                    }
+                }
+                0
+            } else {
+                err_to_u64(SyscallError::Inval)
+            }
+        }
+        _ if info_class == ObSetInfoClass::SocketBind as u32 => {
+            if buf_size < 6 { return err_to_u64(SyscallError::Inval); }
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let ip_bytes = unsafe { core::ptr::read_volatile(buf_ptr as *const [u8; 4]) };
+            let port = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const u16) };
+            let local = crate::net::types::SocketAddrV4::new(
+                crate::net::types::Ipv4Addr(ip_bytes),
+                u16::from_be(port),
+            );
+            if crate::net::socket::socket_bind(socket_id, local) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
+        _ if info_class == ObSetInfoClass::SocketListen as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            if crate::net::socket::socket_listen(socket_id) { 0 }
+            else { err_to_u64(SyscallError::Inval) }
+        }
+        _ if info_class == ObSetInfoClass::SocketSend as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            let mut temp = Vec::with_capacity(buf_size);
+            temp.resize(buf_size, 0u8);
+            unsafe {
+                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp.as_mut_ptr(), buf_size);
+            }
+            match crate::net::socket::socket_send(socket_id, &temp) {
+                Ok(n) => n as u64,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        _ if info_class == ObSetInfoClass::SocketClose as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            crate::net::socket::socket_close(socket_id);
+            crate::net::socket::socket_free(socket_id);
+            let _ = crate::object::namespace::ob_remove_object(obj.name_str());
             0
         }
         _ => err_to_u64(SyscallError::Inval),

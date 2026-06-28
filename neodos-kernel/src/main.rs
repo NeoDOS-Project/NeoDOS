@@ -52,6 +52,7 @@ mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
 mod object;
 mod kwait;
+mod net;
 mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
@@ -447,6 +448,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     nxl::init_nxl_region();
     drivers::hotreload::init_hot_reload();
     nxl::load_nxl();
+
+    // ============================================
+    // PHASE 3.88: Networking subsystem initialization
+    // Probes PCI for e1000 NIC, initializes ARP cache,
+    // creates \Device\Tcp and \Device\Udp namespace objects.
+    // ============================================
+    println!("[+] Initializing networking subsystem...");
+    net::init_networking();
 
     // ============================================
     // PHASE 3.9: Validate syscall ABI + ABI freeze

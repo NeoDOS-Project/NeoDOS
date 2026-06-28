@@ -45,6 +45,9 @@ use crate::drivers::nem::hst::{
     hst_push_event, hst_push_input_byte,
     hst_register_block_device, hst_unregister_block_device,
 };
+use crate::drivers::nem::net_bridge::{
+    hst_register_network_device, hst_unregister_network_device,
+};
 
 static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_push_input_byte),
@@ -63,6 +66,8 @@ static KERNEL_EXPORTS: &[KernelExport] = &[
     export_entry!(hst_ecam_write_dword),
     export_entry!(hst_register_block_device),
     export_entry!(hst_unregister_block_device),
+    export_entry!(hst_register_network_device),
+    export_entry!(hst_unregister_network_device),
 ];
 
 // ── Memory allocation (isolated region) ──

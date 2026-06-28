@@ -25,6 +25,7 @@ pub enum ObType {
     Timer = 15,
     Thread = 16,
     Section = 17,
+    Socket = 18,
 }
 
 impl ObType {
@@ -48,6 +49,7 @@ impl ObType {
             ObType::Timer => "TIMER",
             ObType::Thread => "THREAD",
             ObType::Section => "SECTION",
+            ObType::Socket => "SOCKET",
         }
     }
 }
@@ -125,6 +127,10 @@ pub enum ObInfoClass {
     KeyboardLayout = 14,
     ReadContent = 15,
     VolumeLabel = 16,
+    SocketInfo = 17,
+    SocketAddr = 18,
+    TcpStatus = 19,
+    NicInfo = 20,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -149,6 +155,11 @@ pub enum ObSetInfoClass {
     FileCreate = 15,
     FileDelete = 16,
     SetProcessVt = 17,
+    SocketConnect = 18,
+    SocketBind = 19,
+    SocketListen = 20,
+    SocketSend = 21,
+    SocketClose = 22,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

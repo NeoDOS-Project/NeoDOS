@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.47.0 — 2026-06-28
+
+### Added
+- **B3.1 D9 Network I/O** — `\Device\Tcp` y `\Device\Udp` como objetos de dispositivo en el namespace NT5. `ObType::Socket=18` con creación vía `ob_create(Socket)` y operaciones vía `ob_set_info` (SocketConnect/Bind/Listen/Send/Close) y `ob_query_info` (SocketInfo/SocketAddr/TcpStatus/NicInfo).
+- **B3.2 E3 TCP/IP stack** — Stack completo en kernel: Ethernet (14B header, FCS), ARP (64-entry cache, 300s timeout, static entries, request/reply), IPv4 (20B header, checksum, TTL), ICMP (echo request/reply con checksum), UDP (pseudo-header checksum), TCP (11-state machine, conn lifecycle, send/recv buffers).
+- **e1000 NIC driver (kernel stub)** — Intel e1000 (82540EM/82543GC/82545EM/82574L) con detección PCI, MMIO BAR0, ring buffers RX(32)/TX(16), DMA polling, init en Phase 3.88.
+- **e1000.nem (NEM v3 standalone driver)** — `drivers/e1000/` —  SYSTEM driver con PCI probe, MMIO init, registro via `hst_register_network_device`, callbacks send/poll para integración con kernel NIC registry. Compilación en `build.sh` y empaquetado en `create_neodos_image.py`.
+- **hst_register_network_device/hst_unregister_network_device** — Nuevas HST exports para que drivers NEM registren NICs en el kernel via callbacks C ABI. Incluye bridge `NemNetworkDevice` que implementa `NetworkInterface`.
+- **KWait network reasons** — `WaitReason::SocketRead/SocketConnect/SocketAccept` con magics `0x0009_*` para bloqueo en operaciones de red.
+- **17 kernel tests** — MAC/IPv4 addr, ARP cache, TCP lifecycle, ICMP echo reply, socket manager, UDP header, NIC registry.
+- **EVENT_NETWORK_PACKET=17** — Nuevo tipo de evento para notificar paquetes de red recibidos.
+
+### Changed
+- **ObType::Socket=18** añadido al Object Manager.
+- **ObInfoClass** — SocketInfo(17), SocketAddr(18), TcpStatus(19), NicInfo(20).
+- **ObSetInfoClass** — SocketConnect(18), SocketBind(19), SocketListen(20), SocketSend(21), SocketClose(22).
+- **Kernel version bump** — v0.46.2 → v0.47.0.
+- **Hotreload ResourceType** — añadido NetworkDevice=1.
+- **AGENTS.md** — v0.47 con documentación completa del subsistema de red.
+
 ## v0.46.2 — 2026-06-27
 
 ### Added

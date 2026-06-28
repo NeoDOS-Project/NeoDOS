@@ -784,6 +784,7 @@ fn obj_type_to_auto_path(obj_type: ObType, name: &str) -> alloc::string::String 
         ObType::Symlink => alloc::format!("\\Ob\\Symlink\\{}", name),
         ObType::MountPoint => alloc::format!("\\Global\\Mount\\{}", name),
         ObType::Directory => alloc::format!("\\Ob\\Dir\\{}", name),
+        ObType::Socket => alloc::format!("\\Ob\\Socket\\{}", name),
         ObType::Unknown => alloc::format!("\\Ob\\Unknown\\{}", name),
         _ => alloc::format!("\\Ob\\Unknown\\{}", name),
     }

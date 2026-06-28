@@ -302,6 +302,7 @@ Happy hacking!
             11: ("pci.nem",      read_nem("SYSTEM", "pci.nem")),
             12: ("ata.nem",     read_nem("SYSTEM", "ata.nem")),
             13: ("ahci.nem",     read_nem("SYSTEM", "ahci.nem")),
+            14: ("e1000.nem",    read_nem("SYSTEM", "e1000.nem")),
             16: ("ps2mouse.nem", read_nem("BOOT", "ps2mouse.nem")),
         }
 
@@ -496,7 +497,8 @@ Happy hacking!
         image[offset+1024:offset+1280]= create_dir_entry(11, 1, "pci.nem")
         image[offset+1280:offset+1536]= create_dir_entry(12, 1, "ata.nem")
         image[offset+1536:offset+1792]= create_dir_entry(13, 1, "ahci.nem")
-        image[offset+1792:offset+2048]= create_dir_entry(16, 1, "ps2mouse.nem")
+        image[offset+1792:offset+2048]= create_dir_entry(14, 1, "e1000.nem")
+        image[offset+2048:offset+2304]= create_dir_entry(16, 1, "ps2mouse.nem")
 
         # NEM driver data blocks
         for inum, (fname, fdata) in nem_data.items():

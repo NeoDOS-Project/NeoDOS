@@ -19,6 +19,7 @@ const MAGIC_EVENT_BASE: u32   = 0x0005_0000;
 const MAGIC_TIMER_BASE: u32   = 0x0006_0000;
 const MAGIC_APC_BASE: u32     = 0x0007_0000;
 const MAGIC_SEMAPHORE_BASE: u32 = 0x0008_0000;
+const MAGIC_SOCKET_BASE: u32 = 0x0009_0000;
 
 /// WaitReason encodes what a thread is waiting for.
 /// Variants MUST NOT be reordered or removed (ABI freeze v0.42).
@@ -41,6 +42,12 @@ pub enum WaitReason {
     Alertable,
     /// Waiting on a semaphore (sem_id)
     Semaphore { sem_id: u32 },
+    /// Waiting for socket data to be readable (socket_id)
+    SocketRead { socket_id: u32 },
+    /// Waiting for a socket connection to complete (socket_id)
+    SocketConnect { socket_id: u32 },
+    /// Waiting to accept a new connection (socket_id)
+    SocketAccept { socket_id: u32 },
 }
 
 impl WaitReason {
@@ -56,6 +63,9 @@ impl WaitReason {
             WaitReason::Timer { timer_id }      => MAGIC_TIMER_BASE | (timer_id & 0xFFFF),
             WaitReason::Alertable              => MAGIC_APC_BASE,
             WaitReason::Semaphore { sem_id }   => MAGIC_SEMAPHORE_BASE | (sem_id & 0xFFFF),
+            WaitReason::SocketRead { socket_id }   => MAGIC_SOCKET_BASE | 0x1000 | (socket_id & 0xFFF),
+            WaitReason::SocketConnect { socket_id } => MAGIC_SOCKET_BASE | 0x2000 | (socket_id & 0xFFF),
+            WaitReason::SocketAccept { socket_id }  => MAGIC_SOCKET_BASE | 0x3000 | (socket_id & 0xFFF),
         }
     }
 
@@ -71,6 +81,16 @@ impl WaitReason {
             MAGIC_TIMER_BASE  => WaitReason::Timer { timer_id: id },
             MAGIC_APC_BASE    => WaitReason::Alertable,
             MAGIC_SEMAPHORE_BASE => WaitReason::Semaphore { sem_id: id },
+            MAGIC_SOCKET_BASE => {
+                let sub_type = id & 0xF000;
+                let instance = id & 0xFFF;
+                match sub_type {
+                    0x1000 => WaitReason::SocketRead { socket_id: instance },
+                    0x2000 => WaitReason::SocketConnect { socket_id: instance },
+                    0x3000 => WaitReason::SocketAccept { socket_id: instance },
+                    _ => return None,
+                }
+            }
             _ => return None,
         })
     }

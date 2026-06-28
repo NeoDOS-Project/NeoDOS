@@ -2542,6 +2542,9 @@ pub fn register_tests() {
 
     // A5.3: AHCI NCQ tests
     register_ncq_tests();
+
+    // B3.1/B3.2: Networking tests
+    crate::net::register_net_tests();
 }
 
 

@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.46.1 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects + bugfixes estabilidad)
+v0.47.0 (Networking TCP/IP — B3.1/B3.2 completado: e1000 NIC, TCP/IP stack, \Device\Tcp/\Device\Udp, ICMP ping, 17 tests)
 
 ## Architecture Governance
 
@@ -43,7 +43,9 @@ prioridades actuales son:
 13. **v0.46.1**: **Bugfixes estabilidad OB-046** — lifecycle de procesos via Ob (handler_exit recicla EPROCESS, handler_ob_wait check-and-block atomico, handler_close decrementa pipe refs, threads registrados como ObType::Thread). **COMPLETADO**
     - ~~**Stress test 300 comandos**~~ (`scripts/stress_300.py`) — PASS 300/300 sin crash
 14. **v0.46.2**: **A5.3 AHCI NCQ** — Native Command Queuing AHCI (IrpTagMap, FPDMA batch, 32 tags, detect+fallback). **COMPLETADO**
-15. **v0.47**: Networking (TCP/IP stack)
+15. ~~**v0.47**: Networking (TCP/IP stack)~~ **COMPLETADO**
+    - ~~**B3.1 D9 (Network I/O): \Device\Tcp, \Device\Udp, Socket ObType**~~ COMPLETADO en v0.47
+    - ~~**B3.2 E3 (TCP/IP stack): Ethernet, ARP, IPv4, ICMP, UDP, TCP, e1000 NIC**~~ COMPLETADO en v0.47
 
 **Regla de oro:** No añadir features nuevas antes de completar la fase de
 maduración (v0.40–v0.45). Cada feature nueva se apoya en abstracciones
@@ -1836,3 +1838,108 @@ for AI-level queries.
   lsp_search_symbol, lsp_get_syscalls, etc.).
 - The existing `neodos-mcp` tools (kernel, VFS, modules, ABI, LSP) complement
   the LSP with filesystem, build artifact, and architectural analysis.
+
+---
+
+## Networking Subsystem (B3.1/B3.2)
+
+`src/net/` implements the TCP/IP networking stack for NeoDOS. Architecture follows
+the NT model: the kernel exposes `\Device\Tcp` and `\Device\Udp` as device objects
+in the Ob namespace. Sockets are ObType::Socket (18) objects with operations via
+ob_set_info/ob_query_info.
+
+### Module Structure
+
+| Module | File | Description |
+|--------|------|-------------|
+| Types | `src/net/types.rs` | Core types: MacAddr, Ipv4Addr, SocketAddrV4, TcpState, SocketType, SocketDirection |
+| Ethernet | `src/net/ethernet.rs` | Ethernet frame header (14 bytes), FCS computation |
+| ARP | `src/net/arp.rs` | ARP protocol (64-entry cache, 300s timeout, static entries, request/reply) |
+| IPv4 | `src/net/ipv4.rs` | IPv4 header (20 bytes), header checksum, packet building |
+| ICMP | `src/net/icmp.rs` | ICMP echo request/reply (ping), checksum computation |
+| UDP | `src/net/udp.rs` | UDP header (8 bytes), pseudo-header checksum |
+| TCP | `src/net/tcp.rs` | TCP state machine (11 states), connection lifecycle, send/recv buffers |
+| Socket | `src/net/socket.rs` | Socket manager, bind/connect/listen/send/recv/close, KWait wake |
+| NIC | `src/net/nic.rs` | NetworkInterface trait, NicRegistry (4 slots), IP/next-hop management |
+| e1000 | `src/net/e1000.rs` | Intel e1000 NIC driver (82540EM, 82543GC, 82545EM, 82574L) |
+
+### ObType::Socket (18)
+
+Added to the Object Manager. Created via `ob_create(ObType::Socket, path)` with attrs:
+- bits 0-7: socket_type (1=TCP, 2=UDP, 3=Raw)
+- bits 8-23: port number
+
+### ObInfoClass additions
+
+| Value | Class | Description |
+|-------|-------|-------------|
+| 17 | SocketInfo | Socket type, direction, local/remote addr |
+| 18 | SocketAddr | Local and remote IP:port |
+| 19 | TcpStatus | TCP state (0=Closed, 4=Established, etc.) |
+| 20 | NicInfo | NIC list (id, MAC, IP, link status) |
+
+### ObSetInfoClass additions
+
+| Value | Class | Description |
+|-------|-------|-------------|
+| 18 | SocketConnect | Connect to remote (buf=ip[4]+port[2] big-endian) |
+| 19 | SocketBind | Bind to local address |
+| 20 | SocketListen | Start listening |
+| 21 | SocketSend | Send data payload |
+| 22 | SocketClose | Close socket |
+
+### KWait integration
+
+Network wait reasons added to KWait (ABI extended):
+- `SocketRead { socket_id }` — blocked on socket data
+- `SocketConnect { socket_id }` — waiting for connection completion
+- `SocketAccept { socket_id }` — waiting for incoming connection
+
+### NIC Initialization
+
+At Phase 3.88 in the boot sequence, `net::init_networking()`:
+1. Creates `\Device\Tcp` and `\Device\Udp` namespace entries
+2. Probes PCI for e1000 NIC (bus scan for 8086:100E/1004/100F/10D3)
+3. Initializes found NIC (MAC, ring buffers, RX/TX descriptors, MMIO)
+4. Sets default IP (10.0.2.15) on first NIC
+5. ARP cache starts accepting entries
+
+### Network Packet Flow
+
+```
+NIC (e1000)
+  → poll_packet() → 2048 byte buffer
+    → ethernet::EthernetHeader parse
+      → ARP (0x0806): cache insert (reply) or respond (request)
+      → IPv4 (0x0800): Ipv4Header parse
+        → ICMP (proto 1): echo request → build reply → send
+        → TCP (proto 6): future
+        → UDP (proto 17): future
+```
+
+### Tests (17)
+
+| Test | Description |
+|------|-------------|
+| `net_mac_addr_basics` | MAC address format, broadcast detection |
+| `net_ipv4_addr_basics` | IPv4 addr format, u32 conversion, network prefix |
+| `net_ipv4_checksum` | Verify computed checksum = 0 for valid header |
+| `net_arp_cache_insert_lookup` | ARP cache insert + lookup |
+| `net_arp_cache_eviction` | Max 64 entries enforced |
+| `net_arp_cache_static_survives_eviction` | Static entries survive LRU eviction |
+| `net_tcp_state_machine_simple` | TCP state enum, is_connected() |
+| `net_tcp_connection_lifecycle` | TCP alloc→bind→listen→close |
+| `net_tcp_connect_and_close` | TCP connect to remote, close |
+| `net_icmp_echo_reply_build` | Build ICMP echo reply, verify fields |
+| `net_socket_manager_lifecycle` | Socket alloc/socket_count/free |
+| `net_socket_bind_connect` | Socket local/remote addr, direction |
+| `net_udp_header_checksum` | UDP header src/dst port, length |
+| `net_socket_addr_fmt` | SocketAddrV4 Display format |
+| `net_ipv4_classification` | Loopback, multicast, link-local detection |
+| `net_nic_registry_empty` | Empty NIC registry state |
+
+### ObSetInfoClass / ObInfoClass additions in AGENTS.md tables
+
+For `src/object/types.rs`:
+- ObInfoClass: SocketInfo(17), SocketAddr(18), TcpStatus(19), NicInfo(20)
+- ObSetInfoClass: SocketConnect(18), SocketBind(19), SocketListen(20), SocketSend(21), SocketClose(22)

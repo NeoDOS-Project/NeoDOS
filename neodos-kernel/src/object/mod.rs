@@ -239,6 +239,7 @@ pub fn init_object_manager() {
         ("Event", ObType::Event, 8),
         ("MemoryRegion", ObType::MemoryRegion, 9),
         ("Section", ObType::Section, 10),
+        ("Socket", ObType::Socket, 11),
     ] {
         let _ = table.create(*typ, name, *native_id, 0, None);
     }

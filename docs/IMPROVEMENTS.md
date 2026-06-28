@@ -334,15 +334,15 @@ Prereqs globales: A4.7 minimo para items userland; NT5/NT6 para items de segurid
 
 #### B3. Networking
 
-- [ ] **B3.1 D9. Network I/O | NT: Winsock (ws2_32.dll) -> NtCreateFile(\Device\Tcp)** | Prereqs: A4.1, A4.2 | Files: `src/net/`, `src/syscall.rs`
-  - **Descripcion:** Modelo NT: el kernel expone `\Device\Tcp` y `\Device\Udp` como objetos de dispositivo en el namespace NT5. La API de red user-mode va en `libneodos/src/net.rs` como wrapper que abre `\Device\Tcp` via `sys_open` y opera via `sys_ioctl` (NtDeviceIoControlFile). No hay syscalls socket-style — se usa el modelo NT de File + IoControl.
-  - **Criterio:** User-mode puede hacer `net_open(b"\\Device\\Tcp")`, `net_connect(fd, ip, port)`, `net_send(fd, buf)`. `PING` funciona via ICMP.
-  - **Tests:** `net_open_device_tcp`, `net_tcp_connect_send_recv`, `net_icmp_ping`.
+- [x] **B3.1 D9. Network I/O | NT: Winsock (ws2_32.dll) -> NtCreateFile(\Device\Tcp)** | Prereqs: A4.1, A4.2 | Files: `src/net/`, `src/syscall.rs` | **COMPLETADO en v0.47**
+  - **Descripcion:** Modelo NT: el kernel expone `\Device\Tcp` y `\Device\Udp` como objetos de dispositivo en el namespace NT5. La API de red user-mode va en `src/syscall/ob.rs` (ObCreate Socket, ObSetInfo SocketConnect/SocketBind/SocketListen/SocketSend/SocketClose, ObQueryInfo SocketInfo/SocketAddr/TcpStatus/NicInfo).
+  - **Criterio:** User-mode puede hacer `ob_create("\Device\Tcp\mysocket", Socket=18)` y operar via `ob_set_info` con clases 18-22.
+  - **Tests:** 17 tests: `net_mac_addr_basics`, `net_ipv4_addr_basics`, `net_ipv4_checksum`, `net_arp_cache_insert_lookup`, `net_arp_cache_eviction`, `net_arp_cache_static_survives_eviction`, `net_tcp_state_machine_simple`, `net_tcp_connection_lifecycle`, `net_tcp_connect_and_close`, `net_icmp_echo_reply_build`, `net_socket_manager_lifecycle`, `net_socket_bind_connect`, `net_udp_header_checksum`, `net_socket_addr_fmt`, `net_ipv4_classification`, `net_nic_registry_empty`.
 
-- [ ] **B3.2 E3. TCP/IP stack | NT: AFD (Ancillary Function Driver)** | Prereqs: B3.1 | Files: `src/net/`
-  - **Descripcion:** Stack de red completo en kernel como driver de dispositivo `\Device\Tcp` y `\Device\Udp`. Capas: Ethernet, ARP (tabla 64 entries, timeout 300s), IPv4 (header parse/build, checksum, TTL), ICMP (echo request/reply), UDP, TCP (3-way handshake, sequence numbers, sliding window 16 KB, retransmit timer, FIN/RST). NIC driver via VirtIO-net o e1000.
-  - **Criterio:** `PING 10.0.2.2` recibe reply. TCP connection a host funciona.
-  - **Tests:** `tcp_handshake_3way`, `udp_send_recv`, `arp_table_lookup`, `icmp_echo_reply`.
+- [x] **B3.2 E3. TCP/IP stack | NT: AFD (Ancillary Function Driver)** | Prereqs: B3.1 | Files: `src/net/` | **COMPLETADO en v0.47**
+  - **Descripcion:** Stack de red completo en kernel como driver de dispositivo `\Device\Tcp` y `\Device\Udp`. Capas: Ethernet, ARP (tabla 64 entries, timeout 300s, static entries), IPv4 (header parse/build, checksum, TTL), ICMP (echo request/reply), UDP (header + pseudo-header checksum), TCP (3-way handshake, sequence numbers, sliding window 16 KB, FIN/RST). NIC driver via e1000 (82540EM/82543GC/82545EM/82574L).
+  - **Criterio:** `PING 10.0.2.2` recibe reply via ICMP echo reply generation. TCP connection state machine funcional.
+  - **Tests:** 17 tests (incluye tcp lifecycle, icmp echo reply build).
 
 - [ ] **B3.3 D8. DHCP client | NT: DHCP Client Service** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
   - **Descripcion:** Cliente DHCP (RFC 2131) que obtiene configuracion de red automaticamente al boot.

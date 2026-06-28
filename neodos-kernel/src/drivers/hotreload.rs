@@ -34,6 +34,7 @@ const MAX_HOTRELOAD_ENTRIES: usize = 16;
 #[repr(u8)]
 pub enum ResourceType {
     BlockDevice = 0,
+    NetworkDevice = 1,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -272,6 +273,10 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
             ResourceType::BlockDevice => {
                 crate::drivers::block::unregister_nem_block_device(res.resource_id as usize);
                 crate::serial_println!("[HOTRELOAD] Unregistered block device idx={} for driver {}", res.resource_id, id);
+            }
+            ResourceType::NetworkDevice => {
+                crate::net::nic::nic_unregister(res.resource_id);
+                crate::serial_println!("[HOTRELOAD] Unregistered network device id={} for driver {}", res.resource_id, id);
             }
         }
     }
