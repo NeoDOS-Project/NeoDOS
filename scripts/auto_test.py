@@ -92,10 +92,21 @@ def run_test():
         ])
         print("[+] Storage: ATA/IDE Mode")
 
-    cmd.extend([
-        "-netdev", "user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1",
-        "-device", "e1000,netdev=net0",
-    ])
+    import subprocess
+    has_tap = os.path.exists("/dev/net/tun")
+    if has_tap:
+        try:
+            r = subprocess.run(["ip", "link", "show", "tap0"], capture_output=True, text=True)
+            has_tap = r.returncode == 0
+        except:
+            has_tap = False
+
+    if has_tap:
+        print("[+] Network: TAP (tap0, 10.0.1.0/24)")
+        cmd.extend(["-netdev", "tap,id=net0,ifname=tap0,script=no", "-device", "e1000,netdev=net0"])
+    else:
+        print("[+] Network: user-mode (SLiRP)")
+        cmd.extend(["-netdev", "user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1", "-device", "e1000,netdev=net0"])
 
     cmd.extend([
         "-m", "512M",

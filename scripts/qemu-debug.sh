@@ -60,7 +60,19 @@ else
 fi
 echo ""
 
+# ── Network: TAP (host reachable) o user-mode (SLiRP) ──
+NET_OPTS=""
+if [ -c /dev/net/tun ] && ip link show tap0 >/dev/null 2>&1; then
+    echo "[+] Network: TAP (tap0, 10.0.1.0/24)"
+    NET_OPTS="-netdev tap,id=net0,ifname=tap0,script=no -device e1000,netdev=net0"
+else
+    echo "[+] Network: user-mode (SLiRP), host→guest ICMP NO funciona"
+    echo "[!] Para TAP: sudo ip tuntap add tap0 mode tap user $(whoami) && sudo ip addr add 10.0.1.1/24 dev tap0 && sudo ip link set tap0 up"
+    NET_OPTS="-netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 -device e1000,netdev=net0"
+fi
+
 qemu-system-x86_64 \
+  $NET_OPTS \
   -machine q35,accel=$ACCEL \
   -no-reboot \
   -monitor telnet:127.0.0.1:4444,server,nowait \
@@ -68,8 +80,6 @@ qemu-system-x86_64 \
   -drive if=pflash,format=raw,readonly=on,file=$OVMF_CODE \
   -drive if=pflash,format=raw,file=$OVMF_VARS \
   $DRIVE_OPTS \
-  -netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 \
-  -device e1000,netdev=net0 \
   -m 512M \
   -serial stdio | tee "$PROJECT_ROOT/qemu_output.log"
 
