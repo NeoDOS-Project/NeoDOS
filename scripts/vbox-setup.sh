@@ -46,6 +46,7 @@ if VBoxManage showvminfo "$VM_NAME" &>/dev/null; then
 fi
 
 echo "[1/8] Converting disk_image.img to VDI..."
+rm -f "$DISK_VDI"
 VBoxManage convertfromraw "$DISK_IMAGE" "$DISK_VDI"
 
 echo "[2/8] Creating VM..."
