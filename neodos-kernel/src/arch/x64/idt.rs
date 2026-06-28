@@ -141,13 +141,7 @@ core::arch::global_asm!(
     "pop r14",
     "pop r15",
     "pop rbp",
-    // Validate CS before iretq: if CS != 0x1B (Ring 3 user code),
-    // force it to 0x1B to prevent kernel-mode-at-user-address GPF.
-    // After pops, RSP points to [RIP, CS, RFLAGS, RSP, SS].
-    "cmp qword ptr [rsp + 8], 0x1B",
-    "je 6f",
-    "mov qword ptr [rsp + 8], 0x1B",
-    "6:",
+
     "iretq"
 );
 
