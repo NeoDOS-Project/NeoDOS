@@ -39,6 +39,7 @@ impl NetworkInterface for NemNetworkDevice {
     }
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn hst_register_network_device(
     name: *const u8, name_len: u32,
     mac_addr: *const u8,
@@ -82,6 +83,7 @@ pub unsafe extern "C" fn hst_register_network_device(
     }
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn hst_unregister_network_device(nic_id: i32) -> i32 {
     if nic_id < 0 { return -1; }
     let driver_id = crate::drivers::nem::driver::current_driver_id();

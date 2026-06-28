@@ -42,28 +42,37 @@ fn hex_nibble(v: u8) -> u8 {
 }
 
 fn write_hex_byte(buf: &mut [u8], pos: &mut usize, b: u8) {
-    buf[*pos] = hex_nibble(b >> 4); *pos += 1;
-    buf[*pos] = hex_nibble(b & 0xF); *pos += 1;
+    unsafe {
+        *buf.get_unchecked_mut(*pos) = hex_nibble(b >> 4); *pos += 1;
+        *buf.get_unchecked_mut(*pos) = hex_nibble(b & 0xF); *pos += 1;
+    }
 }
 
 fn write_hex32(buf: &mut [u8], pos: &mut usize, v: u32) {
-    for i in 0..8 {
-        buf[*pos] = hex_nibble(((v >> (28 - i * 4)) & 0xF) as u8);
-        *pos += 1;
+    unsafe {
+        for i in 0..8 {
+            *buf.get_unchecked_mut(*pos) = hex_nibble(((v >> (28 - i * 4)) & 0xF) as u8);
+            *pos += 1;
+        }
     }
 }
 
 fn write_str(buf: &mut [u8], pos: &mut usize, s: &str) {
     let bytes = s.as_bytes();
-    for &b in bytes {
-        if *pos < buf.len() { buf[*pos] = b; *pos += 1; }
+    unsafe {
+        for &b in bytes {
+            *buf.get_unchecked_mut(*pos) = b;
+            *pos += 1;
+        }
     }
 }
 
 fn write_u8(buf: &mut [u8], pos: &mut usize, v: u8) {
-    if v >= 100 { buf[*pos] = b'0' + (v / 100); *pos += 1; }
-    if v >= 10 { buf[*pos] = b'0' + ((v / 10) % 10); *pos += 1; }
-    buf[*pos] = b'0' + (v % 10); *pos += 1;
+    unsafe {
+        if v >= 100 { *buf.get_unchecked_mut(*pos) = b'0' + (v / 100); *pos += 1; }
+        if v >= 10 { *buf.get_unchecked_mut(*pos) = b'0' + ((v / 10) % 10); *pos += 1; }
+        *buf.get_unchecked_mut(*pos) = b'0' + (v % 10); *pos += 1;
+    }
 }
 
 // ── NeoEvent (ABI-stable, matches kernel's eventbus::Event) ──
