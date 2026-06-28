@@ -4,7 +4,7 @@
 
 use alloc::string::ToString;
 use alloc::vec::Vec;
-use crate::scheduler;
+use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use super::{err_to_u64, ob_err_to_syscall, SyscallError, is_user_ptr_valid, copy_user_string,
            current_handle_entry,
@@ -168,11 +168,6 @@ pub(super) fn handler_ob_open(regs: super::Registers) -> u64 {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
-    // Serialize: ensure all previous memory ops are visible (prevents QEMU TCG TB coalescing)
-    // On real hw, lfence+rdtsc serves as a serialization point.
-    // On QEMU TCG, rdtsc forces a translation-block exit that allows pending timer
-    // interrupts to be delivered BEFORE we enter the long-running Process creation path.
-    let _tsc = unsafe { crate::hal::raw::raw_read_tsc() };
     let path_ptr = regs.rbx;
     let obj_type_val = regs.rcx as u32;
     let fds_out = regs.rdx;
@@ -1919,7 +1914,34 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
         }
         _ => return err_to_u64(SyscallError::NoSys),
     };
-
+    // OB-046 fix: cleanup_terminated_process is now handled by handler_exit
+    // via work queue. We only clean up here if the child died before we block.
+    // The check-and-block must be atomic to avoid a race where the child exits
+    // between the check and the block (leaving the parent blocked forever).
+    if obj.obj_type == crate::object::ObType::Process {
+        let pid = obj.native_id as u32;
+        if pid > 0 {
+            crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                let already_dead = lock.find_eprocess(pid).map_or(true, |ep| ep.thread_count == 0);
+                if already_dead {
+                    drop(lock);
+                    crate::scheduler::cleanup_terminated_process(pid);
+                } else {
+                    // Atomically check-and-block: we hold the lock so the child
+                    // cannot exit (modify thread_count) between check and block.
+                    if let Some(k) = lock.current_kthread_mut() {
+                        let magic = reason.encode_magic();
+                        k.state = ThreadState::Blocked { waiting_for: magic };
+                        k.waiting_for = Some(magic);
+                    }
+                    crate::syscall::set_need_resched();
+                }
+            });
+            return 0;
+        }
+    }
     crate::kwait::kwait_block(reason);
     0
 }

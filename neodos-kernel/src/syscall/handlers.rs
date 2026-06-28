@@ -355,6 +355,28 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                     }
                 }
             }
+            // OB-046 fix: defer EPROCESS slot recycling to work queue.
+            // Previously done in handler_ob_wait (which ran before child
+            // context switch, destroying child prematurely) or inline here
+            // (which removes current thread from kthreads while it's still
+            // running, causing use-after-free in syscall return path).
+            // Work queue items fire at safe points (syscall return / idle).
+            let do_cleanup = pid > 0 && {
+                let eproc_ref = scheduler.current_eprocess();
+                eproc_ref.map_or(false, |ep| ep.thread_count == 0)
+            };
+            if do_cleanup {
+                // Heap-allocate the pid so it outlives this stack frame
+                let pid_box = alloc::boxed::Box::new(pid);
+                let pid_ptr = alloc::boxed::Box::into_raw(pid_box) as *mut u8;
+                crate::work_queue::WORK_QUEUE.push_high(
+                    |data| {
+                        let pid_box = unsafe { alloc::boxed::Box::from_raw(data as *mut u32) };
+                        crate::scheduler::cleanup_terminated_process(*pid_box);
+                    },
+                    pid_ptr,
+                );
+            }
         }
         serial_println!("[EXIT] done (after if tid > 0 block)");
     });
