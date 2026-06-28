@@ -18,8 +18,13 @@ if [ ! -f "$DISK_IMAGE" ]; then
     exit 1
 fi
 
-# Refresh mode: re-convert VDI without recreating the VM
-if [ "${1:-}" = "--refresh" ]; then
+# Refresh mode: re-build disk image + re-convert VDI without recreating VM
+if [ "${1:-}" = "--refresh" ] || [ "${1:-}" = "--build" ]; then
+    if [ "${1:-}" = "--build" ]; then
+        echo "[*] Build mode: rebuilding kernel + disk image..."
+        (cd "$PROJECT_ROOT" && bash scripts/build.sh --neodos-image)
+        echo "[*] Build complete."
+    fi
     echo "[*] Refresh mode: re-converting VDI from raw image..."
     rm -f "$DISK_VDI"
     VBoxManage convertfromraw "$DISK_IMAGE" "$DISK_VDI"
@@ -66,6 +71,34 @@ echo "[8/8] Attaching unified disk image..."
 VBoxManage storageattach "$VM_NAME" --storagectl "AHCI" --port 0 --device 0 --type hdd \
     --medium "$DISK_VDI"
 
+# ── Bridged Networking ──
+echo ""
+echo "[+] Configuring bridged networking..."
+
+# Detect the first active physical interface
+BRIDGE_IFACE=""
+for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | grep -v tap | grep -v docker | grep -v vbox); do
+    state=$(cat "/sys/class/net/$iface/operstate" 2>/dev/null || echo "unknown")
+    if [ "$state" = "up" ]; then
+        BRIDGE_IFACE="$iface"
+        break
+    fi
+done
+
+if [ -z "$BRIDGE_IFACE" ]; then
+    # Fallback: pick first non-loopback interface
+    BRIDGE_IFACE=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | grep -v tap | grep -v docker | head -1)
+fi
+
+echo "    Host interface: $BRIDGE_IFACE"
+
+VBoxManage modifyvm "$VM_NAME" \
+    --nic1 bridged \
+    --bridgeadapter1 "$BRIDGE_IFACE" \
+    --nictype1 82540EM \
+    --macaddress1 525400123456 \
+    --cableconnected1 on
+
 echo ""
 echo "[+] VM '$VM_NAME' created successfully!"
 echo ""
@@ -73,4 +106,5 @@ echo "=========================================="
 echo "  Start:    VBoxManage startvm \"$VM_NAME\""
 echo "  Serial:   tail -f $PROJECT_ROOT/vbox_serial.log"
 echo "  VM dir:   ~/VirtualBox VMs/$VM_NAME/"
+echo "  Network:  bridged ($BRIDGE_IFACE)"
 echo "=========================================="
