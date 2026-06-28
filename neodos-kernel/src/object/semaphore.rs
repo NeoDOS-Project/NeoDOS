@@ -88,7 +88,7 @@ impl SemaphoreManager {
     }
 
     pub fn is_used(&self, sem_id: u32) -> bool {
-        self.semaphores.get(sem_id as usize).map_or(false, |s| s.used)
+        self.semaphores.get(sem_id as usize).is_some_and(|s| s.used)
     }
 
     pub fn get_count(&self, sem_id: u32) -> i32 {

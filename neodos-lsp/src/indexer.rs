@@ -156,7 +156,7 @@ impl Indexer {
     // ─── PARSING ────────────────────────────────────────────────────────────
 
     /// Parse a single `.rs` file: extract all symbols and NeoDOS items.
-    pub fn parse_file(path: &PathBuf, content: &str) -> ParsedFile {
+    pub fn parse_file(path: &std::path::Path, content: &str) -> ParsedFile {
         let mut symbols: Vec<database::Symbol> = Vec::new();
         let references: Vec<database::Reference> = Vec::new();
         let mut neodos_items: Vec<database::NeodosItem> = Vec::new();
@@ -193,7 +193,7 @@ impl Indexer {
             }
             // Multi-line attribute (skip).
             if trimmed.starts_with("#[") {
-                pending_attrs.push(trimmed[2..].to_string());
+                pending_attrs.push(trimmed.strip_prefix("#[").unwrap().to_string());
                 continue;
             }
             if trimmed.ends_with(']') && !pending_attrs.is_empty() {
@@ -204,7 +204,7 @@ impl Indexer {
             }
 
             let i = i as u32;
-            let pos_start = Position { line: i, character: col as u32 };
+            let pos_start = Position { line: i, character: col };
             let pos_end = Position { line: i, character: (line.len()) as u32 };
 
             // ── mod declaration ──
@@ -283,7 +283,7 @@ impl Indexer {
                         sym.neodos_kind = Some(database::NeodosKind::BootPhase);
                     }
 
-                    let ndk = sym.neodos_kind.clone();
+                    let ndk = sym.neodos_kind;
                     symbols.push(sym);
 
                     // Register as NeodosItem for special handling.
@@ -484,9 +484,7 @@ impl Indexer {
         let kw_pos = trimmed.find(keyword)?;
         let after_kw = &trimmed[kw_pos + keyword.len()..];
         let name = after_kw
-            .split(|c: char| c.is_whitespace() || c == '<' || c == '(' || c == ';' || c == '{' || c == '!')
-            .filter(|s| !s.is_empty())
-            .next()
+            .split(|c: char| c.is_whitespace() || c == '<' || c == '(' || c == ';' || c == '{' || c == '!').find(|s| !s.is_empty())
             .unwrap_or("")
             .trim();
         if name.is_empty() || name.contains("//") {
@@ -534,8 +532,7 @@ impl Indexer {
         let mut sig = line.to_string();
         // If the function signature spans multiple lines, collect until '{'.
         if !sig.contains('{') {
-            for j in (line_idx + 1)..lines.len().min(line_idx + 10) {
-                let l = lines[j];
+            for l in lines.iter().take(lines.len().min(line_idx + 10)).skip(line_idx + 1) {
                 sig.push_str(l);
                 if l.contains('{') {
                     break;
@@ -552,7 +549,7 @@ impl Indexer {
     fn make_sym(
         name: &str,
         kind: SymbolKind,
-        path: &PathBuf,
+        path: &std::path::Path,
         start: Position,
         end: Position,
         doc: &mut Option<String>,
@@ -565,7 +562,7 @@ impl Indexer {
             name: name.to_string(),
             kind,
             neodos_kind: None,
-            file: path.clone(),
+            file: path.to_path_buf(),
             range: Range { start, end },
             selection_range: Range { start, end },
             parent: None,
@@ -648,8 +645,7 @@ impl Indexer {
 
     fn parse_command_entry(_trimmed: &str, lines: &[&str], line_idx: usize) -> Option<NeodosItem> {
         // Look for `name: "CMDNAME"` pattern in CommandEntry construction.
-        for j in line_idx..lines.len().min(line_idx + 5) {
-            let l = lines[j];
+        for l in lines.iter().take(lines.len().min(line_idx + 5)).skip(line_idx) {
             if let Some(pos) = l.find("name: \"") {
                 let rest = &l[pos + 7..];
                 if let Some(end) = rest.find('"') {
@@ -767,7 +763,6 @@ mod tests {
         assert_eq!(p2.neodos_items.len(), 1, "should detect #[syscall(42)] attribute");
     }
 
-    #[test]
     #[test]
     fn test_cap_constants() {
         let p = index_code("pub const CAP_IRQ: u64 = 1 << 0;\npub const CAP_DMA: u64 = 1 << 1;\nconst CAP_MMIO: u64 = 1 << 2;");

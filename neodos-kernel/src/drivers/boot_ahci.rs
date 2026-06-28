@@ -566,11 +566,10 @@ impl BootAhci {
             if (ci & 1) == 0 {
                 break;
             }
-            if poll_count % 10_000 == 0 {
-                if crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 1000 {
+            if poll_count.is_multiple_of(10_000)
+                && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 1000 {
                     cmd_timed_out = true;
                     break;
-                }
             }
             core::hint::spin_loop();
         }
@@ -695,12 +694,11 @@ impl BootAhci {
                 if (ci & ci_mask) == 0 {
                     break;
                 }
-                if poll_count % 50_000 == 0 {
-                    if crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 2000 {
+                if poll_count.is_multiple_of(50_000)
+                    && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 2000 {
                         cmd_timed_out = true;
                         break;
                     }
-                }
                 core::hint::spin_loop();
             }
             crate::boot_benchmark::ahci_cmd_polled(poll_count);
@@ -756,8 +754,7 @@ impl BootAhci {
         let mut tag_for_irp: [u8; NCQ_MAX_TAGS] = [0xFF; NCQ_MAX_TAGS];
         let mut valid = 0usize;
 
-        for i in 0..batch_size {
-            let irp_id = irp_ids[i];
+        for &irp_id in irp_ids.iter().take(batch_size) {
             let params = match irp::irp_get_params(irp_id) {
                 Some(p) => p,
                 None => continue,
@@ -782,8 +779,7 @@ impl BootAhci {
         let completed = self.ncq_batch_xfer(&cmds[..valid]);
 
         // Complete IRPs based on completion results
-        for i in 0..valid {
-            let tag = tag_for_irp[i];
+        for (i, &tag) in tag_for_irp.iter().enumerate().take(valid) {
             if let Some(irp_id) = self.tag_map.free(tag) {
                 if i < completed {
                     irp::irp_complete_result(irp_id, Ok(()));

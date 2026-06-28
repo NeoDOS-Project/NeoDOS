@@ -84,7 +84,7 @@ impl ArpCache {
 
     pub fn tick(&mut self) {
         self.tick_count = self.tick_count.wrapping_add(1);
-        if self.tick_count % 10 == 0 {
+        if self.tick_count.is_multiple_of(10) {
             self.evict_expired();
         }
     }

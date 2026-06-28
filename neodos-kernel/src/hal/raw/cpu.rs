@@ -114,7 +114,7 @@ pub unsafe fn raw_invpcid(descriptor: &InvpcidDescriptor, ty: u64) {
         "invpcid {0:r}, [{1}]",
         in(reg) ty,
         in(reg) descriptor,
-        options(nostack, nomem),
+        options(nostack),
     );
 }
 
@@ -147,12 +147,12 @@ pub unsafe fn raw_read_rflags() -> u64 {
 
 #[inline]
 pub unsafe fn raw_lgdt(gdt_ptr: &super::GdtDescriptor) {
-    asm!("lgdt [{}]", in(reg) gdt_ptr, options(nostack, nomem));
+    asm!("lgdt [{}]", in(reg) gdt_ptr, options(nostack));
 }
 
 #[inline]
 pub unsafe fn raw_lidt(idt_ptr: &super::IdtDescriptor) {
-    asm!("lidt [{}]", in(reg) idt_ptr, options(nostack, nomem));
+    asm!("lidt [{}]", in(reg) idt_ptr, options(nostack));
 }
 
 #[inline]

@@ -1,5 +1,14 @@
 #![no_std]
 #![no_main]
+#![allow(clippy::missing_safety_doc)]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 use core::arch::asm;
 use core::sync::atomic::AtomicU32;
@@ -80,7 +89,7 @@ fn entry_index(logical: u16) -> usize {
         if HIST.count < HISTORY_MAX as u16 {
             logical as usize
         } else {
-            ((HIST.head as u16 + 1 + logical) % HISTORY_MAX as u16) as usize
+            ((HIST.head + 1 + logical) % HISTORY_MAX as u16) as usize
         }
     }
 }
@@ -123,7 +132,7 @@ fn trim_input(s: &[u8]) -> &[u8] {
 // ── History API ────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn history_add(text: *const u8) {
+pub unsafe extern "C" fn history_add(text: *const u8) {
     let len = core::cmp::min(cstr_len(text, HISTORY_LINE_MAX - 1), HISTORY_LINE_MAX - 1);
     if len == 0 { return; }
     unsafe {
@@ -225,7 +234,7 @@ fn find_word_start(buf: &[u8], pos: usize) -> usize {
 }
 
 #[no_mangle]
-pub extern "C" fn console_readline(prompt: *const u8, output: *mut u8, max_out: i32) -> i32 {
+pub unsafe extern "C" fn console_readline(prompt: *const u8, output: *mut u8, max_out: i32) -> i32 {
     let plen = core::cmp::min(cstr_len(prompt, 128), 128);
     let prompt_slice = unsafe { core::slice::from_raw_parts(prompt, plen) };
     let maxlen = if max_out < 1 { 1 } else { max_out as usize - 1 };
@@ -263,13 +272,11 @@ pub extern "C" fn console_readline(prompt: *const u8, output: *mut u8, max_out: 
                 }
                 return len as i32;
             }
-            0x08 | 0x7F => {
-                if pos > 0 && len > 0 {
-                    for i in pos..len { buf[i - 1] = buf[i]; }
-                    pos -= 1;
-                    len -= 1;
-                    clear_and_rewrite(prompt_slice, &buf[..len]);
-                }
+            0x08 | 0x7F if pos > 0 && len > 0 => {
+                for i in pos..len { buf[i - 1] = buf[i]; }
+                pos -= 1;
+                len -= 1;
+                clear_and_rewrite(prompt_slice, &buf[..len]);
             }
             0x01 => {
                 unsafe {
@@ -365,15 +372,13 @@ pub extern "C" fn console_readline(prompt: *const u8, output: *mut u8, max_out: 
                     if n2 == b'A' as i32 || n2 == b'B' as i32 { continue; }
                 }
             }
-            c if c >= 0x20 && c <= 0x7E => {
-                if len < maxlen {
-                    let cb = c as u8;
-                    for i in (pos..len).rev() { buf[i + 1] = buf[i]; }
-                    buf[pos] = cb;
-                    pos += 1;
-                    len += 1;
-                    clear_and_rewrite(prompt_slice, &buf[..len]);
-                }
+            c if (0x20..=0x7E).contains(&c) && len < maxlen => {
+                let cb = c as u8;
+                for i in (pos..len).rev() { buf[i + 1] = buf[i]; }
+                buf[pos] = cb;
+                pos += 1;
+                len += 1;
+                clear_and_rewrite(prompt_slice, &buf[..len]);
             }
             _ => {}
         }
@@ -383,13 +388,13 @@ pub extern "C" fn console_readline(prompt: *const u8, output: *mut u8, max_out: 
 // ── Output API ─────────────────────────────────
 
 #[no_mangle]
-pub extern "C" fn console_write(text: *const u8, len: i32) -> i32 {
+pub unsafe extern "C" fn console_write(text: *const u8, len: i32) -> i32 {
     if len <= 0 { return 0; }
     unsafe { sys_write(1, text, len as usize) as i32 }
 }
 
 #[no_mangle]
-pub extern "C" fn console_write_line(text: *const u8, len: i32) -> i32 {
+pub unsafe extern "C" fn console_write_line(text: *const u8, len: i32) -> i32 {
     if len > 0 { unsafe { sys_write(1, text, len as usize); } }
     write_str(b"\r\n");
     0
@@ -490,7 +495,7 @@ fn format_bar(current: u64, total: u64, buf: &mut [u8]) -> usize {
     if pos < buf.len() { buf[pos] = b' '; pos += 1; }
     let mut pct_buf = [0u8; 4];
     let pct_len = u64_to_str(pct, &mut pct_buf);
-    if pos + pct_len + 1 <= buf.len() {
+    if pos + pct_len < buf.len() {
         buf[pos..pos+pct_len].copy_from_slice(&pct_buf[..pct_len]);
         pos += pct_len; buf[pos] = b'%'; pos += 1;
     }
@@ -502,16 +507,16 @@ fn progress_render() {
     let mut count = 0;
     {
         let bars = bars_ref();
-        for i in 0..MAX_BARS {
-            if bars[i].active && bars[i].id > 0 { indices[count] = i; count += 1; }
+        for (i, bar) in bars.iter().enumerate() {
+            if bar.active && bar.id > 0 { indices[count] = i; count += 1; }
         }
     }
     let mut new_rows = 0usize;
     {
         let bars = bars_ref();
-        for i in 0..count {
+        for &idx in indices[..count].iter() {
             new_rows += 2;
-            if bars[indices[i]].msg_len > 0 { new_rows += 1; }
+            if bars[idx].msg_len > 0 { new_rows += 1; }
         }
     }
     let prev = unsafe { PREV_PROGRESS_ROWS };
@@ -523,8 +528,8 @@ fn progress_render() {
     }
     if count == 0 { unsafe { PREV_PROGRESS_ROWS = 0; } return; }
     let bars = bars_ref();
-    for i in 0..count {
-        let bar = &bars[indices[i]];
+    for &idx in indices[..count].iter() {
+        let bar = &bars[idx];
         write_str(b"\r\x1b[K");
         write_str(&bar.title[..bar.title_len as usize]);
         write_str(b"\r\n");
@@ -543,11 +548,11 @@ fn progress_render() {
 }
 
 #[no_mangle]
-pub extern "C" fn progress_create(title: *const u8, total: u64) -> i32 {
+pub unsafe extern "C" fn progress_create(title: *const u8, total: u64) -> i32 {
     let id = {
         let bars = bars_mut();
         let mut slot = None;
-        for i in 0..MAX_BARS { if !bars[i].active { slot = Some(i); break; } }
+        for (i, bar) in bars.iter().enumerate() { if !bar.active { slot = Some(i); break; } }
         let idx = match slot { Some(i) => i, None => return -1 };
         let id = NEXT_BAR_ID.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as i32;
         let bar = &mut bars[idx];
@@ -569,7 +574,7 @@ pub extern "C" fn progress_update(id: i32, current: u64) {
 }
 
 #[no_mangle]
-pub extern "C" fn progress_set_message(id: i32, text: *const u8) {
+pub unsafe extern "C" fn progress_set_message(id: i32, text: *const u8) {
     for bar in bars_mut().iter_mut() {
         if bar.active && bar.id == id {
             bar.msg_len = {
@@ -594,24 +599,24 @@ pub extern "C" fn progress_finish(id: i32) {
 #[repr(C)]
 pub struct ConsoleAbiTable {
     pub version: u32,
-    pub readline: extern "C" fn(*const u8, *mut u8, i32) -> i32,
+    pub readline: unsafe extern "C" fn(*const u8, *mut u8, i32) -> i32,
     pub read_byte: extern "C" fn() -> i32,
-    pub write: extern "C" fn(*const u8, i32) -> i32,
-    pub write_line: extern "C" fn(*const u8, i32) -> i32,
+    pub write: unsafe extern "C" fn(*const u8, i32) -> i32,
+    pub write_line: unsafe extern "C" fn(*const u8, i32) -> i32,
     pub set_color: extern "C" fn(u8, u8),
     pub reset_color: extern "C" fn(),
     pub clear_screen: extern "C" fn(),
     pub cursor_home: extern "C" fn(),
-    pub history_add: extern "C" fn(*const u8),
+    pub history_add: unsafe extern "C" fn(*const u8),
     pub history_prev: extern "C" fn() -> *const u8,
     pub history_next: extern "C" fn() -> *const u8,
     pub history_reset: extern "C" fn(),
     pub history_get_count: extern "C" fn() -> i32,
     pub history_get_entry: extern "C" fn(i32) -> *const u8,
     pub completion_register: extern "C" fn(Option<CompletionFn>),
-    pub progress_create: extern "C" fn(*const u8, u64) -> i32,
+    pub progress_create: unsafe extern "C" fn(*const u8, u64) -> i32,
     pub progress_update: extern "C" fn(i32, u64),
-    pub progress_set_message: extern "C" fn(i32, *const u8),
+    pub progress_set_message: unsafe extern "C" fn(i32, *const u8),
     pub progress_finish: extern "C" fn(i32),
     _reserved: [u64; 8],
 }
@@ -628,17 +633,17 @@ pub static CONSOLE_EXPORT_TABLE: ConsoleAbiTable = ConsoleAbiTable {
     reset_color: console_reset_color,
     clear_screen: console_clear_screen,
     cursor_home: console_cursor_home,
-    history_add: history_add,
-    history_prev: history_prev,
-    history_next: history_next,
-    history_reset: history_reset,
-    history_get_count: history_get_count,
-    history_get_entry: history_get_entry,
-    completion_register: completion_register,
-    progress_create: progress_create,
-    progress_update: progress_update,
-    progress_set_message: progress_set_message,
-    progress_finish: progress_finish,
+    history_add,
+    history_prev,
+    history_next,
+    history_reset,
+    history_get_count,
+    history_get_entry,
+    completion_register,
+    progress_create,
+    progress_update,
+    progress_set_message,
+    progress_finish,
     _reserved: [0; 8],
 };
 

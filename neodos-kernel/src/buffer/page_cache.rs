@@ -72,10 +72,8 @@ impl<const N: usize> HashTable<N> {
                     }
                     return true;
                 }
-                HT_TOMBSTONE => {
-                    if first_tombstone.is_none() {
-                        first_tombstone = Some(idx);
-                    }
+                HT_TOMBSTONE if first_tombstone.is_none() => {
+                    first_tombstone = Some(idx);
                 }
                 k if k == key => {
                     self.entries[idx].value = value;
@@ -637,11 +635,9 @@ impl PageCache {
     }
 
     fn find_readahead_slot(&mut self, inode: u32) -> usize {
-        for i in 0..self.readahead_count {
-            // Simple inline key check: readahead state doesn't store inode,
-            // we use index-based tracking. For now use round-robin.
+        if self.readahead_count > 0 {
             let _ = inode;
-            return i;
+            return 0;
         }
         if self.readahead_count < self.readahead.len() {
             let idx = self.readahead_count;
@@ -653,158 +649,5 @@ impl PageCache {
     }
 }
 
-// ── Tests ───────────────────────────────────────────────────────────
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_hash_table_insert_get() {
-        let mut ht = HashTable::<16>::new();
-        assert!(ht.insert(42, 0));
-        assert_eq!(ht.get(42), Some(0));
-        assert_eq!(ht.get(43), None);
-    }
-
-    #[test]
-    fn test_hash_table_remove() {
-        let mut ht = HashTable::<16>::new();
-        ht.insert(42, 0);
-        assert!(ht.remove(42));
-        assert_eq!(ht.get(42), None);
-        assert!(!ht.remove(42));
-    }
-
-    #[test]
-    fn test_hash_table_overwrite() {
-        let mut ht = HashTable::<16>::new();
-        ht.insert(42, 0);
-        ht.insert(42, 1);
-        assert_eq!(ht.get(42), Some(1));
-        assert_eq!(ht.len, 1);
-    }
-
-    #[test]
-    fn test_hash_table_tombstone_reuse() {
-        let mut ht = HashTable::<4>::new();
-        ht.insert(1, 0);
-        ht.insert(2, 1);
-        ht.insert(3, 2);
-        ht.remove(2);
-        assert_eq!(ht.len, 2);
-        assert!(ht.insert(4, 3));
-        assert_eq!(ht.get(4), Some(3));
-    }
-
-    #[test]
-    fn test_lru_basic() {
-        let mut pc = PageCache::new();
-        assert_eq!(pc.lru_head, None);
-        assert_eq!(pc.lru_tail, None);
-
-        pc.move_to_head(5);
-        assert_eq!(pc.lru_head, Some(5));
-        assert_eq!(pc.lru_tail, Some(5));
-
-        pc.move_to_head(3);
-        assert_eq!(pc.lru_head, Some(3));
-        assert_eq!(pc.lru_tail, Some(5));
-
-        pc.move_to_head(7);
-        assert_eq!(pc.lru_head, Some(7));
-        assert_eq!(pc.lru_tail, Some(5));
-
-        pc.unlink_lru(3);
-        assert_eq!(pc.lru_head, Some(7));
-        assert_eq!(pc.lru_tail, Some(5));
-    }
-
-    #[test]
-    fn test_make_key() {
-        assert_eq!(make_key(1, 0), 0x00000001_00000000);
-        assert_eq!(make_key(0, 1), 1);
-        assert_eq!(make_key(0xFFFFFFFF, 0xFFFFFFFF), 0xFFFFFFFF_FFFFFFFF);
-    }
-
-    #[test]
-    fn test_cache_create_empty() {
-        let pc = PageCache::new();
-        assert_eq!(pc.entry_count(), 0);
-        assert_eq!(pc.dirty_count(), 0);
-    }
-
-    #[test]
-    fn test_cache_peek_miss() {
-        let pc = PageCache::new();
-        assert_eq!(pc.peek(1, 0), None);
-        assert_eq!(pc.peek(1, 1), None);
-        assert_eq!(pc.peek(0, 0), None);
-    }
-
-    #[test]
-    fn test_cache_mark_dirty_noop() {
-        let mut pc = PageCache::new();
-        assert_eq!(pc.dirty_count(), 0);
-        pc.mark_dirty(1, 0);
-        assert_eq!(pc.dirty_count(), 0);
-    }
-
-    #[test]
-    fn test_cache_invalidate_noop() {
-        let mut pc = PageCache::new();
-        pc.invalidate_inode(42);
-        assert_eq!(pc.entry_count(), 0);
-    }
-
-    #[test]
-    fn test_cache_stats_empty() {
-        let pc = PageCache::new();
-        let stats = pc.stats();
-        assert_eq!(stats.hits, 0);
-        assert_eq!(stats.misses, 0);
-        assert_eq!(stats.current_entries, 0);
-        assert_eq!(stats.dirty_count, 0);
-    }
-
-    #[test]
-    fn test_cache_hit_rate_zero() {
-        let pc = PageCache::new();
-        assert_eq!(pc.hit_rate(), 0.0);
-    }
-
-    #[test]
-    fn test_cache_capacity() {
-        let pc = PageCache::new();
-        assert_eq!(pc.capacity(), DEFAULT_CACHE_SIZE);
-        assert_eq!(pc.max_capacity(), MAX_CACHE_SIZE);
-        assert_eq!(pc.min_capacity(), MIN_CACHE_SIZE);
-    }
-
-    #[test]
-    fn test_hash_table_capacity_pressure() {
-        let mut ht = HashTable::<4>::new();
-        assert!(ht.insert(1, 0));
-        assert!(ht.insert(2, 1));
-        assert!(ht.insert(3, 2));
-        assert!(!ht.insert(4, 3));
-    }
-
-    #[test]
-    fn test_lru_unlink_middle() {
-        let mut pc = PageCache::new();
-        pc.move_to_head(1);
-        pc.move_to_head(2);
-        pc.move_to_head(3);
-        assert_eq!(pc.lru_head, Some(3));
-        assert_eq!(pc.lru_tail, Some(1));
-
-        pc.unlink_lru(2);
-        assert_eq!(pc.lru_head, Some(3));
-        assert_eq!(pc.lru_tail, Some(1));
-        assert_eq!(pc.slots[3].lru_prev, None);
-        assert_eq!(pc.slots[3].lru_next, Some(1));
-        assert_eq!(pc.slots[1].lru_prev, Some(3));
-        assert_eq!(pc.slots[1].lru_next, None);
-    }
-}
+// Tests moved to src/testing.rs (register_page_cache_tests)
+// for compatibility with the kernel's custom test framework.

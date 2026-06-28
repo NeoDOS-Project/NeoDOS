@@ -136,7 +136,7 @@ impl ObObjectTable {
     /// the initial creation reference plus any extra references).
     pub fn destroy(&mut self, id: ObId) -> Result<(), ObError> {
         let idx = match self.slots.iter().position(|s| {
-            s.as_ref().map_or(false, |o| o.id == id)
+            s.as_ref().is_some_and(|o| o.id == id)
         }) {
             Some(i) => i,
             None => return Err(ObError::NotFound),
@@ -164,7 +164,7 @@ impl ObObjectTable {
     /// Used by ob_close_object to call the callback outside the lock.
     pub fn extract_destroy_info(&mut self, id: ObId) -> Result<(Option<&'static dyn ObOperations>, u64), ObError> {
         let idx = match self.slots.iter().position(|s| {
-            s.as_ref().map_or(false, |o| o.id == id)
+            s.as_ref().is_some_and(|o| o.id == id)
         }) {
             Some(i) => i,
             None => return Err(ObError::NotFound),
@@ -181,7 +181,7 @@ impl ObObjectTable {
     /// Finalize destroy — clear the slot after the callback has been called.
     pub fn finalize_destroy(&mut self, id: ObId) {
         if let Some(idx) = self.slots.iter().position(|s| {
-            s.as_ref().map_or(false, |o| o.id == id)
+            s.as_ref().is_some_and(|o| o.id == id)
         }) {
             self.slots[idx] = None;
             self.count -= 1;
@@ -467,7 +467,7 @@ pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObE
         name[len] = 0;
         ObEnumEntry {
             id: e.obj_id,
-            obj_type: e.obj_type as u32,
+            obj_type: e.obj_type,
             name,
             mode: 0,
             _pad: [0u8; 2],

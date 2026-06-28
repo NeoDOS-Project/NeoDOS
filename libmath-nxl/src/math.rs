@@ -5,8 +5,8 @@ use core::f64;
 
 // ── Constants ──
 
-pub const PI: f64 = 3.14159265358979323846;
-pub const LN2: f64 = 0.69314718055994530942;
+pub const PI: f64 = core::f64::consts::PI;
+pub const LN2: f64 = core::f64::consts::LN_2;
 
 // ── Integer arithmetic ──
 
@@ -43,7 +43,7 @@ pub fn pow(base: i64, exp: u32) -> i64 {
 pub fn sqrt_int(x: u64) -> u64 {
     if x == 0 { return 0; }
     let mut guess = x;
-    let mut result = (x + 1) / 2;
+    let mut result = x.div_ceil(2);
     while result < guess {
         guess = result;
         result = (x / guess + guess) / 2;

@@ -118,7 +118,7 @@ pub fn init_teb_paging() {
     // Initialize the TEB structure
     let teb_ptr = TEB_VADDR as *mut Teb;
     unsafe {
-        core::ptr::write_bytes(phys as *mut u8, 0, 4096);
+        core::ptr::write_bytes(phys, 0, 4096);
         // Write initial TEB
         core::ptr::write(teb_ptr, Teb::new());
         // Set self-pointer

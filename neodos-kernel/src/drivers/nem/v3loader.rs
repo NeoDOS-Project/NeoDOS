@@ -31,7 +31,7 @@ macro_rules! export_entry {
 }
 
 pub fn kernel_exports() -> &'static [KernelExport] {
-    &KERNEL_EXPORTS
+    KERNEL_EXPORTS
 }
 
 pub fn resolve_export(name: &str) -> Option<*const ()> {
@@ -317,12 +317,14 @@ fn find_entry_fn(
         if sym.section == NEM_SECT_UNDEF { continue; }
         if get_sym_name(sym, strtab) == Some(name) {
             let addr = unsafe { text_base.add(sym.value as usize) };
-            return Some(unsafe { core::mem::transmute(addr) });
+            // SAFETY: addr points to a valid NEM driver function entry point
+            return Some(unsafe { core::mem::transmute::<*mut u8, unsafe extern "C" fn() -> i32>(addr) });
         }
     }
     if fallback != 0 && fallback != 0xFFFFFFFF {
         let addr = unsafe { text_base.add(fallback as usize) };
-        return Some(unsafe { core::mem::transmute(addr) });
+        // SAFETY: addr points to a valid NEM driver function entry point (fallback offset)
+        return Some(unsafe { core::mem::transmute::<*mut u8, unsafe extern "C" fn() -> i32>(addr) });
     }
     None
 }
@@ -335,12 +337,14 @@ fn find_entry_event(
         if sym.section == NEM_SECT_UNDEF { continue; }
         if get_sym_name(sym, strtab) == Some(name) {
             let addr = unsafe { text_base.add(sym.value as usize) };
-            return Some(unsafe { core::mem::transmute(addr) });
+            // SAFETY: addr points to a valid NEM driver event handler entry point
+            return Some(unsafe { core::mem::transmute::<*mut u8, unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>(addr) });
         }
     }
     if fallback != 0 && fallback != 0xFFFFFFFF {
         let addr = unsafe { text_base.add(fallback as usize) };
-        return Some(unsafe { core::mem::transmute(addr) });
+        // SAFETY: addr points to a valid NEM driver event handler entry point (fallback offset)
+        return Some(unsafe { core::mem::transmute::<*mut u8, unsafe extern "C" fn(*const crate::eventbus::Event) -> i32>(addr) });
     }
     None
 }
@@ -395,13 +399,13 @@ fn apply_relocation(
     unsafe {
         match reloc.r_type {
             R_NEM_64 => {
-                core::ptr::write(place as *mut u64, (s as u64).wrapping_add(a as u64));
+                core::ptr::write(place as *mut u64, s.wrapping_add(a as u64));
             }
             R_NEM_PC32 | R_NEM_PLT32 => {
                 core::ptr::write(place as *mut i32, (s as i64).wrapping_add(a).wrapping_sub(p as i64) as i32);
             }
             R_NEM_32 => {
-                core::ptr::write(place as *mut u32, (s as u64).wrapping_add(a as u64) as u32);
+                core::ptr::write(place as *mut u32, s.wrapping_add(a as u64) as u32);
             }
             R_NEM_32S => {
                 core::ptr::write(place as *mut i32, (s as i64).wrapping_add(a) as i32);
@@ -431,17 +435,14 @@ static V3_HANDLERS: spin::Mutex<[Option<V3HandlerEntry>; MAX_V3_HANDLERS]> =
 
 fn v3_event_bridge(event: &crate::eventbus::Event) {
     let table = V3_HANDLERS.lock();
-    for entry in table.iter() {
-        if let Some(e) = entry {
-            if e.event_type == event.event_type {
-                // Set current driver context so capability checks work
-                unsafe { crate::drivers::nem::driver::set_current_driver(e.driver_id); }
-                let f: unsafe extern "C" fn(*const crate::eventbus::Event) -> i32 =
-                    unsafe { core::mem::transmute(e.fn_ptr) };
-                let _ = unsafe { f(event as *const _) };
-                unsafe { crate::drivers::nem::driver::clear_current_driver(); }
-                return;
-            }
+    for e in table.iter().flatten() {
+        if e.event_type == event.event_type {
+            unsafe { crate::drivers::nem::driver::set_current_driver(e.driver_id); }
+            let f: unsafe extern "C" fn(*const crate::eventbus::Event) -> i32 =
+                unsafe { core::mem::transmute(e.fn_ptr) };
+            let _ = unsafe { f(event as *const _) };
+            unsafe { crate::drivers::nem::driver::clear_current_driver(); }
+            return;
         }
     }
 }

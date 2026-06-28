@@ -67,7 +67,7 @@ impl BlockBitmap {
     }
 }
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct Inode {
     pub inode_num: u32,          // 0-255
@@ -102,7 +102,7 @@ pub const ATTR_VOLUME: u8   = 0x08;
 pub const ATTR_DIR: u8      = 0x10;
 pub const ATTR_ARCHIVE: u8  = 0x20;
 
-#[repr(packed)]
+#[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
 pub struct DirectoryEntry {
     pub inode_num: u32,
@@ -167,7 +167,7 @@ impl InodeCache {
         };
         
         self.inodes[inode_num] = Some(inode);
-        Ok(self.inodes[inode_num].as_ref().ok_or(FsError::FileNotFound)?)
+        self.inodes[inode_num].as_ref().ok_or(FsError::FileNotFound)
     }
 }
 
@@ -213,7 +213,7 @@ impl NeoDosFs {
         } else {
             inode.size as usize
         };
-        if span == 0 { 0 } else { ((span + BLOCK_SIZE - 1) / BLOCK_SIZE).min(12) }
+        if span == 0 { 0 } else { span.div_ceil(BLOCK_SIZE).min(12) }
     }
 
     pub fn rebuild_bitmap_with_io(&mut self) -> Result<(), FsError> {
@@ -266,7 +266,7 @@ impl NeoDosFs {
         if span == 0 {
             return 0;
         }
-        ((span + BLOCK_SIZE - 1) / BLOCK_SIZE).min(12)
+        span.div_ceil(BLOCK_SIZE).min(12)
     }
 
     pub fn get_inode_block_ptr(&self, inode: &Inode, block_idx: usize) -> Option<u32> {
@@ -654,24 +654,13 @@ impl NeoDosFs {
 
     fn default_perms_for_filename(name: &str) -> u16 {
         if Self::ext_eq(name, ".NXE")
+            || Self::ext_eq(name, ".NXL")
+            || Self::ext_eq(name, ".BAT")
+            || Self::ext_eq(name, ".CMD")
         {
             PERM_R | PERM_X
-        } else if Self::ext_eq(name, ".NEM") {
+        } else if Self::ext_eq(name, ".NEM") || Self::ext_eq(name, ".SYS") {
             PERM_R
-        } else if Self::ext_eq(name, ".NXL") {
-            PERM_R | PERM_X
-        } else if Self::ext_eq(name, ".BAT") || Self::ext_eq(name, ".CMD") {
-            PERM_R | PERM_X
-        } else if Self::ext_eq(name, ".SYS") {
-            PERM_R
-        } else if Self::ext_eq(name, ".CFG") || Self::ext_eq(name, ".INI") {
-            PERM_R | PERM_W
-        } else if Self::ext_eq(name, ".TXT")
-            || Self::ext_eq(name, ".MD")
-            || Self::ext_eq(name, ".LOG")
-            || Self::ext_eq(name, ".ASC")
-        {
-            PERM_R | PERM_W
         } else {
             PERM_R | PERM_W
         }
@@ -836,10 +825,10 @@ impl NeoDosFs {
         {
             let file_inode = *self.inode_cache.load_inode(file_inode_num as usize, cache, dev, self.abs_lba(0))?;
             let num_blocks = Self::inode_block_count(&file_inode);
-            for j in 0..num_blocks.min(12) {
+            for (j, b_ptr) in blocks_to_free.iter_mut().enumerate().take(num_blocks.min(12)) {
                 let b = file_inode.direct_blocks[j];
                 if b != 0 && b < self.superblock.num_blocks {
-                    blocks_to_free[j] = b;
+                    *b_ptr = b;
                 }
             }
         }
@@ -937,9 +926,7 @@ impl NeoDosFs {
                         let new_len = new_name.len().min(DIR_ENTRY_SIZE - 7);
                         sector_data[entry_off + 4] = new_len as u8;
                         sector_data[entry_off + 7..entry_off + 7 + new_len].copy_from_slice(&new_name.as_bytes()[..new_len]);
-                        for i in (entry_off + 7 + new_len)..(entry_off + 256) {
-                            sector_data[i] = 0x20;
-                        }
+                        sector_data[entry_off + 7 + new_len..entry_off + 256].fill(0x20);
                         cache.mark_dirty(sector_lba);
                         return Ok(());
                     }
@@ -1036,10 +1023,9 @@ impl FileSystem for NeoDosFs {
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
 
-        let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
-        temp_buf.resize(buf.len() + offset as usize, 0);
+        let mut temp_buf = alloc::vec![0u8; buf.len() + offset as usize];
         
-        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, &mut *pc_lock, dev)?;
+        let read = self.read_file_to_buf(inode, &mut temp_buf, cache, &mut pc_lock, dev)?;
         
         if offset as usize >= read {
             return Ok(0);
@@ -1059,7 +1045,7 @@ impl FileSystem for NeoDosFs {
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
 
-        Ok(self.write_file(inode, buf, cache, &mut *pc_lock, dev)?)
+        Ok(self.write_file(inode, buf, cache, &mut pc_lock, dev)?)
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {

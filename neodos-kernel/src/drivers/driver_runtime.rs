@@ -82,7 +82,7 @@ pub enum DriverState {
 }
 
 impl DriverState {
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             DriverState::Loaded => "LOADED",
             DriverState::Initialized => "INIT",
@@ -117,7 +117,7 @@ pub enum PipelineStep {
 }
 
 impl PipelineStep {
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             PipelineStep::None => "OK",
             PipelineStep::Load => "LOAD",
@@ -290,6 +290,7 @@ impl DriverRuntime {
             0, 0, 0, DriverCategory::Demand)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn register_ext(
         &mut self,
         name: &str,
@@ -461,28 +462,24 @@ impl DriverRuntime {
     }
 
     pub fn unregister(&mut self, id: DriverId) -> bool {
-        for slot in self.drivers.iter_mut() {
-            if let Some(drv) = slot {
-                if drv.id == id {
-                    drv.state = DriverState::Unloaded;
-                    return true;
-                }
+        for drv in self.drivers.iter_mut().flatten() {
+            if drv.id == id {
+                drv.state = DriverState::Unloaded;
+                return true;
             }
         }
         false
     }
 
     pub fn remove(&mut self, id: DriverId) -> Option<DriverInstance> {
-        for slot in self.drivers.iter_mut() {
-            if let Some(drv) = slot {
-                if drv.id == id {
-                    if let Some(kid) = drv.obj_id {
-                        let _ = object::ob_destroy_object(kid);
-                    }
-                    let removed = core::mem::take(drv);
-                    self.count -= 1;
-                    return Some(removed);
+        for drv in self.drivers.iter_mut().flatten() {
+            if drv.id == id {
+                if let Some(kid) = drv.obj_id {
+                    let _ = object::ob_destroy_object(kid);
                 }
+                let removed = core::mem::take(drv);
+                self.count -= 1;
+                return Some(removed);
             }
         }
         None
@@ -627,6 +624,7 @@ pub fn register_driver(
     DRIVER_RUNTIME.lock().register(name, driver_type, api_version, compat_flags)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn register_driver_ext(
     name: &str,
     driver_type: NemDriverType,

@@ -28,9 +28,9 @@ pub extern "C" fn ack_irq(vector: u8) {
             return;
         }
 
-        if vector >= 32 && vector < 40 {
+        if (32..40).contains(&vector) {
             raw::raw_outb(0x20u16, 0x20u8);
-        } else if vector >= 40 && vector < 48 {
+        } else if (40..48).contains(&vector) {
             raw::raw_outb(0xA0u16, 0x20u8);
             raw::raw_outb(0x20u16, 0x20u8);
         }

@@ -20,3 +20,4 @@ panic = "abort"
 [[bin]]
 name = "neodos_bootloader"
 path = "src/main.rs"
+test = false

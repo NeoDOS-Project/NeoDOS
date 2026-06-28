@@ -40,7 +40,7 @@ lazy_static! {
     /// `true` = vector is in use / reserved.
     static ref VECTOR_BITMAP: Mutex<[bool; MAX_VECTOR]> = {
         let mut bm = [false; MAX_VECTOR];
-        for i in 0..FIRST_MSI_VECTOR { bm[i] = true; }
+        for b in bm.iter_mut().take(FIRST_MSI_VECTOR) { *b = true; }
         bm[0x80] = true;   // syscall gate
         Mutex::new(bm)
     };
@@ -61,7 +61,7 @@ pub fn msi_alloc_vector() -> Option<u8> {
 /// Release a previously-allocated MSI vector.
 pub fn msi_free_vector(vector: u8) {
     let idx = vector as usize;
-    if idx < FIRST_MSI_VECTOR || idx >= MAX_VECTOR { return; }
+    if !(FIRST_MSI_VECTOR..MAX_VECTOR).contains(&idx) { return; }
     VECTOR_BITMAP.lock()[idx] = false;
 }
 

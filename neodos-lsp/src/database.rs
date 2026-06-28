@@ -201,11 +201,10 @@ impl Database {
             .or_default()
             .push(id);
 
-        if let Some(parent) = sym.parent {
-            if let Some(mut p) = self.symbols.get_mut(&parent) {
+        if let Some(parent) = sym.parent
+            && let Some(mut p) = self.symbols.get_mut(&parent) {
                 p.children.push(id);
             }
-        }
 
         self.file_symbols
             .entry(sym.file.clone())
@@ -264,8 +263,8 @@ impl Database {
         let mut results = Vec::new();
         if let Some(ids) = self.file_symbols.get(file) {
             for id in ids.value() {
-                if let Some(sym) = self.symbols.get(id) {
-                    if pos.line >= sym.range.start.line
+                if let Some(sym) = self.symbols.get(id)
+                    && pos.line >= sym.range.start.line
                         && pos.line <= sym.range.end.line
                         && (pos.line != sym.range.start.line
                             || pos.character >= sym.range.start.character)
@@ -274,7 +273,6 @@ impl Database {
                     {
                         results.push(Symbol::clone(&*sym));
                     }
-                }
             }
         }
         results
@@ -287,10 +285,10 @@ impl Database {
             .iter()
             .max_by_key(|s| {
                 let area = (s.range.end.line - s.range.start.line) * 10000
-                    + (s.range.end.character - s.range.start.character) as u32;
+                    + (s.range.end.character - s.range.start.character);
                 std::cmp::Reverse(area)
             })
-            .map(|r| Symbol::clone(&r))
+            .cloned()
     }
 
     /// Get all reference targets for a symbol.
@@ -326,11 +324,10 @@ impl Database {
         for item in &index.neodos_items {
             match item.kind {
                 NeodosItemKind::SyscallHandler => {
-                    if let Some(num_str) = item.name.strip_prefix("SyscallNum::") {
-                        if let Some(num) = num_str.split('(').next().and_then(|s| s.trim().parse::<u64>().ok()) {
+                    if let Some(num_str) = item.name.strip_prefix("SyscallNum::")
+                        && let Some(num) = num_str.split('(').next().and_then(|s| s.trim().parse::<u64>().ok()) {
                             self.syscalls.insert(num, item.clone());
                         }
-                    }
                 }
                 NeodosItemKind::ShellCommand => {
                     self.shell_commands.insert(item.name.clone(), item.clone());

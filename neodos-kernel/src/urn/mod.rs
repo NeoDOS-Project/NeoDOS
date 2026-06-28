@@ -12,6 +12,7 @@ use crate::test_case;
 use crate::test_eq;
 use crate::test_true;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::format;
 use crate::globals::with_vfs;
 use crate::handle::HandleEntry;
@@ -54,9 +55,9 @@ pub struct Urn {
     pub path: String,
 }
 
-impl Urn {
-    pub fn to_string(&self) -> String {
-        format!("neodos://{}/{}", self.scheme.to_str(), self.path)
+impl core::fmt::Display for Urn {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "neodos://{}/{}", self.scheme.to_str(), self.path)
     }
 }
 

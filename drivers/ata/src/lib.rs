@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(dead_code)]
+#![allow(static_mut_refs)]
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
@@ -225,7 +226,7 @@ unsafe extern "C" fn ata_read(device_id: u32, lba: u64, count: u8, buf: *mut u8)
     let ch = if idx == 0 { &CHANNELS[0] } else { &CHANNELS[1] };
     if ch.present == 0 { return -1; }
 
-    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+    let cnt = count.clamp(1, 8);
     let abs_lba = lba as u32;
     // Use DMA if available, PIO fallback
     if ch.bmba != 0 {
@@ -255,14 +256,14 @@ unsafe extern "C" fn ata_read(device_id: u32, lba: u64, count: u8, buf: *mut u8)
 }
 
 unsafe fn ata_read_dma(idx: usize, lba: u32, count: u8, buf: *mut u8) -> i32 {
-    let ch = &*(CHANNELS.as_ptr() as *const AtaChannelState).add(idx);
+    let ch = &*CHANNELS.as_ptr().add(idx);
     let bmba = ch.bmba;
     let total_bytes = (count as usize) * 512;
 
-    let prdt_phys = &PRDT as *const _ as u32;
-    let data_phys = &DMA_DATA as *const _ as u32;
+    let prdt_phys = &raw const PRDT as *const _ as u32;
+    let data_phys = &raw const DMA_DATA as *const _ as u32;
 
-    let prdt_base = &mut PRDT.0 as *mut u8 as *mut PrdtEntry;
+    let prdt_base = &raw mut PRDT.0 as *mut u8 as *mut PrdtEntry;
     core::ptr::write(prdt_base, PrdtEntry {
         data_buffer_phys: data_phys,
         count: (total_bytes as u16).min(0xFFFE),
@@ -318,7 +319,7 @@ unsafe extern "C" fn ata_write(device_id: u32, lba: u64, count: u8, buf: *const 
     let ch = if idx == 0 { &CHANNELS[0] } else { &CHANNELS[1] };
     if ch.present == 0 { return -1; }
 
-    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+    let cnt = count.clamp(1, 8);
     let abs_lba = lba as u32;
 
     // Use DMA if available, PIO fallback
@@ -352,19 +353,19 @@ unsafe extern "C" fn ata_write(device_id: u32, lba: u64, count: u8, buf: *const 
 }
 
 unsafe fn ata_write_dma(idx: usize, lba: u32, count: u8, buf: *const u8) -> i32 {
-    let ch = &*(CHANNELS.as_ptr() as *const AtaChannelState).add(idx);
+    let ch = &*CHANNELS.as_ptr().add(idx);
     let bmba = ch.bmba;
     let total_bytes = (count as usize) * 512;
 
-    let prdt_phys = &PRDT as *const _ as u32;
-    let data_phys = &DMA_DATA as *const _ as u32;
+    let prdt_phys = &raw const PRDT as *const _ as u32;
+    let data_phys = &raw const DMA_DATA as *const _ as u32;
 
     let dst = DMA_DATA.0.as_mut_ptr();
     for i in 0..total_bytes {
         *dst.add(i) = *buf.add(i);
     }
 
-    let prdt_base = &mut PRDT.0 as *mut u8 as *mut PrdtEntry;
+    let prdt_base = &raw mut PRDT.0 as *mut u8 as *mut PrdtEntry;
     core::ptr::write(prdt_base, PrdtEntry {
         data_buffer_phys: data_phys,
         count: (total_bytes as u16).min(0xFFFE),
@@ -536,7 +537,7 @@ pub extern "C" fn driver_init() -> i32 {
 
     // Probe channels
     for i in 0..2 {
-        let ch = unsafe { &mut *(CHANNELS.as_mut_ptr() as *mut AtaChannelState).add(i) };
+        let ch = unsafe { &mut *CHANNELS.as_mut_ptr().add(i) };
         if init_channel(ch) == 0 {
             // Register block device
             let name: [u8; 8] = if i == 0 {

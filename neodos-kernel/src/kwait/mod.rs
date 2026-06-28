@@ -119,14 +119,12 @@ pub fn kwait_wake(reason: &WaitReason) {
     let magic = reason.encode_magic();
     let old_irql = unsafe { irql::raise_irql(DISPATCH_LEVEL) };
     let mut scheduler = scheduler::current_scheduler().lock();
-    for th in scheduler.kthreads.iter_mut() {
-        if let Some(k) = th {
-            if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-                k.waiting_for = None;
-                k.state = ThreadState::Ready;
-                scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
-                crate::syscall::set_need_resched();
-            }
+    for k in scheduler.kthreads.iter_mut().flatten() {
+        if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+            k.waiting_for = None;
+            k.state = ThreadState::Ready;
+            scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+            crate::syscall::set_need_resched();
         }
     }
     drop(scheduler);

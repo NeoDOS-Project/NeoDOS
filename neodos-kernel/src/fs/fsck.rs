@@ -147,7 +147,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
     // ── 2. Read all inodes, build block ownership map ─────
     let mut inodes: Vec<(u32, Inode)> = Vec::new();
 
-    for i in 0..total_inodes as u32 {
+    for i in 0..total_inodes {
         let inode = match read_inode(i, cache, dev, partition_base) {
             Ok(inode_val) => inode_val,
             Err(_) => {
@@ -198,9 +198,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
         }
 
         // Validate mode (must have exactly one of MODE_DIR/MODE_FILE, no high bits)
-        let mode_valid = if ino_mode == 0 {
-            false // should not happen since we filtered used inodes
-        } else if ino_mode & 0xFF00 != 0 {
+        let mode_valid = if ino_mode == 0 || ino_mode & 0xFF00 != 0 {
             false
         } else {
             let has_dir = (ino_mode & MODE_DIR) != 0;
@@ -335,7 +333,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
         }
 
         let dir_inode = match inodes.iter().find(|&&(num, _)| num == dir_inode_num) {
-            Some(&(_, ref inode)) => *inode,
+            Some((_, inode)) => *inode,
             None => {
                 stats.dir_errors += 1;
                 crate::serial_println!("[FSCK] ERROR: Directory inode {} not in inode table", dir_inode_num);
@@ -425,7 +423,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
                     // Validate entry type matches inode mode
                     let actual_mode = inodes.iter()
                         .find(|&&(num, _)| num == entry_inode_num)
-                        .map(|&(_, ref ti)| ti.mode)
+                        .map(|(_, ti)| ti.mode)
                         .unwrap_or(0);
                     let is_dir_entry = entry_type == 2;
                     let is_file_entry = entry_type == 1;
@@ -551,8 +549,9 @@ pub fn register_fsck_tests() {
         let mut c = 0usize;
         for i in 0..12 {
             let b = inode.direct_blocks[i];
-            if b != 0 { c += 1; }
-            else if i == 0 && (inode.mode & MODE_DIR) != 0 && inode.size > 0 { c += 1; }
+            if b != 0 || (i == 0 && (inode.mode & MODE_DIR) != 0 && inode.size > 0) {
+                c += 1;
+            }
         }
         c
     }
@@ -663,9 +662,10 @@ pub fn register_fsck_tests() {
     });
 
     test_case!("fsck_block_range", {
-        test_true!(0 < 2560);
-        test_true!(2559 < 2560);
-        test_true!(!(2560 < 2560));
-        test_true!(!(9999 < 2560));
+        let limit = 2560u32;
+        test_true!(0u32 < limit);
+        test_true!(2559u32 < limit);
+        test_true!(!(2560u32 < limit));
+        test_true!(!(9999u32 < limit));
     });
 }

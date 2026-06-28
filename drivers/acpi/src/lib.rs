@@ -38,7 +38,6 @@ const SLP_TYP_S5: u16 = 5;
 const SLP_EN: u16 = 1 << 13;
 
 const EVENT_SHUTDOWN: u32 = 12;
-const SOURCE_DRIVER: u32 = 1;
 
 static INITIALIZED: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
@@ -160,7 +159,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() {
         return -1;
     }

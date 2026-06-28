@@ -75,21 +75,18 @@ impl NeodosLspConfig {
     pub fn from_env() -> Self {
         let mut cfg = Self::default();
 
-        if let Ok(val) = std::env::var("NEODOS_LSP_MAX_FILES") {
-            if let Ok(n) = val.parse() {
+        if let Ok(val) = std::env::var("NEODOS_LSP_MAX_FILES")
+            && let Ok(n) = val.parse() {
                 cfg.workspace.max_files = n;
             }
-        }
-        if let Ok(val) = std::env::var("NEODOS_LSP_CACHE_SIZE") {
-            if let Ok(n) = val.parse() {
+        if let Ok(val) = std::env::var("NEODOS_LSP_CACHE_SIZE")
+            && let Ok(n) = val.parse() {
                 cfg.cache.documents = n;
             }
-        }
-        if let Ok(val) = std::env::var("NEODOS_LSP_THREADS") {
-            if let Ok(n) = val.parse() {
+        if let Ok(val) = std::env::var("NEODOS_LSP_THREADS")
+            && let Ok(n) = val.parse() {
                 cfg.indexing.threads = n;
             }
-        }
         if let Ok(val) = std::env::var("NEODOS_LSP_WATCH") {
             cfg.workspace.watch_enabled = val == "1" || val.eq_ignore_ascii_case("true");
         }

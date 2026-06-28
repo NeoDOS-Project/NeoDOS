@@ -1,5 +1,13 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 use core::panic::PanicInfo;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -52,7 +60,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() { return -1; }
     let ev = unsafe { &*event };
     if ev.event_type == 16 {

@@ -87,12 +87,7 @@ impl BuddyAllocator {
 
     fn scan_for_buddy(&self, order: usize, buddy_addr: u64) -> Option<usize> {
         let count = self.free_counts[order] as usize;
-        for i in 0..count {
-            if self.free_slots[order][i] == buddy_addr {
-                return Some(i);
-            }
-        }
-        None
+        (0..count).find(|&i| self.free_slots[order][i] == buddy_addr)
     }
 
     fn remove_slot_at(&mut self, order: usize, idx: usize) {
@@ -115,13 +110,13 @@ impl BuddyAllocator {
     }
 
     pub fn init_from_regions(&mut self, regions: &[(u64, u64)], phys_max: u64) {
-        let max_frames = (phys_max.max(1) + PAGE_SIZE - 1) / PAGE_SIZE;
+        let max_frames = phys_max.max(1).div_ceil(PAGE_SIZE);
         self.total_pages = max_frames;
         let limit = (max_frames as usize).min(self.bitmap_words * 64);
 
         for &(start, end) in regions {
             let first = (start / PAGE_SIZE) as usize;
-            let last = ((end + PAGE_SIZE - 1) / PAGE_SIZE) as usize;
+            let last = end.div_ceil(PAGE_SIZE) as usize;
             for frame in first..last.min(limit) {
                 self.bitmap_clear(frame);
             }
@@ -231,7 +226,7 @@ impl BuddyAllocator {
 
     pub fn mark_used_region(&mut self, start: u64, size: u64) {
         let first = (start / PAGE_SIZE) as usize;
-        let last = ((start + size + PAGE_SIZE - 1) / PAGE_SIZE) as usize;
+        let last = (start + size).div_ceil(PAGE_SIZE) as usize;
         let limit = (self.total_pages as usize).min(self.bitmap_words * 64);
         for frame in first..last.min(limit) {
             if !self.bitmap_test(frame) {

@@ -101,6 +101,7 @@ fn hex_nibble(v: u8) -> u8 {
     if v < 10 { b'0' + v } else { b'A' + v - 10 }
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn log_dev(bus: u8, dev: u8, func: u8,
                    vendor: u16, device: u16,
                    class: u8, subclass: u8, prog_if: u8, rev: u8,
@@ -338,7 +339,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() {
         return -1;
     }

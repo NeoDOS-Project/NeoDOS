@@ -382,8 +382,7 @@ crate::hal::get_ticks(),
         );
 
     // Try user-mode dispatch first
-    let in_user_window = rip >= crate::arch::x64::paging::USER_BASE
-        && rip < crate::arch::x64::paging::USER_LIMIT;
+    let in_user_window = (crate::arch::x64::paging::USER_BASE..crate::arch::x64::paging::USER_LIMIT).contains(&rip);
     if is_user_exception(&stack_frame) || in_user_window {
         // For GPF, the fault_addr is typically RIP (null deref) or a selector
         let fault_addr = rip;
@@ -723,7 +722,7 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
         }
 
         // A4.4: Alt+F1-F4 → VT switching (scancodes 0x3B-0x3E)
-        if !released && code >= 0x3B && code <= 0x3E {
+        if !released && (0x3B..=0x3E).contains(&code) {
             let alt;
             unsafe { alt = ALT_PRESSED; }
             if alt {

@@ -185,7 +185,7 @@ pub const EVENT_CAP_ESCALATION: u32 = 0x2000;
 ///
 /// The kernel audits the request (in `handle_cap_escalation`) and may grant
 /// additional capabilities by calling `grant_capabilities`.
-
+///
 /// Maximum additional capabilities a non-BOOT driver can request.
 pub const CAP_ESCALATION_LIMIT: u64 = CAP_ALLOC_PAGE | CAP_BLOCK_DEVICE | CAP_MEMORY;
 

@@ -19,7 +19,7 @@ const WATCHDOG_TIMEOUT_US: u64 = 5_000_000; // 5 seconds in microseconds
 const MAX_NMI_RECOVERIES: u64 = 3;
 
 /// KOBJ type identifier for watchdog stats
-pub const WATCHDOG_KOBJ_ID: u64 = 0x57440000_0000_0001; // "WD\0\0..."
+pub const WATCHDOG_KOBJ_ID: u64 = 0x5744_0000_0000_0001; // "WD\0\0..."
 
 // ── Static state ──
 
@@ -346,13 +346,11 @@ pub fn register_watchdog_tests() {
     test_case!("watchdog_hang_detection_latency", {
         // Verify that the timeout ticks computation is correct
         let period = crate::timers::hpet::hpet_fs_period();
-        if period > 0 {
-            let counter_hz = 1_000_000_000_000_000u64 / period;
-            let ticks_needed = (counter_hz * WATCHDOG_TIMEOUT_US) / 1_000_000;
-            // 5 seconds at the detected frequency should be positive
-            test_true!(ticks_needed > 0);
-            // Should be less than 2^32 (within 32-bit HPET comparator range)
-            test_true!(ticks_needed <= 0xFFFF_FFFF);
-        }
+        let counter_hz = 1_000_000_000_000_000u64.checked_div(period).unwrap_or(0);
+        let ticks_needed = (counter_hz * WATCHDOG_TIMEOUT_US) / 1_000_000;
+        // 5 seconds at the detected frequency should be positive
+        test_true!(ticks_needed > 0);
+        // Should be less than 2^32 (within 32-bit HPET comparator range)
+        test_true!(ticks_needed <= 0xFFFF_FFFF);
     });
 }

@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 description = "NeoDOS console library (NXL) — progress bars and console utilities at 0x1e080000"
 
+[[bin]]
+name = "libconsole-nxl"
+path = "src/main.rs"
+test = false
+
 [profile.release]
 panic = "abort"
 opt-level = 3

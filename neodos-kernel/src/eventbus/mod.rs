@@ -266,6 +266,7 @@ impl EventBus {
     }
 
     /// Push event with explicit priority
+    #[allow(clippy::too_many_arguments)]
     pub fn push_event_priority(
         &self,
         event_type: EventType,
@@ -481,7 +482,7 @@ impl EventBus {
 
     /// Pop and dispatch the next event (high priority first)
     pub fn dispatch_one(&self) -> bool {
-        self.pop().map_or(false, |e| { self.dispatch_one_event(&e); true })
+        self.pop().is_some_and(|e| { self.dispatch_one_event(&e); true })
     }
 
     /// Drain and dispatch all pending events (high first, then normal)

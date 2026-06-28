@@ -69,10 +69,10 @@ pub const TCP_SYN_ACK: u8 = 0x12;
 pub fn compute_tcp_checksum(header: &TcpHeader, src_ip: [u8; 4], dst_ip: [u8; 4], payload: &[u8]) -> u16 {
     let mut sum = 0u32;
 
-    sum = sum.wrapping_add(((src_ip[0] as u32) << 8 | src_ip[1] as u32));
-    sum = sum.wrapping_add(((src_ip[2] as u32) << 8 | src_ip[3] as u32));
-    sum = sum.wrapping_add(((dst_ip[0] as u32) << 8 | dst_ip[1] as u32));
-    sum = sum.wrapping_add(((dst_ip[2] as u32) << 8 | dst_ip[3] as u32));
+    sum = sum.wrapping_add((src_ip[0] as u32) << 8 | src_ip[1] as u32);
+    sum = sum.wrapping_add((src_ip[2] as u32) << 8 | src_ip[3] as u32);
+    sum = sum.wrapping_add((dst_ip[0] as u32) << 8 | dst_ip[1] as u32);
+    sum = sum.wrapping_add((dst_ip[2] as u32) << 8 | dst_ip[3] as u32);
     sum = sum.wrapping_add(6u32);
     let tcp_len = (header.data_offset() + payload.len()) as u16;
     sum = sum.wrapping_add(tcp_len as u32);
@@ -190,7 +190,7 @@ impl TcpControlBlock {
 
     pub fn free_connection(&mut self, id: u32) {
         if let Some(idx) = self.connections.iter().position(|s| {
-            s.as_ref().map_or(false, |c| c.id == id)
+            s.as_ref().is_some_and(|c| c.id == id)
         }) {
             self.connections[idx] = None;
         }
@@ -198,7 +198,7 @@ impl TcpControlBlock {
 
     pub fn allocate_ephemeral_port(&mut self) -> u16 {
         let port = self.next_ephemeral_port;
-        self.next_ephemeral_port = if self.next_ephemeral_port >= 65535 {
+        self.next_ephemeral_port = if self.next_ephemeral_port == 65535 {
             49152
         } else {
             self.next_ephemeral_port.wrapping_add(1)
@@ -317,8 +317,8 @@ pub fn tcp_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
     if available == 0 {
         return Err(());
     }
-    for i in 0..available {
-        buf[i] = conn.recv_buf.pop_front().unwrap_or(0);
+    for item in buf.iter_mut().take(available) {
+        *item = conn.recv_buf.pop_front().unwrap_or(0);
     }
     Ok(available)
 }

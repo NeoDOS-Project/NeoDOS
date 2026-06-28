@@ -29,10 +29,10 @@ pub fn compute_udp_checksum(header: &UdpHeader, src_ip: [u8; 4], dst_ip: [u8; 4]
     let mut sum = 0u32;
 
     // Pseudo-header: src_ip(4) + dst_ip(4) + zero(1) + protocol(1) + UDP length(2)
-    sum = sum.wrapping_add(((src_ip[0] as u32) << 8 | src_ip[1] as u32));
-    sum = sum.wrapping_add(((src_ip[2] as u32) << 8 | src_ip[3] as u32));
-    sum = sum.wrapping_add(((dst_ip[0] as u32) << 8 | dst_ip[1] as u32));
-    sum = sum.wrapping_add(((dst_ip[2] as u32) << 8 | dst_ip[3] as u32));
+    sum = sum.wrapping_add((src_ip[0] as u32) << 8 | src_ip[1] as u32);
+    sum = sum.wrapping_add((src_ip[2] as u32) << 8 | src_ip[3] as u32);
+    sum = sum.wrapping_add((dst_ip[0] as u32) << 8 | dst_ip[1] as u32);
+    sum = sum.wrapping_add((dst_ip[2] as u32) << 8 | dst_ip[3] as u32);
     sum = sum.wrapping_add(17u32); // UDP protocol
     let udp_len = (UDP_HDR_LEN + payload.len()) as u16;
     sum = sum.wrapping_add(udp_len as u32);

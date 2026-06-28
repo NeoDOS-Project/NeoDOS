@@ -3,6 +3,11 @@ name = "vol"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "vol"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 libneodos = { path = "../../libneodos" }
 

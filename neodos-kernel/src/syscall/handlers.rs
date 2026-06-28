@@ -3,7 +3,6 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use core::sync::atomic::Ordering;
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
@@ -120,9 +119,7 @@ pub(super) fn handler_spawn(regs: super::Registers) -> u64 {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();
         let get_parent_entry = |fd: u8| -> Option<crate::handle::HandleEntry> {
-            if let Some(ep) = lock.current_eprocess() {
-                Some(ep.handle_table.get(fd))
-            } else { None }
+            lock.current_eprocess().map(|ep| ep.handle_table.get(fd))
         };
         let sin = if stdin_fd != 0xFF { get_parent_entry(stdin_fd) } else { None };
         let sout = if stdout_fd != 0xFF { get_parent_entry(stdout_fd) } else { None };
@@ -192,15 +189,13 @@ pub(super) fn handler_spawn(regs: super::Registers) -> u64 {
         let mut ct = 0u64;
         let mut c_tid = 0u32;
         let mut neo_top = 0u64;
-        for th in s.kthreads.iter() {
-            if let Some(k) = th {
-                if k.pid == child_pid && k.tid > 0 {
-                    ct = k.kernel_stack_top;
-                    c_tid = k.tid;
-                }
-                if k.pid == parent_pid && k.tid > 0 {
-                    neo_top = k.kernel_stack_top;
-                }
+        for k in s.kthreads.iter().flatten() {
+            if k.pid == child_pid && k.tid > 0 {
+                ct = k.kernel_stack_top;
+                c_tid = k.tid;
+            }
+            if k.pid == parent_pid && k.tid > 0 {
+                neo_top = k.kernel_stack_top;
             }
         }
         (ct, c_tid, neo_top)
@@ -208,12 +203,10 @@ pub(super) fn handler_spawn(regs: super::Registers) -> u64 {
 
     crate::hal::without_interrupts(|| {
         let mut s = crate::scheduler::current_scheduler().lock();
-        for th in s.kthreads.iter() {
-            if let Some(k) = th {
-                if k.tid == child_tid {
-                    s.current_tid = k.tid;
-                    break;
-                }
+        for k in s.kthreads.iter().flatten() {
+            if k.tid == child_tid {
+                s.current_tid = k.tid;
+                break;
             }
         }
         if let Some(k) = s.current_kthread_mut() {
@@ -232,12 +225,10 @@ pub(super) fn handler_spawn(regs: super::Registers) -> u64 {
 
     crate::hal::without_interrupts(|| {
         let mut s = crate::scheduler::current_scheduler().lock();
-        for th in s.kthreads.iter() {
-            if let Some(k) = th {
-                if k.pid == parent_pid && k.tid > 0 {
-                    s.current_tid = k.tid;
-                    break;
-                }
+        for k in s.kthreads.iter().flatten() {
+            if k.pid == parent_pid && k.tid > 0 {
+                s.current_tid = k.tid;
+                break;
             }
         }
     });
@@ -323,9 +314,19 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
             }
             serial_println!("[EXIT] wake_thread_joiner via KWait (OB-031)");
             let tj_magic = crate::kwait::WaitReason::ThreadJoin { tid }.encode_magic();
-            for th in scheduler.kthreads.iter_mut() {
-                if let Some(k) = th {
-                    if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+            for k in scheduler.kthreads.iter_mut().flatten() {
+                if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                    k.waiting_for = None;
+                    k.state = ThreadState::Ready;
+                    scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                    set_need_resched();
+                }
+            }
+            serial_println!("[EXIT] checking: pid={} thread_count", pid);
+            if pid > 0 {
+                let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
+                for k in scheduler.kthreads.iter_mut().flatten() {
+                    if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                         k.waiting_for = None;
                         k.state = ThreadState::Ready;
                         scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
@@ -333,26 +334,11 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                     }
                 }
             }
-            serial_println!("[EXIT] checking: pid={} thread_count", pid);
-            if pid > 0 {
-                let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
-                for th in scheduler.kthreads.iter_mut() {
-                    if let Some(k) = th {
-                        if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-                            k.waiting_for = None;
-                            k.state = ThreadState::Ready;
-                            scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
-                            set_need_resched();
-                        }
-                    }
-                }
-            }
             if pid > 0 {
                 let eproc = scheduler.current_eprocess();
-                if eproc.map_or(true, |ep| ep.thread_count == 0) {
-                    if pid == crate::usermode::current_wait_pid() {
-                        crate::usermode::request_exit_to_kernel();
-                    }
+                if eproc.is_none_or(|ep| ep.thread_count == 0)
+                    && pid == crate::usermode::current_wait_pid() {
+                    crate::usermode::request_exit_to_kernel();
                 }
             }
             // OB-046 fix: defer EPROCESS slot recycling to work queue.
@@ -363,7 +349,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
             // Work queue items fire at safe points (syscall return / idle).
             let do_cleanup = pid > 0 && {
                 let eproc_ref = scheduler.current_eprocess();
-                eproc_ref.map_or(false, |ep| ep.thread_count == 0)
+                eproc_ref.is_some_and(|ep| ep.thread_count == 0)
             };
             if do_cleanup {
                 // Heap-allocate the pid so it outlives this stack frame
@@ -492,23 +478,20 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
         bytes_read as u64
     } else if entry.is_pipe_read() {
         let pipe_id = entry.native_id().unwrap_or(0) as u8;
-        let mut temp_buf = alloc::vec::Vec::with_capacity(count);
-        temp_buf.resize(count, 0u8);
-        loop {
-            match crate::object::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
-                Ok(0) => {
-                    return 0;
+        let mut temp_buf = alloc::vec![0u8; count];
+        match crate::object::pipe::PIPE_MANAGER.read(pipe_id, &mut temp_buf) {
+            Ok(0) => {
+                0
+            }
+            Ok(n) => {
+                unsafe {
+                    core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
                 }
-                Ok(n) => {
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(temp_buf.as_ptr(), buf_ptr, n);
-                    }
-                    return n as u64;
-                }
-                Err(()) => {
-                    crate::object::pipe::block_current_for_pipe(pipe_id);
-                    return err_to_u64(SyscallError::Again);
-                }
+                n as u64
+            }
+            Err(()) => {
+                crate::object::pipe::block_current_for_pipe(pipe_id);
+                err_to_u64(SyscallError::Again)
             }
         }
     } else {
@@ -617,11 +600,9 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
             let s = crate::scheduler::current_scheduler();
             let scheduler = s.lock();
             let my_pid = scheduler.current_pid();
-            for ep in scheduler.eprocesses.iter() {
-                if let Some(ep) = ep {
-                    if ep.parent_pid == my_pid && ep.thread_count == 0 {
-                        return Some(ep.pid);
-                    }
+            for ep in scheduler.eprocesses.iter().flatten() {
+                if ep.parent_pid == my_pid && ep.thread_count == 0 {
+                    return Some(ep.pid);
                 }
             }
             None
@@ -644,7 +625,7 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
             }
         });
         set_need_resched();
-        return 0;
+        0
     } else {
         let is_terminated = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
@@ -889,8 +870,7 @@ pub(super) fn handler_readfile(regs: super::Registers) -> u64 {
         return err_to_u64(SyscallError::BadF);
     }
 
-    let mut temp_buf = Vec::with_capacity(count);
-    temp_buf.resize(count, 0u8);
+    let mut temp_buf = alloc::vec![0u8; count];
 
     let result = crate::globals::with_vfs(|vfs| {
         vfs.read(drive_idx, inode_num, offset, &mut temp_buf)
@@ -946,8 +926,7 @@ pub(super) fn handler_writefile(regs: super::Registers) -> u64 {
         return err_to_u64(SyscallError::BadF);
     }
 
-    let mut temp_buf = Vec::with_capacity(count);
-    temp_buf.resize(count, 0u8);
+    let mut temp_buf = alloc::vec![0u8; count];
     unsafe {
         core::ptr::copy_nonoverlapping(buf_ptr, temp_buf.as_mut_ptr(), count);
     }
@@ -1002,7 +981,7 @@ pub(super) fn handler_readdir(regs: super::Registers) -> u64 {
             if entry.obj_type() == Some(crate::object::ObType::Directory) {
                 (entry.drive().unwrap_or(0) as usize, entry.native_id().unwrap_or(0) as u32, entry.offset)
             } else {
-                return (usize::MAX, 0, 0);
+                (usize::MAX, 0, 0)
             }
         } else {
             (usize::MAX, 0, 0)
@@ -1127,7 +1106,7 @@ pub(super) fn handler_rename(regs: super::Registers) -> u64 {
         return e;
     }
 
-    let new_leaf = match new_path.rfind(|c| c == '\\' || c == '/') {
+    let new_leaf = match new_path.rfind(['\\', '/']) {
         Some(idx) => &new_path[idx + 1..],
         None => &new_path,
     };
@@ -1723,66 +1702,66 @@ pub(super) fn handler_poll(regs: super::Registers) -> u64 {
     }
 
     let mut fds = alloc::vec![PollFd { fd: 0, events: 0, revents: 0 }; nfds];
-    for i in 0..nfds {
+    for (i, fd_entry) in fds.iter_mut().enumerate().take(nfds) {
         unsafe {
             let src = fds_ptr.add(i);
-            fds[i].fd = core::ptr::read_volatile(&(*src).fd);
-            fds[i].events = core::ptr::read_volatile(&(*src).events);
+            fd_entry.fd = core::ptr::read_volatile(&(*src).fd);
+            fd_entry.events = core::ptr::read_volatile(&(*src).events);
         }
     }
 
     let mut ready_count: u64 = 0;
-    for i in 0..nfds {
-        let fd = fds[i].fd;
+    for fd_entry in fds.iter_mut() {
+        let fd = fd_entry.fd;
         if fd < 0 {
-            fds[i].revents = 0;
+            fd_entry.revents = 0;
             continue;
         }
         let entry = current_handle_entry(fd as u8);
         if !entry.is_open() {
-            fds[i].revents = POLLERR;
+            fd_entry.revents = POLLERR;
             ready_count += 1;
             continue;
         }
 
         let mut rev: i16 = 0;
         if entry.is_stdin() {
-            if fds[i].events & POLLIN != 0 {
+            if fd_entry.events & POLLIN != 0 {
                 rev |= POLLIN;
             }
         } else if entry.is_stdout() || entry.is_stderr() {
-            if fds[i].events & POLLOUT != 0 {
+            if fd_entry.events & POLLOUT != 0 {
                 rev |= POLLOUT;
             }
         } else if entry.is_pipe_read() {
             let pipe_id = entry.native_id().unwrap_or(0) as u8;
             let ready = crate::object::pipe::pipe_peek_read_ready(pipe_id).unwrap_or(false);
-            if ready && fds[i].events & POLLIN != 0 {
+            if ready && fd_entry.events & POLLIN != 0 {
                 rev |= POLLIN;
             }
             if crate::object::pipe::pipe_peek_write_closed(pipe_id).unwrap_or(false) {
                 rev |= POLLHUP;
             }
         } else if entry.is_pipe_write() {
-            if fds[i].events & POLLOUT != 0 {
+            if fd_entry.events & POLLOUT != 0 {
                 rev |= POLLOUT;
             }
         } else if entry.obj_type() == Some(crate::object::ObType::Filesystem)
             || entry.obj_type() == Some(crate::object::ObType::Directory) {
-            if fds[i].events & POLLIN != 0 { rev |= POLLIN; }
-            if fds[i].events & POLLOUT != 0 { rev |= POLLOUT; }
+            if fd_entry.events & POLLIN != 0 { rev |= POLLIN; }
+            if fd_entry.events & POLLOUT != 0 { rev |= POLLOUT; }
         } else {
             rev |= POLLERR;
         }
-        fds[i].revents = rev;
+        fd_entry.revents = rev;
         if rev != 0 {
             ready_count += 1;
         }
     }
 
-    for i in 0..nfds {
+    for (i, fd_entry) in fds.iter().enumerate().take(nfds) {
         unsafe {
-            core::ptr::write_volatile(&mut (*fds_ptr.add(i)).revents, fds[i].revents);
+            core::ptr::write_volatile(&mut (*fds_ptr.add(i)).revents, fd_entry.revents);
         }
     }
 

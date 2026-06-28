@@ -13,11 +13,13 @@ fn panic(_: &PanicInfo) -> ! { loop {} }
 // ── LLVM runtime intrinsics ──
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     for i in 0..n { *dest.add(i) = *src.add(i); }
     dest
 }
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     if dest < src as *mut u8 {
         for i in 0..n { *dest.add(i) = *src.add(i); }
@@ -28,6 +30,7 @@ pub unsafe extern "C" fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mu
     dest
 }
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     for i in 0..n { *s.add(i) = c as u8; }
     s
@@ -284,7 +287,7 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
     write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
 
     // Set up RX descriptor ring
-    let rx_phys = &RX_DESCS as *const Aligned4k as u64;
+    let rx_phys = &raw const RX_DESCS as u64;
     write_reg(REG_RDBAL, (rx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_RDBAH, (rx_phys >> 32) as u32);
     write_reg(REG_RDLEN, (NUM_RX_DESC * core::mem::size_of::<RxDesc>()) as u32);
@@ -293,18 +296,18 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
 
     // Initialize RX descriptor buffers
     let rx_descs = core::slice::from_raw_parts_mut(
-        &mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
+        &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
-    for i in 0..NUM_RX_DESC {
+    for (i, desc) in rx_descs.iter_mut().enumerate() {
         let buf_phys = (&BUF_POOL.0[i * RX_BUF_SIZE] as *const u8) as u64;
-        rx_descs[i].addr = buf_phys;
-        rx_descs[i].status = 0;
+        desc.addr = buf_phys;
+        desc.status = 0;
     }
 
     // Initialize TX
     write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 
-    let tx_phys = &TX_DESCS as *const Aligned4k as u64;
+    let tx_phys = &raw const TX_DESCS as u64;
     write_reg(REG_TDBAL, (tx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_TDBAH, (tx_phys >> 32) as u32);
     write_reg(REG_TDLEN, (NUM_TX_DESC * core::mem::size_of::<TxDesc>()) as u32);
@@ -331,7 +334,7 @@ unsafe extern "C" fn e1000_send(device_id: u32, buf: *const u8, len: u32) -> i32
     core::ptr::copy_nonoverlapping(buf, tx_buf_ptr, pkt_len);
 
     let tx_descs = core::slice::from_raw_parts_mut(
-        &mut TX_DESCS.0 as *mut u8 as *mut TxDesc, NUM_TX_DESC
+        &raw mut TX_DESCS.0 as *mut u8 as *mut TxDesc, NUM_TX_DESC
     );
     let desc = &mut tx_descs[tx_cur];
     desc.addr = tx_buf_ptr as u64;
@@ -350,7 +353,7 @@ unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32)
     let rx_cur = RX_CUR.load(Ordering::Relaxed) as usize % NUM_RX_DESC;
 
     let rx_descs = core::slice::from_raw_parts_mut(
-        &mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
+        &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
 
     if rx_descs[rx_cur].status & 0x01 == 0 {
@@ -488,7 +491,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() { return -1; }
     let ev = unsafe { &*event };
     // Handle IRQ-triggered events or kernel dispatch

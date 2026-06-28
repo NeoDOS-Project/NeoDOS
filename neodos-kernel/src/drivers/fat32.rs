@@ -219,7 +219,7 @@ impl Fat32Driver {
 
         let mut part_buf = [""; 32];
         let mut part_count = 0;
-        for segment in path.split(|c| c == '/' || c == '\\') {
+        for segment in path.split(['/', '\\']) {
             if !segment.is_empty() && part_count < 32 {
                 part_buf[part_count] = segment;
                 part_count += 1;
@@ -227,8 +227,7 @@ impl Fat32Driver {
         }
 
         let mut current_cluster = self.boot_sector.root_cluster;
-        for i in 0..part_count {
-            let segment = part_buf[i];
+        for (i, segment) in part_buf.iter().enumerate().take(part_count) {
             let name_11 = Self::name_to_11byte(segment.as_bytes());
             let entry = self.find_entry_in_directory(current_cluster, &name_11)?;
             if !entry.is_directory || i == part_count - 1 {
@@ -384,8 +383,7 @@ impl From<Fat32Error> for VfsError {
 
 impl FileSystem for Fat32Driver {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
-        let mut temp_buf = alloc::vec::Vec::with_capacity(buf.len() + offset as usize);
-        temp_buf.resize(buf.len() + offset as usize, 0);
+        let mut temp_buf = alloc::vec![0u8; buf.len() + offset as usize];
 
         let read = self.read_file_by_cluster(inode, &mut temp_buf)?;
 

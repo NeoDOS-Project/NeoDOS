@@ -53,7 +53,7 @@ print('[+] Shell ready')
 # Let serial log stabilize
 time.sleep(5)
 snap = os.path.getsize(serial_log)
-pool = ['VER', 'DIR', 'MEM', 'VOL', 'CPUINFO', 'DATETIME', 'DRIVES', 'PS', 'LABEL', 'HELP']
+pool = ['VER', 'DIR', 'NEOMEM', 'VOL', 'CPUINFO', 'DATETIME', 'DRIVES', 'PS', 'LABEL', 'HELP']
 
 def check_crash():
     try:

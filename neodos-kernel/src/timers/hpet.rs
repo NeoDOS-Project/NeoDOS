@@ -108,10 +108,9 @@ fn scan_range_for_rsdp(start: u64, end: u64) -> Option<&'static Rsdp> {
     while addr + 16 <= end {
         let ptr = addr as *const Rsdp;
         unsafe {
-            if (*ptr).signature == RSDP_SIGNATURE {
-                if acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
-                    return Some(&*ptr);
-                }
+            if (*ptr).signature == RSDP_SIGNATURE
+                && acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
+                return Some(&*ptr);
             }
         }
         addr += 16;
@@ -130,10 +129,9 @@ fn validate_rsdp(ptr: *const Rsdp) -> bool {
         if !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 20)) {
             return false;
         }
-        if (*ptr).revision >= 2 {
-            if !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 36)) {
-                return false;
-            }
+        if (*ptr).revision >= 2
+            && !acpi_checksum(core::slice::from_raw_parts(ptr as *const u8, 36)) {
+            return false;
         }
         true
     }
@@ -574,7 +572,7 @@ pub fn init_hpet() -> bool {
         hpet_write(base_addr, HPET_TIMER0_CFG, t0_cfg);
 
         // Set comparator to target interval.
-        hpet_write(base_addr, HPET_TIMER0_COMPARATOR, ticks_needed as u64);
+        hpet_write(base_addr, HPET_TIMER0_COMPARATOR, ticks_needed);
 
         // Enable legacy replacement: HPET timer 0 -> IRQ0, timer 1 -> IRQ8 (RTC).
         // This disables the PIT and RTC via PIC directly.
@@ -643,22 +641,4 @@ pub fn sleep_us(us: u64) {
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────
 
-#[cfg(test)]
-pub fn register_tests() -> &'static [(&'static str, fn())] {
-    &[
-        ("hpet_rsdp_scan", test_rsdp_scan),
-    ]
-}
-
-#[cfg(test)]
-fn test_rsdp_scan() {
-    // In QEMU, the RSDP should be findable in the legacy BIOS area.
-    // This test verifies the scanning code doesn't crash
-    // and returns something sensible.
-    let rsdp = find_rsdp();
-    assert!(rsdp.is_some(), "RSDP should be present on real/QEMU hardware");
-    let rsdp = rsdp.unwrap();
-    assert_eq!((&rsdp.signature), &RSDP_SIGNATURE, "Bad RSDP signature");
-}

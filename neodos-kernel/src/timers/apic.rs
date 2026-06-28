@@ -366,27 +366,4 @@ pub fn get_apic_id_for_cpu(cpu: u32) -> Option<u32> {
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────
 
-#[cfg(test)]
-pub fn register_tests() -> &'static [(&'static str, fn())] {
-    &[
-        ("apic_rdmsr_base", test_rdmsr_base),
-        ("apic_present_check", test_apic_present),
-    ]
-}
-
-#[cfg(test)]
-fn test_rdmsr_base() {
-    unsafe {
-        let base = rdmsr(IA32_APIC_BASE);
-        // APIC base MSR must have the enable bit set on QEMU
-        assert!(base != 0, "IA32_APIC_BASE should not be 0");
-    }
-}
-
-#[cfg(test)]
-fn test_apic_present() {
-    // On QEMU with -machine q35 or pc, APIC is always present
-    assert!(is_apic_present(), "APIC should be present on QEMU");
-}

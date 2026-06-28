@@ -94,11 +94,10 @@ pub fn boot_load_all() {
                 None => continue,
             };
 
-            if name == "AHCI" {
-                if crate::boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) == 0 {
+            if name == "AHCI"
+                && crate::boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) == 0 {
                     crate::serial_println!("[BOOT]   Skipping {} ... (AHCI controller not active)", name);
                     continue;
-                }
             }
 
             let abi_result = crate::drivers::abi::negotiate_default(
@@ -269,27 +268,24 @@ pub fn boot_load_all() {
 pub fn driver_scan(path: &str) -> Vec<String> {
     let mut results = Vec::new();
     crate::globals::with_vfs(|vfs| {
-        match vfs.resolve_path(path) {
-            Ok((drive_idx, node)) => {
-                if (node.mode & MODE_DIR) == 0 { return; }
-                let mut i = 0;
-                loop {
-                    match vfs.readdir(drive_idx, node.inode, i) {
-                        Ok(Some(entry)) => {
-                            let name = entry.name.to_ascii_uppercase();
-                            if !name.ends_with(".NEM") || (entry.node.mode & MODE_DIR) != 0 {
-                                i += 1; continue;
-                            }
-                            let full = alloc::format!("{}\\{}", path.trim_end_matches('\\'), name);
-                            results.push(full);
-                            i += 1;
+        if let Ok((drive_idx, node)) = vfs.resolve_path(path) {
+            if (node.mode & MODE_DIR) == 0 { return; }
+            let mut i = 0;
+            loop {
+                match vfs.readdir(drive_idx, node.inode, i) {
+                    Ok(Some(entry)) => {
+                        let name = entry.name.to_ascii_uppercase();
+                        if !name.ends_with(".NEM") || (entry.node.mode & MODE_DIR) != 0 {
+                            i += 1; continue;
                         }
-                        Ok(None) => break,
-                        Err(_) => break,
+                        let full = alloc::format!("{}\\{}", path.trim_end_matches('\\'), name);
+                        results.push(full);
+                        i += 1;
                     }
+                    Ok(None) => break,
+                    Err(_) => break,
                 }
             }
-            Err(_) => {}
         }
     });
     results
@@ -305,8 +301,7 @@ fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
         if size == 0 || size > 65536 {
             return Err("Bad size");
         }
-        let mut buf = alloc::vec::Vec::with_capacity(size);
-        buf.resize(size, 0);
+    let mut buf = alloc::vec![0u8; size];
         let read = vfs.read(drive_idx, node.inode, 0, &mut buf).map_err(|_| "Read error")?;
         buf.truncate(read);
         Ok(buf)

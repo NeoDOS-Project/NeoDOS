@@ -213,7 +213,7 @@ pub fn map_bar_mmio(bus: u8, dev: u8, func: u8, bar_index: u8) -> Option<(u64, u
     pci_config_write_dword(bus, dev, func, offset, 0xFFFF_FFFF);
     let mask_raw = pci_config_read_dword(bus, dev, func, offset);
     pci_config_write_dword(bus, dev, func, offset, raw);
-    let size = (!(mask_raw & 0xFFFF_FFF0) as u64 + 1) as u64;
+    let size = !(mask_raw & 0xFFFF_FFF0) as u64 + 1;
 
     Some((base_phys, size))
 }

@@ -88,16 +88,16 @@ lazy_static! {
 
 /// Check if a virtual address falls within the isolated driver region.
 pub fn is_in_isolated_region(virt: u64) -> bool {
-    virt >= DRIVER_ISO_BASE && virt < DRIVER_ISO_END
+    (DRIVER_ISO_BASE..DRIVER_ISO_END).contains(&virt)
 }
 
 /// Check if a virtual address falls within a specific driver's allocated region.
 pub fn is_in_driver_region(virt: u64, driver_id: u32) -> bool {
     for region in ISOLATED_REGIONS.lock().iter() {
-        if region.in_use && region.driver_id == driver_id {
-            if virt >= region.base && virt < region.base + region.size {
-                return true;
-            }
+        if region.in_use && region.driver_id == driver_id
+            && virt >= region.base && virt < region.base + region.size
+        {
+            return true;
         }
     }
     false
@@ -269,7 +269,7 @@ pub fn alloc_isolated_page(virt: u64, flags: u64) -> Option<u64> {
         return None;
     }
     unsafe {
-        core::ptr::write_bytes(phys as *mut u8, 0, PAGE_4K as usize);
+        core::ptr::write_bytes(phys, 0, PAGE_4K as usize);
     }
 
     let pte_flags = if flags & 0x2 != 0 {
@@ -622,7 +622,7 @@ pub fn register_isolation_tests() {
     test_case!("iso_allocate_free_slot", {
         test_true!(allocate_driver_slot(2042, 0x80000).is_some());
         let base = driver_base(2042).unwrap();
-        test_true!(base >= DRIVER_ISO_BASE && base < DRIVER_ISO_END);
+        test_true!((DRIVER_ISO_BASE..DRIVER_ISO_END).contains(&base));
         test_true!(is_in_driver_region(base, 2042));
         test_true!(is_in_driver_region(base + 0x7FFFF, 2042));
         test_eq!(is_in_driver_region(base + 0x80000, 2042), false);
@@ -630,7 +630,7 @@ pub fn register_isolation_tests() {
         // Allocate another slot
         test_true!(allocate_driver_slot(2043, 0x40000).is_some());
         let base2 = driver_base(2043).unwrap();
-        test_true!(base2 >= DRIVER_ISO_BASE && base2 < DRIVER_ISO_END);
+        test_true!((DRIVER_ISO_BASE..DRIVER_ISO_END).contains(&base2));
         test_ne!(base, base2);
         test_true!(is_in_driver_region(base2, 2043));
 

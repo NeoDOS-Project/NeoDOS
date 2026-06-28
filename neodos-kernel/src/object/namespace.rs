@@ -203,9 +203,7 @@ impl ObNamespace {
             dir.child_dirs.insert(key, DirectoryObject::new(name));
             Ok(())
         } else {
-            if !dir.child_dirs.contains_key(&key) {
-                dir.child_dirs.insert(key, DirectoryObject::new(name));
-            }
+            dir.child_dirs.entry(key).or_insert_with(|| DirectoryObject::new(name));
             Self::create_dir_internal(
                 dir.child_dirs.get_mut(&key).unwrap(),
                 &components[1..]
@@ -329,7 +327,7 @@ impl ObNamespace {
             dir = dir.child_dirs.get(&key).ok_or(OB_NOT_FOUND)?;
         }
         let mut result = Vec::new();
-        for (_key, subdir) in &dir.child_dirs {
+        for subdir in dir.child_dirs.values() {
             let name_str = subdir.name_str();
             let mut name = [0u8; 32];
             let bytes = name_str.as_bytes();
@@ -355,7 +353,7 @@ impl ObNamespace {
         Ok(result)
     }
 
-    fn resolve_symlink_internal<'a>(&self, path: &str, depth: u32) -> Result<ObId, &'static str> {
+    fn resolve_symlink_internal(&self, path: &str, depth: u32) -> Result<ObId, &'static str> {
         if depth > MAX_SYMLINK_HOPS {
             return Err(OB_SYMLINK_LOOP);
         }
@@ -378,9 +376,9 @@ impl ObNamespace {
                     }
                     let parent_path = {
                         let mut p = alloc::string::String::new();
-                        for j in 0..i {
+                        for &c in &components[..i] {
                             p.push('\\');
-                            p.push_str(components[j]);
+                            p.push_str(c);
                         }
                         p
                     };
@@ -400,9 +398,9 @@ impl ObNamespace {
                 let rest_path = {
                     let mut p = alloc::string::String::new();
                     p.push_str(target);
-                    for j in (i + 1)..components.len() {
+                    for &c in &components[(i + 1)..] {
                         p.push('\\');
-                        p.push_str(components[j]);
+                        p.push_str(c);
                     }
                     p
                 };

@@ -8,6 +8,7 @@ description = "NeoDOS standard library — syscall wrappers, I/O, FS, memory, sa
 name = "libneodos"
 path = "src/lib.rs"
 crate-type = ["lib"]
+test = false
 
 [profile.release]
 panic = "abort"

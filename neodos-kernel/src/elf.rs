@@ -322,7 +322,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>, load_off
         // Validate segment range and register with address space (if provided)
         if let Some(ref mut space) = addr_space {
             space.add_segment(vaddr, memsz, flags)
-                .map_err(|e| ElfLoadError::AddressSpaceViolation(e))?;
+                .map_err(ElfLoadError::AddressSpaceViolation)?;
         }
 
         segments.push(SegmentInfo { vaddr, memsz, flags });
@@ -393,8 +393,8 @@ fn build_valid_elf(entry: u64, vaddr: u64, code: &[u8]) -> Vec<u8> {
     buf.push(0);  // osabi
     buf.push(0);  // abiversion
     buf.extend_from_slice(&[0u8; 7]);  // padding
-    buf.extend_from_slice(&(ET_EXEC as u16).to_le_bytes());  // e_type
-    buf.extend_from_slice(&(EM_X86_64 as u16).to_le_bytes());  // e_machine
+    buf.extend_from_slice(&ET_EXEC.to_le_bytes());  // e_type
+    buf.extend_from_slice(&EM_X86_64.to_le_bytes());  // e_machine
     buf.extend_from_slice(&1u32.to_le_bytes());  // e_version
     buf.extend_from_slice(&entry.to_le_bytes());  // e_entry
     buf.extend_from_slice(&64u64.to_le_bytes());  // e_phoff
@@ -410,7 +410,7 @@ fn build_valid_elf(entry: u64, vaddr: u64, code: &[u8]) -> Vec<u8> {
     // Program header (56 bytes): PT_LOAD
     let code_offset = 64 + 56;  // right after headers
     let filesz = code.len();
-    buf.extend_from_slice(&(PT_LOAD as u32).to_le_bytes());  // p_type
+    buf.extend_from_slice(&PT_LOAD.to_le_bytes());  // p_type
     buf.extend_from_slice(&7u32.to_le_bytes());  // p_flags (R+W+X)
     buf.extend_from_slice(&(code_offset as u64).to_le_bytes());  // p_offset
     buf.extend_from_slice(&vaddr.to_le_bytes());  // p_vaddr
@@ -441,8 +441,8 @@ fn build_elf_two_segments(
     buf.push(0);  // osabi
     buf.push(0);  // abiversion
     buf.extend_from_slice(&[0u8; 7]);  // padding
-    buf.extend_from_slice(&(ET_EXEC as u16).to_le_bytes());
-    buf.extend_from_slice(&(EM_X86_64 as u16).to_le_bytes());
+    buf.extend_from_slice(&ET_EXEC.to_le_bytes());
+    buf.extend_from_slice(&EM_X86_64.to_le_bytes());
     buf.extend_from_slice(&1u32.to_le_bytes());
     buf.extend_from_slice(&entry.to_le_bytes());
     buf.extend_from_slice(&64u64.to_le_bytes());  // e_phoff
@@ -461,7 +461,7 @@ fn build_elf_two_segments(
     let code2_offset = code1_offset + code1.len() as u64;
 
     // PHDR 1: PT_LOAD
-    buf.extend_from_slice(&(PT_LOAD as u32).to_le_bytes());
+    buf.extend_from_slice(&PT_LOAD.to_le_bytes());
     buf.extend_from_slice(&7u32.to_le_bytes());
     buf.extend_from_slice(&code1_offset.to_le_bytes());
     buf.extend_from_slice(&vaddr1.to_le_bytes());
@@ -471,7 +471,7 @@ fn build_elf_two_segments(
     buf.extend_from_slice(&1u64.to_le_bytes());
 
     // PHDR 2: PT_LOAD
-    buf.extend_from_slice(&(PT_LOAD as u32).to_le_bytes());
+    buf.extend_from_slice(&PT_LOAD.to_le_bytes());
     buf.extend_from_slice(&7u32.to_le_bytes());
     buf.extend_from_slice(&code2_offset.to_le_bytes());
     buf.extend_from_slice(&vaddr2.to_le_bytes());
@@ -689,9 +689,9 @@ pub fn register_elf_tests() {
         let result_off = load_elf(&raw, None, offset);
         test_true!(result_off.is_ok());
         let r = result_off.unwrap();
-        test_eq!(r.entry, 0 + offset);
+        test_eq!(r.entry, offset);
         test_eq!(r.segments.len(), 1);
-        test_eq!(r.segments[0].vaddr, 0 + offset);
+        test_eq!(r.segments[0].vaddr, offset);
     });
 
     test_case!("elf_pie_accept_zero_vaddr_with_offset", {

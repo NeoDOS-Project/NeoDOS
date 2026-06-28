@@ -91,11 +91,11 @@ pub unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
     if !check_cap(CAP_LOG) { return; }
     // X4: Validate driver pointer before dereferencing
     let driver_id = current_driver_id();
-    if driver_id != 0 {
-        if isolation::validate_export_ptr(msg, len, false).is_err() {
-            crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", driver_id);
-            return;
-        }
+    if driver_id != 0
+        && isolation::validate_export_ptr(msg, len, false).is_err()
+    {
+        crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", driver_id);
+        return;
     }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
     crate::serial_println!("[DRV] {}", s);
@@ -132,12 +132,12 @@ pub unsafe extern "C" fn hst_register_block_device(
 ) -> i32 {
     if !check_cap(CAP_BLOCK_DEVICE) { return -1; }
     // X4: Validate name pointer
-    if current_driver_id() != 0 {
-        if isolation::validate_export_ptr(name, name_len as usize, false).is_err() {
-            crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
-                current_driver_id());
-            return -1;
-        }
+    if current_driver_id() != 0
+        && isolation::validate_export_ptr(name, name_len as usize, false).is_err()
+    {
+        crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
+            current_driver_id());
+        return -1;
     }
     let dev = crate::drivers::block::NemBlockDevice::new(
         device_id, num_sectors, sector_size, read_fn, write_fn,

@@ -175,7 +175,7 @@ fn fill_header(header: &mut CrashDumpHeader, cause: u32, param: &[u64; 4],
     header.version = CRASH_DUMP_VERSION;
     header.timestamp = crate::hal::get_ticks();
     header.cause = cause;
-    header.cpu_count = crate::arch::x64::cpu_local::cpu_count() as u32;
+    header.cpu_count = crate::arch::x64::cpu_local::cpu_count();
     header.param = *param;
 
     // Stack walk: capture return addresses from the stack
@@ -185,7 +185,7 @@ fn fill_header(header: &mut CrashDumpHeader, cause: u32, param: &[u64; 4],
     let mut rbp = stack_rbp;
     let mut depth = 0u32;
     for i in 0..32 {
-        if rbp < 0x100000 || rbp > 0x20000000 {
+        if !(0x100000..=0x20000000).contains(&rbp) {
             break;
         }
         unsafe {
@@ -261,7 +261,7 @@ fn fill_header(header: &mut CrashDumpHeader, cause: u32, param: &[u64; 4],
     let count = if head > 128 { 128 } else { head };
     header.trace_count = count as u32;
     for i in 0..count.min(128) {
-        let src_idx = if head >= i + 1 { head - i - 1 } else { 0 };
+        let src_idx = if head > i { head - i - 1 } else { 0 };
         let idx = src_idx % capacity;
         let entry = &trace.entries[idx];
         header.trace_events[i] = CrashTraceEvent {
@@ -296,8 +296,8 @@ pub fn dump_header_to_serial(header: &CrashDumpHeader) {
     // Copy stack trace to local array (avoid packed field references)
     let mut stack_trace_local = [0u64; 32];
     let st_ptr = core::ptr::addr_of!(header.stack_trace) as *const u64;
-    for i in 0..32 {
-        stack_trace_local[i] = unsafe { core::ptr::read_unaligned(st_ptr.add(i)) };
+    for (i, slot) in stack_trace_local.iter_mut().enumerate() {
+        *slot = unsafe { core::ptr::read_unaligned(st_ptr.add(i)) };
     }
 
     write_serial_raw("\n========================================\n");
@@ -494,10 +494,10 @@ pub fn register_crash_tests() {
 
     test_case!("crash_dump_new_zeroed", {
         let h = CrashDumpHeader::new_zeroed();
-        let magic = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.magic) as *const [u8; 4]) };
-        let ver = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.version) as *const u32) };
-        let cause = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.cause) as *const u32) };
-        let depth = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.stack_depth) as *const u32) };
+        let magic = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.magic)) };
+        let ver = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.version)) };
+        let cause = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.cause)) };
+        let depth = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(h.stack_depth)) };
         test_eq!(&magic, &CRASH_DUMP_MAGIC);
         test_eq!(ver, CRASH_DUMP_VERSION);
         test_eq!(cause, 0);

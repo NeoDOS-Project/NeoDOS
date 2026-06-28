@@ -62,26 +62,26 @@ pub fn dump_forensic_info() {
         }
     }
     let mut w = RawWriter(&*port as *const _);
-    let _ = write!(w, "\n--- Trace buffer (last {} entries) ---\n", crate::trace::TRACE_DUMP_COUNT);
+    let _ = writeln!(w, "\n--- Trace buffer (last {} entries) ---", crate::trace::TRACE_DUMP_COUNT);
     crate::trace::TRACE.dump(crate::trace::TRACE_DUMP_COUNT, &mut w);
 
-    let _ = write!(w, "--- Scheduler state ---\n");
+    let _ = writeln!(w, "--- Scheduler state ---");
     let ticks = crate::hal::get_ticks();
-    let _ = write!(w, "  Timer ticks: {}\n", ticks);
+    let _ = writeln!(w, "  Timer ticks: {}", ticks);
     if let Some(sched) = crate::scheduler::current_scheduler().try_lock() {
-        let _ = write!(w, "  Current TID: {}  Next TID: {}  Next PID: {}\n", sched.current_tid, sched.next_tid, sched.next_pid);
+        let _ = writeln!(w, "  Current TID: {}  Next TID: {}  Next PID: {}", sched.current_tid, sched.next_tid, sched.next_pid);
         for (i, t) in sched.kthreads.iter().enumerate() {
             if let Some(k) = t {
                 let state = format!("{:?}", k.state);
-                let _ = write!(w, "  [{}] TID={} PID={} state={} ticks={}\n",
+                let _ = writeln!(w, "  [{}] TID={} PID={} state={} ticks={}",
                     i, k.tid, k.pid, state, k.cpu_ticks);
             }
         }
     } else {
-        let _ = write!(w, "  (scheduler lock contended)\n");
+        let _ = writeln!(w, "  (scheduler lock contended)");
     }
 
-    let _ = write!(w, "--- End forensic dump ---\n");
+    let _ = writeln!(w, "--- End forensic dump ---");
 }
 
 // ── Panic classification ────────────────────────────────────────────

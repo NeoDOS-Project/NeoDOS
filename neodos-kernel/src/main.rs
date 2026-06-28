@@ -2,8 +2,16 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
 #![allow(static_mut_refs)]
 #![allow(dead_code)]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 extern crate alloc;
 use core::panic::PanicInfo;
@@ -66,7 +74,7 @@ use vfs::io::{IoStack, PageCacheLevel};
 pub const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const KERNEL_VERSION_CODE: u32 = ((0 * 256) + 10) << 8 | 5; // v0.10.5
+const KERNEL_VERSION_CODE: u32 = (10) << 8 | 5; // v0.10.5
 
 #[repr(C)]
 pub struct BootInfo {
@@ -84,15 +92,22 @@ pub struct BootInfo {
 
 #[no_mangle]
 #[link_section = ".text.entry"]
+/// # Safety
+///
+/// This function is called directly by the bootloader after exiting UEFI boot services.
+/// It must only be called once, with a valid `BootInfo` pointer provided by the bootloader.
+/// The caller must ensure that the boot info structure is correctly initialized and that
+/// the system is in a state suitable for kernel initialization (long mode enabled, page
+/// tables set up, etc.).
 pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // 0. Verify boot info magic and version
     if boot_info.magic != BOOTINFO_MAGIC {
         // Can't use println yet, serial not initialized
-        loop {}
+        crate::hal::halt();
     }
 
     // 1. Initialize Graphics Renderer
-    graphics::init(boot_info.fb_info.clone());
+    graphics::init(boot_info.fb_info);
     drivers::ps2::set_leds(0b100); // Caps Lock ON = kernel entry
 
     // 1b. Set up RAM disk from bootloader-loaded FS image
@@ -493,10 +508,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::globals::with_vfs(|vfs| {
             if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
                 if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                let size = match vfs.read(drive_idx, node.inode, 0, &mut cmd_buf) {
-                    Ok(n) => n,
-                    Err(_) => 0,
-                };
+                let size = vfs.read(drive_idx, node.inode, 0, &mut cmd_buf).unwrap_or_default();
                 if size >= 4 {
                     bin_size = size;
                     file_loaded = true;
@@ -578,10 +590,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::globals::with_vfs(|vfs| {
             if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\NeoInit.nxe") {
                 if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                let size = match vfs.read(drive_idx, node.inode, 0, &mut bin_buf) {
-                    Ok(n) => n,
-                    Err(_) => 0,
-                };
+                let size = vfs.read(drive_idx, node.inode, 0, &mut bin_buf).unwrap_or_default();
                 crate::serial_println!(
                     "[NEOINIT] resolved inode={} size={} mode=0x{:04x} read={} bytes",
                     node.inode,

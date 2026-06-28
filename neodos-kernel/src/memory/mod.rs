@@ -97,7 +97,7 @@ pub fn init(boot_info: &crate::BootInfo) {
         let end = desc.phys_start.saturating_add(desc.page_count.saturating_mul(PAGE_SIZE));
         phys_max = phys_max.max(end);
 
-        let total_for_this = (end - start + PAGE_SIZE - 1) / PAGE_SIZE;
+        let total_for_this = (end - start).div_ceil(PAGE_SIZE);
         total_frames += total_for_this;
 
         if matches!(desc.ty, MEM_CONVENTIONAL | MEM_BOOT_SERVICES_CODE | MEM_BOOT_SERVICES_DATA) {
@@ -119,8 +119,8 @@ pub fn init(boot_info: &crate::BootInfo) {
 
     let mut clean_segments: [(u64, u64); 64] = [(0, 0); 64];
     let mut clean_count = 0usize;
-    for i in 0..free_count {
-        if let Some((start, end)) = free_regions[i] {
+    for &region in free_regions.iter().take(free_count) {
+        if let Some((start, end)) = region {
             clean_segments[clean_count] = (start, end);
             clean_count += 1;
         }
@@ -149,9 +149,9 @@ pub fn init(boot_info: &crate::BootInfo) {
     // ── Allocate dynamic bitmap for buddy allocator (>4GB support) ──
     // The bitmap must be allocated BEFORE buddy init since the buddy
     // allocator manages all remaining physical memory.
-    let mut bitmap_words = (((phys_max >> 12) + 63) / 64) as usize; // ceil(frames / 64)
+    let mut bitmap_words = (phys_max >> 12).div_ceil(64) as usize; // ceil(frames / 64)
     let bitmap_bytes = bitmap_words.saturating_mul(8);
-    let mut bitmap_pages = ((bitmap_bytes + 4095) / 4096) as usize;
+    let mut bitmap_pages = bitmap_bytes.div_ceil(4096);
     let mut bitmap_phys = 0u64;
 
     if bitmap_pages > 0 {
@@ -189,7 +189,7 @@ pub fn init(boot_info: &crate::BootInfo) {
                 bitmap_pages
             );
             bitmap_words = crate::memory::buddy::LEGACY_BITMAP_WORDS;
-            bitmap_pages = (bitmap_words * 8 + 4095) / 4096;
+            bitmap_pages = (bitmap_words * 8).div_ceil(4096);
             // Re-try allocation with smaller size
             for seg in clean_segments[..clean_count].iter_mut().rev() {
                 let (s, e) = *seg;
@@ -227,8 +227,7 @@ pub fn init(boot_info: &crate::BootInfo) {
 
     let mut buddy_regions: [(u64, u64); 64] = [(0, 0); 64];
     let mut buddy_count = 0usize;
-    for i in 0..clean_count {
-        let (s, e) = clean_segments[i];
+    for &(s, e) in clean_segments[..clean_count].iter() {
         if e > s && buddy_count < 64 {
             buddy_regions[buddy_count] = (s, e);
             buddy_count += 1;
@@ -298,7 +297,7 @@ pub fn stats() -> MemoryStats {
     let used_kib = base.usable_kib.saturating_sub(free_kib);
 
     // Kernel heap: total from allocator, used from slab allocator
-    let kernel_heap_total = crate::allocator::HEAP_SIZE as u64 / 1024;
+    let kernel_heap_total = crate::allocator::HEAP_SIZE / 1024;
     let (_, _, _, slab_used_bytes) = crate::allocator::ALLOCATOR.usage();
     let kernel_used = slab_used_bytes / 1024;
     let kernel_free = kernel_heap_total.saturating_sub(kernel_used);

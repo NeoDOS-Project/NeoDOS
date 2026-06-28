@@ -29,10 +29,8 @@ impl BlockDeviceManager {
     }
 
     pub fn get(&mut self, idx: usize) -> Option<&mut (dyn BlockDevice + '_)> {
-        if let Some(slot) = self.devices.get_mut(idx) {
-            if let Some(ref mut dev) = slot {
-                return Some(&mut **dev);
-            }
+        if let Some(Some(ref mut dev)) = self.devices.get_mut(idx) {
+            return Some(&mut **dev);
         }
         None
     }

@@ -115,7 +115,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() {
         return -1;
     }

@@ -50,7 +50,7 @@ pub fn get_cpu_info() -> CpuInfo {
             for (i, leaf) in (0x8000_0002u32..=0x8000_0004u32).enumerate() {
                 let (a, b, c, d) = cpuid(leaf, 0);
                 let off = i * 16;
-                brand[off + 0..off + 4].copy_from_slice(&a.to_le_bytes());
+                brand[off..off + 4].copy_from_slice(&a.to_le_bytes());
                 brand[off + 4..off + 8].copy_from_slice(&b.to_le_bytes());
                 brand[off + 8..off + 12].copy_from_slice(&c.to_le_bytes());
                 brand[off + 12..off + 16].copy_from_slice(&d.to_le_bytes());
@@ -208,7 +208,7 @@ pub fn get_cpu_info_full() -> CpuInfoFull {
             for (i, leaf) in (0x8000_0002u32..=0x8000_0004u32).enumerate() {
                 let (a, b, c, d) = cpuid(leaf, 0);
                 let off = i * 16;
-                info.brand[off + 0..off + 4].copy_from_slice(&a.to_le_bytes());
+                info.brand[off..off + 4].copy_from_slice(&a.to_le_bytes());
                 info.brand[off + 4..off + 8].copy_from_slice(&b.to_le_bytes());
                 info.brand[off + 8..off + 12].copy_from_slice(&c.to_le_bytes());
                 info.brand[off + 12..off + 16].copy_from_slice(&d.to_le_bytes());

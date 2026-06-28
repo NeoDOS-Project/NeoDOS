@@ -55,7 +55,7 @@ where
         Ok(h) => h,
         Err(_) => return result,
     };
-    if &gpt_header[0..8] != GPT_SIGNATURE {
+    if gpt_header[0..8] != GPT_SIGNATURE {
         return result;
     }
 
@@ -89,7 +89,7 @@ where
         };
         let entry_offset = offset_in_sector as usize;
 
-        if &sector[entry_offset..entry_offset + 16] == PART_TYPE_NEODOS {
+        if sector[entry_offset..entry_offset + 16] == PART_TYPE_NEODOS {
             let start_lba = match read_u64_le(&sector, entry_offset + 32) {
                 Some(v) => v,
                 None => return result,

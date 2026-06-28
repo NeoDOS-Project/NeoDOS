@@ -38,7 +38,7 @@ impl NegotiationResult {
         matches!(self, NegotiationResult::Compatible | NegotiationResult::CompatibleWithWarnings(_))
     }
 
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             NegotiationResult::Compatible => "Compatible",
             NegotiationResult::CompatibleWithWarnings(w) => w.first().unwrap_or(&"Compatible with warnings"),

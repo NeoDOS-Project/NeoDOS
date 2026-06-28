@@ -3,7 +3,6 @@
 //! All functions are `pub(super)` for SSDT registration in `mod.rs`.
 
 use alloc::string::ToString;
-use alloc::vec::Vec;
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use super::{err_to_u64, ob_err_to_syscall, SyscallError, is_user_ptr_valid, copy_user_string,
@@ -242,8 +241,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
             rfd
         }
         crate::object::ObType::Directory => {
-            if path_str.starts_with("\\Global\\FileSystem\\") {
-                let vfs_path = &path_str["\\Global\\FileSystem\\".len()..];
+            if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
                 if !vfs_path.is_empty() {
                     match crate::globals::with_vfs(|vfs| vfs.mkdir(vfs_path)) {
                         Ok(_) => {},
@@ -288,13 +286,8 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
 
             const MAX_BIN: usize = 65536;
             let bin_data = {
-                let mut buf = alloc::vec::Vec::with_capacity(MAX_BIN);
-                buf.resize(MAX_BIN, 0u8);
-                let vfs_path = if path_str.starts_with("\\Global\\FileSystem\\") {
-                    &path_str["\\Global\\FileSystem\\".len()..]
-                } else {
-                    &path_str
-                };
+                let mut buf = alloc::vec![0u8; MAX_BIN];
+                let vfs_path = path_str.strip_prefix("\\Global\\FileSystem\\").unwrap_or(&path_str);
                 let bin_size = crate::globals::with_vfs(|vfs| {
                     match vfs.resolve_path(vfs_path) {
                         Ok((drive_idx, node)) => {
@@ -348,9 +341,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                     let s = scheduler::current_scheduler();
                     let lock = s.lock();
                     let get_parent_entry = |fd: u8| -> Option<crate::handle::HandleEntry> {
-                        if let Some(ep) = lock.current_eprocess() {
-                            Some(ep.handle_table.get(fd))
-                        } else { None }
+                        lock.current_eprocess().map(|ep| ep.handle_table.get(fd))
                     };
                     let sin = if stdin_fd != 0xFF { get_parent_entry(stdin_fd) } else { None };
                     let sout = if stdout_fd != 0xFF { get_parent_entry(stdout_fd) } else { None };
@@ -390,7 +381,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 None => return err_to_u64(SyscallError::Io),
             };
 
-            if let Err(_) = crate::object::ob_open_object(actual_ob_id, 0) {
+            if crate::object::ob_open_object(actual_ob_id, 0).is_err() {
                 return err_to_u64(SyscallError::Io);
             }
 
@@ -413,11 +404,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
             }
         }
         crate::object::ObType::Driver => {
-            let driver_path = if path_str.starts_with("\\Global\\FileSystem\\") {
-                &path_str["\\Global\\FileSystem\\".len()..]
-            } else {
-                &path_str
-            };
+            let driver_path = path_str.strip_prefix("\\Global\\FileSystem\\").unwrap_or(&path_str);
             match crate::drivers::nem::load_nem_driver(driver_path) {
                 Ok(driver_id) => {
                     let driver_name = alloc::format!("driver/{}", driver_id);
@@ -581,7 +568,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
             }
         }
         crate::object::ObType::Timer => {
-            let period_ms = (attrs & 0x7FFFFFFF) as u64;
+            let period_ms = attrs & 0x7FFFFFFF;
             let periodic = (attrs >> 31) & 1 != 0;
             if period_ms == 0 || period_ms > 3600000 {
                 return err_to_u64(SyscallError::Inval);
@@ -625,7 +612,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
             }
         }
         crate::object::ObType::Section => {
-            let size = (attrs & 0xFFFF_FFFF) as u64;
+            let size = attrs & 0xFFFF_FFFF;
             let prot = ((attrs >> 32) & 0xFF) as u32;
             if size == 0 || size > 0x100000 || prot == 0 || prot > 3 {
                 return err_to_u64(SyscallError::Inval);
@@ -867,18 +854,16 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                         pid,
                         parent_pid: ep.parent_pid,
                         priority: {
-                            let mut prio = 2u8;
-                            for th in lock.kthreads.iter() {
-                                if let Some(k) = th {
-                                    if k.pid == pid {
-                                        prio = k.priority as u8;
-                                        break;
-                                    }
-                                }
-                            }
-                            prio
-                        },
-                        thread_count: ep.thread_count as u32,
+                    let mut prio = 2u8;
+                    for k in lock.kthreads.iter().flatten() {
+                        if k.pid == pid {
+                            prio = k.priority;
+                            break;
+                        }
+                    }
+                    prio
+                },
+                thread_count: ep.thread_count,
                         state: if ep.thread_count == 0 { 1u8 } else { 0u8 },
                         padding: [0u8; 2],
                     }
@@ -917,8 +902,7 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 let mut found = ObThreadInfo {
                     tid: 0, pid, state: 0, priority: 0, padding: [0u8; 2],
                 };
-                for kt in lock.kthreads.iter() {
-                    if let Some(k) = kt {
+                    for k in lock.kthreads.iter().flatten() {
                         if k.pid == pid {
                             found.tid = k.tid;
                             found.state = k.state.to_u8();
@@ -926,7 +910,6 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                             break;
                         }
                     }
-                }
                 found
             });
             let sz = core::mem::size_of::<ObThreadInfo>();
@@ -949,7 +932,7 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 .map(|_| 1u32).unwrap_or(0);
             let info = ObPipeInfo {
                 capacity: capacity as u32,
-                read_refs: read_refs,
+                read_refs,
                 write_refs: 0,
             };
             let sz = core::mem::size_of::<ObPipeInfo>();
@@ -1018,7 +1001,7 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 return err_to_u64(SyscallError::Inval);
             }
             let ver = crate::KERNEL_VERSION.as_bytes();
-            let copy_len = ver.len().min(buf_size as usize);
+            let copy_len = ver.len().min(buf_size);
             unsafe {
                 core::ptr::copy_nonoverlapping(ver.as_ptr(), buf_ptr as *mut u8, copy_len);
             }
@@ -1154,7 +1137,7 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 if buf_size < entry_size { return 0u64; }
                 if let Some(d) = crate::drivers::driver_runtime::get_driver(driver_id) {
                     let raw = DriverInfoRaw {
-                        id: d.id as u32, state: d.state as u8, category: d.category as u8,
+                        id: d.id, state: d.state as u8, category: d.category as u8,
                         driver_type: d.driver_type as u8, api_version: d.api_version,
                         abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
                         last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
@@ -1182,10 +1165,10 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
             let runtime = crate::drivers::driver_runtime::DRIVER_RUNTIME.lock();
             let ids = runtime.driver_ids();
             let count = ids.len().min(max_entries);
-            for i in 0..count {
-                if let Some(d) = crate::drivers::driver_runtime::get_driver(ids[i]) {
+            for (i, &id) in ids.iter().enumerate().take(count) {
+                if let Some(d) = crate::drivers::driver_runtime::get_driver(id) {
                     let raw = DriverInfoRaw {
-                        id: d.id as u32, state: d.state as u8, category: d.category as u8,
+                        id: d.id, state: d.state as u8, category: d.category as u8,
                         driver_type: d.driver_type as u8, api_version: d.api_version,
                         abi_min: d.abi_min, abi_target: d.abi_target, abi_max: d.abi_max,
                         last_error: d.last_error, caps: d.caps, isolation_mode: d.isolation_mode,
@@ -1201,8 +1184,8 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                     }
                 }
             }
-            drop(runtime);
-            (count * entry_size_bulk) as u64
+    drop(runtime);
+    (count * entry_size_bulk) as u64
         }
         _ if info_class == ObInfoClass::Cwd as u32 => {
             if entry.object_id == 0 {
@@ -1265,8 +1248,7 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
             if drive_idx == usize::MAX {
                 return err_to_u64(SyscallError::Inval);
             }
-            let mut temp_buf = Vec::with_capacity(buf_size);
-            temp_buf.resize(buf_size, 0u8);
+            let mut temp_buf = alloc::vec![0u8; buf_size];
             let result = crate::globals::with_vfs(|vfs| {
                 vfs.read(drive_idx, inode_num, handle_offset, &mut temp_buf)
             });
@@ -1528,11 +1510,9 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 let mut lock = s.lock();
                 if obj.obj_type == crate::object::ObType::Process {
                     let pid = obj.native_id as u32;
-                    for kt in lock.kthreads.iter_mut() {
-                        if let Some(k) = kt {
-                            if k.pid == pid {
-                                k.priority = priority as u8;
-                            }
+                    for k in lock.kthreads.iter_mut().flatten() {
+                        if k.pid == pid {
+                            k.priority = priority as u8;
                         }
                     }
                 } else {
@@ -1561,7 +1541,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             }
         }
         _ if info_class == ObSetInfoClass::Security as u32 => {
-            return err_to_u64(SyscallError::NoSys);
+            err_to_u64(SyscallError::NoSys)
         }
         _ if info_class == ObSetInfoClass::ProcessTerminate as u32 => {
             if entry.object_id == 0 {
@@ -1645,7 +1625,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             }
             match crate::globals::with_vfs(|vfs| vfs.rename(old_vfs_path, &new_path)) {
                 Ok(_) => {
-                    let _ = crate::object::namespace::ob_remove_object(&obj_name);
+                    let _ = crate::object::namespace::ob_remove_object(obj_name);
                     let new_ob_name = alloc::format!("\\Global\\FileSystem\\{}", new_path);
                     let _ = crate::object::ob_set_object_name(entry.object_id, &new_ob_name);
                     {
@@ -1681,8 +1661,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             if drive_idx == usize::MAX {
                 return err_to_u64(SyscallError::Inval);
             }
-            let mut temp_buf = Vec::with_capacity(buf_size);
-            temp_buf.resize(buf_size, 0u8);
+            let mut temp_buf = alloc::vec![0u8; buf_size];
             unsafe {
                 core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp_buf.as_mut_ptr(), buf_size);
             }
@@ -1941,7 +1920,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 u16::from_be(port),
             );
             if crate::net::socket::socket_connect(socket_id, remote) {
-                if let Some(nic_id) = crate::net::nic::nic_default_id() {
+                if let Some(_nic_id) = crate::net::nic::nic_default_id() {
                     let mac = crate::net::nic::NIC_REGISTRY.lock().next_hop_mac(remote.ip);
                     if mac.is_some() {
                         crate::net::socket::socket_set_connected(socket_id);
@@ -1998,8 +1977,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 return err_to_u64(SyscallError::Inval);
             }
             let socket_id = obj.native_id as u32;
-            let mut temp = Vec::with_capacity(buf_size);
-            temp.resize(buf_size, 0u8);
+            let mut temp = alloc::vec![0u8; buf_size];
             unsafe {
                 core::ptr::copy_nonoverlapping(buf_ptr as *const u8, temp.as_mut_ptr(), buf_size);
             }
@@ -2052,7 +2030,7 @@ pub(super) fn handler_ob_enum(regs: super::Registers) -> u64 {
 
     let use_vfs = if entry.object_id != 0 {
         matches!(entry.obj_type(), Some(crate::object::ObType::Filesystem) | Some(crate::object::ObType::Directory))
-            && crate::object::ob_lookup(entry.object_id).map_or(false, |obj| {
+            && crate::object::ob_lookup(entry.object_id).is_some_and(|obj| {
                 let s = obj.name_str();
                 s.starts_with("\\Global\\FileSystem\\") || s.starts_with("dir/") || s.starts_with("file/")
             })
@@ -2098,8 +2076,7 @@ pub(super) fn handler_ob_enum(regs: super::Registers) -> u64 {
         return match result {
             Ok(()) => {
                 let count = core::cmp::min(max_entries, entries.len());
-                for i in 0..count {
-                    let raw = &entries[i];
+                for (i, raw) in entries.iter().enumerate().take(count) {
                     unsafe {
                         core::ptr::copy_nonoverlapping(
                             raw as *const crate::object::ObEnumEntry as *const u8,
@@ -2128,8 +2105,7 @@ pub(super) fn handler_ob_enum(regs: super::Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Inval),
     };
     let count = core::cmp::min(max_entries, ob_entries.len());
-    for i in 0..count {
-        let raw = &ob_entries[i];
+    for (i, raw) in ob_entries.iter().enumerate().take(count) {
         unsafe {
             core::ptr::copy_nonoverlapping(
                 raw as *const crate::object::ObEnumEntry as *const u8,
@@ -2149,7 +2125,7 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
     let handle_count = regs.rbx as usize;
     let handles_ptr = regs.rcx;
     let wait_type = regs.rdx as u32;
-    let _timeout_ms = regs.r8 as u64;
+    let _timeout_ms = regs.r8;
 
     if handle_count == 0 || handles_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
@@ -2219,7 +2195,7 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut lock = s.lock();
-                let already_dead = lock.find_eprocess(pid).map_or(true, |ep| ep.thread_count == 0);
+                let already_dead = lock.find_eprocess(pid).is_none_or(|ep| ep.thread_count == 0);
                 if already_dead {
                     drop(lock);
                     crate::scheduler::cleanup_terminated_process(pid);

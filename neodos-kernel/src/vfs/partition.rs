@@ -59,7 +59,7 @@ pub fn find_partitions_by_type(
         Ok(h) => h,
         Err(_) => return result,
     };
-    if &gpt_header[0..8] != gpt_sig {
+    if gpt_header[0..8] != gpt_sig {
         return result;
     }
 

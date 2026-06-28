@@ -104,38 +104,34 @@ impl LspServer {
 
                 // ── Notifications ──
                 "textDocument/didOpen" => {
-                    if let Some(params) = msg.params {
-                        if let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(params) {
+                    if let Some(params) = msg.params
+                        && let Ok(p) = serde_json::from_value::<DidOpenTextDocumentParams>(params) {
                             self.handlers.on_did_open(p);
                         }
-                    }
                 }
 
                 "textDocument/didChange" => {
-                    if let Some(params) = msg.params {
-                        if let Ok(p) = serde_json::from_value::<DidChangeTextDocumentParams>(params) {
+                    if let Some(params) = msg.params
+                        && let Ok(p) = serde_json::from_value::<DidChangeTextDocumentParams>(params) {
                             let change_uri = p.text_document.uri.clone();
                             self.handlers.on_did_change(p);
                             let path = handlers::uri_to_path(&change_uri);
                             self.request_diagnostics(path);
                         }
-                    }
                 }
 
                 "textDocument/didSave" => {
-                    if let Some(params) = msg.params {
-                        if let Ok(p) = serde_json::from_value::<DidSaveTextDocumentParams>(params) {
+                    if let Some(params) = msg.params
+                        && let Ok(p) = serde_json::from_value::<DidSaveTextDocumentParams>(params) {
                             self.handlers.on_did_save(p);
                         }
-                    }
                 }
 
                 "textDocument/didClose" => {
-                    if let Some(params) = msg.params {
-                        if let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(params) {
+                    if let Some(params) = msg.params
+                        && let Ok(p) = serde_json::from_value::<DidCloseTextDocumentParams>(params) {
                             self.handlers.on_did_close(p);
                         }
-                    }
                 }
 
                 "workspace/didChangeWatchedFiles" => {
@@ -221,8 +217,8 @@ impl LspServer {
 
     /// Handle the initialize request.
     fn handle_initialize(&mut self, params: Option<serde_json::Value>) -> InitializeResult {
-        if let Some(ref params) = params {
-            if let Ok(p) = serde_json::from_value::<InitializeParams>(params.clone()) {
+        if let Some(ref params) = params
+            && let Ok(p) = serde_json::from_value::<InitializeParams>(params.clone()) {
                 log::info!(
                     "client: {} {}",
                     p.client_info.as_ref().map(|i| i.name.as_str()).unwrap_or("unknown"),
@@ -260,7 +256,6 @@ impl LspServer {
 
                 self._client_caps = p.capabilities;
             }
-        }
 
         let server_caps = ServerCapabilities {
             text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -296,7 +291,6 @@ impl LspServer {
                 name: "neodos-lsp".into(),
                 version: Some(env!("CARGO_PKG_VERSION").into()),
             }),
-            ..Default::default()
         }
     }
 
@@ -435,7 +429,7 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<JsonRpcMessage>, Str
         }
     }
 
-    let len = content_length.ok_or_else(|| "missing Content-Length header")?;
+    let len = content_length.ok_or("missing Content-Length header")?;
 
     // Read exactly `len` bytes.
     let mut body = vec![0u8; len];
@@ -453,19 +447,18 @@ fn read_message(reader: &mut impl BufRead) -> Result<Option<JsonRpcMessage>, Str
     let method = json
         .get("method")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| "missing method field")?
+        .ok_or("missing method field")?
         .to_string();
     let params = json.get("params").cloned();
 
     log::trace!("<<< {} (id={:?})", method, id);
-    if log::log_enabled!(log::Level::Trace) {
-        if let Some(ref p) = params {
+    if log::log_enabled!(log::Level::Trace)
+        && let Some(ref p) = params {
             let s = serde_json::to_string(p).unwrap_or_default();
             if s.len() < 200 {
                 log::trace!("    params: {s}");
             }
         }
-    }
 
     Ok(Some(JsonRpcMessage { id, method, params }))
 }
@@ -477,7 +470,7 @@ fn write_message(writer: &mut impl Write, value: &serde_json::Value) -> Result<(
 
 fn write_message_inner(writer: &mut impl Write, value: &serde_json::Value) -> Result<(), std::io::Error> {
     let body = serde_json::to_string(value).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::Other, format!("serialize: {e}"))
+        std::io::Error::other(format!("serialize: {e}"))
     })?;
 
     if log::log_enabled!(log::Level::Trace) {

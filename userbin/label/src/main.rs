@@ -1,5 +1,13 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 use libneodos::syscall;
 
@@ -88,20 +96,7 @@ fn print_help() {
     write_str(b"\r\nLABEL [drive:][label]\r\n  Display or change the volume label of a drive.\r\n  LABEL C:          shows current label on C:\r\n  LABEL C:MYDISK    sets C: label to MYDISK\r\n  LABEL MYDISK      sets current drive label to MYDISK\r\n\r\n");
 }
 
-fn write_u32(mut v: u32) {
-    if v == 0 {
-        write_str(b"0");
-        return;
-    }
-    let mut buf = [0u8; 10];
-    let mut i = 9;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_str(&buf[i + 1..]);
-}
+
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {

@@ -234,7 +234,7 @@ pub fn print_ahci_debug() {
     let max   = AHCI_MAX_WAIT.load(Ordering::Relaxed);
     let tmo   = AHCI_TIMEOUTS.load(Ordering::Relaxed);
     let dma   = AHCI_DMA_FAILURES.load(Ordering::Relaxed);
-    let avg   = if cmds > 0 { total / cmds } else { 0 };
+    let avg   = total.checked_div(cmds).unwrap_or(0);
 
     let msg = "[AHCI DEBUG]";
     crate::serial_println!("{}", msg);
@@ -355,7 +355,6 @@ pub fn load_config() {
 /// Try to read BOOT.CFG from the filesystem
 fn read_boot_config() -> Result<alloc::string::String, &'static str> {
     use alloc::string::String;
-    use alloc::vec::Vec;
     
     let path = "C:\\System\\Kernel\\boot.cfg";
     
@@ -371,15 +370,14 @@ fn read_boot_config() -> Result<alloc::string::String, &'static str> {
         
         // Read file content (up to 1024 bytes)
         let size = (node.size as usize).min(1024);
-        let mut buf = Vec::with_capacity(size);
-        buf.resize(size, 0u8);
+        let mut buf = alloc::vec![0u8; size];
         
         vfs.read(drive_idx, node.inode, 0, &mut buf)
             .map_err(|_| "Failed to read BOOT.CFG")?;
         
         // Convert to string
         String::from_utf8(buf).map_err(|_| "BOOT.CFG is not valid UTF-8")
-    }).map_err(|e| e)
+    })
 }
 
 /// Parse BOOT.CFG content and set configuration flags

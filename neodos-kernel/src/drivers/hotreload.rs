@@ -446,8 +446,7 @@ fn read_whole_file(path: &str) -> Result<alloc::vec::Vec<u8>, ()> {
         if size == 0 || size > 65536 {
             return Err(());
         }
-        let mut buf = alloc::vec::Vec::with_capacity(size);
-        buf.resize(size, 0);
+    let mut buf = alloc::vec![0u8; size];
         let read = vfs.read(drive_idx, node.inode, 0, &mut buf).map_err(|_| ())?;
         buf.truncate(read);
         Ok(buf)

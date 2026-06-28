@@ -37,15 +37,14 @@ impl DocumentCache {
         let mut cache = self.files.write();
 
         // Evict oldest if at capacity (LRU approximation).
-        if cache.len() >= self.capacity && !cache.contains_key(&path) {
-            if let Some(oldest_key) = cache
+        if cache.len() >= self.capacity && !cache.contains_key(&path)
+            && let Some(oldest_key) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.last_accessed)
                 .map(|(k, _)| k.clone())
             {
                 cache.remove(&oldest_key);
             }
-        }
 
         cache.insert(
             path,

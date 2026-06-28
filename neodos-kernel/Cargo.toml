@@ -3,6 +3,7 @@ name = "neodos_kernel"
 version = "0.46.0"
 edition = "2021"
 
+
 [dependencies]
 log = "0.4.32"
 x86_64 = { version = "0.14.10", default-features = false, features = ["abi_x86_interrupt", "instructions"] }
@@ -24,3 +25,4 @@ debug = true
 [[bin]]
 name = "neodos_kernel"
 path = "src/main.rs"
+test = false

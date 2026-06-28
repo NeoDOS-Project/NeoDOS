@@ -1,5 +1,4 @@
-use super::types::{Ipv4Addr, SocketAddrV4, SocketType, SocketDirection, TcpState, MAX_SOCKETS};
-use super::nic::{NicRegistry, NIC_REGISTRY};
+use super::types::{Ipv4Addr, SocketAddrV4, SocketType, SocketDirection, MAX_SOCKETS};
 use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -67,7 +66,7 @@ impl SocketManager {
 
     pub fn free_socket(&mut self, id: u32) {
         if let Some(idx) = self.sockets.iter().position(|s| {
-            s.as_ref().map_or(false, |s| s.id == id)
+            s.as_ref().is_some_and(|s| s.id == id)
         }) {
             if let Some(ref socket) = self.sockets[idx] {
                 if let Some(tcp_id) = socket.tcp_conn_id {
@@ -212,9 +211,7 @@ pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
     if available == 0 {
         return Err(());
     }
-    for i in 0..available {
-        buf[i] = socket.recv_buf[i];
-    }
+    buf[..available].copy_from_slice(&socket.recv_buf[..available]);
     socket.recv_buf.drain(..available);
     Ok(available)
 }
@@ -231,7 +228,7 @@ pub fn socket_close(id: u32) {
     }
 }
 
-pub fn socket_next_accept_id(id: u32) -> Option<u32> {
+pub fn socket_next_accept_id(_id: u32) -> Option<u32> {
     None
 }
 

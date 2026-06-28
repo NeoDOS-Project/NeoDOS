@@ -184,7 +184,7 @@ impl NvmeDriver {
 
     fn alloc_contig(count: u16, entry_size: u16) -> (u64, u64) {
         let total = (count as u64) * (entry_size as u64);
-        let npages = (total + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K;
+        let npages = total.div_ceil(PAGE_SIZE_4K);
         let first = crate::memory::allocate_frame().unwrap_or(0);
         if first == 0 { return (0, 0); }
         for i in 1..npages {
@@ -197,7 +197,7 @@ impl NvmeDriver {
     }
 
     fn free_contig(phys: u64, size: u64) {
-        let npages = (size + PAGE_SIZE_4K - 1) / PAGE_SIZE_4K;
+        let npages = size.div_ceil(PAGE_SIZE_4K);
         for i in 0..npages { crate::memory::free_frame(phys + i * PAGE_SIZE_4K); }
     }
 
@@ -253,6 +253,7 @@ impl NvmeDriver {
         fence(Ordering::SeqCst);
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     fn admin_cmd_raw(asq: u64, acq: u64, sq_doorbell: *mut u32, acq_head: u16, _acq_phase: bool,
                      opcode: u8, nsid: u32, cdw10: u32, cdw11: u32, prp1: u64, _timeout_ms: u32,
@@ -284,7 +285,7 @@ impl NvmeDriver {
                     let w2 = cqe32.add(2).read_volatile();
                     let status_field = (w3 >> 16) as u16;
                     let phase = (status_field & 0x1) != 0;
-                    let status = (status_field >> 1) as u16;
+                    let status = status_field >> 1;
                     serial_println!("[NVMe] CQE[{}]: {:08x} {:08x} {:08x} {:08x} cid={} phase={} status={}",
                         acq_head, w0, w1, w2, w3, cq_cid, phase, status);
                     let new_head = (acq_head + 1) % ACQ_ENTRIES;
@@ -478,7 +479,7 @@ impl NvmeDriver {
         // Identify Controller
         serial_println!("[NVMe] Identify controller...");
         Self::zero_phys(dma_phys, 4096);
-        if let Err(_) = drv.admin_cmd(ADMIN_IDENTIFY, 0, 1, 0, dma_phys) { // CNS=1: Identify Controller
+        if drv.admin_cmd(ADMIN_IDENTIFY, 0, 1, 0, dma_phys).is_err() { // CNS=1: Identify Controller
             serial_println!("[NVMe] Identify controller failed");
             return [None,];
         }
@@ -621,11 +622,11 @@ impl NvmeDriver {
         // Identify Namespace
         Self::zero_phys(dma_phys, 4096);
         serial_println!("[NVMe] Identify ns {}...", ns_to_try);
-        if let Err(_) = drv.admin_cmd(ADMIN_IDENTIFY, ns_to_try, 0, 0, dma_phys) {
+        if drv.admin_cmd(ADMIN_IDENTIFY, ns_to_try, 0, 0, dma_phys).is_err() {
             // Dump ASQ[2] after failure
             let sq_dbg = drv.asq_phys as *mut u32;
             serial_println!("[NVMe] ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                unsafe { sq_dbg.add(32+0).read_volatile() }, unsafe { sq_dbg.add(32+1).read_volatile() },
+                unsafe { sq_dbg.add(32).read_volatile() }, unsafe { sq_dbg.add(33).read_volatile() },
                 unsafe { sq_dbg.add(32+2).read_volatile() }, unsafe { sq_dbg.add(32+3).read_volatile() },
                 unsafe { sq_dbg.add(32+4).read_volatile() }, unsafe { sq_dbg.add(32+5).read_volatile() },
                 unsafe { sq_dbg.add(32+6).read_volatile() }, unsafe { sq_dbg.add(32+7).read_volatile() },
@@ -666,7 +667,7 @@ impl NvmeDriver {
         let cq_cdw10 = (io_cq_id as u32) | ((IOCQ_ENTRIES as u32 - 1) << 16);
         let cq_cdw11 = 1u32; // PC=1
         serial_println!("[NVMe] Create IOCQ {}...", io_cq_id);
-        if let Err(_) = drv.admin_cmd(ADMIN_CREATE_IO_CQ, 0, cq_cdw10, cq_cdw11, iocq_phys) {
+        if drv.admin_cmd(ADMIN_CREATE_IO_CQ, 0, cq_cdw10, cq_cdw11, iocq_phys).is_err() {
             serial_println!("[NVMe] Create IOCQ failed");
             Self::free_contig(iocq_phys, iocq_sz);
             return [None,];
@@ -684,7 +685,7 @@ impl NvmeDriver {
         let sq_cdw10 = (io_sq_id as u32) | ((IOSQ_ENTRIES as u32 - 1) << 16);
         let sq_cdw11 = (io_cq_id as u32) << 16 | 1; // PC=1, CQID=1
         serial_println!("[NVMe] Create IOSQ {}...", io_sq_id);
-        if let Err(_) = drv.admin_cmd(ADMIN_CREATE_IO_SQ, 0, sq_cdw10, sq_cdw11, iosq_phys) {
+        if drv.admin_cmd(ADMIN_CREATE_IO_SQ, 0, sq_cdw10, sq_cdw11, iosq_phys).is_err() {
             serial_println!("[NVMe] Create IOSQ failed");
             drv.admin_cmd(ADMIN_DELETE_IO_CQ, 0, io_cq_id as u32, 0, 0).ok();
             Self::free_contig(iocq_phys, iocq_sz);
@@ -751,9 +752,10 @@ impl NvmeDriver {
     pub fn read_sector(&mut self, lba: u32) -> Result<[u8; 512], ()> {
         let mut buf = [0u8; 512];
         let sz = self.sector_size();
-        if sz < 512 || sz > 4096 { return Err(()); }
+        if !(512..=4096).contains(&sz) { return Err(()); }
         let total = (sz as usize).max(512);
-        let nlb = (total as u16 + (1u64 << self.lbads) as u16 - 1) / (1u64 << self.lbads) as u16;
+        let block_size = (1u64 << self.lbads) as u16;
+        let nlb = (total as u16).div_ceil(block_size);
         let prp1 = self.dma_buf_phys;
         self.io_cmd(IO_READ, lba as u64 + self.base_lba, nlb, prp1).map_err(|_| ())?;
         unsafe { core::ptr::copy_nonoverlapping(prp1 as *const u8, buf.as_mut_ptr(), 512usize.min(total)); }
@@ -762,9 +764,10 @@ impl NvmeDriver {
 
     pub fn write_sector(&mut self, lba: u32, data: &[u8; 512]) -> Result<(), ()> {
         let sz = self.sector_size();
-        if sz < 512 || sz > 4096 { return Err(()); }
+        if !(512..=4096).contains(&sz) { return Err(()); }
         let total = (sz as usize).max(512);
-        let nlb = (total as u16 + (1u64 << self.lbads) as u16 - 1) / (1u64 << self.lbads) as u16;
+        let block_size = (1u64 << self.lbads) as u16;
+        let nlb = (total as u16).div_ceil(block_size);
         let prp1 = self.dma_buf_phys;
         unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), prp1 as *mut u8, 512); }
         self.io_cmd(IO_WRITE, lba as u64 + self.base_lba, nlb, prp1).map_err(|_| ())
@@ -788,7 +791,7 @@ impl NvmeDriver {
             let w3 = unsafe { cqe32.add(3).read_volatile() };
             let status_field = (w3 >> 16) as u16;
             if ((status_field & 0x1) != 0) == self.iocq_phase && (w3 & 0xFFFF) as u16 == idx {
-                let status = (status_field >> 1) as u16;
+                let status = status_field >> 1;
                 self.iocq_head = (self.iocq_head + 1) % IOCQ_ENTRIES;
                 if self.iocq_head == 0 { self.iocq_phase = !self.iocq_phase; }
                 self.ring_cq_db(self.io_cq_id, self.iocq_head);

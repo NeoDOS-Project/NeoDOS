@@ -285,7 +285,7 @@ fn normalize_dos_path(path: &str) -> String {
     };
 
     let mut parts: Vec<&str> = Vec::new();
-    for part in rest.split(|c| c == '\\' || c == '/') {
+    for part in rest.split(['\\', '/']) {
         match part {
             "" | "." => {}
             ".." => { parts.pop(); }

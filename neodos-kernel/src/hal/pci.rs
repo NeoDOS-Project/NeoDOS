@@ -121,8 +121,8 @@ pub fn register_tests() {
         ECAM_ACTIVE.store(false, Ordering::SeqCst);
         ECAM_BASE.store(0, Ordering::SeqCst);
         test_eq!(r0, 0xE000_0000);
-        test_eq!(r1, 0xE000_0000 | ((0x1F as u64) << 15));
+        test_eq!(r1, 0xE000_0000 | ((0x1F_u64) << 15));
         test_eq!(r2, 0xE000_0000 | (1u64 << 20));
-        test_eq!(r3, 0xE000_0000 | ((7 as u64) << 12) | 0xFF);
+        test_eq!(r3, 0xE000_0000 | ((7_u64) << 12) | 0xFF);
     });
 }

@@ -306,15 +306,15 @@ static CPU_COUNT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32:
 /// Allocates KPRCB structures from the kernel heap (which is already
 /// identity-mapped read-write) rather than from the buddy allocator.
 pub fn init_kprcb_pages() {
-    for cpu in 0..MAX_CPUS {
-        // Allocate a 4 KB aligned KPRCB from the kernel heap.
-        // Kprcb is #[repr(C, align(4096))] so Box gives page-aligned allocation.
-        let kprcb = alloc::boxed::Box::new(Kprcb::new(cpu as u32, 0));
-        let addr = alloc::boxed::Box::into_raw(kprcb) as u64;
-        unsafe {
-            KPRCB_PAGES[cpu] = addr;
+    unsafe {
+        for (cpu, page) in KPRCB_PAGES.iter_mut().enumerate().take(MAX_CPUS) {
+            // Allocate a 4 KB aligned KPRCB from the kernel heap.
+            // Kprcb is #[repr(C, align(4096))] so Box gives page-aligned allocation.
+            let kprcb = alloc::boxed::Box::new(Kprcb::new(cpu as u32, 0));
+            let addr = alloc::boxed::Box::into_raw(kprcb) as u64;
+            *page = addr;
+            crate::serial_println!("[SMP] KPRCB[{}] at 0x{:x}", cpu, addr);
         }
-        crate::serial_println!("[SMP] KPRCB[{}] at 0x{:x}", cpu, addr);
     }
 }
 

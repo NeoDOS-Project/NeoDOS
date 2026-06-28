@@ -155,11 +155,10 @@ fn map_section_view(base: u64, size: u64, _writable: bool) -> bool {
     let mut addr = base;
     while addr < base + size {
         // Split 2MB page if needed (4K PTE doesn't exist yet)
-        if crate::hal::walk_ptes_4k(addr).is_none() {
-            if crate::arch::x64::paging::split_2mb_page(addr).is_err() {
-                unmap_view_pages(base, addr - base);
-                return false;
-            }
+        if crate::hal::walk_ptes_4k(addr).is_none()
+            && crate::arch::x64::paging::split_2mb_page(addr).is_err() {
+            unmap_view_pages(base, addr - base);
+            return false;
         }
         if crate::arch::x64::paging::mmap_alloc_page(addr).is_none() {
             unmap_view_pages(base, addr - base);

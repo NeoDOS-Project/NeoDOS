@@ -3,6 +3,11 @@ name = "drives"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "drives"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 libneodos = { path = "../../libneodos" }
 

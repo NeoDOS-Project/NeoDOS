@@ -42,10 +42,10 @@ fn serial_init() {
         hst_outb(COM1 + 1, 0x00);
         // Drain any stale byte from the receiver
         if hst_inb(COM1 + 5) & 1 != 0 {
-            hst_inb(COM1 + 0);
+            hst_inb(COM1);
         }
         hst_outb(COM1 + 3, 0x80);
-        hst_outb(COM1 + 0, 0x03);
+        hst_outb(COM1, 0x03);
         hst_outb(COM1 + 1, 0x00);
         hst_outb(COM1 + 3, 0x03);
         hst_outb(COM1 + 2, 0xC7);
@@ -78,7 +78,8 @@ pub extern "C" fn driver_activate() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
+#[allow(clippy::missing_safety_doc)]
+pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     if ACTIVE.load(Ordering::Relaxed) == 0 || event.is_null() {
         return -1;
     }

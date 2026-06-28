@@ -1,10 +1,17 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 use libneodos::syscall;
 use libneodos::syscall::{ObEnumEntry};
 
-const MODE_DIR: u16 = 0x40;
 const PERM_R: u16 = 0x0001;
 const PERM_W: u16 = 0x0002;
 const PERM_X: u16 = 0x0004;
@@ -39,10 +46,6 @@ fn write_u64(mut v: u64) {
         i -= 1;
     }
     write_str(&buf[i + 1..=19]);
-}
-
-fn is_dir(mode: u16) -> bool {
-    (mode & MODE_DIR) != 0
 }
 
 fn fmt_perms(mode: u16) -> [u8; 5] {

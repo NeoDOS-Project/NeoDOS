@@ -75,7 +75,7 @@ pub fn call_fini(id: DriverId) {
 pub fn register_event_bus_handler(_id: DriverId, event_type: u32) -> Result<(), ()> {
     fn dispatch_wrapper(event: &eventbus::Event) {
         let _ = call_event_by_id(
-            event.driver_target as u32,
+            event.driver_target,
             event.event_type,
             event.data0,
             event.data1,

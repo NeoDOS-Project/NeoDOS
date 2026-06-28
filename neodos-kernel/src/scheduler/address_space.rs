@@ -51,6 +51,7 @@ pub struct AddressSpace {
     pub loaded_segments: Vec<SegmentInfo>,
 }
 
+#[allow(clippy::new_without_default)]
 impl AddressSpace {
     pub fn new() -> Self {
         AddressSpace {

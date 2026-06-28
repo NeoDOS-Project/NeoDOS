@@ -1,10 +1,17 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
 
-const MODE_DIR: u16 = 0x40;
 const ARGS_ADDR: u64 = 0x41F000;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 64;
@@ -22,10 +29,6 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
-}
-
-fn is_dir(mode: u16) -> bool {
-    (mode & MODE_DIR) != 0
 }
 
 fn read_args() -> [u8; 260] {

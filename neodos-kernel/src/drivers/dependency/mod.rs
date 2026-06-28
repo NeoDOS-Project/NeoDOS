@@ -32,7 +32,7 @@ impl DependencyGraph {
     }
 
     pub fn add_driver(&mut self, name: &str) {
-        self.edges.entry(name.to_ascii_uppercase()).or_insert_with(Vec::new);
+        self.edges.entry(name.to_ascii_uppercase()).or_default();
     }
 
     pub fn add_dependency(&mut self, driver: &str, depends_on: &str) -> Result<(), DepError> {
@@ -40,11 +40,11 @@ impl DependencyGraph {
         let dep_upper = depends_on.to_ascii_uppercase();
 
         if !self.edges.contains_key(&driver_upper) {
-            self.edges.entry(driver_upper.clone()).or_insert_with(Vec::new);
+            self.edges.entry(driver_upper.clone()).or_default();
         }
 
         if !self.edges.contains_key(&dep_upper) {
-            self.edges.entry(dep_upper.clone()).or_insert_with(Vec::new);
+            self.edges.entry(dep_upper.clone()).or_default();
         }
 
         let deps = self.edges.get_mut(&driver_upper).unwrap();

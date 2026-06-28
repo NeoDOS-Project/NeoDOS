@@ -153,15 +153,14 @@ pub fn init() -> bool {
     for irq in 0..16u8 {
         let has_handler = irq == 0 || irq == 1 || irq == 4 || irq == 12;
         let gsi = resolve_gsi(irq, &overrides);
-        let pin = (gsi - gsi_base as u32) as u8;
+        let pin = (gsi - gsi_base) as u8;
         if pin > max_redir { continue; }
 
         if has_handler {
             let vector = 32 + irq;
             let entry: u64 = vector as u64
                 | IOAPIC_IRQ_DELIVERY_FIXED
-                | IOAPIC_IRQ_PHYSICAL
-                | (0u64 << 56);
+                | IOAPIC_IRQ_PHYSICAL;
 
             let iso_flags = override_flags(irq, &overrides);
             let entry = if iso_flags & 0x2 != 0 {

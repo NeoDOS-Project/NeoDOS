@@ -1,5 +1,13 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
+
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
 
 mod error;
 mod syscall;
@@ -9,14 +17,13 @@ mod process;
 mod mem;
 mod info;
 
-use core::arch::asm;
 
 // ============================================================
 // NXL entry point — never actually executed (passive library)
 // ============================================================
 #[no_mangle]
 pub extern "C" fn nxl_entry() -> ! {
-    loop {}
+    loop { unsafe { core::arch::asm!("hlt"); } }
 }
 
 // ============================================================

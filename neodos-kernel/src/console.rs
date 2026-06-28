@@ -164,7 +164,7 @@ pub fn redraw_from_shadow(shadow: &crate::input::vt::VtShadowBuffer) {
 fn console_max_row() -> usize {
     if let Some(ref r) = *RENDERER.lock() {
         let max_rows = r.fb.height / font::FONT_HEIGHT;
-        max_rows.min(VGA_HEIGHT).max(1)
+        max_rows.clamp(1, VGA_HEIGHT)
     } else {
         VGA_HEIGHT
     }
@@ -363,7 +363,7 @@ pub fn write_char(c: u8) {
         b'\n' => { r += 1; col = 0; }
         b'\r' => { col = 0; }
         b'\x08' => {
-            if col > 0 { col -= 1; }
+            col = col.saturating_sub(1);
             draw_char_at(b' ', r, col);
         }
         c => {
@@ -466,7 +466,7 @@ pub fn cursor_timer_tick() {
         return;
     }
     let cnt = CURSOR_BLINK_COUNTER.fetch_add(1, Ordering::Relaxed);
-    if cnt % CURSOR_BLINK_INTERVAL == 0 {
+    if cnt.is_multiple_of(CURSOR_BLINK_INTERVAL) {
         let visible = !CURSOR_VISIBLE.load(Ordering::Relaxed);
         CURSOR_VISIBLE.store(visible, Ordering::Relaxed);
         draw_cursor(visible);
@@ -488,7 +488,7 @@ pub fn clear_screen() {
 
 fn console_width() -> usize {
     if let Some(ref r) = *RENDERER.lock() {
-        (r.fb.width / font::FONT_WIDTH).min(VGA_WIDTH).max(1)
+        (r.fb.width / font::FONT_WIDTH).clamp(1, VGA_WIDTH)
     } else {
         VGA_WIDTH
     }

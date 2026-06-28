@@ -32,7 +32,7 @@ pub extern "C" fn nxl_sbrk(increment: i64) -> i64 {
     let current = nxl_sys_brk(0);
     if current < 0 { return current; }
     if increment == 0 { return current; }
-    let new = (current as i64).checked_add(increment).unwrap_or(-1);
+    let new = current.checked_add(increment).unwrap_or(-1);
     if new < 0 { return EINVAL; }
     let new = new as u64;
     let result = nxl_sys_brk(new);

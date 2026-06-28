@@ -291,8 +291,8 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
     // Find our CPU index
     let mut my_cpu: usize = 0;
     unsafe {
-        for i in 1..MAX_CPUS {
-            if AP_APIC_IDS[i] == my_apic {
+        for (i, &id) in AP_APIC_IDS.iter().enumerate().take(MAX_CPUS).skip(1) {
+            if id == my_apic {
                 my_cpu = i;
                 break;
             }
@@ -431,14 +431,14 @@ pub fn init_smp() -> usize {
     }
 
     // Step 2: Allocate stacks for APs
-    for cpu in 1..MAX_CPUS {
-        let stack_page = crate::hal::alloc_page();
-        if stack_page.is_null() {
-            crate::serial_println!("[SMP] Failed to allocate stack for AP {}", cpu);
-            break;
-        }
-        unsafe {
-            AP_STACK_PTRS[cpu] = stack_page as u64 + AP_STACK_SIZE as u64;
+    unsafe {
+        for (cpu, slot) in AP_STACK_PTRS.iter_mut().enumerate().take(MAX_CPUS).skip(1) {
+            let stack_page = crate::hal::alloc_page();
+            if stack_page.is_null() {
+                crate::serial_println!("[SMP] Failed to allocate stack for AP {}", cpu);
+                break;
+            }
+            *slot = stack_page as u64 + AP_STACK_SIZE as u64;
         }
     }
 

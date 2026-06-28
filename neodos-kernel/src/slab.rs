@@ -119,7 +119,7 @@ impl SlabPage {
     fn free(&mut self, ptr: *mut u8) -> bool {
         let offset = (ptr as usize).wrapping_sub(self.slots_start());
         let sz = self.slot_size as usize;
-        if offset > SLAB_PAGE_SIZE - sz || offset % sz != 0 {
+        if offset > SLAB_PAGE_SIZE - sz || !offset.is_multiple_of(sz) {
             return false;
         }
         let idx = (offset / sz) as u16;
@@ -245,8 +245,8 @@ impl SlabCache {
     /// Returns the number of objects moved.
     fn drain_batch(&mut self, buf: &[*mut u8], count: usize) -> usize {
         let mut drained = 0;
-        for i in 0..count {
-            if self.free(buf[i]) {
+        for &ptr in buf.iter().take(count) {
+            if self.free(ptr) {
                 drained += 1;
             }
         }
@@ -349,8 +349,8 @@ impl SlabAllocator {
 
         // Push objects into per-CPU hot cache (GS-segment writes, no lock needed)
         unsafe {
-            for i in 0..count {
-                let _ = cpu_local::this_cpu_slab_free_local(cache_idx, batch[i]);
+            for ptr in batch.iter().take(count) {
+                let _ = cpu_local::this_cpu_slab_free_local(cache_idx, *ptr);
             }
         }
         count

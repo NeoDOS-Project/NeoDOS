@@ -22,7 +22,7 @@ pub struct FramebufferInfo {
 }
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
-const BOOT_VERSION: u32 = ((0 * 256) + 10) << 8 | 5; // major.minor.patch -> 0x000A05 = v0.10.5
+const BOOT_VERSION: u32 = (10) << 8 | 5; // major.minor.patch -> 0x000A05 = v0.10.5
 
 #[repr(C)]
 pub struct BootInfo {
@@ -81,7 +81,7 @@ fn efi_main() -> Status {
         });
 
     let (fs_image_addr, fs_image_size) = if !fs_image_data.is_empty() {
-        let fs_page_count = (fs_image_data.len() + 0xFFF) / 0x1000;
+        let fs_page_count = fs_image_data.len().div_ceil(0x1000);
         match uefi::boot::allocate_pages(
             AllocateType::AnyPages,
             MemoryType::LOADER_DATA,
@@ -186,7 +186,7 @@ fn init_gop() -> Option<FramebufferInfo> {
                 uefi::boot::OpenProtocolAttributes::GetProtocol,
             )
         } {
-            let fb = extract_fb_from_gop(&mut *s);
+            let fb = extract_fb_from_gop(&mut s);
             core::mem::forget(s);
             return fb;
         }

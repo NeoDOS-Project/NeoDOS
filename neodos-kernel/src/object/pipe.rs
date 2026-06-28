@@ -61,8 +61,8 @@ impl PipeInner {
     fn read_into(&mut self, buf: &mut [u8]) -> usize {
         let available = self.used();
         let to_read = core::cmp::min(available, buf.len());
-        for i in 0..to_read {
-            buf[i] = self.buf[(self.head + i) % PIPE_BUF_SIZE];
+        for (i, b) in buf.iter_mut().enumerate().take(to_read) {
+            *b = self.buf[(self.head + i) % PIPE_BUF_SIZE];
         }
         self.head = (self.head + to_read) % PIPE_BUF_SIZE;
         to_read
@@ -71,8 +71,8 @@ impl PipeInner {
     fn write_from(&mut self, buf: &[u8]) -> usize {
         let free = self.free();
         let to_write = core::cmp::min(free, buf.len());
-        for i in 0..to_write {
-            self.buf[(self.tail + i) % PIPE_BUF_SIZE] = buf[i];
+        for (i, &b) in buf.iter().enumerate().take(to_write) {
+            self.buf[(self.tail + i) % PIPE_BUF_SIZE] = b;
         }
         self.tail = (self.tail + to_write) % PIPE_BUF_SIZE;
         to_write

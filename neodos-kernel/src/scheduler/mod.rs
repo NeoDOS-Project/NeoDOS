@@ -290,7 +290,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            token: *crate::security::DEFAULT_ADMIN_TOKEN,
             vt_num: 0,
         }
     }
@@ -312,7 +312,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            token: *crate::security::DEFAULT_ADMIN_TOKEN,
             vt_num: 0,
         }
     }
@@ -342,6 +342,7 @@ macro_rules! with_current {
     }};
 }
 
+#[allow(clippy::new_without_default)]
 impl Scheduler {
     // ── Lookup helpers ──
 
@@ -462,6 +463,7 @@ impl Scheduler {
     }
 
     /// Add a new EPROCESS + initial KTHREAD (Ring 3).
+    #[allow(clippy::too_many_arguments)]
     pub fn add_ring3_process(
         &mut self,
         entry: u64,
@@ -578,19 +580,17 @@ impl Scheduler {
         if pid == 0 { return false; }
 
         // Unregister EPROCESS from Ob (OB-046)
-        for e in self.eprocesses.iter() {
-            if let Some(ep) = e {
-                if ep.pid == pid {
-                    if let Some(kid) = ep.obj_id {
-                        let _ = object::ob_destroy_object(kid);
-                    }
-                    if let Some(ob_id) = ep.ob_id {
-                        let _ = object::ob_close_object(ob_id);
-                        let ns_path = alloc::format!("\\Process\\{}", pid);
-                        let _ = crate::object::namespace::ob_remove_object(&ns_path);
-                    }
-                    break;
+        for ep in self.eprocesses.iter().flatten() {
+            if ep.pid == pid {
+                if let Some(kid) = ep.obj_id {
+                    let _ = object::ob_destroy_object(kid);
                 }
+                if let Some(ob_id) = ep.ob_id {
+                    let _ = object::ob_close_object(ob_id);
+                    let ns_path = alloc::format!("\\Process\\{}", pid);
+                    let _ = crate::object::namespace::ob_remove_object(&ns_path);
+                }
+                break;
             }
         }
 
@@ -666,19 +666,17 @@ impl Scheduler {
         if pid == 0 { return false; }
 
         // Unregister from Ob (OB-046)
-        for e in self.eprocesses.iter() {
-            if let Some(ep) = e {
-                if ep.pid == pid {
-                    if let Some(kid) = ep.obj_id {
-                        let _ = object::ob_destroy_object(kid);
-                    }
-                    if let Some(ob_id) = ep.ob_id {
-                        let _ = object::ob_close_object(ob_id);
-                        let ns_path = alloc::format!("\\Process\\{}", pid);
-                        let _ = crate::object::namespace::ob_remove_object(&ns_path);
-                    }
-                    break;
+        for ep in self.eprocesses.iter().flatten() {
+            if ep.pid == pid {
+                if let Some(kid) = ep.obj_id {
+                    let _ = object::ob_destroy_object(kid);
                 }
+                if let Some(ob_id) = ep.ob_id {
+                    let _ = object::ob_close_object(ob_id);
+                    let ns_path = alloc::format!("\\Process\\{}", pid);
+                    let _ = crate::object::namespace::ob_remove_object(&ns_path);
+                }
+                break;
             }
         }
 
@@ -740,28 +738,24 @@ impl Scheduler {
         let legacy_magic = pid | 0x8000_0000;
         // KWait ChildExit magic
         let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
-        for th in self.kthreads.iter_mut() {
-            if let Some(k) = th {
-                if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
-                    k.waiting_for = None;
-                    if matches!(k.state, ThreadState::Blocked { .. }) {
-                        k.state = ThreadState::Ready;
-                        Self::enqueue_to_cpu_run_queue(k);
-                    }
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
+                k.waiting_for = None;
+                if matches!(k.state, ThreadState::Blocked { .. }) {
+                    k.state = ThreadState::Ready;
+                    Self::enqueue_to_cpu_run_queue(k);
                 }
             }
         }
     }
 
     pub fn wake_blocked_on_magic(&mut self, magic: u32) {
-        for th in self.kthreads.iter_mut() {
-            if let Some(k) = th {
-                if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-                    k.waiting_for = None;
-                    k.state = ThreadState::Ready;
-                    // Enqueue to its CPU's run queue
-                    Self::enqueue_to_cpu_run_queue(k);
-                }
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                k.waiting_for = None;
+                k.state = ThreadState::Ready;
+                // Enqueue to its CPU's run queue
+                Self::enqueue_to_cpu_run_queue(k);
             }
         }
     }
@@ -771,15 +765,13 @@ impl Scheduler {
     pub fn set_process_priority(&mut self, pid: u32, priority: u8) -> bool {
         if priority >= PRIORITY_COUNT { return false; }
         let mut found = false;
-        for th in self.kthreads.iter_mut() {
-            if let Some(k) = th {
-                if k.pid == pid {
-                    k.priority = priority;
-                    let idx = priority as usize;
-                    k.time_slice_remaining = TIME_SLICES[idx];
-                    k.ticks_since_scheduled = 0;
-                    found = true;
-                }
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.pid == pid {
+                k.priority = priority;
+                let idx = priority as usize;
+                k.time_slice_remaining = TIME_SLICES[idx];
+                k.ticks_since_scheduled = 0;
+                found = true;
             }
         }
         found
@@ -796,14 +788,12 @@ impl Scheduler {
     // ── Aging ──
 
     fn apply_aging(&mut self) {
-        for th in self.kthreads.iter_mut() {
-            if let Some(k) = th {
-                if k.tid > 0 && k.state == ThreadState::Ready {
-                    k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.tid > 0 && k.state == ThreadState::Ready {
+                k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
                     k.priority -= 1;
                     k.ticks_since_scheduled = 0;
-                }
                 }
             }
         }
@@ -923,15 +913,13 @@ impl Scheduler {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 if check_tid == 0 { continue; }
-                for th in self.kthreads.iter_mut() {
-                    if let Some(k) = th {
-                        if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
-                            let prev = self.current_tid;
-                            self.current_tid = check_tid;
-                            k.state = ThreadState::Running;
-                            crate::trace_cswitch!(prev as u64, check_tid as u64);
-                            return k as *mut Kthread;
-                        }
+                for k in self.kthreads.iter_mut().flatten() {
+                    if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
+                        let prev = self.current_tid;
+                        self.current_tid = check_tid;
+                        k.state = ThreadState::Running;
+                        crate::trace_cswitch!(prev as u64, check_tid as u64);
+                        return k as *mut Kthread;
                     }
                 }
             }
@@ -955,7 +943,7 @@ impl Scheduler {
     pub fn on_timer_tick(&mut self) {
         self.timer_ticks += 1;
 
-        if self.timer_ticks % AGING_INTERVAL_TICKS == 0 {
+        if self.timer_ticks.is_multiple_of(AGING_INTERVAL_TICKS) {
             self.apply_aging();
         }
 

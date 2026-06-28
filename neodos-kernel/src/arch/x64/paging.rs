@@ -16,14 +16,12 @@ fn build_tlb_target_mask() -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let scheduler = s.lock();
-        for slot in &scheduler.kthreads {
-            if let Some(k) = slot {
-                if k.state == crate::scheduler::ThreadState::Terminated {
-                    continue;
-                }
-                if (k.cpu as usize) < count && k.cpu as usize != my_cpu {
-                    mask |= 1u64 << (k.cpu as usize);
-                }
+        for k in scheduler.kthreads.iter().flatten() {
+            if k.state == crate::scheduler::ThreadState::Terminated {
+                continue;
+            }
+            if (k.cpu as usize) < count && k.cpu as usize != my_cpu {
+                mask |= 1u64 << (k.cpu as usize);
             }
         }
     });
@@ -94,10 +92,10 @@ pub struct HeapSlot {
 }
 
 pub fn alloc_heap_slot() -> Option<HeapSlot> {
-    for i in 0..MAX_HEAP_SLOTS {
-        unsafe {
-            if !HEAP_SLOT_USED[i] {
-                HEAP_SLOT_USED[i] = true;
+    unsafe {
+        for (i, slot) in HEAP_SLOT_USED.iter_mut().enumerate().take(MAX_HEAP_SLOTS) {
+            if !*slot {
+                *slot = true;
                 let base = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
                 return Some(HeapSlot { base });
             }
@@ -137,9 +135,9 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
     let mut target_idx: usize = 0;
     if free_count == 1 {
         // Only one free slot — find it directly
-        for i in 0..count {
-            unsafe {
-                if !SLOT_USED[i] {
+        unsafe {
+            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
+                if !used {
                     target_idx = i;
                     break;
                 }
@@ -149,9 +147,9 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         // Random offset within the free slots
         let pick = (r as usize) % free_count;
         let mut seen = 0;
-        for i in 0..count {
-            unsafe {
-                if !SLOT_USED[i] {
+        unsafe {
+            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
+                if !used {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -165,9 +163,9 @@ pub fn alloc_user_slot() -> Option<UserSlot> {
         let tsc = unsafe { crate::hal::raw::raw_read_tsc() };
         let pick = (tsc as usize) % free_count;
         let mut seen = 0;
-        for i in 0..count {
-            unsafe {
-                if !SLOT_USED[i] {
+        unsafe {
+            for (i, &used) in SLOT_USED.iter().enumerate().take(count) {
+                if !used {
                     if seen == pick {
                         target_idx = i;
                         break;
@@ -228,13 +226,13 @@ pub unsafe fn init_custom_page_tables() {
     PML4.0[0].set_addr(pdpt_addr, dir_flags);
 
     // 2. Link PDPT[0..4] → PD[0..4]
-    for i in 0..4 {
-        let pd_addr = PhysAddr::new(&PD[i] as *const _ as u64);
+    for (i, pd) in PD.iter().enumerate() {
+        let pd_addr = PhysAddr::new(pd as *const _ as u64);
         PDPT.0[i].set_addr(pd_addr, dir_flags);
     }
 
     // 3. Identity-map 0..4 GiB with 2 MB huge pages.
-    for i in 0..4usize {
+    for (i, pd) in PD.iter_mut().enumerate().take(4) {
         for j in 0..512usize {
             let addr = (i * 512 + j) as u64 * HUGE_PAGE_SIZE;
 
@@ -243,7 +241,7 @@ pub unsafe fn init_custom_page_tables() {
                 entry_flags |= PageTableFlags::USER_ACCESSIBLE;
             }
 
-            PD[i].0[j].set_addr(PhysAddr::new(addr), entry_flags);
+            pd.0[j].set_addr(PhysAddr::new(addr), entry_flags);
         }
     }
 
@@ -313,7 +311,7 @@ unsafe fn map_phys_range_above_4g(start: u64, end: u64, flags: PageTableFlags) {
         // 4..8 GiB → PML4[1], PDPT entry = (addr-4GiB) / 1GiB
         let _pml4_idx = 1;
         let pdpt_idx = ((addr - 0x1_0000_0000) / (512 * HUGE_PAGE_SIZE)) as usize;
-        let pd_idx = ((addr - 0x1_0000_0000) / HUGE_PAGE_SIZE as u64 % 512) as usize;
+        let pd_idx = ((addr - 0x1_0000_0000) / HUGE_PAGE_SIZE % 512) as usize;
 
         if pdpt_idx < 4 {
             // Link PDPT_HIGH[pdpt_idx] → PD_HIGH[pdpt_idx]
@@ -332,13 +330,13 @@ unsafe fn map_phys_range_above_4g(start: u64, end: u64, flags: PageTableFlags) {
 /// inside or entirely outside the window.
 #[inline]
 fn is_user_range(addr: u64) -> bool {
-    addr >= USER_BASE && addr < USER_LIMIT
+    (USER_BASE..USER_LIMIT).contains(&addr)
 }
 
-/// Extend the user-accessible window to cover `base..base+size`.
-///
-/// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
-/// This function updates the PD entries in-place and flushes the TLB via CR3
+// Extend the user-accessible window to cover `base..base+size`.
+//
+// Both `base` and `base+size` must be 2 MB-aligned and within 0..4 GiB.
+// This function updates the PD entries in-place and flushes the TLB via CR3
 // ─────────────────────────────────────────────────────────
 // 4 KB page-level heap management (on-demand paging)
 // ─────────────────────────────────────────────────────────
@@ -361,7 +359,7 @@ pub const MMAP_TOTAL_SIZE: u64 = 0x200_0000; // 32 MB
 
 /// Check if a virtual address falls within the mmap region.
 pub fn is_mmap_virtual_addr(virt: u64) -> bool {
-    virt >= MMAP_BASE && virt < MMAP_BASE + MMAP_TOTAL_SIZE
+    (MMAP_BASE..MMAP_BASE + MMAP_TOTAL_SIZE).contains(&virt)
 }
 
 /// Split all 2 MB huge pages in the mmap region for 4 KB demand paging.
@@ -370,7 +368,7 @@ pub fn init_mmap_demand_paging() {
     let end = MMAP_BASE + MMAP_TOTAL_SIZE;
     let mut addr = MMAP_BASE;
     while addr < end {
-        if let Err(_) = split_2mb_page(addr) {
+        if split_2mb_page(addr).is_err() {
             serial_println!("[PAG] mmap split @ 0x{:x} FAILED", addr);
         } else {
             count += 1;
@@ -468,10 +466,8 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     }
 
     // Split 2 MB page if needed (PTE doesn't exist yet)
-    if crate::hal::walk_ptes_4k(aligned).is_none() {
-        if split_2mb_page(aligned).is_err() {
-            return false;
-        }
+    if crate::hal::walk_ptes_4k(aligned).is_none() && split_2mb_page(aligned).is_err() {
+        return false;
     }
 
     if region.flags & 1 != 0 {
@@ -635,7 +631,7 @@ pub fn is_heap_virtual_addr(virt: u64) -> bool {
 pub fn init_heap_demand_paging() {
     for i in 0..MAX_HEAP_SLOTS {
         let virt = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
-        if let Err(_) = split_2mb_page(virt) {
+        if split_2mb_page(virt).is_err() {
             serial_println!("[PAG] split heap slot {} @ 0x{:x} FAILED", i, virt);
         }
     }
@@ -700,7 +696,7 @@ pub fn heap_free_range(start: u64, end: u64) {
 /// Returns true if the fault was handled.
 pub fn handle_teb_page_fault(virt: u64) -> bool {
     // TEB is at 0x7000, within the first 4 KB page of the TEB region
-    if virt >= 0x7000 && virt < 0x8000 {
+    if (0x7000..0x8000).contains(&virt) {
         // Check if PTEs exist (page table was split)
         let aligned = virt & !(PAGE_4K - 1);
         if crate::hal::walk_ptes_4k(aligned).is_none() {
@@ -719,7 +715,7 @@ pub fn handle_teb_page_fault(virt: u64) -> bool {
         // Allocate and map TEB page
         let phys = crate::hal::alloc_page();
         if phys.is_null() { return false; }
-        unsafe { core::ptr::write_bytes(phys as *mut u8, 0, 4096); }
+        unsafe { core::ptr::write_bytes(phys, 0, 4096); }
         let rc = crate::hal::map_page(phys as u64, aligned, 0x7);
         if rc != 0 {
             crate::hal::free_page(phys);

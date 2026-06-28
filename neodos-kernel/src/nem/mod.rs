@@ -51,7 +51,7 @@ impl DriverCategory {
             _ => None,
         }
     }
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             DriverCategory::Boot => "BOOT",
             DriverCategory::System => "SYSTEM",
@@ -83,7 +83,7 @@ impl NemDriverType {
             _ => None,
         }
     }
-    pub fn to_str(&self) -> &'static str {
+    pub fn to_str(self) -> &'static str {
         match self {
             NemDriverType::Null => "null",
             NemDriverType::Echo => "echo",

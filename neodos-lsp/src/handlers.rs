@@ -126,7 +126,7 @@ impl LspHandlers {
         }
 
         // 2. NeoDOS syscall completions.
-        if prefix.as_deref() == Some("sys_") || prefix.as_deref().map_or(false, |p| p.starts_with("sys_")) {
+        if prefix.as_deref() == Some("sys_") || prefix.as_deref().is_some_and(|p| p.starts_with("sys_")) {
             for entry in self.db.syscalls.iter() {
                 let (num, item) = entry.pair();
                 items.push(CompletionItem {
@@ -140,7 +140,7 @@ impl LspHandlers {
         }
 
         // 3. Shell commands.
-        if prefix.as_deref() == Some("") || prefix.as_deref().map_or(false, |p| p.len() <= 3) {
+        if prefix.as_deref() == Some("") || prefix.as_deref().is_some_and(|p| p.len() <= 3) {
             for entry in self.db.shell_commands.iter() {
                 items.push(CompletionItem {
                     label: entry.key().clone(),
@@ -153,19 +153,19 @@ impl LspHandlers {
         }
 
         // 4. Capability constants.
-        if prefix.as_deref().map_or(false, |p| p.starts_with("CAP_")) {
+        if prefix.as_deref().is_some_and(|p| p.starts_with("CAP_")) {
             for sym in self.db.find_by_prefix("CAP_") {
-                items.push(Self::sym_to_completion(&sym, &"CAP_".to_string()));
+                items.push(Self::sym_to_completion(&sym, "CAP_"));
             }
         }
 
         // 5. Snippets.
-        if prefix.as_deref().map_or(false, |p| p.starts_with("unsafe") || p.is_empty()) {
+        if prefix.as_deref().is_some_and(|p| p.starts_with("unsafe") || p.is_empty()) {
             items.push(unsafe_snippet());
         }
 
         // 6. Module paths (use statements).
-        if prefix.as_deref().map_or(false, |p| p.contains("::")) {
+        if prefix.as_deref().is_some_and(|p| p.contains("::")) {
             let parts: Vec<&str> = prefix.as_ref().unwrap().split("::").collect();
             if let Some(last) = parts.last() {
                 for sym in self.db.find_by_prefix(last) {
@@ -176,8 +176,8 @@ impl LspHandlers {
 
         // Deduplicate.
         items.sort_by(|a, b| {
-            let a_exact = prefix.as_ref().map_or(false, |p| a.label.eq_ignore_ascii_case(p));
-            let b_exact = prefix.as_ref().map_or(false, |p| b.label.eq_ignore_ascii_case(p));
+            let a_exact = prefix.as_ref().is_some_and(|p| a.label.eq_ignore_ascii_case(p));
+            let b_exact = prefix.as_ref().is_some_and(|p| b.label.eq_ignore_ascii_case(p));
             a_exact.cmp(&b_exact).reverse().then_with(|| a.label.cmp(&b.label))
         });
         items.dedup_by(|a, b| a.label == b.label);
@@ -322,6 +322,7 @@ impl LspHandlers {
         let target_id = sym.id;
         let ref_ids = self.db.references_for(&target_id);
 
+        #[allow(clippy::mutable_key_type)]
         let mut changes: HashMap<lsp_types::Uri, Vec<TextEdit>> = HashMap::new();
 
         // Rename definition.

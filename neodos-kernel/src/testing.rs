@@ -26,18 +26,16 @@ pub fn run_all() -> (usize, usize) {
     let mut passed = 0;
     let mut failed = 0;
     unsafe {
-        for i in 0..TEST_COUNT {
-            if let Some(test) = &TESTS[i] {
-                serial_print!("  TEST {} ... ", test.name);
-                match (test.func)() {
-                    Ok(()) => {
-                        serial_println!("PASS");
-                        passed += 1;
-                    }
-                    Err(msg) => {
-                        serial_println!("FAIL: {}", msg);
-                        failed += 1;
-                    }
+        for test in TESTS.iter().flatten().take(TEST_COUNT) {
+            serial_print!("  TEST {} ... ", test.name);
+            match (test.func)() {
+                Ok(()) => {
+                    serial_println!("PASS");
+                    passed += 1;
+                }
+                Err(msg) => {
+                    serial_println!("FAIL: {}", msg);
+                    failed += 1;
                 }
             }
         }
@@ -488,10 +486,7 @@ pub fn register_alloc_tests() {
     });
 
     test_case!("alloc_vec_push", {
-        let mut v = Vec::new();
-        v.push(1);
-        v.push(2);
-        v.push(3);
+        let v = alloc::vec![1, 2, 3];
         test_eq!(v.len(), 3);
         test_eq!(v[0], 1);
         test_eq!(v[1], 2);
@@ -826,7 +821,7 @@ fn register_mem_stress() {
         }
         test_eq!(v.len(), 100);
         // Drain
-        while let Some(_) = v.pop() {}
+        while v.pop().is_some() {}
         test_eq!(v.len(), 0);
         // Refill
         for i in 0..50 {
@@ -848,7 +843,7 @@ fn register_mem_stress() {
         test_eq!(s.len(), 0);
         // Rebuild
         for _ in 0..30 {
-            s.push_str("x");
+            s.push('x');
         }
         test_eq!(s.len(), 30);
     });
@@ -1637,11 +1632,11 @@ pub fn register_neofs_tests() {
         for bits in 0..32u16 {
             let mode = bits;
             let p = render_perms(mode);
-            for i in 0..5 {
+            for (i, &ch) in p.iter().enumerate() {
                 let expected = if (mode >> i) & 1 != 0 {
                     match i { 0 => b'R', 1 => b'W', 2 => b'X', 3 => b'S', _ => b'D' }
                 } else { b'-' };
-                test_eq!(p[i], expected);
+                test_eq!(ch, expected);
             }
         }
     });
@@ -1683,7 +1678,7 @@ pub fn register_neofs_tests() {
     // ── DirectoryEntry edge cases ──────────────────────────────
     test_case!("neofs_dirent_name_max_length", {
         let mut name = [0u8; 249];
-        for i in 0..249 { name[i] = b'A' + (i % 26) as u8; }
+        for (i, byte) in name.iter_mut().enumerate() { *byte = b'A' + (i % 26) as u8; }
         let entry = DirectoryEntry {
             inode_num: 42, name_len: 249, entry_type: 1, attributes: 0, name,
         };
@@ -1825,7 +1820,7 @@ pub fn register_neofs_tests() {
         for _ in 0..500 {
             let nlen = ((lcg() % 200) + 1) as usize;
             let mut name = [0u8; 249];
-            for i in 0..nlen.min(249) { name[i] = b'A' + (lcg() % 26) as u8; }
+            for item in name.iter_mut().take(nlen.min(249)) { *item = b'A' + (lcg() % 26) as u8; }
             let entry = DirectoryEntry {
                 inode_num: (lcg() % 1000) as u32, name_len: nlen as u8,
                 entry_type: (lcg() % 3) as u8, attributes: (lcg() % 256) as u8, name,
@@ -2005,22 +2000,16 @@ pub fn register_pipe_tests() {
         // Fill the buffer (4096 bytes minus 1 for sentinel)
         let buf = [0xABu8; 256];
         let mut total = 0usize;
-        loop {
-            match PIPE_MANAGER.write(pid, &buf) {
-                Ok(n) => total += n,
-                Err(_) => break,
-            }
+        while let Ok(n) = PIPE_MANAGER.write(pid, &buf) {
+            total += n;
         }
         test_true!(total > 0);
         // Drain
         let mut out = [0u8; 256];
         let mut read_total = 0usize;
-        loop {
-            match PIPE_MANAGER.read(pid, &mut out) {
-                Ok(0) => break,
-                Ok(n) => read_total += n,
-                Err(_) => break,
-            }
+        while let Ok(n) = PIPE_MANAGER.read(pid, &mut out) {
+            if n == 0 { break; }
+            read_total += n;
         }
         test_eq!(read_total, total);
         PIPE_MANAGER.dec_read_ref(pid);
@@ -2043,7 +2032,7 @@ pub fn register_pipe_tests() {
             pipes.push(pid);
         }
         test_true!(pipes.len() <= 16);
-        test_true!(pipes.len() > 0);
+        test_true!(!pipes.is_empty());
         // Allocate should fail now
         test_eq!(PIPE_MANAGER.alloc(), None);
         // Free them all
@@ -2430,11 +2419,11 @@ pub fn register_pci_enum_tests() {
             if is_multi { multi_devs += 1; }
             let max_func = if is_multi { 8usize } else { 1usize };
             for func in 0..max_func {
-                let vendor = pci::pci_config_read_word(0, dev as u8, func as u8, 0);
+                let vendor = pci::pci_config_read_word(0, dev, func as u8, 0);
                 if vendor == 0xFFFF || vendor == 0 {
                     continue;
                 }
-                let class_rev = pci::pci_config_read_dword(0, dev as u8, func as u8, 0x08);
+                let class_rev = pci::pci_config_read_dword(0, dev, func as u8, 0x08);
                 let class = ((class_rev >> 24) & 0xFF) as u8;
                 let subclass = ((class_rev >> 16) & 0xFF) as u8;
                 if class == 0x06 && subclass == 0x04 {
@@ -2614,11 +2603,11 @@ fn register_ncq_tests() {
 
         // Fill all 32 tags
         let mut ids = [0u32; 32];
-        for i in 0..32 {
+        for (i, id_slot) in ids.iter_mut().enumerate() {
             let id = irp_alloc(IrpOp::Read, i as u64, 1,
                 core::ptr::null_mut(), 512, None, core::ptr::null_mut())
                 .ok_or("irp_alloc")?;
-            ids[i] = id;
+            *id_slot = id;
             let tag = map.alloc_tag().ok_or("alloc_tag")?;
             test_true!(map.assign(tag, id));
         }
@@ -2628,10 +2617,10 @@ fn register_ncq_tests() {
         test_true!(map.is_full());
 
         // Clean up
-        for i in 0..32 {
-            let id = map.free(i as u8);
-            test_eq!(id, Some(ids[i]));
-            irp_free(ids[i]);
+        for (i, &id) in ids.iter().enumerate() {
+            let freed = map.free(i as u8);
+            test_eq!(freed, Some(id));
+            irp_free(id);
         }
         test_true!(map.is_empty());
     });
@@ -2642,13 +2631,13 @@ fn register_ncq_tests() {
         let mut map = IrpTagMap::new();
         let mut tags = [0u8; 32];
 
-        for i in 0..32 {
+        for (i, tag_slot) in tags.iter_mut().enumerate() {
             let id = irp_alloc(IrpOp::Read, i as u64, 1,
                 core::ptr::null_mut(), 512, None, core::ptr::null_mut())
                 .ok_or("irp_alloc")?;
             let tag = map.alloc_tag().ok_or("alloc_tag")?;
             test_true!(map.assign(tag, id));
-            tags[i] = tag;
+            *tag_slot = tag;
             irp_free(id);
         }
 
@@ -2927,15 +2916,9 @@ fn register_ecam_integration_tests() {
     });
 
     test_case!("ecam_fallback_to_pio_if_no_mcfg", {
-        if crate::hal::pci::ecam_is_active() {
-            let vendor = pci::pci_config_read_word(0, 0, 0, 0);
-            test_ne!(vendor, 0xFFFF);
-            test_ne!(vendor, 0);
-        } else {
-            let vendor = pci::pci_config_read_word(0, 0, 0, 0);
-            test_ne!(vendor, 0xFFFF);
-            test_ne!(vendor, 0);
-        }
+        let vendor = pci::pci_config_read_word(0, 0, 0, 0);
+        test_ne!(vendor, 0xFFFF);
+        test_ne!(vendor, 0);
     });
 
     test_case!("ecam_read_match_legacy_pio", {

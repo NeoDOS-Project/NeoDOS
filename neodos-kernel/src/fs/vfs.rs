@@ -96,11 +96,9 @@ pub struct Vfs {
 
 impl Vfs {
     fn find_mount(mounts: &[Option<Mount>], mount_count: usize, drive_idx: usize, inode: u32) -> Option<usize> {
-        for i in 0..mount_count {
-            if let Some(ref m) = mounts[i] {
-                if m.parent_drive == drive_idx && m.parent_inode == inode {
-                    return Some(m.mounted_drive);
-                }
+        for m in mounts.iter().take(mount_count).flatten() {
+            if m.parent_drive == drive_idx && m.parent_inode == inode {
+                return Some(m.mounted_drive);
             }
         }
         None
@@ -118,7 +116,7 @@ impl Vfs {
 
     pub fn drive_index(letter: char) -> Option<usize> {
         let l = letter.to_ascii_uppercase();
-        if l >= 'A' && l <= 'Z' {
+        if l.is_ascii_uppercase() {
             Some((l as u8 - b'A') as usize)
         } else {
             None
@@ -193,7 +191,7 @@ impl Vfs {
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
 
         let components: Vec<&str> = rest
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, inode) = self.walk_components(drive_idx, 0, &components)?;
@@ -250,7 +248,7 @@ impl Vfs {
         let mounted_idx = Self::drive_index(mounted_drive).ok_or(VfsError::InvalidPath)?;
 
         let components: Vec<&str> = rest
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
@@ -293,7 +291,7 @@ impl Vfs {
         let drive_idx = Self::drive_index(drive_letter).ok_or(VfsError::InvalidPath)?;
 
         let components: Vec<&str> = rest
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (resolved_drive, resolved_inode) = self.walk_components(drive_idx, 0, &components)?;
@@ -314,7 +312,7 @@ impl Vfs {
     }
 
     fn split_parent_leaf(rest: &str) -> (&str, &str) {
-        match rest.rfind(|c| c == '\\' || c == '/') {
+        match rest.rfind(['\\', '/']) {
             Some(idx) => (&rest[..idx], &rest[idx + 1..]),
             None => ("", rest),
         }
@@ -327,7 +325,7 @@ impl Vfs {
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
         let parent_components: Vec<&str> = parent_path
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
@@ -343,7 +341,7 @@ impl Vfs {
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
         let parent_components: Vec<&str> = parent_path
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
@@ -359,7 +357,7 @@ impl Vfs {
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
         let parent_components: Vec<&str> = parent_path
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
@@ -375,7 +373,7 @@ impl Vfs {
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
         let parent_components: Vec<&str> = parent_path
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
@@ -391,13 +389,13 @@ impl Vfs {
         let (parent_path, leaf) = Self::split_parent_leaf(rest);
 
         let parent_components: Vec<&str> = parent_path
-            .split(|c| c == '\\' || c == '/')
+            .split(['\\', '/'])
             .collect();
 
         let (drive_idx, parent_inode) = self.walk_components(drive_idx, 0, &parent_components)?;
 
         // Extract just the leaf name from new_name (user may pass full path)
-        let new_leaf = new_name.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(new_name);
+        let new_leaf = new_name.rsplit(['\\', '/']).next().unwrap_or(new_name);
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.rename(parent_inode, leaf, new_leaf)

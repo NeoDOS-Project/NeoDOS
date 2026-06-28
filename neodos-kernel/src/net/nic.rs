@@ -59,11 +59,9 @@ impl NicRegistry {
     }
 
     pub fn unregister(&mut self, id: u32) {
-        if (id as usize) < MAX_NICS {
-            if self.nics[id as usize].interface.is_some() {
-                self.nics[id as usize].interface = None;
-                self.active_count -= 1;
-            }
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            self.nics[id as usize].interface = None;
+            self.active_count -= 1;
         }
     }
 
@@ -94,10 +92,8 @@ impl NicRegistry {
     }
 
     pub fn get_ip(&self, id: u32) -> Option<Ipv4Addr> {
-        if (id as usize) < MAX_NICS {
-            if self.nics[id as usize].interface.is_some() {
-                return Some(self.nics[id as usize].ip);
-            }
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            return Some(self.nics[id as usize].ip);
         }
         None
     }

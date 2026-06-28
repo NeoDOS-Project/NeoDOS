@@ -239,11 +239,10 @@ impl HandleTable {
                 }
             }
         }
-        if first.is_some() && second.is_none() {
-            second = Some(self.entries.len() as u8);
+        if let (Some(f), None) = (first, second) {
             self.entries.push(e2);
-            self.entries[first.unwrap() as usize] = e1;
-            return Some((first.unwrap(), second.unwrap()));
+            self.entries[f as usize] = e1;
+            return Some((f, self.entries.len() as u8 - 1));
         }
         match (first, second) {
             (Some(a), Some(b)) => {

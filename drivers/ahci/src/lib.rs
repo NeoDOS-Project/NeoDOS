@@ -11,6 +11,7 @@ fn panic(_: &PanicInfo) -> ! {
 }
 
 #[no_mangle]
+#[allow(clippy::missing_safety_doc)]
 pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     for i in 0..n {
         *dest.add(i) = *src.add(i);
@@ -443,7 +444,7 @@ fn build_read10_cdb(lba: u32, count: u8) -> [u8; 12] {
 
 fn dma_xfer(hba: *mut u32, port: usize, pi: usize, lba: u64, count: u8, is_write: bool) -> i32 {
     let total = (count as usize) * 512;
-    let prd_count = (total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE;
+    let prd_count = total.div_ceil(DMA_BUF_SIZE);
     let prd_used = prd_count.min(MAX_PRD_ENTRIES);
 
     unsafe {
@@ -534,7 +535,7 @@ fn dma_xfer(hba: *mut u32, port: usize, pi: usize, lba: u64, count: u8, is_write
 
 fn dma_packet(hba: *mut u32, port: usize, pi: usize, lba: u32, count: u8) -> i32 {
     let total = (count as usize) * ATAPI_SECTOR_SIZE;
-    let prd_used = ((total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
+    let prd_used = total.div_ceil(DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
 
     unsafe {
         let p = port_reg(hba, port, 0);
@@ -563,7 +564,7 @@ fn dma_packet(hba: *mut u32, port: usize, pi: usize, lba: u32, count: u8) -> i32
         for i in 0..64 { table.cfis[i] = fis_bytes.add(i).read(); }
 
         let cdb = build_read10_cdb(lba, count);
-        for i in 0..12 { table.acmd[i] = cdb[i]; }
+        table.acmd[..12].copy_from_slice(&cdb);
 
         for e in table.prdt.iter_mut() {
             *e = EMPTY_PRD;
@@ -641,7 +642,7 @@ fn ncq_tag_free(tag_busy: &mut u32, tag: u8) {
 
 /// Execute a single NCQ FPDMA queued command (read or write).
 /// Returns 0 on success, -1 on error.
-unsafe fn ncq_setup_fis(table: &mut CmdTableInner, lba: u64, count: u8, is_write: bool, tag: u8) {
+unsafe fn ncq_setup_fis(table: &mut CmdTableInner, lba: u64, _count: u8, is_write: bool, tag: u8) {
     table.cfis = [0u8; 64];
     table.acmd = [0u8; 16];
     table.reserved = [0u8; 48];
@@ -662,7 +663,7 @@ unsafe fn ncq_setup_fis(table: &mut CmdTableInner, lba: u64, count: u8, is_write
 
 unsafe fn ncq_setup_prdt(table: &mut CmdTableInner, total: usize, slot_buf: *mut u8) -> u16 {
     for e in table.prdt.iter_mut() { *e = EMPTY_PRD; }
-    let nprd = ((total + DMA_BUF_SIZE - 1) / DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
+    let nprd = total.div_ceil(DMA_BUF_SIZE).min(MAX_PRD_ENTRIES);
     let prdt_ptr = table.prdt.as_mut_ptr();
     for p in 0..nprd {
         let off = p * DMA_BUF_SIZE;
@@ -872,7 +873,7 @@ unsafe extern "C" fn ahci_read(device_id: u32, lba: u64, count: u8, buf: *mut u8
     if hba.is_null() { return -1; }
     let phys_port = ps.phys_port as usize;
 
-    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+    let cnt = count.clamp(1, 8);
 
     if ps.dev_type == DeviceType::Atapi {
         let total = (cnt as usize) * ATAPI_SECTOR_SIZE;
@@ -928,7 +929,7 @@ unsafe extern "C" fn ahci_write(device_id: u32, lba: u64, count: u8, buf: *const
     if hba.is_null() { return -1; }
     let phys_port = ps.phys_port as usize;
 
-    let cnt = if count < 1 { 1 } else if count > 8 { 8 } else { count };
+    let cnt = count.clamp(1, 8);
     let total = (cnt as usize) * 512;
 
     if ps.ncq_supported != 0 {
@@ -943,7 +944,7 @@ unsafe extern "C" fn ahci_write(device_id: u32, lba: u64, count: u8, buf: *const
                 return if dma_xfer(hba, phys_port, pi, lba, cnt, true) != 0 { -1 } else { 0 };
             }
         };
-        let slot_buf = (core::ptr::addr_of_mut!(PORT_NCQ_RAW_DMA) as *mut u8 as *mut u8)
+        let slot_buf = (core::ptr::addr_of_mut!(PORT_NCQ_RAW_DMA) as *mut u8)
             .add((pi * NCQ_SLOT_COUNT + tag as usize) * NCQ_SLOT_BUF_SIZE);
         core::ptr::copy_nonoverlapping(buf, slot_buf, total);
         let rc = ncq_dma_xfer(hba, phys_port, pi, lba, cnt, true, tag);
@@ -961,6 +962,11 @@ unsafe extern "C" fn ahci_write(device_id: u32, lba: u64, count: u8, buf: *const
 
 /// Batch NCQ read: issue up to `count` concurrent FPDMA QUEUED READ commands.
 /// Returns number of successfully completed reads.
+///
+/// # Safety
+///
+/// `bufs` must be a valid pointer to an array of `count` mutable byte pointers.
+/// Each buffer must be valid for `sector_count * 512` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn ahci_ncq_batch_read(
     device_id: u32, lba_base: u64, count: u32, sector_count: u8, bufs: *mut *mut u8,

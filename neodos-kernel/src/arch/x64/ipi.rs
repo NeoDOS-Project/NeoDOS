@@ -296,7 +296,7 @@ pub fn call_function_all(func: CallFunctionCb, arg: u64, target_mask: u64) -> Re
     {
         let payload = &CALL_FUNCTION as *const CallFunctionPayload as *mut CallFunctionPayload;
         unsafe {
-            (*payload).func.store(func as u64, Ordering::SeqCst);
+            (*payload).func.store(func as usize as u64, Ordering::SeqCst);
             (*payload).arg = arg;
             (*payload).target_mask = effective_mask;
             (*payload).ack_count.store(0, Ordering::SeqCst);

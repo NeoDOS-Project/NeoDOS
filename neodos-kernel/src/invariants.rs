@@ -83,12 +83,12 @@ macro_rules! kern_assert {
     ($cond:expr) => {
         if cfg!(feature = "validation") {
             if !($cond) {
-                crate::serial_println!(
+                $crate::serial_println!(
                     "[INV] {}:{}: {} FAILED",
                     core::file!(), core::line!(), core::stringify!($cond)
                 );
-                crate::panic_classification::panic_with_class!(
-                    crate::panic_classification::PanicClass::AssertionFailed,
+                $crate::panic_classification::panic_with_class!(
+                    $crate::panic_classification::PanicClass::AssertionFailed,
                     "assertion failed: {}", core::stringify!($cond)
                 );
             }
@@ -97,13 +97,13 @@ macro_rules! kern_assert {
     ($cond:expr, $($arg:tt)*) => {
         if cfg!(feature = "validation") {
             if !($cond) {
-                crate::serial_println!(
+                $crate::serial_println!(
                     "[INV] {}:{}: {} FAILED — {}",
                     core::file!(), core::line!(), core::stringify!($cond),
                     format_args!($($arg)*)
                 );
-                crate::panic_classification::panic_with_class!(
-                    crate::panic_classification::PanicClass::AssertionFailed,
+                $crate::panic_classification::panic_with_class!(
+                    $crate::panic_classification::PanicClass::AssertionFailed,
                     $($arg)*
                 );
             }

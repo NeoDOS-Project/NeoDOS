@@ -142,27 +142,25 @@ pub fn wait_for_process(pid: u32) {
 
     let (entry, user_stack_top, kernel_stack_top) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
-        for th in s.kthreads.iter() {
-            if let Some(k) = th {
-                if k.pid == pid && k.tid > 0 {
-                    let entry_ = k.rip;
-                    let ks_top = k.kernel_stack_top;
-                    let sp = if let Some(ep) = s.find_eprocess(pid) {
-                        if let Some(slot) = ep.user_slot {
-                            let slot_size = 0x20000u64;
-                            let max_bin = 0x10000u64;
-                            let user_stack = 0x10000u64;
-                            crate::arch::x64::paging::USER_BASE
-                                + slot as u64 * slot_size
-                                + max_bin + user_stack
-                        } else {
-                            k.rsp
-                        }
+        for k in s.kthreads.iter().flatten() {
+            if k.pid == pid && k.tid > 0 {
+                let entry_ = k.rip;
+                let ks_top = k.kernel_stack_top;
+                let sp = if let Some(ep) = s.find_eprocess(pid) {
+                    if let Some(slot) = ep.user_slot {
+                        let slot_size = 0x20000u64;
+                        let max_bin = 0x10000u64;
+                        let user_stack = 0x10000u64;
+                        crate::arch::x64::paging::USER_BASE
+                            + slot as u64 * slot_size
+                            + max_bin + user_stack
                     } else {
                         k.rsp
-                    };
-                    return (entry_, sp, ks_top);
-                }
+                    }
+                } else {
+                    k.rsp
+                };
+                return (entry_, sp, ks_top);
             }
         }
         (0u64, 0u64, 0u64)
@@ -177,12 +175,10 @@ pub fn wait_for_process(pid: u32) {
 
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        for th in s.kthreads.iter() {
-            if let Some(k) = th {
-                if k.pid == pid && k.tid > 0 {
-                    s.current_tid = k.tid;
-                    break;
-                }
+        for k in s.kthreads.iter().flatten() {
+            if k.pid == pid && k.tid > 0 {
+                s.current_tid = k.tid;
+                break;
             }
         }
         if let Some(k) = s.current_kthread_mut() {

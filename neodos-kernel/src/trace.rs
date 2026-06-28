@@ -38,6 +38,12 @@ pub struct TraceBuffer {
     pub head: AtomicU16,
 }
 
+impl Default for TraceBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TraceBuffer {
     pub const fn new() -> Self {
         const ZERO: TraceEntry = TraceEntry {
@@ -68,12 +74,12 @@ impl TraceBuffer {
     /// Dump the most recent N entries to a writer.
     pub fn dump(&self, count: usize, w: &mut dyn fmt::Write) {
         let head = self.head.load(Ordering::Relaxed) as usize;
-        let start = if head >= count { head - count } else { 0 };
+        let start = head.saturating_sub(count);
         let end = head;
         for i in start..end {
             let idx = i % TRACE_CAPACITY;
             let e = &self.entries[idx];
-            let _ = write!(w, "  [{}] {:?} a0={:#x} a1={:#x} a2={:#x} a3={:#x}\n",
+            let _ = writeln!(w, "  [{}] {:?} a0={:#x} a1={:#x} a2={:#x} a3={:#x}",
                 e.tick, e.event, e.arg0, e.arg1, e.arg2, e.arg3);
         }
     }

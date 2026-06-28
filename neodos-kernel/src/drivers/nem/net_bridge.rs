@@ -1,6 +1,5 @@
 use core::sync::atomic::{AtomicU32, Ordering};
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 use crate::net::nic::{NetworkInterface, nic_register, nic_unregister};
 use crate::net::types::{MacAddr, Ipv4Addr};
 use crate::serial_println;

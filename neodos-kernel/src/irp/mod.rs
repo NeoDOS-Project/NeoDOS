@@ -19,6 +19,7 @@
 //!   - Blocking: magic = IRP_WAIT_MAGIC | irp_id, ThreadState::Blocked
 //!   - Chain: irp_set_chain() links IRPs; auto-submits chain_next on complete
 //!   - All 5 BlockDevice implementors complete synchronously in submit_irp()
+//!
 //! ─────────────────────────────────────────────────────────────────────
 //!
 //! Unified asynchronous I/O model for all kernel block operations.
@@ -153,11 +154,11 @@ impl IrpPool {
                 op: IrpOp::Read,
                 lba: 0,
                 count: 0,
-                buf: 0 as *mut u8,
+                buf: core::ptr::null_mut::<u8>(),
                 buf_len: 0,
                 status: IrpStatus::Pending,
                 callback: None,
-                callback_ctx: 0 as *mut u8,
+                callback_ctx: core::ptr::null_mut::<u8>(),
                 chain_next: None,
                 waiting_pid: None,
             },
@@ -259,15 +260,13 @@ fn irp_wake_waiter(pid: u32) {
     let magic = IRP_WAIT_MAGIC | pid;
     let s = crate::scheduler::current_scheduler();
     let mut scheduler = s.lock();
-    for th in scheduler.kthreads.iter_mut() {
-        if let Some(k) = th {
-            if matches!(k.state, crate::scheduler::ThreadState::Blocked { .. })
-                && k.waiting_for == Some(magic)
-            {
-                k.waiting_for = None;
-                k.state = crate::scheduler::ThreadState::Ready;
-                crate::syscall::set_need_resched();
-            }
+    for k in scheduler.kthreads.iter_mut().flatten() {
+        if matches!(k.state, crate::scheduler::ThreadState::Blocked { .. })
+            && k.waiting_for == Some(magic)
+        {
+            k.waiting_for = None;
+            k.state = crate::scheduler::ThreadState::Ready;
+            crate::syscall::set_need_resched();
         }
     }
 }
@@ -652,8 +651,7 @@ impl IrpTagMap {
         if (tag as usize) >= NCQ_MAX_TAGS {
             return None;
         }
-        let irp_id = self.tags[tag as usize].take();
-        irp_id
+        self.tags[tag as usize].take()
     }
 
     /// Allocate the first free tag. Returns None if all tags are in use.

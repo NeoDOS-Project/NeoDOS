@@ -44,7 +44,7 @@ fn klc_token_codepoint(token: Option<&str>) -> Option<u32> {
 }
 
 fn klc_token_is_dead(token: Option<&str>) -> bool {
-    token.map_or(false, |t| t.ends_with('@'))
+    token.is_some_and(|t| t.ends_with('@'))
 }
 
 struct LayoutTables {
@@ -236,7 +236,7 @@ fn write_u16_array(out: &mut String, name: &str, data: &[u16]) {
             out.push('\n');
         }
     }
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         out.push('\n');
     }
     out.push_str("];\n\n");
@@ -250,7 +250,7 @@ fn write_u8_array(out: &mut String, name: &str, data: &[u8]) {
             out.push('\n');
         }
     }
-    if data.len() % 16 != 0 {
+    if !data.len().is_multiple_of(16) {
         out.push('\n');
     }
     out.push_str("];\n\n");

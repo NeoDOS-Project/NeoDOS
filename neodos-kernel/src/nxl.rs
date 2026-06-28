@@ -217,7 +217,7 @@ fn elf_compiled_base(data: &[u8]) -> Option<u64> {
 
 fn resolve_nxl_fallback(vfs: &mut crate::fs::vfs::Vfs, path: &str) -> Option<(usize, VfsNode)> {
     let file_name = path
-        .rsplit(|c| c == '\\' || c == '/')
+        .rsplit(['\\', '/'])
         .next()
         .unwrap_or(path);
 

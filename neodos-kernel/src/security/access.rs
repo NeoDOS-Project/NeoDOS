@@ -10,18 +10,16 @@ use crate::security::sid::Sid;
 fn check_dacl(dacl: &Acl, sid: &Sid, desired_access: u32) -> bool {
     // ── Phase 1: check all Deny ACEs first ──
     for ace in &dacl.aces {
-        if ace.ace_type == ACE_TYPE_ACCESS_DENIED && ace.sid == *sid {
-            if (ace.access_mask & desired_access) == desired_access {
-                return false;
-            }
+        if ace.ace_type == ACE_TYPE_ACCESS_DENIED && ace.sid == *sid
+            && (ace.access_mask & desired_access) == desired_access {
+            return false;
         }
     }
     // ── Phase 2: check all Allow ACEs ──
     for ace in &dacl.aces {
-        if ace.ace_type == ACE_TYPE_ACCESS_ALLOWED && ace.sid == *sid {
-            if (ace.access_mask & desired_access) == desired_access {
-                return true;
-            }
+        if ace.ace_type == ACE_TYPE_ACCESS_ALLOWED && ace.sid == *sid
+            && (ace.access_mask & desired_access) == desired_access {
+            return true;
         }
     }
     false

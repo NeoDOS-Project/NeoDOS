@@ -215,9 +215,9 @@ fn test_wq_fifo_order() -> Result<(), &'static str> {
         RESULTS.store(data as u64 * 10 + 2, core::sync::atomic::Ordering::Relaxed);
     }
     let wq = WorkQueue::new();
-    test_true!(wq.push(handler_a, 1 as *mut u8));
-    test_true!(wq.push(handler_b, 2 as *mut u8));
-    test_true!(wq.push(handler_c, 3 as *mut u8));
+    test_true!(wq.push(handler_a, core::ptr::without_provenance_mut(1)));
+    test_true!(wq.push(handler_b, core::ptr::without_provenance_mut(2)));
+    test_true!(wq.push(handler_c, core::ptr::without_provenance_mut(3)));
     test_eq!(wq.pending_count(), 3);
 
     let (f1, d1) = wq.pop().unwrap();
