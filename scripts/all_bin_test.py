@@ -84,13 +84,8 @@ BINARIES = [
 ]
 
 def has_crash(text):
-    if "GPF:" in text and "KERNEL PANIC" in text:
-        return True
-    if "!!! KERNEL PANIC (CLASS: STACK_CORRUPTION) !!!" in text:
-        return True
-    if "!!! KERNEL PANIC (CLASS: GPF) !!!" in text:
-        return True
-    return False
+    crashes = ["KERNEL PANIC", "GPF:", "BUGCHECK", "STACK_CORRUPTION", "panic", "Panic"]
+    return any(c in text for c in crashes)
 
 def run_test():
     print("[*] NeoDOS All-Binary Test Runner")
