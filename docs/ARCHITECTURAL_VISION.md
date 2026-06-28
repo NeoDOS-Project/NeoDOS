@@ -774,18 +774,18 @@ HAL ─── Arch (x86_64)
 
 | Métrica | Actual | Objetivo v1.0 |
 |---------|--------|---------------|
-| Líneas de código kernel | ~50K | <60K |
-| Tests automáticos | 501 | >800 |
+| Líneas de código kernel | ~45.580 | <60K |
+| Tests automáticos | 547 (test_case!) | >800 |
 | Cobertura de líneas | ~60% | >90% |
-| Syscalls | 40+ | 50–60 |
-| Procesos simultáneos | 16 | Ilimitado |
-| RAM máxima | 4 GB | 64 GB+ (teórico) |
-| Disco máximo | ~8 GB | 2 TB+ |
-| Drivers NEM | 7 | 15+ |
-| Binarios user-mode | 23 | 30+ |
-| Stack de red | No | TCP/IP + UDP |
-| ASLR | No | Sí (v3) |
-| Seguridad (ACL) | Sí (parcial) | Sí (completo NT) |
+| Syscalls (handlers SSDT) | 29 | 50–60 |
+| Procesos simultáneos | Ilimitado (Vec dinámica) | Ilimitado |
+| RAM máxima | Ilimitado (UEFI dinámico) | 64 GB+ (teórico) |
+| Disco máximo (NeoFS) | ~16 TB (u32×4KB) | 2 TB+ |
+| Drivers NEM | 9 | 15+ |
+| Binarios user-mode | 32 | 30+ |
+| Stack de red | TCP/IP + UDP (12 módulos) | TCP/IP + UDP |
+| ASLR | v1 (PIE + load_offset) | Sí (v3) |
+| Seguridad (ACL) | 5 módulos (SID, Token, ACL, Access) | Sí (completo NT) |
 
 ---
 

@@ -35,10 +35,13 @@ NeoDOS Kernel (x86_64-unknown-none)
   - enable interrupts (STI)
   - custom page tables (4 GiB identity map + user window + demand-paging heap split)
   - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback)
-  - ATA boot stub (BootAta) + AHCI probe + NVMe probe
-  - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
-  - FAT32 ESP mount on A:
-  - Ring 3 shell (neoshell.nxe via NeoInit, 512 kernel tests + user commands)
+   - ATA boot stub (BootAta) + AHCI probe + NVMe probe
+   - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
+   - FAT32 ESP mount on A:
+   - Boot driver loader (PHASE 3.85): carga NEM drivers (BOOT → SYSTEM, dependency-sorted)
+   - Driver Isolation Layer (X4): 16×1 MB slots @ 0x30000000
+   - Networking init (PHASE 3.88): e1000 NIC probe, ARP cache, \Device\Tcp/\Device\Udp
+   - Ring 3 shell (neoshell.nxe via NeoInit, 547 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -111,8 +114,8 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 - Custom paging identity-maps the first 4 GiB.
 - **User heap**: 32 MB virtual range `0x10000000..0x12000000`, organised as 16 × 2 MB huge pages. At boot `init_heap_demand_paging()` splits each 2 MB huge page into 4 KB page tables. Physical frames are allocated on demand by the page fault handler when user-space touches a new page.
 - **Demand paging**: The page fault handler (`idt.rs`) checks if the faulting address falls in the heap range; if so, it calls `handle_heap_page_fault()` which walks the 4 KB page tables and allocates a physical frame via `allocate_frame()` marked as `USER_ACCESSIBLE`. On heap shrink (`sys_brk`), `heap_free_range()` unmaps pages and returns frames to the frame allocator. `heap_alloc_page()` touches pages to trigger page faults.
-- The frame allocator manages the first 4 GiB of physical memory via a bitmap (`memory.rs`). A page of memory is 4096 bytes (0x1000).
-- The `MEM` shell command (migrated to Ring 3 as `MEM.NXE`) reports totals derived from the UEFI memory map, clamped to the first 4 GiB and with some reservations applied:
+- The frame allocator manages physical memory via a buddy allocator (`memory/buddy.rs`) with 11 order levels (4 KB → 4 MB). Detects total RAM from UEFI memory map — no hard limit, supports >4 GB natively.
+- The `MEM` shell command (migrated to Ring 3 as `MEM.NXE`) reports totals derived from the UEFI memory map with reservations applied:
   - first 1 MiB
   - kernel image (`__kernel_start..__kernel_end`)
   - framebuffer range
@@ -466,6 +469,7 @@ Shared library (NXL) loading subsystem for user-mode processes.
 |-----|------|---------|------|
 | `libneodos.nxl` | 0 | `0x1e000000` | Auto-loaded at boot |
 | `libmath.nxl` | 1 | `0x1e040000` | Manual via `LOADLIB` |
+| `console.nxl` | 2 | `0x1e080000` | Auto-loaded on first use by libneodos |
 
 **sys_loadlib (RAX=21)**: Loads a NeoDOS NXL from NeoFS into the next free slot. Returns base address. The NXL ELF is parsed, sections mapped as USER_ACCESSIBLE (read-only), and the export table (`AbiTable`) becomes accessible at the base address.
 
@@ -501,26 +505,27 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 |--------|---------|-------------|
 | ATA (boot stub) | `drivers/ata.rs` | PIO only, primary channel, used before NEM driver loads |
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
-| AHCI | `drivers/ahci.rs` | DMA polling, per-port, ATA + ATAPI, PRDT scatter-gather |
+| AHCI (boot + NEM) | `drivers/ahci.rs` + `drivers/ahci/` | DMA polling + NCQ (v0.46.2), per-port, ATA + ATAPI, PRDT scatter-gather |
 | PS/2 | `drivers/ps2.rs` | IRQ1, scan code → ASCII via KLC layouts |
 | PCI | `drivers/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
 | GPT | `drivers/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
-| RTC | `drivers/rtc.rs` | CMOS RTC |
-| ACPI | `drivers/acpi.rs` | RSDP/XSDT, poweroff via PM1a |
+| RTC | `drivers/rtc_bridge.rs` + `drivers/rtc/` (NEM) | CMOS RTC via NEM driver |
+| ACPI | `drivers/acpi.rs` + `drivers/acpi/` (NEM) | RSDP/XSDT, poweroff via PM1a |
 | NVMe | `drivers/nvme.rs` | In progress |
 | Storage Manager | `drivers/storage_manager.rs` | Unifies NVMe / AHCI / ATA (boot stub) |
 | Block Device | `drivers/block.rs` | Trait + block device manager |
+| e1000 NIC | `drivers/e1000/` (NEM) | Intel e1000 NIC driver (82540EM/82543GC/82545EM/82574L) |
 | USB HID | `drivers/usb_hid/` | UHCI (non-functional on PIIX3) |
 | ECAM PCIe | `hal/pci.rs` | MMIO ECAM config space: set_ecam_base, ecam_is_active, ecam_read/write_config_dword/word/byte |
 | IOAPIC | `interrupts/ioapic.rs` | MADT-detected I/O APIC: init, mask/unmask, ISA IRQ routing, PIC disable |
-| MSI-X | `interrupts/msi.rs` | Per-entry MSI-X table programming: configure_msix_entry/configures |
+| MSI-X | `interrupts/msi.rs` | Per-entry MSI-X table programming: configure_msix_entry |
 
 ---
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **560 tests** (53+ suites) with suites dedicated to the driver architecture:
+The kernel testing framework includes **547 tests** (200 test_case! macros, 505+ assertions) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -555,7 +560,7 @@ The kernel testing framework includes **560 tests** (53+ suites) with suites ded
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
-Tests run automatically at boot. The kernel runs 520 tests, then optionally executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`).
+Tests run automatically at boot. The kernel runs 547 tests (200 test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 
@@ -577,7 +582,7 @@ Tests run automatically at boot. The kernel runs 520 tests, then optionally exec
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:). **Mount points** (`vfs/mount.rs`) register KObjType::MountPoint entries and DosDevices symlinks via `MountManager`.
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `ob_id` (optional Ob reference)
-- **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), max 16 processes, idle process (PID 0) always present. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
+- **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), procesos ilimitados (Vec<Option<Eprocess>> dinámica), idle process (PID 0) siempre presente. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.
 - **shell**: Ring 3 shell (`neoshell.nxe`) via NeoInit (PID 1), PATH dispatch to .NXE commands, TAB autocomplete, pipeline support, environment variables
 
@@ -649,13 +654,13 @@ See `docs/DEBUG.md` for a walkthrough.
 | **Buddy bitmap** | 16384 words → 4GB máximo | Bitmap dinámico por rango o radix tree | **ALTA — v0.40** |
 | **User window** | 4 MB (0x400000..0x800000) | 32+ MB mínimo | **ALTA — v0.40** |
 | **Static buffers** | BIN_BUF[64KB], CMD_BUF[64KB] globales | Allocación dinámica por llamada | **ALTA — v0.40** |
-| **ASLR** | No existe | ASLR v1 base, v2 pila+heap, v3 full | MEDIA — v0.44 |
+| **ASLR** | v1 (PIE + load_offset, slot aleatorio) | ASLR v2 pila+heap, v3 full | MEDIA — v0.44 |
 | **Scheduler lookup** | O(n) linear scan | Hash map o radix tree por TID | MEDIA — v0.41 |
 | **Seguridad** | SID+Token+ACL, admin bypass completo | Grupos, privilegios, SACL, audit | MEDIA — v0.43 |
-| **KWait** | Ad-hoc: pipe STI/HLT, waitpid STI/HLT, IRP blocking | Unified Wait Engine v1 (7 WaitReason variants, kwait_block/wake) | **COMPLETADO — v0.42** |
+| **KWait** | Unified Wait Engine (7 WaitReason, kwait_block/wake, KWait integration) | Completado | **COMPLETADO — v0.42** |
 | **Device Tree** | Detección ad-hoc (PCI scan, ACPI, HPET, IOAPIC) | Árbol jerárquico + Resource Manager | MEDIA — v0.45 |
 | **Registry** | boot.cfg, system.cfg, input.cfg textuales | Hive persistente cell-based (NT Cm) | MEDIA — v0.44 |
-| **Networking** | No existe | NIC driver NEM + TCP/IP stack | MEDIA — v0.47 |
+| **Networking** | TCP/IP + UDP (e1000 NIC, ARP, IPv4, ICMP, TCP, UDP, socket ObType, KWait) | Completado | **COMPLETADO — v0.47** |
 | **IOCP** | No existe (IRP sí, pero sin completion ports) | IoCompletionPort para apps async | BAJA — v0.48 |
 
 Forward-looking architecture reference: [`ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md).
