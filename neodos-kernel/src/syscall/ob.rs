@@ -1916,6 +1916,13 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
     };
 
     crate::kwait::kwait_block(reason);
+    // Cleanup terminated process slot after ob_wait returns (OB-046)
+    if let crate::object::ObType::Process = obj.obj_type {
+        let pid = obj.native_id as u32;
+        if pid > 0 {
+            crate::scheduler::cleanup_terminated_process(pid);
+        }
+    }
     0
 }
 
