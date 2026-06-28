@@ -407,6 +407,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         Err(_) => panic!("Failed to mount filesystem"),
     }
 
+
+
     // ============================================
     // FAT32: via IoStack
     // ============================================

@@ -18,6 +18,7 @@ pub struct FsckStats {
     pub dangling_entries: u32,
     pub dir_errors: u32,
     pub superblock_errors: u32,
+    pub duplicate_inodes: u32,
     pub repairs_applied: u32,
 }
 
@@ -68,7 +69,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
         total_inodes: 0, used_inodes: 0, valid_inodes: 0, corrupted_inodes: 0,
         cross_linked_blocks: 0, bitmap_orphan_blocks: 0, bitmap_missing_blocks: 0,
         orphan_inodes: 0, dangling_entries: 0, dir_errors: 0,
-        superblock_errors: 0, repairs_applied: 0,
+        superblock_errors: 0, duplicate_inodes: 0, repairs_applied: 0,
     };
 
     let is_repair = matches!(mode, FsckMode::Repair);
@@ -146,6 +147,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
 
     // ── 2. Read all inodes, build block ownership map ─────
     let mut inodes: Vec<(u32, Inode)> = Vec::new();
+    let mut seen_inode_nums: Vec<u32> = Vec::new();
 
     for i in 0..total_inodes {
         let inode = match read_inode(i, cache, dev, partition_base) {
@@ -195,6 +197,22 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
                 stats.repairs_applied += 1;
                 crate::serial_println!("[FSCK] REPAIR: Fixed inode_num for inode {}", i);
             }
+        }
+
+        // Detect duplicate inode numbers
+        if ino_inode_num != 0 && seen_inode_nums.contains(&ino_inode_num) {
+            stats.duplicate_inodes += 1;
+            stats.corrupted_inodes += 1;
+            crate::serial_println!("[FSCK] ERROR: Duplicate inode number {} found in slot {} and earlier slot", ino_inode_num, i);
+            if is_repair {
+                let mut fixed = inode;
+                fixed.inode_num = 0;
+                let _ = write_inode(i, &fixed, cache, dev, partition_base);
+                stats.repairs_applied += 1;
+                crate::serial_println!("[FSCK] REPAIR: Zeroed duplicate inode {} in slot {}", ino_inode_num, i);
+            }
+        } else if ino_inode_num != 0 {
+            seen_inode_nums.push(ino_inode_num);
         }
 
         // Validate mode (must have exactly one of MODE_DIR/MODE_FILE, no high bits)
@@ -509,6 +527,7 @@ pub fn print_report(stats: &FsckStats) {
 
     crate::println!("  Errors:");
     crate::println!("    Cross-linked blocks: {}", stats.cross_linked_blocks);
+    crate::println!("    Duplicate inodes:    {}", stats.duplicate_inodes);
     crate::println!("    Orphan inodes:       {}", stats.orphan_inodes);
     crate::println!("    Dangling entries:    {}", stats.dangling_entries);
     crate::println!("    Dir errors:          {}", stats.dir_errors);
