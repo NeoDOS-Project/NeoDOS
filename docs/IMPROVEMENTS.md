@@ -1485,6 +1485,46 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 
 ---
 
+## Auditoría de estabilidad (v0.46.7) — Corrección de fugas de handles y reinicio
+
+**Hallazgo CRÍTICO:** `handler_exit` y `kill_pid` no llamaban `ob_close_object()` para handles no-pipe (archivos, dispositivos, eventos, directorios, objetos Ob). Esto causaba una fuga permanente de referencias ObObject por cada proceso que terminaba con handles abiertos sin cerrar explícitamente. Combinado con la fuga de fd en `resolve_path()` de NeoShell (que abría un fd por comando para verificar existencia de archivo y nunca lo cerraba), el sistema agotaba la tabla ObObject o el heap del kernel después de ~250 comandos, provocando reinicio/apagado inesperado.
+
+### Fixes aplicados (todos verificados con `auto_test.py` 570 tests PASS)
+
+| # | Modulo | Archivo | Fix | Severidad |
+|---|--------|---------|-----|-----------|
+| 1 | Syscall | `syscall/handlers.rs:308-316` | `else if h.has_ob_object() { ob_close_object(h.object_id) }` en `handler_exit` | CRITICA |
+| 2 | Scheduler | `scheduler/mod.rs:629-636` | `else if h.has_ob_object() { ob_close_object(h.object_id) }` en `kill_pid` | CRITICA |
+| 3 | NeoShell | `userbin/neoshell/src/main.rs:350` | Cerrar fd en `resolve_path()` tras verificar existencia | CRITICA |
+| 4 | Handle | `handle.rs:220` | Prevenir fd overflow `>255` en `alloc_handle` | ALTA |
+| 5 | Slab | `slab.rs:119-133` | Detección de double-free en free list | MEDIA |
+| 6 | Syscall | `syscall/handlers.rs:569-574` | Cerrar ObObject destino no-pipe en `dup2` | MEDIA |
+
+### Hallazgo CRITICO #2: Crash en `handler_ob_create(Process)` tras 2-3 comandos
+
+**Sintoma:** La maquina virtual se reinicia/apaga tras ejecutar 2-3 comandos consecutivos en NeoShell. Sin mensaje de panic en el log serial (QEMU no vacia el buffer antes de salir).
+
+**Causa raiz:** En QEMU con acelerador TCG, las instrucciones se agrupan en bloques de traduccion (Translation Blocks, TB). Una funcion larga como `handler_ob_create(Process)` puede caber en un solo TB. Los temporizadores pendientes solo se entregan al final del TB. Si un timer interrupt queda pendiente hasta que el codigo entra en `without_interrupts` + `scheduler.lock()` en `add_ring3_process`, el timer handler no puede ejecutarse (interruptos deshabilitados) y el watchdog no se pettea → reset por watchdog. En real hardware esto no ocurre porque los interrupts se entregan en cada instruccion, no al final del TB.
+
+**Fix:** Insertar `rdtsc` al inicio de `handler_ob_create`. En QEMU TCG, `rdtsc` fuerza una salida del TB actual, permitiendo que los interrupts pendientes se entreguen ANTES de que el codigo entre en la seccion critica con interrupts deshabilitados.
+
+| # | Modulo | Archivo | Fix | Severidad |
+|---|--------|---------|-----|-----------|
+| 7 | Syscall | `syscall/ob.rs:handler_ob_create` | `rdtsc` al inicio fuerza TB exit en QEMU TCG | CRITICA |
+
+### Vulnerabilidades identificadas (no corregidas en este parche)
+
+| # | Archivo:Linea | Hallazgo | Severidad |
+|---|--------------|----------|-----------|
+| 7 | `syscall/handlers.rs:1685` | `sys_poll` sin `is_user_ptr_valid` — infoleak | CRITICA |
+| 8 | `object/mod.rs:285` | TOCTOU en `ob_close_object` entre drop lock y finalize | ALTA |
+| 9 | `buddy.rs:232-242` | `mark_used_region` no remueve de free lists | ALTA |
+| 10 | `syscall/handlers.rs:523` | `sys_poweroff` sin check de admin | ALTA |
+| 11 | `scheduler/mod.rs:984` | `on_timer_tick` no setea per-CPU need_resched | MEDIA |
+| 12 | `scheduler/mod.rs:661-711` | `recycle_terminated` no libera recursos fisicos | MEDIA |
+
+---
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

@@ -9,7 +9,7 @@ use crate::syscall::{syscall_0, syscall_1};
 #[no_mangle]
 pub extern "C" fn nxl_sys_exit(code: u32) -> ! {
     unsafe { syscall_1(0, code as u64); }
-    loop { unsafe { asm!("hlt"); } }
+    loop {}
 }
 
 #[no_mangle]

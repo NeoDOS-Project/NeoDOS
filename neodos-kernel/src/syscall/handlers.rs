@@ -311,6 +311,8 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                                 crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
                             } else if h.is_pipe_write() {
                                 crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
+                            } else if h.has_ob_object() {
+                                let _ = crate::object::ob_close_object(h.object_id);
                             }
                             ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
                         }
@@ -571,6 +573,8 @@ pub(super) fn handler_dup2(regs: super::Registers) -> u64 {
         crate::object::pipe::PIPE_MANAGER.dec_read_ref(dst_entry.native_id().unwrap_or(0) as u8);
     } else if dst_entry.is_pipe_write() {
         crate::object::pipe::PIPE_MANAGER.dec_write_ref(dst_entry.native_id().unwrap_or(0) as u8);
+    } else if dst_entry.has_ob_object() {
+        let _ = crate::object::ob_close_object(dst_entry.object_id);
     }
 
     if src_entry.is_pipe_read() {

@@ -168,6 +168,11 @@ pub(super) fn handler_ob_open(regs: super::Registers) -> u64 {
 // ═══════════════════════════════════════════════════════════════════════
 
 pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
+    // Serialize: ensure all previous memory ops are visible (prevents QEMU TCG TB coalescing)
+    // On real hw, lfence+rdtsc serves as a serialization point.
+    // On QEMU TCG, rdtsc forces a translation-block exit that allows pending timer
+    // interrupts to be delivered BEFORE we enter the long-running Process creation path.
+    let _tsc = unsafe { crate::hal::raw::raw_read_tsc() };
     let path_ptr = regs.rbx;
     let obj_type_val = regs.rcx as u32;
     let fds_out = regs.rdx;

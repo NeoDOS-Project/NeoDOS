@@ -347,7 +347,7 @@ impl Shell {
             let fs = core::str::from_utf8(&f[..p]).unwrap_or("");
             let mut ob = [0u8; 512];
             let obp = to_ob_path(fs, &mut ob);
-            if syscall::sys_ob_open(obp, syscall::ob_access::READ).is_ok() { return Ok(f); }
+            if let Ok(fd) = syscall::sys_ob_open(obp, syscall::ob_access::READ) { let _ = syscall::sys_close(fd); return Ok(f); }
             s = e + 1;
         }
         Err(())

@@ -126,6 +126,20 @@ impl SlabPage {
         if idx >= self.capacity {
             return false;
         }
+        // Double-free detection: verify slot not already in free list
+        // Safety: the free list is always well-formed (single-linked, 0xFFFF terminated).
+        let mut cur = self.free_head;
+        let mut iter_count = 0u32;
+        while cur != 0xFFFF {
+            if cur == idx {
+                return false;
+            }
+            cur = unsafe { ptr::read_unaligned(self.slot_ptr(cur) as *const u16) };
+            iter_count += 1;
+            if iter_count > self.capacity as u32 {
+                return false;
+            }
+        }
         unsafe { ptr::write_unaligned(ptr as *mut u16, self.free_head); }
         self.free_head = idx;
         self.allocated -= 1;

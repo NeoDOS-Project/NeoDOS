@@ -217,7 +217,11 @@ impl HandleTable {
                 return Some(i as u8);
             }
         }
-        let fd = self.entries.len() as u8;
+        let len = self.entries.len();
+        if len > 255 {
+            return None;
+        }
+        let fd = len as u8;
         self.entries.push(entry);
         Some(fd)
     }
