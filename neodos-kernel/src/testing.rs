@@ -83,6 +83,17 @@ macro_rules! test_true {
     };
 }
 
+#[macro_export]
+macro_rules! test_false {
+    ($cond:expr $(,)?) => {
+        if ($cond) {
+            return Err(concat!(
+                "assertion failed: expected false: ", stringify!($cond)
+            ));
+        }
+    };
+}
+
 
 
 // ===== Input buffer tests =====

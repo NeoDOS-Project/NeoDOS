@@ -556,7 +556,7 @@ The kernel testing framework includes **547 tests** (200 test_case! macros, 505+
 | DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order |
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions |
-| Security | 12 | NT6 Security: SID format, Token, ACL allow/deny, SeAccessCheck, admin bypass |
+| Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 | KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
@@ -656,7 +656,7 @@ See `docs/DEBUG.md` for a walkthrough.
 | **Static buffers** | BIN_BUF[64KB], CMD_BUF[64KB] globales | Allocación dinámica por llamada | **ALTA — v0.40** |
 | **ASLR** | v1 (PIE + load_offset, slot aleatorio) | ASLR v2 pila+heap, v3 full | MEDIA — v0.44 |
 | **Scheduler lookup** | O(n) linear scan | Hash map o radix tree por TID | MEDIA — v0.41 |
-| **Seguridad** | SID+Token+ACL, admin bypass completo | Grupos, privilegios, SACL, audit | MEDIA — v0.43 |
+| **Seguridad** | SID+Token+ACL (groups/privileges/session_id), SAM database, admin bypass completo | SACL, audit | MEDIA — v0.43 |
 | **KWait** | Unified Wait Engine (7 WaitReason, kwait_block/wake, KWait integration) | Completado | **COMPLETADO — v0.42** |
 | **Device Tree** | Detección ad-hoc (PCI scan, ACPI, HPET, IOAPIC) | Árbol jerárquico + Resource Manager | MEDIA — v0.45 |
 | **Registry** | boot.cfg, system.cfg, input.cfg textuales | Hive persistente cell-based (NT Cm) | MEDIA — v0.44 |

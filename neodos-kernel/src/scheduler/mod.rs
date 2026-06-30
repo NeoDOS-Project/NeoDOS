@@ -290,7 +290,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: *crate::security::DEFAULT_ADMIN_TOKEN,
+            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
             vt_num: 0,
         }
     }
@@ -312,7 +312,7 @@ impl Eprocess {
             obj_id: None,
             ob_id: None,
             address_space: address_space::AddressSpace::new(),
-            token: *crate::security::DEFAULT_ADMIN_TOKEN,
+            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
             vt_num: 0,
         }
     }
@@ -525,7 +525,7 @@ impl Scheduler {
         // NT6.1: Inherit token from parent process
         if parent_pid > 0 {
             if let Some(parent_ep) = self.find_eprocess(parent_pid) {
-                eproc.token = parent_ep.token;
+                eproc.token = parent_ep.token.clone();
                 eproc.vt_num = parent_ep.vt_num;
             }
         }

@@ -92,7 +92,7 @@ def run_test():
         ])
         print("[+] Storage: ATA/IDE Mode")
 
-    import subprocess
+    # subprocess already imported at module level
     has_tap = os.path.exists("/dev/net/tun")
     if has_tap:
         try:

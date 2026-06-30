@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.47.1 — 2026-06-30
+
+### Added
+- **USR-001 SAM database** — `src/security/sam.rs`: `SamDatabase` + `SamEntry` con username, SID, flags (admin/disabled/locked), full_name, comment. Formato binario (cabecera 16B + entries de longitud variable). `parse_sam()`/`serialize_sam()` para persistencia. 11 tests (roundtrip, max 64 entries, case-insensitive lookup, flags, errores).
+- **USR-002 Token NT extendido** — `src/security/token.rs`: `Token` ahora incluye `groups: Vec<Sid>`, `privileges: u64` (12 flags SE_*_PRIVILEGE), `session_id: u32`. Métodos `add_group()`, `is_in_group()`, `has_privilege()`, `enable_privilege()`, `disable_privilege()`, `inherit_from()`. Admin token recibe `SE_ADMIN_PRIVILEGES`, user token solo `SE_CHANGE_NOTIFY`. `Token::inherit_from()` clona SID/groups/privileges/session_id del padre en procesos hijo.
+- **test_false! macro** — Nueva macro de testing en `src/testing.rs`.
+- **SAM docs** — `AGENTS.md` actualizado con tabla SAM y Token extendido.
+
+### Changed
+- `Token` ya no implementa `Copy` (solo `Clone`) por `Vec<Sid>`.
+- 6 call sites actualizados: `*DEFAULT_ADMIN_TOKEN` → `.clone()`, `ep.token` → `.clone()`.
+- Security tests: 12 → 23.
+
 ## v0.47.0 — 2026-06-28
 
 ### Added

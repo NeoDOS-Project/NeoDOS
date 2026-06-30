@@ -363,8 +363,8 @@ fn check_legacy_path_access(path: &str, access: u32) -> Result<(), u64> {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();
         lock.current_eprocess()
-            .map(|ep| ep.token)
-            .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+            .map(|ep| ep.token.clone())
+            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
     match crate::object::ob_open_path(&ob_path, &token, access) {
         Ok(ob_id) => {

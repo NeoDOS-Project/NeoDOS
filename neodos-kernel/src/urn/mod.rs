@@ -81,8 +81,8 @@ fn current_token() -> crate::security::token::Token {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();
         lock.current_eprocess()
-            .map(|ep| ep.token)
-            .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+            .map(|ep| ep.token.clone())
+            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     })
 }
 

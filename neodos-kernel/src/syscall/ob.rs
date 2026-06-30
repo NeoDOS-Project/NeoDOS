@@ -130,8 +130,8 @@ pub(super) fn handler_ob_open(regs: super::Registers) -> u64 {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();
         lock.current_eprocess()
-            .map(|ep| ep.token)
-            .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+            .map(|ep| ep.token.clone())
+            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
 
     let ob_id = match crate::object::ob_open_path(&path, &token, desired_access) {

@@ -695,8 +695,8 @@ pub(super) fn handler_open(regs: super::Registers) -> u64 {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();
             lock.current_eprocess()
-                .map(|ep| ep.token)
-                .unwrap_or(*crate::security::DEFAULT_ADMIN_TOKEN)
+                .map(|ep| ep.token.clone())
+                .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
         });
         let desired_access = crate::security::acl::ACCESS_READ |
             crate::security::acl::ACCESS_WRITE;

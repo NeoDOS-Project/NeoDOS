@@ -3,12 +3,12 @@
 > Items pendientes del roadmap. Los completados están en
 > [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
-> Version actual: v0.46 (Fase 2 Objectification completada — Timer, Semaphore, Section Objects).
+> Version actual: v0.47 (Networking TCP/IP completado — e1000 NIC, TCP/IP stack, \Device\Tcp/\Device\Udp, ICMP ping, 17 tests).
 > Objetivo: v1.0 — executive NT-like arquitectonicamente solido.
 > **GUIA:** Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cualquier cambio.
 > Fuente de verdad arquitectonica: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 
-**Proximo milestone: v0.47** (Networking TCP/IP).
+**Proximo milestone: v0.48** (NeoFS estabilidad — namespace ownership, dynamic allocators).
 
 ---
 
@@ -111,10 +111,11 @@
 Orden de implementacion dentro de la fase:
 
 1. **v0.46** — Device Tree + Resource Manager completo, PCI auto-vinculacion, VirtIO block driver (BOOT_DRIVER), sys_ioctl()
-2. **v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1-B3.2)
-3. **v0.48** — Async I/O: IOCP v1, sys_accept/send/recv, DHCP (B3.3)
-4. **v0.49** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
-5. **v0.50** — Registry hive database (B2.1-B2.5)
+2. ~~**v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1-B3.2)~~ **COMPLETADO**
+3. **v0.48** — NeoFS estabilidad: namespace ownership (NS-1/NS-2), dynamic allocators (FS-1/FS-2/FS-4), CAP_NS_WRITE, e1000 cleanup
+4. **v0.49** — NeoFS robustez: indirect blocks (FS-3), journaling (FS-5), checksums (FS-6), ResourceRegistry extendido (NS-3), DOS name reservation
+5. **v0.50** — Async I/O: IOCP v1, DHCP (B3.3), Registry hive database (B2.1-B2.5)
+6. **v0.51** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
 
 > **Regla:** No se pasa a la Fase 3 hasta que v0.50 este completo y todos los tests pasen.
 
@@ -1116,8 +1117,8 @@ Al abrir archivo, VFS llama a `se_access_check()` con el SD del inodo.
 
 | ID | Item | Archivos | Esfuerzo |
 |----|------|----------|----------|
-| USR-012 | winlogon.nxe — login screen | `userbin/winlogon/` | ~300 líneas |
-| USR-013 | NeoInit → spawn WINLOGON.NXE | `userbin/neoinit/` | +5 líneas |
+| USR-012 | neologon.nxe — login screen | `userbin/neologon/` | ~300 líneas |
+| USR-013 | NeoInit → spawn NEOLOGON.NXE | `userbin/neoinit/` | +5 líneas |
 | USR-014 | LogonSession manager | `src/security/logon.rs` | ~150 líneas |
 | USR-015 | Split token + linked_token | `src/security/linked_token.rs` | ~100 líneas |
 | USR-016 | Elevation manager + cache + policy | `src/security/elevation.rs` | ~250 líneas |
@@ -1473,15 +1474,27 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 9 | **VirtIO block driver (A5.2)** | v0.46 | A2.1 (ECAM) | 400-500 lineas |
 | 10 | **Device Tree + Resource Manager** | v0.46 | NT5, Driver Runtime | 600-800 lineas |
 | 11 | **sys_ioctl() and PCI device binding** | v0.46 | A2.1, A2.2 | 300-400 lineas |
-| 12 | **Networking (B3.1-B3.2)** | v0.47 | VirtIO-net, IRP | 3000-5000 lineas |
-| 13 | **AHCI NCQ (A5.3)** | v0.46.2 | A2.2, IRP | 900 lineas |
-| 14 | **USR-F1: SAM + Token NT** | v0.48 | NT6 (existente) | 900 lineas |
-| 15 | **USR-F2: Login + SUDO** | v0.49 | USR-F1 | 1600 lineas |
-| 16 | **USR-F3: Hardening + Grupos** | v0.50 | USR-F2 | 600 lineas |
-| 17 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
-| 18 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
-| 19 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
-| 20 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
+| 12 | ~~**Networking (B3.1-B3.2)**~~ | ~~v0.47~~ | ~~VirtIO-net, IRP~~ | ~~3000-5000 lineas~~ **COMPLETADO** |
+| 13 | **AHCI NCQ (A5.3)** | v0.46.2 | A2.2, IRP | 900 lineas **COMPLETADO** |
+| 14 | **NS-1: Namespace ownership tracking** | v0.48 | — | 3-4 días |
+| 15 | **NS-2: Proteger directorios raíz del namespace** | v0.48 | NS-1 | 1-2 días |
+| 16 | **FS-1: Dynamic inode allocator** | v0.48 | — | 2-3 días |
+| 17 | **FS-2: Dynamic block bitmap** | v0.48 | — | 2-3 días |
+| 18 | **FS-4: Eliminar hardcoded sector offsets** | v0.48 | FS-1 | 1 día |
+| 19 | **NS-4: e1000 shutdown/cleanup** | v0.48 | — | 1 día |
+| 20 | **CAP_NS_WRITE capability** | v0.48 | NS-1 | 1 día |
+| 21 | **NS-3: Extender ResourceRegistry** | v0.49 | NS-1 | 1 día |
+| 22 | **FS-3: Indirect blocks support** | v0.49 | FS-1, FS-2 | 1-2 días |
+| 23 | **FS-5: Basic journaling (WAL)** | v0.49 | FS-1, FS-2 | 1 semana |
+| 24 | **FS-6: Metadata checksums** | v0.49 | — | 2-3 días |
+| 25 | **Name reservation (DOS names)** | v0.49 | — | 4 horas |
+| 26 | **USR-F1: SAM + Token NT** | v0.48 | NT6 (existente) | 900 lineas |
+| 27 | **USR-F2: Login + SUDO** | v0.49 | USR-F1 | 1600 lineas |
+| 28 | **USR-F3: Hardening + Grupos** | v0.50 | USR-F2 | 600 lineas |
+| 29 | **NeoReg transaction journal (B2.2)** | v0.50 | B2.1 | 500-700 lineas |
+| 30 | **Shell redirection (B4.3)** | v0.46+ | neoshell | 300-400 lineas |
+| 31 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
+| 32 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
 
 ---
 
@@ -1522,6 +1535,83 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 10 | `syscall/handlers.rs:523` | `sys_poweroff` sin check de admin | ALTA |
 | 11 | `scheduler/mod.rs:984` | `on_timer_tick` no setea per-CPU need_resched | MEDIA |
 | 12 | `scheduler/mod.rs:661-711` | `recycle_terminated` no libera recursos fisicos | MEDIA |
+
+---
+
+## NeoFS Audit & Roadmap (v0.48+)
+
+> Auditoría completa del sistema de archivos NeoFS y la interacción
+> Driver/Namespace. Ver documentación completa:
+> - [NEOFS_AUDIT.md](NEOFS_AUDIT.md) — Hallazgos detallados
+> - [NEOFS_ROADMAP.md](NEOFS_ROADMAP.md) — Roadmap por fases
+> - [NEOFS_TESTS.md](NEOFS_TESTS.md) — Propuesta de tests
+
+### Hallazgos Principales
+
+| ID | Problema | Archivos | Severidad | Impacto |
+|----|----------|----------|-----------|---------|
+| NS-1 | Namespace ownership tracking ausente | `src/object/namespace.rs`, `src/object/mod.rs` | **CRÍTICA** | Cualquier driver/process puede borrar entries de otro |
+| NS-2 | Directorios raíz del namespace sin protección | `src/object/namespace.rs` | **CRÍTICA** | Un driver puede crear `\Device\` entries conflictivas |
+| NS-3 | ResourceRegistry no trackea Ob entries | `src/drivers/hotreload.rs` | **ALTA** | Hot unload deja entries huérfanas en namespace |
+| NS-4 | e1000 no es NEM, no hot-reload, sin cleanup | `src/net/e1000.rs`, `src/net/mod.rs` | **MEDIA** | No hay shutdown path para NIC |
+| FS-1 | Inode allocator fijo en 256 | `src/fs/neodos_fs.rs` | **CRÍTICA** | Máximo 256 archivos en todo el FS |
+| FS-2 | Block bitmap fijo (320 bytes = 2560 bloques) | `src/fs/neodos_fs.rs` | **CRÍTICA** | Máximo ~10 MB de datos |
+| FS-3 | Sin indirect blocks (solo 12 directos) | `src/fs/neodos_fs.rs` | **ALTA** | Archivos limitados a 48 KB |
+| FS-4 | Hardcoded sector offsets (data en sector 200) | `src/fs/neodos_fs.rs` | **MEDIA** | Cambiar num_inodes rompe offsets |
+| FS-5 | Sin journaling/write-ahead log | `src/fs/` (falta `journal.rs`) | **ALTA** | Crash entre writes → FS inconsistente |
+| FS-6 | Sin checksums en metadata | `src/fs/neodos_fs.rs` | **MEDIA** | Corrupción de superblock indetectable |
+
+### Nuevas Tareas Priorizadas (NeoFS vNext)
+
+Items para añadir a la tabla Recommended Next Steps:
+
+| Prioridad | Item | Fase | Dependencias | Esfuerzo |
+|-----------|------|------|-------------|----------|
+| 5 | **NS-1: Namespace ownership tracking** | v0.48 | — | 3-4 días |
+| 6 | **NS-2: Proteger directorios raíz del namespace** | v0.48 | NS-1 | 1-2 días |
+| 7 | **FS-1: Dynamic inode allocator** | v0.48 | — | 2-3 días |
+| 8 | **FS-2: Dynamic block bitmap** | v0.48 | — | 2-3 días |
+| 9 | **NS-3: Extender ResourceRegistry** | v0.49 | NS-1 | 1 día |
+| 10 | **FS-3: Indirect blocks support** | v0.49 | FS-1, FS-2 | 1-2 días |
+| 11 | **FS-4: Eliminar hardcoded sector offsets** | v0.48 | FS-1 | 1 día |
+| 12 | **FS-5: Basic journaling (WAL)** | v0.49 | FS-1, FS-2 | 1 semana |
+| 13 | **FS-6: Metadata checksums** | v0.49 | — | 2-3 días |
+| 14 | **NS-4: e1000 shutdown/cleanup** | v0.48 | — | 1 día |
+| 15 | **CAP_NS_WRITE capability** | v0.48 | NS-1 | 1 día |
+| 16 | **Name reservation (DOS names)** | v0.49 | — | 4 horas |
+
+### Tests Planificados (26 nuevos)
+
+| ID | Test | Categoría | Líneas |
+|----|------|-----------|--------|
+| T1-1 | `inode_create_300` | Inode stress | 50 |
+| T1-2 | `inode_reuse_after_delete` | Inode stress | 60 |
+| T1-3 | `inode_max_limit` | Inode stress | 30 |
+| T1-4 | `inode_collision_check` | Inode stress | 40 |
+| T1-5 | `inode_corruption_detect` | Inode stress | 40 |
+| T2-1 | `ns_path_long_255` | Namespace | 40 |
+| T2-2 | `ns_path_too_long` | Namespace | 20 |
+| T2-3 | `ns_deeply_nested_32` | Namespace | 50 |
+| T2-4 | `ns_entry_corrupted_0xE5` | Namespace | 30 |
+| T2-5 | `ns_entry_corrupted_bad_len` | Namespace | 30 |
+| T2-6 | `ns_reserved_name_con` | Namespace | 20 |
+| T2-7 | `ns_case_insensitive_unicode` | Namespace | 30 |
+| T3-1 | `driver_ns_register_device` | Driver/NS | 40 |
+| T3-2 | `driver_ns_name_collision` | Driver/NS | 40 |
+| T3-3 | `driver_ns_protected_root` | Driver/NS | 30 |
+| T3-4 | `driver_ns_protected_global_info` | Driver/NS | 30 |
+| T3-5 | `driver_ns_hot_unload_cleanup` | Driver/NS | 60 |
+| T3-6 | `driver_ns_hot_unload_blocks_removed` | Driver/NS | 50 |
+| T3-7 | `driver_ns_duplicate_name` | Driver/NS | 30 |
+| T3-8 | `driver_ns_cap_required` | Driver/NS | 30 |
+| T4-1 | `fs_stress_create_open_close_delete_10k` | Stress | 40 |
+| T4-2 | `fs_stress_concurrent_files` | Stress | 60 |
+| T4-3 | `ns_stress_1000_entries_namespace` | Stress | 50 |
+| T4-4 | `fs_stress_long_path_walk` | Stress | 40 |
+| T4-5 | `driver_stress_load_unload_cycle` | Stress | 50 |
+| T4-6 | `driver_stress_concurrent_load` | Stress | 40 |
+
+Ver [NEOFS_TESTS.md](NEOFS_TESTS.md) para especificación completa.
 
 ---
 

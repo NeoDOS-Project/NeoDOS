@@ -2,6 +2,7 @@ pub mod sid;
 pub mod token;
 pub mod acl;
 pub mod access;
+pub mod sam;
 
 use lazy_static::lazy_static;
 
@@ -17,6 +18,7 @@ pub fn init_security() {
 }
 
 pub fn register_security_tests() {
+    sam::register_sam_tests();
     use crate::test_case;
     use crate::test_eq;
     use crate::test_ne;

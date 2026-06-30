@@ -8,8 +8,20 @@ v0.47.0 (Networking TCP/IP — B3.1/B3.2 completado: e1000 NIC, TCP/IP stack, \D
 See `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — all architectural invariants are
 enforceable rules, not suggestions. See `docs/OBJECT_MANAGER_ARCHITECTURE.md`
 for the Object Manager (Ob) evolution plan — handles, URN, and security
-unification. Run `python3 scripts/auto_test.py` and `scripts/check_deps.py`
-before any commit.
+unification.
+
+**New audit docs:**
+- `docs/NEOFS_AUDIT.md` — complete NeoFS + driver/namespace audit (2026-06-28)
+- `docs/NEOFS_ROADMAP.md` — NeoFS vNext phased roadmap (stability → performance)
+- `docs/NEOFS_TESTS.md` — 26 proposed tests for NeoFS, namespace, and drivers
+
+**Next priorities after v0.47:**
+1. Namespace ownership tracking (NS-1)
+2. Dynamic inode allocator (FS-1)
+3. Dynamic block bitmap (FS-2)
+4. Eliminar hardcoded sector offsets (FS-4)
+
+Run `python3 scripts/auto_test.py` and `scripts/check_deps.py` before any commit.
 
 **IMPORTANTE:** Antes de implementar cualquier cambio, leer
 [ARCHITECTURAL_VISION.md](docs/ARCHITECTURAL_VISION.md). Este documento define
@@ -1739,18 +1751,29 @@ fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
 | Module | File | Contents |
 |--------|------|----------|
 | SID | `src/security/sid.rs` | `Sid` struct (S-R-I-S* format), `sid_builtin_admin()` (S-1-5-18), `sid_builtin_user()` (S-1-5-21-0-0-0-1000), `format_string()` |
-| Token | `src/security/token.rs` | `Token` struct (sid + is_admin), `new_admin()`/`new_user()`, `is_admin_token()` |
+| Token | `src/security/token.rs` | `Token` struct (sid, is_admin, groups, privileges bitmap, session_id), `new_admin()`/`new_user()`, `is_admin_token()`, `has_privilege()`, `inherit_from()`, 12 privilege constants (SE_*_PRIVILEGE) |
+| SAM | `src/security/sam.rs` | `SamDatabase` + `SamEntry` con nombre, SID, flags (admin/disabled/locked), full_name, comment. Binary format: header (16B) + variable-length entries. `parse_sam()`/`serialize_sam()` |
 | ACL | `src/security/acl.rs` | `Ace` (allow/deny, access_mask, Sid), `Acl` (revision + ACE vec), `SecurityDescriptor` (owner, group, dacl). Access constants: `ACCESS_READ`, `ACCESS_WRITE`, `ACCESS_EXECUTE`, `ACCESS_ALL` |
 | Access | `src/security/access.rs` | `se_access_check()` — token vs SD check with admin bypass, deny-by-default, ACL iteration |
 | Initialization | `src/security/mod.rs` | `init_security()` in Phase 2.77. `DEFAULT_ADMIN_TOKEN`/`DEFAULT_USER_TOKEN` lazy_static globals |
 
 ### Token Lifecycle
-- Boot: idle process (PID 0) gets admin token
+- Boot: idle process (PID 0) gets admin token with `SE_ADMIN_PRIVILEGES`
 - PID 1 (NeoInit): inherits admin token via `add_ring3_process()`
-- Child processes: inherit parent's token at spawn
+- Child processes: inherit parent's token at spawn via `Token::inherit_from()` (clones SID, groups, privileges, session_id)
 - `is_current_admin()` uses `eprocess.token.is_admin_token()` replacing old PID-based check
+- Token privileges: 12 `SE_*` flags (admin = 0xFFFF, user = SE_CHANGE_NOTIFY only)
+- Group membership via `add_group()`/`is_in_group()` with `Vec<Sid>`
+- Session tracking via `session_id: u32` (admin=0, users=1+)
 
-### Tests (12)
+### SAM Database
+- `SamDatabase` — collection of `SamEntry` users, max 64 entries
+- Binary serialisation via `serialize_sam()` / `parse_sam()`
+- Format: 16B header (magic `SAM\0`, version, count) + variable-length entries (username, SID, flags, full_name, comment)
+- Case-insensitive username lookup
+- Flags: `SAM_FLAG_ADMIN`, `SAM_FLAG_DISABLED`, `SAM_FLAG_LOCKED`
+
+### Tests (23)
 
 | Test | Description |
 |------|-------------|
@@ -1766,6 +1789,17 @@ fn this_cpu_dpc_queue() -> &'static mut DpcQueue { DPC_QUEUES[cpu_id] }
 | `se_admin_required` | Syscall 50 requires admin permission |
 | `se_user_denied_admin_syscall` | User token cannot call admin syscalls |
 | `se_admin_token_isolation` | Admin and user tokens have different SIDs, admin bypasses ACL |
+| `sam_create_database` | SAM database init |
+| `sam_add_user` | Add user with admin flag |
+| `sam_find_by_username` | Case-insensitive username lookup |
+| `sam_find_by_sid` | Find user by SID |
+| `sam_remove_user` | Remove user from database |
+| `sam_flags_disabled_locked` | SAM_FLAG_DISABLED / SAM_FLAG_LOCKED bits |
+| `sam_parse_roundtrip` | Serialize + parse binary roundtrip with full_name/comment |
+| `sam_parse_magic_error` | Invalid magic rejected |
+| `sam_parse_truncated` | Truncated data rejected |
+| `sam_max_entries_enforced` | Max 64 entries enforced |
+| `sam_case_insensitive_lookup` | find_by_username case-insensitive |
 
 ## Artifacts generados
 
