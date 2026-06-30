@@ -29,101 +29,320 @@
 - [ ] `AGENTS.md` / `ARCHITECTURE_SOURCE_OF_TRUTH.md` si cambia contrato
 - [ ] Movido a `IMPROVEMENTS_COMPLETED.md`
 
+
+## PRIORITY OVERVIEW
+
+| ID | Item | Priority |
+|----|------|----------|
+| VFS-1.1 | Unificar MountManager | CRITICAL |
+| VFS-1.2 | Arreglar ownership ObOpen → VFS | CRITICAL |
+| VFS-1.3 | Eliminar stale namespace entries | CRITICAL |
+| VFS-1.4 | HandleTable → ObObject consistency | CRITICAL |
+| v0.48 | NeoFS estabilidad (milestone) | HIGH |
+| VFS-2.1 | Privatizar métodos de NeoFS | HIGH |
+| VFS-2.4 | PageCache con contexto de drive | HIGH |
+| VFS-4.1 | Device IDs estables | HIGH |
+| VFS-4.2 | Hot-unload safety | HIGH |
+| VFS-4.3 | Refcount de block devices | HIGH |
+| OBF-07 | Unificar ObError y SyscallError en NeoDosError | HIGH |
+| A5.2 | VirtIO block driver (BOOT_DRIVER) | HIGH |
+| B3.3 | DHCP client | HIGH |
+| B2.1 | Registry hive database | HIGH |
+| DH3 | Completar libneodos syscall wrappers | HIGH |
+| NS-1..4, FS-1..6 | NeoFS namespace + filesystem fixes (see REFERENCE) | HIGH |
+| v0.49 | NeoFS robustez (milestone) | MEDIUM |
+| VFS-3.1 | Separar \Global\FileSystem del Ob namespace | MEDIUM |
+| VFS-3.3 | Proteger paths del namespace | MEDIUM |
+| VFS-5.1 | Unificar BlockCache + PageCache | MEDIUM |
+| VFS-5.2 | InodeCache con invalidación | MEDIUM |
+| VFS-2.2 | Refactorizar FSCK | MEDIUM |
+| VFS-2.3 | Eliminar acceso directo a NeoFS desde shell | MEDIUM |
+| AI-1 | Completar ObInfoClass/ObSetInfoClass enums | MEDIUM |
+| AI-4 | Arreglar TOCTOU race en kobj_register | MEDIUM |
+| B1.1 | Kernel tracing infrastructure | MEDIUM |
+| B1.2 | NeoTrace system | MEDIUM |
+| B3.4 | NTP client | MEDIUM |
+| B4.3 | Shell redirection (>, <, >>) | MEDIUM |
+| B4.6 | NeoEdit text editor | MEDIUM |
+| B4.7 | Shared library per-process binding | MEDIUM |
+| B4.9 | NeoShell scripting (.BAT) | MEDIUM |
+| B5.1 | Module signature validation | MEDIUM |
+| B5.2 | Driver permission enforcement | MEDIUM |
+| B5.3 | Secure boot chain | MEDIUM |
+| DH1 | Actualizar README.md | MEDIUM |
+| DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | MEDIUM |
+| A3.2 | Kernel debugger (KD) | MEDIUM |
+| USR-001..024 | USR Fase 1+2: SAM + Login + SUDO (see REFERENCE) | MEDIUM |
+| v0.50 | Async I/O y Registry (milestone) | LOW |
+| v0.51 | ASLR v2 y Benchmarking | LOW |
+| v0.52 | Networking completo (UDP, DNS, DHCP) | LOW |
+| v0.53 | Rendimiento (zero-copy pipes, COW fork) | LOW |
+| v0.54-v0.59 | Documentacion y Hardening | LOW |
+| v1.0.0 | API estable | LOW |
+| v0.46 | Device Tree + Resource Manager | LOW |
+| VFS-3.2 | \DosDevices dinámico | LOW |
+| VFS-5.3 | Write-back ordenado | LOW |
+| VFS-6.1..6.4 | VFS Features (overlay, attr, notifications, async) | LOW |
+| VFS-7.1..7.3 | VFS Performance (lock, lookup cache, path cache) | LOW |
+| B6.1 | Zero-copy pipes | LOW |
+| B6.2 | Copy-on-write fork | LOW |
+| B4.8 | NeoTOP (v0.1 exists, v0.2+) | LOW |
+| B4.10 | Compositor 2D | LOW |
+| B7.1..B7.6 | Experimental (GUI, TPM, package mgr, TT debug, hotpatch, DFS) | LOW |
+| AI-2 | Consolidate legacy syscall wrappers | LOW |
+| AI-3 | ObObjectTable lock granularity | LOW |
+| B2.2..B2.5 | Registry features (journal, multi-hive, security, notification) | LOW |
+| USR-025..032 | USR Fase 3: Hardening + Grupos (see REFERENCE) | LOW |
+
 ---
 
-## ROADMAP PENDIENTE (v0.40 -> v1.0)
+## CRITICAL (next sprint — data corruption risks)
 
-> Basado en el analisis completo de `docs/ARCHITECTURAL_VISION.md`.
-> **Regla de oro:** No anadir features nuevas antes de completar la fase de maduracion (v0.40-v0.45).
-> Cada feature nueva se apoya en abstracciones existentes; si esas abstracciones son fragiles, la feature sera fragil.
+### VFS ownership & mount manager risks
+
+* [ ] **VFS-1.1. Unificar MountManager** | Prereqs: — | Files: `src/vfs/mount.rs`, `src/fs/vfs.rs`, `src/main.rs`
+  - **Descripcion:** Fusionar `Vfs::mount()` con `vfs::mount::vfs_mount()`. Un solo punto de mount/unmount que sincronice Vfs.drives[] + MountPoint creation + \DosDevices symlinks. Actualmente `main.rs` llama a ambos para el mismo mount — eliminar la duplicación.
+  - **Severidad:** CRITICO — dos tablas de montaje independientes sin validación cruzada
+  - **Tests:** `vfs_mount_dual_sync`, `vfs_mount_unmount_removes_both`
+
+* [ ] **VFS-1.2. Arreglar ownership ObOpen → VFS** | Prereqs: — | Files: `src/object/mod.rs`, `src/handle.rs`
+  - **Descripcion:** No crear ObObject persistente en namespace para cada `ob_open_path()`. Usar ObObject efímero (sin namespace entry) para file handles, o crear un "file object" real con ObOperations cuyo `on_destroy` cierre el archivo en el FS subyacente.
+  - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
+  - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
+
+* [ ] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Cuando un ObObject se destruye (refcount=0), su namespace entry en `\Global\FileSystem\...` queda huérfano. Implementar garbage collection periódico o usar weak references para entries de filesystem. El parche actual (línea 336-338 de `object/mod.rs`) es frágil.
+  - **Severidad:** ALTA — namespace inconsistente
+  - **Tests:** `vfs_ownership_namespace_entry_cleanup`
+
+* [ ] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
+  - **Descripcion:** Verificar que todo handle close valida que el ObId sigue vivo. Añadir `is_valid()` check en `HandleEntry` methods. Si un ObObject es destruido, los HandleEntry que lo referencian deben detectarlo.
+  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free
+  - **Tests:** `vfs_ownership_double_close_safe`
 
 ---
 
-### Fase 1: Maduracion (v0.40 - v0.45) [COMPLETED]
+## HIGH (v0.48 — v0.49)
 
-*Todos los items de la Fase 1 estan completados.*
+### v0.48. NeoFS estabilidad
 
-1. ~~**v0.43** — SeAccessCheck NT-compatible, sys_poll(), Congelar pipe/IRP protocols~~ **COMPLETADO**
-2. ~~**v0.44** — ASLR v1 (base aleatoria), Ob syscalls RAX 60-66~~ **COMPLETADO** (v0.44.2: Ob migration completa, todas las syscalls legacy desactivadas)
-3. ~~**v0.45** — Ob migration, Device Tree + Resource Manager, Driver state machine freeze~~ **COMPLETADO** (Ob migration completada en v0.44.2; Device Tree y Resource Manager se mueven a v0.46)
+* [ ] **v0.48. NeoFS estabilidad** | Prereqs: — | Files: `src/fs/neodos_fs.rs`, `src/fs/vfs.rs`
+  - **Descripcion:** Namespace ownership (NS-1/NS-2), dynamic allocators (FS-1/FS-2/FS-4), CAP_NS_WRITE, e1000 cleanup
+  - **Severidad:** ALTA — bugfixes de estabilidad post-v0.47
+  - **Tests:** `ns_ownership_tracking`, `fs_dynamic_inode_alloc`, `fs_dynamic_bitmap`
 
----
+### VFS Fase 2: Separación de Capas
 
-### Code Quality & Maintenance
+* [ ] **VFS-2.1. Privatizar métodos de NeoFS** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
+  - **Descripcion:** Hacer `abs_lba()`, `find_entry_in_directory()`, `get_inode_block_ptr()`, `inode_data_block_count()`, `directory_byte_span()`, `rebuild_bitmap()` → `pub(crate)` o privados. Solo deben ser accesibles a través del trait `FileSystem`.
+  - **Severidad:** ALTA — ruptura de encapsulación, cualquier módulo puede acceder a detalles internos de NeoFS
+  - **Tests:** (compilación, no se rompen callers existentes)
 
-### Critical Bugs (SMP-unsafe static mut)
+* [ ] **VFS-2.4. PageCache con contexto de drive** | Prereqs: — | Files: `src/buffer/page_cache.rs`
+  - **Descripcion:** PageCache global usa `inode_num` como clave primaria. Dos instancias de NeoDosFs (C: y D:) con mismo inode_num colisionan. Añadir `drive_idx` a la clave de PageCache.
+  - **Severidad:** ALTA — corrupción silenciosa de datos entre drives
+  - **Tests:** `vfs_cache_pagecache_drive_context`
 
-* [ ] **CB1. Fix WAIT_PID static mut SMP-unsafe** | Prereqs: KWait | Files: `src/usermode.rs`
-  - **Descripcion:** `WAIT_PID` es un `static mut` en usermode.rs usado para comunicacion entre sys_waitpid y el manejador de terminacion de proceso. En SMP, dos CPUs pueden ejecutar sys_waitpid concurrentemente. Migrar a KWait: `kwait_block(ChildExit(pid))` + `kwait_wake(ChildExit(pid))`.
-  - **Severidad:** CRITICO — data corruption en sistemas multicore
-  - **Tests:** `smp_waitpid_concurrent`, `smp_waitpid_no_race`
+### VFS Fase 4: Drivers y Block Devices
 
-* [ ] **CB2. Fix ISOLATED_REGIONS static mut sin sincronizacion** | Prereqs: -- | Files: `src/drivers/driver_runtime.rs`
-  - **Descripcion:** `ISOLATED_REGIONS` es un array estatico mutable accedido desde boot loader, NDREG y hot reload sin Mutex. Envolver en `spin::Mutex<[Option<IsolatedRegion>; MAX_ISOLATED_DRIVERS]>`.
-  - **Severidad:** CRITICO — data corruption si 2 CPUs hacen operaciones de driver concurrentes
-  - **Tests:** `smp_isolated_region_concurrent_access`
+* [ ] **VFS-4.1. Device IDs estables** | Prereqs: — | Files: `src/vfs/io.rs`, `src/drivers/block/mod.rs`
+  - **Descripcion:** Usar UUID o nombre simbólico (ej. el nombre del driver + número de serie) para identificar block devices en lugar de índice numérico en Vec. El `IoStack` debe referenciar por nombre, no por índice. Evita invalidación al insertar/eliminar dispositivos.
+  - **Severidad:** ALTA — si un dispositivo se elimina, los índices cambian y todos los IoStack quedan inválidos
+  - **Tests:** `vfs_iostack_device_id_stable`
 
-* [ ] **CB3. Fix NXL_REGISTRY static mut sin proteccion SMP** | Prereqs: -- | Files: `src/nxl.rs`
-  - **Descripcion:** `NXL_REGISTRY` es array fijo de 8 slots accedido desde sys_loadlib sin sincronizacion. Envolver en `spin::Mutex<[Option<NxlEntry>; 8]>`.
-  - **Severidad:** ALTA — dos procesos cargando NXLs concurrentemente pueden corromper el registry
-  - **Tests:** `smp_nxl_concurrent_load`
+* [ ] **VFS-4.2. Hot-unload safety** | Prereqs: VFS-4.1 | Files: `src/drivers/boot_loader/mod.rs`, `src/drivers/driver_runtime.rs`
+  - **Descripcion:** Cuando un driver se descarga, notificar al VFS para invalidar IoStacks que referencien sus devices. Marcar NeoDosFs como "stale" si su device se va. Impedir reads/writes adicionales.
+  - **Severidad:** ALTA — descarga de driver de disco con archivos abiertos causa uso de device_id inválido
+  - **Tests:** `vfs_iostack_stale_device_handling`
 
-### Documentation & Housekeeping
+* [ ] **VFS-4.3. Refcount de block devices** | Prereqs: VFS-4.1 | Files: `src/drivers/block/mod.rs`
+  - **Descripcion:** Llevar contador de referencias a cada block device (cuántos IoStack lo usan). Prevenir unload si refcount > 0.
+  - **Severidad:** ALTA — hot unload puede dejar referencias colgadas
+  - **Tests:** `driver_stress_load_unload_cycle`
 
-* [ ] **DH1. Actualizar README.md a v0.44.3** | Prereqs: -- | Files: `README.md`
-  - **Descripcion:** README actual muestra v0.39.11 con 320+ tests y 36 syscalls. Actualizar a v0.44.3: 528 tests, 66 syscalls, Ob API, input subsystem, virtual terminals.
-  - **Criterio:** README refleja estado real del sistema (version, tests, syscalls, arquitectura)
+### Object Manager
 
-* [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Prereqs: -- | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
-  - **Descripcion:** El documento menciona MAX_PROCESSES como limite fijo, pero el scheduler usa Vec. Menciona 320+ tests (real 528). Boot phases incompletas (falta Phase 3.86 NXL load, Phase 3.9 ABI freeze).
-  - **Accion:** Corregir Rule 6.3.1 (MAX_PROCESSES -> Vec dinamico), actualizar test counts, completar boot phase list.
+* [ ] **OBF-07. Unificar ObError y SyscallError en NeoDosError** | Prereqs: — | Files: `src/object/types.rs`, `src/syscall/mod.rs`
+  - **Severidad:** MEDIA — 1 dia
+  - **Tests:** `ob_error_syscall_mapping_complete`
+
+### Storage
+
+* [ ] **A5.2. VirtIO block driver (BOOT_DRIVER)** | Prereqs: A2.1 | Files: `src/drivers/virtio_blk.rs` (new, 400-500 lines), `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6
+  - **Descripcion:** Controlador de bloques VirtIO para maquinas virtuales QEMU/KVM. Se clasifica como **BOOT_DRIVER**, no como `.NEM`, ya que participa directamente en la cadena de arranque del sistema y debe estar disponible antes del montaje del volumen raiz.
+    - **PCI detection:** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
+    - **Initialization:**
+      1. Read BAR0 (MMIO base)
+      2. Write device status: ACKNOWLEDGE | DRIVER
+      3. Allocate virtqueue (#0, 32 descriptors)
+      4. Register queue physical address
+      5. Negotiate legacy/modern features
+      6. Write device status: DRIVER_OK
+    - **I/O path:** `submit_irp(irp)` -> descriptor slot -> request header -> sector_start/count/buffer -> doorbell -> wait completion -> used ring -> complete IRP
+    - **Supported operations:** READ, WRITE, FLUSH, DISCARD
+    - **Storage priority:** NVMe > VirtIO > BootAhci > BootAta
+    - **Boot integration:** Available before VFS mount, before NeoInit, before NeoShell, before NEM loader.
+  - **Criterio:**
+    - Arrancar NeoDOS en QEMU usando `-drive if=virtio`
+    - Deteccion automatica PCI, inicializacion correcta del dispositivo.
+    - GPT parsing via VirtIO, carga del superblock NeoDOS, montaje de volumen raiz.
+    - Arranque completo de NeoInit y NeoShell.
+  - **Tests:** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
+
+### Networking
+
+- [ ] **B3.3 D8. DHCP client | NT: DHCP Client Service** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
+  - **Descripcion:** Cliente DHCP (RFC 2131) que obtiene configuracion de red automaticamente al boot.
+  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automaticamente sin configuracion manual.
+  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
+
+### Registry
+
+* [ ] **B2.1 Z6. Registry hive database | NT: Cm (Configuration Manager), cell-based hive** | Prereqs: NT5 (Ob), NT6 (SID/ACL), A5.1 (IoStack) | Files: `src/cm/`, `src/cm/hive.rs`, `src/cm/cell.rs`, `src/cm/key.rs`, `src/cm/cache.rs`
+  - **Descripcion:** Implementar NeoReg, sistema de configuracion jerarquico persistente como el Cm de Windows NT. Diseno sigue el modelo NT de celulas (cells) y bins, con integracion directa en el Object Manager NT5.
+    - **Cell-based hive format:** Hive → Base Block (4KB, magic "neoR", seq numbers) → Bins (4KB) → Cells (Key, Value, Security descriptor). Cada celda tiene un indice dentro del bin, bins se numeran secuencialmente.
+    - **ObNamespace integration:** `\Registry\Machine\System` → Ob::Key (backed by SYSTEM.HIV). `sys_open("\\Registry\\Machine\\System\\BootShell")` funciona via NT5 path resolution.
+    - **Syscall API:** RAX 50-59: `sys_open_key`, `sys_create_key`, `sys_query_value`, `sys_set_value`, `sys_enum_key`, `sys_enum_value`, `sys_delete_key`, `sys_flush_key`, `sys_load_hive`, `sys_unload_hive`.
+  - **Criterio:** Keys/value expuestos como objetos en NT5 namespace. `sys_set_value(key, "PATH", REG_SZ, "C:\\Programs")` persiste y es recuperable tras reboot. Cell cache: 2da lectura no toca disco.
+  - **Severidad:** ALTA — feature grande
+  - **Tests:** `cm_create_key_ob`, `cm_query_value_cache_hit`, `cm_set_value_persist`, `cm_enum_keys_multi`, `cm_hive_reload_integrity`, `cm_cell_corruption_isolated`, `cm_syscall_open_key`, `cm_syscall_set_get_value` (8 tests)
+
+### libneodos
 
 * [ ] **DH3. Completar libneodos syscall wrappers** | Prereqs: -- | Files: `libneodos/src/syscall.rs`
   - **Descripcion:** Faltan wrappers para: `sys_thread_create` (RAX 22), `sys_thread_join` (RAX 23), `sys_sleep_ex` (RAX 41), `sys_poll` (RAX 59), `sys_ob_destroy` (RAX 66), `sys_driver_unload` (RAX 57). Anadir con macros asm igual que los wrappers existentes.
-  - **Criterio:** Cada wrapper nuevo tiene test en cmdtest.nxe. 528 kernel tests + cmdtest pasan.
+  - **Severidad:** MEDIA — funcionalidad incompleta en libneodos
   - **Tests:** 6 nuevos (uno por wrapper)
 
-### Architectural Issues (No criticos)
+---
+
+## MEDIUM (v0.49 — v0.50)
+
+### v0.49. NeoFS robustez
+
+* [ ] **v0.49. NeoFS robustez** | Prereqs: v0.48 | Files: `src/fs/neodos_fs.rs`
+  - **Descripcion:** Indirect blocks (FS-3), journaling (FS-5), checksums (FS-6), ResourceRegistry extendido (NS-3), DOS name reservation
+  - **Severidad:** MEDIA — tolerancia a fallos
+  - **Tests:** `fs_indirect_blocks`, `fs_journal_replay`, `fs_checksum_verify`
+
+### VFS Fase 3: Namespace Consistencia
+
+* [ ] **VFS-3.1. Separar \Global\FileSystem del Ob namespace** | Prereqs: VFS-1.1 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Que `ob_enum("\Global\FileSystem\")` NO enumere el namespace Ob, sino que delegue al VFS para listar directorios reales del filesystem montado.
+  - **Severidad:** MEDIA — ambigüedad semántica entre namespace Ob y paths de FS
+  - **Tests:** `vfs_namespace_filesystem_isolation`
+
+* [ ] **VFS-3.3. Proteger paths del namespace** | Prereqs: VFS-3.1 | Files: `src/syscall/ob.rs`
+  - **Descripcion:** Impedir que `ob_create(ObType::Directory)` cree directorios dentro de `\Global\FileSystem\` — esa ruta debe ser solo para VFS, no para el namespace Ob.
+  - **Severidad:** MEDIA — creación de directorios en namespace que parecen de FS pero no son reales
+  - **Tests:** `vfs_namespace_protected_paths`
+
+### VFS Fase 5: Caché Unificada
+
+* [ ] **VFS-5.1. Unificar BlockCache + PageCache** | Prereqs: — | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
+  - **Descripcion:** Una sola cache de páginas 4KB con sub-sector dirty tracking. Eliminar duplicación de datos (mismo contenido en ambas caches). Política LRU unificada.
+  - **Severidad:** MEDIA — dos caches con datos redundantes, posible incoherencia
+  - **Tests:** `vfs_cache_coherency`
+
+* [ ] **VFS-5.2. InodeCache con invalidación** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
+  - **Descripcion:** Añadir versión/secuencia en superblock. Invalidar InodeCache cuando versión cambie (otro proceso modificó el inodo). Actualmente la cache nunca invalida — TOCTOU race potencial.
+  - **Severidad:** ALTA — stale inode data tras modificación concurrente
+  - **Tests:** `vfs_cache_inode_invalidation`
+
+### VFS Fase 2 (cont.)
+
+* [ ] **VFS-2.2. Refactorizar FSCK** | Prereqs: — | Files: `src/fs/fsck.rs`
+  - **Descripcion:** Extraer lógica común de FSCK a un trait `FsckIntegrity` o similar, con implementación para NeoFS. Mover `fs/fsck.rs` a `drivers/fsck_neodos.rs` para que quede junto a su FS. Si se añade FSCK para FAT32, compartir el trait.
+  - **Severidad:** MEDIA — FSCK atado a layout de NeoFS, difícil de extender
+  - **Tests:** Los 6 tests existentes de FSCK más 2 de integración
+
+* [ ] **VFS-2.3. Eliminar acceso directo a NeoFS desde shell** | Prereqs: — | Files: `src/shell/commands/*.rs`, `src/fs/neodos_fs.rs`
+  - **Descripcion:** `DosShell::cat()`, `list_directory()` y otros comandos usan `NeoDosFs` directamente. Deben ir por VFS + handles, no por NeoDosFs directo.
+  - **Severidad:** MEDIA — bypass de capa VFS, imposibilita añadir chequeos de seguridad en VFS
+  - **Tests:** (funcional — comandos existentes deben seguir funcionando)
+
+### Architectural Issues
 
 * [ ] **AI-1. Completar ObInfoClass/ObSetInfoClass enums** | Prereqs: -- | Files: `src/object/types.rs`
   - **Descripcion:** Anadir clases faltantes: `ObInfoClass::ReadContent = 15`, `ObInfoClass::VolumeLabel = 16`, `ObSetInfoClass::ProcessTerminate = 4`, `ObSetInfoClass::VfsRename = 6`, `ObSetInfoClass::WriteContent = 7`, `ObSetInfoClass::SetCwd = 8`, `ObSetInfoClass::SetVolumeLabel = 9`.
   - **Criterio:** Enums reflejan implementacion real del handler. Tests verifican mapping.
 
-* [ ] **AI-2. Consolidar exports duplicados v3loader.rs / hst.rs** | Prereqs: -- | Files: `src/drivers/v3loader.rs`, `src/drivers/hst.rs`
-  - **Descripcion:** 7 funciones `hst_*` estan exportadas en ambos archivos. Unificar en hst.rs como unico punto de exportacion. v3loader.rs solo llama a hst.rs.
-  - **Criterio:** Zero exports duplicados. Todos los drivers NEM cargan correctamente.
-
-* [ ] **AI-3. Unificar codigos de error ObError y SyscallError** | Prereqs: -- | Files: `src/object/types.rs`, `src/syscall/mod.rs`
-  - **Descripcion:** ObError (-1 a -9) y SyscallError (16 codigos) son conjuntos independientes con traduccion manual en handler_ob_*. Unificar en un solo enum NeoDosError reutilizado por ambas capas.
-  - **Criterio:** Mapping formal verificado por tests. No hay traduccion manual.
 
 * [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Prereqs: -- | Files: `src/kobj/mod.rs`
   - **Descripcion:** `kobj_register()` checkea si el object existe (read lock) y luego inserta (write lock) sin atomicidad. Convertir a operacion atomica: `registry.iter_mut().find(|e| e.is_none())` + insert en un solo lock scope.
   - **Criterio:** Dos CPUs registrando el mismo objeto no pueden resultar en duplicados.
 
-* ~~**[COMPLETED] AI-5. CQ1. Libneodos-nxl ya modularizado** — `libneodos-nxl/src/` ya usa modulos separados (`syscall.rs`, `io.rs`, `fs.rs`, `process.rs`, `mem.rs`, `error.rs`). Con la limpieza ABI v7, se eliminaron las funciones `nxl_sys_pipe/dup2/waitpid/chdir/chdir_parent/readdir` (process.rs) y `nxl_sys_mkdir/unlink/rmdir/rename/writefile` (fs.rs). No requiere mas reorganizacion.~~
+### Tracing & Observability
 
----
+- [ ] **B1.1 Y1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
+  - **Descripcion:** Ampliar el `TraceBuffer` existente (1024 entries, lock-free ring buffer en `trace.rs`) con trace points registrables dinamicamente. Actualmente el buffer soporta 7 tipos de evento (`ContextSwitch`, `SyscallEnter/Exit`, `IrqEnter/Exit`, `SchedDecision`, `Panic`) con 4 argumentos u64 por entry. Esta mejora anade: registro dinamico de trace points por subsistema (scheduler, VFS, memory, drivers), filtrado por categoria/nivel, y dump formateado via serial con timestamps HPET.
+  - **Criterio:** Trace points registrables desde cualquier modulo kernel. Dump via serial legible. Filtrado por categoria funcional.
+  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`.
 
-### Fase 2: Expansion (v0.46 - v0.50)
-*Anadir funcionalidades transformadoras. Ejecucion secuencial dentro de la fase.*
+- [ ] **B1.2 Y2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
+  - **Descripcion:** Comando de shell Ring 3 `NEOTRACE` que expone la infraestructura de tracing (B1.1) al usuario. Subcomandos: `START` (activa captura global), `STOP` (pausa captura), `DUMP [N]` (vuelca las ultimas N entradas del TraceBuffer a consola), `FILTER <category>` (filtra por categoria). Usa `TRACE.dump()` internamente.
+  - **Criterio:** `NEOTRACE START` + ejecutar proceso + `NEOTRACE DUMP 32` muestra ultimas 32 entradas con timestamps.
+  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`.
 
-Orden de implementacion dentro de la fase:
+### Networking
 
-1. **v0.46** — Device Tree + Resource Manager completo, PCI auto-vinculacion, VirtIO block driver (BOOT_DRIVER), sys_ioctl()
-2. ~~**v0.47** — Networking: NIC driver NEM + TCP/IP stack (B3.1-B3.2)~~ **COMPLETADO**
-3. **v0.48** — NeoFS estabilidad: namespace ownership (NS-1/NS-2), dynamic allocators (FS-1/FS-2/FS-4), CAP_NS_WRITE, e1000 cleanup
-4. **v0.49** — NeoFS robustez: indirect blocks (FS-3), journaling (FS-5), checksums (FS-6), ResourceRegistry extendido (NS-3), DOS name reservation
-5. **v0.50** — Async I/O: IOCP v1, DHCP (B3.3), Registry hive database (B2.1-B2.5)
-6. **v0.51** — ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
+- [ ] **B3.4 D7. NTP client | NT: W32Time (Windows Time Service)** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
+  - **Descripcion:** Cliente NTP (RFC 5905, modo SNTP simplificado) que sincroniza el RTC del sistema con un servidor NTP externo.
+  - **Criterio:** Tras boot con red, RTC sincronizado con servidor NTP (offset < 1s).
+  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`.
 
-> **Regla:** No se pasa a la Fase 3 hasta que v0.50 este completo y todos los tests pasen.
+### Userland
 
----
+- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.7 | Files: `userbin/neoshell/`
+  - **Descripcion:** Redireccion de I/O en neoshell. Parser detecta tokens `>` (write), `>>` (append), `<` (read). Para `cmd > file`: neoshell abre/crea `file` via syscall Ob, luego spawna `cmd` con `sys_dup2` redirigiendo fd 1 (stdout) al handle del archivo. Para `cmd < file`: abre archivo y redirige fd 0 (stdin). Para `>>`: abre con flag append.
+  - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
+  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
 
-### FASE A3 — Fault Tolerance (NT: Bugcheck, KD, SEH)
+- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
+  - **Descripcion:** Editor de texto modal Ring 3 (`.NXE`). Usa `ob_open` + `ob_query_info(ReadContent)` para cargar archivos y `ob_set_info(WriteContent)` para guardar. Renderiza via `sys_write` con secuencias ANSI.
+  - **Criterio:** `NEOEDIT C:\System\Config\system.cfg` abre, edita, guarda correctamente.
+  - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`.
 
-El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en cualquier excepcion.
+- [ ] **B4.7 B6b-v2. Shared library per-process binding | NT: Ldr (Loader, PEB->LdrData)** | Prereqs: sys_loadlib | Files: `src/elf.rs`, `libneodos/`
+  - **Descripcion:** Evolucionar el sistema NXL actual (slots globales fijos en 0x1E000000-0x1E200000 compartidos entre procesos) a binding per-process. Cada EPROCESS mantiene su propia tabla de NXLs cargadas.
+  - **Criterio:** Dos procesos cargan versiones distintas de `libmath.nxl` sin interferencia.
+  - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`.
+
+- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/`
+  - **Descripcion:** Interprete de scripts batch en neoshell. Soporta archivos `.BAT`/`.CMD` con: `ECHO`, `SET`, `IF %VAR%==valor cmd`, `GOTO :label`, `CALL script.bat`, `FOR`, `REM`, `@`.
+  - **Criterio:** Script `.BAT` con IF/GOTO/CALL ejecuta correctamente.
+  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`.
+
+### Security
+
+- [ ] **B5.1 U1. Module signature validation** | Prereqs: NT6 | Files: `src/drivers/loader.rs`
+  - **Descripcion:** Validacion criptografica de modulos `.nem` antes de que entren al runtime del driver loader.
+  - **Criterio:** Un `.nem` alterado o sin firma no puede pasar de `Loaded` a `Initialized`.
+  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`.
+
+- [ ] **B5.2 U3. Driver permission enforcement** | Prereqs: NT6.3, B5.1 | Files: `src/drivers/caps.rs`
+  - **Descripcion:** Cruza la capacidad declarada por el driver con el token del proceso que intenta cargarlo y con la ACL del objeto driver en el namespace.
+  - **Criterio:** Un driver sin `CAP_ADMIN` no puede abrir objetos protegidos aunque este firmado.
+  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`.
+
+- [ ] **B5.3 U4. Secure boot chain** | Prereqs: B5.1 | Files: `neodos-bootloader/`, `src/boot/secure.rs`
+  - **Descripcion:** Encadena la verificacion desde bootloader hasta kernel y drivers para que ningun binario de arranque se ejecute sin validacion previa.
+  - **Criterio:** Si falla la verificacion del kernel o de un driver critico, el boot se detiene.
+  - **Tests:** `secure_boot_kernel_verified`, `secure_boot_driver_verified`, `secure_boot_fail_closed`.
+
+### Documentation
+
+* [ ] **DH1. Actualizar README.md a v0.44.3** | Prereqs: -- | Files: `README.md`
+  - **Descripcion:** README actual muestra v0.39.11 con 320+ tests y 36 syscalls. Actualizar a v0.44.3: 528 tests, 66 syscalls, Ob API, input subsystem, virtual terminals.
+  - **Severidad:** BAJA — documentacion
+  - **Tests:** (validacion manual, README refleja estado real)
+
+* [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Prereqs: -- | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
+  - **Descripcion:** El documento menciona MAX_PROCESSES como limite fijo, pero el scheduler usa Vec. Menciona 320+ tests (real 528). Boot phases incompletas (falta Phase 3.86 NXL load, Phase 3.9 ABI freeze).
+  - **Severidad:** BAJA — documentacion desactualizada
+  - **Tests:** (validacion manual, doc refleja codigo)
+
+### Kernel Debugger
 
 - [ ] **A3.2. Kernel debugger (KD)** | NT: WinDbg kernel-mode debugging | Prereqs: A3.1
   - **Archivos:** `src/debugger/mod.rs`, `src/debugger/breakpoint.rs`, `src/debugger/watchpoint.rs`, `src/shell/commands/debug.rs`, `scripts/kd_client.py` (GDB stub adapter)
@@ -153,263 +372,111 @@ El kernel actual no sobrevive a fallos estructurados. Ring 3 mata el proceso en 
 
 ---
 
-- ~~**[COMPLETED] A4.4. Input subsystem redesign** | NT: ConDrv (Console Driver) | Prereqs: A4.7~~
-  - ~~**Archivos:** `src/input/mod.rs` (reescritura), `src/input/manager.rs` (new), `src/input/vt.rs` (new), integracion `arch/x64/idt.rs` (PS/2 delivery)~~
-  - ~~**Descripcion:** Sistema de entrada multiplexado soportando multiples terminales virtuales (VTs) con independencia de input. En vez de enviar bytes directamente al shell activo, el kernel clasifica y enruta el input a una cola por VT, permitiendo que varias sesiones coexistan sin pisarse entre si.~~
-    - ~~**Virtual Terminals:** Max 4 VTs (Alt+F1-F4). Cada VT tiene:
-      - Input queue (ring buffer 4 KB) independiente
-      - Output buffer (attached framebuffer) independiente
-      - Foreground pid (proces que recibe input)
-      - Session leader (PID 1 NeoInit es sesion leader de todas)~~
-    - ~~**Keyboard IRQ (PS/2 IRQ1):** Nueva ruta:
-      1. IRQ1 handler lee scancode
-      2. Convierte a ASCII (KBDUS/KBDSP layout)
-      3. Chequea `active_vt`
-      4. Inserta en `vt_queues[active_vt]`
-      5. Envia event `EVENT_KEYBOARD_INPUT` al event bus (data0 = byte, data1 = vt_num)~~
-    - ~~**VT switching:** Alt+F1 scancode detectado -> `InputManager::switch_vt(1)` -> `active_vt=0` -> framebuffer renderiza VT0, input lo recibe VT0 pid.~~
-    - ~~**sys_read(fd=0, buf, len) stdin:** Bloquea en `vt_queues[active_vt].read()` hasta bytes disponibles.~~
-    - ~~**Foreground policy:** solo el VT foreground recibe el teclado fisico; los demas conservan su cola y su framebuffer en pausa para poder volver sin perder estado.~~
-  - ~~**Criterio:**
-    - Alt+F1: pantalla cambia a VT0, teclado entrega a shell en VT0.
-    - Alt+F2: pantalla cambia a VT1 (vacia), input sin proc -> silent (no error).
-    - Type en VT1, Alt+F1, type en VT0: ambos buffers almacenan independiente.
-    - El cambio de VT no altera el proceso foreground salvo que el propio scheduler o shell lo decida.~~
-  - ~~**Tests:** `input_vt_switch_framebuffer`, `input_vt_independent_queues`, `input_vt_rapid_switching`, `input_4vt_concurrent_stress`, `input_event_bus_dispatch_vt` (5 tests).~~
+## LOW (v0.50+)
 
----
+### v0.50. Async I/O y Registry
 
-### FASE A5 — Storage Unification (NT: IoStack)
+* [ ] **v0.50. Async I/O y Registry** | Prereqs: v0.49 | Files: `src/cm/`, `src/net/dhcp.rs`
+  - **Descripcion:** IOCP v1, DHCP (B3.3), Registry hive database (B2.1-B2.5)
+  - **Severidad:** MEDIA — feature nueva
+  - **Tests:** `cm_hive_persist`, `dhcp_discover_offer`
 
-- [ ] **A5.2. VirtIO block driver (BOOT_DRIVER)**
-  Prereqs: A2.1
-  * **Archivos:** `src/drivers/virtio_blk.rs` (new, 400-500 lines), integracion `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6 (priority init)
-  * **Descripcion:** Controlador de bloques VirtIO para maquinas virtuales QEMU/KVM. Se clasifica como **BOOT_DRIVER**, no como `.NEM`, ya que participa directamente en la cadena de arranque del sistema y debe estar disponible antes del montaje del volumen raiz.
-    * **PCI detection:** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
-    * **Initialization:**
-      1. Read BAR0 (MMIO base)
-      2. Write device status: ACKNOWLEDGE | DRIVER
-      3. Allocate virtqueue (#0, 32 descriptors)
-      4. Register queue physical address
-      5. Negotiate legacy/modern features
-      6. Write device status: DRIVER_OK
-    * **I/O path:** `submit_irp(irp)` ->
-      1. Allocate descriptor slot
-      2. Fill request header
-      3. Configure sector_start, sector_count, buffer address
-      4. Notify device (doorbell)
-      5. Wait completion (polling or interrupt)
-      6. Process used ring
-      7. Complete IRP
-    * **Supported operations:** READ, WRITE, FLUSH, DISCARD
-    * **Storage priority:**
-      ```
-      NVMe > VirtIO > BootAhci > BootAta
-      ```
-    * **Boot integration:**
-      Available before VFS mount, before NeoInit, before NeoShell, before NEM loader. Used by GPT parser and NeoDOS filesystem loader.
-  * **Criterio:**
-    * Arrancar NeoDOS en QEMU usando `-drive if=virtio`
-    * Deteccion automatica PCI.
-    * Inicializacion correcta del dispositivo.
-    * GPT parsing via VirtIO.
-    * Carga del superblock NeoDOS.
-    * Montaje de volumen raiz.
-    * Arranque completo de NeoInit y NeoShell.
-  * **Tests:**
-    `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
+### v0.51. ASLR v2 y Benchmarking
 
-- [x] **A5.3. AHCI NCQ** | NT: Storport Native Command Queuing | Prereqs: A2.2
-  - **Archivos:** `src/drivers/boot_ahci.rs` (extend), `drivers/ahci/src/lib.rs` (NEM driver), `src/irp/mod.rs` (tag-based dispatch)
-  - **Descripcion:** Native Command Queuing en AHCI permite hasta 32 operaciones simultaneas con finalizacion out-of-order.
-    - **NCQ path:**
-      1. Host prepara 32 command tables en memoria (FIS buffer per slot).
-      2. Escribe descriptores a device: ATA FPDMA QUEUED READ (0x60) / WRITE (0x61)
-      3. Device acepta hasta 32 cmds sin esperar completaciones.
-      4. Device finaliza out-of-order: escribe SActive register (bit = completado), trigger IRQ.
-      5. Host lee Successful NCQ Completion Notification (FIS D2H), extrae tag, localiza IRP via tag.
-    - **Tag-based dispatch:** Per-device, map `[Option<IrpId>; 32]` indizado por tag.
-    - **Fall back to legacy:** Si device no soporta NCQ (via IDENTIFY), usar single-command path.
-    - **Completado en v0.46.2:**
-      - IrpTagMap: alloc_tag/free/lookup/in_use/is_full/is_empty, 4 tests unitarios.
-      - boot_ahci.rs: IDENTIFY DEVICE para NCQ detection, `ncq_batch_xfer()` 32-slot batch FPDMA, `ncq_submit_irp_batch()` IRP batch, tag-based `poll_irp()`, fallback automatico a legacy DMA EXT.
-      - NEM AHCI driver: per-slot NCQ buffers (32 slots × 2 puertos), NCQ path en `ahci_read`/`ahci_write`, `ahci_ncq_batch_read` export, IDENTIFY per-port en `driver_init`.
-  - **Criterio:**
-    - 32 tags allocados concurrentemente, dispatch via IrpTagMap.
-    - Tag-based completion lookup con out-of-order.
-    - Fallback a legacy cuando tag map full o NCQ no soportado.
-    - Stress 100 cycles con 32 tags sin perdida.
-  - **Tests:** `ahci_ncq_32_concurrent_dispatch`, `ahci_ncq_tag_based_completion`, `ahci_ncq_fallback_to_legacy`, `ahci_ncq_out_of_order_completion`, `ahci_ncq_stress_load` (5 tests, completados + 4 irp tag map tests = 9 total).
+* [ ] **v0.51. ASLR v2 y Benchmarking** | Prereqs: v0.50 | Files: `src/memory/`, `src/util/bench.rs`
+  - **Descripcion:** ASLR v2 (pila/heap aleatorios), PGO, Benchmarking suite, NTP (B3.4)
+  - **Severidad:** BAJA — rendimiento
+  - **Tests:** `aslr_stack_random`, `ntp_sync`
 
----
+> **Regla:** No se pasa a la Fase 3 hasta que v0.50 este completo y todos los tests pasen.
 
-### Fase 3: Estabilizacion (v0.51 - v1.0.0)
-*Bugfixes, hardening, documentacion, y preparacion para API estable.*
+### Fase 3: Estabilizacion milestones
 
-Orden de implementacion dentro de la fase:
+* [ ] **v0.51. Fork/Clone + Signal + Input** | Prereqs: — | Files: `src/syscall/`
+  - **Descripcion:** sys_fork/clone (bajo demanda), sys_signal minimo, full Input subsystem (A4.4)
+  - **Severidad:** ALTA — base para multiproceso completo
+  - **Tests:** `fork_basic`, `signal_delivery`, `input_vt_full`
 
-1. **v0.51** — sys_fork/clone (bajo demanda), sys_signal minimo, full Input subsystem (A4.4)
-2. **v0.52** — Stack de red completo (UDP, DNS, DHCP), TFTP/NFS basico, Virtual Terminals (B4.5)
-3. **v0.53** — Rendimiento: per-CPU heaps NUMA-aware, scheduler lock-free, zero-copy pipes (B6.1), COW fork (B6.2)
-4. **v0.54-v0.59** — Documentacion API completa, test coverage >95%, fuzzing, module signatures (B5.1), secure boot (B5.3)
-5. **v1.0.0** — Primera API estable. Todo lo anterior debe estar COMPLETED.
+* [ ] **v0.52. Networking completo** | Prereqs: v0.51 | Files: `src/net/`
+  - **Descripcion:** UDP, DNS, DHCP, TFTP/NFS basico, Virtual Terminals (B4.5)
+  - **Severidad:** ALTA — networking usable
+  - **Tests:** `dns_resolve`, `dhcp_lease`, `vt_switch_alt_f1_f2`
 
----
+* [ ] **v0.53. Rendimiento** | Prereqs: v0.52 | Files: `src/memory/`, `src/scheduler/`, `src/pipe.rs`
+  - **Descripcion:** Per-CPU heaps NUMA-aware, scheduler lock-free, zero-copy pipes (B6.1), COW fork (B6.2)
+  - **Severidad:** MEDIA — optimizaciones
+  - **Tests:** `pipe_zero_copy_aligned_buffers`, `cow_fork_shares_pages`
 
-### FASE B — Features (userland + servicios)
+* [ ] **v0.54-v0.59. Documentacion y Hardening** | Prereqs: v0.53 | Files: `docs/`, `src/drivers/`
+  - **Descripcion:** Documentacion API completa, test coverage >95%, fuzzing, module signatures (B5.1), secure boot (B5.3)
+  - **Severidad:** BAJA — calidad
+  - **Tests:** `nem_signature_valid_accepts`, `secure_boot_kernel_verified`
 
-Prereqs globales: A4.7 minimo para items userland; NT5/NT6 para items de seguridad.
+* [ ] **v1.0.0. API estable** | Prereqs: v0.54-v0.59 | Files: —
+  - **Descripcion:** Primera API estable. Todo lo anterior debe estar COMPLETED.
+  - **Severidad:** — hito de release
 
-#### B1. Tracing & Observability
+### v0.46 (Device Tree + Resource Manager)
 
-- [ ] **B1.1 Y1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
-  - **Descripcion:** Ampliar el `TraceBuffer` existente (1024 entries, lock-free ring buffer en `trace.rs`) con trace points registrables dinamicamente. Actualmente el buffer soporta 7 tipos de evento (`ContextSwitch`, `SyscallEnter/Exit`, `IrqEnter/Exit`, `SchedDecision`, `Panic`) con 4 argumentos u64 por entry. Esta mejora anade: registro dinamico de trace points por subsistema (scheduler, VFS, memory, drivers), filtrado por categoria/nivel, y dump formateado via serial con timestamps HPET.
-  - **Criterio:** Trace points registrables desde cualquier modulo kernel. Dump via serial legible. Filtrado por categoria funcional.
-  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`.
+* [ ] **v0.46. Device Tree + Resource Manager** | Prereqs: — | Files: `src/drivers/device_tree.rs`, `src/drivers/resource.rs`
+  - **Descripcion:** Device Tree completo, PCI auto-vinculacion, VirtIO block driver (BOOT_DRIVER), sys_ioctl(). Ver A5.2 para detalle de VirtIO.
+  - **Severidad:** ALTA — dependencia para storage unification
+  - **Tests:** `device_tree_enum`, `virtio_pci_detect`, `virtio_boot_load_kernel`
 
-- [ ] **B1.2 Y2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
-  - **Descripcion:** Comando de shell Ring 3 `NEOTRACE` que expone la infraestructura de tracing (B1.1) al usuario. Subcomandos: `START` (activa captura global), `STOP` (pausa captura), `DUMP [N]` (vuelca las ultimas N entradas del TraceBuffer a consola), `FILTER <category>` (filtra por categoria). Usa `TRACE.dump()` internamente.
-  - **Criterio:** `NEOTRACE START` + ejecutar proceso + `NEOTRACE DUMP 32` muestra ultimas 32 entradas con timestamps.
-  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`.
+### VFS Fase 3 (cont.)
 
-#### B2. NeoReg & Configuration Infrastructure
+* [ ] **VFS-3.2. \DosDevices dinámico** | Prereqs: VFS-1.1 | Files: `src/vfs/mount.rs`
+  - **Descripcion:** Registrar automáticamente symlinks en `\DosDevices\` para cada nuevo mount. Actualmente solo C: y A: se registran en boot.
+  - **Severidad:** BAJA — los mounts adicionales no aparecen en DosDevices
+  - **Tests:** `vfs_mount_dosdevices_autoregister`
 
-* [ ] **B2.1 Z6. Registry hive database | NT: Cm (Configuration Manager), cell-based hive** | Prereqs: NT5 (Ob), NT6 (SID/ACL), A5.1 (IoStack) | Files: `src/cm/`, `src/cm/hive.rs`, `src/cm/cell.rs`, `src/cm/key.rs`, `src/cm/cache.rs`
-  * **Descripcion:**
-    Implementar NeoReg, sistema de configuracion jerarquico persistente como el Cm de Windows NT. El diseno sigue el modelo NT de celulas (cells) y bins, con integracion directa en el Object Manager NT5.
-    **Cell-based hive format** (en vez de arbol simple):
-    ```
-    Hive
-    +- Base Block (4 KB) — magic "neoR", seq numbers, checksum
-    +- Bins (4 KB cada uno)
-    |  +- Cell — Key: name, parent_cell, subkeys_list, values_list, class, sec_desc, last_write
-    |  +- Cell — Value: name, type (REG_SZ/DWORD/BINARY), data
-    |  +- Cell — Security descriptor (SID + ACL, reutilizado entre keys)
-    +- Free cells (linked list for reuse)
-    ```
-    Cada celda tiene un indice dentro del bin, y los bins se numeran secuencialmente.
-    **ObNamespace integration** — cada key registry es un objeto en NT5:
-    ```
-    \Registry
-      \Machine           -> KObj::Directory
-        \System           -> KObj::Key (backed by SYSTEM.HIV)
-        \Drivers          -> KObj::Key (backed by DRIVERS.HIV)
-      \User
-        \Default          -> KObj::Key (backed by DEFAULT.HIV)
-    ```
-    `sys_open("\\Registry\\Machine\\System\\BootShell")` funciona via NT5 path resolution.
-    **Syscall API** — expuesta como syscalls NT-style:
-    ```
-    RAX 50  sys_open_key(path)        -> handle (NtOpenKey)
-    RAX 51  sys_create_key(path)      -> handle (NtCreateKey)
-    RAX 52  sys_query_value(key, name, buf, len) -> value (NtQueryValueKey)
-    RAX 53  sys_set_value(key, name, type, data, len) (NtSetValueKey)
-    RAX 54  sys_enum_key(key, index, buf) -> subkey name (NtEnumerateKey)
-    RAX 55  sys_enum_value(key, index, buf) -> value name (NtEnumerateValueKey)
-    RAX 56  sys_delete_key(key)               (NtDeleteKey)
-    RAX 57  sys_flush_key(key)                (NtFlushKey)
-    RAX 58  sys_load_hive(path, mount_point)  (NtLoadKey, admin)
-    RAX 59  sys_unload_hive(mount_point)      (NtUnloadKey, admin)
-    ```
-  * **Criterio:**
-    - Keys y values expuestos como objetos en NT5 namespace
-    - `sys_open("\\Registry\\Machine\\System")` devuelve handle a la key raiz de SYSTEM.HIV
-    - `sys_set_value(key, "PATH", REG_SZ, "C:\\Programs")` persiste y es recuperable tras reboot
-    - Cell cache: 2da lectura de misma key no toca disco (cache hit)
-    - Hive persistente: tras reboot, valores anteriores siguen presentes
-  * **Tests:**
-    `cm_create_key_ob`, `cm_query_value_cache_hit`, `cm_set_value_persist`,
-    `cm_enum_keys_multi`, `cm_hive_reload_integrity`, `cm_cell_corruption_isolated`,
-    `cm_syscall_open_key`, `cm_syscall_set_get_value` (8 tests)
+### VFS Fase 5 (cont.)
 
-* [ ] **B2.2-2.5. Registry enhancements** | Prereqs: B2.1
-  * **B2.2 Z6. Registry transaction journal | NT: Hive LOG (.LOG1/.LOG2)** | Files: `src/cm/journal.rs`
-    Write-Ahead Log (WAL) para cada hive. Sigue el modelo NT de `.LOG` / `.LOG1` / `.LOG2`.
-    Recovery al boot: replay del log si seq numbers no coinciden.
-  * **B2.3 Z6. Multi-Hive Architecture | NT: SYSTEM/SOFTWARE/SECURITY/DEFAULT hives** | Files: `src/cm/hive.rs`, `src/cm/manager.rs`
-    Multiples hives bajo `\Registry` con independencia de carga, persistencia y recovery.
-  * **B2.4 Z6. Registry Security | NT: SECURITY.HIVE, Key ACLs (NT6)** | Files: `src/cm/security.rs`
-    Control de acceso sobre keys registry usando NT6 Security Reference Monitor (SID + ACL + SeAccessCheck).
-  * **B2.5 Z6. Registry notification + load/unload | NT: RegNotifyChangeKeyValue, NtLoadKey, NtUnloadKey** | Files: `src/cm/notify.rs`
-    Key change notifications via Event Bus. Hive load/unload for user profiles.
+* [ ] **VFS-5.3. Write-back ordenado** | Prereqs: VFS-5.1 | Files: `src/globals.rs`
+  - **Descripcion:** Garantizar flush page → flush block en ese orden coordinado. Actualmente ambos flushean independientemente sin orden.
+  - **Severidad:** BAJA — posible escritura duplicada, no pérdida de datos
+  - **Tests:** `vfs_cache_writeback_order`
 
-#### B3. Networking
+### VFS Fase 6: Características
 
-- [x] **B3.1 D9. Network I/O | NT: Winsock (ws2_32.dll) -> NtCreateFile(\Device\Tcp)** | Prereqs: A4.1, A4.2 | Files: `src/net/`, `src/syscall.rs` | **COMPLETADO en v0.47**
-  - **Descripcion:** Modelo NT: el kernel expone `\Device\Tcp` y `\Device\Udp` como objetos de dispositivo en el namespace NT5. La API de red user-mode va en `src/syscall/ob.rs` (ObCreate Socket, ObSetInfo SocketConnect/SocketBind/SocketListen/SocketSend/SocketClose, ObQueryInfo SocketInfo/SocketAddr/TcpStatus/NicInfo).
-  - **Criterio:** User-mode puede hacer `ob_create("\Device\Tcp\mysocket", Socket=18)` y operar via `ob_set_info` con clases 18-22.
-  - **Tests:** 17 tests: `net_mac_addr_basics`, `net_ipv4_addr_basics`, `net_ipv4_checksum`, `net_arp_cache_insert_lookup`, `net_arp_cache_eviction`, `net_arp_cache_static_survives_eviction`, `net_tcp_state_machine_simple`, `net_tcp_connection_lifecycle`, `net_tcp_connect_and_close`, `net_icmp_echo_reply_build`, `net_socket_manager_lifecycle`, `net_socket_bind_connect`, `net_udp_header_checksum`, `net_socket_addr_fmt`, `net_ipv4_classification`, `net_nic_registry_empty`.
+* [ ] **VFS-6.1. Overlay mounts** | Prereqs: VFS-1.1 | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Montar un FS sobre otro (capa de solo lectura + escritura). Útil para live CDs, actualizaciones, configuraciones por defecto con override de usuario.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_overlay_read_through`, `vfs_overlay_write_copy`
 
-- [x] **B3.2 E3. TCP/IP stack | NT: AFD (Ancillary Function Driver)** | Prereqs: B3.1 | Files: `src/net/` | **COMPLETADO en v0.47**
-  - **Descripcion:** Stack de red completo en kernel como driver de dispositivo `\Device\Tcp` y `\Device\Udp`. Capas: Ethernet, ARP (tabla 64 entries, timeout 300s, static entries), IPv4 (header parse/build, checksum, TTL), ICMP (echo request/reply), UDP (header + pseudo-header checksum), TCP (3-way handshake, sequence numbers, sliding window 16 KB, FIN/RST). NIC driver via e1000 (82540EM/82543GC/82545EM/82574L).
-  - **Criterio:** `PING 10.0.2.2` recibe reply via ICMP echo reply generation. TCP connection state machine funcional.
-  - **Tests:** 17 tests (incluye tcp lifecycle, icmp echo reply build).
+* [ ] **VFS-6.2. Extended attributes VFS** | Prereqs: — | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Añadir atributos VFS al trait `FileSystem`: `VfsAttr::ReadOnly`, `VfsAttr::Hidden`, `VfsAttr::System`, `VfsAttr::Archive`. Que coexistan con los atributos específicos de cada FS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_ext_attr_read`, `vfs_ext_attr_write`
 
-- [ ] **B3.3 D8. DHCP client | NT: DHCP Client Service** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
-  - **Descripcion:** Cliente DHCP (RFC 2131) que obtiene configuracion de red automaticamente al boot.
-  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automaticamente sin configuracion manual.
-  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
+* [ ] **VFS-6.3. File notifications via Event Bus** | Prereqs: — | Files: `src/fs/vfs.rs`, `src/eventbus/`
+  - **Descripcion:** Emitir eventos de Event Bus para cambios de archivos (crear, borrar, modificar). Permite a drivers y procesos de usuario reaccionar a cambios en el FS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_notify_create`, `vfs_notify_delete`, `vfs_notify_modify`
 
-- [ ] **B3.4 D7. NTP client | NT: W32Time (Windows Time Service)** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
-  - **Descripcion:** Cliente NTP (RFC 5905, modo SNTP simplificado) que sincroniza el RTC del sistema con un servidor NTP externo.
-  - **Criterio:** Tras boot con red, RTC sincronizado con servidor NTP (offset < 1s).
-  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`.
+* [ ] **VFS-6.4. Async VFS operations via IRP** | Prereqs: IRP system estable | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Hacer que las operaciones del trait `FileSystem` soporten async via IRP en lugar de solo sync. Permitir lectura/escritura no bloqueante desde el VFS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_async_read`, `vfs_async_write`
 
-#### B4. Userland Usable System
+### VFS Fase 7: Rendimiento
 
-- [ ] **B4.3 S3. Shell redirection (`>`, `<`, `>>`)** | Prereqs: A4.7 | Files: `userbin/neoshell/`
-  - **Descripcion:** Redireccion de I/O en neoshell. Parser detecta tokens `>` (write), `>>` (append), `<` (read). Para `cmd > file`: neoshell abre/crea `file` via syscall Ob, luego spawna `cmd` con `sys_dup2` redirigiendo fd 1 (stdout) al handle del archivo. Para `cmd < file`: abre archivo y redirige fd 0 (stdin). Para `>>`: abre con flag append.
-  - **Criterio:** `DIR > output.txt` crea archivo con listado. `TYPE < input.txt` lee de archivo.
-  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`.
+* [ ] **VFS-7.1. Eliminar lock global de VFS** | Prereqs: — | Files: `src/globals.rs`, `src/fs/vfs.rs`
+  - **Descripcion:** Reemplazar `Mutex<Vfs>` con read-write lock o lock-free path resolution. El lock global es contendedor — lecturas concurrentes de directorios diferentes se serializan innecesariamente.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_concurrent_reads`
 
-- ~~**[COMPLETED] B4.5 B1. Virtual terminals** | Prereqs: A4.4, B4.4 | Files: `userbin/neoshell/`, `src/input/`~~
-  - ~~**Descripcion:** Multiplexar el framebuffer y el input en hasta 4 terminales virtuales (VTs). Depende de A4.4 (input subsystem redisenado con `InputManager` y `vt_queues[4]`). Cada VT tiene su propio buffer de framebuffer, cola de input independiente, y PID foreground.~~
-  - ~~**Criterio:** Alt+F1 y Alt+F2 muestran shells independientes. Input en un VT no afecta al otro.~~
-  - ~~**Tests:** `vt_switch_alt_f1_f2`, `vt_independent_input`, `vt_framebuffer_swap`.~~
+* [ ] **VFS-7.2. Lookup cache** | Prereqs: — | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Cache de resultados de `lookup()` para paths recientes. Evitar recorrer el árbol de directorios en disco repetidamente para paths usados con frecuencia.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_lookup_cache_hit`
 
-- [ ] **B4.6 B6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
-  - **Descripcion:** Editor de texto modal Ring 3 (`.NXE`). Usa `ob_open` + `ob_query_info(ReadContent)` para cargar archivos y `ob_set_info(WriteContent)` para guardar. Renderiza via `sys_write` con secuencias ANSI.
-  - **Criterio:** `NEOEDIT C:\System\Config\system.cfg` abre, edita, guarda correctamente.
-  - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`.
+* [ ] **VFS-7.3. Path cache** | Prereqs: VFS-7.2 | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Cache de `resolve_path()` completa con invalidación por cambio de directorio. Almacenar el resultado (drive_idx, inode) para paths completos.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_path_cache_hit`
 
-- [ ] **B4.7 B6b-v2. Shared library per-process binding | NT: Ldr (Loader, PEB->LdrData)** | Prereqs: sys_loadlib | Files: `src/elf.rs`, `libneodos/`
-  - **Descripcion:** Evolucionar el sistema NXL actual (slots globales fijos en 0x1E000000-0x1E200000 compartidos entre procesos) a binding per-process. Cada EPROCESS mantiene su propia tabla de NXLs cargadas.
-  - **Criterio:** Dos procesos cargan versiones distintas de `libmath.nxl` sin interferencia.
-  - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`.
-
-- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/`
-  - **Descripcion:** Monitor de sistema Ring 3 en tiempo real (`.NXE`). Muestra lista de procesos, uso de CPU por core, estadisticas de memoria, drivers cargados. Refresco cada 1 segundo via `sys_sleep`. Renderiza con ANSI escape codes. Ver tambien [System Tools / Administration Suite](#system-tools--administration-suite) para el roadmap completo de NeoTOP.
-  - **Criterio:** `NEOTOP` muestra procesos activos actualizandose en tiempo real.
-  - **Tests:** `neotop_display_processes`, `neotop_refresh_loop`, `neotop_exit_clean`.
-
-- [ ] **B4.9 B11. NeoShell scripting (`.BAT`)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/`
-  - **Descripcion:** Interprete de scripts batch en neoshell. Soporta archivos `.BAT`/`.CMD` con: `ECHO`, `SET`, `IF %VAR%==valor cmd`, `GOTO :label`, `CALL script.bat`, `FOR`, `REM`, `@`.
-  - **Criterio:** Script `.BAT` con IF/GOTO/CALL ejecuta correctamente.
-  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`.
-
-- [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/`
-  - **Descripcion:** Compositor de ventanas 2D sobre el framebuffer GOP 1280x800. Modelo: cada ventana tiene un back-buffer, posicion, z-order, titulo. El compositor blittea ventanas en orden z sobre el framebuffer principal. Renderiza a 30 FPS maximo.
-  - **Criterio:** Dos ventanas superpuestas, una encima de otra. Mover ventana actualiza framebuffer.
-  - **Tests:** `compositor_create_window`, `compositor_z_order`, `compositor_blit_overlap`.
-
-#### B5. Security
-
-- [ ] **B5.1 U1. Module signature validation** | Prereqs: NT6 | Files: `src/drivers/loader.rs`
-  - **Descripcion:** Validacion criptografica de modulos `.nem` antes de que entren al runtime del driver loader.
-  - **Criterio:** Un `.nem` alterado o sin firma no puede pasar de `Loaded` a `Initialized`.
-  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`.
-
-- [ ] **B5.2 U3. Driver permission enforcement** | Prereqs: NT6.3, B5.1 | Files: `src/drivers/caps.rs`
-  - **Descripcion:** Cruza la capacidad declarada por el driver con el token del proceso que intenta cargarlo y con la ACL del objeto driver en el namespace.
-  - **Criterio:** Un driver sin `CAP_ADMIN` no puede abrir objetos protegidos aunque este firmado.
-  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`.
-
-- [ ] **B5.3 U4. Secure boot chain** | Prereqs: B5.1 | Files: `neodos-bootloader/`, `src/boot/secure.rs`
-  - **Descripcion:** Encadena la verificacion desde bootloader hasta kernel y drivers para que ningun binario de arranque se ejecute sin validacion previa.
-  - **Criterio:** Si falla la verificacion del kernel o de un driver critico, el boot se detiene.
-  - **Tests:** `secure_boot_kernel_verified`, `secure_boot_driver_verified`, `secure_boot_fail_closed`.
-
-#### B6. Performance
+### Performance
 
 - [ ] **B6.1 V2. Zero-copy pipes** | Prereqs: A4.5, S2 | Files: `src/pipe.rs`
   - **Descripcion:** Optimiza el camino de pipes para que, cuando el buffer del productor o consumidor este alineado y sea seguro, los datos se pasen por referencia a paginas compartidas o pinneadas en lugar de copiarse byte a byte dentro del kernel.
@@ -421,186 +488,19 @@ Prereqs globales: A4.7 minimo para items userland; NT5/NT6 para items de segurid
   - **Criterio:** Padre e hijo comparten memoria al nacer y divergen solo al escribir.
   - **Tests:** `cow_fork_shares_pages`, `cow_write_triggers_copy`, `cow_fork_isolated_writes`.
 
-#### B9. Shell command migration Ring 0 -> Ring 3 [COMPLETED]
+### Userland (Low)
 
-Migracion completa de todos los comandos del kernel shell Ring 0 a `.NXE` en Ring 3.
+- [ ] **B4.8 B7. NeoTOP** | Prereqs: A4.7, A1.5 | Files: `userbin/neotop/`
+  - **Descripcion:** Monitor de sistema Ring 3 en tiempo real (`.NXE`). Muestra lista de procesos, uso de CPU por core, estadisticas de memoria, drivers cargados. Refresco cada 1 segundo via `sys_sleep`. Renderiza con ANSI escape codes. Ver tambien [System Tools / Administration Suite](#system-tools--administration-suite) para el roadmap completo de NeoTOP.
+  - **Criterio:** `NEOTOP` muestra procesos activos actualizandose en tiempo real.
+  - **Tests:** `neotop_display_processes`, `neotop_refresh_loop`, `neotop_exit_clean`.
 
-El Ring 0 solo mantiene:
-- **RUN** — bootstrap loader necesario para lanzar el primer binario Ring 3 (NeoInit/neoshell) desde el kernel.
-- **CRASH** — crash dump management; es inherentemente kernel-level.
+- [ ] **B4.10 B12. Compositor 2D** | Prereqs: B4.4, framebuffer | Files: `userbin/compositor/`
+  - **Descripcion:** Compositor de ventanas 2D sobre el framebuffer GOP 1280x800. Modelo: cada ventana tiene un back-buffer, posicion, z-order, titulo. El compositor blittea ventanas en orden z sobre el framebuffer principal. Renderiza a 30 FPS maximo.
+  - **Criterio:** Dos ventanas superpuestas, una encima de otra. Mover ventana actualiza framebuffer.
+  - **Tests:** `compositor_create_window`, `compositor_z_order`, `compositor_blit_overlap`.
 
-**Completados:**
-- HELP -> corehelp.nxe (B9.1)
-- SET -> neoshell built-in (B9.2)
-- EXIT -> neoshell built-in (B9.3)
-- PS -> ps.nxe (B9.4) — migrado a Ob
-- KILL -> kill.nxe (B9.5) — migrado a Ob
-- PRI -> pri.nxe (B9.6) — migrado a Ob
-- DRIVES -> drives.nxe (B9.8) — migrado a Ob
-- KEYB -> keyb.nxe (B9.10) — migrado a Ob
-- CALL -> neoshell built-in (B9.13)
-- LABEL -> label.nxe — migrado a Ob
-- FSCK -> fsck.nxe
-- NDREG -> ndreg.nxe — migrado a Ob
-- LOADNEM -> loadnem.nxe — partial Ob (create(Driver) done, unload via legacy RAX 58)
-- KOBJ -> kobj.nxe — migrado a Ob
-
-Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD, CLS, ECHO, DATE, TIME, VOL, NEOMEM, VER, CPUINFO, DATETIME, VER) tambien estan migrados a Ring 3 como `.NXE`. El comando `MEM` fue reemplazado por `NEOMEM` (NeoMem v0.1).
-
----
-
-### X7. NeoDOS Object Manager (Ob) — Unificacion de Handles, KOBJ, URN y Seguridad [COMPLETED v0.44.2]
-
-> **NT Reference:** Ob (Object Manager) — `ObOpen`, `ObCreate`, `ObQueryInfo`, `ObReferenceObject`
-> **Documento de diseno:** [`docs/OBJECT_MANAGER_ARCHITECTURE.md`](OBJECT_MANAGER_ARCHITECTURE.md)
-> **Version objetivo:** v0.41-v0.44.2
-> **Estado:** [DONE] COMPLETADO (v0.44.2)
-
-#### Arquitectura Implementada
-
-El Object Manager (Ob) unifica handles, objetos, seguridad y namespace en una sola abstraccion:
-
-```
-ObObject (kernel object)
-+-- id: ObId (64-bit)
-+-- type: ObType (16 tipos: Process, Driver, Device, Pipe, ..., Timer)
-+-- name: [u8; OB_NAME_LEN=128]
-+-- refcount: u32
-+-- flags: u32
-+-- native_id: u64 (back-pointer al recurso real)
-+-- ops: Option<&'static dyn ObOperations> (vtable polimorfica)
-
-ObHandle (per-process)
-+-- object_id: ObId -> referencia a ObObject
-+-- access_mask: u32 (READ|WRITE|EXEC|DELETE)
-+-- offset: u64
-
-ObDirectory (namespace)
-+-- \Global\, \Device\, \Driver\, \FileSystem\, \Registry\, \Ob\
-+-- \Global\Info\ (virtual: Version, DateTime, Memory, CpuInfo, Cwd, Keyboard, Drives, Drivers)
-+-- \Ob\Process\ (virtual: PID-indexed)
-```
-
-#### Syscalls Ob (RAX 60-66)
-
-| RAX | Syscall | Args | Descripcion |
-|-----|---------|------|-------------|
-| 60 | `sys_ob_open` | RBX=path, RCX=access | Open named object -> handle (SeAccessCheck integrado) |
-| 61 | `sys_ob_create` | RBX=path, RCX=type, RDX=fds_out, R8=attrs | Create named object (Process=1, Driver=2, Pipe=4, Directory=11, Event=13) |
-| 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=len | Query object metadata (0-16 classes, incl. ReadContent=15, VolumeLabel=16) |
-| 63 | `sys_ob_set_info` | RBX=fd, RCX=class, RDX=buf | Set object metadata (0-9 classes, incl. WriteContent=7, SetCwd=8, SetVolumeLabel=9, VfsRename=6) |
-| 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory (VFS-backed + Ob namespace) |
-| 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=to | Wait on objects (multi-type via KWait) |
-| 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd (files, dirs, drivers, namespace objects) |
-
-#### Syscalls Legacy Migrados a Ob
-
-| RAX | Legacy | Estado SSDT | Equivalente Ob |
-|-----|--------|-------------|----------------|
-| 11 | `sys_readfile` | None | ob_query_info(ReadContent) |
-| 12 | `sys_writefile` | None | ob_set_info(WriteContent) |
-| 24 | `sys_getcpuinfo` | None | ob_open("\Global\Info\CpuInfo") + ob_query_info |
-| 25 | `sys_mkdir` | None | ob_create(Directory) |
-| 26 | `sys_unlink` | None | ob_destroy |
-| 27 | `sys_rmdir` | None | ob_destroy |
-| 28 | `sys_rename` | None | ob_set_info(VfsRename) |
-| 33 | `sys_get_drives` | None | ob_open("\Global\Info\Drives") + ob_query_info |
-| 43 | `sys_get_version` | None | ob_open("\Global\Info\Version") + ob_query_info |
-| 44 | `sys_get_datetime` | None | ob_open("\Global\Info\DateTime") + ob_query_info |
-| 45 | `sys_get_meminfo` | None | ob_open("\Global\Info\Memory") + ob_query_info |
-| 46 | `sys_get_volume_label` | None | ob_query_info(VolumeLabel) |
-| 48 | `sys_kobj_enum` | None | ob_enum |
-| 49 | `sys_set_keyboard_layout` | None | ob_open("\Global\Info\Keyboard") + ob_set_info |
-| 51 | `sys_set_priority` | None | ob_set_info(ProcessPriority) |
-| 52 | `sys_kill_process` | None | ob_set_info(ProcessTerminate) |
-| 54 | `sys_set_volume_label` | None | ob_set_info(SetVolumeLabel) |
-| 56 | `sys_driver_enum` | None | ob_open("\Global\Info\Drivers") + ob_query_info |
-| 57 | `sys_driver_load` | None | ob_create(Driver) |
-
-#### Syscalls Legacy que Permanecen
-
-| RAX | Syscall | Motivo |
-|-----|---------|--------|
-| 0 | `sys_exit` | Demasiado especifica para abstraer |
-| 1 | `sys_write` | Foundation: stdout/stderr/pipe write |
-| 2 | `sys_yield` | Foundation: ceder CPU |
-| 3 | `sys_getpid` | Foundation: PID actual |
-| 4 | `sys_read` | Foundation: stdin/pipe read |
-| 5 | `sys_pipe` | Foundation: pipe creation (paralelo a ob_create(Pipe)) |
-| 6 | `sys_dup2` | Foundation: redireccion |
-| 7 | `sys_spawn` | Foundation: crear proceso (needed by neoinit) |
-| 8 | `sys_readdir` | Foundation: directory read (paralelo a ob_enum) |
-| 9 | `sys_waitpid` | Foundation: wait child |
-| 10 | `sys_open` | Foundation: open file (paralelo a ob_open) |
-| 13 | `sys_close` | Foundation: close handle |
-| 16 | `sys_chdir` | Foundation: change dir |
-| 18 | `sys_brk` | Demasiado especifica |
-| 19 | `sys_mmap` | Demasiado especifica |
-| 20 | `sys_munmap` | Demasiado especifica |
-| 21 | `sys_loadlib` | Demasiado especifica |
-| 22 | `sys_thread_create` | Foundation: thread creation |
-| 23 | `sys_thread_join` | Foundation: thread join |
-| 29 | `sys_set_exception_handler` | Foundation: SEH |
-| 40 | `sys_wait_alertable` | Foundation: alertable wait |
-| 41 | `sys_sleep_ex` | Foundation: sleep |
-| 42 | `sys_poweroff` | Foundation: poweroff |
-| 47 | `sys_chdir_parent` | Foundation: parent cwd change |
-| 50 | `sys_ndreg` | Internal: driver registry admin |
-| 53 | `sys_cursor_blink` | Foundation: cursor control |
-| 55 | `sys_fsck` | Foundation: filesystem check |
-| 58 | `sys_driver_unload` | Foundation: driver unload |
-| 59 | `sys_poll` | Foundation: I/O polling |
-
-#### Metricas Objetivo Alcanzadas
-
-| Metrica | Antes (v0.40) | Despues (v0.44.2) |
-|---------|---------------|-------------------|
-| HandleEntry tipo-seguro | [PENDING] (kind hardcoded) | [DONE] (ObId ref) |
-| KOBJ + handles unificados | [PENDING] | [DONE] |
-| Security en open | [PENDING] (solo syscall 50) | [DONE] (todo acceso via SeAccessCheck) |
-| URN funcional | Parcial (file + device) | Full (all schemes via Ob) |
-| Tipos de objeto | ~8 implicitos | 16 explicitos (ObType enum) |
-| Syscalls Ob | 0 | 7 nuevas (RAX 60-66) |
-| OB_NAME_LEN | 32 | 128 |
-
-#### Estado por Binario
-
-| Binario | Estado Ob | Syscalls Ob | Syscalls Legacy Restantes |
-|---------|-----------|-------------|--------------------------|
-| ps | [DONE] COMPLETO | ob_open, ob_enum, ob_query_info | -- |
-| kill | [DONE] COMPLETO | ob_open, ob_set_info | -- |
-| pri | [DONE] COMPLETO | ob_open, ob_set_info | -- |
-| kobj | [DONE] COMPLETO | ob_open, ob_enum | -- |
-| neoshell | [DONE] COMPLETO | ob_open, ob_enum, ob_create(Pipe), ob_create(Process), ob_wait, ob_set_info(SetCwd), ob_query_info(ReadContent) | sys_cursor_blink, sys_poweroff |
-| cd | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| coredir | [DONE] COMPLETO | ob_open, ob_enum | -- |
-| corehelp | [DONE] COMPLETO | ob_open, ob_enum, ob_create(Pipe), ob_query_info(ReadContent), ob_create(Process), ob_wait | -- |
-| coretype | [DONE] COMPLETO | ob_open, ob_query_info(ReadContent) | -- |
-| tree | [DONE] COMPLETO | ob_open, ob_enum | -- |
-| corecopy | [DONE] COMPLETO | ob_open, ob_destroy, ob_query_info(ReadContent), ob_set_info(WriteContent) | -- |
-| cmdtest | [DONE] COMPLETO | ob_open, ob_create(Directory), ob_destroy, ob_set_info, ob_query_info(ReadContent) | -- |
-| cpuinfo | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| neoinit | [DONE] N/A (PID 1) | ob_create(Process), ob_wait | sys_spawn (needed for bootstrap) |
-| datetime | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| ver | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| mem | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| vol | [DONE] COMPLETO | ob_open, ob_query_info(VolumeLabel) | -- |
-| coredel | [DONE] COMPLETO | ob_open, ob_destroy | -- |
-| coreren | [DONE] COMPLETO | ob_open, ob_set_info(VfsRename) | -- |
-| coremd | [DONE] COMPLETO | ob_create(Directory) | -- |
-| corerd | [DONE] COMPLETO | ob_open, ob_destroy | -- |
-| drives | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| keyb | [DONE] COMPLETO | ob_open, ob_set_info(KeyboardLayout) | -- |
-| label | [DONE] COMPLETO | ob_open, ob_query_info(VolumeLabel), ob_set_info(SetVolumeLabel) | -- |
-| fsck | [DONE] N/A | -- | sys_fsck (comando de reparacion con argumentos) |
-| ndreg | [DONE] COMPLETO | ob_open, ob_query_info | -- |
-| loadnem | [DONE] PARCIAL | ob_create(Driver) | sys_driver_unload (RAX 58) para /U |
-| echo | [DONE] N/A | -- | (foundation only, solo sys_write) |
-| cls | [DONE] N/A | -- | (foundation only, solo sys_write) |
-
----
-
-### B7. Experimental
+### Experimental
 
 - [ ] **B7.1 E4. Full GUI system** | NT: Desktop Window Manager | Prereqs: B4.10 | Files: `userbin/gui/` | Desktop con iconos, menu, ventanas redimensionables.
 - [ ] **B7.2 E5. Advanced secure boot (TPM)** | NT: BitLocker / TPM | Prereqs: B5.3 | Files: `src/boot/tpm.rs` | Medicion PCR + sealed storage.
@@ -609,9 +509,61 @@ ObDirectory (namespace)
 - [ ] **B7.5 T5. Live kernel patching** | NT: Windows Hotpatch | Prereqs: A2.4, A3.2 | Files: `src/patch/mod.rs` | Hot-patch de funcion kernel sin reboot.
 - [ ] **B7.6 T2. Distributed NeoDOS nodes** | NT: DFS | Prereqs: B3.2 | Files: `src/cluster/` | 2 nodos QEMU se descubren y comparten FS read-only.
 
+### Architectural Issues (Low)
+
+* [ ] **AI-2. Consolidate legacy syscall wrappers** | Prereqs: — | Files: `src/syscall/mod.rs`
+  - **Descripcion:** Tras la migracion a Ob, varias syscalls legacy son wrappers finos que podrian eliminarse. `handler_readfile` (RAX 11) y `handler_writefile` (RAX 12) ya estan en None. `handler_mkdir`/`handler_unlink`/`handler_rmdir`/`handler_rename` (RAX 25-28) ya estan en None. Sin embargo, `handler_open` (RAX 10), `handler_readdir` (RAX 8), `handler_pipe` (RAX 5) siguen activos como wrappers de Ob.
+  - **Decision:** Mantener las syscalls legacy activas por compatibilidad con binarios antiguos. No eliminar hasta que todos los binarios conocidos usen exclusivamente Ob API (v1.0).
+  - **Severidad:** BAJA — deuda técnica controlada
+
+* [ ] **AI-3. ObObjectTable lock granularity** | Prereqs: — | Files: `src/object/mod.rs`
+  - **Descripcion:** El `ObObjectTable` usa un unico `spin::Mutex` global. Bajo carga de multiple proceso con operaciones Ob concurrentes (open, query, set, destroy), esto puede convertirse en cuello de botella.
+  - **Propuesta:** Migrar a lock striping (16 locks, hash de ObId para elegir lock) o a una `RwLock` para operaciones de solo lectura vs escritura. Evaluar si es necesario tras medir contention real.
+  - **Severidad:** BAJA — optimizacion, evaluar tras medir contention
+
+### Registry features (Low)
+
+* [ ] **B2.2 Z6. Registry transaction journal | NT: Hive LOG (.LOG1/.LOG2)** | Prereqs: B2.1 | Files: `src/cm/journal.rs`
+  - **Descripcion:** Write-Ahead Log (WAL) para cada hive. Sigue el modelo NT de `.LOG` / `.LOG1` / `.LOG2`. Recovery al boot: replay del log si seq numbers no coinciden.
+  - **Severidad:** MEDIA
+
+* [ ] **B2.3 Z6. Multi-Hive Architecture | NT: SYSTEM/SOFTWARE/SECURITY/DEFAULT hives** | Prereqs: B2.1 | Files: `src/cm/hive.rs`, `src/cm/manager.rs`
+  - **Descripcion:** Multiples hives bajo `\Registry` con independencia de carga, persistencia y recovery.
+  - **Severidad:** MEDIA
+
+* [ ] **B2.4 Z6. Registry Security | NT: SECURITY.HIVE, Key ACLs (NT6)** | Prereqs: B2.1 | Files: `src/cm/security.rs`
+  - **Descripcion:** Control de acceso sobre keys registry usando NT6 Security Reference Monitor (SID + ACL + SeAccessCheck).
+  - **Severidad:** MEDIA
+
+* [ ] **B2.5 Z6. Registry notification + load/unload | NT: RegNotifyChangeKeyValue, NtLoadKey, NtUnloadKey** | Prereqs: B2.1 | Files: `src/cm/notify.rs`
+  - **Descripcion:** Key change notifications via Event Bus. Hive load/unload for user profiles.
+  - **Severidad:** BAJA
+
 ---
 
-## Matriz de Problemas Arquitectonicos
+## COMPLETED (referencia historica)
+
+El contenido completo de los items completados se ha movido a:
+[IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md)
+
+Incluye:
+- Fase 1 (v0.40-v0.45)
+- v0.47 (Networking TCP/IP)
+- X7 (Object Manager unification)
+- B9 (Shell Ring 0 → Ring 3 migration)
+- OBF-01..06, OBF-09 (Fase 1 Objectification)
+- A5.3 (AHCI NCQ)
+- A4.4 (Input subsystem redesign)
+- B4.5 (Virtual terminals)
+- AI-5 (Libneodos-nxl modularization)
+- Fase 2 Ob: Timer, Semaphore, Section (OBF-10..12)
+
+
+---
+
+## REFERENCE (analytical content, tables, design docs)
+
+### Matriz de Problemas Arquitectonicos
 
 | # | Problema | Fase | NT ref | Estado | Riesgo si no se hace |
 |---|----------|------|--------|--------|---------------------|
@@ -642,56 +594,36 @@ ObDirectory (namespace)
 | 25 | Registry flat -> cell-based hive | B2.1-B2.5 | Cm | [PENDING] | Sin config jerarquica transaccional |
 | 26 | Handles/KOBJ/URN/security no unificados | X7 | Ob | COMPLETED v0.44.2 | Unified via ObObjectTable |
 
----
 
-## Architectural Initiatives
+### Architectural Initiatives
+
+> Los items checklist (AI-1 a AI-5) estan listados en sus secciones de prioridad correspondientes. Esta seccion solo contiene el contexto analitico.
 
 Las siguientes iniciativas arquitectonicas son cambios transversales que afectan a multiples subsistemas y requieren coordinacion.
 
-### AI-1: Clean up ObInfoClass/ObSetInfoClass enums
+* [ ] **AI-1. Clean up ObInfoClass/ObSetInfoClass enums** | Prereqs: — | Files: `src/object/types.rs`
+  - **Descripcion:** El handler `handler_ob_query_info` soporta info classes 0-16, pero el enum `ObInfoClass` en `types.rs` solo define hasta 14 (KeyboardLayout). Similarmente, `ObSetInfoClass` solo define hasta 5 (KeyboardLayout), mientras que el handler soporta clases 4 (ProcessTerminate), 6 (VfsRename), 7 (WriteContent), 8 (SetCwd), 9 (SetVolumeLabel).
+  - **Accion:** Anadir `ObInfoClass::ReadContent = 15`, `ObInfoClass::VolumeLabel = 16`, `ObSetInfoClass::ProcessTerminate = 4`, `ObSetInfoClass::VfsRename = 6`, `ObSetInfoClass::WriteContent = 7`, `ObSetInfoClass::SetCwd = 8`, `ObSetInfoClass::SetVolumeLabel = 9`.
+  - **Severidad:** MEDIA — enums incompletos no reflejan implementacion real
+  - **Tests:** `ob_info_class_variants`, `ob_set_info_class_variants`
 
-**Estado:** [PENDING]
-**Archivos:** `src/object/types.rs`
+* [ ] **AI-2. Consolidate legacy syscall wrappers** | Prereqs: — | Files: `src/syscall/mod.rs`
+  - **Descripcion:** Tras la migracion a Ob, varias syscalls legacy son wrappers finos que podrian eliminarse. `handler_readfile` (RAX 11) y `handler_writefile` (RAX 12) ya estan en None. `handler_mkdir`/`handler_unlink`/`handler_rmdir`/`handler_rename` (RAX 25-28) ya estan en None. Sin embargo, `handler_open` (RAX 10), `handler_readdir` (RAX 8), `handler_pipe` (RAX 5) siguen activos como wrappers de Ob.
+  - **Decision:** Mantener las syscalls legacy activas por compatibilidad con binarios antiguos. No eliminar hasta que todos los binarios conocidos usen exclusivamente Ob API (v1.0).
+  - **Severidad:** BAJA — deuda técnica controlada
 
-El handler `handler_ob_query_info` soporta info classes 0-16, pero el enum `ObInfoClass` en `types.rs` solo define hasta 14 (KeyboardLayout). Similarmente, `ObSetInfoClass` solo define hasta 5 (KeyboardLayout), mientras que el handler soporta clases 4 (ProcessTerminate), 6 (VfsRename), 7 (WriteContent), 8 (SetCwd), 9 (SetVolumeLabel).
+* [ ] **AI-3. ObObjectTable lock granularity** | Prereqs: — | Files: `src/object/mod.rs`
+  - **Descripcion:** El `ObObjectTable` usa un unico `spin::Mutex` global. Bajo carga de multiple proceso con operaciones Ob concurrentes (open, query, set, destroy), esto puede convertirse en cuello de botella.
+  - **Propuesta:** Migrar a lock striping (16 locks, hash de ObId para elegir lock) o a una `RwLock` para operaciones de solo lectura vs escritura. Evaluar si es necesario tras medir contention real.
+  - **Severidad:** BAJA — optimizacion, evaluar tras medir contention
 
-**Accion requerida:** Anadir las clases faltantes a los enums para que reflejen la implementacion real:
-- `ObInfoClass::ReadContent = 15`, `ObInfoClass::VolumeLabel = 16`
-- `ObSetInfoClass::ProcessTerminate = 4`, `ObSetInfoClass::VfsRename = 6`, `ObSetInfoClass::WriteContent = 7`, `ObSetInfoClass::SetCwd = 8`, `ObSetInfoClass::SetVolumeLabel = 9`
+* [ ] **AI-4. Standardize error codes between Ob and syscall layer** | Prereqs: — | Files: `src/object/types.rs`, `src/syscall/mod.rs`
+  - **Descripcion:** Actualmente `ObError` tiene su propio conjunto de codigos (-1 a -9), y `SyscallError` tiene otro conjunto separado. La capa de syscall traduce entre ellos manualmente. Puede producir discrepancias (e.g., `ObError::NotFound` -> `SyscallError::NoEnt`).
+  - **Propuesta:** Unificar en un solo conjunto de codigos de error reutilizado por ambas capas, o anadir un mapping formal verificado por tests.
+  - **Severidad:** MEDIA — error mapping manual propenso a bugs
+  - **Tests:** `ob_error_syscall_mapping_complete`
 
-### AI-2: Consolidate legacy syscall wrappers
-
-**Estado:** [PENDING]
-**Archivos:** `src/syscall/mod.rs`
-
-Tras la migracion a Ob, varias syscalls legacy son wrappers finos que podrian eliminarse:
-- `handler_readfile` (RAX 11) y `handler_writefile` (RAX 12) ya estan en None
-- `handler_mkdir`/`handler_unlink`/`handler_rmdir`/`handler_rename` (RAX 25-28) ya estan en None
-- Sin embargo, `handler_open` (RAX 10), `handler_readdir` (RAX 8), `handler_pipe` (RAX 5) siguen activos y son wrappers de Ob
-
-**Decision:** Mantener las syscalls legacy activas por compatibilidad con binarios antiguos. No eliminar hasta que todos los binarios conocidos usen exclusivamente Ob API (v1.0).
-
-### AI-3: ObObjectTable lock granularity
-
-**Estado:** [PENDING]
-**Archivos:** `src/object/mod.rs`
-
-El `ObObjectTable` usa un unico `spin::Mutex` global. Bajo carga de multiple proceso con operaciones Ob concurrentes (open, query, set, destroy), esto puede convertirse en cuello de botella.
-
-**Propuesta:** Migrar a lock striping (16 locks, hash de ObId para elegir lock) o a una `RwLock` para operaciones de solo lectura vs escritura. Evaluar si es necesario tras medir contention real.
-
-### AI-4: Standardize error codes between Ob and syscall layer
-
-**Estado:** [PENDING]
-**Archivos:** `src/object/types.rs`, `src/syscall/mod.rs`
-
-Actualmente `ObError` tiene su propio conjunto de codigos (-1 a -9), y `SyscallError` tiene otro conjunto separado. La capa de syscall traduce entre ellos manualmente. Esto puede producir discrepancias (e.g., `ObError::NotFound` -> `SyscallError::NoEnt` y `ObError::InvalidParam` -> `SyscallError::Inval`).
-
-**Propuesta:** Unificar en un solo conjunto de codigos de error reutilizado por ambas capas, o anadir un mapping formal verificado por tests.
-
----
-
-## Objectification Roadmap — Syscall → Object Migration Plan
+### Objectification Roadmap — Plan y Tablas
 
 > **Documento de diseño:** [`docs/OBJECT_MANAGER_ARCHITECTURE.md`](OBJECT_MANAGER_ARCHITECTURE.md)
 > **Visión arquitectónica:** [`docs/ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md) §4.2
@@ -728,24 +660,6 @@ ObType::Timer   =15  ⚠️ ob_wait(Timer) soportado, falta ob_create(Timer)
 ```
 
 ### Fase 1: Completar ObTypes existentes (v0.44.7 — Prioridad Inmediata)
-
-Syscalls que ya tienen toda la infraestructura Ob necesaria. Solo falta:
-- Completar enums
-- Añadir `ObType::Thread = 16`
-- Implementar thread como objeto
-
-| ID | Tarea | Archivos | Esfuerzo | Dependencias |
-|----|-------|----------|----------|-------------|
-| OBF-01 | Añadir `ObInfoClass::ReadContent=15`, `VolumeLabel=16` al enum | `src/object/types.rs` | 5 min | — |
-| OBF-02 | Añadir `ObSetInfoClass::ProcessTerminate=4`, `VfsRename=6`, `WriteContent=7`, `SetCwd=8`, `SetVolumeLabel=9` al enum | `src/object/types.rs` | 5 min | — |
-| OBF-03 | Añadir `ObType::Thread = 16` al enum + `to_str()` | `src/object/types.rs` | 5 min | — |
-| OBF-04 | Implementar `ob_create(Thread)` en handler_ob_create (type=16): crea KTHREAD, devuelve fd | `src/syscall/mod.rs` | 2-3h | OBF-03 |
-| OBF-05 | Implementar `ob_wait(Thread)` en handler_ob_wait: kwait_block(ThreadJoin) | `src/syscall/mod.rs` | 1h | OBF-03 |
-| OBF-06 | Implementar `ob_set_info(ThreadPriority)` usando fd thread | `src/syscall/mod.rs` | 30 min | OBF-03 |
-| OBF-06b | Eliminar `handler_thread_create` (RAX 22) y `handler_thread_join` (RAX 23) del SSDT → `None` | `src/syscall/mod.rs` | 5 min | OBF-04, OBF-05 |
-| OBF-07 | Unificar ObError y SyscallError en NeoDosError | `src/object/types.rs`, `src/syscall/mod.rs` | 1 día | — |
-| OBF-08 | Migrar `sys_waitpid` a KWait nativo (eliminar `WAIT_PID` static mut) | `src/usermode.rs`, `src/syscall/mod.rs` | 2-3h | CB1 |
-| OBF-09 | Tests kernel: 8 tests (thread create/wait/kill via Ob, enum completos, error unificado) | `src/testing.rs` | ~150 líneas | OBF-01..08 |
 
 **Criterio de aceptación:**
 - `sys_ob_create("\\MyThread", Thread)` devuelve fd
@@ -854,9 +768,7 @@ Fase 3 (v0.47+)  ← Fase 2 completa + Networking/Registry
 | T-OBF-17 | F3 | ob_set_info(SecuritySet): cambiar SD de objeto |
 | T-OBF-18 | F3 | ob_query_info(Security): leer SD de objeto |
 
----
-
-## USR: Sistema de Usuarios NT-style (SAM + UAC + SUDO)
+### USR: Sistema de Usuarios NT-style (SAM + UAC + SUDO)
 
 ### Filosofía NT vs Unix
 
@@ -1199,9 +1111,8 @@ Al abrir archivo, VFS llama a `se_access_check()` con el SD del inodo.
 | Fase 2 | Fase 1 completa |
 | Fase 3 | Fase 2 completa |
 
----
 
-## System Tools / Administration Suite
+### System Tools / Administration Suite
 
 > Hoja de ruta del ecosistema de herramientas administrativas de NeoDOS.
 > Todas las herramientas son binarios Ring 3 (`.NXE`) que se comunican con el
@@ -1452,9 +1363,8 @@ para administracion del sistema: servicios, apagado, reinicio, configuracion.
 | **NeoCtl** | Planificado | Driver Runtime | Ob + foundation syscalls |
 | **NeoDebug** | Planificado (A3.2) | Object Manager | `ob_enum` + `ob_query_info` |
 
----
 
-## Recommended Next Steps
+### Recommended Next Steps
 
 Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 
@@ -1496,9 +1406,7 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 31 | **Registry hive database (B2.1)** | v0.50 | NT5, NT6, IoStack | 2000-3000 lineas |
 | 32 | **Kernel debugger (A3.2)** | v0.51+ | A3.1 | 1500-2000 lineas |
 
----
-
-## Auditoría de estabilidad (v0.46.7) — Corrección de fugas de handles y reinicio
+### Auditoría de estabilidad (v0.46.7)
 
 **Hallazgo CRÍTICO:** `handler_exit` y `kill_pid` no llamaban `ob_close_object()` para handles no-pipe (archivos, dispositivos, eventos, directorios, objetos Ob). Esto causaba una fuga permanente de referencias ObObject por cada proceso que terminaba con handles abiertos sin cerrar explícitamente. Combinado con la fuga de fd en `resolve_path()` de NeoShell (que abría un fd por comando para verificar existencia de archivo y nunca lo cerraba), el sistema agotaba la tabla ObObject o el heap del kernel después de ~250 comandos, provocando reinicio/apagado inesperado.
 
@@ -1536,9 +1444,7 @@ Priorizados por impacto y dependencias (con bugs criticos como prioridad 0):
 | 11 | `scheduler/mod.rs:984` | `on_timer_tick` no setea per-CPU need_resched | MEDIA |
 | 12 | `scheduler/mod.rs:661-711` | `recycle_terminated` no libera recursos fisicos | MEDIA |
 
----
-
-## NeoFS Audit & Roadmap (v0.48+)
+### NeoFS Audit & Roadmap (v0.48+)
 
 > Auditoría completa del sistema de archivos NeoFS y la interacción
 > Driver/Namespace. Ver documentación completa:
@@ -1611,9 +1517,484 @@ Items para añadir a la tabla Recommended Next Steps:
 | T4-5 | `driver_stress_load_unload_cycle` | Stress | 50 |
 | T4-6 | `driver_stress_concurrent_load` | Stress | 40 |
 
-Ver [NEOFS_TESTS.md](NEOFS_TESTS.md) para especificación completa.
+
+### Auditoría Arquitectónica del VFS de NeoDOS
+
+# Auditoría Arquitectónica del VFS de NeoDOS (2026-06-30)
+
+## Resumen Ejecutivo
+
+El VFS de NeoDOS es ligero y funcional, pero adolece de una **separación incompleta de responsabilidades**. El `FileSystem` trait (`src/fs/vfs.rs`) y el `Vfs` struct son limpios y genéricos, pero el `MountManager` (`src/vfs/mount.rs`) reside en un módulo separado con suscripción al Object Manager que **duplica la funcionalidad de montaje**. El código específico de NeoFS está correctamente encapsulado en `src/fs/neodos_fs.rs`, aunque expone detalles internos (inodos, bitmap) como `pub`. La integración con el Object Manager es funcional pero tiene **ownership confuso**: los handles de archivo crean objetos `ObObject` sin path namespace, y las referencias viven en dos sitios (HandleTable y ObObjectTable). Detectados **4 riesgos arquitectónicos** y **7 items de deuda técnica**.
 
 ---
+
+## 1. Arquitectura Actual
+
+### 1.1 Capas del VFS
+
+```
+┌──────────────────────────────────────────────┐
+│  Syscall Handlers (syscall/ob.rs, handlers.rs) │
+├──────────────────────────────────────────────┤
+│  Ob open_path()  (object/mod.rs)              │
+│    ├─ Namespace lookup (object/namespace.rs)  │
+│    └─ VFS resolve_path() (fs/vfs.rs)          │
+├──────────────────────────────────────────────┤
+│  Vfs struct (fs/vfs.rs)                       │
+│    ├─ drives[26]: Box<dyn FileSystem>         │
+│    ├─ mounts[8]: sub-mounts dentro de drives  │
+│    └─ walk_components(): path traversal       │
+├──────────────────────────────────────────────┤
+│  FileSystem trait (fs/vfs.rs)                 │
+│    ├─ NeoDosFs (fs/neodos_fs.rs)              │
+│    ├─ Fat32Driver (drivers/fat32.rs)          │
+│    └─ Iso9660Driver (drivers/iso9660.rs)      │
+├──────────────────────────────────────────────┤
+│  IoStack (vfs/io.rs)                          │
+│    ├─ translation LBA (partición)             │
+│    ├─ block cache lookup                      │
+│    └─ read_sectors/write_sectors              │
+├──────────────────────────────────────────────┤
+│  BlockDevice trait (drivers/block/)           │
+│    ├─ RamDisk / BootAta / BootAhci            │
+│    ├─ NVMe / NemBlockDevice                   │
+│    └─ read_blocks/write_blocks                │
+└──────────────────────────────────────────────┘
+```
+
+### 1.2 Módulos VFS
+
+| Módulo | Archivo | Responsabilidad |
+|--------|---------|----------------|
+| `fs/vfs.rs` | `src/fs/vfs.rs` | Core VFS: `FileSystem` trait, `Vfs` struct con 26 drives, path resolution, mount/unmount |
+| `vfs/io.rs` | `src/vfs/io.rs` | `IoStack`: block I/O con traducción de partición, stub de cache L1/L2 |
+| `vfs/mount.rs` | `src/vfs/mount.rs` | `MountManager`: mount de alto nivel con namespace Ob, symlinks \DosDevices |
+| `vfs/partition.rs` | `src/vfs/partition.rs` | `PartitionInfo`, parsing GPT, búsqueda de particiones por GUID |
+| `fs/neodos_fs.rs` | `src/fs/neodos_fs.rs` | Implementación `FileSystem` para NeoFS (+ inodo, bitmap, dir entry internos) |
+| `fs/fsck.rs` | `src/fs/fsck.rs` | FSCK específico de NeoFS (lee inodos, bitmap, directorios directamente) |
+| `handle.rs` | `src/handle.rs` | `HandleTable`, `HandleEntry` — tabla de handles por proceso, todos referencian ObObject |
+| `globals.rs` | `src/globals.rs` | Globales `VFS`, `BLOCK_CACHE`, `PAGE_CACHE`, `BLOCK_DEVICES`, helpers `with_vfs()` |
+
+---
+
+## 2. Fortalezas
+
+### 2.1 `FileSystem` trait bien diseñado
+- Trait genérico con 12 métodos, defaults para `NotImplemented` en operaciones opcionales.
+- `Send` bound — correcto para kernel multihilo.
+- `VfsNode` simple (inode, mode, size) — abstracción limpia.
+
+### 2.2 Vfs struct minimalista
+- `drives[26]` — array fijo, O(1) lookup, sin allocaciones dinámicas.
+- `mounts[8]` — array fijo con sub-montaje (mount dentro de un drive).
+- Path resolution puramente VFS: `walk_components()` con soporte `.`, `..`, traversal de mount points.
+- `split_drive()` correcto y simple.
+
+### 2.3 IoStack — capa de I/O unificada
+- Traducción LBA partición-relativa → absoluta.
+- Cache lookup transparente.
+- `with_device()` permite acceso directo cuando el FS lo necesita.
+
+### 2.4 Partition parsing limpio
+- GPT parsing sin dependencias externas.
+- Búsqueda por GUID de partición.
+- Separado en módulo propio.
+
+### 2.5 HandleTable bien encapsulado
+- Soporta fds ilimitados (Vec dinámico).
+- Sentinel values para stdin/stdout/stderr claros.
+- `alloc_handle()` O(n) pero aceptable.
+
+---
+
+## 3. Debilidades y Riesgos
+
+### ⚠ R1: Ownership Confuso — Handles Filesystem vs Object Manager
+
+**Gravedad: ALTA**
+
+Cuando `handler_ob_open()` resuelve `\Global\FileSystem\C:\path`:
+1. `ob_open_path()` llama a `vfs.resolve_path()` → obtiene `(drive_idx, VfsNode)`
+2. Crea un `ObObject` vía `ob_create_object(ObType::Filesystem, path_str, node.inode, drive_idx, None)`
+3. Inserta en namespace con `ob_insert_object(path_str, obj_id)`
+4. Crea un `HandleEntry::ob_object(obj_id, ...)` en la handle table del proceso
+
+**Problemas:**
+- El `ObObject` se crea **sin `ObOperations`**, por lo que `on_destroy` nunca se llama. Cuando el handle se cierra (`ob_close_object`), se decrementa refcount, pero no se liberan recursos del filesystem (no hay un `close` real en el FS).
+- `ob_close_object` destruye el `ObObject` cuando refcount llega a 0, pero el `VfsNode` (inode, mode, size) que se resolvió es una copia — no hay un objeto persisted que represente "archivo abierto" en el VFS.
+- **No hay un "file object"** en el sentido NT (un objeto que representa una instancia de apertura con estado). La handle table almacena `ObId` + `offset`, pero el `ObObject` en la tabla global no tiene offset — cada proceso tiene su offset en la `HandleEntry`.
+- **Dos procesos que abren el mismo archivo** crean dos `ObObject`s separados en el Object Manager, sin relación entre sí. Esto es correcto pero ineficiente.
+
+### ⚠ R2: Dualidad de Mount Managers
+
+**Gravedad: ALTA**
+
+Existen **DOS sistemas de mount** paralelos:
+
+1. **Vfs::mount/unmount** (`src/fs/vfs.rs:126-147`): monta `Box<dyn FileSystem>` en `drives[letter]`. Array fijo de 26, mount dentro de drive (sub-mount).
+
+2. **MountManager** (`src/vfs/mount.rs`): crea objetos `ObType::MountPoint` en el Object Manager, crea entradas en `\DosDevices\`, inserta symlinks, registra en `\Device\`.
+
+**Problemas:**
+- `main.rs` llama a **ambos** para el mismo mount: `vfs.mount('C', Box::new(fs))` + `vfs_mount("\\Device\\NeoDosVolume0", 'C', NeoDosFs)`.
+- No hay validación cruzada: se puede montar en `MountManager` sin mount en `Vfs`, o viceversa.
+- `vfs_path_to_mount()` busca en `MountManager` por prefijo de path, pero `Vfs::resolve_path()` usa `walk_components()` que busca en `Vfs.mounts[]` — dos tablas de montaje separadas.
+- Al hacer `unmount`, `Vfs::unmount()` limpia `drives[idx]` y elimina mounts hijos; `vfs_unmount()` destruye el `ObObject` del MountPoint. Pero **no hay sincronización** entre ambos.
+
+### ⚠ R3: ObCreate File/Directory No Pasa por VFS
+
+**Gravedad: MEDIA**
+
+`handler_ob_create()` (syscall RAX=61):
+- Para `ObType::Directory`: llama a `ob_create_object_path()` que registra en Object Manager y namespace. **No llama a `Vfs::mkdir()`**.
+- Para pipes: crea pipe y registra.
+- Para otros tipos: registra en OM directamente.
+
+El `ObType::Directory` creation registra en el **namespace del Object Manager**, no en el filesystem NeoFS. Un directorio creado vía `ob_create(ObType::Directory, "\\Global\\FileSystem\\C:\\Temp\\newdir")` crea una entrada en el namespace de Ob, pero **no crea un directorio en NeoFS**. Esto es confuso: el path `\Global\FileSystem\C:\...` sugiere que es un path de filesystem, pero la creación es en el namespace Ob, no en el disco.
+
+### ⚠ R4: Cache Fragmentación
+
+**Gravedad: MEDIA**
+
+Hay **tres caches separadas** sin coordinación:
+
+1. **BlockCache** (`buffer/block_cache.rs`): cache de sectores (512B), LRU, usada por NeoFS y FAT32.
+2. **PageCache** (`buffer/page_cache.rs`): cache de páginas (4KB), usada por NeoFS para `read_file_to_buf`.
+3. **InodeCache** (`fs/neodos_fs.rs:136`): array fijo `[Option<Inode>; 256]`, dentro de `NeoDosFs`.
+
+**Problemas:**
+- `InodeCache` vive dentro de `NeoDosFs` y usa `BlockCache` con `partition_base` hardcodeado a `self.abs_lba(0)`.
+- `PageCache` es global (`PAGE_CACHE` en globals.rs), pero `NeoDosFs::read_file_to_buf` la usa con `inode_num` como clave — si dos instancias de NeoDosFs (misma partición, drives diferentes) comparten PageCache, pueden mezclar datos.
+- No hay `dirty` tracking coordinado entre BlockCache y PageCache.
+- `flush_cache_if_needed()` en globals.rs flushea ambos independentemente, pero sin garantía de orden (primero page, luego block).
+
+---
+
+## 4. Separación VFS vs NeoFS
+
+### 4.1 Correctamente Separado
+
+| Concepto | Pertenece a | Archivo |
+|----------|-------------|---------|
+| `FileSystem` trait | VFS | `fs/vfs.rs:51-80` |
+| Path resolution | VFS | `fs/vfs.rs:149-201` |
+| Drive table | VFS | `fs/vfs.rs:91-95` |
+| Mount sub-mount | VFS | `fs/vfs.rs:84-89, 98-105` |
+| `IoStack` | VFS | `vfs/io.rs` |
+| `PartitionInfo`/GPT | VFS | `vfs/partition.rs` |
+| `VfsError` | VFS | `fs/vfs.rs:9-22` |
+| `VfsNode` | VFS | `fs/vfs.rs:37-41` |
+| `DirEntry` | VFS | `fs/vfs.rs:46-49` |
+| Handle management | VFS/Handle | `handle.rs` |
+| `Superblock` | NeoFS | `fs/neodos_fs.rs:13-22` |
+| `Inode` | NeoFS | `fs/neodos_fs.rs:72-85` |
+| `InodeCache` | NeoFS | `fs/neodos_fs.rs:136-171` |
+| `BlockBitmap` | NeoFS | `fs/neodos_fs.rs:29-68` |
+| `DirectoryEntry` | NeoFS | `fs/neodos_fs.rs:107-113` |
+| `FsError` | NeoFS | `fs/neodos_fs.rs:118-128` |
+| Block I/O (read/write sectors) | NeoFS via IoStack | `fs/neodos_fs.rs:182-1169` |
+| FSCK | NeoFS | `fs/fsck.rs` |
+
+### 4.2 Infracciones Detectadas
+
+1. **`NeoDosFs` expone métodos de acceso a bloques como `pub`**: `abs_lba()`, `get_inode_block_ptr()`, `inode_data_block_count()`, `find_entry_in_directory()`, etc. son públicos. Deberían ser `pub(crate)` o privados, accedidos solo a través del trait `FileSystem`.
+
+2. **`NeoDosFs::read_file_to_buf()` salta el VFS**: usado directamente por la shell (`DosShell::cat`) y otras partes del kernel, bypassando la capa de handles y VFS.
+
+3. **`FsError` → `VfsError` conversión** manual en `impl FileSystem for NeoDosFs` (línea 1004-1016). Correcto pero frágil — si se añade un nuevo `FsError`, hay que acordarse de mapearlo.
+
+4. **FSCK accede a estructuras internas de NeoFS directamente**: `read_inode()`, `read_superblock()`, `read_dir_entry()` — todo depende del layout de disco de NeoFS. Esto es correcto (FSCK debe ser específico del FS), pero actualmente `fsck.rs` está en `src/fs/` como módulo hermano. Si se añade FSCK para FAT32, habría que duplicar o refactorizar.
+
+---
+
+## 5. Integración con Object Manager
+
+### 5.1 Flujo ObOpen → VFS
+
+```
+sys_ob_open (RAX=60)
+  → handler_ob_open(ob.rs:110)
+    → ob_open_path() (object/mod.rs:322)
+      → 1. Namespace lookup (namespace.rs: lookup_path)
+      → 2. Si es \Global\FileSystem\:
+        → Vfs::resolve_path() (fs/vfs.rs:189)
+        → ob_create_object(ObType::Filesystem, path_str, inode, drive, None)
+        → namespace::ob_insert_object(path_str, obj_id)
+        → ob_reference(obj_id)
+      → 3. Crea HandleEntry::ob_object(obj_id, access)
+```
+
+### 5.2 Ownership
+
+| Entidad | Propietario | Ciclo de vida |
+|---------|-------------|---------------|
+| `Vfs` struct | Global static `VFS` | Toda la vida del kernel |
+| `Vfs.drives[]` | `Vfs` | Desde mount hasta unmount |
+| `Box<dyn FileSystem>` (NeoDosFs) | `Vfs.drives[idx]` | Desde mount hasta unmount |
+| `ObObject` (Filesystem) | `OB_TABLE` | Desde `ob_create_object` hasta `ob_close_object` (refcount=0) |
+| `HandleEntry.ob_object_id` | `HandleTable` del EPROCESS | Desde alloc_handle hasta close/sys_exit |
+| Namespace entry | `OB_NAMESPACE` | Desde insert hasta remove |
+| InodeCache | `NeoDosFs` | Toda la vida del FS |
+| BlockCache | Global `BLOCK_CACHE` | Toda la vida del kernel |
+
+### 5.3 Riesgos de Ownership
+
+**ObObject creado en ob_open_path NO se destruye al cerrar el handle si hay namespace entry:**
+- `ob_open_path()` inserta el ObObject en el namespace con `ob_insert_object()`.
+- Cuando se cierra el handle, `HandleEntry::close()` llama `ob_close_object()` que decrementa refcount. Si llega a 0, destruye el ObObject.
+- **Pero**: la namespace entry (`\Global\FileSystem\C:\...`) permanece en `OB_NAMESPACE` apuntando a un ObId que ya no existe.
+- Siguiente `ob_open_path()` detecta el entry huérfano y lo limpia (línea 336-338: "Remove stale entry"), pero esto es un parche, no un diseño limpio.
+
+**HandleEntry almacena ObId sin verificar validez:**
+- Si un ObObject es destruido (refcount=0), cualquier HandleEntry que aún tenga ese ObId queda colgando.
+- `HandleEntry::obj_type()` llama `ob_lookup(self.object_id)` que devuelve `None` — el handler debe manejar este caso. Algunos lo hacen, otros no.
+
+---
+
+## 6. Integración con Namespace
+
+### 6.1 Árbol de Namespace
+
+```
+\
+├── Device\              → contiene dispositivos (Harddisk0, NeoDosVolume0, EspVolume0)
+│   ├── NeoDosVolume0
+│   ├── EspVolume0
+│   ├── Tcp              (objeto de socket)
+│   └── Udp              (objeto de socket)
+├── DosDevices\          → symlinks a Device\
+│   ├── C: → \Device\NeoDosVolume0
+│   └── A: → \Device\EspVolume0
+├── Global\
+│   ├── FileSystem\      → VFS path resolution
+│   │   ├── C:\...       (objetos creados dinámicamente por ob_open_path)
+│   │   └── A:\...       (objetos creados dinámicamente por ob_open_path)
+│   ├── Info\            → objetos de info del sistema
+│   │   ├── CpuInfo
+│   │   ├── Version
+│   │   ├── Memory
+│   │   ├── DateTime
+│   │   ├── Drives
+│   │   ├── Drivers
+│   │   └── Keyboard
+│   └── Mount\           → MountPoints
+│       ├── C:
+│       └── A:
+├── Driver\              → drivers NEM cargados
+├── Ob\                  → Ob jetos internos (Process, Pipe, Thread, etc.)
+│   ├── Process\
+│   ├── Pipe\
+│   ├── Thread\
+│   └── ...
+├── Registry\            → registry keys
+├── Process\             → procesos activos
+└── FileSystem\          → filesystems registrados
+```
+
+### 6.2 Problemas de Namespace
+
+1. **`\Global\FileSystem\C:\...` mezcla namespace Ob con paths de FS real**. El namespace de Ob es un árbol de objetos kernel, no un filesystem. Mezclar ambos crea ambigüedad: `ob_enum("\Global\FileSystem\C:\")` enumeraría el namespace Ob, no el directorio raíz de NeoFS.
+
+2. **MountPoint objects en `\Global\Mount\` vs `\DosDevices\` vs `\Device\`**: Tres representaciones del mismo mount. Sin sincronización.
+
+3. **No hay `\DosDevices\` consistente**: solo se crean symlinks para C: y A: durante el boot. No hay registro de units adicionales.
+
+---
+
+## 7. Integración con Drivers
+
+### 7.1 Block Devices
+
+- `BLOCK_DEVICES` global: `BlockDeviceManager` con Vec de `Box<dyn BlockDevice>`.
+- Drivers NEM se registran vía `hst_register_block_device()` en boot loader (Phase 3.85).
+- `IoStack.device_id` es un índice numérico en `BLOCK_DEVICES` — **frágil**: si un dispositivo se desmonta/elimina, los índices cambian y todos los IoStack que referencian ese `device_id` quedan inválidos.
+
+### 7.2 Hot Unload no maneja referencias activas
+
+- `driver_unload` en boot_loader limpia el driver, pero no notifica al VFS ni a los IoStack que referencian sus block devices.
+- Si un driver de disco se descarga mientras hay archivos abiertos (handles vivos), los siguientes reads/writes via `IoStack` usarán un índice de dispositivo que ya no es válido.
+
+### 7.3 Falta de abstractión de Driver Registration
+
+- No hay un mecanismo para que un driver notifique al VFS "este device_id ya no es válido".
+- `NemBlockDevice` se registra con un `device_id` fijo, pero si se recarga, puede obtener un `device_id` diferente.
+
+---
+
+## 8. Caché
+
+### 8.1 Estado Actual
+
+| Cache | Tipo | Tamaño | Propietario | Política | Dirty tracking |
+|-------|------|--------|-------------|----------|----------------|
+| BlockCache | Sector (512B) | 64 entradas | Global (`BLOCK_CACHE`) | LRU | Sí |
+| PageCache | Página (4KB) | 64 entradas | Global (`PAGE_CACHE`) | LRU | Sí |
+| InodeCache | Inode (256B) | 256 entradas | `NeoDosFs` (per-instancia) | Fill-once, nunca invalida | N/A |
+
+### 8.2 Problemas
+
+1. **InodeCache nunca se invalida**: una vez cargado un inodo, permanece en cache aunque otro proceso lo modifique. TOCTOU race potencial.
+
+2. **BlockCache y PageCache duplican datos**: un sector de 512B en BlockCache es parte de una página de 4KB en PageCache. Ambas caches pueden tener el mismo data físico con versiones diferentes.
+
+3. **PageCache usa `inode_num` como clave primaria**: si dos `NeoDosFs` instancias (e.g., C: y D:) tienen archivos con el mismo `inode_num`, habrá colisión. El `PageCache` global no tiene contexto de drive.
+
+4. **No hay write-back coordination**: BlockCache flushea dirty sectors, PageCache flushea dirty pages. Si una página dirty en PageCache contiene sectores también dirty en BlockCache, se escribirán dos veces.
+
+---
+
+## 9. Deuda Técnica
+
+| ID | Descripción | Archivo | Gravedad |
+|----|-------------|---------|----------|
+| DT-1 | `IoStack` contenidos dentro de `NeoDosFs` crean dependencia directa del FS al dispositivo | `fs/neodos_fs.rs:178` | Media |
+| DT-2 | `with_vfs()` + `globals::VFS.lock()` — lock global del VFS, contendedor | `globals.rs:14,25-31` | Alta |
+| DT-3 | `NeoDosFs::abs_lba()` recalculado constantemente con `self.io_stack.translate_lba()` | `fs/neodos_fs.rs:182-184` | Baja |
+| DT-4 | Hardcodeo de offset de bloques de datos: `200 + (block * 8)` | `fs/neodos_fs.rs:338,339,393,...` | Media |
+| DT-5 | `list_directory()`, `read_file()`, `read_file_to_buf()` en `NeoDosFs` son para debug/consola directa, no via VFS | `fs/neodos_fs.rs:319-558` | Baja |
+| DT-6 | `KDrive` eliminado del código pero referenciado en AGENTS.md y documentación | — | Baja |
+| DT-7 | FSCK (`fs/fsck.rs`) hardcodea layout NeoFS (sector 200, inode table sector 1) | `fs/fsck.rs:32-55` | Media |
+
+---
+
+### VFS Roadmap — Fase 1: Estabilización (Prioridad: CRÍTICA)
+
+*Eliminar riesgos de ownership y dualidad de mounts.*
+
+* [ ] **VFS-1.1. Unificar MountManager** | Prereqs: — | Files: `src/vfs/mount.rs`, `src/fs/vfs.rs`, `src/main.rs`
+  - **Descripcion:** Fusionar `Vfs::mount()` con `vfs::mount::vfs_mount()`. Un solo punto de mount/unmount que sincronice Vfs.drives[] + MountPoint creation + \DosDevices symlinks. Actualmente `main.rs` llama a ambos para el mismo mount — eliminar la duplicación.
+  - **Severidad:** CRITICO — dos tablas de montaje independientes sin validación cruzada
+  - **Tests:** `vfs_mount_dual_sync`, `vfs_mount_unmount_removes_both`
+
+* [ ] **VFS-1.2. Arreglar ownership ObOpen → VFS** | Prereqs: — | Files: `src/object/mod.rs`, `src/handle.rs`
+  - **Descripcion:** No crear ObObject persistente en namespace para cada `ob_open_path()`. Usar ObObject efímero (sin namespace entry) para file handles, o crear un "file object" real con ObOperations cuyo `on_destroy` cierre el archivo en el FS subyacente.
+  - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
+  - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
+
+* [ ] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Cuando un ObObject se destruye (refcount=0), su namespace entry en `\Global\FileSystem\...` queda huérfano. Implementar garbage collection periódico o usar weak references para entries de filesystem. El parche actual (línea 336-338 de `object/mod.rs`) es frágil.
+  - **Severidad:** ALTA — namespace inconsistente
+  - **Tests:** `vfs_ownership_namespace_entry_cleanup`
+
+* [ ] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
+  - **Descripcion:** Verificar que todo handle close valida que el ObId sigue vivo. Añadir `is_valid()` check en `HandleEntry` methods. Si un ObObject es destruido, los HandleEntry que lo referencian deben detectarlo.
+  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free
+  - **Tests:** `vfs_ownership_double_close_safe`
+
+### VFS Roadmap — Fase 2: Separación de Capas (Prioridad: ALTA)
+
+*VFS puramente genérico, NeoFS puramente específico.*
+
+* [ ] **VFS-2.1. Privatizar métodos de NeoFS** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
+  - **Descripcion:** Hacer `abs_lba()`, `find_entry_in_directory()`, `get_inode_block_ptr()`, `inode_data_block_count()`, `directory_byte_span()`, `rebuild_bitmap()` → `pub(crate)` o privados. Solo deben ser accesibles a través del trait `FileSystem`.
+  - **Severidad:** ALTA — ruptura de encapsulación, cualquier módulo puede acceder a detalles internos de NeoFS
+  - **Tests:** (compilación, no se rompen callers existentes)
+
+* [ ] **VFS-2.2. Refactorizar FSCK** | Prereqs: — | Files: `src/fs/fsck.rs`
+  - **Descripcion:** Extraer lógica común de FSCK a un trait `FsckIntegrity` o similar, con implementación para NeoFS. Mover `fs/fsck.rs` a `drivers/fsck_neodos.rs` para que quede junto a su FS. Si se añade FSCK para FAT32, compartir el trait.
+  - **Severidad:** MEDIA — FSCK atado a layout de NeoFS, difícil de extender
+  - **Tests:** Los 6 tests existentes de FSCK más 2 de integración
+
+* [ ] **VFS-2.3. Eliminar acceso directo a NeoFS desde shell** | Prereqs: — | Files: `src/shell/commands/*.rs`, `src/fs/neodos_fs.rs`
+  - **Descripcion:** `DosShell::cat()`, `list_directory()` y otros comandos usan `NeoDosFs` directamente. Deben ir por VFS + handles, no por NeoDosFs directo.
+  - **Severidad:** MEDIA — bypass de capa VFS, imposibilita añadir chequeos de seguridad en VFS
+  - **Tests:** (funcional — comandos existentes deben seguir funcionando)
+
+* [ ] **VFS-2.4. PageCache con contexto de drive** | Prereqs: — | Files: `src/buffer/page_cache.rs`
+  - **Descripcion:** PageCache global usa `inode_num` como clave primaria. Dos instancias de NeoDosFs (C: y D:) con mismo inode_num colisionan. Añadir `drive_idx` a la clave de PageCache.
+  - **Severidad:** ALTA — corrupción silenciosa de datos entre drives
+  - **Tests:** `vfs_cache_pagecache_drive_context`
+
+### VFS Roadmap — Fase 3: Namespace Consistencia (Prioridad: MEDIA)
+
+* [ ] **VFS-3.1. Separar \Global\FileSystem del Ob namespace** | Prereqs: VFS-1.1 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Que `ob_enum("\Global\FileSystem\")` NO enumere el namespace Ob, sino que delegue al VFS para listar directorios reales del filesystem montado.
+  - **Severidad:** MEDIA — ambigüedad semántica entre namespace Ob y paths de FS
+  - **Tests:** `vfs_namespace_filesystem_isolation`
+
+* [ ] **VFS-3.2. \DosDevices dinámico** | Prereqs: VFS-1.1 | Files: `src/vfs/mount.rs`
+  - **Descripcion:** Registrar automáticamente symlinks en `\DosDevices\` para cada nuevo mount. Actualmente solo C: y A: se registran en boot.
+  - **Severidad:** BAJA — los mounts adicionales no aparecen en DosDevices
+  - **Tests:** `vfs_mount_dosdevices_autoregister`
+
+* [ ] **VFS-3.3. Proteger paths del namespace** | Prereqs: VFS-3.1 | Files: `src/syscall/ob.rs`
+  - **Descripcion:** Impedir que `ob_create(ObType::Directory)` cree directorios dentro de `\Global\FileSystem\` — esa ruta debe ser solo para VFS, no para el namespace Ob.
+  - **Severidad:** MEDIA — creación de directorios en namespace que parecen de FS pero no son reales
+  - **Tests:** `vfs_namespace_protected_paths`
+
+### VFS Roadmap — Fase 4: Drivers y Block Devices (Prioridad: ALTA)
+
+* [ ] **VFS-4.1. Device IDs estables** | Prereqs: — | Files: `src/vfs/io.rs`, `src/drivers/block/mod.rs`
+  - **Descripcion:** Usar UUID o nombre simbólico (ej. el nombre del driver + número de serie) para identificar block devices en lugar de índice numérico en Vec. El `IoStack` debe referenciar por nombre, no por índice. Evita invalidación al insertar/eliminar dispositivos.
+  - **Severidad:** ALTA — si un dispositivo se elimina, los índices cambian y todos los IoStack quedan inválidos
+  - **Tests:** `vfs_iostack_device_id_stable`
+
+* [ ] **VFS-4.2. Hot-unload safety** | Prereqs: VFS-4.1 | Files: `src/drivers/boot_loader/mod.rs`, `src/drivers/driver_runtime.rs`
+  - **Descripcion:** Cuando un driver se descarga, notificar al VFS para invalidar IoStacks que referencien sus devices. Marcar NeoDosFs como "stale" si su device se va. Impedir reads/writes adicionales.
+  - **Severidad:** ALTA — descarga de driver de disco con archivos abiertos causa uso de device_id inválido
+  - **Tests:** `vfs_iostack_stale_device_handling`
+
+* [ ] **VFS-4.3. Refcount de block devices** | Prereqs: VFS-4.1 | Files: `src/drivers/block/mod.rs`
+  - **Descripcion:** Llevar contador de referencias a cada block device (cuántos IoStack lo usan). Prevenir unload si refcount > 0.
+  - **Severidad:** ALTA — hot unload puede dejar referencias colgadas
+  - **Tests:** `driver_stress_load_unload_cycle`
+
+### VFS Roadmap — Fase 5: Caché Unificada (Prioridad: MEDIA)
+
+* [ ] **VFS-5.1. Unificar BlockCache + PageCache** | Prereqs: — | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
+  - **Descripcion:** Una sola cache de páginas 4KB con sub-sector dirty tracking. Eliminar duplicación de datos (mismo contenido en ambas caches). Política LRU unificada.
+  - **Severidad:** MEDIA — dos caches con datos redundantes, posible incoherencia
+  - **Tests:** `vfs_cache_coherency`
+
+* [ ] **VFS-5.2. InodeCache con invalidación** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
+  - **Descripcion:** Añadir versión/secuencia en superblock. Invalidar InodeCache cuando versión cambie (otro proceso modificó el inodo). Actualmente la cache nunca invalida — TOCTOU race potencial.
+  - **Severidad:** ALTA — stale inode data tras modificación concurrente
+  - **Tests:** `vfs_cache_inode_invalidation`
+
+* [ ] **VFS-5.3. Write-back ordenado** | Prereqs: VFS-5.1 | Files: `src/globals.rs`
+  - **Descripcion:** Garantizar flush page → flush block en ese orden coordinado. Actualmente ambos flushean independientemente sin orden.
+  - **Severidad:** BAJA — posible escritura duplicada, no pérdida de datos
+  - **Tests:** `vfs_cache_writeback_order`
+
+### VFS Roadmap — Fase 6: Características (Prioridad: BAJA)
+
+* [ ] **VFS-6.1. Overlay mounts** | Prereqs: VFS-1.1 | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Montar un FS sobre otro (capa de solo lectura + escritura). Útil para live CDs, actualizaciones, configuraciones por defecto con override de usuario.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_overlay_read_through`, `vfs_overlay_write_copy`
+
+* [ ] **VFS-6.2. Extended attributes VFS** | Prereqs: — | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Añadir atributos VFS al trait `FileSystem`: `VfsAttr::ReadOnly`, `VfsAttr::Hidden`, `VfsAttr::System`, `VfsAttr::Archive`. Que coexistan con los atributos específicos de cada FS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_ext_attr_read`, `vfs_ext_attr_write`
+
+* [ ] **VFS-6.3. File notifications via Event Bus** | Prereqs: — | Files: `src/fs/vfs.rs`, `src/eventbus/`
+  - **Descripcion:** Emitir eventos de Event Bus para cambios de archivos (crear, borrar, modificar). Permite a drivers y procesos de usuario reaccionar a cambios en el FS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_notify_create`, `vfs_notify_delete`, `vfs_notify_modify`
+
+* [ ] **VFS-6.4. Async VFS operations via IRP** | Prereqs: IRP system estable | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Hacer que las operaciones del trait `FileSystem` soporten async via IRP en lugar de solo sync. Permitir lectura/escritura no bloqueante desde el VFS.
+  - **Severidad:** BAJA — feature nueva
+  - **Tests:** `vfs_async_read`, `vfs_async_write`
+
+### VFS Roadmap — Fase 7: Rendimiento (Prioridad: BAJA)
+
+* [ ] **VFS-7.1. Eliminar lock global de VFS** | Prereqs: — | Files: `src/globals.rs`, `src/fs/vfs.rs`
+  - **Descripcion:** Reemplazar `Mutex<Vfs>` con read-write lock o lock-free path resolution. El lock global es contendedor — lecturas concurrentes de directorios diferentes se serializan innecesariamente.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_concurrent_reads`
+
+* [ ] **VFS-7.2. Lookup cache** | Prereqs: — | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Cache de resultados de `lookup()` para paths recientes. Evitar recorrer el árbol de directorios en disco repetidamente para paths usados con frecuencia.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_lookup_cache_hit`
+
+* [ ] **VFS-7.3. Path cache** | Prereqs: VFS-7.2 | Files: `src/fs/vfs.rs`
+  - **Descripcion:** Cache de `resolve_path()` completa con invalidación por cambio de directorio. Almacenar el resultado (drive_idx, inode) para paths completos.
+  - **Severidad:** BAJA — optimización
+  - **Tests:** `vfs_perf_path_cache_hit`
+
 
 ## Referencias
 
@@ -1622,3 +2003,6 @@ Ver [NEOFS_TESTS.md](NEOFS_TESTS.md) para especificación completa.
 - [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) — vision a largo plazo v0.40 -> v1.0
 - [OBJECT_MANAGER_ARCHITECTURE.md](OBJECT_MANAGER_ARCHITECTURE.md) — diseno completo del Object Manager
 - [KERNEL.md](KERNEL.md) — documentacion del kernel
+- [NEOFS_AUDIT.md](NEOFS_AUDIT.md) — auditoría NeoFS (2026-06-28)
+- [NEOFS_TESTS.md](NEOFS_TESTS.md) — tests propuestos para NeoFS
+

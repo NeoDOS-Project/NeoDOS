@@ -131,6 +131,8 @@ pub enum ObInfoClass {
     SocketAddr = 18,
     TcpStatus = 19,
     NicInfo = 20,
+    RegistryKey = 21,
+    RegistryValue = 22,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -160,6 +162,10 @@ pub enum ObSetInfoClass {
     SocketListen = 20,
     SocketSend = 21,
     SocketClose = 22,
+    RegistryCreateKey = 23,
+    RegistryDeleteKey = 24,
+    RegistrySetValue = 25,
+    RegistryDeleteValue = 26,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

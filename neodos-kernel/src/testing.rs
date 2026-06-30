@@ -9,7 +9,7 @@ struct Test {
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 570;
+const MAX_TESTS: usize = 580;
 static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
 static mut TEST_COUNT: usize = 0;
 
@@ -2545,6 +2545,9 @@ pub fn register_tests() {
 
     // B3.1/B3.2: Networking tests
     crate::net::register_net_tests();
+
+    // B2.1 Z6: Registry hive database (Cm) tests
+    crate::cm::register_cm_tests();
 }
 
 

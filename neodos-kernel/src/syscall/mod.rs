@@ -17,6 +17,7 @@ pub mod table;
 pub mod permission;
 mod handlers;
 mod ob;
+mod cm;
 mod tests;
 
 use alloc::string::{String, ToString};
@@ -32,6 +33,7 @@ pub use permission::{SyscallPermission, CAP_ADMIN};
 // Import handler functions from sub-modules for SSDT registration
 use self::handlers::*;
 use self::ob::*;
+use self::cm::*;
 pub use self::tests::register_syscall_table_tests;
 
 // ── Syscall Number Constants (frozen ABI) ──
@@ -78,11 +80,22 @@ pub enum SyscallNum {
     ObEnum = 64,
     ObWait = 65,
     ObDestroy = 66,
+    // B2.1 Z6: Registry hive database (Cm)
+    CmOpenKey = 67,
+    CmCreateKey = 68,
+    CmQueryValue = 69,
+    CmSetValue = 70,
+    CmEnumKey = 71,
+    CmEnumValue = 72,
+    CmDeleteKey = 73,
+    CmFlushKey = 74,
+    CmLoadHive = 75,
+    CmUnloadHive = 76,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 66;
-    pub const HIGHEST_ASSIGNED: u64 = 66;
+    pub const MAX_VALID: u64 = 76;
+    pub const HIGHEST_ASSIGNED: u64 = 76;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -125,6 +138,16 @@ impl SyscallNum {
             64 => Some(Self::ObEnum),
             65 => Some(Self::ObWait),
             66 => Some(Self::ObDestroy),
+            67 => Some(Self::CmOpenKey),
+            68 => Some(Self::CmCreateKey),
+            69 => Some(Self::CmQueryValue),
+            70 => Some(Self::CmSetValue),
+            71 => Some(Self::CmEnumKey),
+            72 => Some(Self::CmEnumValue),
+            73 => Some(Self::CmDeleteKey),
+            74 => Some(Self::CmFlushKey),
+            75 => Some(Self::CmLoadHive),
+            76 => Some(Self::CmUnloadHive),
             _ => None,
         }
     }
@@ -184,6 +207,7 @@ pub fn validate_abi() {
         29,
         40, 41, 42, 47, 53, 55, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
+        67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
     ];
 
     for &n in ASSIGNED {
@@ -494,6 +518,16 @@ lazy_static! {
         t[64] = Some(handler_ob_enum as SyscallFn);
         t[65] = Some(handler_ob_wait as SyscallFn);
         t[66] = Some(handler_ob_destroy as SyscallFn);
+        t[67] = Some(handler_cm_open_key as SyscallFn);
+        t[68] = Some(handler_cm_create_key as SyscallFn);
+        t[69] = Some(handler_cm_query_value as SyscallFn);
+        t[70] = Some(handler_cm_set_value as SyscallFn);
+        t[71] = Some(handler_cm_enum_key as SyscallFn);
+        t[72] = Some(handler_cm_enum_value as SyscallFn);
+        t[73] = Some(handler_cm_delete_key as SyscallFn);
+        t[74] = Some(handler_cm_flush_key as SyscallFn);
+        t[75] = Some(handler_cm_load_hive as SyscallFn);
+        t[76] = Some(handler_cm_unload_hive as SyscallFn);
         t
     };
 
@@ -533,6 +567,16 @@ lazy_static! {
         t[64] = SyscallPermission::user();
         t[65] = SyscallPermission::user();
         t[66] = SyscallPermission::user();
+        t[67] = SyscallPermission::user();
+        t[68] = SyscallPermission::user();
+        t[69] = SyscallPermission::user();
+        t[70] = SyscallPermission::user();
+        t[71] = SyscallPermission::user();
+        t[72] = SyscallPermission::user();
+        t[73] = SyscallPermission::user();
+        t[74] = SyscallPermission::user();
+        t[75] = SyscallPermission::admin();
+        t[76] = SyscallPermission::admin();
         t
     };
 }

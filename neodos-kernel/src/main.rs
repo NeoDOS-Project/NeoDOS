@@ -61,6 +61,7 @@ mod urn;
 mod object;
 mod kwait;
 mod net;
+mod cm;
 mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
@@ -473,6 +474,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing networking subsystem...");
     net::init_networking();
+
+    // ============================================
+    // PHASE 3.881: Cm (Configuration Manager) — Registry
+    // Initializes the \Registry namespace tree and mounts
+    // the SYSTEM hive for persistent configuration storage.
+    // ============================================
+    println!("[+] Initializing Configuration Manager (Registry)...");
+    cm::init_cm();
 
     // ============================================
     // PHASE 3.9: Validate syscall ABI + ABI freeze

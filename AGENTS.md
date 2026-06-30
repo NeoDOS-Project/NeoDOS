@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.47.0 (Networking TCP/IP — B3.1/B3.2 completado: e1000 NIC, TCP/IP stack, \Device\Tcp/\Device\Udp, ICMP ping, 17 tests)
+v0.48.0 (Registry hive database — B2.1 Z6 completado: cell-based hive, \Registry\Machine namespace, Cm syscalls RAX 67-76, 580 tests)
 
 ## Architecture Governance
 
@@ -16,10 +16,14 @@ unification.
 - `docs/NEOFS_TESTS.md` — 26 proposed tests for NeoFS, namespace, and drivers
 
 **Next priorities after v0.47:**
-1. Namespace ownership tracking (NS-1)
-2. Dynamic inode allocator (FS-1)
-3. Dynamic block bitmap (FS-2)
-4. Eliminar hardcoded sector offsets (FS-4)
+1. **VFS-1.1** Unificar MountManager (dual mount sync)
+2. **VFS-1.2** Arreglar ownership ObOpen → VFS
+3. **VFS-2.1** Privatizar métodos de NeoFS (encapsulation)
+4. **VFS-4.1** Device IDs estables (no índice numérico)
+5. Namespace ownership tracking (NS-1)
+6. Dynamic inode allocator (FS-1)
+7. Dynamic block bitmap (FS-2)
+8. Eliminar hardcoded sector offsets (FS-4)
 
 Run `python3 scripts/auto_test.py` and `scripts/check_deps.py` before any commit.
 
@@ -51,7 +55,8 @@ prioridades actuales son:
     - ~~**OBF-11 (Semaphore Object)**~~ COMPLETADO — ob_create(Semaphore), ob_set_info(SemaphoreRelease), ob_wait(Semaphore)
     - ~~**OBF-12 (Section Object)**~~ COMPLETADO — ob_create(Section), ob_set_info(SectionMapView/SectionUnmapView)
     - ~~**OBF-05 (legacy kobj module removal)**~~ COMPLETADO — `kobj/` eliminado, namespace movido a `object/namespace.rs`, todos los callers migrados a `object::ob_*`
-    - **OBF-13 (Device Tree / Registry Key)** 🔶 PENDIENTE
+    - **OBF-13 (Registry Key)** ~~COMPLETADO~~ en v0.48.0 — B2.1 Z6 cell-based hive, \Registry\Machine namespace, Cm syscalls RAX 67-76
+    - **OBF-13 (Device Tree)** 🔶 PENDIENTE
 13. **v0.46.1**: **Bugfixes estabilidad OB-046** — lifecycle de procesos via Ob (handler_exit recicla EPROCESS, handler_ob_wait check-and-block atomico, handler_close decrementa pipe refs, threads registrados como ObType::Thread). **COMPLETADO**
     - ~~**Stress test 300 comandos**~~ (`scripts/stress_300.py`) — PASS 300/300 sin crash
 14. **v0.46.2**: **A5.3 AHCI NCQ** — Native Command Queuing AHCI (IrpTagMap, FPDMA batch, 32 tags, detect+fallback). **COMPLETADO**
@@ -605,6 +610,16 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 64 | `sys_ob_enum` | RBX=dir_fd, RCX=buf, RDX=max | Enumerate directory | Activo |
 | 65 | `sys_ob_wait` | RBX=count, RCX=handles, RDX=type, R8=timeout | Wait on objects | Activo |
 | 66 | `sys_ob_destroy` | RBX=fd | Destroy/delete object by fd | Activo |
+| 67 | `sys_cm_open_key` | RBX=path_ptr | Open registry key by path → fd | Activo |
+| 68 | `sys_cm_create_key` | RBX=fd, RCX=name_ptr | Create subkey under fd → new fd | Activo |
+| 69 | `sys_cm_query_value` | RBX=fd, RCX=name_ptr, RDX=buf, R8=len | Query value by name → type+size+data | Activo |
+| 70 | `sys_cm_set_value` | RBX=fd, RCX=name_ptr, RDX=type, R8=data_ptr, R9=len | Set value (SZ/DWORD/BINARY) | Activo |
+| 71 | `sys_cm_enum_key` | RBX=fd, RCX=index, RDX=buf | Enumerate subkeys by index | Activo |
+| 72 | `sys_cm_enum_value` | RBX=fd, RCX=index, RDX=buf | Enumerate values by index | Activo |
+| 73 | `sys_cm_delete_key` | RBX=fd | Delete key and all subkeys | Activo |
+| 74 | `sys_cm_flush_key` | RBX=fd | Flush hive to disk | Activo |
+| 75 | `sys_cm_load_hive` | RBX=name_ptr, RCX=mount_ptr | Load hive from file (admin) | Activo |
+| 76 | `sys_cm_unload_hive` | RBX=mount_ptr | Unload hive (admin) | Activo |
 
 **Syscalls legacy eliminadas del SSDT (RAX 12, 25–28, 46, 48, 50–52, 54, 57):** migradas a la API Object Manager (Ob). Ver secuencia `ob_open → ob_query_info/ob_set_info/ob_create/ob_destroy`.
 
@@ -616,11 +631,11 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 🔶 Fase 2 (v0.46) — Timer/Semaphore/Section | Timer create/wait, Semaphore create/release/wait, Section create/map |
 | ❌ Legacy removed (SSDT=None, usar Ob) | sys_pipe, sys_spawn, sys_open, sys_close, sys_readfile, sys_readdir, sys_waitpid, sys_chdir, sys_writefile, sys_mkdir, sys_unlink, sys_rmdir, sys_rename, sys_chdir_parent |
 | ⬜ Foundation (no Object, mecanismos puros) | sys_exit, sys_write, sys_read, sys_yield, sys_getpid, sys_brk, sys_mmap, sys_munmap, sys_loadlib, sys_poweroff, sys_cursor_blink, sys_fsck, sys_poll, sys_set_exception_handler, sys_wait_alertable, sys_sleep_ex |
-| 🆕 Futuras (RAX ≥ 67, DEBEN ser Ob) | sys_ob_logon, sys_ob_query_token, sys_ob_set_security, sys_ob_create_timer, sys_ob_create_section, sys_ob_socket, etc. |
+| 🆕 Futuras (RAX ≥ 77, DEBEN ser Ob) | sys_ob_logon, sys_ob_query_token, sys_ob_set_security, sys_ob_create_timer, sys_ob_create_section, sys_ob_socket, etc. |
 
 Ver `docs/IMPROVEMENTS.md` sección **"Objectification Roadmap"** para plan detallado por fases.
 
-**Regla de arquitectura:** Toda syscall nueva (RAX ≥ 67) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe/entrega fds obtenidos via `ob_open`/`ob_create`, y se apoya en el Object Manager para lifecycle y seguridad. No se aceptan syscalls planas legacy para funcionalidad nueva. Ver secciones USR y **Objectification Roadmap** en `docs/IMPROVEMENTS.md`.
+**Regla de arquitectura:** Toda syscall nueva (RAX ≥ 77) DEBE implementarse como `sys_ob_*` — opera sobre objetos en el namespace Ob, recibe/entrega fds obtenidos via `ob_open`/`ob_create`, y se apoya en el Object Manager para lifecycle y seguridad. Excepción: las syscalls Cm (RAX 67-76, `sys_cm_*`) operan sobre objetos `ObType::Key` en el namespace `\Registry\` y siguen la misma convención Ob internamente, pero usan prefijo `cm_` por consistencia con el subsistema NT Configuration Manager. No se aceptan syscalls planas legacy para funcionalidad nueva. Ver secciones USR y **Objectification Roadmap** en `docs/IMPROVEMENTS.md`.
 
 ## IPC / Pipes
 
@@ -827,48 +842,11 @@ pub fn urn_seek(handle: &mut UrnHandle, pos: u64)
 
 19 tests: parse (4 scheme variants + 4 error cases), open error (2: file not found, device not found), roundtrip, OB-025 (5: registry/kobj namespace + file via Ob + UrnHandle), OB-018 ObObjectTable integration.
 
-## NT5.6 Virtual FS Objects (K:\ drive)
+## ~~NT5.6 Virtual FS Objects (K:\ drive)~~ [REMOVED]
 
-`src/vfs/kdrive.rs` — Virtual `K:\` drive exposing internal NT5 objects as read-only files via the VFS `FileSystem` trait. Analogous to NT's `\GLOBAL??\` namespace.
-
-### Directory Structure
-
-```
-K:\
-├── Processes\         (dir) — lists active PIDs
-│   ├── 1              (file) — PID 1 state, parent, threads, priority, CWD, heap
-│   └── ...
-├── Drivers\           (dir) — lists loaded NEM drivers
-│   ├── keyboard.nem   (file) — driver name, state, category, ABI, caps, errors
-│   └── ...
-├── Memory             (file) — memory stats (phys_max, total, usable, free, used, reserved)
-└── Interrupts         (file) — per-CPU interrupt counters
-```
-
-### Inode Encoding
-
-| Range | Type |
-|-------|------|
-| 0 | Root directory |
-| 1 | Processes directory |
-| 2 | Drivers directory |
-| 3 | Memory stats file |
-| 4 | Interrupts file |
-| 1000–1255 | PID info files (inode = 1000 + pid) |
-| 2000–2063 | Driver info files (inode = 2000 + slot_index) |
-
-### Implementation
-
-- `KDrive` unit struct implements `FileSystem` trait
-- `read()` generates content dynamically from scheduler/driver_runtime/memory/cpu_local
-- Content format: CRLF text lines with key: value pairs
-- `init_kdrive()` mounted at boot phase 3 (after VFS + FAT32)
-- Case-insensitive lookup for root entries
-- Write/create/mkdir all return `Err(VfsError::NotImplemented)`
-
-### Tests
-
-12 tests: root readdir, lookup root entries, case-insensitive lookup, not-found, memory stats read, interrupts stats, write rejected, stat root is dir, read at offset, PID inode encoding, driver inode encoding.
+KDrive fue eliminado del código porque `\Global\Info\*` objects en el Object Manager
+reemplazan su funcionalidad. Los comandos `neomem.nxe`, `datetime.nxe`, `ver.nxe`,
+`drives.nxe`, `ndreg.nxe` y `ps.nxe` usan `ob_open` + `ob_query_info` directamente.
 
 ## Deferred Work Queue (X5)
 
@@ -902,7 +880,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 
 ## In-Kernel Test Framework
 
-528 tests en 50 suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
+528+ tests en 50+ suites. Registrados en `testing.rs`, ejecutados por el comando `test` del shell.
 
 | Suite | Tests | Descripción |
 |-------|-------|-------------|
@@ -916,7 +894,6 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IRP | 11 | Async I/O: IRP alloc/free, completion/error, pool reuse, queue FIFO/wraparound, callback dispatch, flush/ioctl ops, get_params |
 | PS/2 Kbd Ref | 10 | Reference PS/2 keyboard driver: entrypoints, lifecycle, key events, error handling |
 | Framebuffer Ref | 8 | Reference framebuffer driver: entrypoints, lifecycle, clear/pixel/scroll, error handling |
-| KOBJ (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy (OB-004), init root + type entries (OB-005) |
 | Object (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy (OB-004), init root + type entries (OB-005) |
 | Page Cache | 13 | Page cache (advanced): hash map O(1), LRU doubly-linked, create, peek, dirty, invalidate, capacity, stats, hit_rate, pending_writes |
 | PCI Enumeration | 3 | PCI bus 0 devices, bus 1 empty, bridge detection algorithm |
@@ -933,7 +910,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | ANSI | 3 | ANSI terminal: color fg/bg, cursor position, clear screen |
 | Security | 12 | NT6 Security Reference Monitor: SID format, Token inheritance, ACL allow/deny, SeAccessCheck, admin vs user token, admin bypass |
 | URN | 11 | NT5.5 Unified Resource Namespace: parse schemes, invalid/missing paths, resolve file/device, roundtrip |
-| KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, not-found, memory stats, interrupts, write-rejected, offsets, inode encoding |
+| KDrive | ~~12~~ | [ELIMINADO] Reemplazado por \Global\Info\* en Ob |
 | Input | 13 | Input buffer (ring buffer), VT switching, independent queues, framebuffer swap |
 | Keyboard | 5 | UTF-8 encoding, compose keys |
 | Process/Thread | 4 | Kthread struct, ThreadState, Eprocess constructor |
@@ -952,7 +929,7 @@ WORK_QUEUE.process_low();   // drain all low-priority items
 | IoStack | 5 | Unified block I/O: partition offset, no-partition passthrough, cache levels, device read, offset correctness |
 | Mmap | 6 | MmapRegion struct, flags, address bounds, VMA add/remove |
 Comando `test`:
-1. Ejecuta `testing::run_all()` (528 tests kernel)
+1. Ejecuta `testing::run_all()` (528+ tests kernel)
 2. Si pasan, ejecuta `run CPUINFO.NXE`, `run DIR.NXE`, `run DATETIME.NXE`, `run VER.NXE` (user-mode)
 
 La shell Ring 3 (`neoshell.nxe`) se carga via NeoInit (PID 1) y ofrece built-ins + dispatch a comandos externos .NXE via PATH.

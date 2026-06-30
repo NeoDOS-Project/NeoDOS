@@ -22,4 +22,4 @@ impl Registers {
 pub type SyscallFn = fn(Registers) -> u64;
 
 /// Highest assigned syscall number (0..=MAX_SYSCALL are expected to have handlers).
-pub const MAX_SYSCALL: u64 = 66;
+pub const MAX_SYSCALL: u64 = 76;
