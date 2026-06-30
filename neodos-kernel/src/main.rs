@@ -395,15 +395,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     match NeoDosFs::new(&sb_data, neodos_io) {
         Ok(mut fs) => {
             let _ = fs.rebuild_bitmap_with_io();
-            crate::globals::with_vfs(|vfs| {
-                if let Err(e) = vfs.mount('C', alloc::boxed::Box::new(fs)) {
-                    panic!("Failed to mount C: {:?}", e);
-                }
-            });
+            if let Err(e) = vfs::mount::vfs_mount_filesystem(
+                "\\Device\\NeoDosVolume0",
+                'C',
+                alloc::boxed::Box::new(fs),
+                vfs::mount::FilesystemType::NeoDosFs,
+            ) {
+                panic!("Failed to mount C: {:?}", e);
+            }
             boot_benchmark::mark(boot_benchmark::BootStage::FsMounted);
             boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::FsMounted);
             println!("[+] NeoDOS FS mounted on C:");
-            let _ = vfs::mount::vfs_mount("\\Device\\NeoDosVolume0", 'C', vfs::mount::FilesystemType::NeoDosFs);
         },
         Err(_) => panic!("Failed to mount filesystem"),
     }
@@ -415,16 +417,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     println!("[+] Initializing FAT32 driver...");
     let fat32_mounted = if let Ok(fat32) = Fat32Driver::new(esp_io) {
-        crate::globals::with_vfs(|vfs| {
-            let _ = vfs.mount('A', alloc::boxed::Box::new(fat32));
-        });
-        true
+        vfs::mount::vfs_mount_filesystem(
+            "\\Device\\EspVolume0",
+            'A',
+            alloc::boxed::Box::new(fat32),
+            vfs::mount::FilesystemType::Fat32,
+        ).is_ok()
     } else {
         false
     };
     if fat32_mounted {
         println!("[+] FAT32 ESP mounted on A:");
-        let _ = vfs::mount::vfs_mount("\\Device\\EspVolume0", 'A', vfs::mount::FilesystemType::Fat32);
     }
 
     // ============================================
