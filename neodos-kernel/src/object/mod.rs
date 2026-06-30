@@ -19,6 +19,16 @@ pub trait ObOperations: Send + Sync {
     fn on_destroy(&self, _id: ObId, _native_id: u64) {}
 }
 
+/// Ops for file/directory handles opened via ObOpen → VFS resolution.
+/// Currently a no-op; future use: release file locks, flush dirty pages.
+pub struct FileHandleOps;
+
+impl ObOperations for FileHandleOps {
+    fn on_destroy(&self, _id: ObId, _native_id: u64) {}
+}
+
+pub static FILE_HANDLE_OPS: FileHandleOps = FileHandleOps;
+
 // ── Per-object metadata ──
 
 #[derive(Clone, Copy)]
@@ -333,8 +343,9 @@ pub fn ob_open_path(
             ob_reference(kobj_id)?;
             return Ok(kobj_id);
         }
-        // Namespace entry exists but object is gone (destroyed on fd close).
-        // Remove stale entry and continue to VFS resolution.
+        // VFS-1.2: Namespace entry exists but object is gone.
+        // This only happens for non-FS paths (e.g. devices, registry roots).
+        // File handles under \Global\FileSystem\ no longer create namespace entries.
         let _ = crate::object::namespace::ob_remove_object(path_str);
     }
 
@@ -367,34 +378,18 @@ pub fn ob_open_path(
         return Ok(id);
     }
 
-    // Attempt VFS resolution for paths under \Global\FileSystem\
-    // This enables ObOpen("\Global\FileSystem\C:\path\to\file") to work
-    // by resolving the VFS path, creating an ObObject, and inserting it
-    // into the namespace.
+    // VFS-1.2: Resolve paths under \Global\FileSystem\ via VFS.
+    // Creates an ephemeral ObObject with FileHandleOps (no namespace entry).
+    // Every open() creates a fresh handle instance — no orphaned namespace entries.
     if let Some(vfs_path) = path_str.strip_prefix("\\Global\\FileSystem\\") {
         if !vfs_path.is_empty() && vfs_path.contains(':') {
             let result = crate::globals::with_vfs(|vfs| vfs.resolve_path(vfs_path));
             if let Ok((drive_idx, node)) = result {
                 let is_dir = (node.mode & crate::fs::vfs::MODE_DIR) != 0;
                 let obj_type = if is_dir { ObType::Directory } else { ObType::Filesystem };
-                let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, None)?;
-                {
-                    let _ = crate::object::namespace::ob_create_directory_tree(path_str);
-                }
-                // Atomic insert; if another thread created the same entry first,
-                // destroy our object and use the existing one.
-                let id = match crate::object::namespace::ob_insert_object(path_str, obj_id) {
-                    Ok(_) => obj_id,
-                    Err(_) => {
-                        let _ = ob_destroy_object(obj_id);
-                        match crate::object::namespace::ob_lookup_path(path_str) {
-                            Ok(existing_id) => existing_id,
-                            Err(_) => return Err(ObError::NotFound),
-                        }
-                    }
-                };
-                ob_reference(id)?;
-                return Ok(id);
+                let obj_id = ob_create_object(obj_type, path_str, node.inode as u64, drive_idx as u32, Some(&FILE_HANDLE_OPS))?;
+                ob_reference(obj_id)?;
+                return Ok(obj_id);
             }
         }
     }
@@ -829,5 +824,36 @@ pub fn register_object_tests() {
         test_eq!(ob_count(), start + 1);
         ob_destroy_object(id2).unwrap();
         test_eq!(ob_count(), start);
+    });
+
+    // ── VFS-1.2: ObOpen → VFS ownership ──
+
+    test_case!("vfs_ownership_obid_valid_after_close", {
+        // Verify an ObObject created with FileHandleOps can be closed properly
+        let id = ob_create_object(ObType::Filesystem, "test_file", 42, 0, Some(&FILE_HANDLE_OPS)).unwrap();
+        test_true!(id > 0);
+        let obj = ob_lookup(id).unwrap();
+        test_eq!(obj.native_id, 42);
+        test_eq!(obj.obj_type, ObType::Filesystem);
+        test_true!(obj.ops.is_some());
+
+        // ob_close_object should deref then auto-destroy (refcount was 1, goes to 0)
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
+    });
+
+    test_case!("vfs_ownership_namespace_entry_cleanup", {
+        // Verify file handles do NOT create namespace entries
+        // (VFS-1.2: ephemeral ObObject without namespace insertion)
+        let id = ob_create_object(ObType::Filesystem, "test_no_ns", 99, 0, Some(&FILE_HANDLE_OPS)).unwrap();
+        test_true!(id > 0);
+
+        // Should NOT be findable via namespace lookup
+        let ns_result = crate::object::namespace::ob_lookup_path("\\Global\\FileSystem\\C:\\test_no_ns");
+        test_true!(ns_result.is_err());
+
+        // Clean up
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
     });
 }
