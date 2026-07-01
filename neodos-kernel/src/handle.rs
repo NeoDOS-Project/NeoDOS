@@ -100,16 +100,20 @@ impl HandleEntry {
     }
 
     /// Close this handle: release the Ob reference.
+    /// Only calls ob_close_object if the ObObject is still alive.
+    /// Double-close and stale-handle scenarios are safe.
     pub fn close(&mut self) {
-        if self.has_ob_object() {
+        if self.has_ob_object() && self.is_valid() {
             let _ = ob_close_object(self.object_id);
         }
         *self = HandleEntry::closed();
     }
 
     /// True if this handle references a real ObObject (not a standard stream).
+    /// Standard streams (stdin=MAX, stdout=MAX-1, stderr=MAX-2) and
+    /// closed (0) all return false.
     pub fn has_ob_object(&self) -> bool {
-        self.object_id > HANDLE_STDERR || (self.object_id > 0 && self.object_id < HANDLE_STDERR)
+        self.object_id > 0 && self.object_id < HANDLE_STDERR
     }
 
     pub fn is_open(&self) -> bool {
@@ -130,6 +134,20 @@ impl HandleEntry {
 
     pub fn is_stderr(&self) -> bool {
         self.object_id == HANDLE_STDERR
+    }
+
+    /// Check whether the referenced ObObject still exists in the Object Manager.
+    /// Standard-stream sentinels (stdin/stdout/stderr) always report valid.
+    pub fn is_valid(&self) -> bool {
+        if !self.has_ob_object() {
+            return true;
+        }
+        ob_lookup(self.object_id).is_some()
+    }
+
+    /// True if the handle is open AND the referenced ObObject is still alive.
+    pub fn is_open_and_valid(&self) -> bool {
+        self.is_open() && self.is_valid()
     }
 
     /// True if this handle is a pipe read end (offset=0).

@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.48.1 — 2026-07-01
+
+### Added
+- **VFS-1.3 Stale namespace entry cleanup** — `ob_remove_by_id()` en `src/object/namespace.rs`: busca y elimina namespace entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir un ObObject, garantizando que no queden entries huérfanas en el namespace. 3 tests: `vfs_namespace_cleanup_on_destroy`, `vfs_namespace_cleanup_on_close`, `vfs_namespace_no_orphan_on_close_with_refs`.
+- **VFS-1.4 HandleTable → ObObject consistency** — `is_valid()` e `is_open_and_valid()` en `HandleEntry` (`src/handle.rs`): verifican que el ObId referenciado sigue vivo en el Object Manager. `close()` solo llama `ob_close_object` si `is_valid()`. Corregido `has_ob_object()` que falsamente trataba STDIN/STDOUT (sentinels) como ObObjects reales. 5 tests: `vfs_ownership_is_valid`, `vfs_ownership_is_valid_after_obj_destroyed`, `vfs_ownership_double_close_safe`, `vfs_ownership_stdio_always_valid`, `vfs_ownership_closed_not_valid`.
+
+### Changed
+- Kernel test count: 580 → 588.
+- AGENTS.md version bump: v0.48.0 → v0.48.1.
+- docs/IMPROVEMENTS.md: VFS-1.3 y VFS-1.4 marcados como completados.
+
 ## v0.48.0 — 2026-07-01
 
 ### Added

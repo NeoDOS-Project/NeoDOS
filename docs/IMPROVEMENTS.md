@@ -36,8 +36,8 @@
 |----|------|----------|
 | VFS-1.1 | Unificar MountManager | CRITICAL |
 | VFS-1.2 | Arreglar ownership ObOpen → VFS | CRITICAL |
-| VFS-1.3 | Eliminar stale namespace entries | CRITICAL |
-| VFS-1.4 | HandleTable → ObObject consistency | CRITICAL |
+| VFS-1.3 | ~~Eliminar stale namespace entries~~ | CRITICAL ✅ |
+| VFS-1.4 | ~~HandleTable → ObObject consistency~~ | CRITICAL ✅ |
 | v0.48 | NeoFS estabilidad (milestone) | HIGH |
 | VFS-2.1 | Privatizar métodos de NeoFS | HIGH |
 | VFS-2.4 | PageCache con contexto de drive | HIGH |
@@ -110,15 +110,15 @@
   - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
   - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
 
-* [ ] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
-  - **Descripcion:** Cuando un ObObject se destruye (refcount=0), su namespace entry en `\Global\FileSystem\...` queda huérfano. Implementar garbage collection periódico o usar weak references para entries de filesystem. El parche actual (línea 336-338 de `object/mod.rs`) es frágil.
-  - **Severidad:** ALTA — namespace inconsistente
-  - **Tests:** `vfs_ownership_namespace_entry_cleanup`
+* [x] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Añadida `ob_remove_by_id()` en namespace que busca y elimina entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir. El parche reactivo (línea 336-338 de `object/mod.rs`) queda como safety net para casos extremos.
+  - **Severidad:** ALTA — namespace inconsistente ✅
+  - **Tests:** `vfs_namespace_cleanup_on_destroy`, `vfs_namespace_cleanup_on_close`, `vfs_namespace_no_orphan_on_close_with_refs`
 
-* [ ] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
-  - **Descripcion:** Verificar que todo handle close valida que el ObId sigue vivo. Añadir `is_valid()` check en `HandleEntry` methods. Si un ObObject es destruido, los HandleEntry que lo referencian deben detectarlo.
-  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free
-  - **Tests:** `vfs_ownership_double_close_safe`
+* [x] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
+  - **Descripcion:** Añadidos `is_valid()` (verifica ObId vivo en Object Manager) e `is_open_and_valid()`. `close()` solo llama `ob_close_object` si `is_valid()`. Corregido `has_ob_object()` que falsamente trataba STDIN/STDOUT como ObObjects. Double-close y stale handles son seguros.
+  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free ✅
+  - **Tests:** `vfs_ownership_is_valid`, `vfs_ownership_is_valid_after_obj_destroyed`, `vfs_ownership_double_close_safe`, `vfs_ownership_stdio_always_valid`, `vfs_ownership_closed_not_valid`
 
 ---
 
@@ -1871,15 +1871,15 @@ sys_ob_open (RAX=60)
   - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
   - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
 
-* [ ] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
-  - **Descripcion:** Cuando un ObObject se destruye (refcount=0), su namespace entry en `\Global\FileSystem\...` queda huérfano. Implementar garbage collection periódico o usar weak references para entries de filesystem. El parche actual (línea 336-338 de `object/mod.rs`) es frágil.
-  - **Severidad:** ALTA — namespace inconsistente
-  - **Tests:** `vfs_ownership_namespace_entry_cleanup`
+* [x] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+  - **Descripcion:** Añadida `ob_remove_by_id()` en namespace que busca y elimina entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir. El parche reactivo (línea 336-338 de `object/mod.rs`) queda como safety net.
+  - **Severidad:** ALTA — namespace inconsistente ✅
+  - **Tests:** `vfs_namespace_cleanup_on_destroy`, `vfs_namespace_cleanup_on_close`, `vfs_namespace_no_orphan_on_close_with_refs`
 
-* [ ] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
-  - **Descripcion:** Verificar que todo handle close valida que el ObId sigue vivo. Añadir `is_valid()` check en `HandleEntry` methods. Si un ObObject es destruido, los HandleEntry que lo referencian deben detectarlo.
-  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free
-  - **Tests:** `vfs_ownership_double_close_safe`
+* [x] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
+  - **Descripcion:** Añadidos `is_valid()` (verifica ObId vivo en Object Manager) e `is_open_and_valid()`. `close()` solo llama `ob_close_object` si `is_valid()`. Corregido `has_ob_object()` que falsamente trataba STDIN/STDOUT como ObObjects. Double-close y stale handles son seguros.
+  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free ✅
+  - **Tests:** `vfs_ownership_is_valid`, `vfs_ownership_is_valid_after_obj_destroyed`, `vfs_ownership_double_close_safe`, `vfs_ownership_stdio_always_valid`, `vfs_ownership_closed_not_valid`
 
 ### VFS Roadmap — Fase 2: Separación de Capas (Prioridad: ALTA)
 

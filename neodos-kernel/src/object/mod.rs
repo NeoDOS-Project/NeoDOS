@@ -268,7 +268,12 @@ pub fn ob_create_object(
 }
 
 pub fn ob_destroy_object(id: ObId) -> Result<(), ObError> {
-    OB_TABLE.lock().destroy(id)
+    let result = OB_TABLE.lock().destroy(id);
+    if result.is_ok() {
+        // VFS-1.3: Remove stale namespace entry for this ObId
+        let _ = crate::object::namespace::ob_remove_by_id(id);
+    }
+    result
 }
 
 pub fn ob_lookup(id: ObId) -> Option<ObObject> {
@@ -291,6 +296,9 @@ pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
     if ops.is_none() && native_id == 0 {
         // No callback, simple cleanup
         table.finalize_destroy(id);
+        drop(table);
+        // VFS-1.3: Remove stale namespace entry
+        let _ = crate::object::namespace::ob_remove_by_id(id);
         return Ok(());
     }
     drop(table);
@@ -300,6 +308,9 @@ pub fn ob_close_object(id: ObId) -> Result<(), ObError> {
     }
     let mut table = OB_TABLE.lock();
     table.finalize_destroy(id);
+    drop(table);
+    // VFS-1.3: Remove stale namespace entry
+    let _ = crate::object::namespace::ob_remove_by_id(id);
     Ok(())
 }
 
@@ -855,5 +866,65 @@ pub fn register_object_tests() {
         // Clean up
         ob_close_object(id).unwrap();
         test_true!(ob_lookup(id).is_none());
+    });
+
+    // ── VFS-1.3: Stale namespace entry cleanup ──
+
+    test_case!("vfs_namespace_cleanup_on_destroy", {
+        // Create an object and insert it into the namespace
+        let id = ob_create_object(ObType::Filesystem, "ns_destroy", 42, 0, None).unwrap();
+        let _ = crate::object::namespace::ob_create_directory("\\TestDir");
+        let _ = crate::object::namespace::ob_insert_object("\\TestDir\\cleanup_destroy", id);
+
+        // Verify it's in the namespace
+        let ns_id = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_destroy").unwrap();
+        test_eq!(ns_id, id);
+
+        // Destroy the object -> should also remove the namespace entry
+        ob_destroy_object(id).unwrap();
+
+        // Verify namespace entry is gone
+        let ns_result = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_destroy");
+        test_true!(ns_result.is_err());
+    });
+
+    test_case!("vfs_namespace_cleanup_on_close", {
+        // Create an object and insert it into the namespace
+        let id = ob_create_object(ObType::Filesystem, "ns_close", 99, 0, None).unwrap();
+        let _ = crate::object::namespace::ob_insert_object("\\TestDir\\cleanup_close", id);
+
+        // Verify it's in the namespace
+        let ns_id = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_close").unwrap();
+        test_eq!(ns_id, id);
+
+        // Close the object (refcount 1→0) -> should auto-destroy and clean up namespace
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
+
+        // Verify namespace entry is gone
+        let ns_result = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_close");
+        test_true!(ns_result.is_err());
+    });
+
+    test_case!("vfs_namespace_no_orphan_on_close_with_refs", {
+        // Create object, reference it, insert into namespace
+        let id = ob_create_object(ObType::Filesystem, "ns_ref", 7, 0, None).unwrap();
+        let _ = crate::object::namespace::ob_insert_object("\\TestDir\\cleanup_ref", id);
+        ob_reference(id).unwrap();  // refcount 1→2
+
+        // Close once (refcount 2→1) — object stays alive, namespace entry stays
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_some());
+
+        // Namespace entry should still be valid
+        let ns_id = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_ref").unwrap();
+        test_eq!(ns_id, id);
+
+        // Close again (refcount 1→0) — auto-destroy, namespace entry removed
+        ob_close_object(id).unwrap();
+        test_true!(ob_lookup(id).is_none());
+
+        let ns_result = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_ref");
+        test_true!(ns_result.is_err());
     });
 }

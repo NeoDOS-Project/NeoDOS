@@ -757,6 +757,15 @@ pub fn ob_find_path_by_id(target_id: ObId) -> Option<String> {
     OB_NAMESPACE.lock().find_path_by_id(target_id)
 }
 
+/// Remove any namespace entry that points to the given ObId.
+/// Returns the path that was removed, if any.
+/// Uses ob_find_path_by_id + ob_remove_object.
+pub fn ob_remove_by_id(id: ObId) -> Option<String> {
+    let path = ob_find_path_by_id(id)?;
+    let _ = ob_remove_object(&path);
+    Some(path)
+}
+
 pub fn ob_insert_symlink(path: &str, target: &str) -> Result<(), &'static str> {
     OB_NAMESPACE.lock().insert_symlink(path, target)
 }

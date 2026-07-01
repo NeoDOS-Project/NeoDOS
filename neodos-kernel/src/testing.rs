@@ -2120,6 +2120,84 @@ pub fn register_pipe_tests() {
         test_eq!(f.offset, 0);
     });
 
+    // ── VFS-1.4: HandleTable → ObObject consistency ──
+
+    test_case!("vfs_ownership_is_valid", {
+        let entry = HandleEntry::file(0, 100);
+        test_true!(entry.has_ob_object());
+        test_true!(entry.is_open());
+        test_true!(entry.is_valid());
+        test_true!(entry.is_open_and_valid());
+        test_eq!(entry.obj_type(), Some(crate::object::ObType::Filesystem));
+        test_eq!(entry.native_id(), Some(100));
+        // Clean up
+        let mut e = entry;
+        e.close();
+        test_true!(!e.is_open());
+    });
+
+    test_case!("vfs_ownership_is_valid_after_obj_destroyed", {
+        let entry = HandleEntry::file(0, 200);
+        let obj_id = entry.object_id;
+        test_true!(entry.is_valid());
+        // Destroy the underlying ObObject directly
+        crate::object::ob_destroy_object(obj_id).unwrap();
+        // Now is_valid() should return false
+        test_true!(!entry.is_valid());
+        test_true!(!entry.is_open_and_valid());
+        // obj_type/native_id/drive should all return None
+        test_true!(entry.obj_type().is_none());
+        test_true!(entry.native_id().is_none());
+        test_true!(entry.drive().is_none());
+        // close() should not panic or crash — it detects stale object
+        let mut e = entry;
+        e.close();
+        test_true!(!e.is_open());
+    });
+
+    test_case!("vfs_ownership_double_close_safe", {
+        let entry = HandleEntry::file(0, 300);
+        let obj_id = entry.object_id;
+        test_true!(crate::object::ob_lookup(obj_id).is_some());
+        // First close: normal
+        let mut e1 = entry;
+        e1.close();
+        test_true!(!e1.is_open());
+        // Second close on the same handle: safe no-op
+        e1.close();
+        test_true!(!e1.is_open());
+        // Now test: destroy ObObject then close handle
+        let entry2 = HandleEntry::file(0, 400);
+        let obj_id2 = entry2.object_id;
+        let mut e2 = entry2;
+        // Manually destroy the ObObject
+        crate::object::ob_destroy_object(obj_id2).unwrap();
+        // Handle still shows open but invalid
+        test_true!(e2.is_open());
+        test_true!(!e2.is_valid());
+        // close() must not call ob_close_object on destroyed object
+        e2.close();
+        test_true!(!e2.is_open());
+    });
+
+    test_case!("vfs_ownership_stdio_always_valid", {
+        let sin = HandleEntry::stdin();
+        let sout = HandleEntry::stdout();
+        let serr = HandleEntry::stderr();
+        test_true!(sin.is_valid());
+        test_true!(sout.is_valid());
+        test_true!(serr.is_valid());
+        test_true!(!sin.has_ob_object());
+        test_true!(!sout.has_ob_object());
+        test_true!(!serr.has_ob_object());
+    });
+
+    test_case!("vfs_ownership_closed_not_valid", {
+        let entry = HandleEntry::closed();
+        test_true!(!entry.is_open());
+        test_true!(entry.is_valid()); // closed is always "valid" trivially
+    });
+
     // ── Pipeline tests ──────────────────────────────────────────────
 
     test_case!("pipe_two_commands", {

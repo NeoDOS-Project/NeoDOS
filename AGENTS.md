@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.48.0 (Registry hive database — B2.1 Z6 completado: cell-based hive, \Registry\Machine namespace, Cm syscalls RAX 67-76, 580 tests)
+v0.48.1 (VFS-1.3 stale namespace cleanup + VFS-1.4 HandleTable→Ob consistency, 588 tests)
 
 ## Architecture Governance
 
@@ -16,16 +16,18 @@ unification.
 - `docs/NEOFS_TESTS.md` — 26 proposed tests for NeoFS, namespace, and drivers
 - `docs/NETWORK_USERLAND_ARCHITECTURE.md` — userland networking (net.nxl), Registry config model, NeoPkg design (2026-07-01)
 
-**Next priorities after v0.47:**
-1. **VFS-1.1** Unificar MountManager (dual mount sync)
-2. **VFS-1.2** Arreglar ownership ObOpen → VFS
-3. **VFS-2.1** Privatizar métodos de NeoFS (encapsulation)
-4. **VFS-4.1** Device IDs estables (no índice numérico)
-5. Namespace ownership tracking (NS-1)
-6. Dynamic inode allocator (FS-1)
-7. Dynamic block bitmap (FS-2)
-8. Eliminar hardcoded sector offsets (FS-4)
-9. **NET-1** Implementar transmit path socket→NIC (Fase 1 red userland)
+**Next priorities after v0.48:**
+1. ~~**VFS-1.1** Unificar MountManager (dual mount sync)~~ **COMPLETADO**
+2. ~~**VFS-1.2** Arreglar ownership ObOpen → VFS~~ **COMPLETADO**
+3. ~~**VFS-1.3** Eliminar stale namespace entries~~ **COMPLETADO**
+4. ~~**VFS-1.4** HandleTable → ObObject consistency~~ **COMPLETADO**
+5. **VFS-2.1** Privatizar métodos de NeoFS (encapsulation)
+6. **VFS-4.1** Device IDs estables (no índice numérico)
+7. Namespace ownership tracking (NS-1)
+8. Dynamic inode allocator (FS-1)
+9. Dynamic block bitmap (FS-2)
+10. Eliminar hardcoded sector offsets (FS-4)
+11. **NET-1** Implementar transmit path socket→NIC (Fase 1 red userland)
 
 Run `python3 scripts/auto_test.py` and `scripts/check_deps.py` before any commit.
 
@@ -53,6 +55,8 @@ prioridades actuales son:
 10. ~~**v0.44.6**: **Completar libneodos wrappers** (thread_create/join, sleep_ex, poll, ob_destroy, driver_unload)~~ **COMPLETADO** — `ob_thread_create/join`, `sys_ob_destroy`, `sys_driver_unload` ya existían; añadidos `sys_poll` (RAX 59) y `sys_sleep_ex` (RAX 41) con `PollFd` struct
 11. **v0.44.7**: **Arreglos arquitectónicos menores + Fase 1 Objectification** (ObType::Thread, InfoClass enums completos, ObError/SyscallError unificado, exports duplicados, TOCTOU race)
 12. ~~**v0.46**: **Fase 2 Objectification** (Timer Object, Semaphore Object, Section Object, Device Tree)~~ **COMPLETADO**
+13. ~~**VFS-1.3** Eliminar stale namespace entries~~ **COMPLETADO** en v0.48.1
+14. ~~**VFS-1.4** HandleTable→ObObject consistency~~ **COMPLETADO** en v0.48.1
     - ~~**OBF-10 (Timer Object)**~~ COMPLETADO — ob_create(Timer), ob_set_info(TimerStart/TimerCancel), ob_wait(Timer)
     - ~~**OBF-11 (Semaphore Object)**~~ COMPLETADO — ob_create(Semaphore), ob_set_info(SemaphoreRelease), ob_wait(Semaphore)
     - ~~**OBF-12 (Section Object)**~~ COMPLETADO — ob_create(Section), ob_set_info(SectionMapView/SectionUnmapView)
