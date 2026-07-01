@@ -2,6 +2,10 @@ use super::types::{Ipv4Addr, SocketAddrV4, SocketType, SocketDirection, MAX_SOCK
 use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::net::ethernet::{ETH_TYPE_IPV4, build_ethernet_frame};
+use crate::net::ipv4::{IPV4_HDR_MIN_LEN, IPV4_PROTO_UDP, build_ipv4_header, Ipv4Header};
+use crate::net::nic::{nic_default_id, nic_send_packet, NIC_REGISTRY};
+use crate::net::arp::arp_resolve;
 
 pub struct Socket {
     pub id: u32,
@@ -16,7 +20,7 @@ pub struct Socket {
 }
 
 pub struct SocketManager {
-    sockets: Vec<Option<Socket>>,
+    pub sockets: Vec<Option<Socket>>,
     next_id: u32,
 }
 
@@ -247,5 +251,88 @@ pub fn socket_set_connected(id: u32) {
 pub fn socket_set_local(id: u32, local: SocketAddrV4) {
     if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         socket.local = local;
+    }
+}
+
+/// Send data via a UDP socket. Resolves destination MAC via ARP, builds
+/// Ethernet+IP+UDP+payload, and transmits.
+pub fn socket_send_udp(socket: &Socket, data: &[u8]) -> Result<(), ()> {
+    let src_ip = socket.local.ip;
+    let dst_ip = socket.remote.ip;
+    let dst_mac = arp_resolve(dst_ip).ok_or(())?;
+    let udp_data = crate::net::udp::build_udp_datagram(
+        src_ip.0, dst_ip.0,
+        socket.local.port, socket.remote.port,
+        data,
+    );
+    let ip_hdr = build_ipv4_header(src_ip, dst_ip, IPV4_PROTO_UDP, udp_data.len(), 0);
+    let ip_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &ip_hdr as *const Ipv4Header as *const u8,
+            IPV4_HDR_MIN_LEN,
+        )
+    };
+    let mut ip_pkt = Vec::with_capacity(IPV4_HDR_MIN_LEN + udp_data.len());
+    ip_pkt.extend_from_slice(ip_bytes);
+    ip_pkt.extend_from_slice(&udp_data);
+
+    let nic_id = nic_default_id().ok_or(())?;
+    let mut registry = NIC_REGISTRY.lock();
+    let nic = registry.get_mut(nic_id).ok_or(())?;
+    let src_mac = nic.mac_address();
+    drop(registry);
+    let frame = build_ethernet_frame(dst_mac, src_mac, ETH_TYPE_IPV4, &ip_pkt);
+    nic_send_packet(nic_id, &frame)
+}
+
+/// Dispatch a received UDP datagram to a bound socket.
+pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, data: &[u8]) {
+    let mut mgr = SOCKET_MANAGER.lock();
+    for i in 0..MAX_SOCKETS {
+        if i >= mgr.sockets.len() { break; }
+        let Some(ref mut socket) = mgr.sockets[i] else { continue };
+        if socket.socket_type == SocketType::Udp
+            && socket.direction == SocketDirection::Connected
+            && (socket.remote.port == src_port
+                || (socket.remote.port == 0 && socket.local.port != 0))
+        {
+            socket.recv_buf.extend_from_slice(data);
+            break;
+        }
+    }
+}
+
+/// Dispatch a received TCP segment to the matching connection.
+pub fn tcp_dispatch(src_ip: Ipv4Addr, dst_ip: Ipv4Addr, segment: &[u8]) {
+    let parsed = crate::net::tcp::parse_tcp_segment(segment);
+    let Some((src_port, dst_port, seq, ack, flags, _window, payload)) = parsed else { return };
+    let mut mgr = SOCKET_MANAGER.lock();
+    for i in 0..MAX_SOCKETS {
+        if i >= mgr.sockets.len() { break; }
+        let Some(ref mut socket) = mgr.sockets[i] else { continue };
+        if socket.socket_type == SocketType::Tcp
+            && socket.direction != SocketDirection::None
+            && socket.remote.port == src_port
+            && socket.local.port == dst_port
+        {
+            let tcp_id = match socket.tcp_conn_id {
+                Some(id) => id,
+                None => return,
+            };
+            let conn = match crate::net::tcp::tcp_get_connection(tcp_id) {
+                Some(c) => c,
+                None => return,
+            };
+            if flags & crate::net::tcp::TCP_FLAG_SYN != 0 && conn.state == crate::net::types::TcpState::Listen {
+                crate::net::tcp::tcp_send_syn_ack(i, dst_port, src_port, seq, src_ip.0, dst_ip.0);
+            } else if flags & crate::net::tcp::TCP_FLAG_ACK != 0 && conn.state == crate::net::types::TcpState::SynSent {
+                crate::net::tcp::tcp_handle_ack(i, seq, ack);
+            } else if (flags & crate::net::tcp::TCP_FLAG_PSH != 0 || flags & crate::net::tcp::TCP_FLAG_ACK != 0)
+                && conn.state == crate::net::types::TcpState::Established
+            {
+                socket.recv_buf.extend_from_slice(payload);
+            }
+            break;
+        }
     }
 }

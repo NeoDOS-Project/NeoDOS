@@ -1,3 +1,5 @@
+use alloc::vec::Vec;
+
 pub const UDP_HDR_LEN: usize = 8;
 
 #[repr(C, packed)]
@@ -66,4 +68,29 @@ pub fn compute_udp_checksum(header: &UdpHeader, src_ip: [u8; 4], dst_ip: [u8; 4]
 
     let cs = !(sum as u16);
     if cs == 0 { 0xFFFF } else { cs }
+}
+
+/// Build a complete UDP datagram (pseudo-header checksum included).
+/// Returns the UDP header + payload bytes ready for IP encapsulation.
+pub fn build_udp_datagram(
+    src_ip: [u8; 4], dst_ip: [u8; 4],
+    src_port: u16, dst_port: u16,
+    payload: &[u8],
+) -> Vec<u8> {
+    let hdr = UdpHeader::new(src_port, dst_port, payload.len());
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &hdr as *const UdpHeader as *const u8,
+            UDP_HDR_LEN,
+        )
+    };
+    let mut datagram = Vec::with_capacity(UDP_HDR_LEN + payload.len());
+    datagram.extend_from_slice(hdr_bytes);
+    datagram.extend_from_slice(payload);
+    let cs = compute_udp_checksum(&hdr, src_ip, dst_ip, payload);
+    if cs != 0 {
+        datagram[6] = (cs >> 8) as u8;
+        datagram[7] = (cs & 0xFF) as u8;
+    }
+    datagram
 }

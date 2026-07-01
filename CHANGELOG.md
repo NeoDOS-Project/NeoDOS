@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.48.4 — 2026-07-01
+## v0.48.5 — 2026-07-01
 
 ### Added
 - **VFS-4.1 Device IDs estables** — `BlockDeviceManager.register()` ahora escanea slots libres (índices estables). `find_by_name()` permite búsqueda por nombre. `device_name()` en el trait `BlockDevice`.
@@ -12,6 +12,16 @@
 - `IoStack` struct: añadidos `stale: bool`, `acquire_ref()`/`release_ref()`/`is_valid()`. `IoStack::with_partition()` ya no adquiere lock automáticamente (evita deadlock en boot).
 - `unregister_nem_block_device()` ahora verifica refcount antes de remover.
 - `BlockDeviceManager`: register escanea slots libres (índices estables).
+
+## v0.48.4 — 2026-07-01
+
+### Added
+- **NET-1 F1: Ethernet/UDP/ARP TX helpers** — `build_ethernet_frame()` en `ethernet.rs`, `build_udp_datagram()` en `udp.rs`, `arp_resolve()` en `arp.rs` (cache lookup + broadcast ARP request).
+- **NET-1 F2: UDP dispatch + ICMP Port Unreachable** — `udp_dispatch()` en `socket.rs` para rutear UDP recibido a sockets. `build_port_unreachable()` en `icmp.rs` (Type 3/Code 3).
+- **NET-1 F3: TCP receive dispatch** — `tcp_dispatch()` en `socket.rs`, `parse_tcp_segment()` en `tcp.rs`, handler para TCP en `net_handle_incoming_packet()`.
+- **NET-1 F4: TCP real three-way handshake** — `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn_ack()`, `tcp_handle_ack()` en `tcp.rs`. SYN→SYN-ACK→ACK con I/O real sobre NIC.
+- **DHCP client** — `dhcp.rs`: cliente DHCP (RFC 2131) con Discover/Offer/Request/Ack. Arranque automático al boot. Renovación de lease.
+- **No hardcoded IPs** — kernel arranca desde `0.0.0.0`, DHCP asigna IP automáticamente.
 
 ## v0.48.3 — 2026-07-01
 

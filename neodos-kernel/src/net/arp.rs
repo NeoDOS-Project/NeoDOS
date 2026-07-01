@@ -188,3 +188,31 @@ pub fn arp_cache_entries() -> alloc::vec::Vec<(Ipv4Addr, MacAddr)> {
     let cache = ARP_CACHE.lock();
     cache.entries.iter().map(|e| (e.ip, e.mac)).collect()
 }
+
+/// Resolve an IP to a MAC address. First checks the cache; if not found,
+/// sends an ARP request over the default NIC and returns None immediately.
+/// The caller should retry later after the reply arrives.
+pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
+    if let Some(mac) = arp_lookup(target_ip) {
+        return Some(mac);
+    }
+    let nic_id = crate::net::nic::nic_default_id()?;
+    let mut registry = crate::net::nic::NIC_REGISTRY.lock();
+    let nic = registry.get_mut(nic_id)?;
+    let src_mac = nic.mac_address();
+    let src_ip = nic.ip_address();
+    drop(registry);
+
+    let arp_pkt = arp_make_packet(ARP_OP_REQUEST, src_mac, src_ip, MacAddr::zero(), target_ip);
+    let arp_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &arp_pkt as *const ArpPacket as *const u8,
+            core::mem::size_of::<ArpPacket>(),
+        )
+    };
+    let frame = crate::net::ethernet::build_ethernet_frame(
+        MacAddr::broadcast(), src_mac, crate::net::ethernet::ETH_TYPE_ARP, arp_bytes,
+    );
+    let _ = crate::net::nic::nic_send_packet(nic_id, &frame);
+    None
+}

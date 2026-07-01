@@ -1,4 +1,5 @@
 use super::types::MacAddr;
+use alloc::vec::Vec;
 
 pub const ETH_HDR_LEN: usize = 14;
 pub const ETH_TYPE_IPV4: u16 = 0x0800;
@@ -29,6 +30,21 @@ impl EthernetHeader {
 
     pub fn is_ipv4(&self) -> bool { self.ethertype() == ETH_TYPE_IPV4 }
     pub fn is_arp(&self) -> bool { self.ethertype() == ETH_TYPE_ARP }
+}
+
+/// Build a complete Ethernet frame: header + payload.
+pub fn build_ethernet_frame(dst: MacAddr, src: MacAddr, ether_type: u16, payload: &[u8]) -> Vec<u8> {
+    let eth = EthernetHeader::new(dst, src, ether_type);
+    let eth_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &eth as *const EthernetHeader as *const u8,
+            ETH_HDR_LEN,
+        )
+    };
+    let mut frame = Vec::with_capacity(ETH_HDR_LEN + payload.len());
+    frame.extend_from_slice(eth_bytes);
+    frame.extend_from_slice(payload);
+    frame
 }
 
 pub fn compute_eth_fcs(packet: &[u8]) -> u32 {

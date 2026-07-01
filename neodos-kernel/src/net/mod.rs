@@ -7,10 +7,11 @@ pub mod udp;
 pub mod tcp;
 pub mod socket;
 pub mod nic;
+pub mod dhcp;
 pub mod e1000;
 mod tests;
 
-use types::{Ipv4Addr, SocketType};
+use types::SocketType;
 use socket::SOCKET_MANAGER;
 use nic::NIC_REGISTRY;
 
@@ -42,9 +43,7 @@ pub fn init_networking() {
 
     let nic_count = crate::net::nic::nic_count();
     if nic_count > 0 {
-        let first_ip = Ipv4Addr::new([10, 0, 1, 80]);
-        crate::net::nic::nic_set_ip(0, first_ip);
-        crate::serial_println!("[NET] NIC 0 IP set to {}", first_ip);
+        dhcp::dhcp_start();
     }
 
     {
@@ -67,6 +66,7 @@ pub fn net_is_initialized() -> bool {
 pub fn net_tick() {
     if !net_is_initialized() { return; }
     arp::arp_tick();
+    dhcp::dhcp_tick();
 }
 
 pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
@@ -137,7 +137,20 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
         let payload_offset = ip_offset + header_len;
         let payload = &packet[payload_offset..];
 
-        if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_ICMP {
+        if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_UDP {
+            if payload.len() < core::mem::size_of::<crate::net::udp::UdpHeader>() { return; }
+            let udp_hdr: &crate::net::udp::UdpHeader = unsafe {
+                &*(payload.as_ptr() as *const crate::net::udp::UdpHeader)
+            };
+            if udp_hdr.dst_port() == crate::net::dhcp::DHCP_CLIENT_PORT {
+                dhcp::dhcp_handle_offer(packet);
+            }
+            let udp_data = &payload[core::mem::size_of::<crate::net::udp::UdpHeader>()..];
+            socket::udp_dispatch(ip_hdr.src_ip(), udp_hdr.src_port(), udp_data);
+        } else if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_TCP {
+            if payload.len() < 20 { return; }
+            socket::tcp_dispatch(ip_hdr.src_ip(), ip_hdr.dst_ip(), payload);
+        } else if ip_hdr.protocol() == crate::net::ipv4::IPV4_PROTO_ICMP {
             if payload.len() < core::mem::size_of::<crate::net::icmp::IcmpHeader>() { return; }
             let icmp_hdr: &crate::net::icmp::IcmpHeader = unsafe {
                 &*(payload.as_ptr() as *const crate::net::icmp::IcmpHeader)
@@ -204,4 +217,5 @@ pub fn network_poll_all() {
 
 pub fn register_net_tests() {
     tests::register_net_tests();
+    dhcp::register_dhcp_tests();
 }
