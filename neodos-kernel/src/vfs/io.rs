@@ -24,6 +24,7 @@ pub struct IoStack {
     pub device_id: usize,
     pub partition: Option<PartitionInfo>,
     pub cache_level: PageCacheLevel,
+    pub stale: bool,
 }
 
 impl IoStack {
@@ -32,6 +33,7 @@ impl IoStack {
             device_id,
             partition: None,
             cache_level: PageCacheLevel::L1,
+            stale: false,
         }
     }
 
@@ -40,6 +42,32 @@ impl IoStack {
             device_id,
             partition: Some(partition),
             cache_level: cache,
+            stale: false,
+        }
+    }
+
+    /// Acquire a reference on the underlying device (increments refcount).
+    pub fn acquire_ref(&self) {
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        bdevs.acquire(self.device_id);
+    }
+
+    /// Release a reference on the underlying device (decrements refcount).
+    pub fn release_ref(&self) {
+        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+        bdevs.release(self.device_id);
+    }
+
+    /// Mark this IoStack as stale (device was removed).
+    pub fn mark_stale(&mut self) {
+        self.stale = true;
+    }
+
+    /// Check if the underlying device is still alive.
+    pub fn is_valid(&self) -> bool {
+        !self.stale && {
+            let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+            bdevs.get(self.device_id).is_some()
         }
     }
 
@@ -62,6 +90,7 @@ impl IoStack {
     ///
     /// `lba` is partition-relative; `count` is the number of 512-byte sectors.
     pub fn read_sectors(&self, lba: u64, count: u64, buf: &mut [u8]) -> Result<(), ()> {
+        if self.stale { return Err(()); }
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level != PageCacheLevel::None && count == 1 && buf.len() >= 512 {
@@ -86,6 +115,7 @@ impl IoStack {
     ///
     /// Translates LBA and writes directly to the device.
     pub fn write_sectors(&self, lba: u64, count: u64, buf: &[u8]) -> Result<(), ()> {
+        if self.stale { return Err(()); }
         let abs_lba = self.translate_lba(lba);
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(self.device_id).ok_or(())?;
@@ -110,6 +140,7 @@ impl IoStack {
     where
         F: FnOnce(&mut dyn BlockDevice) -> R,
     {
+        if self.stale { return Err(()); }
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(self.device_id).ok_or(())?;
         Ok(f(dev))

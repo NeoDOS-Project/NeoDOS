@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.48.4 — 2026-07-01
+
+### Added
+- **VFS-4.1 Device IDs estables** — `BlockDeviceManager.register()` ahora escanea slots libres (índices estables). `find_by_name()` permite búsqueda por nombre. `device_name()` en el trait `BlockDevice`.
+- **VFS-4.2 Hot-unload safety** — `IoStack.stale` flag. `read_sectors()`/`write_sectors()`/`with_device()` fallan si `stale`. `mark_stale()` para invalidación externa. `is_valid()` verifica device alive.
+- **VFS-4.3 Refcount block devices** — `refcounts[u32; MAX]` en `BlockDeviceManager`. `acquire()`/`release()`/`refcount()`. `remove()` solo si refcount=0. `force_remove()` bypass.
+- **OBF-07** — Ya implementado: `ob_err_to_syscall()` en `syscall/mod.rs` con test `ob_err_to_syscall_mapping`.
+
+### Changed
+- `IoStack` struct: añadidos `stale: bool`, `acquire_ref()`/`release_ref()`/`is_valid()`. `IoStack::with_partition()` ya no adquiere lock automáticamente (evita deadlock en boot).
+- `unregister_nem_block_device()` ahora verifica refcount antes de remover.
+- `BlockDeviceManager`: register escanea slots libres (índices estables).
+
 ## v0.48.3 — 2026-07-01
 
 ### Added

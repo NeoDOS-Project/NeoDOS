@@ -10,22 +10,27 @@ pub const MAX_BLOCK_DEVICES: usize = 8;
 pub struct BlockDeviceManager {
     devices: [Option<Box<dyn BlockDevice>>; MAX_BLOCK_DEVICES],
     count: usize,
+    refcounts: [u32; MAX_BLOCK_DEVICES],
 }
 
 impl BlockDeviceManager {
     pub fn new() -> Self {
         let devices: [Option<Box<dyn BlockDevice>>; MAX_BLOCK_DEVICES] = Default::default();
-        BlockDeviceManager { devices, count: 0 }
+        BlockDeviceManager { devices, count: 0, refcounts: [0; MAX_BLOCK_DEVICES] }
     }
 
+    /// Register a device. Scans for first free slot (stable indices).
+    /// Returns the device index, which is stable until explicitly removed.
     pub fn register(&mut self, dev: Box<dyn BlockDevice>) -> Option<usize> {
-        if self.count >= MAX_BLOCK_DEVICES {
-            return None;
+        for i in 0..MAX_BLOCK_DEVICES {
+            if self.devices[i].is_none() {
+                self.devices[i] = Some(dev);
+                self.count += 1;
+                self.refcounts[i] = 0;
+                return Some(i);
+            }
         }
-        let idx = self.count;
-        self.devices[idx] = Some(dev);
-        self.count += 1;
-        Some(idx)
+        None
     }
 
     pub fn get(&mut self, idx: usize) -> Option<&mut (dyn BlockDevice + '_)> {
@@ -39,12 +44,49 @@ impl BlockDeviceManager {
         self.devices.get_mut(idx)?.replace(dev)
     }
 
+    /// Acquire a device reference (increments refcount).
+    pub fn acquire(&mut self, idx: usize) -> bool {
+        if idx < MAX_BLOCK_DEVICES && self.devices[idx].is_some() {
+            self.refcounts[idx] = self.refcounts[idx].saturating_add(1);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Release a device reference (decrements refcount).
+    pub fn release(&mut self, idx: usize) {
+        if idx < MAX_BLOCK_DEVICES {
+            self.refcounts[idx] = self.refcounts[idx].saturating_sub(1);
+        }
+    }
+
+    /// Get refcount for a device.
+    pub fn refcount(&self, idx: usize) -> u32 {
+        if idx < MAX_BLOCK_DEVICES { self.refcounts[idx] } else { 0 }
+    }
+
     /// Remove a block device by index. Returns the removed device if found.
+    /// Fails if refcount > 0.
     pub fn remove(&mut self, idx: usize) -> Option<Box<dyn BlockDevice>> {
-        if idx < self.devices.len() {
+        if idx < MAX_BLOCK_DEVICES && self.refcounts[idx] == 0 {
             let removed = self.devices[idx].take();
             if removed.is_some() {
-                self.count -= 1;
+                self.count = self.count.saturating_sub(1);
+            }
+            removed
+        } else {
+            None
+        }
+    }
+
+    /// Force-remove a device regardless of refcount.
+    pub fn force_remove(&mut self, idx: usize) -> Option<Box<dyn BlockDevice>> {
+        if idx < MAX_BLOCK_DEVICES {
+            self.refcounts[idx] = 0;
+            let removed = self.devices[idx].take();
+            if removed.is_some() {
+                self.count = self.count.saturating_sub(1);
             }
             removed
         } else {
@@ -55,7 +97,22 @@ impl BlockDeviceManager {
     pub fn count(&self) -> usize {
         self.count
     }
+
+    /// Find a registered device by name. Returns its index.
+    pub fn find_by_name(&self, name: &str) -> Option<usize> {
+        for i in 0..MAX_BLOCK_DEVICES {
+            if let Some(ref dev) = self.devices[i] {
+                if dev.device_name() == name {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
 }
+
+/// Block device name maximum length.
+pub const MAX_DEVICE_NAME_LEN: usize = 32;
 
 /// Block device trait with IRP-based async I/O.
 ///
@@ -66,6 +123,8 @@ impl BlockDeviceManager {
 /// them directly.
 pub trait BlockDevice: Send {
     fn num_sectors(&self) -> Option<u64> { None }
+
+    fn device_name(&self) -> &str { "" }
 
     fn sector_size(&self) -> u32 { 512 }
 
@@ -384,9 +443,29 @@ pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
 }
 
 /// Unregister a NemBlockDevice by its index.
-pub fn unregister_nem_block_device(idx: usize) {
+/// Only succeeds if the device's refcount is 0 (no active IoStacks).
+pub fn unregister_nem_block_device(idx: usize) -> bool {
     let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+    if bdevs.refcount(idx) > 0 {
+        crate::serial_println!("[BLK] Cannot unregister device at idx={}: refcount={}", idx, bdevs.refcount(idx));
+        return false;
+    }
     if bdevs.remove(idx).is_some() {
         crate::serial_println!("[BLK] NEM block device unregistered at idx={}", idx);
+        true
+    } else {
+        false
+    }
+}
+
+/// Force-unregister a NemBlockDevice, bypassing refcount check.
+/// Used by hot-unload with /F flag.
+pub fn force_unregister_nem_block_device(idx: usize) -> bool {
+    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+    if bdevs.force_remove(idx).is_some() {
+        crate::serial_println!("[BLK] NEM block device FORCE unregistered at idx={}", idx);
+        true
+    } else {
+        false
     }
 }
