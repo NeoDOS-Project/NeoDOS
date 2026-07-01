@@ -29,6 +29,7 @@ pub const CAP_LOG: u64 = 1 << 8;          // FROZEN v0.42 — bit 8
 pub const CAP_TIMING: u64 = 1 << 9;       // FROZEN v0.42 — bit 9
 pub const CAP_MEMORY: u64 = 1 << 10;      // FROZEN v0.42 — bit 10
 pub const CAP_ISOLATION: u64 = 1 << 11;   // FROZEN v0.42 — bit 11
+pub const CAP_NS_WRITE: u64 = 1 << 12;    // bit 12 — Ob namespace write ops (insert/remove/create)
 
 pub const CAP_ALL: u64 = u64::MAX;
 
@@ -47,6 +48,7 @@ pub fn cap_name(flag: u64) -> &'static str {
         CAP_TIMING => "TIMING",
         CAP_MEMORY => "MEMORY",
         CAP_ISOLATION => "ISOLATION",
+        CAP_NS_WRITE => "NS_WRITE",
         _ => "UNKNOWN",
     }
 }
@@ -66,6 +68,7 @@ pub fn all_cap_names() -> &'static [(u64, &'static str)] {
         (CAP_TIMING, "TIMING"),
         (CAP_MEMORY, "MEMORY"),
         (CAP_ISOLATION, "ISOLATION"),
+        (CAP_NS_WRITE, "NS_WRITE"),
     ]
 }
 
@@ -260,6 +263,8 @@ pub fn register_cap_tests() {
         test_eq!(CAP_LOG, 256);
         test_eq!(CAP_TIMING, 512);
         test_eq!(CAP_MEMORY, 1024);
+        test_eq!(CAP_ISOLATION, 2048);
+        test_eq!(CAP_NS_WRITE, 4096);
     });
 
     test_case!("caps_set_has", {

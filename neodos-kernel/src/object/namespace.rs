@@ -18,6 +18,7 @@ pub const OB_ALREADY_EXISTS: &str = "OB_ALREADY_EXISTS";
 pub const OB_CANNOT_CREATE_ROOT: &str = "OB_CANNOT_CREATE_ROOT";
 pub const OB_SAME_NAME: &str = "OB_SAME_NAME";
 pub const OB_SYMLINK_LOOP: &str = "OB_SYMLINK_LOOP";
+pub const OB_PROTECTED: &str = "OB_PROTECTED";
 
 fn name_to_key(name: &str) -> [u8; MAX_NAME_LEN] {
     let mut key = [0u8; MAX_NAME_LEN];
@@ -117,6 +118,8 @@ pub struct DirectoryObject {
     pub children: BTreeMap<[u8; MAX_NAME_LEN], ObId>,
     pub child_dirs: BTreeMap<[u8; MAX_NAME_LEN], DirectoryObject>,
     pub symlinks: BTreeMap<[u8; MAX_NAME_LEN], SymlinkEntry>,
+    pub protected: bool,
+    pub creator: Option<ObId>,
 }
 
 impl DirectoryObject {
@@ -126,6 +129,8 @@ impl DirectoryObject {
             children: BTreeMap::new(),
             child_dirs: BTreeMap::new(),
             symlinks: BTreeMap::new(),
+            protected: false,
+            creator: None,
         }
     }
 
@@ -209,6 +214,17 @@ impl ObNamespace {
                 &components[1..]
             )
         }
+    }
+
+    pub fn set_protected(&mut self, path: &str, protected: bool) -> Result<(), &'static str> {
+        let components = Self::parse_path(path)?;
+        let mut current = &mut self.root;
+        for comp in &components {
+            let key = name_to_key(comp);
+            current = current.child_dirs.get_mut(&key).ok_or(OB_NOT_FOUND)?;
+        }
+        current.protected = protected;
+        Ok(())
     }
 
     pub fn insert_object(&mut self, path: &str, obj_id: ObId) -> Result<(), &'static str> {
@@ -650,6 +666,11 @@ pub fn init_object_namespace() {
         // Create \Global\FileSystem namespace subtree for VFS path resolution
         // (\Global\FileSystem\C:\path\to\file) — used by ob_open_path and ob_create
         let _ = ns.create_directory("\\Global\\FileSystem");
+        // Mark root directories as protected
+        for dir in root_dirs {
+            let path = alloc::format!("\\{}", dir);
+            let _ = ns.set_protected(&path, true);
+        }
     }
     // Register KObjs outside the lock to avoid deadlock with kobj_register → ob_insert_object_auto
     let root_dirs = ["Device", "DosDevices", "Global", "Driver", "FileSystem", "Ob", "Registry", "Process"];
@@ -764,6 +785,91 @@ pub fn ob_remove_by_id(id: ObId) -> Option<String> {
     let path = ob_find_path_by_id(id)?;
     let _ = ob_remove_object(&path);
     Some(path)
+}
+
+pub fn ob_set_protected(path: &str, protected: bool) -> Result<(), &'static str> {
+    OB_NAMESPACE.lock().set_protected(path, protected)
+}
+
+pub fn ob_is_path_protected(path: &str) -> bool {
+    let ns = OB_NAMESPACE.lock();
+    let components = match ObNamespace::parse_path(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    if components.is_empty() {
+        return ns.root.protected;
+    }
+    let mut current = &ns.root;
+    for comp in &components {
+        let key = name_to_key(comp);
+        match current.child_dirs.get(&key) {
+            Some(dir) => current = dir,
+            None => return false,
+        }
+    }
+    current.protected
+}
+
+pub fn ob_insert_object_checked(path: &str, obj_id: ObId) -> Result<(), &'static str> {
+    let mut ns = OB_NAMESPACE.lock();
+    let components = ObNamespace::parse_path(path).map_err(|_| OB_INVALID_PATH)?;
+    // Check if the parent directory is protected
+    if components.len() > 1 {
+        let parent_components = &components[..components.len() - 1];
+        let mut current = &ns.root;
+        for &comp in parent_components {
+            let key = name_to_key(comp);
+            match current.child_dirs.get(&key) {
+                Some(dir) => current = dir,
+                None => return Err(OB_NOT_FOUND),
+            }
+        }
+        if current.protected {
+            return Err(OB_PROTECTED);
+        }
+    }
+    ns.insert_object(path, obj_id)
+}
+
+pub fn ob_create_directory_checked(path: &str) -> Result<(), &'static str> {
+    let mut ns = OB_NAMESPACE.lock();
+    let components = ObNamespace::parse_path(path).map_err(|_| OB_INVALID_PATH)?;
+    if components.len() > 1 {
+        let parent_components = &components[..components.len() - 1];
+        let mut current = &ns.root;
+        for &comp in parent_components {
+            let key = name_to_key(comp);
+            match current.child_dirs.get(&key) {
+                Some(dir) => current = dir,
+                None => return Err(OB_NOT_FOUND),
+            }
+        }
+        if current.protected {
+            return Err(OB_PROTECTED);
+        }
+    }
+    ns.create_directory(path)
+}
+
+pub fn ob_insert_symlink_checked(path: &str, target: &str) -> Result<(), &'static str> {
+    let mut ns = OB_NAMESPACE.lock();
+    let components = ObNamespace::parse_path(path).map_err(|_| OB_INVALID_PATH)?;
+    if components.len() > 1 {
+        let parent_components = &components[..components.len() - 1];
+        let mut current = &ns.root;
+        for &comp in parent_components {
+            let key = name_to_key(comp);
+            match current.child_dirs.get(&key) {
+                Some(dir) => current = dir,
+                None => return Err(OB_NOT_FOUND),
+            }
+        }
+        if current.protected {
+            return Err(OB_PROTECTED);
+        }
+    }
+    ns.insert_symlink(path, target)
 }
 
 pub fn ob_insert_symlink(path: &str, target: &str) -> Result<(), &'static str> {
@@ -1001,5 +1107,75 @@ pub fn register_namespace_tests() {
         test_true!(ns.lookup_by_path("\\Device\\rootdev").is_ok());
         test_true!(ns.lookup_by_path("\\Device\\RootDev\\..\\RootDev").is_ok());
         crate::object::ob_destroy_object(id).unwrap();
+    });
+
+    // ── NS-1.1 / NS-1.2: Namespace ownership and protected root dirs ──
+
+    test_case!("ob_set_protected_flag", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Device").unwrap();
+        ns.set_protected("\\Device", true).unwrap();
+        let key = name_to_key("Device");
+        let device_dir = ns.root.child_dirs.get(&key).unwrap();
+        test_true!(device_dir.protected);
+    });
+
+    test_case!("ob_protected_non_root_subdirs_unprotected", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Device").unwrap();
+        ns.set_protected("\\Device", true).unwrap();
+        ns.create_directory("\\Device\\Sub").unwrap();
+        let device = ns.root.child_dirs.get(&name_to_key("Device")).unwrap();
+        test_true!(!device.child_dirs.get(&name_to_key("Sub")).unwrap().protected);
+    });
+
+    test_case!("ob_insert_object_internal_bypasses_protection", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Device").unwrap();
+        ns.set_protected("\\Device", true).unwrap();
+        let id = crate::object::ob_create_object(ObType::Unknown, "hacked", 1, 0, None).unwrap();
+        // Internal insert_object bypasses protection (kernel code path)
+        test_true!(ns.insert_object("\\Device\\Hacked", id).is_ok());
+        crate::object::ob_destroy_object(id).unwrap_or(());
+    });
+
+    test_case!("ob_set_protected_unmark", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Device").unwrap();
+        ns.set_protected("\\Device", true).unwrap();
+        ns.set_protected("\\Device", false).unwrap();
+        let key = name_to_key("Device");
+        let device_dir = ns.root.child_dirs.get(&key).unwrap();
+        test_true!(!device_dir.protected);
+    });
+
+    test_case!("ob_protected_deep_nested_insert_allowed", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Device").unwrap();
+        ns.set_protected("\\Device", true).unwrap();
+        ns.create_directory("\\Device\\Storage").unwrap();
+        let id = crate::object::ob_create_object(ObType::Unknown, "disk", 1, 0, None).unwrap();
+        // Inserting under non-protected subdir \Device\Storage is allowed
+        test_true!(ns.insert_object("\\Device\\Storage\\Disk0", id).is_ok());
+        crate::object::ob_destroy_object(id).unwrap_or(());
+    });
+
+    test_case!("ob_protected_flag_subdirs_inherit_none", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Root").unwrap();
+        ns.set_protected("\\Root", true).unwrap();
+        ns.create_directory("\\Root\\Sub").unwrap();
+        test_true!(ns.root.child_dirs.get(&name_to_key("Root")).unwrap().protected);
+        test_true!(!ns.root.child_dirs.get(&name_to_key("Root")).unwrap()
+            .child_dirs.get(&name_to_key("Sub")).unwrap().protected);
+    });
+
+    test_case!("ob_set_protected_clears_flag", {
+        let mut ns = ObNamespace::new();
+        ns.create_directory("\\Root").unwrap();
+        ns.set_protected("\\Root", true).unwrap();
+        test_true!(ns.root.child_dirs.get(&name_to_key("Root")).unwrap().protected);
+        ns.set_protected("\\Root", false).unwrap();
+        test_true!(!ns.root.child_dirs.get(&name_to_key("Root")).unwrap().protected);
     });
 }

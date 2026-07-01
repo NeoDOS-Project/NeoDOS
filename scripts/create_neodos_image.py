@@ -6,7 +6,8 @@ import os
 BLOCK_SIZE = 4096
 SECTOR_SIZE = 512
 SUPERBLOCK_MAGIC = 0x4F444F4E  # "NEOD"
-DATA_START_SECTOR = 200
+NUM_INODES = 256
+DATA_START_SECTOR = 1 + (NUM_INODES * 256 + 511) // 512  # = 129 for 256 inodes
 ROOT_DIR_BLOCK = 0
 
 # NeoDOS permission and mode flags (matching neodos_fs.rs)
@@ -205,7 +206,7 @@ Happy hacking!
         image[offset:offset+256] = entry
 
         # Data block 1
-        offset = (200 + 8) * 512
+        offset = (DATA_START_SECTOR + 8) * 512
         txt_content = b"This is the secondary disk (D:). Only has this file.\r\n"
         image[offset:offset+len(txt_content)] = txt_content
     else:
@@ -548,19 +549,19 @@ Happy hacking!
         # ── Data blocks ──
         # Block 1 = readme.txt
         print("[*] Writing readme.txt content...")
-        offset = (200 + 8) * 512
+        offset = (DATA_START_SECTOR + 8) * 512
         image[offset:offset+len(readme_text)] = readme_text.encode('utf-8')
 
         # Block 2 = test.bat
         print("[*] Writing test.bat content...")
-        offset = (200 + 16) * 512
+        offset = (DATA_START_SECTOR + 16) * 512
         testbat_content = read_cfg("test.bat")
         image[offset:offset+len(testbat_content)] = testbat_content
 
         # ── System\ directory ──
         print("[*] Writing System directory...")
         blk = sys_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]      = create_dir_entry(inode_kernel, 2, "Kernel")
         image[offset+256:offset+512]  = create_dir_entry(inode_drivers, 2, "Drivers")
         image[offset+512:offset+768]  = create_dir_entry(inode_libraries, 2, "Libraries")
@@ -570,20 +571,20 @@ Happy hacking!
         # System\Kernel\
         print("[*] Writing System\\Kernel directory...")
         blk = kernel_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256] = create_dir_entry(inode_bootcfg, 1, "boot.cfg")
 
         # System\Kernel\boot.cfg content
         print("[*] Writing boot.cfg...")
         for bi, blk in enumerate(bootcfg_blocks):
             chunk = bootcfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-            off = (200 + blk * 8) * 512
+            off = (DATA_START_SECTOR + blk * 8) * 512
             image[off:off+len(chunk)] = chunk
 
         # System\Drivers\ directory
         print("[*] Writing System\\Drivers directory...")
         blk = drv_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]    = create_dir_entry(inode_ps2kbd, 1, "kbps2.nem")
         image[offset+256:offset+512]= create_dir_entry(inode_serial, 1, "serial.nem")
         image[offset+512:offset+768]= create_dir_entry(inode_rtc, 1, "rtc.nem")
@@ -602,13 +603,13 @@ Happy hacking!
             print(f"[*] Writing System\\Drivers\\{fname} content ({len(fdata)} bytes)...")
             for bi, blk in enumerate(blks):
                 chunk = fdata[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
+                off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
         # System\Libraries\ directory
         print("[*] Writing System\\Libraries directory...")
         blk = lib_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]     = create_dir_entry(inode_fsnxl, 1, "fs.nxl")
         image[offset+512:offset+768]  = create_dir_entry(inode_consolenxl, 1, "console.nxl")
         image[offset+1024:offset+1280]= create_dir_entry(inode_mathnxl, 1, "math.nxl")
@@ -619,7 +620,7 @@ Happy hacking!
                 print(f"[*] Writing System\\Libraries inode {inum} ({len(nxl_data)} bytes)...")
                 for bi, blk in enumerate(blklist):
                     chunk = nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                    off = (200 + blk * 8) * 512
+                    off = (DATA_START_SECTOR + blk * 8) * 512
                     image[off:off+len(chunk)] = chunk
 
         # math.nxl data blocks
@@ -627,7 +628,7 @@ Happy hacking!
             print(f"[*] Writing System\\Libraries\\math.nxl ({len(math_nxl_data)} bytes)...")
             for bi, blk in enumerate(math_nxl_blocks):
                 chunk = math_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
+                off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
         # console.nxl data blocks
@@ -635,13 +636,13 @@ Happy hacking!
             print(f"[*] Writing System\\Libraries\\console.nxl ({len(console_nxl_data)} bytes)...")
             for bi, blk in enumerate(console_nxl_blocks):
                 chunk = console_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
+                off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
         # System\Layouts\ directory
         print("[*] Writing System\\Layouts directory...")
         blk = lay_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]  = create_dir_entry(inode_eses, 1, "es-ES.nkb")
         image[offset+256:offset+512]= create_dir_entry(inode_enus, 1, "en-US.nkb")
 
@@ -649,13 +650,13 @@ Happy hacking!
         for inum, content, blk_list in [(inode_eses, es_nkb_content, es_nkb_blocks), (inode_enus, en_nkb_content, en_nkb_blocks)]:
             for bi, blk in enumerate(blk_list):
                 chunk = content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
+                off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
         # System\Config\ directory
         print("[*] Writing System\\Config directory...")
         blk = cfg_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]  = create_dir_entry(inode_systemcfg, 1, "system.cfg")
         image[offset+256:offset+512]= create_dir_entry(inode_inputcfg, 1, "input.cfg")
 
@@ -663,20 +664,20 @@ Happy hacking!
         print("[*] Writing system.cfg...")
         for bi, blk in enumerate(system_cfg_blocks):
             chunk = system_cfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-            off = (200 + blk * 8) * 512
+            off = (DATA_START_SECTOR + blk * 8) * 512
             image[off:off+len(chunk)] = chunk
 
         # input.cfg content
         print("[*] Writing input.cfg...")
         for bi, blk in enumerate(input_cfg_blocks):
             chunk = input_cfg_content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-            off = (200 + blk * 8) * 512
+            off = (DATA_START_SECTOR + blk * 8) * 512
             image[off:off+len(chunk)] = chunk
 
         # ── Programs\ directory ──
         print("[*] Writing Programs directory...")
         blk = prog_dir_blocks[0]
-        offset = (200 + blk * 8) * 512
+        offset = (DATA_START_SECTOR + blk * 8) * 512
         image[offset:offset+256]      = create_dir_entry(inode_neoshell, 1, "NeoShell.nxe")
         image[offset+256:offset+512]  = create_dir_entry(inode_neoinit, 1, "NeoInit.nxe")
         image[offset+512:offset+768]  = create_dir_entry(inode_cpuinfo, 1, "cpuinfo.nxe")
@@ -750,7 +751,7 @@ Happy hacking!
             print(f"[*] Writing Programs\\{name} ({len(data)} bytes across {len(blks)} blocks)...")
             for bi, blk in enumerate(blks):
                 chunk = data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
-                off = (200 + blk * 8) * 512
+                off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
         allocator.check_no_duplicates()

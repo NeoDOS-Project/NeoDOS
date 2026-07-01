@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.48.1 (VFS-1.3 stale namespace cleanup + VFS-1.4 HandleTable→Ob consistency, 588 tests)
+v0.48.2 (NeoFS estabilidad — dynamic inode/bitmap allocators, sector offsets, NS ownership, CAP_NS_WRITE, 588 tests)
 
 ## Architecture Governance
 

@@ -906,6 +906,46 @@ pub fn register_object_tests() {
         test_true!(ns_result.is_err());
     });
 
+    // ── NS-1.1 / NS-1.2: Protected root dirs via ob_insert_object_checked ──
+
+    test_case!("ob_insert_object_checked_rejects_protected_parent", {
+        let _ = crate::object::namespace::ob_create_directory("\\TestNS");
+        let id = ob_create_object(ObType::Filesystem, "test_protected", 1, 0, None).unwrap();
+        // Mark \TestNS as protected
+        let _ = crate::object::namespace::ob_set_protected("\\TestNS", true);
+        let result = crate::object::namespace::ob_insert_object_checked("\\TestNS\\Hacked", id);
+        test_true!(result.is_err());
+        // Cleanup: remove the protection, then destroy via the regular insert
+        let _ = crate::object::namespace::ob_set_protected("\\TestNS", false);
+        let _ = crate::object::namespace::ob_insert_object("\\TestNS\\Hacked", id);
+        ob_destroy_object(id).unwrap_or(());
+    });
+
+    test_case!("ob_insert_object_checked_allows_normal_insert", {
+        let _ = crate::object::namespace::ob_create_directory("\\TestNS");
+        let id = ob_create_object(ObType::Filesystem, "test_normal", 1, 0, None).unwrap();
+        // Mark it protected, but insert under a non-protected subdir
+        let _ = crate::object::namespace::ob_set_protected("\\TestNS", true);
+        let _ = crate::object::namespace::ob_create_directory("\\TestNS\\Sub");
+        let result = crate::object::namespace::ob_insert_object_checked("\\TestNS\\Sub\\Normal", id);
+        test_true!(result.is_ok());
+        let _ = crate::object::namespace::ob_remove_object("\\TestNS\\Sub\\Normal");
+        ob_destroy_object(id).unwrap_or(());
+    });
+
+    test_case!("ob_create_directory_checked_rejects_protected_parent", {
+        let _ = crate::object::namespace::ob_create_directory("\\TestNS2");
+        let _ = crate::object::namespace::ob_set_protected("\\TestNS2", true);
+        let result = crate::object::namespace::ob_create_directory_checked("\\TestNS2\\HackedDir");
+        test_true!(result.is_err());
+    });
+
+    test_case!("ob_create_directory_checked_allows_non_protected", {
+        let _ = crate::object::namespace::ob_create_directory("\\TestNS3");
+        let result = crate::object::namespace::ob_create_directory_checked("\\TestNS3\\NormalDir");
+        test_true!(result.is_ok());
+    });
+
     test_case!("vfs_namespace_no_orphan_on_close_with_refs", {
         // Create object, reference it, insert into namespace
         let id = ob_create_object(ObType::Filesystem, "ns_ref", 7, 0, None).unwrap();

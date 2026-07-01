@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.48.2 — 2026-07-01
+
+### Added
+- **FS-1.1 Dynamic inode allocator** — `InodeCache.inodes` reemplazado de `[Option<Inode>; 256]` a `Vec<Option<Inode>>`. `load_inode()` extiende el Vec según demanda. `find_free_inode()` itera hasta `num_inodes` del superblock. Sin límite fijo de 256 inodos.
+- **FS-1.2 Dynamic block bitmap** — `BlockBitmap.bits` reemplazado de `[u8; 320]` a `Vec<u8>` con tamaño = `ceil(num_blocks/8)`. Soportan FS de hasta 40+ MB.
+- **FS-1.3 Hardcoded sector offsets eliminados** — Añadido `data_start_sector()` con fórmula `1 + ceil(num_inodes*256/512)`. Reemplazados todos los `200` literales (12 en kernel, 1 en fsck.rs, 19 en create_neodos_image.py, 1 en neodos_fs.py del MCP).
+- **NS-1.1 Namespace ownership tracking** — `DirectoryObject.protected` flag y `set_protected()`. `ob_insert_object_checked()` y `ob_create_directory_checked()` verifican protección parental.
+- **NS-1.2 Protected root directories** — `\Device`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process`, `\DosDevices` marcados como protegidos en `init_object_namespace()`.
+- **CAP_NS_WRITE** — Nueva capability flag (bit 12) para operaciones de namespace write. Añadida a `cap_name()` y `all_cap_names()`.
+- **11 new tests** — 7 namespace (protected flag, subdir inheritance, set/clear, internal bypass) + 4 mod.rs (insert_checked rejects protected parent, allows normal, create_directory_checked).
+
+### Changed
+- AGENTS.md version bump: v0.48.1 → v0.48.2.
+
 ## v0.48.1 — 2026-07-01
 
 ### Added

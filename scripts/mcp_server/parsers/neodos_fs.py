@@ -39,7 +39,8 @@ INODE_SECTORS = 63           # LBAs 1-63
 MAX_INODES = 126
 BLOCK_SIZE = 4096
 BLOCK_SECTORS = BLOCK_SIZE // SECTOR_SIZE  # 8
-DATA_START_SECTOR = 200      # LBA where data blocks begin
+# Computed: sector 1 (superblock) + inode table (num_inodes * 256 bytes / sector_size)
+DATA_START_SECTOR = 1 + (256 * 256 + 511) // 512  # = 129 for 256 inodes
 DIR_ENTRY_SIZE = 256
 
 NEODOS_MAGIC = 0x4F444F4E    # "NEOD" little-endian

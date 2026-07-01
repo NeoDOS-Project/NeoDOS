@@ -324,7 +324,7 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
     // ── 4. Block bitmap consistency ───────────────────────
     // The bitmap is always rebuilt from inodes at mount time.
     // We only verify that our computed bitmap matches expectations.
-    let mut computed_bitmap = BlockBitmap::new();
+    let mut computed_bitmap = BlockBitmap::new(num_blocks);
     for &(b, _) in &block_refs {
         computed_bitmap.mark_used(b);
     }
@@ -375,7 +375,8 @@ pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, pa
             let b = if bp != 0 { bp } else { 0 };
             if b >= num_blocks { continue; }
 
-            let block_sector = 200 + (b * 8);
+            let data_start = 1 + (total_inodes * 256 + 511) / 512;
+            let block_sector = data_start + (b * 8);
             for sector_offset in 0..8 {
                 // Phase 1: Read sector (immutable borrow, then release)
                 let mut sector_entries: Vec<(usize, u32, u8, u8, [u8; 249])> = Vec::new();
