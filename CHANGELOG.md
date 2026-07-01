@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.48.0 — 2026-07-01
+
+### Added
+- **Userland Networking Architecture** — `docs/NETWORK_USERLAND_ARCHITECTURE.md`: diseño completo de net.nxl (API userland de red), herramientas NXE (ipconfig, ping, dhcp), migración de NeoInit a Registry, modelo de configuración Registry+NeoFS, sistema de paquetes NeoPkg, y roadmap de implementación (19 tareas pre-1.0, 9 post-1.0). Incluye especificación detallada de gaps del kernel TCP/IP, plan de implementación por fases (transmit path → receive path → UDP → TCP real), y respaldo arquitectónico para la integración Ob + networking userland.
+
 ## v0.47.1 — 2026-06-30
 
 ### Added

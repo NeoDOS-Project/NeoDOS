@@ -14,6 +14,7 @@ unification.
 - `docs/NEOFS_AUDIT.md` — complete NeoFS + driver/namespace audit (2026-06-28)
 - `docs/NEOFS_ROADMAP.md` — NeoFS vNext phased roadmap (stability → performance)
 - `docs/NEOFS_TESTS.md` — 26 proposed tests for NeoFS, namespace, and drivers
+- `docs/NETWORK_USERLAND_ARCHITECTURE.md` — userland networking (net.nxl), Registry config model, NeoPkg design (2026-07-01)
 
 **Next priorities after v0.47:**
 1. **VFS-1.1** Unificar MountManager (dual mount sync)
@@ -24,6 +25,7 @@ unification.
 6. Dynamic inode allocator (FS-1)
 7. Dynamic block bitmap (FS-2)
 8. Eliminar hardcoded sector offsets (FS-4)
+9. **NET-1** Implementar transmit path socket→NIC (Fase 1 red userland)
 
 Run `python3 scripts/auto_test.py` and `scripts/check_deps.py` before any commit.
 
