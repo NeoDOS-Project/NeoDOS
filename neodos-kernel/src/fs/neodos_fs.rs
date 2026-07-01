@@ -186,6 +186,7 @@ pub struct NeoDosFs {
     pub inode_cache: InodeCache,
     pub block_bitmap: BlockBitmap,
     pub io_stack: IoStack,
+    pub drive_id: u8,
 }
 
 impl NeoDosFs {
@@ -226,7 +227,7 @@ impl NeoDosFs {
         if span == 0 { 0 } else { span.div_ceil(BLOCK_SIZE).min(12) }
     }
 
-    pub fn rebuild_bitmap_with_io(&mut self) -> Result<(), FsError> {
+    pub(crate) fn rebuild_bitmap_with_io(&mut self) -> Result<(), FsError> {
         let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
         let cache = cache_lock.as_mut().ok_or(FsError::BlockDeviceError)?;
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
@@ -234,7 +235,7 @@ impl NeoDosFs {
         self.rebuild_bitmap(cache, dev)
     }
 
-    pub fn rebuild_bitmap(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
+    pub(crate) fn rebuild_bitmap(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), FsError> {
         self.block_bitmap = BlockBitmap::new(self.superblock.num_blocks);
         for i in 0..self.superblock.num_inodes as usize {
             let inode = *self.inode_cache.load_inode(i, cache, dev, self.abs_lba(0))?;
@@ -258,7 +259,7 @@ impl NeoDosFs {
         block_ptr < self.superblock.num_blocks
     }
 
-    pub fn inode_data_block_count(&self, inode: &Inode) -> usize {
+    pub(crate) fn inode_data_block_count(&self, inode: &Inode) -> usize {
         let span = if (inode.mode & MODE_DIR) != 0 {
             Self::directory_byte_span(inode)
         } else if inode.size == 0 {
@@ -272,7 +273,7 @@ impl NeoDosFs {
         span.div_ceil(BLOCK_SIZE).min(12)
     }
 
-    pub fn get_inode_block_ptr(&self, inode: &Inode, block_idx: usize) -> Option<u32> {
+    pub(crate) fn get_inode_block_ptr(&self, inode: &Inode, block_idx: usize) -> Option<u32> {
         let num_blocks = self.inode_data_block_count(inode);
         if block_idx >= num_blocks {
             return None;
@@ -318,6 +319,7 @@ impl NeoDosFs {
             inode_cache,
             block_bitmap: BlockBitmap::new(superblock.num_blocks),
             io_stack: io,
+            drive_id: 0,
         })
     }
 
@@ -379,8 +381,8 @@ impl NeoDosFs {
         Ok(())
     }
 
-    pub fn find_entry_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice)
-        -> Result<(u32, u8), FsError>
+    pub(crate) fn find_entry_in_directory(&mut self, dir_inode_num: u32, name: &str, cache: &mut BlockCache, dev: &mut dyn BlockDevice) 
+        -> Result<(u32, u8), FsError> 
     {
         let dir_inode = *self.inode_cache.load_inode(dir_inode_num as usize, cache, dev, self.abs_lba(0))?;
         if (dir_inode.mode & MODE_DIR) == 0 {
@@ -515,7 +517,7 @@ impl NeoDosFs {
                 continue;
             };
             let block_lba = self.abs_lba(self.data_start_sector() + (current_block * 8)) as u64;
-            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba, dev)?;
+            let page = page_cache.read_page(self.drive_id, inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = bytes_left.min(4096).min(buf.len() - total_read);
             buf[total_read..total_read + to_copy].copy_from_slice(&page[..to_copy]);
             total_read += to_copy;
@@ -545,7 +547,7 @@ impl NeoDosFs {
                 continue;
             };
             let block_lba = self.abs_lba(self.data_start_sector() + (current_block * 8)) as u64;
-            let page = page_cache.read_page(inode_num, block_idx as u32, block_lba, dev)?;
+            let page = page_cache.read_page(self.drive_id, inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = bytes_left.min(4096);
 
             if let Ok(text) = core::str::from_utf8(&page[..to_copy]) {
@@ -792,7 +794,7 @@ impl NeoDosFs {
             let block_ptr = inode.direct_blocks[block_idx];
             let block_lba = self.abs_lba(self.data_start_sector() + (block_ptr * 8)) as u64;
 
-            let page = page_cache.get_page_mut(inode_num, block_idx as u32, block_lba, dev)?;
+            let page = page_cache.get_page_mut(self.drive_id, inode_num, block_idx as u32, block_lba, dev)?;
             let to_copy = (data.len() - written).min(4096);
             page[..to_copy].copy_from_slice(&data[written..written + to_copy]);
             written += to_copy;

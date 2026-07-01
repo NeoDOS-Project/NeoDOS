@@ -507,7 +507,7 @@ fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
 
         {
             let pc_lock = crate::globals::PAGE_CACHE.lock();
-            if let Some(cached) = pc_lock.peek(region.inode, block_num as u32) {
+            if let Some(cached) = pc_lock.peek(region.drive, region.inode, block_num as u32) {
                 let to_copy = bytes_to_read.min(4096);
                 dest_slice[..to_copy].copy_from_slice(&cached[..to_copy]);
                 from_cache = true;

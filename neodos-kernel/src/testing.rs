@@ -2347,28 +2347,28 @@ pub fn register_page_cache_tests() {
 
     test_case!("page_cache_peek_miss", {
         let pc = PageCache::new();
-        test_eq!(pc.peek(1, 0), None);
-        test_eq!(pc.peek(1, 1), None);
-        test_eq!(pc.peek(0, 0), None);
+        test_eq!(pc.peek(0, 1, 0), None);
+        test_eq!(pc.peek(0, 1, 1), None);
+        test_eq!(pc.peek(0, 0, 0), None);
     });
 
     test_case!("page_cache_mark_dirty_adds_dirty", {
         let mut pc = PageCache::new();
         test_eq!(pc.dirty_count(), 0);
-        pc.mark_dirty(1, 0);
+        pc.mark_dirty(0, 1, 0);
         test_eq!(pc.dirty_count(), 0);
     });
 
     test_case!("page_cache_invalidate_noop_empty", {
         let mut pc = PageCache::new();
-        pc.invalidate_inode(42);
+        pc.invalidate_inode(0, 42);
         test_eq!(pc.entry_count(), 0);
     });
 
     test_case!("page_cache_invalidate_multiple", {
         let mut pc = PageCache::new();
-        pc.invalidate_inode(1);
-        pc.invalidate_inode(2);
+        pc.invalidate_inode(0, 1);
+        pc.invalidate_inode(0, 2);
         test_eq!(pc.entry_count(), 0);
     });
 
@@ -2387,7 +2387,7 @@ pub fn register_page_cache_tests() {
         let pc = PageCache::new();
         for inode in &[1u32, 2, 3] {
             for block in &[0u32, 1, 5, 10] {
-                test_eq!(pc.peek(*inode, *block), None);
+                test_eq!(pc.peek(0, *inode, *block), None);
             }
         }
     });
@@ -2423,10 +2423,10 @@ pub fn register_page_cache_tests() {
 
     test_case!("page_cache_invalidate_leaves_other_inodes", {
         let mut pc = PageCache::new();
-        pc.invalidate_inode(1);
-        pc.invalidate_inode(2);
+        pc.invalidate_inode(0, 1);
+        pc.invalidate_inode(0, 2);
         test_eq!(pc.entry_count(), 0);
-        pc.invalidate_inode(1);
+        pc.invalidate_inode(0, 1);
         test_eq!(pc.entry_count(), 0);
     });
 

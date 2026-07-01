@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.48.3 — 2026-07-01
+
+### Added
+- **VFS-2.4 PageCache drive context** — `make_key()` ahora incluye `drive_id: u8` en bits 56-63 de la clave. Todos los métodos públicos (`read_page`, `get_page_mut`, `peek`, `mark_dirty`, `flush_inode`, `invalidate_inode`, `prefetch`) aceptan `drive_id`. Dos FS (C: y D:) con mismo inode_num ya no colisionan en PageCache.
+
+### Changed
+- **VFS-2.1 NeoFS encapsulation** — 5 métodos cambiados de `pub` a `pub(crate)`: `rebuild_bitmap_with_io`, `rebuild_bitmap`, `inode_data_block_count`, `get_inode_block_ptr`, `find_entry_in_directory`. Solo accesibles a través del trait `FileSystem`.
+- `NeoDosFs.drive_id` añadido para identificar cada instancia de FS en PageCache.
+
 ## v0.48.2 — 2026-07-01
 
 ### Added
