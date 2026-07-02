@@ -121,7 +121,72 @@
     - Arranque completo de NeoInit y NeoShell.
   - **Tests:** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
 
-### Networking
+### Networking (F5-F8 — Userland)
+
+* [ ] **NET-1.5. libneodos: SOCKET constant + wrappers** | Prereqs: NET-1 F4 | Files: `libneodos/src/syscall.rs`
+  - **Descripcion:** Anadir `ob_type::SOCKET = 18`, `ObInfoClass::SocketInfo(17)`..`SocketRecv(23)`, `ob_set_info_class::SOCKET_CONNECT(18)`..`SOCKET_CLOSE(22)`. Wrappers: `ob_socket_create()`, `ob_socket_connect()`, `ob_socket_bind()`, `ob_socket_listen()`, `ob_socket_send()`, `ob_socket_recv()`, `ob_socket_close()`.
+  - **Severidad:** ALTA — necesario para red userland
+  - **Tests:** compilación, no se rompen callers
+
+* [ ] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Prereqs: NET-1 F4 | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - **Descripcion:** Anadir `ObInfoClass::SocketRecv = 23` al enum. Handler en `handler_ob_query_info` que copia datos de `socket.recv_buf` al buffer de usuario. Si no hay datos, retorna `-EAGAIN`.
+  - **Severidad:** ALTA — necesario para net_socket_recv en net.nxl
+  - **Tests:** `ob_query_info_socket_recv`
+
+* [ ] **NET-1.7. Kernel: asignar nic_id y puerto efimero en socket_create** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
+  - **Descripcion:** Al crear socket via `ob_create(Socket)`, asignar NIC por defecto y puerto efimero (49152-65535) si no se especifica.
+  - **Severidad:** MEDIA — simplifica API userland
+  - **Tests:** `socket_auto_port_assign`
+
+* [ ] **NET-1.8. net.nxl: libreria userland de red (libnet/)** | Prereqs: NET-1.5, NET-1.6 | Files: `libnet/` (nuevo)
+  - **Descripcion:** Nueva libreria NXL `net.nxl` en slot 3 (`0x1e0c0000`). API: `net_interface_count()`, `net_get_interface_info()`, `net_get_stats()`, `net_socket_create()`, `net_socket_bind()`, `net_socket_connect()`, `net_socket_listen()`, `net_socket_send()`, `net_socket_recv()`, `net_socket_close()`, `net_set_ip()`, `net_set_gateway()`. Usa inline asm para syscalls (no depende de libneodos NXL).
+  - **Severidad:** ALTA — capa base para herramientas de red userland
+  - **Tests:** tests unitarios de parsing (mock syscalls)
+
+* [ ] **NET-1.9. ipconfig.nxe: herramienta userland** | Prereqs: NET-1.8 | Files: `userbin/ipconfig/` (nuevo)
+  - **Descripcion:** `IPCONFIG [/ALL]` — lista interfaces de red, MAC, IP, gateway, DNS, estadisticas. Carga net.nxl via loadlib().
+  - **Severidad:** MEDIA — diagnostico de red basico
+  - **Tests:** integracion: ejecutar ipconfig, verificar salida
+
+* [ ] **NET-1.10. ping.nxe: ICMP userland** | Prereqs: NET-1.8 | Files: `userbin/ping/` (nuevo)
+  - **Descripcion:** `PING <host> [/n count] [/w timeout_ms]`. Usa socket raw para enviar ICMP echo request. Construye header ICMP, calcula checksum, mide RTT.
+  - **Severidad:** MEDIA — herramienta de red esencial
+  - **Tests:** ping a QEMU host o loopback
+
+* [ ] **NET-1.11. dhcp.nxe: DHCP client userland** | Prereqs: NET-1.8 | Files: `userbin/dhcp/` (nuevo)
+  - **Descripcion:** `DHCP [/RENEW] [/RELEASE]`. Cliente DHCP via UDP socket. Discover/Offer/Request/Ack completo. Persiste config en Registry.
+  - **Severidad:** MEDIA — configuracion automatica de red
+  - **Tests:** simular servidor DHCP, verificar cliente
+
+* [ ] **NET-1.12. Registry: valores por defecto en boot** | Prereqs: B2.1 | Files: `src/main.rs`, `src/cm/mod.rs`
+  - **Descripcion:** En boot (Phase 3.881), crear valores Registry por defecto: `CurrentControlSet\Services\NeoInit\DefaultShell`, `Network\Interfaces\0\DHCPEnabled=1`, `Control\WaitForNetwork=0`, etc. Solo crear si no existen.
+  - **Severidad:** ALTA — necesario para migracion de NeoInit a Registry
+  - **Tests:** `cm_default_values_created`
+
+* [ ] **NET-1.13. NeoInit: leer Registry para configuracion** | Prereqs: NET-1.12 | Files: `userbin/neoinit/`
+  - **Descripcion:** NeoInit lee DefaultShell, AutoStartServices, EnableVT, WaitForNetwork desde `\Registry\Machine\System\CurrentControlSet\Services\NeoInit`. Eliminar paths hardcodeados.
+  - **Severidad:** ALTA — configuracion del sistema sin recompilar
+  - **Tests:** integracion: boot con Registry, verificar shell spawn
+
+* [ ] **NET-1.14. NeoInit: auto-start de servicios** | Prereqs: NET-1.13 | Files: `userbin/neoinit/`
+  - **Descripcion:** NeoInit lee `AutoStartServices` (REG_MULTI_SZ), para cada servicio: abrir `\Registry\...\Services\<name>`, leer `Path`, hacer spawn_detached(). Servicios en background, fire-and-forget.
+  - **Severidad:** MEDIA — permite iniciar netcfg, logger, etc. al boot
+  - **Tests:** integracion: Registry con servicio de prueba, verificar spawn
+
+* [ ] **NET-1.15. netcfg.nxe: servicio de configuracion de red** | Prereqs: NET-1.8, NET-1.12 | Files: `userbin/netcfg/` (nuevo)
+  - **Descripcion:** Servicio auto-iniciado: carga net.nxl, lee config de Registry (DHCPEnabled, IP, Gateway, DNS), ejecuta DHCP si corresponde, aplica IP via net_set_ip/net_set_gateway, persiste resultado en Registry.
+  - **Severidad:** ALTA — automatiza configuracion de red al boot
+  - **Tests:** integracion: netcfg con DHCP simulado
+
+* [ ] **NET-1.16. Registry: persistencia a disco (cm_flush_key)** | Prereqs: B2.1 | Files: `src/cm/mod.rs`, `src/cm/hive.rs`
+  - **Descripcion:** Implementar `cm_flush_key()`: serializar hive a bytes (formato NEOH), escribir a `C:\System\Registry\<name>.hiv`. En boot: cargar hive desde disco si existe. `cm_set_value` marca hive dirty. Flush automatico en shutdown.
+  - **Severidad:** CRITICA — sin persistencia, Registry se pierde en cada reboot
+  - **Tests:** `cm_set_value_persist_roundtrip`, `cm_hive_reload_integrity`
+
+* [ ] **NET-1.17. NeoPkg: sistema de paquetes v1** | Prereqs: VFS, Registry | Files: `userbin/pkg/` (nuevo)
+  - **Descripcion:** `PKG INSTALL/REMOVE/LIST/INFO/VERIFY`. Formato .npkg (magic NPKG, manifest, file entries, checksums). Registro en `\Registry\Machine\Packages\<name>`. Proteccion CORE (no eliminar NeoInit/NeoShell/libneodos/kernel.elf).
+  - **Severidad:** ALTA — gestion de software instalado
+  - **Tests:** `pkg_install_remove_roundtrip`, `pkg_core_protection`
 
 ### Registry
 
