@@ -343,6 +343,23 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ---
 
+### v0.48 (NeoFS estabilidad — VFS Fase 2/4 — NET-1 F1-F4 — DHCP)
+
+* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
+* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
+* [x] **VFS-1.3. Eliminar stale namespace entries** — COMPLETADO en v0.48.1: ob_remove_by_id(), cleanup en destroy/close
+* [x] **VFS-1.4. HandleTable → ObObject consistency** — COMPLETADO en v0.48.1: is_valid(), close() guardado, has_ob_object() bugfix
+* [x] **v0.48. NeoFS estabilidad** — COMPLETADO en v0.48.2: FS-1.1/1.2/1.3 (dynamic allocators, sector offsets), NS-1.1/1.2 (ownership, protected dirs), CAP_NS_WRITE
+* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3: 5 métodos pub→pub(crate)
+* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3: drive_id en clave PageCache
+* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4: register escanea slots libres (índices estables), find_by_name()
+* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4: IoStack.stale flag, operaciones fallan en stale
+* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4: refcounts[], acquire/release, remove() protegido
+* [x] **OBF-07. Unificar ObError y SyscallError** — COMPLETADO: ob_err_to_syscall() + test
+* [x] **B3.3 D8. DHCP client** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático
+* [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
+* [x] **NET-1 F1-F4** — COMPLETADO en v0.48.5: Ethernet/UDP/ARP builders, ICMP Port Unreachable, socket_send, UDP/TCP dispatch, TCP three-way handshake real
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

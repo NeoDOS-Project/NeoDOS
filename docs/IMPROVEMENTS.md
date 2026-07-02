@@ -34,19 +34,6 @@
 
 | ID | Item | Priority |
 |----|------|----------|
-| VFS-1.1 | ~~Unificar MountManager~~ | CRITICAL ✅ |
-| VFS-1.2 | ~~Arreglar ownership ObOpen → VFS~~ | CRITICAL ✅ |
-| VFS-1.3 | ~~Eliminar stale namespace entries~~ | CRITICAL ✅ |
-| VFS-1.4 | ~~HandleTable → ObObject consistency~~ | CRITICAL ✅ |
-| v0.48 | ~~NeoFS estabilidad (milestone)~~ | HIGH ✅ |
-| VFS-2.1 | ~~Privatizar métodos de NeoFS~~ | HIGH ✅ |
-| VFS-2.4 | ~~PageCache con contexto de drive~~ | HIGH ✅ |
-| VFS-4.1 | ~~Device IDs estables~~ | HIGH ✅ |
-| VFS-4.2 | ~~Hot-unload safety~~ | HIGH ✅ |
-| VFS-4.3 | ~~Refcount de block devices~~ | HIGH ✅ |
-| OBF-07 | ~~Unificar ObError y SyscallError~~ | HIGH ✅ |
-| B3.3 | ~~DHCP client~~ | HIGH ✅ |
-| B2.1 | ~~Registry hive database~~ | HIGH ✅ |
 | DH3 | Completar libneodos syscall wrappers | HIGH |
 | NS-1..4, FS-1..6 | NeoFS namespace + filesystem fixes (see REFERENCE) | HIGH |
 | v0.49 | NeoFS robustez (milestone) | MEDIUM |
@@ -99,36 +86,17 @@
 
 ### VFS ownership & mount manager risks
 
-* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
-* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
-* [x] **VFS-1.3. Eliminar stale namespace entries** — COMPLETADO en v0.48.1
-* [x] **VFS-1.4. HandleTable → ObObject consistency** — COMPLETADO en v0.48.1
-
 ---
 
 ## HIGH (v0.48 — v0.49)
 
 ### v0.48. NeoFS estabilidad
 
-* [x] **v0.48. NeoFS estabilidad** — COMPLETADO en v0.48.2: FS-1.1/1.2/1.3 (allocators, offsets), NS-1.1/1.2 (ownership, protected dirs), CAP_NS_WRITE
-
 ### VFS Fase 2: Separación de Capas
-
-* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3: 5 métodos pub→pub(crate)
-
-* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3: drive_id en clave PageCache
 
 ### VFS Fase 4: Drivers y Block Devices
 
-* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4: register escanea slots libres (índices estables), find_by_name()
-
-* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4: IoStack.stale flag, operaciones fallan en stale
-
-* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4: refcounts[], acquire/release, remove() protegido
-
 ### Object Manager
-
-* [x] **OBF-07. Unificar ObError y SyscallError en NeoDosError** — COMPLETADO: ob_err_to_syscall() + test
 
 ### Storage
 
@@ -155,18 +123,7 @@
 
 ### Networking
 
-- [x] **B3.3 D8. DHCP client | NT: DHCP Client Service** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático, lease renewal
-
 ### Registry
-
-* [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
-  - **Descripcion:** Implementar NeoReg, sistema de configuracion jerarquico persistente como el Cm de Windows NT. Diseno sigue el modelo NT de celulas (cells) y bins, con integracion directa en el Object Manager NT5.
-    - **Cell-based hive format:** Hive → Base Block (4KB, magic "neoR", seq numbers) → Bins (4KB) → Cells (Key, Value, Security descriptor). Cada celda tiene un indice dentro del bin, bins se numeran secuencialmente.
-    - **ObNamespace integration:** `\Registry\Machine\System` → Ob::Key (backed by SYSTEM.HIV). `sys_open("\\Registry\\Machine\\System\\BootShell")` funciona via NT5 path resolution.
-    - **Syscall API:** RAX 50-59: `sys_open_key`, `sys_create_key`, `sys_query_value`, `sys_set_value`, `sys_enum_key`, `sys_enum_value`, `sys_delete_key`, `sys_flush_key`, `sys_load_hive`, `sys_unload_hive`.
-  - **Criterio:** Keys/value expuestos como objetos en NT5 namespace. `sys_set_value(key, "PATH", REG_SZ, "C:\\Programs")` persiste y es recuperable tras reboot. Cell cache: 2da lectura no toca disco.
-  - **Severidad:** ALTA — feature grande
-  - **Tests:** `cm_create_key_ob`, `cm_query_value_cache_hit`, `cm_set_value_persist`, `cm_enum_keys_multi`, `cm_hive_reload_integrity`, `cm_cell_corruption_isolated`, `cm_syscall_open_key`, `cm_syscall_set_get_value` (8 tests)
 
 ### libneodos
 
@@ -1822,25 +1779,9 @@ sys_ob_open (RAX=60)
 
 *Eliminar riesgos de ownership y dualidad de mounts.*
 
-* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
-
-* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
-
-* [x] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
-  - **Descripcion:** Añadida `ob_remove_by_id()` en namespace que busca y elimina entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir. El parche reactivo (línea 336-338 de `object/mod.rs`) queda como safety net.
-  - **Severidad:** ALTA — namespace inconsistente ✅
-  - **Tests:** `vfs_namespace_cleanup_on_destroy`, `vfs_namespace_cleanup_on_close`, `vfs_namespace_no_orphan_on_close_with_refs`
-
-* [x] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
-  - **Descripcion:** Añadidos `is_valid()` (verifica ObId vivo en Object Manager) e `is_open_and_valid()`. `close()` solo llama `ob_close_object` si `is_valid()`. Corregido `has_ob_object()` que falsamente trataba STDIN/STDOUT como ObObjects. Double-close y stale handles son seguros.
-  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free ✅
-  - **Tests:** `vfs_ownership_is_valid`, `vfs_ownership_is_valid_after_obj_destroyed`, `vfs_ownership_double_close_safe`, `vfs_ownership_stdio_always_valid`, `vfs_ownership_closed_not_valid`
-
 ### VFS Roadmap — Fase 2: Separación de Capas (Prioridad: ALTA)
 
 *VFS puramente genérico, NeoFS puramente específico.*
-
-* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3
 
 * [ ] **VFS-2.2. Refactorizar FSCK** | Prereqs: — | Files: `src/fs/fsck.rs`
   - **Descripcion:** Extraer lógica común de FSCK a un trait `FsckIntegrity` o similar, con implementación para NeoFS. Mover `fs/fsck.rs` a `drivers/fsck_neodos.rs` para que quede junto a su FS. Si se añade FSCK para FAT32, compartir el trait.
@@ -1851,8 +1792,6 @@ sys_ob_open (RAX=60)
   - **Descripcion:** `DosShell::cat()`, `list_directory()` y otros comandos usan `NeoDosFs` directamente. Deben ir por VFS + handles, no por NeoDosFs directo.
   - **Severidad:** MEDIA — bypass de capa VFS, imposibilita añadir chequeos de seguridad en VFS
   - **Tests:** (funcional — comandos existentes deben seguir funcionando)
-
-* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3
 
 ### VFS Roadmap — Fase 3: Namespace Consistencia (Prioridad: MEDIA)
 
@@ -1872,10 +1811,6 @@ sys_ob_open (RAX=60)
   - **Tests:** `vfs_namespace_protected_paths`
 
 ### VFS Roadmap — Fase 4: Drivers y Block Devices (Prioridad: ALTA)
-
-* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4
-* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4
-* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4
 
 ### VFS Roadmap — Fase 5: Caché Unificada (Prioridad: MEDIA)
 
