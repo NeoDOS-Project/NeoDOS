@@ -1,7 +1,7 @@
 # NeoDOS — AGENTS.md
 ## Versión Actual
 
-v0.48.2 (NeoFS estabilidad — dynamic inode/bitmap allocators, sector offsets, NS ownership, CAP_NS_WRITE, 588 tests)
+v0.48.6 (VirtIO block driver A5.2 — PCI 0x1AF4:0x1001, legacy virtqueue, BOOT_DRIVER priority, 537 tests, VIO-ARCH base)
 
 ## Architecture Governance
 
@@ -97,8 +97,12 @@ python3 scripts/auto_test.py            # Automated headless test runner
 
 QEMU accelerator via `QEMU_ACCEL` env var (default: TCG):
 ```bash
-QEMU_ACCEL=kvm bash scripts/qemu-debug.sh
-QEMU_ACCEL=kvm python3 scripts/auto_test.py
+QEMU_ACCEL=kvm bash scripts/qemu-debug.sh                   # default AHCI
+QEMU_ACCEL=kvm bash scripts/qemu-debug.sh --nvme             # NVMe mode
+QEMU_ACCEL=kvm bash scripts/qemu-debug.sh --virtio           # VirtIO block mode
+QEMU_ACCEL=kvm bash scripts/qemu-debug.sh --ata              # legacy ATA PIO
+QEMU_ACCEL=kvm python3 scripts/auto_test.py                   # AHCI tests
+QEMU_ACCEL=kvm python3 scripts/auto_test.py --virtio          # VirtIO tests
 ```
 
 **Note**: Default machine is now `-machine q35` (PCIe with ECAM). Q35 + TCG
@@ -342,7 +346,7 @@ single port, single command slot, 8-sector PRDT. Used during early boot (PHASE 3
 `main.rs`) for GPT parsing, NeoDOS superblock read, and block cache warmup before NEM drivers
 are loaded.
 
-Priority in `storage_manager.rs`: NVMe > BootAhci > BootAta (PIO fallback).
+Priority in `storage_manager.rs`: NVMe > VirtIO > BootAhci > BootAta (PIO fallback).
 
 ### ATA PIO boot stub (fallback)
 

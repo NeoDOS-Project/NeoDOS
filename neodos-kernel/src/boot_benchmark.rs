@@ -197,6 +197,9 @@ pub static AHCI_TIMEOUTS:     AtomicU64 = AtomicU64::new(0);
 pub static AHCI_DMA_FAILURES: AtomicU64 = AtomicU64::new(0);
 pub static AHCI_RETRIES:      AtomicU64 = AtomicU64::new(0);
 
+// ── VirtIO debug instrumentation ────────────────────────────────────
+pub static VIRTIO_COMMANDS: AtomicU64 = AtomicU64::new(0);
+
 /// Call at the start of each AHCI DMA command.
 pub fn ahci_cmd_start() {
     AHCI_COMMANDS.fetch_add(1, Ordering::Relaxed);

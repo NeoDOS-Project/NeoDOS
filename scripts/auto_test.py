@@ -45,11 +45,17 @@ def run_test():
     print()
     
     use_ahci = True
+    use_virtio = False
     for arg in sys.argv[1:]:
         if arg == "--ata":
             use_ahci = False
+            use_virtio = False
         elif arg == "--ahci":
             use_ahci = True
+            use_virtio = False
+        elif arg == "--virtio":
+            use_ahci = False
+            use_virtio = True
     
     disk_image = os.path.join(PROJECT_ROOT, "disk_image.img")
     ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
@@ -70,16 +76,28 @@ def run_test():
         accel = "tcg"
     print(f"[+] QEMU accelerator: {accel}")
     
+    if use_virtio:
+        # Q35 with disable-legacy=on forces modern MMIO transport
+        machine = "q35"
+    else:
+        machine = "q35"
+
     cmd = [
         "qemu-system-x86_64",
-        "-machine", f"q35,accel={accel}",
+        "-machine", f"{machine},accel={accel}",
         "-monitor", "telnet:127.0.0.1:4446,server,nowait",
         "-display", "none",
         "-drive", f"if=pflash,format=raw,readonly=on,file={ovmf_code}",
         "-drive", f"if=pflash,format=raw,file={ovmf_vars}",
     ]
     
-    if use_ahci:
+    if use_virtio:
+        cmd.extend([
+            "-drive", f"if=none,format=raw,file={disk_image},id=virtioblk",
+            "-device", "virtio-blk-pci,disable-modern=on,drive=virtioblk"
+        ])
+        print("[+] Storage: VirtIO Block Mode (q35, legacy-only)")
+    elif use_ahci:
         cmd.extend([
             "-device", "ahci,id=ahci",
             "-drive", f"if=none,format=raw,file={disk_image},id=mydisk",

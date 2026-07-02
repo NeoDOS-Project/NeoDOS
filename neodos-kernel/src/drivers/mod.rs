@@ -18,6 +18,7 @@ pub mod nem;
 pub mod nvme;
 pub mod pci;
 pub mod rtc_bridge;
+pub mod virtio_blk;
 
 use core::sync::atomic::AtomicBool;
 

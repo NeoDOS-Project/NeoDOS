@@ -315,6 +315,7 @@ Happy hacking!
         inode_ahci = allocator.alloc("ahci.nem")
         inode_e1000 = allocator.alloc("e1000.nem")
         inode_ps2mouse = allocator.alloc("ps2mouse.nem")
+        inode_virtio_blk = allocator.alloc("virtio-blk.nem")
         inode_libraries = allocator.alloc("Libraries")
         inode_fsnxl = allocator.alloc("fs.nxl")
         inode_mathnxl = allocator.alloc("math.nxl")
@@ -401,6 +402,7 @@ Happy hacking!
             inode_ahci:    ("ahci.nem",     read_nem("SYSTEM", "ahci.nem")),
             inode_e1000:   ("e1000.nem",    read_nem("SYSTEM", "e1000.nem")),
             inode_ps2mouse:("ps2mouse.nem", read_nem("BOOT", "ps2mouse.nem")),
+            inode_virtio_blk:("virtio-blk.nem", read_nem("SYSTEM", "virtio-blk.nem")),
         }
 
         # Allocate blocks for everything
@@ -451,7 +453,7 @@ Happy hacking!
         # Directory blocks (fixed block allocation)
         sys_dir_blocks    = alloc_blocks(inode_system, 2304)    # System dir (9 entries × 256)
         kernel_dir_blocks = alloc_blocks(inode_kernel, 512)     # Kernel dir
-        drv_dir_blocks    = alloc_blocks(inode_drivers, 2048)    # Drivers dir (8 entries)
+        drv_dir_blocks    = alloc_blocks(inode_drivers, 2560)    # Drivers dir (10 entries)
         lib_dir_blocks    = alloc_blocks(inode_libraries, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(inode_layouts, 768)    # Layouts dir (2 entries + padding)
         cfg_dir_blocks    = alloc_blocks(inode_config, 768)    # Config dir (2 entries + padding)
@@ -469,7 +471,7 @@ Happy hacking!
             inode_system:  (dir_mode, 2304, pad_blocks(sys_dir_blocks)),
             inode_kernel:  (dir_mode, 512,  pad_blocks(kernel_dir_blocks)),
             inode_bootcfg: (MODE_FILE | default_perms_for_filename("boot.cfg"), len(bootcfg_content), pad_blocks(bootcfg_blocks)),
-            inode_drivers: (dir_mode, 2048, pad_blocks(drv_dir_blocks)),
+            inode_drivers: (dir_mode, 2560, pad_blocks(drv_dir_blocks)),
             inode_libraries: (dir_mode, 1536, pad_blocks(lib_dir_blocks)),
             inode_fsnxl:   (MODE_FILE | default_perms_for_filename("fs.nxl"), len(nxl_data), pad_blocks(fs_nxl_blocks)),
             inode_mathnxl: (MODE_FILE | default_perms_for_filename("math.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
@@ -594,6 +596,7 @@ Happy hacking!
         image[offset+1536:offset+1792]= create_dir_entry(inode_ahci, 1, "ahci.nem")
         image[offset+1792:offset+2048]= create_dir_entry(inode_e1000, 1, "e1000.nem")
         image[offset+2048:offset+2304]= create_dir_entry(inode_ps2mouse, 1, "ps2mouse.nem")
+        image[offset+2304:offset+2560]= create_dir_entry(inode_virtio_blk, 1, "virtio-blk.nem")
 
         # NEM driver data blocks
         for inum, (fname, fdata) in nem_data.items():

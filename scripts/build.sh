@@ -198,6 +198,16 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     else
         echo "[!] e1000 build script not found"
     fi
+
+    echo "[+] Compiling NEM v3 standalone driver (virtio-blk)..."
+    DRV_DIR="$PROJECT_ROOT/drivers/virtio-blk"
+    if [ -f "$DRV_DIR/build_nem.py" ]; then
+        mkdir -p "$NEM_DIR/SYSTEM"
+        python3 "$DRV_DIR/build_nem.py" "$NEM_DIR/SYSTEM"
+        echo "[✓] virtio-blk.nem compiled"
+    else
+        echo "[!] virtio-blk build script not found"
+    fi
     export NEM_DIR
 fi
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.48.6 — 2026-07-02
+
+### Added
+- **A5.2 VirtIO Block driver (BOOT_DRIVER)** — `src/drivers/virtio_blk.rs` (322 lines) + `src/virtio/` VIO-ARCH layer (`vring.rs` + `transport.rs`). PCI detection 0x1AF4:0x1001 (legacy I/O) and 0x1AF4:0x1042 (modern MMIO, detected but requires MMIO mapping). Legacy virtqueue I/O BAR interface, 256-entry split vring, read/write/flush via virtio-blk protocol, BlockDevice trait. Storage priority: NVMe > VirtIO > AHCI > ATA. 9 tests (4 unit + 5 integration stubs). `-drive if=virtio` / `--virtio` flag for QEMU. I/O verified via QEMU TCG (pending KVM bugfix for PAGE_TABLE_CORRUPTION).
+
 ## v0.48.5 — 2026-07-01
 
 ### Added

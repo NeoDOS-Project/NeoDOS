@@ -161,6 +161,53 @@ fn mount_system_hive() {
     }
 }
 
+/// Ensure a key path exists in a hive, creating intermediate keys as needed.
+/// Returns the cell index of the final key in the path.
+/// path is like "CurrentControlSet\\Services\\NeoInit"
+fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {
+    let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
+    let mut curr = start;
+    for part in &parts {
+        curr = match hive.find_key(curr, part) {
+            Some(found) => found,
+            None => hive.create_key(curr, part)?,
+        };
+    }
+    Some(curr)
+}
+
+/// Create default registry values during boot (Phase 3.881).
+/// Only sets values that don't already exist, so user overrides survive.
+pub fn cm_ensure_default_values() {
+    let mut cm = CM_MANAGER.lock();
+    if cm.hives.is_empty() {
+        return;
+    }
+    let hm = &mut cm.hives[0]; // SYSTEM hive
+    let root = hm.hive.root_cell();
+
+    // 1. CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\NeoShell.nxe"
+    if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Services\\NeoInit") {
+        if hm.hive.find_value(key, "DefaultShell").is_none() {
+            hm.hive.set_value(key, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+        }
+    }
+
+    // 2. CurrentControlSet\Services\Network\Interfaces\0\DHCPEnabled = 1
+    if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Services\\Network\\Interfaces\\0") {
+        if hm.hive.find_value(key, "DHCPEnabled").is_none() {
+            hm.hive.set_value(key, "DHCPEnabled", hive::REG_DWORD, &1u32.to_le_bytes());
+        }
+    }
+
+    // 3. CurrentControlSet\Control\WaitForNetwork = 0
+    if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Control") {
+        if hm.hive.find_value(key, "WaitForNetwork").is_none() {
+            hm.hive.set_value(key, "WaitForNetwork", hive::REG_DWORD, &0u32.to_le_bytes());
+        }
+    }
+}
+
 /// Mount a hive file from the filesystem at the given mount path.
 /// mount_path is like \Registry\Machine\Software
 pub fn cm_load_hive(name: &str, mount_path: &str) -> Result<(), ()> {
@@ -532,6 +579,80 @@ pub fn register_cm_tests() {
             hive.free_cell(val_idx);
         }
         test_eq!(hive.value_count(net), 2);
+    });
+
+    test_case!("cm_default_values_created", {
+        let mut hive = Hive::new("TestDefaults");
+        let root = hive.root_cell();
+
+        // Reproduce the ensure_key_path + ensure_default_values logic
+        let neoinit = {
+            let path = "CurrentControlSet\\Services\\NeoInit";
+            let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
+            let mut curr = root;
+            for part in &parts {
+                curr = match hive.find_key(curr, part) {
+                    Some(found) => found,
+                    None => hive.create_key(curr, part).unwrap(),
+                };
+            }
+            curr
+        };
+        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+
+        let net_iface = {
+            let path = "CurrentControlSet\\Services\\Network\\Interfaces\\0";
+            let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
+            let mut curr = root;
+            for part in &parts {
+                curr = match hive.find_key(curr, part) {
+                    Some(found) => found,
+                    None => hive.create_key(curr, part).unwrap(),
+                };
+            }
+            curr
+        };
+        hive.set_value(net_iface, "DHCPEnabled", hive::REG_DWORD, &1u32.to_le_bytes());
+
+        let ctrl = {
+            let path = "CurrentControlSet\\Control";
+            let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
+            let mut curr = root;
+            for part in &parts {
+                curr = match hive.find_key(curr, part) {
+                    Some(found) => found,
+                    None => hive.create_key(curr, part).unwrap(),
+                };
+            }
+            curr
+        };
+        hive.set_value(ctrl, "WaitForNetwork", hive::REG_DWORD, &0u32.to_le_bytes());
+
+        // Verify all values were created correctly
+        let v1 = hive.query_value(neoinit, "DefaultShell").unwrap();
+        test_eq!(v1.as_str().unwrap(), "C:\\Programs\\NeoShell.nxe");
+        test_eq!(v1.value_type, hive::REG_SZ);
+
+        let v2 = hive.query_value(net_iface, "DHCPEnabled").unwrap();
+        test_eq!(v2.as_dword().unwrap(), 1);
+        test_eq!(v2.value_type, hive::REG_DWORD);
+
+        let v3 = hive.query_value(ctrl, "WaitForNetwork").unwrap();
+        test_eq!(v3.as_dword().unwrap(), 0);
+        test_eq!(v3.value_type, hive::REG_DWORD);
+
+        // Verify idempotency: re-running set_value on existing keys is fine
+        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+        let v1b = hive.query_value(neoinit, "DefaultShell").unwrap();
+        test_eq!(v1b.as_str().unwrap(), "C:\\Programs\\NeoShell.nxe");
+
+        // Verify the key hierarchy is intact
+        test_eq!(hive.key_count(root), 1); // Root has CurrentControlSet
+        let ccs = hive.find_key(root, "CurrentControlSet").unwrap();
+        test_eq!(hive.key_count(ccs), 2); // CurrentControlSet has Services + Control
+        let services = hive.find_key(ccs, "Services").unwrap();
+        test_eq!(hive.key_count(services), 2); // Services has NeoInit + Network
+        test_eq!(hive.value_count(ctrl), 1); // Control has WaitForNetwork
     });
 }
 

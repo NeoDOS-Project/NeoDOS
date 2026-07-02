@@ -2624,6 +2624,9 @@ pub fn register_tests() {
     // B3.1/B3.2: Networking tests
     crate::net::register_net_tests();
 
+    // A5.2: VirtIO Block driver tests
+    crate::drivers::virtio_blk::register_tests();
+
     // B2.1 Z6: Registry hive database (Cm) tests
     crate::cm::register_cm_tests();
 }

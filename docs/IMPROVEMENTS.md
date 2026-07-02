@@ -63,6 +63,18 @@
 | NET-1.10 | ping.nxe | MEDIUM |
 | NET-1.11 | dhcp.nxe (userland) | MEDIUM |
 | NET-1.15 | netcfg.nxe network service | HIGH |
+| VIO-ARCH | Virtqueue abstraction + modern PCI transport | HIGH |
+| VIO-NET | VirtIO Network (0x1000) | HIGH |
+| VIO-9P | VirtIO 9P filesystem (0x1009) | HIGH |
+| VIO-BLK2 | VirtIO Block NEM driver | MEDIUM |
+| VIO-INPUT | VirtIO Input (0x1013) | MEDIUM |
+| VIO-CON | VirtIO Console (0x1002) | LOW |
+| VIO-RNG | VirtIO RNG (0x1003) | LOW |
+| VIO-SCSI | VirtIO SCSI (0x100A) | LOW |
+| VIO-GPU | VirtIO GPU (0x1012) | LOW |
+| VIO-VSOCK | VirtIO VSOCK (0x1014) | LOW |
+| VIO-SOUND | VirtIO Sound (0x1015) | LOW |
+| VIO-BALLOON | VirtIO Memory Balloon (0x1004) | LOW |
 | B2.6 | Registry defaults in boot | HIGH |
 | B2.7 | Registry disk persistence | CRITICAL |
 | B4.10 | NeoInit Registry-driven config | HIGH |
@@ -113,7 +125,7 @@
 
 ### Storage
 
-* [ ] **A5.2. VirtIO block driver (BOOT_DRIVER)** | Prereqs: A2.1 | Files: `src/drivers/virtio_blk.rs` (new, 400-500 lines), `src/drivers/storage.rs`, `src/main.rs` PHASE 3.6
+* [x] **A5.2. VirtIO block driver (BOOT_DRIVER)** | Prereqs: A2.1 | Files: `src/drivers/virtio_blk.rs` (322 lines), `src/virtio/` (vring.rs + transport.rs, VIO-ARCH), `src/drivers/storage_manager.rs`, `src/main.rs` PHASE 3.6 — **COMPLETADO** en v0.48.6
   - **Descripcion:** Controlador de bloques VirtIO para maquinas virtuales QEMU/KVM. Se clasifica como **BOOT_DRIVER**, no como `.NEM`, ya que participa directamente en la cadena de arranque del sistema y debe estar disponible antes del montaje del volumen raiz.
     - **PCI detection:** Bus 0, vendor 0x1AF4 (Red Hat), device 0x1001 (VirtIO Block).
     - **Initialization:**
@@ -132,7 +144,127 @@
     - Deteccion automatica PCI, inicializacion correcta del dispositivo.
     - GPT parsing via VirtIO, carga del superblock NeoDOS, montaje de volumen raiz.
     - Arranque completo de NeoInit y NeoShell.
-  - **Tests:** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
+   - **Tests:** `virtio_pci_detect`, `virtio_virtqueue_init`, `virtio_submit_read_write`, `virtio_boot_load_kernel`, `virtio_gpt_parsing`, `virtio_mount_rootfs`, `virtio_boot_neoshell` (7 tests)
+
+### A5.3. VirtIO Driver Roadmap
+
+> **Estado actual:** Solo VirtIO Block (0x1001) como BOOT_DRIVER inline, PCI legacy I/O BAR,
+> virtqueue manual sin abstracción reusable, polling síncrono (sin interrupciones ni MSI-X).
+> No hay soporte para transport moderno (MMIO BAR, VirtIO 1.0+), ni drivers NEM standalone.
+>
+> **Prerequisito transversal:** antes de implementar drivers específicos, se recomienda
+> crear una capa de virtqueue reutilizable (split vring 1.0) y soporte para transport moderno
+> PCI MMIO, para que todos los drivers VirtIO compartan la misma infraestructura.
+
+* [ ] **VIO-ARCH. Virtqueue abstraction + modern PCI transport** | Prereqs: A2.1 | Files: `src/virtio/` (new)
+  - **Descripcion:** Capa base reutilizable para todos los drivers VirtIO:
+    - Virtqueue split vring 1.0 (descriptor table, avail ring, used ring) en módulo propio
+    - Soporte para legacy I/O BAR y modern MMIO BAR (VirtIO 1.0+)
+    - Negociación de features (legacy vs modern)
+    - Múltiples virtqueues por dispositivo
+    - Descriptores indirectos
+    - MSI-X + interrupciones (modo poll como fallback)
+    - Función de descubrimiento PCI genérica (0x1AF4, cualquier device ID)
+  - **Severidad:** ALTA — desbloquea todos los demás drivers VirtIO
+  - **Tests:** `vio_virtqueue_alloc_free`, `vio_virtqueue_submit_chain`, `vio_virtqueue_poll_completion`, `vio_modern_bar_detect`, `vio_feature_negotiation`, `vio_msix_configure`
+
+* [ ] **VIO-BLK2. VirtIO Block NEM driver** | Prereqs: VIO-ARCH | Files: `drivers/virtio-blk/` (new, NEM SYSTEM)
+  - **Descripcion:** Reemplazar el BOOT_DRIVER inline por un driver NEM standalone (SYSTEM category):
+    - Se carga en Phase 3.85 junto con los demás NEM SYSTEM
+    - Usa la capa VIO-ARCH para virtqueue y transport
+    - Sigue el pipeline de certificación (Loaded→Initialized→Registered→Bound→Active)
+    - Hotplug multi-dispositivo (no solo índice 0)
+    - Interrupciones MSI-X con DPC para completar IRPs sin polling
+  - **Severidad:** MEDIA — el BOOT_DRIVER actual funciona; este es refactor + mejora
+  - **Tests:** `vio_blk_probe`, `vio_blk_read_write`, `vio_blk_multi_device`
+
+* [ ] **VIO-NET. VirtIO Network (0x1000)** | Prereqs: VIO-ARCH | Files: `src/net/virtio_net.rs` o `drivers/virtio-net/` (NEM)
+  - **Descripcion:** Controlador de red VirtIO complementario a e1000. Se integra con `src/net/nic.rs` (trait `NetworkInterface`).
+    - 1 RX virtqueue + 1 TX virtqueue (opcional: 1 control queue)
+    - Mergeable RX buffers (VIRTIO_NET_F_MRG_RXBUF)
+    - Checksum offload (VIRTIO_NET_F_CSUM, VIRTIO_NET_F_GUEST_CSUM)
+    - MAC desde config space del dispositivo
+    - Link status polling (VIRTIO_NET_F_STATUS)
+    - Modo legacy (I/O BAR) y moderno (MMIO BAR)
+  - **Severidad:** ALTA — permite QEMU/KVM con red VirtIO (más rápida que e1000)
+  - **Tests:** `vio_net_probe`, `vio_net_send_recv`, `vio_net_mac_config`
+
+* [ ] **VIO-CON. VirtIO Console (0x1002)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-console/` (NEM)
+  - **Descripcion:** Controlador de consola serie VirtIO (2 virtqueues: receiveq + transmitq por puerto).
+    - Múltiples puertos (VIRTIO_CONSOLE_F_MULTIPORT)
+    - Integración con `src/serial.rs` o como nuevo dispositivo en Ob namespace `\Device\VirtioCon`
+    - Útil para QEMU `-chardev socket,id=virtiocon -device virtio-serial` sin puerto serie 16550
+  - **Severidad:** BAJA — el serial 16550 existente funciona bien
+  - **Tests:** `vio_con_write_read`, `vio_con_multiport`
+
+* [ ] **VIO-RNG. VirtIO RNG (0x1003)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-rng/` (NEM)
+  - **Descripcion:** Fuente de entropía adicional vía VirtIO.
+    - Un solo virtqueue, el dispositivo rellena buffers con bytes aleatorios
+    - Útil si RDRAND no está disponible o como fuente adicional de entropía
+    - Integrar con `src/random.rs` o exponer como Ob info object
+  - **Severidad:** BAJA — RDRAND + TSC fallback existente es suficiente
+  - **Tests:** `vio_rng_fill_buffer`, `vio_rng_randomness_test`
+
+* [ ] **VIO-9P. VirtIO 9P (0x1009)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-9p/` (NEM), `src/fs/9p.rs`
+  - **Descripcion:** Filesystem 9P2000.L sobre VirtIO para compartir directorios host-huésped.
+    - Single virtqueue (o múltiples para requests concurrentes)
+    - Operaciones: Tversion, Tattach, Twalk, Topen, Tread, Twrite, Tclunk
+    - Montable vía VFS como otro driver de filesystem (drive letter, ej. H:)
+    - QEMU: `-virtfs local,path=/host/share,mount_tag=hostshare`
+  - **Severidad:** ALTA — permite compartir archivos host→huésped sin red ni FAT32
+  - **Tests:** `vio_9p_version_attach`, `vio_9p_walk_open_read`, `vio_9p_write_close`
+
+* [ ] **VIO-SCSI. VirtIO SCSI (0x100A)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-scsi/` (NEM)
+  - **Descripcion:** Controlador SCSI sobre VirtIO.
+    - 1 control queue + 1 request queue por target (o 1 compartida + 1 control)
+    - Comandos SCSI: READ(10), WRITE(10), INQUIRY, TEST_UNIT_READY, READ_CAPACITY(10/16)
+    - Registra block devices por LUN
+    - Útil para QEMU con controladores SCSI emulados sobre VirtIO
+  - **Severidad:** BAJA — VirtIO Block cubre el caso de uso principal
+  - **Tests:** `vio_scsi_inquiry`, `vio_scsi_read_write`, `vio_scsi_lun_enum`
+
+* [ ] **VIO-GPU. VirtIO GPU (0x1012)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-gpu/` (NEM), `src/video/gpu.rs`
+  - **Descripcion:** Controlador de GPU 2D/3D acelerada vía VirtIO.
+    - 1 control queue + 1 cursor queue
+    - Comandos: resource_create_2d, resource_flush, transfer_to_host_2d, set_scanout
+    - Modo scanout (framebuffer compartido) para display simple
+    - Integración con el compositor 2D (B4.10)
+  - **Severidad:** BAJA — framebuffer GOP existente es suficiente para fase actual
+  - **Tests:** `vio_gpu_scanout_mode`, `vio_gpu_resource_create_flush`
+
+* [ ] **VIO-INPUT. VirtIO Input (0x1013)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-input/` (NEM)
+  - **Descripcion:** Controlador de dispositivos de entrada (teclado, ratón, tablet) vía VirtIO.
+    - 1 event queue por dispositivo
+    - Eventos: EV_KEY, EV_REL, EV_ABS, EV_SYN
+    - Integración con `src/input/manager.rs` como fuente de entrada adicional a PS/2
+    - Útil para QEMU con `-device virtio-keyboard` / `-device virtio-tablet`
+  - **Severidad:** MEDIA — permite entrada en VMs sin PS/2
+  - **Tests:** `vio_input_key_event`, `vio_input_abs_event`, `vio_input_multi_device`
+
+* [ ] **VIO-VSOCK. VirtIO VSOCK (0x1014)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-vsock/` (NEM)
+  - **Descripcion:** Socket de comunicación host-huésped vía VirtIO.
+    - 1 RX queue + 1 TX queue + 1 event queue
+    - Stream-oriented (similar TCP), con context_id (CID)
+    - Exponer como device Ob `\Device\Vsock`
+    - Útil para comunicación eficiente host→guest sin red
+  - **Severidad:** BAJA — sin uso inmediato en NeoDOS
+  - **Tests:** `vio_vsock_open_close`, `vio_vsock_send_recv`
+
+* [ ] **VIO-SOUND. VirtIO Sound (0x1015)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-sound/` (NEM)
+  - **Descripcion:** Controlador de audio vía VirtIO.
+    - 1 control queue + 1 event queue + N stream queues por PCM stream
+    - PCM playback/capture, mixer controls
+    - QEMU: `-device virtio-sound`
+  - **Severidad:** BAJA — NeoDOS no tiene subsistema de audio todavía
+  - **Tests:** `vio_sound_pcm_open_close`, `vio_sound_volume_control`
+
+* [ ] **VIO-BALLOON. VirtIO Memory Balloon (0x1004)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-balloon/` (NEM)
+  - **Descripcion:** Gestión dinámica de memoria huésped (ballooning) para VMs.
+    - 1 virtqueue para inflar/desinflar páginas
+    - Estadísticas: VIRTIO_BALLOON_F_STATS_VQ
+    - Útil para VMs donde el host quiere reclamar memoria guest
+  - **Severidad:** BAJA — sin plan de virtualización actual
+  - **Tests:** `vio_balloon_inflate_deflate`, `vio_balloon_stats`
 
 ### Networking (F5-F6 — Userland tools)
 

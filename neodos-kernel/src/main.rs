@@ -62,6 +62,7 @@ mod object;
 mod kwait;
 mod net;
 mod cm;
+mod virtio;
 mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
@@ -487,6 +488,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     cm::init_cm();
 
     // ============================================
+    // PHASE 3.881b: Default registry values for boot
+    // Creates CurrentControlSet\Services\NeoInit\DefaultShell,
+    // Network\Interfaces\0\DHCPEnabled, Control\WaitForNetwork, etc.
+    // Only sets values if they don't already exist.
+    // ============================================
+    println!("[+] Ensuring default registry values...");
+    cm::cm_ensure_default_values();
+
+    // ============================================
     // PHASE 3.9: Validate syscall ABI + ABI freeze
     // ============================================
     println!("[+] Validating syscall ABI...");
@@ -566,10 +576,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Detect which storage driver was selected
     let driver_name: &'static str = {
         let bdevs = globals::BLOCK_DEVICES.lock();
-        // storage_manager priority: NVMe > AHCI > ATA
+        // storage_manager priority: NVMe > VirtIO > AHCI > ATA
         if bdevs.count() > 0 {
-            // Check AHCI debug counters to see if AHCI was used
-            if boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+            if boot_benchmark::VIRTIO_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) > 0 {
+                "VIRTIO.BLK"
+            } else if boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) > 0 {
                 "AHCI.NEM"
             } else {
                 "ATA.PIO"

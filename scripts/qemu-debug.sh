@@ -22,6 +22,7 @@ for arg in "$@"; do
         --ata) USE_STORAGE="ata" ;;
         --ahci) USE_STORAGE="ahci" ;;
         --nvme) USE_STORAGE="nvme" ;;
+        --virtio) USE_STORAGE="virtio" ;;
     esac
 done
 
@@ -54,6 +55,9 @@ if [ "$USE_STORAGE" = "ahci" ]; then
 elif [ "$USE_STORAGE" = "nvme" ]; then
   DRIVE_OPTS="-drive if=none,format=raw,file=$DISK_IMAGE,id=nvm -device nvme,serial=deadbeef,drive=nvm"
   echo "[+] Storage: NVMe Mode"
+elif [ "$USE_STORAGE" = "virtio" ]; then
+  DRIVE_OPTS="-drive if=none,format=raw,file=$DISK_IMAGE,id=virtioblk -device virtio-blk-pci,disable-legacy=on,drive=virtioblk"
+  echo "[+] Storage: VirtIO Block Mode"
 else
   DRIVE_OPTS="-drive format=raw,file=$DISK_IMAGE,index=0,media=disk"
   echo "[+] Storage: ATA/IDE Mode"
