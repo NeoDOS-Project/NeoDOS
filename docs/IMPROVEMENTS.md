@@ -34,20 +34,19 @@
 
 | ID | Item | Priority |
 |----|------|----------|
-| VFS-1.1 | Unificar MountManager | CRITICAL |
-| VFS-1.2 | Arreglar ownership ObOpen → VFS | CRITICAL |
+| VFS-1.1 | ~~Unificar MountManager~~ | CRITICAL ✅ |
+| VFS-1.2 | ~~Arreglar ownership ObOpen → VFS~~ | CRITICAL ✅ |
 | VFS-1.3 | ~~Eliminar stale namespace entries~~ | CRITICAL ✅ |
 | VFS-1.4 | ~~HandleTable → ObObject consistency~~ | CRITICAL ✅ |
-| v0.48 | NeoFS estabilidad (milestone) | HIGH |
-| VFS-2.1 | Privatizar métodos de NeoFS | HIGH |
-| VFS-2.4 | PageCache con contexto de drive | HIGH |
-| VFS-4.1 | Device IDs estables | HIGH |
-| VFS-4.2 | Hot-unload safety | HIGH |
-| VFS-4.3 | Refcount de block devices | HIGH |
-| OBF-07 | Unificar ObError y SyscallError en NeoDosError | HIGH |
-| A5.2 | VirtIO block driver (BOOT_DRIVER) | HIGH |
-| B3.3 | DHCP client | HIGH |
-| B2.1 | Registry hive database | HIGH |
+| v0.48 | ~~NeoFS estabilidad (milestone)~~ | HIGH ✅ |
+| VFS-2.1 | ~~Privatizar métodos de NeoFS~~ | HIGH ✅ |
+| VFS-2.4 | ~~PageCache con contexto de drive~~ | HIGH ✅ |
+| VFS-4.1 | ~~Device IDs estables~~ | HIGH ✅ |
+| VFS-4.2 | ~~Hot-unload safety~~ | HIGH ✅ |
+| VFS-4.3 | ~~Refcount de block devices~~ | HIGH ✅ |
+| OBF-07 | ~~Unificar ObError y SyscallError~~ | HIGH ✅ |
+| B3.3 | ~~DHCP client~~ | HIGH ✅ |
+| B2.1 | ~~Registry hive database~~ | HIGH ✅ |
 | DH3 | Completar libneodos syscall wrappers | HIGH |
 | NS-1..4, FS-1..6 | NeoFS namespace + filesystem fixes (see REFERENCE) | HIGH |
 | v0.49 | NeoFS robustez (milestone) | MEDIUM |
@@ -100,25 +99,10 @@
 
 ### VFS ownership & mount manager risks
 
-* [ ] **VFS-1.1. Unificar MountManager** | Prereqs: — | Files: `src/vfs/mount.rs`, `src/fs/vfs.rs`, `src/main.rs`
-  - **Descripcion:** Fusionar `Vfs::mount()` con `vfs::mount::vfs_mount()`. Un solo punto de mount/unmount que sincronice Vfs.drives[] + MountPoint creation + \DosDevices symlinks. Actualmente `main.rs` llama a ambos para el mismo mount — eliminar la duplicación.
-  - **Severidad:** CRITICO — dos tablas de montaje independientes sin validación cruzada
-  - **Tests:** `vfs_mount_dual_sync`, `vfs_mount_unmount_removes_both`
-
-* [ ] **VFS-1.2. Arreglar ownership ObOpen → VFS** | Prereqs: — | Files: `src/object/mod.rs`, `src/handle.rs`
-  - **Descripcion:** No crear ObObject persistente en namespace para cada `ob_open_path()`. Usar ObObject efímero (sin namespace entry) para file handles, o crear un "file object" real con ObOperations cuyo `on_destroy` cierre el archivo en el FS subyacente.
-  - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
-  - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
-
-* [x] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
-  - **Descripcion:** Añadida `ob_remove_by_id()` en namespace que busca y elimina entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir. El parche reactivo (línea 336-338 de `object/mod.rs`) queda como safety net para casos extremos.
-  - **Severidad:** ALTA — namespace inconsistente ✅
-  - **Tests:** `vfs_namespace_cleanup_on_destroy`, `vfs_namespace_cleanup_on_close`, `vfs_namespace_no_orphan_on_close_with_refs`
-
-* [x] **VFS-1.4. HandleTable → ObObject consistency** | Prereqs: — | Files: `src/handle.rs`
-  - **Descripcion:** Añadidos `is_valid()` (verifica ObId vivo en Object Manager) e `is_open_and_valid()`. `close()` solo llama `ob_close_object` si `is_valid()`. Corregido `has_ob_object()` que falsamente trataba STDIN/STDOUT como ObObjects. Double-close y stale handles son seguros.
-  - **Severidad:** MEDIA — colgar handles puede causar uso-after-free ✅
-  - **Tests:** `vfs_ownership_is_valid`, `vfs_ownership_is_valid_after_obj_destroyed`, `vfs_ownership_double_close_safe`, `vfs_ownership_stdio_always_valid`, `vfs_ownership_closed_not_valid`
+* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
+* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
+* [x] **VFS-1.3. Eliminar stale namespace entries** — COMPLETADO en v0.48.1
+* [x] **VFS-1.4. HandleTable → ObObject consistency** — COMPLETADO en v0.48.1
 
 ---
 
@@ -126,45 +110,25 @@
 
 ### v0.48. NeoFS estabilidad
 
-* [ ] **v0.48. NeoFS estabilidad** | Prereqs: — | Files: `src/fs/neodos_fs.rs`, `src/fs/vfs.rs`
-  - **Descripcion:** Namespace ownership (NS-1/NS-2), dynamic allocators (FS-1/FS-2/FS-4), CAP_NS_WRITE, e1000 cleanup
-  - **Severidad:** ALTA — bugfixes de estabilidad post-v0.47
-  - **Tests:** `ns_ownership_tracking`, `fs_dynamic_inode_alloc`, `fs_dynamic_bitmap`
+* [x] **v0.48. NeoFS estabilidad** — COMPLETADO en v0.48.2: FS-1.1/1.2/1.3 (allocators, offsets), NS-1.1/1.2 (ownership, protected dirs), CAP_NS_WRITE
 
 ### VFS Fase 2: Separación de Capas
 
-* [ ] **VFS-2.1. Privatizar métodos de NeoFS** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
-  - **Descripcion:** Hacer `abs_lba()`, `find_entry_in_directory()`, `get_inode_block_ptr()`, `inode_data_block_count()`, `directory_byte_span()`, `rebuild_bitmap()` → `pub(crate)` o privados. Solo deben ser accesibles a través del trait `FileSystem`.
-  - **Severidad:** ALTA — ruptura de encapsulación, cualquier módulo puede acceder a detalles internos de NeoFS
-  - **Tests:** (compilación, no se rompen callers existentes)
+* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3: 5 métodos pub→pub(crate)
 
-* [ ] **VFS-2.4. PageCache con contexto de drive** | Prereqs: — | Files: `src/buffer/page_cache.rs`
-  - **Descripcion:** PageCache global usa `inode_num` como clave primaria. Dos instancias de NeoDosFs (C: y D:) con mismo inode_num colisionan. Añadir `drive_idx` a la clave de PageCache.
-  - **Severidad:** ALTA — corrupción silenciosa de datos entre drives
-  - **Tests:** `vfs_cache_pagecache_drive_context`
+* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3: drive_id en clave PageCache
 
 ### VFS Fase 4: Drivers y Block Devices
 
-* [ ] **VFS-4.1. Device IDs estables** | Prereqs: — | Files: `src/vfs/io.rs`, `src/drivers/block/mod.rs`
-  - **Descripcion:** Usar UUID o nombre simbólico (ej. el nombre del driver + número de serie) para identificar block devices en lugar de índice numérico en Vec. El `IoStack` debe referenciar por nombre, no por índice. Evita invalidación al insertar/eliminar dispositivos.
-  - **Severidad:** ALTA — si un dispositivo se elimina, los índices cambian y todos los IoStack quedan inválidos
-  - **Tests:** `vfs_iostack_device_id_stable`
+* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4: register escanea slots libres (índices estables), find_by_name()
 
-* [ ] **VFS-4.2. Hot-unload safety** | Prereqs: VFS-4.1 | Files: `src/drivers/boot_loader/mod.rs`, `src/drivers/driver_runtime.rs`
-  - **Descripcion:** Cuando un driver se descarga, notificar al VFS para invalidar IoStacks que referencien sus devices. Marcar NeoDosFs como "stale" si su device se va. Impedir reads/writes adicionales.
-  - **Severidad:** ALTA — descarga de driver de disco con archivos abiertos causa uso de device_id inválido
-  - **Tests:** `vfs_iostack_stale_device_handling`
+* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4: IoStack.stale flag, operaciones fallan en stale
 
-* [ ] **VFS-4.3. Refcount de block devices** | Prereqs: VFS-4.1 | Files: `src/drivers/block/mod.rs`
-  - **Descripcion:** Llevar contador de referencias a cada block device (cuántos IoStack lo usan). Prevenir unload si refcount > 0.
-  - **Severidad:** ALTA — hot unload puede dejar referencias colgadas
-  - **Tests:** `driver_stress_load_unload_cycle`
+* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4: refcounts[], acquire/release, remove() protegido
 
 ### Object Manager
 
-* [ ] **OBF-07. Unificar ObError y SyscallError en NeoDosError** | Prereqs: — | Files: `src/object/types.rs`, `src/syscall/mod.rs`
-  - **Severidad:** MEDIA — 1 dia
-  - **Tests:** `ob_error_syscall_mapping_complete`
+* [x] **OBF-07. Unificar ObError y SyscallError en NeoDosError** — COMPLETADO: ob_err_to_syscall() + test
 
 ### Storage
 
@@ -191,14 +155,11 @@
 
 ### Networking
 
-- [ ] **B3.3 D8. DHCP client | NT: DHCP Client Service** | Prereqs: B3.2 | Files: `src/net/dhcp.rs`
-  - **Descripcion:** Cliente DHCP (RFC 2131) que obtiene configuracion de red automaticamente al boot.
-  - **Criterio:** Al boot con NIC presente, kernel obtiene IP automaticamente sin configuracion manual.
-  - **Tests:** `dhcp_discover_offer_sequence`, `dhcp_lease_renewal`.
+- [x] **B3.3 D8. DHCP client | NT: DHCP Client Service** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático, lease renewal
 
 ### Registry
 
-* [ ] **B2.1 Z6. Registry hive database | NT: Cm (Configuration Manager), cell-based hive** | Prereqs: NT5 (Ob), NT6 (SID/ACL), A5.1 (IoStack) | Files: `src/cm/`, `src/cm/hive.rs`, `src/cm/cell.rs`, `src/cm/key.rs`, `src/cm/cache.rs`
+* [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
   - **Descripcion:** Implementar NeoReg, sistema de configuracion jerarquico persistente como el Cm de Windows NT. Diseno sigue el modelo NT de celulas (cells) y bins, con integracion directa en el Object Manager NT5.
     - **Cell-based hive format:** Hive → Base Block (4KB, magic "neoR", seq numbers) → Bins (4KB) → Cells (Key, Value, Security descriptor). Cada celda tiene un indice dentro del bin, bins se numeran secuencialmente.
     - **ObNamespace integration:** `\Registry\Machine\System` → Ob::Key (backed by SYSTEM.HIV). `sys_open("\\Registry\\Machine\\System\\BootShell")` funciona via NT5 path resolution.
@@ -1861,15 +1822,9 @@ sys_ob_open (RAX=60)
 
 *Eliminar riesgos de ownership y dualidad de mounts.*
 
-* [ ] **VFS-1.1. Unificar MountManager** | Prereqs: — | Files: `src/vfs/mount.rs`, `src/fs/vfs.rs`, `src/main.rs`
-  - **Descripcion:** Fusionar `Vfs::mount()` con `vfs::mount::vfs_mount()`. Un solo punto de mount/unmount que sincronice Vfs.drives[] + MountPoint creation + \DosDevices symlinks. Actualmente `main.rs` llama a ambos para el mismo mount — eliminar la duplicación.
-  - **Severidad:** CRITICO — dos tablas de montaje independientes sin validación cruzada
-  - **Tests:** `vfs_mount_dual_sync`, `vfs_mount_unmount_removes_both`
+* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
 
-* [ ] **VFS-1.2. Arreglar ownership ObOpen → VFS** | Prereqs: — | Files: `src/object/mod.rs`, `src/handle.rs`
-  - **Descripcion:** No crear ObObject persistente en namespace para cada `ob_open_path()`. Usar ObObject efímero (sin namespace entry) para file handles, o crear un "file object" real con ObOperations cuyo `on_destroy` cierre el archivo en el FS subyacente.
-  - **Severidad:** CRITICO — namespace entries huérfanos, sin callback de cleanup
-  - **Tests:** `vfs_ownership_obid_valid_after_close`, `vfs_ownership_namespace_entry_cleanup`
+* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
 
 * [x] **VFS-1.3. Eliminar stale namespace entries** | Prereqs: VFS-1.2 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
   - **Descripcion:** Añadida `ob_remove_by_id()` en namespace que busca y elimina entries por ObId. `ob_destroy_object()` y `ob_close_object()` llaman `ob_remove_by_id()` al destruir. El parche reactivo (línea 336-338 de `object/mod.rs`) queda como safety net.
@@ -1885,10 +1840,7 @@ sys_ob_open (RAX=60)
 
 *VFS puramente genérico, NeoFS puramente específico.*
 
-* [ ] **VFS-2.1. Privatizar métodos de NeoFS** | Prereqs: — | Files: `src/fs/neodos_fs.rs`
-  - **Descripcion:** Hacer `abs_lba()`, `find_entry_in_directory()`, `get_inode_block_ptr()`, `inode_data_block_count()`, `directory_byte_span()`, `rebuild_bitmap()` → `pub(crate)` o privados. Solo deben ser accesibles a través del trait `FileSystem`.
-  - **Severidad:** ALTA — ruptura de encapsulación, cualquier módulo puede acceder a detalles internos de NeoFS
-  - **Tests:** (compilación, no se rompen callers existentes)
+* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3
 
 * [ ] **VFS-2.2. Refactorizar FSCK** | Prereqs: — | Files: `src/fs/fsck.rs`
   - **Descripcion:** Extraer lógica común de FSCK a un trait `FsckIntegrity` o similar, con implementación para NeoFS. Mover `fs/fsck.rs` a `drivers/fsck_neodos.rs` para que quede junto a su FS. Si se añade FSCK para FAT32, compartir el trait.
@@ -1900,10 +1852,7 @@ sys_ob_open (RAX=60)
   - **Severidad:** MEDIA — bypass de capa VFS, imposibilita añadir chequeos de seguridad en VFS
   - **Tests:** (funcional — comandos existentes deben seguir funcionando)
 
-* [ ] **VFS-2.4. PageCache con contexto de drive** | Prereqs: — | Files: `src/buffer/page_cache.rs`
-  - **Descripcion:** PageCache global usa `inode_num` como clave primaria. Dos instancias de NeoDosFs (C: y D:) con mismo inode_num colisionan. Añadir `drive_idx` a la clave de PageCache.
-  - **Severidad:** ALTA — corrupción silenciosa de datos entre drives
-  - **Tests:** `vfs_cache_pagecache_drive_context`
+* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3
 
 ### VFS Roadmap — Fase 3: Namespace Consistencia (Prioridad: MEDIA)
 
@@ -1924,20 +1873,9 @@ sys_ob_open (RAX=60)
 
 ### VFS Roadmap — Fase 4: Drivers y Block Devices (Prioridad: ALTA)
 
-* [ ] **VFS-4.1. Device IDs estables** | Prereqs: — | Files: `src/vfs/io.rs`, `src/drivers/block/mod.rs`
-  - **Descripcion:** Usar UUID o nombre simbólico (ej. el nombre del driver + número de serie) para identificar block devices en lugar de índice numérico en Vec. El `IoStack` debe referenciar por nombre, no por índice. Evita invalidación al insertar/eliminar dispositivos.
-  - **Severidad:** ALTA — si un dispositivo se elimina, los índices cambian y todos los IoStack quedan inválidos
-  - **Tests:** `vfs_iostack_device_id_stable`
-
-* [ ] **VFS-4.2. Hot-unload safety** | Prereqs: VFS-4.1 | Files: `src/drivers/boot_loader/mod.rs`, `src/drivers/driver_runtime.rs`
-  - **Descripcion:** Cuando un driver se descarga, notificar al VFS para invalidar IoStacks que referencien sus devices. Marcar NeoDosFs como "stale" si su device se va. Impedir reads/writes adicionales.
-  - **Severidad:** ALTA — descarga de driver de disco con archivos abiertos causa uso de device_id inválido
-  - **Tests:** `vfs_iostack_stale_device_handling`
-
-* [ ] **VFS-4.3. Refcount de block devices** | Prereqs: VFS-4.1 | Files: `src/drivers/block/mod.rs`
-  - **Descripcion:** Llevar contador de referencias a cada block device (cuántos IoStack lo usan). Prevenir unload si refcount > 0.
-  - **Severidad:** ALTA — hot unload puede dejar referencias colgadas
-  - **Tests:** `driver_stress_load_unload_cycle`
+* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4
+* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4
+* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4
 
 ### VFS Roadmap — Fase 5: Caché Unificada (Prioridad: MEDIA)
 
