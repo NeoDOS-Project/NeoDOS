@@ -44,7 +44,7 @@
 | NET-1.8 | net.nxl userland network library | **HIGH** |
 | NET-1.15 | netcfg.nxe network service | **HIGH** |
 | B2.6 | Registry defaults in boot | **HIGH** |
-| **B2.7** | **Registry disk persistence** | **CRITICAL** |
+| ~~**B2.7**~~ | ~~**Registry disk persistence**~~ **[COMPLETED]** | ~~**CRITICAL**~~ |
 | B4.10 | NeoInit Registry-driven config | **HIGH** |
 | PKG-1 (P0-P6) | NeoGet v1 — sistema de paquetes `.nxp` (diseño completo, impl diferida a v0.70) | LOW |
 | v0.49 | NeoFS robustez (indirect blocks, journaling, checksums) | MEDIUM |
@@ -118,12 +118,6 @@
 ---
 
 ## CRITICAL
-
-### Registry disk persistence
-
-* [ ] **B2.7. Persistencia Registry a disco (cm_flush_key)** | Prereqs: B2.1 | Files: `src/cm/mod.rs`, `src/cm/hive.rs`
-  - Serializar hive (formato NEOH), escribir a `C:\System\Registry\<name>.hiv`. Boot: cargar desde disco. `cm_set_value` marca dirty. Flush en shutdown.
-  - **Tests:** `cm_set_value_persist_roundtrip`, `cm_hive_reload_integrity`
 
 ---
 

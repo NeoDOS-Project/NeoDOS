@@ -9,7 +9,7 @@
 
 ## Resumen Ejecutivo
 
-NeoDOS v0.44.2 es un sistema operativo funcional con una base arquitectónica sólida. El kernel es monolítico con subsistema de drivers aislados (modelo híbrido), escrito 100% en Rust, con 528 tests automáticos y 27 binarios de usuario.
+NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica sólida. El kernel es monolítico con subsistema de drivers aislados (modelo híbrido), escrito 100% en Rust, con 537 tests automáticos y 30+ binarios de usuario.
 
 **Estado general:** SÓLIDO — El núcleo del sistema está bien diseñado y la migración a Object Manager (Ob) se ha completado exitosamente. Los problemas identificados son principalmente deuda técnica y documentación desactualizada, no fallos arquitectónicos fundamentales.
 
@@ -27,7 +27,7 @@ NeoDOS v0.44.2 es un sistema operativo funcional con una base arquitectónica s�
 - Per-CPU slab allocator con hot cache lock-free
 - SMP con IPI, TLB shootdown, work stealing
 - Driver isolation (X4) con validación de punteros
-- 528 tests en 50 suites
+- 537 tests en 50+ suites
 
 **Debilidades principales:**
 - `usermode.rs:WAIT_PID` static mut SMP-unsafe (**bug crítico**)
@@ -109,7 +109,7 @@ NeoDOS v0.44.2 es un sistema operativo funcional con una base arquitectónica s�
 | Syscalls (total SSDT) | 66 (40 activos, 26 None) |
 | Drivers NEM | 12 (PS/2 kbd, serial, RTC, ACPI, PCI, ATA, AHCI + 5 reference) |
 | User binaries | 27 .NXE |
-| Tests kernel | 528 (50 suites) |
+| Tests kernel | 537 (50+ suites) |
 | Tests user | 7 cmdtest |
 | RAM soportada | >4 GB (bitmap dinámico) |
 | User window | 32 MB (0x400000-0x2400000) |
@@ -125,7 +125,7 @@ NeoDOS v0.44.2 es un sistema operativo funcional con una base arquitectónica s�
 |----|----------|-----------|---------|
 | A1 | README desactualizado (v0.39.11 vs v0.44.2) | BAJA | Confusión en nuevos desarrolladores |
 | A2 | ARCHITECTURE_SOURCE_OF_TRUTH.md menciona MAX_PROCESSES fijo pero scheduler usa Vec | BAJA | Documentación desactualizada vs código |
-| A3 | IMPROVEMENTS.md menciona "528 tests" pero SOURCE_OF_TRUTH dice "320+" | BAJA | Inconsistencia documentación |
+| A3 | IMPROVEMENTS.md mencionaba "528 tests" pero SOURCE_OF_TRUTH decía "320+" | BAJA | Inconsistencia documentación (corregido v0.48.6) |
 | A4 | check_deps.py no verifica todas las forbidden dependencies declaradas | MEDIA | Risk de regresión arquitectónica |
 
 ---
@@ -472,13 +472,13 @@ IoStack → BlockDevice trait
 
 | Documento | Versión | Estado | Problemas |
 |-----------|---------|--------|-----------|
-| `README.md` | v0.39.11 | ❌ DESACTUALIZADO | Dice v0.39.11 (real v0.44.2), tests 320+ (real 528), syscalls 36 (real 66) |
-| `AGENTS.md` | v0.44.3 | ⚠️ PARCIAL | Buena guía operativa, algunas tablas desactualizadas |
+| `README.md` | v0.44.2 | ❌ DESACTUALIZADO | Dice v0.44.2 (real v0.48.6), tests 528 (real 537), syscalls 36 (real 66+7 Ob) |
+| `AGENTS.md` | v0.48.6 | ✅ ACTUALIZADO | Ahora es minimal (78 líneas, solo reglas + referencias) |
 | `ARCHITECTURE_SOURCE_OF_TRUTH.md` | v1.0 | ⚠️ PARCIAL | MAX_PROCESSES fijo (real Vec), boot phases incompletas, test counts desactualizados |
 | `ARCHITECTURAL_VISION.md` | v1.0 | ✅ ACTUAL | Visión correcta, roadmap coincide con implementación |
 | `IMPROVEMENTS.md` | v4.1 | ✅ ACTUAL | 169/177 items completados, estructura correcta |
 | `OBJECT_MANAGER_ARCHITECTURE.md` | v1.0 | ✅ ACTUAL | Documento de diseño completo |
-| `KERNEL.md` | v1.0 | ⚠️ PARCIAL | No revisado en detalle |
+| ~~`KERNEL.md`~~ | — | ❌ ELIMINADO | Contenido migrado a `docs/architecture.md` + `docs/boot.md` |
 
 ### 10.2 Hallazgos Documentación
 
@@ -486,7 +486,7 @@ IoStack → BlockDevice trait
 |----|----------|-----------|
 | D1 | README.md desactualizado — versión, tests, syscalls | ALTA |
 | D2 | ARCHITECTURE_SOURCE_OF_TRUTH.md inconsistente con scheduler actual | MEDIA |
-| D3 | KERNEL.md no verificado en esta auditoría | BAJA |
+| D3 | KERNEL.md no verificado en esta auditoría — **ELIMINADO** (contenido en architecture.md + boot.md) | BAJA |
 | D4 | CHANGELOG.md OK — actualizado hasta v0.44.2 | ✅ OK |
 
 ---
@@ -586,7 +586,7 @@ KObjType incluye tipos (EventBus=5, MountPoint=10, Symlink=9) que ObType no tien
 2. **Modelo NT correcto:** EPROCESS/KTHREAD, handles, objetos, seguridad
 3. **Driver ecosystem maduro:** Certificación, capacidades, aislamiento, ABI negotiation, hot reload
 4. **Object Manager completo:** Unificación de handles, KOBJ, URN y seguridad en Ob
-5. **Testing extensivo:** 528 tests en 50 suites
+5. **Testing extensivo:** 537 tests en 50+ suites
 6. **Rust idioms correctos:** Sin heap en IRQ, sin schedule() en spinlock, IRQL framework
 
 ### Puntos Débiles (Acción Inmediata)

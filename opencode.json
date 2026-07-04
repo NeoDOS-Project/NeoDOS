@@ -1,7 +1,7 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-      "llmstudio": {
+    "llmstudio": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "LM Studio (local)",
       "options": {
@@ -16,7 +16,7 @@
   "instructions": ["AGENTS.md"],
   "command": {
     "build": {
-      "template": "Build the NeoDOS OS: compile bootloader + kernel and create the FAT32 disk image. Run from the neodos/ directory.",
+      "template": "Build the NeoDOS OS: compile bootloader + kernel and create the GPT disk image. Run from neodos/. If user binaries needed, use --neodos-image: `bash scripts/build.sh --neodos-image`. Then verify with `python3 scripts/auto_test.py` and `scripts/check_deps.py`.",
       "description": "Build bootloader, kernel, and disk image"
     },
     "build-lsp": {
@@ -24,16 +24,44 @@
       "description": "Build the NeoDOS LSP server"
     },
     "run": {
-      "template": "Launch NeoDOS in QEMU with OVMF UEFI firmware, serial output, and GDB server on :1234. Run from neodos/ after building.",
+      "template": "Launch NeoDOS in QEMU with OVMF UEFI firmware, serial output, and GDB server on :1234. Run `bash scripts/qemu-debug.sh` from neodos/. Use QEMU_ACCEL=kvm for acceleration.",
       "description": "Run NeoDOS in QEMU"
     },
     "debug": {
-      "template": "Connect GDB to a running QEMU instance (port :1234) with kernel symbols loaded. Run from neodos/ using gdb -x .gdbinit",
+      "template": "Connect GDB to a running QEMU instance (port :1234) with kernel symbols loaded. Run from neodos/ using `gdb -x .gdbinit`. The debug build is at neodos-kernel/target/x86_64-unknown-none/debug/neodos-kernel.",
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Review uncommitted changes in the repo (master branch). Check that docs/ files (AGENTS.md, ARCHITECTURE.md, KERNEL.md, IMPROVEMENTS.md, CHANGELOG.md, NEM_SPEC.md, etc.) are up to date with any new features or changes. Build kernel + user binaries, then run auto_test.py. Commit and push to GitHub with descriptive message.",
-      "description": "Release to GitHub"
+      "template": "Review uncommitted changes in the repo. Check that `docs/` files (SYSCALLS.md, ARCHITECTURE.md, ARCHITECTURE_SOURCE_OF_TRUTH.md, IMPROVEMENTS.md, CHANGELOG.md, etc.) are up to date. Run `cargo build` in neodos-kernel/, then `python3 scripts/auto_test.py`, then `scripts/check_deps.py`. Commit with `git add -A && git commit -m \"feat|fix|refactor: ...\" && git push`.",
+      "description": "Build, test, commit, and push to GitHub"
+    },
+    "audit": {
+      "template": "Perform a complete NeoDOS project audit. Use the MCP tools extensively: run `neodos-mcp_check_consistency targets=all` for invariant validation. Then:\n1. Detect dead code: search for unused functions, globals, and modules with `rg \"fn .*\\{\" --include=\"*.rs\"` and cross-reference with grep for callers.\n2. Detect duplicate code: look for similar patterns across subsystems (e.g., two cache implementations, two mount managers).\n3. Find API inconsistencies: check ObInfoClass/ObSetInfoClass enum completeness vs handler implementation in src/object/types.rs and src/syscall/ob.rs.\n4. Review docs against code: check docs/<subsystem>.md for stale file paths, wrong struct names, outdated version numbers.\n5. Check for architectural improvements: identify fixed-size arrays, hardcoded limits, tight coupling, missing abstractions.\n6. Update docs/IMPROVEMENTS.md with findings as new LOW/MEDIUM items.\nDo NOT modify any code — only report findings and update IMPROVEMENTS.md.",
+      "description": "Full project audit: dead code, duplicates, API consistency, docs, architecture"
+    },
+    "review": {
+      "template": "Review the current code changes for NeoDOS. Check:\n1. Potential bugs: look for unwrap(), expect(), indexing without bounds check, integer overflow, unsafe without safety comments.\n2. Rust errors: run `cargo build` in neodos-kernel/.\n3. Architecture compliance: verify new code follows NT-like design (Ob handles, not raw pointers; no Ring 0 shell commands; RAX >= 77 → sys_ob_* for new syscalls).\n4. Naming consistency: kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars (AGENTS.md rule 10).\n5. Cross-subsystem dependencies: run `scripts/check_deps.py`.\n6. Documentation: check if docs/<subsystem>.md needs updating for changed APIs.\nProvide a verdict: approve, changes-requested (with file/line refs), or reject (with rule reference).",
+      "description": "Review code changes: bugs, architecture, naming, deps, docs"
+    },
+    "docs": {
+      "template": "Synchronize all NeoDOS documentation. For each step, use Read/Edit tools — do NOT run scripts.\n1. Scan `docs/` directory: check every .md file exists as referenced from AGENTS.md (the Table of Contents must match actual files).\n2. Check `CHANGELOG.md` for any missing entries since last commit (run `git log --oneline -10` to see recent work).\n3. Open `docs/IMPROVEMENTS.md` and verify all completed items are properly reflected (move to IMPROVEMENTS_COMPLETED.md if done, update version references).\n4. Verify `docs/ARCHITECTURE.md` boot phase list matches `src/main.rs`.\n5. Verify cross-references between docs are valid (relative .md links resolve).\n6. Run `neodos-mcp_check_consistency targets=docs` for automated doc validation.\nDo NOT modify code. Only fix documentation.",
+      "description": "Sync all docs: verify references, update changelog, fix stale content"
+    },
+    "design": {
+      "template": "Before implementing a new NeoDOS feature, produce a design document. Follow these steps in order:\n1. Research: read `docs/ARCHITECTURAL_VISION.md` and relevant subsystem docs (e.g., docs/objects.md for Ob changes, docs/syscalls.md for new syscalls).\n2. Problem analysis: what is the current limitation? Why can't existing abstractions solve it?\n3. Solution design: describe the proposed change. Include:\n   - New types/structs/enums needed (with ObType numbers if applicable)\n   - New syscalls (RAX number ≥ 77, MUST be sys_ob_*)\n   - New ObInfoClass/ObSetInfoClass variants\n   - New files or modules (path relative to neodos-kernel/src/)\n   - Changes to existing files\n4. Alternatives: list at least one alternative approach and explain why it was rejected.\n5. Affected components: list every subsystem that will change (scheduler, VFS, memory, drivers, etc.).\n6. API contract: for each new public function/syscall, specify: args, return values, error codes, preconditions.\n7. Test plan: list at least 3 test cases per invariant.\n8. Implementation plan: sequential steps with file paths.\nDo NOT write implementation code. Only produce the design.",
+      "description": "Design a feature before implementation: analysis, API, affected components, test plan"
+    },
+    "cleanup": {
+      "template": "Find and clean up technical debt in the NeoDOS kernel and user code. Use grep and ripgrep extensively.\n1. Search for TODO comments: `rg \"TODO\" --include=\"*.rs\"` — report each with file:line, assess if still relevant.\n2. Search for FIXME comments: `rg \"FIXME\" --include=\"*.rs\"` — report each, prioritize critical ones.\n3. Search for HACK comments: `rg \"HACK\" --include=\"*.rs\"`.\n4. Search for commented-out code blocks: `rg \"^// \" --include=\"*.rs\"` looking for large commented sections (>5 lines).\n5. Detect dead functions: for each `pub fn` or `fn`, grep for callers. If none found, check if it's a trait impl or test.\n6. Check for obsolete modules: look at mod.rs files, cross-reference with directory listings.\n7. Search for duplicate code: e.g., two implementations of the same algorithm (search for \"fn.*same_name\" across files).\nFor each finding: remove if clearly unused, add a TODO with issue ref if too risky to remove now.\nRun `cargo build` in neodos-kernel/ after any removal to verify nothing breaks.",
+      "description": "Find and remove dead code, old TODOs, FIXMEs, commented code, duplicates"
+    },
+    "testing": {
+      "template": "Validate NeoDOS changes with the complete test suite.\n1. Build: `cargo build` in neodos-kernel/ — fix any compilation errors first.\n2. Run kernel tests: `python3 scripts/auto_test.py` — all 537+ tests must pass.\n3. Check dependency rules: `scripts/check_deps.py`.\n4. If tests fail: identify the failing test group (printed in output), inspect the test code in src/testing.rs, fix the issue, re-run.\n5. Check test coverage: look at the feature being changed — are there existing tests? If the feature lacks tests, propose new test_case! entries in the appropriate module with descriptions.\n6. For user-mode changes: build with `bash scripts/build.sh --neodos-image` and boot in QEMU to verify.\n7. Report: summary of passed tests, any regressions, and test coverage gaps found.",
+      "description": "Run tests, check coverage, propose new tests for uncovered code"
+    },
+    "roadmap": {
+      "template": "Analyze and improve the NeoDOS roadmap in docs/IMPROVEMENTS.md.\n1. Read `docs/IMPROVEMENTS.md` completely.\n2. Read `docs/IMPROVEMENTS_COMPLETED.md` to understand what's been done.\n3. Categorize all pending items:\n   - Kernel: boot, HAL, init, SMP, IRQL, DPC\n   - Object Manager: Ob types, namespace, ObOperation\n   - Syscalls: new syscalls, wrappers, ABI\n   - Memory: allocators, paging, regions\n   - Scheduler: priorities, aging, SMP\n   - Drivers: NEM format, lifecycle, caps, isolation\n   - Shell: commands, pipeline, scripting\n   - Filesystem: NeoFS, VFS, FAT32\n   - Registry: Cm hive, persistence\n   - Network: TCP/IP, DHCP, userland tools\n   - Security: SAM, tokens, ACL\n   - Documentation: stale docs, missing refs\n   - Tools: build scripts, test infra, CI\n4. For each category, check for:\n   - Duplicate items (same task listed in multiple places)\n   - Stale items (already completed, not moved to COMPLETED)\n   - Overlapping items (merge into one)\n5. Re-prioritize by: impact (how many subsystems benefit), complexity (estimated effort), dependencies (prerequisites).\n6. Update the PRIORITY OVERVIEW table with correct ordering.\n7. Remove or merge any duplicates found.",
+      "description": "Analyze IMPROVEMENTS.md: categorize, deduplicate, prioritize by impact"
     }
   },
   "lsp": {

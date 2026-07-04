@@ -1214,7 +1214,7 @@ El tipo se identifica mediante sentinelas en `object_id` (ObId::MAX, MAX-1, MAX-
 
 **Archivos:**
 - `docs/OBJECT_MANAGER_ARCHITECTURE.md` (completar secciones)
-- `AGENTS.md` (tabla de syscalls actualizada)
+- `docs/syscalls.md` (tabla de syscalls actualizada)
 
 **Criterio:**
 - La documentación cubre todas las syscalls Ob

@@ -41,7 +41,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Boot driver loader (PHASE 3.85): carga NEM drivers (BOOT → SYSTEM, dependency-sorted)
    - Driver Isolation Layer (X4): 16×1 MB slots @ 0x30000000
    - Networking init (PHASE 3.88): e1000 NIC probe, ARP cache, \Device\Tcp/\Device\Udp
-   - Ring 3 shell (neoshell.nxe via NeoInit, 547 kernel tests + user commands)
+   - Ring 3 shell (neoshell.nxe via NeoInit, 537 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -394,7 +394,7 @@ Fine-grained resource access control for NEM drivers. Each driver inherits a 64-
 
 **Capability escalation:** A SYSTEM driver may request `CAP_ALLOC_PAGE`, `CAP_BLOCK_DEVICE`, or `CAP_MEMORY` via `EVENT_CAP_ESCALATION` (type `0x2000`). The kernel audits and may grant. DEMAND drivers cannot escalate — this is a security boundary.
 
-See `AGENTS.md` for the complete flag table and implementation details.
+See `docs/drivers.md` for the complete capability flag table and `docs/hal.md` for primitives.
 
 ---
 
@@ -525,7 +525,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **547 tests** (200 test_case! macros, 505+ assertions) with suites dedicated to the driver architecture:
+The kernel testing framework includes **537 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -547,20 +547,18 @@ The kernel testing framework includes **547 tests** (200 test_case! macros, 505+
 | APC | 5 | APC engine: kernel dispatch, alertable wait, queue overflow, IRP→APC completion, stress 100 concurrent IRPs |
 | KWait | 10 | Unified Wait Engine: block/wake 7 WaitReason variants, PipeRead, IrpComplete, ThreadJoin, ChildExit, Event, Timer, Alertable |
 | ABI Freeze | 4 | Frozen event types 0–15, capability bits 0–11, IOAPIC API |
-| KOBJ | 8 | Kernel Object Manager: register/unregister, refcount, type enum, lookup |
 | Object (Ob) | 14 | ObObjectTable: create/lookup/destroy, refcount, close auto-destroy |
 | Slab | 9 | Slab allocator: per-size alloc/free, multi-page, realloc fallback |
 | Per-CPU Slab | 5 | Per-CPU slab alloc/free, refill/drain batching, scaling |
 | IPI | 5 | Inter-processor interrupts: constants, TLB shootdown, call function |
 | Work Queue | 6 | Deferred work queue: push/pop, FIFO, empty, overflow, isolation |
-| DPC | 5 | DPC engine: enqueue/dispatch, IRQ transition, nesting, callback order |
 | Stress | 14 | Stress: sched, syscall, mem, buddy allocator, handle table |
 | Hot Reload | 11 | Hot reload: resource tracking, registry, state transitions |
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
-| KDrive | 12 | NT5.6 Virtual FS K:\: root readdir, lookup, case-insensitive, stats |
 
-Tests run automatically at boot. The kernel runs 547 tests (200 test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+
+Tests run automatically at boot. The kernel runs 537 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 

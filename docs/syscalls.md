@@ -1,6 +1,7 @@
 # NeoDOS Syscall ABI
 
-NeoDOS user-mode applications execute in Ring 3. To request a kernel service, applications trigger software interrupt `INT 0x80`.
+NeoDOS user-mode applications execute in Ring 3. To request a kernel service,
+applications trigger software interrupt `INT 0x80`.
 
 ## Calling Convention
 
@@ -13,7 +14,121 @@ NeoDOS user-mode applications execute in Ring 3. To request a kernel service, ap
 | `R8` | Argument 3 |
 | `R9` | Argument 4 |
 
-Return in `RAX`: `≥ 0` success, `< 0` error. All other GPRs preserved.
+Return in `RAX`: `>= 0` success, `< 0` error. All other GPRs preserved.
+
+### Return Convention
+
+- Success: non-negative value (fd, PID, bytes written, etc.)
+- Error: negative value encoded via `err_to_u64()`:
+  ```rust
+  pub fn err_to_u64(e: SyscallError) -> u64 {
+      (-(e as i64)) as u64
+  }
+  ```
+- User-mode checks: `cmp rax, -1` / `jg success` (positive or zero = OK)
+
+### SyscallNum Enum
+
+```rust
+pub enum SyscallNum {
+    Exit = 0, Write = 1, Yield = 2, GetPid = 3, Read = 4,
+    Dup2 = 6, ReadDir = 8, WaitPid = 9, WriteFile = 12, Close = 13,
+    ChDir = 16, Brk = 18, Mmap = 19, Munmap = 20, LoadLib = 21,
+    ThreadCreate = 22, ThreadJoin = 23, SetExceptionHandler = 29,
+    WaitAlertable = 40, SleepEx = 41, Poweroff = 42,
+    GetVolumeLabel = 46, ChDirParent = 47, KObjEnum = 48,
+    SetPriority = 51, KillProcess = 52, CursorBlink = 53,
+    SetVolumeLabel = 54, Fsck = 55, DriverLoad = 57, DriverUnload = 58,
+    Poll = 59,
+    ObOpen = 60, ObCreate = 61, ObQueryInfo = 62, ObSetInfo = 63,
+    ObEnum = 64, ObWait = 65, ObDestroy = 66,
+    CmOpenKey = 67, CmCreateKey = 68, CmQueryValue = 69,
+    CmSetValue = 70, CmEnumKey = 71, CmEnumValue = 72,
+    CmDeleteKey = 73, CmFlushKey = 74, CmLoadHive = 75, CmUnloadHive = 76,
+}
+
+impl SyscallNum {
+    pub const MAX_VALID: u64 = 76;
+    pub fn from_u64(n: u64) -> Option<Self>;
+}
+```
+
+### SyscallError Enum
+
+```rust
+pub enum SyscallError {
+    Inval = 1,    // Invalid argument
+    NoEnt = 2,    // No such entry
+    NoMem = 3,    // Out of memory
+    Acces = 4,    // Permission denied
+    BadF  = 5,    // Bad file descriptor
+    Fault = 6,    // Bad user pointer
+    NoSys = 7,    // No such syscall
+    Again = 8,    // Resource temporarily unavailable
+    Pipe  = 9,    // Pipe error
+    Exist = 10,   // Already exists
+    NotDir= 11,   // Not a directory
+    IsDir = 12,   // Is a directory
+    Io    = 13,   // I/O error
+    NoDev = 14,   // No such device
+    Busy  = 15,   // Resource busy
+    Perm  = 16,   // Operation not permitted (admin required)
+}
+```
+
+### Error Codes (Returned as Negative u64)
+
+Error values are the negation of `SyscallError` enum variants defined in `src/syscall/mod.rs`.
+
+| Value | Name | Meaning |
+|-------|------|---------|
+| -1 | Inval | Invalid argument |
+| -2 | NoEnt | File/path not found |
+| -3 | NoMem | Memory allocation failure |
+| -4 | Acces | Permission denied |
+| -5 | BadF | Invalid file descriptor |
+| -6 | Fault | Bad user-mode pointer |
+| -7 | NoSys | No such syscall/function |
+| -8 | Again | Try again (non-blocking) |
+| -9 | Pipe | Pipe error |
+| -10 | Exist | Object already exists |
+| -11 | NotDir | Component not a directory |
+| -12 | IsDir | Is a directory, expected file |
+| -13 | Io | I/O error |
+| -14 | NoDev | No such device |
+| -15 | Busy | Resource busy |
+| -16 | Perm | Permission denied (security) |
+
+### SSDT (Syscall Service Dispatch Table)
+
+Dispatch uses a fixed-size array `[Option<SyscallFn>; 256]` indexed by RAX.
+Each handler has type `fn(Registers) -> u64`. The table is initialized in
+a `lazy_static!` block at `syscall/mod.rs:491`.
+
+`validate_abi()` is called at boot (Phase 3.9) to assert that every assigned
+syscall number has a registered handler:
+
+```rust
+pub fn validate_abi() {
+    const ASSIGNED: &[u64] = &[
+        0, 1, 2, 3, 4, 6, 13, 16, 18, 19, 20, 21, 29,
+        40, 41, 42, 47, 53, 55, 58, 59,
+        60, 61, 62, 63, 64, 65, 66,
+        67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+    ];
+    for &n in ASSIGNED {
+        assert!(SYSCALL_TABLE[n as usize].is_some(),
+                "SSDT missing handler for assigned syscall {}", n);
+    }
+}
+```
+
+### Permission System
+
+Each syscall slot has a `SyscallPermission` with an `admin` flag. Admin
+syscalls (e.g., `DriverUnload=58`, `CmLoadHive=75`) require the calling
+process to hold an admin token (`token.is_admin_token()`). Non-admin calls
+return `-Perm`.
 
 ---
 
@@ -30,7 +145,7 @@ Writes a buffer to a file descriptor (stdout, stderr, pipe writer).
 - **Returns**: Bytes written, or error code.
 
 ### 2 — `sys_yield`
-Voluntarily yields the CPU. Running→Ready, resets time slice, forces reschedule.
+Voluntarily yields the CPU. Running->Ready, resets time slice, forces reschedule.
 - **Args**: None.
 - **Returns**: `0`.
 
@@ -167,7 +282,7 @@ Poll fds for ready I/O.
 ### 60 — `sys_ob_open`
 Open an Ob namespace object by path. Security access check, allocates handle.
 - **Args**: `RBX`=path_ptr, `RCX`=desired_access.
-- **Returns**: fd (≥3), or error code.
+- **Returns**: fd (>=3), or error code.
 
 ### 61 — `sys_ob_create`
 Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section.
@@ -208,3 +323,40 @@ Wait on one or more Ob objects to become signaled.
 Destroy/delete an Ob object by fd (file, directory, namespace object).
 - **Args**: `RBX`=fd.
 - **Returns**: `0` on success, or error code.
+
+---
+
+## Objectification Status
+
+| Status | Syscalls | Description |
+|--------|----------|-------------|
+| Already Objects | RAX 60-66 (ob_open/create/query_info/set_info/enum/wait/destroy) | Native Ob operations, operate on namespace handles |
+| Removed from SSDT (use Ob) | pipe(5), spawn(7), open(10), close(13), readfile(11), mkdir, unlink, rmdir, rename | Replaced by ob_create/ob_open/ob_destroy + VFS object paths |
+| Foundation (intact) | exit, write, read, yield, getpid, brk, mmap, munmap, loadlib, thread_create/join, poll, poweroff | Not object operations; remain as direct syscalls |
+| Registry | RAX 67-76 (Cm*) | Configuration Manager — cell-based hive syscalls |
+
+## Architecture Rule
+
+**Every new syscall (RAX >= 77) MUST be implemented as `sys_ob_*`** — it must
+operate on Ob objects in the namespace, receive handles obtained via
+`ob_open`/`ob_create`, and return results via `ob_query_info`/`ob_set_info`.
+
+This rule enforces the NT-like design where the Object Manager is the central
+abstraction for all kernel resources. Foundation syscalls (memory, process
+control, I/O) may remain unchanged for ABI stability, but any genuinely new
+kernel functionality must enter through the Ob architecture.
+
+## Registry Syscalls (RAX 67-76)
+
+| RAX | Syscall | Purpose |
+|-----|---------|---------|
+| 67 | `sys_cm_open_key` | Open existing registry key by path |
+| 68 | `sys_cm_create_key` | Create or open registry key |
+| 69 | `sys_cm_query_value` | Read a registry value |
+| 70 | `sys_cm_set_value` | Write a registry value |
+| 71 | `sys_cm_enum_key` | Enumerate subkeys |
+| 72 | `sys_cm_enum_value` | Enumerate values in a key |
+| 73 | `sys_cm_delete_key` | Delete a key and its subkeys |
+| 74 | `sys_cm_flush_key` | Flush key to persistent storage |
+| 75 | `sys_cm_load_hive` | Load a hive file (admin) |
+| 76 | `sys_cm_unload_hive` | Unload a hive (admin) |

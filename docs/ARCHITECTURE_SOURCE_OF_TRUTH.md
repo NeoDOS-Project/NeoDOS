@@ -843,4 +843,4 @@ Before any commit, verify:
 - [ ] Any new syscall added at the next available RAX (Section 12)
 - [ ] Any new driver passes ABI negotiation (Section 8.3)
 - [ ] `CHANGELOG.md` updated if this commit changes user-visible behavior
-- [ ] `AGENTS.md` updated if adding syscalls, commands, or driver categories
+- [ ] `docs/` updated if adding syscalls, commands, or driver categories

@@ -358,12 +358,14 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 * [x] **OBF-07. Unificar ObError y SyscallError** — COMPLETADO: ob_err_to_syscall() + test
 * [x] **B3.3 D8. DHCP client** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático
 * [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
+* [x] **B2.7. Registry disk persistence (cm_flush_key)** — COMPLETADO en v0.48.6: NEOH serialization format, VFS file `C:\System\Registry\<name>.hiv`, dirty tracking, flush on shutdown. Tests: `cm_set_value_persist_roundtrip`, `cm_hive_serialization_integrity`
 * [x] **NET-1 F1-F4** — COMPLETADO en v0.48.5: Ethernet/UDP/ARP builders, ICMP Port Unreachable, socket_send, UDP/TCP dispatch, TCP three-way handshake real
 
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT
-- [AGENTS.md](../AGENTS.md) — build, test, convenciones de commit
+- [skills/build/SKILL.md](../skills/build/SKILL.md) — build, test, convenciones de commit
+- [AGENTS.md](../AGENTS.md) — permanent rules (minimal)
 - [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) — vision a largo plazo v0.40 -> v1.0
 - [OBJECT_MANAGER_ARCHITECTURE.md](OBJECT_MANAGER_ARCHITECTURE.md) — diseno completo del Object Manager
-- [KERNEL.md](KERNEL.md) — documentacion del kernel
+- [Boot](boot.md) — boot sequence, fases, GPT layout
