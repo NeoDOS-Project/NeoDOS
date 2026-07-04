@@ -1432,6 +1432,88 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
             }
             (count * entry_size) as u64
         }
+        // ── RegistryKey (21): query key metadata (subkey count, value count) ──
+        _ if info_class == ObInfoClass::RegistryKey as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let native_id = match entry.native_id() {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Decode hive and cell, query key info via cm
+            let (hive_idx, cell_idx) = crate::cm::decode_cell(native_id);
+            let cm_lock = crate::cm::CM_MANAGER.lock();
+            if (hive_idx as usize) >= cm_lock.hives.len() {
+                return err_to_u64(SyscallError::NoEnt);
+            }
+            let hm = &cm_lock.hives[hive_idx as usize];
+            let subkey_count = hm.hive.key_count(cell_idx) as u32;
+            let value_count = hm.hive.value_count(cell_idx) as u32;
+            drop(cm_lock);
+            // Write [subkey_count: u32, value_count: u32] = 8 bytes
+            let header = [
+                (subkey_count & 0xFF) as u8, ((subkey_count >> 8) & 0xFF) as u8,
+                ((subkey_count >> 16) & 0xFF) as u8, ((subkey_count >> 24) & 0xFF) as u8,
+                (value_count & 0xFF) as u8, ((value_count >> 8) & 0xFF) as u8,
+                ((value_count >> 16) & 0xFF) as u8, ((value_count >> 24) & 0xFF) as u8,
+            ];
+            let sz = 8;
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(header.as_ptr(), buf_ptr as *mut u8, sz);
+            }
+            sz as u64
+        }
+        // ── RegistryValue (22): query a value by name (name in buf, output overwrites) ──
+        _ if info_class == ObInfoClass::RegistryValue as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            // Read value name from buf (null-terminated)
+            let base = buf_ptr as *const u8;
+            let name = {
+                let mut s = alloc::string::String::new();
+                for i in 0..buf_size {
+                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                    if c == 0 { break; }
+                    s.push(c as char);
+                }
+                s
+            };
+            if name.is_empty() {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let native_id = match entry.native_id() {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            match crate::cm::cm_query_value(native_id, &name) {
+                Ok(val) => {
+                    let data = &val.data;
+                    let total_size = 8 + data.len();
+                    // Write [value_type: u32 LE, data_len: u32 LE, data...]
+                    let header = [
+                        (val.value_type & 0xFF) as u8, ((val.value_type >> 8) & 0xFF) as u8,
+                        ((val.value_type >> 16) & 0xFF) as u8, ((val.value_type >> 24) & 0xFF) as u8,
+                        (data.len() & 0xFF) as u8, ((data.len() >> 8) & 0xFF) as u8,
+                        ((data.len() >> 16) & 0xFF) as u8, ((data.len() >> 24) & 0xFF) as u8,
+                    ];
+                    let copy_len = if buf_size >= total_size { total_size } else { buf_size };
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(header.as_ptr(), buf_ptr as *mut u8, 8);
+                        if copy_len > 8 {
+                            let data_copy = &data[..core::cmp::min(data.len(), buf_size - 8)];
+                            core::ptr::copy_nonoverlapping(
+                                data_copy.as_ptr(), (buf_ptr + 8) as *mut u8, data_copy.len(),
+                            );
+                        }
+                    }
+                    total_size as u64
+                }
+                Err(()) => err_to_u64(SyscallError::NoEnt),
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -1541,7 +1623,67 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             }
         }
         _ if info_class == ObSetInfoClass::Security as u32 => {
-            err_to_u64(SyscallError::NoSys)
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            // buf = [rev: u8, ace_count: u8, (ace_type: u8, flags: u8, access_mask: u32 LE, sid_cnt: u8, sid_auth: [u8;6], sid_subs: u32×cnt)...]
+            if buf_size < 2 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let base = buf_ptr as *const u8;
+            let sd_rev = unsafe { core::ptr::read_volatile(base) };
+            let ace_count = unsafe { core::ptr::read_volatile(base.add(1)) };
+            let mut offset = 2usize;
+            let mut acl = crate::security::acl::Acl::new();
+            for _ in 0..ace_count {
+                if offset + 7 > buf_size {
+                    return err_to_u64(SyscallError::Inval);
+                }
+                let ace_type = unsafe { core::ptr::read_volatile(base.add(offset)) };
+                let flags = unsafe { core::ptr::read_volatile(base.add(offset + 1)) };
+                let access_mask = unsafe {
+                    u32::from_le_bytes([
+                        core::ptr::read_volatile(base.add(offset + 2)),
+                        core::ptr::read_volatile(base.add(offset + 3)),
+                        core::ptr::read_volatile(base.add(offset + 4)),
+                        core::ptr::read_volatile(base.add(offset + 5)),
+                    ])
+                };
+                let sid_cnt = unsafe { core::ptr::read_volatile(base.add(offset + 6)) } as usize;
+                if sid_cnt > crate::security::sid::MAX_SUB_AUTHORITIES {
+                    return err_to_u64(SyscallError::Inval);
+                }
+                offset += 7;
+                if offset + 6 + sid_cnt * 4 > buf_size {
+                    return err_to_u64(SyscallError::Inval);
+                }
+                let mut sid_auth = [0u8; 6];
+                for j in 0..6 {
+                    sid_auth[j] = unsafe { core::ptr::read_volatile(base.add(offset + j)) };
+                }
+                offset += 6;
+                let mut sid_subs = [0u32; crate::security::sid::MAX_SUB_AUTHORITIES];
+                for j in 0..sid_cnt {
+                    sid_subs[j] = unsafe {
+                        u32::from_le_bytes([
+                            core::ptr::read_volatile(base.add(offset + j * 4)),
+                            core::ptr::read_volatile(base.add(offset + j * 4 + 1)),
+                            core::ptr::read_volatile(base.add(offset + j * 4 + 2)),
+                            core::ptr::read_volatile(base.add(offset + j * 4 + 3)),
+                        ])
+                    };
+                }
+                offset += sid_cnt * 4;
+                let sid = crate::security::sid::Sid::from_parts(1, &sid_auth, &sid_subs[..sid_cnt]);
+                let ace = crate::security::acl::Ace { ace_type, flags, access_mask, sid };
+                acl.insert_ace_canonical(ace);
+            }
+            let sd = crate::security::acl::SecurityDescriptor::new()
+                .with_dacl(acl);
+            match crate::object::ob_set_security(entry.object_id, sd) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::BadF),
+            }
         }
         _ if info_class == ObSetInfoClass::ProcessTerminate as u32 => {
             if entry.object_id == 0 {
@@ -2000,6 +2142,157 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             crate::net::socket::socket_free(socket_id);
             let _ = crate::object::namespace::ob_remove_object(obj.name_str());
             0
+        }
+        // ── RegistryCreateKey (23): create a subkey (name in buf) ──
+        _ if info_class == ObSetInfoClass::RegistryCreateKey as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let base = buf_ptr as *const u8;
+            let name = {
+                let mut s = alloc::string::String::new();
+                for i in 0..buf_size {
+                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                    if c == 0 { break; }
+                    s.push(c as char);
+                }
+                s
+            };
+            if name.is_empty() { return err_to_u64(SyscallError::Inval); }
+            let native_id = match entry.native_id() {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            match crate::cm::cm_create_key(native_id, &name) {
+                Ok(_) => 0,
+                Err(()) => err_to_u64(SyscallError::Exist),
+            }
+        }
+        // ── RegistryDeleteKey (24): delete a subkey (name in buf) ──
+        _ if info_class == ObSetInfoClass::RegistryDeleteKey as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            // If buf is empty, delete the key itself (like handler_cm_delete_key)
+            if buf_size == 0 || unsafe { core::ptr::read_volatile(buf_ptr as *const u8) } == 0 {
+                let native_id = match entry.native_id() {
+                    Some(id) => id,
+                    None => return err_to_u64(SyscallError::BadF),
+                };
+                match crate::cm::cm_delete_key(native_id) {
+                    Ok(()) => {
+                        let _ = crate::object::ob_destroy_object(entry.object_id);
+                        0
+                    }
+                    Err(()) => err_to_u64(SyscallError::Inval),
+                }
+            } else {
+                let base = buf_ptr as *const u8;
+                let name = {
+                    let mut s = alloc::string::String::new();
+                    for i in 0..buf_size {
+                        let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                        if c == 0 { break; }
+                        s.push(c as char);
+                    }
+                    s
+                };
+                let native_id = match entry.native_id() {
+                    Some(id) => id,
+                    None => return err_to_u64(SyscallError::BadF),
+                };
+                match crate::cm::cm_open_key(native_id, &name) {
+                    Ok(subkey_native_id) => {
+                        match crate::cm::cm_delete_key(subkey_native_id) {
+                            Ok(()) => 0,
+                            Err(()) => err_to_u64(SyscallError::Inval),
+                        }
+                    }
+                    Err(()) => err_to_u64(SyscallError::NoEnt),
+                }
+            }
+        }
+        // ── RegistrySetValue (25): set a value on the key ──
+        // buf = [name\0][value_type: u32 LE][data_len: u32 LE][data...]
+        _ if info_class == ObSetInfoClass::RegistrySetValue as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let base = buf_ptr as *const u8;
+            let mut name_end = 0;
+            while name_end < buf_size && buf_size - name_end >= 4 {
+                let c = unsafe { core::ptr::read_volatile(base.add(name_end)) };
+                if c == 0 { break; }
+                name_end += 1;
+            }
+            if name_end == 0 || name_end >= buf_size - 8 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let name_bytes = unsafe {
+                core::slice::from_raw_parts(base, name_end)
+            };
+            let name = core::str::from_utf8(name_bytes).unwrap_or("");
+            if name.is_empty() { return err_to_u64(SyscallError::Inval); }
+            let payload_start = name_end + 1;
+            if payload_start + 8 > buf_size {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let value_type = unsafe {
+                u32::from_le_bytes([
+                    core::ptr::read_volatile(base.add(payload_start)),
+                    core::ptr::read_volatile(base.add(payload_start + 1)),
+                    core::ptr::read_volatile(base.add(payload_start + 2)),
+                    core::ptr::read_volatile(base.add(payload_start + 3)),
+                ])
+            };
+            let data_len = unsafe {
+                u32::from_le_bytes([
+                    core::ptr::read_volatile(base.add(payload_start + 4)),
+                    core::ptr::read_volatile(base.add(payload_start + 5)),
+                    core::ptr::read_volatile(base.add(payload_start + 6)),
+                    core::ptr::read_volatile(base.add(payload_start + 7)),
+                ]) as usize
+            };
+            let data_start = payload_start + 8;
+            if data_start + data_len > buf_size {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let data = unsafe {
+                core::slice::from_raw_parts(base.add(data_start), data_len)
+            };
+            let native_id = match entry.native_id() {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            match crate::cm::cm_set_value(native_id, name, value_type, data) {
+                Ok(()) => 0,
+                Err(()) => err_to_u64(SyscallError::NoMem),
+            }
+        }
+        // ── RegistryDeleteValue (26): delete a value by name (name in buf) ──
+        _ if info_class == ObSetInfoClass::RegistryDeleteValue as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Key) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let base = buf_ptr as *const u8;
+            let name = {
+                let mut s = alloc::string::String::new();
+                for i in 0..buf_size {
+                    let c = unsafe { core::ptr::read_volatile(base.add(i)) };
+                    if c == 0 { break; }
+                    s.push(c as char);
+                }
+                s
+            };
+            if name.is_empty() { return err_to_u64(SyscallError::Inval); }
+            let native_id = match entry.native_id() {
+                Some(id) => id,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            match crate::cm::cm_set_value(native_id, &name, crate::cm::hive::REG_NONE, &[]) {
+                Ok(()) => 0,
+                Err(()) => err_to_u64(SyscallError::NoMem),
+            }
         }
         _ => err_to_u64(SyscallError::Inval),
     }

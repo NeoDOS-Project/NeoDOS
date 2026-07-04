@@ -57,7 +57,7 @@ pub extern "C" fn nxl_file_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
 /// File write via ob_set_info(WriteContent=7)
 #[no_mangle]
 pub extern "C" fn nxl_file_write(fd: u8, buf: *const u8, len: usize) -> i64 {
-    nxl_sys_ob_set_info(fd, 7, buf, len)
+    nxl_sys_ob_set_info(fd, 7, buf, len) // 7 = WriteContent (used in NXL ABI, value stable)
 }
 
 /// File open via ob_open (RAX=60)

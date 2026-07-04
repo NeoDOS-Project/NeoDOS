@@ -10,7 +10,7 @@
 //! - Nesting depth limit (MAX_DPC_DEPTH=10) prevents infinite recursion
 //! - DPCs execute at DISPATCH_LEVEL (interrupts disabled, device IRQs masked)
 
-use core::sync::atomic::{compiler_fence, Ordering};
+use core::sync::atomic::{compiler_fence, AtomicU64, Ordering};
 use crate::{test_eq, test_true};
 
 /// Maximum number of DPC entries per-CPU queue.
@@ -162,11 +162,26 @@ pub fn this_cpu_dpc_queue() -> &'static mut DpcQueue {
     }
 }
 
+/// Global count of DPCs dropped due to full queue.
+pub static DPC_DROPPED_COUNT: AtomicU64 = AtomicU64::new(0);
+
 /// Enqueue a DPC on the current CPU's queue.
 /// Safe to call from any context where interrupts may be disabled (DIRQL+).
+/// Returns true if the DPC was enqueued, false if the queue was full (overflow).
 #[inline]
 pub fn insert_queue_dpc(function: DpcFn, context: *mut u8) -> bool {
-    this_cpu_dpc_queue().enqueue(function, context)
+    if this_cpu_dpc_queue().enqueue(function, context) {
+        true
+    } else {
+        DPC_DROPPED_COUNT.fetch_add(1, Ordering::Relaxed);
+        false
+    }
+}
+
+/// Return the total number of DPCs dropped due to queue overflow.
+#[inline]
+pub fn dpc_dropped_count() -> u64 {
+    DPC_DROPPED_COUNT.load(Ordering::Relaxed)
 }
 
 /// Dispatch all pending DPCs on the current CPU.
@@ -210,7 +225,6 @@ fn test_dpc_irq_to_dispatch_transition() -> Result<(), &'static str> {
     static ORDER: AtomicU64 = AtomicU64::new(0);
 
     fn irq_handler(ctx: *mut u8) {
-        // Simulate ISR: enqueue DPC
         ORDER.store(1, core::sync::atomic::Ordering::Relaxed);
         let q = ctx as *mut DpcQueue;
         unsafe {
@@ -225,12 +239,10 @@ fn test_dpc_irq_to_dispatch_transition() -> Result<(), &'static str> {
     let mut q = DpcQueue::new();
     let q_ptr = &mut q as *mut DpcQueue;
 
-    // Simulate IRQ firing and enqueueing DPC
     irq_handler(q_ptr as *mut u8);
     test_eq!(ORDER.load(core::sync::atomic::Ordering::Relaxed), 1);
     test_true!(q.has_pending());
 
-    // Simulate DIRQL→DISPATCH transition: dispatch DPCs
     let count = q.dispatch_all();
     test_eq!(count, 1);
     test_eq!(ORDER.load(core::sync::atomic::Ordering::Relaxed), 2);
@@ -242,7 +254,6 @@ fn test_dpc_nesting_depth_limit() -> Result<(), &'static str> {
 
     fn nested_dpc(ctx: *mut u8) {
         NEST_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-        // Attempt to enqueue another DPC (nesting)
         let q = ctx as *mut DpcQueue;
         unsafe {
             (*q).enqueue(nested_dpc, ctx);
@@ -252,15 +263,10 @@ fn test_dpc_nesting_depth_limit() -> Result<(), &'static str> {
     let mut q = DpcQueue::new();
     let q_ptr = &mut q as *mut DpcQueue;
 
-    // Enqueue a DPC that will try to nest
     test_true!(q.enqueue(nested_dpc, q_ptr as *mut u8));
 
-    // First dispatch executes the DPC, which enqueues another
-    // But depth limit prevents infinite recursion
     let count = q.dispatch_all();
-    // Should have executed at least the first DPC
     test_true!(count >= 1);
-    // Depth should be back to 0 after dispatch returns
     test_eq!(q.depth, 0);
     Ok(())
 }
@@ -294,7 +300,6 @@ fn test_dpc_callback_execution_order() -> Result<(), &'static str> {
 
     let count = q.dispatch_all();
     test_eq!(count, 3);
-    // FIFO order: A first, B second, C third
     test_eq!(RESULTS[0].load(core::sync::atomic::Ordering::Relaxed), 10);
     test_eq!(RESULTS[1].load(core::sync::atomic::Ordering::Relaxed), 20);
     test_eq!(RESULTS[2].load(core::sync::atomic::Ordering::Relaxed), 30);
@@ -311,13 +316,11 @@ fn test_dpc_stress_100_irqs() -> Result<(), &'static str> {
 
     let mut q = DpcQueue::new();
 
-    // Simulate 100 IRQs, each enqueueing a DPC
     for _ in 0..100 {
         test_true!(q.enqueue(stress_callback, core::ptr::null_mut()));
     }
     test_eq!(q.pending_count(), 100);
 
-    // Dispatch all — none should leak, none should infinite-loop
     let count = q.dispatch_all();
     test_eq!(count, 100);
     test_eq!(
@@ -327,12 +330,67 @@ fn test_dpc_stress_100_irqs() -> Result<(), &'static str> {
     test_true!(!q.has_pending());
     test_eq!(q.pending_count(), 0);
 
-    // Queue should be reusable after full drain
     STRESS_COUNT.store(0, core::sync::atomic::Ordering::Relaxed);
     test_true!(q.enqueue(stress_callback, core::ptr::null_mut()));
     let count2 = q.dispatch_all();
     test_eq!(count2, 1);
     test_eq!(STRESS_COUNT.load(core::sync::atomic::Ordering::Relaxed), 1);
+    Ok(())
+}
+
+fn test_dpc_queue_overflow() -> Result<(), &'static str> {
+    // Test that a full queue correctly rejects enqueue and
+    // that dispatch_all drains all entries correctly.
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static DROP_CNT: AtomicU64 = AtomicU64::new(0);
+
+    fn drop_cb(_ctx: *mut u8) {
+        DROP_CNT.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let mut q = DpcQueue::new();
+    let half = DPC_QUEUE_SIZE / 2;
+
+    for _ in 0..half {
+        test_true!(q.enqueue(drop_cb, core::ptr::null_mut()));
+    }
+    test_eq!(q.pending_count(), half);
+
+    test_true!(q.enqueue(drop_cb, core::ptr::null_mut()));
+    test_eq!(q.pending_count(), half + 1);
+
+    let count = q.dispatch_all();
+    test_eq!(count, half + 1);
+    test_eq!(q.pending_count(), 0);
+    test_eq!(DROP_CNT.load(Ordering::Relaxed), (half + 1) as u64);
+
+    DROP_CNT.store(0, Ordering::Relaxed);
+    test_true!(q.enqueue(drop_cb, core::ptr::null_mut()));
+    test_eq!(q.pending_count(), 1);
+    let c2 = q.dispatch_all();
+    test_eq!(c2, 1);
+    test_eq!(DROP_CNT.load(Ordering::Relaxed), 1);
+    Ok(())
+}
+
+fn test_dpc_dispatch_pending_global_api() -> Result<(), &'static str> {
+    use core::sync::atomic::{AtomicU64, Ordering};
+    static CALLED: AtomicU64 = AtomicU64::new(0);
+    fn global_cb(_ctx: *mut u8) {
+        CALLED.store(42, Ordering::Relaxed);
+    }
+
+    let prev_dropped = DPC_DROPPED_COUNT.load(Ordering::Relaxed);
+
+    test_true!(insert_queue_dpc(global_cb, core::ptr::null_mut()));
+    test_true!(dpc_has_pending());
+
+    let count = dpc_dispatch_pending();
+    test_true!(count >= 1);
+    test_eq!(CALLED.load(Ordering::Relaxed), 42);
+    test_true!(!dpc_has_pending());
+
+    test_eq!(DPC_DROPPED_COUNT.load(Ordering::Relaxed) - prev_dropped, 0);
     Ok(())
 }
 
@@ -343,4 +401,6 @@ pub fn register_tests() {
     crate::testing::register("dpc_nesting_depth_limit", test_dpc_nesting_depth_limit);
     crate::testing::register("dpc_callback_execution_order", test_dpc_callback_execution_order);
     crate::testing::register("dpc_stress_100_irqs", test_dpc_stress_100_irqs);
+    crate::testing::register("dpc_queue_overflow", test_dpc_queue_overflow);
+    crate::testing::register("dpc_dispatch_pending_global_api", test_dpc_dispatch_pending_global_api);
 }

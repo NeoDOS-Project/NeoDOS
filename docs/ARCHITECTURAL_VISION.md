@@ -449,7 +449,7 @@ pub enum WaitReason {
 - `sys_read` en pipe vacío → KWait::PipeRead
 - `sys_waitpid` → KWait::ChildExit
 - `sys_thread_join` → KWait::ThreadJoin
-- `irp_block_current` → KWait::IrpComplete
+- Block on IRP completion → KWait::IrpComplete
 
 **Beneficio:** Un solo mecanismo de bloqueo/despertar. Un solo lugar donde el scheduler interactúa con la espera. Posibilidad de WaitAny/WaitAll (como NT `KeWaitForMultipleObjects`).
 

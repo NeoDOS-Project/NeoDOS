@@ -79,7 +79,7 @@ pub trait FileSystem: Send {
     }
 }
 
-const MAX_MOUNTS: usize = 8;
+const MAX_SUBDIR_MOUNTS: usize = 8;
 
 #[derive(Debug, Clone, Copy)]
 struct Mount {
@@ -90,7 +90,7 @@ struct Mount {
 
 pub struct Vfs {
     pub drives: [Option<Box<dyn FileSystem>>; 26],
-    mounts: [Option<Mount>; MAX_MOUNTS],
+    mounts: [Option<Mount>; MAX_SUBDIR_MOUNTS],
     mount_count: usize,
 }
 
@@ -109,7 +109,7 @@ impl Vfs {
         const NONE_MOUNT: Option<Mount> = None;
         Vfs {
             drives: [NONE_DRIVE; 26],
-            mounts: [NONE_MOUNT; MAX_MOUNTS],
+            mounts: [NONE_MOUNT; MAX_SUBDIR_MOUNTS],
             mount_count: 0,
         }
     }
@@ -273,7 +273,7 @@ impl Vfs {
             }
         }
 
-        if self.mount_count >= MAX_MOUNTS {
+        if self.mount_count >= MAX_SUBDIR_MOUNTS {
             return Err(VfsError::MountTableFull);
         }
 

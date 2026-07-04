@@ -24,7 +24,7 @@ pub struct HiveMount {
 }
 
 pub struct CmManager {
-    hives: Vec<HiveMount>,
+    pub(crate) hives: Vec<HiveMount>,
 }
 
 impl CmManager {
@@ -238,10 +238,16 @@ pub fn cm_ensure_default_values() {
     let hm = &mut cm.hives[0]; // SYSTEM hive
     let root = hm.hive.root_cell();
 
-    // 1. CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\NeoShell.nxe"
+    // 1. CurrentControlSet\Services\NeoInit — NeoInit configuration
     if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Services\\NeoInit") {
         if hm.hive.find_value(key, "DefaultShell").is_none() {
             hm.hive.set_value(key, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+        }
+        if hm.hive.find_value(key, "EnableVT").is_none() {
+            hm.hive.set_value(key, "EnableVT", hive::REG_DWORD, &1u32.to_le_bytes());
+        }
+        if hm.hive.find_value(key, "AutoStartServices").is_none() {
+            hm.hive.set_value(key, "AutoStartServices", hive::REG_SZ, b"");
         }
     }
 

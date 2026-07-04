@@ -627,7 +627,9 @@ pub mod ob_access {
 }
 
 /// ObInfoClass — info classes for sys_ob_query_info (RAX=62).
+/// Must match kernel's `ObInfoClass` in `src/object/types.rs`.
 #[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObInfoClass {
     Basic = 0,
     Name = 1,
@@ -636,7 +638,7 @@ pub enum ObInfoClass {
     Thread = 4,
     Pipe = 5,
     Device = 6,
-    Cpu = 7,
+    CpuInfo = 7,
     Version = 8,
     DateTime = 9,
     Memory = 10,
@@ -646,6 +648,12 @@ pub enum ObInfoClass {
     KeyboardLayout = 14,
     ReadContent = 15,
     VolumeLabel = 16,
+    SocketInfo = 17,
+    SocketAddr = 18,
+    TcpStatus = 19,
+    NicInfo = 20,
+    RegistryKey = 21,
+    RegistryValue = 22,
 }
 
 pub mod ob_type {
@@ -657,18 +665,70 @@ pub mod ob_type {
     pub const THREAD: u32 = 16;
 }
 
+/// ObSetInfoClass — info classes for sys_ob_set_info (RAX=63).
+/// Must match kernel's `ObSetInfoClass` in `src/object/types.rs`.
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObSetInfoClass {
+    ProcessPriority = 0,
+    ThreadPriority = 1,
+    ObjectName = 2,
+    Security = 3,
+    ProcessTerminate = 4,
+    KeyboardLayout = 5,
+    VfsRename = 6,
+    WriteContent = 7,
+    SetCwd = 8,
+    SetVolumeLabel = 9,
+    TimerStart = 10,
+    TimerCancel = 11,
+    SemaphoreRelease = 12,
+    SectionMapView = 13,
+    SectionUnmapView = 14,
+    FileCreate = 15,
+    FileDelete = 16,
+    SetProcessVt = 17,
+    SocketConnect = 18,
+    SocketBind = 19,
+    SocketListen = 20,
+    SocketSend = 21,
+    SocketClose = 22,
+    RegistryCreateKey = 23,
+    RegistryDeleteKey = 24,
+    RegistrySetValue = 25,
+    RegistryDeleteValue = 26,
+}
+
+/// Backward-compatible constants for `ObSetInfoClass`.
 pub mod ob_set_info_class {
-    pub const PROCESS_PRIORITY: u32 = 0;
-    pub const THREAD_PRIORITY: u32 = 1;
-    pub const OBJECT_NAME: u32 = 2;
-    pub const PROCESS_TERMINATE: u32 = 4;
-    pub const KEYBOARD_LAYOUT: u32 = 5;
-    pub const VFS_RENAME: u32 = 6;
-    pub const WRITE_CONTENT: u32 = 7;
-    pub const SET_CWD: u32 = 8;
-    pub const SET_VOLUME_LABEL: u32 = 9;
-    pub const FILE_CREATE: u32 = 15;
-    pub const FILE_DELETE: u32 = 16;
+    use super::ObSetInfoClass;
+    pub const PROCESS_PRIORITY: ObSetInfoClass = ObSetInfoClass::ProcessPriority;
+    pub const THREAD_PRIORITY: ObSetInfoClass = ObSetInfoClass::ThreadPriority;
+    pub const OBJECT_NAME: ObSetInfoClass = ObSetInfoClass::ObjectName;
+    pub const SECURITY: ObSetInfoClass = ObSetInfoClass::Security;
+    pub const PROCESS_TERMINATE: ObSetInfoClass = ObSetInfoClass::ProcessTerminate;
+    pub const KEYBOARD_LAYOUT: ObSetInfoClass = ObSetInfoClass::KeyboardLayout;
+    pub const VFS_RENAME: ObSetInfoClass = ObSetInfoClass::VfsRename;
+    pub const WRITE_CONTENT: ObSetInfoClass = ObSetInfoClass::WriteContent;
+    pub const SET_CWD: ObSetInfoClass = ObSetInfoClass::SetCwd;
+    pub const SET_VOLUME_LABEL: ObSetInfoClass = ObSetInfoClass::SetVolumeLabel;
+    pub const TIMER_START: ObSetInfoClass = ObSetInfoClass::TimerStart;
+    pub const TIMER_CANCEL: ObSetInfoClass = ObSetInfoClass::TimerCancel;
+    pub const SEMAPHORE_RELEASE: ObSetInfoClass = ObSetInfoClass::SemaphoreRelease;
+    pub const SECTION_MAP_VIEW: ObSetInfoClass = ObSetInfoClass::SectionMapView;
+    pub const SECTION_UNMAP_VIEW: ObSetInfoClass = ObSetInfoClass::SectionUnmapView;
+    pub const FILE_CREATE: ObSetInfoClass = ObSetInfoClass::FileCreate;
+    pub const FILE_DELETE: ObSetInfoClass = ObSetInfoClass::FileDelete;
+    pub const SET_PROCESS_VT: ObSetInfoClass = ObSetInfoClass::SetProcessVt;
+    pub const SOCKET_CONNECT: ObSetInfoClass = ObSetInfoClass::SocketConnect;
+    pub const SOCKET_BIND: ObSetInfoClass = ObSetInfoClass::SocketBind;
+    pub const SOCKET_LISTEN: ObSetInfoClass = ObSetInfoClass::SocketListen;
+    pub const SOCKET_SEND: ObSetInfoClass = ObSetInfoClass::SocketSend;
+    pub const SOCKET_CLOSE: ObSetInfoClass = ObSetInfoClass::SocketClose;
+    pub const REGISTRY_CREATE_KEY: ObSetInfoClass = ObSetInfoClass::RegistryCreateKey;
+    pub const REGISTRY_DELETE_KEY: ObSetInfoClass = ObSetInfoClass::RegistryDeleteKey;
+    pub const REGISTRY_SET_VALUE: ObSetInfoClass = ObSetInfoClass::RegistrySetValue;
+    pub const REGISTRY_DELETE_VALUE: ObSetInfoClass = ObSetInfoClass::RegistryDeleteValue;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
@@ -877,10 +937,10 @@ pub fn sys_ob_query_info(fd: u8, info_class: ObInfoClass, buf: &mut [u8]) -> Res
 }
 
 /// sys_ob_set_info (RAX=63): set metadata for an object by fd.
-pub fn sys_ob_set_info(fd: u8, info_class: u32, buf: &[u8]) -> Result<(), i64> {
+pub fn sys_ob_set_info(fd: u8, info_class: ObSetInfoClass, buf: &[u8]) -> Result<(), i64> {
     let ptr = buf.as_ptr() as u64;
     let len = buf.len() as u64;
-    let r = unsafe { ob_syscall_4!(63, fd as u64, info_class as u64, ptr, len) };
+    let r = unsafe { ob_syscall_4!(63, fd as u64, info_class as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -923,7 +983,7 @@ pub fn ob_set_thread_priority(thread_fd: u8, priority: u8) -> Result<(), i64> {
     if priority > 3 { return Err(EINVAL); }
     let p = [priority as u32];
     let buf = unsafe { core::slice::from_raw_parts(p.as_ptr() as *const u8, 4) };
-    sys_ob_set_info(thread_fd, ob_set_info_class::THREAD_PRIORITY, buf)
+    sys_ob_set_info(thread_fd, ObSetInfoClass::ThreadPriority, buf)
 }
 
 /// sys_ob_destroy (RAX=66): destroy/delete an object by fd.
@@ -944,7 +1004,7 @@ pub fn ob_file_create(path: &str) -> Result<u8, i64> {
     buf[..bytes.len()].copy_from_slice(bytes);
     let ptr = buf.as_ptr() as u64;
     let len = bytes.len() as u64;
-    let r = unsafe { ob_syscall_4!(63, 1u64, 15u64, ptr, len) };
+    let r = unsafe { ob_syscall_4!(63, 1u64, ObSetInfoClass::FileCreate as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(r as u8) }
 }
 
@@ -952,7 +1012,7 @@ pub fn ob_file_create(path: &str) -> Result<u8, i64> {
 /// Calls sys_ob_set_info(fd, FileDelete, null, 0).
 pub fn ob_file_delete(fd: u8) -> Result<(), i64> {
     let dummy: u64 = 0;
-    let r = unsafe { ob_syscall_4!(63, fd as u64, 16u64, &dummy as *const u64 as u64, 8u64) };
+    let r = unsafe { ob_syscall_4!(63, fd as u64, ObSetInfoClass::FileDelete as u32 as u64, &dummy as *const u64 as u64, 8u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -983,4 +1043,40 @@ pub fn sys_poll(fds: &mut [PollFd], timeout_ms: u64) -> Result<usize, i64> {
 pub fn sys_sleep_ex() -> Result<(), i64> {
     let r = unsafe { ob_syscall_2!(41, 0u64, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Registry (Cm) — RAX 67–76
+// ═══════════════════════════════════════════════════════════════════════
+
+pub const REG_NONE: u32 = 0;
+pub const REG_SZ: u32 = 1;
+pub const REG_DWORD: u32 = 2;
+pub const REG_BINARY: u32 = 3;
+
+/// sys_cm_open_key (RAX=67): open a registry key by full Ob path.
+/// Returns fd (>=3) on success.
+pub fn sys_cm_open_key(path: &str) -> Result<u8, i64> {
+    let bytes = path.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut buf = [0u8; 256];
+    buf[..bytes.len()].copy_from_slice(bytes);
+    let ptr = buf.as_ptr() as u64;
+    let r = unsafe { ob_syscall_2!(67, ptr, 0u64) };
+    ret(r).map(|v| v as u8)
+}
+
+/// sys_cm_query_value (RAX=69): query a value on a registry key by fd.
+/// buf receives: [type: u32 LE, data_len: u32 LE, data...]
+/// Returns total_size (8 + data_len) regardless of buf capacity.
+pub fn sys_cm_query_value(fd: u8, name: &str, buf: &mut [u8]) -> Result<usize, i64> {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut name_buf = [0u8; 256];
+    name_buf[..bytes.len()].copy_from_slice(bytes);
+    let name_ptr = name_buf.as_ptr() as u64;
+    let buf_ptr = buf.as_mut_ptr() as u64;
+    let buf_len = buf.len() as u64;
+    let r = unsafe { ob_syscall_4!(69, fd as u64, name_ptr, buf_ptr, buf_len) };
+    ret(r).map(|v| v as usize)
 }

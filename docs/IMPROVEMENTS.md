@@ -43,9 +43,9 @@
 | NET-1.6 | Kernel: SocketRecv class 23 | **HIGH** |
 | NET-1.8 | net.nxl userland network library | **HIGH** |
 | NET-1.15 | netcfg.nxe network service | **HIGH** |
-| B2.6 | Registry defaults in boot | **HIGH** |
+| ~~B2.6~~ | ~~Registry defaults in boot~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~**B2.7**~~ | ~~**Registry disk persistence**~~ **[COMPLETED]** | ~~**CRITICAL**~~ |
-| B4.10 | NeoInit Registry-driven config | **HIGH** |
+| ~~B4.10~~ | ~~NeoInit Registry-driven config~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | PKG-1 (P0-P6) | NeoGet v1 — sistema de paquetes `.nxp` (diseño completo, impl diferida a v0.70) | LOW |
 | v0.49 | NeoFS robustez (indirect blocks, journaling, checksums) | MEDIUM |
 | VFS-3.1 | Separar `\Global\FileSystem` del Ob namespace | MEDIUM |
@@ -167,14 +167,14 @@
 
 ### Registry
 
-* [ ] **B2.6. Valores Registry por defecto en boot** | Prereqs: B2.1 | Files: `src/main.rs`, `src/cm/mod.rs`
+* [x] **B2.6. Valores Registry por defecto en boot** | Prereqs: B2.1 | Files: `src/main.rs`, `src/cm/mod.rs`
   - En Phase 3.881, crear `CurrentControlSet\Services\NeoInit\DefaultShell`,
     `Network\Interfaces\0\DHCPEnabled=1`, etc. Solo si no existen.
   - **Tests:** `cm_default_values_created`
 
 ### System Bootstrap (NeoInit)
 
-* [ ] **B4.10. NeoInit: leer Registry para config** | Prereqs: B2.6 | Files: `userbin/neoinit/`
+* [x] **B4.10. NeoInit: leer Registry para config** | Prereqs: B2.6 | Files: `userbin/neoinit/`
   - NeoInit lee DefaultShell, AutoStartServices, EnableVT, WaitForNetwork desde
     `\Registry\Machine\System\CurrentControlSet\Services\NeoInit`. Eliminar paths hardcodeados.
   - **Tests:** boot con Registry, verificar shell spawn
@@ -386,12 +386,12 @@
 
 ### 2026-07-04 Audit: Architectural & API Consistency
 
-* [ ] **AUDIT-1. Kernel: Registry info classes not handled** | Files: `src/syscall/ob.rs`, `src/object/types.rs`
+* [x] **AUDIT-1. Kernel: Registry info classes not handled** | Files: `src/syscall/ob.rs`, `src/object/types.rs`
   - `ObInfoClass::RegistryKey (21)` and `::RegistryValue (22)` both fall to `_ => Inval` in `handler_ob_query_info`.
   - `ObSetInfoClass::RegistryCreateKey (23)`, `::RegistryDeleteKey (24)`, `::RegistrySetValue (25)`, `::RegistryDeleteValue (26)` all fall to `_ => Inval` in `handler_ob_set_info`.
   - **Tests:** `ob_query_info_registry_key_value`, `ob_set_info_registry_operations`
 
-* [ ] **AUDIT-2. libneodos ObInfoClass/ObSetInfoClass out of sync with kernel** | Files: `libneodos/src/syscall.rs`
+* [x] **AUDIT-2. libneodos ObInfoClass/ObSetInfoClass out of sync with kernel** | Files: `libneodos/src/syscall.rs`
   - `ObInfoClass` missing 6 variants: `SocketInfo(17)`, `SocketAddr(18)`, `TcpStatus(19)`, `NicInfo(20)`, `RegistryKey(21)`, `RegistryValue(22)`.
   - Naming mismatch: variant 7 is `Cpu` in libneodos vs `CpuInfo` in kernel (same value, different name).
   - `ObSetInfoClass` only defines 11 of 27 constants — missing `Security(3)`, `TimerStart(10)`, `TimerCancel(11)`, `SemaphoreRelease(12)`, `SectionMapView(13)`, `SectionUnmapView(14)`, `SetProcessVt(17)`, and all Socket/Registry set classes.
@@ -400,31 +400,31 @@
   - `ob_file_create`/`ob_file_delete` hardcode `15u64`/`16u64` instead of using named constants.
   - **Tests:** `libneodos_ob_info_class_completeness`, `libneodos_ob_set_info_class_completeness`
 
-* [ ] **AUDIT-3. Two active mount systems (fs/vfs.rs + vfs/mount.rs)** | Files: `src/fs/vfs.rs`, `src/vfs/mount.rs`
+* [x] **AUDIT-3. Two active mount systems (fs/vfs.rs + vfs/mount.rs)** | Files: `src/fs/vfs.rs`, `src/vfs/mount.rs`
   - `MAX_MOUNTS` is 8 in `fs/vfs.rs` vs 16 in `vfs/mount.rs` — inconsistency for same concept.
   - Drives must be registered in **both** systems; `vfs_mount_filesystem()` calls both `vfs.mount()` AND `MountManager::mount()`, creating risk of inconsistency.
   - **Tests:** `mount_dual_system_consistency`
 
-* [ ] **AUDIT-4. Low DPC integration: only dispatched from 2 call sites, no test coverage** | Files: `src/dpc/mod.rs`
+* [x] **AUDIT-4. Low DPC integration: only dispatched from 2 call sites, no test coverage** | Files: `src/dpc/mod.rs`
   - `dpc_dispatch_pending()` exists at line 176 and is called from `idt.rs:663` and `syscall/mod.rs:240`, but has no test coverage and no DPC queue overflow handling.
 
 * [ ] **AUDIT-5. Dead code: processes.rs vestigial demo code** | Files: `src/processes.rs`
   - `proc_a()`/`proc_b()`/`proc_c()`/`proc_d()` — 4 functions that only print "A", "B", "C", "D" in infinite loops. Zero external references. Vestigial from early prototyping.
 
-* [ ] **AUDIT-6. Dead code: slab_container.rs `Slab<T>` unused in production** | Files: `src/slab_container.rs`
-  - Generic O(1) insert/lookup/remove container with stable keys — only used in its own test cases. No production code uses it.
+* [x] **AUDIT-6. Dead code: slab_container.rs `Slab<T>` unused in production** | Files: `src/slab_container.rs`
+  - Removed: `mod slab_container;` from `main.rs`, deleted file, removed test registration from `testing.rs`.
 
-* [ ] **AUDIT-7. Dead code: Unused IRP functions** | Files: `src/irp/mod.rs`
-  - `irp_set_chain()`, `irp_block_current()`, `irp_submit_and_wait()`, `irp_sync_read()`, `irp_sync_write()` — all have zero external callers.
+* [x] **AUDIT-7. Dead code: Unused IRP functions** | Files: `src/irp/mod.rs`
+  - Removed: `irp_set_chain`, `irp_block_current`, `irp_submit_and_wait`, `irp_sync_read`, `irp_sync_write`, `chain_next` field. Updated docs.
 
-* [ ] **AUDIT-8. Dead code: Unused EventBus methods** | Files: `src/eventbus/mod.rs`
-  - 13+ methods with zero external callers including: `push_event_priority()`, `push_event_high()`, `push_event_with_dyn_payload()`, `pop_priority()`, `register_handler_v2()`, `unregister_handler_by_name()`, `dispatch_one()`, `dispatch_pending()`, `queue_available()`, `handler_count()`, `next_event_id()`, `high_queue_available()`, `pending_dyn_payloads()`.
+* [x] **AUDIT-8. Dead code: Unused EventBus methods** | Files: `src/eventbus/mod.rs`
+  - Removed: `push_event_high`, `push_event_with_dyn_payload`, `pop_priority`, `unregister_handler_by_name`, `queue_available`, `handler_count`, `next_event_id`, `high_queue_available`, `pending_dyn_payloads`, free `register_handler`, free `dispatch_pending`, `DynPayloadEntry`, `dyn_payloads` field, `cleanup_dyn_payload`, `#![allow(dead_code)]`. Kept `push_event_priority`/`register_handler_v2`/`dispatch_one` (transitively used by public API).
 
-* [ ] **AUDIT-9. Kernel link address discrepancy in docs** | Files: `docs/ARCHITECTURE.md`, `docs/memory.md`
+* [x] **AUDIT-9. Kernel link address discrepancy in docs** | Files: `docs/ARCHITECTURE.md`, `docs/memory.md`
   - `ARCHITECTURE.md:113` says kernel loads at `0x200000`; `kernel.ld:4` says `. = 0x4000000` (64 MB).
   - `memory.md:79` says kernel_image at `0x100000` — also wrong.
 
-* [ ] **AUDIT-10. ObSetInfoClass::Security explicitly unimplemented** | Files: `src/syscall/ob.rs`
+* [x] **AUDIT-10. ObSetInfoClass::Security explicitly unimplemented** | Files: `src/syscall/ob.rs`
   - Handler for `Security=3` exists but returns `NoSys` at line 1543 — code exists but does nothing.
 
 ---

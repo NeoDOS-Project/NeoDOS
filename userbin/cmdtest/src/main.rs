@@ -288,7 +288,7 @@ pub extern "C" fn _start() -> ! {
         let ob = to_ob_path("C:\\Temp\\cmdtest_dst.txt", &mut b);
         let r = syscall::sys_ob_open(ob, libneodos::syscall::ob_access::READ)
             .and_then(|fd| {
-                let r = syscall::sys_ob_set_info(fd, 6, b"C:\\Temp\\cmdtest_renamed.txt");
+                let r = syscall::sys_ob_set_info(fd, syscall::ObSetInfoClass::VfsRename, b"C:\\Temp\\cmdtest_renamed.txt");
                 let _ = syscall::sys_close(fd);
                 r
             });

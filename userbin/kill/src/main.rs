@@ -116,7 +116,7 @@ pub extern "C" fn _start() -> ! {
     };
 
     // ObSetInfo class 4 = ProcessTerminate
-    match syscall::sys_ob_set_info(proc_fd, 4, &[]) {
+    match syscall::sys_ob_set_info(proc_fd, syscall::ObSetInfoClass::ProcessTerminate, &[]) {
         Ok(()) => {
             write_str(b"\r\nProcess ");
             write_u32(pid);

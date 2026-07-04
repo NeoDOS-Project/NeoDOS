@@ -110,7 +110,7 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 
 ## Memory Model (Current)
 
-- Kernel link/entry address starts at `0x200000` (see `neodos-kernel/kernel.ld`).
+- Kernel link/entry address starts at `0x4000000` (see `neodos-kernel/kernel.ld`).
 - Custom paging identity-maps the first 4 GiB.
 - **User heap**: 32 MB virtual range `0x10000000..0x12000000`, organised as 16 × 2 MB huge pages. At boot `init_heap_demand_paging()` splits each 2 MB huge page into 4 KB page tables. Physical frames are allocated on demand by the page fault handler when user-space touches a new page.
 - **Demand paging**: The page fault handler (`idt.rs`) checks if the faulting address falls in the heap range; if so, it calls `handle_heap_page_fault()` which walks the 4 KB page tables and allocates a physical frame via `allocate_frame()` marked as `USER_ACCESSIBLE`. On heap shrink (`sys_brk`), `heap_free_range()` unmaps pages and returns frames to the frame allocator. `heap_alloc_page()` touches pages to trigger page faults.

@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.48.6 | **Tests:** 620 | **ABI:** v7 | **Ob API:** RAX 60-66
+**Version:** v0.48.7 | **Tests:** 646 | **ABI:** v7 | **Ob API:** RAX 60-76
 
 ## Permanent Rules (MUST always follow)
 
@@ -40,6 +40,7 @@ For every subsystem, consult its doc — not this file:
 | Subsystem | Doc | Contents |
 |-----------|-----|----------|
 | Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
+| Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
 | Syscalls | `docs/syscalls.md` | Full table, calling convention, migration status |
 | Scheduler | `docs/scheduler.md` | Priorities, aging, SMP, work stealing |
 | Memory | `docs/memory.md` | Buddy allocator, slab, demand paging, mmap |
@@ -57,6 +58,8 @@ For every subsystem, consult its doc — not this file:
 | HAL | `docs/hal.md` | Hardware abstraction layer, primitives |
 | Interrupts | `docs/interrupts.md` | IRQL, IOAPIC, MSI-X, DPC, IPI |
 | Roadmap | `docs/IMPROVEMENTS.md` | Pending items by priority |
+| Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items |
+| Debug | `docs/DEBUG.md` | GDB setup, debug tips |
 | Vision | `docs/ARCHITECTURAL_VISION.md` | Long-term strategy v0.40→v1.0 |
 
 ## Skills (specialized task checklists)

@@ -144,8 +144,8 @@ impl ArpCache {
 
     fn evict_oldest(&mut self) {
         if self.entries.is_empty() { return; }
-        let mut oldest = 0;
-        let mut oldest_tick = self.entries[0].tick_count;
+        let mut oldest = usize::MAX;
+        let mut oldest_tick = u64::MAX;
         for (i, e) in self.entries.iter().enumerate() {
             if e.is_static { continue; }
             if e.tick_count < oldest_tick {
@@ -153,7 +153,12 @@ impl ArpCache {
                 oldest_tick = e.tick_count;
             }
         }
-        self.entries.remove(oldest);
+        if oldest == usize::MAX {
+            // Only static entries remain — remove the first one as last resort
+            self.entries.remove(0);
+        } else {
+            self.entries.remove(oldest);
+        }
     }
 
     pub fn len(&self) -> usize { self.entries.len() }

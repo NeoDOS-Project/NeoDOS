@@ -2551,7 +2551,6 @@ pub fn register_tests() {
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
     crate::object::register_object_tests();
-    crate::slab_container::register_slab_container_tests();
     crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();
     crate::dpc::register_tests();
@@ -2734,13 +2733,16 @@ fn register_ncq_tests() {
         }
 
         // Free tags out of order (evens first, then odds)
-        for i in (0..32).rev().step_by(2) {
+        // NOTE: step_by(2) after rev() takes every 2nd from the reversed iterator,
+        // so (0..32).step_by(2).rev() = 30, 28, ..., 0 (evens)
+        // and (1..32).step_by(2).rev() = 31, 29, ..., 1 (odds)
+        for i in (0..32).step_by(2).rev() {
             let freed = map.free(tags[i]);
             test_true!(freed.is_some());
         }
         test_eq!(map.in_use(), 16);
 
-        for i in (1..32).rev().step_by(2) {
+        for i in (1..32).step_by(2).rev() {
             let freed = map.free(tags[i]);
             test_true!(freed.is_some());
         }

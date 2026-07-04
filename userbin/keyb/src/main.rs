@@ -48,7 +48,7 @@ fn args_to_slice(buf: &[u8; 256]) -> &[u8] {
 
 fn set_layout_via_ob(layout: u8) -> Result<(), i64> {
     let fd = syscall::sys_ob_open("\\Global\\Info\\Keyboard", libneodos::syscall::ob_access::READ)?;
-    let r = syscall::sys_ob_set_info(fd, 5, &[layout]);
+    let r = syscall::sys_ob_set_info(fd, syscall::ObSetInfoClass::KeyboardLayout, &[layout]);
     let _ = syscall::sys_close(fd);
     r
 }

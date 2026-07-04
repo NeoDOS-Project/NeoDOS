@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.48.7 — 2026-07-04
+
+### Added
+- **B4.10 NeoInit Registry-driven config** — `userbin/neoinit/`: lee DefaultShell, EnableVT, WaitForNetwork, AutoStartServices desde `\Registry\Machine\System\CurrentControlSet\Services\NeoInit`.
+- **AUDIT-1. Registry Ob info classes** — `handler_ob_query_info`/`handler_ob_set_info` ahora soportan RegistryKey, RegistryValue, RegistryCreateKey, RegistryDeleteKey, RegistrySetValue, RegistryDeleteValue.
+- **AUDIT-2. libneodos Ob enum sync** — `ObInfoClass` completo (22 variantes, derives), `ObSetInfoClass` como enum (27 variantes), `sys_ob_set_info` tipado.
+- **AUDIT-10. Security descriptor via ObSetInfo** — Handler para `ObSetInfoClass::Security` parsea ACL desde buffer y llama `ob_set_security`.
+- **AUDIT-4. DPC overflow tracking** — `DPC_DROPPED_COUNT` global, 2 nuevos tests de cobertura.
+
+### Changed
+- **AUDIT-3. MAX_MOUNTS rename** — `fs/vfs.rs`: `MAX_MOUNTS` → `MAX_SUBDIR_MOUNTS` para eliminar ambigüedad.
+- **AUDIT-9. Doc fixes** — Corregidas direcciones de kernel link en 4 docs (`0x200000` → `0x4000000`).
+- **AGENTS.md** — ToC actualizado, versión y test count actualizados.
+- **Tests:** 645 → 646. Fixes: `ahci_ncq_out_of_order` (iterator bug) y `net_arp_cache_static_survives_eviction` (evict_oldest skip static entries).
+- Version bumps: libneodos 0.2.1, neoinit 0.3.1, cpuinfo/pri/kill/keyb/coreren/cmdtest 0.1.1.
+
 ## v0.48.6 — 2026-07-02
 
 ### Added

@@ -4,9 +4,7 @@
 //! The following APIs are stable and will not change:
 //!   - irp_alloc() / irp_free() / irp_get_params()
 //!   - irp_complete() / irp_complete_result()
-//!   - irp_block_current() / irp_submit_and_wait()
-//!   - irp_sync_read() / irp_sync_write()
-//!   - irp_get_status() / irp_set_chain()
+//!   - irp_get_status()
 //!   - IrpQueue (per-device FIFO)
 //!   - BlockDevice trait: submit_irp() / poll_irp()
 //!
@@ -16,8 +14,6 @@
 //!   - Drivers MUST call irp_get_params() to extract fields under pool lock
 //!   - Completion: irp_complete() sets status, wakes waiter, dispatches callback
 //!   - Callbacks are dispatched via high-priority work queue (never in IRQ)
-//!   - Blocking: magic = IRP_WAIT_MAGIC | irp_id, ThreadState::Blocked
-//!   - Chain: irp_set_chain() links IRPs; auto-submits chain_next on complete
 //!   - All 5 BlockDevice implementors complete synchronously in submit_irp()
 //!
 //! ─────────────────────────────────────────────────────────────────────
@@ -70,7 +66,6 @@ pub struct Irp {
     pub status: IrpStatus,
     pub callback: Option<IrpCallback>,
     pub callback_ctx: *mut u8,
-    pub chain_next: Option<IrpId>,
     pub waiting_pid: Option<u32>,
 }
 
@@ -114,7 +109,6 @@ impl IrpPoolInner {
                 status: IrpStatus::Pending,
                 callback: None,
                 callback_ctx: core::ptr::null_mut(),
-                chain_next: None,
                 waiting_pid: None,
             },
         };
@@ -159,7 +153,6 @@ impl IrpPool {
                 status: IrpStatus::Pending,
                 callback: None,
                 callback_ctx: core::ptr::null_mut::<u8>(),
-                chain_next: None,
                 waiting_pid: None,
             },
         };
@@ -197,7 +190,6 @@ pub fn irp_alloc(
     irp.status = IrpStatus::Pending;
     irp.callback = callback;
     irp.callback_ctx = callback_ctx;
-    irp.chain_next = None;
     irp.waiting_pid = None;
     Some(id)
 }
@@ -229,15 +221,6 @@ pub fn irp_get_params(id: IrpId) -> Option<IrpParams> {
 pub fn irp_get_status(id: IrpId) -> IrpStatus {
     let mut pool = IRP_POOL.inner.lock();
     pool.get_mut(id).map_or(IrpStatus::Error(1), |irp| irp.status)
-}
-
-/// Mark an IRP as having a chain successor. When the current IRP
-/// completes, the chain_next IRP is submitted to the same device.
-pub fn irp_set_chain(irp_id: IrpId, next_id: IrpId) {
-    let mut pool = IRP_POOL.inner.lock();
-    if let Some(irp) = pool.get_mut(irp_id) {
-        irp.chain_next = Some(next_id);
-    }
 }
 
 // ── Work queue dispatch for completion callbacks ──────────────────────
@@ -277,14 +260,12 @@ fn irp_wake_waiter(pid: u32) {
 pub fn irp_complete(irp_id: IrpId, status: IrpStatus) {
     let mut cb_info: Option<(IrpCallback, *mut u8)> = None;
     let mut waiter_pid: Option<u32> = None;
-    let mut _chain: Option<IrpId> = None;
 
     {
         let mut pool = IRP_POOL.inner.lock();
         if let Some(irp) = pool.get_mut(irp_id) {
             irp.status = status;
             waiter_pid = irp.waiting_pid.take();
-            _chain = irp.chain_next.take();
             cb_info = irp.callback.take().map(|cb| (cb, irp.callback_ctx));
         }
     }
@@ -318,20 +299,6 @@ pub fn irp_complete_result(irp_id: IrpId, result: Result<(), ()>) {
         Ok(()) => irp_complete(irp_id, IrpStatus::Completed),
         Err(()) => irp_complete(irp_id, IrpStatus::Error(1)),
     }
-}
-
-/// Block the current thread until the given IRP completes.
-pub fn irp_block_current(irp_id: IrpId) {
-    let magic = IRP_WAIT_MAGIC | irp_id;
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let mut scheduler = s.lock();
-        if let Some(k) = scheduler.current_kthread_mut() {
-            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: magic };
-            k.waiting_for = Some(magic);
-        }
-        crate::syscall::set_need_resched();
-    });
 }
 
 // ── Per-device IRP Queue ──────────────────────────────────────────────
@@ -391,69 +358,6 @@ impl IrpQueue {
         } else {
             IRP_QUEUE_DEPTH - self.head + self.tail
         }
-    }
-}
-
-// ── Helper: synchronous block on IRP completion ──────────────────────
-
-/// Submit an IRP to a device and block the current process until it
-/// completes. Returns the final `IrpStatus`.
-pub fn irp_submit_and_wait(
-    dev: &mut dyn crate::drivers::block::BlockDevice,
-    irp_id: IrpId,
-) -> IrpStatus {
-    if dev.submit_irp(irp_id).is_err() {
-        irp_complete(irp_id, IrpStatus::Error(1));
-        return IrpStatus::Error(1);
-    }
-
-    if irp_get_status(irp_id) != IrpStatus::Pending {
-        return irp_get_status(irp_id);
-    }
-
-    irp_block_current(irp_id);
-    irp_get_status(irp_id)
-}
-
-// ── Synchronous IRP helpers (for code that wants IRP-based I/O) ─────
-
-/// Perform a synchronous read by allocating an IRP, submitting it,
-/// and blocking until completion.
-pub fn irp_sync_read(
-    dev: &mut dyn crate::drivers::block::BlockDevice,
-    lba: u64,
-    count: u8,
-    buf: &mut [u8],
-) -> Result<(), ()> {
-    let id = irp_alloc(
-        IrpOp::Read, lba, count, buf.as_mut_ptr(), buf.len(),
-        None, core::ptr::null_mut(),
-    ).ok_or(())?;
-    let status = irp_submit_and_wait(dev, id);
-    irp_free(id);
-    match status {
-        IrpStatus::Completed => Ok(()),
-        _ => Err(()),
-    }
-}
-
-/// Perform a synchronous write by allocating an IRP, submitting it,
-/// and blocking until completion.
-pub fn irp_sync_write(
-    dev: &mut dyn crate::drivers::block::BlockDevice,
-    lba: u64,
-    count: u8,
-    buf: &[u8],
-) -> Result<(), ()> {
-    let id = irp_alloc(
-        IrpOp::Write, lba, count, buf.as_ptr() as *mut u8, buf.len(),
-        None, core::ptr::null_mut(),
-    ).ok_or(())?;
-    let status = irp_submit_and_wait(dev, id);
-    irp_free(id);
-    match status {
-        IrpStatus::Completed => Ok(()),
-        _ => Err(()),
     }
 }
 

@@ -1,8 +1,8 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.47 (Networking TCP/IP completado).
-> Proximo milestone: v0.48 (NeoFS estabilidad).
+> Version actual: v0.48.7 (Registry config, audits).
+> Proximo milestone: v0.49 (Servicios de red).
 
 ---
 
@@ -35,6 +35,38 @@
 1. ~~**v0.43** — SeAccessCheck NT-compatible, sys_poll(), Congelar pipe/IRP protocols~~ **COMPLETADO**
 2. ~~**v0.44** — ASLR v1 (base aleatoria), Ob syscalls RAX 60-66~~ **COMPLETADO** (v0.44.2: Ob migration completa, todas las syscalls legacy desactivadas)
 3. ~~**v0.45** — Ob migration, Device Tree + Resource Manager, Driver state machine freeze~~ **COMPLETADO** (Ob migration completada en v0.44.2; Device Tree y Resource Manager se mueven a v0.46)
+
+### v0.48.7 (Registry config + Audits)
+
+* [x] **B2.6. Registry defaults in boot** | Files: `src/main.rs`, `src/cm/mod.rs`
+  - En Phase 3.881, crear `CurrentControlSet\Services\NeoInit\DefaultShell`,
+    `Network\Interfaces\0\DHCPEnabled=1`, etc. Solo si no existen.
+  - **Tests:** `cm_default_values_created`
+
+* [x] **B4.10. NeoInit: leer Registry para config** | Files: `userbin/neoinit/`
+  - NeoInit lee DefaultShell, AutoStartServices, EnableVT, WaitForNetwork desde
+    `\Registry\Machine\System\CurrentControlSet\Services\NeoInit`.
+  - **Tests:** boot con Registry, verificar shell spawn
+
+* [x] **AUDIT-1. Registry info classes handled** | Files: `src/syscall/ob.rs`, `src/object/types.rs`
+  - `ObInfoClass::RegistryKey (21)` y `::RegistryValue (22)` implementados.
+  - `ObSetInfoClass::RegistryCreateKey (23)`, `::RegistryDeleteKey (24)`, `::RegistrySetValue (25)`, `::RegistryDeleteValue (26)` implementados.
+
+* [x] **AUDIT-2. libneodos ObInfoClass/ObSetInfoClass sync** | Files: `libneodos/src/syscall.rs`
+  - Añadidos 6 variantes faltantes a ObInfoClass. ObSetInfoClass convertido a enum con 27 variantes.
+  - `sys_ob_set_info` ahora toma `ObSetInfoClass` en vez de `u32`.
+
+* [x] **AUDIT-3. Dual mount systems (MAX_MOUNTS)** | Files: `src/fs/vfs.rs`
+  - Renombrado `MAX_MOUNTS` a `MAX_SUBDIR_MOUNTS` en fs/vfs.rs para eliminar ambigüedad.
+
+* [x] **AUDIT-4. DPC overflow handling + tests** | Files: `src/dpc/mod.rs`
+  - Añadido `DPC_DROPPED_COUNT` global. 3 nuevos tests: queue_overflow, dispatch_pending_global_api.
+
+* [x] **AUDIT-9. Kernel link address in docs** | Files: `docs/ARCHITECTURE.md`, `docs/memory.md`, `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`, `docs/DEBUG.md`
+  - Corregido `0x200000`/`0x100000` → `0x4000000` en todas las referencias.
+
+* [x] **AUDIT-10. ObSetInfoClass::Security implementado** | Files: `src/syscall/ob.rs`
+  - Reemplazado `err_to_u64(NoSys)` por implementación funcional que parsea SD y llama `ob_set_security`.
 
 ### v0.47 (Networking TCP/IP)
 

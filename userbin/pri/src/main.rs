@@ -161,7 +161,7 @@ pub extern "C" fn _start() -> ! {
 
     // ObSetInfo class 0 = ProcessPriority
     let priority_bytes = [priority as u8, 0, 0, 0];
-    match syscall::sys_ob_set_info(proc_fd, 0, &priority_bytes) {
+    match syscall::sys_ob_set_info(proc_fd, syscall::ObSetInfoClass::ProcessPriority, &priority_bytes) {
         Ok(()) => {
             let names: &[&[u8]] = &[b"HIGH", b"ABOVE_NORMAL", b"NORMAL", b"IDLE"];
             write_str(b"\r\nProcess ");

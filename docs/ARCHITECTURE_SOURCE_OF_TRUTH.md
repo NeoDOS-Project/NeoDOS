@@ -12,7 +12,7 @@ NeoDOS is a monolithic x86_64 kernel with a driver isolation layer, preemptive p
 IRP-based async I/O, and a user-mode process model (Ring 3). It runs on UEFI (OVMF) with
 bootloader → kernel → NeoInit (PID 1) startup sequence.
 
-- **Kernel image**: ELF64, loaded at `0x200000`, identity-mapped.
+- **Kernel image**: ELF64, loaded at `0x4000000`, identity-mapped.
 - **User processes**: loads at `0x400000`, heap at `0x10000000`, mmap at `0x20000000`.
 - **Drivers**: NEM format (`.nem`), loaded from NeoFS at boot or on demand.
 - **NeoInit (PID 1)**: userland supervisor, started by kernel after boot.
@@ -119,7 +119,7 @@ and boot continues.
 
 | Region | Base | Size | Owner |
 |--------|------|------|-------|
-| Kernel image | 0x200000 | ~1 MB | Kernel (read-only exec) |
+| Kernel image | 0x4000000 | ~1.2 MB | Kernel (read-only exec) |
 | Kernel .rodata | 0x00100000 | ~1 MB | Kernel (read-only) |
 | Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
 | User window | 0x400000 | 4 MB | User processes (code+stack) |
@@ -258,10 +258,7 @@ irp_alloc() → Pending
 ```
 
 **Rule 7.1.1**: An IRP MUST NOT be accessed after `irp_complete` dispatches its callback.
-**Rule 7.1.2**: Chaining (`chain_next`) MUST be set before the parent IRP is submitted.
 **Rule 7.1.3**: The device driver calls `irp_complete` exactly once per IRP.
-**Rule 7.1.4**: `irp_sync_read` / `irp_sync_write` are synchronous wrappers that block the
-calling process. They MUST NOT be called from IRQ context.
 **Rule 7.1.5**: `irp_complete_with_apc` delivers the IRP completion callback via the
 target thread's user APC queue (DIRQL → DPC → APC flow). The callback runs at PASSIVE_LEVEL
 in user context before the next user-mode instruction.
@@ -367,7 +364,7 @@ DEMAND MUST NOT escalate.
 - User heap (`0x10000000..0x12000000`)
 - mmap region (`0x20000000..0x22000000`)
 - User code (`0x400000..0x800000`)
-- Kernel image (`0x200000..PHYS_MEM_END`)
+- Kernel image (`0x4000000..PHYS_MEM_END`)
 
 All other addresses are rejected.
 **Rule 8.5.4**: Isolation mode `Sandbox` (DEMAND drivers) marks the driver `FAULTED` on any

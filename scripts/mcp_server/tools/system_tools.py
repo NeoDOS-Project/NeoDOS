@@ -8,10 +8,8 @@ consistency between documentation, source code, and build artifacts.
 import os
 import re
 from pathlib import Path
-
-
-NEODOS_ROOT: Path = None
-KERNEL_SRC: Path = None
+NEODOS_ROOT: Path = None  # type: ignore[assignment]
+KERNEL_SRC: Path = None  # type: ignore[assignment]
 
 
 def configure(root_dir: str):
@@ -92,9 +90,11 @@ def check_consistency(targets: str = "all") -> str:
 
 def _check_source_consistency() -> list[tuple[str, str]]:
     results = []
+    root = NEODOS_ROOT or Path(".")
+    krnl = KERNEL_SRC or root / "neodos-kernel" / "src"
 
-    if not KERNEL_SRC or not KERNEL_SRC.exists():
-        results.append(("ERROR", f"Kernel source not found at {KERNEL_SRC}"))
+    if not krnl.exists():
+        results.append(("ERROR", f"Kernel source not found at {krnl}"))
         return results
 
     # Check for forbidden dependencies in shell → ahci/ata
@@ -155,16 +155,35 @@ def _check_doc_consistency() -> list[tuple[str, str]]:
 
     # Check CHANGELOG.md
     changelog = NEODOS_ROOT / "CHANGELOG.md"
+    version: str | None = None
     if changelog.exists():
-        version = "?"
         for line in open(changelog):
-            m = re.match(r"^## \[v([\d.]+)\]", line)
+            m = re.match(r"^## v([\d.]+)", line)
             if m:
                 version = m.group(1)
                 break
-        results.append(("OK", f"CHANGELOG.md present (v{version})"))
+        ver_str = version if version else "?"
+        results.append(("OK", f"CHANGELOG.md present (v{ver_str})"))
     else:
         results.append(("WARN", "CHANGELOG.md missing"))
+
+    # Check AGENTS.md version vs CHANGELOG.md
+    agents = NEODOS_ROOT / "AGENTS.md"
+    if agents.exists():
+        agents_ver = None
+        for line in open(agents):
+            m = re.match(r'\*\*Version:\*\* v([\d.]+)', line)
+            if m:
+                agents_ver = m.group(1)
+                break
+        if agents_ver and version not in ('?', None) and agents_ver != version:
+            results.append(("WARN", f"AGENTS.md version (v{agents_ver}) != CHANGELOG.md (v{version})"))
+        elif agents_ver and version in ('?', None):
+            results.append(("OK", f"AGENTS.md version v{agents_ver} (CHANGELOG version unknown)"))
+        elif agents_ver:
+            results.append(("OK", f"AGENTS.md version v{agents_ver} matches CHANGELOG"))
+    else:
+        results.append(("WARN", "AGENTS.md not found"))
 
     # Check NEM spec
     nem_spec = NEODOS_ROOT / "docs" / "NEM_SPEC.md"

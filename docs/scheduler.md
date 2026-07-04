@@ -217,7 +217,6 @@ that returns to the kernel's idle loop after the final `iretq`.
 |-----------------------------------|--------------------------------|
 | `sched_set_process_priority(pid, priority)` | Change priority at runtime   |
 | `sys_yield(RAX=2)`                | Voluntary yield                 |
-| `irp_block_current()`             | Block on IRP completion         |
 | `PRI <pid> <level>`               | Shell: set priority             |
 | `PS`                              | Shell: list processes + H/AN/N/I|
 

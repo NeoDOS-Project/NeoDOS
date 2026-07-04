@@ -76,7 +76,7 @@ on overlap detection. `init_default()` defines the canonical layout:
 
 | Name         | Base      | Size     | Purpose                         |
 |--------------|-----------|----------|---------------------------------|
-| kernel_image | 0x100000  | 1 MB     | Kernel .text/.rodata/.data/.bss |
+| kernel_image | 0x4000000 | ~1.2 MB  | Kernel .text/.rodata/.data/.bss |
 | user_window  | 0x400000  | 32 MB    | Ring 3 code + stack slots       |
 | kernel_heap  | 0x2400000 | 16 MB    | Kernel linked-list heap         |
 | crash_dump   | 0xF000000 | 16 MB    | Panic-time crash dump region    |

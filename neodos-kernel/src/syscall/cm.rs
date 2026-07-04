@@ -5,6 +5,7 @@ use crate::hal;
 use crate::handle::{HandleEntry, alloc_handle};
 use crate::scheduler;
 use crate::syscall::{copy_user_string, is_user_ptr_valid, current_handle_entry};
+use alloc::string::ToString;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Registry syscall handlers (Cm — Configuration Manager)
@@ -13,6 +14,9 @@ use crate::syscall::{copy_user_string, is_user_ptr_valid, current_handle_entry};
 
 /// RAX 67: cm_open_key(path_ptr) -> handle
 /// Open a registry key by path under \Registry.
+/// First tries direct Ob namespace lookup (for mount points).
+/// If not found, resolves through a hive mount point for deep key paths
+/// (e.g. \Registry\Machine\System\CurrentControlSet\Services\NeoInit).
 /// Returns fd (>=3) on success.
 pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
     let path_ptr = regs.rbx;
@@ -22,7 +26,6 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
         Err(_) => return err_to_u64(SyscallError::Fault),
     };
 
-    // Look up via Ob namespace (full path like \Registry\Machine\System)
     let token = hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
@@ -31,25 +34,95 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
             .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
 
-    match crate::object::ob_open_path(&path, &token, 1) {
-        Ok(ob_id) => {
-            // The ob_id has native_id = encoded cell index
-            let entry = HandleEntry::ob_object(ob_id, 1);
-            let fd = hal::without_interrupts(|| {
-                let s = scheduler::current_scheduler();
-                let mut lock = s.lock();
-                if let Some(ep) = lock.current_eprocess_mut() {
-                    alloc_handle(&mut ep.handle_table, entry)
-                } else {
-                    None
-                }
-            });
-            match fd {
-                Some(f) => f as u64,
-                None => err_to_u64(SyscallError::NoMem),
+    // Try direct Ob namespace lookup first (handles mount points exactly).
+    if let Ok(ob_id) = crate::object::ob_open_path(&path, &token, 1) {
+        let entry = HandleEntry::ob_object(ob_id, 1);
+        let fd = hal::without_interrupts(|| {
+            let s = scheduler::current_scheduler();
+            let mut lock = s.lock();
+            if let Some(ep) = lock.current_eprocess_mut() {
+                alloc_handle(&mut ep.handle_table, entry)
+            } else {
+                None
+            }
+        });
+        return match fd {
+            Some(f) => f as u64,
+            None => err_to_u64(SyscallError::NoMem),
+        };
+    }
+
+    // Not found as a direct namespace entry — resolve through hive mount points.
+    // Find the hive whose mount_path is a prefix of the requested path.
+    let (mount_path, subkey_path) = {
+        let cm_locked = cm::CM_MANAGER.lock();
+        let mut found = None;
+        for hm in cm_locked.hives.iter() {
+            let mp = &hm.mount_path;
+            if path.starts_with(mp.as_str())
+                && path.len() > mp.len() + 1
+                && path.as_bytes().get(mp.len()) == Some(&b'\\')
+            {
+                let sk = path[mp.len() + 1..].to_string();
+                found = Some((mp.clone(), sk));
+                break;
             }
         }
-        Err(_) => err_to_u64(SyscallError::NoEnt),
+        drop(cm_locked);
+        match found {
+            Some(pair) => pair,
+            None => return err_to_u64(SyscallError::NoEnt),
+        }
+    };
+
+    if subkey_path.is_empty() {
+        return err_to_u64(SyscallError::NoEnt);
+    }
+
+    // Open the mount point to get its native_id (encoded cell index)
+    let mount_ob_id = match crate::object::ob_open_path(&mount_path, &token, 1) {
+        Ok(id) => id,
+        Err(_) => return err_to_u64(SyscallError::NoEnt),
+    };
+
+    let mount_native_id = crate::object::ob_lookup(mount_ob_id)
+        .map(|o| o.native_id)
+        .unwrap_or(0);
+
+    // Close the mount point reference (we only needed its native_id)
+    let _ = crate::object::ob_close_object(mount_ob_id);
+
+    // Resolve the subkey path within the hive
+    match cm::cm_open_key(mount_native_id, &subkey_path) {
+        Ok(subkey_native_id) => {
+            let leaf_name = subkey_path.rsplit('\\').next().unwrap_or(&subkey_path);
+            match crate::object::ob_create_object(
+                crate::object::ObType::Key,
+                leaf_name,
+                subkey_native_id,
+                0,
+                None,
+            ) {
+                Ok(ob_id) => {
+                    let entry = HandleEntry::ob_object(ob_id, 1);
+                    let fd = hal::without_interrupts(|| {
+                        let s = scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(ep) = lock.current_eprocess_mut() {
+                            alloc_handle(&mut ep.handle_table, entry)
+                        } else {
+                            None
+                        }
+                    });
+                    match fd {
+                        Some(f) => f as u64,
+                        None => err_to_u64(SyscallError::NoMem),
+                    }
+                }
+                Err(_) => err_to_u64(SyscallError::NoMem),
+            }
+        }
+        Err(()) => err_to_u64(SyscallError::NoEnt),
     }
 }
 

@@ -25,7 +25,7 @@ Useful commands:
 
 ```text
 info registers
-x /16x 0x200000
+x /16x 0x4000000
 info mem
 ```
 
@@ -41,12 +41,12 @@ Example session:
 
 ```gdb
 (gdb) target remote localhost:1234
-(gdb) break *0x200000
+(gdb) break *0x4000000
 (gdb) continue
 ```
 
 ## Tips
 
-- If you don’t hit a breakpoint at `0x200000`, confirm the kernel entry printed by the bootloader and that you rebuilt the disk image.
+- If you don’t hit a breakpoint at `0x4000000`, confirm the kernel entry printed by the bootloader and that you rebuilt the disk image.
 - If the shell boots but reboots later, check the serial log (`qemu_output.log`) first; it usually contains the panic location.
 

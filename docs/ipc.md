@@ -104,20 +104,9 @@ Per-device FIFO ring buffer of 32 entries. Used by block device drivers to queue
 2. Sets `Irp::status` to `Completed` or `Error`.
 3. Wakes waiting thread: `waiting_pid` matched against scheduler; thread state restored from `Blocked` to `Ready`.
 4. Dispatches callback via `WORK_QUEUE.push_high(callback_fn, ctx)` if callback exists.
-5. Chains: if `chain_next` is `Some(next_id)`, submits the chained IRP to the device queue.
-
 ### Scheduler Integration
 
-`irp_block_current(id)` sets `ThreadState::Blocked { waiting_for: IRP_WAIT_MAGIC | id }` and yields. `irp_complete` calls `irp_wake_waiter(id)` to find and unblock the thread.
-
-### Sync Helpers
-
-```rust
-pub fn irp_sync_read(device: &BlockDevice, lba: u64, buf: &mut [u8]) -> Result<(), i64>;
-pub fn irp_sync_write(device: &BlockDevice, lba: u64, buf: &[u8]) -> Result<(), i64>;
-```
-
-Allocate IRP, submit to device, block current thread until completion, free IRP, return status.
+`irp_complete` calls `irp_wake_waiter(id)` to find and unblock the thread waiting on the IRP.
 
 ### BlockDevice Trait
 

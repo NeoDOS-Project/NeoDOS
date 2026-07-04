@@ -127,7 +127,7 @@ pub extern "C" fn _start() -> ! {
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(fd) => {
             let new_bytes = new_path.as_bytes();
-            match syscall::sys_ob_set_info(fd, 6, new_bytes) {
+            match syscall::sys_ob_set_info(fd, syscall::ObSetInfoClass::VfsRename, new_bytes) {
                 Ok(_) => {
                     let _ = syscall::sys_close(fd);
                     write_str(b"\r\n");

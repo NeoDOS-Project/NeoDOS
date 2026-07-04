@@ -18,13 +18,11 @@ use core::panic::PanicInfo;
 
 mod allocator;
 mod slab;
-mod slab_container;
 mod arch;
 mod hal;
 mod console;
 mod cpu;
 pub mod scheduler;
-mod processes;
 mod drivers;
 mod buffer;
 mod fs;

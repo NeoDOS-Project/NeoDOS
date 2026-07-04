@@ -109,7 +109,7 @@ pub extern "C" fn _start() -> ! {
     let buf = unsafe {
         core::slice::from_raw_parts_mut(&mut info as *mut CpuInfoFull as *mut u8, size_of::<CpuInfoFull>())
     };
-    let n = match sys_ob_query_info(fd, ObInfoClass::Cpu, buf) {
+    let n = match sys_ob_query_info(fd, ObInfoClass::CpuInfo, buf) {
         Ok(n) => n,
         Err(_) => {
             let _ = sys_close(fd);

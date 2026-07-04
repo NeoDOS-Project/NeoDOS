@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering, compiler_fence};
 use spin::Mutex;
@@ -153,7 +152,6 @@ pub struct HandlerEntry {
 const NORMAL_QUEUE_SIZE: usize = 64;
 const HIGH_QUEUE_SIZE: usize = 16;
 const MAX_HANDLERS: usize = 64;
-const DYN_PAYLOAD_SLOTS: usize = 16;
 
 // ── High-priority queue ──
 
@@ -172,17 +170,6 @@ impl HighPriorityQueue {
             head: AtomicUsize::new(0),
             tail: AtomicUsize::new(0),
         }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.head.load(Ordering::Relaxed) == self.tail.load(Ordering::Relaxed)
-    }
-
-    pub fn available(&self) -> usize {
-        let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Relaxed);
-        if tail >= head { HIGH_QUEUE_SIZE - 1 - (tail - head) }
-        else { head - tail - 1 }
     }
 
     pub fn push(&self, event: &Event) -> bool {
@@ -207,15 +194,6 @@ impl HighPriorityQueue {
     }
 }
 
-// ── Dynamic payload tracking ──
-
-#[derive(Clone, Copy)]
-struct DynPayloadEntry {
-    event_id: u64,
-    data_ptr: *mut u8,
-    len: usize,
-}
-
 // ── Event Bus (single unified version) ──
 
 pub struct EventBus {
@@ -232,9 +210,6 @@ pub struct EventBus {
 
     /// Handlers with subscription filters (up to 64)
     handlers: Mutex<[Option<HandlerEntry>; MAX_HANDLERS]>,
-
-    /// Dynamic payloads pending cleanup (up to 16)
-    dyn_payloads: Mutex<[Option<DynPayloadEntry>; DYN_PAYLOAD_SLOTS]>,
 }
 
 impl EventBus {
@@ -246,7 +221,6 @@ impl EventBus {
             high_queue: HighPriorityQueue::new(),
             next_id: AtomicU64::new(1),
             handlers: Mutex::new([None; MAX_HANDLERS]),
-            dyn_payloads: Mutex::new([None; DYN_PAYLOAD_SLOTS]),
         }
     }
 
@@ -300,68 +274,6 @@ impl EventBus {
         }
     }
 
-    /// Convenience: push to high-priority queue
-    pub fn push_event_high(
-        &self,
-        event_type: EventType, source: EventSource, device_id: u32,
-        data0: u64, data1: u64, flags: u32,
-    ) -> Result<u64, ()> {
-        self.push_event_priority(event_type, source, device_id, data0, data1, flags, EventPriority::High)
-    }
-
-    /// Push event with dynamic payload (allocates copy, auto-freed after dispatch)
-    pub fn push_event_with_dyn_payload(
-        &self,
-        event_type: EventType, source: EventSource, device_id: u32,
-        payload: &[u8], flags: u32,
-    ) -> Result<u64, ()> {
-        let len = payload.len();
-        if len == 0 {
-            return self.push_event(event_type, source, device_id, 0, 0, flags);
-        }
-        let data = unsafe {
-            let layout = core::alloc::Layout::from_size_align(len, 1).map_err(|_| ())?;
-            let ptr = alloc::alloc::alloc(layout);
-            if ptr.is_null() { return Err(()); }
-            core::ptr::copy_nonoverlapping(payload.as_ptr(), ptr, len);
-            ptr
-        };
-        let event_id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let timestamp = crate::hal::get_ticks();
-        let event = Event {
-            event_id, event_type, source, timestamp, device_id,
-            driver_target: 0, data0: data as u64, data1: len as u64,
-            flags: flags | EVENT_FLAG_DYN_PAYLOAD,
-        };
-        {
-            let tail = self.tail.load(Ordering::Relaxed);
-            let head = self.head.load(Ordering::Acquire);
-            let next = (tail + 1) % NORMAL_QUEUE_SIZE;
-            if next == head {
-                unsafe {
-                    let layout = core::alloc::Layout::from_size_align(len, 1).unwrap();
-                    alloc::alloc::dealloc(data, layout);
-                }
-                return Err(());
-            }
-            unsafe { (*self.queue.get())[tail] = event; }
-            compiler_fence(Ordering::Release);
-            self.tail.store(next, Ordering::Release);
-        }
-        let mut slots = self.dyn_payloads.lock();
-        for slot in slots.iter_mut() {
-            if slot.is_none() {
-                *slot = Some(DynPayloadEntry { event_id, data_ptr: data, len });
-                return Ok(event_id);
-            }
-        }
-        unsafe {
-            let layout = core::alloc::Layout::from_size_align(len, 1).unwrap();
-            alloc::alloc::dealloc(data, layout);
-        }
-        Err(())
-    }
-
     // ── Event consumption ──
 
     fn pop_normal(&self) -> Option<Event> {
@@ -377,14 +289,6 @@ impl EventBus {
     /// Pop highest-priority event available
     fn pop(&self) -> Option<Event> {
         self.high_queue.pop().or_else(|| self.pop_normal())
-    }
-
-    /// Pop from a specific priority queue
-    pub fn pop_priority(&self, priority: EventPriority) -> Option<Event> {
-        match priority {
-            EventPriority::High => self.high_queue.pop(),
-            EventPriority::Normal => self.pop_normal(),
-        }
     }
 
     // ── Handler registration ──
@@ -431,40 +335,6 @@ impl EventBus {
         false
     }
 
-    /// Unregister a handler by name
-    pub fn unregister_handler_by_name(&self, name: &str) -> bool {
-        let mut handlers = self.handlers.lock();
-        for slot in handlers.iter_mut() {
-            if let Some(h) = slot {
-                if h.name == name {
-                    *slot = None;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    // ── Dynamic payload cleanup ──
-
-    fn cleanup_dyn_payload(&self, event_id: u64) {
-        let mut slots = self.dyn_payloads.lock();
-        for slot in slots.iter_mut() {
-            if let Some(entry) = slot {
-                if entry.event_id == event_id {
-                    if !entry.data_ptr.is_null() {
-                        unsafe {
-                            let layout = core::alloc::Layout::from_size_align(entry.len, 1).unwrap();
-                            alloc::alloc::dealloc(entry.data_ptr, layout);
-                        }
-                    }
-                    *slot = None;
-                    return;
-                }
-            }
-        }
-    }
-
     // ── Dispatch ──
 
     fn dispatch_one_event(&self, event: &Event) {
@@ -475,9 +345,6 @@ impl EventBus {
             }
         }
         drop(handlers);
-        if event.flags & EVENT_FLAG_DYN_PAYLOAD != 0 {
-            self.cleanup_dyn_payload(event.event_id);
-        }
     }
 
     /// Pop and dispatch the next event (high priority first)
@@ -494,31 +361,6 @@ impl EventBus {
         count
     }
 
-    // ── Diagnostics ──
-
-    pub fn queue_available(&self) -> usize {
-        let head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Relaxed);
-        let norm = if tail >= head { NORMAL_QUEUE_SIZE - 1 - (tail - head) }
-                   else { head - tail - 1 };
-        norm + self.high_queue.available()
-    }
-
-    pub fn handler_count(&self) -> usize {
-        self.handlers.lock().iter().filter(|s| s.is_some()).count()
-    }
-
-    pub fn next_event_id(&self) -> u64 {
-        self.next_id.load(Ordering::Relaxed)
-    }
-
-    pub fn high_queue_available(&self) -> usize {
-        self.high_queue.available()
-    }
-
-    pub fn pending_dyn_payloads(&self) -> usize {
-        self.dyn_payloads.lock().iter().filter(|s| s.is_some()).count()
-    }
 }
 
 unsafe impl Sync for EventBus {}
@@ -534,16 +376,6 @@ pub fn push_event(
     data0: u64, data1: u64, flags: u32,
 ) -> Result<u64, ()> {
     EVENT_BUS.push_event(event_type, source, device_id, data0, data1, flags)
-}
-
-pub fn register_handler(
-    event_type: EventType, callback: EventCallback, name: &'static str,
-) -> Result<(), ()> {
-    EVENT_BUS.register_handler(event_type, callback, name)
-}
-
-pub fn dispatch_pending() -> usize {
-    EVENT_BUS.dispatch_pending()
 }
 
 // ── Tests ──
@@ -641,9 +473,8 @@ fn tevent_unregister_handler() -> Result<(), &'static str> {
     fn dummy(_: &Event) {}
     let bus = EventBus::new();
     bus.register_handler(EVENT_TIMER_TICK, dummy, "dummy").unwrap();
-    test_eq!(bus.handler_count(), 1);
     test_true!(bus.unregister_handler(dummy));
-    test_eq!(bus.handler_count(), 0);
+    test_true!(!bus.unregister_handler(dummy));
     Ok(())
 }
 
@@ -651,20 +482,6 @@ fn tevent_empty_queue() -> Result<(), &'static str> {
     let bus = EventBus::new();
     test_true!(bus.pop().is_none());
     test_eq!(bus.dispatch_pending(), 0);
-    Ok(())
-}
-
-// ── v2-specific tests ──
-
-fn tevent_priority_order() -> Result<(), &'static str> {
-    let bus = EventBus::new();
-    let normal_id = bus.push_event(EVENT_TIMER_TICK, SOURCE_HAL, 1, 0, 0, EVENT_FLAG_NONE).unwrap();
-    let high_id = bus.push_event_high(EVENT_KEYBOARD_INPUT, SOURCE_HAL, 3, 0, 0, EVENT_FLAG_NONE).unwrap();
-    let first = bus.pop().unwrap();
-    test_eq!(first.event_id, high_id);
-    test_eq!(first.event_type, EVENT_KEYBOARD_INPUT);
-    let second = bus.pop().unwrap();
-    test_eq!(second.event_id, normal_id);
     Ok(())
 }
 
@@ -696,44 +513,6 @@ fn tevent_strict_filter() -> Result<(), &'static str> {
     Ok(())
 }
 
-fn tevent_unregister_by_name() -> Result<(), &'static str> {
-    fn dummy(_: &Event) {}
-    let bus = EventBus::new();
-    bus.register_handler_v2(EventFilter::wildcard(), dummy, "wild").unwrap();
-    test_eq!(bus.handler_count(), 1);
-    test_true!(bus.unregister_handler_by_name("wild"));
-    test_eq!(bus.handler_count(), 0);
-    Ok(())
-}
-
-fn tevent_high_queue_overflow() -> Result<(), &'static str> {
-    let bus = EventBus::new();
-    let mut ok_count = 0usize;
-    for i in 0..HIGH_QUEUE_SIZE + 10 {
-        if bus.push_event_high(EVENT_TIMER_TICK, SOURCE_HAL, 1, i as u64, 0, EVENT_FLAG_NONE).is_ok() {
-            ok_count += 1;
-        } else { break; }
-    }
-    test_eq!(ok_count, HIGH_QUEUE_SIZE - 1);
-    Ok(())
-}
-
-fn tevent_dyn_payload_lifecycle() -> Result<(), &'static str> {
-    let bus = EventBus::new();
-    let payload = [0x41u8, 0x42, 0x43, 0x44];
-    let result = bus.push_event_with_dyn_payload(EVENT_SERIAL_DATA, SOURCE_HAL, 2, &payload, EVENT_FLAG_NONE);
-    test_true!(result.is_ok());
-    let id = result.unwrap();
-    test_true!(id > 0);
-    let popped = bus.pop().unwrap();
-    test_eq!(popped.event_id, id);
-    test_eq!(popped.flags & EVENT_FLAG_DYN_PAYLOAD, EVENT_FLAG_DYN_PAYLOAD);
-    test_eq!(bus.pending_dyn_payloads(), 1);
-    bus.dispatch_one_event(&popped);
-    test_eq!(bus.pending_dyn_payloads(), 0);
-    Ok(())
-}
-
 fn tevent_filter_wildcard() -> Result<(), &'static str> {
     let filter = EventFilter::wildcard();
     let e1 = Event { event_id: 1, event_type: EVENT_TIMER_TICK, source: SOURCE_HAL, timestamp: 0, device_id: 0, driver_target: 0, data0: 0, data1: 0, flags: 0 };
@@ -762,12 +541,8 @@ pub fn register_tests() {
     crate::testing::register("event_handler_type_filter", tevent_handler_type_filter);
     crate::testing::register("event_unregister_handler", tevent_unregister_handler);
     crate::testing::register("event_empty_queue", tevent_empty_queue);
-    crate::testing::register("ev_priority_order", tevent_priority_order);
     crate::testing::register("ev_filter_by_type", tevent_v2_filter_by_type);
     crate::testing::register("ev_strict_filter", tevent_strict_filter);
-    crate::testing::register("ev_unregister_by_name", tevent_unregister_by_name);
-    crate::testing::register("ev_high_queue_overflow", tevent_high_queue_overflow);
-    crate::testing::register("ev_dyn_payload_lifecycle", tevent_dyn_payload_lifecycle);
     crate::testing::register("ev_filter_wildcard", tevent_filter_wildcard);
     crate::testing::register("ev_filter_source_mask", tevent_filter_source_mask);
 }
