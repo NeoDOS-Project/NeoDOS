@@ -145,14 +145,14 @@ impl E1000Nic {
         let rx_bufs = {
             let mut v = Vec::with_capacity(E1000_NUM_RX_DESC);
             for _ in 0..E1000_NUM_RX_DESC {
-                v.push(Vec::with_capacity(E1000_RX_BUF_SIZE));
+                v.push(alloc::vec![0u8; E1000_RX_BUF_SIZE]);
             }
             v
         };
         let tx_bufs = {
             let mut v = Vec::with_capacity(E1000_NUM_TX_DESC);
             for _ in 0..E1000_NUM_TX_DESC {
-                v.push(Vec::with_capacity(E1000_RX_BUF_SIZE));
+                v.push(alloc::vec![0u8; E1000_RX_BUF_SIZE]);
             }
             v
         };

@@ -1,45 +1,42 @@
+use alloc::vec::Vec;
+use spin::Mutex;
+use lazy_static::lazy_static;
 use crate::serial_print;
 use crate::serial_println;
 
 type TestFn = fn() -> Result<(), &'static str>;
 
-#[derive(Copy, Clone)]
 struct Test {
     name: &'static str,
     func: TestFn,
 }
 
-const MAX_TESTS: usize = 580;
-static mut TESTS: [Option<Test>; MAX_TESTS] = [None; MAX_TESTS];
-static mut TEST_COUNT: usize = 0;
+lazy_static! {
+    static ref TESTS: Mutex<Vec<Test>> = Mutex::new(Vec::new());
+}
 
 pub fn register(name: &'static str, func: TestFn) {
-    unsafe {
-        if TEST_COUNT < MAX_TESTS {
-            TESTS[TEST_COUNT] = Some(Test { name, func });
-            TEST_COUNT += 1;
-        }
-    }
+    TESTS.lock().push(Test { name, func });
 }
 
 pub fn run_all() -> (usize, usize) {
     let mut passed = 0;
     let mut failed = 0;
-    unsafe {
-        for test in TESTS.iter().flatten().take(TEST_COUNT) {
-            serial_print!("  TEST {} ... ", test.name);
-            match (test.func)() {
-                Ok(()) => {
-                    serial_println!("PASS");
-                    passed += 1;
-                }
-                Err(msg) => {
-                    serial_println!("FAIL: {}", msg);
-                    failed += 1;
-                }
+    let tests = TESTS.lock();
+    for test in tests.iter() {
+        serial_print!("  TEST {} ... ", test.name);
+        match (test.func)() {
+            Ok(()) => {
+                serial_println!("PASS");
+                passed += 1;
+            }
+            Err(msg) => {
+                serial_println!("FAIL: {}", msg);
+                failed += 1;
             }
         }
     }
+    drop(tests);
     (passed, failed)
 }
 

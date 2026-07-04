@@ -122,8 +122,19 @@ pub fn decode_cell(native_id: u64) -> (u32, u32) {
 }
 
 /// Initialize the Cm subsystem. Called during PHASE 3.88 after networking init.
-/// Creates the \Registry namespace tree and mounts the SYSTEM hive.
+/// Creates the \Registry namespace tree, ensures C:\System\Registry\ exists,
+/// and mounts the SYSTEM hive.
 pub fn init_cm() {
+    // Ensure VFS directory for registry files exists
+    let _ = crate::globals::with_vfs(|vfs| -> Result<(), ()> {
+        // Try to resolve System\Registry; if not found, create it
+        if vfs.resolve_path("C:\\System\\Registry").is_err() {
+            let _ = vfs.resolve_path("C:\\System").map_err(|_| ())?;
+            vfs.mkdir("C:\\System\\Registry").map_err(|_| ())?;
+        }
+        Ok(())
+    });
+
     let cm = CM_MANAGER.lock();
 
     // Create \Registry directories in namespace (if not already created)
@@ -131,7 +142,7 @@ pub fn init_cm() {
     let _ = namespace::ob_create_directory("\\Registry\\User");
     drop(cm);
 
-    // Mount SYSTEM hive
+    // Mount SYSTEM hive (try loading from disk first)
     mount_system_hive();
 }
 
@@ -139,8 +150,8 @@ fn mount_system_hive() {
     let name = "SYSTEM";
     let mount_path = "\\Registry\\Machine\\System";
 
-    // Create the hive
-    let hive = Hive::new(name);
+    // Try loading from disk first; fall back to fresh hive
+    let hive = load_hive_from_vfs(name).unwrap_or_else(|| Hive::new(name));
 
     // Create Ob object for root key (cell 0, hive 0)
     let encoded = encode_cell(0, 0); // hive 0, cell 0 (root)
@@ -159,6 +170,47 @@ fn mount_system_hive() {
         let mut cm = CM_MANAGER.lock();
         cm.mount(name, mount_path, hive, ob_id);
     }
+}
+
+/// Try to load a hive from C:\System\Registry\<name>.hiv via VFS.
+/// Returns None if file doesn't exist or is invalid.
+fn load_hive_from_vfs(name: &str) -> Option<Hive> {
+    let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", name);
+    crate::globals::with_vfs(|vfs| {
+        let (drive_idx, node) = vfs.resolve_path(&file_path).ok()?;
+        let size = node.size as usize;
+        if size < 16 {
+            return None;
+        }
+        let mut buf = alloc::vec![0u8; size];
+        let read = vfs.read(drive_idx, node.inode, 0, &mut buf).ok()?;
+        buf.truncate(read);
+        let mut hive = Hive::deserialize(&buf).ok()?;
+        hive.name = name.to_string();
+        Some(hive)
+    })
+}
+
+/// Write a hive to C:\System\Registry\<name>.hiv via VFS.
+fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
+    if !hive.is_dirty() {
+        return Ok(());
+    }
+    let data = hive.serialize();
+    let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
+    crate::globals::with_vfs(|vfs| {
+        // Try to open existing file and overwrite
+        if let Ok((drive_idx, node)) = vfs.resolve_path(&file_path) {
+            // Truncate then write
+            let _ = vfs.write(drive_idx, node.inode, 0, &data);
+            Ok(())
+        } else {
+            // Create new file
+            let node = vfs.create(&file_path).map_err(|_| ())?;
+            vfs.write(0, node.inode, 0, &data).map_err(|_| ())?;
+            Ok(())
+        }
+    })
 }
 
 /// Ensure a key path exists in a hive, creating intermediate keys as needed.
@@ -219,7 +271,8 @@ pub fn cm_load_hive(name: &str, mount_path: &str) -> Result<(), ()> {
         }
     }
 
-    let hive = Hive::new(name);
+    // Try loading from disk first; fall back to fresh hive
+    let hive = load_hive_from_vfs(name).unwrap_or_else(|| Hive::new(name));
 
     // Create directory structure in namespace
     let _ = namespace::ob_create_directory_tree(mount_path);
@@ -375,12 +428,64 @@ pub fn cm_enum_value(key_native_id: u64, index: u32) -> Result<String, ()> {
 /// Flush a hive to disk.
 pub fn cm_flush_key(key_native_id: u64) -> Result<(), ()> {
     let (hive_idx, _cell_idx) = decode_cell(key_native_id);
-    let cm = CM_MANAGER.lock();
-    if (hive_idx as usize) >= cm.hives.len() {
+    if (hive_idx as usize) >= CM_MANAGER.lock().hives.len() {
         return Err(());
     }
-    // Flush is a no-op for now (no disk persistence)
+    // Take a snapshot of the hive (clone to release lock before I/O)
+    let hive_snapshot = {
+        let cm = CM_MANAGER.lock();
+        if (hive_idx as usize) >= cm.hives.len() {
+            return Err(());
+        }
+        // Not dirty, nothing to do
+        if !cm.hives[hive_idx as usize].hive.is_dirty() {
+            return Ok(());
+        }
+        // Clone the hive for I/O outside the lock
+        let hm = &cm.hives[hive_idx as usize];
+        hm.hive.clone()
+    };
+
+    // Persist to VFS outside CM_MANAGER lock
+    flush_hive_to_vfs(&hive_snapshot)?;
+
+    // Mark clean inside the lock
+    let mut cm = CM_MANAGER.lock();
+    if (hive_idx as usize) < cm.hives.len() {
+        cm.hives[hive_idx as usize].hive.mark_clean();
+    }
     Ok(())
+}
+
+/// Flush all dirty hives to disk.
+pub fn cm_flush_all_hives() {
+    // Collect clones of all dirty hives
+    let snapshots: Vec<(usize, Hive)> = {
+        let cm = CM_MANAGER.lock();
+        cm.hives.iter()
+            .filter(|hm| hm.hive.is_dirty())
+            .enumerate()
+            .map(|(i, hm)| (i, hm.hive.clone()))
+            .collect()
+    };
+
+    if snapshots.is_empty() {
+        return;
+    }
+
+    crate::serial_println!("[CM] Flushing {} dirty hive(s) to disk...", snapshots.len());
+
+    for (hive_idx, hive) in &snapshots {
+        if flush_hive_to_vfs(hive).is_ok() {
+            // Mark clean
+            let mut cm = CM_MANAGER.lock();
+            if (*hive_idx as usize) < cm.hives.len() {
+                cm.hives[*hive_idx as usize].hive.mark_clean();
+            }
+        } else {
+            crate::serial_println!("[CM] WARNING: Failed to flush hive '{}'", hive.name);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -653,6 +758,117 @@ pub fn register_cm_tests() {
         let services = hive.find_key(ccs, "Services").unwrap();
         test_eq!(hive.key_count(services), 2); // Services has NeoInit + Network
         test_eq!(hive.value_count(ctrl), 1); // Control has WaitForNetwork
+    });
+
+    // ── B2.7 Persistence tests ──
+
+    test_case!("cm_set_value_persist_roundtrip", {
+        // Create a hive with values, serialize, deserialize, verify all values survive
+        let mut original = Hive::new("TestRoundtrip");
+        let root = original.root_cell();
+
+        let sub = original.create_key(root, "Application").unwrap();
+        original.set_value(root, "Version", hive::REG_SZ, b"1.0.42").unwrap();
+        original.set_value(root, "DebugMode", hive::REG_DWORD, &0u32.to_le_bytes()).unwrap();
+        original.set_value(root, "MaxUsers", hive::REG_DWORD, &100u32.to_le_bytes()).unwrap();
+        original.set_value(sub, "Path", hive::REG_SZ, b"C:\\Programs\\Test").unwrap();
+        original.set_value(sub, "Enabled", hive::REG_DWORD, &1u32.to_le_bytes()).unwrap();
+        original.set_value(sub, "Timeout", hive::REG_DWORD, &5000u32.to_le_bytes()).unwrap();
+
+        // Save original state
+        let orig_version = original.query_value(root, "Version").unwrap().clone();
+
+        // Serialize
+        let data = original.serialize();
+        test_true!(data.len() > 16); // Must have header + content
+
+        // Deserialize
+        let mut restored = Hive::deserialize(&data).unwrap();
+        restored.name = "TestRoundtrip".to_string();
+
+        // Verify structure
+        let restored_root = restored.root_cell();
+        test_eq!(restored_root, 0);
+        test_eq!(restored.key_count(restored_root), 1); // Application
+        let restored_app = restored.find_key(restored_root, "Application").unwrap();
+        test_true!(restored_app != hive::NULL_CELL);
+
+        // Verify root values
+        let r_version = restored.query_value(restored_root, "Version").unwrap();
+        test_eq!(r_version.value_type, hive::REG_SZ);
+        test_eq!(r_version.as_str().unwrap(), orig_version.as_str().unwrap());
+
+        let r_max = restored.query_value(restored_root, "MaxUsers").unwrap();
+        test_eq!(r_max.as_dword().unwrap(), 100);
+
+        let r_debug = restored.query_value(restored_root, "DebugMode").unwrap();
+        test_eq!(r_debug.as_dword().unwrap(), 0);
+
+        // Verify subkey values
+        let r_path = restored.query_value(restored_app, "Path").unwrap();
+        test_eq!(r_path.as_str().unwrap(), "C:\\Programs\\Test");
+
+        let r_enabled = restored.query_value(restored_app, "Enabled").unwrap();
+        test_eq!(r_enabled.as_dword().unwrap(), 1);
+
+        let r_timeout = restored.query_value(restored_app, "Timeout").unwrap();
+        test_eq!(r_timeout.as_dword().unwrap(), 5000);
+
+        // Verify value counts
+        test_eq!(original.value_count(root), 3);
+        test_eq!(restored.value_count(restored_root), 3);
+        test_eq!(original.value_count(sub), 3);
+        test_eq!(restored.value_count(restored_app), 3);
+    });
+
+    test_case!("cm_hive_serialization_integrity", {
+        // Test that serialization roundtrip preserves complex state
+        // including deleted keys, and that the integrity is maintained
+        let mut hive = Hive::new("TestIntegrity2");
+        let root = hive.root_cell();
+
+        // Create a deep key hierarchy
+        let l1 = hive.create_key(root, "Level1").unwrap();
+        let l2 = hive.create_key(l1, "Level2").unwrap();
+        let l3 = hive.create_key(l2, "Level3").unwrap();
+        hive.set_value(l3, "DeepValue", hive::REG_SZ, b"deep").unwrap();
+
+        // Create a sibling branch
+        let other = hive.create_key(root, "Other").unwrap();
+        hive.create_key(other, "SubOther").unwrap();
+
+        test_eq!(hive.key_count(root), 2);
+
+        // Serialize and restore
+        let data = hive.serialize();
+        let mut restored = Hive::deserialize(&data).unwrap();
+        restored.name = "TestIntegrity2".to_string();
+
+        // Verify structure
+        let r_root = restored.root_cell();
+        test_eq!(restored.key_count(r_root), 2);
+
+        let r_l1 = restored.find_key(r_root, "Level1").unwrap();
+        test_true!(r_l1 != hive::NULL_CELL);
+        let r_l2 = restored.find_key(r_l1, "Level2").unwrap();
+        let r_l3 = restored.find_key(r_l2, "Level3").unwrap();
+        let deep = restored.query_value(r_l3, "DeepValue").unwrap();
+        test_eq!(deep.as_str().unwrap(), "deep");
+
+        let r_other = restored.find_key(r_root, "Other").unwrap();
+        test_true!(restored.find_key(r_other, "SubOther").is_some());
+
+        // Now delete a key on the restored hive and verify serialization still fine
+        restored.delete_key(r_other);
+        test_eq!(restored.key_count(r_root), 1);
+
+        // Re-serialize and re-restore to verify delete persists
+        let data2 = restored.serialize();
+        let restored2 = Hive::deserialize(&data2).unwrap();
+        let r2_root = restored2.root_cell();
+        test_eq!(restored2.key_count(r2_root), 1);
+        test_true!(restored2.find_key(r2_root, "Other").is_none());
+        test_true!(restored2.find_key(r2_root, "Level1").is_some());
     });
 }
 

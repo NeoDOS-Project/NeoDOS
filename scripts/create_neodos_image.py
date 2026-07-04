@@ -324,6 +324,7 @@ Happy hacking!
         inode_eses = allocator.alloc("es-ES.nkb")
         inode_enus = allocator.alloc("en-US.nkb")
         inode_config = allocator.alloc("Config")
+        inode_registry = allocator.alloc("Registry")
         inode_systemcfg = allocator.alloc("system.cfg")
         inode_inputcfg = allocator.alloc("input.cfg")
 
@@ -456,6 +457,7 @@ Happy hacking!
         drv_dir_blocks    = alloc_blocks(inode_drivers, 2560)    # Drivers dir (10 entries)
         lib_dir_blocks    = alloc_blocks(inode_libraries, 1536)   # Libraries dir (5 entries)
         lay_dir_blocks    = alloc_blocks(inode_layouts, 768)    # Layouts dir (2 entries + padding)
+        reg_dir_blocks    = alloc_blocks(inode_registry, 256)   # Registry dir (empty, 1 slot)
         cfg_dir_blocks    = alloc_blocks(inode_config, 768)    # Config dir (2 entries + padding)
         prog_dir_blocks   = alloc_blocks(inode_programs, 8192)   # Programs dir (32 entries)
         pkg_dir_blocks    = alloc_blocks(inode_packages, 256)    # Packages dir (empty)
@@ -480,6 +482,7 @@ Happy hacking!
             inode_eses:    (MODE_FILE | default_perms_for_filename("es-ES.nkb"), len(es_nkb_content), pad_blocks(es_nkb_blocks)),
             inode_enus:    (MODE_FILE | default_perms_for_filename("en-US.nkb"), len(en_nkb_content), pad_blocks(en_nkb_blocks)),
             inode_config:  (dir_mode, 768,  pad_blocks(cfg_dir_blocks)),
+            inode_registry: (dir_mode, 256, pad_blocks(reg_dir_blocks)),
             inode_systemcfg: (MODE_FILE | default_perms_for_filename("system.cfg"), len(system_cfg_content), pad_blocks(system_cfg_blocks)),
             inode_inputcfg: (MODE_FILE | default_perms_for_filename("input.cfg"), len(input_cfg_content), pad_blocks(input_cfg_blocks)),
             inode_programs: (dir_mode, 6656, pad_blocks(prog_dir_blocks)),
@@ -655,6 +658,18 @@ Happy hacking!
                 chunk = content[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
+
+        # System\Registry\ directory (empty, for hive persistence)
+        print("[*] Writing System\\Registry directory...")
+        blk = reg_dir_blocks[0]
+        offset = (DATA_START_SECTOR + blk * 8) * 512
+        # Empty directory — will be populated at runtime
+
+        # Add Registry entry to System directory
+        # (slot 5, after Config at slot 4)
+        blk = sys_dir_blocks[0]
+        offset_sys = (DATA_START_SECTOR + blk * 8) * 512
+        image[offset_sys + 5*256:offset_sys + 6*256] = create_dir_entry(inode_registry, 2, "Registry")
 
         # System\Config\ directory
         print("[*] Writing System\\Config directory...")
