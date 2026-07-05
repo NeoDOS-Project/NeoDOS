@@ -654,6 +654,7 @@ pub enum ObInfoClass {
     NicInfo = 20,
     RegistryKey = 21,
     RegistryValue = 22,
+    SocketRecv = 23,
 }
 
 pub mod ob_type {
@@ -663,6 +664,7 @@ pub mod ob_type {
     pub const DIRECTORY: u32 = 11;
     pub const EVENT: u32 = 13;
     pub const THREAD: u32 = 16;
+    pub const SOCKET: u32 = 18;
 }
 
 /// ObSetInfoClass — info classes for sys_ob_set_info (RAX=63).
@@ -697,6 +699,7 @@ pub enum ObSetInfoClass {
     RegistryDeleteKey = 24,
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
+    SetNicIp = 27,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -729,6 +732,7 @@ pub mod ob_set_info_class {
     pub const REGISTRY_DELETE_KEY: ObSetInfoClass = ObSetInfoClass::RegistryDeleteKey;
     pub const REGISTRY_SET_VALUE: ObSetInfoClass = ObSetInfoClass::RegistrySetValue;
     pub const REGISTRY_DELETE_VALUE: ObSetInfoClass = ObSetInfoClass::RegistryDeleteValue;
+    pub const SET_NIC_IP: ObSetInfoClass = ObSetInfoClass::SetNicIp;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
@@ -1045,6 +1049,67 @@ pub fn sys_sleep_ex() -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+// ── Socket wrappers ──
+
+/// SocketAddrV4 — ABI-compatible address for socket operations.
+/// IP is network-byte-order (big-endian), port is host-byte-order.
+#[repr(C)]
+pub struct SocketAddrV4 {
+    pub ip: [u8; 4],
+    pub port: u16,
+}
+
+impl SocketAddrV4 {
+    pub fn new(ip: [u8; 4], port: u16) -> Self {
+        SocketAddrV4 { ip, port }
+    }
+}
+
+/// ob_socket_create: create a socket via ob_create(Socket).
+/// `sock_type` = 1 (TCP), 2 (UDP), 3 (Raw). `port` = local port hint (0 = ephemeral).
+pub fn ob_socket_create(path: &str, sock_type: u32, port: u16) -> Result<u8, i64> {
+    let attrs = (sock_type & 0xFF) as u64 | ((port as u64) << 8);
+    sys_ob_create(path, ob_type::SOCKET, None, attrs)
+}
+
+/// ob_socket_connect: connect to a remote address via ob_set_info(SocketConnect).
+pub fn ob_socket_connect(fd: u8, ip: [u8; 4], port: u16) -> Result<(), i64> {
+    let mut buf = [0u8; 6];
+    buf[..4].copy_from_slice(&ip);
+    buf[4..6].copy_from_slice(&port.to_be_bytes());
+    sys_ob_set_info(fd, ObSetInfoClass::SocketConnect, &buf)
+}
+
+/// ob_socket_bind: bind to a local address via ob_set_info(SocketBind).
+pub fn ob_socket_bind(fd: u8, ip: [u8; 4], port: u16) -> Result<(), i64> {
+    let mut buf = [0u8; 6];
+    buf[..4].copy_from_slice(&ip);
+    buf[4..6].copy_from_slice(&port.to_be_bytes());
+    sys_ob_set_info(fd, ObSetInfoClass::SocketBind, &buf)
+}
+
+/// ob_socket_listen: start listening via ob_set_info(SocketListen).
+pub fn ob_socket_listen(fd: u8) -> Result<(), i64> {
+    sys_ob_set_info(fd, ObSetInfoClass::SocketListen, &[])
+}
+
+/// ob_socket_send: send data via ob_set_info(SocketSend).
+/// Returns number of bytes sent on success.
+pub fn ob_socket_send(fd: u8, data: &[u8]) -> Result<usize, i64> {
+    let r = unsafe { ob_syscall_4!(63, fd as u64, ObSetInfoClass::SocketSend as u32 as u64, data.as_ptr() as u64, data.len() as u64) };
+    if r < 0 { Err(r) } else { Ok(r as usize) }
+}
+
+/// ob_socket_recv: receive data via ob_query_info(SocketRecv).
+pub fn ob_socket_recv(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    sys_ob_query_info(fd, ObInfoClass::SocketRecv, buf)
+}
+
+/// ob_socket_close: close a socket via ob_set_info(SocketClose).
+pub fn ob_socket_close(fd: u8) -> Result<(), i64> {
+    sys_ob_set_info(fd, ObSetInfoClass::SocketClose, &[])
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Registry (Cm) — RAX 67–76
 // ═══════════════════════════════════════════════════════════════════════
@@ -1079,4 +1144,38 @@ pub fn sys_cm_query_value(fd: u8, name: &str, buf: &mut [u8]) -> Result<usize, i
     let buf_len = buf.len() as u64;
     let r = unsafe { ob_syscall_4!(69, fd as u64, name_ptr, buf_ptr, buf_len) };
     ret(r).map(|v| v as usize)
+}
+
+macro_rules! ob_syscall_5 {
+    ($rax:literal, $rbx:expr, $rcx:expr, $rdx:expr, $r8:expr, $r9:expr) => {{
+        let r: i64;
+        core::arch::asm!(
+            "push rbx", "push rcx", "push rdx", "push r8", "push r9",
+            "mov r10, {a0}", "mov r11, {a1}", "mov r12, {a2}", "mov r13, {a3}", "mov r14, {a4}",
+            "mov rbx, r10", "mov rcx, r11", "mov rdx, r12", "mov r8, r13", "mov r9, r14",
+            "mov rax, {n}",
+            "int 0x80",
+            "pop r9", "pop r8", "pop rdx", "pop rcx", "pop rbx",
+            a0 = in(reg) $rbx, a1 = in(reg) $rcx, a2 = in(reg) $rdx, a3 = in(reg) $r8, a4 = in(reg) $r9,
+            n = const $rax,
+            out("rax") r,
+            out("r10") _, out("r11") _, out("r12") _, out("r13") _, out("r14") _,
+            options(nostack),
+        );
+        r
+    }}
+}
+
+/// sys_cm_set_value (RAX=70): set a value on a registry key by fd.
+/// fd = key handle from sys_cm_open_key, name = value name, value_type = REG_* constant.
+pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Result<(), i64> {
+    let bytes = name.as_bytes();
+    if bytes.len() >= 255 { return Err(EINVAL); }
+    let mut name_buf = [0u8; 256];
+    name_buf[..bytes.len()].copy_from_slice(bytes);
+    let name_ptr = name_buf.as_ptr() as u64;
+    let data_ptr = data.as_ptr() as u64;
+    let data_len = data.len() as u64;
+    let r = unsafe { ob_syscall_5!(70, fd as u64, name_ptr, value_type as u64, data_ptr, data_len) };
+    if r < 0 { Err(r) } else { Ok(()) }
 }

@@ -241,7 +241,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop', 'netcfg']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -301,6 +301,19 @@ Happy hacking!
         else:
             print(f"[!] console.nxl not found — NXL not included")
 
+        net_nxl_candidates = [
+            os.path.join(os.path.dirname(__file__), '..', 'net.nxl'),
+            os.path.join(os.path.dirname(__file__), '..', 'libnet-nxl', 'target', 'x86_64-unknown-none', 'release', 'libnet-nxl'),
+        ]
+        net_nxl_path = next((path for path in net_nxl_candidates if os.path.exists(path)), None)
+        net_nxl_data = b''
+        if net_nxl_path is not None:
+            with open(net_nxl_path, 'rb') as f:
+                net_nxl_data = f.read()
+            print(f"[*] Including net.nxl from {os.path.relpath(net_nxl_path, os.path.dirname(__file__))} ({len(net_nxl_data)} bytes)")
+        else:
+            print(f"[!] net.nxl not found — NXL not included")
+
         # ── Dynamic inode allocator (remaining allocations) ──
         inode_system = allocator.alloc("System")
         inode_kernel = allocator.alloc("Kernel")
@@ -320,6 +333,7 @@ Happy hacking!
         inode_fsnxl = allocator.alloc("fs.nxl")
         inode_mathnxl = allocator.alloc("math.nxl")
         inode_consolenxl = allocator.alloc("console.nxl")
+        inode_netnxl = allocator.alloc("net.nxl")
         inode_layouts = allocator.alloc("Layouts")
         inode_eses = allocator.alloc("es-ES.nkb")
         inode_enus = allocator.alloc("en-US.nkb")
@@ -361,6 +375,7 @@ Happy hacking!
         inode_loadnem = allocator.alloc("loadnem.nxe")
         inode_progress = allocator.alloc("progress.nxe")
         inode_neotop = allocator.alloc("neotop.nxe")
+        inode_netcfg = allocator.alloc("netcfg.nxe")
 
         # Other directories
         inode_packages = allocator.alloc("Packages")
@@ -438,9 +453,11 @@ Happy hacking!
         loadnem_blocks    = alloc_blocks(inode_loadnem, len(nxe_files['loadnem']))
         progress_blocks   = alloc_blocks(inode_progress, len(nxe_files['progress']))
         neotop_blocks     = alloc_blocks(inode_neotop, len(nxe_files['neotop']))
+        netcfg_blocks     = alloc_blocks(inode_netcfg, len(nxe_files['netcfg']))
         fs_nxl_blocks     = alloc_blocks(inode_fsnxl, len(nxl_data))
         math_nxl_blocks   = alloc_blocks(inode_mathnxl, len(math_nxl_data))
         console_nxl_blocks = alloc_blocks(inode_consolenxl, len(console_nxl_data))
+        net_nxl_blocks    = alloc_blocks(inode_netnxl, len(net_nxl_data))
         bootcfg_blocks    = alloc_blocks(inode_bootcfg, len(bootcfg_content))
         system_cfg_blocks = alloc_blocks(inode_systemcfg, len(system_cfg_content))
         input_cfg_blocks  = alloc_blocks(inode_inputcfg, len(input_cfg_content))
@@ -478,6 +495,7 @@ Happy hacking!
             inode_fsnxl:   (MODE_FILE | default_perms_for_filename("fs.nxl"), len(nxl_data), pad_blocks(fs_nxl_blocks)),
             inode_mathnxl: (MODE_FILE | default_perms_for_filename("math.nxl"), len(math_nxl_data), pad_blocks(math_nxl_blocks)),
             inode_consolenxl: (MODE_FILE | default_perms_for_filename("console.nxl"), len(console_nxl_data), pad_blocks(console_nxl_blocks)),
+            inode_netnxl:  (MODE_FILE | default_perms_for_filename("net.nxl"), len(net_nxl_data), pad_blocks(net_nxl_blocks)),
             inode_layouts: (dir_mode, 768,  pad_blocks(lay_dir_blocks)),
             inode_eses:    (MODE_FILE | default_perms_for_filename("es-ES.nkb"), len(es_nkb_content), pad_blocks(es_nkb_blocks)),
             inode_enus:    (MODE_FILE | default_perms_for_filename("en-US.nkb"), len(en_nkb_content), pad_blocks(en_nkb_blocks)),
@@ -521,6 +539,7 @@ Happy hacking!
             inode_loadnem: (MODE_FILE | default_perms_for_filename("loadnem.nxe"), len(nxe_files['loadnem']), pad_blocks(loadnem_blocks)),
             inode_progress: (MODE_FILE | default_perms_for_filename("progress.nxe"), len(nxe_files['progress']), pad_blocks(progress_blocks)),
             inode_neotop:  (MODE_FILE | default_perms_for_filename("neotop.nxe"), len(nxe_files['neotop']), pad_blocks(neotop_blocks)),
+            inode_netcfg:  (MODE_FILE | default_perms_for_filename("netcfg.nxe"), len(nxe_files['netcfg']), pad_blocks(netcfg_blocks)),
             inode_temp:    (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             inode_data:    (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             inode_logs:    (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -619,6 +638,7 @@ Happy hacking!
         image[offset:offset+256]     = create_dir_entry(inode_fsnxl, 1, "fs.nxl")
         image[offset+512:offset+768]  = create_dir_entry(inode_consolenxl, 1, "console.nxl")
         image[offset+1024:offset+1280]= create_dir_entry(inode_mathnxl, 1, "math.nxl")
+        image[offset+1536:offset+1792]= create_dir_entry(inode_netnxl, 1, "net.nxl")
 
         # fs.nxl (libneodos) data blocks
         if nxl_data:
@@ -642,6 +662,14 @@ Happy hacking!
             print(f"[*] Writing System\\Libraries\\console.nxl ({len(console_nxl_data)} bytes)...")
             for bi, blk in enumerate(console_nxl_blocks):
                 chunk = console_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
+                off = (DATA_START_SECTOR + blk * 8) * 512
+                image[off:off+len(chunk)] = chunk
+
+        # net.nxl data blocks
+        if net_nxl_data:
+            print(f"[*] Writing System\\Libraries\\net.nxl ({len(net_nxl_data)} bytes)...")
+            for bi, blk in enumerate(net_nxl_blocks):
+                chunk = net_nxl_data[bi * BLOCK_SIZE:(bi + 1) * BLOCK_SIZE]
                 off = (DATA_START_SECTOR + blk * 8) * 512
                 image[off:off+len(chunk)] = chunk
 
@@ -727,6 +755,7 @@ Happy hacking!
         image[offset+7424:offset+7680]= create_dir_entry(inode_loadnem, 1, "loadnem.nxe")
         image[offset+7680:offset+7936]= create_dir_entry(inode_progress, 1, "progress.nxe")
         image[offset+7936:offset+8192]= create_dir_entry(inode_neotop, 1, "neotop.nxe")
+        image[offset+3072:offset+3328]= create_dir_entry(inode_netcfg, 1, "netcfg.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -761,6 +790,7 @@ Happy hacking!
             inode_loadnem: ('loadnem.nxe', nxe_files['loadnem']),
             inode_progress: ('progress.nxe', nxe_files['progress']),
             inode_neotop: ('neotop.nxe', nxe_files['neotop']),
+            inode_netcfg: ('netcfg.nxe', nxe_files['netcfg']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:

@@ -4,7 +4,7 @@ use crate::test_true;
 use alloc::format;
 use super::types::{TcpState, MacAddr, Ipv4Addr, SocketType, SocketDirection, SocketAddrV4};
 use super::arp::ArpCache;
-use super::socket::SocketManager;
+use super::socket::{SocketManager, SOCKET_MANAGER};
 use super::tcp::{tcp_alloc_connection, tcp_bind, tcp_listen, tcp_connect, tcp_close, tcp_get_state, tcp_free_connection};
 use super::nic::NicRegistry;
 use super::ipv4::{compute_ip_checksum, build_ipv4_header, Ipv4Header};
@@ -175,5 +175,38 @@ pub fn register_net_tests() {
         let reg = NicRegistry::new();
         test_eq!(reg.count(), 0);
         test_true!(reg.default_nic_id().is_none());
+    });
+
+    test_case!("net_socket_recv_data", {
+        let id = {
+            let mut mgr = SOCKET_MANAGER.lock();
+            let id = mgr.alloc_socket(SocketType::Tcp).unwrap();
+            let socket = mgr.get_socket_mut(id).unwrap();
+            socket.direction = SocketDirection::Connected;
+            socket.remote = SocketAddrV4::new(Ipv4Addr::new([10, 0, 2, 2]), 80);
+            socket.recv_buf.extend_from_slice(b"hello");
+            id
+        };
+        let mut buf = [0u8; 64];
+        let n = super::socket::socket_recv(id, &mut buf).unwrap();
+        test_eq!(n, 5);
+        test_eq!(&buf[..n], b"hello");
+        let mgr = SOCKET_MANAGER.lock();
+        let socket = mgr.get_socket(id).unwrap();
+        test_true!(socket.recv_buf.is_empty());
+    });
+
+    test_case!("net_socket_recv_empty", {
+        let id = {
+            let mut mgr = SOCKET_MANAGER.lock();
+            let id = mgr.alloc_socket(SocketType::Tcp).unwrap();
+            let socket = mgr.get_socket_mut(id).unwrap();
+            socket.direction = SocketDirection::Connected;
+            socket.remote = SocketAddrV4::new(Ipv4Addr::new([10, 0, 2, 2]), 80);
+            id
+        };
+        let mut buf = [0u8; 64];
+        let r = super::socket::socket_recv(id, &mut buf);
+        test_true!(r.is_err());
     });
 }

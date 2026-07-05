@@ -1400,6 +1400,26 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
             unsafe { core::ptr::write_volatile(buf_ptr as *mut u32, tcp_state); }
             4u64
         }
+        // ── SocketRecv (23): read data from socket receive buffer ──
+        _ if info_class == ObInfoClass::SocketRecv as u32 => {
+            if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Socket {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let socket_id = obj.native_id as u32;
+            if buf_size == 0 || buf_ptr == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let user_buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_size) };
+            match crate::net::socket::socket_recv(socket_id, user_buf) {
+                Ok(n) => n as u64,
+                Err(_) => err_to_u64(SyscallError::Again),
+            }
+        }
         _ if info_class == ObInfoClass::NicInfo as u32 => {
             #[repr(C)]
             struct NicInfoRaw {
@@ -2293,6 +2313,18 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Ok(()) => 0,
                 Err(()) => err_to_u64(SyscallError::NoMem),
             }
+        }
+        // ── SetNicIp (27): set NIC IP address ──
+        _ if info_class == ObSetInfoClass::SetNicIp as u32 => {
+            if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
+            let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let ip_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
+            let ip = crate::net::types::Ipv4Addr(ip_bytes);
+            if buf_size >= 12 {
+                let _mask = unsafe { core::ptr::read_volatile((buf_ptr + 8) as *const [u8; 4]) };
+            }
+            crate::net::nic::nic_set_ip(iface_idx, ip);
+            0
         }
         _ => err_to_u64(SyscallError::Inval),
     }

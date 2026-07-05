@@ -1,0 +1,19 @@
+[package]
+name = "libnet-nxl"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS networking library (NXL) — interface, socket, IP config at 0x1e0c0000"
+
+[[bin]]
+name = "libnet-nxl"
+path = "src/main.rs"
+test = false
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

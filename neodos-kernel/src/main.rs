@@ -36,6 +36,7 @@ mod handle;
 mod eventbus;
 mod work_queue;
 mod dpc;
+mod debugger;
 
 mod memory;
 mod globals;

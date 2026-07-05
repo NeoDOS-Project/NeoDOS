@@ -393,6 +393,27 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 * [x] **B2.7. Registry disk persistence (cm_flush_key)** — COMPLETADO en v0.48.6: NEOH serialization format, VFS file `C:\System\Registry\<name>.hiv`, dirty tracking, flush on shutdown. Tests: `cm_set_value_persist_roundtrip`, `cm_hive_serialization_integrity`
 * [x] **NET-1 F1-F4** — COMPLETADO en v0.48.5: Ethernet/UDP/ARP builders, ICMP Port Unreachable, socket_send, UDP/TCP dispatch, TCP three-way handshake real
 
+### NET-1.5..NET-1.15: Networking userland [COMPLETED]
+
+* [x] **NET-1.5. libneodos: SOCKET constants + wrappers** | Files: `libneodos/src/syscall.rs`
+  - Añadido `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv = 23`, y wrappers `ob_socket_create/connect/bind/listen/send/recv/close`.
+  - Añadido `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) con macro `ob_syscall_5!`.
+
+* [x] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - Handler en `ob_query_info` copia `socket.recv_buf` a usuario; si vacío retorna `-EAGAIN`.
+  - Tests: `net_socket_recv_data`, `net_socket_recv_empty`.
+
+* [x] **NET-1.8. net.nxl: userland network library** | Files: `libnet/` (new), `libnet-nxl/` (new)
+  - NXL slot 3 (`0x1e0c0000`). API (16 funciones): `iface_count/info/stats`, `socket_create/bind/connect/listen/send/recv/close`, `set_ip/get_ip/get_gateway/get_mask/get_dhcp_bound`.
+  - `libnet/` — static library wrapper con lazy loading via `loadlib`.
+  - `sys_cm_set_value` añadido a libneodos.
+
+* [x] **NET-1.15. netcfg.nxe: network service** | Files: `userbin/netcfg/` (new)
+  - Servicio auto-iniciado por NeoInit. Lee Registry (`DHCPEnabled`), aplica IP estática o espera DHCP del kernel.
+  - Si DHCP falla, asigna APIPA (169.254.1.1). Corre como daemon.
+  - `ObSetInfoClass::SetNicIp = 27` para aplicar IP desde userspace.
+  - Incluido en imagen NeoFS via `scripts/create_neodos_image.py`.
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

@@ -79,7 +79,7 @@ NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
 if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
-    for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver neomem vol echo label coretype tree corecls corecopy coredel coreren coremd corerd cmdtest drives ps keyb kill pri fsck ndreg loadnem progress neotop; do
+    for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver neomem vol echo label coretype tree corecls corecopy coredel coreren coremd corerd cmdtest drives ps keyb kill pri fsck ndreg loadnem progress neotop netcfg; do
     #for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
         echo "    Building $pkg..."
         cd "$USERBIN_DIR/$pkg"
@@ -112,6 +112,13 @@ if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     CONSOLE_NXL_BIN="$PROJECT_ROOT/console.nxl"
     cp "target/x86_64-unknown-none/release/libconsole-nxl" "$CONSOLE_NXL_BIN"
     echo "[✓] libconsole NXL: $CONSOLE_NXL_BIN ($(stat -c%s "$CONSOLE_NXL_BIN") bytes)"
+
+    echo "[+] Building libnet NXL (networking library)..."
+    cd "$PROJECT_ROOT/libnet-nxl"
+    cargo build --release 2>&1 || { echo "[!] Failed to build libnet-nxl"; exit 1; }
+    NET_NXL_BIN="$PROJECT_ROOT/net.nxl"
+    cp "target/x86_64-unknown-none/release/libnet-nxl" "$NET_NXL_BIN"
+    echo "[✓] libnet NXL: $NET_NXL_BIN ($(stat -c%s "$NET_NXL_BIN") bytes)"
 
     echo "[+] Compiling NEM v3 standalone driver (ps2kbd)..."
     DRV_DIR="$PROJECT_ROOT/drivers/ps2kbd"

@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.48.8 — 2026-07-05
+
+### Added
+- **NET-1.5. libneodos SOCKET constants + wrappers** — `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv = 23`, wrappers `ob_socket_create/connect/bind/listen/send/recv/close`, `SocketAddrV4` struct.
+- **NET-1.6. Kernel SocketRecv (class 23)** — Handler `ob_query_info` copia `socket.recv_buf`, retorna `-EAGAIN` si vacío. Tests: `net_socket_recv_data`, `net_socket_recv_empty`.
+- **NET-1.8. net.nxl userland network library** — `libnet-nxl/` (slot 3, `0x1e0c0000`) + `libnet/` (wrapper static). API: 16 funciones de interface/socket/config.
+- **NET-1.15. netcfg.nxe network service** — `userbin/netcfg/`. Auto-iniciado por NeoInit. DHCP o IP estática desde Registry. APIPA (169.254.1.1) si DHCP falla.
+- **Kernel: ObSetInfoClass::SetNicIp (class 27)** — Permite a userspace configurar IP vía `sys_ob_set_info`. Handler llama `nic_set_ip()`.
+- **libneodos: sys_cm_set_value (RAX=70)** — Nueva macro `ob_syscall_5!` + wrapper para escribir valores Registry.
+- **libneodos: ob_syscall_5! macro** — Soportar 5 argumentos en syscalls (necesario para CmSetValue).
+
+### Changed
+- **NeoInit: spawn_service() helper** — Refactorizado bucle de auto-start. Siempre arranca `netcfg.nxe` aunque `AutoStartServices` esté vacío.
+- **Build: scripts/build.sh** — Añadido build de `libnet-nxl` (net.nxl) y `netcfg` como userbin.
+- **Image: create_neodos_image.py** — Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs).
+- **Tests:** 646 → 648. Tests de socket recv añadidos.
+
 ## v0.48.7 — 2026-07-04
 
 ### Added

@@ -69,6 +69,51 @@ fn spawn_and_wait(path: &str) -> Result<u32, i64> {
     Ok(0)
 }
 
+fn spawn_service(path: &str) {
+    if path.is_empty() { return; }
+    let mut svc_path_buf = [0u8; 512];
+    let svc_bytes = path.as_bytes();
+    let svc_total = OB_FS_PREFIX.len() + svc_bytes.len();
+    if svc_total > svc_path_buf.len() {
+        write_str(b"[neoinit] WARNING: service path too long, skipping\r\n");
+        return;
+    }
+    svc_path_buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
+    svc_path_buf[OB_FS_PREFIX.len()..svc_total].copy_from_slice(svc_bytes);
+    let svc_ob_path = core::str::from_utf8(&svc_path_buf[..svc_total]).unwrap();
+    match spawn_detached(svc_ob_path) {
+        Ok(pid) => {
+            write_str(b"[neoinit] started service PID ");
+            let mut pb = [0u8; 10];
+            let mut i = 9;
+            let mut v = pid as usize;
+            while v > 0 {
+                pb[i] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if i == 0 { break; }
+                i -= 1;
+            }
+            let start = if pid == 0 { 9 } else { i + 1 };
+            write_str(&pb[start..=9]);
+            write_str(b"\r\n");
+        }
+        Err(e) => {
+            write_str(b"[neoinit] service spawn FAILED: errno ");
+            let mut eb = [0u8; 10];
+            let mut i = 9;
+            let mut v = (-e) as usize;
+            while v > 0 {
+                eb[i] = b'0' + (v % 10) as u8;
+                v /= 10;
+                if i == 0 { break; }
+                i -= 1;
+            }
+            write_str(&eb[i..=9]);
+            write_str(b"\r\n");
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     write_str(b"\r\n");
@@ -158,57 +203,16 @@ pub extern "C" fn _start() -> ! {
     ob_path_buf[OB_FS_PREFIX.len()..total].copy_from_slice(shell_bytes);
     let ob_path = core::str::from_utf8(&ob_path_buf[..total]).unwrap();
 
-    // ── Auto-start services ──
+    // ── Auto-start services from registry ──
     if !services_str.is_empty() {
         write_str(b"[neoinit] auto-starting services...\r\n");
         for svc in services_str.split(';') {
-            let svc = svc.trim();
-            if svc.is_empty() {
-                continue;
-            }
-            let mut svc_path_buf = [0u8; 512];
-            let svc_bytes = svc.as_bytes();
-            let svc_total = OB_FS_PREFIX.len() + svc_bytes.len();
-            if svc_total > svc_path_buf.len() {
-                write_str(b"[neoinit] WARNING: service path too long, skipping\r\n");
-                continue;
-            }
-            svc_path_buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
-            svc_path_buf[OB_FS_PREFIX.len()..svc_total].copy_from_slice(svc_bytes);
-            let svc_ob_path = core::str::from_utf8(&svc_path_buf[..svc_total]).unwrap();
-            match spawn_detached(svc_ob_path) {
-                Ok(pid) => {
-                    write_str(b"[neoinit] started service PID ");
-                    let mut pb = [0u8; 10];
-                    let mut i = 9;
-                    let mut v = pid as usize;
-                    while v > 0 {
-                        pb[i] = b'0' + (v % 10) as u8;
-                        v /= 10;
-                        if i == 0 { break; }
-                        i -= 1;
-                    }
-                    let start = if pid == 0 { 9 } else { i + 1 };
-                    write_str(&pb[start..=9]);
-                    write_str(b"\r\n");
-                }
-                Err(e) => {
-                    write_str(b"[neoinit] service spawn FAILED: errno ");
-                    let mut eb = [0u8; 10];
-                    let mut i = 9;
-                    let mut v = (-e) as usize;
-                    while v > 0 {
-                        eb[i] = b'0' + (v % 10) as u8;
-                        v /= 10;
-                        if i == 0 { break; }
-                        i -= 1;
-                    }
-                    write_str(&eb[i..=9]);
-                    write_str(b"\r\n");
-                }
-            }
+            spawn_service(svc.trim());
         }
     }
+
+    // ── Always start netcfg (network configuration daemon) ──
+    spawn_service("C:\\Programs\\netcfg.nxe");
 
     // ── Spawn loop ──
     write_str(b"[neoinit] entering spawn loop...\r\n");

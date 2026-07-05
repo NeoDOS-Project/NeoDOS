@@ -1,0 +1,23 @@
+[package]
+name = "libnet"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS networking user library — wraps net.nxl NXL"
+
+[lib]
+name = "libnet"
+path = "src/lib.rs"
+crate-type = ["lib"]
+test = false
+
+[dependencies]
+libneodos = { path = "../libneodos" }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

@@ -39,10 +39,10 @@
 | VIO-ARCH | Virtqueue abstraction + modern PCI transport | **HIGH** |
 | VIO-NET | VirtIO Network (0x1000) | **HIGH** |
 | VIO-9P | VirtIO 9P filesystem (0x1009) | **HIGH** |
-| NET-1.5 | libneodos SOCKET constants + wrappers | **HIGH** |
-| NET-1.6 | Kernel: SocketRecv class 23 | **HIGH** |
-| NET-1.8 | net.nxl userland network library | **HIGH** |
-| NET-1.15 | netcfg.nxe network service | **HIGH** |
+| ~~NET-1.5~~ | ~~libneodos SOCKET constants + wrappers~~ **[COMPLETED]** | ~~**HIGH**~~ |
+| ~~NET-1.6~~ | ~~Kernel: SocketRecv class 23~~ **[COMPLETED]** | ~~**HIGH**~~ |
+| ~~NET-1.8~~ | ~~net.nxl userland network library~~ **[COMPLETED]** | ~~**HIGH**~~ |
+| ~~NET-1.15~~ | ~~netcfg.nxe network service~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~B2.6~~ | ~~Registry defaults in boot~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~**B2.7**~~ | ~~**Registry disk persistence**~~ **[COMPLETED]** | ~~**CRITICAL**~~ |
 | ~~B4.10~~ | ~~NeoInit Registry-driven config~~ **[COMPLETED]** | ~~**HIGH**~~ |
@@ -147,21 +147,21 @@
 
 ### Networking — Userland tools
 
-* [ ] **NET-1.5. libneodos: SOCKET constants + wrappers** | Prereqs: NET-1 F4 | Files: `libneodos/src/syscall.rs`
+* [x] **NET-1.5. libneodos: SOCKET constants + wrappers** | Prereqs: NET-1 F4 | Files: `libneodos/src/syscall.rs`
   - Añadir `ob_type::SOCKET = 18`, `ObInfoClass::SocketInfo`..`SocketRecv`, `ObSetInfoClass::SocketConnect`..`SocketClose`.
     Wrappers: `ob_socket_create/connect/bind/listen/send/recv/close`.
   - **Tests:** compilación, no se rompen callers
 
-* [ ] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Prereqs: NET-1 F4 | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+* [x] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Prereqs: NET-1 F4 | Files: `src/object/types.rs`, `src/syscall/ob.rs`
   - Handler `ob_query_info` copia `socket.recv_buf` a usuario. Si no hay datos, `-EAGAIN`.
   - **Tests:** `ob_query_info_socket_recv`
 
-* [ ] **NET-1.8. net.nxl: userland network library** | Prereqs: NET-1.5/1.6 | Files: `libnet/` (new)
+* [x] **NET-1.8. net.nxl: userland network library** | Prereqs: NET-1.5/1.6 | Files: `libnet/` (new)
   - NXL slot 3 (`0x1e0c0000`). API: interface_count/get_interface_info/get_stats,
     socket_create/bind/connect/listen/send/recv/close, set_ip/set_gateway.
   - **Tests:** unitarios parsing (mock syscalls)
 
-* [ ] **NET-1.15. netcfg.nxe: network service** | Prereqs: NET-1.8, B2.6 | Files: `userbin/netcfg/` (new)
+* [x] **NET-1.15. netcfg.nxe: network service** | Prereqs: NET-1.8, B2.6 | Files: `userbin/netcfg/` (new)
   - Servicio auto-iniciado: carga net.nxl, lee Registry, ejecuta DHCP si toca, aplica IP, persiste resultado.
   - **Tests:** netcfg con DHCP simulado
 
@@ -200,12 +200,6 @@
     Timestamps con HPET. Salida paginada (more-like).
   - **Tests:** `neolog_eventbus_dump`, `neolog_trace_filter`
 
-### libneodos
-
-* [ ] ~~**DH3. Completar libneodos syscall wrappers~~ **[STALE — all wrappers exist]** | Files: `libneodos/src/syscall.rs`
-  - `sys_thread_create` (exists line 909), `sys_thread_join` (line 915), `sys_sleep_ex` (line 983),
-    `sys_poll` (line 975), `sys_ob_destroy` (line 932), `sys_driver_unload` (line 546) — all implemented.
-  - Replace with AUDIT-2 (libneodos ObInfoClass/ObSetInfoClass sync).
 
 ---
 
@@ -247,14 +241,6 @@
   - Comandos shell deben ir por VFS + handles, no por NeoDosFs directo.
   - **Tests:** (funcional — comandos existentes deben seguir funcionando)
 
-### Architectural Issues
-
-* [ ] ~~**AI-1. Completar ObInfoClass/ObSetInfoClass enums~~ **[STALE — all listed classes exist]** | Files: `src/object/types.rs`
-  - `ReadContent=15`, `VolumeLabel=16`, `ProcessTerminate=4`, `VfsRename=6`, `WriteContent=7`,
-    `SetCwd=8`, `SetVolumeLabel=9` all already exist in kernel enums. Replace with AUDIT-1 (unhandled Registry classes) and AUDIT-2 (libneodos sync).
-
-* [ ] ~~**AI-4. Arreglar TOCTOU race en kobj_register~~ **[STALE — kobj subsystem removed in v0.46]** | Files: `src/kobj/mod.rs` (removed)
-  - Replace with AUDIT-1/AUDIT-2 for current Object Manager issues.
 
 ### Tracing & Observability
 
@@ -365,15 +351,6 @@
 | F2: Login + SUDO | USR-012..024 | Fase 1 |
 | F3: Hardening + Grupos | USR-025..032 | Fase 2 |
 
-### Documentation
-
-* [ ] **DH1. Actualizar README.md a v0.48.6** | Files: `README.md`
-  - README actual muestra v0.39.11. Actualizar: 537 tests, 66 syscalls, Ob API, input, VTs.
-  - **Tests:** (validación manual)
-
-* [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
-  - MAX_PROCESSES fijo → Vec real. Tests 320→537. Boot phases incompletas.
-  - **Tests:** (validación manual)
 
 ### Kernel Debugger
 
