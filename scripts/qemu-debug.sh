@@ -16,6 +16,7 @@ echo "[*] NeoDOS QEMU Debug Session"
 echo ""
 
 USE_STORAGE="ahci"
+USE_TAP=false
 
 for arg in "$@"; do
     case "$arg" in
@@ -23,6 +24,7 @@ for arg in "$@"; do
         --ahci) USE_STORAGE="ahci" ;;
         --nvme) USE_STORAGE="nvme" ;;
         --virtio) USE_STORAGE="virtio" ;;
+        --tap) USE_TAP=true ;;
     esac
 done
 
@@ -64,15 +66,15 @@ else
 fi
 echo ""
 
-# ── Network: TAP (host reachable) o user-mode (SLiRP) ──
-NET_OPTS=""
-if [ -c /dev/net/tun ] && ip link show tap0 >/dev/null 2>&1; then
-    echo "[+] Network: TAP (tap0, 10.0.1.0/24)"
+# ── Network: user-mode (SLiRP) por defecto, TAP con --tap ──
+NET_OPTS="-netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 -device e1000,netdev=net0"
+if [ "$USE_TAP" = true ] && [ -c /dev/net/tun ]; then
+    echo "[+] Network: TAP (tap0, 10.0.1.0/24) — DHCP de tu LAN"
+    echo "[!] Si falla: sudo ip tuntap del tap0; sudo ip tuntap add tap0 mode tap user $(whoami); sudo ip addr add 10.0.1.1/24 dev tap0; sudo ip link set tap0 up"
     NET_OPTS="-netdev tap,id=net0,ifname=tap0,script=no -device e1000,netdev=net0"
 else
-    echo "[+] Network: user-mode (SLiRP), host→guest ICMP NO funciona"
-    echo "[!] Para TAP: sudo ip tuntap add tap0 mode tap user $(whoami) && sudo ip addr add 10.0.1.1/24 dev tap0 && sudo ip link set tap0 up"
-    NET_OPTS="-netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 -device e1000,netdev=net0"
+    echo "[+] Network: user-mode (SLiRP) — DHCP virtual 10.0.1.x"
+    echo "[!] Usa --tap para TAP (red real)"
 fi
 
 qemu-system-x86_64 \
