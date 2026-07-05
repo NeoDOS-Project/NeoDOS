@@ -157,7 +157,15 @@ lazy_static! {
         idt.divide_error.set_handler_fn(divide_error_handler);
         idt.debug.set_handler_fn(debug_handler);
         idt.non_maskable_interrupt.set_handler_fn(nmi_handler);
-        idt.breakpoint.set_handler_fn(breakpoint_handler);
+        // Use GDB stub trampoline for breakpoint handler
+        unsafe {
+            extern "C" {
+                static gdb_breakpoint_entry: u8;
+            }
+            idt.breakpoint.set_handler_addr(
+                x86_64::VirtAddr::from_ptr(core::ptr::addr_of!(gdb_breakpoint_entry))
+            );
+        }
         idt.overflow.set_handler_fn(overflow_handler);
         idt.bound_range_exceeded.set_handler_fn(bounds_handler);
         idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
@@ -265,8 +273,8 @@ extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame)
         "Divide error: rip={:#x}", rip);
 }
 
-extern "x86-interrupt" fn debug_handler(_: InterruptStackFrame) {
-    serial_println!("[IRQ] Debug exception");
+extern "x86-interrupt" fn debug_handler(frame: InterruptStackFrame) {
+    serial_println!("[KD] Debug exception @ {:#x}", frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn nmi_handler(stack_frame: InterruptStackFrame) {

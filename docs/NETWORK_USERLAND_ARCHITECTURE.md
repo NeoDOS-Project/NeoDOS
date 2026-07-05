@@ -2180,7 +2180,7 @@ fn init_cm() {
 | libnet-nxl | `libnet-nxl/` | `net.nxl` → `C:\System\Libraries\net.nxl` (slot 3, `0x1e0c0000`) | ✅ |
 | libnet | `libnet/` | Static library wrapper con lazy loading | ✅ |
 | netcfg | `userbin/netcfg/` | `netcfg.nxe` → servicio de red (daemon) | ✅ |
-| ipconfig | `userbin/ipconfig/` | *(pendiente)* | ❌ |
+| ipconfig | `userbin/ipconfig/` | `ipconfig.nxe` → muestra info de interfaces | ✅ |
 | ping | `userbin/ping/` | *(pendiente)* | ❌ |
 | dhcp | `userbin/dhcp/` | *(pendiente — DHCP se hace en kernel vía idle loop)* | ❌ |
 

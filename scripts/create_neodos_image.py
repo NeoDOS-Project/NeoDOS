@@ -241,7 +241,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop', 'netcfg']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop', 'netcfg', 'ipconfig']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -376,6 +376,7 @@ Happy hacking!
         inode_progress = allocator.alloc("progress.nxe")
         inode_neotop = allocator.alloc("neotop.nxe")
         inode_netcfg = allocator.alloc("netcfg.nxe")
+        inode_ipconfig = allocator.alloc("ipconfig.nxe")
 
         # Other directories
         inode_packages = allocator.alloc("Packages")
@@ -454,6 +455,7 @@ Happy hacking!
         progress_blocks   = alloc_blocks(inode_progress, len(nxe_files['progress']))
         neotop_blocks     = alloc_blocks(inode_neotop, len(nxe_files['neotop']))
         netcfg_blocks     = alloc_blocks(inode_netcfg, len(nxe_files['netcfg']))
+        ipconfig_blocks   = alloc_blocks(inode_ipconfig, len(nxe_files['ipconfig']))
         fs_nxl_blocks     = alloc_blocks(inode_fsnxl, len(nxl_data))
         math_nxl_blocks   = alloc_blocks(inode_mathnxl, len(math_nxl_data))
         console_nxl_blocks = alloc_blocks(inode_consolenxl, len(console_nxl_data))
@@ -476,7 +478,7 @@ Happy hacking!
         lay_dir_blocks    = alloc_blocks(inode_layouts, 768)    # Layouts dir (2 entries + padding)
         reg_dir_blocks    = alloc_blocks(inode_registry, 256)   # Registry dir (empty, 1 slot)
         cfg_dir_blocks    = alloc_blocks(inode_config, 768)    # Config dir (2 entries + padding)
-        prog_dir_blocks   = alloc_blocks(inode_programs, 8192)   # Programs dir (32 entries)
+        prog_dir_blocks   = alloc_blocks(inode_programs, 8704)   # Programs dir (34 entries)
         pkg_dir_blocks    = alloc_blocks(inode_packages, 256)    # Packages dir (empty)
         usr_dir_blocks    = alloc_blocks(inode_users, 768)    # Users dir
         def_dir_blocks    = alloc_blocks(inode_default, 256)    # Users\Default (empty)
@@ -540,6 +542,7 @@ Happy hacking!
             inode_progress: (MODE_FILE | default_perms_for_filename("progress.nxe"), len(nxe_files['progress']), pad_blocks(progress_blocks)),
             inode_neotop:  (MODE_FILE | default_perms_for_filename("neotop.nxe"), len(nxe_files['neotop']), pad_blocks(neotop_blocks)),
             inode_netcfg:  (MODE_FILE | default_perms_for_filename("netcfg.nxe"), len(nxe_files['netcfg']), pad_blocks(netcfg_blocks)),
+            inode_ipconfig:(MODE_FILE | default_perms_for_filename("ipconfig.nxe"), len(nxe_files['ipconfig']), pad_blocks(ipconfig_blocks)),
             inode_temp:    (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
             inode_data:    (dir_mode, 256,  pad_blocks(dat_dir_blocks)),
             inode_logs:    (dir_mode, 256,  pad_blocks(log_dir_blocks)),
@@ -756,6 +759,7 @@ Happy hacking!
         image[offset+7680:offset+7936]= create_dir_entry(inode_progress, 1, "progress.nxe")
         image[offset+7936:offset+8192]= create_dir_entry(inode_neotop, 1, "neotop.nxe")
         image[offset+3072:offset+3328]= create_dir_entry(inode_netcfg, 1, "netcfg.nxe")
+        image[offset+8192:offset+8448]= create_dir_entry(inode_ipconfig, 1, "ipconfig.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -791,6 +795,7 @@ Happy hacking!
             inode_progress: ('progress.nxe', nxe_files['progress']),
             inode_neotop: ('neotop.nxe', nxe_files['neotop']),
             inode_netcfg: ('netcfg.nxe', nxe_files['netcfg']),
+            inode_ipconfig: ('ipconfig.nxe', nxe_files['ipconfig']),
         }
         for inum, (name, data) in nxe_inode_map.items():
             if not data:
