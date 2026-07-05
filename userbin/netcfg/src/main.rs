@@ -62,9 +62,10 @@ pub extern "C" fn _start() -> ! {
     if dhcp_enabled != 0 {
         write_str(b"DHCP: waiting...\r\n");
         let mut ip = 0u32;
-        for i in 0..20000 {
-            if i % 2000 == 0 { write_str(b"."); }
-            syscall::sys_yield();
+        for i in 0..500 {
+            if i % 50 == 0 { write_str(b"."); }
+            // Sleep para que el idle loop corra y DHCP progrese
+            let _ = syscall::sys_sleep_ex();
             ip = libnet::get_ip(0);
             if ip != 0 { break; }
         }
