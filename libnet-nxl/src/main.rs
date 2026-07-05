@@ -91,7 +91,7 @@ unsafe fn ob_create(path: &str, obj_type: u32, attrs: u64) -> i64 {
 }
 
 unsafe fn ob_close(fd: u8) -> i64 {
-    syscall_2(5, fd as u64, 0)
+    syscall_2(13, fd as u64, 0)
 }
 
 unsafe fn ob_set_info(fd: u8, class: u32, buf: *const u8, len: usize) -> i64 {
