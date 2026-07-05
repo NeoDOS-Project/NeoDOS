@@ -560,6 +560,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     scheduler.on_timer_tick();
 
+    crate::net::dhcp::dhcp_tick();
+
     let tid = scheduler.current_tid;
 
     // ── Preemptive context switch ──────────────────────────────
