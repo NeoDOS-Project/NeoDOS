@@ -62,11 +62,13 @@ pub extern "C" fn _start() -> ! {
     if dhcp_enabled != 0 {
         write_str(b"DHCP: waiting...\r\n");
         let mut ip = 0u32;
-        for _ in 0..5000 {
+        for i in 0..20000 {
+            if i % 2000 == 0 { write_str(b"."); }
             syscall::sys_yield();
             ip = libnet::get_ip(0);
             if ip != 0 { break; }
         }
+        write_str(b"\r\n");
         assigned_ip = ip;
         if ip != 0 {
             let mut buf = [0u8; 16];
