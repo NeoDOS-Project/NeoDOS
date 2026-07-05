@@ -65,7 +65,7 @@
 | B1.1 | Kernel tracing infrastructure | MEDIUM |
 | B1.2 | NeoTrace system | MEDIUM |
 | B3.3 | **DHCP test page fault (CR2=0x0) when sending DISCOVER via NEM e1000** — exposed by static array layout changes. Test `dhcp_discover_offer_sequence` needs investigation: likely null pointer or DMA buffer alignment in NEM e1000 driver. Currently commented out in `src/net/dhcp.rs`. | HIGH |
-| B3.3 | **DHCP test page fault (CR2=0x0) when sending DISCOVER via NEM e1000** — exposed by static array layout changes. Test `dhcp_discover_offer_sequence` needs investigation: likely null pointer or DMA buffer alignment in NEM e1000 driver. Currently commented out in `src/net/dhcp.rs`. | HIGH |
+| NET-1.16 | **Kernel DHCP no progresa en userspace** — `build_dhcp_packet()` usa `Vec` (heap alloc) y `nic_send_packet()` toma spinlocks, inseguro desde timer IRQ. `dhcp_tick()` en idle loop no corre porque threads siempre están Ready. Solución: refactorizar `build_dhcp_packet()` a buffer fijo, proteger `DHCP_CLIENT` con `Mutex`, llamar `dhcp_tick()` desde timer IRQ. Actualmente netcfg asigna APIPA. | HIGH |
 | B3.4 | NTP client | MEDIUM |
 | B4.3 | Shell redirection (>, <, >>) | MEDIUM |
 | B4.6 | NeoEdit text editor | MEDIUM |
@@ -79,6 +79,7 @@
 | NET-1.9 | ipconfig.nxe | MEDIUM |
 | NET-1.10 | ping.nxe | MEDIUM |
 | NET-1.11 | dhcp.nxe (userland) | MEDIUM |
+| NET-1.16 | Kernel DHCP no progresa en userspace | **HIGH** |
 | VIO-BLK2 | VirtIO Block NEM driver | MEDIUM |
 | VIO-INPUT | VirtIO Input (0x1013) | MEDIUM |
 | DH1 | Actualizar README.md | MEDIUM |
@@ -270,6 +271,13 @@
 * [ ] **NET-1.11. dhcp.nxe (userland)** | Prereqs: NET-1.8 | Files: `userbin/dhcp/` (new)
   - `DHCP [/RENEW] [/RELEASE]`. DHCP via UDP socket. Persiste en Registry.
   - **Tests:** servidor DHCP simulado
+
+* [ ] **NET-1.16. Kernel DHCP no progresa en userspace** | Prereqs: NET-1.8 | Files: `src/net/dhcp.rs`, `src/arch/x64/idt.rs`
+  - `build_dhcp_packet()` usa `Vec` (heap allocation) → inseguro desde timer IRQ.
+  - `nic_send_packet()` toma `NIC_REGISTRY.lock()` (spinlock) → deadlock desde IRQ.
+  - `dhcp_tick()` en idle loop nunca corre porque threads userspace siempre están Ready.
+  - **Solución:** buffer fijo en `build_dhcp_packet()`, `Mutex` para `DHCP_CLIENT`, llamar `dhcp_tick()` desde timer IRQ.
+  - **Tests:** `dhcp_discover_offer_sequence`, netcfg obtiene IP real vía DHCP.
 
 * [ ] **B3.4. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
   - Cliente NTP (RFC 5905, SNTP simplificado). Sincroniza RTC del sistema.
