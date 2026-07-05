@@ -19,6 +19,7 @@ pub trait NetworkInterface: Send + Sync {
 struct NicSlot {
     interface: Option<Box<dyn NetworkInterface>>,
     ip: Ipv4Addr,
+    mask: Ipv4Addr,
     mac: MacAddr,
 }
 
@@ -33,6 +34,7 @@ impl NicRegistry {
         const EMPTY: NicSlot = NicSlot {
             interface: None,
             ip: Ipv4Addr::new([0; 4]),
+            mask: Ipv4Addr::new([0; 4]),
             mac: MacAddr::new([0; 6]),
         };
         NicRegistry {
@@ -49,6 +51,7 @@ impl NicRegistry {
                 self.nics[i] = NicSlot {
                     interface: Some(interface),
                     ip: Ipv4Addr::unspecified(),
+                    mask: Ipv4Addr::unspecified(),
                     mac,
                 };
                 self.active_count += 1;
@@ -107,6 +110,19 @@ impl NicRegistry {
         }
     }
 
+    pub fn get_mask(&self, id: u32) -> Option<Ipv4Addr> {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            return Some(self.nics[id as usize].mask);
+        }
+        None
+    }
+
+    pub fn set_mask(&mut self, id: u32, mask: Ipv4Addr) {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            self.nics[id as usize].mask = mask;
+        }
+    }
+
     pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
         let gateway = if self.active_count > 0 {
             if let Some(ref nic) = self.nics[0].interface {
@@ -161,6 +177,14 @@ pub fn nic_get_ip(nic_id: u32) -> Option<Ipv4Addr> {
 
 pub fn nic_set_ip(nic_id: u32, ip: Ipv4Addr) {
     NIC_REGISTRY.lock().set_ip(nic_id, ip);
+}
+
+pub fn nic_get_mask(nic_id: u32) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().get_mask(nic_id)
+}
+
+pub fn nic_set_mask(nic_id: u32, mask: Ipv4Addr) {
+    NIC_REGISTRY.lock().set_mask(nic_id, mask);
 }
 
 pub fn nic_default_id() -> Option<u32> {

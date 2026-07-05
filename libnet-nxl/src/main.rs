@@ -27,15 +27,15 @@ const OB_READ: u32 = 1;
 unsafe fn syscall_2(sys_num: u64, a0: u64, a1: u64) -> i64 {
     let r: i64;
     asm!(
-        "push rbx", "push rcx",
-        "mov r8, {a0}", "mov r9, {a1}",
-        "mov rbx, r8", "mov rcx, r9",
+        "push rbx",
+        "mov rbx, {a0}",
+        "mov rcx, {a1}",
         "mov rax, {n}",
         "int 0x80",
-        "pop rcx", "pop rbx",
+        "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, n = in(reg) sys_num,
-        out("rax") r, out("r8") _, out("r9") _,
-        options(nostack),
+        out("rax") r,
+        out("rcx") _, out("r8") _, out("r9") _,
     );
     r
 }
@@ -44,15 +44,16 @@ unsafe fn syscall_2(sys_num: u64, a0: u64, a1: u64) -> i64 {
 unsafe fn syscall_3(sys_num: u64, a0: u64, a1: u64, a2: u64) -> i64 {
     let r: i64;
     asm!(
-        "push rbx", "push rcx", "push rdx",
-        "mov r8, {a0}", "mov r9, {a1}", "mov r10, {a2}",
-        "mov rbx, r8", "mov rcx, r9", "mov rdx, r10",
+        "push rbx",
+        "mov rbx, {a0}",
+        "mov rcx, {a1}",
+        "mov rdx, {a2}",
         "mov rax, {n}",
         "int 0x80",
-        "pop rdx", "pop rcx", "pop rbx",
+        "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, a2 = in(reg) a2, n = in(reg) sys_num,
-        out("rax") r, out("r8") _, out("r9") _, out("r10") _,
-        options(nostack),
+        out("rax") r,
+        out("rcx") _, out("rdx") _, out("r8") _, out("r9") _,
     );
     r
 }
@@ -61,15 +62,17 @@ unsafe fn syscall_3(sys_num: u64, a0: u64, a1: u64, a2: u64) -> i64 {
 unsafe fn syscall_4(sys_num: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
     let r: i64;
     asm!(
-        "push rbx", "push rcx", "push rdx", "push r8",
-        "mov r9, {a0}", "mov r10, {a1}", "mov r11, {a2}", "mov r12, {a3}",
-        "mov rbx, r9", "mov rcx, r10", "mov rdx, r11", "mov r8, r12",
+        "push rbx",
+        "mov rbx, {a0}",
+        "mov rcx, {a1}",
+        "mov rdx, {a2}",
+        "mov r8, {a3}",
         "mov rax, {n}",
         "int 0x80",
-        "pop r8", "pop rdx", "pop rcx", "pop rbx",
+        "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, a2 = in(reg) a2, a3 = in(reg) a3, n = in(reg) sys_num,
-        out("rax") r, out("r9") _, out("r10") _, out("r11") _, out("r12") _,
-        options(nostack),
+        out("rax") r,
+        out("rcx") _, out("rdx") _, out("r8") _, out("r9") _,
     );
     r
 }
@@ -176,8 +179,8 @@ pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 
 pub extern "C" fn net_socket_create(sock_type: u32) -> i32 {
     let mut id_buf = [0u8; 16];
     let id = unsafe {
-        let mut n = 0u64;
-        asm!("mov rax, 3", "int 0x80", out("rax") n, options(nostack));
+        let mut n: u64;
+        asm!("int 0x80", in("rax") 3u64, lateout("rax") n);
         n
     };
     let path_len = {
@@ -291,7 +294,10 @@ pub extern "C" fn net_get_gateway(_iface: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn net_get_dhcp_bound() -> i32 {
-    0
+    // DHCP bound status: check if NIC 0 has a non-zero IP
+    // (dhcpd.nxe sets IP via net_set_ip when bound)
+    let ip = net_get_ip(0);
+    if ip != 0 { 1 } else { 0 }
 }
 
 #[no_mangle]

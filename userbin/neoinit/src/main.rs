@@ -211,8 +211,8 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    // ── Always start netcfg (network configuration daemon) ──
-    spawn_service("C:\\Programs\\netcfg.nxe");
+    // ── Always start dhcpd (DHCP client service) ──
+    spawn_service("C:\\Programs\\dhcpd.nxe");
 
     // ── Spawn loop ──
     write_str(b"[neoinit] entering spawn loop...\r\n");

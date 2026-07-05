@@ -198,6 +198,10 @@ pub fn arp_cache_entries() -> alloc::vec::Vec<(Ipv4Addr, MacAddr)> {
 /// sends an ARP request over the default NIC and returns None immediately.
 /// The caller should retry later after the reply arrives.
 pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
+    // Broadcast IP maps to broadcast MAC directly (no ARP needed)
+    if target_ip.is_broadcast() {
+        return Some(MacAddr::broadcast());
+    }
     if let Some(mac) = arp_lookup(target_ip) {
         return Some(mac);
     }

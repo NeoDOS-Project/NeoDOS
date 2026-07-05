@@ -110,20 +110,30 @@ def run_test():
         ])
         print("[+] Storage: ATA/IDE Mode")
 
-    # subprocess already imported at module level
-    has_tap = os.path.exists("/dev/net/tun")
-    if has_tap:
-        try:
-            r = subprocess.run(["ip", "link", "show", "tap0"], capture_output=True, text=True)
-            has_tap = r.returncode == 0
-        except:
-            has_tap = False
+    # Default to user-mode networking (no sudo/root required).
+    # Set NETWORK_MODE=tap or --tap for TAP mode (requires preconfigured tap0).
+    use_tap = os.environ.get("NETWORK_MODE", "") == "tap"
+    if use_tap:
+        # Verify tap0 interface exists and is accessible
+        if os.path.exists("/dev/net/tun"):
+            try:
+                r = subprocess.run(["ip", "link", "show", "tap0"], capture_output=True, text=True)
+                use_tap = r.returncode == 0
+            except:
+                use_tap = False
+    if not use_tap:
+        # Also check command line for --tap
+        for arg in sys.argv[1:]:
+            if arg == "--tap":
+                use_tap = True
+                break
 
-    if has_tap:
+    if use_tap:
         print("[+] Network: TAP (tap0, 10.0.1.0/24)")
+        print("[!] TAP requires pre-configured tap0 — see scripts/qemu-debug.sh")
         cmd.extend(["-netdev", "tap,id=net0,ifname=tap0,script=no", "-device", "e1000,netdev=net0"])
     else:
-        print("[+] Network: user-mode (SLiRP)")
+        print("[+] Network: user-mode (SLiRP) — no sudo needed")
         cmd.extend(["-netdev", "user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1", "-device", "e1000,netdev=net0"])
 
     cmd.extend([

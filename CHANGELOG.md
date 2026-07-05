@@ -17,6 +17,13 @@
 - **Image: create_neodos_image.py** — Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs).
 - **Tests:** 646 → 648. Tests de socket recv añadidos.
 
+### Fixed
+- **OB-FIX-001: Ob Socket object_id perdido en SocketConnect/SocketBind** — Causa raíz: `SocketConnect` y primer brazo `SocketBind` usaban `entry.offset` para obtener `socket_id`, pero `HandleEntry::ob_object()` descarta el segundo parámetro (socket_id se pasa como `_access_mask` que se ignora, `offset` siempre 0). Corregido: ambos ahora usan `ob_lookup(entry.object_id).native_id`. Brazo duplicado de `SocketBind` eliminado.
+- **UDP send path** — `socket_send()` para UDP solo acumulaba datos en `send_buf` sin transmitir. Corregido: extrae `local`/`remote`, suelta el lock, llama `socket_send_udp_raw()`.
+- **SetNicIp mask** — Handler ahora también persiste la máscara de subred vía `nic_set_mask()`.
+- **dhcpd.nxe** — Habilitado flujo DORA (crea socket UDP, bind, connect a broadcast, ejecuta `DhcpClient::run()`).
+- **NIC registry** — Añadido campo `mask` a `NicSlot`, funciones `nic_get_mask`/`nic_set_mask`.
+
 ## v0.48.7 — 2026-07-04
 
 ### Added

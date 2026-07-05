@@ -241,7 +241,7 @@ Happy hacking!
         # ── Read binary data ──
         userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
         nxe_files = {}
-        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop', 'netcfg', 'ipconfig']:
+        for name in ['cpuinfo', 'neoshell', 'neoinit', 'coredir', 'cd', 'corehelp', 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype', 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd', 'corerd', 'cmdtest', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress', 'neotop', 'dhcpd', 'netcfg', 'ipconfig']:
             fpath = os.path.join(userbin_dir, f'{name}.nxe')
             data = b''
             if os.path.exists(fpath):
@@ -375,6 +375,7 @@ Happy hacking!
         inode_loadnem = allocator.alloc("loadnem.nxe")
         inode_progress = allocator.alloc("progress.nxe")
         inode_neotop = allocator.alloc("neotop.nxe")
+        inode_dhcpd = allocator.alloc("dhcpd.nxe")
         inode_netcfg = allocator.alloc("netcfg.nxe")
         inode_ipconfig = allocator.alloc("ipconfig.nxe")
 
@@ -454,6 +455,7 @@ Happy hacking!
         loadnem_blocks    = alloc_blocks(inode_loadnem, len(nxe_files['loadnem']))
         progress_blocks   = alloc_blocks(inode_progress, len(nxe_files['progress']))
         neotop_blocks     = alloc_blocks(inode_neotop, len(nxe_files['neotop']))
+        dhcpd_blocks      = alloc_blocks(inode_dhcpd, len(nxe_files['dhcpd']))
         netcfg_blocks     = alloc_blocks(inode_netcfg, len(nxe_files['netcfg']))
         ipconfig_blocks   = alloc_blocks(inode_ipconfig, len(nxe_files['ipconfig']))
         fs_nxl_blocks     = alloc_blocks(inode_fsnxl, len(nxl_data))
@@ -505,7 +507,7 @@ Happy hacking!
             inode_registry: (dir_mode, 256, pad_blocks(reg_dir_blocks)),
             inode_systemcfg: (MODE_FILE | default_perms_for_filename("system.cfg"), len(system_cfg_content), pad_blocks(system_cfg_blocks)),
             inode_inputcfg: (MODE_FILE | default_perms_for_filename("input.cfg"), len(input_cfg_content), pad_blocks(input_cfg_blocks)),
-            inode_programs: (dir_mode, 6656, pad_blocks(prog_dir_blocks)),
+            inode_programs: (dir_mode, 8704, pad_blocks(prog_dir_blocks)),
             inode_neoshell: (MODE_FILE | default_perms_for_filename("NeoShell.nxe"), len(nxe_files['neoshell']), pad_blocks(neoshell_blocks)),
             inode_neoinit: (MODE_FILE | default_perms_for_filename("NeoInit.nxe"), len(nxe_files['neoinit']), pad_blocks(neoinit_blocks)),
             inode_cpuinfo: (MODE_FILE | default_perms_for_filename("cpuinfo.nxe"), len(nxe_files['cpuinfo']), pad_blocks(cpuinfo_blocks)),
@@ -541,6 +543,7 @@ Happy hacking!
             inode_loadnem: (MODE_FILE | default_perms_for_filename("loadnem.nxe"), len(nxe_files['loadnem']), pad_blocks(loadnem_blocks)),
             inode_progress: (MODE_FILE | default_perms_for_filename("progress.nxe"), len(nxe_files['progress']), pad_blocks(progress_blocks)),
             inode_neotop:  (MODE_FILE | default_perms_for_filename("neotop.nxe"), len(nxe_files['neotop']), pad_blocks(neotop_blocks)),
+            inode_dhcpd:   (MODE_FILE | default_perms_for_filename("dhcpd.nxe"), len(nxe_files['dhcpd']), pad_blocks(dhcpd_blocks)),
             inode_netcfg:  (MODE_FILE | default_perms_for_filename("netcfg.nxe"), len(nxe_files['netcfg']), pad_blocks(netcfg_blocks)),
             inode_ipconfig:(MODE_FILE | default_perms_for_filename("ipconfig.nxe"), len(nxe_files['ipconfig']), pad_blocks(ipconfig_blocks)),
             inode_temp:    (dir_mode, 256,  pad_blocks(tmp_dir_blocks)),
@@ -760,6 +763,7 @@ Happy hacking!
         image[offset+7936:offset+8192]= create_dir_entry(inode_neotop, 1, "neotop.nxe")
         image[offset+3072:offset+3328]= create_dir_entry(inode_netcfg, 1, "netcfg.nxe")
         image[offset+8192:offset+8448]= create_dir_entry(inode_ipconfig, 1, "ipconfig.nxe")
+        image[offset+8448:offset+8704]= create_dir_entry(inode_dhcpd, 1, "dhcpd.nxe")
 
         # Write all NXE binary data
         nxe_inode_map = {
@@ -794,6 +798,7 @@ Happy hacking!
             inode_loadnem: ('loadnem.nxe', nxe_files['loadnem']),
             inode_progress: ('progress.nxe', nxe_files['progress']),
             inode_neotop: ('neotop.nxe', nxe_files['neotop']),
+            inode_dhcpd:  ('dhcpd.nxe', nxe_files['dhcpd']),
             inode_netcfg: ('netcfg.nxe', nxe_files['netcfg']),
             inode_ipconfig: ('ipconfig.nxe', nxe_files['ipconfig']),
         }

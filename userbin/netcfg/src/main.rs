@@ -58,19 +58,29 @@ pub extern "C" fn _start() -> ! {
 
     let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
 
-    let mut assigned_ip;
-    if dhcp_enabled != 0 {
-        write_str(b"DHCP: waiting...\r\n");
+    if dhcp_enabled == 0 {
+        // Static IP mode: read and set from registry
+        let ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
+        if ip != 0 {
+            let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
+            let _ = libnet::set_ip(0, ip, mask);
+            let mut buf = [0u8; 16];
+            let len = format_ip(ip, &mut buf);
+            write_str(b"static: IP ");
+            write_str(&buf[..len]);
+            write_str(b"\r\n");
+        }
+    } else {
+        // DHCP mode: wait for dhcpd to assign an IP
+        write_str(b"DHCP: waiting for dhcpd...\r\n");
         let mut ip = 0u32;
-        for i in 0..500 {
-            if i % 50 == 0 { write_str(b"."); }
-            // Sleep para que el idle loop corra y DHCP progrese
+        for i in 0..2000 {
+            if i % 100 == 0 { write_str(b"."); }
             let _ = syscall::sys_sleep_ex();
             ip = libnet::get_ip(0);
             if ip != 0 { break; }
         }
         write_str(b"\r\n");
-        assigned_ip = ip;
         if ip != 0 {
             let mut buf = [0u8; 16];
             let len = format_ip(ip, &mut buf);
@@ -79,25 +89,7 @@ pub extern "C" fn _start() -> ! {
             write_str(b"\r\n");
             write_reg_dword(key_fd, "IPAddress", ip);
         } else {
-            assigned_ip = 0xA9FE0101; // 169.254.1.1 APIPA
-            let _ = libnet::set_ip(0, assigned_ip, 0x0000FFFF);
-            let mut buf = [0u8; 16];
-            let len = format_ip(assigned_ip, &mut buf);
-            write_str(b"DHCP: IP (APIPA) ");
-            write_str(&buf[..len]);
-            write_str(b"\r\n");
-            write_reg_dword(key_fd, "IPAddress", assigned_ip);
-        }
-    } else {
-        assigned_ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
-        if assigned_ip != 0 {
-            let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
-            let _ = libnet::set_ip(0, assigned_ip, mask);
-            let mut buf = [0u8; 16];
-            let len = format_ip(assigned_ip, &mut buf);
-            write_str(b"static: IP ");
-            write_str(&buf[..len]);
-            write_str(b"\r\n");
+            write_str(b"DHCP: timeout waiting for dhcpd\r\n");
         }
     }
 

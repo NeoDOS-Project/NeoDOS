@@ -2,7 +2,7 @@
 
 ## TCP/IP Stack
 
-Directory: `src/net/` (13 files, ~3165 lines). Modular protocol stack with socket abstraction, NIC drivers, and DHCP client.
+Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socket abstraction, NIC drivers, and ARP cache.
 
 ### Module Overview
 
@@ -17,8 +17,7 @@ Directory: `src/net/` (13 files, ~3165 lines). Modular protocol stack with socke
 | `tcp.rs` | ~800 | TCP state machine (11 states), connection lifecycle, send/recv buffers (16 KB sliding window), segment building |
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
 | `nic.rs` | ~150 | `NetworkInterface` trait, `NicRegistry` (4 slots), IP/next-hop/gateway management |
-| `e1000.rs` | ~350 | Intel e1000 NIC driver (82540EM, 82543GC, 82545EM, 82574L), ring buffers, RX/TX descriptors, MMIO |
-| `dhcp.rs` | ~200 | DHCP client (RFC 2131), DORA sequence, auto-start on boot, lease renewal |
+| `e1000.rs` | ~350 | Intel e1000 NIC driver (82540EM, 82543GM, 82543GC, 82545EM, 82574L), ring buffers, RX/TX descriptors, MMIO |
 | `tests.rs` | ~300 | 17+ integration tests |
 
 ### TCP State Machine
@@ -61,11 +60,12 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 
 | Class ID | Name | Effect |
 |----------|------|--------|
-| 18 | `SocketConnect` | Initiate TCP connection to remote addr |
+| 18 | `SocketConnect` | Initiate TCP connection or set UDP remote |
 | 19 | `SocketBind` | Bind socket to local address/port |
 | 20 | `SocketListen` | Start listening for TCP connections |
 | 21 | `SocketSend` | Send data on connected socket |
 | 22 | `SocketClose` | Close socket (FIN or RST) |
+| 27 | `SetNicIp` | Set NIC IP address from userspace |
 
 Socket creation via `ob_create` with `attrs` encoding: bits 0-7 = socket type (1=TCP, 2=UDP, 3=Raw), bits 8-23 = port for well-known bindings.
 
@@ -89,7 +89,7 @@ NIC (e1000)
     -> ethernet::EthernetHeader parse (dst MAC, src MAC, ethertype)
       |
       +-> ARP (ethertype 0x0806):
-      |     -> arp_resolve() -> cache lookup
+      |     -> arp_resolve() -> cache lookup (broadcast IP -> broadcast MAC directly)
       |     -> if request for our IP: build reply
       |     -> if reply: update cache
       |
@@ -112,15 +112,13 @@ NIC (e1000)
                     -> KWait wake for SocketRead
 ```
 
-Each receive direction produces a `NetPacket` struct that is consumed by the protocol handler. Unhandled protocols are silently dropped.
-
 ## NIC Initialization (Phase 3.88)
 
 1. Create `\Device\Tcp` and `\Device\Udp` namespace entries in Ob
 2. Probe PCI bus for Intel e1000 devices (vendor 0x8086, devices 0x100E/0x1004/0x100F/0x10D3)
 3. Initialize found NIC: map MMIO BAR, allocate RX/TX ring buffers, configure descriptors
-4. Set initial IP configuration (default: 0.0.0.0 until DHCP completes)
-5. Start DHCP client in auto-renewal mode
+4. Set initial IP configuration (default: 0.0.0.0 — no kernel DHCP)
+5. Userspace DHCP service (`dhcpd.nxe`) configures IP asynchronously
 6. ARP cache begins accepting entries
 
 ### NicRegistry
@@ -133,16 +131,101 @@ pub struct NicRegistry {
 }
 ```
 
-## DHCP Client
+## DHCP Client — Userspace Service
 
-File: `src/net/dhcp.rs`. Standard DORA sequence per RFC 2131:
+**DHCP is NOT handled by the kernel.** The protocol runs entirely in userspace as the `dhcpd.nxe` service, following the NT-like design principle where protocol stacks live in user mode and the kernel only provides transport primitives.
 
-1. **DISCOVER**: broadcast DHCP discover (port 67 -> 255.255.255.255:68)
-2. **OFFER**: receive DHCP offer from server (Yiaddr = offered IP)
-3. **REQUEST**: broadcast DHCP request with offered server IP
-4. **ACK**: receive DHCP acknowledgment with lease, mask, gateway, DNS
+### Architecture
 
-On success: updates NIC IP, subnet mask, default gateway. Stores lease information. Lease renewal runs on a configurable timer (default: 50% of lease time). Registry integration stores DHCPEnabled flag at `\Registry\Machine\Network\Interfaces\0\DHCPEnabled`.
+```
+dhcpd.nxe (Ring 3 user service)
+  │
+  ├─ Creates UDP socket (ObType::Socket = 18)
+  │   ├─ bind(0.0.0.0:68)        ← DHCP client port
+  │   └─ connect(255.255.255.255:67)  ← DHCP server port (broadcast)
+  │
+  ├─ Performs DORA sequence:
+  │   ├─ DISCOVER → wait → OFFER
+  │   ├─ REQUEST  → wait → ACK
+  │   └─ On ACK: set NIC IP via libnet::set_ip()
+  │
+  ├─ Manages lease renewal at 50% of lease time
+  ├─ Falls back to APIPA (169.254.1.1) if DHCP fails
+  └─ Persists IP configuration to Registry
+
+Kernel (Ring 0) provides:
+  ├─ NIC access (e1000 kernel stub or NEM driver)
+  ├─ Ethernet / ARP / IPv4 / UDP protocol processing
+  ├─ Socket abstraction with recv/send via Ob syscalls
+  └─ No DHCP protocol logic — removed in v0.48.8+
+```
+
+### DORA Sequence (RFC 2131)
+
+1. **DISCOVER**: Broadcast UDP packet with DHCPDISCOVER message type
+2. **OFFER**: Received on bound UDP socket (port 68), parsed for offered IP and options
+3. **REQUEST**: Unicast or broadcast DHCPREQUEST with offered server ID
+4. **ACK**: Final acknowledgment, IP is configured via `ob_set_info(SetNicIp)`
+
+### Lease Renewal
+
+After binding, `dhcpd.nxe` enters a loop that:
+- Tracks elapsed time via `sys_yield()` batches (approximating seconds)
+- At 50% of lease time, sends unicast DHCPREQUEST to the serving DHCP server
+- On ACK: lease is extended, timer resets
+- On failure: retries up to `MAX_RETRIES`, then restarts DORA
+
+### Why Userspace?
+
+The previous kernel-based DHCP implementation had fundamental architectural problems:
+- `build_dhcp_packet()` used `Vec` (heap allocation) from timer IRQ context
+- `nic_send_packet()` acquired `NIC_REGISTRY.lock()` (spinlock) from IRQ context, risking deadlock
+- `dhcp_tick()` in the idle loop never ran because user threads were always `Ready`
+- Result: DHCP never progressed, and `netcfg` always fell back to APIPA
+
+Moving DHCP to userspace resolves all these issues:
+- All memory allocation happens in process context (safe)
+- No spinlocks held in IRQ context
+- Socket operations are fully preemptible
+- Clean separation of concerns: kernel transports packets, user mode runs protocols
+
+### Registry Integration
+
+`dhcpd.nxe` stores network configuration in:
+```
+\Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
+  DHCPEnabled = 1 (DWORD)
+  IPAddress   = <assigned IP> (DWORD, big-endian byte order)
+  SubnetMask  = <subnet mask> (DWORD)
+  DHCPBound   = 1/0 (DWORD, 1 when DHCP lease is active)
+  DHCPServer  = <server IP> (DWORD)
+```
+
+## QEMU Networking
+
+NeoDOS uses QEMU's user-mode networking (SLiRP) by default, which requires **no root/sudo privileges**.
+
+### Default Mode (sudo-free)
+
+```bash
+-netdev user,id=net0,net=10.0.1.0/24,dhcpstart=10.0.1.80,host=10.0.1.1 \
+-device e1000,netdev=net0
+```
+
+QEMU's built-in DHCP server assigns IPs in the 10.0.1.x range starting at 10.0.1.80.
+The host is accessible at 10.0.1.1 and provides NAT to the outside world.
+
+### TAP Mode (requires privileges)
+
+```bash
+bash scripts/qemu-debug.sh --tap
+```
+
+TAP networking requires:
+- `/dev/net/tun` access (requires `CAP_NET_ADMIN` or root)
+- A preconfigured `tap0` interface on the host
+
+Useful when the guest needs direct network access (e.g., DHCP from a real LAN server).
 
 ## Source Files
 
@@ -158,9 +241,12 @@ On success: updates NIC IP, subnet mask, default gateway. Stores lease informati
 | socket.rs | `src/net/socket.rs` |
 | nic.rs | `src/net/nic.rs` |
 | e1000.rs | `src/net/e1000.rs` |
-| dhcp.rs | `src/net/dhcp.rs` |
 | tests.rs | `src/net/tests.rs` |
+
+User-mode DHCP service: `userbin/dhcpd/src/main.rs`
 
 ## Tests
 
 17+ tests in `src/net/tests.rs` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
+
+Kernel DHCP tests removed (DHCP is now a userspace service).

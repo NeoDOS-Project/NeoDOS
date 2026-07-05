@@ -417,24 +417,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                     };
                     let ns_path = alloc::format!("\\Driver\\{}", driver_id);
                     let _ = crate::object::namespace::ob_insert_object(&ns_path, ob_id);
-
-                    let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
-                    let fd = crate::hal::without_interrupts(|| {
-                        let s = scheduler::current_scheduler();
-                        let mut lock = s.lock();
-                        if let Some(ep) = lock.current_eprocess_mut() {
-                            crate::handle::alloc_handle(&mut ep.handle_table, entry)
-                        } else {
-                            None
-                        }
-                    });
-                    match fd {
-                        Some(fd) => fd as u64,
-                        None => {
-                            let _ = crate::object::ob_close_object(ob_id);
-                            err_to_u64(SyscallError::NoMem)
-                        }
-                    }
+                    ob_id as u64
                 }
                 Err(_) => err_to_u64(SyscallError::Io),
             }
@@ -692,7 +675,8 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 }
             };
 
-            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            // Store socket_id in entry's offset for direct retrieval by socket ops
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, socket_id);
             let fd = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
@@ -2081,20 +2065,10 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 crate::net::types::Ipv4Addr(ip_bytes),
                 u16::from_be(port),
             );
-            if crate::net::socket::socket_connect(socket_id, remote) {
-                if let Some(_nic_id) = crate::net::nic::nic_default_id() {
-                    let mac = crate::net::nic::NIC_REGISTRY.lock().next_hop_mac(remote.ip);
-                    if mac.is_some() {
-                        crate::net::socket::socket_set_connected(socket_id);
-                        let mut mgr = crate::net::socket::SOCKET_MANAGER.lock();
-                        mgr.wake_socket_connect_waiters(socket_id);
-                        drop(mgr);
-                    }
-                }
-                0
-            } else {
-                err_to_u64(SyscallError::Inval)
-            }
+            crate::net::socket::socket_set_remote(socket_id, remote);
+            crate::net::socket::socket_set_connected(socket_id);
+            crate::serial_println!("[SOCK] Connect OK sid={}", socket_id);
+            0
         }
         _ if info_class == ObSetInfoClass::SocketBind as u32 => {
             if buf_size < 6 { return err_to_u64(SyscallError::Inval); }
@@ -2314,16 +2288,18 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Err(()) => err_to_u64(SyscallError::NoMem),
             }
         }
-        // ── SetNicIp (27): set NIC IP address ──
+        // ── SetNicIp (27): set NIC IP address and subnet mask ──
         _ if info_class == ObSetInfoClass::SetNicIp as u32 => {
             if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
             let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
             let ip_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
             let ip = crate::net::types::Ipv4Addr(ip_bytes);
-            if buf_size >= 12 {
-                let _mask = unsafe { core::ptr::read_volatile((buf_ptr + 8) as *const [u8; 4]) };
-            }
             crate::net::nic::nic_set_ip(iface_idx, ip);
+            if buf_size >= 12 {
+                let mask_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 8) as *const [u8; 4]) };
+                let mask = crate::net::types::Ipv4Addr(mask_bytes);
+                crate::net::nic::nic_set_mask(iface_idx, mask);
+            }
             0
         }
         _ => err_to_u64(SyscallError::Inval),

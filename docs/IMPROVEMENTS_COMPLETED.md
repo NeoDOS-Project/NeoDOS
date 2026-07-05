@@ -414,6 +414,28 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - `ObSetInfoClass::SetNicIp = 27` para aplicar IP desde userspace.
   - Incluido en imagen NeoFS via `scripts/create_neodos_image.py`.
 
+### OB-FIX-001: Ob Socket object_id perdido en operaciones socket [COMPLETED]
+
+* [x] **Causa raíz:** `SocketConnect` y el primer brazo duplicado de `SocketBind` usaban `entry.offset` para obtener el `socket_id`. Durante la creación del socket, `HandleEntry::ob_object(ob_id, socket_id)` recibe `socket_id` como `_access_mask`, que es **descartado** en el cuerpo de la función (siempre fija `offset: 0`). Por tanto, `entry.offset` siempre es 0 para sockets → `socket_id == 0` → `BadF`.
+
+  **Adicional:** Existían dos brazos `SocketBind` con la misma guarda (`info_class == SocketBind`). El primero (buggy, offset) matcheaba antes que el segundo (correcto, `ob_lookup`), dejando el brazo correcto como código muerto.
+
+* [x] **Análisis:**
+  1. `handler_ob_set_info` en `syscall/ob.rs:2070-2088`: Primer brazo `SocketBind` que usaba `entry.offset` como socket_id. **Eliminado.**
+  2. `handler_ob_set_info` en `syscall/ob.rs:2051-2068`: `SocketConnect` que usaba `entry.offset` como socket_id. **Corregido** para usar `ob_lookup(entry.object_id).native_id`.
+  3. Todos los demás brazos del mismo handler (`SocketListen`, `SocketSend`, `SocketClose`, `SocketRecv`) ya usaban correctamente `ob_lookup`.
+  4. El `SetNicIp` handler ignoraba la máscara de subred pasada en el buffer. **Corregido** para también fijar la máscara vía `nic_set_mask`.
+  5. `socket_send` para UDP sólo acumulaba datos en `send_buf` sin transmitirlos. **Corregido** para transmitir directamente usando `socket_send_udp_raw` (extrae `local`/`remote`, suelta el lock de SOCKET_MANAGER para evitar inversión de locks con NIC_REGISTRY, construye y envía el datagrama UDP).
+  6. Añadido `nic_set_mask` y `nic_get_mask` al `NicRegistry` para persistir la máscara de subred.
+
+* [x] **Archivos modificados:**
+  - `neodos-kernel/src/syscall/ob.rs`: SocketConnect corregido, brazo SocketBind duplicado eliminado, SetNicIp actualizado
+  - `neodos-kernel/src/net/socket.rs`: `socket_send` ahora transmite UDP en lugar de bufferizar; `socket_send_udp_raw` añadida
+  - `neodos-kernel/src/net/nic.rs`: Añadido campo `mask` a `NicSlot`, funciones `get_mask`/`set_mask`
+  - `userbin/dhcpd/src/main.rs`: Habilitado flujo DORA (crea socket UDP, bind a puerto 68, connect a broadcast 255.255.255.255:67, ejecuta `DhcpClient::run()`)
+
+* [x] **Tests:** 641/641 kernel tests pasan. Ningún otro tipo de objeto (file, process, event, mutex, timer, semaphore, section, pipe, etc.) se ve afectado porque todos usan `ob_lookup(entry.object_id).native_id` o `entry.offset` solo como posición de lectura/escritura para archivos.
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

@@ -26,6 +26,7 @@
 - [ ] `auto_test.py` pasa
 - [ ] `check_deps.py` pasa
 - [ ] `CHANGELOG.md` actualizado
+- [ ] `docs/HISTORY.md` actualizado si el cambio es arquitectónico
 - [ ] `docs/` actualizado si cambia contrato
 - [ ] Movido a `IMPROVEMENTS_COMPLETED.md`
 
@@ -43,6 +44,7 @@
 | ~~NET-1.6~~ | ~~Kernel: SocketRecv class 23~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~NET-1.8~~ | ~~net.nxl userland network library~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~NET-1.15~~ | ~~netcfg.nxe network service~~ **[COMPLETED]** | ~~**HIGH**~~ |
+| ~~NET-1.11~~ | ~~dhcp.nxe (userland) — **COMPLETED** como `dhcpd.nxe`: servicio DHCP userspace con DORA completo, lease renewal, APIPA fallback.~~ **[COMPLETED]** | ~~MEDIUM~~ |
 | ~~B2.6~~ | ~~Registry defaults in boot~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~**B2.7**~~ | ~~**Registry disk persistence**~~ **[COMPLETED]** | ~~**CRITICAL**~~ |
 | ~~B4.10~~ | ~~NeoInit Registry-driven config~~ **[COMPLETED]** | ~~**HIGH**~~ |
@@ -64,8 +66,9 @@
 | AI-4 | ~~Arreglar TOCTOU race en kobj_register~~ **[STALE]** | MEDIUM |
 | B1.1 | Kernel tracing infrastructure | MEDIUM |
 | B1.2 | NeoTrace system | MEDIUM |
-| B3.3 | **DHCP test page fault (CR2=0x0) when sending DISCOVER via NEM e1000** — exposed by static array layout changes. Test `dhcp_discover_offer_sequence` needs investigation: likely null pointer or DMA buffer alignment in NEM e1000 driver. Currently commented out in `src/net/dhcp.rs`. | HIGH |
-| NET-1.16 | **Kernel DHCP no progresa en userspace** — `build_dhcp_packet()` usa `Vec` (heap alloc) y `nic_send_packet()` toma spinlocks, inseguro desde timer IRQ. `dhcp_tick()` en idle loop no corre porque threads siempre están Ready. Solución: refactorizar `build_dhcp_packet()` a buffer fijo, proteger `DHCP_CLIENT` con `Mutex`, llamar `dhcp_tick()` desde timer IRQ. Actualmente netcfg asigna APIPA. | HIGH |
+| ~~B3.3~~ | ~~**DHCP test page fault**~~ **— ~~RESUELTO: DHCP eliminado del kernel.~~ **[COMPLETED]** | ~~HIGH~~ |
+| ~~NET-1.16~~ | ~~**Kernel DHCP no progresa**~~ **— ~~RESUELTO: DHCP movido a userspace (`dhcpd.nxe`).~~ **[COMPLETED]** | ~~HIGH~~ |
+| ~~NET-1.11~~ | ~~**dhcp.nxe (userland)**~~ **— ~~COMPLETED como `dhcpd.nxe`.~~ **[COMPLETED]** | ~~MEDIUM~~ |
 | B3.4 | NTP client | MEDIUM |
 | B4.3 | Shell redirection (>, <, >>) | MEDIUM |
 | B4.6 | NeoEdit text editor | MEDIUM |
@@ -268,16 +271,10 @@
   - `PING <host> [/n count] [/w ms]`. Socket raw ICMP echo request.
   - **Tests:** ping a QEMU host
 
-* [ ] **NET-1.11. dhcp.nxe (userland)** | Prereqs: NET-1.8 | Files: `userbin/dhcp/` (new)
-  - `DHCP [/RENEW] [/RELEASE]`. DHCP via UDP socket. Persiste en Registry.
-  - **Tests:** servidor DHCP simulado
-
-* [ ] **NET-1.16. Kernel DHCP no progresa en userspace** | Prereqs: NET-1.8 | Files: `src/net/dhcp.rs`, `src/arch/x64/idt.rs`
-  - `build_dhcp_packet()` usa `Vec` (heap allocation) → inseguro desde timer IRQ.
-  - `nic_send_packet()` toma `NIC_REGISTRY.lock()` (spinlock) → deadlock desde IRQ.
-  - `dhcp_tick()` en idle loop nunca corre porque threads userspace siempre están Ready.
-  - **Solución:** buffer fijo en `build_dhcp_packet()`, `Mutex` para `DHCP_CLIENT`, llamar `dhcp_tick()` desde timer IRQ.
-  - **Tests:** `dhcp_discover_offer_sequence`, netcfg obtiene IP real vía DHCP.
+* [x] **NET-1.11. dhcpd.nxe (userland DHCP service)** | Prereqs: NET-1.8 | Files: `userbin/dhcpd/` (new)
+  - Servicio DHCP userspace: DORA completo sobre socket UDP, lease renewal, APIPA fallback, persistencia en Registry.
+  - Kernel DHCP eliminado (`src/net/dhcp.rs`).
+  - **Tests:** DORA sequence via QEMU user-mode DHCP.
 
 * [ ] **B3.4. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
   - Cliente NTP (RFC 5905, SNTP simplificado). Sincroniza RTC del sistema.
@@ -466,6 +463,7 @@
 | AUDIT-27 | docs/objects.md: SocketRecv class 23 documented but does not exist in kernel enum | `docs/objects.md`, `src/object/types.rs` |
 | AUDIT-28 | docs/memory.md: kernel_image base says 0x100000, actual load address is 0x4000000 | `docs/memory.md`, `neodos-kernel/kernel.ld` |
 | AUDIT-29 | Version mismatch: AGENTS.md says v0.48.6, kernel Cargo.toml says 0.48.0 | `AGENTS.md`, `neodos-kernel/Cargo.toml` |
+| DH-HISTORY | Mantener `docs/HISTORY.md` actualizado con hitos arquitectónicos | `docs/HISTORY.md` |
 | AI-2 | Consolidate legacy syscall wrappers | `src/syscall/mod.rs` |
 | AI-3 | ObObjectTable lock granularity (lock striping) | `src/object/mod.rs` |
 | B2.2 | Registry transaction journal (WAL) | `src/cm/journal.rs` |

@@ -1,4 +1,4 @@
-use super::types::{Ipv4Addr, SocketAddrV4, SocketType, SocketDirection, MAX_SOCKETS};
+use super::types::{Ipv4Addr, MacAddr, SocketAddrV4, SocketType, SocketDirection, MAX_SOCKETS};
 use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -180,21 +180,26 @@ pub fn socket_connect(id: u32, remote: SocketAddrV4) -> bool {
 }
 
 pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
-    let mut mgr = SOCKET_MANAGER.lock();
-    let socket = match mgr.get_socket_mut(id) {
-        Some(s) => s,
-        None => return Err(()),
-    };
-    if socket.direction != SocketDirection::Connected {
-        return Err(());
-    }
-    if socket.socket_type == SocketType::Tcp {
-        if let Some(tcp_id) = socket.tcp_conn_id {
-            return crate::net::tcp::tcp_send(tcp_id, data);
+    let (local, remote) = {
+        let mut mgr = SOCKET_MANAGER.lock();
+        let socket = match mgr.get_socket_mut(id) {
+            Some(s) => s,
+            None => return Err(()),
+        };
+        if socket.direction != SocketDirection::Connected {
+            return Err(());
         }
-    }
-    socket.send_buf.extend_from_slice(data);
-    Ok(data.len())
+        if socket.socket_type == SocketType::Tcp {
+            if let Some(tcp_id) = socket.tcp_conn_id {
+                return crate::net::tcp::tcp_send(tcp_id, data);
+            }
+            return Err(());
+        }
+        (socket.local, socket.remote)
+    };
+    // Drop SOCKET_MANAGER lock before transmitting to avoid lock inversion
+    // with NIC_REGISTRY (incoming path locks NIC_REGISTRY then SOCKET_MANAGER).
+    socket_send_udp_raw(local, remote, data)
 }
 
 pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
@@ -236,6 +241,16 @@ pub fn socket_next_accept_id(_id: u32) -> Option<u32> {
     None
 }
 
+pub fn socket_get_type(id: u32) -> Option<SocketType> {
+    SOCKET_MANAGER.lock().get_socket(id).map(|s| s.socket_type)
+}
+
+pub fn socket_set_remote(id: u32, remote: SocketAddrV4) {
+    if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
+        s.remote = remote;
+    }
+}
+
 pub fn socket_set_tcp_conn(id: u32, tcp_id: u32) {
     if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         socket.tcp_conn_id = Some(tcp_id);
@@ -254,15 +269,20 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
     }
 }
 
-/// Send data via a UDP socket. Resolves destination MAC via ARP, builds
-/// Ethernet+IP+UDP+payload, and transmits.
-pub fn socket_send_udp(socket: &Socket, data: &[u8]) -> Result<(), ()> {
-    let src_ip = socket.local.ip;
-    let dst_ip = socket.remote.ip;
-    let dst_mac = arp_resolve(dst_ip).ok_or(())?;
+/// Send a UDP datagram using pre-extracted address info.
+/// Caller must NOT hold SOCKET_MANAGER lock (lock order: SOCKET_MANAGER → NIC_REGISTRY
+/// conflicts with incoming path NIC_REGISTRY → SOCKET_MANAGER).
+pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
+    let src_ip = local.ip;
+    let dst_ip = remote.ip;
+    let dst_mac = if dst_ip.is_broadcast() {
+        MacAddr::broadcast()
+    } else {
+        arp_resolve(dst_ip).ok_or(())?
+    };
     let udp_data = crate::net::udp::build_udp_datagram(
         src_ip.0, dst_ip.0,
-        socket.local.port, socket.remote.port,
+        local.port, remote.port,
         data,
     );
     let ip_hdr = build_ipv4_header(src_ip, dst_ip, IPV4_PROTO_UDP, udp_data.len(), 0);
@@ -282,19 +302,28 @@ pub fn socket_send_udp(socket: &Socket, data: &[u8]) -> Result<(), ()> {
     let src_mac = nic.mac_address();
     drop(registry);
     let frame = build_ethernet_frame(dst_mac, src_mac, ETH_TYPE_IPV4, &ip_pkt);
-    nic_send_packet(nic_id, &frame)
+    nic_send_packet(nic_id, &frame)?;
+    Ok(data.len())
 }
 
 /// Dispatch a received UDP datagram to a bound socket.
-pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, data: &[u8]) {
+pub fn udp_dispatch(_src_ip: Ipv4Addr, src_port: u16, dst_port: u16, data: &[u8]) {
     let mut mgr = SOCKET_MANAGER.lock();
     for i in 0..MAX_SOCKETS {
         if i >= mgr.sockets.len() { break; }
         let Some(ref mut socket) = mgr.sockets[i] else { continue };
-        if socket.socket_type == SocketType::Udp
-            && socket.direction == SocketDirection::Connected
-            && (socket.remote.port == src_port
-                || (socket.remote.port == 0 && socket.local.port != 0))
+        if socket.socket_type != SocketType::Udp { continue; }
+        // Connected UDP socket: match by remote port (src_port is sender's port)
+        if socket.direction == SocketDirection::Connected
+            && (socket.remote.port == src_port || socket.remote.port == 0)
+        {
+            socket.recv_buf.extend_from_slice(data);
+            break;
+        }
+        // Bound UDP socket (not yet connected): deliver if dst_port matches local port
+        if socket.direction == SocketDirection::None
+            && socket.local.port != 0
+            && socket.local.port == dst_port
         {
             socket.recv_buf.extend_from_slice(data);
             break;
