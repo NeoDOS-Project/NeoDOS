@@ -1,8 +1,8 @@
 # NeoDOS Userland Networking + System Configuration + Package Architecture
 
-**Versión:** v0.2 (diseño detallado)
-**Fecha:** 2026-07-01
-**Estado:** Borrador — Pendiente de implementación
+**Versión:** v0.3 (implementado)
+**Fecha:** 2026-07-05
+**Estado:** Implementado — NET-1.5/1.6/1.8/1.15 completados
 
 ---
 
@@ -111,201 +111,79 @@ se lee como:
 let net = *(0x1e0c0000 as *const NetAbiTable);
 ```
 
-#### 2.2.1 Structs compartidas
+#### 2.2.1 Structs compartidas (implementadas en v0.3)
 
 ```rust
+/// ABI del kernel via ObInfoClass::NicInfo (class 20).
+/// Cada entrada: nic_id(4) + mac(6) + ip(4) + link_up(1) = 15 bytes.
 #[repr(C)]
-pub struct NetInterfaceInfo {
+pub struct NetIfaceInfo {
     pub nic_id: u32,
-    pub mac: [u8; 6],              // 6 bytes
-    pub _pad1: [u8; 2],            // alinear a 4
-    pub ipv4: [u8; 4],
-    pub subnet_mask: [u8; 4],
-    pub gateway: [u8; 4],
-    pub dns_server: [u8; 4],
-    pub link_up: u8,                // 0=down, 1=up
-    pub _pad2: [u8; 7],            // alinear a 8
-    pub rx_packets: u64,
-    pub tx_packets: u64,
-    pub rx_bytes: u64,
-    pub tx_bytes: u64,
-    pub speed_mbps: u32,
-    pub driver_name: [u8; 32],      // null-terminated
-}
-// Tamaño total: 100 bytes
-
-#[repr(C)]
-pub struct NetStats {
-    pub interfaces: u32,
-    pub total_rx_packets: u64,
-    pub total_tx_packets: u64,
-    pub total_rx_bytes: u64,
-    pub total_tx_bytes: u64,
-    pub arp_entries: u32,
-    pub socket_count: u32,
-    pub _pad: [u8; 4],
-}
-
-#[repr(C)]
-pub struct NetSocketAddr {
+    pub mac: [u8; 6],
     pub ip: [u8; 4],
-    pub port: u16,                  // network byte order (big-endian)
-    pub _pad: [u8; 2],
+    pub link_up: u8,
 }
 
-#[repr(C)]                          // para SocketInfo query
-pub struct NetSocketInfo {
-    pub socket_type: u32,           // 1=TCP, 2=UDP, 3=Raw
-    pub direction: u32,             // 0=None, 1=Connecting, 2=Connected, 3=Listening, 4=Closed
-    pub local_ip: [u8; 4],
-    pub local_port: u16,
-    pub remote_ip: [u8; 4],
-    pub remote_port: u16,
-    pub recv_available: u32,        // bytes disponibles en recv_buf del kernel
-    pub tcp_state: u32,            // solo para TCP
+/// Dirección IPv4 + puerto para bind/connect.
+#[repr(C)]
+pub struct SocketAddrV4 {
+    pub ip: [u8; 4],
+    pub port: u16,
 }
+
+/// Planificado (no implementado):
+/// - NetSocketInfo (socket_type, direction, local/remote addr, recv_available, tcp_state)
+/// - NetIfaceStats (rx/tx packets/bytes, errores)
+/// - NetStats global
 ```
 
-#### 2.2.2 Funciones de interfaz
+#### 2.2.2 Funciones de interfaz (implementadas)
 
 ```rust
-/// Número de interfaces de red disponibles.
-pub fn net_interface_count() -> Result<u32, NetError>;
-
-/// Obtener información de una interfaz por índice.
-pub fn net_get_interface_info(nic_id: u32) -> Result<NetInterfaceInfo, NetError>;
-
-/// Obtener MAC de una interfaz como bytes.
-pub fn net_get_mac(nic_id: u32) -> Result<[u8; 6], NetError>;
-
-/// Obtener dirección IPv4 como bytes.
-pub fn net_get_ip(nic_id: u32) -> Result<[u8; 4], NetError>;
-
-/// Obtener gateway como bytes.
-pub fn net_get_gateway(nic_id: u32) -> Result<[u8; 4], NetError>;
-
-/// Obtener estadísticas globales de red.
-pub fn net_get_stats() -> Result<NetStats, NetError>;
+// Desde libnet-nxl (C ABI, retornan i32):
+pub extern "C" fn net_iface_count() -> u32;
+pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i32;
+pub extern "C" fn net_iface_stats(idx: u32, stats: *mut NetIfaceStats) -> i32;  // stub
+pub extern "C" fn net_get_ip(iface: u32) -> u32;
+pub extern "C" fn net_get_gateway(iface: u32) -> u32;
+pub extern "C" fn net_get_mask(iface: u32) -> u32;
+pub extern "C" fn net_get_dhcp_bound() -> i32;
 ```
 
-**Implementación concreta:**
+**Implementación:** net.nxl abre `\Global\Info\CpuInfo` como fd comodín y
+consulta `ObInfoClass::NicInfo` (class 20). El kernel devuelve un array de
+registros NicInfoRaw de 15 bytes cada uno. No existe `\Global\Info\NicInfo`
+— el handler NicInfo es global y funciona con cualquier fd válido.
+
+**net_iface_stats** retorna -1 (pendiente de implementar estadísticas en kernel).
+
+**Sobre stats:** Planificado pero no implementado.
+
+#### 2.2.3 Funciones de socket (implementadas)
 
 ```rust
-pub fn net_interface_count() -> Result<u32, NetError> {
-    let fd = syscall::sys_ob_open("\\Global\\Info\\NicInfo", ob_access::READ)?;
-    let mut buf = [0u8; 2048];
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::NicInfo, &mut buf)?;
-    syscall::sys_close(fd)?;
-
-    // NicInfo devuelve array de NetInterfaceInfo. Count = n / sizeof(NetInterfaceInfo)
-    let count = n / core::mem::size_of::<NetInterfaceInfo>();
-    Ok(count as u32)
-}
-
-pub fn net_get_interface_info(nic_id: u32) -> Result<NetInterfaceInfo, NetError> {
-    let fd = syscall::sys_ob_open("\\Global\\Info\\NicInfo", ob_access::READ)?;
-    let mut buf = [0u8; 2048];
-    let _n = syscall::sys_ob_query_info(fd, ObInfoClass::NicInfo, &mut buf)?;
-    syscall::sys_close(fd)?;
-
-    let size = core::mem::size_of::<NetInterfaceInfo>();
-    let offset = nic_id as usize * size;
-    if offset + size > buf.len() {
-        return Err(NetError::NotFound);
-    }
-    let ptr = &buf[offset] as *const u8 as *const NetInterfaceInfo;
-    Ok(unsafe { *ptr })
-}
+// Desde libnet-nxl (C ABI, retornan i32, negativo = error):
+pub extern "C" fn net_socket_create(sock_type: u32) -> i32;
+pub extern "C" fn net_socket_bind(fd: i32, ip: u32, port: u16) -> i32;
+pub extern "C" fn net_socket_connect(fd: i32, ip: u32, port: u16) -> i32;
+pub extern "C" fn net_socket_listen(fd: i32) -> i32;
+pub unsafe extern "C" fn net_socket_send(fd: i32, data: *const u8, len: u32) -> i32;
+pub unsafe extern "C" fn net_socket_recv(fd: i32, buf: *mut u8, max: u32) -> i32;
+pub extern "C" fn net_socket_close(fd: i32) -> i32;
 ```
 
-**Sobre stats:** El kernel expondrá un nuevo `\Global\Info\NetworkStats` con
-ObInfoClass::NetworkStats (21). En la primera versión, se calcula sumando las
-stats de todas las NICs vía NicInfo.
-
-#### 2.2.3 Funciones de socket
+**Particularidades de la implementación:**
+- `net_socket_create` genera un path único (`\NetSock-{hex}`) porque `ob_create` requiere path en namespace. `sock_type` se codifica en `attrs` (bits 0-7).
+- `bind`/`connect` reciben `ip: u32` (big-endian) y `port: u16` (host order), no un struct.
+- `send` retorna bytes enviados como valor positivo.
+- `recv` usa `ObInfoClass::SocketRecv` (class 23). No implementa `ob_wait` para bloqueo.
+- `close` llama `ObSetInfoClass::SocketClose` que libera el socket en el kernel.
+- `net_get_tcp_status` y `net_get_socket_addr` existen vía ObInfoClass pero no tienen wrapper en libnet-nxl todavía.
 
 ```rust
-/// Crear un socket. `path` es nombre en namespace Ob (ej: "\\MyApp\\Ping").
-/// `socket_type`: SOCKET_TCP(1), SOCKET_UDP(2), SOCKET_RAW(3).
-pub fn net_socket_create(path: &str, socket_type: u32) -> Result<u8, NetError> {
-    let attrs = socket_type & 0xFF;
-    let fd = syscall::sys_ob_create(path, ob_type::SOCKET, None, attrs as u64)?;
-    Ok(fd)
-}
-
-/// Vincular socket a dirección local.
-pub fn net_socket_bind(fd: u8, addr: &NetSocketAddr) -> Result<(), NetError> {
-    let bytes = addr_as_bytes(addr);  // 8 bytes: ip[4] + port[2] + pad[2]
-    syscall::sys_ob_set_info(fd, ob_set_info_class::SOCKET_BIND, &bytes)?;
-    Ok(())
-}
-
-/// Conectar a destino remoto.
-pub fn net_socket_connect(fd: u8, addr: &NetSocketAddr) -> Result<(), NetError> {
-    let bytes = addr_as_bytes(addr);
-    syscall::sys_ob_set_info(fd, ob_set_info_class::SOCKET_CONNECT, &bytes)?;
-    // Para TCP, esperar conexión establecida:
-    syscall::sys_ob_wait(fd)?;     // bloquea hasta Connected o error
-    Ok(())
-}
-
-/// Poner en escucha (solo TCP).
-pub fn net_socket_listen(fd: u8) -> Result<(), NetError> {
-    syscall::sys_ob_set_info(fd, ob_set_info_class::SOCKET_LISTEN, &[])?;
-    Ok(())
-}
-
-/// Enviar datos. Devuelve bytes enviados.
-pub fn net_socket_send(fd: u8, data: &[u8]) -> Result<usize, NetError> {
-    let n = syscall::sys_ob_set_info(fd, ob_set_info_class::SOCKET_SEND, data)?;
-    Ok(n)
-}
-
-/// Recibir datos. Devuelve bytes recibidos (0 = EOF/closed).
-pub fn net_socket_recv(fd: u8, buf: &mut [u8]) -> Result<usize, NetError> {
-    // --- Estrategia de receive ---
-    // 1. Consultar SocketInfo para ver cuántos bytes hay en recv_buf del kernel
-    // 2. Si hay datos, llamar ob_query_info(fd, SocketInfo) que también copia datos
-    // 3. Si no hay datos y socket abierto, hacer ob_wait(fd) y reintentar
-    //
-    // El kernel expone SocketInfo (class 17) con un campo recv_available.
-    // Para recibir datos reales, usamos un nuevo ObInfoClass::SocketRecv(23).
-    // O bien extendemos SocketInfo para incluir payload inline.
-
-    // === Alternativa 1: SocketRecv query ===
-    let mut recv_buf = [0u8; 2048];
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::SocketRecv, &mut recv_buf)?;
-    let copy_len = n.min(buf.len());
-    buf[..copy_len].copy_from_slice(&recv_buf[..copy_len]);
-    Ok(copy_len)
-
-    // === Alternativa 2: ob_wait + consulta ===
-    // Loop: ob_wait(fd) → consulta SocketInfo → si recv_available > 0, copiar
-}
-
-/// Cerrar socket.
-pub fn net_socket_close(fd: u8) -> Result<(), NetError> {
-    syscall::sys_ob_set_info(fd, ob_set_info_class::SOCKET_CLOSE, &[])?;
-    syscall::sys_close(fd)?;
-    Ok(())
-}
-
-/// Obtener estado TCP.
-pub fn net_get_tcp_status(fd: u8) -> Result<TcpState, NetError> {
-    let mut buf = [0u8; 4];
-    syscall::sys_ob_query_info(fd, ObInfoClass::TcpStatus, &mut buf)?;
-    let state = u32::from_le_bytes(buf);
-    Ok(TcpState::from(state))
-}
-
-/// Obtener dirección local y remota.
-pub fn net_get_socket_addr(fd: u8) -> Result<(NetSocketAddr, NetSocketAddr), NetError> {
-    let mut buf = [0u8; 32];  // SocketAddr info class
-    syscall::sys_ob_query_info(fd, ObInfoClass::SocketAddr, &mut buf)?;
-    let local = NetSocketAddr { ip: buf[0..4].try_into().unwrap(), port: u16::from_be_bytes(buf[4..6].try_into().unwrap()), _pad: [0;2] };
-    let remote = NetSocketAddr { ip: buf[8..12].try_into().unwrap(), port: u16::from_be_bytes(buf[12..14].try_into().unwrap()), _pad: [0;2] };
-    Ok((local, remote))
-}
+// Equivalente userspace vía libneodos (wrappers existentes):
+use libneodos::syscall::{ob_socket_create, ob_socket_connect, ob_socket_bind,
+                         ob_socket_listen, ob_socket_send, ob_socket_recv, ob_socket_close};
 ```
 
 #### 2.2.4 Errores de net.nxl
@@ -402,10 +280,10 @@ pub fn net_socket_recv(fd: u8, buf: &mut [u8]) -> Result<usize, NetError> {
 }
 ```
 
-### 2.3 Tabla de exports de net.nxl
+### 2.3 Tabla de exports de net.nxl (implementada en v0.3)
 
 ```rust
-// libnet/src/lib.rs — genera net.nxl, slot 0x1e0c0000
+// libnet-nxl/src/main.rs — genera net.nxl, slot 0x1e0c0000
 
 pub const NET_NXL_BASE: u64 = 0x1e0c0000;
 pub const NET_ABI_VERSION: u32 = 1;
@@ -415,28 +293,38 @@ pub struct NetAbiTable {
     pub version: u32,
 
     // === Interfaces ===
-    pub net_interface_count: fn() -> i64,
-    pub net_get_interface_info: fn(nic_id: u32, buf: *mut u8, buf_len: usize) -> i64,
-    pub net_get_stats: fn(buf: *mut u8) -> i64,
+    pub iface_count: extern "C" fn() -> u32,
+    pub iface_info: unsafe extern "C" fn(u32, *mut NetIfaceInfo) -> i32,
+    pub iface_stats: extern "C" fn(u32, *mut NetIfaceStats) -> i32,  // stub
 
     // === Sockets ===
-    pub net_socket_create: fn(path: *const u8, socket_type: u32) -> i64,
-    pub net_socket_bind: fn(fd: u8, addr_bytes: *const u8) -> i64,
-    pub net_socket_connect: fn(fd: u8, addr_bytes: *const u8) -> i64,
-    pub net_socket_listen: fn(fd: u8) -> i64,
-    pub net_socket_send: fn(fd: u8, data: *const u8, len: usize) -> i64,
-    pub net_socket_recv: fn(fd: u8, buf: *mut u8, buf_len: usize) -> i64,
-    pub net_socket_close: fn(fd: u8) -> i64,
+    pub socket_create: extern "C" fn(u32) -> i32,
+    pub socket_bind: extern "C" fn(i32, u32, u16) -> i32,
+    pub socket_connect: extern "C" fn(i32, u32, u16) -> i32,
+    pub socket_listen: extern "C" fn(i32) -> i32,
+    pub socket_send: unsafe extern "C" fn(i32, *const u8, u32) -> i32,
+    pub socket_recv: unsafe extern "C" fn(i32, *mut u8, u32) -> i32,
+    pub socket_close: extern "C" fn(i32) -> i32,
 
     // === Configuración ===
-    pub net_set_ip: fn(nic_id: u32, ip_bytes: *const u8) -> i64,
-    pub net_set_gateway: fn(nic_id: u32, gw_bytes: *const u8) -> i64,
+    pub set_ip: extern "C" fn(u32, u32, u32) -> i32,
+    pub set_gateway: extern "C" fn(u32, u32) -> i32,  // stub (escribe Registry)
 
     // === Estado ===
-    pub net_get_tcp_status: fn(fd: u8, out: *mut u8) -> i64,
-    pub net_get_socket_addr: fn(fd: u8, out: *mut u8) -> i64,
+    pub get_ip: extern "C" fn(u32) -> u32,
+    pub get_gateway: extern "C" fn(u32) -> u32,
+    pub get_mask: extern "C" fn(u32) -> u32,
+    pub get_dhcp_bound: extern "C" fn() -> i32,  // stub (retorna 0)
+    _reserved: [u64; 7],
 }
 ```
+
+**Diferencias con el diseño original:**
+- `path` eliminado de `socket_create` — se genera automáticamente
+- `ip` pasado como `u32` (big-endian) en vez de `*const u8` array
+- Se añadieron `get_ip`, `get_gateway`, `get_mask`, `get_dhcp_bound`
+- `get_tcp_status` y `get_socket_addr` no tienen wrapper (accesibles vía ObInfoClass directamente)
+- `set_gateway` es stub — el kernel no expone `SetNicGateway`
 
 ### 2.4 net.nxl acceso a libneodos
 
@@ -981,35 +869,42 @@ pub extern "C" fn _start() -> ! {
 }
 ```
 
-### 4.4 Servicio netcfg.nxe
+### 4.4 Servicio netcfg.nxe (implementado)
 
 `netcfg.nxe` es un servicio auto-iniciado que configura la red al boot.
+
+**Implementación real (`userbin/netcfg/src/main.rs`):**
 
 ```
 netcfg.nxe
   │
-  ├── Cargar net.nxl
-  ├── Leer configuración de Registry:
-  │   \Registry\Machine\System\Network\Interfaces\0
+  ├── Cargar net.nxl vía libnet (lazy load)
+  ├── Abrir Registry:
+  │   \Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
   │     ├── DHCPEnabled     REG_DWORD  1
-  │     ├── IP              REG_SZ     "0.0.0.0"
-  │     ├── Gateway         REG_SZ     "0.0.0.0"
-  │     └── DNS             REG_SZ     "0.0.0.0"
+  │     └── IPAddress       REG_DWORD  0 (persistido)
   │
   ├── Si DHCPEnabled == 1:
-  │   ├── Ejecutar dhcp.nxe (obtener IP dinámica)
-  │   └── Guardar resultado en Registry
+  │   ├── Esperar hasta 20000 yields a que kernel DHCP asigne IP
+  │   │   (kernel DHCP avanza vía dhcp_tick() en idle loop)
+  │   ├── Leer IP via libnet::get_ip(0) → NicInfo del kernel
+  │   └── Si timeout → APIPA 169.254.1.1 con net_set_ip(0, ip, mask)
   │
   ├── Si DHCPEnabled == 0:
-  │   ├── net_set_ip(IP, SubnetMask)
-  │   └── net_set_gateway(Gateway)
+  │   ├── Leer IPAddress/SubnetMask del Registry
+  │   └── net_set_ip(0, ip, mask) vía ObSetInfoClass::SetNicIp(27)
   │
-  └── Marcar red como disponible:
-      (crear Event en Ob, o escribir flag en Registry)
+  └── Corre como DAEMMON (loop { yield })
 ```
 
-netcfg termina después de configurar. NeoInit no espera a netcfg a menos que
-`WaitForNetwork=1`.
+**Diferencias con el diseño original:**
+- No ejecuta `dhcp.nxe` — espera al kernel DHCP (vía `dhcp_tick()` en idle loop)
+- Path Registry: `CurrentControlSet\Services\Network\Interfaces\0` (no `\System\Network\...`)
+- netcfg corre como daemon (no termina tras configurar)
+- `set_gateway` es stub (el kernel no tiene SetNicGateway)
+- IP se guarda como REG_DWORD (no REG_SZ) para simplicidad
+- Usa APIPA (169.254.1.1) si DHCP falla
+- No hay flag "red disponible" — netcfg simplemente existe
 
 ### 4.5 Integración con la shell: servicios en background
 
@@ -2257,59 +2152,46 @@ fn init_cm() {
 
 ---
 
-## 11. Apéndice: Cambios por Archivo
+## 11. Apéndice: Cambios por Archivo (implementados en v0.3)
 
 ### 11.1 Kernel source
 
-| Archivo | Cambio | Fase |
-|---------|--------|------|
-| `src/net/ethernet.rs` | Añadir `build_ethernet_frame()` | F1 |
-| `src/net/arp.rs` | Añadir `resolve_mac_with_arp()` síncrono | F1 |
-| `src/net/udp.rs` | Añadir `build_udp_datagram()`, `calc_udp_checksum()` | F1 |
-| `src/net/tcp.rs` | Añadir `build_tcp_segment()`, implementar handshake real | F3/F4 |
-| `src/net/socket.rs` | Modificar `socket_send()` para transmitir por NIC | F1 |
-| `src/net/socket.rs` | Añadir `socket_set_nic()`, `alloc_ephemeral_port()` | F1 |
-| `src/net/mod.rs` | Añadir dispatch UDP en `net_handle_incoming_packet()` | F2 |
-| `src/net/mod.rs` | Añadir dispatch TCP en `net_handle_incoming_packet()` | F3 |
-| `src/net/icmp.rs` | Añadir `build_port_unreachable()`, `build_echo_request()` | F2 |
-| `src/object/types.rs` | Añadir `ObInfoClass::SocketRecv = 23` | F1 |
-| `src/syscall/ob.rs` | Añadir handler para SocketRecv (class 23) en query_info | F1 |
-| `src/syscall/ob.rs` | Verificar que SocketSend/SocketClose usan ruta kernel correcta | F0 |
-| `src/syscall/ob.rs` | Asignar nic_id automático en creación de socket | F1 |
-| `src/cm/mod.rs` | Añadir `create_default_registry_values()` | F7 |
-| `src/cm/mod.rs` | Implementar `cm_flush_key()` con serialización | F7 |
-| `src/cm/hive.rs` | Añadir `serialize()`, `deserialize()` | F7 |
-| `src/main.rs` | Llamar `create_default_registry_values()` en boot | F7 |
+| Archivo | Cambio | Estado |
+|---------|--------|--------|
+| `src/object/types.rs` | `ObInfoClass::SocketRecv = 23`, `ObSetInfoClass::SetNicIp = 27` | ✅ |
+| `src/syscall/ob.rs` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
+| `src/syscall/ob.rs` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
+| `src/main.rs` | `AutoStartServices` default incluye `C:\Programs\netcfg.nxe` | ✅ |
+| `src/scheduler/mod.rs` | `dhcp_tick()` llamado desde idle loop para que DHCP progrese | ✅ |
 
 ### 11.2 libneodos
 
-| Archivo | Cambio | Fase |
-|---------|--------|------|
-| `src/syscall.rs` | Añadir `ob_type::SOCKET = 18` | F4 |
-| `src/syscall.rs` | Añadir `ObInfoClass::SocketInfo(17)` .. `SocketRecv(23)` | F4 |
-| `src/syscall.rs` | Añadir `ob_set_info_class::SOCKET_CONNECT(18)` .. `SOCKET_CLOSE(22)` | F4 |
-| `src/syscall.rs` | Añadir `ob_socket_create()`, `ob_socket_connect()`, etc. | F4 |
+| Archivo | Cambio | Estado |
+|---------|--------|--------|
+| `src/syscall.rs` | `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv=23` | ✅ |
+| `src/syscall.rs` | Wrappers: `ob_socket_create/connect/bind/listen/send/recv/close` | ✅ |
+| `src/syscall.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) + `ob_syscall_5!` macro | ✅ |
+| `src/syscall.rs` | `ObSetInfoClass::SetNicIp = 27` | ✅ |
 
 ### 11.3 Nuevos proyectos
 
-| Proyecto | Path | Produce | Fase |
-|----------|------|---------|------|
-| libnet | `libnet/` | `net.nxl` → `C:\System\Libraries\net.nxl` | F5 |
-| ipconfig | `userbin/ipconfig/` | `ipconfig.nxe` | F6 |
-| ping | `userbin/ping/` | `ping.nxe` | F6 |
-| dhcp | `userbin/dhcp/` | `dhcp.nxe` | F6 |
-| netcfg | `userbin/netcfg/` | `netcfg.nxe` | F7 |
-| pkg | `userbin/pkg/` | `pkg.nxe` | F8 |
+| Proyecto | Path | Produce | Estado |
+|----------|------|---------|--------|
+| libnet-nxl | `libnet-nxl/` | `net.nxl` → `C:\System\Libraries\net.nxl` (slot 3, `0x1e0c0000`) | ✅ |
+| libnet | `libnet/` | Static library wrapper con lazy loading | ✅ |
+| netcfg | `userbin/netcfg/` | `netcfg.nxe` → servicio de red (daemon) | ✅ |
+| ipconfig | `userbin/ipconfig/` | *(pendiente)* | ❌ |
+| ping | `userbin/ping/` | *(pendiente)* | ❌ |
+| dhcp | `userbin/dhcp/` | *(pendiente — DHCP se hace en kernel vía idle loop)* | ❌ |
 
 ### 11.4 Scripts
 
-| Script | Propósito | Fase |
-|--------|-----------|------|
-| `scripts/create_neodos_image.py` | Añadir net.nxl, ipconfig.nxe, ping.nxe, dhcp.nxe a la imagen | F6 |
-| `scripts/init_registry.py` | Generar SYSTEM.hiv inicial con valores por defecto | F7 |
-| `scripts/create_test_package.py` | Crear paquete .npkg de prueba | F8 |
+| Script | Cambio | Estado |
+|--------|--------|--------|
+| `scripts/build.sh` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
+| `scripts/create_neodos_image.py` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs) | ✅ |
 
 ---
 
-*Este documento es un diseño arquitectónico. Ver `docs/IMPROVEMENTS.md` para el
-estado actual de cada tarea.*
+*Documento actualizado a v0.3 reflejando la implementación real (NET-1.5/1.6/1.8/1.15).
+Ver `docs/IMPROVEMENTS.md` para el estado actual de cada tarea.*
