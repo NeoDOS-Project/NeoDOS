@@ -207,7 +207,6 @@ fn idle_task() -> ! {
             crate::work_queue::WORK_QUEUE.process_low();
         });
         crate::eventbus::EVENT_BUS.dispatch_pending();
-        crate::net::dhcp::dhcp_tick();
         crate::hal::hlt_once();
     }
 }
