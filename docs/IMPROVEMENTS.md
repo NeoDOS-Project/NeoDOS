@@ -276,6 +276,11 @@
   - Kernel DHCP eliminado (`src/net/dhcp.rs`).
   - **Tests:** DORA sequence via QEMU user-mode DHCP.
 
+* [ ] **BUG-NEM-RX: NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
+  - El driver NEM e1000 envia DISCOVER OK, pero `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado).
+  - Con kernel e1000 funciona correctamente (DORA completo). Workaround: `default_nic_id()` prefiere kernel e1000.
+  - **Causa posible:** `hst_virt_to_phys()` devuelve dir fisica incorrecta para RX descriptor ring, o la coherencia de cache falla.
+
 * [ ] **B3.4. NTP client** | Prereqs: B3.2 | Files: `src/net/ntp.rs`
   - Cliente NTP (RFC 5905, SNTP simplificado). Sincroniza RTC del sistema.
   - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`
