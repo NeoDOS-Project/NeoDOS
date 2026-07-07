@@ -590,7 +590,7 @@ pub extern "C" fn _start() -> ! {
         loop { syscall::sys_yield(); }
     }
 
-    // Get MAC address from NIC 0
+    // Get MAC address and current IP from NIC 0
     let mut iface = libnet::NetIfaceInfo {
         nic_id: 0,
         mac: [0u8; 6],
@@ -598,6 +598,10 @@ pub extern "C" fn _start() -> ! {
         link_up: 0,
     };
     let mac = if libnet::iface_info(0, &mut iface) == 0 {
+        let cur_ip = u32::from_be_bytes(iface.ip);
+        write_str(b"[dhcpd] NIC IP=");
+        write_ip(cur_ip);
+        write_str(b"\r\n");
         iface.mac
     } else {
         write_str(b"[dhcpd] WARN: no NIC info, using fake MAC\r\n");

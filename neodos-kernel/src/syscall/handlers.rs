@@ -422,6 +422,7 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
             }
         }
     });
+    crate::net::network_poll_all();
     set_need_resched();
     0
 }

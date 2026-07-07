@@ -38,7 +38,7 @@ pub fn init_networking() {
 
     crate::object::namespace::ob_create_directory("\\Device\\Nic").unwrap_or(());
 
-    let _has_nic = crate::net::e1000::probe_e1000();
+    let _has_kernel_nic = crate::net::e1000::probe_e1000();
 
     let nic_count = crate::net::nic::nic_count();
 
@@ -61,6 +61,7 @@ pub fn net_is_initialized() -> bool {
 
 pub fn net_tick() {
     if !net_is_initialized() { return; }
+    network_poll_all();
     arp::arp_tick();
 }
 

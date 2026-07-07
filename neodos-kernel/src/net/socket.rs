@@ -203,6 +203,9 @@ pub fn socket_send(id: u32, data: &[u8]) -> Result<usize, ()> {
 }
 
 pub fn socket_recv(id: u32, buf: &mut [u8]) -> Result<usize, ()> {
+    // Poll NIC for new packets before checking receive buffer
+    crate::net::network_poll_all();
+    
     let mut mgr = SOCKET_MANAGER.lock();
     let socket = match mgr.get_socket_mut(id) {
         Some(s) => s,

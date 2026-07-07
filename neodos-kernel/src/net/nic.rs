@@ -140,7 +140,8 @@ impl NicRegistry {
     }
 
     pub fn default_nic_id(&self) -> Option<u32> {
-        for i in 0..MAX_NICS {
+        // Return the LAST registered NIC (prefers kernel e1000 over NEM bridge)
+        for i in (0..MAX_NICS).rev() {
             if self.nics[i].interface.is_some() {
                 return Some(i as u32);
             }

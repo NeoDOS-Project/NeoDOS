@@ -1,7 +1,8 @@
 use crate::eventbus;
 use crate::input;
 use crate::hal;
-use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_MMIO, CAP_BLOCK_DEVICE};
+use crate::drivers::caps::{CAP_IRQ, CAP_PORTIO, CAP_EVENT_BUS, CAP_INPUT, CAP_TIMING, CAP_LOG, CAP_MMIO, CAP_BLOCK_DEVICE, CAP_DMA};
+use x86_64::structures::paging::PageTableFlags;
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
 use crate::drivers::isolation;
@@ -118,6 +119,21 @@ pub unsafe extern "C" fn hst_ecam_write_dword(bus: u8, dev: u8, func: u8, offset
     if !check_cap(CAP_MMIO) { return; }
     if hal::pci::ecam_is_active() {
         hal::pci::ecam_write_config_dword(bus, dev, func, offset, value);
+    }
+}
+
+pub unsafe extern "C" fn hst_virt_to_phys(virt: u64) -> u64 {
+    if !check_cap(CAP_DMA) { return 0; }
+    match crate::hal::walk_ptes_4k(virt) {
+        Some(pte) => {
+            if pte.flags().contains(PageTableFlags::PRESENT) {
+                let phys_base = pte.addr().as_u64();
+                phys_base | (virt & 0xFFF)
+            } else {
+                0
+            }
+        }
+        None => 0,
     }
 }
 

@@ -443,15 +443,7 @@ pub fn ob_create_object_path(
     let id = ob_create_object(obj_type, leaf, native_id, attrs, ops)?;
 
     // Insert into namespace (create parent directories as needed)
-    {
-        let parent_path = match normalized.rfind('\\') {
-            Some(idx) if idx > 0 => &normalized[..idx],
-            _ => "\\",
-        };
-        if parent_path != "\\" {
-            let _ = crate::object::namespace::ob_create_directory(parent_path);
-        }
-    }
+    let _ = crate::object::namespace::ob_create_directory_tree(&normalized);
     match crate::object::namespace::ob_insert_object(&normalized, id) {
         Ok(_) => Ok(id),
         Err(_) => {

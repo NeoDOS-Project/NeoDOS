@@ -17,3 +17,4 @@ target/
 __pycache__/
 /tmp/
 *.bin
+*.fd

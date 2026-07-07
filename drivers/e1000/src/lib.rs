@@ -112,6 +112,7 @@ extern "C" {
         poll_fn: unsafe extern "C" fn(u32, *mut u8, *mut u32) -> i32,
     ) -> i32;
     fn hst_unregister_network_device(nic_id: i32) -> i32;
+    fn hst_virt_to_phys(virt: u64) -> u64;
 }
 
 fn log_bytes(buf: &[u8]) {
@@ -286,8 +287,9 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
     // Initialize RX
     write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
 
-    // Set up RX descriptor ring
-    let rx_phys = &raw const RX_DESCS as u64;
+    // Set up RX descriptor ring (translate virtual → physical for DMA)
+    let rx_virt = &raw const RX_DESCS as u64;
+    let rx_phys = hst_virt_to_phys(rx_virt);
     write_reg(REG_RDBAL, (rx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_RDBAH, (rx_phys >> 32) as u32);
     write_reg(REG_RDLEN, (NUM_RX_DESC * core::mem::size_of::<RxDesc>()) as u32);
@@ -299,15 +301,16 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
         &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
     for (i, desc) in rx_descs.iter_mut().enumerate() {
-        let buf_phys = (&BUF_POOL.0[i * RX_BUF_SIZE] as *const u8) as u64;
-        desc.addr = buf_phys;
+        let buf_virt = (&BUF_POOL.0[i * RX_BUF_SIZE] as *const u8) as u64;
+        desc.addr = hst_virt_to_phys(buf_virt);
         desc.status = 0;
     }
 
     // Initialize TX
     write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 
-    let tx_phys = &raw const TX_DESCS as u64;
+    let tx_virt = &raw const TX_DESCS as u64;
+    let tx_phys = hst_virt_to_phys(tx_virt);
     write_reg(REG_TDBAL, (tx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_TDBAH, (tx_phys >> 32) as u32);
     write_reg(REG_TDLEN, (NUM_TX_DESC * core::mem::size_of::<TxDesc>()) as u32);
@@ -331,13 +334,15 @@ unsafe extern "C" fn e1000_send(device_id: u32, buf: *const u8, len: u32) -> i32
 
     let tx_offset = NUM_RX_DESC * RX_BUF_SIZE + tx_cur * RX_BUF_SIZE;
     let tx_buf_ptr = (&BUF_POOL.0[tx_offset]) as *const u8 as *mut u8;
-    core::ptr::copy_nonoverlapping(buf, tx_buf_ptr, pkt_len);
+    for i in 0..pkt_len {
+        *tx_buf_ptr.add(i) = *buf.add(i);
+    }
 
     let tx_descs = core::slice::from_raw_parts_mut(
         &raw mut TX_DESCS.0 as *mut u8 as *mut TxDesc, NUM_TX_DESC
     );
     let desc = &mut tx_descs[tx_cur];
-    desc.addr = tx_buf_ptr as u64;
+    desc.addr = hst_virt_to_phys(tx_buf_ptr as u64);
     desc.length = pkt_len as u16;
     desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
     desc.status = 0;
@@ -370,7 +375,10 @@ unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32)
     }
 
     let rx_buf = &BUF_POOL.0[rx_cur * RX_BUF_SIZE..];
-    core::ptr::copy_nonoverlapping(rx_buf.as_ptr(), buf, pkt_len);
+    let rx_src = rx_buf.as_ptr();
+    for i in 0..pkt_len {
+        *buf.add(i) = *rx_src.add(i);
+    }
     *out_len = pkt_len as u32;
 
     // Return buffer to NIC

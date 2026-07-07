@@ -501,6 +501,17 @@ Mostly completed. See [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md) for
 - X7 (Object Manager unification — handles, KOBJ, URN, security)
 - All 16 ObTypes defined, 7 Ob syscalls (RAX 60-66)
 
+### QEMU Bridge Infrastructure
+- **scripts/setup-network.sh** — One-time setup: creates `neodos0` bridge via NetworkManager,
+  registers with `qemu-bridge-helper`, configures NAT (nftables/iptables), enables IP forwarding,
+  adds user to `kvm` group. After setup, QEMU runs without `sudo`.
+- **scripts/qemu-debug.sh** — Updated: `--bridge` flag uses `qemu-bridge-helper` (SUID root)
+  for runtime TAP creation. Falls back to SLiRP if bridge not found. `--tap` flag for raw TAP.
+- **docs/qemu-setup.md** — Full documentation: architecture, security analysis, distribution
+  differences, troubleshooting, comparison of all approaches.
+- **Design decision:** `qemu-bridge-helper` (SUID root, per-bridge ACL in bridge.conf) chosen
+  over `setcap cap_net_admin+ep` (broad, hard to audit) and raw TAP (per-session setup).
+
 ### NeoFS Audit
 Full audit in [NEOFS_AUDIT.md](NEOFS_AUDIT.md), roadmap in [NEOFS_ROADMAP.md](NEOFS_ROADMAP.md),
 test plan in [NEOFS_TESTS.md](NEOFS_TESTS.md).

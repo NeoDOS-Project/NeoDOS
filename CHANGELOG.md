@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.48.9 — 2026-07-06
+
+### Added
+- **NET-2.1. hst_virt_to_phys() HST export** — Nueva función de kernel `hst_virt_to_phys(virt) -> phys` que camina las page tables para traducir direcciones virtuales a físicas. Necesario para DMA en drivers NEM cargados en región aislada (0x30000000) donde virt ≠ phys.
+- **NET-2.2. Polling de red en handler_yield y socket_recv** — `crate::net::network_poll_all()` añadido en `handler_yield` (syscall RAX=2) y en `socket_recv()` para que el NIC se sondee antes de leer el buffer de socket.
+- **test_dhcp_bridge.sh, test_dhcp_tap.sh** — Scripts de prueba para DHCP con bridge y TAP.
+
+### Changed
+- **NET-2.3. default_nic_id() ahora prefiere último NIC** — Iteración inversa (último registrado = kernel e1000). Así el driver NEM se carga pero el kernel e1000 es el activo.
+- **dhcpd.nxe: muestra IP actual al arrancar** — `[dhcpd] NIC IP=...` muestra la IP de la NIC al iniciar.
+- **Tests:** 648 → 656 (8 tests nuevos: timers, semáforos, seh_teb, section, ahci_ncq, etc.).
+
+### Fixed
+- **NET-2.4. GPF en e1000_send del NEM driver** — Causa raíz: `core::ptr::copy_nonoverlapping` generaba `call memcpy` en la región aislada del driver NEM, pero la relocación producía un salto a dirección no canónica (0xca3948c931f88948 = bytes de `memcpy` interpretados como u64). Fix: reemplazar con bucles `for` manuales.
+- **NET-2.5. DMA apuntando a memoria física incorrecta** — El driver NEM e1000 usaba direcciones virtuales (0x30700000) en los registros MMIO del NIC (RDBAL, TDBAL, descriptors). En región aislada virt ≠ phys. Fix: `hst_virt_to_phys()` en todas las direcciones DMA.
+- **NET-2.6. Doble inicialización del e1000** — El kernel volvía a inicializar el hardware tras el driver NEM, causando conflictos en los rings de descriptores. Fix: el kernel siempre sondea e1000; `default_nic_id()` prefiere el kernel (NIC 1) sobre el NEM (NIC 0).
+- **NET-2.7. Recibir paquetes nunca se ejecutaba** — `network_poll_all()` estaba definido pero nunca llamado. Fix: añadido a `handler_yield` y `socket_recv`.
+- **OB-FIX-002: Socket create fallaba con error -10** — `ob_create_directory` requiere que el padre exista. DHCP necesitaba `\Socket\DHCP\0` pero `\Socket\DHCP` no existía. Fix: usar `ob_create_directory_tree` que hace mkdir -p recursivo.
+
 ## v0.48.8 — 2026-07-05
 
 ### Added
