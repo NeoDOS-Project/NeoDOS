@@ -3,7 +3,7 @@
 > Items pendientes del roadmap. Los completados están en
 > [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
-> Version actual: **v0.48.6** — Tests: 537 — ABI: v7 — Ob API: RAX 60-66
+> Version actual: **v0.48.9** — Tests: 656 — ABI: v7 — Ob API: RAX 60-76
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cambios.
 > Fuente de verdad: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
@@ -211,7 +211,7 @@
 
 ### v0.49 — NeoFS robustez
 
-* [ ] **v0.49. NeoFS robustez** | Prereqs: v0.48 | Files: `src/fs/neodos_fs.rs`
+* [x] **v0.49. NeoFS robustez** | Prereqs: v0.48 | Files: `src/fs/neodos_fs.rs`
   - Indirect blocks (FS-3), journaling (FS-5), checksums (FS-6), ResourceRegistry extendido (NS-3), DOS name reservation
   - **Tests:** `fs_indirect_blocks`, `fs_journal_replay`, `fs_checksum_verify`
 
@@ -414,6 +414,111 @@
 * [x] **AUDIT-10. ObSetInfoClass::Security explicitly unimplemented** | Files: `src/syscall/ob.rs`
   - Handler for `Security=3` exists but returns `NoSys` at line 1543 — code exists but does nothing.
 
+### 2026-07-07 Audit: Comprehensive Project Review (dead code, docs staleness, architecture)
+
+* [ ] **AUDIT-30. Dead code mask: `#![allow(dead_code)]` in main.rs + globals.rs** | Files: `src/main.rs:9`, `src/globals.rs:1`
+  - Both files suppress all dead-code warnings for the entire kernel crate. Removing them would reveal additional dead items.
+  - **Tests:** (requires no behavioral change — compile-only check)
+
+* [ ] **AUDIT-31. Unused macros + functions + enum variants + constants** | Files: multiple
+  - Unused macros: `with_current!` (`scheduler/mod.rs:332`), `trace_irq_enter!`/`trace_irq_exit!` (`trace.rs:130,140`)
+  - Unused functions: `register_tests()` in `virtio/mod.rs` (tests silently skipped), `with_cache`/`with_page_cache` in `globals.rs:33/42`, `nic_get_mask` in `net/nic.rs:183`, `socket_next_accept_id` in `net/socket.rs:243` (stub), `pipe_peek_read_closed` in `object/pipe.rs:294`, `clear`/`segment_count` in `scheduler/address_space.rs:120/124`
+  - Unused enum variants: `ObError::TableFull` (`object/types.rs:70`), `ObType::EventBus` (`object/types.rs:15`)
+  - Unused constant: `PIT_HZ` in `boot_benchmark.rs:21`
+  - **Tests:** Remove unused items, verify build
+
+* [ ] **AUDIT-32. 5+ `.expect()` panic paths in production code** | Files: `src/scheduler/mod.rs:485-487`, `src/main.rs:334`, `src/globals.rs:38`, `src/arch/x64/serial.rs:73`, `src/urn/mod.rs:383`
+  - Scheduler slot full panics (`EPROCESS table full`, `KTHREAD table full`), block device missing, block cache uninitialized, serial write failure, URN object creation — all crash the kernel instead of returning `Result`.
+  - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
+
+* [ ] **AUDIT-33. `BIN_BUF` global static mut not re-entrant** | Files: `src/syscall/handlers.rs:79`
+  - `BIN_BUF: [u8; 65536]` is a global static mut shared by `sys_exec` and `sys_loadlib`. Two concurrent threads calling exec simultaneously will corrupt each other's binary buffer. Should be per-call heap allocated.
+  - **Tests:** `concurrent_exec_no_race`
+
+* [ ] **AUDIT-34. No RAII IRQL guard — 15+ manual raise/lower boilerplate in scheduler** | Files: `src/scheduler/mod.rs`
+  - Pattern `raise_irql(DISPATCH_LEVEL); ... lower_irql(old_irql)` repeated 15+ times. Missing `IrqlGuard` type implementing `Drop` could prevent RAII violations and reduce code.
+  - **Tests:** `irql_guard_restores_on_drop`, `irql_guard_nested`
+
+* [ ] **AUDIT-35. virtio::register_tests() orphaned — tests silently skipped** | Files: `src/virtio/mod.rs:35`
+  - `register_tests()` is defined but never called from `testing.rs`. All virtio tests silently excluded from test suite.
+  - **Tests:** Add call to `virtio::register_tests()` in `testing.rs`
+
+* [ ] **AUDIT-36. Docs: ARCHITECTURE.md HAL ABI self-contradiction** | Files: `docs/ARCHITECTURE.md:125 vs 178`
+  - Line 125 says `HAL ABI v0.3`, line 178 says `HAL ABI v0.4` — same doc, two different versions.
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-37. Docs: ARCHITECTURE.md kernel heap address wrong** | Files: `docs/ARCHITECTURE.md:581`
+  - Says `linked_list_allocator 16 MB @ 0x1000000` but actual `src/memory/layout.rs:107` has kernel_heap at `0x0240_0000` (36 MB).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-38. Docs: ARCHITECTURE.md event type count stale** | Files: `docs/ARCHITECTURE.md:222-243`
+  - Says "16 event types (0-15)" but actual code has 18+ (missing `EVENT_MOUSE_INPUT=16`, `EVENT_NETWORK_PACKET=17`).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-39. Docs: memory.md nxl_region address typo** | Files: `docs/memory.md:84`
+  - Says `0x1E00000` (missing a zero, 31 MB) but actual layout is `0x1E000000` (503 MB).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-40. Docs: objects.md ObSetInfoClass count stale** | Files: `docs/objects.md:185-216`
+  - Says "Supports 27 set classes" but actual code has 28 variants (0-27). Missing `SetNicIp = 27`.
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-41. Docs: syscalls.md documents removed syscalls as active** | Files: `docs/syscalls.md` sections 5-13
+  - RAX 5 (`sys_pipe`), 7 (`sys_spawn`), 8 (`sys_readdir`), 9 (`sys_waitpid`), 10 (`sys_open`), 11 (`sys_readfile`) documented with full handler descriptions but all removed from SSDT.
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-42. Docs: ipc.md event struct field sizes wrong** | Files: `docs/ipc.md:180-213`
+  - Event struct fields documented as `u16`/`u16`/`u16` but actual code uses `u32`/`u32`/`u32`. Event type values off by 2 (`EVENT_SHUTDOWN` doc=10 actual=12, `EVENT_DRIVER_UNLOAD` doc=11 actual=13, etc.). Missing `EVENT_RTC_READ(10)`, `RTC_DATA(11)`, `NMI_WATCHDOG(15)`, `MOUSE_INPUT(16)`, `NETWORK_PACKET(17)`.
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-43. Docs: ipc.md pipe storage description stale** | Files: `docs/ipc.md:7`
+  - Says "16 static pipe buffers" as `[Option<PipeBuffer>; 16]` but actual code uses `Vec<Option<Mutex<PipeInner>>>` (dynamic, since v0.41).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-44. Docs: drivers.md 8-state vs 7-state lifecycle** | Files: `docs/drivers.md:94`
+  - Says "8-state lifecycle" but actual `driver_runtime.rs` uses 7 states: Loaded, Initialized, Registered, Bound, Active, Faulted, Unloaded (no separate `Unloading` state).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-45. Docs: ARCHITECTURE.md references "MEM.NXE" binary renamed** | Files: `docs/ARCHITECTURE.md:118`
+  - References `MEM` binary/migration, but directory renamed from `userbin/mem/` to `userbin/neomem/` in v0.46.1.
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-46. Docs: ARCHITECTURE.md ObType count stale** | Files: `docs/ARCHITECTURE.md:576`
+  - Says "ObType=17 variants" but actual code has 18 (missing `Socket = 18` added v0.47.0).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-47. Non-reentrant IRP pool with wraparound overwrite** | Files: `src/irp/mod.rs:13-14`
+  - Pool index = `id % IRP_POOL_SIZE` (mod 64). With monotonic ID counter, a slow IRP could be silently overwritten by a new one when the counter wraps.
+  - **Tests:** `irp_pool_wraparound_no_overwrite`
+
+* [ ] **AUDIT-48. Fixed 16 KB kernel stack with no guard page** | Files: `src/scheduler/mod.rs:21`
+  - `KERNEL_STACK_SIZE = 16384` with no guard page. Deep call chains risk silent stack overflow (syscall → VFS → FS → block cache → IRP → driver → completion).
+  - **Tests:** `kernel_stack_deep_call_overflow_safe`
+
+* [ ] **AUDIT-49. 10 inconsistent fixed-size name buffer sizes** | Files: see below
+  - No unified naming policy: names truncated at 8, 24, 32, 128, 248, 255, or 260 bytes depending on context (`object/mod.rs:38`=128, `object/types.rs:184`=32, `object/namespace.rs:79`=24, `syscall/ob.rs:24`=32, `syscall/handlers.rs:21`=260, `drivers/driver_runtime.rs:138`=8, `fs/neodos_fs.rs:237`=248, `nxl.rs:20`=24).
+  - **Tests:** `name_buf_truncation_no_panic`
+
+* [ ] **AUDIT-50. 27 `lazy_static!` should migrate to `once_cell`/`LazyLock`** | Files: multiple
+  - `lazy_static!` crate is in maintenance mode. 27 usages across kernel should migrate to `once_cell::sync::Lazy` or `std::sync::LazyLock`.
+  - **Tests:** (no behavioral change — refactor only)
+
+* [ ] **AUDIT-51. drivers/nem/driver.rs `unregister_all()` does nothing** | Files: `src/drivers/nem/driver.rs:92-98`
+  - Loop drains handler list but body is empty — comment says "a full implementation would store the function pointer alongside the name."
+  - **Tests:** `nem_unregister_all_purges_handlers`
+
+* [ ] **AUDIT-52. Two cache implementations with different APIs** | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
+  - BlockCache (512B sectors, LRU linear scan) vs PageCache (4KB pages, LRU double-linked list + hash table). Both used by `neodos_fs.rs`. Duplicated eviction policy, sizing logic.
+  - **Tests:** `cache_unified_coherency` (when implemented)
+
+* [ ] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
+  - Says "64 entries" but actual page cache may be 128 entries (ARCHITECTURE.md says 128-entry/512KB).
+  - **Tests:** (doc fix only)
+
+* [ ] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
+  - Says "537 tests" but actual count is 656 (CHANGELOG v0.48.9).
+  - **Tests:** (doc fix only)
+
 ---
 
 ## LOW
@@ -465,9 +570,9 @@
 | AUDIT-24 | docs/libneodos.md: claims syscall instruction is used, actual code uses int 0x80 | `docs/libneodos.md`, `libneodos/src/syscall.rs` |
 | AUDIT-25 | docs/libneodos.md: claims user.ld places code at 0x400000, actual user.ld links at 0 | `docs/libneodos.md`, `userbin/*/user.ld` |
 | AUDIT-26 | docs/scheduler.md: CpuRunQueue field names wrong (head/tail vs head_idx/tail_idx), missing count field | `docs/scheduler.md`, `src/arch/x64/cpu_local.rs` |
-| AUDIT-27 | docs/objects.md: SocketRecv class 23 documented but does not exist in kernel enum | `docs/objects.md`, `src/object/types.rs` |
+| AUDIT-27 | docs/objects.md: SocketRecv class 23 documented and DOES exist in kernel enum (re-check; this may be resolved) | `docs/objects.md`, `src/object/types.rs` |
 | AUDIT-28 | docs/memory.md: kernel_image base says 0x100000, actual load address is 0x4000000 | `docs/memory.md`, `neodos-kernel/kernel.ld` |
-| AUDIT-29 | Version mismatch: AGENTS.md says v0.48.6, kernel Cargo.toml says 0.48.0 | `AGENTS.md`, `neodos-kernel/Cargo.toml` |
+| AUDIT-29 | Version mismatch: AGENTS.md says v0.48.7, kernel Cargo.toml says 0.48.0, CHANGELOG says v0.48.9 | `AGENTS.md`, `neodos-kernel/Cargo.toml`, `CHANGELOG.md` |
 | DH-HISTORY | Mantener `docs/HISTORY.md` actualizado con hitos arquitectónicos | `docs/HISTORY.md` |
 | AI-2 | Consolidate legacy syscall wrappers | `src/syscall/mod.rs` |
 | AI-3 | ObObjectTable lock granularity (lock striping) | `src/object/mod.rs` |

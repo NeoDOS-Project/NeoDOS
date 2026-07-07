@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.49.0 — 2026-07-07
+
+### Added
+- **FS-3. Indirect blocks** — Archivos >48 KB ahora soportados mediante bloque indirecto (1024 entradas, ~4 MB máx). `get_inode_block_ptr()`, `inode_data_block_count()`, `write_file()`, `add_directory_entry()`, `delete_file_by_inode()`, `rebuild_bitmap()` actualizados. Helper `allocate_indirect_block()`, `read_indirect_pointers()`, `write_indirect_pointer()`.
+- **FS-5. Journaling (WAL)** — Nuevo módulo `src/fs/journal.rs`: estructura `Journal` con `begin_transaction()`, `commit_transaction()`, `recover()` (replay/rollback al montar), `rollback_transaction()`. Entradas CRC32-protegidas. Área de journal reservable al final de la partición.
+- **FS-6. Metadata checksums** — CRC32 en Superblock (verificado al montar), CRC32 en Inode (nuevo campo `checksum`, verificado en `load_inode()`), XOR checksum en DirectoryEntry (verificado en lectura). `FsError::ChecksumMismatch` si falla.
+- **NS-3. ResourceRegistry extendido** — `ResourceType::ObNamespace=2` para rastrear entradas Ob por driver. `track_ob_entry()`/`untrack_ob_entry()`. Limpieza automática en hot-unload vía `ob_remove_by_id()`.
+- **DOS name reservation** — `is_reserved_dos_name()` bloquea CON/PRN/AUX/NUL/COM1-9/LPT1-9 en `create_file_at()`, `create_directory_at()`, `rename_file()`.
+
+### Changed
+- Inode struct: nuevo campo `checksum: u32`, padding reducido de 160 → 156 bytes (tamaño total 256 bytes inalterado).
+- DirectoryEntry struct: nuevo campo `checksum: u8`, name reducido de 249 → 248 bytes (total 256 bytes inalterado).
+- Superblock: `reserved[0..4]` almacena CRC32 del superblock.
+- `get_inode_block_ptr()` ahora requiere `cache`/`dev` para resolver bloques indirectos.
+
+### Tests
+- 15 tests nuevos: `fs_indirect_blocks_*` (3), `fs_checksum_*` (4), `fs_dos_reserved_names` (1), `fs_resource_registry_ob_namespace` (1), `fs_journal_*` (4), más actualización de patrones existentes.
+- Total: 641 → 653 tests (12 new: indirect blocks, checksums, journal, DOS names, ResourceRegistry).
+
 ## v0.48.9 — 2026-07-06
 
 ### Added

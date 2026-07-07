@@ -608,8 +608,9 @@ pub fn register_fsck_tests() {
             inode_num: 1, mode: MODE_FILE, size: 4096,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            direct_blocks: [0; 12],             indirect_block: 0,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_true!(!block_used(&inode, 0));
 
@@ -630,8 +631,9 @@ pub fn register_fsck_tests() {
             inode_num: 1, mode: MODE_FILE, size: 0,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            direct_blocks: [0; 12],             indirect_block: 0,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(count_blocks(&inode), 0);
         inode.direct_blocks[0] = 5;
@@ -650,8 +652,9 @@ pub fn register_fsck_tests() {
             inode_num: 1, mode: MODE_FILE, size: 4096,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            direct_blocks: [0; 12],             indirect_block: 0,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_true!(get_block(&inode, 0).is_none());
         inode.direct_blocks[0] = 5;
@@ -667,16 +670,18 @@ pub fn register_fsck_tests() {
             inode_num: 0, mode: 0, size: 0,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            direct_blocks: [0; 12],             indirect_block: 0,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_true!(!is_used(&free));
         let used = Inode {
             inode_num: 1, mode: MODE_FILE, size: 100,
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
-            direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            direct_blocks: [0; 12],             indirect_block: 0,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_true!(is_used(&used));
     });

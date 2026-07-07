@@ -877,7 +877,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_R) != 0);
         test_eq!(inode.mode & PERM_W, 0);
@@ -892,7 +894,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_W) != 0);
         test_eq!(inode.mode & (PERM_R | PERM_X | PERM_S | PERM_D), 0);
@@ -904,7 +908,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_X) != 0);
         test_eq!(inode.mode & (PERM_R | PERM_W | PERM_S | PERM_D), 0);
@@ -916,7 +922,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_S) != 0);
         test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X | PERM_D), 0);
@@ -928,7 +936,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_D) != 0);
         test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X | PERM_S), 0);
@@ -953,7 +963,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.mode & PERM_ALL, PERM_ALL);
     });
@@ -965,7 +977,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & PERM_R) != 0);
         test_true!((inode.mode & PERM_X) != 0);
@@ -979,7 +993,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.mode & PERM_ALL, 0);
     });
@@ -991,7 +1007,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.mode & PERM_ALL, PERM_ALL);
         test_true!((inode.mode & MODE_DIR) != 0);
@@ -1006,7 +1024,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & MODE_FILE) != 0);
         test_true!((inode.mode & PERM_R) != 0);
@@ -1023,7 +1043,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & MODE_DIR) != 0);
         test_eq!(inode.mode & PERM_ALL, PERM_ALL);
@@ -1039,7 +1061,9 @@ pub fn register_neofs_tests() {
             atime: 1111, mtime: 2222, ctime: 3333,
             link_count: 3, owner_uid: 500, owner_gid: 50,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         let mut raw = [0u8; 256];
         unsafe { core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original); }
@@ -1064,7 +1088,9 @@ pub fn register_neofs_tests() {
                 atime: 0, mtime: 0, ctime: 0,
                 link_count: 0, owner_uid: 0, owner_gid: 0,
                 direct_blocks: [0; 12], indirect_block: 0,
-                padding: [0; 160],
+                checksum: 0,
+
+                padding: [0; 156],
             };
             test_eq!(inode.mode & (PERM_R | PERM_W | PERM_X), flags);
         }
@@ -1078,7 +1104,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & MODE_FILE) != 0);
         test_eq!((inode.mode & MODE_DIR), 0);
@@ -1090,7 +1118,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!((inode.mode & MODE_DIR) != 0);
         test_eq!((inode.mode & MODE_FILE), 0);
@@ -1106,7 +1136,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.mode & MODE_FILE, 0);
         test_eq!(inode.mode & MODE_DIR, 0);
@@ -1118,7 +1150,7 @@ pub fn register_neofs_tests() {
             atime: u64::MAX, mtime: u64::MAX, ctime: u64::MAX,
             link_count: u16::MAX, owner_uid: u32::MAX, owner_gid: u32::MAX,
             direct_blocks: [0xFFFFFFFF; 12], indirect_block: u32::MAX,
-            padding: [0xFF; 160],
+            checksum: 0, padding: [0xFF; 156],
         };
         test_eq!(inode.inode_num, 255);
         test_eq!(inode.mode, 0xFFFF);
@@ -1134,7 +1166,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.atime, 0);
         test_eq!(inode.mtime, 0);
@@ -1147,7 +1181,9 @@ pub fn register_neofs_tests() {
             atime: u64::MAX, mtime: u64::MAX, ctime: u64::MAX,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.atime, u64::MAX);
         test_eq!(inode.mtime, u64::MAX);
@@ -1160,7 +1196,9 @@ pub fn register_neofs_tests() {
             atime: 1000, mtime: 2000, ctime: 3000,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_true!(inode.atime <= inode.mtime);
         test_true!(inode.mtime <= inode.ctime);
@@ -1172,7 +1210,9 @@ pub fn register_neofs_tests() {
             atime: 999888777666, mtime: 555444333222, ctime: 111222333444,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         let mut raw = [0u8; 256];
         unsafe { core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original); }
@@ -1197,7 +1237,8 @@ pub fn register_neofs_tests() {
             owner_gid: 100,
             direct_blocks: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
         let mut raw = [0u8; 256];
         unsafe {
@@ -1226,7 +1267,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         let mut raw = [0u8; 256];
         unsafe { core::ptr::write_unaligned(raw.as_mut_ptr() as *mut Inode, original); }
@@ -1250,7 +1293,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 0);
     });
@@ -1262,7 +1307,8 @@ pub fn register_neofs_tests() {
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 1);
     });
@@ -1274,7 +1320,8 @@ pub fn register_neofs_tests() {
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 1);
     });
@@ -1286,7 +1333,8 @@ pub fn register_neofs_tests() {
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 2);
     });
@@ -1298,9 +1346,11 @@ pub fn register_neofs_tests() {
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
-        test_eq!(NeoDosFs::inode_block_count(&inode), 12);
+        use crate::fs::neodos_fs::MAX_FILE_BLOCKS;
+        test_eq!(NeoDosFs::inode_block_count(&inode), MAX_FILE_BLOCKS);
     });
 
     test_case!("neofs_inode_block_count_dir_root", {
@@ -1310,7 +1360,8 @@ pub fn register_neofs_tests() {
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 1);
     });
@@ -1480,7 +1531,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(NeoDosFs::inode_block_count(&inode), 0);
     });
@@ -1493,7 +1546,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.owner_uid, 0);
         test_eq!(inode.owner_gid, 0);
@@ -1506,7 +1561,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.link_count, 0);
     });
@@ -1517,7 +1574,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: u16::MAX, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.link_count, u16::MAX);
     });
@@ -1528,7 +1587,9 @@ pub fn register_neofs_tests() {
             atime: 100, mtime: 200, ctime: 300,
             link_count: 2, owner_uid: 65535, owner_gid: 65535,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         test_eq!(inode.owner_uid, 65535);
         test_eq!(inode.owner_gid, 65535);
@@ -1542,7 +1603,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         for i in 0..200 {
             inode.mode = if i % 2 == 0 { MODE_FILE } else { MODE_DIR };
@@ -1557,7 +1620,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         for i in 0..32u16 {
             inode.mode = MODE_FILE | ((i * 0x1111) & PERM_ALL);
@@ -1571,7 +1636,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         for i in 0..100 {
             inode.owner_uid = i * 1000;
@@ -1585,7 +1652,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         for i in 0..100 {
             inode.atime = i as u64;
@@ -1673,7 +1742,9 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         inode.atime = 0x1111_2222_3333_4444;
         inode.mtime = 0x4444_3333_2222_1111;
@@ -1727,7 +1798,7 @@ pub fn register_neofs_tests() {
             atime: u64::MAX, mtime: u64::MAX, ctime: u64::MAX,
             link_count: u16::MAX, owner_uid: u32::MAX, owner_gid: u32::MAX,
             direct_blocks: [u32::MAX; 12], indirect_block: u32::MAX,
-            padding: [0xFFu8; 160],
+            checksum: 0, padding: [0xFFu8; 156],
         };
         test_eq!(inode.inode_num, u32::MAX);
         test_eq!(inode.mode, u16::MAX);
@@ -1744,8 +1815,9 @@ pub fn register_neofs_tests() {
             inode_num: 0, mode: u16::MAX, size: 0,
             atime: u64::MAX, mtime: 0, ctime: u64::MAX,
             link_count: u16::MAX, owner_uid: 0, owner_gid: u32::MAX,
-            direct_blocks: [0; 12], indirect_block: u32::MAX,
-            padding: [0u8; 160],
+            direct_blocks: [0; 12],             indirect_block: u32::MAX,
+            checksum: 0,
+            padding: [0; 156],
         };
         test_eq!(inode.inode_num, 0);
         test_eq!(inode.mode, u16::MAX);
@@ -1765,7 +1837,7 @@ pub fn register_neofs_tests() {
             atime: 1000, mtime: 2000, ctime: 3000,
             link_count: 1, owner_uid: 0, owner_gid: 0,
             direct_blocks: [10, 11, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            indirect_block: 0, padding: [0u8; 160],
+            indirect_block: 0, checksum: 0, padding: [0; 156],
         };
         let raw = unsafe {
             core::slice::from_raw_parts(&inode as *const _ as *const u8, core::mem::size_of::<Inode>())
@@ -1776,7 +1848,7 @@ pub fn register_neofs_tests() {
         let corrupted: Inode = unsafe { core::ptr::read_unaligned(bytes.as_ptr() as *const _) };
         test_eq!(corrupted.inode_num, 42);
         // verify corruption affected padding, not meaningful fields
-        test_ne!(corrupted.padding[104], 0);
+        test_ne!(corrupted.padding[100], 0);
     });
     test_case!("neofs_corrupt_dirent_flip_byte", {
         let entry = DirectoryEntry {
@@ -1803,7 +1875,7 @@ pub fn register_neofs_tests() {
                 atime: lcg(), mtime: lcg(), ctime: lcg(),
                 link_count: lcg() as u16, owner_uid: (lcg() % (u32::MAX as u64 + 1)) as u32, owner_gid: (lcg() % (u32::MAX as u64 + 1)) as u32,
                 direct_blocks: [lcg() as u32 % 100000, lcg() as u32 % 100000, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-                indirect_block: 0, padding: [0u8; 160],
+                indirect_block: 0, checksum: 0, padding: [0; 156],
             };
             let raw = unsafe {
                 core::slice::from_raw_parts(&inode as *const _ as *const u8, core::mem::size_of::<Inode>())
@@ -1851,13 +1923,174 @@ pub fn register_neofs_tests() {
             atime: 0, mtime: 0, ctime: 0,
             link_count: 0, owner_uid: 0, owner_gid: 0,
             direct_blocks: [0; 12], indirect_block: 0,
-            padding: [0; 160],
+            checksum: 0,
+
+            padding: [0; 156],
         };
         for i in 0..=65535u16 {
             inode.mode = i;
             test_eq!(inode.mode, i);
         }
         test_eq!(inode.mode, 0xFFFF);
+    });
+
+    // ── v0.49: Indirect blocks (FS-3) ─────────────────────────
+
+    test_case!("fs_indirect_blocks_pointer_resolution", {
+        // Test that get_inode_block_ptr returns pointers for indirect blocks
+        // based on the inode's indirect_block field
+        use crate::fs::neodos_fs::MAX_DIRECT_BLOCKS;
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: ((MAX_DIRECT_BLOCKS + 10) * 4096) as u32,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111],
+            indirect_block: 200,
+            checksum: 0, padding: [0; 156],
+        };
+        // For block_idx < MAX_DIRECT_BLOCKS, should use direct_blocks
+        test_eq!(inode.direct_blocks[0], 100);
+        test_eq!(inode.direct_blocks[11], 111);
+        // indirect_block field should be set
+        test_eq!(inode.indirect_block, 200);
+        // File should need indirect blocks
+        test_true!(inode.size as usize > MAX_DIRECT_BLOCKS * 4096);
+    });
+
+    test_case!("fs_indirect_blocks_file_size_beyond_direct", {
+        // Verify inode_data_block_count returns > MAX_DIRECT_BLOCKS for large files
+        use crate::fs::neodos_fs::{MAX_DIRECT_BLOCKS, INDIRECT_ENTRIES};
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: 100 * 4096,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            checksum: 0, padding: [0; 156],
+        };
+        // size=100 blocks should be > MAX_DIRECT_BLOCKS
+        let block_count = crate::fs::neodos_fs::NeoDosFs::inode_block_count(&inode);
+        test_true!(block_count > MAX_DIRECT_BLOCKS);
+        test_eq!(block_count, 100.min(MAX_DIRECT_BLOCKS + INDIRECT_ENTRIES));
+    });
+
+    test_case!("fs_indirect_blocks_small_file_no_indirect", {
+        // Small files should NOT require indirect blocks
+        let inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: 4096,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            indirect_block: 0,
+            checksum: 0, padding: [0; 156],
+        };
+        let block_count = crate::fs::neodos_fs::NeoDosFs::inode_block_count(&inode);
+        test_eq!(block_count, 1);
+    });
+
+    // ── v0.49: Checksums (FS-6) ───────────────────────────────
+
+    test_case!("fs_checksum_crc32_computation", {
+        use crate::fs::neodos_fs::crc32;
+        // Known test vector for CRC32
+        let data = b"Hello, NeoDOS!";
+        let cksum = crc32(data);
+        test_true!(cksum != 0);
+        // Same data should produce same checksum
+        test_eq!(crc32(b"Hello, NeoDOS!"), cksum);
+        // Different data should produce different checksum
+        test_ne!(crc32(b"Hello, World!"), cksum);
+        // Empty data check
+        test_eq!(crc32(b""), 0);
+    });
+
+    test_case!("fs_checksum_inode_roundtrip", {
+        let mut inode = Inode {
+            inode_num: 42, mode: MODE_FILE | PERM_R, size: 4096,
+            atime: 100, mtime: 200, ctime: 300,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [1, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            indirect_block: 0,
+            checksum: 0, padding: [0; 156],
+        };
+        // Initially no checksum
+        test_true!(inode.verify_checksum());
+        // Set checksum
+        inode.set_checksum();
+        test_true!(inode.verify_checksum());
+        // Modify a field — checksum should fail
+        inode.size = 8192;
+        test_true!(!inode.verify_checksum());
+        // Recompute — should pass again
+        inode.set_checksum();
+        test_true!(inode.verify_checksum());
+    });
+
+    test_case!("fs_checksum_verify", {
+        // Integration: verify that inode checksums pass/fail correctly
+        let mut inode = Inode {
+            inode_num: 1, mode: MODE_FILE, size: 0,
+            atime: 0, mtime: 0, ctime: 0,
+            link_count: 1, owner_uid: 0, owner_gid: 0,
+            direct_blocks: [0; 12], indirect_block: 0,
+            checksum: 0, padding: [0; 156],
+        };
+        // Zero checksum = no checksum = always true
+        test_true!(inode.verify_checksum());
+        // Compute and store
+        inode.set_checksum();
+        test_true!(inode.verify_checksum());
+        // Corrupt the inode_num (first field)
+        let original = inode.inode_num;
+        inode.inode_num = 0xFF;
+        test_true!(!inode.verify_checksum());
+        inode.inode_num = original;
+        test_true!(inode.verify_checksum());
+    });
+
+    // ── v0.49: DOS name reservation ───────────────────────────
+
+    test_case!("fs_dos_reserved_names", {
+        use crate::fs::neodos_fs::is_reserved_dos_name;
+        test_true!(is_reserved_dos_name("CON"));
+        test_true!(is_reserved_dos_name("PRN"));
+        test_true!(is_reserved_dos_name("AUX"));
+        test_true!(is_reserved_dos_name("NUL"));
+        test_true!(is_reserved_dos_name("COM1"));
+        test_true!(is_reserved_dos_name("LPT1"));
+        test_true!(is_reserved_dos_name("con"));
+        test_true!(is_reserved_dos_name("Con.txt"));
+        test_true!(is_reserved_dos_name("lpt9.dat"));
+        // Non-reserved names should pass
+        test_true!(!is_reserved_dos_name("README"));
+        test_true!(!is_reserved_dos_name("main.rs"));
+        test_true!(!is_reserved_dos_name("hello.nxe"));
+        test_true!(!is_reserved_dos_name("COM"));
+        test_true!(!is_reserved_dos_name("LPT"));
+    });
+
+    // ── v0.49: Resource Registry (NS-3) ───────────────────────
+
+    test_case!("fs_resource_registry_ob_namespace", {
+        use crate::drivers::hotreload::{ResourceRegistry, ResourceType};
+        let mut registry = ResourceRegistry::new();
+        registry.track(1, ResourceType::ObNamespace, 100);
+        registry.track(1, ResourceType::ObNamespace, 101);
+        registry.track(2, ResourceType::ObNamespace, 200);
+        let res1 = registry.resources_for(1);
+        test_eq!(res1.len(), 2);
+        let res2 = registry.resources_for(2);
+        test_eq!(res2.len(), 1);
+        test_eq!(res2[0].resource_id, 200);
+        // Untrack one
+        registry.untrack(1, ResourceType::ObNamespace, 100);
+        let res1 = registry.resources_for(1);
+        test_eq!(res1.len(), 1);
+        test_eq!(res1[0].resource_id, 101);
+        // Untrack all
+        let removed = registry.untrack_all(1);
+        test_eq!(removed.len(), 1);
+        test_eq!(removed[0].resource_id, 101);
+        test_eq!(registry.resources_for(1).len(), 0);
     });
 }
 
@@ -2550,6 +2783,7 @@ pub fn register_tests() {
     crate::drivers::abi::register_abi_tests();
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
+    crate::fs::journal::register_journal_tests();
     crate::object::register_object_tests();
     crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();

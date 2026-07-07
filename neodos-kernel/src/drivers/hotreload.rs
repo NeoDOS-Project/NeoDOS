@@ -35,6 +35,7 @@ const MAX_HOTRELOAD_ENTRIES: usize = 16;
 pub enum ResourceType {
     BlockDevice = 0,
     NetworkDevice = 1,
+    ObNamespace = 2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -173,6 +174,16 @@ pub fn untrack_resource(driver_id: DriverId, resource_type: ResourceType, resour
     RESOURCE_REGISTRY.lock().untrack(driver_id, resource_type, resource_id);
 }
 
+/// Track an Ob namespace entry owned by a driver.
+pub fn track_ob_entry(driver_id: DriverId, resource_id: u32) {
+    track_resource(driver_id, ResourceType::ObNamespace, resource_id);
+}
+
+/// Untrack an Ob namespace entry.
+pub fn untrack_ob_entry(driver_id: DriverId, resource_id: u32) {
+    untrack_resource(driver_id, ResourceType::ObNamespace, resource_id);
+}
+
 /// Register a load result for future hot reload/unload use.
 pub fn register_load_result(driver_id: DriverId, result: &NemV3LoadResult) {
     HOT_RELOAD_REGISTRY.lock().register(driver_id, result);
@@ -277,6 +288,11 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
             ResourceType::NetworkDevice => {
                 crate::net::nic::nic_unregister(res.resource_id);
                 crate::serial_println!("[HOTRELOAD] Unregistered network device id={} for driver {}", res.resource_id, id);
+            }
+            ResourceType::ObNamespace => {
+                // Remove the Ob object by ID
+                let _ = crate::object::namespace::ob_remove_by_id(res.resource_id as u64);
+                crate::serial_println!("[HOTRELOAD] Removed Ob namespace entry id={} for driver {}", res.resource_id, id);
             }
         }
     }
