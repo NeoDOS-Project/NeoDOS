@@ -41,7 +41,7 @@ def build_server(root_dir: str):
     from .server import McpServer, ToolSpec, ResourceSpec, PromptSpec
 
     # Configure tool modules
-    from .tools import kernel_tools, vfs_tools, module_tools, libneodos_tools, system_tools, lsp_tools
+    from .tools import kernel_tools, vfs_tools, module_tools, libneodos_tools, system_tools, lsp_tools, registry_tools
 
     kernel_tools.configure(root_dir)
     vfs_tools.configure(root_dir)
@@ -49,6 +49,7 @@ def build_server(root_dir: str):
     libneodos_tools.configure(root_dir)
     system_tools.configure(root_dir)
     lsp_tools.configure(root_dir)
+    registry_tools.configure(root_dir)
 
     server = McpServer(name="neodos-mcp", version="0.28.0")
 
@@ -249,6 +250,110 @@ def build_server(root_dir: str):
             },
         },
         handler=vfs_tools.vfs_dump_inodes,
+    ))
+
+    # Registry tools
+    server.register_tool(ToolSpec(
+        name="registry_list",
+        description="List registry key contents: subkeys and values",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "key_path": {
+                    "type": "string",
+                    "description": "Registry key path (e.g. \\Registry\\Machine\\System\\CurrentControlSet\\Services)",
+                    "default": "\\",
+                },
+                "hive": {
+                    "type": "string",
+                    "description": "Hive name (SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT)",
+                    "default": "SYSTEM",
+                },
+                "drive": {
+                    "type": "string",
+                    "description": "Drive letter where hive files are stored",
+                    "default": "C",
+                },
+            },
+        },
+        handler=registry_tools.registry_list,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="registry_query",
+        description="Query a specific registry value by name",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "key_path": {
+                    "type": "string",
+                    "description": "Registry key path (e.g. \\Registry\\Machine\\System\\CurrentControlSet\\Services\\NeoInit)",
+                    "default": "\\",
+                },
+                "value_name": {
+                    "type": "string",
+                    "description": "Value name to query (omit to list all values)",
+                },
+                "hive": {
+                    "type": "string",
+                    "description": "Hive name (SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT)",
+                    "default": "SYSTEM",
+                },
+                "drive": {
+                    "type": "string",
+                    "description": "Drive letter",
+                    "default": "C",
+                },
+            },
+        },
+        handler=registry_tools.registry_query,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="registry_tree",
+        description="Recursive registry key tree dump",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "key_path": {
+                    "type": "string",
+                    "description": "Root key path for the tree",
+                    "default": "\\",
+                },
+                "hive": {
+                    "type": "string",
+                    "description": "Hive name (SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT)",
+                    "default": "SYSTEM",
+                },
+                "drive": {
+                    "type": "string",
+                    "description": "Drive letter",
+                    "default": "C",
+                },
+            },
+        },
+        handler=registry_tools.registry_tree,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="registry_hive_info",
+        description="Show information about a registry hive: version, cell count, root key",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "hive": {
+                    "type": "string",
+                    "description": "Hive name (SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT)",
+                    "default": "SYSTEM",
+                },
+                "drive": {
+                    "type": "string",
+                    "description": "Drive letter",
+                    "default": "C",
+                },
+            },
+        },
+        handler=registry_tools.registry_hive_info,
     ))
 
     # Runtime module tools

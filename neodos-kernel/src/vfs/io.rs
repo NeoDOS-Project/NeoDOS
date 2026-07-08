@@ -94,14 +94,12 @@ impl IoStack {
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level != PageCacheLevel::None && count == 1 && buf.len() >= 512 {
-            let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-            if let Some(cache) = cache_lock.as_mut() {
-                let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-                if let Some(dev) = bdevs_lock.get(self.device_id) {
-                    if let Ok(sector) = cache.get_sector(abs_lba as u32, dev) {
-                        buf[..512].copy_from_slice(sector);
-                        return Ok(());
-                    }
+            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
+            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+            if let Some(dev) = bdevs_lock.get(self.device_id) {
+                if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, dev) {
+                    buf[..512].copy_from_slice(sector);
+                    return Ok(());
                 }
             }
         }

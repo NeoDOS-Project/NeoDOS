@@ -48,14 +48,25 @@
 | ~~B2.6~~ | ~~Registry defaults in boot~~ **[COMPLETED]** | ~~**HIGH**~~ |
 | ~~**B2.7**~~ | ~~**Registry disk persistence**~~ **[COMPLETED]** | ~~**CRITICAL**~~ |
 | ~~B4.10~~ | ~~NeoInit Registry-driven config~~ **[COMPLETED]** | ~~**HIGH**~~ |
+| SH-ALL | Shell overhaul (quoting, redirection, editor, scripting) | MEDIUM |
+| SH-QUOTE | Shell quoting/escaping | MEDIUM |
+| SH-REDIR | Shell redirection (>, <, >>) | MEDIUM |
+| SH-EDITOR | Shell line editor (ANSI, Ctrl keys, insert) | MEDIUM |
+| SH-HISTORY | Shell history persistence | MEDIUM |
+| SH-COMPL | Shell completion (filename, path cache) | MEDIUM |
+| SH-ENV | Shell env expansion (%VAR%) | MEDIUM |
+| SH-PIPE | Pipeline wait + exit codes | MEDIUM |
+| SH-BATCH | Shell batch scripting (IF, GOTO, FOR) | MEDIUM |
+| SH-TOKEN | Shell tokenizer (quoting, pipes, ; separator) | MEDIUM |
+| SH-SEP | Shell semicolon command separator | LOW |
 | PKG-1 (P0-P6) | NeoGet v1 — sistema de paquetes `.nxp` (diseño completo, impl diferida a v0.70) | LOW |
-| v0.49 | NeoFS robustez (indirect blocks, journaling, checksums) | MEDIUM |
+| v0.49 | NeoFS v2 (formato NE2 — B-tree, COW, extents, inline data, snapshots) | **HIGH** |
 | VFS-3.1 | Separar `\Global\FileSystem` del Ob namespace | MEDIUM |
 | VFS-3.3 | Proteger paths del namespace | MEDIUM |
 | VFS-5.1 | Unificar BlockCache + PageCache | MEDIUM |
 | VFS-5.2 | InodeCache con invalidación | MEDIUM |
 | VFS-2.2 | Refactorizar FSCK | MEDIUM |
-| VFS-2.3 | Eliminar acceso directo a NeoFS desde shell | MEDIUM |
+| ~~VFS-2.3~~ | ~~Eliminar acceso directo a NeoFS desde shell~~ **[COMPLETED]** | ~~MEDIUM~~ |
 | ADM-1 | neotop v0.2 (per-thread CPU, I/O stats, network bar) | **HIGH** |
 | ADM-2 | neostat (monitor rendimiento histórico) | **HIGH** |
 | ADM-3 | neolog (visor event log + EventBus dump) | **HIGH** |
@@ -110,7 +121,14 @@
 | B7.1..B7.6 | Experimental (GUI, TPM, package mgr, TT debug, hotpatch, DFS) | LOW |
 | AI-2 | Consolidate legacy syscall wrappers | LOW |
 | AI-3 | ObObjectTable lock granularity | LOW |
-| B2.2..B2.5 | Registry features (journal, multi-hive, security, notification) | LOW |
+| | **Registry (ver `docs/design/registry-improvements.md`)** | |
+| CM-FIX | Registry bugfixes (free list, value deletion, unmount flush, iterative delete) | **HIGH** |
+| CM-SEC | Registry security (ACL por clave, SeAccessCheck) | MEDIUM |
+| CM-DIRTY | Registry per-cell dirty tracking + incremental flush | MEDIUM |
+| CM-MULTI | Registry multi-hive (SOFTWARE, SECURITY, DEFAULT) | MEDIUM |
+| CM-WAL | Registry WAL (write-ahead logging, crash recovery) | MEDIUM |
+| CM-LIB | Registry libneodos wrappers (7 missing wrappers) | MEDIUM |
+| CM-REGEDIT | regedit.nxe — registry editor | LOW |
 | USR-025..032 | USR Fase 3: Hardening + Grupos | LOW |
 | v0.50 | Async I/O y Registry (milestone) | LOW |
 | v0.51 | ASLR v2 y Benchmarking | LOW |
@@ -176,6 +194,119 @@
     `Network\Interfaces\0\DHCPEnabled=1`, etc. Solo si no existen.
   - **Tests:** `cm_default_values_created`
 
+* [ ] **CM-FIX. Registry bugfixes (free list, delete_value, unmount flush, iterative delete)** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/cm.rs`
+  - Diseño completo en `docs/design/registry-improvements.md` sección 2.1.
+  - Fix free list: reemplazar `free_head`/`scan_next_free` roto por next-fit linear scan con `next_alloc_hint`.
+  - Cambiar `cells` de `[Option<Cell>; 2048]` a `Vec<Option<Cell>>` (soft max).
+  - Añadir `Hive::delete_value()`: desenlazar de lista de valores, liberar celda.
+  - Fix `RegistryDeleteValue` handler: llama a `cm_delete_value()` en vez del hack `REG_NONE`.
+  - Fix `cm_unload_hive()`: flush dirty data antes de desmontar.
+  - Fix `cm_flush_key()` deadlock: evitar doble adquisición de lock.
+  - Reemplazar `delete_key()` recursivo por iterativo con `Vec` stack explícito.
+  - **Tests:** `cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings`
+
+* [ ] **CM-SEC. Registry security (ACL por clave, SeAccessCheck)** | Prereqs: CM-FIX | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`, `src/syscall/cm.rs`
+  - Diseño en `docs/design/registry-improvements.md` sección 2.2.
+  - Nuevo archivo `src/cm/security.rs` con `cm_check_access()`, `cm_ensure_security()`, `cm_inherit_security()`.
+  - En creación de clave: asignar SecurityCell con owner=SID del token, DACL por defecto.
+  - En apertura/consulta/escritura/borrado: `SeAccessCheck(token, sec_desc, requested_access)`.
+  - Herencia: clave hija copia o referencia la SecurityCell del padre.
+  - Admin bypass: token admin accede a cualquier clave.
+  - **Tests:** `cm_sec_key_creation_assigns_owner`, `cm_sec_access_granted`, `cm_sec_access_denied`, `cm_sec_inheritance_parent_child`, `cm_sec_explicit_set_via_ob`, `cm_sec_admin_bypass`
+
+* [ ] **CM-DIRTY. Registry per-cell dirty tracking + incremental flush** | Prereqs: CM-FIX | Files: `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs`
+  - Diseño en `docs/design/registry-improvements.md` sección 2.3.
+  - Añadir `dirty_cells: BitVec` a Hive (1 bit por slot).
+  - `slot_mut()` marca el bit dirty; `serialize_dirty()` escribe solo celdas sucias.
+  - Wire `CellCache` existente en `slot()`/`slot_mut()` para evitar linear scan.
+  - `cm_flush_key()` usa dirty tracking para flush incremental.
+  - **Tests:** `cm_dirty_cell_set_on_write`, `cm_dirty_cleared_after_flush`, `cm_dirty_serialize_only_dirty`, `cm_dirty_full_flush_roundtrip`, `cm_dirty_hive_flag`
+
+* [ ] **CM-MULTI. Registry multi-hive (SOFTWARE, SECURITY, DEFAULT)** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`
+  - Diseño en `docs/design/registry-improvements.md` sección 2.4.
+  - Montar SOFTWARE hive en `\Registry\Machine\Software` (app/user settings).
+  - Montar SECURITY hive en `\Registry\Machine\Security` (políticas, SID cache).
+  - Montar DEFAULT hive en `\Registry\User\.Default` (user defaults).
+  - Cada hive crea su directorio raíz en namespace Ob durante el mount.
+  - **Tests:** `cm_multi_software_mounted`, `cm_multi_hive_isolation`, `cm_multi_cross_hive_path_fails`, `cm_multi_unload_reload`
+
+* [ ] **CM-WAL. Registry WAL (write-ahead logging, crash recovery)** | Prereqs: CM-FIX | Files: `src/cm/wal.rs` (new), `src/cm/mod.rs`
+  - Diseño en `docs/design/registry-improvements.md` sección 2.5.
+  - Nuevo archivo `src/cm/wal.rs` con `wal_log()`, `wal_replay()`, `wal_checkpoint()`.
+  - Cada mutación escribe entrada WAL a `C:\System\Registry\<name>.wal` + fsync antes de aplicar a hive.
+  - En mount: si existe `.wal`, hacer replay antes de cargar `.hiv`.
+  - Checkpoint: tras flush exitoso, serializar hive, truncar `.wal`.
+  - Checksum débil `wrapping_add` reemplazado por CRC32 (NEOHv2).
+  - **Tests:** `cm_wal_created_on_mutation`, `cm_wal_replay_on_load`, `cm_wal_truncated_after_flush`, `cm_wal_power_loss_recovery`, `cm_wal_empty_noop`
+
+* [ ] **CM-LIB. Registry libneodos wrappers** | Prereqs: CM-FIX | Files: `libneodos/src/syscall.rs`
+  - Diseño en `docs/design/registry-improvements.md` sección 2.6.
+  - Añadir 7 wrappers faltantes: `sys_cm_create_key`, `sys_cm_delete_key`, `sys_cm_enum_key`, `sys_cm_enum_value`, `sys_cm_flush_key`, `sys_cm_load_hive`, `sys_cm_unload_hive`.
+  - **Tests:** `cm_lib_create_key_wrapper`, `cm_lib_enum_key_wrapper`, `cm_lib_enum_value_wrapper`, `cm_lib_flush_key_wrapper`
+
+* [ ] **CM-REGEDIT. regedit.nxe — registry editor** | Prereqs: CM-LIB | Files: `userbin/regedit/` (new)
+  - Diseño en `docs/design/registry-improvements.md` sección 2.6.
+  - Navegación de árbol: `REGEDIT <path>` muestra subclaves y valores.
+  - Crear/borrar claves: `REGEDIT /CREATE <path>`, `REGEDIT /DELETE <path>`.
+  - Set/query valores: `REGEDIT /SET <path> <name> <type> <value>`, `REGEDIT /QUERY <path> <name>`.
+  - Flush manual: `REGEDIT /FLUSH <path>`.
+  - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
+
+### NeoFS v2 (formato "NE2\0")
+
+> **Diseño completo:** `docs/neofs_v2_design.md`
+> **Filosofía:** B-tree por directorio, COW (sin journal), extents, inline data, CRC32 de archivo completo, 64 snapshots circulares.
+> **No retrocompatible** con NeoFS v1 ("NEOD"). Partición nueva con formato limpio.
+
+* [ ] **NFSv2-BTREE. B-tree persistente genérico** | Prereqs: -- | Files: `src/fs/btree.rs` (nuevo)
+  - B-tree con orden configurable, nodos 4KB. Operaciones: insert, lookup, delete, walk inorder.
+  - COW en escritura: insert/delete crea nuevos nodos hasta la raíz, devuelve nueva root_lba.
+  - Serialización a/desde bloques 4KB con CRC32 por nodo.
+  - **Tests:** `btree_insert_lookup`, `btree_delete`, `btree_walk_inorder`, `btree_cow_new_root`, `btree_cow_preserves_old_root`
+
+* [ ] **NFSv2-FREELIST. Free list** | Prereqs: -- | Files: `src/fs/freelist.rs` (nuevo)
+  - Lista de regiones libres (start_lba, length). Alocar: first-fit. Liberar: merge con adyacentes.
+  - Múltiples nodos si hay muchas regiones (encadenados por next_lba).
+  - **Tests:** `freelist_alloc_marks_used`, `freelist_free_reclaims`, `freelist_merge_adjacent`, `freelist_multi_node`
+
+* [ ] **NFSv2-SNAPSHOT. Snapshot table** | Prereqs: NFSv2-BTREE | Files: `src/fs/snapshot.rs` (nuevo)
+  - Tabla circular de 64 entradas. CREATE copia root_btree_lba actual. RESTORE cambia superblock.
+  - PURGE: vacía tabla (no reclama bloques — GC lazy en alloc_block).
+  - **Tests:** `snapshot_create_list`, `snapshot_restore`, `snapshot_circular_64`
+
+* [ ] **NFSv2-FILESYSTEM. FileSystem trait impl** | Prereqs: NFSv2-BTREE, NFSv2-FREELIST, NFSv2-SNAPSHOT | Files: `src/fs/neodos_fs.rs` (reescribir), `src/fs/mod.rs`
+  - NeoDosFsV2 con superblock "NE2\0", B-tree directory, extents, inline data, COW.
+  - read/lookup/readdir/stat: lookup en B-tree, verificar CRC32.
+  - write/create/mkdir: COW: alocar bloques, escribir, nuevo nodo B-tree, nueva raíz.
+  - remove_file: eliminar entrada del B-tree. remove_dir: eliminar subárbol completo.
+  - rename: modificar nombre en DirEntry, actualizar B-tree.
+  - DEL instantáneo (solo B-tree), RD recursivo siempre funciona.
+  - Superblock: root_lba, root_version (se incrementa en cada escritura), timestamps.
+  - mode bits: R,W,X,S,D (sin DOS attributes, sin 8.3, sin owner/group).
+  - Archivos <208 bytes: inline (0 lecturas de disco).
+  - **Tests:** `neofs_v2_create_file`, `neofs_v2_write_read_roundtrip`, `neofs_v2_cow_root_version_inc`, `neofs_v2_cow_preserves_old_data`, `neofs_v2_delete_removes_entry`, `neofs_v2_rmdir_recursive`, `neofs_v2_checksum_verify`, `neofs_v2_inline_small_file`, `neofs_v2_large_file_extents`, `neofs_v2_dir_10k_entries`, `neofs_v2_rename_file`, `neofs_v2_mkdir_lookup`, `neofs_v2_write_power_loss_safe`
+
+* [ ] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs` (reescribir)
+  - Verificar checksum del superblock. Walk completo del B-tree verificando CRC32 de cada nodo.
+  - Verificar que freelist + used_blocks = total_blocks. Opción --deep para checksums de datos.
+  - Modo repair: reconstruir freelist desde B-tree walk.
+  - **Tests:** `neofs_v2_fsck_clean`, `neofs_v2_fsck_corrupt_btree`
+
+* [ ] **NFSv2-SYSCALL. sys_ob_snapshot (RAX 77)** | Prereqs: NFSv2-FILESYSTEM, NFSv2-SNAPSHOT | Files: `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/object/types.rs`
+  - handler_ob_snapshot: CREATE/RESTORE/LIST/PURGE sobre handle del FS raíz.
+  - SSDT entry + permission entry. Nuevos ObInfoClass si aplica.
+  - **Tests:** `syscall_ob_snapshot_create`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_list`
+
+* [ ] **NFSv2-SHELL. Comandos SNAPSHOT para neoshell** | Prereqs: NFSv2-SYSCALL | Files: `userbin/neoshell/`, `libneodos/`
+  - `SNAPSHOT LIST`, `SNAPSHOT CREATE`, `SNAPSHOT RESTORE <id>`, `SNAPSHOT PURGE`.
+  - Wrappers en libneodos. Posible NXL con lógica de snapshot.
+  - **Tests:** `snapshot_shell_create_restore`
+
+* [ ] **NFSv2-MKFS. Herramienta mkfs.neodos (formato NE2)** | Prereqs: NFSv2-FILESYSTEM | Files: `userbin/mkfs/` (o script build)
+  - Escribir superblock "NE2\0", B-tree raíz vacío, freelist con todo el espacio libre.
+  - Integrar en scripts/build.sh para generar imagen de disco con formato NE2.
+  - **Tests:** `mkfs_creates_valid_ne2_superblock`
+
 ### System Bootstrap (NeoInit)
 
 * [x] **B4.10. NeoInit: leer Registry para config** | Prereqs: B2.6 | Files: `userbin/neoinit/`
@@ -209,19 +340,18 @@
 
 ## MEDIUM
 
-### v0.49 — NeoFS robustez
+### v0.49 — NeoFS v2 (formato NE2)
 
-* [x] **v0.49. NeoFS robustez** | Prereqs: v0.48 | Files: `src/fs/neodos_fs.rs`
-  - Indirect blocks (FS-3), journaling (FS-5), checksums (FS-6), ResourceRegistry extendido (NS-3), DOS name reservation
-  - **Tests:** `fs_indirect_blocks`, `fs_journal_replay`, `fs_checksum_verify`
+> Ver sección **NeoFS v2 (formato "NE2\0")** en HIGH para la lista completa de items.
+> Este hito sustituye el anterior v0.49 (indirect blocks, journaling, checksums) por el rediseño completo NeoFS v2.
 
 ### VFS Fase 3: Namespace Consistencia
 
-* [ ] **VFS-3.1. Separar `\Global\FileSystem` del Ob namespace** | Prereqs: VFS-1.1 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
+* [x] **VFS-3.1. Separar `\Global\FileSystem` del Ob namespace** | Prereqs: VFS-1.1 | Files: `src/object/mod.rs`, `src/object/namespace.rs`
   - `ob_enum("\Global\FileSystem\")` debe delegar al VFS, no al namespace Ob.
   - **Tests:** `vfs_namespace_filesystem_isolation`
 
-* [ ] **VFS-3.3. Proteger paths del namespace** | Prereqs: VFS-3.1 | Files: `src/syscall/ob.rs`
+* [x] **VFS-3.3. Proteger paths del namespace** | Prereqs: VFS-3.1 | Files: `src/syscall/ob.rs`
   - Impedir `ob_create(ObType::Directory)` dentro de `\Global\FileSystem\`.
   - **Tests:** `vfs_namespace_protected_paths`
 
@@ -241,8 +371,8 @@
   - Extraer lógica común a trait `FsckIntegrity`, mover a `drivers/fsck_neodos.rs`.
   - **Tests:** 6 tests existentes + 2 de integración
 
-* [ ] **VFS-2.3. Eliminar acceso directo a NeoFS desde shell** | Prereqs: -- | Files: `src/shell/commands/*.rs`, `src/fs/neodos_fs.rs`
-  - Comandos shell deben ir por VFS + handles, no por NeoDosFs directo.
+* [x] **VFS-2.3. Eliminar acceso directo a NeoFS desde shell** | Prereqs: -- | Files: `src/shell/commands/*.rs`, `src/fs/neodos_fs.rs`
+  - Comandos shell deben ir por VFS + handles, no por NeoDosFs directo. **[COMPLETED en v0.48.x — migración completa a syscalls Ob (RAX 60-66)]**
   - **Tests:** (funcional — comandos existentes deben seguir funcionando)
 
 
@@ -287,9 +417,11 @@
 
 ### Userland
 
-* [ ] **B4.3. Shell redirection (>, <, >>)** | Prereqs: A4.7 | Files: `userbin/neoshell/`
-  - Parser detecta tokens `>` (write), `>>` (append), `<` (read). Usa `sys_dup2`.
-  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`
+* [ ] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: tokenizer, editor | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
+  - Diseño completo en `docs/design/shell-improvements.md` sección 2.6.
+  - Tokenizer parsea `>`, `>>`, `<`, `2>` como tokens de redirección.
+  - Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd correspondiente, spawn.
+  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
 
 * [ ] **B4.6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
   - Editor de texto modal Ring 3. Usa `ob_open` + `ob_query_info(ReadContent)` / `ob_set_info(WriteContent)`.
@@ -299,9 +431,44 @@
   - Evolucionar NXL slots globales a binding per-process. Cada EPROCESS mantiene su tabla de NXLs.
   - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`
 
-* [ ] **B4.9. NeoShell scripting (.BAT)** | Prereqs: B4.1, B4.2, B4.3 | Files: `userbin/neoshell/`
-  - Intérprete batch: `ECHO`, `SET`, `IF`, `GOTO`, `CALL`, `FOR`, `REM`, `@`.
-  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`
+* [ ] **SH-BATCH. NeoShell scripting (.BAT)** | Prereqs: SH-QUOTE, SH-REDIR, SH-ENV, SH-SEP | Files: `userbin/neoshell/src/batch.rs`
+  - Diseño completo en `docs/design/shell-improvements.md` sección 2.10.
+  - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`, `@`, `PAUSE`.
+  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`, `bat_shift_args`, `bat_pause_resume`
+
+* [ ] **SH-QUOTE. Shell quoting/escaping** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.5.
+  - Tokenizer state machine: `"..."` (expande %VAR%), `'...'` (literal), `^` escape, `%%` literal percent.
+  - **Tests:** `tokenizer_double_quotes`, `tokenizer_single_quotes_literal`, `tokenizer_escape_char`, `tokenizer_unmatched_quote`
+
+* [ ] **SH-EDITOR. Shell line editor (ANSI)** | Prereqs: -- | Files: `userbin/neoshell/src/editor.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.7.
+  - Reemplaza readline() actual con `LineEditor`: posicionamiento ANSI real, Ctrl-A/E (home/end), Ctrl-K (kill), Ctrl-U (clear), Ctrl-R (history search), Insert toggle.
+  - **Tests:** `editor_basic_input`, `editor_backspace`, `editor_left_right`, `editor_home_end`, `editor_ctrl_k`, `editor_history_search`
+
+* [ ] **SH-HISTORY. Shell history persistence** | Prereqs: SH-EDITOR | Files: `userbin/neoshell/src/history.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.8.
+  - History manager propio del shell (no console.nxl). Ring buffer dinámico, persistencia en `C:\System\neoshell.hst`.
+  - **Tests:** `history_add_retrieve`, `history_prev_next`, `history_persistence_save_load`, `history_max_entries`
+
+* [ ] **SH-ENV. Shell env expansion (%VAR%)** | Prereqs: SH-QUOTE | Files: `userbin/neoshell/src/env.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.9.
+  - Post-tokenization pass: reemplaza `%VARNAME%` con valor de `EnvStore`. `%%` → literal `%`. Error si variable no existe.
+  - **Tests:** `env_simple_expansion`, `env_multiple_expansion`, `env_unknown_var`, `env_literal_percent`, `env_in_redirect_target`
+
+* [ ] **SH-PIPE. Pipeline wait + exit codes** | Prereqs: SH-TOKEN | Files: `userbin/neoshell/src/pipeline.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.1.
+  - Pipeline espera a todos los procesos vía `ob_wait`, recolecta exit codes, reporta errores.
+  - **Tests:** `pipeline_simple_wait`, `pipeline_three_stage`, `pipeline_exit_code_report`, `pipeline_empty_cmd_error`
+
+* [ ] **SH-SEP. Shell semicolon command separator (`;`)** | Prereqs: SH-TOKEN | Files: `userbin/neoshell/src/tokenizer.rs`
+  - Token `Semicolon` en tokenizer. `execute_line` divide en comandos por `;` y ejecuta secuencialmente.
+  - **Tests:** `semicolon_two_commands`, `semicolon_with_redirect`, `semicolon_mixed_with_pipe`
+
+* [ ] **SH-COMPL. Shell completion (filename, path cache)** | Prereqs: -- | Files: `userbin/neoshell/src/completion.rs`
+  - Diseño en `docs/design/shell-improvements.md` sección 2.10.
+  - Completion engine con PATH cache (TTL), filename completion para paths con `\` o `/`, thread-safe (sin mutable statics).
+  - **Tests:** `completion_command_prefix`, `completion_filename`, `completion_path_cache_hit`, `completion_no_matches`
 
 * [ ] **B4.11. NeoInit: auto-start de servicios** | Prereqs: B4.10 | Files: `userbin/neoinit/`
   - Leer AutoStartServices desde Registry, spawn_detached() para cada uno.
@@ -443,49 +610,7 @@
   - `register_tests()` is defined but never called from `testing.rs`. All virtio tests silently excluded from test suite.
   - **Tests:** Add call to `virtio::register_tests()` in `testing.rs`
 
-* [ ] **AUDIT-36. Docs: ARCHITECTURE.md HAL ABI self-contradiction** | Files: `docs/ARCHITECTURE.md:125 vs 178`
-  - Line 125 says `HAL ABI v0.3`, line 178 says `HAL ABI v0.4` — same doc, two different versions.
-  - **Tests:** (doc fix only)
 
-* [ ] **AUDIT-37. Docs: ARCHITECTURE.md kernel heap address wrong** | Files: `docs/ARCHITECTURE.md:581`
-  - Says `linked_list_allocator 16 MB @ 0x1000000` but actual `src/memory/layout.rs:107` has kernel_heap at `0x0240_0000` (36 MB).
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-38. Docs: ARCHITECTURE.md event type count stale** | Files: `docs/ARCHITECTURE.md:222-243`
-  - Says "16 event types (0-15)" but actual code has 18+ (missing `EVENT_MOUSE_INPUT=16`, `EVENT_NETWORK_PACKET=17`).
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-39. Docs: memory.md nxl_region address typo** | Files: `docs/memory.md:84`
-  - Says `0x1E00000` (missing a zero, 31 MB) but actual layout is `0x1E000000` (503 MB).
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-40. Docs: objects.md ObSetInfoClass count stale** | Files: `docs/objects.md:185-216`
-  - Says "Supports 27 set classes" but actual code has 28 variants (0-27). Missing `SetNicIp = 27`.
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-41. Docs: syscalls.md documents removed syscalls as active** | Files: `docs/syscalls.md` sections 5-13
-  - RAX 5 (`sys_pipe`), 7 (`sys_spawn`), 8 (`sys_readdir`), 9 (`sys_waitpid`), 10 (`sys_open`), 11 (`sys_readfile`) documented with full handler descriptions but all removed from SSDT.
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-42. Docs: ipc.md event struct field sizes wrong** | Files: `docs/ipc.md:180-213`
-  - Event struct fields documented as `u16`/`u16`/`u16` but actual code uses `u32`/`u32`/`u32`. Event type values off by 2 (`EVENT_SHUTDOWN` doc=10 actual=12, `EVENT_DRIVER_UNLOAD` doc=11 actual=13, etc.). Missing `EVENT_RTC_READ(10)`, `RTC_DATA(11)`, `NMI_WATCHDOG(15)`, `MOUSE_INPUT(16)`, `NETWORK_PACKET(17)`.
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-43. Docs: ipc.md pipe storage description stale** | Files: `docs/ipc.md:7`
-  - Says "16 static pipe buffers" as `[Option<PipeBuffer>; 16]` but actual code uses `Vec<Option<Mutex<PipeInner>>>` (dynamic, since v0.41).
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-44. Docs: drivers.md 8-state vs 7-state lifecycle** | Files: `docs/drivers.md:94`
-  - Says "8-state lifecycle" but actual `driver_runtime.rs` uses 7 states: Loaded, Initialized, Registered, Bound, Active, Faulted, Unloaded (no separate `Unloading` state).
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-45. Docs: ARCHITECTURE.md references "MEM.NXE" binary renamed** | Files: `docs/ARCHITECTURE.md:118`
-  - References `MEM` binary/migration, but directory renamed from `userbin/mem/` to `userbin/neomem/` in v0.46.1.
-  - **Tests:** (doc fix only)
-
-* [ ] **AUDIT-46. Docs: ARCHITECTURE.md ObType count stale** | Files: `docs/ARCHITECTURE.md:576`
-  - Says "ObType=17 variants" but actual code has 18 (missing `Socket = 18` added v0.47.0).
-  - **Tests:** (doc fix only)
 
 * [ ] **AUDIT-47. Non-reentrant IRP pool with wraparound overwrite** | Files: `src/irp/mod.rs:13-14`
   - Pool index = `id % IRP_POOL_SIZE` (mod 64). With monotonic ID counter, a slow IRP could be silently overwritten by a new one when the counter wraps.
@@ -511,13 +636,7 @@
   - BlockCache (512B sectors, LRU linear scan) vs PageCache (4KB pages, LRU double-linked list + hash table). Both used by `neodos_fs.rs`. Duplicated eviction policy, sizing logic.
   - **Tests:** `cache_unified_coherency` (when implemented)
 
-* [ ] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
-  - Says "64 entries" but actual page cache may be 128 entries (ARCHITECTURE.md says 128-entry/512KB).
-  - **Tests:** (doc fix only)
 
-* [ ] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
-  - Says "537 tests" but actual count is 656 (CHANGELOG v0.48.9).
-  - **Tests:** (doc fix only)
 
 ---
 
@@ -576,17 +695,20 @@
 | DH-HISTORY | Mantener `docs/HISTORY.md` actualizado con hitos arquitectónicos | `docs/HISTORY.md` |
 | AI-2 | Consolidate legacy syscall wrappers | `src/syscall/mod.rs` |
 | AI-3 | ObObjectTable lock granularity (lock striping) | `src/object/mod.rs` |
-| B2.2 | Registry transaction journal (WAL) | `src/cm/journal.rs` |
-| B2.3 | Multi-Hive Architecture | `src/cm/hive.rs`, `src/cm/manager.rs` |
-| B2.4 | Registry Security (ACL por clave) | `src/cm/security.rs` |
-| B2.5 | Registry notification + load/unload | `src/cm/notify.rs` |
+| CM-FIX | Registry bugfixes (free list, value deletion, unmount flush, iterative delete) | `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/cm.rs` |
+| CM-SEC | Registry security (ACL por clave, SeAccessCheck) | `src/cm/security.rs` (new), `src/cm/mod.rs`, `src/syscall/cm.rs` |
+| CM-DIRTY | Registry per-cell dirty tracking + incremental flush | `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs` |
+| CM-MULTI | Registry multi-hive (SOFTWARE, SECURITY, DEFAULT) | `src/cm/mod.rs` |
+| CM-WAL | Registry WAL (write-ahead logging, crash recovery) | `src/cm/wal.rs` (new), `src/cm/mod.rs` |
+| CM-LIB | Registry libneodos wrappers (7 missing wrappers) | `libneodos/src/syscall.rs` |
+| CM-REGEDIT | regedit.nxe — registry editor | `userbin/regedit/` (new) |
 | USR-025..032 | USR Fase 3: runas, secedit, groups, MIC enforcement | `userbin/runas/`, `userbin/secedit/`, `src/security/` |
 
 ### Milestones (LOW)
 
 | ID | Item | Prereqs |
 |----|------|---------|
-| v0.50 | Async I/O (IOCP v1), Registry hive features, DHCP | v0.49 |
+| v0.50 | Registry bugfixes + security + multi-hive, Shell overhaul, NeoFS robustez | v0.49 |
 | v0.51 | ASLR v2 (stack/heap random), PGO, Benchmarking suite, NTP | v0.50 |
 | v0.52 | UDP, DNS, TFTP/NFS básico | v0.51 |
 | v0.53 | Per-CPU heaps, scheduler lock-free, zero-copy pipes, COW fork | v0.52 |

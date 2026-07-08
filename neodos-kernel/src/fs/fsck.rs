@@ -1,4 +1,4 @@
-use crate::buffer::block_cache::BlockCache;
+use crate::buffer::page_cache::PageCache;
 use crate::drivers::block::BlockDevice;
 use crate::fs::neodos_fs::*;
 use alloc::vec::Vec;
@@ -28,7 +28,7 @@ pub enum FsckMode {
 }
 
 // Helper: read Inode value from disk.
-fn read_inode(inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Inode, ()> {
+fn read_inode(inode_num: u32, cache: &mut PageCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Inode, ()> {
     let inode_sector = 1 + (inode_num / 2);
     let offset = (inode_num % 2) as usize * 256;
     let sector_data = cache.get_sector(inode_sector + partition_base, dev)?;
@@ -38,7 +38,7 @@ fn read_inode(inode_num: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice,
     Ok(inode)
 }
 
-fn write_inode(inode_num: u32, inode: &Inode, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
+fn write_inode(inode_num: u32, inode: &Inode, cache: &mut PageCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
     let inode_sector = 1 + (inode_num / 2);
     let offset = (inode_num % 2) as usize * 256;
     let sector_data = cache.get_sector_mut(inode_sector + partition_base, dev)?;
@@ -48,23 +48,23 @@ fn write_inode(inode_num: u32, inode: &Inode, cache: &mut BlockCache, dev: &mut 
     Ok(())
 }
 
-fn read_superblock(cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Superblock, ()> {
+fn read_superblock(cache: &mut PageCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<Superblock, ()> {
     let data = cache.get_sector(partition_base, dev)?;
     let sb: Superblock = unsafe { core::ptr::read_unaligned(data.as_ptr() as *const _) };
     Ok(sb)
 }
 
-fn write_superblock(sb: &Superblock, cache: &mut BlockCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
+fn write_superblock(sb: &Superblock, cache: &mut PageCache, dev: &mut dyn BlockDevice, partition_base: u32) -> Result<(), ()> {
     let data = cache.get_sector_mut(partition_base, dev)?;
     unsafe { core::ptr::write_unaligned(data.as_mut_ptr() as *mut Superblock, *sb); }
     Ok(())
 }
 
-fn read_dir_entry(sector_data: &[u8; 512], entry_off: usize) -> DirectoryEntry {
+fn read_dir_entry(sector_data: &[u8], entry_off: usize) -> DirectoryEntry {
     unsafe { core::ptr::read_unaligned(sector_data.as_ptr().add(entry_off) as *const _) }
 }
 
-pub fn run(cache: &mut BlockCache, dev: &mut dyn BlockDevice, mode: FsckMode, partition_base: u32) -> FsckStats {
+pub fn run(cache: &mut PageCache, dev: &mut dyn BlockDevice, mode: FsckMode, partition_base: u32) -> FsckStats {
     let mut stats = FsckStats {
         total_inodes: 0, used_inodes: 0, valid_inodes: 0, corrupted_inodes: 0,
         cross_linked_blocks: 0, bitmap_orphan_blocks: 0, bitmap_missing_blocks: 0,

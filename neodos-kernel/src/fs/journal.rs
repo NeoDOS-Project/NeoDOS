@@ -1,7 +1,7 @@
 // src/fs/journal.rs — Write-ahead log for NeoFS crash recovery (FS-5)
 #![allow(dead_code)]
 
-use crate::buffer::block_cache::BlockCache;
+use crate::buffer::page_cache::PageCache;
 use crate::drivers::block::BlockDevice;
 use crate::serial_println;
 use alloc::vec::Vec;
@@ -123,7 +123,7 @@ impl Journal {
     }
 
     /// Load journal state from disk.
-    pub fn load(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) {
+    pub fn load(&mut self, cache: &mut PageCache, dev: &mut dyn BlockDevice) {
         if !self.enabled {
             return;
         }
@@ -153,7 +153,7 @@ impl Journal {
     }
 
     /// Persist journal header to disk.
-    pub fn sync_header(&self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) {
+    pub fn sync_header(&self, cache: &mut PageCache, dev: &mut dyn BlockDevice) {
         if !self.enabled {
             return;
         }
@@ -173,12 +173,11 @@ impl Journal {
         unsafe {
             core::ptr::write_unaligned(sector_data.as_mut_ptr() as *mut JournalHeader, header);
         }
-        cache.mark_dirty(self.header_sector);
     }
 
     /// Begin a transaction: write a Begin entry.
     pub fn begin_transaction(&mut self, op: JournalOperation, inode_num: u32, inode_snapshot: &[u8; 256],
-                             cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<u32, ()> {
+                             cache: &mut PageCache, dev: &mut dyn BlockDevice) -> Result<u32, ()> {
         if !self.enabled {
             return Ok(0);
         }
@@ -211,7 +210,6 @@ impl Journal {
         unsafe {
             core::ptr::write_unaligned(sector_data.as_mut_ptr() as *mut JournalEntry, entry);
         }
-        cache.mark_dirty(sector_lba);
         self.num_entries += 1;
         self.sync_header(cache, dev);
 
@@ -220,7 +218,7 @@ impl Journal {
     }
 
     /// Commit a transaction: write a Commit entry.
-    pub fn commit_transaction(&mut self, tx_id: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
+    pub fn commit_transaction(&mut self, tx_id: u32, cache: &mut PageCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
         if !self.enabled || tx_id == 0 {
             return Ok(());
         }
@@ -251,7 +249,6 @@ impl Journal {
         unsafe {
             core::ptr::write_unaligned(sector_data.as_mut_ptr() as *mut JournalEntry, entry);
         }
-        cache.mark_dirty(sector_lba);
         self.num_entries += 1;
         self.sync_header(cache, dev);
 
@@ -260,7 +257,7 @@ impl Journal {
     }
 
     /// Rollback: find a Begin entry for the given tx, restore inode snapshot.
-    pub fn rollback_transaction(tx_id: u32, entry_base: u32, cache: &mut BlockCache, dev: &mut dyn BlockDevice,
+    pub fn rollback_transaction(tx_id: u32, entry_base: u32, cache: &mut PageCache, dev: &mut dyn BlockDevice,
                                 inode_cache: &mut InodeCache, abs_lba: u32,
                                 _data_start: u32) -> Result<(), ()> {
         // Scan backwards for the Begin entry for this tx
@@ -295,7 +292,6 @@ impl Journal {
                         inode
                     );
                 }
-                cache.mark_dirty(inode_sector);
                 // Update cache
                 let mut restored = inode;
                 restored.set_checksum();
@@ -310,7 +306,7 @@ impl Journal {
     }
 
     /// Recover: scan journal for uncommitted transactions and roll them back.
-    pub fn recover(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice,
+    pub fn recover(&mut self, cache: &mut PageCache, dev: &mut dyn BlockDevice,
                    inode_cache: &mut InodeCache, abs_lba: u32,
                    _data_start: u32) -> Result<u32, ()> {
         if !self.enabled {
@@ -380,7 +376,6 @@ impl Journal {
                         inode
                     );
                 }
-                cache.mark_dirty(inode_sector);
                 let mut restored = inode;
                 restored.set_checksum();
                 inode_cache.ensure_inode_capacity(inode_num);
@@ -400,7 +395,7 @@ impl Journal {
     }
 
     /// Internal: checkpoint and clear the journal.
-    fn checkpoint_internal(&mut self, cache: &mut BlockCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
+    fn checkpoint_internal(&mut self, cache: &mut PageCache, dev: &mut dyn BlockDevice) -> Result<(), ()> {
         self.checkpoint = self.sequence;
         self.sequence += 1;
         self.num_entries = 0;

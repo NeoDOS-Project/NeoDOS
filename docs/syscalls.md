@@ -159,40 +159,28 @@ Reads data from a file descriptor (stdin, pipe reader). Blocks with `-EAGAIN` if
 - **Args**: `RBX`=fd, `RCX`=buf, `RDX`=count.
 - **Returns**: Bytes read, or error.
 
-### 5 — `sys_pipe`
-Creates a unidirectional data pipe.
-- **Args**: `RBX` = pointer to `[read_fd, write_fd]` (`*mut u64`).
-- **Returns**: `0` on success, or error code.
+### 5 — `sys_pipe` **(REMOVED — use `ObCreate` + pipe fd)**
+Was: Creates a unidirectional data pipe. Now handled via Object Manager.
 
 ### 6 — `sys_dup2`
 Duplicates an fd to a target slot (redirection).
 - **Args**: `RBX`=old_fd, `RCX`=new_fd.
 - **Returns**: `0` on success, or error code.
 
-### 7 — `sys_spawn`
-Loads and executes a user-mode binary in a new child process.
-- **Args**: `RBX`=path_ptr, `RCX`=stdin_fd(0xFF=inherit), `RDX`=stdout_fd, `R8`=stderr_fd.
-- **Returns**: PID on success, or error code.
+### 7 — `sys_spawn` **(REMOVED — process creation via Ob)**
+Was: Loads and executes a user-mode binary. Now handled via Object Manager.
 
-### 8 — `sys_readdir`
-Reads one directory entry from a HANDLE_DIR fd.
-- **Args**: `RBX`=fd, `RCX`=buf_ptr (`*mut DirEntryRaw`).
-- **Returns**: `1` = entry read, `0` = end of dir, or error.
+### 8 — `sys_readdir` **(REMOVED — use `ObEnum` instead)**
+Was: Reads directory entries. Now handled via `ob_enum` (RAX 64).
 
-### 9 — `sys_waitpid`
-Blocks until the specified child process terminates.
-- **Args**: `RBX` = PID (`u32`).
-- **Returns**: Exit code on success, or error.
+### 9 — `sys_waitpid` **(REMOVED — use `ob_wait` on process)**
+Was: Waits for child process. Now handled via `ob_wait` (RAX 65).
 
-### 10 — `sys_open`
-Opens a file on the VFS and returns an fd.
-- **Args**: `RBX`=path_ptr, `RCX`=flags (reserved).
-- **Returns**: fd (`u8`) on success, or error code.
+### 10 — `sys_open` **(REMOVED — use `ob_open` instead)**
+Was: Opens files on VFS. Now handled via `ob_open` (RAX 60).
 
-### 11 — `sys_readfile`
-Reads from an open file at the current offset.
-- **Args**: `RBX`=fd, `RCX`=buf, `RDX`=count.
-- **Returns**: Bytes read, or error code.
+### 11 — `sys_readfile` **(REMOVED — use `ob_query_info` instead)**
+Was: Reads from open file. Now handled via Object Manager.
 
 ### 13 — `sys_close`
 Closes an fd (file, pipe, device, event). For pipes, decrements refcount.

@@ -206,7 +206,7 @@ Dirty tracking with deferred write-back.
 
 ### Page Cache
 
-Source: `src/buffer/page_cache.rs`. 64 entries, 4 KB pages, LRU eviction.
+Source: `src/buffer/page_cache.rs`. 128 entries, 4 KB pages, LRU eviction.
 Dirty tracking with pending-write accounting. Checked by file-backed mmap before
 issuing a VFS read.
 

@@ -431,6 +431,11 @@ pub fn ob_create_object_path(
         return Err(ObError::InvalidType);
     }
 
+    // VFS-3.3: Prevent ob_create inside \Global\FileSystem\ — FS objects go through VFS
+    if normalized.starts_with("\\Global\\FileSystem") {
+        return Err(ObError::InvalidParam);
+    }
+
     let native_id = match obj_type {
         ObType::Pipe => {
             let pipe_id = crate::object::pipe::PIPE_MANAGER.alloc()
@@ -455,8 +460,89 @@ pub fn ob_create_object_path(
 
 /// Enumerate objects in a namespace directory by path.
 /// Returns a list of ObEnumEntry values.
+/// VFS-3.1: `\Global\FileSystem\` paths delegate to VFS, not namespace.
 pub fn ob_enum_directory(path: &str) -> Result<alloc::vec::Vec<ObEnumEntry>, ObError> {
-    let entries = crate::object::namespace::ob_enumerate_namespace(path)
+    let normalized = crate::object::namespace::normalize_path(path);
+
+    // VFS-3.1: \Global\FileSystem\ paths → VFS enumeration
+    if normalized == "\\Global\\FileSystem" || normalized.starts_with("\\Global\\FileSystem\\") {
+        let vfs_rest = normalized.strip_prefix("\\Global\\FileSystem").unwrap_or("");
+        let vfs_path = vfs_rest.trim_start_matches('\\');
+
+        if vfs_path.is_empty() {
+            // Enumerate available drives
+            let mut entries = alloc::vec::Vec::new();
+            crate::globals::with_vfs(|vfs| {
+                for i in 0..26usize {
+                    if vfs.drives[i].is_some() {
+                        let letter = (b'A' + i as u8) as char;
+                        let mut name = [0u8; 32];
+                        let name_str = alloc::format!("{}:", letter);
+                        let bytes = name_str.as_bytes();
+                        let len = bytes.len().min(31);
+                        name[..len].copy_from_slice(&bytes[..len]);
+                        entries.push(ObEnumEntry {
+                            id: 0,
+                            obj_type: ObType::Directory as u32,
+                            name,
+                            mode: 0,
+                            _pad: [0u8; 2],
+                            size: 0,
+                        });
+                    }
+                }
+            });
+            return Ok(entries);
+        }
+
+        // Subpath with drive letter → use VFS readdir
+        if vfs_path.contains(':') {
+            let (drive_idx, node) = crate::globals::with_vfs(|vfs| {
+                vfs.resolve_path(vfs_path)
+            }).map_err(|_| ObError::NotFound)?;
+
+            if (node.mode & crate::fs::vfs::MODE_DIR) == 0 {
+                return Err(ObError::InvalidParam);
+            }
+
+            let dir_inode = node.inode;
+            let mut entries = alloc::vec::Vec::new();
+            let mut idx = 0usize;
+            loop {
+                let result = crate::globals::with_vfs(|vfs| {
+                    vfs.readdir(drive_idx, dir_inode, idx)
+                });
+                match result {
+                    Ok(Some(dir_entry)) => {
+                        let mut name = [0u8; 32];
+                        let bytes = dir_entry.name.as_bytes();
+                        let len = bytes.len().min(31);
+                        name[..len].copy_from_slice(&bytes[..len]);
+                        let obj_type = if (dir_entry.node.mode & crate::fs::vfs::MODE_DIR) != 0 {
+                            ObType::Directory
+                        } else {
+                            ObType::Filesystem
+                        };
+                        entries.push(ObEnumEntry {
+                            id: dir_entry.node.inode as u64,
+                            obj_type: obj_type as u32,
+                            name,
+                            mode: dir_entry.node.mode,
+                            _pad: [0u8; 2],
+                            size: dir_entry.node.size,
+                        });
+                        idx += 1;
+                    }
+                    Ok(None) => break,
+                    Err(_) => break,
+                }
+            }
+            return Ok(entries);
+        }
+    }
+
+    // Default: namespace enumeration
+    let entries = crate::object::namespace::ob_enumerate_namespace(&normalized)
         .map_err(|_| ObError::NotFound)?;
     Ok(entries.iter().map(|e| {
         let mut name = [0u8; 32];
@@ -958,5 +1044,36 @@ pub fn register_object_tests() {
 
         let ns_result = crate::object::namespace::ob_lookup_path("\\TestDir\\cleanup_ref");
         test_true!(ns_result.is_err());
+    });
+
+    // ── VFS-3.1: \Global\FileSystem\ enumeration delegates to VFS ──
+
+    test_case!("vfs_namespace_filesystem_isolation", {
+        // Insert a legacy namespace entry under \Global\FileSystem\
+        let id = ob_create_object(ObType::Filesystem, "legacy_fs", 1, 0, None).unwrap();
+        let _ = crate::object::namespace::ob_create_directory("\\Global\\FileSystem");
+        let _ = crate::object::namespace::ob_insert_object("\\Global\\FileSystem\\LegacyEntry", id);
+
+        // ob_enum_directory delegates to VFS, not namespace
+        let entries = ob_enum_directory("\\Global\\FileSystem\\").unwrap();
+        for e in &entries {
+            let name_str = core::str::from_utf8(&e.name).unwrap_or("");
+            test_true!(name_str != "LegacyEntry");
+        }
+
+        // Cleanup
+        let _ = crate::object::namespace::ob_remove_object("\\Global\\FileSystem\\LegacyEntry");
+        ob_destroy_object(id).unwrap_or(());
+    });
+
+    // ── VFS-3.3: ob_create(Directory) under \Global\FileSystem\ is rejected ──
+
+    test_case!("vfs_namespace_protected_paths", {
+        let result = ob_create_object_path(
+            "\\Global\\FileSystem\\C:\\ProtectedDir",
+            ObType::Directory,
+            0, None,
+        );
+        test_true!(result.is_err());
     });
 }

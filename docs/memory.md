@@ -81,7 +81,7 @@ on overlap detection. `init_default()` defines the canonical layout:
 | kernel_heap  | 0x2400000 | 16 MB    | Kernel linked-list heap         |
 | crash_dump   | 0xF000000 | 16 MB    | Panic-time crash dump region    |
 | user_heap    | 0x10000000| 32 MB    | Per-process heap (2 MB x16)     |
-| nxl_region   | 0x1E00000 | 2 MB     | NXL user libraries              |
+| nxl_region   | 0x1E000000| 2 MB     | NXL user libraries              |
 | mmap_region  | 0x20000000| 32 MB    | Anonymous + file-backed mmap    |
 | driver_iso   | 0x30000000| 16 MB    | Isolated NEM driver slots       |
 

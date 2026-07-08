@@ -66,7 +66,7 @@ mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
-use buffer::block_cache::BlockCache;
+use buffer::page_cache::PageCache;
 use fs::neodos_fs::NeoDosFs;
 use graphics::FramebufferInfo;
 use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
@@ -323,9 +323,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let primary_idx = 0;
 
     // ── A5.1: Create IoStacks from GPT ──
-    println!("[+] Initializing Block Cache...");
-    *globals::BLOCK_CACHE.lock() = Some(BlockCache::new());
-    println!("[+] Initializing Page Cache (128 × 4 KB = 512 KB, hash + LRU)...");
+    println!("[+] Initializing unified Page Cache (128 × 4 KB = 512 KB, hash + LRU)...");
+    // VFS-5.1: Unified cache initialized eagerly via globals::PAGE_CACHE (const fn).
 
     println!("[+] Scanning GPT for partitions...");
     let (neodos_io, esp_io) = {

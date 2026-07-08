@@ -2577,9 +2577,9 @@ pub fn register_page_cache_tests() {
 
     test_case!("page_cache_peek_miss", {
         let pc = PageCache::new();
-        test_eq!(pc.peek(0, 1, 0), None);
-        test_eq!(pc.peek(0, 1, 1), None);
-        test_eq!(pc.peek(0, 0, 0), None);
+        test_eq!(pc.peek_inode(0, 1, 0), None);
+        test_eq!(pc.peek_inode(0, 1, 1), None);
+        test_eq!(pc.peek_inode(0, 0, 0), None);
     });
 
     test_case!("page_cache_mark_dirty_adds_dirty", {
@@ -2617,7 +2617,7 @@ pub fn register_page_cache_tests() {
         let pc = PageCache::new();
         for inode in &[1u32, 2, 3] {
             for block in &[0u32, 1, 5, 10] {
-                test_eq!(pc.peek(0, *inode, *block), None);
+                test_eq!(pc.peek_inode(0, *inode, *block), None);
             }
         }
     });
@@ -2666,7 +2666,39 @@ pub fn register_page_cache_tests() {
         // (no block device needed for empty cache)
         test_eq!(pc.dirty_count(), 0);
     });
+
+    // ── VFS-5.1: Unified cache — sub-sector dirty tracking ──
+
+    test_case!("vfs_cache_coherency", {
+        let mut pc = PageCache::new();
+        test_eq!(pc.dirty_count(), 0);
+        // mark_dirty_sector on uncached page is a no-op (page not loaded)
+        pc.mark_dirty_sector(0);
+        test_eq!(pc.dirty_count(), 0);
+        // mark_dirty via inode key on uncached page is also a no-op
+        pc.mark_dirty(0, 1, 0);
+        test_eq!(pc.dirty_count(), 0);
+        // invalidation on empty cache is safe
+        pc.invalidate_inode(0, 0);
+        test_eq!(pc.dirty_count(), 0);
+        // peek_inode on empty cache returns None
+        test_eq!(pc.peek_inode(0, 1, 0), None);
+    });
+
+    // ── VFS-5.2: InodeCache invalidation on superblock version change ──
+
+    test_case!("vfs_cache_inode_invalidation", {
+        use crate::fs::neodos_fs::InodeCache;
+        let mut ic = InodeCache::new();
+        test_eq!(ic.entry_count(), 0);
+        ic.check_version(1);
+        test_eq!(ic.version(), 1);
+        ic.check_version(2);
+        test_eq!(ic.version(), 2);
+    });
 }
+
+// ===== PCI Enumeration tests =====
 
 // ===== PCI Enumeration tests =====
 

@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.49.0 — 2026-07-07
+## v0.49.0 — 2026-07-08
 
 ### Added
 - **FS-3. Indirect blocks** — Archivos >48 KB ahora soportados mediante bloque indirecto (1024 entradas, ~4 MB máx). `get_inode_block_ptr()`, `inode_data_block_count()`, `write_file()`, `add_directory_entry()`, `delete_file_by_inode()`, `rebuild_bitmap()` actualizados. Helper `allocate_indirect_block()`, `read_indirect_pointers()`, `write_indirect_pointer()`.
@@ -8,16 +8,37 @@
 - **FS-6. Metadata checksums** — CRC32 en Superblock (verificado al montar), CRC32 en Inode (nuevo campo `checksum`, verificado en `load_inode()`), XOR checksum en DirectoryEntry (verificado en lectura). `FsError::ChecksumMismatch` si falla.
 - **NS-3. ResourceRegistry extendido** — `ResourceType::ObNamespace=2` para rastrear entradas Ob por driver. `track_ob_entry()`/`untrack_ob_entry()`. Limpieza automática en hot-unload vía `ob_remove_by_id()`.
 - **DOS name reservation** — `is_reserved_dos_name()` bloquea CON/PRN/AUX/NUL/COM1-9/LPT1-9 en `create_file_at()`, `create_directory_at()`, `rename_file()`.
+- **VFS-3.1. `\Global\FileSystem\` enumera via VFS** — `ob_enum_directory()` delega paths `\Global\FileSystem\` al VFS en vez del namespace Ob. Enumera drives (A-Z) y contenidos de directorios vía `vfs.readdir()`. Test: `vfs_namespace_filesystem_isolation`.
+- **VFS-3.3. Proteger paths del namespace** — `ob_create(Directory)` bajo `\Global\FileSystem\` es rechazado con `ObError::InvalidParam`. Test: `vfs_namespace_protected_paths`.
+- **VFS-5.2. InodeCache invalidation** — Nuevo campo `InodeCache.version` con `check_version()` que invalida el caché cuando el superblock cambia. Campo `Superblock.version` incrementado en `set_volume_label()`. Test: `vfs_cache_inode_invalidation`.
+- **Registry SYSTEM.HIV en imagen** — Nuevo script `scripts/gen_system_hiv.py` genera `SYSTEM.HIV` con valores por defecto. `create_neodos_image.py` lo incluye en `C:\System\Registry\`. `build.sh` lo genera automáticamente.
+- **MCP registry tools** — 4 nuevas herramientas MCP: `registry_list`, `registry_query`, `registry_tree`, `registry_hive_info`. Parser de hive en `scripts/mcp_server/parsers/registry_hive.py`.
+- **Design docs** — `docs/design/registry-improvements.md` (CM-FIX/CM-SEC/CM-DIRTY/CM-MULTI/CM-WAL/CM-LIB/CM-REGEDIT), `docs/design/shell-improvements.md` (SH-ALL overhaul).
+- **Skills/registry** — Nueva skill de Registry con checklist procedural.
+- **Shell roadmap** — 11 nuevos items SH-* en `docs/IMPROVEMENTS.md`: quoting, redirection, editor, history, env, completion, pipes, batch, tokenizer, separator.
 
 ### Changed
+- **VFS-2.3. Eliminar acceso directo a NeoFS desde shell** — Verificada la migración completa: todos los comandos shell (userbin/*) usan syscalls Ob (RAX 60-66) → VFS + handles, sin acceso directo a `NeoDosFs`. Los handlers legacy (`handler_open`, `handler_readfile`, `handler_writefile`, `handler_readdir`, `handler_mkdir`, `handler_unlink`, `handler_rmdir`, `handler_rename`) ya no están en la SSDT (código inactivo, no invocable).
+- **VFS-5.1. Cache unificado** — `BlockCache` eliminado, `PageCache` unificado como única capa de caché. `BLOCK_CACHE` global reemplazado por `PAGE_CACHE`. Todos los métodos de `NeoDosFs` migrados de `&mut BlockCache` a `&mut PageCache`. `mark_dirty()` ahora es implícito en `get_sector_mut()`. `flush_cache_if_needed()` simplificado. `IoStack::read_sectors()` usa `PageCache` en vez de `BlockCache`.
 - Inode struct: nuevo campo `checksum: u32`, padding reducido de 160 → 156 bytes (tamaño total 256 bytes inalterado).
 - DirectoryEntry struct: nuevo campo `checksum: u8`, name reducido de 249 → 248 bytes (total 256 bytes inalterado).
-- Superblock: `reserved[0..4]` almacena CRC32 del superblock.
+- Superblock: `reserved[0..4]` almacena CRC32 del superblock. Nuevo campo `version: u32`, reservado reducido 464→460 bytes.
 - `get_inode_block_ptr()` ahora requiere `cache`/`dev` para resolver bloques indirectos.
+- `read_file_to_buf()` y `write_file()` reciben solo `&mut PageCache` (eliminado segundo parámetro `&mut BlockCache`).
+- `NeoDosFs` FileSystem trait impl: todas las funciones usan `PAGE_CACHE` en vez de `BLOCK_CACHE`.
+- `globals.rs`: eliminados `BLOCK_CACHE`, `NEED_PAGE_CACHE_FLUSH`, `with_cache()`. `NEED_CACHE_FLUSH` unificado.
+- PageCache: `peek()` renombrado a `peek_inode()`.
+- Journal: métodos `recover()`, `checkpoint_internal()`, transacciones aceptan `&mut PageCache` en vez de `&mut BlockCache`. Eliminados `cache.mark_dirty()` redundantes.
+- FSCK handler: usa `PageCache` en vez de `BlockCache`.
 
 ### Tests
-- 15 tests nuevos: `fs_indirect_blocks_*` (3), `fs_checksum_*` (4), `fs_dos_reserved_names` (1), `fs_resource_registry_ob_namespace` (1), `fs_journal_*` (4), más actualización de patrones existentes.
-- Total: 641 → 653 tests (12 new: indirect blocks, checksums, journal, DOS names, ResourceRegistry).
+- 19 tests nuevos: `vfs_cache_coherency`, `vfs_cache_inode_invalidation`, `vfs_namespace_filesystem_isolation`, `vfs_namespace_protected_paths` + 15 de v0.49 previos.
+- Tests actualizados: `page_cache_peek_miss` → `page_cache_peek_inode_miss`, `page_cache_empty_peek` → `page_cache_empty_peek_inode`.
+- Total: 641 → 656 tests.
+
+### Docs
+- **AUDIT-36..46, AUDIT-53..54 completados** — 11 auditorías de documentación corregidas: ARCHITECTURE.md (HAL ABI, kernel heap, event types, MEM binary, ObType count, test count), syscalls.md (removed syscalls), ipc.md (event struct, pipe storage), memory.md (nxl_region address), objects.md (SetInfoClass count), filesystem.md (page cache capacity). Movidas de IMPROVEMENTS.md a IMPROVEMENTS_COMPLETED.md.
+- AGENTS.md: añadida fila Registry en tabla de Skills.
 
 ## v0.48.9 — 2026-07-06
 

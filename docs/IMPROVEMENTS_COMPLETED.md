@@ -1,7 +1,7 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.48.7 (Registry config, audits).
+> Version actual: v0.48.9 (Auditoría docs completa).
 > Proximo milestone: v0.49 (Servicios de red).
 
 ---
@@ -67,6 +67,58 @@
 
 * [x] **AUDIT-10. ObSetInfoClass::Security implementado** | Files: `src/syscall/ob.rs`
   - Reemplazado `err_to_u64(NoSys)` por implementación funcional que parsea SD y llama `ob_set_security`.
+
+* [x] **AUDIT-36. Docs: ARCHITECTURE.md HAL ABI self-contradiction** | Files: `docs/ARCHITECTURE.md:125 vs 178`
+  - Line 125 now says `HAL ABI v0.4` (was `v0.3`), matching line 178.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-37. Docs: ARCHITECTURE.md kernel heap address wrong** | Files: `docs/ARCHITECTURE.md:581`
+  - Changed `0x1000000` → `0x0240_0000` to match `src/memory/layout.rs:107`.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-38. Docs: ARCHITECTURE.md event type count stale** | Files: `docs/ARCHITECTURE.md:222-243`
+  - Updated from "16 event types (0-15)" to "18 event types (0-17)". Added `EVENT_MOUSE_INPUT=16` and `EVENT_NETWORK_PACKET=17`.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-39. Docs: memory.md nxl_region address typo** | Files: `docs/memory.md:84`
+  - Changed `0x1E00000` → `0x1E000000` to match actual layout.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-40. Docs: objects.md ObSetInfoClass count stale** | Files: `docs/objects.md:185-216`
+  - Updated from "Supports 27 set classes" to "Supports 28 set classes". Added `SetNicIp = 27`.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-41. Docs: syscalls.md documents removed syscalls as active** | Files: `docs/syscalls.md` sections 5-13
+  - RAX 5, 7, 8, 9, 10, 11 now marked as **REMOVED** with replacement guidance (Ob equivalents).
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-42. Docs: ipc.md event struct field sizes wrong** | Files: `docs/ipc.md:180-213`
+  - Event struct: `u16`→`u32` for `event_type`, `source`, `flags`; added `driver_target: u32`; corrected event type table values and added missing entries (RTC_READ=10, RTC_DATA=11, NMI_WATCHDOG=15, MOUSE_INPUT=16, NETWORK_PACKET=17).
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-43. Docs: ipc.md pipe storage description stale** | Files: `docs/ipc.md:7`
+  - "16 static pipe buffers" → dynamic `Vec<Option<Mutex<PipeInner>>>`.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-44. Docs: drivers.md 8-state vs 7-state lifecycle** | Files: `docs/drivers.md:94`
+  - Verified: doc already correct (8 states including `Unloading`), code has 8 `DriverState` variants. No change needed.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-45. Docs: ARCHITECTURE.md references "MEM.NXE" binary renamed** | Files: `docs/ARCHITECTURE.md:118`
+  - Updated MEM reference to point to `userbin/neomem/`.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-46. Docs: ARCHITECTURE.md ObType count stale** | Files: `docs/ARCHITECTURE.md:576`
+  - Changed "ObType=17 variants" → "ObType=18 variants", added `Socket` to the list.
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
+  - Changed "64 entries" → "128 entries" (matches `CACHE_SIZE = 128` in `page_cache.rs:3`).
+  - **Tests:** (doc fix only)
+
+* [x] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
+  - Updated "537 tests" → "656 tests" in both locations.
+  - **Tests:** (doc fix only)
 
 ### v0.47 (Networking TCP/IP)
 

@@ -115,14 +115,14 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 - **User heap**: 32 MB virtual range `0x10000000..0x12000000`, organised as 16 × 2 MB huge pages. At boot `init_heap_demand_paging()` splits each 2 MB huge page into 4 KB page tables. Physical frames are allocated on demand by the page fault handler when user-space touches a new page.
 - **Demand paging**: The page fault handler (`idt.rs`) checks if the faulting address falls in the heap range; if so, it calls `handle_heap_page_fault()` which walks the 4 KB page tables and allocates a physical frame via `allocate_frame()` marked as `USER_ACCESSIBLE`. On heap shrink (`sys_brk`), `heap_free_range()` unmaps pages and returns frames to the frame allocator. `heap_alloc_page()` touches pages to trigger page faults.
 - The frame allocator manages physical memory via a buddy allocator (`memory/buddy.rs`) with 11 order levels (4 KB → 4 MB). Detects total RAM from UEFI memory map — no hard limit, supports >4 GB natively.
-- The `MEM` shell command (migrated to Ring 3 as `MEM.NXE`) reports totals derived from the UEFI memory map with reservations applied:
+- The `MEM` shell command (Ring 3 `NEOMEM.NXE` from `userbin/neomem/`) reports totals derived from the UEFI memory map with reservations applied:
   - first 1 MiB
   - kernel image (`__kernel_start..__kernel_end`)
   - framebuffer range
 
 ## Driver Architecture (v0.16+)
 
-NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → Event Bus → HAL ABI v0.3 → hardware`.
+NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → Event Bus → HAL ABI v0.4 → hardware`.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -219,7 +219,7 @@ struct Event {
 }
 ```
 
-**16 event types (FROZEN v0.42 — types 0–15 MUST NOT be reassigned):**
+**18 event types (FROZEN v0.42 — types 0–17 MUST NOT be reassigned):**
 
 | Constant | Value | Description |
 |-----------|-------|-------------|
@@ -239,6 +239,8 @@ struct Event {
 | `EVENT_DRIVER_UNLOAD` | 13 | Driver unload request |
 | `EVENT_DRIVER_UNLOAD_ACK` | 14 | Driver unload acknowledgement |
 | `EVENT_NMI_WATCHDOG` | 15 | NMI watchdog timeout |
+| `EVENT_MOUSE_INPUT` | 16 | PS/2 mouse raw bytes |
+| `EVENT_NETWORK_PACKET` | 17 | NIC received a packet |
 | `EVENT_USER` | 0x1000 | User-defined event base |
 | `EVENT_WILDCARD` | 0xFFFFFFFF | Matches any type |
 
@@ -525,7 +527,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **537 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **656 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -558,7 +560,7 @@ The kernel testing framework includes **537 tests** (200+ test_case! macros) wit
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
 
-Tests run automatically at boot. The kernel runs 537 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+Tests run automatically at boot. The kernel runs 656 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 
@@ -573,12 +575,12 @@ Tests run automatically at boot. The kernel runs 537 tests (200+ test_case! regi
 
 ## Kernel Subsystems (High-Level)
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
-- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=17 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=18 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section, Socket). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (128-entry, 512 KB hash map O(1) + LRU cache for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:). **Mount points** (`vfs/mount.rs`) register KObjType::MountPoint entries and DosDevices symlinks via `MountManager`.
-- **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x1000000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
+- **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x0240_0000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `ob_id` (optional Ob reference)
 - **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), procesos ilimitados (Vec<Option<Eprocess>> dinámica), idle process (PID 0) siempre presente. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.

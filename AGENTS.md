@@ -72,6 +72,7 @@ For every subsystem, consult its doc — not this file:
 | Scheduler | Scheduler changes | `skills/scheduler/SKILL.md` |
 | Memory | Memory subsystem changes | `skills/memory/SKILL.md` |
 | Shell | Add shell command | `skills/shell/SKILL.md` |
+| Registry | Cm hive, keys, values, persistence | `skills/registry/SKILL.md` |
 | Drivers | Develop NEM driver | `skills/drivers/SKILL.md` |
 | Filesystem | FS development | `skills/filesystem/SKILL.md` |
 | Testing | Write/run tests | `skills/testing/SKILL.md` |

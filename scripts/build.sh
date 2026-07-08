@@ -225,6 +225,8 @@ if [ "$BUILD_NEODOS_IMAGE" = true ]; then
     echo "[+] Generating NeoDOS FS images..."
     if command -v python3 >/dev/null 2>&1; then
         cd "$SCRIPT_DIR"
+        echo "[*] Generating SYSTEM.HIV..."
+        python3 gen_system_hiv.py
         python3 create_neodos_image.py \
             --label "NEODOS" \
             --output "neodos_image.img" \

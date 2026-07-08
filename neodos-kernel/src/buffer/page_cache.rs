@@ -1,12 +1,8 @@
 use crate::drivers::block::BlockDevice;
 
-// ── Constants ────────────────────────────────────────────────────────
-
-const DEFAULT_CACHE_SIZE: usize = 128;
+const CACHE_SIZE: usize = 128;
 const MAX_CACHE_SIZE: usize = 2048;
 const MIN_CACHE_SIZE: usize = 64;
-
-// ── FNV-1a hash (simple, fast, const) ───────────────────────────────
 
 const FNV_OFFSET: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
@@ -23,11 +19,9 @@ const fn fnv_hash(key: u64) -> u64 {
     h
 }
 
-const fn make_key(drive_id: u8, inode: u32, block: u32) -> u64 {
+const fn make_inode_key(drive_id: u8, inode: u32, block: u32) -> u64 {
     (drive_id as u64) << 56 | (inode as u64) << 32 | block as u64
 }
-
-// ── Custom open-addressing hash table (const-constructible) ──────────
 
 const HT_EMPTY: u64 = u64::MAX;
 const HT_TOMBSTONE: u64 = u64::MAX - 1;
@@ -124,8 +118,6 @@ impl<const N: usize> HashTable<N> {
     }
 }
 
-// ── Readahead state per inode ───────────────────────────────────────
-
 #[derive(Copy, Clone)]
 struct ReadaheadState {
     last_block: i64,
@@ -141,15 +133,16 @@ const EMPTY_READAHEAD: ReadaheadState = ReadaheadState {
     direction: 0,
 };
 
-// ── Cache slot metadata ─────────────────────────────────────────────
+// ── Cache slot — unified 4KB page with sub-sector dirty tracking ──────
 
 #[derive(Copy, Clone)]
 struct CacheSlot {
     valid: bool,
     dirty: bool,
     write_pending: bool,
-    key: u64,
-    data_lba: u64,
+    lba: u64,
+    dirty_sectors: u8,
+    inode_key: u64,
     dirty_since_tick: u64,
     data: [u8; 4096],
     lru_prev: Option<u16>,
@@ -160,8 +153,9 @@ const EMPTY_SLOT: CacheSlot = CacheSlot {
     valid: false,
     dirty: false,
     write_pending: false,
-    key: 0,
-    data_lba: 0,
+    lba: 0,
+    dirty_sectors: 0,
+    inode_key: 0,
     dirty_since_tick: 0,
     data: [0u8; 4096],
     lru_prev: None,
@@ -184,11 +178,11 @@ pub struct CacheStats {
     pub hash_table_capacity: usize,
 }
 
-// ── Page cache ──────────────────────────────────────────────────────
+// ── Unified page cache ─────────────────────────────────────────────
 
 pub struct PageCache {
-    slots: [CacheSlot; DEFAULT_CACHE_SIZE],
-    hash: HashTable<DEFAULT_CACHE_SIZE>,
+    slots: [CacheSlot; CACHE_SIZE],
+    hash: HashTable<CACHE_SIZE>,
     lru_head: Option<u16>,
     lru_tail: Option<u16>,
     readahead: [ReadaheadState; 64],
@@ -205,7 +199,7 @@ pub struct PageCache {
 impl PageCache {
     pub const fn new() -> Self {
         PageCache {
-            slots: [EMPTY_SLOT; DEFAULT_CACHE_SIZE],
+            slots: [EMPTY_SLOT; CACHE_SIZE],
             hash: HashTable::new(),
             lru_head: None,
             lru_tail: None,
@@ -221,7 +215,48 @@ impl PageCache {
         }
     }
 
-    // ── Core API (backward-compatible) ───────────────────────────
+    // ── Sector-level API (replaces BlockCache) ─────────────────────
+
+    pub fn get_sector(&mut self, lba: u32, dev: &mut dyn BlockDevice) -> Result<&[u8], ()> {
+        let page_lba = (lba as u64) & !7;
+        let offset = ((lba as u64) & 7) as usize * 512;
+        let data = self.load_page(page_lba, dev)?;
+        Ok(&data[offset..offset + 512])
+    }
+
+    pub fn get_sector_mut(&mut self, lba: u32, dev: &mut dyn BlockDevice) -> Result<&mut [u8], ()> {
+        let page_lba = (lba as u64) & !7;
+        let sector_bit = 1u8 << ((lba as u64) & 7);
+        let offset = ((lba as u64) & 7) as usize * 512;
+
+        let slot_id = self.get_or_load_slot(page_lba, 0, dev)?;
+        let slot = &mut self.slots[slot_id as usize];
+        slot.dirty_sectors |= sector_bit;
+        if !slot.dirty {
+            slot.dirty = true;
+            self.dirty_count += 1;
+            slot.dirty_since_tick = self.counter;
+        }
+        Ok(&mut slot.data[offset..offset + 512])
+    }
+
+    pub fn mark_dirty_sector(&mut self, lba: u32) {
+        let page_lba = (lba as u64) & !7;
+        let sector_bit = 1u8 << ((lba as u64) & 7);
+        if let Some(slot_id) = self.hash.get(page_lba) {
+            let slot = &mut self.slots[slot_id as usize];
+            if slot.valid {
+                slot.dirty_sectors |= sector_bit;
+                if !slot.dirty {
+                    slot.dirty = true;
+                    self.dirty_count += 1;
+                    slot.dirty_since_tick = self.counter;
+                }
+            }
+        }
+    }
+
+    // ── Page-level API (file data) ─────────────────────────────────
 
     pub fn read_page(
         &mut self,
@@ -232,22 +267,26 @@ impl PageCache {
         dev: &mut dyn BlockDevice,
     ) -> Result<&[u8; 4096], ()> {
         self.counter = self.counter.wrapping_add(1);
-        let key = make_key(drive_id, inode, block_num);
-
-        if let Some(slot_id) = self.hash.get(key) {
-            if self.slots[slot_id as usize].valid {
+        let key = data_lba;
+        let slot_id = if let Some(id) = self.hash.get(key) {
+            if self.slots[id as usize].valid {
                 self.hits += 1;
-                self.move_to_head(slot_id);
+                self.move_to_head(id);
                 self.update_readahead(inode, block_num);
-                return Ok(&self.slots[slot_id as usize].data);
+                id
+            } else {
+                self.misses += 1;
+                let id = self.evict_lru(dev)?;
+                self.populate_slot(id, key, make_inode_key(drive_id, inode, block_num), dev)?;
+                id
             }
-        }
-
-        self.misses += 1;
-        let slot_id = self.evict_lru();
-        self.populate_slot(slot_id, drive_id, inode, block_num, data_lba, dev)?;
+        } else {
+            self.misses += 1;
+            let id = self.evict_lru(dev)?;
+            self.populate_slot(id, key, make_inode_key(drive_id, inode, block_num), dev)?;
+            id
+        };
         self.update_readahead(inode, block_num);
-
         Ok(&self.slots[slot_id as usize].data)
     }
 
@@ -260,42 +299,39 @@ impl PageCache {
         dev: &mut dyn BlockDevice,
     ) -> Result<&mut [u8; 4096], ()> {
         self.counter = self.counter.wrapping_add(1);
-        let key = make_key(drive_id, inode, block_num);
-
+        let key = data_lba;
         let slot_id = if let Some(id) = self.hash.get(key) {
             if self.slots[id as usize].valid {
                 self.hits += 1;
                 self.move_to_head(id);
-                self.update_readahead(inode, block_num);
                 id
             } else {
                 self.misses += 1;
-                let id = self.evict_lru();
-                self.populate_slot(id, drive_id, inode, block_num, data_lba, dev)?;
+                let id = self.evict_lru(dev)?;
+                self.populate_slot(id, key, make_inode_key(drive_id, inode, block_num), dev)?;
                 id
             }
         } else {
             self.misses += 1;
-            let id = self.evict_lru();
-            self.populate_slot(id, drive_id, inode, block_num, data_lba, dev)?;
+            let id = self.evict_lru(dev)?;
+            self.populate_slot(id, key, make_inode_key(drive_id, inode, block_num), dev)?;
             id
         };
-
-        self.slots[slot_id as usize].dirty = true;
-        if self.slots[slot_id as usize].dirty_since_tick == 0 {
-            self.slots[slot_id as usize].dirty_since_tick = self.counter;
-        }
-        if !self.slots[slot_id as usize].dirty {
-            self.dirty_count += 1;
-        }
         self.update_readahead(inode, block_num);
-
-        Ok(&mut self.slots[slot_id as usize].data)
+        let slot = &mut self.slots[slot_id as usize];
+        slot.dirty_sectors = 0xFF;
+        if !slot.dirty {
+            slot.dirty = true;
+            self.dirty_count += 1;
+            slot.dirty_since_tick = self.counter;
+        }
+        Ok(&mut slot.data)
     }
 
-    pub fn peek(&self, drive_id: u8, inode: u32, block_num: u32) -> Option<&[u8; 4096]> {
-        let key = make_key(drive_id, inode, block_num);
-        if let Some(slot_id) = self.hash.get(key) {
+    // ── Cache-only operations (no disk I/O) ────────────────────────
+
+    pub fn peek(&self, lba: u64) -> Option<&[u8; 4096]> {
+        if let Some(slot_id) = self.hash.get(lba) {
             let slot = &self.slots[slot_id as usize];
             if slot.valid {
                 return Some(&slot.data);
@@ -304,25 +340,51 @@ impl PageCache {
         None
     }
 
+    /// Legacy peek by inode key — scans linearly if needed.
+    pub fn peek_inode(&self, drive_id: u8, inode: u32, block_num: u32) -> Option<&[u8; 4096]> {
+        let target_key = make_inode_key(drive_id, inode, block_num);
+        for slot in &self.slots {
+            if slot.valid && slot.inode_key == target_key {
+                return Some(&slot.data);
+            }
+        }
+        None
+    }
+
+    /// Mark a page dirty (by inode key) — only works if page is in cache.
     pub fn mark_dirty(&mut self, drive_id: u8, inode: u32, block_num: u32) {
-        let key = make_key(drive_id, inode, block_num);
-        if let Some(slot_id) = self.hash.get(key) {
-            let slot = &mut self.slots[slot_id as usize];
-            if slot.valid && !slot.dirty {
-                slot.dirty = true;
-                slot.dirty_since_tick = self.counter;
-                self.dirty_count += 1;
+        let target_key = make_inode_key(drive_id, inode, block_num);
+        for slot in &mut self.slots {
+            if slot.valid && slot.inode_key == target_key {
+                slot.dirty_sectors = 0xFF;
+                if !slot.dirty {
+                    slot.dirty = true;
+                    slot.dirty_since_tick = self.counter;
+                    self.dirty_count += 1;
+                }
+                return;
             }
         }
     }
 
+    // ── Flush ──────────────────────────────────────────────────────
+
     pub fn flush(&mut self, dev: &mut dyn BlockDevice) -> Result<(), ()> {
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
-                let lba = self.slots[i].data_lba;
-                let tmp = self.slots[i].data;
-                dev.write_blocks(lba, 8, &tmp)?;
+                let lba = self.slots[i].lba;
+                let dirty = self.slots[i].dirty_sectors;
+                let data = &self.slots[i].data;
+                for s in 0..8u8 {
+                    if (dirty >> s) & 1 != 0 {
+                        let offset = (s as usize) * 512;
+                        let mut sector = [0u8; 512];
+                        sector.copy_from_slice(&data[offset..offset + 512]);
+                        dev.write_sector((lba + s as u64) as u64, &sector)?;
+                    }
+                }
                 self.slots[i].dirty = false;
+                self.slots[i].dirty_sectors = 0;
                 self.dirty_count = self.dirty_count.saturating_sub(1);
                 self.dirty_flushes += 1;
             }
@@ -331,16 +393,26 @@ impl PageCache {
     }
 
     pub fn flush_inode(&mut self, drive_id: u8, inode: u32, dev: &mut dyn BlockDevice) -> Result<(), ()> {
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
-                let k = self.slots[i].key;
+                let k = self.slots[i].inode_key;
+                if k == 0 { continue; }
                 let slot_drive = (k >> 56) as u8;
                 let slot_inode = ((k >> 32) as u32) & 0x00FF_FFFF;
                 if slot_drive == drive_id && slot_inode == inode {
-                    let lba = self.slots[i].data_lba;
-                    let tmp = self.slots[i].data;
-                    dev.write_blocks(lba, 8, &tmp)?;
+                    let lba = self.slots[i].lba;
+                    let dirty = self.slots[i].dirty_sectors;
+                    let data = &self.slots[i].data;
+                    for s in 0..8u8 {
+                        if (dirty >> s) & 1 != 0 {
+                            let offset = (s as usize) * 512;
+                            let mut sector = [0u8; 512];
+                            sector.copy_from_slice(&data[offset..offset + 512]);
+                            dev.write_sector((lba + s as u64) as u64, &sector)?;
+                        }
+                    }
                     self.slots[i].dirty = false;
+                    self.slots[i].dirty_sectors = 0;
                     self.dirty_count = self.dirty_count.saturating_sub(1);
                     self.dirty_flushes += 1;
                 }
@@ -349,23 +421,29 @@ impl PageCache {
         Ok(())
     }
 
+    // ── Invalidation ───────────────────────────────────────────────
+
     pub fn invalidate_inode(&mut self, drive_id: u8, inode: u32) {
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if self.slots[i].valid {
-                let k = self.slots[i].key;
+                let k = self.slots[i].inode_key;
+                if k == 0 { continue; }
                 let slot_drive = (k >> 56) as u8;
                 let slot_inode = ((k >> 32) as u32) & 0x00FF_FFFF;
                 if slot_drive == drive_id && slot_inode == inode {
                     if self.slots[i].dirty {
                         self.dirty_count = self.dirty_count.saturating_sub(1);
                     }
+                    let lba = self.slots[i].lba;
                     self.unlink_lru(i as u16);
-                    self.hash.remove(k);
+                    self.hash.remove(lba);
                     self.slots[i] = EMPTY_SLOT;
                 }
             }
         }
     }
+
+    // ── Stats ──────────────────────────────────────────────────────
 
     pub fn entry_count(&self) -> usize {
         self.hash.len
@@ -375,13 +453,11 @@ impl PageCache {
         self.dirty_count as usize
     }
 
-    // ── Extended API ─────────────────────────────────────────────
-
     pub fn stats(&self) -> CacheStats {
         let mut valid = 0;
         let mut dirty = 0;
         let mut pending = 0;
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if self.slots[i].valid {
                 valid += 1;
                 if self.slots[i].dirty {
@@ -402,7 +478,7 @@ impl PageCache {
             dirty_count: dirty,
             pending_writes: pending,
             hash_table_len: self.hash.len,
-            hash_table_capacity: DEFAULT_CACHE_SIZE,
+            hash_table_capacity: CACHE_SIZE,
         }
     }
 
@@ -417,7 +493,7 @@ impl PageCache {
 
     pub fn pending_write_count(&self) -> usize {
         let mut count = 0;
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if self.slots[i].write_pending {
                 count += 1;
             }
@@ -426,7 +502,7 @@ impl PageCache {
     }
 
     pub fn capacity(&self) -> usize {
-        DEFAULT_CACHE_SIZE
+        CACHE_SIZE
     }
 
     pub fn max_capacity(&self) -> usize {
@@ -437,19 +513,31 @@ impl PageCache {
         MIN_CACHE_SIZE
     }
 
-    /// Flush dirty pages as a batch (async-friendly, returns count).
-    /// Skips pages with in-flight writes. Marks flushed pages as write_pending.
     pub fn flush_batch(&mut self, dev: &mut dyn BlockDevice, max_flush: usize) -> usize {
         let mut flushed = 0;
-        for i in 0..DEFAULT_CACHE_SIZE {
+        for i in 0..CACHE_SIZE {
             if flushed >= max_flush {
                 break;
             }
             if self.slots[i].valid && self.slots[i].dirty && !self.slots[i].write_pending {
-                let lba = self.slots[i].data_lba;
-                let tmp = self.slots[i].data;
-                if dev.write_blocks(lba, 8, &tmp).is_ok() {
+                let lba = self.slots[i].lba;
+                let dirty = self.slots[i].dirty_sectors;
+                let data = self.slots[i].data;
+                let mut ok = true;
+                for s in 0..8u8 {
+                    if (dirty >> s) & 1 != 0 {
+                        let offset = (s as usize) * 512;
+                        let mut sector = [0u8; 512];
+                        sector.copy_from_slice(&data[offset..offset + 512]);
+                        if dev.write_sector((lba + s as u64) as u64, &sector).is_err() {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if ok {
                     self.slots[i].dirty = false;
+                    self.slots[i].dirty_sectors = 0;
                     self.slots[i].write_pending = false;
                     self.dirty_count = self.dirty_count.saturating_sub(1);
                     self.dirty_flushes += 1;
@@ -460,13 +548,11 @@ impl PageCache {
         flushed
     }
 
-    /// Check if dirty pages exceed the flush threshold (10% of capacity).
     pub fn needs_async_flush(&self) -> bool {
-        let threshold = (DEFAULT_CACHE_SIZE as f32 * 0.10) as u16;
+        let threshold = (CACHE_SIZE as f32 * 0.10) as u16;
         self.dirty_count >= threshold
     }
 
-    /// Explicit readahead: prefetch N contiguous blocks starting from block_num.
     pub fn prefetch(
         &mut self,
         drive_id: u8,
@@ -475,96 +561,108 @@ impl PageCache {
         count: u32,
         dev: &mut dyn BlockDevice,
     ) {
-        for i in 0..count {
-            let block = start_block + i;
-            let key = make_key(drive_id, inode, block);
-            if self.hash.contains(key) {
-                continue;
-            }
-            let lba = 200 + (block as u64 * 8);
-            let slot_id = self.evict_lru();
-            if self.populate_slot(slot_id, drive_id, inode, block, lba, dev).is_ok() {
-                self.slots[slot_id as usize].dirty = false;
-                self.slots[slot_id as usize].dirty_since_tick = 0;
-            }
-        }
+        let _ = (drive_id, inode, start_block, count, dev);
     }
 
     // ── Internal: slot management ────────────────────────────────
 
-    fn evict_lru(&mut self) -> u16 {
-        // Prefer free slots — only evict when cache is actually full
-        for i in 0..DEFAULT_CACHE_SIZE {
+    fn load_page(&mut self, lba: u64, dev: &mut dyn BlockDevice) -> Result<&[u8; 4096], ()> {
+        self.counter = self.counter.wrapping_add(1);
+        if let Some(slot_id) = self.hash.get(lba) {
+            if self.slots[slot_id as usize].valid {
+                self.hits += 1;
+                self.move_to_head(slot_id);
+                return Ok(&self.slots[slot_id as usize].data);
+            }
+        }
+        self.misses += 1;
+        let slot_id = self.evict_lru(dev)?;
+        self.populate_slot(slot_id, lba, 0, dev)?;
+        Ok(&self.slots[slot_id as usize].data)
+    }
+
+    fn get_or_load_slot(&mut self, lba: u64, inode_key: u64, dev: &mut dyn BlockDevice) -> Result<u16, ()> {
+        self.counter = self.counter.wrapping_add(1);
+        if let Some(slot_id) = self.hash.get(lba) {
+            if self.slots[slot_id as usize].valid {
+                self.hits += 1;
+                self.move_to_head(slot_id);
+                return Ok(slot_id);
+            }
+        }
+        self.misses += 1;
+        let slot_id = self.evict_lru(dev)?;
+        self.populate_slot(slot_id, lba, inode_key, dev)?;
+        Ok(slot_id)
+    }
+
+    fn evict_lru(&mut self, dev: &mut dyn BlockDevice) -> Result<u16, ()> {
+        for i in 0..CACHE_SIZE {
             if !self.slots[i].valid {
-                return i as u16;
+                return Ok(i as u16);
             }
         }
         if let Some(tail) = self.lru_tail {
             let slot = &self.slots[tail as usize];
             if slot.valid && slot.dirty && !slot.write_pending {
-                let lba = slot.data_lba;
+                let lba = slot.lba;
+                let dirty = slot.dirty_sectors;
                 let tmp = slot.data;
                 let _ = slot;
-                if let Some(mut bdevs) = crate::globals::BLOCK_DEVICES.try_lock() {
-                    if let Some(dev) = bdevs.get(0) {
-                        let _ = dev.write_blocks(lba, 8, &tmp);
+                for s in 0..8u8 {
+                    if (dirty >> s) & 1 != 0 {
+                        let offset = (s as usize) * 512;
+                        let mut sector = [0u8; 512];
+                        sector.copy_from_slice(&tmp[offset..offset + 512]);
+                        let _ = dev.write_sector((lba + s as u64) as u64, &sector);
                     }
                 }
                 self.dirty_count = self.dirty_count.saturating_sub(1);
                 self.evictions += 1;
             }
-            let key = self.slots[tail as usize].key;
+            let lba = self.slots[tail as usize].lba;
             self.unlink_lru(tail);
-            self.hash.remove(key);
+            self.hash.remove(lba);
             self.slots[tail as usize] = EMPTY_SLOT;
-            tail
+            Ok(tail)
         } else {
-            for i in 0..DEFAULT_CACHE_SIZE {
+            for i in 0..CACHE_SIZE {
                 if !self.slots[i].valid {
-                    return i as u16;
+                    return Ok(i as u16);
                 }
             }
-            0
+            Ok(0)
         }
     }
 
     fn populate_slot(
         &mut self,
         slot_id: u16,
-        drive_id: u8,
-        inode: u32,
-        block_num: u32,
-        data_lba: u64,
+        lba: u64,
+        inode_key: u64,
         dev: &mut dyn BlockDevice,
     ) -> Result<(), ()> {
         let mut tmp = [0u8; 4096];
-        dev.read_blocks(data_lba, 8, &mut tmp)?;
-
-        let key = make_key(drive_id, inode, block_num);
+        for s in 0..8u64 {
+            let offset = (s as usize) * 512;
+            let sector = dev.read_sector((lba + s) as u64)?;
+            tmp[offset..offset + 512].copy_from_slice(&sector);
+        }
         self.slots[slot_id as usize] = CacheSlot {
             valid: true,
             dirty: false,
             write_pending: false,
-            key,
-            data_lba,
+            lba,
+            dirty_sectors: 0,
+            inode_key,
             dirty_since_tick: 0,
             data: tmp,
             lru_prev: None,
             lru_next: None,
         };
-        self.hash.insert(key, slot_id);
+        self.hash.insert(lba, slot_id);
         self.move_to_head(slot_id);
         Ok(())
-    }
-
-    fn find_slot(&self, drive_id: u8, inode: u32, block_num: u32) -> Option<u16> {
-        let key = make_key(drive_id, inode, block_num);
-        if let Some(slot_id) = self.hash.get(key) {
-            if self.slots[slot_id as usize].valid {
-                return Some(slot_id);
-            }
-        }
-        None
     }
 
     // ── Internal: LRU doubly-linked list ─────────────────────────
@@ -609,6 +707,7 @@ impl PageCache {
 
     fn update_readahead(&mut self, inode: u32, block_num: u32) {
         let idx = self.find_readahead_slot(inode);
+        if idx >= self.readahead.len() { return; }
         let state = &mut self.readahead[idx];
 
         if state.last_block < 0 {
@@ -641,20 +740,7 @@ impl PageCache {
         state.last_block = block_num as i64;
     }
 
-    fn find_readahead_slot(&mut self, inode: u32) -> usize {
-        if self.readahead_count > 0 {
-            let _ = inode;
-            return 0;
-        }
-        if self.readahead_count < self.readahead.len() {
-            let idx = self.readahead_count;
-            self.readahead_count += 1;
-            idx
-        } else {
-            0
-        }
+    fn find_readahead_slot(&self, _inode: u32) -> usize {
+        0
     }
 }
-
-// Tests moved to src/testing.rs (register_page_cache_tests)
-// for compatibility with the kernel's custom test framework.

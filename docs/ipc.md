@@ -4,13 +4,13 @@
 
 ### Architecture
 
-16 static pipe buffers of 4 KB each, protected by `spin::Mutex<[Option<PipeBuffer>; 16]>`. Each `PipeBuffer` contains a ring buffer (`[u8; 4096]`), read/write cursors, and a reference count.
+Dynamic pipe storage using `Vec<Option<Mutex<PipeInner>>>` (since v0.41). Each `PipeInner` contains a boxed ring buffer (`Box<[u8; 4096]>`), read/write cursors, and reference counts.
 
 Reference-counted: auto-freed when all reader/writer file descriptors are closed. `pipe_close()` decrements refcount; the buffer is freed when it reaches 0.
 
 ### System Calls
 
-- **sys_pipe** (RAX 5): Allocates the next free pipe buffer, creates two `HandleEntry::PipeReader/PipeWriter` entries, returns `[read_fd, write_fd]`. Returns `-EMFILE` if all 16 pipes in use.
+- **sys_pipe** (RAX 5, **REMOVED**): Was pipe creation. Replaced by `ob_create` + pipe fd.
 - **sys_close** (RAX 13) on a pipe fd: Removes the handle entry, decrements refcount. Calls `pipe_free()` if refcount reaches 0.
 - **sys_dup2** (RAX 6): Copies an fd with refcount increment. Both old and new fd share the same pipe buffer.
 
@@ -178,13 +178,14 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 | Field | Type | Description |
 |-------|------|-------------|
 | `event_id` | u64 | Unique event ID |
-| `event_type` | u16 | Event type constant |
-| `source` | u16 | Event source |
+| `event_type` | u32 | Event type constant |
+| `source` | u32 | Event source |
 | `timestamp` | u64 | TSC timestamp |
 | `device_id` | u32 | Device identifier |
+| `driver_target` | u32 | Targeted driver ID |
 | `data0` | u64 | Payload word 0 |
 | `data1` | u64 | Payload word 1 |
-| `flags` | u16 | Event flags |
+| `flags` | u32 | Event flags |
 
 ### Event Type Constants
 
@@ -200,9 +201,14 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 | `POLICY_VIOLATION` | 7 | Security policy check failed |
 | `FS_MOUNTED` | 8 | Filesystem mounted |
 | `KEYB_LAYOUT` | 9 | Keyboard layout changed |
-| `EVENT_SHUTDOWN` | 10 | System shutdown in progress |
-| `EVENT_DRIVER_UNLOAD` | 11 | Driver unload request |
-| `EVENT_DRIVER_UNLOAD_ACK` | 12 | Driver unload acknowledgment |
+| `EVENT_RTC_READ` | 10 | RTC read request |
+| `EVENT_RTC_DATA` | 11 | RTC data ready |
+| `EVENT_SHUTDOWN` | 12 | System shutdown in progress |
+| `EVENT_DRIVER_UNLOAD` | 13 | Driver unload request |
+| `EVENT_DRIVER_UNLOAD_ACK` | 14 | Driver unload acknowledgment |
+| `EVENT_NMI_WATCHDOG` | 15 | NMI watchdog timeout |
+| `EVENT_MOUSE_INPUT` | 16 | PS/2 mouse raw bytes |
+| `EVENT_NETWORK_PACKET` | 17 | NIC received a packet |
 | `USER` | 0x1000+ | User-defined event types |
 
 ### Event Sources

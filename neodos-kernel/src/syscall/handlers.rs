@@ -1601,11 +1601,7 @@ pub(super) fn handler_fsck(regs: super::Registers) -> u64 {
     });
 
     let res = crate::hal::without_interrupts(|| {
-        let mut cache_lock = crate::globals::BLOCK_CACHE.lock();
-        let cache = match cache_lock.as_mut() {
-            Some(c) => c,
-            None => return err_to_u64(SyscallError::Io),
-        };
+        let mut cache_lock = crate::globals::PAGE_CACHE.lock();
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = match bdevs_lock.get(0) {
             Some(d) => d,
@@ -1613,7 +1609,7 @@ pub(super) fn handler_fsck(regs: super::Registers) -> u64 {
         };
         let partition_base = crate::globals::PRIMARY_PARTITION_BASE.load(Ordering::Relaxed) as u32;
 
-        let stats = crate::fs::fsck::run(cache, dev, mode, partition_base);
+        let stats = crate::fs::fsck::run(&mut *cache_lock, dev, mode, partition_base);
 
         let raw = unsafe { &mut *result.get() };
         raw.total_inodes = stats.total_inodes;

@@ -183,7 +183,7 @@ Supports 24 info classes:
 
 ### ob_set_info (RAX=63)
 
-Supports 27 set classes:
+Supports 28 set classes:
 
 | Class | Name | Description |
 |-------|------|-------------|
@@ -214,6 +214,7 @@ Supports 27 set classes:
 | 24 | RegistryDeleteKey | Delete registry key |
 | 25 | RegistrySetValue | Set registry value |
 | 26 | RegistryDeleteValue | Delete registry value |
+| 27 | SetNicIp | Set NIC IP address and subnet mask |
 
 ### ob_enum (RAX=64)
 
