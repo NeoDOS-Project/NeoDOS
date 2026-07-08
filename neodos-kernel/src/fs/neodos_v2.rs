@@ -44,12 +44,14 @@ pub struct NeoDosFsV2 {
 }
 
 impl BTreeIO for NeoDosFsV2 {
-    fn read_node(&self, lba: u64) -> Option<BTreeNode> {
+    fn read_node(&self, block_lba: u64) -> Option<BTreeNode> {
+        let sector_lba = block_lba * 8;
+        let abs_sector = self.io_stack.translate_lba(sector_lba);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id)?;
         let mut buf = [0u8; NODE_SIZE];
         for i in 0..8usize {
-            let s = dev.read_sector(lba + i as u64).ok()?;
+            let s = dev.read_sector(abs_sector + i as u64).ok()?;
             buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
         }
         drop(bdevs);
@@ -57,8 +59,10 @@ impl BTreeIO for NeoDosFsV2 {
     }
 
     fn write_node(&mut self, node: &BTreeNode) -> u64 {
-        let lba = self.freelist.alloc_blocks(1).unwrap_or(0);
-        if lba == 0 { return 0; }
+        let block_lba = self.freelist.alloc_blocks(1).unwrap_or(0);
+        if block_lba == 0 { return 0; }
+        let sector_lba = block_lba * 8;
+        let abs_sector = self.io_stack.translate_lba(sector_lba);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = match bdevs.get(self.io_stack.device_id) { Some(d) => d, None => return 0 };
         let mut buf = [0u8; NODE_SIZE];
@@ -66,9 +70,9 @@ impl BTreeIO for NeoDosFsV2 {
         for i in 0..8usize {
             let mut sec = [0u8; 512];
             sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
-            if dev.write_sector(lba + i as u64, &sec).is_err() { return 0; }
+            if dev.write_sector(abs_sector + i as u64, &sec).is_err() { return 0; }
         }
-        lba
+        block_lba
     }
 }
 
@@ -78,10 +82,13 @@ impl NeoDosFsV2 {
         let sb: SuperblockNE2 = unsafe { core::mem::transmute(raw) };
         if sb.magic != SUPERBLOCK_MAGIC { return Err(()); }
 
+        let mut inode_cache = Vec::new();
+        let root_entry = DirEntryV2::new_dir("\\");
+        inode_cache.push(Some((sb.root_btree_lba, root_entry)));
         Ok(NeoDosFsV2 {
             sb, freelist: FreeList::with_range(1, sb.num_blocks - 1),
             io_stack,
-            inode_cache: Vec::new(), next_inode: 1,
+            inode_cache, next_inode: 1,
         })
     }
 
@@ -137,11 +144,20 @@ impl FileSystem for NeoDosFsV2 {
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
-        let entry = dir_lookup(self, btree_root, name).ok_or(VfsError::NotFound)?;
+        let cached = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref());
+        if cached.is_none() {
+            crate::serial_println!("[NE2] lookup({}, '{}'): inode NOT CACHED!", dir_inode, name);
+            return Err(VfsError::NotFound);
+        }
+        let btree_root = cached.unwrap().0;
+        let entry = dir_lookup(self, btree_root, name).ok_or_else(|| {
+            crate::serial_println!("[NE2] lookup({}, '{}'): dir_lookup FAILED root_lba={}", dir_inode, name, btree_root);
+            VfsError::NotFound
+        })?;
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         let mode = entry.mode;
-        let inum = self.cache(btree_root, entry);
+        let child_root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { btree_root };
+        let inum = self.cache(child_root, entry);
         Ok(VfsNode { inode: inum, mode, size })
     }
 

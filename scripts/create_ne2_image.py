@@ -132,6 +132,8 @@ def create_image(output_path, num_blocks, label, file_data):
                                       extent_lba=extent_lba, extent_count=blocks)
                 next_lba += blocks
             node_entries.append((name.encode('utf-8'), entry))
+        # Sort by key for binary search
+        node_entries.sort(key=lambda x: x[0])
         dir_nodes[dirpath] = node_entries
     
     total_blocks = max(next_lba, num_blocks)
