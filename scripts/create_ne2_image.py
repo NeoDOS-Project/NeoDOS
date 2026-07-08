@@ -206,13 +206,16 @@ def collect_files():
     # README
     readme = b"Welcome to NeoDOS v2!\r\n"
     files.append(("/README.TXT", readme, MODE_FILE | PERM_R | PERM_W))
+
+    # Temp directory marker (needed by tests)
+    files.append(("/Temp/.empty", b"", MODE_FILE | PERM_R | PERM_W))
     
     # NXE binaries — split into \Programs\ (essential) and \System\Tools\ (extra)
     userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
     programs_nxe = ['neoshell', 'neoinit', 'cmdtest', 'cd', 'corehelp',
                     'datetime', 'ver', 'neomem', 'vol', 'echo', 'label',
                     'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
-                    'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb']
+                    'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir']
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
                  'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'ping', 'cpuinfo']
     for name in programs_nxe + tools_nxe:

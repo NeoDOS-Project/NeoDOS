@@ -85,8 +85,11 @@ impl NeoDosFsV2 {
         let mut inode_cache = Vec::new();
         let root_entry = DirEntryV2::new_dir("\\");
         inode_cache.push(Some((sb.root_btree_lba, root_entry)));
+        // Freelist: num_used tells how many blocks are allocated (0 to num_used-1)
+        let first_free = sb.num_used;
+        let free_count = sb.num_blocks.saturating_sub(first_free);
         Ok(NeoDosFsV2 {
-            sb, freelist: FreeList::with_range(1, sb.num_blocks - 1),
+            sb, freelist: FreeList::with_range(first_free, free_count),
             io_stack,
             inode_cache, next_inode: 1,
         })
@@ -118,10 +121,14 @@ impl NeoDosFsV2 {
 impl FileSystem for NeoDosFsV2 {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
         let (_, entry) = self.inode_cache.get(inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
+        let abs_lba = self.io_stack.translate_lba(entry.extent_lba * 8);
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
         let mut pc = crate::globals::PAGE_CACHE.lock();
-        file_read(entry, offset, buf, &mut *pc, dev).map_err(|_| VfsError::IOError)
+        // Translate partition-relative block LBA to absolute sector LBA for page cache
+        let mut adj_entry = entry.clone();
+        adj_entry.extent_lba = abs_lba;
+        file_read(&adj_entry, offset, buf, &mut *pc, dev).map_err(|_| VfsError::IOError)
     }
 
     fn write(&mut self, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError> {
@@ -146,14 +153,26 @@ impl FileSystem for NeoDosFsV2 {
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
         let cached = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref());
         if cached.is_none() {
-            crate::serial_println!("[NE2] lookup({}, '{}'): inode NOT CACHED!", dir_inode, name);
             return Err(VfsError::NotFound);
         }
         let btree_root = cached.unwrap().0;
-        let entry = dir_lookup(self, btree_root, name).ok_or_else(|| {
-            crate::serial_println!("[NE2] lookup({}, '{}'): dir_lookup FAILED root_lba={}", dir_inode, name, btree_root);
-            VfsError::NotFound
-        })?;
+        // Debug: dump root on first lookup failure
+        let entry = match dir_lookup(self, btree_root, name) {
+            Some(e) => e,
+            None => {
+                if let Some(n) = self.read_node(btree_root) {
+                    crate::serial_println!("[NE2] FAIL lookup({},'{}') root_lba={} node={:?}[{}] keys:",
+                        dir_inode, name, btree_root, n.node_type, n.entries.len());
+                    for (i, e) in n.entries.iter().enumerate() {
+                        let k = core::str::from_utf8(&e.key).unwrap_or("<?>");
+                        crate::serial_println!("  [{}] \"{}\"", i, k);
+                    }
+                } else {
+                    crate::serial_println!("[NE2] FAIL lookup({},'{}') CAN'T READ root_lba={}", dir_inode, name, btree_root);
+                }
+                return Err(VfsError::NotFound);
+            }
+        };
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         let mode = entry.mode;
         let child_root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { btree_root };
