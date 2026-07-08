@@ -91,7 +91,7 @@ def create_image(output_path, num_blocks, label, file_data):
     # Organize files into directory tree
     dir_tree = {ROOT: []}  # ensure root exists
     for path, content, mode in file_data:
-        parts = path.strip('\\').split('\\')
+        parts = path.strip('/').split('/')
         filename = parts[-1]
         parent = ROOT + '/'.join(parts[:-1]) if len(parts) > 1 else ROOT
         if parent not in dir_tree: dir_tree[parent] = []
@@ -110,27 +110,17 @@ def create_image(output_path, num_blocks, label, file_data):
     dir_nodes = {}
     dir_lba_map = {}
     
-    # First pass: allocate LBAs for dir B-tree nodes and file data
-    # Root dir is at '\\'
-    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count('\\')):
+    # First pass: allocate LBAs for dir B-tree nodes
+    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count(ROOT)):
         dir_lba_map[dirpath] = next_lba
-        next_lba += 1  # 1 block per B-tree node
-    
-    # Second pass: allocate file data blocks
-    for dirpath, entries in dir_tree.items():
-        for name, content, mode, is_dir in entries:
-            if is_dir:
-                continue
-            if len(content) > INLINE_MAX:
-                # Will be assigned in order; track separately
-                pass
+        next_lba += 1
     
     # Build B-tree entries per directory
-    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count('\\')):
+    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count(ROOT)):
         node_entries = []
         for name, content, mode, is_dir in dir_tree[dirpath]:
             if is_dir:
-                subdir_path = dirpath + ROOT + name if dirpath != ROOT else '\\' + name
+                subdir_path = dirpath + ROOT + name if dirpath != ROOT else ROOT + name
                 subdir_lba = dir_lba_map.get(subdir_path, 0)
                 entry = make_direntry(name, mode, 0, extent_lba=subdir_lba, extent_count=0)
             elif len(content) <= INLINE_MAX:
@@ -209,11 +199,11 @@ def collect_files():
         p = os.path.join(base_path, cfg)
         if os.path.exists(p):
             with open(p, 'rb') as f:
-                files.append((f"\\System\\{cfg}", f.read(), MODE_FILE | PERM_R))
+                files.append(('/System/' + cfg, f.read(), MODE_FILE | PERM_R))
     
     # README
     readme = b"Welcome to NeoDOS v2!\r\n"
-    files.append(("\\README.TXT", readme, MODE_FILE | PERM_R | PERM_W))
+    files.append(("/README.TXT", readme, MODE_FILE | PERM_R | PERM_W))
     
     # NXE binaries — split into \Programs\ (essential) and \System\Tools\ (extra)
     userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
@@ -224,18 +214,18 @@ def collect_files():
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
                  'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'ping', 'cpuinfo']
     for name in programs_nxe + tools_nxe:
-        subdir = 'Programs' if name in programs_nxe else 'System\\Tools'
+        subdir = 'Programs' if name in programs_nxe else 'System/Tools'
         p = os.path.join(userbin_dir, f'{name}.nxe')
         if os.path.exists(p):
             with open(p, 'rb') as f:
                 data = f.read()
             perms = default_perms(f'{name}.NXE')
-            files.append((f'\\{subdir}\\{name}.nxe', data, MODE_FILE | perms))
-            print(f"  [+] {name}.nxe -> \\{subdir}\\ ({len(data)} bytes)")
+            files.append(('/' + subdir + '/' + name + '.nxe', data, MODE_FILE | perms))
+            print(f"  [+] {name}.nxe (in {subdir}) ({len(data)} bytes)")
         else:
             print(f"  [!] {name}.nxe not found")
-    
-    # NXL libraries (with renames: libneodos→fs, libmath→math, console→console, net→net)
+
+    # NXL libraries
     nxl_map = [
         ('libneodos.nxl', 'fs.nxl'),
         ('libmath.nxl', 'math.nxl'),
@@ -245,27 +235,26 @@ def collect_files():
     for src_name, dst_name in nxl_map:
         nxl_path = os.path.join(os.path.dirname(__file__), '..', src_name)
         if not os.path.exists(nxl_path):
-            # Try build output directory
             libname = src_name.replace('lib', '').replace('.nxl', '')
             nxl_path = os.path.join(os.path.dirname(__file__), '..', f'lib{libname}-nxl',
                                     'target', 'x86_64-unknown-none', 'release', src_name)
         if os.path.exists(nxl_path):
             with open(nxl_path, 'rb') as f:
                 data = f.read()
-            files.append((f'\\System\\Libraries\\{dst_name}', data, MODE_FILE | PERM_R | PERM_X))
+            files.append(('/System/Libraries/' + dst_name, data, MODE_FILE | PERM_R | PERM_X))
             print(f"  [+] {src_name} -> {dst_name} ({len(data)} bytes)")
         else:
-            print(f"  [!] {src_name} not found (will use empty)")
-            files.append((f'\\System\\Libraries\\{dst_name}', b'', MODE_FILE | PERM_R))
-    
+            print(f"  [!] {src_name} not found")
+            files.append(('/System/Libraries/' + dst_name, b'', MODE_FILE | PERM_R))
+
     # NEM drivers
     nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
     for nem_name in ['ps2kbd', 'ps2mouse', 'rtc', 'serial', 'acpi', 'ahci', 'ata', 'e1000', 'pci', 'virtio-blk']:
-        p = os.path.join(nem_dir, nem_name, f'{nem_name}.nem') if os.path.exists(os.path.join(nem_dir, nem_name)) else f'/tmp/nem_drivers/{nem_name}.nem'
+        p = os.path.join(nem_dir, nem_name, f'{nem_name}.nem') if os.path.exists(os.path.join(nem_dir, nem_name)) else '/tmp/nem_drivers/' + nem_name + '.nem'
         if os.path.exists(p):
             with open(p, 'rb') as f:
                 data = f.read()
-            files.append((f'\\System\\Drivers\\{nem_name}.nem', data, MODE_FILE | PERM_R))
+            files.append(('/System/Drivers/' + nem_name + '.nem', data, MODE_FILE | PERM_R))
             print(f"  [+] {nem_name}.nem ({len(data)} bytes)")
         else:
             print(f"  [!] {nem_name}.nem not found")
