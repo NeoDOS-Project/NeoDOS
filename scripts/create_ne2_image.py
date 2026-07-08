@@ -64,14 +64,13 @@ def make_direntry(name, mode, size, extent_lba=0, extent_count=0, inline_data=b'
     return bytes(buf)
 
 def make_btree_leaf(entries_data):
-    """Create a B-tree leaf node with entries = [(key, value_128), ...]"""
+    """Create a B-tree leaf node (no splitting)."""
     data = bytearray(BLOCK_SIZE)
     data[0:2] = struct.pack('<H', 1)  # Leaf
     data[2:4] = struct.pack('<H', len(entries_data))
     off = 8
     for key, value in entries_data:
-        kl = len(key)
-        vl = len(value)
+        kl = len(key); vl = len(value)
         if off + 4 + kl + vl > BLOCK_SIZE: break
         data[off:off+2] = struct.pack('<H', kl)
         data[off+2:off+2+kl] = key
@@ -82,49 +81,34 @@ def make_btree_leaf(entries_data):
     data[4:8] = struct.pack('<I', cksum)
     return bytes(data)
 
+def entry_size(key_len):
+    """Size of one B-tree entry in bytes."""
+    return 4 + key_len + DIRENTRY_SIZE  # key_len(2) + key + val_len(2) + value(128)
+
+ROOT = '/'  # single-character root marker for sorting
+
 def create_image(output_path, num_blocks, label, file_data):
-    """
-    file_data = [(path_within_fs, content_bytes, mode_bit), ...]
-    e.g. ("\\Programs\\NeoInit.nxe", content, MODE_FILE|PERM_R|PERM_X)
-    Directory entries are created automatically from path prefixes.
-    """
     # Organize files into directory tree
-    dir_tree = {}  # dir_path -> [(name, content, mode, is_dir), ...]
+    dir_tree = {ROOT: []}  # ensure root exists
     for path, content, mode in file_data:
         parts = path.strip('\\').split('\\')
         filename = parts[-1]
-        # Create parent directories
-        for i in range(1, len(parts)):
-            dirpath = '\\' + '\\'.join(parts[:i])
-            if dirpath not in dir_tree:
-                dir_tree[dirpath] = []
-        # Add file to its parent directory
-        parent = '\\' + '\\'.join(parts[:-1]) if len(parts) > 1 else '\\'
-        if parent not in dir_tree:
-            dir_tree[parent] = []
+        parent = ROOT + '/'.join(parts[:-1]) if len(parts) > 1 else ROOT
+        if parent not in dir_tree: dir_tree[parent] = []
         dir_tree[parent].append((filename, content, mode, False))
-        # Create directory entries for each parent
         for i in range(1, len(parts)):
-            dirpath = '\\' + '\\'.join(parts[:i])
+            dirpath = ROOT + '/'.join(parts[:i])
             dirname = parts[i-1]
-            parent_of_dir = '\\' + '\\'.join(parts[:i-1]) if i > 1 else '\\'
-            # Check if already added
-            already = False
-            for dname, _, _, is_d in dir_tree.get(parent_of_dir, []):
-                if dname == dirname and is_d:
-                    already = True
-                    break
+            parent_of_dir = ROOT + '/'.join(parts[:i-1]) if i > 1 else ROOT
+            if dirpath not in dir_tree: dir_tree[dirpath] = []
+            if parent_of_dir not in dir_tree: dir_tree[parent_of_dir] = []
+            already = any(d == dirname and is_d for d,_,_,is_d in dir_tree[parent_of_dir])
             if not already:
-                if parent_of_dir not in dir_tree:
-                    dir_tree[parent_of_dir] = []
                 dir_tree[parent_of_dir].append((dirname, b'', MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D, True))
     
-    # Allocate blocks: LBA 0 = superblock, LBA 1 = B-tree root, LBA 2+ = data
     next_lba = 2
-    
-    # Build all B-tree nodes (one per dir) and file data blocks
-    dir_nodes = {}  # dir_path -> list of (key_bytes, value_128_bytes)
-    dir_lba_map = {}  # dir_path -> lba
+    dir_nodes = {}
+    dir_lba_map = {}
     
     # First pass: allocate LBAs for dir B-tree nodes and file data
     # Root dir is at '\\'
@@ -146,7 +130,7 @@ def create_image(output_path, num_blocks, label, file_data):
         node_entries = []
         for name, content, mode, is_dir in dir_tree[dirpath]:
             if is_dir:
-                subdir_path = dirpath + '\\' + name if dirpath != '\\' else '\\' + name
+                subdir_path = dirpath + ROOT + name if dirpath != ROOT else '\\' + name
                 subdir_lba = dir_lba_map.get(subdir_path, 0)
                 entry = make_direntry(name, mode, 0, extent_lba=subdir_lba, extent_count=0)
             elif len(content) <= INLINE_MAX:
@@ -160,12 +144,12 @@ def create_image(output_path, num_blocks, label, file_data):
             node_entries.append((name.encode('utf-8'), entry))
         dir_nodes[dirpath] = node_entries
     
-    total_blocks = next_lba
+    total_blocks = max(next_lba, num_blocks)
     image_size = total_blocks * BLOCK_SIZE
     image = bytearray(image_size)
     
     # 1. Superblock
-    root_lba = dir_lba_map.get('\\', 1)
+    root_lba = dir_lba_map.get(ROOT, 1)
     label_bytes = label.encode('utf-8')[:32]
     sb = bytearray(SECTOR_SIZE)
     struct.pack_into('<I', sb, 0, SUPERBLOCK_MAGIC_NE2)
@@ -196,8 +180,8 @@ def create_image(output_path, num_blocks, label, file_data):
             # Find extent_lba from the entry we built
             for ename, ebytes in dir_nodes[dirpath]:
                 if ename == name.encode('utf-8'):
-                    # Parse extent_lba from the serialized entry (offset 107)
-                    extent_lba = struct.unpack_from('<Q', ebytes[107:115])[0]
+                    # Parse extent_lba from the serialized entry (offset 99)
+                    extent_lba = struct.unpack_from('<Q', ebytes[99:107])[0]
                     blocks = (len(content) + BLOCK_SIZE - 1) // BLOCK_SIZE
                     block_start = extent_lba * BLOCK_SIZE
                     for i in range(blocks):
@@ -231,42 +215,48 @@ def collect_files():
     readme = b"Welcome to NeoDOS v2!\r\n"
     files.append(("\\README.TXT", readme, MODE_FILE | PERM_R | PERM_W))
     
-    # NXE binaries
+    # NXE binaries — split into \Programs\ (essential) and \System\Tools\ (extra)
     userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
-    nxe_names = ['cpuinfo', 'neoshell', 'neoinit', 'cmdtest', 'cd', 'corehelp',
-                 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype',
-                 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd',
-                 'corerd', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg',
-                 'loadnem', 'progress', 'neotop', 'dhcpd', 'netcfg', 'ipconfig',
-                 'coredir']
-    for name in nxe_names:
+    programs_nxe = ['neoshell', 'neoinit', 'cmdtest', 'cd', 'corehelp',
+                    'datetime', 'ver', 'neomem', 'vol', 'echo', 'label',
+                    'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
+                    'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb']
+    tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
+                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'ping', 'cpuinfo']
+    for name in programs_nxe + tools_nxe:
+        subdir = 'Programs' if name in programs_nxe else 'System\\Tools'
         p = os.path.join(userbin_dir, f'{name}.nxe')
         if os.path.exists(p):
             with open(p, 'rb') as f:
                 data = f.read()
             perms = default_perms(f'{name}.NXE')
-            files.append((f'\\Programs\\{name}.nxe', data, MODE_FILE | perms))
-            print(f"  [+] {name}.nxe ({len(data)} bytes)")
+            files.append((f'\\{subdir}\\{name}.nxe', data, MODE_FILE | perms))
+            print(f"  [+] {name}.nxe -> \\{subdir}\\ ({len(data)} bytes)")
         else:
             print(f"  [!] {name}.nxe not found")
     
-    # NXL libraries
-    for nxl_name, libname in [('libneodos.nxl', 'neodos'), 
-                               ('libmath.nxl', 'math'),
-                               ('console.nxl', 'console'),
-                               ('libnet.nxl', 'net'),
-                               ('libfs.nxl', 'fs')]:
-        nxl_path = os.path.join(os.path.dirname(__file__), '..', nxl_name)
+    # NXL libraries (with renames: libneodos→fs, libmath→math, console→console, net→net)
+    nxl_map = [
+        ('libneodos.nxl', 'fs.nxl'),
+        ('libmath.nxl', 'math.nxl'),
+        ('console.nxl', 'console.nxl'),
+        ('net.nxl', 'net.nxl'),
+    ]
+    for src_name, dst_name in nxl_map:
+        nxl_path = os.path.join(os.path.dirname(__file__), '..', src_name)
         if not os.path.exists(nxl_path):
+            # Try build output directory
+            libname = src_name.replace('lib', '').replace('.nxl', '')
             nxl_path = os.path.join(os.path.dirname(__file__), '..', f'lib{libname}-nxl',
-                                    'target', 'x86_64-unknown-none', 'release', f'lib{libname}-nxl')
+                                    'target', 'x86_64-unknown-none', 'release', src_name)
         if os.path.exists(nxl_path):
             with open(nxl_path, 'rb') as f:
                 data = f.read()
-            files.append((f'\\System\\Libraries\\{nxl_name}', data, MODE_FILE | PERM_R | PERM_X))
-            print(f"  [+] {nxl_name} ({len(data)} bytes)")
+            files.append((f'\\System\\Libraries\\{dst_name}', data, MODE_FILE | PERM_R | PERM_X))
+            print(f"  [+] {src_name} -> {dst_name} ({len(data)} bytes)")
         else:
-            print(f"  [!] {nxl_name} not found")
+            print(f"  [!] {src_name} not found (will use empty)")
+            files.append((f'\\System\\Libraries\\{dst_name}', b'', MODE_FILE | PERM_R))
     
     # NEM drivers
     nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')

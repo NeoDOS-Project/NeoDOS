@@ -396,7 +396,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Detectar formato: NE2 (v2) o NEOD (v1 legacy)
     let magic = u32::from_le_bytes(sb_data[0..4].try_into().unwrap());
     let mut fs_type_label = "?";
-    let mount_result: Result<(), &'static str> = if magic == 0x32454E32 {
+    let mount_result: Result<(), &'static str> = if magic == 0x0032454E {
         // NE2 — NeoFS v2
         match NeoDosFsV2::new(neodos_io) {
             Ok(fs) => {
