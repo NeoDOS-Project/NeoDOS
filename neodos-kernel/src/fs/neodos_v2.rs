@@ -14,7 +14,7 @@ use crate::fs::snapshot::SnapshotTable;
 use crate::fs::neodos_dir::{DirEntryV2, dir_lookup, dir_readdir, dir_count, DIRENTRY_SIZE, PERM_R, PERM_W, PERM_X, PERM_D};
 use crate::fs::neodos_io::{file_read, file_write, file_free_extents, crc32};
 
-const SUPERBLOCK_MAGIC: u32 = 0x32454E32;
+const SUPERBLOCK_MAGIC: u32 = 0x0032454E; // "NE2\0"
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
@@ -74,14 +74,10 @@ impl BTreeIO for NeoDosFsV2 {
 
 impl NeoDosFsV2 {
     pub fn new(io_stack: IoStack) -> Result<Self, ()> {
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs.get(io_stack.device_id).ok_or(())?;
-        let raw = dev.read_sector(0)?;
+        let raw = io_stack.read_sector(0)?;
         let sb: SuperblockNE2 = unsafe { core::mem::transmute(raw) };
         if sb.magic != SUPERBLOCK_MAGIC { return Err(()); }
-        drop(bdevs);
 
-        let slab = 2; // estimación: LBA 1 en adelante para datos
         Ok(NeoDosFsV2 {
             sb, freelist: FreeList::with_range(1, sb.num_blocks - 1),
             io_stack,
@@ -107,9 +103,7 @@ impl NeoDosFsV2 {
         let raw = unsafe { core::slice::from_raw_parts(&self.sb as *const _ as *const u8, 512) };
         let mut sector = [0u8; 512];
         sector.copy_from_slice(raw);
-        let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-        let dev = bdevs.get(self.io_stack.device_id).ok_or(())?;
-        dev.write_sector(0, &sector).ok();
+        self.io_stack.write_sector(0, &sector).ok();
         Ok(())
     }
 }
@@ -250,4 +244,56 @@ impl FileSystem for NeoDosFsV2 {
 
     fn fs_type(&self) -> &'static str { "NE2" }
     fn total_sectors(&self) -> u64 { self.sb.num_blocks * 8 }
+}
+
+/// Formatear una partición con NE2 (mkfs).
+/// Escribe superblock, raíz B-tree vacía, y freelist inicial.
+pub fn mkfs_ne2(io_stack: &IoStack, num_blocks: u64, label: &str) -> Result<(), ()> {
+    // 1. Escribir superblock
+    let mut label_arr = [0u8; 32];
+    let len = label.len().min(32);
+    label_arr[..len].copy_from_slice(&label.as_bytes()[..len]);
+
+    let sb = SuperblockNE2 {
+        magic: SUPERBLOCK_MAGIC,
+        version: 2,
+        root_btree_lba: 1,
+        root_version: 1,
+        root_timestamp: crate::hal::get_ticks(),
+        num_blocks,
+        num_used: 1,
+        num_free: num_blocks - 2,
+        label_len: len as u8,
+        label: label_arr,
+        flags: 0,
+        freelist_lba: 0,
+        snapshot_table_lba: 0,
+        reserved: [0u8; 403],
+    };
+
+    let raw = unsafe { core::slice::from_raw_parts(&sb as *const _ as *const u8, 512) };
+    let mut sector = [0u8; 512];
+    sector.copy_from_slice(raw);
+    io_stack.write_sector(0, &sector)?;
+
+    // 2. Escribir raíz B-tree vacía (LBA 1)
+    let mut root_node = BTreeNode::new(NodeType::Leaf);
+    let mut buf = [0u8; NODE_SIZE];
+    root_node.serialize(&mut buf);
+    for i in 0..8usize {
+        let mut sec = [0u8; 512];
+        sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
+        io_stack.write_sector(1 + i as u64, &sec)?;
+    }
+
+    // 3. Superblock definitivo con checksum
+    let mut sb2 = sb;
+    sb2.root_version = 1;
+    let crc = crc32(unsafe { core::slice::from_raw_parts(&sb2 as *const _ as *const u8, 72) });
+    sb2.reserved[..4].copy_from_slice(&crc.to_le_bytes());
+    let raw2 = unsafe { core::slice::from_raw_parts(&sb2 as *const _ as *const u8, 512) };
+    sector.copy_from_slice(raw2);
+    io_stack.write_sector(0, &sector)?;
+
+    Ok(())
 }

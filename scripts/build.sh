@@ -227,17 +227,16 @@ if [ "$BUILD_NEODOS_IMAGE" = true ]; then
         cd "$SCRIPT_DIR"
         echo "[*] Generating SYSTEM.HIV..."
         python3 gen_system_hiv.py
-        python3 create_neodos_image.py \
+        # Imagen primaria: NE2 format
+        python3 create_ne2_image.py \
             --label "NEODOS" \
             --output "neodos_image.img" \
-            --readme "Welcome to NeoDOS!
-This is the PRIMARY disk (C:).
-Built with NeoDOS FS v1.0.
-"
-        python3 create_neodos_image.py \
+            --blocks 2560
+        # Imagen secundaria: NE2 format (small)
+        python3 create_ne2_image.py \
             --label "NEODOS2" \
             --output "neodos_image2.img" \
-            --minimal
+            --blocks 512
         cd "$PROJECT_ROOT"
         echo "[✓] NeoDOS FS images: $NEODOS_IMAGE, $NEODOS_IMAGE2"
     else
