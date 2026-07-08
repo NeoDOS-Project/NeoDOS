@@ -1,4 +1,10 @@
 pub mod neodos_fs;
+pub mod neodos_dir;
+pub mod neodos_v2;
+pub mod neodos_io;
 pub mod vfs;
 pub mod fsck;
 pub mod journal;
+pub mod btree;
+pub mod freelist;
+pub mod snapshot;

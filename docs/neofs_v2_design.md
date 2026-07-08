@@ -181,25 +181,29 @@ path = "C:\DOCS\INFORME.TXT"
 ### 3.4 Borrar archivo
 
 ```
+DEL INFORME.TXT
+
 1. Lookup en B-tree del directorio padre
-2. Eliminar la entrada del B-tree (COW)
-3. Los bloques de datos se convierten en "basura" freelist pendiente
-
-Nota: DEL es O(log n) — solo modifica el B-tree, no recorre datos.
-La freelist se actualiza perezosamente cuando se necesita espacio.
+2. Si el archivo tiene bloques de datos: caminar extents, liberar bloques a freelist
+3. Eliminar la entrada del B-tree (COW)
+4. root_version++
 ```
 
-### 3.5 Borrar directorio (con todo su contenido)
+`DEL` siempre libera los bloques de datos inmediatamente. Es O(log n + extents).
+
+### 3.5 Borrar directorio
 
 ```
-RD C:\PROYECTO
+RD VACIO
+1. Si el directorio tiene entradas (archivos o subdirs): "Directory not empty"
+2. Si está vacío: eliminar entrada del B-tree (COW), root_version++
 
+RD /F PROYECTO  (force: borra aunque tenga contenido)
 1. Lookup del nodo directory de PROYECTO
-2. Eliminar el subárbol completo del B-tree (una sola operación)
-3. root_version++
-
-Nota: No importa si PROYECTO tiene 5000 archivos dentro.
-Todos se borran con una sola eliminación del nodo raíz del subárbol.
+2. Caminar el subárbol recursivamente recolectando todos los LBAs de datos
+3. Liberar todos los bloques de datos a freelist
+4. Eliminar la entrada del B-tree (COW)
+5. root_version++
 ```
 
 ### 3.6 Renombrar

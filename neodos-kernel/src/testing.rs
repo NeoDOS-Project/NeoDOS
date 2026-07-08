@@ -2816,6 +2816,10 @@ pub fn register_tests() {
     crate::drivers::dependency::register_dependency_tests();
     crate::fs::fsck::register_fsck_tests();
     crate::fs::journal::register_journal_tests();
+    crate::fs::btree::register_btree_tests();
+    crate::fs::freelist::register_freelist_tests();
+    crate::fs::snapshot::register_snapshot_tests();
+    crate::fs::neodos_dir::register_dir_tests();
     crate::object::register_object_tests();
     crate::vfs::mount::register_mount_tests();
     crate::work_queue::register_tests();
