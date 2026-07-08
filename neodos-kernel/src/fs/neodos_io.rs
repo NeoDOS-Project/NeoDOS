@@ -5,11 +5,10 @@
 use alloc::vec::Vec;
 use crate::drivers::block::BlockDevice;
 use crate::buffer::page_cache::PageCache;
-use super::neodos_dir::DirEntryV2;
+use super::neodos_dir::{DirEntryV2, INLINE_MAX};
 use super::freelist::FreeList;
 
 pub const BLOCK_SIZE: usize = 4096;
-pub const INLINE_MAX: usize = 208;
 
 /// Leer datos de un archivo.
 /// Intenta inline first, luego extents.

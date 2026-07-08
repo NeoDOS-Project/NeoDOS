@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Create a NeoFS v2 (NE2) filesystem image."""
+"""Create a NeoFS v2 (NE2) filesystem image with files."""
 import struct
 import sys
 import os
+from pathlib import Path
 
 BLOCK_SIZE = 4096
 SECTOR_SIZE = 512
+DIRENTRY_SIZE = 128
+NAME_MAX = 48
+INLINE_MAX = 16
 SUPERBLOCK_MAGIC_NE2 = 0x0032454E  # "NE2\0"
-
+MODE_DIR = 0x0040
+MODE_FILE = 0x0080
+PERM_R = 0x0001
+PERM_W = 0x0002
+PERM_X = 0x0004
+PERM_S = 0x0008
+PERM_D = 0x0010
 
 def crc32(data):
     crc = 0xFFFFFFFF
@@ -20,95 +30,270 @@ def crc32(data):
                 crc >>= 1
     return crc ^ 0xFFFFFFFF
 
+def default_perms(name):
+    u = name.upper()
+    if u.endswith('.NXE') or u.endswith('.COM') or u.endswith('.EXE'): return PERM_R | PERM_X
+    if u.endswith('.NEM'): return PERM_R
+    if u.endswith('.NXL'): return PERM_R | PERM_X
+    if u.endswith('.BAT') or u.endswith('.CMD'): return PERM_R | PERM_X
+    if u.endswith('.SYS'): return PERM_R
+    if u.endswith('.CFG') or u.endswith('.INI'): return PERM_R | PERM_W
+    if u.endswith('.TXT') or u.endswith('.MD') or u.endswith('.LOG'): return PERM_R | PERM_W
+    return PERM_R | PERM_W
 
-def create_superblock(num_blocks, label=""):
-    """Create NE2 superblock (512 bytes)"""
-    data = bytearray(512)
+def make_direntry(name, mode, size, extent_lba=0, extent_count=0, inline_data=b''):
+    """Create a 128-byte DirEntryV2."""
+    buf = bytearray(DIRENTRY_SIZE)
+    nl = min(len(name), NAME_MAX)
+    buf[0] = nl
+    buf[1:1+nl] = name.encode('utf-8')[:nl]
+    # inline data at offset 49
+    off_inline = 1 + NAME_MAX
+    il = min(len(inline_data), INLINE_MAX)
+    buf[off_inline:off_inline+il] = inline_data[:il]
+    # fields
+    off = off_inline + INLINE_MAX  # 65
+    struct.pack_into('<H', buf, off, mode); off += 2
+    struct.pack_into('<Q', buf, off, size); off += 8
+    struct.pack_into('<Q', buf, off, 0); off += 8   # created
+    struct.pack_into('<Q', buf, off, 0); off += 8   # modified
+    struct.pack_into('<I', buf, off, 0); off += 4   # checksum
+    struct.pack_into('<I', buf, off, il); off += 4  # inline_len
+    struct.pack_into('<Q', buf, off, extent_lba); off += 8
+    struct.pack_into('<I', buf, off, extent_count); off += 4
+    return bytes(buf)
 
-    # magic (4), version (4)
-    data[0:4] = struct.pack('<I', SUPERBLOCK_MAGIC_NE2)
-    data[4:8] = struct.pack('<I', 2)  # version
-
-    # root_btree_lba = 1 (right after superblock)
-    data[8:16] = struct.pack('<Q', 1)
-    # root_version = 1
-    data[16:24] = struct.pack('<Q', 1)
-    # root_timestamp = 0
-    data[24:32] = struct.pack('<Q', 0)
-    # num_blocks
-    data[32:40] = struct.pack('<Q', num_blocks)
-    # num_used = 1 (just the root B-tree node)
-    data[40:48] = struct.pack('<Q', 1)
-    # num_free = num_blocks - 2
-    data[48:56] = struct.pack('<Q', num_blocks - 2)
-    # label_len
-    label_bytes = label.encode('utf-8')[:32]
-    data[56] = len(label_bytes)
-    data[57:57 + len(label_bytes)] = label_bytes
-    # flags = 0 (offset 89)
-    data[89:93] = struct.pack('<I', 0)
-    # freelist_lba = 0 (implicit: from LBA 2 to num_blocks-1)
-    data[93:101] = struct.pack('<Q', 0)
-    # snapshot_table_lba = 0
-    data[101:109] = struct.pack('<Q', 0)
-    # reserved[403..407] = CRC32 (computed below)
-
-    # Compute CRC32 of bytes 0..72
-    cksum = crc32(bytes(data[:72]))
-    data[109:113] = struct.pack('<I', cksum)
-
-    return bytes(data)
-
-
-def create_empty_btree_node():
-    """Create an empty B-tree leaf node (4096 bytes)"""
+def make_btree_leaf(entries_data):
+    """Create a B-tree leaf node with entries = [(key, value_128), ...]"""
     data = bytearray(BLOCK_SIZE)
-    # node_type = 1 (Leaf), num_entries = 0
     data[0:2] = struct.pack('<H', 1)  # Leaf
-    data[2:4] = struct.pack('<H', 0)  # 0 entries
-    # CRC32 of payload (offset 8..4096)
+    data[2:4] = struct.pack('<H', len(entries_data))
+    off = 8
+    for key, value in entries_data:
+        kl = len(key)
+        vl = len(value)
+        if off + 4 + kl + vl > BLOCK_SIZE: break
+        data[off:off+2] = struct.pack('<H', kl)
+        data[off+2:off+2+kl] = key
+        data[off+2+kl:off+4+kl] = struct.pack('<H', vl)
+        data[off+4+kl:off+4+kl+vl] = value
+        off += 4 + kl + vl
     cksum = crc32(bytes(data[8:]))
     data[4:8] = struct.pack('<I', cksum)
     return bytes(data)
 
-
-def create_image(output_path, num_blocks, label=""):
+def create_image(output_path, num_blocks, label, file_data):
+    """
+    file_data = [(path_within_fs, content_bytes, mode_bit), ...]
+    e.g. ("\\Programs\\NeoInit.nxe", content, MODE_FILE|PERM_R|PERM_X)
+    Directory entries are created automatically from path prefixes.
+    """
+    # Organize files into directory tree
+    dir_tree = {}  # dir_path -> [(name, content, mode, is_dir), ...]
+    for path, content, mode in file_data:
+        parts = path.strip('\\').split('\\')
+        filename = parts[-1]
+        # Create parent directories
+        for i in range(1, len(parts)):
+            dirpath = '\\' + '\\'.join(parts[:i])
+            if dirpath not in dir_tree:
+                dir_tree[dirpath] = []
+        # Add file to its parent directory
+        parent = '\\' + '\\'.join(parts[:-1]) if len(parts) > 1 else '\\'
+        if parent not in dir_tree:
+            dir_tree[parent] = []
+        dir_tree[parent].append((filename, content, mode, False))
+        # Create directory entries for each parent
+        for i in range(1, len(parts)):
+            dirpath = '\\' + '\\'.join(parts[:i])
+            dirname = parts[i-1]
+            parent_of_dir = '\\' + '\\'.join(parts[:i-1]) if i > 1 else '\\'
+            # Check if already added
+            already = False
+            for dname, _, _, is_d in dir_tree.get(parent_of_dir, []):
+                if dname == dirname and is_d:
+                    already = True
+                    break
+            if not already:
+                if parent_of_dir not in dir_tree:
+                    dir_tree[parent_of_dir] = []
+                dir_tree[parent_of_dir].append((dirname, b'', MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D, True))
+    
+    # Allocate blocks: LBA 0 = superblock, LBA 1 = B-tree root, LBA 2+ = data
+    next_lba = 2
+    
+    # Build all B-tree nodes (one per dir) and file data blocks
+    dir_nodes = {}  # dir_path -> list of (key_bytes, value_128_bytes)
+    dir_lba_map = {}  # dir_path -> lba
+    
+    # First pass: allocate LBAs for dir B-tree nodes and file data
+    # Root dir is at '\\'
+    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count('\\')):
+        dir_lba_map[dirpath] = next_lba
+        next_lba += 1  # 1 block per B-tree node
+    
+    # Second pass: allocate file data blocks
+    for dirpath, entries in dir_tree.items():
+        for name, content, mode, is_dir in entries:
+            if is_dir:
+                continue
+            if len(content) > INLINE_MAX:
+                # Will be assigned in order; track separately
+                pass
+    
+    # Build B-tree entries per directory
+    for dirpath in sorted(dir_tree.keys(), key=lambda x: x.count('\\')):
+        node_entries = []
+        for name, content, mode, is_dir in dir_tree[dirpath]:
+            if is_dir:
+                subdir_path = dirpath + '\\' + name if dirpath != '\\' else '\\' + name
+                subdir_lba = dir_lba_map.get(subdir_path, 0)
+                entry = make_direntry(name, mode, 0, extent_lba=subdir_lba, extent_count=0)
+            elif len(content) <= INLINE_MAX:
+                entry = make_direntry(name, mode, len(content), inline_data=content)
+            else:
+                extent_lba = next_lba
+                blocks = (len(content) + BLOCK_SIZE - 1) // BLOCK_SIZE
+                entry = make_direntry(name, mode, len(content),
+                                      extent_lba=extent_lba, extent_count=blocks)
+                next_lba += blocks
+            node_entries.append((name.encode('utf-8'), entry))
+        dir_nodes[dirpath] = node_entries
+    
+    total_blocks = next_lba
+    image_size = total_blocks * BLOCK_SIZE
+    image = bytearray(image_size)
+    
+    # 1. Superblock
+    root_lba = dir_lba_map.get('\\', 1)
+    label_bytes = label.encode('utf-8')[:32]
+    sb = bytearray(SECTOR_SIZE)
+    struct.pack_into('<I', sb, 0, SUPERBLOCK_MAGIC_NE2)
+    struct.pack_into('<I', sb, 4, 2)
+    struct.pack_into('<Q', sb, 8, root_lba)
+    struct.pack_into('<Q', sb, 16, 1)
+    struct.pack_into('<Q', sb, 24, 0)
+    struct.pack_into('<Q', sb, 32, total_blocks)
+    struct.pack_into('<Q', sb, 40, next_lba)
+    struct.pack_into('<Q', sb, 48, total_blocks - next_lba)
+    sb[56] = len(label_bytes)
+    sb[57:57+len(label_bytes)] = label_bytes
+    cksum = crc32(bytes(sb[:72]))
+    sb[109:113] = struct.pack('<I', cksum)
+    image[0:SECTOR_SIZE] = bytes(sb)
+    
+    # 2. Write all B-tree nodes (one per directory)
+    for dirpath, node_entries in dir_nodes.items():
+        lba = dir_lba_map[dirpath]
+        node_data = make_btree_leaf(node_entries)
+        image[lba * BLOCK_SIZE : lba * BLOCK_SIZE + BLOCK_SIZE] = node_data
+    
+    # 3. Write file data blocks
+    for dirpath, entries in dir_tree.items():
+        for name, content, mode, is_dir in entries:
+            if is_dir or len(content) <= INLINE_MAX:
+                continue
+            # Find extent_lba from the entry we built
+            for ename, ebytes in dir_nodes[dirpath]:
+                if ename == name.encode('utf-8'):
+                    # Parse extent_lba from the serialized entry (offset 107)
+                    extent_lba = struct.unpack_from('<Q', ebytes[107:115])[0]
+                    blocks = (len(content) + BLOCK_SIZE - 1) // BLOCK_SIZE
+                    block_start = extent_lba * BLOCK_SIZE
+                    for i in range(blocks):
+                        chunk = content[i*BLOCK_SIZE:(i+1)*BLOCK_SIZE]
+                        image[block_start + i*BLOCK_SIZE : block_start + i*BLOCK_SIZE + len(chunk)] = chunk
+                    break
+    
+    total_file_entries = sum(len(nodes) for nodes in dir_nodes.values())
     with open(output_path, 'wb') as f:
-        # LBA 0: Superblock (512 bytes)
-        sb = create_superblock(num_blocks, label)
-        f.write(sb)
-        # Pad to 512 bytes (already 512)
-        assert len(sb) == 512
+        f.write(bytes(image))
+    
+    actual = os.path.getsize(output_path)
+    print(f"[+] NE2 image: {output_path}")
+    print(f"    Size: {actual} bytes ({total_blocks} blocks)")
+    print(f"    Entries in tree: {total_file_entries}")
 
-        # LBA 1: Empty B-tree root (4096 bytes = 8 sectors)
-        root_node = create_empty_btree_node()
-        f.write(root_node)
-        assert len(root_node) == 4096
 
-        # Rest of the disk: empty (free space)
-        remaining = (num_blocks - 2) * BLOCK_SIZE
-        f.write(b'\x00' * remaining)
-
-    actual_size = os.path.getsize(output_path)
-    expected = num_blocks * BLOCK_SIZE
-    print(f"[+] NE2 image created: {output_path}")
-    print(f"    Size: {actual_size} bytes ({num_blocks} blocks)")
-    print(f"    Label: '{label}'")
+def collect_files():
+    """Collect all files to include in the image."""
+    files = []
+    
+    # Config files (inline, small)
+    base_path = os.path.join(os.path.dirname(__file__), "..", "preferences")
+    for cfg in ['boot.cfg', 'system.cfg', 'input.cfg']:
+        p = os.path.join(base_path, cfg)
+        if os.path.exists(p):
+            with open(p, 'rb') as f:
+                files.append((f"\\System\\{cfg}", f.read(), MODE_FILE | PERM_R))
+    
+    # README
+    readme = b"Welcome to NeoDOS v2!\r\n"
+    files.append(("\\README.TXT", readme, MODE_FILE | PERM_R | PERM_W))
+    
+    # NXE binaries
+    userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
+    nxe_names = ['cpuinfo', 'neoshell', 'neoinit', 'cmdtest', 'cd', 'corehelp',
+                 'datetime', 'ver', 'neomem', 'vol', 'echo', 'label', 'coretype',
+                 'tree', 'corecls', 'corecopy', 'coredel', 'coreren', 'coremd',
+                 'corerd', 'drives', 'ps', 'keyb', 'kill', 'pri', 'fsck', 'ndreg',
+                 'loadnem', 'progress', 'neotop', 'dhcpd', 'netcfg', 'ipconfig',
+                 'coredir']
+    for name in nxe_names:
+        p = os.path.join(userbin_dir, f'{name}.nxe')
+        if os.path.exists(p):
+            with open(p, 'rb') as f:
+                data = f.read()
+            perms = default_perms(f'{name}.NXE')
+            files.append((f'\\Programs\\{name}.nxe', data, MODE_FILE | perms))
+            print(f"  [+] {name}.nxe ({len(data)} bytes)")
+        else:
+            print(f"  [!] {name}.nxe not found")
+    
+    # NXL libraries
+    for nxl_name, libname in [('libneodos.nxl', 'neodos'), 
+                               ('libmath.nxl', 'math'),
+                               ('console.nxl', 'console'),
+                               ('libnet.nxl', 'net'),
+                               ('libfs.nxl', 'fs')]:
+        nxl_path = os.path.join(os.path.dirname(__file__), '..', nxl_name)
+        if not os.path.exists(nxl_path):
+            nxl_path = os.path.join(os.path.dirname(__file__), '..', f'lib{libname}-nxl',
+                                    'target', 'x86_64-unknown-none', 'release', f'lib{libname}-nxl')
+        if os.path.exists(nxl_path):
+            with open(nxl_path, 'rb') as f:
+                data = f.read()
+            files.append((f'\\System\\Libraries\\{nxl_name}', data, MODE_FILE | PERM_R | PERM_X))
+            print(f"  [+] {nxl_name} ({len(data)} bytes)")
+        else:
+            print(f"  [!] {nxl_name} not found")
+    
+    # NEM drivers
+    nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
+    for nem_name in ['ps2kbd', 'ps2mouse', 'rtc', 'serial', 'acpi', 'ahci', 'ata', 'e1000', 'pci', 'virtio-blk']:
+        p = os.path.join(nem_dir, nem_name, f'{nem_name}.nem') if os.path.exists(os.path.join(nem_dir, nem_name)) else f'/tmp/nem_drivers/{nem_name}.nem'
+        if os.path.exists(p):
+            with open(p, 'rb') as f:
+                data = f.read()
+            files.append((f'\\System\\Drivers\\{nem_name}.nem', data, MODE_FILE | PERM_R))
+            print(f"  [+] {nem_name}.nem ({len(data)} bytes)")
+        else:
+            print(f"  [!] {nem_name}.nem not found")
+    
+    return files
 
 
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Create NE2 filesystem image')
     parser.add_argument('--label', default='NEODOS')
-    parser.add_argument('--blocks', type=int, default=2560, help='Number of 4KB blocks')
-    parser.add_argument('--size-mb', type=int, help='Size in MB (overrides --blocks)')
+    parser.add_argument('--blocks', type=int, default=2560)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--no-files', action='store_true', help='Create empty image')
     args = parser.parse_args()
-
-    if args.size_mb:
-        total_bytes = args.size_mb * 1024 * 1024
-        num_blocks = total_bytes // BLOCK_SIZE
+    
+    if args.no_files:
+        create_image(args.output, args.blocks, args.label, [])
     else:
-        num_blocks = args.blocks
-
-    create_image(args.output, num_blocks, args.label)
+        files = collect_files()
+        create_image(args.output, args.blocks, args.label, files)

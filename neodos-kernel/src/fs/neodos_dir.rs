@@ -5,21 +5,22 @@ use alloc::vec::Vec;
 use crate::fs::btree::{BTreeNode, BTreeEntry, BTree, BTreeIO, NodeType, NODE_SIZE};
 
 pub const DIRENTRY_SIZE: usize = 128;
-pub const NAME_MAX: usize = 207;
+pub const NAME_MAX: usize = 48;
+pub const INLINE_MAX: usize = 16;
 
-/// Entrada de directorio (almacenada en B-tree leaf).
+/// Entrada de directorio (128 bytes, almacenada en B-tree leaf).
 #[derive(Debug, Clone)]
 pub struct DirEntryV2 {
     pub name: Vec<u8>,
-    pub mode: u16,         // bits 0-4: R,W,X,S,D — bit6=dir bit7=file
+    pub mode: u16,
     pub size: u64,
     pub created: u64,
     pub modified: u64,
-    pub checksum: u32,     // CRC32 del contenido del archivo
-    pub inline_len: u32,   // 0 = no inline. >0 → primeros N bytes en inline_data
-    pub inline_data: [u8; 208], // datos inline O nombre (se solapan)
-    pub extent_lba: u64,   // LBA del primer extent (0 = no extents)
-    pub extent_count: u32, // número de extents
+    pub checksum: u32,
+    pub inline_len: u32,
+    pub inline_data: [u8; INLINE_MAX],
+    pub extent_lba: u64,
+    pub extent_count: u32,
 }
 
 pub const MODE_DIR: u16 = 0x40;
@@ -40,7 +41,7 @@ impl DirEntryV2 {
             modified: 0,
             checksum: 0,
             inline_len: 0,
-            inline_data: [0u8; 208],
+            inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
         };
@@ -56,7 +57,7 @@ impl DirEntryV2 {
             modified: 0,
             checksum: 0,
             inline_len: 0,
-            inline_data: [0u8; 208],
+            inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
         };
@@ -68,24 +69,34 @@ impl DirEntryV2 {
 
     pub fn serialize(&self, buf: &mut [u8; DIRENTRY_SIZE]) {
         buf.fill(0);
-        let nl = self.name.len().min(207);
+        let nl = self.name.len().min(NAME_MAX);
         buf[0] = nl as u8;
         buf[1..1 + nl].copy_from_slice(&self.name[..nl]);
-        let mut off = 208;
-        buf[off..off + 2].copy_from_slice(&self.mode.to_le_bytes()); off += 2;
-        buf[off..off + 8].copy_from_slice(&self.size.to_le_bytes()); off += 8;
-        buf[off..off + 8].copy_from_slice(&self.created.to_le_bytes()); off += 8;
-        buf[off..off + 8].copy_from_slice(&self.modified.to_le_bytes()); off += 8;
-        buf[off..off + 4].copy_from_slice(&self.checksum.to_le_bytes()); off += 4;
-        buf[off..off + 4].copy_from_slice(&self.inline_len.to_le_bytes()); off += 4;
-        buf[off..off + 8].copy_from_slice(&self.extent_lba.to_le_bytes()); off += 8;
-        buf[off..off + 4].copy_from_slice(&self.extent_count.to_le_bytes()); off += 4;
+        // name[1..1+NAME_MAX] = 49 bytes total for name section
+        // inline_data follows name section
+        let off_name = 1 + NAME_MAX; // 49
+        let il = self.inline_len.min(INLINE_MAX as u32) as usize;
+        buf[off_name..off_name + il].copy_from_slice(&self.inline_data[..il]);
+        let mut off = off_name + INLINE_MAX; // 49 + 16 = 65
+        buf[off..off + 2].copy_from_slice(&self.mode.to_le_bytes()); off += 2; // 67
+        buf[off..off + 8].copy_from_slice(&self.size.to_le_bytes()); off += 8; // 75
+        buf[off..off + 8].copy_from_slice(&self.created.to_le_bytes()); off += 8; // 83
+        buf[off..off + 8].copy_from_slice(&self.modified.to_le_bytes()); off += 8; // 91
+        buf[off..off + 4].copy_from_slice(&self.checksum.to_le_bytes()); off += 4; // 95
+        buf[off..off + 4].copy_from_slice(&self.inline_len.to_le_bytes()); off += 4; // 99
+        buf[off..off + 8].copy_from_slice(&self.extent_lba.to_le_bytes()); off += 8; // 107
+        buf[off..off + 4].copy_from_slice(&self.extent_count.to_le_bytes()); off += 4; // 111
+        // padding to 128
     }
 
     pub fn deserialize(buf: &[u8; DIRENTRY_SIZE]) -> Self {
         let nl = buf[0] as usize;
-        let name = if nl > 0 { buf[1..1 + nl.min(207)].to_vec() } else { Vec::new() };
-        let mut off = 208;
+        let name = if nl > 0 { buf[1..1 + nl.min(NAME_MAX)].to_vec() } else { Vec::new() };
+        let off_name = 1 + NAME_MAX;
+        let off_inline = off_name;
+        let mut inline_data = [0u8; INLINE_MAX];
+        inline_data.copy_from_slice(&buf[off_inline..off_inline + INLINE_MAX]);
+        let mut off = off_inline + INLINE_MAX;
         let mode = u16::from_le_bytes(buf[off..off+2].try_into().unwrap_or([0;2])); off += 2;
         let size = u64::from_le_bytes(buf[off..off+8].try_into().unwrap_or([0;8])); off += 8;
         let created = u64::from_le_bytes(buf[off..off+8].try_into().unwrap_or([0;8])); off += 8;
@@ -94,8 +105,6 @@ impl DirEntryV2 {
         let inline_len = u32::from_le_bytes(buf[off..off+4].try_into().unwrap_or([0;4])); off += 4;
         let extent_lba = u64::from_le_bytes(buf[off..off+8].try_into().unwrap_or([0;8])); off += 8;
         let extent_count = u32::from_le_bytes(buf[off..off+4].try_into().unwrap_or([0;4]));
-        let mut inline_data = [0u8; 208];
-        inline_data[..nl].copy_from_slice(&buf[1..1+nl]);
         DirEntryV2 { name, mode, size, created, modified, checksum, inline_len, inline_data, extent_lba, extent_count }
     }
 
