@@ -140,12 +140,12 @@ pub extern "C" fn _start() -> ! {
     let shell_name = if key_fd != 0xFF {
         match read_reg_str(key_fd, "DefaultShell", &mut shell_buf) {
             Some(len) if len > 0 => {
-                core::str::from_utf8(&shell_buf[..len]).unwrap_or("C:\\Programs\\NeoShell.nxe")
+                core::str::from_utf8(&shell_buf[..len]).unwrap_or("C:\\Programs\\neoshell.nxe")
             }
-            _ => "C:\\Programs\\NeoShell.nxe",
+            _ => "C:\\Programs\\neoshell.nxe",
         }
     } else {
-        "C:\\Programs\\NeoShell.nxe"
+        "C:\\Programs\\neoshell.nxe"
     };
 
     // ── Read EnableVT ──
@@ -212,7 +212,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // ── Always start dhcpd (DHCP client service) ──
-    spawn_service("C:\\Programs\\dhcpd.nxe");
+    spawn_service("C:\\System\\Tools\\dhcpd.nxe");
 
     // ── Spawn loop ──
     write_str(b"[neoinit] entering spawn loop...\r\n");

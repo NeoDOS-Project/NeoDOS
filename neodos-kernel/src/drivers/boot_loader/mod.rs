@@ -27,7 +27,7 @@ fn collect_driver_data(files: &[String], category: DriverCategory) -> Vec<(Strin
         let name = parsed.map(|p| p.name.to_ascii_uppercase())
             .unwrap_or_else(|| {
                 let base = f.rsplit('\\').next().unwrap_or(f);
-                base.trim_end_matches(".NEM").to_ascii_uppercase()
+                base.trim_end_matches(".nem").trim_end_matches(".NEM").to_ascii_uppercase()
             });
         collected.push((name, data));
     }
@@ -274,11 +274,11 @@ pub fn driver_scan(path: &str) -> Vec<String> {
             loop {
                 match vfs.readdir(drive_idx, node.inode, i) {
                     Ok(Some(entry)) => {
-                        let name = entry.name.to_ascii_uppercase();
-                        if !name.ends_with(".NEM") || (entry.node.mode & MODE_DIR) != 0 {
+                        let upper = entry.name.to_ascii_uppercase();
+                        if !upper.ends_with(".NEM") || (entry.node.mode & MODE_DIR) != 0 {
                             i += 1; continue;
                         }
-                        let full = alloc::format!("{}\\{}", path.trim_end_matches('\\'), name);
+                        let full = alloc::format!("{}\\{}", path.trim_end_matches('\\'), entry.name);
                         results.push(full);
                         i += 1;
                     }

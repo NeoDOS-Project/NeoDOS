@@ -116,7 +116,7 @@ def build_default_system_hive() -> bytes:
     # Values under NeoInit
     v_default_shell = b.alloc_idx()
     b.add_value(v_default_shell, "DefaultShell", REG_SZ,
-                b"C:\\Programs\\NeoShell.nxe\x00")
+                b"C:\\Programs\\neoshell.nxe\x00")
 
     v_enable_vt = b.alloc_idx()
     b.add_value(v_enable_vt, "EnableVT", REG_DWORD,
@@ -216,7 +216,7 @@ def build_default_system_hive_v2() -> bytes:
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices
     b.add_value(_V_SHELL, "DefaultShell", REG_SZ,
-                b"C:\\Programs\\NeoShell.nxe\x00")
+                b"C:\\Programs\\neoshell.nxe\x00")
     b.add_value(_V_VT, "EnableVT", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_SHELL)
     b.add_value(_V_AUTO, "AutoStartServices", REG_SZ,

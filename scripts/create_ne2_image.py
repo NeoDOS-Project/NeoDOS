@@ -201,7 +201,8 @@ def collect_files():
         p = os.path.join(base_path, cfg)
         if os.path.exists(p):
             with open(p, 'rb') as f:
-                files.append(('/System/' + cfg, f.read(), MODE_FILE | PERM_R))
+                sub = 'Kernel/' if cfg == 'boot.cfg' else ''
+                files.append(('/System/' + sub + cfg, f.read(), MODE_FILE | PERM_R))
     
     # README
     readme = b"Welcome to NeoDOS v2!\r\n"
@@ -210,6 +211,12 @@ def collect_files():
     # Temp directory marker (needed by tests)
     files.append(("/Temp/.empty", b"", MODE_FILE | PERM_R | PERM_W))
     
+    # Registry hive: SYSTEM.HIV
+    hiv_path = os.path.join(os.path.dirname(__file__), "system.hiv")
+    if os.path.exists(hiv_path):
+        with open(hiv_path, 'rb') as f:
+            files.append(('/System/Registry/SYSTEM.hiv', f.read(), MODE_FILE | PERM_R))
+
     # NXE binaries — split into \Programs\ (essential) and \System\Tools\ (extra)
     userbin_dir = os.path.join(os.path.dirname(__file__), '..', 'userbin')
     programs_nxe = ['neoshell', 'neoinit', 'cmdtest', 'cd', 'corehelp',
@@ -217,7 +224,7 @@ def collect_files():
                     'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
                     'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir']
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
-                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'ping', 'cpuinfo']
+                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'cpuinfo']
     for name in programs_nxe + tools_nxe:
         subdir = 'Programs' if name in programs_nxe else 'System/Tools'
         p = os.path.join(userbin_dir, f'{name}.nxe')
@@ -254,8 +261,11 @@ def collect_files():
 
     # NEM drivers
     nem_dir = os.environ.get('NEM_DIR', '/tmp/nem_drivers_0')
-    for nem_name in ['ps2kbd', 'ps2mouse', 'rtc', 'serial', 'acpi', 'ahci', 'ata', 'e1000', 'pci', 'virtio-blk']:
-        p = os.path.join(nem_dir, nem_name, f'{nem_name}.nem') if os.path.exists(os.path.join(nem_dir, nem_name)) else '/tmp/nem_drivers/' + nem_name + '.nem'
+    boot_drivers = ['ps2kbd', 'ps2mouse', 'rtc', 'serial']
+    sys_drivers = ['acpi', 'pci', 'ata', 'ahci', 'e1000', 'virtio-blk']
+    for nem_name in boot_drivers + sys_drivers:
+        cat = 'BOOT' if nem_name in boot_drivers else 'SYSTEM'
+        p = os.path.join(nem_dir, cat, f'{nem_name}.nem')
         if os.path.exists(p):
             with open(p, 'rb') as f:
                 data = f.read()

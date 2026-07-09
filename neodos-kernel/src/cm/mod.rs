@@ -240,9 +240,6 @@ pub fn cm_ensure_default_values() {
 
     // 1. CurrentControlSet\Services\NeoInit — NeoInit configuration
     if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Services\\NeoInit") {
-        if hm.hive.find_value(key, "DefaultShell").is_none() {
-            hm.hive.set_value(key, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
-        }
         if hm.hive.find_value(key, "EnableVT").is_none() {
             hm.hive.set_value(key, "EnableVT", hive::REG_DWORD, &1u32.to_le_bytes());
         }
@@ -709,7 +706,7 @@ pub fn register_cm_tests() {
             }
             curr
         };
-        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\neoshell.nxe");
 
         let net_iface = {
             let path = "CurrentControlSet\\Services\\Network\\Interfaces\\0";
@@ -741,7 +738,7 @@ pub fn register_cm_tests() {
 
         // Verify all values were created correctly
         let v1 = hive.query_value(neoinit, "DefaultShell").unwrap();
-        test_eq!(v1.as_str().unwrap(), "C:\\Programs\\NeoShell.nxe");
+        test_eq!(v1.as_str().unwrap(), "C:\\Programs\\neoshell.nxe");
         test_eq!(v1.value_type, hive::REG_SZ);
 
         let v2 = hive.query_value(net_iface, "DHCPEnabled").unwrap();
@@ -753,9 +750,9 @@ pub fn register_cm_tests() {
         test_eq!(v3.value_type, hive::REG_DWORD);
 
         // Verify idempotency: re-running set_value on existing keys is fine
-        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\NeoShell.nxe");
+        hive.set_value(neoinit, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\neoshell.nxe");
         let v1b = hive.query_value(neoinit, "DefaultShell").unwrap();
-        test_eq!(v1b.as_str().unwrap(), "C:\\Programs\\NeoShell.nxe");
+        test_eq!(v1b.as_str().unwrap(), "C:\\Programs\\neoshell.nxe");
 
         // Verify the key hierarchy is intact
         test_eq!(hive.key_count(root), 1); // Root has CurrentControlSet

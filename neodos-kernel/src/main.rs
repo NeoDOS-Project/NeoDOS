@@ -646,7 +646,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         let mut entry: u64 = 0;
         let mut loaded = false;
         crate::globals::with_vfs(|vfs| {
-            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\NeoInit.nxe") {
+            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\neoinit.nxe") {
                 if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
                 let size = vfs.read(drive_idx, node.inode, 0, &mut bin_buf).unwrap_or_default();
                 crate::serial_println!(

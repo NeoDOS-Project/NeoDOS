@@ -78,7 +78,7 @@ pub fn register_syscall_table_tests() {
     test_case!("spawn_hello_binary_path_resolve", {
         if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
         let result = crate::globals::with_vfs(|vfs| {
-            vfs.resolve_path("C:\\Programs\\dir.nxe")
+            vfs.resolve_path("C:\\Programs\\coredir.nxe")
         });
         test_true!(result.is_ok());
         if let Ok((_, node)) = result {
@@ -445,5 +445,42 @@ pub fn register_syscall_table_tests() {
             let result = super::ob_err_to_syscall(*ob_err);
             test_eq!(result as i64, *expected_syscall as i64);
         }
+    });
+
+    test_case!("cow_inline_write_read", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let test_file = "C:\\Temp\\_COWINL.TST";
+        let data = b"Hello NE2 COW!";
+        let result = crate::globals::with_vfs(|vfs| {
+            let (drive, _) = vfs.resolve_path("C:\\")?;
+            let node = vfs.create(test_file)?;
+            vfs.write(drive, node.inode, 0, data)?;
+            let mut buf = [0u8; 32];
+            let n = vfs.read(drive, node.inode, 0, &mut buf)?;
+            if n != data.len() { return Err(crate::fs::vfs::VfsError::IOError); }
+            if &buf[..n] != data { return Err(crate::fs::vfs::VfsError::IOError); }
+            let _ = vfs.remove_file(test_file);
+            Ok(())
+        });
+        test_true!(result.is_ok());
+    });
+
+    test_case!("cow_extent_write_read", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let test_file = "C:\\Temp\\_COWEXT.TST";
+        let data = b"This is a test for extent-based writes in NeoFS v2. The data must exceed INLINE_MAX (16 bytes) to force extent allocation.";
+        let result = crate::globals::with_vfs(|vfs| {
+            let (drive, _) = vfs.resolve_path("C:\\")?;
+            let node = vfs.create(test_file)?;
+            let written = vfs.write(drive, node.inode, 0, data)?;
+            if written != data.len() { return Err(crate::fs::vfs::VfsError::IOError); }
+            let mut buf = [0u8; 256];
+            let n = vfs.read(drive, node.inode, 0, &mut buf)?;
+            if n != data.len() { return Err(crate::fs::vfs::VfsError::IOError); }
+            if &buf[..n] != data { return Err(crate::fs::vfs::VfsError::IOError); }
+            let _ = vfs.remove_file(test_file);
+            Ok(())
+        });
+        test_true!(result.is_ok());
     });
 }

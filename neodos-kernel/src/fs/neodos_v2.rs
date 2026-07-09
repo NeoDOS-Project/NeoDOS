@@ -100,9 +100,24 @@ impl NeoDosFsV2 {
     }
 
     fn cache(&mut self, btree_root: u64, entry: DirEntryV2) -> u32 {
+        if entry.is_dir() && entry.extent_lba > 0 {
+            for i in 0..self.inode_cache.len() {
+                if let Some((_, cached)) = &self.inode_cache[i] {
+                    if cached.extent_lba == entry.extent_lba && cached.name == entry.name {
+                        return i as u32;
+                    }
+                }
+            }
+        }
         let i = self.alloc_inum();
         if i as usize >= self.inode_cache.len() { self.inode_cache.resize(i as usize + 1, None); }
         self.inode_cache[i as usize] = Some((btree_root, entry)); i
+    }
+
+    fn update_inode_root(&mut self, inode: u32, new_root: u64) {
+        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) {
+            c.0 = new_root;
+        }
     }
 
     fn save_sb(&mut self) -> Result<(), ()> {
@@ -136,7 +151,8 @@ impl FileSystem for NeoDosFsV2 {
         let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs.get(self.io_stack.device_id).ok_or(VfsError::IOError)?;
         let mut pc = crate::globals::PAGE_CACHE.lock();
-        let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, dev).map_err(|_| VfsError::IOError)?;
+        let part_base = self.io_stack.translate_lba(0);
+        let new_entry = file_write(&entry, offset, buf, &mut self.freelist, &mut *pc, dev, part_base).map_err(|_| VfsError::IOError)?;
         drop(pc);
         drop(bdevs);
 
@@ -145,34 +161,14 @@ impl FileSystem for NeoDosFsV2 {
         }).ok_or(VfsError::IOError)?;
 
         if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
-        self.save_sb().map_err(|_| VfsError::IOError)?;
-        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) { *c = (btree_root, new_entry); }
+        if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) { *c = (new_root, new_entry); }
         Ok(buf.len())
     }
 
     fn lookup(&mut self, dir_inode: u32, name: &str) -> Result<VfsNode, VfsError> {
-        let cached = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref());
-        if cached.is_none() {
-            return Err(VfsError::NotFound);
-        }
-        let btree_root = cached.unwrap().0;
-        // Debug: dump root on first lookup failure
-        let entry = match dir_lookup(self, btree_root, name) {
-            Some(e) => e,
-            None => {
-                if let Some(n) = self.read_node(btree_root) {
-                    crate::serial_println!("[NE2] FAIL lookup({},'{}') root_lba={} node={:?}[{}] keys:",
-                        dir_inode, name, btree_root, n.node_type, n.entries.len());
-                    for (i, e) in n.entries.iter().enumerate() {
-                        let k = core::str::from_utf8(&e.key).unwrap_or("<?>");
-                        crate::serial_println!("  [{}] \"{}\"", i, k);
-                    }
-                } else {
-                    crate::serial_println!("[NE2] FAIL lookup({},'{}') CAN'T READ root_lba={}", dir_inode, name, btree_root);
-                }
-                return Err(VfsError::NotFound);
-            }
-        };
+        let cached = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).ok_or(VfsError::NotFound)?;
+        let btree_root = cached.0;
+        let entry = dir_lookup(self, btree_root, name).ok_or(VfsError::NotFound)?;
         let size = if entry.inline_len > 0 { entry.inline_len as u32 } else { entry.size as u32 };
         let mode = entry.mode;
         let child_root = if entry.is_dir() && entry.extent_lba > 0 { entry.extent_lba } else { btree_root };
@@ -184,8 +180,12 @@ impl FileSystem for NeoDosFsV2 {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         match dir_readdir(self, btree_root, index) {
             Some(e) => {
-                let size = if e.inline_len > 0 { e.inline_len as u32 } else { e.size as u32 };
-                Ok(Some(DirEntry { name: core::str::from_utf8(&e.name).unwrap_or("?").into(), node: VfsNode { inode: 0, mode: e.mode, size } }))
+                let child_root = if e.is_dir() && e.extent_lba > 0 { e.extent_lba } else { btree_root };
+                let inum = self.cache(child_root, e);
+                let cached = self.inode_cache[inum as usize].as_ref().ok_or(VfsError::NotFound)?;
+                let dname = core::str::from_utf8(&cached.1.name).unwrap_or("?");
+                let size = if cached.1.inline_len > 0 { cached.1.inline_len as u32 } else { cached.1.size as u32 };
+                Ok(Some(DirEntry { name: dname.into(), node: VfsNode { inode: inum, mode: cached.1.mode, size } }))
             }
             None => Ok(None),
         }
@@ -205,9 +205,10 @@ impl FileSystem for NeoDosFsV2 {
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
 
-        if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
+        if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
+        self.update_inode_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
-        let inum = self.cache(subdir_root, entry);
+        let inum = self.cache(new_root, entry);
         Ok(VfsNode { inode: inum, mode: MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D, size: 0 })
     }
 
@@ -217,9 +218,10 @@ impl FileSystem for NeoDosFsV2 {
         let new_root = BTree::insert(self, btree_root, name.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; entry.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
-        if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
+        if dir_inode == 0 { self.sb.root_btree_lba = new_root; }
+        self.update_inode_root(dir_inode, new_root);
         self.save_sb().map_err(|_| VfsError::IOError)?;
-        let inum = self.cache(btree_root, entry);
+        let inum = self.cache(new_root, entry);
         Ok(VfsNode { inode: inum, mode: MODE_FILE | PERM_R | PERM_W | PERM_X | PERM_D, size: 0 })
     }
 
@@ -233,7 +235,10 @@ impl FileSystem for NeoDosFsV2 {
         let btree_root = self.inode_cache.get(dir_inode as usize).and_then(|x| x.as_ref()).map(|x| x.0).ok_or(VfsError::NotFound)?;
         if let Some(e) = dir_lookup(self, btree_root, name) { file_free_extents(&e, &mut self.freelist); }
         let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
-        if let Some(r) = nr { if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = r; } }
+        if let Some(r) = nr {
+            if dir_inode == 0 { self.sb.root_btree_lba = r; }
+            self.update_inode_root(dir_inode, r);
+        }
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
@@ -247,7 +252,10 @@ impl FileSystem for NeoDosFsV2 {
             file_free_extents(&e, &mut self.freelist);
         }
         let nr = BTree::delete(self, btree_root, name.as_bytes()).ok_or(VfsError::IOError)?;
-        if let Some(r) = nr { if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = r; } }
+        if let Some(r) = nr {
+            if dir_inode == 0 { self.sb.root_btree_lba = r; }
+            self.update_inode_root(dir_inode, r);
+        }
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 
@@ -261,7 +269,8 @@ impl FileSystem for NeoDosFsV2 {
         let nr = BTree::insert(self, ad, new.as_bytes(), &{
             let mut tmp = [0u8; DIRENTRY_SIZE]; renamed.serialize(&mut tmp); tmp.to_vec()
         }).ok_or(VfsError::IOError)?;
-        if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = nr; }
+        if dir_inode == 0 { self.sb.root_btree_lba = nr; }
+        self.update_inode_root(dir_inode, nr);
         self.save_sb().map_err(|_| VfsError::IOError)
     }
 

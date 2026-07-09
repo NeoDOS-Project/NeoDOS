@@ -46,7 +46,7 @@ pub fn file_read(
     let mut block = start_block;
 
     while bytes_read < buf.len() && block < total_blocks {
-        let lba = start_lba + block as u64;
+        let lba = start_lba + block as u64 * 8;
         let data = cache.read_page(0, 0, block, lba, dev)?;
         let to_copy = (BLOCK_SIZE - block_offset)
             .min(buf.len() - bytes_read)
@@ -60,6 +60,7 @@ pub fn file_read(
 
 /// Escribir datos a un archivo (COW: nuevos bloques, nuevos extents).
 /// Devuelve un nuevo DirEntry con los extents actualizados.
+/// `partition_base_sector` es el offset de partición en sectores (translate_lba(0)).
 pub fn file_write(
     entry: &DirEntryV2,
     offset: u64,
@@ -67,6 +68,7 @@ pub fn file_write(
     freelist: &mut FreeList,
     cache: &mut PageCache,
     dev: &mut dyn BlockDevice,
+    partition_base_sector: u64,
 ) -> Result<DirEntryV2, ()> {
     let mut new_entry = entry.clone();
 
@@ -96,13 +98,14 @@ pub fn file_write(
 
     // Necesitamos extents. Alocar bloques.
     let total_blocks = ((new_size + BLOCK_SIZE - 1) / BLOCK_SIZE) as u32;
-    let start_lba = freelist.alloc_blocks(total_blocks).ok_or(())?;
+    let start_block = freelist.alloc_blocks(total_blocks).ok_or(())?;
+    let start_sector = partition_base_sector + start_block * 8;
 
     // Escribir datos bloque por bloque
     let mut written = 0usize;
     for block_idx in 0..total_blocks {
-        let block_lba = start_lba + block_idx as u64;
-        let page = cache.get_page_mut(0, 0, block_idx, block_lba, dev)?;
+        let sector_lba = start_sector + block_idx as u64 * 8;
+        let page = cache.get_page_mut(0, 0, block_idx, sector_lba, dev)?;
         let block_start = block_idx as usize * BLOCK_SIZE;
         let to_write = core::cmp::min(BLOCK_SIZE, new_size - block_start);
         if to_write > 0 {
@@ -124,7 +127,7 @@ pub fn file_write(
         written += to_write;
     }
 
-    new_entry.extent_lba = start_lba;
+    new_entry.extent_lba = start_block;
     new_entry.extent_count = total_blocks;
     new_entry.inline_len = 0;
     new_entry.size = new_size as u64;
@@ -133,8 +136,11 @@ pub fn file_write(
     // Checksum del contenido completo
     if new_size <= 65536 {
         let mut full = alloc::vec![0u8; new_size];
-        let _ = file_read(&new_entry, 0, &mut full, cache, dev);
+        let mut ck_entry = new_entry.clone();
+        ck_entry.extent_lba = start_sector;
+        let _ = file_read(&ck_entry, 0, &mut full, cache, dev);
         new_entry.checksum = crc32(&full);
+        ck_entry.extent_lba = start_block;
     }
 
     Ok(new_entry)
