@@ -2189,7 +2189,7 @@ fn init_cm() {
 | Script | Cambio | Estado |
 |--------|--------|--------|
 | `scripts/build.sh` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
-| `scripts/create_neodos_image.py` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs) | ✅ |
+| `scripts/create_ne2_image.py` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs) | ✅ |
 
 ---
 

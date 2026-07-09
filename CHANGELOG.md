@@ -2,6 +2,19 @@
 
 ## v0.49.0 — 2026-07-08
 
+### Removed (NeoFS v1 obsolescence)
+- **NeoFS v1 (NEOD) officially obsolete** — Legacy NeoFS v1 support has been completely removed:
+  - Deleted `src/fs/neodos_fs.rs` (NeoFS v1 driver)
+  - Deleted `src/fs/fsck.rs` (v1 fsck)
+  - Deleted `src/fs/journal.rs` (v1 journal)
+  - Deleted `scripts/create_neodos_image.py` (v1 image builder)
+  - Deleted `scripts/mcp_server/parsers/neodos_fs.py` (v1 parser)
+  - Removed ~1900 lines of NeoFS v1 tests from `testing.rs`
+  - Removed obsolete doc files: `NEOFS_AUDIT.md`, `NEOFS_ROADMAP.md`, `NEOFS_TESTS.md`
+  - Kernel mount now rejects NEOD superblocks with a clear error message
+  - VFS mount simplified to single NeoFS v2 path
+  - FAT32 compatibility driver remains untouched and fully supported
+
 ### Added
 - **FS-3. Indirect blocks** — Archivos >48 KB ahora soportados mediante bloque indirecto (1024 entradas, ~4 MB máx). `get_inode_block_ptr()`, `inode_data_block_count()`, `write_file()`, `add_directory_entry()`, `delete_file_by_inode()`, `rebuild_bitmap()` actualizados. Helper `allocate_indirect_block()`, `read_indirect_pointers()`, `write_indirect_pointer()`.
 - **FS-5. Journaling (WAL)** — Nuevo módulo `src/fs/journal.rs`: estructura `Journal` con `begin_transaction()`, `commit_transaction()`, `recover()` (replay/rollback al montar), `rollback_transaction()`. Entradas CRC32-protegidas. Área de journal reservable al final de la partición.

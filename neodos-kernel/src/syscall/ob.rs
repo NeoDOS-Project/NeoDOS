@@ -1666,7 +1666,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 return err_to_u64(SyscallError::Inval);
             }
             let base = buf_ptr as *const u8;
-            let sd_rev = unsafe { core::ptr::read_volatile(base) };
+            let _sd_rev = unsafe { core::ptr::read_volatile(base) };
             let ace_count = unsafe { core::ptr::read_volatile(base.add(1)) };
             let mut offset = 2usize;
             let mut acl = crate::security::acl::Acl::new();

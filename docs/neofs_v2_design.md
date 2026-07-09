@@ -320,42 +320,28 @@ Sin DOS attributes. Sin owner/group (futuro: SID). Sin ACLs (futuro).
 
 ---
 
-## 6. Diferencias con NeoFS v1
+## 6. NeoFS v1
 
-| Aspecto | v1 | v2 |
-|---------|----|----|
-| Magic | "NEOD" | "NE2\0" |
-| Inodes | Tabla lineal fija | Entrada en B-tree del directorio |
-| Directorio | Lista enlazada de entries 256B | B-tree de entradas 128B |
-| Block pointers | 12 directos + 1 indirecto | Extents (2 inline + overflow) |
-| Límite archivo | ~4 MB | ~2 TB |
-| Crash safety | Journal WAL | COW inherente |
-| Checksums datos | No | CRC32 por archivo |
-| Snapshots | No | 64 circulares |
-| DEL | Entrada marcada 0xE5 | Entrada eliminada del B-tree |
-| RD con contenido | Fallaba | Funciona (borra subárbol) |
-| Inline data | No | Archivos <208 bytes |
-| Free space | Bitmap lineal | Free list B-tree |
-| DOS attributes | Sí | No |
-| 8.3 names | Sí | No |
-| FSCK | Recorre inodes + bitmaps | Verifica B-tree |
-| Owner/UID/GID | Sí (no usado) | No |
+NeoFS v1 (magic "NEOD") is **obsolete and has been removed**. The kernel rejects NEOD superblocks at mount time with a clear error message. NeoFS v2 (NE2) is the only native filesystem format.
 
 ---
 
-## 7. Archivos a crear/modificar
+## 7. Archivos creados/modificados
 
 ```
 neodos-kernel/src/
 ├── fs/
-│   ├── mod.rs                          ─ añadir pub mod btree;
-│   ├── btree.rs                        ─ NUEVO: B-tree persistente genérico
-│   ├── neodos_fs.rs                    ─ REESCRIBIR: NeoDosFs sobre B-tree + extents + COW
-│   ├── freelist.rs                     ─ NUEVO: free region list
-│   ├── snapshot.rs                     ─ NUEVO: snapshot table + GC lazy
+│   ├── mod.rs                          ─ módulos v2 (neodos_v2, neodos_dir, neodos_io, btree, freelist, snapshot)
+│   ├── btree.rs                        ─ B-tree persistente genérico
+│   ├── neodos_v2.rs                    ─ NeoDosFsV2 sobre B-tree + extents + COW
+│   ├── neodos_dir.rs                   ─ Directorio B-tree (DirEntryV2)
+│   ├── neodos_io.rs                    ─ Extent read/write + inline data
+│   ├── freelist.rs                     ─ Free region list
+│   ├── snapshot.rs                     ─ Snapshot table + GC lazy
 │   ├── vfs.rs                          ─ sin cambios (trait FileSystem igual)
-│   ├── fsck.rs                         ─ REESCRIBIR: fsck sobre B-tree
-│   └── journal.rs                      ─ ELIMINAR (reemplazado por COW)
+│   ├── neodos_fs.rs                    ─ ELIMINADO (NeoFS v1 obsoleto)
+│   ├── fsck.rs                         ─ ELIMINADO (fsck v1 eliminado con v1)
+│   └── journal.rs                      ─ ELIMINADO (reemplazado por COW)
 ├── syscall/
 │   ├── mod.rs                          ─ añadir handler_ob_snapshot en SSDT (RAX 77)
 │   └── ob.rs                           ─ añadir handler_ob_snapshot
@@ -397,7 +383,7 @@ neodos-kernel/src/
 1. `src/fs/btree.rs` — B-tree: insert, lookup, delete, walk, COW clone
 2. `src/fs/freelist.rs` — Free list: alloc, free, merge, save/load
 3. `src/fs/snapshot.rs` — Snapshot table: create, list, restore, purge
-4. `src/fs/neodos_fs.rs` — FileSystem trait impl con B-tree + extents + COW
+4. `src/fs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
 5. `src/fs/fsck.rs` — Scrub de B-tree + checksums
 6. `src/syscall/ob.rs` — handler_ob_snapshot (RAX 77)
 7. Tests

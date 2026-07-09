@@ -1169,7 +1169,7 @@ neoget verify --all --json
 | `libneopkg/src/recovery.rs` | Backup/restore for transactions |
 | `libneopkg/src/crypt.rs` | Ed25519 + CRC32 primitives |
 | `libneopkg/src/config.rs` | Default paths, keys |
-| `src/fs/neodos_fs.rs` | `MODE_CORE = 0x0200` kernel const |
+| `src/fs/neodos_dir.rs` | `MODE_DIR = 0x40`, `MODE_FILE = 0x80` kernel consts |
 | `src/syscall/ob.rs` | CORE guard in `ob_destroy` |
 | `src/syscall/cm.rs` | CORE guard in `cm_delete_key` |
 

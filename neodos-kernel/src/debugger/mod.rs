@@ -9,8 +9,6 @@
 //!   `+` / `-`               — ack / nak
 //!   `0x03` (Ctrl-C)         — interrupt target
 
-use core::arch::asm;
-
 // ── COM1 serial port I/O ──
 
 const COM1: u16 = 0x3F8;
@@ -19,20 +17,16 @@ const LSR_THR_EMPTY: u8 = 0x20; // Transmitter Holding Register Empty
 const LSR_DATA_READY: u8 = 0x01; // Data Ready
 
 fn serial_read() -> Option<u8> {
-    unsafe {
-        if crate::hal::x64::inb(COM1_LSR) & LSR_DATA_READY != 0 {
-            Some(crate::hal::x64::inb(COM1))
-        } else {
-            None
-        }
+    if crate::hal::x64::inb(COM1_LSR) & LSR_DATA_READY != 0 {
+        Some(crate::hal::x64::inb(COM1))
+    } else {
+        None
     }
 }
 
 fn serial_write(byte: u8) {
-    unsafe {
-        while crate::hal::x64::inb(COM1_LSR) & LSR_THR_EMPTY == 0 {}
-        crate::hal::x64::outb(COM1, byte);
-    }
+    while crate::hal::x64::inb(COM1_LSR) & LSR_THR_EMPTY == 0 {}
+    crate::hal::x64::outb(COM1, byte);
 }
 
 fn serial_write_str(s: &[u8]) {
@@ -117,6 +111,7 @@ fn regs_to_hex() -> [u8; 400] {
     put_reg!(r.rip); put_reg!(r.eflags);
     put_reg!(r.cs as u64); put_reg!(r.ss as u64); put_reg!(r.ds as u64);
     put_reg!(r.es as u64); put_reg!(r.fs as u64); put_reg!(r.gs as u64);
+    let _ = offset;
     buf
 }
 
@@ -142,7 +137,7 @@ fn regs_from_hex(data: &[u8]) {
         r.cs = from_hex(&data[pos..pos + 16]) as u32; pos += 16;
     }
     if pos + 16 <= data.len() {
-        r.ss = from_hex(&data[pos..pos + 16]) as u32; pos += 16;
+        r.ss = from_hex(&data[pos..pos + 16]) as u32;
     }
 }
 

@@ -66,8 +66,6 @@ mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
 use drivers::gpt;
-use buffer::page_cache::PageCache;
-use fs::neodos_fs::NeoDosFs;
 use fs::neodos_v2::NeoDosFsV2;
 use graphics::FramebufferInfo;
 use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
@@ -393,7 +391,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         serial_println!("[WATCHDOG] Timeout before FS mount!");
     }
 
-    // Detectar formato: NE2 (v2) o NEOD (v1 legacy)
+    // Detectar formato: NE2 (NeoFS v2) o desconocido
     let magic = u32::from_le_bytes(sb_data[0..4].try_into().unwrap());
     let mut fs_type_label = "?";
     let mount_result: Result<(), &'static str> = if magic == 0x0032454E {
@@ -414,25 +412,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                 Err("NE2 mount failed")
             }
         }
+    } else if magic == 0x4F444F4E {
+        // NEOD — NeoFS v1 (obsolete)
+        serial_println!("[!] NeoFS v1 (NEOD) is obsolete and no longer supported");
+        Err("NeoFS v1 is obsolete")
     } else {
-        // NEOD — NeoFS v1 (legacy)
-        match NeoDosFs::new(&sb_data, neodos_io) {
-            Ok(mut fs) => {
-                let _ = fs.rebuild_bitmap_with_io();
-                fs_type_label = "NEOD";
-                let boxed = alloc::boxed::Box::new(fs);
-                vfs::mount::vfs_mount_filesystem(
-                    "\\Device\\NeoDosVolume0",
-                    'C',
-                    boxed,
-                    vfs::mount::FilesystemType::NeoDosFs,
-                ).map(|_| ())
-            }
-            Err(e) => {
-                serial_println!("[!] NEOD mount failed: {:?}", e);
-                Err("NEOD mount failed")
-            }
-        }
+        serial_println!("[!] Unknown filesystem magic: 0x{:08X}", magic);
+        Err("unsupported filesystem format")
     };
 
     match mount_result {

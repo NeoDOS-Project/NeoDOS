@@ -4,13 +4,10 @@
 
 use alloc::vec::Vec;
 use alloc::string::String;
-use crate::drivers::block::BlockDevice;
-use crate::buffer::page_cache::PageCache;
 use crate::vfs::io::IoStack;
 use crate::fs::vfs::{FileSystem, VfsNode, DirEntry, VfsError, MODE_DIR, MODE_FILE};
 use crate::fs::btree::{BTree, BTreeNode, BTreeIO, NodeType, NODE_SIZE};
 use crate::fs::freelist::FreeList;
-use crate::fs::snapshot::SnapshotTable;
 use crate::fs::neodos_dir::{DirEntryV2, dir_lookup, dir_readdir, dir_count, DIRENTRY_SIZE, PERM_R, PERM_W, PERM_X, PERM_D};
 use crate::fs::neodos_io::{file_read, file_write, file_free_extents, crc32};
 
@@ -336,7 +333,7 @@ pub fn mkfs_ne2(io_stack: &IoStack, num_blocks: u64, label: &str) -> Result<(), 
     io_stack.write_sector(0, &sector)?;
 
     // 2. Escribir raíz B-tree vacía (LBA 1)
-    let mut root_node = BTreeNode::new(NodeType::Leaf);
+    let root_node = BTreeNode::new(NodeType::Leaf);
     let mut buf = [0u8; NODE_SIZE];
     root_node.serialize(&mut buf);
     for i in 0..8usize {

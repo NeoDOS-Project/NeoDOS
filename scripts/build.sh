@@ -4,15 +4,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-BUILD_NEODOS_IMAGE=false
+BUILD_FS_IMAGE=false
 BUILD_USERBIN=false
 
-NEODOS_IMAGE="$SCRIPT_DIR/neodos_image.img"
-NEODOS_IMAGE2="$SCRIPT_DIR/neodos_image2.img"
+FS_IMAGE="$SCRIPT_DIR/neodos_image.img"
+FS_IMAGE2="$SCRIPT_DIR/neodos_image2.img"
 
 for arg in "$@"; do
     case "$arg" in
-        --neodos-image|-n) BUILD_NEODOS_IMAGE=true; BUILD_USERBIN=true ;;
+        --neodos-image|-n) BUILD_FS_IMAGE=true; BUILD_USERBIN=true ;;
     esac
 done
 
@@ -77,7 +77,7 @@ echo ""
 USERBIN_DIR="$PROJECT_ROOT/userbin"
 NEM_DIR="/tmp/nem_drivers_$$"
 cd "$PROJECT_ROOT"
-if [ "$BUILD_NEODOS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
+if [ "$BUILD_FS_IMAGE" = true ] && command -v python3 >/dev/null 2>&1; then
     echo "[+] Building Rust user-mode binaries for FS image..."
     for pkg in neoshell neoinit coredir cd corehelp cpuinfo datetime ver neomem vol echo label coretype tree corecls corecopy coredel coreren coremd corerd cmdtest drives ps keyb kill pri fsck ndreg loadnem progress neotop dhcpd netcfg ipconfig; do
     #for pkg in hello systest filetest alltest cputest test cpuinfo neoshell neoinit coredir corehelp; do
@@ -221,7 +221,7 @@ fi
 # ============================================
 # 3. Generate NeoDOS FS image (optional, before ESP)
 # ============================================
-if [ "$BUILD_NEODOS_IMAGE" = true ]; then
+if [ "$BUILD_FS_IMAGE" = true ]; then
     echo "[+] Generating NeoDOS FS images..."
     if command -v python3 >/dev/null 2>&1; then
         cd "$SCRIPT_DIR"
@@ -238,7 +238,7 @@ if [ "$BUILD_NEODOS_IMAGE" = true ]; then
             --output "neodos_image2.img" \
             --blocks 512
         cd "$PROJECT_ROOT"
-        echo "[✓] NeoDOS FS images: $NEODOS_IMAGE, $NEODOS_IMAGE2"
+        echo "[✓] NeoDOS FS images: $FS_IMAGE, $FS_IMAGE2"
     else
         echo "[!] python3 not found; skipping NeoDOS FS image"
     fi
@@ -267,8 +267,8 @@ if command -v mkfs.fat >/dev/null 2>&1; then
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/BOOT/BOOTX64.EFI
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/bootloader.efi" ::/EFI/NeoDOS/bootloader.efi
         mcopy -i "$ESP_IMAGE" "$PROJECT_ROOT/kernel.elf" ::/EFI/NeoDOS/kernel.elf
-        if [ -f "$NEODOS_IMAGE" ]; then
-            mcopy -i "$ESP_IMAGE" "$NEODOS_IMAGE" ::/EFI/NeoDOS/neodos.fs
+        if [ -f "$FS_IMAGE" ]; then
+            mcopy -i "$ESP_IMAGE" "$FS_IMAGE" ::/EFI/NeoDOS/neodos.fs
             echo "[✓] Copied NeoDOS FS to ESP"
         fi
         echo "[✓] Copied files to ESP"
@@ -289,10 +289,10 @@ echo "[+] Creating unified GPT disk image..."
 
 DISK_IMAGE="$PROJECT_ROOT/disk_image.img"
 
-if [ -f "$NEODOS_IMAGE" ] && command -v python3 >/dev/null 2>&1; then
+if [ -f "$FS_IMAGE" ] && command -v python3 >/dev/null 2>&1; then
     python3 "$SCRIPT_DIR/create_gpt_image.py" \
         --esp "$ESP_IMAGE" \
-        --neodos "$NEODOS_IMAGE" \
+        --neodos "$FS_IMAGE" \
         --output "$DISK_IMAGE"
     echo "[✓] Unified GPT disk image: $DISK_IMAGE"
 else

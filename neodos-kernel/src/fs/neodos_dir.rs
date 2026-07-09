@@ -2,7 +2,7 @@
 //! Cada directorio es un B-tree de DirEntryV2.
 
 use alloc::vec::Vec;
-use crate::fs::btree::{BTreeNode, BTreeEntry, BTree, BTreeIO, NodeType, NODE_SIZE};
+use crate::fs::btree::{BTreeEntry, BTree, BTreeIO};
 
 pub const DIRENTRY_SIZE: usize = 128;
 pub const NAME_MAX: usize = 48;
@@ -33,7 +33,7 @@ pub const PERM_D: u16 = 16;
 
 impl DirEntryV2 {
     pub fn new_file(name: &str) -> Self {
-        let mut d = DirEntryV2 {
+        DirEntryV2 {
             name: name.as_bytes().to_vec(),
             mode: MODE_FILE | PERM_R | PERM_W | PERM_X | PERM_D,
             size: 0,
@@ -44,12 +44,11 @@ impl DirEntryV2 {
             inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
-        };
-        d
+        }
     }
 
     pub fn new_dir(name: &str) -> Self {
-        let mut d = DirEntryV2 {
+        DirEntryV2 {
             name: name.as_bytes().to_vec(),
             mode: MODE_DIR | PERM_R | PERM_W | PERM_X | PERM_D,
             size: 0,
@@ -60,8 +59,7 @@ impl DirEntryV2 {
             inline_data: [0u8; INLINE_MAX],
             extent_lba: 0,
             extent_count: 0,
-        };
-        d
+        }
     }
 
     pub fn is_dir(&self) -> bool { self.mode & MODE_DIR != 0 }
@@ -85,7 +83,7 @@ impl DirEntryV2 {
         buf[off..off + 4].copy_from_slice(&self.checksum.to_le_bytes()); off += 4; // 95
         buf[off..off + 4].copy_from_slice(&self.inline_len.to_le_bytes()); off += 4; // 99
         buf[off..off + 8].copy_from_slice(&self.extent_lba.to_le_bytes()); off += 8; // 107
-        buf[off..off + 4].copy_from_slice(&self.extent_count.to_le_bytes()); off += 4; // 111
+        buf[off..off + 4].copy_from_slice(&self.extent_count.to_le_bytes()); // 111
         // padding to 128
     }
 

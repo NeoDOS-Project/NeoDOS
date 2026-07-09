@@ -42,19 +42,14 @@ CURSOR=9
 
 El disco del sistema es `scripts/neodos_image.img`. Hay dos formas de añadir `CONFIG.SYS`:
 
-### 1. Modificar `create_neodos_image.py`
+### 1. Modificar `create_ne2_image.py`
 
-Editar `scripts/create_neodos_image.py` y añadir las líneas en el bloque de CONFIG.SYS (block 4):
-
-```python
-config_content = b"""CURSOR=9
-"""
-```
+Editar `scripts/create_ne2_image.py` para personalizar `CONFIG.SYS`.
 
 Luego regenerar la imagen:
 
 ```bash
-cd scripts && python3 create_neodos_image.py
+cd scripts && python3 create_ne2_image.py
 ```
 
 ### 2. Añadirlo al disco manualmente (solo FAT32 data disk)

@@ -3,7 +3,6 @@
 
 use alloc::format;
 use alloc::string::{String, ToString};
-use core::sync::atomic::Ordering;
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
@@ -1574,76 +1573,17 @@ pub(super) fn handler_set_volume_label(regs: super::Registers) -> u64 {
 }
 
 pub(super) fn handler_fsck(regs: super::Registers) -> u64 {
+    // NeoFS v1 fsck has been removed. NeoFS v2 does not yet have fsck support.
+    // Reserved for future implementation.
     let buf_ptr = regs.rbx;
-    let _drive_char = (regs.rcx & 0xFF) as u8 as char;
-    let repair_flag = regs.rdx != 0;
-
     if buf_ptr == 0 {
         return err_to_u64(SyscallError::Inval);
     }
-
     let stats_size = core::mem::size_of::<FsckStatsRaw>() as u64;
     if !is_user_ptr_valid(buf_ptr, stats_size) {
         return err_to_u64(SyscallError::Fault);
     }
-
-    let mode = if repair_flag {
-        crate::fs::fsck::FsckMode::Repair
-    } else {
-        crate::fs::fsck::FsckMode::CheckOnly
-    };
-
-    let result = core::cell::UnsafeCell::new(FsckStatsRaw {
-        total_inodes: 0, used_inodes: 0, valid_inodes: 0,
-        corrupted_inodes: 0, cross_linked_blocks: 0,
-        orphan_inodes: 0, dangling_entries: 0, dir_errors: 0,
-        superblock_errors: 0, repairs_applied: 0,
-    });
-
-    let res = crate::hal::without_interrupts(|| {
-        let mut cache_lock = crate::globals::PAGE_CACHE.lock();
-        let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
-        let dev = match bdevs_lock.get(0) {
-            Some(d) => d,
-            None => return err_to_u64(SyscallError::NoDev),
-        };
-        let partition_base = crate::globals::PRIMARY_PARTITION_BASE.load(Ordering::Relaxed) as u32;
-
-        let stats = crate::fs::fsck::run(&mut *cache_lock, dev, mode, partition_base);
-
-        let raw = unsafe { &mut *result.get() };
-        raw.total_inodes = stats.total_inodes;
-        raw.used_inodes = stats.used_inodes;
-        raw.valid_inodes = stats.valid_inodes;
-        raw.corrupted_inodes = stats.corrupted_inodes;
-        raw.cross_linked_blocks = stats.cross_linked_blocks;
-        raw.orphan_inodes = stats.orphan_inodes;
-        raw.dangling_entries = stats.dangling_entries;
-        raw.dir_errors = stats.dir_errors;
-        raw.superblock_errors = stats.superblock_errors;
-        raw.repairs_applied = stats.repairs_applied;
-
-        if stats.repairs_applied > 0 {
-            crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
-        }
-
-        0u64
-    });
-
-    if res != 0 {
-        return res;
-    }
-
-    let raw = unsafe { &*result.get() };
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            raw as *const FsckStatsRaw as *const u8,
-            buf_ptr as *mut u8,
-            core::mem::size_of::<FsckStatsRaw>(),
-        );
-    }
-
-    0
+    err_to_u64(SyscallError::NoSys)
 }
 
 // ═══════════════════════════════════════════════════════════════════════

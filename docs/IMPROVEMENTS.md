@@ -3,12 +3,12 @@
 > Items pendientes del roadmap. Los completados están en
 > [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
-> Version actual: **v0.48.9** — Tests: 656 — ABI: v7 — Ob API: RAX 60-76
+> Version actual: **v0.49.0** — Tests: 656 — ABI: v7 — Ob API: RAX 60-76
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cambios.
 > Fuente de verdad: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 
-**Próximo milestone: v0.49** (NeoFS robustez — indirect blocks, journaling, checksums)
+**Próximo milestone: v0.50** (Registry bugfixes + Shell overhaul + NeoFS robustez)
 
 ---
 
@@ -274,7 +274,7 @@
   - PURGE: vacía tabla (no reclama bloques — GC lazy en alloc_block).
   - **Tests:** `snapshot_create_list`, `snapshot_restore`, `snapshot_circular_64`
 
-* [ ] **NFSv2-FILESYSTEM. FileSystem trait impl** | Prereqs: NFSv2-BTREE, NFSv2-FREELIST, NFSv2-SNAPSHOT | Files: `src/fs/neodos_fs.rs` (reescribir), `src/fs/mod.rs`
+* [x] **NFSv2-FILESYSTEM. FileSystem trait impl** | Prereqs: NFSv2-BTREE, NFSv2-FREELIST, NFSv2-SNAPSHOT | Files: `src/fs/neodos_v2.rs`, `src/fs/mod.rs`
   - NeoDosFsV2 con superblock "NE2\0", B-tree directory, extents, inline data, COW.
   - read/lookup/readdir/stat: lookup en B-tree, verificar CRC32.
   - write/create/mkdir: COW: alocar bloques, escribir, nuevo nodo B-tree, nueva raíz.
@@ -357,12 +357,12 @@
 
 ### VFS Fase 5: Caché Unificada
 
-* [ ] **VFS-5.1. Unificar BlockCache + PageCache** | Prereqs: -- | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
-  - Una sola cache de páginas 4KB con sub-sector dirty tracking. Política LRU unificada.
+* [x] **VFS-5.1. Unificar BlockCache + PageCache** | Prereqs: -- | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
+  - **[COMPLETED en v0.49 — BlockCache eliminado, PageCache unificado como única capa de caché]**
   - **Tests:** `vfs_cache_coherency`
 
-* [ ] **VFS-5.2. InodeCache con invalidación** | Prereqs: -- | Files: `src/fs/neodos_fs.rs`
-  - Añadir versión/secuencia en superblock. Invalidar InodeCache cuando cambie.
+* [x] **VFS-5.2. InodeCache con invalidación** | Prereqs: -- | Files: `src/fs/neodos_fs.rs`
+  - **[COMPLETED en v0.49 — InodeCache.version + check_version() implementados]**
   - **Tests:** `vfs_cache_inode_invalidation`
 
 ### VFS Fase 2 (cont.)
@@ -632,13 +632,137 @@
   - Loop drains handler list but body is empty — comment says "a full implementation would store the function pointer alongside the name."
   - **Tests:** `nem_unregister_all_purges_handlers`
 
-* [ ] **AUDIT-52. Two cache implementations with different APIs** | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
-  - BlockCache (512B sectors, LRU linear scan) vs PageCache (4KB pages, LRU double-linked list + hash table). Both used by `neodos_fs.rs`. Duplicated eviction policy, sizing logic.
-  - **Tests:** `cache_unified_coherency` (when implemented)
+* [x] **AUDIT-52. Two cache implementations with different APIs** | Files: `src/buffer/block_cache.rs`, `src/buffer/page_cache.rs`
+  - BlockCache (512B sectors, LRU linear scan) vs PageCache (4KB pages, LRU double-linked list + hash table). **[COMPLETED en v0.49 — BlockCache eliminado, PageCache unificado]**
 
+### 2026-07-09 Audit: Comprehensive Project Review (dead code, duplicates, docs, architecture)
 
+* [ ] **AUDIT-53. 5× duplicate `crc32()` implementation** | Files: `src/fs/neodos_fs.rs:12`, `src/fs/neodos_io.rs:156`, `src/fs/snapshot.rs:122`, `src/fs/freelist.rs:174`, `src/fs/btree.rs:96`
+  - Five byte-for-byte identical CRC32 implementations across the filesystem subsystem. `neodos_io.rs:173` already comments "Re-export crc32 from neodos_fs". Move to shared `fs/crc32.rs` utility module.
+  - **Tests:** `crc32_single_implementation`
 
----
+* [ ] **AUDIT-54. GPT parsing duplicated** | Files: `src/drivers/gpt.rs`, `src/vfs/partition.rs`
+  - `read_u64_le`/`read_u32_le`/`read_sector_from_dev` helper functions and GPT partition loop logic are copy-pasted between `drivers/gpt.rs` and `vfs/partition.rs`. Consolidate into `drivers/gpt.rs` and re-export from `vfs/partition.rs`.
+  - **Tests:** `gpt_parse_consistent`
+
+* [ ] **AUDIT-55. ABI validation duplicated** | Files: `src/drivers/abi/mod.rs:50-80`, `src/drivers/nem/policy.rs:27-57`
+  - `abi::negotiate()` (returns `NegotiationResult`) and `policy::validate_abi()` (returns `Result<(), &str>`) implement the same three overlapping-window checks. Have `validate_abi()` delegate to `abi::negotiate()`.
+  - **Tests:** `abi_validation_single_code_path`
+
+* [ ] **AUDIT-56. Dual mount managers (Vfs.mounts + MountManager)** | Files: `src/fs/vfs.rs:84-95`, `src/vfs/mount.rs:38-123`
+  - `MountManager` in `vfs/mount.rs` and `Vfs.mounts` in `fs/vfs.rs` coexist with separate `MAX_MOUNTS` values (16 vs 8). Both must be updated for every mount/unmount operation, creating inconsistency risk. Merge into single mount manager.
+  - **Tests:** `mount_single_manager`
+
+* [ ] **AUDIT-57. MODE_DIR/MODE_FILE constants defined 3×** | Files: `src/fs/vfs.rs:43-44`, `src/fs/neodos_dir.rs:26-27`, `src/fs/neodos_fs.rs:209-210`
+  - `MODE_DIR = 0x40` and `MODE_FILE = 0x80` defined identically in 3 files. Define once in `fs/vfs.rs` (the FileSystem trait module) and import everywhere.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-58. Error constants duplicated between libneodos and libneodos-nxl** | Files: `libneodos/src/syscall.rs:3-17`, `libneodos-nxl/src/error.rs:4-18`
+  - Same 15 error constants (`EINVAL` through `EBUSY`) with same values defined in both crates. Also `ret()`/`ret_unit()` helpers duplicated with slightly different signatures. Share via common crate.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-59. 10+ enums with manual `to_str()` instead of `Display`** | Files: multiple (`panic_classification.rs`, `nem/mod.rs`, `object/types.rs`, `vfs/mount.rs`, `urn/mod.rs`, `drivers/driver_runtime.rs`, `drivers/abi/mod.rs`)
+  - Every enum defines `pub fn to_str(self) -> &'static str` with a full match. This is a Rust anti-pattern. Replace all with `impl fmt::Display` or derive macros (`strum`, `Display` derive).
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-60. iso9660.rs dead filesystem driver** | Files: `src/drivers/iso9660.rs`
+  - Full ISO9660 filesystem driver (`Iso9660Driver` + `FileSystem` impl) declared in `drivers/mod.rs` but never imported or instantiated anywhere. Zero callers. Remove or register with VFS.
+  - **Tests:** (remove dead code, verify build)
+
+* [ ] **AUDIT-61. debugger/mod.rs GDB stub dead code** | Files: `src/debugger/mod.rs`
+  - `gdb_main()` implemented but never called from anywhere. Documented in `IMPROVEMENTS.md` as future A3.2 work. Decide: either remove or add as boot-time feature gate.
+  - **Tests:** (behavioral — no-op removal)
+
+* [ ] **AUDIT-62. drivers/nem/drivers/kbd_layout.rs never compiled** | Files: `src/drivers/nem/drivers/kbd_layout.rs`
+  - Keyboard layout tables file exists in directory but directory has **no `mod.rs`**, so this file is never included in compilation. Either add `mod` declaration or remove the file.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-63. 23 dead functions across kernel** | Files: multiple
+  - Dead functions found: `signal_device_event()` (`drivers/mod.rs:51`), `read_bar64()`/`map_bar_mmio()` (`drivers/pci.rs:182/192`), `find_neodos_partition()` (`drivers/gpt.rs:35`), `wait_for_key()`/`read_scancode()` (`drivers/ps2.rs:129/139`), `set_rx_permissions()`/`set_rw_permissions()`/`iter_isolated_regions()`/`format_isolation_info()` (`drivers/isolation.rs:338/345/443/581`), `print_ahci_debug()`/`set_ahci_debug_enabled()` (`boot_benchmark.rs:233/429`), `IoStack::acquire_ref()`/`release_ref()`/`mark_stale()`/`with_device()` (`vfs/io.rs:50/56/62/137`), `find_partitions_by_type()`/`read_u64_le()`/`read_u32_le()` (`vfs/partition.rs:51/32/37`), `vfs_mount()`/`vfs_unmount()`/`vfs_get_mount()`/`vfs_unmount_filesystem()`/`vfs_path_to_mount()` (`vfs/mount.rs:129/133/137/174/193`), `write_indirect_block_all()` (`fs/neodos_fs.rs:386`), `reserve_journal_area()` (`fs/journal.rs:415`).
+  - **Tests:** Remove each, verify build
+
+* [ ] **AUDIT-64. `PageCacheLevel` unused enum variants** | Files: `src/vfs/io.rs:9`
+  - `PageCacheLevel::L2`, `L3`, `L4` variants never used — only `L1` is referenced. Remove dead variants.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-65. Dead struct `CryptoContext`** | Files: `src/vfs/io.rs:16`
+  - `pub struct CryptoContext {}` — empty struct with zero callers outside own file. Remove.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-66. ARCHITECTURE_SOURCE_OF_TRUTH.md Event struct layout wrong** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md:379-390`
+  - Documents Event as `source: u8`, `timestamp: u32`, `flags: u16` with no `driver_target` field. Actual code has `source: EventSource` (u32), `timestamp: u64`, `flags: u32`, plus `driver_target: u32` present. This is the **governance document** — must match code exactly.
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-67. boot.md KERNEL_VERSION_CODE at v0.10.5** | Files: `docs/boot.md:100`
+  - `KERNEL_VERSION_CODE = (10 << 8) | 5 = 0x0A05` corresponds to kernel v0.10.5. Current version is v0.49.0. Update constant to match actual version.
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-68. roadmap.md version says v0.48** | Files: `docs/roadmap.md:3`
+  - "Current: **v0.48**" should be **v0.49.0**. v0.48 focus items (NeoFS stability NS-1/2, FS-1/2/4) are all completed.
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-69. Test count outdated in testing.md and ARCHITECTURAL_VISION.md** | Files: `docs/testing.md:5`, `docs/ARCHITECTURAL_VISION.md:96,778`
+  - `testing.md` says "537+ tests across 50+ suites", `ARCHITECTURAL_VISION.md` says "537 tests". Current count is **656** tests. Update all stale counts.
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-70. filesystem.md structs missing checksum/version fields** | Files: `docs/filesystem.md:13-79`
+  - Superblock (missing `version: u32`), Inode (missing `checksum: u32`), DirectoryEntry (missing `checksum: u8`) all lack fields added in v0.49 FS-6. Update struct layouts.
+  - Also: `BLOCK_CACHE` still referenced (removed in v0.49 VFS-5.1).
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-71. syscalls.md missing Socket and Registry info classes** | Files: `docs/syscalls.md:284-296`
+  - `sys_ob_query_info` docs only mention classes 15, 16 — missing Socket info classes (17-23) and Registry info classes (21-22). `sys_ob_set_info` docs only list classes 4-14 — missing Socket (18-22) and Registry (23-27) set classes.
+  - Also: `sys_ob_create` type list missing `Socket=18`.
+  - **Tests:** (docs fix only)
+
+* [ ] **AUDIT-72. net/mod.rs monolithic protocol dispatch** | Files: `src/net/mod.rs:68-197`
+  - 130-line `net_handle_incoming_packet()` function chains `if/else` on `eth_hdr.is_arp()` / `is_ipv4()`, with all protocol decode logic inlined. Contains 9 `unsafe` pointer casts for header deserialization. Replace with `ProtocolHandler` trait + `HashMap<EtherType, Box<dyn ProtocolHandler>>`.
+  - **Tests:** `net_protocol_handler_register`, `net_protocol_dispatch_eth`
+
+* [ ] **AUDIT-73. Storage probe hardcoded to 4 concrete drivers** | Files: `src/drivers/storage_manager.rs:2-5`
+  - `init_storage()` directly imports `BootAta`, `BootAhci`, `NvmeDriver`, `VirtIoBlk`. Adding a new storage driver requires modifying this file. Should use PCI vendor/device ID → probe function registry.
+  - **Tests:** `storage_probe_registry_add_driver`, `storage_probe_auto_discovery`
+
+* [ ] **AUDIT-74. SPSC ring buffer triplicated** | Files: `src/work_queue.rs`, `src/input/vt.rs` (VtInputQueue), `src/arch/x64/cpu_local.rs` (CpuRunQueue)
+  - Three independent implementations of lock-free single-producer single-consumer ring buffer with atomic head/tail. Extract into generic `RingBuf<T, const CAP: usize>` in a shared utility module.
+  - **Tests:** `ringbuf_push_pop`, `ringbuf_overflow`, `ringbuf_empty_full`
+
+* [ ] **AUDIT-75. 27 fixed-size arrays across kernel** | Files: multiple
+  - Fixed-size arrays identified: `VT_COUNT=4`/`VT_QUEUE_SIZE=4096` (`input/vt.rs`), `MAX_NICS=4`/`MAX_SOCKETS=64`/`MAX_TCP_CONNECTIONS=32` (`net/types.rs`), `NXL_SLOT_COUNT=8` (`nxl.rs`), `MAX_ISOLATED_DRIVERS=16` (`drivers/isolation.rs`), `OB_NAME_LEN=128` (`object/types.rs`), `USER_LIMIT=36MB`/`USER_SLOT_COUNT=32` (`arch/x64/paging.rs`), `BIN_BUF=65536` (`syscall/handlers.rs`), `MAX_BLOCK_DEVICES=8` (`drivers/block.rs`), `drives=[Option;26]` (`fs/vfs.rs`), `MAX_SUBDIR_MOUNTS=8` (`vfs/vfs.rs`). Many should be dynamic `Vec` or growable structures.
+  - See also: AUDIT-49 (name buffer sizes), AUDIT-33 (BIN_BUF), AUDIT-48 (kernel stack).
+  - **Tests:** per-item migration tests
+
+* [ ] **AUDIT-76. Network unsafe pointer casts (9 occurrences)** | Files: `src/net/mod.rs`
+  - Pattern `unsafe { &*(packet.as_ptr().add(N) as *const T) }` used 9× to deserialize raw Ethernet/ARP/IPv4/UDP/TCP/ICMP headers. Use `#[repr(packed)]` structs with safe conversion or a parser combinator.
+  - **Tests:** `net_header_safe_deserialize_eth`, `net_header_safe_deserialize_ip`
+
+* [ ] **AUDIT-77. Dual ABI validation code paths** | Files: `src/drivers/abi/mod.rs:50-80`, `src/drivers/nem/policy.rs:27-57`
+  - `abi::negotiate()` returns `NegotiationResult` with `Compatible/Incompatible`; `policy::validate_abi()` returns `Result<(), &str>` with identical window checks. Consolidate: `validate_abi()` should call `abi::negotiate()` internally.
+  - **Tests:** `abi_validation_single_code_path`
+
+* [ ] **AUDIT-78. `kernel_stack_trace` uses fixed crash buffers** | Files: `src/crash/mod.rs:34,66,70`
+  - `stack_trace: [u64; 32]`, `pml4: [u64; 512]`, `trace_events: [CrashTraceEvent; 128]` — large fixed arrays in crash dump struct. Make variable-length with header + offset table.
+  - **Tests:** `crash_dump_variable_length`
+
+* [ ] **AUDIT-79. from_u8/from_u16 pattern should use `TryFrom`** | Files: `src/drivers/nem/mod.rs:46-98`
+  - `DriverCategory::from_u8`, `NemDriverType::from_u8`, `NemDriverType::from_u16` — manual match-based conversions. Replace with `impl TryFrom<u8/u16>` or `strum::FromRepr`.
+  - **Tests:** (compile-only)
+
+* [ ] **AUDIT-80. `lazy_static!` still at 27 usages — migrate to `LazyLock`** | Files: multiple
+  - AUDIT-50 flagged 27 `lazy_static!` usages. Still all present. `lazy_static!` crate is in maintenance mode. `std::sync::LazyLock` is stable (Rust 1.80+).
+  - **Tests:** (compile-only refactor)
+
+* [ ] **AUDIT-81. `proc_a/b/c/d()` in processes.rs still vestigial** | Files: `src/processes.rs`
+  - AUDIT-5 from 2026-07-04 audit remains unaddressed: 4 functions (`proc_a`/`proc_b`/`proc_c`/`proc_d`) that only print letters in infinite loops. Zero external references. Vestigial prototyping code.
+  - **Tests:** Remove, verify build
+
+* [ ] **AUDIT-82. `#![allow(dead_code)]` mask still present** | Files: `src/main.rs:9`, `src/globals.rs:1`
+  - AUDIT-30 flagged both files suppressing all dead-code warnings for the entire kernel crate. Still present. Remove and fix revealed dead items.
+  - **Tests:** (compile-only — remove allow, fix warnings)
+
+* [ ] **AUDIT-83. Toctou in storage device enumeration** | Files: `src/drivers/storage_manager.rs`
+  - Storage probe iterates PCI bus for storage devices but has no synchronization if drivers load/unload concurrently during probe. Add `StorageRegistry` with probe lock.
+  - **Tests:** `storage_probe_concurrent_safe`---
 
 ## LOW
 
@@ -745,9 +869,7 @@ Mostly completed. See [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md) for
   over `setcap cap_net_admin+ep` (broad, hard to audit) and raw TAP (per-session setup).
 
 ### NeoFS Audit
-Full audit in [NEOFS_AUDIT.md](NEOFS_AUDIT.md), roadmap in [NEOFS_ROADMAP.md](NEOFS_ROADMAP.md),
-test plan in [NEOFS_TESTS.md](NEOFS_TESTS.md).
-
+NeoFS v1 is obsolete and has been removed. See [neofs_v2_design.md](neofs_v2_design.md) for the current native filesystem format.
 ### VFS Architecture Audit
 Detailed findings in the VFS sections above. Key risks (R1-R4) resolved or tracked as VFS-2.*/VFS-5.* items.
 

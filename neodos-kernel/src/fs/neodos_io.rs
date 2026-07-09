@@ -2,7 +2,6 @@
 //! Cada archivo tiene extents (start_lba, length) almacenados en un B-tree
 //! de tipo extent_list (node_type=2), o datos inline si caben en 208 bytes.
 
-use alloc::vec::Vec;
 use crate::drivers::block::BlockDevice;
 use crate::buffer::page_cache::PageCache;
 use super::neodos_dir::{DirEntryV2, INLINE_MAX};
@@ -102,7 +101,6 @@ pub fn file_write(
     let start_sector = partition_base_sector + start_block * 8;
 
     // Escribir datos bloque por bloque
-    let mut written = 0usize;
     for block_idx in 0..total_blocks {
         let sector_lba = start_sector + block_idx as u64 * 8;
         let page = cache.get_page_mut(0, 0, block_idx, sector_lba, dev)?;
@@ -124,7 +122,6 @@ pub fn file_write(
                 page[overlap..overlap + data_end].copy_from_slice(&data[data_start..data_end]);
             }
         }
-        written += to_write;
     }
 
     new_entry.extent_lba = start_block;
@@ -169,7 +166,5 @@ pub fn crc32(data: &[u8]) -> u32 {
 }
 
 pub fn register_io_tests() {
-    crate::test_case!("neodos_io_crc32", {
-        // Re-export crc32 from neodos_fs
-    });
+    // NeoFS v2 I/O tests
 }

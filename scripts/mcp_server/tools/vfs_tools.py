@@ -2,19 +2,17 @@
 tools/vfs_tools.py — NeoDOS VFS Analysis Tools.
 
 Provides read-only access to NeoDOS filesystem images via VFS abstraction.
-All filesystem operations go through the VFS layer (NeoDosFsImage parser),
-never accessing raw disk sectors directly.
+NeoFS v1 (NEOD) has been removed. NeoFS v2 (NE2) is the only native format.
 """
 
 import os
 from pathlib import Path
-from ..parsers.neodos_fs import NeoDosFsImage
+from typing import Optional
+from ..parsers.neodos_v2_fs import NeoDosFsV2Image, open_image, SuperblockNE2
 
 
-# ── Configuration ──
-
-NEODOS_ROOT: Path = None
-_IMAGES: dict[str, NeoDosFsImage] = {}  # drive letter -> image parser
+NEODOS_ROOT: Optional[Path] = None
+_IMAGES: dict[str, NeoDosFsV2Image] = {}
 
 
 def configure(root_dir: str):
@@ -23,22 +21,23 @@ def configure(root_dir: str):
     _IMAGES.clear()
 
 
-def _get_image(drive_letter: str = "C") -> NeoDosFsImage:
+def _get_image(drive_letter: str = "C") -> NeoDosFsV2Image:
     """Get or cache the image parser for a drive letter."""
     drive = drive_letter.upper()
     if drive in _IMAGES:
         return _IMAGES[drive]
 
-    # Determine image path based on drive letter
+    if NEODOS_ROOT is None:
+        raise FileNotFoundError("NEODOS_ROOT not configured")
+
+    candidates = []
     if drive == "C":
         candidates = [
             NEODOS_ROOT / "scripts" / "neodos_image.img",
             NEODOS_ROOT / "disk_image.img",
         ]
-        # Also try extracting from disk_image.img
         disk_img = NEODOS_ROOT / "disk_image.img"
         if disk_img.exists() and not candidates[0].exists():
-            # Try to extract NeoDOS partition from GPT disk image
             extracted = _extract_neodos_partition(str(disk_img))
             if extracted:
                 _IMAGES[drive] = extracted
@@ -47,16 +46,14 @@ def _get_image(drive_letter: str = "C") -> NeoDosFsImage:
         candidates = [
             NEODOS_ROOT / "scripts" / "neodos_image2.img",
         ]
-    else:
-        candidates = []
 
     for img_path in candidates:
         if img_path.exists():
             try:
-                img = NeoDosFsImage(str(img_path))
+                img = open_image(str(img_path))
                 _IMAGES[drive] = img
                 return img
-            except ValueError as e:
+            except ValueError:
                 continue
 
     raise FileNotFoundError(
@@ -65,73 +62,52 @@ def _get_image(drive_letter: str = "C") -> NeoDosFsImage:
     )
 
 
-def _extract_neodos_partition(disk_img_path: str) -> Optional[NeoDosFsImage]:
-    """Extract the NeoDOS partition from a GPT disk image.
-    GPT: Partition 2 (NeoDOS FS) starts at LBA ~206848.
-    """
+def _extract_neodos_partition(disk_img_path: str) -> Optional[NeoDosFsV2Image]:
+    """Extract the NeoDOS partition from a GPT disk image."""
     import struct
-    SECTOR_SIZE = 512
-    GPT_PART_ENTRY_SIZE = 128
-    GPT_FIRST_ENTRY_LBA = 2  # LBA 2 for GPT partition entries
+    import tempfile
 
     try:
         with open(disk_img_path, "rb") as f:
-            # Read protective MBR
-            mbr = f.read(SECTOR_SIZE)
-            if len(mbr) < SECTOR_SIZE:
+            mbr = f.read(512)
+            if len(mbr) < 512:
                 return None
-
-            # Read GPT header at LBA 1
-            f.seek(SECTOR_SIZE)
+            f.seek(512)
             gpt_hdr = f.read(92)
             if len(gpt_hdr) < 92:
                 return None
-
-            # Parse GPT header for partition entry start
             part_ent_lba = struct.unpack_from("<Q", gpt_hdr, 72)[0]
             num_part_ents = struct.unpack_from("<I", gpt_hdr, 80)[0]
             part_ent_size = struct.unpack_from("<I", gpt_hdr, 84)[0]
-
-            if part_ent_size != GPT_PART_ENTRY_SIZE:
-                return None
-
-            # NeoDOS partition GUID: EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
             neodos_guid = bytes.fromhex("A2A0D0EBE5B9334487C068B6B72699C7")
-
-            # Scan partitions from LBA 2
-            f.seek(part_ent_lba * SECTOR_SIZE)
+            f.seek(part_ent_lba * 512)
             for i in range(min(num_part_ents, 128)):
-                entry = f.read(GPT_PART_ENTRY_SIZE)
-                if len(entry) < GPT_PART_ENTRY_SIZE:
+                entry = f.read(part_ent_size)
+                if len(entry) < part_ent_size:
                     break
-                part_type_guid = entry[0:16]
-                if part_type_guid == neodos_guid:
+                if entry[0:16] == neodos_guid:
                     start_lba = struct.unpack_from("<Q", entry, 32)[0]
                     end_lba = struct.unpack_from("<Q", entry, 40)[0]
-                    # Extract partition data
-                    part_size = (end_lba - start_lba + 1) * SECTOR_SIZE
-                    f.seek(start_lba * SECTOR_SIZE)
+                    part_size = (end_lba - start_lba + 1) * 512
+                    f.seek(start_lba * 512)
                     part_data = f.read(part_size)
-                    # Create a temporary file-like object
-                    # Since NeoDosFsImage expects a file path, write to temp
-                    import tempfile
                     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".neodos")
                     tmp.write(part_data)
                     tmp.close()
-                    img = NeoDosFsImage(tmp.name)
-                    # Clean up temp file after parsing (data is in memory)
                     try:
+                        img = open_image(tmp.name)
                         os.unlink(tmp.name)
-                    except:
-                        pass
-                    return img
-
-            return None
-    except Exception as e:
+                        return img
+                    except ValueError:
+                        os.unlink(tmp.name)
+                        return None
+        return None
+    except Exception:
         return None
 
 
 # ── Tool Implementations ──
+
 
 def vfs_list(path: str = "\\", drive: str = "C") -> str:
     """List directory contents from NeoDOS filesystem through VFS."""
@@ -140,7 +116,6 @@ def vfs_list(path: str = "\\", drive: str = "C") -> str:
     except FileNotFoundError as e:
         return f"VFS Error: {e}"
 
-    # Normalize path
     if ":" in path:
         path = path.split(":", 1)[1]
     path = path.replace("/", "\\").rstrip("\\") or "\\"
@@ -149,20 +124,17 @@ def vfs_list(path: str = "\\", drive: str = "C") -> str:
     if entries is None:
         return f"VFS Error: '{path}' not found on {drive}:"
 
-    # Format as DOS DIR output
     lines = [f" Directory of {drive}:{path}"]
     lines.append("")
     total_files = 0
     total_dirs = 0
     for e in entries:
-        if e["type"] == "deleted":
-            continue
         if e["type"] == "dir":
             total_dirs += 1
-            lines.append(f"  {e['name']:20s}  <DIR>          {e['perms']}")
+            lines.append(f"  {e['name']:20s}  <DIR>          {e['mode_str']}")
         else:
             total_files += 1
-            lines.append(f"  {e['name']:20s}  {e['size']:>8d}  {e['perms']}")
+            lines.append(f"  {e['name']:20s}  {e['size']:>8d}  {e['mode_str']}")
     lines.append("")
     lines.append(f"  {total_files:>3d} File(s)")
     lines.append(f"  {total_dirs:>3d} Dir(s)")
@@ -184,17 +156,15 @@ def vfs_read(path: str, drive: str = "C") -> str:
     if data is None:
         return f"VFS Error: '{path}' not found on {drive}:"
 
-    # Try text, else show hex
     try:
         text = data.decode("ascii")
         if text and text[-1] == "\n":
             text = text[:-1]
         return text
     except UnicodeDecodeError:
-        # Show hex dump
         lines = [f"Binary file: {len(data)} bytes", ""]
         for i in range(0, min(len(data), 1024), 16):
-            chunk = data[i:i+16]
+            chunk = data[i:i + 16]
             hex_part = " ".join(f"{b:02x}" for b in chunk)
             ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
             lines.append(f"  {i:06x}  {hex_part:48s}  {ascii_part}")
@@ -223,11 +193,7 @@ def vfs_stat(path: str, drive: str = "C") -> str:
         f"Name:   {info['name']}",
         f"Type:   {info['type']}",
         f"Size:   {info['size']} bytes",
-        f"Inode:  {info['inode']}",
-        f"Mode:   {info['mode']}",
-        f"Perms:  {info['perms']}",
-        f"UID:    {info['uid']}",
-        f"GID:    {info['gid']}",
+        f"Mode:   {info['mode_str']}",
     ])
 
 
@@ -248,12 +214,10 @@ def vfs_resolve(path: str, drive: str = "C") -> str:
     if info:
         return "\n".join([
             f"Resolved: {drive}:{info.path}",
-            f"  Inode:  {info.inode.inode_num}",
-            f"  Type:   {info.inode.mode_str()}",
-            f"  Size:   {info.inode.size} bytes",
+            f"  Type:   {info.mode_str()}",
+            f"  Size:   {info.size} bytes",
         ])
 
-    # Fallback search: try all filesystem drives
     for d in ["C", "D", "A", "B"]:
         if d == drive:
             continue
@@ -265,9 +229,8 @@ def vfs_resolve(path: str, drive: str = "C") -> str:
                 return "\n".join([
                     f"Resolved via fallback: {d}:{alt_info.path}",
                     f"  (original path '{path}' not found on {drive}:)",
-                    f"  Inode:  {alt_info.inode.inode_num}",
-                    f"  Type:   {alt_info.inode.mode_str()}",
-                    f"  Size:   {alt_info.inode.size} bytes",
+                    f"  Type:   {alt_info.mode_str()}",
+                    f"  Size:   {alt_info.size} bytes",
                 ])
         except FileNotFoundError:
             continue
@@ -285,12 +248,7 @@ def vfs_dump_superblock(drive: str = "C") -> str:
 
 
 def vfs_dump_inodes(drive: str = "C") -> str:
-    """Dump NeoDOS inode table."""
-    try:
-        img = _get_image(drive)
-    except FileNotFoundError as e:
-        return f"VFS Error: {e}"
-    return img.dump_inode_table()
+    return "NeoFS v2: uses B-tree directories (no fixed inode table)"
 
 
 def vfs_tree(path: str = "\\", drive: str = "C", indent: str = "") -> str:
@@ -309,7 +267,7 @@ def vfs_tree(path: str = "\\", drive: str = "C", indent: str = "") -> str:
         return f"VFS Error: '{path}' not found"
 
     lines = []
-    dirs = [e for e in entries if e["type"] == "dir" and e["name"] not in (".", "..")]
+    dirs = [e for e in entries if e["type"] == "dir"]
     files = [e for e in entries if e["type"] == "file"]
 
     for e in files:

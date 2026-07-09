@@ -40,7 +40,7 @@ test_case!("my_test", {
 
 | Suite | Count | Description |
 |-------|-------|-------------|
-| NeoFS | 75 | Inode metadata, permissions, timestamps, block count, DOS attrs, serialization, stress, corruption, rendering, indirect blocks |
+| NeoFS | - | NeoFS v1 removed. NeoFS v2 tests via btree, freelist, snapshot, neodos_dir |
 | NEM | 23 | v1/v2/v3 parsing, header validation, type decoding, ABI field extraction, category parsing, v3 relocations/symbols/sections |
 | ELF | 20 | Header validation, segment loading, edge cases (empty, truncated, corrupted), PIE offset/relocation, address space validation |
 | Event Bus | 17 | v2 queue ops, subscription filters, dynamic payload lifecycle, backpressure, priority dispatch, handler registration/unregistration |

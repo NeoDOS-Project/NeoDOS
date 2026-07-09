@@ -310,9 +310,9 @@ pub fn register_tests() {
         test_eq!((MAX_SECTORS_PER_IO as u32) * SECTOR_SIZE, 4096);
     });
 
-    test_case!("virtio_submit_read_write", { Result::<(), &str>::Ok(()) });
-    test_case!("virtio_boot_load_kernel", { Result::<(), &str>::Ok(()) });
-    test_case!("virtio_gpt_parsing", { Result::<(), &str>::Ok(()) });
-    test_case!("virtio_mount_rootfs", { Result::<(), &str>::Ok(()) });
-    test_case!("virtio_boot_neoshell", { Result::<(), &str>::Ok(()) });
+    test_case!("virtio_submit_read_write", {});
+    test_case!("virtio_boot_load_kernel", {});
+    test_case!("virtio_gpt_parsing", {});
+    test_case!("virtio_mount_rootfs", {});
+    test_case!("virtio_boot_neoshell", {});
 }

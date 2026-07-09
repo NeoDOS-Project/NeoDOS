@@ -5,46 +5,58 @@ layer), FAT32 (ESP compat), IoStack (unified block I/O), and cache layers.
 
 ## NeoFS
 
-Source: `src/fs/neodos_fs.rs`. Native on-disk format for NeoDOS partitions.
+**NeoFS v1 (NEOD) is obsolete and has been removed.**
+
+NeoFS v2 (NE2) is the only native filesystem format supported by NeoDOS.
+
+Source: `src/fs/neodos_v2.rs`. Native on-disk format for NeoDOS partitions.
 All multi-byte integers are little-endian.
 
-### Superblock
+### Superblock v2
 
-Located at LBA 0, exactly 512 bytes. Magic value: `0x4F444F4E` ("NEOD").
+Located at LBA 0, exactly 512 bytes. Magic value: `0x0032454E` ("NE2\0").
 
-| Offset | Size | Field        | Description                      |
-|--------|------|--------------|----------------------------------|
-| 0      | 4    | magic        | "NEOD" magic                     |
-| 4      | 4    | block_size   | Typically 4096                   |
-| 8      | 4    | num_blocks   | Total blocks in partition        |
-| 12     | 4    | num_inodes   | Maximum number of inodes         |
-| 16     | 8    | created      | Creation timestamp               |
-| 24     | 1    | label_len    | Volume label length (0-11)       |
-| 25     | 11   | label        | DOS-standard volume label        |
-| 36     | 476  | reserved     | Padding to 512 bytes             |
+| Offset | Size | Field              | Description                      |
+|--------|------|--------------------|----------------------------------|
+| 0      | 4    | magic              | "NE2\0" magic                    |
+| 4      | 4    | version            | Format version                   |
+| 8      | 8    | root_btree_lba     | Root B-tree block address        |
+| 16     | 8    | root_version       | Root version counter             |
+| 24     | 8    | root_timestamp     | Last root update timestamp       |
+| 32     | 8    | num_blocks         | Total blocks in partition        |
+| 40     | 8    | num_used           | Used blocks                      |
+| 48     | 8    | num_free           | Free blocks                      |
+| 56     | 1    | label_len          | Volume label length (0-32)       |
+| 57     | 32   | label              | Volume label                     |
+| 89     | 4    | flags              | Feature flags (reserved)         |
+| 93     | 8    | freelist_lba       | Freelist root block              |
+| 101    | 8    | snapshot_table_lba | Snapshot table block             |
+| 109    | 403  | reserved           | Padding to 512 bytes             |
 
-### Inode Table
+### Architecture
 
-Fixed offset after superblock. Each inode is 256 bytes:
+- **B-tree directories**: Each directory is a persistent B-tree indexed by entry name.
+- **Extent-based files**: Files use extent lists (stored in B-trees) for data block tracking.
+- **Inline data**: Small files (≤16 bytes) store data directly in the directory entry.
+- **Copy-on-Write**: B-tree updates use COW semantics for crash safety.
+- **Freelist**: A dedicated free block allocator replaces the old bitmap approach.
+- **Snapshots**: Up to 64 snapshot entries in a circular table.
+- **Feature flags**: The superblock `flags` field enables forward-compatible format evolution.
 
-```rust
-pub struct Inode {
-    pub inode_num: u32,
-    pub mode: u16,              // 0x40=dir, 0x80=file + permission bits
-    pub size: u32,
-    pub atime: u64,
-    pub mtime: u64,
-    pub ctime: u64,
-    pub link_count: u16,
-    pub owner_uid: u32,
-    pub owner_gid: u32,
-    pub direct_blocks: [u32; 12],  // 12 direct block pointers
-    pub indirect_block: u32,       // Single indirect block
-    pub padding: [u8; 160],
-}
-```
+### Files
 
-Permission flags stored in mode bits 0-4:
+| File | Purpose |
+|------|---------|
+| `src/fs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
+| `src/fs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
+| `src/fs/neodos_io.rs` | Extent-based read/write + inline data |
+| `src/fs/btree.rs` | Generic persistent B-tree with COW |
+| `src/fs/freelist.rs` | Free block allocator |
+| `src/fs/snapshot.rs` | Snapshot table |
+
+### Permission Flags
+
+Permission flags stored in directory entry mode bits:
 
 | Flag | Bit | Meaning   |
 |------|-----|-----------|
@@ -53,48 +65,6 @@ Permission flags stored in mode bits 0-4:
 | PERM_X | 2 | Execute   |
 | PERM_S | 3 | System    |
 | PERM_D | 4 | Delete    |
-
-DOS attributes coexist in a separate field on directory entries:
-
-| Attribute | Value |
-|-----------|-------|
-| ATTR_READONLY | 0x01 |
-| ATTR_HIDDEN   | 0x02 |
-| ATTR_SYSTEM   | 0x04 |
-| ATTR_VOLUME   | 0x08 |
-| ATTR_DIR      | 0x10 |
-| ATTR_ARCHIVE  | 0x20 |
-
-### Directory Entries
-
-Each entry is 256 bytes, stored in directory inodes:
-
-```rust
-pub struct DirectoryEntry {
-    pub inode_num: u32,
-    pub name_len: u8,
-    pub entry_type: u8,   // 1=file, 2=dir
-    pub attributes: u8,
-    pub name: [u8; 249],
-}
-```
-
-Sentinel entry_type values: 0x00 = unused slot, 0xE5 = deleted, 0x2E = self (`.`),
-0x2E2E = parent (`..`). Long filenames use consecutive entries with a marker in
-the name field.
-
-### Block Bitmap
-
-Tracks free/used blocks via a byte vector. Each bit represents one block:
-
-```rust
-pub fn alloc(&mut self) -> Option<u32>;
-pub fn free(&mut self, block: u32);
-pub fn mark_used(&mut self, block: u32);
-```
-
-75 tests covering inode metadata, permissions, timestamps, serialization,
-corruption detection, and directory walking.
 
 ## Default File Permissions
 

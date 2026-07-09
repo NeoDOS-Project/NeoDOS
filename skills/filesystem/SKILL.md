@@ -12,7 +12,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
    Understand NeoFS layout, VFS architecture, IoStack, the page cache, and storage priority.
 
 2. **Identify the relevant subsystem**
-   - **NeoFS**: `src/fs/neodos_fs.rs` — native filesystem format
+   - **NeoFS v2**: `src/fs/neodos_v2.rs` — native filesystem format (NE2). NeoFS v1 (NEOD) is obsolete and removed.
    - **FAT32**: `src/drivers/fat32.rs` — FAT32 read/write support
    - **VFS**: `src/vfs/mod.rs` — virtual filesystem layer (path resolution, file ops)
    - **IoStack**: `src/vfs/io.rs` — I/O request stack (IRP-like)
