@@ -15,7 +15,7 @@ const SUPERBLOCK_MAGIC: u32 = 0x0032454E; // "NE2\0"
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-struct SuperblockNE2 {
+pub(super) struct SuperblockNE2 {
     magic: u32,
     version: u32,
     root_btree_lba: u64,
@@ -300,6 +300,11 @@ impl FileSystem for NeoDosFsV2 {
 
     fn fs_type(&self) -> &'static str { "NE2" }
     fn total_sectors(&self) -> u64 { self.sb.num_blocks * 8 }
+    fn fsck(&mut self, repair: bool, deep: bool, stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
+        let s = crate::fs::fsck::fsck_ne2(&self.io_stack, repair, deep);
+        *stats = s.to_raw();
+        Ok(())
+    }
 }
 
 /// Formatear una partición con NE2 (mkfs).

@@ -77,6 +77,9 @@ pub trait FileSystem: Send {
     fn total_sectors(&self) -> u64 {
         0
     }
+    fn fsck(&mut self, _repair: bool, _deep: bool, _stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
 }
 
 const MAX_SUBDIR_MOUNTS: usize = 8;

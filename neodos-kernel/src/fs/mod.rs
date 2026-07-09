@@ -5,3 +5,4 @@ pub mod vfs;
 pub mod btree;
 pub mod freelist;
 pub mod snapshot;
+pub mod fsck;
