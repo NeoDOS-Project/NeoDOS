@@ -72,6 +72,13 @@ impl BTreeIO for NeoDosFsV2 {
             sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
             if dev.write_sector(abs_sector + i as u64, &sec).is_err() { return 0; }
         }
+        // Invalidate page cache for these sectors — a freed data block
+        // may have dirty pages left over from file_write, which would
+        // overwrite B-tree metadata on flush.
+        {
+            let mut pc = crate::globals::PAGE_CACHE.lock();
+            pc.invalidate_range(abs_sector, abs_sector + 8);
+        }
         block_lba
     }
 }
@@ -161,6 +168,14 @@ impl FileSystem for NeoDosFsV2 {
         }).ok_or(VfsError::IOError)?;
 
         if btree_root == self.sb.root_btree_lba { self.sb.root_btree_lba = new_root; }
+        // Update parent directory's cache entry if its root changed
+        for i in 0..self.inode_cache.len() {
+            if let Some(c) = &mut self.inode_cache[i] {
+                if c.0 == btree_root && c.1.is_dir() {
+                    c.0 = new_root;
+                }
+            }
+        }
         if let Some(c) = self.inode_cache.get_mut(inode as usize).and_then(|x| x.as_mut()) { *c = (new_root, new_entry); }
         Ok(buf.len())
     }

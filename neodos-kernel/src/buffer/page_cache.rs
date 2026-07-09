@@ -443,6 +443,28 @@ impl PageCache {
         }
     }
 
+    /// Invalidate cached pages that overlap with [start_lba, end_lba).
+    /// Direct writes (B-tree nodes) go through raw device; we must evict
+    /// stale page cache entries so future reads get the fresh data.
+    pub fn invalidate_range(&mut self, start_lba: u64, end_lba: u64) {
+        let page_start = start_lba & !7;
+        let page_end = end_lba.saturating_sub(1) & !7;
+        let mut i = 0usize;
+        while i < CACHE_SIZE {
+            if self.slots[i].valid && self.slots[i].lba >= page_start && self.slots[i].lba <= page_end {
+                if self.slots[i].dirty {
+                    self.dirty_count = self.dirty_count.saturating_sub(1);
+                }
+                let lba = self.slots[i].lba;
+                self.unlink_lru(i as u16);
+                self.hash.remove(lba);
+                self.slots[i] = EMPTY_SLOT;
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     // ── Stats ──────────────────────────────────────────────────────
 
     pub fn entry_count(&self) -> usize {
