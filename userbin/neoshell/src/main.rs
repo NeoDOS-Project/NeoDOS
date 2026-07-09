@@ -340,6 +340,7 @@ impl Shell {
     fn resolve_path(&self, cmd: &[u8]) -> Result<[u8; 260], ()> {
         let pv = self.env_get(b"PATH").unwrap_or(b"\\Programs");
         let dr = self.get_drive();
+        // Try PATH directories first
         let mut s = 0usize;
         loop {
             while s < pv.len() && pv[s] == b';' { s += 1; }
@@ -358,6 +359,18 @@ impl Shell {
             if let Ok(fd) = syscall::sys_ob_open(obp, syscall::ob_access::READ) { let _ = syscall::sys_close(fd); return Ok(f); }
             s = e + 1;
         }
+        // Fallback: search current directory
+        let mut cwb = [0u8; 256];
+        let cwd = match syscall::sys_getcwd(&mut cwb) { Ok(n) if n>2 => &cwb[..n], _ => return Err(()) };
+        let mut f = [0u8; 260]; let mut p = 0;
+        for &b in cwd { if p < 255 { f[p] = b; p += 1; } }
+        if p > 0 && f[p-1] != b'\\' && p < 255 { f[p] = b'\\'; p += 1; }
+        for &b in cmd { if p < 255 { f[p] = if b.is_ascii_uppercase() { b + 32 } else { b }; p += 1; } }
+        if p+4 < 260 { f[p]=b'.'; f[p+1]=b'n'; f[p+2]=b'x'; f[p+3]=b'e'; p+=4; }
+        let fs = core::str::from_utf8(&f[..p]).unwrap_or("");
+        let mut ob = [0u8; 512];
+        let obp = to_ob_path(fs, &mut ob);
+        if let Ok(fd) = syscall::sys_ob_open(obp, syscall::ob_access::READ) { let _ = syscall::sys_close(fd); return Ok(f); }
         Err(())
     }
 
