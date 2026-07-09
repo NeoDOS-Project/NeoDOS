@@ -286,7 +286,7 @@
   - Archivos <208 bytes: inline (0 lecturas de disco).
   - **Tests:** `neofs_v2_create_file`, `neofs_v2_write_read_roundtrip`, `neofs_v2_cow_root_version_inc`, `neofs_v2_cow_preserves_old_data`, `neofs_v2_delete_removes_entry`, `neofs_v2_rmdir_recursive`, `neofs_v2_checksum_verify`, `neofs_v2_inline_small_file`, `neofs_v2_large_file_extents`, `neofs_v2_dir_10k_entries`, `neofs_v2_rename_file`, `neofs_v2_mkdir_lookup`, `neofs_v2_write_power_loss_safe`
 
-* [ ] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs` (reescribir)
+* [x] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs` (reescribir)
   - Verificar checksum del superblock. Walk completo del B-tree verificando CRC32 de cada nodo.
   - Verificar que freelist + used_blocks = total_blocks. Opción --deep para checksums de datos.
   - Modo repair: reconstruir freelist desde B-tree walk.

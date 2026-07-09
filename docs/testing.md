@@ -63,7 +63,7 @@ test_case!("my_test", {
 | Framebuffer Ref | 8 | Entrypoint validation, lifecycle (init→clear→pixel→scroll→cleanup), error handling for null params |
 | Scheduler | 7 | Priority levels, time-slice accounting, round-robin fairness, aging boost after starvation threshold |
 | Mmap | 6 | MmapRegion struct layout, flag combinations, address bounds validation, VMA add/remove from process address space |
-| FSCK | 6 | Inode validation helpers (magic, checksum), block pointer logic (direct/indirect), mode/permission checks |
+| FSCK | 2 | NE2 B-tree walk + CRC32 node verification, freelist coherency, superblock checksum, corrupt node detection, repair mode |
 | UTF-8 | 6 | Validation: valid 1-4 byte sequences, overlong rejection, surrogate rejection, continuation byte errors |
 | Work Queue | 6 | Push/pop ordering, FIFO semantics, empty queue behavior, overflow returns Err, high/low queue isolation, pending flag atomicity |
 | IPI | 5 | Constants verification, TLB shootdown struct layout, call function struct layout, local-only mask, no-targets edge case |

@@ -350,8 +350,8 @@ impl Shell {
             f[p] = dr; p += 1; f[p] = b':'; p += 1;
             for &b in dir { if p < 255 { f[p] = b; p += 1; } }
             if p > 0 && f[p-1] != b'\\' && p < 255 { f[p] = b'\\'; p += 1; }
-            for &b in cmd { if p < 255 { f[p] = b; p += 1; } }
-            if p+4 < 260 { f[p]=b'.'; f[p+1]=b'N'; f[p+2]=b'X'; f[p+3]=b'E'; p+=4; }
+            for &b in cmd { if p < 255 { f[p] = if b.is_ascii_uppercase() { b + 32 } else { b }; p += 1; } }
+            if p+4 < 260 { f[p]=b'.'; f[p+1]=b'n'; f[p+2]=b'x'; f[p+3]=b'e'; p+=4; }
             let fs = core::str::from_utf8(&f[..p]).unwrap_or("");
             let mut ob = [0u8; 512];
             let obp = to_ob_path(fs, &mut ob);

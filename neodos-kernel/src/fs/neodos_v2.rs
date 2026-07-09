@@ -337,14 +337,14 @@ pub fn mkfs_ne2(io_stack: &IoStack, num_blocks: u64, label: &str) -> Result<(), 
     sector.copy_from_slice(raw);
     io_stack.write_sector(0, &sector)?;
 
-    // 2. Escribir raíz B-tree vacía (LBA 1)
+    // 2. Escribir raíz B-tree vacía (block_lba = 1 → sector 8)
     let root_node = BTreeNode::new(NodeType::Leaf);
     let mut buf = [0u8; NODE_SIZE];
     root_node.serialize(&mut buf);
     for i in 0..8usize {
         let mut sec = [0u8; 512];
         sec.copy_from_slice(&buf[i * 512..(i + 1) * 512]);
-        io_stack.write_sector(1 + i as u64, &sec)?;
+        io_stack.write_sector(8 + i as u64, &sec)?;
     }
 
     // 3. Superblock definitivo con checksum

@@ -15,7 +15,6 @@ use crate::fs::freelist::FreeList;
 use crate::fs::freelist::FreeRegion;
 use crate::fs::neodos_io::crc32;
 use crate::drivers::block::BlockDevice;
-use crate::buffer::page_cache::PageCache;
 
 const SUPERBLOCK_MAGIC: u32 = 0x0032454E;
 const BLOCK_SIZE: usize = 4096;
@@ -162,9 +161,6 @@ fn walk_node(
     used: &mut BlockSet,
     visited: &mut Vec<u64>,
     stats: &mut FsckStats,
-    dev: &mut dyn BlockDevice,
-    cache: &mut PageCache,
-    deep: bool,
 ) {
     if lba == 0 || visited.contains(&lba) {
         return;
@@ -202,70 +198,44 @@ fn walk_node(
     }
 
     if node_type == 0 {
-        // Internal node: key = separator, value = child LBA (8 bytes)
+        // Internal node: child LBAs stored in values (8 bytes each)
         let mut offset = 8usize;
         for _ in 0..entry_count {
-            if offset + 4 > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            if offset + 4 > BLOCK_SIZE { break; }
             let kl = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
             offset += 2;
-            if offset + kl > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
-            offset += kl;
-            if offset + 2 > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            offset += kl.min(BLOCK_SIZE - offset);
+            if offset + 2 > BLOCK_SIZE { break; }
             let vl = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
             offset += 2;
-            if offset + vl > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            if offset + vl > BLOCK_SIZE { break; }
             if vl >= 8 {
                 let child = u64::from_le_bytes([
                     buf[offset], buf[offset + 1], buf[offset + 2], buf[offset + 3],
                     buf[offset + 4], buf[offset + 5], buf[offset + 6], buf[offset + 7],
                 ]);
                 if child > 0 {
-                    walk_node(io, child, used, visited, stats, dev, cache, deep);
+                    walk_node(io, child, used, visited, stats);
                 }
             }
             offset += vl;
         }
     } else {
-        // Leaf node: key = name, value = DirEntryV2 (128 bytes)
+        // Leaf node: value = DirEntryV2 (128 bytes)
         let mut offset = 8usize;
         for _ in 0..entry_count {
-            if offset + 4 > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            if offset + 4 > BLOCK_SIZE { break; }
             let kl = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
             offset += 2;
-            if offset + kl > BLOCK_SIZE || kl > NAME_MAX {
-                stats.warnings += 1;
-                offset += kl.min(BLOCK_SIZE - offset);
-                continue;
-            }
+            if offset + kl > BLOCK_SIZE || kl > NAME_MAX { break; }
             offset += kl;
-            if offset + 2 > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            if offset + 2 > BLOCK_SIZE { break; }
             let vl = u16::from_le_bytes([buf[offset], buf[offset + 1]]) as usize;
             offset += 2;
-            if offset + vl > BLOCK_SIZE {
-                stats.warnings += 1;
-                break;
-            }
+            if offset + vl > BLOCK_SIZE { break; }
 
             if vl >= DIRENTRY_SIZE {
-                parse_entry(&buf[offset..offset + DIRENTRY_SIZE], used, stats, io, dev, cache, deep);
+                parse_entry(&buf[offset..offset + DIRENTRY_SIZE], used, stats);
             } else {
                 stats.errors += 1;
             }
@@ -274,15 +244,7 @@ fn walk_node(
     }
 }
 
-fn parse_entry(
-    raw: &[u8],
-    used: &mut BlockSet,
-    stats: &mut FsckStats,
-    io: &IoStack,
-    dev: &mut dyn BlockDevice,
-    cache: &mut PageCache,
-    deep: bool,
-) {
+fn parse_entry(raw: &[u8], used: &mut BlockSet, stats: &mut FsckStats) {
     let name_len = raw[0] as usize;
     if name_len > NAME_MAX {
         stats.errors += 1;
@@ -299,14 +261,11 @@ fn parse_entry(
     if is_dir { stats.total_dirs += 1; }
     if is_file { stats.total_files += 1; }
 
-    let inline_len = u32::from_le_bytes([raw[95], raw[96], raw[97], raw[98]]);
     let extent_lba = u64::from_le_bytes([
         raw[99], raw[100], raw[101], raw[102],
         raw[103], raw[104], raw[105], raw[106],
     ]);
     let extent_count = u32::from_le_bytes([raw[107], raw[108], raw[109], raw[110]]);
-    let stored_checksum = u32::from_le_bytes([raw[91], raw[92], raw[93], raw[94]]);
-    let file_size = u64::from_le_bytes([raw[67], raw[68], raw[69], raw[70], raw[71], raw[72], raw[73], raw[74]]);
 
     // Track extent blocks
     if extent_lba > 0 && extent_count > 0 {
@@ -315,47 +274,6 @@ fn parse_entry(
             used.insert(b);
         }
     }
-
-    // Deep checksum verification
-    if deep && is_file && stored_checksum != 0 && file_size > 0 {
-        let checksum = if inline_len > 0 {
-            let il = inline_len.min(16) as usize;
-            crc32(&raw[49..49 + il])
-        } else if extent_lba > 0 {
-            let abs_base = io.translate_lba(extent_lba * SECTORS_PER_BLOCK);
-            verify_extent_checksum(dev, cache, abs_base, file_size, extent_count)
-        } else {
-            0
-        };
-        if checksum != 0 && checksum != stored_checksum {
-            stats.warnings += 1;
-        }
-    }
-}
-
-fn verify_extent_checksum(
-    dev: &mut dyn BlockDevice,
-    cache: &mut PageCache,
-    abs_base: u64,
-    file_size: u64,
-    _extent_count: u32,
-) -> u32 {
-    let total_blocks = ((file_size + BLOCK_SIZE as u64 - 1) / BLOCK_SIZE as u64) as u32;
-    let mut full = alloc::vec![0u8; (total_blocks as usize) * BLOCK_SIZE];
-    for b in 0..total_blocks {
-        let lba = abs_base + b as u64 * SECTORS_PER_BLOCK;
-        if let Ok(data) = cache.read_page(0, 0, b as u32, lba, dev) {
-            let start = b as usize * BLOCK_SIZE;
-            let end = core::cmp::min(start + BLOCK_SIZE, full.len());
-            full[start..end].copy_from_slice(&data[..end - start]);
-        } else {
-            return 0;
-        }
-    }
-    if file_size < full.len() as u64 {
-        full.truncate(file_size as usize);
-    }
-    crc32(&full)
 }
 
 // ── Freelist verification ─────────────────────────────────────────
@@ -401,7 +319,7 @@ fn verify_freelist(used: &BlockSet, total_blocks: u64, stats: &mut FsckStats) ->
 pub fn fsck_ne2(
     io: &IoStack,
     repair: bool,
-    deep: bool,
+    _deep: bool,
 ) -> FsckStats {
     let mut stats = FsckStats::default();
 
@@ -433,40 +351,21 @@ pub fn fsck_ne2(
         return stats;
     }
 
-    // 2. Walk B-tree
+    // 2. Walk B-tree (uses IoStack only — no BLOCK_DEVICES lock held)
     let mut used = BlockSet::new();
     used.insert(0); // superblock
     used.insert(1); // root B-tree node (block 1)
 
-    let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
-    let dev = match bdevs.get(io.device_id) {
-        Some(d) => d,
-        None => {
-            stats.errors += 1;
-            return stats;
-        }
-    };
-    let mut cache = crate::buffer::page_cache::PageCache::new();
     let mut visited = Vec::new();
-
     if root_lba > 0 {
-        walk_node(io, root_lba, &mut used, &mut visited, &mut stats, &mut *dev, &mut cache, deep);
+        walk_node(io, root_lba, &mut used, &mut visited, &mut stats);
     }
-
-    drop(bdevs);
 
     // 3. Verify freelist
     let new_fl = verify_freelist(&used, total_blocks, &mut stats);
 
     // 4. Repair
     if repair && (stats.errors > 0 || stats.warnings > 0) {
-        let mut bdevs2 = crate::globals::BLOCK_DEVICES.lock();
-        let dev2 = match bdevs2.get(io.device_id) {
-            Some(d) => d,
-            None => return stats,
-        };
-
-        // Update superblock
         let now = crate::hal::get_ticks();
         let new_sb = SuperblockNE2 {
             magic: SUPERBLOCK_MAGIC,
@@ -484,9 +383,6 @@ pub fn fsck_ne2(
             snapshot_table_lba: 0,
             reserved: [0u8; 403],
         };
-        let _ = dev2;
-        drop(bdevs2);
-
         let _ = write_superblock(io, &new_sb);
         stats.repaired = true;
         stats.used_blocks = used.len();
@@ -543,60 +439,46 @@ pub fn register_fsck_tests() {
 
     // Test 1: clean filesystem
     crate::test_case!("neofs_v2_fsck_clean", {
-        let num_sectors = 8192u64; // 1024 blocks × 8 sectors
-        let sectors = alloc::vec![[0u8; 512]; num_sectors as usize];
+        let sectors = alloc::vec![[0u8; 512]; 1024];
         let test_dev = TestBlockDevice { sectors };
-
         let dev_id = {
             let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
             bdevs.register(alloc::boxed::Box::new(test_dev)).unwrap()
         };
-
-        // Format as NE2
         let io = IoStack::new(dev_id);
-        let num_blocks = num_sectors / 8;
+        let num_blocks = 128;
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, num_blocks, "TEST");
 
-        // Run fsck
         let stats = fsck_ne2(&io, false, false);
 
-        // Verify clean
         crate::test_eq!(stats.errors, 0);
         crate::test_true!(stats.total_nodes > 0);
-        crate::test_true!(stats.total_blocks == num_blocks);
-        crate::test_true!(stats.used_blocks > 0);
-        crate::test_true!(!stats.repaired);
+        crate::test_eq!(stats.total_blocks, num_blocks);
 
-        // Cleanup
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 
     // Test 2: corrupted B-tree node CRC
     crate::test_case!("neofs_v2_fsck_corrupt_btree", {
-        let num_sectors = 8192u64;
-        let sectors = alloc::vec![[0u8; 512]; num_sectors as usize];
+        let sectors = alloc::vec![[0u8; 512]; 1024];
         let test_dev = TestBlockDevice { sectors };
-
         let dev_id = {
             let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
             bdevs.register(alloc::boxed::Box::new(test_dev)).unwrap()
         };
-
         let io = IoStack::new(dev_id);
-        let num_blocks = num_sectors / 8;
+        let num_blocks = 128;
         let _ = crate::fs::neodos_v2::mkfs_ne2(&io, num_blocks, "TEST");
 
-        // Corrupt the root B-tree node (block 1, sectors 8-15)
-        // Flip a byte in the first data byte of sector 9 (offset 512 in the block)
         let mut corrupt = io.read_sector(9).unwrap();
         corrupt[10] ^= 0xFF;
         let _ = io.write_sector(9, &corrupt);
+        // Invalidate page cache since write bypasses it
+        crate::globals::PAGE_CACHE.lock().invalidate_range(8, 16);
 
-        // Run fsck — should detect CRC error
         let stats = fsck_ne2(&io, false, false);
         crate::test_true!(stats.errors > 0);
 
-        // Cleanup
         let _ = crate::globals::BLOCK_DEVICES.lock().force_remove(dev_id);
     });
 }

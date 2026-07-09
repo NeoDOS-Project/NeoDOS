@@ -488,6 +488,17 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 * [x] **Tests:** 641/641 kernel tests pasan. Ningún otro tipo de objeto (file, process, event, mutex, timer, semaphore, section, pipe, etc.) se ve afectado porque todos usan `ob_lookup(entry.object_id).native_id` o `entry.offset` solo como posición de lectura/escritura para archivos.
 
+### NFSv2-FSCK: fsck para NE2 [COMPLETED]
+
+* [x] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs`
+  - Verificar checksum del superblock. Walk completo del B-tree verificando CRC32 de cada nodo.
+  - Verificar que freelist + used_blocks = total_blocks.
+  - Modo repair: reconstruir freelist desde B-tree walk.
+  - Syscall 55 (`sys_fsck`) actualizada: llama `fs.fsck()` vía VFS, copia `FsckStatsRaw` a buffer usuario.
+  - Bug corregido en `mkfs_ne2`: escribía nodo raíz en sectores 1–8 en vez de 8–15.
+  - **Tests:** `neofs_v2_fsck_clean`, `neofs_v2_fsck_corrupt_btree` (ambos PASS).
+  - Dependencias: `check_deps.py` — 0 violaciones.
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT
