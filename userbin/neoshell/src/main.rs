@@ -390,10 +390,23 @@ impl Shell {
                 write_str(b"\r\n");
                 let rest = after_first_token(trimmed);
                 unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=rest.len().min(255); core::ptr::copy_nonoverlapping(rest.as_ptr(),d,n); d.add(n).write(0); }
-                match self.resolve_path(&cu[..cul]) {
-                    Ok(full) => {
+                const ALIASES: &[(&[u8], &[u8])] = &[
+                    (b"HELP", b"COREHELP"), (b"DIR", b"COREDIR"), (b"CLS", b"CORECLS"),
+                    (b"MD", b"COREMD"), (b"RD", b"CORERD"), (b"DEL", b"COREDEL"),
+                    (b"REN", b"COREREN"), (b"COPY", b"CORECOPY"), (b"TYPE", b"CORETYPE"),
+                    (b"TIME", b"DATETIME"), (b"DATE", b"DATETIME"),
+                ];
+                let cmd = &cu[..cul];
+                let alias = ALIASES.iter().find(|(a,_)| *a == cmd).map(|(_,t)| *t);
+                let names = if let Some(a) = alias { &[cmd, a] } else { &[cmd][..] };
+                let mut ok = false;
+                for name in names {
+                    if let Ok(full) = self.resolve_path(name) {
                         let fs = core::str::from_utf8(&full[..full.iter().position(|&b|b==0).unwrap_or(full.len())]).unwrap_or("");
-                        let iscd = fs.ends_with("\\CD.NXE") || fs.eq_ignore_ascii_case("CD.NXE");
+                        let iscd = {
+                            let fb = fs.as_bytes();
+                            fb.len() >= 7 && fb[fb.len()-7..].eq_ignore_ascii_case(b"\\CD.NXE")
+                        };
                         let pk = (0xFFu64)|((0xFFu64)<<8)|((0xFFu64)<<16);
                         let mut ob = [0u8; 512];
                         let obp = to_ob_path(fs, &mut ob);
@@ -416,12 +429,14 @@ impl Shell {
                                     }
                                 }
                                 let _ = syscall::sys_close(fd);
+                                ok = true;
                             }
-                            Err(_) => { write_err(b"Bad command or file name\r\n"); }
+                            Err(_) => {}
                         }
+                        break;
                     }
-                    Err(_) => { write_err(b"Bad command or file name\r\n"); }
                 }
+                if !ok { write_err(b"Bad command or file name\r\n"); }
             }
         }
     }

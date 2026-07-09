@@ -224,7 +224,7 @@ def collect_files():
                     'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
                     'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir']
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
-                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'coredir', 'cpuinfo']
+                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'cpuinfo']
     for name in programs_nxe + tools_nxe:
         subdir = 'Programs' if name in programs_nxe else 'System/Tools'
         p = os.path.join(userbin_dir, f'{name}.nxe')
