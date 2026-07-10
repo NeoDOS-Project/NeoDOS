@@ -78,7 +78,12 @@
 | CM-WAL | Registry WAL (write-ahead logging) | LOW | registry |
 | CM-LIB | Registry libneodos wrappers (7 missing) | LOW | lib |
 | CM-REGEDIT | regedit.nxe — registry editor | LOW | admin |
-| USR-001..024 | USR Fase 1+2: SAM + Login + SUDO | LOW | security |
+| USR-P1 | SAM wired + token enhancements | MEDIUM | security |
+| USR-P2 | Sessions: login/logoff/lock | MEDIUM | security |
+| USR-P3 | Filesystem security: owner SID + perms | MEDIUM | security |
+| USR-P4 | Registry security: ACL per key | MEDIUM | registry |
+| USR-P5 | Integrity levels + privilege enforcement | MEDIUM | security |
+| USR-P6 | User commands: whoami, passwd, who, su | MEDIUM | shell |
 | B1.1 | Kernel tracing infrastructure | LOW | kernel |
 | B1.2 | NeoTrace system | LOW | kernel |
 | ADM-3 | neolog (visor event log) | LOW | admin |
@@ -95,7 +100,7 @@
 | B4.8 | NeoTOP v0.2+ | LOW | admin |
 | B4.12 | Compositor 2D | LOW | userland |
 | B7.1..B7.6 | Experimental (GUI, TPM, package mgr, etc.) | LOW | xp |
-| USR-025..032 | USR Fase 3: Hardening + Grupos | LOW | security |
+| USR-P6 | User commands: whoami, passwd, who, logoff, su, runas | LOW | shell |
 | DH1 | Actualizar README.md | LOW | docs |
 | DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | LOW | docs |
 | DH3 | Completar libneodos syscall wrappers | LOW | lib |
@@ -375,11 +380,67 @@
   - Navegación de árbol, crear/borrar claves, set/query valores, flush manual.
   - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
 
-#### Security (USR)
+#### Security (USR) — Users, Groups, Sessions
 
-* [ ] **USR-001..024. USR Fase 1+2: SAM + Login + SUDO** | Prereqs: NT6 | Files: multiples
-  - Ver `docs/security.md`. F1: SAM + Token NT. F2: Login + SUDO.
-  - **Tests:** `sam_create_user`, `sam_authenticate`, `sudo_spawn_as_user`
+> Diseño completo: `docs/design/users-security-design.md`. Modelo NT-like: SAM + Token + Session + ACL.
+> No Unix uid/gid — usar SID (ya existente en `src/security/`).
+> No nuevas syscalls — todo via Ob API (RAX 60-66) con ObType::Session=19 e info classes nuevas.
+> 6 fases incrementales, cada una testeable independientemente.
+
+* [ ] **USR-P1. Foundation: SAM wired + token enhancements** | Prereqs: CM-FIX | Files: `src/security/sam.rs`, `src/security/token.rs`, `src/security/access.rs`, `src/security/mod.rs`, `src/object/types.rs`, `src/main.rs`
+  - Wire SAM persistence to `\Registry\Machine\SAM` via VFS (binary format SAM\0, version 2)
+  - Fix empty DACL semantics (empty = deny, not grant)
+  - Add group SID checking to `SeAccessCheck` (currently only checks primary SID)
+  - Add `integrity_level` (Untrusted/Low/Medium/High/System) and `creation_time` to Token
+  - Add `Session = 19` to ObType enum
+  - Create built-in users (Administrator S-1-5-21-500, Guest S-1-5-21-501) in `init_security()`
+  - **Tests:** `sam_create_delete_user`, `sam_authenticate_correct_wrong`, `sam_serialize_roundtrip`, `sam_password_change`, `se_access_check_groups`, `se_access_check_empty_dacl_deny`, `token_integrity_level`
+
+* [ ] **USR-P2. Sessions: login/logoff/lock** | Prereqs: USR-P1 | Files: `src/syscall/ob.rs`, `src/globals.rs`, `src/scheduler/mod.rs`, `src/object/types.rs`, `libneodos/src/syscall.rs`, `userbin/neologon/` (new), `userbin/neoinit/`
+  - Add `SESSION_MANAGER: Mutex<SessionManager>` global
+  - Handler for `sys_ob_create(Session)` — allocates session_id, creates Session object in `\Session\{id}`
+  - Handler for `ObInfoClass::SessionInfo` (24) — session_id, user_sid, state, login_time, process_count
+  - Handler for `ObSetInfoClass::SessionLock` (28) and `SessionLogoff` (29)
+  - Handler for `ObSetInfoClass::ChangePassword` (31) — SAM password update
+  - New `userbin/neologon/` — login prompt, SAM auth, session creation, spawn shell with user token
+  - NeoInit spawns neologon instead of shell directly (interactive path)
+  - Token inheritance: processes spawned within a session inherit session_id
+  - **Tests:** `session_create_query`, `session_lock_unlock`, `session_logoff_terminates`, `session_enum_all`, `neologon_login_success`, `neologon_login_failure`, `passwd_change_verify`
+
+* [ ] **USR-P3. Filesystem security: owner SID + permission enforcement** | Prereqs: USR-P1 | Files: `src/fs/neodos_dir.rs`, `src/fs/neodos_v2.rs`, `src/fs/vfs.rs`, `src/syscall/ob.rs`
+  - Add `owner_sid: Sid` to DirEntryV2 (128→136 bytes, superblock `FEATURE_OWNER_SID` flag)
+  - Backward compat: old NE2 without owner_sid → default S-1-5-21-0-0-0-1000
+  - Add `check_vfs_access()` in VFS: owner/group/other check against token.sid + token.groups
+  - Wire permission checks in `handler_ob_open`, `handler_ob_create`, `handler_ob_destroy` (VFS paths)
+  - Default permissions by extension: .NEM=admin-only, .SYS=admin-only, .NXE=user-RX, etc.
+  - Admin bypass preserved
+  - **Tests:** `neofs_owner_read_write_delete`, `neofs_other_write_denied`, `neofs_admin_bypass`, `neofs_create_default_perms`, `neofs_backward_compat_no_owner`
+
+* [ ] **USR-P4. Registry security: ACL per key** | Prereqs: CM-FIX, USR-P1 | Files: `src/cm/hive.rs`, `src/cm/security.rs` (new), `src/cm/mod.rs`
+  - New `src/cm/security.rs`: `cm_check_access()`, `cm_default_sec_desc()`
+  - Wire `sec_desc_cell` on key creation (inherits parent's SD or creates default)
+  - ACL check on all Cm syscall handlers (open, create, delete, set, enum)
+  - Default: admin=full, user=read `\Registry\Machine`, read-write `\Registry\User\{sid}`
+  - User profile hive auto-mounted at `\Registry\User\{sid}` on login
+  - **Tests:** `cm_sec_key_owner_assigned`, `cm_sec_access_granted_denied`, `cm_sec_admin_bypass`, `cm_sec_inheritance`
+
+* [ ] **USR-P5. Integrity levels + privilege enforcement** | Prereqs: USR-P1 | Files: `src/security/access.rs`, `src/syscall/ob.rs`, `src/syscall/permission.rs`
+  - Add integrity level check to `SeAccessCheck`: deny write if process_IL < object_IL
+  - Handler for `ObSetInfoClass::SetIntegrityLevel` (32) — can only lower, never raise
+  - Handler for `ObInfoClass::TokenInfo` (28) — query current process token (sid, groups, privileges, IL)
+  - Handler for `ObInfoClass::IntegrityLevel` (27) — query object IL
+  - Wire `has_privilege()` in all admin-only syscalls (driver_unload, load/unload hive, etc.)
+  - Token filtering at login: admin gets all 12 privileges, standard user gets only SE_CHANGE_NOTIFY
+  - **Tests:** `integrity_medium_cant_write_high`, `integrity_drop_level`, `token_query_info`, `privilege_enforcement_admin_syscall`
+
+* [ ] **USR-P6. User commands: whoami, passwd, who, logoff, su, runas** | Prereqs: USR-P2, USR-P3 | Files: `userbin/neoshell/`
+  - `WHOAMI` — `ob_query_info(process_fd, TokenInfo)` → sid → SAM lookup → print username
+  - `PASSWD` — `ob_set_info(session_fd, ChangePassword, old|new)`
+  - `WHO` — `ob_enum(\Session\)` → query each session → print user + since
+  - `LOGOFF` — `ob_set_info(session_fd, SessionLogoff)`
+  - `SU <user>` — spawn new shell as target user (requires password)
+  - `RUNAS [/USER:admin] <command>` — spawn command with different token
+  - **Tests:** `whoami_prints_username`, `passwd_change_works`, `who_lists_sessions`, `logoff_terminates_shell`
 
 * [ ] **B5.3. Secure boot chain** | Prereqs: B5.1 | Files: `neodos-bootloader/`, `src/boot/secure.rs`
   - Verificación encadenada bootloader → kernel → drivers.
@@ -541,9 +602,11 @@
 | Versión | Enfoque | Estado |
 |---------|---------|--------|
 | v0.50 | Registry bugfixes, Shell Phase 1, NeoFS snapshot syscall | **PRÓXIMO** |
-| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2, Networking tools | planned |
-| v0.52 | VirtIO, Performance (zero-copy pipes), Security (sig validation, Registry ACL) | planned |
-| v0.53+ | Hardening, Multi-hive, Documentation, Cleanup | backlog |
+| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2, Networking tools, USR-P1 (SAM foundation) | planned |
+| v0.52 | VirtIO, Performance (zero-copy pipes), Security (sig validation), USR-P2 (sessions) + USR-P3 (FS security) | planned |
+| v0.53 | Registry ACL (USR-P4), Integrity levels + privilege enforcement (USR-P5), Multi-hive | planned |
+| v0.54 | User commands (USR-P6), Documentation, Cleanup | backlog |
+| v0.55+ | Hardening, GUI prep, network auth | backlog |
 
 ---
 
