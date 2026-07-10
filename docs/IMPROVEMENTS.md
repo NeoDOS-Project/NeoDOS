@@ -25,83 +25,89 @@
 
 | ID | Item | Prio | Cat |
 |----|------|------|-----|
-| **v0.50** | **Registry bugfixes (CM-FIX) + Shell overhaul + NeoFS snapshot syscall** | **HIGH** | milestone |
-| CM-FIX | Registry bugfixes (free list, delete_value, unmount flush, iterative delete) | **HIGH** | registry |
+| **v0.50** | **Registry bugfixes + Shell Phase 1 + NeoFS snapshot** | **HIGH** | milestone |
+| CM-FIX | Registry bugfixes (free list, delete, unmount flush) | ~~HIGH~~ COMPLETADO | registry |
 | NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
-| SH-TOKEN | Shell tokenizer (quoting, pipes, ; separator) | **HIGH** | shell |
-| SH-QUOTE | Shell quoting/escaping | **HIGH** | shell |
+| SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
 | SH-REDIR | Shell redirection (>, <, >>) | **HIGH** | shell |
 | B4.11 | NeoInit auto-start servicios | **HIGH** | boot |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
 | | | | |
-| **v0.51** | **NeoFS v2 remaining + Shell + Networking tools** | **MEDIUM** | milestone |
+| **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
 | NFSv2-BTREE | B-tree persistente genérico | MEDIUM | fs |
-| NFSv2-FREELIST | Free list allocator | MEDIUM | fs |
-| NFSv2-SNAPSHOT | Snapshot table (64 circular) | MEDIUM | fs |
-| NFSv2-SHELL | Comandos SNAPSHOT en neoshell | MEDIUM | shell |
-| NFSv2-MKFS | Herramienta mkfs.neodos | MEDIUM | fs |
-| SH-EDITOR | Shell line editor (ANSI, Ctrl keys, insert) | MEDIUM | shell |
-| SH-HISTORY | Shell history persistence | MEDIUM | shell |
-| SH-ENV | Shell env expansion (%VAR%) | MEDIUM | shell |
-| SH-PIPE | Pipeline wait + exit codes | MEDIUM | shell |
-| SH-BATCH | Shell batch scripting (IF, GOTO, FOR) | MEDIUM | shell |
-| SH-SEP | Shell semicolon separator | MEDIUM | shell |
-| SH-COMPL | Shell completion (filename, path cache) | MEDIUM | shell |
+| NFSv2-FREELIST+SNAP | Free list + Snapshot table (64 circular) | MEDIUM | fs |
+| NFSv2-SHELL+MKFS | Shell snapshot cmds + mkfs.neodos | MEDIUM | fs+shell |
+| SH-EDITOR+HISTORY | Line editor + history persistence | MEDIUM | shell |
+| SH-ENV+PIPE | Env expansion (%VAR%) + pipeline wait | MEDIUM | shell |
+| SH-SEP+COMPL+BATCH | Semicolon + completion + batch scripting | MEDIUM | shell |
+| USR-P1a | ObType::Session=19 + SAM built-in users | MEDIUM | security |
+| USR-P1b | Token: integrity_level + creation_time | MEDIUM | security |
+| USR-P1c | SAM persistence to Registry hive | MEDIUM | security |
+| USR-P1d | SeAccessCheck: fix empty DACL + group SIDs | MEDIUM | security |
+| USR-P1e | ObSetInfoClass::ChangePassword (31) | MEDIUM | security |
 | NET-1.9 | ipconfig.nxe | MEDIUM | net |
 | NET-1.10 | ping.nxe | MEDIUM | net |
 | B3.4 | NTP client | MEDIUM | net |
-| ADM-1 | neotop v0.2 (per-thread CPU, I/O, network) | MEDIUM | admin |
-| ADM-2 | neostat (monitor rendimiento histórico) | MEDIUM | admin |
+| ADM-1+2 | neotop v0.2 + neostat | MEDIUM | admin |
 | ADM-4 | neotask (gestor de tareas) | MEDIUM | admin |
-| ADM-5 | neocfg (config vía Registry) | MEDIUM | admin |
-| ADM-6 | neofs (formatear, label, fsck, stats) | MEDIUM | admin |
+| ADM-5+6 | neocfg + neofs | MEDIUM | admin |
 | | | | |
-| **v0.52** | **VirtIO + Performance + Security** | **MEDIUM** | milestone |
+| **v0.52** | **VirtIO + Sessions + FS Security** | **MEDIUM** | milestone |
 | VIO-ARCH | Virtqueue abstraction + modern PCI transport | **HIGH** | drivers |
 | VIO-NET | VirtIO Network (0x1000) | **HIGH** | drivers |
-| VIO-9P | VirtIO 9P filesystem (0x1009) | MEDIUM | drivers |
-| VIO-BLK2 | VirtIO Block NEM driver | MEDIUM | drivers |
-| VIO-INPUT | VirtIO Input (0x1013) | MEDIUM | drivers |
+| VIO-9P+BLK2+INPUT | VirtIO 9P + Block NEM + Input | MEDIUM | drivers |
 | B6.1 | Zero-copy pipes | MEDIUM | kernel |
-| B5.1 | Module signature validation | MEDIUM | security |
-| B5.2 | Driver permission enforcement | MEDIUM | security |
-| CM-SEC | Registry security (ACL por clave) | MEDIUM | registry |
-| CM-DIRTY | Registry per-cell dirty tracking | MEDIUM | registry |
-| CM-MULTI | Registry multi-hive (SOFTWARE, SECURITY, DEFAULT) | MEDIUM | registry |
-| B4.6 | NeoEdit text editor | MEDIUM | userland |
-| B4.7 | Shared library per-process binding | MEDIUM | userland |
-| A3.2 | Kernel debugger (KD) | MEDIUM | kernel |
+| USR-P2a | SessionManager + ob_create(Session) | MEDIUM | ob |
+| USR-P2b | SessionInfo + SessionLock/Logoff | MEDIUM | ob |
+| USR-P2c | TokenInfo (28) + session_id inheritance | MEDIUM | ob |
+| USR-P2d | neologon.nxe login binary | MEDIUM | userland |
+| USR-P2e | NeoInit spawns neologon | MEDIUM | boot |
+| USR-P3a | DirEntryV2: owner_sid field | MEDIUM | fs |
+| USR-P3b | VFS permission check function | MEDIUM | fs |
+| USR-P3c | Wire VFS checks in syscall handlers | MEDIUM | syscall |
+| USR-P3d | Default permissions by extension | MEDIUM | fs |
 | VFS-2.2 | Refactorizar FSCK | MEDIUM | fs |
 | | | | |
-| **v0.53** | **Hardening + Multi-hive + Docs** | **LOW** | milestone |
+| **v0.53** | **Security + Registry + Integrity** | **MEDIUM** | milestone |
+| B5.1 | Module signature validation | MEDIUM | security |
+| B5.2 | Driver permission enforcement | MEDIUM | security |
+| CM-DIRTY | Registry per-cell dirty tracking | MEDIUM | registry |
+| CM-MULTI | Registry multi-hive (SOFTWARE, SECURITY, DEFAULT) | MEDIUM | registry |
+| USR-P4a | cm/security.rs: Registry ACL module | MEDIUM | registry |
+| USR-P4b | Wire sec_desc_cell on key creation | MEDIUM | registry |
+| USR-P4c | ACL checks in Cm syscall handlers | MEDIUM | registry |
+| USR-P4d | User profile hive auto-mount | MEDIUM | registry |
+| USR-P5a | Integrity level in SeAccessCheck | MEDIUM | security |
+| USR-P5b | SetIntegrityLevel + IntegrityLevel query | MEDIUM | ob |
+| USR-P5c | Privilege enforcement in admin syscalls | MEDIUM | syscall |
+| A3.2 | Kernel debugger (KD) | MEDIUM | kernel |
+| B4.6 | NeoEdit text editor | MEDIUM | userland |
+| B4.7 | Shared library per-process binding | MEDIUM | userland |
+| | | | |
+| **v0.54** | **Hardening + User commands + Docs + DNS** | **LOW** | milestone |
 | B5.3 | Secure boot chain | LOW | security |
 | CM-WAL | Registry WAL (write-ahead logging) | LOW | registry |
 | CM-LIB | Registry libneodos wrappers (7 missing) | LOW | lib |
 | CM-REGEDIT | regedit.nxe — registry editor | LOW | admin |
-| USR-P1 | SAM wired + token enhancements | MEDIUM | security |
-| USR-P2 | Sessions: login/logoff/lock | MEDIUM | security |
-| USR-P3 | Filesystem security: owner SID + perms | MEDIUM | security |
-| USR-P4 | Registry security: ACL per key | MEDIUM | registry |
-| USR-P5 | Integrity levels + privilege enforcement | MEDIUM | security |
-| USR-P6 | User commands: whoami, passwd, who, su | MEDIUM | shell |
+| USR-P6a | WHOAMI command | LOW | shell |
+| USR-P6b | PASSWD command | LOW | shell |
+| USR-P6c | WHO + LOGOFF commands | LOW | shell |
+| USR-P6d | SU command | LOW | shell |
+| USR-P6e | RUNAS command | LOW | shell |
+| NET-DNS | DNS resolver (stub resolver + cache) | LOW | net |
 | B1.1 | Kernel tracing infrastructure | LOW | kernel |
 | B1.2 | NeoTrace system | LOW | kernel |
 | ADM-3 | neolog (visor event log) | LOW | admin |
 | NET-1.7 | Kernel: nic_id + ephemeral port | LOW | net |
 | BUG-NEM-RX | NEM e1000 no recibe paquetes | LOW | drivers |
+| AUDIT-17 | User address space constrained (36MB) | LOW | kernel |
 | B6.2 | Copy-on-write fork | LOW | kernel |
 | VFS-3.2 | `\DosDevices` dinámico | LOW | fs |
 | VFS-5.3 | Write-back ordenado | LOW | fs |
 | VFS-6.1..6.4 | VFS Features (overlay, attr, notifications, async) | LOW | fs |
 | VFS-7.1..7.3 | VFS Performance (lock, lookup cache, path cache) | LOW | fs |
-| ADM-7 | neoctl: panel de control | LOW | admin |
-| ADM-8 | neodebug: frontend KD | LOW | admin |
-| ADM-9 | neomem v0.2 | LOW | admin |
-| B4.8 | NeoTOP v0.2+ | LOW | admin |
-| B4.12 | Compositor 2D | LOW | userland |
-| B7.1..B7.6 | Experimental (GUI, TPM, package mgr, etc.) | LOW | xp |
-| USR-P6 | User commands: whoami, passwd, who, logoff, su, runas | LOW | shell |
-| DH1 | Actualizar README.md | LOW | docs |
+| | | | |
+| **backlog** | **Low-priority + experimental + cleanup** | **LOW** | |
 | DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | LOW | docs |
 | DH3 | Completar libneodos syscall wrappers | LOW | lib |
 | DH-HISTORY | Mantener docs/HISTORY.md actualizado | LOW | docs |
@@ -109,33 +115,13 @@
 | AI-2 | Consolidate legacy syscall wrappers | LOW | syscall |
 | AI-3 | ObObjectTable lock granularity | LOW | ob |
 | AI-4 | Arreglar TOCTOU race en kobj_register | LOW | ob |
-| AUDIT-11 | IPI function duplicates in smp.rs | LOW | cleanup |
-| AUDIT-12 | AHCI structs defined twice | LOW | cleanup |
-| AUDIT-13 | PCI config access in 7 files | LOW | cleanup |
-| AUDIT-14 | HST extern in 8 NEM drivers | LOW | cleanup |
-| AUDIT-15 | PAGE_SIZE defined 7 times | LOW | cleanup |
-| AUDIT-16 | Error enums overlapping variants | LOW | cleanup |
-| AUDIT-17 | User address space constrained (36MB) | LOW | kernel |
-| AUDIT-18 | Idle loops without `hlt` | LOW | cleanup |
-| AUDIT-19 | Global static mut without sync (40+) | LOW | cleanup |
-| AUDIT-20 | Large files: syscall/ob.rs, syscall/handlers.rs | LOW | cleanup |
-| AUDIT-21 | Scheduler panics on table full | LOW | cleanup |
-| AUDIT-22 | Page cache O(n) linear scans | LOW | cleanup |
-| AUDIT-23 | NEM v3 header docs contradict code | LOW | docs |
-| AUDIT-24 | libneodos.md: syscall instruction vs int 0x80 | LOW | docs |
-| AUDIT-25 | libneodos.md: user.ld base addr wrong | LOW | docs |
-| AUDIT-26 | scheduler.md: CpuRunQueue field names wrong | LOW | docs |
-| AUDIT-27 | objects.md: SocketRecv class 23 (re-check) | LOW | docs |
-| AUDIT-28 | memory.md: kernel_image base wrong | LOW | docs |
-| AUDIT-29 | Version mismatch in AGENTS/Cargo/CHANGELOG | LOW | docs |
+| ADM-7+8+9 | neoctl + neodebug + neomem v0.2 | LOW | admin |
+| B4.8 | NeoTOP v0.2+ | LOW | admin |
+| B4.12 | Compositor 2D | LOW | userland |
+| B7.1..B7.6 | Experimental (GUI, TPM, package mgr, etc.) | LOW | xp |
 | PKG-1 | NeoGet v1 (diferido a v0.70) | LOW | xp |
-| VIO-CON | VirtIO Console (0x1002) | LOW | drivers |
-| VIO-RNG | VirtIO RNG (0x1003) | LOW | drivers |
-| VIO-SCSI | VirtIO SCSI (0x100A) | LOW | drivers |
-| VIO-GPU | VirtIO GPU (0x1012) | LOW | drivers |
-| VIO-VSOCK | VirtIO VSOCK (0x1014) | LOW | drivers |
-| VIO-SOUND | VirtIO Sound (0x1015) | LOW | drivers |
-| VIO-BALLOON | VirtIO Memory Balloon (0x1004) | LOW | drivers |
+| VIO-CON...BALLOON | VirtIO Console/RNG/SCSI/GPU/VSOCK/Sound/Balloon | LOW | drivers |
+| CLEANUP-1..35 | Dead code, duplicates, refactors (see LOW section) | LOW | cleanup |
 
 ---
 
@@ -145,7 +131,7 @@
 
 #### Registry
 
-* [ ] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/cm.rs`
+* [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`
   - Fix free list: reemplazar `free_head`/`scan_next_free` por next-fit linear scan con `next_alloc_hint`.
   - Cambiar `cells` de `[Option<Cell>; 2048]` a `Vec<Option<Cell>>` (soft max).
   - Añadir `Hive::delete_value()`: desenlazar de lista de valores, liberar celda.
@@ -153,7 +139,7 @@
   - Fix `cm_unload_hive()`: flush dirty data antes de desmontar.
   - Fix `cm_flush_key()` deadlock: evitar doble adquisición de lock.
   - Reemplazar `delete_key()` recursivo por iterativo con `Vec` stack explícito.
-  - **Tests:** `cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings`
+  - **Tests:** `cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings` | **COMPLETADO**
 
 #### NeoFS v2
 
@@ -164,15 +150,12 @@
 
 #### Shell (Phase 1 — foundation)
 
-* [ ] **SH-TOKEN. Shell tokenizer** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
+* [ ] **SH-TOKEN+QUOTE. Shell tokenizer + quoting** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
   - Diseño en `docs/design/shell-improvements.md`. Tokenizer state machine para pipes, redirects, quoting.
-  - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`
-
-* [ ] **SH-QUOTE. Shell quoting/escaping** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
   - `"..."` (expande %VAR%), `'...'` (literal), `^` escape, `%%` literal percent.
-  - **Tests:** `tokenizer_double_quotes`, `tokenizer_single_quotes_literal`, `tokenizer_escape_char`, `tokenizer_unmatched_quote`
+  - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`
 
-* [ ] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
+* [ ] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
   - Tokenizer parsea `>`, `>>`, `<`, `2>`. Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd, spawn.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
 
@@ -219,41 +202,30 @@
 
 #### Shell (Phase 2 — editor, env, pipeline)
 
-* [ ] **SH-EDITOR. Shell line editor (ANSI)** | Prereqs: -- | Files: `userbin/neoshell/src/editor.rs`
-  - Reemplaza readline() con `LineEditor`: posicionamiento ANSI, Ctrl-A/E (home/end), Ctrl-K (kill), Ctrl-U (clear), Ctrl-R (history search), Insert toggle.
-  - **Tests:** `editor_basic_input`, `editor_backspace`, `editor_left_right`, `editor_home_end`, `editor_ctrl_k`, `editor_history_search`
-
-* [ ] **SH-HISTORY. Shell history persistence** | Prereqs: SH-EDITOR | Files: `userbin/neoshell/src/history.rs`
+* [ ] **SH-EDITOR+HISTORY. Shell line editor + history** | Prereqs: -- | Files: `userbin/neoshell/src/editor.rs`, `userbin/neoshell/src/history.rs`
+  - Reemplaza readline() con `LineEditor`: posicionamiento ANSI, Ctrl-A/E/K/U/R, Insert.
   - Ring buffer dinámico, persistencia en `C:\System\neoshell.hst`.
-  - **Tests:** `history_add_retrieve`, `history_prev_next`, `history_persistence_save_load`, `history_max_entries`
+  - **Tests:** `editor_basic_input`, `editor_backspace`, `editor_ctrl_k`, `editor_history_search`, `history_persistence_save_load`
 
-* [ ] **SH-ENV. Shell env expansion (%VAR%)** | Prereqs: SH-QUOTE | Files: `userbin/neoshell/src/env.rs`
+* [ ] **SH-ENV+PIPE. Shell env expansion + pipeline** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/env.rs`, `userbin/neoshell/src/pipeline.rs`
   - Post-tokenization pass: reemplaza `%VARNAME%` con valor de `EnvStore`.
-  - **Tests:** `env_simple_expansion`, `env_multiple_expansion`, `env_unknown_var`, `env_literal_percent`, `env_in_redirect_target`
+  - Pipeline espera a todos los procesos vía `ob_wait`, recolecta exit codes.
+  - **Tests:** `env_simple_expansion`, `env_unknown_var`, `pipeline_simple_wait`, `pipeline_three_stage`, `pipeline_exit_code_report`
 
-* [ ] **SH-PIPE. Pipeline wait + exit codes** | Prereqs: SH-TOKEN | Files: `userbin/neoshell/src/pipeline.rs`
-  - Pipeline espera a todos los procesos vía `ob_wait`, recolecta exit codes, reporta errores.
-  - **Tests:** `pipeline_simple_wait`, `pipeline_three_stage`, `pipeline_exit_code_report`, `pipeline_empty_cmd_error`
-
-* [ ] **SH-SEP. Shell semicolon command separator (`;`)** | Prereqs: SH-TOKEN | Files: `userbin/neoshell/src/tokenizer.rs`
-  - Token `Semicolon` en tokenizer. `execute_line` divide en comandos por `;` y ejecuta secuencialmente.
-  - **Tests:** `semicolon_two_commands`, `semicolon_with_redirect`, `semicolon_mixed_with_pipe`
-
-* [ ] **SH-COMPL. Shell completion** | Prereqs: -- | Files: `userbin/neoshell/src/completion.rs`
-  - Completion engine con PATH cache (TTL), filename completion para paths con `\` o `/`.
-  - **Tests:** `completion_command_prefix`, `completion_filename`, `completion_path_cache_hit`, `completion_no_matches`
-
-* [ ] **SH-BATCH. Shell batch scripting (.BAT)** | Prereqs: SH-QUOTE, SH-REDIR, SH-ENV, SH-SEP | Files: `userbin/neoshell/src/batch.rs`
+* [ ] **SH-SEP+COMPL+BATCH. Separator + completion + scripting** | Prereqs: SH-TOKEN+QUOTE, SH-REDIR, SH-ENV+PIPE | Files: `userbin/neoshell/src/tokenizer.rs`, `userbin/neoshell/src/completion.rs`, `userbin/neoshell/src/batch.rs`
+  - Token `Semicolon` en tokenizer. Completion engine con PATH cache.
+  - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`.
+  - **Tests:** `semicolon_two_commands`, `completion_command_prefix`, `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`
   - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`, `@`, `PAUSE`.
   - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`, `bat_shift_args`, `bat_pause_resume`
 
 #### Networking — Userland tools
 
-* [ ] **NET-1.9. ipconfig.nxe** | Prereqs: NET-1.8 | Files: `userbin/ipconfig/` (new)
+* [ ] **NET-1.9. ipconfig.nxe** | Prereqs: -- | Files: `userbin/ipconfig/` (new)
   - `IPCONFIG [/ALL]` — interfaces, MAC, IP, gateway, DNS, stats.
   - **Tests:** integración
 
-* [ ] **NET-1.10. ping.nxe** | Prereqs: NET-1.8 | Files: `userbin/ping/` (new)
+* [ ] **NET-1.10. ping.nxe** | Prereqs: -- | Files: `userbin/ping/` (new)
   - `PING <host> [/n count] [/w ms]`. Socket raw ICMP echo request.
   - **Tests:** ping a QEMU host
 
@@ -328,12 +300,7 @@
   - Cruzar capacidad declarada del driver con token del proceso y ACL del objeto.
   - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`
 
-#### Registry (Phase 2 — security + dirty tracking)
-
-* [ ] **CM-SEC. Registry security (ACL por clave)** | Prereqs: CM-FIX | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`, `src/syscall/cm.rs`
-  - Nuevo `src/cm/security.rs` con `cm_check_access()`, `cm_ensure_security()`, `cm_inherit_security()`.
-  - Admin bypass: token admin accede a cualquier clave.
-  - **Tests:** `cm_sec_key_creation_assigns_owner`, `cm_sec_access_granted`, `cm_sec_access_denied`, `cm_sec_inheritance_parent_child`, `cm_sec_admin_bypass`
+#### Registry (Phase 2 — dirty tracking + multi-hive)
 
 * [ ] **CM-DIRTY. Registry per-cell dirty tracking + incremental flush** | Prereqs: CM-FIX | Files: `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs`
   - `dirty_cells: BitVec` (1 bit por slot). `slot_mut()` marca dirty; `serialize_dirty()` escribe solo celdas sucias.
@@ -342,6 +309,8 @@
 * [ ] **CM-MULTI. Registry multi-hive** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`
   - Montar SOFTWARE, SECURITY, DEFAULT hives. Cada hive crea su directorio raíz en namespace Ob.
   - **Tests:** `cm_multi_software_mounted`, `cm_multi_hive_isolation`, `cm_multi_cross_hive_path_fails`, `cm_multi_unload_reload`
+
+> **Nota:** Registry ACL security (CM-SEC) movido a USR-P4a/4b/4c — integrado con el diseño de usuarios.
 
 #### Userland
 
@@ -385,62 +354,173 @@
 > Diseño completo: `docs/design/users-security-design.md`. Modelo NT-like: SAM + Token + Session + ACL.
 > No Unix uid/gid — usar SID (ya existente en `src/security/`).
 > No nuevas syscalls — todo via Ob API (RAX 60-66) con ObType::Session=19 e info classes nuevas.
-> 6 fases incrementales, cada una testeable independientemente.
+> Cada paso es pequeño, testeable, y mantiene backward compatibility.
 
-* [ ] **USR-P1. Foundation: SAM wired + token enhancements** | Prereqs: CM-FIX | Files: `src/security/sam.rs`, `src/security/token.rs`, `src/security/access.rs`, `src/security/mod.rs`, `src/object/types.rs`, `src/main.rs`
-  - Wire SAM persistence to `\Registry\Machine\SAM` via VFS (binary format SAM\0, version 2)
-  - Fix empty DACL semantics (empty = deny, not grant)
-  - Add group SID checking to `SeAccessCheck` (currently only checks primary SID)
-  - Add `integrity_level` (Untrusted/Low/Medium/High/System) and `creation_time` to Token
+* [ ] **USR-P1a. ObType::Session + SAM built-in users** | Prereqs: CM-FIX | Files: `src/object/types.rs`, `src/main.rs`, `src/security/mod.rs`
   - Add `Session = 19` to ObType enum
   - Create built-in users (Administrator S-1-5-21-500, Guest S-1-5-21-501) in `init_security()`
-  - **Tests:** `sam_create_delete_user`, `sam_authenticate_correct_wrong`, `sam_serialize_roundtrip`, `sam_password_change`, `se_access_check_groups`, `se_access_check_empty_dacl_deny`, `token_integrity_level`
+  - Verify SAM entries exist after boot
+  - **Tests:** `usr_type_session_exists`, `usr_builtin_admin_created`, `usr_builtin_guest_created`
 
-* [ ] **USR-P2. Sessions: login/logoff/lock** | Prereqs: USR-P1 | Files: `src/syscall/ob.rs`, `src/globals.rs`, `src/scheduler/mod.rs`, `src/object/types.rs`, `libneodos/src/syscall.rs`, `userbin/neologon/` (new), `userbin/neoinit/`
-  - Add `SESSION_MANAGER: Mutex<SessionManager>` global
-  - Handler for `sys_ob_create(Session)` — allocates session_id, creates Session object in `\Session\{id}`
-  - Handler for `ObInfoClass::SessionInfo` (24) — session_id, user_sid, state, login_time, process_count
-  - Handler for `ObSetInfoClass::SessionLock` (28) and `SessionLogoff` (29)
-  - Handler for `ObSetInfoClass::ChangePassword` (31) — SAM password update
-  - New `userbin/neologon/` — login prompt, SAM auth, session creation, spawn shell with user token
-  - NeoInit spawns neologon instead of shell directly (interactive path)
-  - Token inheritance: processes spawned within a session inherit session_id
-  - **Tests:** `session_create_query`, `session_lock_unlock`, `session_logoff_terminates`, `session_enum_all`, `neologon_login_success`, `neologon_login_failure`, `passwd_change_verify`
+* [ ] **USR-P1b. Token: add integrity_level + creation_time** | Prereqs: USR-P1a | Files: `src/security/token.rs`, `src/security/mod.rs`
+  - Add `IntegrityLevel` enum (Untrusted=0, Low=1, Medium=2, High=3, System=4)
+  - Add `integrity_level: IntegrityLevel` and `creation_time: u64` fields to Token
+  - Update `new_admin()` → integrity_level=System, `new_user()` → integrity_level=Medium
+  - **Tests:** `usr_token_admin_system_il`, `usr_token_user_medium_il`, `usr_token_creation_time_set`
 
-* [ ] **USR-P3. Filesystem security: owner SID + permission enforcement** | Prereqs: USR-P1 | Files: `src/fs/neodos_dir.rs`, `src/fs/neodos_v2.rs`, `src/fs/vfs.rs`, `src/syscall/ob.rs`
-  - Add `owner_sid: Sid` to DirEntryV2 (128→136 bytes, superblock `FEATURE_OWNER_SID` flag)
-  - Backward compat: old NE2 without owner_sid → default S-1-5-21-0-0-0-1000
-  - Add `check_vfs_access()` in VFS: owner/group/other check against token.sid + token.groups
-  - Wire permission checks in `handler_ob_open`, `handler_ob_create`, `handler_ob_destroy` (VFS paths)
-  - Default permissions by extension: .NEM=admin-only, .SYS=admin-only, .NXE=user-RX, etc.
-  - Admin bypass preserved
-  - **Tests:** `neofs_owner_read_write_delete`, `neofs_other_write_denied`, `neofs_admin_bypass`, `neofs_create_default_perms`, `neofs_backward_compat_no_owner`
+* [ ] **USR-P1c. SAM persistence to Registry hive** | Prereqs: USR-P1a | Files: `src/security/sam.rs`
+  - Implement `sam_save(path)` — serialize SAM to `\Registry\Machine\SAM` via VFS (binary magic `SAM\0`, version 2)
+  - Implement `sam_load(path)` — deserialize from VFS
+  - Wire save on user create/delete/password change
+  - Wire load at boot in `init_security()`
+  - **Tests:** `usr_sam_save_load_roundtrip`, `usr_sam_persist_across_reboot`, `usr_sam_save_on_user_create`
 
-* [ ] **USR-P4. Registry security: ACL per key** | Prereqs: CM-FIX, USR-P1 | Files: `src/cm/hive.rs`, `src/cm/security.rs` (new), `src/cm/mod.rs`
-  - New `src/cm/security.rs`: `cm_check_access()`, `cm_default_sec_desc()`
-  - Wire `sec_desc_cell` on key creation (inherits parent's SD or creates default)
-  - ACL check on all Cm syscall handlers (open, create, delete, set, enum)
-  - Default: admin=full, user=read `\Registry\Machine`, read-write `\Registry\User\{sid}`
-  - User profile hive auto-mounted at `\Registry\User\{sid}` on login
-  - **Tests:** `cm_sec_key_owner_assigned`, `cm_sec_access_granted_denied`, `cm_sec_admin_bypass`, `cm_sec_inheritance`
+* [ ] **USR-P1d. SeAccessCheck: fix empty DACL + group SID checking** | Prereqs: USR-P1b | Files: `src/security/access.rs`, `src/security/acl.rs`
+  - Fix empty DACL: empty ACL = deny all (match NT behavior)
+  - Add group SID checking: iterate `token.groups` in addition to `token.sid` during ACL evaluation
+  - Keep admin bypass intact
+  - **Tests:** `usr_se_access_empty_dacl_denies`, `usr_se_access_group_sid_allowed`, `usr_se_access_group_sid_denied`, `usr_se_access_admin_bypass`
 
-* [ ] **USR-P5. Integrity levels + privilege enforcement** | Prereqs: USR-P1 | Files: `src/security/access.rs`, `src/syscall/ob.rs`, `src/syscall/permission.rs`
-  - Add integrity level check to `SeAccessCheck`: deny write if process_IL < object_IL
-  - Handler for `ObSetInfoClass::SetIntegrityLevel` (32) — can only lower, never raise
-  - Handler for `ObInfoClass::TokenInfo` (28) — query current process token (sid, groups, privileges, IL)
-  - Handler for `ObInfoClass::IntegrityLevel` (27) — query object IL
-  - Wire `has_privilege()` in all admin-only syscalls (driver_unload, load/unload hive, etc.)
-  - Token filtering at login: admin gets all 12 privileges, standard user gets only SE_CHANGE_NOTIFY
-  - **Tests:** `integrity_medium_cant_write_high`, `integrity_drop_level`, `token_query_info`, `privilege_enforcement_admin_syscall`
+* [ ] **USR-P1e. ObSetInfoClass::ChangePassword syscall handler** | Prereqs: USR-P1c | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - Add `ChangePassword = 31` to ObSetInfoClass
+  - Handler validates old password hash, updates SAM with new password hash
+  - Returns EAUTH if old password doesn't match
+  - **Tests:** `usr_change_password_ok`, `usr_change_password_wrong_old`, `usr_change_password_then_login`
 
-* [ ] **USR-P6. User commands: whoami, passwd, who, logoff, su, runas** | Prereqs: USR-P2, USR-P3 | Files: `userbin/neoshell/`
-  - `WHOAMI` — `ob_query_info(process_fd, TokenInfo)` → sid → SAM lookup → print username
-  - `PASSWD` — `ob_set_info(session_fd, ChangePassword, old|new)`
-  - `WHO` — `ob_enum(\Session\)` → query each session → print user + since
-  - `LOGOFF` — `ob_set_info(session_fd, SessionLogoff)`
-  - `SU <user>` — spawn new shell as target user (requires password)
-  - `RUNAS [/USER:admin] <command>` — spawn command with different token
-  - **Tests:** `whoami_prints_username`, `passwd_change_works`, `who_lists_sessions`, `logoff_terminates_shell`
+* [ ] **USR-P2a. SessionManager global + ObCreate(Session)** | Prereqs: USR-P1a | Files: `src/globals.rs`, `src/scheduler/mod.rs`, `src/syscall/ob.rs`
+  - Add `SESSION_MANAGER: Mutex<SessionManager>` global with `sessions: Vec<Option<Session>>`
+  - Handler for `sys_ob_create(Session)` — allocates session_id (1-based), creates Session struct
+  - Auto-path: `\Session\{session_id}` in namespace
+  - Session struct: `{ session_id, user_sid, token, login_time, state, vt_num, process_count }`
+  - **Tests:** `usr_session_create_alloc_id`, `usr_session_namespace_path`, `usr_session_create_then_query`
+
+* [ ] **USR-P2b. ObInfoClass::SessionInfo + ObSetInfoClass::SessionLock/Logoff** | Prereqs: USR-P2a | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - Add `SessionInfo = 24` to ObInfoClass: returns session_id, user_sid, state, login_time, process_count
+  - Add `SessionLock = 28` and `SessionLogoff = 29` to ObSetInfoClass
+  - SessionLock: sets state=Locked, blocks input on associated VT
+  - SessionLogoff: terminates all processes in session, frees session slot
+  - **Tests:** `usr_session_query_info`, `usr_session_lock_state`, `usr_session_logoff_cleans_up`
+
+* [ ] **USR-P2c. TokenInfo + Token inheritance with session_id** | Prereqs: USR-P2a | Files: `src/object/types.rs`, `src/syscall/ob.rs`, `src/scheduler/mod.rs`
+  - Add `TokenInfo = 28` to ObInfoClass: returns sid, is_admin, groups, privileges, integrity_level, session_id
+  - Modify `add_ring3_process()`: child inherits `session_id` from parent's token
+  - **Tests:** `usr_token_info_query`, `usr_process_inherits_session_id`
+
+* [ ] **USR-P2d. neologon.nxe: login binary** | Prereqs: USR-P2b, USR-P2c | Files: `userbin/neologon/` (new), `libneodos/src/syscall.rs`
+  - New user binary: `userbin/neologon/` with `_start()` entry
+  - Prints login prompt, reads username + password
+  - Calls `sys_ob_create(Session)` → kernel validates SAM credentials
+  - On success: spawns shell (`C:\Programs\neoshell.nxe`) within the new session
+  - On failure: prints error, re-prompts (max 3 attempts)
+  - libneodos wrappers: `session_create()`, `session_lock()`, `session_logoff()`, `change_password()`
+  - **Tests:** `usr_neologon_login_ok`, `usr_neologon_login_bad_password`, `usr_neologon_max_attempts`
+
+* [ ] **USR-P2e. NeoInit spawns neologon instead of shell** | Prereqs: USR-P2d | Files: `userbin/neoinit/`
+  - NeoInit Phase 4: spawn `C:\Programs\neologon.nxe` instead of shell directly
+  - neologon handles the shell spawn after authentication
+  - If DefaultAutoLogin is set in Registry: auto-login as that user (skip prompt)
+  - **Tests:** `usr_neoinit_spawns_neologon`, `usr_auto_login_from_registry`
+
+* [ ] **USR-P3a. DirEntryV2: add owner_sid field** | Prereqs: USR-P1b | Files: `src/fs/neodos_dir.rs`, `src/fs/neodos_v2.rs`
+  - Add `owner_sid: Sid` to DirEntryV2 (serialized size grows 128→136 bytes)
+  - Superblock flag `FEATURE_OWNER_SID`: indicates extended dir entries
+  - Backward compat: read old NE2 without owner_sid → assign default S-1-5-21-0-0-0-1000
+  - Write new dir entries with current process token.sid as owner
+  - **Tests:** `usr_direntry_owner_sid_written`, `usr_direntry_backward_compat_read`, `usr_direntry_default_owner`
+
+* [ ] **USR-P3b. VFS permission checking function** | Prereqs: USR-P1d, USR-P3a | Files: `src/fs/vfs.rs`
+  - Add `check_vfs_access(token, mode, owner_sid, desired) -> bool` to VFS
+  - Logic: owner check → group member check → other check
+  - Admin bypass: admin always granted
+  - Uses existing PERM_R/W/X/D bits from `mode` field
+  - **Tests:** `usr_vfs_check_owner_rw`, `usr_vfs_check_other_ro`, `usr_vfs_check_admin_bypass`
+
+* [ ] **USR-P3c. Wire VFS permission checks in syscall handlers** | Prereqs: USR-P3b | Files: `src/syscall/ob.rs`
+  - `handler_ob_open` (VFS paths): check READ/WRITE/EXECUTE against file mode + owner
+  - `handler_ob_create` (VFS mkdir/create): check WRITE against parent dir
+  - `handler_ob_destroy` (VFS unlink): check DELETE against file
+  - `handler_ob_set_info(VfsRename)`: check WRITE+DELETE against file
+  - Returns `ObError::AccessDenied` on failure
+  - **Tests:** `usr_vfs_open_read_ok`, `usr_vfs_open_write_denied`, `usr_vfs_create_in_own_dir`, `usr_vfs_delete_own_file_ok`, `usr_vfs_delete_other_file_denied`
+
+* [ ] **USR-P3d. Default permissions by extension** | Prereqs: USR-P3c | Files: `src/fs/vfs.rs`
+  - On `create()`: apply default PERM_* bits based on file extension
+  - .NEM → PERM_R|PERM_S (admin-only read, system file)
+  - .SYS → PERM_R|PERM_S (admin-only read, system file)
+  - .NXE → PERM_R|PERM_X (world-readable+executable)
+  - .NXL → PERM_R|PERM_X (world-readable+executable)
+  - .CFG/.INI → PERM_R|PERM_W (user config)
+  - (other) → PERM_R|PERM_W (user files)
+  - Directories → PERM_R|PERM_W|PERM_X|PERM_D
+  - **Tests:** `usr_default_perm_nem_readonly`, `usr_default_perm_nxe_rx`, `usr_default_perm_dir_full`
+
+* [ ] **USR-P4a. cm/security.rs: Registry ACL checking module** | Prereqs: CM-FIX, USR-P1d | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`
+  - New file: `cm_check_access(token, sec_desc, desired_access) -> bool`
+  - Reuses `SeAccessCheck` from security subsystem
+  - If key has no sec_desc_cell: default — admin full, user read-only
+  - Helper: `cm_default_sec_desc(creator_sid)` — creates SD with creator as owner
+  - **Tests:** `usr_cm_sec_check_admin_full`, `usr_cm_sec_check_user_readonly`, `usr_cm_sec_default_sd`
+
+* [ ] **USR-P4b. Wire sec_desc_cell on key creation** | Prereqs: USR-P4a | Files: `src/cm/hive.rs`
+  - On `KeyCell` creation: inherit parent's `sec_desc_cell` or create default via `cm_default_sec_desc()`
+  - Store `sec_desc_cell` as index to a Security cell in the hive
+  - Serialize/deserialize Security cells in NEOH format
+  - **Tests:** `usr_cm_key_inherits_parent_sec`, `usr_cm_key_default_sec_when_no_parent`
+
+* [ ] **USR-P4c. ACL checks in Cm syscall handlers** | Prereqs: USR-P4b | Files: `src/syscall/cm.rs` or `src/syscall/ob.rs` (Registry handlers)
+  - Wire `cm_check_access()` in: open_key, create_key, delete_key, set_value, delete_value, enum_key, enum_value
+  - Returns `ObError::AccessDenied` if check fails
+  - **Tests:** `usr_cm_open_key_admin`, `usr_cm_create_key_user_denied`, `usr_cm_delete_key_admin_only`
+
+* [ ] **USR-P4d. User profile hive auto-mount** | Prereqs: USR-P4c | Files: `src/cm/mod.rs`
+  - On session creation: auto-mount `\Registry\User\{sid}` hive
+  - Profile hive stored at `C:\Users\{username}\ntuser.hiv`
+  - Default values: Environment\PATH, Console\colors, etc.
+  - **Tests:** `usr_cm_user_hive_mounted_on_login`, `usr_cm_user_hive_has_defaults`
+
+* [ ] **USR-P5a. Integrity level in SeAccessCheck** | Prereqs: USR-P1b | Files: `src/security/access.rs`
+  - Extend `SeAccessCheck`: if `process_IL < object_IL`, deny WRITE/DELETE (allow READ)
+  - Add `integrity_level` field to `SecurityDescriptor` (default=Medium)
+  - Admin bypass: SYSTEM integrity level always passes
+  - **Tests:** `usr_il_medium_read_high_ok`, `usr_il_medium_write_high_denied`, `usr_il_system_bypass`
+
+* [ ] **USR-P5b. SetIntegrityLevel + IntegrityLevel info classes** | Prereqs: USR-P5a | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - Add `SetIntegrityLevel = 32` to ObSetInfoClass — can only lower IL, never raise
+  - Add `IntegrityLevel = 27` to ObInfoClass — query object/process IL
+  - Handler validates: new_IL < current_IL (can't raise), returns Inval if try to raise
+  - **Tests:** `usr_il_drop_from_high_to_medium`, `usr_il_raise_denied`, `usr_il_query_current`
+
+* [ ] **USR-P5c. Privilege enforcement in admin syscalls** | Prereqs: USR-P1b | Files: `src/syscall/permission.rs`, `src/syscall/ob.rs`
+  - Wire `token.has_privilege(bit)` in admin-only syscalls: driver_unload, cm_load_hive, cm_unload_hive
+  - Token filtering: `new_admin()` → all 12 privileges; `new_user()` → only SE_CHANGE_NOTIFY
+  - **Tests:** `usr_priv_admin_has_all`, `usr_priv_user_has_change_notify`, `usr_priv_driver_unload_denied_for_user`
+
+* [ ] **USR-P6a. WHOAMI command** | Prereqs: USR-P2c | Files: `userbin/neoshell/`
+  - New built-in or .NXE: queries `TokenInfo` via `ob_query_info(process_fd, 28)`
+  - Extracts SID → SAM lookup → prints `username [SID]`
+  - **Tests:** `usr_whoami_prints_username`, `usr_whoami_shows_sid`
+
+* [ ] **USR-P6b. PASSWD command** | Prereqs: USR-P2d | Files: `userbin/neoshell/`
+  - Prompts for old password, new password, confirm new password
+  - Calls `ob_set_info(session_fd, ChangePassword, buffer)`
+  - Prints success or error message
+  - **Tests:** `usr_passwd_change_ok`, `usr_passwd_wrong_old`, `usr_passwd_mismatch_confirm`
+
+* [ ] **USR-P6c. WHO + LOGOFF commands** | Prereqs: USR-P2b | Files: `userbin/neoshell/`
+  - `WHO`: `ob_enum(\Session\)` → for each session, query SessionInfo → print user + since
+  - `LOGOFF`: `ob_set_info(session_fd, SessionLogoff)` → kernel terminates all session processes
+  - **Tests:** `usr_who_lists_sessions`, `usr_logoff_terminates_shell`
+
+* [ ] **USR-P6d. SU command** | Prereqs: USR-P2d, USR-P2e | Files: `userbin/neoshell/`
+  - `SU <username>`: prompts for target user's password
+  - On auth: spawns new shell in target user's session
+  - Uses existing `sys_ob_create(Process)` with attrs encoding target token
+  - **Tests:** `usr_su_correct_password`, `usr_su_wrong_password`, `usr_su_spawns_as_target`
+
+* [ ] **USR-P6e. RUNAS command** | Prereqs: USR-P6d | Files: `userbin/neoshell/`
+  - `RUNAS [/USER:admin] <command>`: spawns command with different token
+  - Requires target user's password (or admin consent)
+  - **Tests:** `usr_runas_admin_command`, `usr_runas_user_denied_without_password`
 
 * [ ] **B5.3. Secure boot chain** | Prereqs: B5.1 | Files: `neodos-bootloader/`, `src/boot/secure.rs`
   - Verificación encadenada bootloader → kernel → drivers.
@@ -473,6 +553,13 @@
 * [ ] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
   - Asignar NIC por defecto y puerto efímero (49152-65535) si no especificado.
   - **Tests:** `socket_auto_port_assign`
+
+* [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
+  - Stub resolver: consulta UDP a servidor DNS (puerto 53), parsea respuestas (A, AAAA, CNAME, MX).
+  - Caché local con TTL (hasta 64 entradas, expiración por timer).
+  - Integración con libnet: `dns_resolve(hostname) -> Ipv4Addr`.
+  - Servidores DNS desde Registry (`HKLM\Network\Interfaces\0\DnsServer`), configurable via ipconfig.
+  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
 
 * [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.
@@ -537,22 +624,6 @@
 
 #### Documentation
 
-* [x] **AUDIT-23. NEM v3 header docs contradict code** | Files: `docs/ARCHITECTURE.md`, `docs/drivers.md`, `src/nem/mod.rs`
-  - Fixed offset table (added padding row at 26, corrected all subsequent offsets). Rewrote `drivers.md` table to match actual `NemHeaderV3` struct.
-* [x] **AUDIT-24. libneodos.md: syscall instruction vs int 0x80** | Files: `docs/libneodos.md`, `libneodos/src/syscall.rs`
-  - Changed "syscall instruction" → "int 0x80" in doc.
-* [x] **AUDIT-25. libneodos.md: user.ld base addr wrong** | Files: `docs/libneodos.md`, `userbin/*/user.ld`
-  - Changed "placing code at 0x400000" → "linking at address 0; runtime loads at 0x400000".
-* [x] **AUDIT-26. scheduler.md: CpuRunQueue field names wrong** | Files: `docs/scheduler.md`, `src/arch/x64/cpu_local.rs`
-  - Fixed field names (head/tail → head_idx/tail_idx), added missing `count: u16`.
-* [x] **AUDIT-27. objects.md: SocketRecv class 23 (re-check)** | Files: `docs/objects.md`
-  - Already correct — SocketRecv=23 consistent everywhere.
-* [x] **AUDIT-28. memory.md: kernel_image base wrong** | Files: `docs/memory.md`, `neodos-kernel/kernel.ld`
-  - Already fixed in prior audit.
-* [x] **AUDIT-29. Version mismatch AGENTS/Cargo/CHANGELOG** | Files: `AGENTS.md`, `neodos-kernel/Cargo.toml`, `CHANGELOG.md`
-  - Fixed: `Cargo.toml` bumped from 0.48.0 → 0.49.0 to match AGENTS/CHANGELOG.
-* [x] **DH1. Actualizar README.md** | Files: `README.md`
-  - Updated version badge to v0.49.0, test count to 656.
 * [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
 * [ ] **DH-HISTORY. Mantener docs/HISTORY.md** | Files: `docs/HISTORY.md`
 
@@ -601,12 +672,12 @@
 
 | Versión | Enfoque | Estado |
 |---------|---------|--------|
-| v0.50 | Registry bugfixes, Shell Phase 1, NeoFS snapshot syscall | **PRÓXIMO** |
-| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2, Networking tools, USR-P1 (SAM foundation) | planned |
-| v0.52 | VirtIO, Performance (zero-copy pipes), Security (sig validation), USR-P2 (sessions) + USR-P3 (FS security) | planned |
-| v0.53 | Registry ACL (USR-P4), Integrity levels + privilege enforcement (USR-P5), Multi-hive | planned |
-| v0.54 | User commands (USR-P6), Documentation, Cleanup | backlog |
-| v0.55+ | Hardening, GUI prep, network auth | backlog |
+| v0.50 | Registry bugfixes (CM-FIX), Shell Phase 1 (tokenizer+redirect), NeoFS snapshot syscall | **PRÓXIMO** |
+| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2 (editor, env, pipeline, batch), USR-P1 (SAM foundation) | planned |
+| v0.52 | VirtIO (ARCH+NET), Sessions (USR-P2), FS security (USR-P3), Zero-copy pipes | planned |
+| v0.53 | Module sig validation, Registry dirty+multihive, Registry ACL (USR-P4), Integrity levels (USR-P5), KD, NeoEdit | planned |
+| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs | backlog |
+| v0.55+ | Cleanup (dead code, duplicates, refactors), Backlog items | backlog |
 
 ---
 

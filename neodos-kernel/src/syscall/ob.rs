@@ -2324,9 +2324,9 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Some(id) => id,
                 None => return err_to_u64(SyscallError::BadF),
             };
-            match crate::cm::cm_set_value(native_id, &name, crate::cm::hive::REG_NONE, &[]) {
+            match crate::cm::cm_delete_value(native_id, &name) {
                 Ok(()) => 0,
-                Err(()) => err_to_u64(SyscallError::NoMem),
+                Err(()) => err_to_u64(SyscallError::NoEnt),
             }
         }
         // ── SetNicIp (27): set NIC IP address and subnet mask ──

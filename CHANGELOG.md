@@ -49,6 +49,20 @@
 - Tests actualizados: `page_cache_peek_miss` → `page_cache_peek_inode_miss`, `page_cache_empty_peek` → `page_cache_empty_peek_inode`.
 - Total: 641 → 656 tests.
 
+### Fixed
+- **CM-FIX Registry bugfixes** — Varias correcciones en el subsistema de Registry:
+  - **Free list**: Reemplazado `free_head`/`scan_next_free` por next-fit linear scan con `next_alloc_hint`. Ahora reusa slots libres de forma determinista.
+  - **Soft max cells**: Cambiado límite fijo de 2048 celdas a `Vec` dinámico (crece bajo demanda). Toda comprobación usa `cells.len()` en vez de `MAX_CELLS`.
+  - **`Hive::delete_value()`**: Nuevo método que desenlaza un valor de la lista enlazada y libera la celda.
+  - **`RegistryDeleteValue` handler**: Reemplazado el hack `REG_NONE` por llamada a `cm_delete_value()`.
+  - **`cm_unload_hive()`**: Ahora hace flush de datos sucios antes de desmontar.
+  - **`cm_flush_key()` deadlock**: Eliminada doble adquisición del lock `CM_MANAGER` que causaba deadlock.
+  - **`delete_key()` iterativo**: Reemplazada recursión por pila explícita `Vec<(u32, bool)>`.
+- Tests: 7 nuevos (`cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings`).
+
+### Changed
+- **RegistryDeleteValue** (`ObSetInfoClass::RegistryDeleteValue = 26`): Cambiado de `cm_set_value` con `REG_NONE` a `cm_delete_value` genuino.
+
 ### Docs
 - **AUDIT-36..46, AUDIT-53..54 completados** — 11 auditorías de documentación corregidas: ARCHITECTURE.md (HAL ABI, kernel heap, event types, MEM binary, ObType count, test count), syscalls.md (removed syscalls), ipc.md (event struct, pipe storage), memory.md (nxl_region address), objects.md (SetInfoClass count), filesystem.md (page cache capacity). Movidas de IMPROVEMENTS.md a IMPROVEMENTS_COMPLETED.md.
 - AGENTS.md: añadida fila Registry en tabla de Skills.

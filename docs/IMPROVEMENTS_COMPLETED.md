@@ -1,8 +1,22 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.49.0 (Auditoría docs completa).
-> Proximo milestone: v0.50 (Async I/O + Registry persistence).
+> Version actual: v0.49.0 (CM-FIX completado).
+> Proximo milestone: v0.50 (Shell Phase 1 + NeoFS snapshot).
+
+---
+
+### CM-FIX. Registry bugfixes [COMPLETED]
+
+* [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`
+  - **Fix free list:** reemplazar `free_head`/`scan_next_free` por next-fit linear scan con `next_alloc_hint`.
+  - **Soft max cells:** cambiar `cells` de fijo `MAX_CELLS=2048` a `Vec<Option<Cell>>` dinámico.
+  - **`delete_value()`:** desenlazar de lista de valores, liberar celda.
+  - **`RegistryDeleteValue` handler:** llama a `cm_delete_value()` en vez del hack `REG_NONE`.
+  - **`cm_unload_hive()`:** flush dirty data antes de desmontar.
+  - **`cm_flush_key()` deadlock:** evitar doble adquisición de lock.
+  - **`delete_key()` iterativo:** reemplazar recursión por `Vec` stack explícito.
+  - **Tests:** `cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings`
 
 ---
 
@@ -540,6 +554,25 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 * [x] **AUDIT-71. syscalls.md missing Socket and Registry info classes** | Files: `docs/syscalls.md:284-296`
   - `sys_ob_query_info` ampliado de 2 clases a 24 (0-23). `sys_ob_set_info` ampliado de 11 clases a 28 (0-27). `sys_ob_create` ahora incluye `Socket=18`.
   - **Tests:** (docs fix only)
+
+### AUDIT-23..29 + DH1: Documentación corregida [COMPLETED]
+
+* [x] **AUDIT-23. NEM v3 header docs contradict code** | Files: `docs/ARCHITECTURE.md`, `docs/drivers.md`, `src/nem/mod.rs`
+  - Fixed offset table (added padding row at 26, corrected all subsequent offsets). Rewrote `drivers.md` table to match actual `NemHeaderV3` struct.
+* [x] **AUDIT-24. libneodos.md: syscall instruction vs int 0x80** | Files: `docs/libneodos.md`
+  - Changed "syscall instruction" → "int 0x80".
+* [x] **AUDIT-25. libneodos.md: user.ld base addr wrong** | Files: `docs/libneodos.md`
+  - Changed "placing code at 0x400000" → "linking at address 0; runtime loads at 0x400000".
+* [x] **AUDIT-26. scheduler.md: CpuRunQueue field names wrong** | Files: `docs/scheduler.md`
+  - Fixed field names (head/tail → head_idx/tail_idx), added missing `count: u16`.
+* [x] **AUDIT-27. objects.md: SocketRecv class 23 (re-check)** | Files: `docs/objects.md`
+  - Already correct — SocketRecv=23 consistent everywhere.
+* [x] **AUDIT-28. memory.md: kernel_image base wrong** | Files: `docs/memory.md`
+  - Already fixed in prior audit.
+* [x] **AUDIT-29. Version mismatch AGENTS/Cargo/CHANGELOG** | Files: `AGENTS.md`, `neodos-kernel/Cargo.toml`
+  - Fixed: `Cargo.toml` bumped from 0.48.0 → 0.49.0.
+* [x] **DH1. Actualizar README.md** | Files: `README.md`
+  - Updated version badge to v0.49.0, test count to 656.
 
 ## Referencias
 

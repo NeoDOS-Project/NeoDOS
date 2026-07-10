@@ -107,7 +107,7 @@ impl Cell {
 pub struct Hive {
     pub name: String,
     cells: Vec<Option<Cell>>,
-    free_head: u32,
+    next_alloc_hint: u32,
     count: usize,
     dirty: bool,
 }
@@ -119,7 +119,7 @@ impl Hive {
         let mut hive = Hive {
             name: name.to_string(),
             cells,
-            free_head: NULL_CELL,
+            next_alloc_hint: 1,
             count: 0,
             dirty: false,
         };
@@ -134,62 +134,42 @@ impl Hive {
     pub fn mark_clean(&mut self) { self.dirty = false; }
 
     pub fn alloc_cell(&mut self, cell: Cell) -> Option<u32> {
-        if self.free_head != NULL_CELL {
-            let idx = self.free_head;
-            let next_free = match &self.cells[idx as usize] {
-                Some(Cell::Free) => {
-                    // Read next pointer stored in the free cell data
-                    // For simplicity, just scan for the next free
-                    self.scan_next_free(idx as usize)
-                }
-                _ => NULL_CELL,
-            };
-            if self.cells[idx as usize].is_some() {
-                self.free_head = next_free;
-                self.cells[idx as usize] = Some(cell);
+        let start = self.next_alloc_hint as usize;
+        let len = self.cells.len();
+        for offset in 0..len {
+            let i = (start + offset) % len;
+            if self.cells[i].is_none() {
+                self.cells[i] = Some(cell);
                 self.count += 1;
                 self.dirty = true;
-                return Some(idx);
-            }
-        }
-        for (i, slot) in self.cells.iter_mut().enumerate() {
-            if slot.is_none() {
-                *slot = Some(cell);
-                self.count += 1;
-                self.dirty = true;
+                self.next_alloc_hint = ((i as u32) + 1) % len as u32;
                 return Some(i as u32);
             }
         }
-        None
-    }
-
-    fn scan_next_free(&self, start: usize) -> u32 {
-        for i in (start + 1)..MAX_CELLS {
-            if self.cells[i].is_none() || matches!(self.cells[i], Some(Cell::Free)) {
-                return i as u32;
-            }
-        }
-        NULL_CELL
+        // No free slot found — extend the Vec (soft max)
+        let idx = len;
+        self.cells.push(Some(cell));
+        self.count += 1;
+        self.dirty = true;
+        self.next_alloc_hint = (idx + 1) as u32;
+        Some(idx as u32)
     }
 
     pub fn free_cell(&mut self, idx: u32) {
-        if idx as usize >= MAX_CELLS { return; }
-        match &self.cells[idx as usize] {
-            Some(Cell::Free) | None => return,
-            _ => {}
-        }
-        self.cells[idx as usize] = Some(Cell::Free);
+        if (idx as usize) >= self.cells.len() { return; }
+        if self.cells[idx as usize].is_none() { return; }
+        self.cells[idx as usize] = None;
         self.count -= 1;
         self.dirty = true;
     }
 
     pub(crate) fn slot(&self, idx: u32) -> Option<&Cell> {
-        if (idx as usize) >= MAX_CELLS { return None; }
+        if (idx as usize) >= self.cells.len() { return None; }
         self.cells[idx as usize].as_ref()
     }
 
     pub(crate) fn slot_mut(&mut self, idx: u32) -> Option<&mut Cell> {
-        if (idx as usize) >= MAX_CELLS { return None; }
+        if (idx as usize) >= self.cells.len() { return None; }
         self.dirty = true;
         self.cells[idx as usize].as_mut()
     }
@@ -245,54 +225,68 @@ impl Hive {
 
     pub fn delete_key(&mut self, idx: u32) {
         if idx == 0 { return; }
-        let (subkeys_head, values_head, parent_cell, self_sibling) = match self.slot(idx) {
-            Some(Cell::Key(k)) => (k.subkeys_head, k.values_head, k.parent_cell, k.subkeys_sibling),
-            _ => return,
-        };
-        // Free subkeys recursively
-        let mut curr = subkeys_head;
-        while curr != NULL_CELL {
-            let next = match self.slot(curr) {
-                Some(Cell::Key(k)) => k.subkeys_sibling,
-                _ => NULL_CELL,
-            };
-            self.delete_key(curr);
-            curr = next;
-        }
-        // Free values
-        let mut curr_val = values_head;
-        while curr_val != NULL_CELL {
-            let next = match self.slot(curr_val) {
-                Some(Cell::Value(v)) => v.next,
-                _ => NULL_CELL,
-            };
-            self.free_cell(curr_val);
-            curr_val = next;
-        }
-        // Unlink from parent (use pre-extracted sibling to avoid double borrow)
-        if parent_cell != NULL_CELL {
-            if let Some(Cell::Key(ref mut pk)) = self.slot_mut(parent_cell) {
-                if pk.subkeys_head == idx {
-                    pk.subkeys_head = self_sibling;
-                } else {
-                    let mut prev = pk.subkeys_head;
-                    while prev != NULL_CELL {
-                        let nxt = match self.slot(prev) {
-                            Some(Cell::Key(p)) => p.subkeys_sibling,
-                            _ => NULL_CELL,
-                        };
-                        if nxt == idx {
-                            if let Some(Cell::Key(ref mut pp)) = self.slot_mut(prev) {
-                                pp.subkeys_sibling = self_sibling;
+        if self.slot(idx).is_none() { return; }
+        // Iterative deletion with explicit stack
+        let mut stack: Vec<(u32, bool)> = alloc::vec![(idx, false)];
+        while let Some((curr, visited)) = stack.pop() {
+            if !visited {
+                // First visit: push self back, then push subkeys
+                let subkeys_head = match self.slot(curr) {
+                    Some(Cell::Key(k)) => k.subkeys_head,
+                    _ => { self.free_cell(curr); continue; }
+                };
+                stack.push((curr, true));
+                let mut sk = subkeys_head;
+                while sk != NULL_CELL {
+                    let next = match self.slot(sk) {
+                        Some(Cell::Key(k)) => k.subkeys_sibling,
+                        _ => NULL_CELL,
+                    };
+                    stack.push((sk, false));
+                    sk = next;
+                }
+            } else {
+                // Second visit: free values, unlink from parent, free self
+                let (values_head, parent_cell, self_sibling) = match self.slot(curr) {
+                    Some(Cell::Key(k)) => (k.values_head, k.parent_cell, k.subkeys_sibling),
+                    _ => { self.free_cell(curr); continue; }
+                };
+                // Free values
+                let mut cv = values_head;
+                while cv != NULL_CELL {
+                    let next = match self.slot(cv) {
+                        Some(Cell::Value(v)) => v.next,
+                        _ => NULL_CELL,
+                    };
+                    self.free_cell(cv);
+                    cv = next;
+                }
+                // Unlink from parent
+                if parent_cell != NULL_CELL {
+                    if let Some(Cell::Key(ref mut pk)) = self.slot_mut(parent_cell) {
+                        if pk.subkeys_head == curr {
+                            pk.subkeys_head = self_sibling;
+                        } else {
+                            let mut prev = pk.subkeys_head;
+                            while prev != NULL_CELL {
+                                let nxt = match self.slot(prev) {
+                                    Some(Cell::Key(p)) => p.subkeys_sibling,
+                                    _ => NULL_CELL,
+                                };
+                                if nxt == curr {
+                                    if let Some(Cell::Key(ref mut pp)) = self.slot_mut(prev) {
+                                        pp.subkeys_sibling = self_sibling;
+                                    }
+                                    break;
+                                }
+                                prev = nxt;
                             }
-                            break;
                         }
-                        prev = nxt;
                     }
                 }
+                self.free_cell(curr);
             }
         }
-        self.free_cell(idx);
     }
 
     pub fn enum_key(&self, parent: u32, index: u32) -> Option<String> {
@@ -380,6 +374,46 @@ impl Hive {
             Some(Cell::Value(v)) => Some(v.clone()),
             _ => None,
         }
+    }
+
+    pub fn delete_value(&mut self, key_idx: u32, name: &str) -> bool {
+        let head = match self.slot(key_idx) {
+            Some(Cell::Key(k)) => k.values_head,
+            _ => return false,
+        };
+        let mut curr = head;
+        let mut prev = NULL_CELL;
+        while curr != NULL_CELL {
+            let next = match self.slot(curr) {
+                Some(Cell::Value(v)) => {
+                    if v.name.eq_ignore_ascii_case(name) {
+                        Some(v.next)
+                    } else {
+                        None
+                    }
+                }
+                _ => break,
+            };
+            if let Some(nxt) = next {
+                if prev == NULL_CELL {
+                    if let Some(Cell::Key(ref mut k)) = self.slot_mut(key_idx) {
+                        k.values_head = nxt;
+                    }
+                } else {
+                    if let Some(Cell::Value(ref mut pv)) = self.slot_mut(prev) {
+                        pv.next = nxt;
+                    }
+                }
+                self.free_cell(curr);
+                return true;
+            }
+            prev = curr;
+            curr = match self.slot(curr) {
+                Some(Cell::Value(v)) => v.next,
+                _ => NULL_CELL,
+            };
+        }
+        false
     }
 
     pub fn enum_value(&self, key_idx: u32, index: u32) -> Option<String> {
@@ -612,7 +646,7 @@ impl Hive {
                     computed_checksum = computed_checksum.wrapping_add(lw_high);
                     pos += 8;
 
-                    if (cell_idx as usize) >= MAX_CELLS {
+                    if (cell_idx as usize) >= cells.len() {
                         return Err(());
                     }
                     cells[cell_idx as usize] = Some(Cell::Key(KeyCell {
@@ -657,7 +691,7 @@ impl Hive {
                     computed_checksum = computed_checksum.wrapping_add(nxt);
                     pos += 4;
 
-                    if (cell_idx as usize) >= MAX_CELLS {
+                    if (cell_idx as usize) >= cells.len() {
                         return Err(());
                     }
                     cells[cell_idx as usize] = Some(Cell::Value(ValueCell {
@@ -685,7 +719,7 @@ impl Hive {
                     computed_checksum = computed_checksum.wrapping_add(nxt);
                     pos += 4;
 
-                    if (cell_idx as usize) >= MAX_CELLS {
+                    if (cell_idx as usize) >= cells.len() {
                         return Err(());
                     }
                     cells[cell_idx as usize] = Some(Cell::Security(SecurityCell {
@@ -705,7 +739,7 @@ impl Hive {
         let mut hive = Hive {
             name: String::new(),
             cells,
-            free_head: NULL_CELL,
+            next_alloc_hint: 1,
             count,
             dirty: false,
         };

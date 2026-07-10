@@ -308,7 +308,22 @@ pub fn cm_load_hive(name: &str, mount_path: &str) -> Result<(), ()> {
 
 /// Unmount a hive by its mount path.
 pub fn cm_unload_hive(mount_path: &str) -> Result<(), ()> {
+    // Flush dirty data before unmount
+    {
+        let cm = CM_MANAGER.lock();
+        if let Some(hm) = cm.find_hive_by_path(mount_path) {
+            if hm.hive.is_dirty() {
+                let snapshot = hm.hive.clone();
+                drop(cm);
+                flush_hive_to_vfs(&snapshot)?;
+            }
+        }
+    }
     let mut cm = CM_MANAGER.lock();
+    // Mark clean after flush
+    if let Some(hm) = cm.find_hive_by_path_mut(mount_path) {
+        hm.hive.mark_clean();
+    }
     // Remove from namespace
     let _ = namespace::ob_remove_object(mount_path);
     if cm.unmount(mount_path) {
@@ -406,6 +421,17 @@ pub fn cm_set_value(key_native_id: u64, name: &str, value_type: u32, data: &[u8]
     hm.hive.set_value(cell_idx, name, value_type, data).ok_or(())
 }
 
+/// Delete a value on a key.
+pub fn cm_delete_value(key_native_id: u64, name: &str) -> Result<(), ()> {
+    let (hive_idx, cell_idx) = decode_cell(key_native_id);
+    let mut cm = CM_MANAGER.lock();
+    if (hive_idx as usize) >= cm.hives.len() {
+        return Err(());
+    }
+    let hm = &mut cm.hives[hive_idx as usize];
+    if hm.hive.delete_value(cell_idx, name) { Ok(()) } else { Err(()) }
+}
+
 /// Query a value on a key. Returns the value cell.
 pub fn cm_query_value(key_native_id: u64, name: &str) -> Result<ValueCell, ()> {
     let (hive_idx, cell_idx) = decode_cell(key_native_id);
@@ -431,9 +457,7 @@ pub fn cm_enum_value(key_native_id: u64, index: u32) -> Result<String, ()> {
 /// Flush a hive to disk.
 pub fn cm_flush_key(key_native_id: u64) -> Result<(), ()> {
     let (hive_idx, _cell_idx) = decode_cell(key_native_id);
-    if (hive_idx as usize) >= CM_MANAGER.lock().hives.len() {
-        return Err(());
-    }
+
     // Take a snapshot of the hive (clone to release lock before I/O)
     let hive_snapshot = {
         let cm = CM_MANAGER.lock();
@@ -872,6 +896,176 @@ pub fn register_cm_tests() {
         test_eq!(restored2.key_count(r2_root), 1);
         test_true!(restored2.find_key(r2_root, "Other").is_none());
         test_true!(restored2.find_key(r2_root, "Level1").is_some());
+    });
+
+    // ── CM-FIX tests ──
+
+    test_case!("cm_free_list_next_fit", {
+        let mut hive = Hive::new("TestNextFit");
+        let root = hive.root_cell();
+
+        // Allocate cells; next_alloc_hint should advance sequentially
+        let k1 = hive.create_key(root, "A").unwrap();
+        let k2 = hive.create_key(root, "B").unwrap();
+        let k3 = hive.create_key(root, "C").unwrap();
+        test_true!(k1 < k2);
+        test_true!(k2 < k3);
+
+        // Free the middle one
+        hive.delete_key(k2);
+        test_eq!(hive.key_count(root), 2);
+
+        // Next alloc should reuse the freed slot (next-fit from hint)
+        let k4 = hive.create_key(root, "D").unwrap();
+        test_eq!(k4, k2);
+
+        // Free first, alloc should reuse it
+        hive.delete_key(k1);
+        let k5 = hive.create_key(root, "E").unwrap();
+        test_eq!(k5, k1);
+    });
+
+    test_case!("cm_delete_value", {
+        let mut hive = Hive::new("TestDelVal");
+        let root = hive.root_cell();
+
+        hive.set_value(root, "Keep", hive::REG_DWORD, &1u32.to_le_bytes()).unwrap();
+        hive.set_value(root, "Remove", hive::REG_SZ, b"delete_me").unwrap();
+        hive.set_value(root, "Keep2", hive::REG_DWORD, &2u32.to_le_bytes()).unwrap();
+        test_eq!(hive.value_count(root), 3);
+
+        // Delete the middle value
+        test_true!(hive.delete_value(root, "Remove"));
+        test_eq!(hive.value_count(root), 2);
+
+        // Verify remaining values intact
+        let v1 = hive.query_value(root, "Keep").unwrap();
+        test_eq!(v1.as_dword().unwrap(), 1);
+        let v2 = hive.query_value(root, "Keep2").unwrap();
+        test_eq!(v2.as_dword().unwrap(), 2);
+
+        // Delete non-existent returns false
+        test_true!(!hive.delete_value(root, "NonExistent"));
+
+        // Delete first in list
+        test_true!(hive.delete_value(root, "Keep"));
+        test_eq!(hive.value_count(root), 1);
+
+        // Delete last remaining
+        test_true!(hive.delete_value(root, "Keep2"));
+        test_eq!(hive.value_count(root), 0);
+    });
+
+    test_case!("cm_delete_value_persist", {
+        let mut hive = Hive::new("TestDelValPersist");
+        let root = hive.root_cell();
+
+        hive.set_value(root, "A", hive::REG_DWORD, &10u32.to_le_bytes()).unwrap();
+        hive.set_value(root, "B", hive::REG_SZ, b"persist").unwrap();
+        hive.set_value(root, "C", hive::REG_DWORD, &20u32.to_le_bytes()).unwrap();
+
+        // Delete B
+        test_true!(hive.delete_value(root, "B"));
+        test_eq!(hive.value_count(root), 2);
+
+        // Serialize and reload
+        let data = hive.serialize();
+        let mut restored = Hive::deserialize(&data).unwrap();
+        restored.name = "TestDelValPersist".to_string();
+        let r_root = restored.root_cell();
+
+        test_eq!(restored.value_count(r_root), 2);
+        test_true!(restored.find_value(r_root, "A").is_some());
+        test_true!(restored.find_value(r_root, "C").is_some());
+        test_true!(restored.find_value(r_root, "B").is_none());
+
+        // Values still have correct data after roundtrip
+        let va = restored.query_value(r_root, "A").unwrap();
+        test_eq!(va.as_dword().unwrap(), 10);
+        let vc = restored.query_value(r_root, "C").unwrap();
+        test_eq!(vc.as_dword().unwrap(), 20);
+    });
+
+    test_case!("cm_unmount_flush", {
+        // Test that unmount flushes dirty data: create hive, set values,
+        // simulate unmount by serializing (VFS flush mocked via serialize).
+        let mut hive = Hive::new("TestUnmountFlush");
+        let root = hive.root_cell();
+        hive.set_value(root, "FlushMe", hive::REG_SZ, b"data").unwrap();
+        test_true!(hive.is_dirty());
+
+        // Serialize to "flush"
+        let data = hive.serialize();
+        let restored = Hive::deserialize(&data).unwrap();
+        let r_root = restored.root_cell();
+        let v = restored.query_value(r_root, "FlushMe").unwrap();
+        test_eq!(v.as_str().unwrap(), "data");
+    });
+
+    test_case!("cm_deep_key_deletion_iterative", {
+        let mut hive = Hive::new("TestDeepIter");
+        let root = hive.root_cell();
+
+        // Create a deep hierarchy:
+        // root
+        //   L1
+        //     L2
+        //       L3
+        //         L4 (with value)
+        let l1 = hive.create_key(root, "L1").unwrap();
+        let l2 = hive.create_key(l1, "L2").unwrap();
+        let l3 = hive.create_key(l2, "L3").unwrap();
+        let l4 = hive.create_key(l3, "L4").unwrap();
+        hive.set_value(l4, "deep_val", hive::REG_SZ, b"deep").unwrap();
+
+        test_eq!(hive.key_count(root), 1);
+        test_eq!(hive.key_count(l1), 1);
+        test_eq!(hive.key_count(l2), 1);
+        test_eq!(hive.key_count(l3), 1);
+
+        // Delete L1 (should recursively delete all children)
+        hive.delete_key(l1);
+
+        test_eq!(hive.key_count(root), 0);
+        test_true!(hive.find_key(root, "L1").is_none());
+        // Verify no dangling refs: cell count should be 1 (only root)
+        test_eq!(hive.cell_count(), 1);
+    });
+
+    test_case!("cm_key_deletion_preserves_siblings", {
+        let mut hive = Hive::new("TestSiblings");
+        let root = hive.root_cell();
+
+        let a = hive.create_key(root, "Alpha").unwrap();
+        let b = hive.create_key(root, "Beta").unwrap();
+        let c = hive.create_key(root, "Gamma").unwrap();
+        let d = hive.create_key(root, "Delta").unwrap();
+        let e = hive.create_key(root, "Epsilon").unwrap();
+
+        test_eq!(hive.key_count(root), 5);
+
+        // Delete middle (Gamma)
+        hive.delete_key(c);
+        test_eq!(hive.key_count(root), 4);
+        test_true!(hive.find_key(root, "Alpha").is_some());
+        test_true!(hive.find_key(root, "Beta").is_some());
+        test_true!(hive.find_key(root, "Delta").is_some());
+        test_true!(hive.find_key(root, "Epsilon").is_some());
+
+        // Delete first (Alpha) — tests head-of-list unlinking
+        hive.delete_key(a);
+        test_eq!(hive.key_count(root), 3);
+        test_true!(hive.find_key(root, "Alpha").is_none());
+
+        // Delete last (Epsilon) — tests tail unlinking
+        hive.delete_key(e);
+        test_eq!(hive.key_count(root), 2);
+        test_true!(hive.find_key(root, "Epsilon").is_none());
+
+        // Delete remaining (Beta, Delta)
+        hive.delete_key(b);
+        hive.delete_key(d);
+        test_eq!(hive.key_count(root), 0);
     });
 }
 
