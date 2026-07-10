@@ -222,9 +222,10 @@ def collect_files():
     programs_nxe = ['neoshell', 'neoinit', 'cmdtest', 'shtest', 'cd', 'corehelp',
                     'datetime', 'ver', 'neomem', 'vol', 'echo', 'label',
                     'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
-                    'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir']
+                    'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir',
+                    'poweroff']
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
-                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'cpuinfo', 'poweroff']
+                 'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'cpuinfo']
     for name in programs_nxe + tools_nxe:
         subdir = 'Programs' if name in programs_nxe else 'System/Tools'
         p = os.path.join(userbin_dir, f'{name}.nxe')
