@@ -199,17 +199,11 @@ fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     let data = hive.serialize();
     let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
     crate::globals::with_vfs(|vfs| {
-        // Try to open existing file and overwrite
-        if let Ok((drive_idx, node)) = vfs.resolve_path(&file_path) {
-            // Truncate then write
-            let _ = vfs.write(drive_idx, node.inode, 0, &data);
-            Ok(())
-        } else {
-            // Create new file
-            let node = vfs.create(&file_path).map_err(|_| ())?;
-            vfs.write(0, node.inode, 0, &data).map_err(|_| ())?;
-            Ok(())
-        }
+        // Delete existing file first so size matches the new data exactly
+        let _ = vfs.remove_file(&file_path);
+        let node = vfs.create(&file_path).map_err(|_| ())?;
+        vfs.write(0, node.inode, 0, &data).map_err(|_| ())?;
+        Ok(())
     })
 }
 
