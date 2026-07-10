@@ -421,26 +421,24 @@ pub fn sys_set_volume_label(drive: u8, label: &[u8]) -> Result<(), i64> {
 /// FsckStats — mirrors kernel's FsckStatsRaw (RAX=55).
 #[repr(C)]
 pub struct FsckStats {
-    pub total_inodes: u32,
-    pub used_inodes: u32,
-    pub valid_inodes: u32,
-    pub corrupted_inodes: u32,
-    pub cross_linked_blocks: u32,
-    pub orphan_inodes: u32,
-    pub dangling_entries: u32,
-    pub dir_errors: u32,
-    pub superblock_errors: u32,
-    pub repairs_applied: u32,
+    pub total_blocks: u64,
+    pub used_blocks: u64,
+    pub free_blocks: u64,
+    pub total_nodes: u64,
+    pub total_dirs: u64,
+    pub total_files: u64,
+    pub errors: u32,
+    pub warnings: u32,
+    pub repaired: u32,
 }
 
 /// sys_fsck (RAX=55): Run filesystem integrity check.
 /// drive = ASCII drive letter (e.g. b'C'), repair = true to repair errors.
 pub fn sys_fsck(drive: u8, repair: bool) -> Result<FsckStats, i64> {
     let mut stats = FsckStats {
-        total_inodes: 0, used_inodes: 0, valid_inodes: 0,
-        corrupted_inodes: 0, cross_linked_blocks: 0,
-        orphan_inodes: 0, dangling_entries: 0, dir_errors: 0,
-        superblock_errors: 0, repairs_applied: 0,
+        total_blocks: 0, used_blocks: 0, free_blocks: 0,
+        total_nodes: 0, total_dirs: 0, total_files: 0,
+        errors: 0, warnings: 0, repaired: 0,
     };
     let ptr = &mut stats as *mut FsckStats as *mut u8;
     let r: i64;

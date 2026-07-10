@@ -5,6 +5,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
+use super::crc32::crc32;
 
 pub const NODE_SIZE: usize = 4096;
 const HEADER_SIZE: usize = 8;
@@ -91,18 +92,6 @@ impl BTreeNode {
     fn find_pos(&self, key: &[u8]) -> Result<usize, usize> {
         self.entries.binary_search_by(|e| e.key.as_slice().cmp(key))
     }
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 { crc = (crc >> 1) ^ 0xEDB88320; }
-            else { crc >>= 1; }
-        }
-    }
-    !crc
 }
 
 // ── B-tree operaciones ─────────────────────────────────────────────

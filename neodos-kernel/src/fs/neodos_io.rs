@@ -150,20 +150,7 @@ pub fn file_free_extents(entry: &DirEntryV2, freelist: &mut FreeList) {
     }
 }
 
-pub fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    !crc
-}
+pub use super::crc32::crc32;
 
 pub fn register_io_tests() {
     // NeoFS v2 I/O tests

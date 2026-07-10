@@ -128,38 +128,34 @@ pub struct NetIfaceStats {
 // ── NXL API functions ──
 
 #[no_mangle]
-pub extern "C" fn net_iface_count() -> u32 {
+fn query_nic_info(buf: &mut [u8]) -> i64 {
     unsafe {
-        let mut buf = [0u8; 32];
-        // Use ob_open on an info object to get a query handle.
-        // \Global\Info\CpuInfo is guaranteed to exist after boot.
-        let fd = match ob_open("\\Global\\Info\\CpuInfo\0", OB_READ) {
+        let fd = match ob_open("\\Global\\Info\\Network\0", OB_READ) {
             r if r >= 0 => r as u8,
-            _ => return 0,
+            _ => return -1,
         };
         let r = ob_query_info(fd, INFO_CLASS_NIC_INFO, buf.as_mut_ptr(), buf.len());
         let _ = ob_close(fd);
-        if r < 0 { return 0; }
-        let entry_size: usize = 12; // NicInfoRaw: nic_id(4) + mac(6) + ip(4) + link_up(1) = 15, padded to 16
-        (r as usize / entry_size) as u32
+        r
     }
+}
+
+pub extern "C" fn net_iface_count() -> u32 {
+    let mut buf = [0u8; 32];
+    let r = query_nic_info(&mut buf);
+    if r < 0 { return 0; }
+    (r as usize / 12) as u32
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i32 {
     if info.is_null() { return -1; }
-    let fd = match ob_open("\\Global\\Info\\CpuInfo\0", OB_READ) {
-        r if r >= 0 => r as u8,
-        _ => return -1,
-    };
     let mut buf = [0u8; 256];
-    let r = ob_query_info(fd, INFO_CLASS_NIC_INFO, buf.as_mut_ptr(), buf.len());
-    let _ = ob_close(fd);
+    let r = query_nic_info(&mut buf);
     if r < 0 { return -1; }
-    let entry_size: usize = 15;
-    let offset = (idx as usize) * entry_size;
-    if offset + entry_size > r as usize { return -1; }
-    let raw = &buf[offset..offset + entry_size];
+    let offset = (idx as usize) * 15;
+    if offset + 15 > r as usize { return -1; }
+    let raw = &buf[offset..offset + 15];
     let nic_id = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&raw[4..10]);
@@ -272,15 +268,8 @@ pub extern "C" fn net_set_gateway(_iface: u32, gw: u32) -> i32 {
 
 #[no_mangle]
 pub extern "C" fn net_get_ip(iface: u32) -> u32 {
-    let fd = unsafe {
-        match ob_open("\\Global\\Info\\CpuInfo\0", OB_READ) {
-            r if r >= 0 => r as u8,
-            _ => return 0,
-        }
-    };
     let mut buf = [0u8; 32];
-    let r = unsafe { ob_query_info(fd, INFO_CLASS_NIC_INFO, buf.as_mut_ptr(), buf.len()) };
-    let _ = unsafe { ob_close(fd) };
+    let r = query_nic_info(&mut buf);
     if r < 0 { return 0; }
     let offset = (iface as usize) * 15;
     if offset + 15 > r as usize { return 0; }

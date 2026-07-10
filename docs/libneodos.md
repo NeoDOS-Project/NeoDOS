@@ -85,7 +85,7 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `cm_load_hive` | 75 | Load registry hive |
 | `cm_unload_hive` | 76 | Unload registry hive |
 
-All use `inline assembly` via `syscall` instruction with `x86_64::syscall()`.
+All use `int 0x80` via inline assembly.
 
 ### IO (`src/io.rs`)
 
@@ -180,7 +180,7 @@ All output macros append `\r\n` for CRLF line endings (NT console convention). I
    rustflags = ["-C", "relocation-model=static"]
    ```
 
-3. **Linker script**: Use `user.ld` placing code at `0x400000`:
+3. **Linker script**: Use `user.ld` linking at address 0 (runtime loading places code starting at `0x400000` via ASLR slot):
    ```
    cargo:rustc-link-arg=-Tuser.ld
    ```

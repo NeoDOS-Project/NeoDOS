@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
+use super::crc32::crc32;
 
 pub const REGION_SIZE: usize = 12; // start_lba(8) + length(4)
 pub const REGIONS_PER_NODE: usize = 340;
@@ -169,21 +170,6 @@ impl FreeList {
         };
         Some((FreeList { regions }, next_lba))
     }
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    !crc
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

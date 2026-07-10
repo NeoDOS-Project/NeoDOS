@@ -1,7 +1,7 @@
 # NeoDOS — Un Sistema Operativo Moderno en Rust para x86-64
 
-[![Version](https://img.shields.io/badge/version-v0.48.6-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-537-green.svg)](neodos-kernel/src/testing.rs)
+[![Version](https://img.shields.io/badge/version-v0.49.0-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-656-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
 
 NeoDOS es un sistema operativo de 64 bits escrito en Rust con arquitectura híbrida: kernel monolítico con subsistema de drivers aislados estilo microkernel. Arranca en UEFI, soporta SMP, tiene un planificador prioritario estilo NT, drivers con certificación y capacidades, un sistema de archivos propio, y un modelo de seguridad ACL-based.
@@ -30,7 +30,7 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 |---------|--------|
-| **Kernel** | v0.48.6 — 537 tests, 32 syscalls SSDT activos, 24 fases de boot |
+| **Kernel** | v0.49.0 — 656 tests, 32 syscalls SSDT activos, 24 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
 | **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |

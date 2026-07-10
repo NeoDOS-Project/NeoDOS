@@ -169,20 +169,14 @@ compatibility. Uses the same IoStack layer for block I/O. Supports long filename
 
 ## Cache Layers
 
-### Block Cache
-
-Source: `src/buffer/block_cache.rs`. 64 entries, 512-byte sectors, LRU eviction.
-Dirty tracking with deferred write-back.
-
 ### Page Cache
 
 Source: `src/buffer/page_cache.rs`. 128 entries, 4 KB pages, LRU eviction.
 Dirty tracking with pending-write accounting. Checked by file-backed mmap before
 issuing a VFS read.
 
-Both caches are global:
+The page cache is global:
 ```rust
-pub static BLOCK_CACHE: Mutex<BlockCache>;
 pub static PAGE_CACHE: Mutex<PageCache>;
 ```
 

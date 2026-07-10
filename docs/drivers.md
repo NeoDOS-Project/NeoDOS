@@ -10,30 +10,33 @@ Source: `src/nem/mod.rs`, `src/drivers/nem/v3loader.rs`.
 
 ### NEM v3 Header (80 bytes)
 
-| Offset | Size | Field         | Description                        |
-|--------|------|---------------|------------------------------------|
-| 0      | 4    | magic         | "NEM\0" = 0x004D454E              |
-| 4      | 4    | version       | 3 for v3                           |
-| 8      | 4    | header_size    | 80                                 |
-| 12     | 2    | driver_type    | NemDriverType enum                 |
-| 14     | 1    | category      | 0=BOOT, 1=SYSTEM, 2=DEMAND         |
-| 15     | 1    | pad           |                                    |
-| 16     | 2    | abi_min       | Min ABI version (must be >= 1)     |
-| 18     | 2    | abi_target    | Targeted ABI version               |
-| 20     | 2    | abi_max       | Max ABI version (must be <= 2)     |
-| 22     | 2    | compat_flags  | Compatibility flags                |
-| 24-40  | 16   | name          | Driver name (null-terminated)      |
-| 40     | 4    | text_size     | .text section size                 |
-| 44     | 4    | rodata_size   | .rodata section size               |
-| 48     | 4    | data_size     | .data section size                 |
-| 52     | 4    | bss_size      | .bss section size                  |
-| 56     | 2    | num_relocs    | Number of relocation entries       |
-| 58     | 2    | num_symbols   | Number of symbol table entries     |
-| 60     | 4    | entry_init    | Offset of init function            |
-| 64     | 4    | entry_event   | Offset of event handler            |
-| 68     | 4    | entry_activate| Offset of activate function        |
-| 72     | 4    | entry_fini    | Offset of fini function            |
-| 76     | 4    | entry_reserved| Reserved                           |
+Source: `neodos-kernel/src/nem/mod.rs`. `#[repr(C)]` struct with implicit alignment padding.
+
+| Offset | Size | Field         | Description                            |
+|--------|------|---------------|----------------------------------------|
+| 0      | 4    | magic         | "NEM3" = 0x334D454E                   |
+| 4      | 4    | version       | 3 for v3                               |
+| 8      | 4    | header_size   | 80                                     |
+| 12     | 4    | flags         | Various flags                          |
+| 16     | 2    | abi_min       | Min ABI version                        |
+| 18     | 2    | abi_target    | Targeted ABI version                   |
+| 20     | 2    | abi_max       | Max supported ABI version              |
+| 22     | 2    | driver_type   | NemDriverType (0=Null..5=Burst)        |
+| 24     | 2    | category      | 0=BOOT, 1=SYSTEM, 2=DEMAND            |
+| 26     | 2    | (padding)     | Alignment padding                      |
+| 28     | 4    | text_size     | .text section size                     |
+| 32     | 4    | rodata_size   | .rodata section size                   |
+| 36     | 4    | data_size     | .data section size                     |
+| 40     | 4    | bss_size      | .bss section size                      |
+| 44     | 4    | total_mem_size| Total memory required                  |
+| 48     | 4    | entry_init    | Offset of init function                |
+| 52     | 4    | entry_event   | Offset of event handler                |
+| 56     | 4    | entry_fini    | Offset of fini function                |
+| 60     | 4    | num_relocs    | Number of relocation entries           |
+| 64     | 4    | relocs_offset | Relocation table offset                |
+| 68     | 4    | syms_offset   | Symbol table offset                    |
+| 72     | 4    | strtab_offset | String table offset                    |
+| 76     | 4    | name_offset   | Driver name offset (ASCII)             |
 
 ### Relocation Types
 

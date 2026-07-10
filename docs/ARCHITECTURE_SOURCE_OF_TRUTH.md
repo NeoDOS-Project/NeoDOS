@@ -380,13 +380,14 @@ page fault within its slot. `None` and `Basic` ignore the fault.
 #[repr(C)]
 struct Event {
     event_id: u64,
-    event_type: u32,
-    source: u8,        // SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND
-    timestamp: u32,
+    event_type: EventType,
+    source: EventSource,  // SOURCE_HAL, SOURCE_DRIVER, SOURCE_KERNEL, SOURCE_USERLAND
+    timestamp: u64,
     device_id: u32,
+    driver_target: u32,
     data0: u64,
     data1: u64,
-    flags: u16,
+    flags: u32,
 };
 ```
 

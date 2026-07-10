@@ -72,8 +72,9 @@ Each CPU has a `CpuRunQueue` embedded in its KPRCB (accessed via GS segment):
 ```rust
 pub struct CpuRunQueue {
     pub entries: [u32; 64],  // TIDs in ring buffer
-    pub tail: u16,           // enqueue position
-    pub head: u16,           // dequeue position
+    pub head_idx: u16,       // dequeue position
+    pub tail_idx: u16,       // enqueue position
+    pub count: u16,          // number of entries
 }
 ```
 

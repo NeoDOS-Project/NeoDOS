@@ -1,6 +1,6 @@
 # Roadmap
 
-Current: **v0.48** (NeoFS stability — namespace ownership, dynamic allocators). Target: **v1.0** (stable NT-like executive).
+Current: **v0.49.0** (NeoFS robustness — indirect blocks, journaling, checksums). Target: **v1.0** (stable NT-like executive).
 
 See [IMPROVEMENTS.md](IMPROVEMENTS.md) for the full detailed roadmap with per-item descriptions, files, prerequisites, and test plans.
 

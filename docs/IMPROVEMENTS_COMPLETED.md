@@ -1,8 +1,8 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.48.9 (Auditoría docs completa).
-> Proximo milestone: v0.49 (Servicios de red).
+> Version actual: v0.49.0 (Auditoría docs completa).
+> Proximo milestone: v0.50 (Async I/O + Registry persistence).
 
 ---
 
@@ -112,6 +112,10 @@
   - Changed "ObType=17 variants" → "ObType=18 variants", added `Socket` to the list.
   - **Tests:** (doc fix only)
 
+* [x] **AUDIT-53. CRC32 deduplicated to shared `fs/crc32.rs`** | Files: `src/fs/neodos_io.rs`, `src/fs/snapshot.rs`, `src/fs/freelist.rs`, `src/fs/btree.rs`
+  - Four private `fn crc32` implementations and one `pub fn crc32` consolidated into a single shared module `src/fs/crc32.rs`. All callers now `use super::crc32::crc32`.
+  - **Tests:** `crc32_single_implementation`
+
 * [x] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
   - Changed "64 entries" → "128 entries" (matches `CACHE_SIZE = 128` in `page_cache.rs:3`).
   - **Tests:** (doc fix only)
@@ -119,6 +123,18 @@
 * [x] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
   - Updated "537 tests" → "656 tests" in both locations.
   - **Tests:** (doc fix only)
+
+* [x] **AUDIT-54. GPT parsing deduplicated** | Files: `src/drivers/gpt.rs`, `src/vfs/partition.rs`
+  - `read_u64_le`/`read_u32_le`/`read_sector_from_dev` helpers and GPT partition loop logic consolidated into `drivers/gpt.rs` as `pub(crate)`. `vfs/partition.rs` now delegates to `gpt::parse_gpt_filter` and re-exports constants.
+  - **Tests:** `gpt_parse_consistent`
+
+* [x] **AUDIT-57. MODE_DIR/MODE_FILE constants deduplicated** | Files: `src/fs/vfs.rs:43-44`, `src/fs/neodos_dir.rs:26-27`
+  - `MODE_DIR = 0x40` and `MODE_FILE = 0x80` removed from `neodos_dir.rs`; re-exported via `pub use super::vfs::{MODE_DIR, MODE_FILE}`.
+  - **Tests:** (compile-only)
+
+* [x] **AUDIT-5 / AUDIT-81. Dead code: processes.rs removed** | Files: `src/processes.rs`
+  - `proc_a()`/`proc_b()`/`proc_c()`/`proc_d()` — 4 vestigial prototyping functions removed entirely. `processes.rs` deleted. Zero external references.
+  - **Tests:** Remove, verify build
 
 ### v0.47 (Networking TCP/IP)
 
@@ -498,6 +514,32 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - Bug corregido en `mkfs_ne2`: escribía nodo raíz en sectores 1–8 en vez de 8–15.
   - **Tests:** `neofs_v2_fsck_clean`, `neofs_v2_fsck_corrupt_btree` (ambos PASS).
   - Dependencias: `check_deps.py` — 0 violaciones.
+
+### AUDIT-66..71: Documentación corregida [COMPLETED]
+
+* [x] **AUDIT-66. ARCHITECTURE_SOURCE_OF_TRUTH.md Event struct layout wrong** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md:379-390`
+  - Documents Event as `source: u8`, `timestamp: u32`, `flags: u16` with no `driver_target` field. Actual code has `source: EventSource` (u32), `timestamp: u64`, `flags: u32`, plus `driver_target: u32` present. Corregido para coincidir con el código.
+  - **Tests:** (docs fix only)
+
+* [x] **AUDIT-67. boot.md KERNEL_VERSION_CODE at v0.10.5** | Files: `docs/boot.md:100`
+  - `KERNEL_VERSION_CODE = (10 << 8) | 5 = 0x0A05` correspondía a v0.10.5. Actualizado a `(49 << 8) | 0 = 0x3100` (v0.49.0).
+  - **Tests:** (docs fix only)
+
+* [x] **AUDIT-68. roadmap.md version says v0.48** | Files: `docs/roadmap.md:3`
+  - "Current: **v0.48**" cambiado a **v0.49.0**.
+  - **Tests:** (docs fix only)
+
+* [x] **AUDIT-69. Test count outdated in testing.md and ARCHITECTURAL_VISION.md** | Files: `docs/testing.md:5`, `docs/ARCHITECTURAL_VISION.md:96,778`
+  - `testing.md` y `ARCHITECTURAL_VISION.md` decían "537 tests". Actualizado a **656**.
+  - **Tests:** (docs fix only)
+
+* [x] **AUDIT-70. filesystem.md structs missing checksum/version fields** | Files: `docs/filesystem.md:13-79`
+  - Superblock ya tenía `version: u32`. Eliminada referencia a `BLOCK_CACHE` (eliminado en v0.49 VFS-5.1). Documentación de cache layers actualizada.
+  - **Tests:** (docs fix only)
+
+* [x] **AUDIT-71. syscalls.md missing Socket and Registry info classes** | Files: `docs/syscalls.md:284-296`
+  - `sys_ob_query_info` ampliado de 2 clases a 24 (0-23). `sys_ob_set_info` ampliado de 11 clases a 28 (0-27). `sys_ob_create` ahora incluye `Socket=18`.
+  - **Tests:** (docs fix only)
 
 ## Referencias
 

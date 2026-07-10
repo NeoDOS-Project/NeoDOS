@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 537+ tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 656 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 1. **Boot-time**: `test` shell command (built-in) calls `testing::run_all()` — prints PASS/FAIL per test, returns summary count.

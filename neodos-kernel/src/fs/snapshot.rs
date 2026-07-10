@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 use alloc::vec::Vec;
+use super::crc32::crc32;
 
 pub const MAX_SNAPSHOTS: usize = 64;
 pub const NODE_SIZE: usize = 4096;
@@ -117,21 +118,6 @@ impl SnapshotTable {
             snapshots,
         })
     }
-}
-
-fn crc32(data: &[u8]) -> u32 {
-    let mut crc = !0u32;
-    for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            if crc & 1 != 0 {
-                crc = (crc >> 1) ^ 0xEDB88320;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    !crc
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

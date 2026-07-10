@@ -1,3 +1,4 @@
+pub mod crc32;
 pub mod neodos_dir;
 pub mod neodos_v2;
 pub mod neodos_io;

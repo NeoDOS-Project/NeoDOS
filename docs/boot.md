@@ -97,7 +97,7 @@ partition 2.
 | Constant | Value | Description |
 |----------|-------|-------------|
 | `BOOTINFO_MAGIC` | `0x4E444F53` | "NDOS" magic in BootInfo |
-| `KERNEL_VERSION_CODE` | `(10 << 8) \| 5` = `0x0A05` | v0.10.5 |
+| `KERNEL_VERSION_CODE` | `(49 << 8) \| 0` = `0x3100` | v0.49.0 |
 | `BOOT_VERSION` | `(10 << 8) \| 5` | Must match kernel version code |
 
 The bootloader version (`boot_info.version`) is compared against

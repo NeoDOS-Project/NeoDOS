@@ -90,6 +90,21 @@ fn write_u32(mut v: u32) {
     write_str(&buf[i + 1..]);
 }
 
+fn write_u64(mut v: u64) {
+    if v == 0 {
+        write_str(b"0");
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 19;
+    while v > 0 {
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        i -= 1;
+    }
+    write_str(&buf[i + 1..]);
+}
+
 fn print_report(stats: &syscall::FsckStats) {
     write_str(b"\r\n");
     write_str(b"========================================\r\n");
@@ -97,32 +112,28 @@ fn print_report(stats: &syscall::FsckStats) {
     write_str(b"========================================\r\n");
     write_str(b"\r\n");
 
-    write_str(b"  Inodes:\r\n");
-    write_str(b"    Total:     "); write_u32(stats.total_inodes); write_str(b"\r\n");
-    write_str(b"    Used:      "); write_u32(stats.used_inodes); write_str(b"\r\n");
-    write_str(b"    Valid:     "); write_u32(stats.valid_inodes); write_str(b"\r\n");
-    write_str(b"    Corrupted: "); write_u32(stats.corrupted_inodes); write_str(b"\r\n");
+    write_str(b"  Summary:\r\n");
+    write_str(b"    Total blocks: "); write_u64(stats.total_blocks); write_str(b"\r\n");
+    write_str(b"    Used blocks:  "); write_u64(stats.used_blocks); write_str(b"\r\n");
+    write_str(b"    Free blocks:  "); write_u64(stats.free_blocks); write_str(b"\r\n");
     write_str(b"\r\n");
 
-    write_str(b"  Errors:\r\n");
-    write_str(b"    Cross-linked blocks: "); write_u32(stats.cross_linked_blocks); write_str(b"\r\n");
-    write_str(b"    Orphan inodes:       "); write_u32(stats.orphan_inodes); write_str(b"\r\n");
-    write_str(b"    Dangling entries:    "); write_u32(stats.dangling_entries); write_str(b"\r\n");
-    write_str(b"    Dir errors:          "); write_u32(stats.dir_errors); write_str(b"\r\n");
-    write_str(b"    Superblock errors:   "); write_u32(stats.superblock_errors); write_str(b"\r\n");
+    write_str(b"  B-tree nodes:\r\n");
+    write_str(b"    Total:   "); write_u64(stats.total_nodes); write_str(b"\r\n");
+    write_str(b"    Dirs:    "); write_u64(stats.total_dirs); write_str(b"\r\n");
+    write_str(b"    Files:   "); write_u64(stats.total_files); write_str(b"\r\n");
     write_str(b"\r\n");
 
-    write_str(b"  Repairs applied: "); write_u32(stats.repairs_applied); write_str(b"\r\n");
-
-    let total_errors = stats.corrupted_inodes + stats.cross_linked_blocks
-        + stats.orphan_inodes + stats.dangling_entries
-        + stats.dir_errors + stats.superblock_errors;
+    write_str(b"  Errors:      "); write_u32(stats.errors); write_str(b"\r\n");
+    write_str(b"  Warnings:    "); write_u32(stats.warnings); write_str(b"\r\n");
 
     write_str(b"\r\n");
-    if total_errors == 0 {
+    if stats.errors == 0 && stats.warnings == 0 {
         write_str(b"  STATUS: OK -- No errors found.\r\n");
+    } else if stats.repaired != 0 {
+        write_str(b"  STATUS: "); write_u32(stats.errors + stats.warnings); write_str(b" issue(s) repaired.\r\n");
     } else {
-        write_str(b"  STATUS: "); write_u32(total_errors); write_str(b" error(s) found.\r\n");
+        write_str(b"  STATUS: "); write_u32(stats.errors + stats.warnings); write_str(b" issue(s) found (use /F to repair).\r\n");
     }
     write_str(b"========================================\r\n");
 }

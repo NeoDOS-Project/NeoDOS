@@ -273,7 +273,7 @@ Open an Ob namespace object by path. Security access check, allocates handle.
 - **Returns**: fd (>=3), or error code.
 
 ### 61 — `sys_ob_create`
-Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section.
+Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section, 18=Socket.
 - **Args**: `RBX`=path_ptr, `RCX`=type, `RDX`=fds_out, `R8`=attrs.
   - `type=14 (Semaphore)`: `attrs[0:15]=initial_count`, `attrs[16:31]=max_count`
   - `type=15 (Timer)`: `attrs[0:30]=period_ms`, `attrs[31]=1 (periodic) / 0 (oneshot)`
@@ -281,12 +281,12 @@ Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event,
 - **Returns**: fd, or error code.
 
 ### 62 — `sys_ob_query_info`
-Query object info. Classes: 15=ReadContent, 16=VolumeLabel.
+Query object info. Classes: 0=Basic, 1=Name, 2=File, 3=Process, 4=Thread, 5=Pipe, 6=Device, 7=CpuInfo, 8=Version, 9=DateTime, 10=Memory, 11=Drives, 12=Drivers, 13=Cwd, 14=KeyboardLayout, 15=ReadContent, 16=VolumeLabel, 17=SocketInfo, 18=SocketAddr, 19=TcpStatus, 20=NicInfo, 21=RegistryKey, 22=RegistryValue, 23=SocketRecv.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written, or error code.
 
 ### 63 — `sys_ob_set_info`
-Set object info. Classes: 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=MapView, 14=UnmapView.
+Set object info. Classes: 0=ProcessPriority, 1=ThreadPriority, 2=ObjectName, 3=Security, 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=SectionMapView, 14=SectionUnmapView, 15=FileCreate, 16=FileDelete, 17=SetProcessVt, 18=SocketConnect, 19=SocketBind, 20=SocketListen, 21=SocketSend, 22=SocketClose, 23=RegistryCreateKey, 24=RegistryDeleteKey, 25=RegistrySetValue, 26=RegistryDeleteValue, 27=SetNicIp.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
   - `class=10 (TimerStart)`: Starts the timer. `buf` unused. Returns 0.
   - `class=11 (TimerCancel)`: Cancels a running timer. `buf` unused. Returns 0.

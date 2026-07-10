@@ -275,19 +275,20 @@ Offset  Size   Field              Description
 20      2      abi_max            Maximum supported ABI version
 22      2      driver_type        NemDriverType (0-5)
 24      2      category           DriverCategory (0=Boot,1=System,2=Demand)
-26      4      text_size          Code size
-30      4      rodata_size        Read-only data size
-34      4      data_size          Initialized data size
-38      4      bss_size           BSS size (zero-fill)
-42      4      total_mem_size     Total memory required
-46      4      entry_init         Offset from text base
-50      4      entry_event        Offset from text base
-54      4      entry_fini         Offset from text base
-58      4      num_relocs         Number of relocations
-62      4      relocs_offset      Relocation table offset
-66      4      syms_offset        Symbol table offset
-70      4      strtab_offset      String table offset
-74      4      name_offset        Driver name offset (ASCII)
+26      2      (padding)          Alignment padding
+28      4      text_size          Code size
+32      4      rodata_size        Read-only data size
+36      4      data_size          Initialized data size
+40      4      bss_size           BSS size (zero-fill)
+44      4      total_mem_size     Total memory required
+48      4      entry_init         Offset from text base
+52      4      entry_event        Offset from text base
+56      4      entry_fini         Offset from text base
+60      4      num_relocs         Number of relocations
+64      4      relocs_offset      Relocation table offset
+68      4      syms_offset        Symbol table offset
+72      4      strtab_offset      String table offset
+76      4      name_offset        Driver name offset (ASCII)
 ```
 
 **Driver types (`NemDriverType`):** `Null=0`, `Echo=1`, `Lifecycle=2`, `Mutation=3`, `Fault=4`, `Burst=5`

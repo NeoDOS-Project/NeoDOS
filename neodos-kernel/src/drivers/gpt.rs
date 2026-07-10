@@ -3,7 +3,7 @@
 use crate::drivers::block::BlockDevice;
 
 const GPT_SIGNATURE: [u8; 8] = *b"EFI PART";
-const PART_TYPE_NEODOS: [u8; 16] = [
+pub const PART_TYPE_NEODOS: [u8; 16] = [
     0xA2, 0xA0, 0xD0, 0xEB, 0xE5, 0xB9, 0x33, 0x44,
     0x87, 0xC0, 0x68, 0xB6, 0xB7, 0x26, 0x99, 0xC7,
 ];
@@ -22,12 +22,12 @@ pub struct GptPartition {
     pub end_lba: u64,
 }
 
-fn read_u64_le(buf: &[u8], offset: usize) -> Option<u64> {
+pub(crate) fn read_u64_le(buf: &[u8], offset: usize) -> Option<u64> {
     let arr: [u8; 8] = buf[offset..offset + 8].try_into().ok()?;
     Some(u64::from_le_bytes(arr))
 }
 
-fn read_u32_le(buf: &[u8], offset: usize) -> Option<u32> {
+pub(crate) fn read_u32_le(buf: &[u8], offset: usize) -> Option<u32> {
     let arr: [u8; 4] = buf[offset..offset + 4].try_into().ok()?;
     Some(u32::from_le_bytes(arr))
 }
@@ -37,7 +37,7 @@ pub fn find_neodos_partition(dev: &mut dyn BlockDevice) -> Option<GptPartition> 
     partitions[0].take()
 }
 
-fn read_sector_from_dev(dev: &mut dyn BlockDevice, lba: u32) -> Result<[u8; 512], ()> {
+pub(crate) fn read_sector_from_dev(dev: &mut dyn BlockDevice, lba: u32) -> Result<[u8; 512], ()> {
     let saved_base = dev.base_lba();
     dev.set_base_lba(0);
     let result = dev.read_sector(lba as u64);
@@ -116,7 +116,7 @@ pub fn find_all_esp_partitions(dev: &mut dyn BlockDevice) -> [Option<GptPartitio
 }
 
 /// Generic GPT parser that filters by any partition type GUID.
-fn parse_gpt_filter<F>(mut read_sector: F, target_type: &[u8; 16]) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS]
+pub(crate) fn parse_gpt_filter<F>(mut read_sector: F, target_type: &[u8; 16]) -> [Option<GptPartition>; MAX_NEODOS_PARTITIONS]
 where
     F: FnMut(u32) -> Result<[u8; 512], ()>,
 {

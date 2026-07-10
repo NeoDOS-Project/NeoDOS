@@ -23,8 +23,7 @@ pub struct DirEntryV2 {
     pub extent_count: u32,
 }
 
-pub const MODE_DIR: u16 = 0x40;
-pub const MODE_FILE: u16 = 0x80;
+pub use super::vfs::{MODE_DIR, MODE_FILE};
 pub const PERM_R: u16 = 1;
 pub const PERM_W: u16 = 2;
 pub const PERM_X: u16 = 4;
