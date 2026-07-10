@@ -1,16 +1,12 @@
 [package]
-name = "neoshell"
+name = "poweroff"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "neoshell"
+name = "poweroff"
 path = "src/main.rs"
 test = false
-
-[lib]
-name = "neoshell_lib"
-path = "src/lib.rs"
 
 [dependencies]
 libneodos = { path = "../../libneodos" }

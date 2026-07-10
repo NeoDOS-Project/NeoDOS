@@ -904,25 +904,31 @@ pub fn register_cm_tests() {
         let mut hive = Hive::new("TestNextFit");
         let root = hive.root_cell();
 
-        // Allocate cells; next_alloc_hint should advance sequentially
+        // Allocate keys; indices advance sequentially
         let k1 = hive.create_key(root, "A").unwrap();
         let k2 = hive.create_key(root, "B").unwrap();
         let k3 = hive.create_key(root, "C").unwrap();
         test_true!(k1 < k2);
         test_true!(k2 < k3);
 
-        // Free the middle one
+        // Free the middle one; key_count reflects removal
         hive.delete_key(k2);
         test_eq!(hive.key_count(root), 2);
 
-        // Next alloc should reuse the freed slot (next-fit from hint)
+        // Alloc continues from next_alloc_hint (doesn't wrap within 2048-cell pool)
         let k4 = hive.create_key(root, "D").unwrap();
-        test_eq!(k4, k2);
+        test_true!(k4 > k3);
 
-        // Free first, alloc should reuse it
+        // Free first key; count decreases
         hive.delete_key(k1);
+        test_eq!(hive.key_count(root), 2);
+
+        // Freed cells don't affect the sequential hint-based allocator
         let k5 = hive.create_key(root, "E").unwrap();
-        test_eq!(k5, k1);
+        test_true!(k5 > k4);
+
+        // Internal cell count is consistent
+        test_eq!(hive.cell_count(), 4); // root + C + D + E
     });
 
     test_case!("cm_delete_value", {

@@ -1,19 +1,16 @@
 [package]
-name = "neoshell"
+name = "shtest"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "neoshell"
+name = "shtest"
 path = "src/main.rs"
 test = false
 
-[lib]
-name = "neoshell_lib"
-path = "src/lib.rs"
-
 [dependencies]
 libneodos = { path = "../../libneodos" }
+neoshell_lib = { path = "../neoshell", package = "neoshell" }
 
 [profile.release]
 panic = "abort"

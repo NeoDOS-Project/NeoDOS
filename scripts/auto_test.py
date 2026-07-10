@@ -311,24 +311,48 @@ def run_test():
         else:
             print("[SKIP] Command tests not run or incomplete")
         
-        # Overall: kernel tests must pass; command tests optional
+        # Check shell tests (shtest.nxe)
+        if "SHTEST_COMPLETE" in full_text:
+            shtest_ok = "SHELL_TESTS_PASSED" in full_text
+            sh_match = re.search(r"\[SHTEST\] (\d+) passed, (\d+) failed", full_text)
+            if shtest_ok:
+                if sh_match:
+                    print(f"[PASS] Shell tests: {sh_match.group(1)} passed, {sh_match.group(2)} failed")
+                else:
+                    print("[PASS] Shell tests: all passed")
+            else:
+                if sh_match:
+                    print(f"[FAIL] Shell tests: {sh_match.group(1)} passed, {sh_match.group(2)} failed")
+                else:
+                    print("[FAIL] Shell tests: some failed")
+        else:
+            print("[SKIP] Shell tests not run or incomplete")
+        
+        # Overall: kernel tests must pass; command/shell tests optional
         kernel_ok = "kernel tests passed" in full_text
         cmdtest_ran = "CMDTEST_COMPLETE" in full_text
         cmd_ok = "ALL_COMMAND_TESTS_PASSED" in full_text
+        shtest_ran = "SHTEST_COMPLETE" in full_text
+        shtest_ok = "SHELL_TESTS_PASSED" in full_text
         if kernel_ok:
-            if cmdtest_ran and cmd_ok:
+            if cmdtest_ran and cmd_ok and shtest_ran and shtest_ok:
                 print("\n" + "=" * 60)
-                print("OVERALL: SUCCESS (kernel + commands)")
+                print("OVERALL: SUCCESS (kernel + commands + shell)")
                 print("=" * 60)
                 return 0
-            elif cmdtest_ran:
+            elif cmdtest_ran and not cmd_ok:
                 print("\n" + "=" * 60)
                 print("OVERALL: KERNEL OK, COMMAND TESTS FAILED")
                 print("=" * 60)
                 return 1
+            elif shtest_ran and not shtest_ok:
+                print("\n" + "=" * 60)
+                print("OVERALL: KERNEL OK, SHELL TESTS FAILED")
+                print("=" * 60)
+                return 1
             else:
                 print("\n" + "=" * 60)
-                print("OVERALL: KERNEL OK (no command tests)")
+                print("OVERALL: KERNEL OK (no tests or all optional passed)")
                 print("=" * 60)
                 return 0
         else:

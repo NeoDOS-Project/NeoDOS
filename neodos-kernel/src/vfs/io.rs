@@ -180,7 +180,6 @@ fn test_iostack_partition_read_device() -> Result<(), &'static str> {
     // correctly reads the device. Device 0 must be available.
     let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
     if bdevs.count() == 0 {
-        // Skip if no block device
         return Ok(());
     }
     let dev = bdevs.get(0).ok_or("No device 0")?;
@@ -190,8 +189,13 @@ fn test_iostack_partition_read_device() -> Result<(), &'static str> {
     dev.set_base_lba(saved);
     drop(bdevs);
 
-    // Now read through IoStack without partition (should get same data)
-    let stack = IoStack::new(0);
+    // Use IoStack without cache to avoid stale cache from boot-time GPT reads
+    let stack = IoStack {
+        device_id: 0,
+        partition: None,
+        cache_level: PageCacheLevel::None,
+        stale: false,
+    };
     let io_sector = stack.read_sector(0).map_err(|_| "IoStack read failed")?;
     test_eq!(io_sector, sector0);
     Ok(())

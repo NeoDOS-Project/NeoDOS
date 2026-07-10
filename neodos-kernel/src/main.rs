@@ -545,49 +545,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("ALL_TESTS_COMPLETE");
     }
 
-    // ── Run user-mode command tests (cmdtest.nxe) ──
-    {
-        println!("[CMDTEST] Loading cmdtest.nxe...");
-        let mut cmd_buf = alloc::vec![0u8; 65536];
-        let mut bin_size = 0usize;
-        let mut file_loaded = false;
-        crate::globals::with_vfs(|vfs| {
-            if let Ok((drive_idx, node)) = vfs.resolve_path("C:\\Programs\\cmdtest.nxe") {
-                if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
-                let size = vfs.read(drive_idx, node.inode, 0, &mut cmd_buf).unwrap_or_default();
-                if size >= 4 {
-                    bin_size = size;
-                    file_loaded = true;
-                }
-            } else {
-                println!("[CMDTEST] cmdtest.nxe not found, skipping");
-            }
-        });
-        if file_loaded {
-            if let Some(slot) = arch::x64::paging::alloc_user_slot() {
-                let data = &cmd_buf[..bin_size];
-                let entry = match elf::load_elf(data, None, slot.code_base) {
-                    Ok(r) => r.entry,
-                    Err(err) => {
-                        println!("[CMDTEST] ELF load failed: {:?}", err);
-                        arch::x64::paging::free_user_slot(slot.slot_idx);
-                        0
-                    }
-                };
-                if entry != 0 {
-                    let pid = usermode::spawn_usermode(
-                        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
-                    );
-                    println!("[CMDTEST] PID {} entered", pid);
-                    usermode::wait_for_process(pid);
-                    println!("[CMDTEST] PID {} exited, cleaning up", pid);
-                    scheduler::cleanup_terminated_process(pid);
-                }
-            } else {
-                println!("[CMDTEST] no free user slot, skipping");
-            }
-        }
-    }
+    run_user_test_binary("CMDTEST", "C:\\Programs\\cmdtest.nxe");
+    run_user_test_binary("SHTEST", "C:\\Programs\\shtest.nxe");
 
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
@@ -689,6 +648,48 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // If we get here, NeoInit exited (shouldn't happen)
     panic!("NeoInit PID {} exited! Ring 3 shell required.", pid);
+}
+
+// ── Helper: load + run a user-mode test binary ──
+
+fn run_user_test_binary(tag: &str, path: &str) {
+    println!("[{}] Loading {}...", tag, path);
+    let mut buf = alloc::vec![0u8; 65536];
+    let mut bin_size = 0usize;
+    let mut file_loaded = false;
+    crate::globals::with_vfs(|vfs| {
+        if let Ok((drive_idx, node)) = vfs.resolve_path(path) {
+            if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
+            let size = vfs.read(drive_idx, node.inode, 0, &mut buf).unwrap_or_default();
+            if size >= 4 {
+                bin_size = size;
+                file_loaded = true;
+            }
+        } else {
+            println!("[{}] {} not found, skipping", tag, path);
+        }
+    });
+    if !file_loaded { return; }
+    let slot = match arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => { println!("[{}] no free user slot, skipping", tag); return; }
+    };
+    let data = &buf[..bin_size];
+    let entry = match elf::load_elf(data, None, slot.code_base) {
+        Ok(r) => r.entry,
+        Err(err) => {
+            println!("[{}] ELF load failed: {:?}", tag, err);
+            arch::x64::paging::free_user_slot(slot.slot_idx);
+            return;
+        }
+    };
+    let pid = usermode::spawn_usermode(
+        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+    );
+    println!("[{}] PID {} entered", tag, pid);
+    usermode::wait_for_process(pid);
+    println!("[{}] PID {} exited, cleaning up", tag, pid);
+    scheduler::cleanup_terminated_process(pid);
 }
 
 #[panic_handler]
