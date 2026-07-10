@@ -26,6 +26,7 @@ pub enum ObType {
     Thread = 16,
     Section = 17,
     Socket = 18,
+    Service = 20,
 }
 
 impl ObType {
@@ -50,6 +51,7 @@ impl ObType {
             ObType::Thread => "THREAD",
             ObType::Section => "SECTION",
             ObType::Socket => "SOCKET",
+            ObType::Service => "SERVICE",
         }
     }
 }
@@ -134,6 +136,9 @@ pub enum ObInfoClass {
     RegistryKey = 21,
     RegistryValue = 22,
     SocketRecv = 23,
+    ServiceState = 29,
+    ServiceConfig = 30,
+    ServiceStatus = 31,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -168,6 +173,10 @@ pub enum ObSetInfoClass {
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
     SetNicIp = 27,
+    ServiceStart = 33,
+    ServiceStop = 34,
+    ServiceRestart = 35,
+    ServiceSetConfig = 36,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

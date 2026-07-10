@@ -574,6 +574,24 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 * [x] **DH1. Actualizar README.md** | Files: `README.md`
   - Updated version badge to v0.49.0, test count to 656.
 
+---
+
+### SM-001. Service Manager [COMPLETED]
+
+* [x] **SM-001. Service Manager (kernel)** | Prereqs: CM-FIX | Files: `src/services/` (new), `src/object/types.rs`, `src/syscall/mod.rs`, `src/syscall/ob.rs`, `src/globals.rs`, `src/main.rs`, `libneodos/src/syscall.rs`, `scripts/gen_system_hiv.py`
+  - `ObType::Service = 20` en `src/object/types.rs`
+  - 3 nuevos `ObInfoClass` (29=ServiceState, 30=ServiceConfig, 31=ServiceStatus)
+  - 4 nuevos `ObSetInfoClass` (33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig)
+  - RAX 77 `sys_ob_service` en SSDT (handler_ob_service, admin-only)
+  - `SERVICE_MANAGER: Mutex<ServiceManager>` global
+  - Máquina de 5 estados (Stopped→Starting→Running→Stopping→Failed) con restart policy (Never/OnCrash/Always)
+  - Dependencias entre servicios con orden topológico (Kahn)
+  - `\Service\<Name>` en namespace Ob
+  - Backend Registry: `\Registry\Machine\System\CurrentControlSet\Services\<Name>`
+  - `sm_init()` en Phase 3.882, `sm_start_auto_services()` en Phase 4
+  - Default Dhcpd service en `scripts/gen_system_hiv.py` (Auto, OnCrash, MaxFailures=3)
+  - 22 tests unitarios (state machine, dependencies, registry backend, error codes, process exit handling)
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

@@ -61,6 +61,7 @@ mod object;
 mod kwait;
 mod net;
 mod cm;
+mod services;
 mod virtio;
 mod abi_freeze;
 
@@ -519,6 +520,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     cm::cm_ensure_default_values();
 
     // ============================================
+    // PHASE 3.882: Service Manager (Sm) init
+    // Loads configured services from Registry,
+    // creates \Service\ namespace, resolves deps.
+    // ============================================
+    println!("[+] Initializing Service Manager...");
+    services::sm_init();
+
+    // ============================================
     // PHASE 3.9: Validate syscall ABI + ABI freeze
     // ============================================
     println!("[+] Validating syscall ABI...");
@@ -641,6 +650,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     });
 
     println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
+
+    // Start auto-start services (System/Auto start types in dependency order)
+    services::sm_start_auto_services();
+
     crate::object::namespace::ob_namespace_debug();
 
     // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)

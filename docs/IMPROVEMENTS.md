@@ -30,7 +30,7 @@
 | NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
 | SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
 | SH-REDIR | Shell redirection (>, <, >>) | **HIGH** | shell |
-| B4.11 | NeoInit auto-start servicios | **HIGH** | boot |
+| B4.11 | NeoInit auto-start servicios (→ SM-001) | ~~HIGH~~ SUPERSEDED | boot |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
 | | | | |
 | **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
@@ -45,6 +45,7 @@
 | USR-P1c | SAM persistence to Registry hive | MEDIUM | security |
 | USR-P1d | SeAccessCheck: fix empty DACL + group SIDs | MEDIUM | security |
 | USR-P1e | ObSetInfoClass::ChangePassword (31) | MEDIUM | security |
+| SM-001 | Service Manager (ObType::Service=20, RAX 77) | MEDIUM | services |
 | NET-1.9 | ipconfig.nxe | MEDIUM | net |
 | NET-1.10 | ping.nxe | MEDIUM | net |
 | B3.4 | NTP client | MEDIUM | net |
@@ -164,9 +165,26 @@
 
 #### Boot
 
-* [ ] **B4.11. NeoInit: auto-start de servicios** | Prereqs: B4.10 (NeoInit Registry config, completed) | Files: `userbin/neoinit/`
-  - Leer AutoStartServices desde Registry, spawn_detached() para cada uno.
-  - **Tests:** Registry con servicio prueba, verificar spawn
+* [x] **B4.11. NeoInit: auto-start de servicios** | Prereqs: B4.10 | Files: `userbin/neoinit/`
+  - ✅ Implementación actual: leer AutoStartServices, spawn_detached(). 
+  - ⚠️ **SUPERSEDED por SM-001** — migrar al Service Manager del kernel.
+  - Diseño: `docs/design/service-manager-design.md`
+
+#### Service Manager
+
+* [x] **SM-001. Service Manager (kernel)** | Prereqs: CM-FIX | Files: `src/services/` (new), `src/object/types.rs`, `src/syscall/mod.rs`, `src/syscall/ob.rs`, `src/syscall/permission.rs`, `src/globals.rs`, `src/main.rs`, `userbin/neoinit/`, `libneodos/src/syscall.rs`
+  - Diseño completo: `docs/design/service-manager-design.md`
+  - `ObType::Service = 20` en `src/object/types.rs`
+  - 3 nuevos `ObInfoClass` (29=ServiceState, 30=ServiceConfig, 31=ServiceStatus)
+  - 4 nuevos `ObSetInfoClass` (33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig)
+  - RAX 77 `sys_ob_service` en SSDT
+  - `SERVICE_MANAGER: Mutex<ServiceManager>` global
+  - Máquina de 5 estados (Stopped→Starting→Running→Stopping→Failed) con restart policy
+  - Dependencias entre servicios con orden topológico
+  - `\Service\<Name>` en namespace Ob
+  - Backend Registry: `\Registry\Machine\System\CurrentControlSet\Services\<Name>`
+  - Migrar auto-start desde NeoInit al Sm del kernel
+  - **Tests:** 25+ tests unitarios + integración en el diseño
 
 #### Kernel Hardening
 

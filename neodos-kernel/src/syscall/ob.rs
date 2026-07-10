@@ -196,6 +196,7 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
         16 => crate::object::ObType::Thread,
          17 => crate::object::ObType::Section,
          18 => crate::object::ObType::Socket,
+         20 => crate::object::ObType::Service,
         _ => return err_to_u64(SyscallError::Inval),
     };
 
@@ -722,6 +723,35 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 None => {
                     let _ = crate::object::ob_close_object(ob_id);
                     crate::net::socket::socket_free(socket_id);
+                    err_to_u64(SyscallError::NoMem)
+                }
+            }
+        }
+        crate::object::ObType::Service => {
+            // Creating a Service object from user-mode requires admin privileges
+            // Delegate to ServiceManager::register for the given path.
+            let ob_id = match crate::object::ob_create_object_path(
+                &path_str, obj_type, 0, None,
+            ) {
+                Ok(id) => id,
+                Err(_) => return err_to_u64(SyscallError::NoMem),
+            };
+            let _ = crate::object::namespace::ob_create_directory_tree(&path_str);
+            let _ = crate::object::namespace::ob_insert_object(&path_str, ob_id);
+            let entry = crate::handle::HandleEntry::ob_object(ob_id, 0);
+            let fd = crate::hal::without_interrupts(|| {
+                let s = scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(ep) = lock.current_eprocess_mut() {
+                    crate::handle::alloc_handle(&mut ep.handle_table, entry)
+                } else {
+                    None
+                }
+            });
+            match fd {
+                Some(fd) => fd as u64,
+                None => {
+                    let _ = crate::object::ob_close_object(ob_id);
                     err_to_u64(SyscallError::NoMem)
                 }
             }
@@ -1559,6 +1589,117 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 Err(()) => err_to_u64(SyscallError::NoEnt),
             }
         }
+        _ if info_class == ObInfoClass::ServiceState as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            let svc = &sm.services[idx];
+            let state_bytes = [svc.state as u8];
+            let pid_bytes = svc.pid.to_le_bytes();
+            let tick_bytes = svc.start_tick.to_le_bytes();
+            let out: [u8; 13] = [
+                state_bytes[0],
+                pid_bytes[0], pid_bytes[1], pid_bytes[2], pid_bytes[3],
+                tick_bytes[0], tick_bytes[1], tick_bytes[2], tick_bytes[3],
+                tick_bytes[4], tick_bytes[5], tick_bytes[6], tick_bytes[7],
+            ];
+            let sz = out.len();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::ServiceConfig as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            let svc = &sm.services[idx];
+            let st = svc.start_type as u8;
+            let rp = svc.restart_policy as u8;
+            let mf = svc.max_failures.to_le_bytes();
+            let mut display = [0u8; 128];
+            let dn_bytes = svc.display_name.as_bytes();
+            let dn_len = dn_bytes.len().min(127);
+            display[..dn_len].copy_from_slice(&dn_bytes[..dn_len]);
+            let mut binpath = [0u8; 256];
+            let bp_bytes = svc.binary_path.as_bytes();
+            let bp_len = bp_bytes.len().min(255);
+            binpath[..bp_len].copy_from_slice(&bp_bytes[..bp_len]);
+            let mut out = alloc::vec::Vec::with_capacity(394);
+            out.push(st);
+            out.push(rp);
+            out.extend_from_slice(&mf);
+            out.extend_from_slice(&display);
+            out.extend_from_slice(&binpath);
+            let sz = out.len();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::ServiceStatus as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            let svc = &sm.services[idx];
+            let state = [svc.state as u8];
+            let pid = svc.pid.to_le_bytes();
+            let ecnt = svc.exit_count.to_le_bytes();
+            let lec = svc.last_exit_code.to_le_bytes();
+            let fc = svc.failure_count.to_le_bytes();
+            let tick = svc.start_tick.to_le_bytes();
+            let mut out = [0u8; 29];
+            out[0] = state[0];
+            out[1..5].copy_from_slice(&pid);
+            out[5..9].copy_from_slice(&ecnt);
+            out[9..17].copy_from_slice(&lec);
+            out[17..21].copy_from_slice(&fc);
+            out[21..29].copy_from_slice(&tick);
+            let sz = out.len();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(out.as_ptr(), buf_ptr as *mut u8, sz);
+            }
+            sz as u64
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -2343,6 +2484,122 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             }
             0
         }
+        _ if info_class == ObSetInfoClass::ServiceStart as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.start_service(idx) {
+                Ok(()) => 0,
+                Err(_e) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        _ if info_class == ObSetInfoClass::ServiceStop as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let timeout_ms = if buf_size >= 4 {
+                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+            } else {
+                0
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.stop_service(idx, timeout_ms) {
+                Ok(()) => 0,
+                Err(_e) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        _ if info_class == ObSetInfoClass::ServiceRestart as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let timeout_ms = if buf_size >= 4 {
+                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+            } else {
+                0
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.restart_service(idx, timeout_ms) {
+                Ok(()) => 0,
+                Err(_e) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        _ if info_class == ObSetInfoClass::ServiceSetConfig as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Service {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 6 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let start_type = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let restart_policy = unsafe { core::ptr::read_volatile((buf_ptr + 1) as *const u8) };
+            let max_failures = unsafe { core::ptr::read_volatile((buf_ptr + 2) as *const u32) };
+
+            use crate::services::{ServiceStartType, ServiceRestartPolicy};
+            let st = match start_type {
+                0 => ServiceStartType::Boot,
+                1 => ServiceStartType::System,
+                2 => ServiceStartType::Auto,
+                3 => ServiceStartType::Demand,
+                4 => ServiceStartType::Disabled,
+                _ => return err_to_u64(SyscallError::Inval),
+            };
+            let rp = match restart_policy {
+                0 => ServiceRestartPolicy::Never,
+                1 => ServiceRestartPolicy::OnCrash,
+                2 => ServiceRestartPolicy::Always,
+                _ => return err_to_u64(SyscallError::Inval),
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.set_config(idx, st, rp, max_failures) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Inval),
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -2619,4 +2876,155 @@ pub(super) fn handler_ob_destroy(regs: super::Registers) -> u64 {
         }
     });
     0
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OB-021: ObService — RAX=77
+// ═══════════════════════════════════════════════════════════════════════
+
+const SERVICE_CONTROL_START: u32 = 0;
+const SERVICE_CONTROL_STOP: u32 = 1;
+const SERVICE_CONTROL_RESTART: u32 = 2;
+const SERVICE_CONTROL_QUERY_STATUS: u32 = 3;
+const SERVICE_CONTROL_SET_CONFIG: u32 = 4;
+
+pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
+    let fd = regs.rbx as u8;
+    let control = regs.rcx as u32;
+    let buf_ptr = regs.rdx;
+    let buf_len = regs.r8 as usize;
+
+    let entry = current_handle_entry(fd);
+    if !entry.is_open() {
+        return err_to_u64(SyscallError::BadF);
+    }
+    if entry.object_id == 0 {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let obj = match crate::object::ob_lookup(entry.object_id) {
+        Some(o) => o,
+        None => return err_to_u64(SyscallError::BadF),
+    };
+    if obj.obj_type != crate::object::ObType::Service {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    match control {
+        SERVICE_CONTROL_START => {
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.start_service(idx) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        SERVICE_CONTROL_STOP => {
+            let timeout_ms = if buf_len >= 4 && buf_ptr != 0 {
+                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+            } else {
+                0
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.stop_service(idx, timeout_ms) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        SERVICE_CONTROL_RESTART => {
+            let timeout_ms = if buf_len >= 4 && buf_ptr != 0 {
+                unsafe { core::ptr::read_volatile(buf_ptr as *const u32) }
+            } else {
+                0
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.restart_service(idx, timeout_ms) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Busy),
+            }
+        }
+        SERVICE_CONTROL_QUERY_STATUS => {
+            if buf_ptr == 0 || buf_len < 29 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, 29) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            let svc = &sm.services[idx];
+            let status: [u8; 29] = [
+                svc.state as u8,
+                svc.pid as u8, (svc.pid >> 8) as u8,
+                (svc.pid >> 16) as u8, (svc.pid >> 24) as u8,
+                svc.exit_count as u8, (svc.exit_count >> 8) as u8,
+                (svc.exit_count >> 16) as u8, (svc.exit_count >> 24) as u8,
+                svc.last_exit_code as u8, (svc.last_exit_code >> 8) as u8,
+                (svc.last_exit_code >> 16) as u8, (svc.last_exit_code >> 24) as u8,
+                (svc.last_exit_code >> 32) as u8, (svc.last_exit_code >> 40) as u8,
+                (svc.last_exit_code >> 48) as u8, (svc.last_exit_code >> 56) as u8,
+                svc.failure_count as u8, (svc.failure_count >> 8) as u8,
+                (svc.failure_count >> 16) as u8, (svc.failure_count >> 24) as u8,
+                svc.start_tick as u8, (svc.start_tick >> 8) as u8,
+                (svc.start_tick >> 16) as u8, (svc.start_tick >> 24) as u8,
+                (svc.start_tick >> 32) as u8, (svc.start_tick >> 40) as u8,
+                (svc.start_tick >> 48) as u8, (svc.start_tick >> 56) as u8,
+            ];
+            unsafe {
+                core::ptr::copy_nonoverlapping(status.as_ptr(), buf_ptr as *mut u8, 29);
+            }
+            29
+        }
+        SERVICE_CONTROL_SET_CONFIG => {
+            if buf_ptr == 0 || buf_len < 6 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, 6) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let start_type = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let restart_policy = unsafe { core::ptr::read_volatile((buf_ptr + 1) as *const u8) };
+            let max_failures = unsafe { core::ptr::read_volatile((buf_ptr + 2) as *const u32) };
+
+            use crate::services::{ServiceStartType, ServiceRestartPolicy};
+            let st = match start_type {
+                0 => ServiceStartType::Boot,
+                1 => ServiceStartType::System,
+                2 => ServiceStartType::Auto,
+                3 => ServiceStartType::Demand,
+                4 => ServiceStartType::Disabled,
+                _ => return err_to_u64(SyscallError::Inval),
+            };
+            let rp = match restart_policy {
+                0 => ServiceRestartPolicy::Never,
+                1 => ServiceRestartPolicy::OnCrash,
+                2 => ServiceRestartPolicy::Always,
+                _ => return err_to_u64(SyscallError::Inval),
+            };
+            let mut sm = crate::services::SERVICE_MANAGER.lock();
+            let idx = match sm.find_by_obj_id(entry.object_id) {
+                Some(i) => i,
+                None => return err_to_u64(SyscallError::NoEnt),
+            };
+            match sm.set_config(idx, st, rp, max_failures) {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Inval),
+            }
+        }
+        _ => err_to_u64(SyscallError::NoSys),
+    }
 }

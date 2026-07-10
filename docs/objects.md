@@ -96,6 +96,7 @@ offset for SeAccessCheck re-verification.
 | 16 | Thread | Thread object (waitable on join) |
 | 17 | Section | Shared memory section (maps to VMA) |
 | 18 | Socket | Network socket (Tcp/Udp) |
+| 20 | Service | Managed service process (Sm) |
 
 ## Namespace Hierarchy
 
@@ -126,6 +127,7 @@ offset for SeAccessCheck re-verification.
 │   ├── E1000                      — e1000 NIC driver
 │   └── ...
 ├── \Registry\                     — registry keys (Cm)
+├── \Service\                      — registered service objects (ObType::Service)
 ├── \Ob\Process\                   — PID-indexed process objects
 ├── \Security\                     — security objects (future)
 └── \DosDevices\                   — drive letter symlinks (C:, A:)
@@ -144,7 +146,8 @@ offset for SeAccessCheck re-verification.
 ### ob_create (RAX=61)
 
 1. Validate ObType — only user-creatable types: Process(1), Driver(2), Pipe(4),
-   Directory(11), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17)
+   Directory(11), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17),
+   Service(20)
 2. Call `ob_create_object()` in the global table with given name + type
 3. Insert into namespace at the given path
 4. Allocate handle entries for any returned fds (pipe creates bidirectional pair)
@@ -152,7 +155,7 @@ offset for SeAccessCheck re-verification.
 
 ### ob_query_info (RAX=62)
 
-Supports 24 info classes:
+Supports 27 info classes:
 
 | Class | Name | Description |
 |-------|------|-------------|
@@ -180,10 +183,13 @@ Supports 24 info classes:
 | 21 | RegistryKey | Key metadata |
 | 22 | RegistryValue | Value data |
 | 23 | SocketRecv | Receive from socket |
+| 29 | ServiceState | Service state (state+pid+uptime) |
+| 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
+| 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
 
 ### ob_set_info (RAX=63)
 
-Supports 28 set classes:
+Supports 32 set classes:
 
 | Class | Name | Description |
 |-------|------|-------------|
@@ -215,6 +221,10 @@ Supports 28 set classes:
 | 25 | RegistrySetValue | Set registry value |
 | 26 | RegistryDeleteValue | Delete registry value |
 | 27 | SetNicIp | Set NIC IP address and subnet mask |
+| 33 | ServiceStart | Start a service (Stopped/Failed → Starting → Running) |
+| 34 | ServiceStop | Stop a running service (Running → Stopping → Stopped) |
+| 35 | ServiceRestart | Restart a service (stop + start atomically) |
+| 36 | ServiceSetConfig | Modify service configuration (start type, restart policy, max failures) |
 
 ### ob_enum (RAX=64)
 

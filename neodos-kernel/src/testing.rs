@@ -1652,6 +1652,9 @@ pub fn register_tests() {
 
     // B2.1 Z6: Registry hive database (Cm) tests
     crate::cm::register_cm_tests();
+
+    // SM-001: Service Manager tests
+    crate::services::register_service_tests();
 }
 
 

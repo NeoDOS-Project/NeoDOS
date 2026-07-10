@@ -653,6 +653,9 @@ pub enum ObInfoClass {
     RegistryKey = 21,
     RegistryValue = 22,
     SocketRecv = 23,
+    ServiceState = 29,
+    ServiceConfig = 30,
+    ServiceStatus = 31,
 }
 
 pub mod ob_type {
@@ -663,6 +666,7 @@ pub mod ob_type {
     pub const EVENT: u32 = 13;
     pub const THREAD: u32 = 16;
     pub const SOCKET: u32 = 18;
+    pub const SERVICE: u32 = 20;
 }
 
 /// ObSetInfoClass — info classes for sys_ob_set_info (RAX=63).
@@ -698,6 +702,10 @@ pub enum ObSetInfoClass {
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
     SetNicIp = 27,
+    ServiceStart = 33,
+    ServiceStop = 34,
+    ServiceRestart = 35,
+    ServiceSetConfig = 36,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -731,6 +739,10 @@ pub mod ob_set_info_class {
     pub const REGISTRY_SET_VALUE: ObSetInfoClass = ObSetInfoClass::RegistrySetValue;
     pub const REGISTRY_DELETE_VALUE: ObSetInfoClass = ObSetInfoClass::RegistryDeleteValue;
     pub const SET_NIC_IP: ObSetInfoClass = ObSetInfoClass::SetNicIp;
+    pub const SERVICE_START: ObSetInfoClass = ObSetInfoClass::ServiceStart;
+    pub const SERVICE_STOP: ObSetInfoClass = ObSetInfoClass::ServiceStop;
+    pub const SERVICE_RESTART: ObSetInfoClass = ObSetInfoClass::ServiceRestart;
+    pub const SERVICE_SET_CONFIG: ObSetInfoClass = ObSetInfoClass::ServiceSetConfig;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).
@@ -1176,4 +1188,18 @@ pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Res
     let data_len = data.len() as u64;
     let r = unsafe { ob_syscall_5!(70, fd as u64, name_ptr, value_type as u64, data_ptr, data_len) };
     if r < 0 { Err(r) } else { Ok(()) }
+}
+
+// Service Manager syscall (RAX=77)
+pub const SERVICE_CONTROL_START: u32 = 0;
+pub const SERVICE_CONTROL_STOP: u32 = 1;
+pub const SERVICE_CONTROL_RESTART: u32 = 2;
+pub const SERVICE_CONTROL_QUERY_STATUS: u32 = 3;
+pub const SERVICE_CONTROL_SET_CONFIG: u32 = 4;
+
+pub fn sys_ob_service(fd: u8, control: u32, buf: &mut [u8]) -> Result<usize, i64> {
+    let buf_ptr = buf.as_mut_ptr() as u64;
+    let buf_len = buf.len() as u64;
+    let r = unsafe { ob_syscall_4!(77, fd as u64, control as u64, buf_ptr, buf_len) };
+    if r < 0 { Err(r as i64) } else { Ok(r as usize) }
 }

@@ -182,36 +182,45 @@ def build_default_system_hive() -> bytes:
 def build_default_system_hive_v2() -> bytes:
     """
     Build SYSTEM.HIV with proper tree structure matching kernel's
-    ensure_key_path() traversal.
+    ensure_key_path() traversal. Includes default service entries
+    (Dhcpd) for the Service Manager (SM-001).
     """
     b = HiveBuilder()
 
-    # Constants for cell indices (allocated in order)
-    # We'll build the tree bottom-up to properly set sibling pointers
-
     # Total cells needed: root + CurrentControlSet + Services + NeoInit +
     #   Network + Interfaces + 0 + Control +
+    #   Dhcpc + DhcpcDisplayName + DhcpcBinaryPath + DhcpcImagePath +
+    #   DhcpcStartType + DhcpcRestartPolicy + DhcpcMaxFailures + DhcpcDeps +
     #   DefaultShell + EnableVT + AutoStartServices +
     #   DHCPEnabled + WaitForNetwork
-    # = 13 cells
+    # = 22 cells
 
     # ── ALLOCATE all cells first ──
     _ROOT = 0
     _CCS = 1
     _SVC = 2
     _NEO = 3
-    _NET = 4
-    _IFC = 5
-    _IF0 = 6
-    _CTL = 7
-    _V_SHELL = 8
-    _V_VT = 9
-    _V_AUTO = 10
-    _V_DHCP = 11
-    _V_WAIT = 12
+    _DHCPC = 4
+    _NET = 5
+    _IFC = 6
+    _IF0 = 7
+    _CTL = 8
+    _V_SHELL = 9
+    _V_VT = 10
+    _V_AUTO = 11
+    _V_DHCP = 12
+    _V_WAIT = 13
+    _V_DNAME = 14
+    _V_BPATH = 15
+    _V_IPATH = 16
+    _V_STYPE = 17
+    _V_RPOL = 18
+    _V_MFAIL = 19
+    _V_DEPS = 20
+    _V_DESC = 21
 
     # Pre-alloc: ensure next_idx doesn't conflict
-    b.next_idx = 13
+    b.next_idx = 22
 
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices
@@ -221,6 +230,24 @@ def build_default_system_hive_v2() -> bytes:
                 struct.pack("<I", 1), next_val=_V_SHELL)
     b.add_value(_V_AUTO, "AutoStartServices", REG_SZ,
                 b"\x00", next_val=_V_VT)
+
+    # Dhcpc values: Description -> Dependencies -> MaxFailures -> RestartPolicy -> StartType -> ImagePath -> BinaryPath -> DisplayName
+    b.add_value(_V_DESC, "Description", REG_SZ,
+                b"DHCP Client Service\x00")
+    b.add_value(_V_DEPS, "Dependencies", REG_SZ,
+                b"\x00", next_val=_V_DESC)
+    b.add_value(_V_MFAIL, "MaxFailures", REG_DWORD,
+                struct.pack("<I", 3), next_val=_V_DEPS)
+    b.add_value(_V_RPOL, "RestartPolicy", REG_DWORD,
+                struct.pack("<I", 1), next_val=_V_MFAIL)  # OnCrash
+    b.add_value(_V_STYPE, "StartType", REG_DWORD,
+                struct.pack("<I", 2), next_val=_V_RPOL)  # Auto
+    b.add_value(_V_IPATH, "ImagePath", REG_SZ,
+                b"C:\\System\\Tools\\dhcpd.nxe\x00", next_val=_V_STYPE)
+    b.add_value(_V_BPATH, "BinaryPath", REG_SZ,
+                b"C:\\System\\Tools\\dhcpd.nxe\x00", next_val=_V_IPATH)
+    b.add_value(_V_DNAME, "DisplayName", REG_SZ,
+                b"DHCP Client\x00", next_val=_V_BPATH)
 
     # Interfaces\0 values: DHCPEnabled
     b.add_value(_V_DHCP, "DHCPEnabled", REG_DWORD,
@@ -234,17 +261,22 @@ def build_default_system_hive_v2() -> bytes:
     # NeoInit (child of Services)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_AUTO)
 
+    # Dhcpc (child of Services, sibling of NeoInit)
+    b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME)
+
     # Interfaces\0 (child of Interfaces)
     b.add_key(_IF0, "0", _IFC, values_head=_V_DHCP)
 
     # Interfaces (child of Network)
     b.add_key(_IFC, "Interfaces", _NET, subkeys_head=_IF0)
 
-    # Network (child of Services, sibling of NeoInit)
+    # Network (child of Services, sibling of Dhcpc)
     b.add_key(_NET, "Network", _SVC, subkeys_head=_IFC)
 
-    # Services: subkeys = NeoInit -> Network (sibling chain)
+    # Services: subkeys = NeoInit -> Dhcpc -> Network (sibling chain)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_AUTO,
+              subkeys_sibling=_DHCPC)
+    b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME,
               subkeys_sibling=_NET)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO)
 
@@ -269,12 +301,20 @@ def main():
     output.write_bytes(data)
     size = len(data)
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: {13}")
+    print(f"  Cells: {22}")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\NeoInit\\EnableVT = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\NeoInit\\AutoStartServices = '' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 2 (Auto, REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\RestartPolicy = 1 (OnCrash, REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\MaxFailures = 3 (REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\Dependencies = '' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\Description = 'DHCP Client Service' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
 

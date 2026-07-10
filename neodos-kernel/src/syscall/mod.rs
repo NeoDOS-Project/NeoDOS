@@ -91,11 +91,12 @@ pub enum SyscallNum {
     CmFlushKey = 74,
     CmLoadHive = 75,
     CmUnloadHive = 76,
+    ObService = 77,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 76;
-    pub const HIGHEST_ASSIGNED: u64 = 76;
+    pub const MAX_VALID: u64 = 77;
+    pub const HIGHEST_ASSIGNED: u64 = 77;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -148,6 +149,7 @@ impl SyscallNum {
             74 => Some(Self::CmFlushKey),
             75 => Some(Self::CmLoadHive),
             76 => Some(Self::CmUnloadHive),
+            77 => Some(Self::ObService),
             _ => None,
         }
     }
@@ -207,7 +209,7 @@ pub fn validate_abi() {
         29,
         40, 41, 42, 47, 53, 55, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
-        67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+        67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
     ];
 
     for &n in ASSIGNED {
@@ -528,6 +530,7 @@ lazy_static! {
         t[74] = Some(handler_cm_flush_key as SyscallFn);
         t[75] = Some(handler_cm_load_hive as SyscallFn);
         t[76] = Some(handler_cm_unload_hive as SyscallFn);
+        t[77] = Some(handler_ob_service as SyscallFn);
         t
     };
 
@@ -577,6 +580,7 @@ lazy_static! {
         t[74] = SyscallPermission::user();
         t[75] = SyscallPermission::admin();
         t[76] = SyscallPermission::admin();
+        t[77] = SyscallPermission::admin();
         t
     };
 }

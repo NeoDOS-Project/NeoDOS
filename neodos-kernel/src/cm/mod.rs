@@ -202,7 +202,8 @@ fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
         // Delete existing file first so size matches the new data exactly
         let _ = vfs.remove_file(&file_path);
         let node = vfs.create(&file_path).map_err(|_| ())?;
-        vfs.write(0, node.inode, 0, &data).map_err(|_| ())?;
+        let (drive_idx, _) = vfs.resolve_path(&file_path).map_err(|_| ())?;
+        vfs.write(drive_idx, node.inode, 0, &data).map_err(|_| ())?;
         Ok(())
     })
 }
@@ -210,7 +211,7 @@ fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
 /// Ensure a key path exists in a hive, creating intermediate keys as needed.
 /// Returns the cell index of the final key in the path.
 /// path is like "CurrentControlSet\\Services\\NeoInit"
-fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {
+pub fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {
     let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
     let mut curr = start;
     for part in &parts {
@@ -253,6 +254,27 @@ pub fn cm_ensure_default_values() {
     if let Some(key) = ensure_key_path(&mut hm.hive, root, "CurrentControlSet\\Control") {
         if hm.hive.find_value(key, "WaitForNetwork").is_none() {
             hm.hive.set_value(key, "WaitForNetwork", hive::REG_DWORD, &0u32.to_le_bytes());
+        }
+    }
+
+    // 4. Default services (fallback when no SYSTEM.hiv on disk)
+    if let Some(dhcpc_key) = ensure_key_path(&mut hm.hive, root,
+        "CurrentControlSet\\Services\\Dhcpc")
+    {
+        if hm.hive.find_value(dhcpc_key, "DisplayName").is_none() {
+            hm.hive.set_value(dhcpc_key, "DisplayName", hive::REG_SZ, b"DHCP Client");
+        }
+        if hm.hive.find_value(dhcpc_key, "BinaryPath").is_none() {
+            hm.hive.set_value(dhcpc_key, "BinaryPath", hive::REG_SZ, b"C:\\System\\Tools\\dhcpd.nxe");
+        }
+        if hm.hive.find_value(dhcpc_key, "StartType").is_none() {
+            hm.hive.set_value(dhcpc_key, "StartType", hive::REG_DWORD, &2u32.to_le_bytes()); // Auto
+        }
+        if hm.hive.find_value(dhcpc_key, "RestartPolicy").is_none() {
+            hm.hive.set_value(dhcpc_key, "RestartPolicy", hive::REG_DWORD, &1u32.to_le_bytes()); // OnCrash
+        }
+        if hm.hive.find_value(dhcpc_key, "MaxFailures").is_none() {
+            hm.hive.set_value(dhcpc_key, "MaxFailures", hive::REG_DWORD, &3u32.to_le_bytes());
         }
     }
 }
@@ -1066,6 +1088,138 @@ pub fn register_cm_tests() {
         hive.delete_key(b);
         hive.delete_key(d);
         test_eq!(hive.key_count(root), 0);
+    });
+
+    // ── B4.11: NeoInit AutoStartServices tests ──
+
+    test_case!("cm_neoinit_autostart_set_read", {
+        let mut hive = Hive::new("TestAutoStart");
+        let root = hive.root_cell();
+
+        // Build key path: CurrentControlSet\Services\NeoInit
+        let ccs = hive.create_key(root, "CurrentControlSet").unwrap();
+        let svc = hive.create_key(ccs, "Services").unwrap();
+        let neoinit = hive.create_key(svc, "NeoInit").unwrap();
+
+        // Set AutoStartServices with semicolon-separated paths
+        hive.set_value(neoinit, "AutoStartServices", hive::REG_SZ,
+            b"C:\\System\\Tools\\dhcpd.nxe;C:\\Programs\\netcfg.nxe");
+
+        // Read back and verify type
+        let val = hive.query_value(neoinit, "AutoStartServices").unwrap();
+        test_eq!(val.value_type, hive::REG_SZ);
+
+        // Parse and verify individual paths
+        let services_str = val.as_str().unwrap();
+        test_true!(services_str == "C:\\System\\Tools\\dhcpd.nxe;C:\\Programs\\netcfg.nxe");
+
+        let services: Vec<&str> = services_str.split(';').collect();
+        test_eq!(services.len(), 2);
+        test_eq!(services[0], "C:\\System\\Tools\\dhcpd.nxe");
+        test_eq!(services[1], "C:\\Programs\\netcfg.nxe");
+    });
+
+    test_case!("cm_neoinit_autostart_empty", {
+        let mut hive = Hive::new("TestAutoStartEmpty");
+        let root = hive.root_cell();
+
+        let ccs = hive.create_key(root, "CurrentControlSet").unwrap();
+        let svc = hive.create_key(ccs, "Services").unwrap();
+        let neoinit = hive.create_key(svc, "NeoInit").unwrap();
+
+        // Default empty value matches cm_ensure_default_values()
+        hive.set_value(neoinit, "AutoStartServices", hive::REG_SZ, b"");
+
+        let val = hive.query_value(neoinit, "AutoStartServices").unwrap();
+        test_eq!(val.value_type, hive::REG_SZ);
+        let services_str = val.as_str().unwrap();
+        test_eq!(services_str, "");
+        test_eq!(services_str.is_empty(), true);
+
+        // Splitting an empty string should yield one empty fragment
+        let parts: Vec<&str> = services_str.split(';').collect();
+        test_eq!(parts.len(), 1);
+        test_eq!(parts[0], "");
+    });
+
+    test_case!("cm_neoinit_autostart_single", {
+        let mut hive = Hive::new("TestAutoStartSingle");
+        let root = hive.root_cell();
+
+        let ccs = hive.create_key(root, "CurrentControlSet").unwrap();
+        let svc = hive.create_key(ccs, "Services").unwrap();
+        let neoinit = hive.create_key(svc, "NeoInit").unwrap();
+
+        hive.set_value(neoinit, "AutoStartServices", hive::REG_SZ,
+            b"C:\\System\\Tools\\dhcpd.nxe");
+
+        let val = hive.query_value(neoinit, "AutoStartServices").unwrap();
+        let svc_path = val.as_str().unwrap();
+        test_eq!(svc_path, "C:\\System\\Tools\\dhcpd.nxe");
+
+        // Simulate neoinit's parsing: split by ';', trim each entry
+        let parts: Vec<&str> = svc_path.split(';').map(|s| s.trim()).collect();
+        test_eq!(parts.len(), 1);
+        test_eq!(parts[0], "C:\\System\\Tools\\dhcpd.nxe");
+    });
+
+    test_case!("cm_neoinit_autostart_parse_edge_cases", {
+        let mut hive = Hive::new("TestAutoStartEdge");
+        let root = hive.root_cell();
+
+        let ccs = hive.create_key(root, "CurrentControlSet").unwrap();
+        let svc = hive.create_key(ccs, "Services").unwrap();
+        let neoinit = hive.create_key(svc, "NeoInit").unwrap();
+
+        // Multiple services with spaces and empty entries between semicolons
+        hive.set_value(neoinit, "AutoStartServices", hive::REG_SZ,
+            b"  C:\\Tools\\one.nxe ; C:\\Tools\\two.nxe ;;C:\\Tools\\three.nxe");
+
+        let val = hive.query_value(neoinit, "AutoStartServices").unwrap();
+        let raw = val.as_str().unwrap();
+
+        // neoinit splits by ';' and trims each fragment
+        let services: Vec<&str> = raw.split(';').map(|s| s.trim()).collect();
+        test_eq!(services.len(), 4);
+        test_eq!(services[0], "C:\\Tools\\one.nxe");
+        test_eq!(services[1], "C:\\Tools\\two.nxe");
+        test_eq!(services[2], "");  // empty entry between ;;
+        test_eq!(services[3], "C:\\Tools\\three.nxe");
+
+        // neoinit's spawn_service skips empty strings
+        let non_empty: Vec<&str> = services.iter().filter(|s| !s.is_empty()).copied().collect();
+        test_eq!(non_empty.len(), 3);
+        test_eq!(non_empty[0], "C:\\Tools\\one.nxe");
+        test_eq!(non_empty[1], "C:\\Tools\\two.nxe");
+        test_eq!(non_empty[2], "C:\\Tools\\three.nxe");
+    });
+
+    test_case!("cm_neoinit_autostart_ob_path", {
+        // Verify the Ob path construction used by spawn_service()
+        // prepends \Global\FileSystem\ to each service path
+        let prefix = b"\\Global\\FileSystem\\";
+
+        let cases: [(&str, &str); 3] = [
+            ("C:\\System\\Tools\\dhcpd.nxe",
+             "\\Global\\FileSystem\\C:\\System\\Tools\\dhcpd.nxe"),
+            ("C:\\Programs\\netcfg.nxe",
+             "\\Global\\FileSystem\\C:\\Programs\\netcfg.nxe"),
+            ("C:\\Programs\\neoshell.nxe",
+             "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe"),
+        ];
+
+        for (svc_path, expected_ob) in &cases {
+            let mut buf = [0u8; 512];
+            let svc_bytes = svc_path.as_bytes();
+            let total = prefix.len() + svc_bytes.len();
+            test_true!(total <= buf.len());
+
+            buf[..prefix.len()].copy_from_slice(prefix);
+            buf[prefix.len()..total].copy_from_slice(svc_bytes);
+            let ob_path = core::str::from_utf8(&buf[..total]).unwrap();
+
+            test_eq!(ob_path, *expected_ob);
+        }
     });
 }
 

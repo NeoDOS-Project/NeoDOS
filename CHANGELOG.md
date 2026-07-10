@@ -16,6 +16,18 @@
   - FAT32 compatibility driver remains untouched and fully supported
 
 ### Added
+- **SM-001. Service Manager** — Nuevo subsistema kernel para gestionar el ciclo de vida de servicios Ring 3:
+  - `ObType::Service = 20` en `src/object/types.rs`
+  - 3 nuevos `ObInfoClass` (29=ServiceState, 30=ServiceConfig, 31=ServiceStatus)
+  - 4 nuevos `ObSetInfoClass` (33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig)
+  - RAX 77 `sys_ob_service` en SSDT (handler_ob_service)
+  - `SERVICE_MANAGER: Mutex<ServiceManager>` global en `src/services/mod.rs`
+  - Máquina de 5 estados (Stopped→Starting→Running→Stopping→Failed) con restart policy (Never/OnCrash/Always)
+  - Dependencias entre servicios con orden topológico (Kahn)
+  - `\Service\<Name>` en namespace Ob
+  - Backend Registry: `\Registry\Machine\System\CurrentControlSet\Services\<Name>`
+  - `sm_init()` en Phase 3.882, `sm_start_auto_services()` en Phase 4 (tras NeoInit)
+  - 22 tests unitarios
 - **FS-3. Indirect blocks** — Archivos >48 KB ahora soportados mediante bloque indirecto (1024 entradas, ~4 MB máx). `get_inode_block_ptr()`, `inode_data_block_count()`, `write_file()`, `add_directory_entry()`, `delete_file_by_inode()`, `rebuild_bitmap()` actualizados. Helper `allocate_indirect_block()`, `read_indirect_pointers()`, `write_indirect_pointer()`.
 - **FS-5. Journaling (WAL)** — Nuevo módulo `src/fs/journal.rs`: estructura `Journal` con `begin_transaction()`, `commit_transaction()`, `recover()` (replay/rollback al montar), `rollback_transaction()`. Entradas CRC32-protegidas. Área de journal reservable al final de la partición.
 - **FS-6. Metadata checksums** — CRC32 en Superblock (verificado al montar), CRC32 en Inode (nuevo campo `checksum`, verificado en `load_inode()`), XOR checksum en DirectoryEntry (verificado en lectura). `FsError::ChecksumMismatch` si falla.
@@ -47,7 +59,9 @@
 ### Tests
 - 19 tests nuevos: `vfs_cache_coherency`, `vfs_cache_inode_invalidation`, `vfs_namespace_filesystem_isolation`, `vfs_namespace_protected_paths` + 15 de v0.49 previos.
 - Tests actualizados: `page_cache_peek_miss` → `page_cache_peek_inode_miss`, `page_cache_empty_peek` → `page_cache_empty_peek_inode`.
-- Total: 641 → 656 tests.
+- **B4.11. NeoInit auto-start services** — 5 tests nuevos: `cm_neoinit_autostart_set_read`, `cm_neoinit_autostart_empty`, `cm_neoinit_autostart_single`, `cm_neoinit_autostart_parse_edge_cases`, `cm_neoinit_autostart_ob_path`. Validan almacenamiento/lectura de AutoStartServices en Registry, parsing (split/trim/skip-vacío) y construcción de Ob path `\Global\FileSystem\`.
+- Total: 597 → 602 tests.
+- **SM-001. Service Manager** — 22 tests nuevos: state machine (valid/disbaled/stop-stopped/restart-failed/exhaust-failures/restart-on-crash), dependency resolution (no-deps/simple-chain/cycle/fan-out), registry backend (config-clone/find-by-name/set-config/register-duplicate/remove-stopped/remove-running-fails), error codes, process exit handling (stopping/running-never-restart), state enum values.
 
 ### Fixed
 - **CM-FIX Registry bugfixes** — Varias correcciones en el subsistema de Registry:

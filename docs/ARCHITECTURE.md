@@ -41,7 +41,10 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Boot driver loader (PHASE 3.85): carga NEM drivers (BOOT → SYSTEM, dependency-sorted)
    - Driver Isolation Layer (X4): 16×1 MB slots @ 0x30000000
    - Networking init (PHASE 3.88): e1000 NIC probe, ARP cache, \Device\Tcp/\Device\Udp
-   - Ring 3 shell (neoshell.nxe via NeoInit, 537 kernel tests + user commands)
+   - Cm Registry init (PHASE 3.881): mount SYSTEM hive, ensure defaults
+   - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
+   - Auto-start services (PHASE 4): start System/Auto services in dependency order
+   - Ring 3 shell (neoshell.nxe via NeoInit, 602 kernel tests + user commands)
 ```
 
 ## Disco único GPT

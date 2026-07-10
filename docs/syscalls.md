@@ -45,10 +45,11 @@ pub enum SyscallNum {
     CmOpenKey = 67, CmCreateKey = 68, CmQueryValue = 69,
     CmSetValue = 70, CmEnumKey = 71, CmEnumValue = 72,
     CmDeleteKey = 73, CmFlushKey = 74, CmLoadHive = 75, CmUnloadHive = 76,
+    ObService = 77,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 76;
+    pub const MAX_VALID: u64 = 77;
     pub fn from_u64(n: u64) -> Option<Self>;
 }
 ```
@@ -114,7 +115,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4, 6, 13, 16, 18, 19, 20, 21, 29,
         40, 41, 42, 47, 53, 55, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
-        67, 68, 69, 70, 71, 72, 73, 74, 75, 76,
+        67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
     ];
     for &n in ASSIGNED {
         assert!(SYSCALL_TABLE[n as usize].is_some(),
@@ -348,3 +349,4 @@ kernel functionality must enter through the Ob architecture.
 | 74 | `sys_cm_flush_key` | Flush key to persistent storage |
 | 75 | `sys_cm_load_hive` | Load a hive file (admin) |
 | 76 | `sys_cm_unload_hive` | Unload a hive (admin) |
+| 77 | `sys_ob_service` | Service control: START(0), STOP(1), RESTART(2), QUERY_STATUS(3), SET_CONFIG(4). Admin only. |

@@ -53,65 +53,12 @@ fn read_reg_dword(key_fd: u8, name: &str) -> Option<u32> {
     Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
 }
 
-fn spawn_detached(path: &str) -> Result<u32, i64> {
-    let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
-    let fd = syscall::sys_ob_create(path, 1, None, attrs)?;
-    let pid = fd as u32;
-    let _ = syscall::sys_close(fd);
-    Ok(pid)
-}
-
 fn spawn_and_wait(path: &str) -> Result<u32, i64> {
     let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
     let fd = syscall::sys_ob_create(path, 1, None, attrs)?;
     let _ = syscall::sys_ob_wait(fd);
     let _ = syscall::sys_close(fd);
     Ok(0)
-}
-
-fn spawn_service(path: &str) {
-    if path.is_empty() { return; }
-    let mut svc_path_buf = [0u8; 512];
-    let svc_bytes = path.as_bytes();
-    let svc_total = OB_FS_PREFIX.len() + svc_bytes.len();
-    if svc_total > svc_path_buf.len() {
-        write_str(b"[neoinit] WARNING: service path too long, skipping\r\n");
-        return;
-    }
-    svc_path_buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
-    svc_path_buf[OB_FS_PREFIX.len()..svc_total].copy_from_slice(svc_bytes);
-    let svc_ob_path = core::str::from_utf8(&svc_path_buf[..svc_total]).unwrap();
-    match spawn_detached(svc_ob_path) {
-        Ok(pid) => {
-            write_str(b"[neoinit] started service PID ");
-            let mut pb = [0u8; 10];
-            let mut i = 9;
-            let mut v = pid as usize;
-            while v > 0 {
-                pb[i] = b'0' + (v % 10) as u8;
-                v /= 10;
-                if i == 0 { break; }
-                i -= 1;
-            }
-            let start = if pid == 0 { 9 } else { i + 1 };
-            write_str(&pb[start..=9]);
-            write_str(b"\r\n");
-        }
-        Err(e) => {
-            write_str(b"[neoinit] service spawn FAILED: errno ");
-            let mut eb = [0u8; 10];
-            let mut i = 9;
-            let mut v = (-e) as usize;
-            while v > 0 {
-                eb[i] = b'0' + (v % 10) as u8;
-                v /= 10;
-                if i == 0 { break; }
-                i -= 1;
-            }
-            write_str(&eb[i..=9]);
-            write_str(b"\r\n");
-        }
-    }
 }
 
 #[no_mangle]
@@ -121,6 +68,7 @@ pub extern "C" fn _start() -> ! {
     write_str(NEOINIT_VERSION.as_bytes());
     write_str(b" (PID 1)\r\n");
     write_str(b"----------------------------------------\r\n");
+    write_str(b"[neoinit] services managed by kernel Service Manager (SM-001)\r\n");
 
     // ── Open registry ──
     let reg_key = syscall::sys_cm_open_key(REG_KEY_PATH);
@@ -162,22 +110,6 @@ pub extern "C" fn _start() -> ! {
         0
     };
 
-    // ── Read AutoStartServices (semicolon-separated) ──
-    let mut services_buf = [0u8; 512];
-    let services_str = if key_fd != 0xFF {
-        read_reg_str(key_fd, "AutoStartServices", &mut services_buf)
-            .and_then(|len| {
-                if len > 0 {
-                    core::str::from_utf8(&services_buf[..len]).ok()
-                } else {
-                    None
-                }
-            })
-            .unwrap_or("")
-    } else {
-        ""
-    };
-
     // ── Close registry key ──
     if key_fd != 0xFF {
         let _ = syscall::sys_close(key_fd);
@@ -202,17 +134,6 @@ pub extern "C" fn _start() -> ! {
     ob_path_buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
     ob_path_buf[OB_FS_PREFIX.len()..total].copy_from_slice(shell_bytes);
     let ob_path = core::str::from_utf8(&ob_path_buf[..total]).unwrap();
-
-    // ── Auto-start services from registry ──
-    if !services_str.is_empty() {
-        write_str(b"[neoinit] auto-starting services...\r\n");
-        for svc in services_str.split(';') {
-            spawn_service(svc.trim());
-        }
-    }
-
-    // ── Always start dhcpd (DHCP client service) ──
-    spawn_service("C:\\System\\Tools\\dhcpd.nxe");
 
     // ── Spawn loop ──
     write_str(b"[neoinit] entering spawn loop...\r\n");
