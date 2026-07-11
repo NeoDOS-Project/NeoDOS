@@ -16,23 +16,23 @@
   "instructions": ["AGENTS.md"],
   "command": {
     "build": {
-      "template": "Build the NeoDOS OS: compile bootloader + kernel and create the GPT disk image. Run from neodos/. If user binaries needed, use --neodos-image: `bash scripts/build.sh --neodos-image`. Then verify with `python3 scripts/auto_test.py` and `scripts/check_deps.py`.",
-      "description": "Build bootloader, kernel, and disk image"
+      "template": "Build NeoDOS using neodev: `cargo run --manifest-path tools/neodev/Cargo.toml -- build --image`. For quick (kernel+bootloader only): `--quick --image`. Kernel requires nightly Rust: `RUSTUP_TOOLCHAIN=nightly cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image`. Verify with `python3 scripts/check_deps.py`.",
+      "description": "Build bootloader, kernel, user binaries, and disk image"
     },
     "build-lsp": {
       "template": "Build the NeoDOS LSP server: `cd neodos-lsp && cargo build --release`. The binary will be at neodos-lsp/target/release/neodos-lsp.",
       "description": "Build the NeoDOS LSP server"
     },
     "run": {
-      "template": "Launch NeoDOS in QEMU with OVMF UEFI firmware, serial output, and GDB server on :1234. Run `bash scripts/qemu-debug.sh` from neodos/. Use QEMU_ACCEL=kvm for acceleration.",
-      "description": "Run NeoDOS in QEMU"
+      "template": "Launch NeoDOS in QEMU with neodev: `cargo run --manifest-path tools/neodev/Cargo.toml -- run`. Options: --kvm, --gdb, --storage ahci|ata|nvme|virtio, --net user|tap|bridge, --bdm (persistent OVMF vars), --headless, --serial <file>.",
+      "description": "Run NeoDOS in QEMU with neodev"
     },
     "debug": {
       "template": "Connect GDB to a running QEMU instance (port :1234) with kernel symbols loaded. Run from neodos/ using `gdb -x .gdbinit`. The debug build is at neodos-kernel/target/x86_64-unknown-none/debug/neodos-kernel.",
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Review uncommitted changes in the repo. Check that `docs/` files (SYSCALLS.md, ARCHITECTURE.md, ARCHITECTURE_SOURCE_OF_TRUTH.md, IMPROVEMENTS.md, CHANGELOG.md, etc.) are up to date. Run `cargo build` in neodos-kernel/, then `python3 scripts/auto_test.py`, then `scripts/check_deps.py`. Commit with `git add -A && git commit -m \"feat|fix|refactor: ...\" && git push`.",
+      "template": "Review uncommitted changes in the repo. Check that `docs/` files (SYSCALLS.md, ARCHITECTURE.md, ARCHITECTURE_SOURCE_OF_TRUTH.md, IMPROVEMENTS.md, CHANGELOG.md, etc.) are up to date. Run `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/, then `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick`, then `scripts/check_deps.py`. Commit with `git add -A && git commit -m \"feat|fix|refactor: ...\" && git push`.",
       "description": "Build, test, commit, and push to GitHub"
     },
     "audit": {
@@ -56,7 +56,7 @@
       "description": "Find and remove dead code, old TODOs, FIXMEs, commented code, duplicates"
     },
     "testing": {
-      "template": "Validate NeoDOS changes with the complete test suite.\n1. Build: `cargo build` in neodos-kernel/ — fix any compilation errors first.\n2. Run kernel tests: `python3 scripts/auto_test.py` — all 537+ tests must pass.\n3. Check dependency rules: `scripts/check_deps.py`.\n4. If tests fail: identify the failing test group (printed in output), inspect the test code in src/testing.rs, fix the issue, re-run.\n5. Check test coverage: look at the feature being changed — are there existing tests? If the feature lacks tests, propose new test_case! entries in the appropriate module with descriptions.\n6. For user-mode changes: build with `bash scripts/build.sh --neodos-image` and boot in QEMU to verify.\n7. Report: summary of passed tests, any regressions, and test coverage gaps found.",
+      "template": "Validate NeoDOS changes with the complete test suite.\n1. Build: `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/ — fix any compilation errors first.\n2. Run kernel tests: `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image && cargo run --manifest-path tools/neodev/Cargo.toml -- test` — all tests must pass.\n3. Check dependency rules: `scripts/check_deps.py`.\n4. If tests fail: identify the failing test group (printed in output), inspect the test code in src/testing.rs, fix the issue, re-run.\n5. Check test coverage: look at the feature being changed — are there existing tests? If the feature lacks tests, propose new test_case! entries in the appropriate module with descriptions.\n6. For user-mode changes: build with `cargo run --manifest-path tools/neodev/Cargo.toml -- build --image` and boot in QEMU to verify.\n7. Report: summary of passed tests, any regressions, and test coverage gaps found.",
       "description": "Run tests, check coverage, propose new tests for uncovered code"
     },
     "roadmap": {
