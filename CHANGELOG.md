@@ -3,6 +3,7 @@
 ## v0.49.1 — 2026-07-11
 
 ### Added
+- **NeoDev** — New unified development tool (`tools/neodev/`) written in Rust. Replaces `build.sh`, `qemu-debug.sh`, `auto_test.py`, `create_ne2_image.py`, `create_gpt_image.py`. Modules: build, image, run, test, clean, config, report, discovery. Auto-discovers all 36 NXE, 4 NXL, 10 NEM drivers with zero manual lists. Run with `cargo run --manifest-path tools/neodev/Cargo.toml -- <cmd>`.
 - **PowerManager Ob object** — New `ObType::PowerManager(21)` at `\System\PowerManager`. Operations via `ObSetInfoClass::PowerShutdown(37)` and `PowerReboot(38)`. Accessible via `sys_ob_open` + `sys_ob_set_info`. No dedicated syscall.
 - **HAL `reboot()`** — New CPU primitive: `outb(0xCF9, 0x06)` + PS/2 reset, then halt.
 - **`userbin/reboot`** — New `.NXE` binary using Ob API for system reboot.

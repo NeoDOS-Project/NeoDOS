@@ -28,11 +28,13 @@ cargo run --bin neodev -- clean                    # clean artifacts
 bash scripts/build.sh                              # legacy (still available)
 python3 scripts/auto_test.py                       # legacy test runner
 ```
+Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`
+or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/Cargo.toml --'`
 
 ## Git Workflow
 
-1. `cargo run --bin neodev -- build --quick` (or `cargo build` in `neodos-kernel/`)
-2. `cargo run --bin neodev -- test` (or `python3 scripts/auto_test.py`)
+1. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
+2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test` (or `python3 scripts/auto_test.py`)
 3. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
 4. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
 

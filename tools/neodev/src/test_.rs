@@ -264,12 +264,19 @@ fn read_serial_since(offset: u64) -> Result<String> {
 fn print_serial_line(line: &str, _state: &str) {
     if line.contains("ALL_TESTS_COMPLETE") {
         println!("{} ALL TESTS COMPLETE", "[+]".bold().green());
-    } else if line.contains("Type HELP") || line.contains("NeoDOS") && line.contains("FS Started") {
-        println!("  Shell detected!");
-    } else if line.contains("kernel tests") || line.contains("passed") || line.contains("failed") {
-        if !line.contains("TEST") {
-            println!("  [TEST] {}", line);
+    } else if line.contains("Type HELP") {
+        println!("{} Shell detected!", "[+]".bold().green());
+    } else if line.contains("NeoDOS Kernel v") || line.contains("Bootloader v") {
+        println!("  {}", line);
+    } else if line.contains("[✓]") || line.contains("[+]") {
+        let clean = line.trim();
+        if clean.len() > 4 {
+            println!("  {}", clean);
         }
+    } else if line.contains("kernel tests") || line.contains("ALL TESTS COMPLETE") {
+        println!("  [TEST] {}", line);
+    } else if line.contains("PANIC") || line.contains("panic") {
+        println!("  {} {}", "[!]".bold().red(), line);
     }
 }
 
