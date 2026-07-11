@@ -22,6 +22,7 @@ pub struct Socket {
 pub struct SocketManager {
     pub sockets: Vec<Option<Socket>>,
     next_id: u32,
+    next_ephemeral_port: u16,
 }
 
 impl SocketManager {
@@ -29,7 +30,19 @@ impl SocketManager {
         SocketManager {
             sockets: Vec::new(),
             next_id: 1,
+            next_ephemeral_port: 49152,
         }
+    }
+
+    /// Allocate an ephemeral port in the IANA dynamic range 49152–65535.
+    pub fn allocate_ephemeral_port(&mut self) -> u16 {
+        let port = self.next_ephemeral_port;
+        self.next_ephemeral_port = if self.next_ephemeral_port == 65535 {
+            49152
+        } else {
+            self.next_ephemeral_port.wrapping_add(1)
+        };
+        port
     }
 
     pub fn alloc_socket(&mut self, socket_type: SocketType) -> Option<u32> {
@@ -134,12 +147,24 @@ pub fn socket_free(id: u32) {
 }
 
 pub fn socket_bind(id: u32, local: SocketAddrV4) -> bool {
+    // Fetch default NIC before locking SOCKET_MANAGER (lock order: NIC_REGISTRY
+    // must not be acquired after SOCKET_MANAGER — see socket_send_udp_raw).
+    let default_nic = nic_default_id();
     let mut mgr = SOCKET_MANAGER.lock();
+    let needs_port = local.port == 0;
+    let port = if needs_port { Some(mgr.allocate_ephemeral_port()) } else { None };
     let socket = match mgr.get_socket_mut(id) {
         Some(s) => s,
         None => return false,
     };
+    let mut local = local;
+    if let Some(p) = port {
+        local.port = p;
+    }
     socket.local = local;
+    if socket.nic_id.is_none() {
+        socket.nic_id = default_nic;
+    }
     if socket.socket_type == SocketType::Tcp {
         if let Some(tcp_id) = socket.tcp_conn_id {
             crate::net::tcp::tcp_bind(tcp_id, local);
@@ -263,6 +288,18 @@ pub fn socket_set_tcp_conn(id: u32, tcp_id: u32) {
 pub fn socket_set_connected(id: u32) {
     if let Some(socket) = SOCKET_MANAGER.lock().get_socket_mut(id) {
         socket.direction = SocketDirection::Connected;
+    }
+}
+
+/// Assign the default NIC to a socket if none is set.
+/// Caller must not hold SOCKET_MANAGER lock when calling this.
+pub fn socket_assign_default_nic(id: u32) {
+    if let Some(nic_id) = nic_default_id() {
+        if let Some(s) = SOCKET_MANAGER.lock().get_socket_mut(id) {
+            if s.nic_id.is_none() {
+                s.nic_id = Some(nic_id);
+            }
+        }
     }
 }
 

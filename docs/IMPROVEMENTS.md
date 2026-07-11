@@ -29,8 +29,9 @@
 | CM-FIX | Registry bugfixes (free list, delete, unmount flush) | ~~HIGH~~ COMPLETADO | registry |
 | NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
 | SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
-| SH-REDIR | Shell redirection (>, <, >>) | **HIGH** | shell |
+| SH-REDIR | Shell redirection (>, <, >>) | ~~HIGH~~ COMPLETADO | shell |
 | B4.11 | NeoInit auto-start servicios (→ SM-001) | ~~HIGH~~ SUPERSEDED | boot |
+| PM-PHASE1 | HAL ACPI primitives (FADT parse, S5, reboot) | **HIGH** | power |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
 | | | | |
 | **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
@@ -46,12 +47,16 @@
 | USR-P1d | SeAccessCheck: fix empty DACL + group SIDs | MEDIUM | security |
 | USR-P1e | ObSetInfoClass::ChangePassword (31) | MEDIUM | security |
 | SM-001 | Service Manager (ObType::Service=20, RAX 77) | MEDIUM | services |
+| PM-PHASE2 | Power Manager kernel core (ObType=21, struct, Registry, plan mgmt) | MEDIUM | power |
 | NET-1.9 | ipconfig.nxe | MEDIUM | net |
 | NET-1.10 | ping.nxe | MEDIUM | net |
 | B3.4 | NTP client | MEDIUM | net |
 | ADM-1+2 | neotop v0.2 + neostat | MEDIUM | admin |
 | ADM-4 | neotask (gestor de tareas) | MEDIUM | admin |
 | ADM-5+6 | neocfg + neofs | MEDIUM | admin |
+| KBD-PHASE1 | NeoKBD kernel module + Ob API + Event Bus + libneodos | MEDIUM | kbd |
+| KBD-PHASE2 | ps2kbd simplification + .kbd format tool | MEDIUM | kbd |
+| ADM-NEOKEY | neokey CLI (reemplaza keyb, nombres de layout) | MEDIUM | admin |
 | | | | |
 | **v0.52** | **VirtIO + Sessions + FS Security** | **MEDIUM** | milestone |
 | VIO-ARCH | Virtqueue abstraction + modern PCI transport | **HIGH** | drivers |
@@ -68,6 +73,7 @@
 | USR-P3c | Wire VFS checks in syscall handlers | MEDIUM | syscall |
 | USR-P3d | Default permissions by extension | MEDIUM | fs |
 | VFS-2.2 | Refactorizar FSCK | MEDIUM | fs |
+| PM-PHASE3 | Power syscall dispatch + Event Bus types | MEDIUM | power |
 | | | | |
 | **v0.53** | **Security + Registry + Integrity** | **MEDIUM** | milestone |
 | B5.1 | Module signature validation | MEDIUM | security |
@@ -88,7 +94,9 @@
 | **v0.54** | **Hardening + User commands + Docs + DNS + i18n** | **LOW** | milestone |
 | B5.3 | Secure boot chain | LOW | security |
 | CM-WAL | Registry WAL (write-ahead logging) | LOW | registry |
+| PM-PHASE4 | Service Manager shutdown integration + libneodos wrappers + shell commands | MEDIUM | power |
 | CM-LIB | Registry libneodos wrappers (7 missing) | LOW | lib |
+| PM-PHASE5 | Power Manager polish: event handlers, async coordination, tests | LOW | power |
 | CM-REGEDIT | regedit.nxe — registry editor | LOW | admin |
 | USR-P6a | WHOAMI command | LOW | shell |
 | USR-P6b | PASSWD command | LOW | shell |
@@ -97,12 +105,13 @@
 | USR-P6e | RUNAS command | LOW | shell |
 | NET-DNS | DNS resolver (stub resolver + cache) | LOW | net |
 | I18N-P1 | i18n runtime (libneodos + NLT format) | LOW | lib |
+| PM-PHASE5 | Power Manager polish: tests completion, NeoCfg integration, event handlers | LOW | power |
 | I18N-P2 | Migrar NeoShell + NeoInit + apps core a tr!() | LOW | shell |
 | I18N-P3 | neolocale tool + archivos .nlt + segundo idioma | LOW | tools |
 | B1.1 | Kernel tracing infrastructure | LOW | kernel |
 | B1.2 | NeoTrace system | LOW | kernel |
 | ADM-3 | neolog (visor event log) | LOW | admin |
-| NET-1.7 | Kernel: nic_id + ephemeral port | LOW | net |
+| NET-1.7 | Kernel: nic_id + ephemeral port | ~~LOW~~ COMPLETADO | net |
 | BUG-NEM-RX | NEM e1000 no recibe paquetes | LOW | drivers |
 | AUDIT-17 | User address space constrained (36MB) | LOW | kernel |
 | B6.2 | Copy-on-write fork | LOW | kernel |
@@ -159,7 +168,7 @@
   - `"..."` (expande %VAR%), `'...'` (literal), `^` escape, `%%` literal percent.
   - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`
 
-* [ ] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
+* [x] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
   - Tokenizer parsea `>`, `>>`, `<`, `2>`. Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd, spawn.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
 
@@ -192,10 +201,19 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
+#### Power Manager — Phase 1: HAL ACPI primitives
+
+* [ ] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Prereqs: -- | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs` (new), `src/hal/x64/mod.rs`, `src/hal/mod.rs`
+  - Añadir `reboot()` en HAL: ACPI reset register → QEMU debug port 0xCF9 → PS/2 → `halt()`. Nuevo extern "C" + `#[used]` ABI retention.
+  - Añadir `acpi_parse_fadt()`: parsear FADT desde RSDP → XSDT/RSDT, extraer PM1a/b control block, S5 sleep type (SLP_TYPa/b), reset register.
+  - Añadir `acpi_s5_write()`: escribir SLP_TYPa + SLP_EN a PM1a control register.
+  - Actualizar `poweroff()`: intentar ACPI S5 primero, fallback a QEMU debug ports, luego PS/2.
+  - `src/power/acpi.rs`: wrapper que llama a `acpi_parse_fadt()` y almacena `AcpiPowerState`.
+  - **Tests:** `pm_acpi_fadt_valid_parses_s5`, `pm_acpi_fadt_absent_fallback_ports`, `pm_acpi_fadt_reset_register`, `pm_hal_reboot_does_not_return`, `pm_hal_poweroff_tries_acpi_first`, `pm_hal_s5_write_correct_slp_typ`
+
 ---
 
 ## MEDIUM
-
 ### v0.51: NeoFS v2 remaining + Shell Phase 2 + Networking tools
 
 #### NeoFS v2 (completar implementación)
@@ -268,13 +286,77 @@
   - Listar procesos, matar, cambiar prioridad, crear proceso.
   - **Tests:** `neotask_kill_pid`, `neotask_set_priority`, `neotask_spawn`
 
-* [ ] **ADM-5. neocfg** | Prereqs: B2.6 | Files: `userbin/neocfg/`
-  - Navegación de árbol del Registry: `ls`, `cd`, `cat`, `set`, `delete`, `create`.
-  - **Tests:** `neocfg_read_write_key`, `neocfg_enum_key_value`
+* [ ] **ADM-5. neocfg (Panel de Control)** | Prereqs: -- | Files: `userbin/neocfg/` (new), `scripts/build.sh`, `scripts/create_ne2_image.py`, `docs/design/neocfg-design.md`
+  - Aplicación Ring 3 .NXE: panel de control modular que consume exclusivamente APIs públicas de libneodos.
+  - `CfgModule` trait: cada subsistema (System, Keyboard, About, Power, Locale) implementa interfaz común.
+  - `ui/menu.rs`: renderizado de menús con navegación por teclado (↑↓, Enter, Esc, 1-9).
+  - `ui/dialog.rs`: diálogos de entrada, confirmación, mensajes informativos.
+  - Módulo System (solo lectura): version, memory, cpu, drives, processes, services via `ob_query_info`.
+  - Módulo Keyboard: listar/cambiar layouts via `ob_set_info(KeyboardLayout=5)`, `ob_query_info(KeyboardLayout=14)`.
+  - Módulo About: version strings via `ob_query_info(Version=8)`.
+  - Módulo Power (stub): mensaje "not available" hasta PM-PHASE2 completado.
+  - Módulo Locale (stub): mensaje "not available" hasta I18N-P1 completado.
+  - Todos los textos visibles via `tr!()` macro (i18n desde el diseño).
+  - Preparado para GUI: la lógica en `modules/` se reutiliza sin cambios.
+  - **Tests:** `neocfg_menu_navigation`, `neocfg_system_info`, `neocfg_keyboard_set_layout`, `neocfg_about_version`, `neocfg_stubs_no_crash`, `neocfg_i18n_all_keys_present`, `neocfg_no_direct_registry_access`
 
 * [ ] **ADM-6. neofs** | Prereqs: -- | Files: `userbin/neofs/`
   - Estadísticas de volumen, correr fsck, cambiar label, listar montajes.
   - **Tests:** `neofs_fsck_drive`, `neofs_format_volume`, `neofs_label_roundtrip`
+
+#### Keyboard Manager — Phase 1: Kernel core + Ob API + Event Bus + libneodos
+
+* [ ] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Prereqs: -- | Files: `src/kbd/mod.rs` (new), `src/kbd/layout.rs` (new), `src/kbd/unicode.rs` (new), `src/kbd/config.rs` (new), `src/kbd/event.rs` (new), `src/kbd/hotkey.rs` (new), `src/object/types.rs`, `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs` (new), `libneodos/src/lib.rs`, `docs/design/neokbd-design.md`
+  - Diseño completo: `docs/design/neokbd-design.md`
+  - `ObType::KeyboardDevice = 22` en `src/object/types.rs`
+  - 2 nuevos `ObInfoClass` (35=KeyboardInfo, 36=KeyboardCaps)
+  - 5 nuevos `ObSetInfoClass` (43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay, 45=KeyboardSetRepeatRate, 46=KeyboardSetLeds, 47=KeyboardSetModifier)
+  - `src/kbd/mod.rs`: `NeoKbd` struct con state, config, layouts vec, modifiers, dead_key. `pub static KBD: Mutex<NeoKbd>`. `kbd_init()`: escanea `C:\System\Keyboard\*.kbd`, carga layouts, aplica defaults Registry.
+  - `src/kbd/layout.rs`: `KbdLayout` struct con nombre, lang_tag, `[KeyEntry; 256]`, `Vec<ComposeEntry>`. `load_kbd()`: parsea `.kbd` binario. `lookup()`: scancode + mods → codepoint.
+  - `src/kbd/unicode.rs`: `unicode_to_utf8()`: codepoint a UTF-8. Dead key compose engine.
+  - `src/kbd/config.rs`: load/save config desde `\Registry\Machine\System\Keyboard\*`.
+  - `src/kbd/event.rs`: handler de `EVENT_KEYBOARD_INPUT`, llama a `kbd_process_scancode()`.
+  - `src/kbd/hotkey.rs`: hotkey dispatcher (Ctrl+Alt+Del → poweroff, Alt+F1-F4 → VT switch). Reemplaza checks hardcodeados en `idt.rs`.
+  - `src/eventbus/mod.rs`: añadir `EVENT_KEYDOWN=27`, `EVENT_KEYUP=28`, `EVENT_KEY_CHAR=29`, `EVENT_KBD_MODIFIER=30`, `EVENT_KBD_REPEAT=31`.
+  - `src/main.rs`: PHASE 3.875 `kbd::kbd_init()` (después de input init, antes de driver loader). Crear `\Device\Keyboard` en namespace.
+  - `src/cm/mod.rs`: defaults: `Layout=Spanish`, `RepeatDelay=500`, `RepeatRate=30`, `NumLockOnBoot=1`, `CapsLockOnBoot=0`.
+  - `src/arch/x64/idt.rs`: eliminar Ctrl+Alt+Del y Alt+F# checks hardcodeados (NeoKBD los maneja).
+  - `libneodos/src/keyboard.rs`: `kbd_get_layout()`, `kbd_set_layout()`, `kbd_list_layouts()`, `kbd_get_repeat()`, `kbd_set_repeat()`, `kbd_get_state()`, `kbd_set_leds()`. Tipos `KbdState`, `KbdLayoutInfo`.
+  - **Tests:** `kbd_init_ob_namespace`, `kbd_query_info`, `kbd_set_layout_by_name`, `kbd_set_layout_invalid`, `kbd_layout_persists_registry`, `kbd_scancode_us_a`, `kbd_scancode_sp_n_tilde`, `kbd_dead_key_acute_compose`, `kbd_modifiers_state`, `kbd_leds_set_query`, `kbd_repeat_config`, `kbd_hotkey_ctrl_alt_del`, `kbd_hotkey_alt_f1_vt_switch`, `kbd_load_kbd_file`, `kbd_load_kbd_invalid_rejected`
+
+* [ ] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Prereqs: KBD-PHASE1 | Files: `drivers/ps2kbd/src/lib.rs`, `drivers/ps2kbd/build.rs`, `tools/kbdcompile/` (new), `drivers/ps2kbd/layouts/`, `docs/keyboard.md` (new)
+  - Simplificar `drivers/ps2kbd/src/lib.rs`: eliminar `klc_layout` module, `translate_scancode()`, `encode_utf8_first()`, `LAYOUT` atomic, `DEAD_KEY` atomic, `OUTPUT_PENDING0/1` atomics (~150 líneas eliminadas).
+  - `process_scancode()` simplificado: solo actualizar modificadores (make/set, break/clear, toggle para Caps/Num) y emitir evento raw via `hst_push_key_event(scancode, is_make)`.
+  - Nueva HST call `hst_push_key_event()`: llama a `kbd::kbd_event(scancode, is_make)`, NeoKBD hace traducción + composición + push bytes.
+  - `drivers/ps2kbd/build.rs`: eliminar generación de `kbd_layout.rs`. Los layouts ahora son archivos `.kbd`.
+  - `tools/kbdcompile/`: herramienta que convierte `.klc` → `.kbd` binario. Se invoca en build de imagen, no en runtime.
+  - Layouts iniciales `.kbd`: `US.kbd` (en-US, 256 scancodes, 0 compose), `Spanish.kbd` (es-ES, 256 scancodes, 54 compose).
+  - `docs/keyboard.md`: guía de arquitectura, cómo añadir layouts, API pública, integración con NeoCfg.
+  - **Tests:** `kbd_phase2_driver_no_layout_tables`, `kbd_phase2_raw_event_flow`, `kbd_phase2_kbdcompile_us_layout`, `kbd_phase2_kbdcompile_spanish_layout`, `kbd_phase2_backward_compat_legacy_keyb`
+
+* [ ] **ADM-NEOKEY. neokey CLI utility** | Prereqs: KBD-PHASE1 | Files: `userbin/neokey/` (new), `scripts/build.sh`, `scripts/create_ne2_image.py`
+  - Reemplaza el `keyb.nxe` actual (índices numéricos 0/1) por `neokey.nxe` con nombres de layout.
+  - `NEOKEY show` — muestra layout activo, estado modificadores, LEDs.
+  - `NEOKEY layout <name>` — cambia layout por nombre (ej. `NEOKEY layout Spanish`, `NEOKEY layout US`).
+  - `NEOKEY layouts` — lista todos los layouts disponibles en `C:\System\Keyboard\`.
+  - `NEOKEY repeat <cps>` — configura velocidad de repetición (2–60 cps).
+  - `NEOKEY delay <ms>` — configura retardo antes de repetir (100–2000 ms).
+  - `NEOKEY leds` — muestra estado actual de LEDs.
+  - Usa `libneodos::keyboard::*` API (kbd_get_layout, kbd_set_layout, kbd_list_layouts, etc.).
+  - Incluye `::HELP::` block para auto-documentación en NeoShell.
+  - **Tests:** `neokey_show_displays_layout`, `neokey_layout_change_by_name`, `neokey_layouts_list`, `neokey_repeat_config`, `neokey_delay_config`, `neokey_help_flag`
+
+* [ ] **PM-PHASE2. Power Manager kernel core** | Prereqs: PM-PHASE1 | Files: `src/power/mod.rs` (new), `src/power/plan.rs` (new), `src/power/coordinator.rs` (new), `src/object/types.rs`, `src/cm/mod.rs`, `src/main.rs`
+  - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
+  - `PowerSystemState` enum: Active, ShuttingDown, Rebooting, Suspending, Hibernating, Off.
+  - `PowerPlan` + `PowerPolicies`: DisplayTimeout, SleepTimeout, HibernateEnabled, CpuPolicy, LidAction, PowerButtonAction.
+  - `PowerManager::load_plan_from_registry(index)`: leer plan activo desde `\Registry\Machine\System\Power\Plans\<Name>\*`.
+  - `PowerManager::save_plan_to_registry(index)`: persistir políticas activas.
+  - `src/power/coordinator.rs`: `shutdown()` y `reboot()` sin integración con servicios todavía — solo HAL calls.
+  - `src/object/types.rs`: añadir `PowerManager = 21` a `ObType`.
+  - `src/main.rs`: añadir PHASE 3.883 — crear `\Device\PowerManager` en namespace Ob, inicializar PowerManager.
+  - `src/cm/mod.rs`: añadir defaults de Power en `cm_ensure_default_values()`: `ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`.
+  - **Tests:** `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`, `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`
 
 ### v0.52: VirtIO + Performance + Security
 
@@ -349,6 +431,16 @@
   - INT3 breakpoints, hardware watchpoints (DR0-DR3), GDB remote protocol stub via serial.
   - **Tests:** `kd_breakpoint_set_and_hit`, `kd_breakpoint_invalid_addr`, `kd_watchpoint_write_detect`, `kd_register_snapshot`, `kd_gdb_protocol_qSupported`
 
+#### Power Manager — Phase 3: Syscall dispatch + Event Bus
+
+* [ ] **PM-PHASE3. Power syscall dispatch + Event Bus types** | Prereqs: PM-PHASE2 | Files: `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/abi_freeze.rs`, `src/power/event.rs` (new)
+  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_set_info` para clases 37-42 (PowerShutdown, PowerReboot, PowerSuspend, PowerHibernate, PowerSetPlan, PowerSetPolicy). Admin check para shutdown/reboot/set-plan.
+  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_query_info` para clases 32-34 (PowerPlanInfo, PowerStatus, PowerSystemState). Sin admin check.
+  - `src/eventbus/mod.rs`: añadir tipos 19-26: `EVENT_SHUTDOWN_PHASE2`, `EVENT_SUSPEND`, `EVENT_RESUME`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, `EVENT_LID_OPEN`, `EVENT_BATTERY_LOW`, `EVENT_POWER_SOURCE_CHANGE`.
+  - `src/abi_freeze.rs`: validar nuevos tipos no estén en rango 0-15.
+  - `src/power/event.rs`: handlers para `EVENT_POWER_BUTTON` → ejecutar `PowerButtonAction`, `EVENT_LID_CLOSE` → ejecutar `LidAction`.
+  - **Tests:** `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`, `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
+
 ---
 
 ## LOW
@@ -369,6 +461,17 @@
 * [ ] **CM-REGEDIT. regedit.nxe** | Prereqs: CM-LIB | Files: `userbin/regedit/` (new)
   - Navegación de árbol, crear/borrar claves, set/query valores, flush manual.
   - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
+
+#### Power Manager — Phase 4: Service Manager + libneodos + shell
+
+* [ ] **PM-PHASE4. Shutdown coordination + libneodos wrappers + shell commands** | Prereqs: PM-PHASE3 | Files: `src/services/mod.rs`, `libneodos/src/power.rs` (new), `libneodos/src/syscall.rs`, `userbin/neoshell/`
+  - `src/services/mod.rs`: añadir `ServiceManager::stop_all()` — itera servicios en orden inverso de dependencias, para cada uno llama `stop_service()` con timeout.
+  - `ServiceManager::stop_all()` es llamado por `PowerCoordinator::shutdown()` antes de `EVENT_SHUTDOWN_PHASE2`.
+  - `libneodos/src/power.rs`: wrapper `power_shutdown()`, `power_reboot()`, `power_suspend()`, `power_hibernate()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`.
+  - Tipos públicos: `PowerPlanInfo`, `PowerSystemStatus`, `PowerPolicyUpdate`.
+  - Internamente: `ob_open("\Device\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`.
+  - `userbin/neoshell/`: añadir `REBOOT` built-in. Migrar `POWEROFF` a llamar `libneodos::power_shutdown()`.
+  - **Tests:** `pm_service_manager_stop_all_order`, `pm_service_manager_stop_all_timeout`, `pm_lib_get_plan`, `pm_lib_set_plan`, `pm_lib_reboot`, `pm_lib_shutdown`
 
 #### Security (USR) — Users, Groups, Sessions
 
@@ -571,7 +674,7 @@
 
 #### Networking
 
-* [ ] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
+* [x] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
   - Asignar NIC por defecto y puerto efímero (49152-65535) si no especificado.
   - **Tests:** `socket_auto_port_assign`
 
@@ -612,6 +715,22 @@
 
 * [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.
+
+#### Power Manager — Phase 5: Polish + event-driven coordination + tests
+
+* [ ] **PM-PHASE5. Power Manager polish: async coordination, full test suite** | Prereqs: PM-PHASE4 | Files: `src/power/coordinator.rs`, `src/power/event.rs`, `src/power/mod.rs`, `docs/power-manager.md`
+  - Completar coordinación asíncrona en `coordinator.rs`: shutdown con timeout por servicio, fallback force-kill.
+  - Integrar `EVENT_POWER_BUTTON` con `PowerManager` para ejecutar `power_button_action` desde Event Bus.
+  - Integrar `EVENT_LID_CLOSE`/`EVENT_LID_OPEN` para ejecutar `lid_action`.
+  - Integración con `\Global\Info\Power` para consultas vía `ob_query_info`.
+  - Completar suite de tests (25 tests del diseño original):
+    - Inicialización: `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_capabilities_from_fadt`
+    - Planes: `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`
+    - Políticas: `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`, `pm_policy_restored_on_plan_switch`
+    - Shutdown: `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`
+    - Eventos: `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
+    - HAL/ACPI: tests de `pm_fadt_*`, `pm_hal_*`, `pm_lib_*`
+  - **Tests:** completar los 25 tests + integración en QEMU
 
 #### Kernel
 
@@ -725,7 +844,7 @@
 | v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2 (editor, env, pipeline, batch), USR-P1 (SAM foundation) | planned |
 | v0.52 | VirtIO (ARCH+NET), Sessions (USR-P2), FS security (USR-P3), Zero-copy pipes | planned |
 | v0.53 | Module sig validation, Registry dirty+multihive, Registry ACL (USR-P4), Integrity levels (USR-P5), KD, NeoEdit | planned |
-| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs | backlog |
+| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs, Power Manager Phase 5 | backlog |
 | v0.55+ | Cleanup (dead code, duplicates, refactors), Backlog items | backlog |
 
 ---

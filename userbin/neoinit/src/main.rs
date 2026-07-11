@@ -61,6 +61,25 @@ fn spawn_and_wait(path: &str) -> Result<u32, i64> {
     Ok(0)
 }
 
+fn try_spawn_test(path: &str, tag: &str) {
+    let mut ob_path_buf = [0u8; 512];
+    let bytes = path.as_bytes();
+    let total = OB_FS_PREFIX.len() + bytes.len();
+    if total > ob_path_buf.len() { return; }
+    ob_path_buf[..OB_FS_PREFIX.len()].copy_from_slice(OB_FS_PREFIX);
+    ob_path_buf[OB_FS_PREFIX.len()..total].copy_from_slice(bytes);
+    let ob_path = match core::str::from_utf8(&ob_path_buf[..total]) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    match spawn_and_wait(ob_path) {
+        Ok(_) => write_str(b"[neoinit] test completed: "),
+        Err(_) => write_str(b"[neoinit] test not found or failed: "),
+    }
+    write_str(tag.as_bytes());
+    write_str(b"\r\n");
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     write_str(b"\r\n");
@@ -68,7 +87,7 @@ pub extern "C" fn _start() -> ! {
     write_str(NEOINIT_VERSION.as_bytes());
     write_str(b" (PID 1)\r\n");
     write_str(b"----------------------------------------\r\n");
-    write_str(b"[neoinit] services managed by kernel Service Manager (SM-001)\r\n");
+    write_str(b"[neoinit] services managed by kernel Service Manager\r\n");
 
     // ── Open registry ──
     let reg_key = syscall::sys_cm_open_key(REG_KEY_PATH);
@@ -122,6 +141,10 @@ pub extern "C" fn _start() -> ! {
             syscall::sys_yield();
         }
     }
+
+    // ── Run user-mode test binaries ──
+    try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
+    try_spawn_test("C:\\Programs\\shtest.nxe", "SHTEST");
 
     // ── Build Ob path for shell ──
     let mut ob_path_buf = [0u8; 512];

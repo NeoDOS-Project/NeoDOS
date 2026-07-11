@@ -368,25 +368,42 @@ pub(super) fn handler_write(regs: super::Registers) -> u64 {
     let ptr = regs.rcx as *const u8;
     let len = regs.rdx as usize;
 
+    if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
+        return err_to_u64(SyscallError::Fault);
+    }
+    let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+
     let entry = current_handle_entry(fd);
 
     if entry.is_stdout() || entry.is_stderr() {
-        if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
-            return err_to_u64(SyscallError::Fault);
-        }
-        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
         if let Ok(s) = core::str::from_utf8(slice) {
             crate::console::print_str(s);
         }
         len as u64
     } else if entry.is_pipe_write() {
-        if !is_user_ptr_valid(regs.rcx, len as u64) || len > 4096 {
-            return err_to_u64(SyscallError::Fault);
-        }
-        let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
         match crate::object::pipe::PIPE_MANAGER.write(entry.native_id().unwrap_or(0) as u8, slice) {
             Ok(n) => n as u64,
             Err(_) => err_to_u64(SyscallError::Pipe),
+        }
+    } else if entry.obj_type() == Some(crate::object::ObType::Filesystem) {
+        let drive_idx = entry.drive().unwrap_or(0) as usize;
+        let inode_num = entry.native_id().unwrap_or(0) as u32;
+        let handle_offset = entry.offset;
+        let result = crate::globals::with_vfs(|vfs| {
+            vfs.write(drive_idx, inode_num, handle_offset, slice)
+        });
+        match result {
+            Ok(bytes_written) => {
+                crate::hal::without_interrupts(|| {
+                    let s = crate::scheduler::current_scheduler();
+                    let mut lock = s.lock();
+                    if let Some(ep) = lock.current_eprocess_mut() {
+                        ep.handle_table[fd as usize].offset += bytes_written as u64;
+                    }
+                });
+                bytes_written as u64
+            }
+            Err(_) => err_to_u64(SyscallError::Io),
         }
     } else {
         err_to_u64(SyscallError::BadF)

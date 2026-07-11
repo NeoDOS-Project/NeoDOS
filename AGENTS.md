@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.49.0 | **Tests:** 656 | **ABI:** v7 | **Ob API:** RAX 60-76
+**Version:** v0.49.1 | **Tests:** 625 (kernel) | **ABI:** v7 | **Ob API:** RAX 60-76
 
 ## Permanent Rules (MUST always follow)
 

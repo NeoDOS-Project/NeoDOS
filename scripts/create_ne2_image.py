@@ -223,7 +223,7 @@ def collect_files():
                     'datetime', 'ver', 'neomem', 'vol', 'echo', 'label',
                     'coretype', 'tree', 'corecls', 'corecopy', 'coredel',
                     'coreren', 'coremd', 'corerd', 'drives', 'ps', 'keyb', 'coredir',
-                    'poweroff']
+                    'poweroff', 'colors']
     tools_nxe = ['kill', 'pri', 'fsck', 'ndreg', 'loadnem', 'progress',
                  'neotop', 'dhcpd', 'netcfg', 'ipconfig', 'cpuinfo']
     for name in programs_nxe + tools_nxe:

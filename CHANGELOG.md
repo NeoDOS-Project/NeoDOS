@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.49.1 — 2026-07-11
+
+### Added
+- **Console ANSI 256-color + truecolor** — `ESC[38;5;Nm`/`48;5;Nm` (256-color) and `ESC[38;2;R;G;Bm`/`48;2;R;G;Bm` (truecolor) now parsed in kernel console. New getter `get_fg()`/`get_bg()` types changed to `u32` with color encoding (mode + value). New exports in libconsole-nxl and libneodos: `console_set_color_256()`, `console_set_truecolor()`, `set_color_256()`, `set_truecolor()`. Tests: `ansi_256_color`, `ansi_truecolor`.
+- **Shell redirection (SH-REDIR)** — New `userbin/neoshell/src/redir.rs` module: `parse_line()` handles `>`, `<`, `>>`, `2>`, `2>>` redirection syntax. Integrated into `execute_line()` and `run_pipeline()` for both simple commands and pipelines. Supports pipe + redirect combinations.
+- **File write via sys_write (RAX 1)** — `handler_write()` now supports Filesystem-type handles: writes to file at current offset, advances offset automatically.
+- **Socket ephemeral port (NET-1.7)** — `SocketManager::allocate_ephemeral_port()` allocates ports in IANA dynamic range (49152–65535). `socket_bind()` auto-assigns ephemeral port when port 0 is requested. Auto-assigns default NIC via `socket_assign_default_nic()`. Test: `socket_auto_port_assign`.
+- **colors userbin** — New `.NXE` binary in `userbin/colors/` for testing console color capabilities.
+- **Power Manager design doc** — `docs/power-manager.md` with full architecture, audit, phased implementation plan.
+- **NeoCfg design doc** — `docs/design/neocfg-design.md` with panel de control specification.
+- **NeoKBD design doc** — `docs/design/neokbd-design.md` with keyboard manager architecture.
+
+### Changed
+- **Pipe Ob refactoring** — Pipe creation in `handler_ob_create` now uses Ob reference counting instead of direct HandleEntry constructors. Pipes managed as proper Ob objects with `PIPE_OPS`.
+- **Test binary migration** — Moved `run_user_test_binary()` from kernel to NeoInit. CMDTEST and SHTEST now run as user-mode Ring 3 processes via `try_spawn_test()` in `neoinit/src/main.rs`.
+- **Shell prompt and FD handling** — Prompt now uses a single `write_str` call. Pipeline FD handling refactored to use `RedirFds` from `redir.rs`. Built-in commands call `fds.close_all()`.
+- **IMPROVEMENTS.md** — Updated roadmap with KBD-PHASE1, KBD-PHASE2, ADM-NEOKEY, PM-PHASE2 through PM-PHASE5 roadmap items.
+
+### Fixed
+- **socket_bind ephemeral port check** — Fixed bug where `socket_bind()` incorrectly checked socket's existing port instead of caller's requested port, causing explicit port 8080 to be overridden with an ephemeral port.
+
+### Tests
+- 625 kernel tests pass (1 new: `socket_auto_port_assign`, 2 new: `ansi_256_color`, `ansi_truecolor`).
+
 ## v0.49.0 — 2026-07-08
 
 ### Removed (NeoFS v1 obsolescence)

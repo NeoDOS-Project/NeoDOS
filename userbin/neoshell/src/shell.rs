@@ -4,6 +4,7 @@ use core;
 use neoshell_lib::env::{EnvVar, MAX_ENV};
 use neoshell_lib::pipeline::{self, MAX_PIPELINE};
 use crate::completion::{BUILTINS, set_completion_ctx, shell_complete};
+use crate::redir;
 
 const LINE_BUF_SIZE: usize = 256;
 const ARGS_ADDR: u64 = 0x41F000;
@@ -81,13 +82,23 @@ impl Shell {
         }
     }
 
-    fn prompt(&self) {
-        let mut b = [0u8; 256];
-        match syscall::sys_getcwd(&mut b) {
-            Ok(n) if n > 0 => write_str(&b[..n]),
-            _ => write_str(b"C:\\"),
+    fn prompt(&mut self) {
+        let mut out = [0u8; 384];
+        let mut p = 0usize;
+
+        let mut cwdb = [0u8; 256];
+        match syscall::sys_getcwd(&mut cwdb) {
+            Ok(n) if n > 0 => {
+                let sl = n.min(384 - p);
+                out[p..p + sl].copy_from_slice(&cwdb[..sl]); p += sl;
+            }
+            _ => {
+                out[p] = b'C'; p += 1; out[p] = b':'; p += 1; out[p] = b'\\'; p += 1;
+            }
         }
-        write_str(b"> ");
+        out[p] = b'>'; p += 1; out[p] = b' '; p += 1;
+
+        write_str(&out[..p]);
     }
 
     fn get_drive(&self) -> u8 {
@@ -264,18 +275,24 @@ impl Shell {
             } else { write_err(b"\r\nInvalid drive\r\n"); }
             return;
         }
-        let up = first_token(trimmed);
+        let parsed = redir::parse_line(trimmed);
+        if let Some(e) = parsed.error {
+            write_err(b"\r\n"); write_err(e.as_bytes()); write_err(b"\r\n");
+            return;
+        }
+        let cmd_slice = &parsed.cmd[..parsed.cmd_len];
+        let args_slice = &parsed.args[..parsed.args_len];
+        let fds = parsed.fds;
         let mut cu = [0u8; 32];
-        let cul = { let n = up.len().min(31); cu[..n].copy_from_slice(&up[..n]); make_ascii_uppercase(&mut cu[..n]); n };
+        let cul = { let n = cmd_slice.len().min(31); cu[..n].copy_from_slice(&cmd_slice[..n]); make_ascii_uppercase(&mut cu[..n]); n };
         match &cu[..cul] {
-            b"CWD" => self.cmd_cwd(),
-            b"SET" => self.cmd_set(trimmed),
-            b"EXIT" => self.cmd_exit(),
-            b"CALL" => self.cmd_call(trimmed),
+            b"CWD" => { fds.close_all(); self.cmd_cwd(); }
+            b"SET" => { fds.close_all(); self.cmd_set(trimmed); }
+            b"EXIT" => { fds.close_all(); self.cmd_exit(); }
+            b"CALL" => { fds.close_all(); self.cmd_call(trimmed); }
             _ => {
                 write_str(b"\r\n");
-                let rest = after_first_token(trimmed);
-                unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=rest.len().min(255); core::ptr::copy_nonoverlapping(rest.as_ptr(),d,n); d.add(n).write(0); }
+                unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=args_slice.len().min(255); core::ptr::copy_nonoverlapping(args_slice.as_ptr(),d,n); d.add(n).write(0); }
                 const ALIASES: &[(&[u8], &[u8])] = &[
                     (b"HELP", b"COREHELP"), (b"DIR", b"COREDIR"), (b"CLS", b"CORECLS"),
                     (b"MD", b"COREMD"), (b"RD", b"CORERD"), (b"DEL", b"COREDEL"),
@@ -293,18 +310,19 @@ impl Shell {
                             let fb = fs.as_bytes();
                             fb.len() >= 7 && fb[fb.len()-7..].eq_ignore_ascii_case(b"\\CD.NXE")
                         };
-                        let pk = (0xFFu64)|((0xFFu64)<<8)|((0xFFu64)<<16);
+                        let pk = (fds.stdin_fd as u64) | ((fds.stdout_fd as u64) << 8) | ((fds.stderr_fd as u64) << 16);
                         let mut ob = [0u8; 512];
                         let obp = to_ob_path(fs, &mut ob);
                         match syscall::sys_ob_create(obp, syscall::ob_type::PROCESS, None, pk) {
                             Ok(fd) => {
-                                write_str(b"[OB "); write_u64(fd as u64); write_str(b"] "); write_str(up); write_str(b"\r\n");
+                                fds.close_all();
+                                write_str(b"[OB "); write_u64(fd as u64); write_str(b"] "); write_str(cmd_slice); write_str(b"\r\n");
                                 if syscall::sys_ob_wait(fd).is_err() { write_err(b"ob_wait error\r\n"); }
                                 else if iscd {
                                     let mut rb = [0u8; 256];
                                     unsafe { core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, rb.as_mut_ptr(), 256); }
                                     let r = trim_ascii(&rb);
-                                    if rest.is_empty() { if !r.is_empty() { write_str(b"\r\n"); write_str(r); write_str(b"\r\n"); } }
+                                    if args_slice.is_empty() { if !r.is_empty() { write_str(b"\r\n"); write_str(r); write_str(b"\r\n"); } }
                                     else if !r.is_empty() {
                                         let p = core::str::from_utf8(r).unwrap_or("");
                                         let pb = p.as_bytes();
@@ -322,7 +340,10 @@ impl Shell {
                         break;
                     }
                 }
-                if !ok { write_err(b"Bad command or file name\r\n"); }
+                if !ok {
+                    fds.close_all();
+                    write_err(b"Bad command or file name\r\n");
+                }
             }
         }
     }
@@ -347,23 +368,42 @@ impl Shell {
             let ce = if ci<pp.len() { pp[ci] } else { line.len() };
             let sl = trim_ascii(&line[cs..ce]); cs = ce+1;
             if sl.is_empty() { write_err(b"\r\nInvalid pipe syntax\r\n"); err=true; break; }
-            let cn = first_token(sl); let ca = after_first_token(sl);
+            let parsed = redir::parse_line(sl);
+            if let Some(e) = parsed.error {
+                write_err(b"\r\n"); write_err(e.as_bytes()); write_err(b"\r\n"); err=true; break;
+            }
+            let cn = &parsed.cmd[..parsed.cmd_len];
+            let ca = &parsed.args[..parsed.args_len];
+            let pfds = parsed.fds;
             let mut cu=[0u8;32]; let cl={let n=cn.len().min(31); cu[..n].copy_from_slice(&cn[..n]); make_ascii_uppercase(&mut cu[..n]); n};
-            if BUILTINS.iter().any(|&bi| bi == &cu[..cl]) { write_err(b"\r\nCannot pipe built-in\r\n"); err=true; break; }
+            if BUILTINS.iter().any(|&bi| bi == &cu[..cl]) {
+                pfds.close_all();
+                write_err(b"\r\nCannot pipe built-in\r\n"); err=true; break;
+            }
             match self.resolve_path(&cu[..cl]) {
                 Ok(full) => {
                     let fs = core::str::from_utf8(&full[..full.iter().position(|&b|b==0).unwrap_or(full.len())]).unwrap_or("");
                     unsafe { let d=ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=ca.len().min(255); core::ptr::copy_nonoverlapping(ca.as_ptr(),d,n); d.add(n).write(0); }
-                    let si = if ci==0 { 0xFF } else { rf[ci-1] };
-                    let so = if ci==nc-1 { 0xFF } else { wf[ci] };
-                    let pk = (si as u64)|((so as u64)<<8)|((0xFFu64)<<16);
+                    let si = if pfds.stdin_fd != 0xFF { pfds.stdin_fd } else if ci==0 { 0xFF } else { rf[ci-1] };
+                    let so = if pfds.stdout_fd != 0xFF { pfds.stdout_fd } else if ci==nc-1 { 0xFF } else { wf[ci] };
+                    let se = if pfds.stderr_fd != 0xFF { pfds.stderr_fd } else { 0xFF };
+                    let pk = (si as u64)|((so as u64)<<8)|((se as u64)<<16);
                     let mut ob=[0u8;512];
                     match syscall::sys_ob_create(to_ob_path(fs,&mut ob), syscall::ob_type::PROCESS, None, pk) {
-                        Ok(_) => { write_str(b"\r\n["); write_u64(0); write_str(b"] "); write_str(cn); write_str(b"\r\n"); }
-                        Err(_) => { write_err(b"\r\nBad command or file name\r\n"); err=true; break; }
+                        Ok(_) => {
+                            pfds.close_all();
+                            write_str(b"\r\n["); write_u64(0); write_str(b"] "); write_str(cn); write_str(b"\r\n");
+                        }
+                        Err(_) => {
+                            pfds.close_all();
+                            write_err(b"\r\nBad command or file name\r\n"); err=true; break;
+                        }
                     }
                 }
-                Err(_) => { write_err(b"\r\nBad command or file name\r\n"); err=true; break; }
+                Err(_) => {
+                    pfds.close_all();
+                    write_err(b"\r\nBad command or file name\r\n"); err=true; break;
+                }
             }
             if ci>0 { let _=syscall::sys_close(rf[ci-1]); }
             if ci<pp.len() { let _=syscall::sys_close(wf[ci]); }

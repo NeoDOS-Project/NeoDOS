@@ -10,6 +10,7 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 }
 
 mod completion;
+mod redir;
 mod shell;
 
 #[no_mangle]

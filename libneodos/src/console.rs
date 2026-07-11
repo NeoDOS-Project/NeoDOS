@@ -39,7 +39,9 @@ pub struct ConsoleAbiTable {
     pub progress_update: extern "C" fn(i32, u64),
     pub progress_set_message: extern "C" fn(i32, *const u8),
     pub progress_finish: extern "C" fn(i32),
-    _reserved: [u64; 8],
+    pub set_color_256: extern "C" fn(u8, u8),
+    pub set_truecolor: extern "C" fn(u8, u8, u8, u8, u8, u8),
+    _reserved: [u64; 6],
 }
 
 fn get_table() -> Option<&'static ConsoleAbiTable> {
@@ -110,6 +112,20 @@ pub fn write_line(text: &[u8]) -> i32 {
 pub fn set_color(fg: u8, bg: u8) {
     if let Some(t) = get_table() {
         (t.set_color)(fg, bg);
+    }
+}
+
+/// Set foreground and background using xterm 256-color palette (0-255).
+pub fn set_color_256(fg: u8, bg: u8) {
+    if let Some(t) = get_table() {
+        (t.set_color_256)(fg, bg);
+    }
+}
+
+/// Set foreground and background using 24-bit truecolor (0-255 each channel).
+pub fn set_truecolor(fg_r: u8, fg_g: u8, fg_b: u8, bg_r: u8, bg_g: u8, bg_b: u8) {
+    if let Some(t) = get_table() {
+        (t.set_truecolor)(fg_r, fg_g, fg_b, bg_r, bg_g, bg_b);
     }
 }
 

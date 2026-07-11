@@ -206,15 +206,21 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 return err_to_u64(SyscallError::Fault);
             }
             let ob_id = match crate::object::ob_create_object_path(
-                &path_str, obj_type, 0, None,
+                &path_str, obj_type, 0, Some(&crate::object::pipe::PIPE_OPS),
             ) {
                 Ok(id) => id,
                 Err(e) => return err_to_u64(ob_err_to_syscall(e)),
             };
             let obj = crate::object::ob_lookup(ob_id).unwrap();
             let pipe_id = obj.native_id as u8;
-            let read_entry = crate::handle::HandleEntry::pipe_read(pipe_id);
-            let write_entry = crate::handle::HandleEntry::pipe_write(pipe_id);
+            let read_entry = crate::handle::HandleEntry {
+                object_id: ob_id,
+                offset: 0,
+            };
+            let write_entry = crate::handle::HandleEntry {
+                object_id: ob_id,
+                offset: 1,
+            };
             let (rfd, wfd) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler();
                 let mut lock = s.lock();
@@ -235,6 +241,9 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 let _ = crate::object::ob_close_object(ob_id);
                 return err_to_u64(SyscallError::NoMem);
             }
+            crate::object::ob_reference(ob_id).ok();
+            crate::object::ob_reference(ob_id).ok();
+            let _ = crate::object::ob_close_object(ob_id);
             unsafe {
                 (fds_out as *mut u64).write(rfd);
                 (fds_out as *mut u64).add(1).write(wfd);
@@ -687,6 +696,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 Some(id) => id,
                 None => return err_to_u64(SyscallError::NoMem),
             };
+
+            // Assign default NIC if available (no NIC_REGISTRY lock ordering concern
+            // since we don't hold SOCKET_MANAGER lock here).
+            crate::net::socket::socket_assign_default_nic(socket_id);
 
             if sock_type == crate::net::types::SocketType::Tcp {
                 if let Some(tcp_id) = crate::net::tcp::tcp_alloc_connection() {

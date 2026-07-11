@@ -421,6 +421,60 @@ pub extern "C" fn console_set_color(fg: u8, bg: u8) {
 pub extern "C" fn console_reset_color() { write_str(b"\x1b[0m"); }
 
 #[no_mangle]
+pub extern "C" fn console_set_color_256(fg: u8, bg: u8) {
+    let mut buf = [0u8; 24];
+    let mut tmp = [0u8; 4];
+    // foreground: ESC[38;5;Fm
+    buf[0] = 0x1B; buf[1] = b'['; buf[2] = b'3'; buf[3] = b'8'; buf[4] = b';';
+    buf[5] = b'5'; buf[6] = b';';
+    let fl = u64_to_str(fg as u64, &mut tmp);
+    buf[7..7 + fl].copy_from_slice(&tmp[..fl]);
+    buf[7 + fl] = b'm';
+    write_str(&buf[..8 + fl]);
+    // background: ESC[48;5;Bm
+    buf[0] = 0x1B; buf[1] = b'['; buf[2] = b'4'; buf[3] = b'8'; buf[4] = b';';
+    buf[5] = b'5'; buf[6] = b';';
+    let bl = u64_to_str(bg as u64, &mut tmp);
+    buf[7..7 + bl].copy_from_slice(&tmp[..bl]);
+    buf[7 + bl] = b'm';
+    write_str(&buf[..8 + bl]);
+}
+
+#[no_mangle]
+pub extern "C" fn console_set_truecolor(fg_r: u8, fg_g: u8, fg_b: u8, bg_r: u8, bg_g: u8, bg_b: u8) {
+    let mut buf = [0u8; 48];
+    let mut tmp = [0u8; 4];
+    // foreground: ESC[38;2;R;G;Bm
+    buf[0] = 0x1B; buf[1] = b'['; buf[2] = b'3'; buf[3] = b'8'; buf[4] = b';';
+    buf[5] = b'2'; buf[6] = b';';
+    let mut pos = 7;
+    let fl = u64_to_str(fg_r as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b';'; pos += 1;
+    let fl = u64_to_str(fg_g as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b';'; pos += 1;
+    let fl = u64_to_str(fg_b as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b'm'; pos += 1;
+    write_str(&buf[..pos]);
+    // background: ESC[48;2;R;G;Bm
+    buf[0] = 0x1B; buf[1] = b'['; buf[2] = b'4'; buf[3] = b'8'; buf[4] = b';';
+    buf[5] = b'2'; buf[6] = b';';
+    pos = 7;
+    let fl = u64_to_str(bg_r as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b';'; pos += 1;
+    let fl = u64_to_str(bg_g as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b';'; pos += 1;
+    let fl = u64_to_str(bg_b as u64, &mut tmp);
+    buf[pos..pos + fl].copy_from_slice(&tmp[..fl]); pos += fl;
+    buf[pos] = b'm'; pos += 1;
+    write_str(&buf[..pos]);
+}
+
+#[no_mangle]
 pub extern "C" fn console_clear_screen() { write_str(b"\x1b[2J"); }
 
 #[no_mangle]
@@ -618,7 +672,9 @@ pub struct ConsoleAbiTable {
     pub progress_update: extern "C" fn(i32, u64),
     pub progress_set_message: unsafe extern "C" fn(i32, *const u8),
     pub progress_finish: extern "C" fn(i32),
-    _reserved: [u64; 8],
+    pub set_color_256: extern "C" fn(u8, u8),
+    pub set_truecolor: extern "C" fn(u8, u8, u8, u8, u8, u8),
+    _reserved: [u64; 6],
 }
 
 #[no_mangle]
@@ -644,7 +700,9 @@ pub static CONSOLE_EXPORT_TABLE: ConsoleAbiTable = ConsoleAbiTable {
     progress_update,
     progress_set_message,
     progress_finish,
-    _reserved: [0; 8],
+    set_color_256: console_set_color_256,
+    set_truecolor: console_set_truecolor,
+    _reserved: [0; 6],
 };
 
 // ── NXL boilerplate ────────────────────────────

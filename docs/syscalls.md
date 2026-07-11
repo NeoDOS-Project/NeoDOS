@@ -141,9 +141,10 @@ Terminates the calling process and frees all allocated resources.
 - **Returns**: Does not return.
 
 ### 1 — `sys_write`
-Writes a buffer to a file descriptor (stdout, stderr, pipe writer).
+Writes a buffer to a file descriptor (stdout, stderr, pipe writer, Filesystem handle).
 - **Args**: `RBX`=fd, `RCX`=buf, `RDX`=len.
 - **Returns**: Bytes written, or error code.
+- **Filesystem**: When fd refers to an open file handle, writes at current offset and advances it.
 
 ### 2 — `sys_yield`
 Voluntarily yields the CPU. Running->Ready, resets time slice, forces reschedule.

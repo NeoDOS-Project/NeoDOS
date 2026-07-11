@@ -8,7 +8,7 @@ use crate::font;
 const VGA_WIDTH: usize = 160;
 const VGA_HEIGHT: usize = 50;
 
-use core::sync::atomic::{AtomicUsize, AtomicU8, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicUsize, AtomicU8, AtomicU32, AtomicBool, Ordering};
 
 static ROW: AtomicUsize = AtomicUsize::new(0);
 static COL: AtomicUsize = AtomicUsize::new(0);
@@ -45,8 +45,19 @@ const ANSI_ESC: u8 = 1;
 const ANSI_CSI: u8 = 2;
 
 static ANSI_STATE: AtomicU8 = AtomicU8::new(ANSI_NORMAL);
-static ANSI_FG: AtomicU8 = AtomicU8::new(7);    // default fg = white
-static ANSI_BG: AtomicU8 = AtomicU8::new(0);    // default bg = black
+// Color encoding: bits [31:24] = mode (0=ANSI 16-color, 1=256-color, 2=truecolor)
+//                 bits [23:0]  = value (index for 0/1, RGB for truecolor)
+const CM_ANSI: u32 = 0;
+const CM_256: u32 = 1;
+const CM_TRUECOLOR: u32 = 2;
+const CM_SHIFT: u32 = 24;
+
+fn enc_color(mode: u32, val: u32) -> u32 { (mode << CM_SHIFT) | (val & 0x00FF_FFFF) }
+fn dec_mode(c: u32) -> u32 { (c >> CM_SHIFT) & 0x3 }
+fn dec_val(c: u32) -> u32 { c & 0x00FF_FFFF }
+
+static ANSI_FG: AtomicU32 = AtomicU32::new(7);    // default fg = white (ANSI index 7)
+static ANSI_BG: AtomicU32 = AtomicU32::new(0);    // default bg = black (ANSI index 0)
 static ANSI_BOLD: AtomicBool = AtomicBool::new(false);
 
 // Parser transient state — only accessed when ANSI_STATE == CSI.
@@ -61,19 +72,53 @@ static mut ANSI_CSI_HAS_DIGIT: bool = false;
 // ── Public helpers for tests ──────────────────────────────────────────────
 pub fn get_row() -> usize { ROW.load(Ordering::SeqCst) }
 pub fn get_col() -> usize { COL.load(Ordering::SeqCst) }
-pub fn get_fg() -> u8 { ANSI_FG.load(Ordering::Relaxed) }
-pub fn get_bg() -> u8 { ANSI_BG.load(Ordering::Relaxed) }
+pub fn get_fg() -> u32 { ANSI_FG.load(Ordering::Relaxed) }
+pub fn get_bg() -> u32 { ANSI_BG.load(Ordering::Relaxed) }
 pub fn get_bold() -> bool { ANSI_BOLD.load(Ordering::Relaxed) }
 
+fn xterm_256_to_rgb(index: u8) -> u32 {
+    if index < 16 {
+        ANSI_COLORS[index as usize]
+    } else if index < 232 {
+        let i = index - 16;
+        let r = (i / 36) % 6;
+        let g = (i / 6) % 6;
+        let b = i % 6;
+        let to_byte = |v: u8| -> u8 { if v == 0 { 0 } else { v * 40 + 55 } };
+        (to_byte(r as u8) as u32) << 16
+            | (to_byte(g as u8) as u32) << 8
+            | to_byte(b as u8) as u32
+    } else {
+        let s = ((index - 232) * 10 + 8) as u32;
+        (s << 16) | (s << 8) | s
+    }
+}
+
+fn resolve_color(enc: u32, is_fg: bool) -> u32 {
+    let mode = dec_mode(enc);
+    let val = dec_val(enc) as u8;
+    match mode {
+        CM_ANSI => {
+            if is_fg {
+                let bold = ANSI_BOLD.load(Ordering::Relaxed);
+                let idx = if bold && val < 8 { val + 8 } else { val };
+                ANSI_COLORS[idx as usize]
+            } else {
+                ANSI_COLORS[val as usize]
+            }
+        }
+        CM_256 => xterm_256_to_rgb(val),
+        CM_TRUECOLOR => enc & 0x00FF_FFFF,
+        _ => if is_fg { ANSI_COLORS[7] } else { ANSI_COLORS[0] },
+    }
+}
+
 fn current_fg_rgb() -> u32 {
-    let idx = ANSI_FG.load(Ordering::Relaxed);
-    let bold = ANSI_BOLD.load(Ordering::Relaxed);
-    let actual = if bold && idx < 8 { idx + 8 } else { idx };
-    ANSI_COLORS[actual as usize]
+    resolve_color(ANSI_FG.load(Ordering::Relaxed), true)
 }
 
 fn current_bg_rgb() -> u32 {
-    ANSI_COLORS[ANSI_BG.load(Ordering::Relaxed) as usize]
+    resolve_color(ANSI_BG.load(Ordering::Relaxed), false)
 }
 
 // ── VgaWriter (fmt::Write) ─────────────────────────────────────────────────
@@ -116,8 +161,8 @@ pub fn init() {}
 pub struct ConsoleState {
     pub row: usize,
     pub col: usize,
-    pub fg: u8,
-    pub bg: u8,
+    pub fg: u32,
+    pub bg: u32,
     pub bold: bool,
     pub cursor_visible: bool,
 }
@@ -237,30 +282,58 @@ fn execute_ansi_csi(cmd: u8) {
         match cmd {
             b'm' => { // SGR — Select Graphic Rendition
                 if count == 0 {
-                    // No params = reset (ESC[m ≣ ESC[0m)
                     ANSI_FG.store(7, Ordering::Relaxed);
                     ANSI_BG.store(0, Ordering::Relaxed);
                     ANSI_BOLD.store(false, Ordering::Relaxed);
                 }
-                for &p in params {
+                let mut i = 0;
+                while i < count {
+                    let p = params[i];
                     match p {
                         0 => {
-                            ANSI_FG.store(7, Ordering::Relaxed);
-                            ANSI_BG.store(0, Ordering::Relaxed);
+                            ANSI_FG.store(enc_color(CM_ANSI, 7), Ordering::Relaxed);
+                            ANSI_BG.store(enc_color(CM_ANSI, 0), Ordering::Relaxed);
                             ANSI_BOLD.store(false, Ordering::Relaxed);
                         }
                         1 => { ANSI_BOLD.store(true, Ordering::Relaxed); }
                         22 => { ANSI_BOLD.store(false, Ordering::Relaxed); }
-                        30..=37 => { ANSI_FG.store((p - 30) as u8, Ordering::Relaxed); }
-                        38 => {} // extended fg — not implemented
-                        39 => { ANSI_FG.store(7, Ordering::Relaxed); }
-                        40..=47 => { ANSI_BG.store((p - 40) as u8, Ordering::Relaxed); }
-                        48 => {} // extended bg — not implemented
-                        49 => { ANSI_BG.store(0, Ordering::Relaxed); }
-                        90..=97 => { ANSI_FG.store((p - 90 + 8) as u8, Ordering::Relaxed); }
-                        100..=107 => { ANSI_BG.store((p - 100 + 8) as u8, Ordering::Relaxed); }
+                        30..=37 => { ANSI_FG.store(enc_color(CM_ANSI, (p - 30) as u32), Ordering::Relaxed); }
+                        38 => {
+                            i += 1;
+                            if i < count && params[i] == 5 && i + 1 < count {
+                                i += 1;
+                                ANSI_FG.store(enc_color(CM_256, params[i] as u32), Ordering::Relaxed);
+                            } else if i < count && params[i] == 2 && i + 3 < count {
+                                let r = params[i + 1] as u8;
+                                let g = params[i + 2] as u8;
+                                let b = params[i + 3] as u8;
+                                ANSI_FG.store(enc_color(CM_TRUECOLOR,
+                                    (r as u32) << 16 | (g as u32) << 8 | b as u32), Ordering::Relaxed);
+                                i += 3;
+                            }
+                        }
+                        39 => { ANSI_FG.store(enc_color(CM_ANSI, 7), Ordering::Relaxed); }
+                        40..=47 => { ANSI_BG.store(enc_color(CM_ANSI, (p - 40) as u32), Ordering::Relaxed); }
+                        48 => {
+                            i += 1;
+                            if i < count && params[i] == 5 && i + 1 < count {
+                                i += 1;
+                                ANSI_BG.store(enc_color(CM_256, params[i] as u32), Ordering::Relaxed);
+                            } else if i < count && params[i] == 2 && i + 3 < count {
+                                let r = params[i + 1] as u8;
+                                let g = params[i + 2] as u8;
+                                let b = params[i + 3] as u8;
+                                ANSI_BG.store(enc_color(CM_TRUECOLOR,
+                                    (r as u32) << 16 | (g as u32) << 8 | b as u32), Ordering::Relaxed);
+                                i += 3;
+                            }
+                        }
+                        49 => { ANSI_BG.store(enc_color(CM_ANSI, 0), Ordering::Relaxed); }
+                        90..=97 => { ANSI_FG.store(enc_color(CM_ANSI, (p - 90 + 8) as u32), Ordering::Relaxed); }
+                        100..=107 => { ANSI_BG.store(enc_color(CM_ANSI, (p - 100 + 8) as u32), Ordering::Relaxed); }
                         _ => {}
                     }
+                    i += 1;
                 }
             }
 
@@ -610,5 +683,62 @@ pub fn register_ansi_tests() {
         // Restore
         ROW.store(saved_row, Ordering::SeqCst);
         COL.store(saved_col, Ordering::SeqCst);
+    });
+
+    test_case!("ansi_256_color", {
+        let saved_fg = ANSI_FG.load(Ordering::Relaxed);
+        let saved_bg = ANSI_BG.load(Ordering::Relaxed);
+        let saved_bold = ANSI_BOLD.load(Ordering::Relaxed);
+
+        // ESC[38;5;82m — 256-color fg (green: index 82 = cube 1,3,4)
+        print_str("\x1b[38;5;82m");
+        let fg = ANSI_FG.load(Ordering::Relaxed);
+        test_eq!(dec_mode(fg), CM_256);
+        test_eq!(dec_val(fg), 82);
+        // xterm 82 = cube 1,3,4 → RGB(0, 215, 0) in case value is right
+        test_eq!(xterm_256_to_rgb(82), 0x005FFF00);
+
+        // ESC[48;5;196m — 256-color bg (bright red)
+        print_str("\x1b[48;5;196m");
+        let bg = ANSI_BG.load(Ordering::Relaxed);
+        test_eq!(dec_mode(bg), CM_256);
+        test_eq!(dec_val(bg), 196);
+        test_eq!(xterm_256_to_rgb(196), 0xFF0000);
+
+        // Reset clears extended colors
+        print_str("\x1b[0m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), enc_color(CM_ANSI, 7));
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), enc_color(CM_ANSI, 0));
+
+        ANSI_FG.store(saved_fg, Ordering::Relaxed);
+        ANSI_BG.store(saved_bg, Ordering::Relaxed);
+        ANSI_BOLD.store(saved_bold, Ordering::Relaxed);
+    });
+
+    test_case!("ansi_truecolor", {
+        let saved_fg = ANSI_FG.load(Ordering::Relaxed);
+        let saved_bg = ANSI_BG.load(Ordering::Relaxed);
+        let saved_bold = ANSI_BOLD.load(Ordering::Relaxed);
+
+        // ESC[38;2;100;200;50m — truecolor fg
+        print_str("\x1b[38;2;100;200;50m");
+        let fg = ANSI_FG.load(Ordering::Relaxed);
+        test_eq!(dec_mode(fg), CM_TRUECOLOR);
+        test_eq!(dec_val(fg), 0x64C832);
+
+        // ESC[48;2;10;20;30m — truecolor bg
+        print_str("\x1b[48;2;10;20;30m");
+        let bg = ANSI_BG.load(Ordering::Relaxed);
+        test_eq!(dec_mode(bg), CM_TRUECOLOR);
+        test_eq!(dec_val(bg), 0x0A141E);
+
+        // Reset clears truecolor
+        print_str("\x1b[0m");
+        test_eq!(ANSI_FG.load(Ordering::Relaxed), enc_color(CM_ANSI, 7));
+        test_eq!(ANSI_BG.load(Ordering::Relaxed), enc_color(CM_ANSI, 0));
+
+        ANSI_FG.store(saved_fg, Ordering::Relaxed);
+        ANSI_BG.store(saved_bg, Ordering::Relaxed);
+        ANSI_BOLD.store(saved_bold, Ordering::Relaxed);
     });
 }
