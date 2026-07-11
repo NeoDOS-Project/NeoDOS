@@ -31,14 +31,16 @@ Return in `RAX`: `>= 0` success, `< 0` error. All other GPRs preserved.
 
 ```rust
 pub enum SyscallNum {
-    Exit = 0, Write = 1, Yield = 2, GetPid = 3, Read = 4,
+    Exit = 0, Write = 1, Yield = 2, /* GetPid = 3 — removed; use Ob API */
+    Read = 4,
     Dup2 = 6, ReadDir = 8, WaitPid = 9, WriteFile = 12, Close = 13,
     ChDir = 16, Brk = 18, Mmap = 19, Munmap = 20, LoadLib = 21,
     ThreadCreate = 22, ThreadJoin = 23, SetExceptionHandler = 29,
-    WaitAlertable = 40, SleepEx = 41, Poweroff = 42,
+    WaitAlertable = 40, SleepEx = 41, /* Poweroff = 42 — removed; use Ob API */
     GetVolumeLabel = 46, ChDirParent = 47, KObjEnum = 48,
     SetPriority = 51, KillProcess = 52, CursorBlink = 53,
-    SetVolumeLabel = 54, Fsck = 55, DriverLoad = 57, DriverUnload = 58,
+    SetVolumeLabel = 54, /* Fsck = 55 — removed; use Ob API */
+    DriverLoad = 57, DriverUnload = 58,
     Poll = 59,
     ObOpen = 60, ObCreate = 61, ObQueryInfo = 62, ObSetInfo = 63,
     ObEnum = 64, ObWait = 65, ObDestroy = 66,
@@ -112,8 +114,8 @@ syscall number has a registered handler:
 ```rust
 pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 6, 13, 16, 18, 19, 20, 21, 29,
-        40, 41, 42, 47, 53, 55, 58, 59,
+        0, 1, 2, 4, 6, 13, 16, 18, 19, 20, 21, 29,
+        40, 41, 47, 53, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
         67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
     ];
@@ -151,10 +153,11 @@ Voluntarily yields the CPU. Running->Ready, resets time slice, forces reschedule
 - **Args**: None.
 - **Returns**: `0`.
 
-### 3 — `sys_getpid`
-Retrieves the Process ID (PID) of the calling process.
-- **Args**: None.
-- **Returns**: PID (`u32`).
+### 3 — `sys_getpid` **(REMOVED — use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)`)**
+Was: Retrieves the Process ID (PID) of the calling process. Now handled via Object Manager:
+- `ob_open("\\Global\\Info\\Process", READ)` returns a handle to a virtual info object
+- `ob_query_info(fd, ProcessId=34, buf)` reads 4 bytes → PID as u32 LE
+- `ob_destroy(fd)` closes the handle
 
 ### 4 — `sys_read`
 Reads data from a file descriptor (stdin, pipe reader). Blocks with `-EAGAIN` if pipe empty.
@@ -249,10 +252,11 @@ Enable/disable automatic cursor blinking.
 - **Args**: `RBX`=0 (disable), 1 (enable).
 - **Returns**: `0` on success, or error code.
 
-### 55 — `sys_fsck`
-Run filesystem integrity check. Returns `FsckStats`.
-- **Args**: `RBX`=buf_ptr, `RCX`=drive_char, `RDX`=repair_flag.
-- **Returns**: `FsckStats` filled on success, or error.
+### 55 — `sys_fsck` **(REMOVED — use `ob_query_info(FsckStatus)` / `ob_set_info(FsckRepair)`)**
+Was: Run filesystem integrity check. Now handled via Object Manager:
+- **Query**: `ob_query_info(fd, FsckStatus=33, buf)` on a Filesystem handle → returns `FsckStatsRaw` (read-only check)
+- **Repair**: `ob_set_info(fd, FsckRepair=39, &[repair_flag])` on a Filesystem handle → runs repair
+- The handle is obtained via `ob_open` on a path under `\Global\FileSystem\` (e.g. `\Global\FileSystem\C:\`).
 
 ### 58 — `sys_driver_unload`
 Unload a NEM driver by name (admin).
@@ -278,12 +282,12 @@ Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event,
 - **Returns**: fd, or error code.
 
 ### 62 — `sys_ob_query_info`
-Query object info. Classes: 0=Basic, 1=Name, 2=File, 3=Process, 4=Thread, 5=Pipe, 6=Device, 7=CpuInfo, 8=Version, 9=DateTime, 10=Memory, 11=Drives, 12=Drivers, 13=Cwd, 14=KeyboardLayout, 15=ReadContent, 16=VolumeLabel, 17=SocketInfo, 18=SocketAddr, 19=TcpStatus, 20=NicInfo, 21=RegistryKey, 22=RegistryValue, 23=SocketRecv.
+Query object info. Classes: 0=Basic, 1=Name, 2=File, 3=Process, 4=Thread, 5=Pipe, 6=Device, 7=CpuInfo, 8=Version, 9=DateTime, 10=Memory, 11=Drives, 12=Drivers, 13=Cwd, 14=KeyboardLayout, 15=ReadContent, 16=VolumeLabel, 17=SocketInfo, 18=SocketAddr, 19=TcpStatus, 20=NicInfo, 21=RegistryKey, 22=RegistryValue, 23=SocketRecv, 29=ServiceState, 30=ServiceConfig, 31=ServiceStatus, 33=FsckStatus, 34=ProcessId.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written, or error code.
 
 ### 63 — `sys_ob_set_info`
-Set object info. Classes: 0=ProcessPriority, 1=ThreadPriority, 2=ObjectName, 3=Security, 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=SectionMapView, 14=SectionUnmapView, 15=FileCreate, 16=FileDelete, 17=SetProcessVt, 18=SocketConnect, 19=SocketBind, 20=SocketListen, 21=SocketSend, 22=SocketClose, 23=RegistryCreateKey, 24=RegistryDeleteKey, 25=RegistrySetValue, 26=RegistryDeleteValue, 27=SetNicIp.
+Set object info. Classes: 0=ProcessPriority, 1=ThreadPriority, 2=ObjectName, 3=Security, 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=SectionMapView, 14=SectionUnmapView, 15=FileCreate, 16=FileDelete, 17=SetProcessVt, 18=SocketConnect, 19=SocketBind, 20=SocketListen, 21=SocketSend, 22=SocketClose, 23=RegistryCreateKey, 24=RegistryDeleteKey, 25=RegistrySetValue, 26=RegistryDeleteValue, 27=SetNicIp, 33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig, 37=PowerShutdown, 38=PowerReboot, 39=FsckRepair.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
   - `class=10 (TimerStart)`: Starts the timer. `buf` unused. Returns 0.
   - `class=11 (TimerCancel)`: Cancels a running timer. `buf` unused. Returns 0.
@@ -316,8 +320,8 @@ Destroy/delete an Ob object by fd (file, directory, namespace object).
 | Status | Syscalls | Description |
 |--------|----------|-------------|
 | Already Objects | RAX 60-66 (ob_open/create/query_info/set_info/enum/wait/destroy) | Native Ob operations, operate on namespace handles |
-| Removed from SSDT (use Ob) | pipe(5), spawn(7), open(10), close(13), readfile(11), mkdir, unlink, rmdir, rename, poweroff(42) | Replaced by ob_create/ob_open/ob_destroy + VFS object paths. Poweroff: use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
-| Foundation (intact) | exit, write, read, yield, getpid, brk, mmap, munmap, loadlib, thread_create/join, poll | Not object operations; remain as direct syscalls |
+| Removed from SSDT (use Ob) | pipe(5), spawn(7), open(10), close(13), readfile(11), mkdir, unlink, rmdir, rename, poweroff(42), fsck(55), getpid(3) | Replaced by ob_create/ob_open/ob_destroy + VFS object paths. Poweroff: use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)`. Fsck: use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle. Getpid: use `ob_open(\\Global\\Info\\Process)` + `ob_query_info(ProcessId=34)`. |
+| Foundation (intact) | exit, write, read, yield, brk, mmap, munmap, loadlib, thread_create/join, poll | Not object operations; remain as direct syscalls |
 | Registry | RAX 67-76 (Cm*) | Configuration Manager — cell-based hive syscalls |
 
 ## Architecture Rule

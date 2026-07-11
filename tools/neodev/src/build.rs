@@ -130,7 +130,7 @@ pub fn build_user_bins(disc: &Discovery) -> Result<Vec<(String, bool)>> {
                 .join("x86_64-unknown-none")
                 .join("release")
                 .join(&project.name);
-            let dst = project.path.join(&nxe_name);
+            let dst = project.path.parent().unwrap().join(&nxe_name);
             if src.exists() {
                 std::fs::copy(&src, &dst)?;
             }

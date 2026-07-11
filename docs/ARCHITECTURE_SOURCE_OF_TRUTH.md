@@ -641,7 +641,7 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permission
 | 0 | `exit` | `(code)` | STABLE |
 | 1 | `write` | `(fd, buf, len)` | STABLE |
 | 2 | `yield` | `()` | STABLE |
-| 3 | `getpid` | `()` | STABLE |
+| 3 | `getpid` | `()` | MIGRATED — use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
 | 4 | `read` | `(fd, buf, count)` | STABLE |
 | 5 | `pipe` | `(fds)` | STABLE |
 | 6 | `dup2` | `(old, new)` | STABLE |

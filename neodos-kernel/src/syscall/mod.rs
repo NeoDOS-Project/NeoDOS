@@ -44,7 +44,7 @@ pub enum SyscallNum {
     Exit = 0,
     Write = 1,
     Yield = 2,
-    GetPid = 3,
+    // GetPid = 3, — removed; use ob_open + ob_query_info(ProcessId)
     Read = 4,
     Dup2 = 6,
     ReadDir = 8,
@@ -60,7 +60,7 @@ pub enum SyscallNum {
     ThreadJoin = 23,
     WaitAlertable = 40,
     SleepEx = 41,
-    Poweroff = 42,
+    // Poweroff = 42, — removed; use ob_set_info(PowerShutdown/PowerReboot)
     GetVolumeLabel = 46,
     ChDirParent = 47,
     KObjEnum = 48,
@@ -69,7 +69,6 @@ pub enum SyscallNum {
     SetExceptionHandler = 29,
     CursorBlink = 53,
     SetVolumeLabel = 54,
-    Fsck = 55,
     DriverLoad = 57,
     DriverUnload = 58,
     Poll = 59,
@@ -103,7 +102,7 @@ impl SyscallNum {
             0 => Some(Self::Exit),
             1 => Some(Self::Write),
             2 => Some(Self::Yield),
-            3 => Some(Self::GetPid),
+             // 3 → getpid removed; use ob_open + ob_query_info(ProcessId)
             4 => Some(Self::Read),
             6 => Some(Self::Dup2),
             8 => Some(Self::ReadDir),
@@ -120,7 +119,7 @@ impl SyscallNum {
             29 => Some(Self::SetExceptionHandler),
             40 => Some(Self::WaitAlertable),
             41 => Some(Self::SleepEx),
-            42 => Some(Self::Poweroff),
+            // 42 → Poweroff removed; use Ob API (ob_set_info with PowerShutdown/PowerReboot)
             46 => Some(Self::GetVolumeLabel),
             47 => Some(Self::ChDirParent),
             48 => Some(Self::KObjEnum),
@@ -128,7 +127,7 @@ impl SyscallNum {
             52 => Some(Self::KillProcess),
             53 => Some(Self::CursorBlink),
             54 => Some(Self::SetVolumeLabel),
-            55 => Some(Self::Fsck),
+            // 55 → fsck removed; use ob_query_info/ob_set_info
             57 => Some(Self::DriverLoad),
             58 => Some(Self::DriverUnload),
             59 => Some(Self::Poll),
@@ -204,10 +203,10 @@ pub fn ob_err_to_syscall(e: crate::object::ObError) -> SyscallError {
 
 pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 3, 4, 6,
+        0, 1, 2, 4, 6,
         13, 16, 18, 19, 20, 21,
         29,
-        40, 41, 42, 47, 53, 55, 58, 59,
+        40, 41, 47, 53, 58, 59,
         60, 61, 62, 63, 64, 65, 66,
         67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
     ];
@@ -495,7 +494,7 @@ lazy_static! {
         t[0] = Some(handler_exit as SyscallFn);
         t[1] = Some(handler_write as SyscallFn);
         t[2] = Some(handler_yield as SyscallFn);
-        t[3] = Some(handler_getpid as SyscallFn);
+        // t[3] was handler_getpid — removed; use ob_open + ob_query_info(ProcessId)
         t[4] = Some(handler_read as SyscallFn);
         t[6] = Some(handler_dup2 as SyscallFn);
         t[13] = Some(handler_close as SyscallFn);
@@ -507,10 +506,8 @@ lazy_static! {
         t[29] = Some(handler_set_exception_handler as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
-        // t[42] was sys_poweroff — removed; power management uses Ob API (RAX=63 + PowerShutdown/PowerReboot)
         t[47] = Some(handler_chdir_parent as SyscallFn);
         t[53] = Some(handler_cursor_blink as SyscallFn);
-        t[55] = Some(handler_fsck as SyscallFn);
         t[58] = Some(handler_driver_unload as SyscallFn);
         t[59] = Some(handler_poll as SyscallFn);
         t[60] = Some(handler_ob_open as SyscallFn);
@@ -539,7 +536,6 @@ lazy_static! {
         t[0] = SyscallPermission::user();
         t[1] = SyscallPermission::user();
         t[2] = SyscallPermission::user();
-        t[3] = SyscallPermission::user();
         t[4] = SyscallPermission::user();
         t[5] = SyscallPermission::user();
         t[6] = SyscallPermission::user();
@@ -557,10 +553,8 @@ lazy_static! {
         t[29] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
-        t[42] = SyscallPermission::user();
         t[47] = SyscallPermission::user();
         t[53] = SyscallPermission::user();
-        t[55] = SyscallPermission::user();
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::user();
         t[60] = SyscallPermission::user();

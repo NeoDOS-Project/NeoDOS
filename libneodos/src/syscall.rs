@@ -39,7 +39,18 @@ pub fn sys_yield() {
 }
 
 pub fn sys_getpid() -> u32 {
-    (export::get_table().sys_getpid)()
+    // Use Ob API: open \Global\Info\Process, query ProcessId, close
+    let fd = match sys_ob_open("\\Global\\Info\\Process", ob_access::READ) {
+        Ok(f) => f,
+        Err(_) => return 0,
+    };
+    let mut pid = [0u8; 4];
+    let r = sys_ob_query_info(fd, ObInfoClass::ProcessId, &mut pid);
+    let _ = sys_close(fd);
+    match r {
+        Ok(_) => u32::from_le_bytes(pid),
+        Err(_) => 0,
+    }
 }
 
 pub fn sys_read(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
@@ -196,7 +207,7 @@ pub fn ob_power_shutdown() -> ! {
         }
         Err(_) => {}
     }
-    loop { unsafe { core::arch::asm!("hlt"); } }
+    loop {}
 }
 
 /// Open the PowerManager object and perform a reboot.
@@ -208,7 +219,7 @@ pub fn ob_power_reboot() -> ! {
         }
         Err(_) => {}
     }
-    loop { unsafe { core::arch::asm!("hlt"); } }
+    loop {}
 }
 
 /// DateTime — matches kernel's SysDateTime (RAX=44).
@@ -431,53 +442,6 @@ pub fn sys_set_volume_label(drive: u8, label: &[u8]) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
-/// FsckStats — mirrors kernel's FsckStatsRaw (RAX=55).
-#[repr(C)]
-pub struct FsckStats {
-    pub total_blocks: u64,
-    pub used_blocks: u64,
-    pub free_blocks: u64,
-    pub total_nodes: u64,
-    pub total_dirs: u64,
-    pub total_files: u64,
-    pub errors: u32,
-    pub warnings: u32,
-    pub repaired: u32,
-}
-
-/// sys_fsck (RAX=55): Run filesystem integrity check.
-/// drive = ASCII drive letter (e.g. b'C'), repair = true to repair errors.
-pub fn sys_fsck(drive: u8, repair: bool) -> Result<FsckStats, i64> {
-    let mut stats = FsckStats {
-        total_blocks: 0, used_blocks: 0, free_blocks: 0,
-        total_nodes: 0, total_dirs: 0, total_files: 0,
-        errors: 0, warnings: 0, repaired: 0,
-    };
-    let ptr = &mut stats as *mut FsckStats as *mut u8;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "push rdx",
-            "mov rax, 55",
-            "mov rbx, {ptr}",
-            "mov rcx, {drive}",
-            "mov rdx, {repair}",
-            "int 0x80",
-            "pop rdx",
-            "pop rcx",
-            "pop rbx",
-            ptr = in(reg) ptr as u64,
-            drive = in(reg) drive as u64,
-            repair = in(reg) repair as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(stats) }
-}
-
 /// DriverInfo — mirrors kernel's DriverInfoRaw (RAX=56).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -669,6 +633,8 @@ pub enum ObInfoClass {
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
+    FsckStatus = 33,
+    ProcessId = 34,
 }
 
 pub mod ob_type {
@@ -721,6 +687,7 @@ pub enum ObSetInfoClass {
     ServiceSetConfig = 36,
     PowerShutdown = 37,
     PowerReboot = 38,
+    FsckRepair = 39,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -1135,6 +1102,45 @@ pub fn ob_socket_recv(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
 /// ob_socket_close: close a socket via ob_set_info(SocketClose).
 pub fn ob_socket_close(fd: u8) -> Result<(), i64> {
     sys_ob_set_info(fd, ObSetInfoClass::SocketClose, &[])
+}
+
+/// FsckStats — mirrors kernel's FsckStatsRaw.
+#[repr(C)]
+pub struct FsckStats {
+    pub total_blocks: u64,
+    pub used_blocks: u64,
+    pub free_blocks: u64,
+    pub total_nodes: u64,
+    pub total_dirs: u64,
+    pub total_files: u64,
+    pub errors: u32,
+    pub warnings: u32,
+    pub repaired: u32,
+}
+
+/// ob_fsck_status: run read-only fsck check via ob_query_info(FsckStatus).
+/// `drive_fd` = fd from ob_open on a file in the target filesystem.
+pub fn ob_fsck_status(drive_fd: u8) -> Result<FsckStats, i64> {
+    let mut stats = FsckStats {
+        total_blocks: 0, used_blocks: 0, free_blocks: 0,
+        total_nodes: 0, total_dirs: 0, total_files: 0,
+        errors: 0, warnings: 0, repaired: 0,
+    };
+    let buf = unsafe {
+        core::slice::from_raw_parts_mut(
+            &mut stats as *mut FsckStats as *mut u8,
+            core::mem::size_of::<FsckStats>(),
+        )
+    };
+    sys_ob_query_info(drive_fd, ObInfoClass::FsckStatus, buf).map(|_| stats)
+}
+
+/// ob_fsck_repair: run fsck with repair via ob_set_info(FsckRepair).
+/// `drive_fd` = fd from ob_open on a file in the target filesystem.
+/// `repair` = true to attempt fixes, false for read-only check.
+pub fn ob_fsck_repair(drive_fd: u8, repair: bool) -> Result<(), i64> {
+    let flag = [if repair { 1u8 } else { 0u8 }];
+    sys_ob_set_info(drive_fd, ObSetInfoClass::FsckRepair, &flag)
 }
 
 // ═══════════════════════════════════════════════════════════════════════

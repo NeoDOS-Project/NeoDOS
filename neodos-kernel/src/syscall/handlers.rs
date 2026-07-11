@@ -20,10 +20,6 @@ struct DirEntryRaw {
     pub name: [u8; 260],
 }
 
-// ── Fsck stats struct (re-export from fsck module) ──
-
-use crate::fs::fsck::FsckStatsRaw;
-
 // ── Poll struct ──
 
 const POLLIN: i16 = 1;
@@ -415,13 +411,6 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
     crate::net::network_poll_all();
     set_need_resched();
     0
-}
-
-pub(super) fn handler_getpid(_regs: super::Registers) -> u64 {
-    let pid = crate::hal::without_interrupts(|| {
-        crate::scheduler::current_scheduler().lock().current_pid()
-    });
-    pid as u64
 }
 
 pub(super) fn handler_read(regs: super::Registers) -> u64 {
@@ -1561,47 +1550,6 @@ pub(super) fn handler_set_volume_label(regs: super::Registers) -> u64 {
         }
         Err(_) => err_to_u64(SyscallError::Io),
     }
-}
-
-pub(super) fn handler_fsck(regs: super::Registers) -> u64 {
-    let buf_ptr = regs.rbx;
-    let drive_char = (regs.rcx & 0xFF) as u8 as char;
-    let repair = (regs.rdx & 1) != 0;
-
-    if buf_ptr == 0 {
-        return err_to_u64(SyscallError::Inval);
-    }
-    let stats_size = core::mem::size_of::<FsckStatsRaw>() as u64;
-    if !is_user_ptr_valid(buf_ptr, stats_size) {
-        return err_to_u64(SyscallError::Fault);
-    }
-
-    let stats = crate::globals::with_vfs(|vfs| {
-        let mut result = FsckStatsRaw {
-            total_blocks: 0, used_blocks: 0, free_blocks: 0,
-            total_nodes: 0, total_dirs: 0, total_files: 0,
-            errors: 0, warnings: 0, repaired: 0,
-        };
-        let drive_idx = match (drive_char, crate::fs::vfs::Vfs::drive_index(drive_char)) {
-            (_, Some(idx)) => idx,
-            _ => return result,
-        };
-        let fs = match vfs.drives[drive_idx].as_mut() {
-            Some(f) => f,
-            None => return result,
-        };
-        let _ = fs.fsck(repair, false, &mut result);
-        result
-    });
-
-    unsafe {
-        core::ptr::copy_nonoverlapping(
-            &stats as *const _ as *const u8,
-            buf_ptr as *mut u8,
-            core::mem::size_of::<FsckStatsRaw>(),
-        );
-    }
-    0
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -142,6 +142,8 @@ pub enum ObInfoClass {
     ServiceConfig = 30,
     ServiceStatus = 31,
     PowerState = 32,
+    FsckStatus = 33,
+    ProcessId = 34,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -182,6 +184,7 @@ pub enum ObSetInfoClass {
     ServiceSetConfig = 36,
     PowerShutdown = 37,
     PowerReboot = 38,
+    FsckRepair = 39,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

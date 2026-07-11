@@ -99,9 +99,6 @@ pub fn run_qemu(cfg: &Config, opts: &RunOptions) -> Result<()> {
     println!("  QEMU accelerator: {}", accel);
     cmd.args(["-machine", &format!("q35,accel={}", accel)]);
 
-    // No reboot
-    cmd.arg("-no-reboot");
-
     // Monitor
     let mon_port = opts.monitor_port.unwrap_or(4444);
     cmd.args([

@@ -29,15 +29,16 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 3, 4, 6,
+            0, 1, 2, 4, 6,
             13, 16, 18, 19, 20, 21,
-            29, 40, 41, 42, 47,
-            53, 55, 58, 59,
+            29, 40, 41, 47,
+            53, 58, 59,
             60, 61, 62, 63, 64, 65, 66,
         ];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
+        test_true!(SYSCALL_TABLE[3].is_none()); // getpid removed — use Ob API
         test_true!(SYSCALL_TABLE[5].is_none());
         test_true!(SYSCALL_TABLE[7].is_none());
         test_true!(SYSCALL_TABLE[8].is_none());

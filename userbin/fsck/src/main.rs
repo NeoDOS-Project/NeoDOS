@@ -177,7 +177,41 @@ pub extern "C" fn _start() -> ! {
         write_str(b"\r\nFSCK: Checking drive "); write_str(&[drive]); write_str(b"... (use /F to repair errors)\r\n");
     }
 
-    match syscall::sys_fsck(drive, repair) {
+    // Open drive root via Ob to obtain a Filesystem handle
+    let mut path_buf = [0u8; 32];
+    let prefix = b"\\Global\\FileSystem\\";
+    path_buf[..prefix.len()].copy_from_slice(prefix);
+    let len = prefix.len();
+    path_buf[len] = drive;
+    path_buf[len + 1] = b':';
+    path_buf[len + 2] = b'\\';
+    let fd = match syscall::sys_ob_open(
+        unsafe { core::str::from_utf8_unchecked(&path_buf[..len + 3]) },
+        0x01, // READ access
+    ) {
+        Ok(f) => f,
+        Err(_) => {
+            write_err(b"\r\nFSCK: Cannot open drive.\r\n");
+            syscall::sys_exit(1);
+        }
+    };
+
+    let result = if repair {
+        syscall::ob_fsck_repair(fd, true).map(|_| {
+            // After repair, query status to get stats
+            syscall::ob_fsck_status(fd).unwrap_or(syscall::FsckStats {
+                total_blocks: 0, used_blocks: 0, free_blocks: 0,
+                total_nodes: 0, total_dirs: 0, total_files: 0,
+                errors: 0, warnings: 0, repaired: 1,
+            })
+        })
+    } else {
+        syscall::ob_fsck_status(fd)
+    };
+
+    let _ = syscall::sys_close(fd);
+
+    match result {
         Ok(stats) => {
             print_report(&stats);
         }

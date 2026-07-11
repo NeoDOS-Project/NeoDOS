@@ -186,6 +186,8 @@ Supports 27 info classes:
 | 29 | ServiceState | Service state (state+pid+uptime) |
 | 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
+| 33 | FsckStatus | FsckStatsRaw — filesystem integrity check results (read-only) |
+| 34 | ProcessId | u32 LE — current process PID |
 
 ### ob_set_info (RAX=63)
 
@@ -225,6 +227,9 @@ Supports 32 set classes:
 | 34 | ServiceStop | Stop a running service (Running → Stopping → Stopped) |
 | 35 | ServiceRestart | Restart a service (stop + start atomically) |
 | 36 | ServiceSetConfig | Modify service configuration (start type, restart policy, max failures) |
+| 37 | PowerShutdown | Initiate coordinated system shutdown |
+| 38 | PowerReboot | Initiate coordinated system reboot |
+| 39 | FsckRepair | Run fsck with repair flag (buf[0] != 0 = repair) |
 
 ### ob_enum (RAX=64)
 

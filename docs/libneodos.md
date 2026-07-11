@@ -30,7 +30,7 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `exit` | 0 | `(code: i32) -> !` | Terminate process |
 | `write` | 1 | `(fd: u64, buf: &[u8]) -> usize` | Write to file/pipe |
 | `yield` | 2 | `() -> ()` | Yield CPU |
-| `getpid` | 3 | `() -> u64` | Get process ID |
+| `getpid` | _(removed)_ | Ob API | Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
 | `read` | 4 | `(fd: u64, buf: &mut [u8]) -> usize` | Read from file/pipe |
 | `pipe` | 5 | `() -> [u64; 2]` | Create pipe → [read_fd, write_fd] |
 | `dup2` | 6 | `(old_fd: u64, new_fd: u64) -> u64` | Duplicate file descriptor |
@@ -58,7 +58,7 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `ob_power_reboot` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerReboot)` |
 | `chdir_parent` | 47 | Change to parent directory |
 | `cursor_blink` | 53 | Toggle cursor blink |
-| `fsck` | 55 | Filesystem check |
+| `fsck` | _(removed)_ | Ob API | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
 | `driver_unload` | 58 | Unload a NEM driver |
 | `poll` | 59 | Poll multiple fds for readiness |
 

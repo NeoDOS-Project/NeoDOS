@@ -1352,6 +1352,61 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
+        _ if info_class == ObInfoClass::FsckStatus as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_byte = entry.drive().unwrap_or(0xFF);
+            if drive_byte == 0xFF {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_char = (b'A' + drive_byte) as char;
+            let stat = crate::globals::with_vfs(|vfs| {
+                let mut result = crate::fs::fsck::FsckStatsRaw {
+                    total_blocks: 0, used_blocks: 0, free_blocks: 0,
+                    total_nodes: 0, total_dirs: 0, total_files: 0,
+                    errors: 0, warnings: 0, repaired: 0,
+                };
+                let drive_idx = match crate::fs::vfs::Vfs::drive_index(drive_char) {
+                    Some(idx) => idx,
+                    None => return result,
+                };
+                if let Some(fs) = vfs.drives[drive_idx].as_mut() {
+                    let _ = fs.fsck(false, false, &mut result);
+                }
+                result
+            });
+            let sz = core::mem::size_of::<crate::fs::fsck::FsckStatsRaw>();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &stat as *const _ as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::ProcessId as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 12 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            let pid = crate::hal::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid()
+            });
+            let bytes = (pid as u32).to_le_bytes();
+            unsafe {
+                core::ptr::copy_nonoverlapping(bytes.as_ptr(), buf_ptr as *mut u8, 4);
+            }
+            4u64
+        }
         _ if info_class == ObInfoClass::SocketInfo as u32 => {
             if entry.object_id == 0 { return err_to_u64(SyscallError::BadF); }
             let obj = match crate::object::ob_lookup(entry.object_id) {
@@ -2638,6 +2693,32 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 return err_to_u64(SyscallError::Inval);
             }
             crate::object::power::power_reboot();
+        }
+        _ if info_class == ObSetInfoClass::FsckRepair as u32 => {
+            if entry.obj_type() != Some(crate::object::ObType::Filesystem) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_byte = entry.drive().unwrap_or(0xFF);
+            if drive_byte == 0xFF {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let drive_char = (b'A' + drive_byte) as char;
+            let repair = if buf_size >= 1 { unsafe { core::ptr::read_volatile::<u8>(buf_ptr as *const u8) != 0 } } else { false };
+            crate::globals::with_vfs(|vfs| {
+                let mut result = crate::fs::fsck::FsckStatsRaw {
+                    total_blocks: 0, used_blocks: 0, free_blocks: 0,
+                    total_nodes: 0, total_dirs: 0, total_files: 0,
+                    errors: 0, warnings: 0, repaired: 0,
+                };
+                let drive_idx = match crate::fs::vfs::Vfs::drive_index(drive_char) {
+                    Some(idx) => idx,
+                    None => return,
+                };
+                if let Some(fs) = vfs.drives[drive_idx].as_mut() {
+                    let _ = fs.fsck(repair, false, &mut result);
+                }
+            });
+            0
         }
         _ => err_to_u64(SyscallError::Inval),
     }

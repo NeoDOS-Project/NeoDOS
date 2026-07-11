@@ -15,6 +15,22 @@
 - **`handler_poweroff()`** — Deleted from `syscall/handlers.rs`.
 - **`sys_poweroff()`** — Deleted from `libneodos`.
 - **Poweroff from SSDT** — `t[42]` entry removed from `syscall/mod.rs`.
+- **`SYS_GETPID` (RAX=3)** — Syscall, handler removed. Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)`.
+- **`handler_getpid()`** — Deleted from `syscall/handlers.rs`.
+- **`nxl_sys_getpid()`** — Migrated to Ob API (open + query + close).
+- **Getpid from SSDT** — `t[3]` entry removed from `syscall/mod.rs`.
+- **`SYS_FSCK` (RAX=55)** — Syscall, handler removed. Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle.
+- **Fsck from SSDT** — `t[55]` entry removed from `syscall/mod.rs`.
+
+### Added
+- **`\Global\Info\Process`** — New virtual Key object (native_id=12) for PID queries via Ob API.
+- **`ObInfoClass::ProcessId = 34`** — New info class returning PID as u32 LE.
+
+### Fixed
+- **fsck path panic** — `copy_from_slice` hardcoded length 22 vs actual 19 bytes caused abort in `ob_open` path.
+- **poweroff/reboot `hlt` GPF** — `hlt` is privileged (ring 0); replaced with `loop {}` in `ob_power_shutdown`/`ob_power_reboot`.
+- **build artifact path** — `build_user_bins` copied binaries to project subdir but image builder read from root `userbin/`.
+- **`-no-reboot` removed** — `neodev run` no longer passes `-no-reboot`; reboot command works in QEMU.
 
 ### Fixed
 - **Watchdog system reset** — Now calls `power_reboot()` (was incorrectly using `poweroff()`).
@@ -39,7 +55,7 @@
 - **socket_bind ephemeral port check** — Fixed bug where `socket_bind()` incorrectly checked socket's existing port instead of caller's requested port, causing explicit port 8080 to be overridden with an ephemeral port.
 
 ### Tests
-- 625 kernel tests pass (1 new: `socket_auto_port_assign`, 2 new: `ansi_256_color`, `ansi_truecolor`).
+- 628 kernel tests pass (3 new: `socket_auto_port_assign`, `ansi_256_color`, `ansi_truecolor`; `syscall_table_validation_boot` updated for removed syscalls).
 
 ## v0.49.0 — 2026-07-08
 

@@ -607,7 +607,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 0 | sys_exit | RBX=code | Terminate process |
 | 1 | sys_write | RBX=fd, RCX=ptr, RDX=len | Write to fd (1=console, pipe writer) |
 | 2 | sys_yield | — | Yield CPU |
-| 3 | sys_getpid | — | Return current PID |
+| 3 | _(removed)_ | Ob API | Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
 | 4 | sys_read | RBX=fd, RCX=buf, RDX=count | Read from fd (0=stdin, pipe reader) |
 | 5 | sys_pipe | RBX=fds_ptr | Create pipe, returns [read_fd, write_fd] |
 | 6 | sys_dup2 | RBX=old_fd, RCX=new_fd | Duplicate file descriptor |
@@ -627,7 +627,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 42 | _(removed)_ | PowerManager Ob | Use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
 | 47 | sys_chdir_parent | RBX=path_ptr | Change parent process cwd (legacy) |
 | 53 | sys_cursor_blink | RBX=0/1 | Enable/disable cursor blink |
-| 55 | sys_fsck | RBX=buf, RCX=drive, RDX=repair | Filesystem integrity check |
+| 55 | _(removed)_ | Ob API | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
 | 58 | sys_driver_unload | RBX=name, RCX=force | Unload NEM driver (admin) |
 | 59 | sys_poll | RBX=pfds, RCX=nfds, RDX=timeout | Poll fds for ready I/O |
 | 60 | sys_ob_open | RBX=path, RCX=access | Open Ob namespace object |
