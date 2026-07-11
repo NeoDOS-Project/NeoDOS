@@ -598,7 +598,7 @@ impl Indexer {
                 "munmap" => 20, "loadlib" => 21, "thread_create" => 22,
                 "thread_join" => 23, "getcpuinfo" => 24, "mkdir" => 25,
                 "unlink" => 26, "rmdir" => 27, "rename" => 28,
-                "wait_alertable" => 40, "sleep_ex" => 41, "poweroff" => 42,
+                "wait_alertable" => 40, "sleep_ex" => 41,
                 "get_version" => 43, "get_datetime" => 44, "get_meminfo" => 45,
                 "get_volume_label" => 46, "chdir_parent" => 47, "kobj_enum" => 48,
                 _ => return None,
@@ -759,7 +759,7 @@ mod tests {
         assert_eq!(p.neodos_items.len(), 1);
 
         // Test via attribute (detect_syscall_handler also checks #[syscall(num)]).
-        let p2 = index_code("#[syscall(42)]\npub fn poweroff_handler() -> ! { loop {} }");
+        let p2 = index_code("#[syscall(60)]\npub fn ob_open_handler() -> ! { loop {} }");
         assert_eq!(p2.neodos_items.len(), 1, "should detect #[syscall(42)] attribute");
     }
 

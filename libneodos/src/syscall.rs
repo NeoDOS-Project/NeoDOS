@@ -187,15 +187,28 @@ impl DirEntry {
     }
 }
 
-/// sys_poweroff: power off the machine (RAX=42).
-pub fn sys_poweroff() -> ! {
-    unsafe {
-        core::arch::asm!(
-            "int 0x80",
-            in("rax") 42u64,
-            options(noreturn)
-        );
+/// Open the PowerManager object and perform a shutdown.
+pub fn ob_power_shutdown() -> ! {
+    match sys_ob_open("\\System\\PowerManager", ob_access::WRITE) {
+        Ok(fd) => {
+            let _ = sys_ob_set_info(fd, ObSetInfoClass::PowerShutdown, &[]);
+            let _ = sys_close(fd);
+        }
+        Err(_) => {}
     }
+    loop { unsafe { core::arch::asm!("hlt"); } }
+}
+
+/// Open the PowerManager object and perform a reboot.
+pub fn ob_power_reboot() -> ! {
+    match sys_ob_open("\\System\\PowerManager", ob_access::WRITE) {
+        Ok(fd) => {
+            let _ = sys_ob_set_info(fd, ObSetInfoClass::PowerReboot, &[]);
+            let _ = sys_close(fd);
+        }
+        Err(_) => {}
+    }
+    loop { unsafe { core::arch::asm!("hlt"); } }
 }
 
 /// DateTime — matches kernel's SysDateTime (RAX=44).
@@ -706,6 +719,8 @@ pub enum ObSetInfoClass {
     ServiceStop = 34,
     ServiceRestart = 35,
     ServiceSetConfig = 36,
+    PowerShutdown = 37,
+    PowerReboot = 38,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -743,6 +758,8 @@ pub mod ob_set_info_class {
     pub const SERVICE_STOP: ObSetInfoClass = ObSetInfoClass::ServiceStop;
     pub const SERVICE_RESTART: ObSetInfoClass = ObSetInfoClass::ServiceRestart;
     pub const SERVICE_SET_CONFIG: ObSetInfoClass = ObSetInfoClass::ServiceSetConfig;
+    pub const POWER_SHUTDOWN: ObSetInfoClass = ObSetInfoClass::PowerShutdown;
+    pub const POWER_REBOOT: ObSetInfoClass = ObSetInfoClass::PowerReboot;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).

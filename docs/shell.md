@@ -68,7 +68,8 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 | KILL `<pid>` | `ob_set_info(Process, ProcessTerminate)` on target process object |
 | PRI `<pid> <level>` | `ob_set_info(Process, ProcessPriority, &level)` |
 | KEYB `<layout>` | `ob_set_info(KeyboardLayout)` on keyboard device object |
-| POWEROFF | `sys_poweroff` (RAX 42) |
+| POWEROFF | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown)` — via Object Manager |
+| REBOOT | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerReboot)` — via Object Manager |
 | VER | `ob_open(\Global\Info\Version)` → `ob_query_info` → print version string |
 | VOL `<drive>` | `ob_query_info(VolumeLabel)` on volume object |
 | DATE | `ob_open(\Global\Info\DateTime)` → `ob_query_info` → formatted print |

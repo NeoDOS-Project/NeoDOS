@@ -53,7 +53,9 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 |------|-----|-------------|
 | `wait_alertable` | 40 | Wait with alertable flag |
 | `sleep_ex` | 41 | Sleep with microsecond resolution |
-| `poweroff` | 42 | System poweroff |
+| `poweroff` | _(removed)_ | Use `ob_power_shutdown()` via Ob API |
+| `ob_power_shutdown` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerShutdown)` |
+| `ob_power_reboot` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerReboot)` |
 | `chdir_parent` | 47 | Change to parent directory |
 | `cursor_blink` | 53 | Toggle cursor blink |
 | `fsck` | 55 | Filesystem check |

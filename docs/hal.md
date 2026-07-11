@@ -25,7 +25,7 @@ src/hal/
     mod.rs      - read_cr2() re-export
   pci.rs        - PCIe ECAM MMIO config space access
   x64/          - extern "C" ABI surface, delegates to hal/raw
-    cpu.rs      - 12 primitives (enable/disable_interrupts, halt, poweroff,
+    cpu.rs      - 12 primitives (enable/disable_interrupts, halt, poweroff, reboot,
                   read_cr2/3, write_cr3, flush_tlb, interrupts_enabled,
                   hlt_once, cpu_info)
     io.rs       - 6 primitives (inb/outb, inw/outw, inl/outl)
@@ -44,7 +44,7 @@ src/hal/
 
 | Category | Primitives | Source |
 |----------|-----------|--------|
-| CPU Control | `enable_interrupts()`, `disable_interrupts()`, `halt() -> !`, `poweroff() -> !`, `read_cr2()`, `read_cr3()`, `write_cr3(val)`, `flush_tlb(virt)`, `interrupts_enabled()`, `hlt_once()`, `read_cr0()`, `read_cr4()` | `x64/cpu.rs` |
+| CPU Control | `enable_interrupts()`, `disable_interrupts()`, `halt() -> !`, `poweroff() -> !`, `reboot() -> !`, `read_cr2()`, `read_cr3()`, `write_cr3(val)`, `flush_tlb(virt)`, `interrupts_enabled()`, `hlt_once()`, `read_cr0()`, `read_cr4()` | `x64/cpu.rs` |
 | Port I/O | `inb(port)`, `inw(port)`, `inl(port)`, `outb(port, val)`, `outw(port, val)`, `outl(port, val)` | `x64/io.rs` |
 | Page Memory | `alloc_page() -> *mut u8`, `free_page(ptr)`, `map_page(phys, virt, flags)`, `unmap_page(virt)`, `walk_ptes_4k(virt)` | `x64/mem.rs` |
 | Interrupt Management | `register_irq(vector, handler)`, `ack_irq(vector)` | `x64/irq.rs` |

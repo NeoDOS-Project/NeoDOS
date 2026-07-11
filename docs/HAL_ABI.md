@@ -176,28 +176,29 @@ is covered by a 2 MB huge page that cannot be split (implementation-specific).
 | 2  | `disable_interrupts`| —                                               | `void`    | No stack frame needed |
 | 3  | `halt`              | —                                               | `noreturn`| Infinite loop       |
 | 4  | `poweroff`          | —                                               | `noreturn`| Sequence of port writes, then halt |
-| 5  | `inb`               | `rdi`=`port: u16` (zero-extended to 64 bit)     | `rax`=`u8`| 8-bit port read |
-| 6  | `outb`              | `rdi`=`port: u16`, `rsi`=`val: u8`              | `void`    | 8-bit port write |
-| 7  | `inw`               | `rdi`=`port: u16`                               | `rax`=`u16`| 16-bit port read |
-| 8  | `outw`              | `rdi`=`port: u16`, `rsi`=`val: u16`              | `void`    | 16-bit port write |
-| 9  | `inl`               | `rdi`=`port: u16`                               | `rax`=`u32`| 32-bit port read |
-| 10 | `outl`              | `rdi`=`port: u16`, `rsi`=`val: u32`              | `void`    | 32-bit port write |
-| 11 | `read_cr2`          | —                                               | `rax`=`u64`| Page-fault linear address |
-| 12 | `read_cr3`          | —                                               | `rax`=`u64`| Current PML4 physical address |
-| 13 | `write_cr3`         | `rdi`=`val: u64`                                | `void`    | Reloads page tables, flushes TLB |
-| 14 | `flush_tlb`         | `rdi`=`virt: u64`                               | `void`    | `invlpg` instruction |
-| 15 | `interrupts_enabled`| —                                               | `rax`=`bool`| Reads RFLAGS.IF via pushfq |
-| 16 | `hlt_once`          | —                                               | `void`    | Single HLT, returns after next IRQ |
-| 17 | `alloc_page`        | —                                               | `rax`=`*mut u8` | Null on OOM |
-| 18 | `free_page`         | `rdi`=`ptr: *mut u8`                            | `void`    | Undefined if `ptr` not from `alloc_page` |
-| 19 | `map_page`          | `rdi`=`phys: u64`, `rsi`=`virt: u64`, `rdx`=`flags: u64` | `rax`=`i32` | 0=ok, -1=fail |
-| 20 | `unmap_page`        | `rdi`=`virt: u64`                               | `rax`=`i32` | 0=ok, -1=fail |
-| 21 | `register_irq`      | `rdi`=`vector: u8`, `rsi`=`handler: IrqHandler`  | `rax`=`i32` | Always returns -1 (stub — see §5.4) |
-| 22 | `ack_irq`           | `rdi`=`vector: u8`                              | `void`    | Port writes to PIC. Safe for vectors 32–47 |
-| 23 | `get_ticks`         | —                                               | `rax`=`u64` | Atomic relaxed load |
-| 24 | `increment_ticks`   | —                                               | `void`    | Atomic relaxed increment |
-| 25 | `memory_barrier`    | —                                               | `void`    | `atomic_thread_fence(seq_cst)` |
-| 26 | `sleep_hint`        | `rdi`=`us: u32`                                 | `void`    | Busy-wait: ~1 port-0x80 stall per unit |
+| 5  | `reboot`            | —                                               | `noreturn`| `outb(0xCF9, 0x06)` + PS/2 reset, then halt |
+| 6  | `inb`               | `rdi`=`port: u16` (zero-extended to 64 bit)     | `rax`=`u8`| 8-bit port read |
+| 7  | `outb`              | `rdi`=`port: u16`, `rsi`=`val: u8`              | `void`    | 8-bit port write |
+| 8  | `inw`               | `rdi`=`port: u16`                               | `rax`=`u16`| 16-bit port read |
+| 9  | `outw`              | `rdi`=`port: u16`, `rsi`=`val: u16`              | `void`    | 16-bit port write |
+| 10 | `inl`               | `rdi`=`port: u16`                               | `rax`=`u32`| 32-bit port read |
+| 11 | `outl`              | `rdi`=`port: u16`, `rsi`=`val: u32`              | `void`    | 32-bit port write |
+| 12 | `read_cr2`          | —                                               | `rax`=`u64`| Page-fault linear address |
+| 13 | `read_cr3`          | —                                               | `rax`=`u64`| Current PML4 physical address |
+| 14 | `write_cr3`         | `rdi`=`val: u64`                                | `void`    | Reloads page tables, flushes TLB |
+| 15 | `flush_tlb`         | `rdi`=`virt: u64`                               | `void`    | `invlpg` instruction |
+| 16 | `interrupts_enabled`| —                                               | `rax`=`bool`| Reads RFLAGS.IF via pushfq |
+| 18 | `hlt_once`          | —                                               | `void`    | Single HLT, returns after next IRQ |
+| 19 | `alloc_page`        | —                                               | `rax`=`*mut u8` | Null on OOM |
+| 20 | `free_page`         | `rdi`=`ptr: *mut u8`                            | `void`    | Undefined if `ptr` not from `alloc_page` |
+| 21 | `map_page`          | `rdi`=`phys: u64`, `rsi`=`virt: u64`, `rdx`=`flags: u64` | `rax`=`i32` | 0=ok, -1=fail |
+| 22 | `unmap_page`        | `rdi`=`virt: u64`                               | `rax`=`i32` | 0=ok, -1=fail |
+| 23 | `register_irq`      | `rdi`=`vector: u8`, `rsi`=`handler: IrqHandler`  | `rax`=`i32` | Always returns -1 (stub — see §5.4) |
+| 24 | `ack_irq`           | `rdi`=`vector: u8`                              | `void`    | Port writes to PIC. Safe for vectors 32–47 |
+| 25 | `get_ticks`         | —                                               | `rax`=`u64` | Atomic relaxed load |
+| 26 | `increment_ticks`   | —                                               | `void`    | Atomic relaxed increment |
+| 27 | `memory_barrier`    | —                                               | `void`    | `atomic_thread_fence(seq_cst)` |
+| 28 | `sleep_hint`        | `rdi`=`us: u32`                                 | `void`    | Busy-wait: ~1 port-0x80 stall per unit |
 
 ### 3.1 ABI identity
 

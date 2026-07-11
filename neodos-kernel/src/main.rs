@@ -255,6 +255,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     // ============================================
+    // PHASE 2.765: Power Manager initialization
+    // Registers \System\PowerManager as a persistent Ob object.
+    // ============================================
+    println!("[+] Initializing Power Manager...");
+    object::power::init_power_manager();
+
+    // ============================================
     // PHASE 2.77: Security subsystem initialization
     // Creates default admin/user tokens for process identity.
     // ============================================

@@ -25,7 +25,7 @@ KNOWN_SYSCALLS: dict[str, int] = {
     "chdir": 16, "getcwd": 17, "brk": 18, "mmap": 19, "munmap": 20,
     "loadlib": 21, "thread_create": 22, "thread_join": 23, "getcpuinfo": 24,
     "mkdir": 25, "unlink": 26, "rmdir": 27, "rename": 28,
-    "wait_alertable": 40, "sleep_ex": 41, "poweroff": 42,
+    "wait_alertable": 40, "sleep_ex": 41,
     "get_version": 43, "get_datetime": 44, "get_meminfo": 45,
     "get_volume_label": 46, "chdir_parent": 47, "kobj_enum": 48,
 }

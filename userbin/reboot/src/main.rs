@@ -9,13 +9,13 @@ fn write_str(s: &[u8]) {
 
 #[used]
 #[link_section = ".rodata"]
-static POWEROFF_HELP: &[u8] = b"::HELP::\
-POWEROFF\r\n\
-  Power off the system.\r\n\
+static REBOOT_HELP: &[u8] = b"::HELP::\
+REBOOT\r\n\
+  Reboot the system.\r\n\
 ::END::";
 
 fn print_help() {
-    write_str(b"\r\nPOWEROFF\r\n  Power off the system.\r\n\r\n");
+    write_str(b"\r\nREBOOT\r\n  Reboot the system.\r\n\r\n");
 }
 
 #[no_mangle]
@@ -25,6 +25,6 @@ pub extern "C" fn _start() -> ! {
         print_help();
         syscall::sys_exit(0);
     }
-    write_str(b"\r\npowering off...\r\n");
-    syscall::ob_power_shutdown()
+    write_str(b"\r\nrebooting...\r\n");
+    syscall::ob_power_reboot()
 }

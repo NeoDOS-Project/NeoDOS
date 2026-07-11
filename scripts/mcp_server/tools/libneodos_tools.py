@@ -101,7 +101,7 @@ SYSCALL_MAP = [
     ("set_exception_handler", 29, "sys_set_exception_handler"),
     ("wait_alertable", 40, "sys_wait_alertable"),
     ("sleep_ex", 41, "sys_sleep_ex"),
-    ("poweroff", 42, "sys_poweroff"),
+    # ("poweroff", 42) — removed; use Ob API: sys_ob_open + sys_ob_set_info(PowerShutdown/Reboot)
     ("cursor_blink", 53, "sys_cursor_blink"),
     ("fsck", 55, "sys_fsck"),
     ("driver_unload", 58, "sys_driver_unload"),
@@ -251,7 +251,7 @@ def analyze_libneodos_coverage() -> str:
         9: "waitpid", 10: "open", 13: "close",
         16: "chdir", 18: "brk", 19: "mmap", 20: "munmap", 21: "loadlib",
         22: "thread_create", 23: "thread_join", 29: "set_exception_handler",
-        40: "wait_alertable", 41: "sleep_ex", 42: "poweroff",
+        40: "wait_alertable", 41: "sleep_ex",
         47: "chdir_parent", 53: "cursor_blink", 55: "fsck",
         58: "driver_unload", 59: "poll",
         60: "ob_open", 61: "ob_create", 62: "ob_query_info",

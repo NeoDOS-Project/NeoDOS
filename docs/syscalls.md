@@ -239,11 +239,6 @@ Alertable yield. Checks APCs before/after yield.
 - **Args**: None.
 - **Returns**: `1` if APC delivered, `0` otherwise.
 
-### 42 — `sys_poweroff`
-Powers off the machine (QEMU debug port + ACPI S5 + PS/2 reset).
-- **Args**: None.
-- **Returns**: Does not return.
-
 ### 47 — `sys_chdir_parent` (LEGACY)
 Changes CWD of the parent process. Used by `CD.NXE` via ARGS_ADDR.
 - **Args**: `RBX` = path_ptr.
@@ -321,8 +316,8 @@ Destroy/delete an Ob object by fd (file, directory, namespace object).
 | Status | Syscalls | Description |
 |--------|----------|-------------|
 | Already Objects | RAX 60-66 (ob_open/create/query_info/set_info/enum/wait/destroy) | Native Ob operations, operate on namespace handles |
-| Removed from SSDT (use Ob) | pipe(5), spawn(7), open(10), close(13), readfile(11), mkdir, unlink, rmdir, rename | Replaced by ob_create/ob_open/ob_destroy + VFS object paths |
-| Foundation (intact) | exit, write, read, yield, getpid, brk, mmap, munmap, loadlib, thread_create/join, poll, poweroff | Not object operations; remain as direct syscalls |
+| Removed from SSDT (use Ob) | pipe(5), spawn(7), open(10), close(13), readfile(11), mkdir, unlink, rmdir, rename, poweroff(42) | Replaced by ob_create/ob_open/ob_destroy + VFS object paths. Poweroff: use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
+| Foundation (intact) | exit, write, read, yield, getpid, brk, mmap, munmap, loadlib, thread_create/join, poll | Not object operations; remain as direct syscalls |
 | Registry | RAX 67-76 (Cm*) | Configuration Manager — cell-based hive syscalls |
 
 ## Architecture Rule
@@ -351,3 +346,18 @@ kernel functionality must enter through the Ob architecture.
 | 75 | `sys_cm_load_hive` | Load a hive file (admin) |
 | 76 | `sys_cm_unload_hive` | Unload a hive (admin) |
 | 77 | `sys_ob_service` | Service control: START(0), STOP(1), RESTART(2), QUERY_STATUS(3), SET_CONFIG(4). Admin only. |
+
+## Power Manager Object (via ObSetInfoClass)
+
+Power management is handled entirely via the Object Manager — no dedicated syscall.
+
+| Path | ObType | Operation | ObSetInfoClass |
+|------|--------|-----------|---------------|
+| `\System\PowerManager` | `PowerManager(21)` | Shutdown (power off) | `PowerShutdown = 37` |
+| `\System\PowerManager` | `PowerManager(21)` | Reboot | `PowerReboot = 38` |
+
+**Usage (Ring 3):**
+```c
+fd = sys_ob_open("\\System\\PowerManager", WRITE);
+sys_ob_set_info(fd, PowerShutdown, NULL, 0);  // or PowerReboot
+```

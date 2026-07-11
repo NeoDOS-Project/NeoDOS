@@ -27,6 +27,7 @@ pub enum ObType {
     Section = 17,
     Socket = 18,
     Service = 20,
+    PowerManager = 21,
 }
 
 impl ObType {
@@ -52,6 +53,7 @@ impl ObType {
             ObType::Section => "SECTION",
             ObType::Socket => "SOCKET",
             ObType::Service => "SERVICE",
+            ObType::PowerManager => "POWERMANAGER",
         }
     }
 }
@@ -139,6 +141,7 @@ pub enum ObInfoClass {
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
+    PowerState = 32,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -177,6 +180,8 @@ pub enum ObSetInfoClass {
     ServiceStop = 34,
     ServiceRestart = 35,
     ServiceSetConfig = 36,
+    PowerShutdown = 37,
+    PowerReboot = 38,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

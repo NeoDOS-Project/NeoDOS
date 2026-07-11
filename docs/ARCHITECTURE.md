@@ -191,7 +191,7 @@ Lowest kernel layer. All inline assembly confined to `src/hal/` (55 asm calls). 
 
 | Module | Primitives |
 |--------|------------|
-| CPU | `enable_interrupts()`, `disable_interrupts()`, `halt()`, `poweroff()`, `read_cr2()`, `read_cr3()`, `write_cr3()`, `flush_tlb()`, `interrupts_enabled()`, `hlt_once()` |
+| CPU | `enable_interrupts()`, `disable_interrupts()`, `halt()`, `poweroff()`, `reboot()`, `read_cr2()`, `read_cr3()`, `write_cr3()`, `flush_tlb()`, `interrupts_enabled()`, `hlt_once()` |
 | Port I/O | `inb()`, `outb()`, `inw()`, `outw()`, `inl()`, `outl()` |
 | Page Memory | `alloc_page()`, `free_page()`, `map_page()`, `unmap_page()`, `memory_barrier()` |
 | Interrupts | `register_irq()` (stub), `ack_irq()` |
@@ -624,7 +624,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 23 | sys_thread_join | RBX=tid | Wait for thread termination |
 | 40 | sys_wait_alertable | — | Alertable wait: dispatch pending APC or block |
 | 41 | sys_sleep_ex | — | Alertable yield: check APC before/after yielding |
-| 42 | sys_poweroff | — | Power off the machine |
+| 42 | _(removed)_ | PowerManager Ob | Use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
 | 47 | sys_chdir_parent | RBX=path_ptr | Change parent process cwd (legacy) |
 | 53 | sys_cursor_blink | RBX=0/1 | Enable/disable cursor blink |
 | 55 | sys_fsck | RBX=buf, RCX=drive, RDX=repair | Filesystem integrity check |

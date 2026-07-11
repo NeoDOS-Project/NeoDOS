@@ -507,7 +507,7 @@ lazy_static! {
         t[29] = Some(handler_set_exception_handler as SyscallFn);
         t[40] = Some(handler_wait_alertable as SyscallFn);
         t[41] = Some(handler_sleep_ex as SyscallFn);
-        t[42] = Some(handler_poweroff as SyscallFn);
+        // t[42] was sys_poweroff — removed; power management uses Ob API (RAX=63 + PowerShutdown/PowerReboot)
         t[47] = Some(handler_chdir_parent as SyscallFn);
         t[53] = Some(handler_cursor_blink as SyscallFn);
         t[55] = Some(handler_fsck as SyscallFn);

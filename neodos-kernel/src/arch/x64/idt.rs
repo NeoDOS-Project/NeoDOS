@@ -722,9 +722,9 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
             let ctrl; let alt;
             unsafe { ctrl = CTRL_PRESSED; alt = ALT_PRESSED; }
             if ctrl && alt {
-                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Powering off...");
+                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Shutting down...");
                 crate::hal::ack_irq(33);
-                crate::hal::poweroff();
+                crate::object::power::power_shutdown();
             }
         }
 

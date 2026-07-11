@@ -2613,6 +2613,32 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Inval),
             }
         }
+        _ if info_class == ObSetInfoClass::PowerShutdown as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::PowerManager {
+                return err_to_u64(SyscallError::Inval);
+            }
+            crate::object::power::power_shutdown();
+        }
+        _ if info_class == ObSetInfoClass::PowerReboot as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::PowerManager {
+                return err_to_u64(SyscallError::Inval);
+            }
+            crate::object::power::power_reboot();
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }

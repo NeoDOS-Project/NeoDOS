@@ -20,6 +20,17 @@ pub extern "C" fn halt() -> ! {
 
 #[no_mangle]
 #[inline(never)]
+pub extern "C" fn reboot() -> ! {
+    disable_interrupts();
+    unsafe {
+        raw::raw_outb(0xCF9, 0x06);
+        raw::raw_outb(0x64, 0xFE);
+    }
+    halt()
+}
+
+#[no_mangle]
+#[inline(never)]
 pub extern "C" fn poweroff() -> ! {
     disable_interrupts();
     unsafe {
@@ -81,6 +92,8 @@ static KEEP_CPU_ENABLE_INTERRUPTS: unsafe extern "C" fn() = enable_interrupts;
 static KEEP_CPU_DISABLE_INTERRUPTS: unsafe extern "C" fn() = disable_interrupts;
 #[used]
 static KEEP_CPU_HALT: unsafe extern "C" fn() -> ! = halt;
+#[used]
+static KEEP_CPU_REBOOT: unsafe extern "C" fn() -> ! = reboot;
 #[used]
 static KEEP_CPU_POWEROFF: unsafe extern "C" fn() -> ! = poweroff;
 #[used]

@@ -3,6 +3,22 @@
 ## v0.49.1 — 2026-07-11
 
 ### Added
+- **PowerManager Ob object** — New `ObType::PowerManager(21)` at `\System\PowerManager`. Operations via `ObSetInfoClass::PowerShutdown(37)` and `PowerReboot(38)`. Accessible via `sys_ob_open` + `sys_ob_set_info`. No dedicated syscall.
+- **HAL `reboot()`** — New CPU primitive: `outb(0xCF9, 0x06)` + PS/2 reset, then halt.
+- **`userbin/reboot`** — New `.NXE` binary using Ob API for system reboot.
+- **`ob_power_shutdown()`, `ob_power_reboot()`** — libneodos wrappers using Ob API.
+- **`\System` namespace directory** — Protected root directory for system objects.
+
+### Removed
+- **`SYS_POWEROFF` (RAX=42)** — Syscall, handler, and wrapper removed. Power management fully migrated to Object Manager.
+- **`handler_poweroff()`** — Deleted from `syscall/handlers.rs`.
+- **`sys_poweroff()`** — Deleted from `libneodos`.
+- **Poweroff from SSDT** — `t[42]` entry removed from `syscall/mod.rs`.
+
+### Fixed
+- **Watchdog system reset** — Now calls `power_reboot()` (was incorrectly using `poweroff()`).
+- **Ctrl+Alt+Del handler** — Now calls `power_shutdown()` with proper flush + event dispatch (was direct `hal::poweroff()` without flush).
+
 - **Console ANSI 256-color + truecolor** — `ESC[38;5;Nm`/`48;5;Nm` (256-color) and `ESC[38;2;R;G;Bm`/`48;2;R;G;Bm` (truecolor) now parsed in kernel console. New getter `get_fg()`/`get_bg()` types changed to `u32` with color encoding (mode + value). New exports in libconsole-nxl and libneodos: `console_set_color_256()`, `console_set_truecolor()`, `set_color_256()`, `set_truecolor()`. Tests: `ansi_256_color`, `ansi_truecolor`.
 - **Shell redirection (SH-REDIR)** — New `userbin/neoshell/src/redir.rs` module: `parse_line()` handles `>`, `<`, `>>`, `2>`, `2>>` redirection syntax. Integrated into `execute_line()` and `run_pipeline()` for both simple commands and pipelines. Supports pipe + redirect combinations.
 - **File write via sys_write (RAX 1)** — `handler_write()` now supports Filesystem-type handles: writes to file at current offset, advances offset automatically.

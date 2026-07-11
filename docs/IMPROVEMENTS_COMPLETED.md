@@ -260,7 +260,7 @@ ObDirectory (namespace)
 | 29 | `sys_set_exception_handler` | Foundation: SEH |
 | 40 | `sys_wait_alertable` | Foundation: alertable wait |
 | 41 | `sys_sleep_ex` | Foundation: sleep |
-| 42 | `sys_poweroff` | Foundation: poweroff |
+| 42 | `sys_poweroff` | ⏩ **MIGRATED** to Ob: PowerManager object at `\System\PowerManager`. Use `sys_ob_open` + `sys_ob_set_info(PowerShutdown/Reboot)`. |
 | 47 | `sys_chdir_parent` | Foundation: parent cwd change |
 | 50 | `sys_ndreg` | Internal: driver registry admin |
 | 53 | `sys_cursor_blink` | Foundation: cursor control |

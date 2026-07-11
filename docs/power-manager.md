@@ -1,8 +1,8 @@
 # Power Manager — Design Document
 
-> **Versión:** v0.1  
-> **Estado:** Diseño  
-> **Versión de NeoDOS:** v0.49+  
+> **Versión:** v0.2  
+> **Estado:** Implementado (Fase 1 — migración a Object Manager)  
+> **Versión de NeoDOS:** v0.49.1+  
 
 ---
 
@@ -14,22 +14,24 @@
 
 | Archivo | Relevancia |
 |---------|------------|
-| `hal/x64/cpu.rs` | `poweroff()` — brute-force writes to QEMU debug ports (0x404, 0x604, 0xB004, 0x4004) + PS/2 reset (`outb(0x64, 0xFE)`). No ACPI S5. No `reboot()`. |
-| `syscall/handlers.rs:229` | `handler_poweroff()` — flushes registry hives, dispatches `EVENT_SHUTDOWN`, calls `hal::poweroff()`. No coordination with processes. |
-| `syscall/mod.rs:510` | `t[42] = handler_poweroff`. Foundation syscall, no Ob wrapper. |
+| `object/power.rs` | `PowerManager` Ob object at `\System\PowerManager`, `ObType::PowerManager(21)`. Shutdown/reboot via `ob_set_info(PowerShutdown=37/PowerReboot=38)`. |
+| `hal/x64/cpu.rs` | `poweroff()` — QEMU debug ports (0x404, 0x604, 0xB004, 0x4004) + PS/2 reset. `reboot()` — new: 0xCF9 reset + PS/2 reset. |
+| `syscall/handlers.rs` | `handler_poweroff` **removed** (was at lines 229-241). Power management via Ob API. |
+| `syscall/mod.rs` | `t[42]` **removed**. Power management via `handler_ob_set_info` (RAX=63) with `PowerShutdown`/`PowerReboot`. |
 | `timers/hpet.rs` | ACPI table scanner: RSDP → RSDT/XSDT. Finds HPET, MCFG, MADT tables. **No FADT, no DSDT, no S5.** |
-| `watchdog/mod.rs:238` | `watchdog_reset_system()` — calls `crate::hal::poweroff()` (for reboot, incorrectly uses poweroff path). |
+| `watchdog/mod.rs:238` | `watchdog_reset_system()` — now calls `crate::object::power::power_reboot()` (correctly uses reboot path). |
+| `arch/x64/idt.rs` | Ctrl+Alt+Del now calls `crate::object::power::power_shutdown()` (flush + event dispatch + hal). |
 | `services/mod.rs` | Service Manager: 5-state machine, Registry-backed, ObType::Service (20). `SERVICE_MANAGER` global. |
 | `eventbus/mod.rs:33` | `EVENT_SHUTDOWN = 12` (frozen). No `EVENT_SUSPEND`, `EVENT_HIBERNATE`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`. |
 | `cm/mod.rs` | Registry subsystem: cell-based hive, persistent to `C:\System\Registry\SYSTEM.hiv`. Used by Services, Networking. |
-| `main.rs` | 11 boot phases. PHASE 3.881 = Cm init, PHASE 3.882 = Service Manager init. | 
+| `main.rs` | PHASE 2.765: `object::power::init_power_manager()` — registers `\System\PowerManager`. `\System` added to namespace dirs. | 
 
 #### HAL
 
 | Primitivo | Estado |
 |-----------|--------|
-| `poweroff()` ✅ | Brute-force QEMU + PS/2. Funciona en QEMU. |
-| `reboot()` ❌ | No existe. Watchdog abusa de `poweroff()`. |
+| `poweroff()` ✅ | QEMU debug ports + PS/2 reset. Also available via PowerManager Ob object. |
+| `reboot()` ✅ | `outb(0xCF9, 0x06)` + PS/2 reset. Available via PowerManager Ob object. |
 | `acpi_fadt()` ❌ | No se parsea FADT. |
 | `acpi_s5_write()` ❌ | No existe. |
 
@@ -56,7 +58,8 @@
 
 | Funcionalidad | Existe | Dónde |
 |--------------|--------|-------|
-| Apagado básico | ✅ | `sys_poweroff` (RAX=42) — QEMU debug ports |
+| Apagado básico | ✅ | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown)` — via Object Manager |
+| Reboot | ✅ | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerReboot)` — via Object Manager |
 | Reinicio básico | ❌ | No hay syscall dedicada |
 | ACPI FADT parse | ❌ | No existe |
 | ACPI S5 (sleep type) | ❌ | No existe |
@@ -74,11 +77,11 @@
 
 ### Current limitations
 
-1. **`sys_poweroff` es una syscall directa (RAX=42)**, no integrada en el Object Manager. Viola la regla del sistema (`RAX ≥ 77 → sys_ob_*`).
+1. ~~**`sys_poweroff` es una syscall directa (RAX=42)**, no integrada en el Object Manager.~~ ✅ **CORREGIDO**: Power management via `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` (RAX=63). Syscall 42 eliminada.
 
-2. **Apagado inmediato sin coordinación.** El handler actual flushes registries y dispatches `EVENT_SHUTDOWN`, pero no espera a que los servicios terminen, no notifica a procesos de usuario, y no da tiempo a drivers para apagar hardware.
+2. **API incompleta.** Shutdown y reboot implementados. Falta `suspend()`, `hibernate()`, consulta de estado.
 
-3. **Sin reinicio.** `sys_poweroff` solo apaga. El watchdog usa `poweroff()` incorrectamente para "reiniciar" (escribe a puertos QEMU que causan reset en QEMU pero no en hardware real).
+3. ~~**Sin reinicio.** `sys_poweroff` solo apaga.~~ ✅ **CORREGIDO**: `reboot()` en HAL + `power_reboot()` en PowerManager. Watchdog usa correctamente reboot.
 
 4. **Sin ACPI real.** La `poweroff()` actual usa puertos QEMU específicos. En hardware real sin QEMU, solo funciona el PS/2 reset (`outb(0x64, 0xFE)`) que no apaga limpiamente. El ACPI PM1a register para S5 no se usa.
 

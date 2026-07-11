@@ -4,6 +4,7 @@ pub mod timer;
 pub mod semaphore;
 pub mod section;
 pub mod namespace;
+pub mod power;
 
 pub use types::{ObError, ObId, ObType, OB_NAME_LEN};
 pub use types::{ObObjectSnapshot, ObEnumEntry};
@@ -1075,5 +1076,44 @@ pub fn register_object_tests() {
             0, None,
         );
         test_true!(result.is_err());
+    });
+
+    // ── PowerManager tests ──
+
+    test_case!("pm_create_powermanager_object", {
+        let _ = namespace::ob_create_directory("\\System");
+        let id = ob_create_object(ObType::PowerManager, "System\\PowerManager", 0, 0, Some(&power::POWER_MANAGER_OPS));
+        test_true!(id.is_ok());
+        if let Ok(obj_id) = id {
+            let obj = ob_lookup(obj_id).unwrap();
+            test_eq!(obj.obj_type, ObType::PowerManager);
+            test_eq!(obj.native_id, 0);
+            ob_close_object(obj_id).unwrap();
+        }
+    });
+
+    test_case!("pm_open_powermanager_via_namespace", {
+        let _ = namespace::ob_create_directory("\\System");
+        let id = ob_create_object(ObType::PowerManager, "System\\PowerManager", 0, 0, Some(&power::POWER_MANAGER_OPS));
+        test_true!(id.is_ok());
+        if let Ok(obj_id) = id {
+            let _ = namespace::ob_insert_object("\\System\\PowerManager", obj_id);
+            let token = crate::security::token::Token::new_admin();
+            let opened = ob_open_path("\\System\\PowerManager", &token, 3);
+            test_true!(opened.is_ok());
+            if let Ok(opened_id) = opened {
+                let obj = ob_lookup(opened_id).unwrap();
+                test_eq!(obj.obj_type, ObType::PowerManager);
+                ob_close_object(opened_id).unwrap();
+            }
+            ob_close_object(obj_id).unwrap();
+        }
+    });
+
+    test_case!("pm_powermanager_wrong_type_rejected", {
+        let id = ob_create_object(ObType::Process, "not_power", 0, 0, None).unwrap();
+        let obj = ob_lookup(id).unwrap();
+        test_true!(obj.obj_type != ObType::PowerManager);
+        ob_destroy_object(id).unwrap();
     });
 }

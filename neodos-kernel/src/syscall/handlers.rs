@@ -226,20 +226,6 @@ pub(super) fn handler_spawn(regs: super::Registers) -> u64 {
     child_pid as u64
 }
 
-pub(super) fn handler_poweroff(_regs: super::Registers) -> u64 {
-    serial_println!("[POWEROFF] sys_poweroff called — shutting down");
-    // Flush registry hives to disk first
-    crate::cm::cm_flush_all_hives();
-    crate::globals::flush_cache_if_needed();
-    let _ = crate::eventbus::EVENT_BUS.push_event(
-        crate::eventbus::EVENT_SHUTDOWN,
-        crate::eventbus::SOURCE_KERNEL,
-        0, 0, 0, 0,
-    );
-    crate::eventbus::EVENT_BUS.dispatch_pending();
-    crate::hal::poweroff();
-}
-
 pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {

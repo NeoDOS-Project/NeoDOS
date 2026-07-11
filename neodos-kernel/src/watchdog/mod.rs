@@ -237,8 +237,7 @@ fn watchdog_write_dump_to_disk() {
 /// Force a controlled system reset via ACPI or QEMU debug port.
 fn watchdog_reset_system() -> ! {
     serial_println!("[WDT] *** SYSTEM RESET due to watchdog timeout ***");
-    // Try ACPI reset, fallback to QEMU debug port, then PS/2
-    crate::hal::poweroff(); // This function tries all methods and halts
+    crate::object::power::power_reboot();
 }
 
 // ── Stats ──
