@@ -1,0 +1,24 @@
+[workspace]
+members = [
+    "tools/neodev",
+    "neodos-lsp",
+]
+exclude = [
+    "neodos-kernel",
+    "neodos-bootloader",
+    "userbin/*",
+    "drivers/*",
+    "libneodos-nxl",
+    "libmath-nxl",
+    "libconsole-nxl",
+    "libnet-nxl",
+    "libneodos",
+    "libnet",
+]
+resolver = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
+codegen-units = 1

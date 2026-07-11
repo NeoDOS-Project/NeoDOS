@@ -18,18 +18,21 @@
 ## Quick Reference
 
 ```bash
-bash scripts/build.sh                          # bootloader + kernel + GPT
-bash scripts/build.sh --neodos-image           # + user binaries
-bash scripts/qemu-debug.sh                     # QEMU + OVMF + GDB :1234
-python3 scripts/auto_test.py                   # 620 kernel tests
-scripts/check_deps.py                          # subsystem dependency rules
-QEMU_ACCEL=kvm bash scripts/qemu-debug.sh      # KVM mode
+cargo run --bin neodev -- build --quick --image    # build kernel + bl + image (preferred)
+cargo run --bin neodev -- build --image            # build everything + image
+cargo run --bin neodev -- run                      # QEMU + OVMF + GDB :1234
+cargo run --bin neodev -- run --kvm                # KVM mode
+cargo run --bin neodev -- test                     # run automated tests
+cargo run --bin neodev -- list                     # show discovered projects
+cargo run --bin neodev -- clean                    # clean artifacts
+bash scripts/build.sh                              # legacy (still available)
+python3 scripts/auto_test.py                       # legacy test runner
 ```
 
 ## Git Workflow
 
-1. `cargo build` in `neodos-kernel/`
-2. `python3 scripts/auto_test.py`
+1. `cargo run --bin neodev -- build --quick` (or `cargo build` in `neodos-kernel/`)
+2. `cargo run --bin neodev -- test` (or `python3 scripts/auto_test.py`)
 3. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
 4. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
 
@@ -39,6 +42,7 @@ For every subsystem, consult its doc — not this file:
 
 | Subsystem | Doc | Contents |
 |-----------|-----|----------|
+| NeoDev | `tools/neodev/README.md` | Development tool: build, image, run, test |
 | Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
 | Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
 | Syscalls | `docs/syscalls.md` | Full table, calling convention, migration status |
@@ -79,3 +83,4 @@ For every subsystem, consult its doc — not this file:
 | Review | Code review checklist | `skills/review/SKILL.md` |
 | Documentation | Update docs | `skills/documentation/SKILL.md` |
 | Release | Release process | `skills/release/SKILL.md` |
+| NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` |
