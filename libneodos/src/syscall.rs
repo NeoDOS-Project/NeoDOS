@@ -262,14 +262,14 @@ pub struct MemInfo {
     pub used_pages: u64,
 }
 
-/// sys_dup2 (RAX=6): duplicate a file descriptor.
+/// sys_dup2 (RAX=22): duplicate a file descriptor.
 pub fn sys_dup2(old_fd: u8, new_fd: u8) -> Result<u8, i64> {
     let r: i64;
     unsafe {
         core::arch::asm!(
             "push rbx",
             "push rcx",
-            "mov rax, 6",
+            "mov rax, 22",
             "mov rbx, {old}",
             "mov rcx, {new}",
             "int 0x80",
@@ -282,35 +282,6 @@ pub fn sys_dup2(old_fd: u8, new_fd: u8) -> Result<u8, i64> {
         );
     }
     if r < 0 { Err(r) } else { Ok(r as u8) }
-}
-
-/// sys_get_volume_label (RAX=46): get the volume label for a drive.
-/// drive = ASCII drive letter (e.g. b'C'). Returns label string in buf (null-terminated).
-pub fn sys_get_volume_label(drive: u8, buf: &mut [u8]) -> Result<usize, i64> {
-    let ptr = buf.as_mut_ptr();
-    let len = buf.len();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "push rdx",
-            "mov rax, 46",
-            "mov rbx, {drive}",
-            "mov rcx, {ptr}",
-            "mov rdx, {len}",
-            "int 0x80",
-            "pop rdx",
-            "pop rcx",
-            "pop rbx",
-            drive = in(reg) drive as u64,
-            ptr = in(reg) ptr as u64,
-            len = in(reg) len as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    ret(r).map(|v| v as usize)
 }
 
 /// DriveInfo — matches kernel's DriveInfoRaw (RAX=33).
@@ -335,111 +306,6 @@ impl DriveInfo {
         if end == 0 { return "(no label)"; }
         core::str::from_utf8(&self.label[..end]).unwrap_or("")
     }
-}
-
-/// KObjEntryRaw — matches kernel's KObjEntryRaw (RAX=48).
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct KObjEntryRaw {
-    pub id: u64,
-    pub obj_type: u32,
-    pub padding: u32,
-    pub name: [u8; 24],
-    pub refcount: u32,
-    pub native_id: u64,
-}
-
-impl KObjEntryRaw {
-    pub fn name_str(&self) -> &str {
-        let end = self.name.iter().position(|&b| b == 0).unwrap_or(24);
-        core::str::from_utf8(&self.name[..end]).unwrap_or("<?>")
-    }
-
-    pub fn type_str(&self) -> &'static str {
-        match self.obj_type {
-            0 => "UNKNOWN",
-            1 => "PROCESS",
-            2 => "DRIVER",
-            3 => "DEVICE",
-            4 => "PIPE",
-            5 => "EVENTBUS",
-            6 => "BLOCKDEV",
-            7 => "FILESYSTEM",
-            8 => "MEMREGION",
-            9 => "SYMLINK",
-            10 => "MOUNTPOINT",
-            11 => "DIRECTORY",
-            _ => "?",
-        }
-    }
-}
-
-/// sys_set_priority (RAX=51): set process scheduling priority (admin).
-pub fn sys_set_priority(pid: u32, priority: u8) -> Result<(), i64> {
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 51",
-            "mov rbx, {pid}",
-            "mov rcx, {priority}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            pid = in(reg) pid as u64,
-            priority = in(reg) priority as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(()) }
-}
-
-/// sys_kill (RAX=52): terminate a process by PID (admin).
-pub fn sys_kill(pid: u32) -> Result<(), i64> {
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov rax, 52",
-            "mov rbx, {pid}",
-            "int 0x80",
-            "pop rbx",
-            pid = in(reg) pid as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(()) }
-}
-
-/// sys_set_volume_label (RAX=54): set the volume label for a drive.
-pub fn sys_set_volume_label(drive: u8, label: &[u8]) -> Result<(), i64> {
-    if label.len() > 11 {
-        return Err(EINVAL);
-    }
-    let mut buf = [0u8; 12];
-    buf[..label.len()].copy_from_slice(label);
-    let ptr = buf.as_ptr();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 54",
-            "mov rbx, {drive}",
-            "mov rcx, {ptr}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            drive = in(reg) drive as u64,
-            ptr = in(reg) ptr as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(()) }
 }
 
 /// DriverInfo — mirrors kernel's DriverInfoRaw (RAX=56).
@@ -493,30 +359,7 @@ impl DriverInfo {
     }
 }
 
-/// sys_driver_load (RAX=57): load a NEM driver from a filesystem path (admin).
-pub fn sys_driver_load(path: &str) -> Result<u32, i64> {
-    let bytes = path.as_bytes();
-    if bytes.len() >= 255 { return Err(EINVAL); }
-    let mut buf = [0u8; 256];
-    buf[..bytes.len()].copy_from_slice(bytes);
-    let ptr = buf.as_ptr();
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "mov rax, 57",
-            "mov rbx, {ptr}",
-            "int 0x80",
-            "pop rbx",
-            ptr = in(reg) ptr as u64,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    if r < 0 { Err(r) } else { Ok(r as u32) }
-}
-
-/// sys_driver_unload (RAX=58): unload a NEM driver by name (admin).
+/// sys_driver_unload (RAX=35): unload a NEM driver by name (admin).
 /// force = true to force unload without waiting for ACK.
 pub fn sys_driver_unload(name: &str, force: bool) -> Result<(), i64> {
     let bytes = name.as_bytes();
@@ -529,7 +372,7 @@ pub fn sys_driver_unload(name: &str, force: bool) -> Result<(), i64> {
         core::arch::asm!(
             "push rbx",
             "push rcx",
-            "mov rax, 58",
+            "mov rax, 35",
             "mov rbx, {ptr}",
             "mov rcx, {force}",
             "int 0x80",
@@ -544,13 +387,13 @@ pub fn sys_driver_unload(name: &str, force: bool) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
-/// sys_cursor_blink (RAX=53): enable/disable automatic cursor blinking.
+/// sys_cursor_blink (RAX=30): enable/disable automatic cursor blinking.
 pub fn sys_cursor_blink(enabled: bool) -> Result<(), i64> {
     let r: i64;
     unsafe {
         core::arch::asm!(
             "push rbx",
-            "mov rax, 53",
+            "mov rax, 30",
             "mov rbx, {enable}",
             "int 0x80",
             "pop rbx",
@@ -562,34 +405,8 @@ pub fn sys_cursor_blink(enabled: bool) -> Result<(), i64> {
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
-/// sys_kobj_enum (RAX=48): enumerate kernel objects.
-/// buf must be large enough for max_entries entries (each 48 bytes).
-/// Returns number of entries written.
-pub fn sys_kobj_enum(buf: &mut [KObjEntryRaw]) -> Result<usize, i64> {
-    let buf_ptr = buf.as_mut_ptr() as *mut u8;
-    let max = buf.len() as u64;
-    let r: i64;
-    unsafe {
-        core::arch::asm!(
-            "push rbx",
-            "push rcx",
-            "mov rax, 48",
-            "mov rbx, {ptr}",
-            "mov rcx, {max}",
-            "int 0x80",
-            "pop rcx",
-            "pop rbx",
-            ptr = in(reg) buf_ptr as u64,
-            max = in(reg) max,
-            out("rax") r,
-            options(nostack),
-        );
-    }
-    ret(r).map(|v| v as usize)
-}
-
 // ═══════════════════════════════════════════════════════════════════════
-// Object Manager (Ob) — RAX 60–64
+// Object Manager (Ob) — RAX 60–77
 // ═══════════════════════════════════════════════════════════════════════
 
 /// ObAccess — access mask bits (matches kernel `ObAccess`)
@@ -913,18 +730,18 @@ macro_rules! ob_syscall_4 {
     }}
 }
 
-/// sys_ob_open (RAX=60): open an Ob namespace object.
+/// sys_ob_open (RAX=40): open an Ob namespace object.
 pub fn sys_ob_open(path: &str, access_mask: u32) -> Result<u8, i64> {
     let bytes = path.as_bytes();
     if bytes.len() >= 255 { return Err(EINVAL); }
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
     let ptr = buf.as_ptr() as u64;
-    let r = unsafe { ob_syscall_2!(60, ptr, access_mask as u64) };
+    let r = unsafe { ob_syscall_2!(40, ptr, access_mask as u64) };
     ret(r).map(|v| v as u8)
 }
 
-/// sys_ob_create (RAX=61): create an object.
+/// sys_ob_create (RAX=41): create an object.
 pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>, attrs: u64) -> Result<u8, i64> {
     let bytes = path.as_bytes();
     if bytes.len() >= 255 { return Err(EINVAL); }
@@ -935,7 +752,7 @@ pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>, 
         Some(f) => f.as_mut_ptr() as u64,
         None => 0u64,
     };
-    let r = unsafe { ob_syscall_4!(61, ptr, obj_type as u64, fds_ptr, attrs) };
+    let r = unsafe { ob_syscall_4!(41, ptr, obj_type as u64, fds_ptr, attrs) };
     ret(r).map(|v| v as u8)
 }
 
@@ -943,7 +760,7 @@ pub fn sys_ob_create(path: &str, obj_type: u32, fds_out: Option<&mut [u64; 2]>, 
 pub fn sys_ob_query_info(fd: u8, info_class: ObInfoClass, buf: &mut [u8]) -> Result<usize, i64> {
     let ptr = buf.as_mut_ptr() as u64;
     let len = buf.len() as u64;
-    let r = unsafe { ob_syscall_4!(62, fd as u64, info_class as u64, ptr, len) };
+    let r = unsafe { ob_syscall_4!(42, fd as u64, info_class as u64, ptr, len) };
     ret(r).map(|v| v as usize)
 }
 
@@ -951,7 +768,7 @@ pub fn sys_ob_query_info(fd: u8, info_class: ObInfoClass, buf: &mut [u8]) -> Res
 pub fn sys_ob_set_info(fd: u8, info_class: ObSetInfoClass, buf: &[u8]) -> Result<(), i64> {
     let ptr = buf.as_ptr() as u64;
     let len = buf.len() as u64;
-    let r = unsafe { ob_syscall_4!(63, fd as u64, info_class as u32 as u64, ptr, len) };
+    let r = unsafe { ob_syscall_4!(43, fd as u64, info_class as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -959,7 +776,7 @@ pub fn sys_ob_set_info(fd: u8, info_class: ObSetInfoClass, buf: &[u8]) -> Result
 pub fn sys_ob_enum(dir_fd: u8, entries: &mut [ObEnumEntry]) -> Result<usize, i64> {
     let ptr = entries.as_mut_ptr() as *mut u8 as u64;
     let max = entries.len() as u64;
-    let r = unsafe { ob_syscall_3!(64, dir_fd as u64, ptr, max) };
+    let r = unsafe { ob_syscall_3!(44, dir_fd as u64, ptr, max) };
     ret(r).map(|v| v as usize)
 }
 
@@ -969,7 +786,7 @@ pub fn sys_ob_enum(dir_fd: u8, entries: &mut [ObEnumEntry]) -> Result<usize, i64
 pub fn sys_ob_wait(fd: u8) -> Result<(), i64> {
     let handles = [fd as u64];
     let fd_ptr = handles.as_ptr() as u64;
-    let r = unsafe { ob_syscall_3!(65, 1u64, fd_ptr, 0u64) };
+    let r = unsafe { ob_syscall_3!(45, 1u64, fd_ptr, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -1001,7 +818,7 @@ pub fn ob_set_thread_priority(thread_fd: u8, priority: u8) -> Result<(), i64> {
 /// Removes namespace objects (directories, pipes, etc.) from Ob namespace.
 /// For files, use ob_file_delete() instead.
 pub fn sys_ob_destroy(fd: u8) -> Result<(), i64> {
-    let r = unsafe { ob_syscall_2!(66, fd as u64, 0u64) };
+    let r = unsafe { ob_syscall_2!(46, fd as u64, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -1015,7 +832,7 @@ pub fn ob_file_create(path: &str) -> Result<u8, i64> {
     buf[..bytes.len()].copy_from_slice(bytes);
     let ptr = buf.as_ptr() as u64;
     let len = bytes.len() as u64;
-    let r = unsafe { ob_syscall_4!(63, 1u64, ObSetInfoClass::FileCreate as u32 as u64, ptr, len) };
+    let r = unsafe { ob_syscall_4!(43, 1u64, ObSetInfoClass::FileCreate as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(r as u8) }
 }
 
@@ -1023,7 +840,7 @@ pub fn ob_file_create(path: &str) -> Result<u8, i64> {
 /// Calls sys_ob_set_info(fd, FileDelete, null, 0).
 pub fn ob_file_delete(fd: u8) -> Result<(), i64> {
     let dummy: u64 = 0;
-    let r = unsafe { ob_syscall_4!(63, fd as u64, ObSetInfoClass::FileDelete as u32 as u64, &dummy as *const u64 as u64, 8u64) };
+    let r = unsafe { ob_syscall_4!(43, fd as u64, ObSetInfoClass::FileDelete as u32 as u64, &dummy as *const u64 as u64, 8u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -1046,13 +863,13 @@ pub const POLLHUP: i16 = 8;
 pub fn sys_poll(fds: &mut [PollFd], timeout_ms: u64) -> Result<usize, i64> {
     let pfds_ptr = fds.as_ptr() as u64;
     let nfds = fds.len() as u64;
-    let r = unsafe { ob_syscall_3!(59, pfds_ptr, nfds, timeout_ms) };
+    let r = unsafe { ob_syscall_3!(24, pfds_ptr, nfds, timeout_ms) };
     if r < 0 { Err(r) } else { Ok(r as usize) }
 }
 
 /// sys_sleep_ex: yield alertable — cede CPU, chequea APCs pendientes (RAX=41).
 pub fn sys_sleep_ex() -> Result<(), i64> {
-    let r = unsafe { ob_syscall_2!(41, 0u64, 0u64) };
+    let r = unsafe { ob_syscall_2!(3, 0u64, 0u64) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -1103,7 +920,7 @@ pub fn ob_socket_listen(fd: u8) -> Result<(), i64> {
 /// ob_socket_send: send data via ob_set_info(SocketSend).
 /// Returns number of bytes sent on success.
 pub fn ob_socket_send(fd: u8, data: &[u8]) -> Result<usize, i64> {
-    let r = unsafe { ob_syscall_4!(63, fd as u64, ObSetInfoClass::SocketSend as u32 as u64, data.as_ptr() as u64, data.len() as u64) };
+    let r = unsafe { ob_syscall_4!(43, fd as u64, ObSetInfoClass::SocketSend as u32 as u64, data.as_ptr() as u64, data.len() as u64) };
     if r < 0 { Err(r) } else { Ok(r as usize) }
 }
 
@@ -1173,7 +990,7 @@ pub fn sys_cm_open_key(path: &str) -> Result<u8, i64> {
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
     let ptr = buf.as_ptr() as u64;
-    let r = unsafe { ob_syscall_2!(67, ptr, 0u64) };
+    let r = unsafe { ob_syscall_2!(50, ptr, 0u64) };
     ret(r).map(|v| v as u8)
 }
 
@@ -1188,7 +1005,7 @@ pub fn sys_cm_query_value(fd: u8, name: &str, buf: &mut [u8]) -> Result<usize, i
     let name_ptr = name_buf.as_ptr() as u64;
     let buf_ptr = buf.as_mut_ptr() as u64;
     let buf_len = buf.len() as u64;
-    let r = unsafe { ob_syscall_4!(69, fd as u64, name_ptr, buf_ptr, buf_len) };
+    let r = unsafe { ob_syscall_4!(52, fd as u64, name_ptr, buf_ptr, buf_len) };
     ret(r).map(|v| v as usize)
 }
 
@@ -1222,7 +1039,7 @@ pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Res
     let name_ptr = name_buf.as_ptr() as u64;
     let data_ptr = data.as_ptr() as u64;
     let data_len = data.len() as u64;
-    let r = unsafe { ob_syscall_5!(70, fd as u64, name_ptr, value_type as u64, data_ptr, data_len) };
+    let r = unsafe { ob_syscall_5!(53, fd as u64, name_ptr, value_type as u64, data_ptr, data_len) };
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
@@ -1236,6 +1053,6 @@ pub const SERVICE_CONTROL_SET_CONFIG: u32 = 4;
 pub fn sys_ob_service(fd: u8, control: u32, buf: &mut [u8]) -> Result<usize, i64> {
     let buf_ptr = buf.as_mut_ptr() as u64;
     let buf_len = buf.len() as u64;
-    let r = unsafe { ob_syscall_4!(77, fd as u64, control as u64, buf_ptr, buf_len) };
+    let r = unsafe { ob_syscall_4!(47, fd as u64, control as u64, buf_ptr, buf_len) };
     if r < 0 { Err(r as i64) } else { Ok(r as usize) }
 }

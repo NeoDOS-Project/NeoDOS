@@ -3,7 +3,7 @@
 > Items pendientes del roadmap. Los completados están en
 > [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
-> Version actual: **v0.49.2** — Tests: 625 (kernel) — ABI: v7 — Ob API: RAX 60-76
+> Version actual: **v0.50-dev** — SSDT reorganized: RAX 0-59
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cambios.
 > Fuente de verdad: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
@@ -28,6 +28,8 @@
 | **v0.50** | **Shell tokenizer + NeoFS snapshot + Power Phase 2** | **HIGH** | milestone |
 | NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
 | SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
+| SSDT-DRVUNLOAD | sys_driver_unload (RAX 35) → ob_destroy | **MEDIUM** | kernel |
+| SSDT-MIGRATE-DUP2 | sys_dup2 (RAX 22) → Ob API | **LOW** | kernel |
 | PM-PHASE2 | Power Manager kernel core (ObType=21, Registry, plan mgmt) | **HIGH** | power |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
 | | | | |
@@ -116,6 +118,7 @@
 | DH-HISTORY | Mantener docs/HISTORY.md actualizado | LOW | docs |
 | AI-1 | Completar ObInfoClass/ObSetInfoClass enums | LOW | ob |
 | AI-2 | Consolidate legacy syscall wrappers | LOW | syscall |
+| SSDT-FINAL | SSDT audit, cleanup, renumbering (DONE v0.49→v0.50) | **DONE** | syscall |
 | AI-3 | ObObjectTable lock granularity | LOW | ob |
 | AI-4 | Arreglar TOCTOU race en kobj_register | LOW | ob |
 | ADM-7+8+9 | neoctl + neodebug + neomem v0.2 | LOW | admin |
@@ -755,6 +758,53 @@
 | v0.53 | Module sig validation, Registry dirty+multihive, Registry ACL (USR-P4), Integrity levels (USR-P5), KD, NeoEdit | planned |
 | v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs, Power Phases 4+5 | backlog |
 | v0.55+ | Cleanup (dead code, duplicates, refactors), Backlog items | backlog |
+
+---
+
+## SSDT — Pending Migrations (v0.50+)
+
+### SSDT-DRVUNLOAD: Migrate sys_driver_unload → Ob API
+
+**Current state:** `sys_driver_unload` (RAX 35 / was 58) is a name-based legacy
+syscall that unloads a NEM driver by name string. It goes through
+`drivers::hotreload::unload_driver(&name, force)`.
+
+**Problem:** The Ob API provides `ob_destroy(fd)` for object destruction, but
+driver unloading is name-based, not fd-based. The driver is not registered as
+a namespace object in the current implementation — it's only in the driver
+registry.
+
+**Proposed architecture:**
+1. Ensure all loaded NEM drivers are discoverable as Ob namespace objects
+   under `\Driver\` (e.g. `\Driver\PS2MOUSE`).
+2. Change `loadnem.nxe` to:
+   - Load: `ob_create("\Driver\<name>", DRIVER, ...)` — already done
+   - Unload: `ob_open("\Driver\<name>", ...)` + `ob_destroy(fd)` — NOT done
+3. Remove `handler_driver_unload` and the `sys_driver_unload` wrapper.
+
+**Impact:**
+- `loadnem.nxe`: must be updated to use Ob API for unload
+- `libneodos`: remove `sys_driver_unload` wrapper
+- Kernel: remove `handler_driver_unload` from SSDT
+- Drivers: must register in Ob namespace on load
+
+**Steps:**
+1. [ ] Add driver namespace registration in `load_nem_driver()`
+2. [ ] Update `loadnem.nxe` to use `ob_destroy()` for unload
+3. [ ] Remove `handler_driver_unload` from SSDT
+4. [ ] Remove `sys_driver_unload` from libneodos
+
+### SSDT-MIGRATE-DUP2: Migrate sys_dup2 → Ob handle duplication
+
+**Current state:** `sys_dup2` (RAX 22 / was 6) duplicates a file descriptor
+slot within the process handle table.
+
+**Analysis:** Dup2 is inherently process-local (handle table manipulation).
+It could be exposed as `ob_set_info(HandleDuplicate)` on a process object,
+but this adds complexity with no immediate benefit. The current implementation
+is simple and efficient.
+
+**Veredict:** Keep as-is. Not a candidate for Ob migration.
 
 ---
 

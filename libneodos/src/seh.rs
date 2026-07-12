@@ -10,7 +10,7 @@ pub const EXCEPTION_PAGE_FAULT: u32 = 14;
 
 pub type ExceptionHandler = extern "C" fn(u32, u64, u64) -> u32;
 
-/// Register an SEH handler for the current thread.
+/// Register an SEH handler for the current thread (RAX=4).
 ///
 /// `handler` is an optional callback (None to clear).
 /// Returns 0 on success, -1 on error.
@@ -23,7 +23,7 @@ pub fn sys_set_exception_handler(handler: Option<ExceptionHandler>) -> i64 {
     unsafe {
         asm!(
             "push rbx",
-            "mov rax, 29",
+            "mov rax, 4",
             "mov rbx, {a0}",
             "int 0x80",
             "pop rbx",

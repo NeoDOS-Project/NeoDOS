@@ -27,12 +27,12 @@ pub extern "C" fn nxl_sys_getpid() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn nxl_sys_yield() {
-    unsafe { syscall_0(2); }
+    unsafe { syscall_0(1); }
 }
 
 #[no_mangle]
 pub extern "C" fn nxl_sys_loadlib(path: *const u8) -> i64 {
-    ret(unsafe { syscall_1(21, path as u64) })
+    ret(unsafe { syscall_1(25, path as u64) })
 }
 
 

@@ -82,7 +82,7 @@ unsafe fn ob_open(path: &str, access: u32) -> i64 {
     if bytes.len() >= 255 { return -1; }
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
-    syscall_2(60, buf.as_ptr() as u64, access as u64)
+    syscall_2(40, buf.as_ptr() as u64, access as u64)
 }
 
 unsafe fn ob_create(path: &str, obj_type: u32, attrs: u64) -> i64 {
@@ -90,19 +90,19 @@ unsafe fn ob_create(path: &str, obj_type: u32, attrs: u64) -> i64 {
     if bytes.len() >= 255 { return -1; }
     let mut buf = [0u8; 256];
     buf[..bytes.len()].copy_from_slice(bytes);
-    syscall_4(61, buf.as_ptr() as u64, obj_type as u64, 0u64, attrs)
+    syscall_4(41, buf.as_ptr() as u64, obj_type as u64, 0u64, attrs)
 }
 
 unsafe fn ob_close(fd: u8) -> i64 {
-    syscall_2(13, fd as u64, 0)
+    syscall_2(23, fd as u64, 0)
 }
 
 unsafe fn ob_set_info(fd: u8, class: u32, buf: *const u8, len: usize) -> i64 {
-    syscall_4(63, fd as u64, class as u64, buf as u64, len as u64)
+    syscall_4(43, fd as u64, class as u64, buf as u64, len as u64)
 }
 
 unsafe fn ob_query_info(fd: u8, class: u32, buf: *mut u8, len: usize) -> i64 {
-    syscall_4(62, fd as u64, class as u64, buf as u64, len as u64)
+    syscall_4(42, fd as u64, class as u64, buf as u64, len as u64)
 }
 
 // ── Data types ──
@@ -174,11 +174,8 @@ pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 
 #[no_mangle]
 pub extern "C" fn net_socket_create(sock_type: u32) -> i32 {
     let mut id_buf = [0u8; 16];
-    let id = unsafe {
-        let mut n: u64;
-        asm!("int 0x80", in("rax") 3u64, lateout("rax") n);
-        n
-    };
+    // TODO: Use Ob API for getpid (RAX=3 removed, use ob_open + ob_query_info(ProcessId))
+    let id = 0u64;
     let path_len = {
         let s = b"\\NetSock-";
         id_buf[..s.len()].copy_from_slice(s);
@@ -261,7 +258,7 @@ pub extern "C" fn net_set_gateway(_iface: u32, gw: u32) -> i32 {
         }
     };
     let gw_bytes = gw.to_be_bytes();
-    let r = unsafe { syscall_4(70, fd as u64, 1u64, gw_bytes.as_ptr() as u64, 4u64) };
+    let r = unsafe { syscall_4(53, fd as u64, 1u64, gw_bytes.as_ptr() as u64, 4u64) };
     let _ = unsafe { ob_close(fd) };
     if r < 0 { r as i32 } else { 0 }
 }

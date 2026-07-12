@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.49.2 | **Tests:** 625 (kernel) | **ABI:** v7 | **Ob API:** RAX 60-76
+**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls)
 
 ## Permanent Rules (MUST always follow)
 
@@ -9,7 +9,7 @@
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
-6. **New syscalls (RAX ≥ 77) MUST be `sys_ob_*`** — operate on Ob objects, receive/return Ob handles.
+6. **New syscalls (RAX ≥ 60) MUST be `sys_ob_*`** — operate on Ob objects, receive/return Ob handles.
 7. **Code is truth.** Documentation explains design, it does not replicate code. Update docs when architecture changes.
 8. **Before architecture decisions:** read `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — invariants are enforceable rules.
 9. **Keep AGENTS.md minimal.** Move specialized instructions to `docs/` and procedural checklists to `skills/`.

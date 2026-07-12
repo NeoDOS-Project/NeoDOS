@@ -29,25 +29,17 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_validation_boot", {
         const ASSIGNED: &[u64] = &[
-            0, 1, 2, 4, 6,
-            13, 16, 18, 19, 20, 21,
-            29, 40, 41, 47,
-            53, 58, 59,
-            60, 61, 62, 63, 64, 65, 66,
+            0, 1, 2, 3, 4,
+            10, 11, 12,
+            20, 21, 22, 23, 24, 25,
+            30, 35,
+            40, 41, 42, 43, 44, 45, 46, 47,
+            50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
         ];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
-        test_true!(SYSCALL_TABLE[3].is_none()); // getpid removed — use Ob API
         test_true!(SYSCALL_TABLE[5].is_none());
-        test_true!(SYSCALL_TABLE[7].is_none());
-        test_true!(SYSCALL_TABLE[8].is_none());
-        test_true!(SYSCALL_TABLE[9].is_none());
-        test_true!(SYSCALL_TABLE[10].is_none());
-        test_true!(SYSCALL_TABLE[11].is_none());
-        test_true!(SYSCALL_TABLE[22].is_none());
-        test_true!(SYSCALL_TABLE[23].is_none());
-        test_true!(SYSCALL_TABLE[12].is_none());
         test_true!(SYSCALL_TABLE[99].is_none());
         test_true!(SYSCALL_TABLE[255].is_none());
     });
@@ -63,15 +55,11 @@ pub fn register_syscall_table_tests() {
     test_case!("syscall_add_new_easy", {
         test_true!(SYSCALL_TABLE[0].is_some());
         test_true!(SYSCALL_TABLE[1].is_some());
-        test_true!(SYSCALL_TABLE[22].is_none());
-        test_true!(SYSCALL_TABLE[23].is_none());
-        test_true!(SYSCALL_TABLE[8].is_none());
-        test_true!(SYSCALL_TABLE[10].is_none());
 
         test_eq!(SYSCALL_PERMISSIONS[0].ring_min, 3);
-        test_eq!(SYSCALL_PERMISSIONS[58].admin, true);
+        test_eq!(SYSCALL_PERMISSIONS[35].admin, true);
 
-        test_true!(SYSCALL_TABLE[66].is_some());
+        test_true!(SYSCALL_TABLE[46].is_some());
     });
 
     // ── A4.6 Integration tests ──
@@ -401,10 +389,10 @@ pub fn register_syscall_table_tests() {
     });
 
     // ═══════════════════════════════════════════════════════════════════
-    // OB-017: handler_readfile/handler_writefile via ObQueryInfo
+    // Ob create/lookup/destroy integration tests
     // ═══════════════════════════════════════════════════════════════════
 
-    test_case!("handler_readfile_ob_info_extraction", {
+    test_case!("ob_create_lookup_extraction", {
         let inode = 42u32;
         let ob_id = crate::object::ob_create_object(
             crate::object::ObType::Filesystem, "OBFILE", inode as u64, 0, None,
@@ -417,7 +405,7 @@ pub fn register_syscall_table_tests() {
         crate::object::ob_destroy_object(ob_id).unwrap();
     });
 
-    test_case!("handler_writefile_ob_info_extraction", {
+    test_case!("ob_create_lookup_extraction_write", {
         let inode = 99u32;
         let ob_id = crate::object::ob_create_object(
             crate::object::ObType::Filesystem, "OBWRITE", inode as u64, 0, None,

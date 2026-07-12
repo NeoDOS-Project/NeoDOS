@@ -25,7 +25,7 @@ unsafe fn sys_write(fd: u8, buf: *const u8, len: usize) -> i64 {
     let r: i64;
     asm!(
         "push rbx", "push rcx", "push rdx",
-        "mov rax, 1",
+        "mov rax, 20",
         "mov rbx, {fd}",
         "mov rcx, {buf}",
         "mov rdx, {len}",
@@ -51,7 +51,7 @@ fn read_byte() -> i32 {
     unsafe {
         asm!(
             "push rbx", "push rcx", "push rdx",
-            "mov rax, 4",
+            "mov rax, 21",
             "mov rbx, 0",
             "mov rcx, {buf}",
             "mov rdx, 1",
@@ -250,7 +250,7 @@ pub unsafe extern "C" fn console_readline(prompt: *const u8, output: *mut u8, ma
         let key = read_byte();
         match key {
             -1 => {
-                unsafe { asm!("mov rax, 2", "int 0x80"); }
+                unsafe { asm!("mov rax, 1", "int 0x80"); }
                 continue;
             }
             0x0D | 0x0A => {

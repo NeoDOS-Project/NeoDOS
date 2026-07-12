@@ -6,12 +6,12 @@ use crate::syscall::syscall_3;
 // ============================================================
 #[no_mangle]
 pub extern "C" fn nxl_sys_write(fd: u8, buf: *const u8, len: usize) -> i64 {
-    ret(unsafe { syscall_3(1, fd as u64, buf as u64, len as u64) })
+    ret(unsafe { syscall_3(20, fd as u64, buf as u64, len as u64) })
 }
 
 #[no_mangle]
 pub extern "C" fn nxl_sys_read(fd: u8, buf: *mut u8, len: usize) -> i64 {
-    ret(unsafe { syscall_3(4, fd as u64, buf as u64, len as u64) })
+    ret(unsafe { syscall_3(21, fd as u64, buf as u64, len as u64) })
 }
 
 // ============================================================

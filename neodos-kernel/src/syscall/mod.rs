@@ -41,114 +41,89 @@ pub use self::tests::register_syscall_table_tests;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u64)]
 pub enum SyscallNum {
+    // Process (0-9)
     Exit = 0,
-    Write = 1,
-    Yield = 2,
-    // GetPid = 3, — removed; use ob_open + ob_query_info(ProcessId)
-    Read = 4,
-    Dup2 = 6,
-    ReadDir = 8,
-    WaitPid = 9,
-    WriteFile = 12,
-    Close = 13,
-    ChDir = 16,
-    Brk = 18,
-    Mmap = 19,
-    Munmap = 20,
-    LoadLib = 21,
-    ThreadCreate = 22,
-    ThreadJoin = 23,
-    WaitAlertable = 40,
-    SleepEx = 41,
-    // Poweroff = 42, — removed; use ob_set_info(PowerShutdown/PowerReboot)
-    GetVolumeLabel = 46,
-    ChDirParent = 47,
-    KObjEnum = 48,
-    SetPriority = 51,
-    KillProcess = 52,
-    SetExceptionHandler = 29,
-    CursorBlink = 53,
-    SetVolumeLabel = 54,
-    DriverLoad = 57,
-    DriverUnload = 58,
-    Poll = 59,
-    ObOpen = 60,
-    ObCreate = 61,
-    ObQueryInfo = 62,
-    ObSetInfo = 63,
-    ObEnum = 64,
-    ObWait = 65,
-    ObDestroy = 66,
-    // B2.1 Z6: Registry hive database (Cm)
-    CmOpenKey = 67,
-    CmCreateKey = 68,
-    CmQueryValue = 69,
-    CmSetValue = 70,
-    CmEnumKey = 71,
-    CmEnumValue = 72,
-    CmDeleteKey = 73,
-    CmFlushKey = 74,
-    CmLoadHive = 75,
-    CmUnloadHive = 76,
-    ObService = 77,
+    Yield = 1,
+    WaitAlertable = 2,
+    SleepEx = 3,
+    SetExceptionHandler = 4,
+    // Memory (10-19)
+    Brk = 10,
+    Mmap = 11,
+    Munmap = 12,
+    // I/O (20-29)
+    Write = 20,
+    Read = 21,
+    Dup2 = 22,
+    Close = 23,
+    Poll = 24,
+    LoadLib = 25,
+    // Console (30-39)
+    CursorBlink = 30,
+    // Driver (35-39)
+    DriverUnload = 35,
+    // Object Manager (40-49)
+    ObOpen = 40,
+    ObCreate = 41,
+    ObQueryInfo = 42,
+    ObSetInfo = 43,
+    ObEnum = 44,
+    ObWait = 45,
+    ObDestroy = 46,
+    ObService = 47,
+    // Registry Cm (50-59)
+    CmOpenKey = 50,
+    CmCreateKey = 51,
+    CmQueryValue = 52,
+    CmSetValue = 53,
+    CmEnumKey = 54,
+    CmEnumValue = 55,
+    CmDeleteKey = 56,
+    CmFlushKey = 57,
+    CmLoadHive = 58,
+    CmUnloadHive = 59,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 77;
-    pub const HIGHEST_ASSIGNED: u64 = 77;
+    pub const MAX_VALID: u64 = 59;
+    pub const HIGHEST_ASSIGNED: u64 = 59;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
             0 => Some(Self::Exit),
-            1 => Some(Self::Write),
-            2 => Some(Self::Yield),
-             // 3 → getpid removed; use ob_open + ob_query_info(ProcessId)
-            4 => Some(Self::Read),
-            6 => Some(Self::Dup2),
-            8 => Some(Self::ReadDir),
-            9 => Some(Self::WaitPid),
-            12 => Some(Self::WriteFile),
-            13 => Some(Self::Close),
-            16 => Some(Self::ChDir),
-            18 => Some(Self::Brk),
-            19 => Some(Self::Mmap),
-            20 => Some(Self::Munmap),
-            21 => Some(Self::LoadLib),
-            22 => Some(Self::ThreadCreate),
-            23 => Some(Self::ThreadJoin),
-            29 => Some(Self::SetExceptionHandler),
-            40 => Some(Self::WaitAlertable),
-            41 => Some(Self::SleepEx),
-            // 42 → Poweroff removed; use Ob API (ob_set_info with PowerShutdown/PowerReboot)
-            46 => Some(Self::GetVolumeLabel),
-            47 => Some(Self::ChDirParent),
-            48 => Some(Self::KObjEnum),
-            51 => Some(Self::SetPriority),
-            52 => Some(Self::KillProcess),
-            53 => Some(Self::CursorBlink),
-            54 => Some(Self::SetVolumeLabel),
-            // 55 → fsck removed; use ob_query_info/ob_set_info
-            57 => Some(Self::DriverLoad),
-            58 => Some(Self::DriverUnload),
-            59 => Some(Self::Poll),
-            60 => Some(Self::ObOpen),
-            61 => Some(Self::ObCreate),
-            62 => Some(Self::ObQueryInfo),
-            63 => Some(Self::ObSetInfo),
-            64 => Some(Self::ObEnum),
-            65 => Some(Self::ObWait),
-            66 => Some(Self::ObDestroy),
-            67 => Some(Self::CmOpenKey),
-            68 => Some(Self::CmCreateKey),
-            69 => Some(Self::CmQueryValue),
-            70 => Some(Self::CmSetValue),
-            71 => Some(Self::CmEnumKey),
-            72 => Some(Self::CmEnumValue),
-            73 => Some(Self::CmDeleteKey),
-            74 => Some(Self::CmFlushKey),
-            75 => Some(Self::CmLoadHive),
-            76 => Some(Self::CmUnloadHive),
-            77 => Some(Self::ObService),
+            1 => Some(Self::Yield),
+            2 => Some(Self::WaitAlertable),
+            3 => Some(Self::SleepEx),
+            4 => Some(Self::SetExceptionHandler),
+            10 => Some(Self::Brk),
+            11 => Some(Self::Mmap),
+            12 => Some(Self::Munmap),
+            20 => Some(Self::Write),
+            21 => Some(Self::Read),
+            22 => Some(Self::Dup2),
+            23 => Some(Self::Close),
+            24 => Some(Self::Poll),
+            25 => Some(Self::LoadLib),
+            30 => Some(Self::CursorBlink),
+            35 => Some(Self::DriverUnload),
+            40 => Some(Self::ObOpen),
+            41 => Some(Self::ObCreate),
+            42 => Some(Self::ObQueryInfo),
+            43 => Some(Self::ObSetInfo),
+            44 => Some(Self::ObEnum),
+            45 => Some(Self::ObWait),
+            46 => Some(Self::ObDestroy),
+            47 => Some(Self::ObService),
+            50 => Some(Self::CmOpenKey),
+            51 => Some(Self::CmCreateKey),
+            52 => Some(Self::CmQueryValue),
+            53 => Some(Self::CmSetValue),
+            54 => Some(Self::CmEnumKey),
+            55 => Some(Self::CmEnumValue),
+            56 => Some(Self::CmDeleteKey),
+            57 => Some(Self::CmFlushKey),
+            58 => Some(Self::CmLoadHive),
+            59 => Some(Self::CmUnloadHive),
             _ => None,
         }
     }
@@ -203,12 +178,12 @@ pub fn ob_err_to_syscall(e: crate::object::ObError) -> SyscallError {
 
 pub fn validate_abi() {
     const ASSIGNED: &[u64] = &[
-        0, 1, 2, 4, 6,
-        13, 16, 18, 19, 20, 21,
-        29,
-        40, 41, 47, 53, 58, 59,
-        60, 61, 62, 63, 64, 65, 66,
-        67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77,
+        0, 1, 2, 3, 4,
+        10, 11, 12,
+        20, 21, 22, 23, 24, 25,
+        30, 35,
+        40, 41, 42, 43, 44, 45, 46, 47,
+        50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
     ];
 
     for &n in ASSIGNED {
@@ -378,33 +353,6 @@ fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::han
     *entry
 }
 
-fn check_legacy_path_access(path: &str, access: u32) -> Result<(), u64> {
-    if !path.contains(':') {
-        return Ok(());
-    }
-    let normalized = path.replace('/', "\\");
-    let ob_path = alloc::format!("\\Global\\FileSystem\\{}", normalized);
-    let token = crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let lock = s.lock();
-        lock.current_eprocess()
-            .map(|ep| ep.token.clone())
-            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
-    });
-    match crate::object::ob_open_path(&ob_path, &token, access) {
-        Ok(ob_id) => {
-            let _ = crate::object::ob_close_object(ob_id);
-            Ok(())
-        }
-        Err(crate::object::ObError::AccessDenied) => {
-            Err(err_to_u64(SyscallError::Acces))
-        }
-        Err(_) => {
-            Ok(())
-        }
-    }
-}
-
 fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
     let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
 
@@ -444,46 +392,6 @@ fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> 
     }
 }
 
-fn generate_info_content(info_type: u32) -> Option<alloc::vec::Vec<u8>> {
-    match info_type {
-        1 => {
-            let stats = crate::memory::stats();
-            let mut buf = alloc::vec::Vec::with_capacity(48);
-            buf.extend_from_slice(&stats.phys_max.to_le_bytes());
-            buf.extend_from_slice(&stats.total_kib.to_le_bytes());
-            buf.extend_from_slice(&stats.usable_kib.to_le_bytes());
-            buf.extend_from_slice(&stats.free_kib.to_le_bytes());
-            buf.extend_from_slice(&stats.used_kib.to_le_bytes());
-            buf.extend_from_slice(&stats.reserved_kib.to_le_bytes());
-            Some(buf)
-        }
-        2 => {
-            let count = crate::arch::x64::cpu_local::cpu_count() as usize;
-            let mut buf = alloc::vec::Vec::with_capacity(count * 8);
-            for cpu in 0..count {
-                let kprcb_base = crate::arch::x64::cpu_local::kprcb_page(cpu)
-                    .unwrap_or(0);
-                let ic = if kprcb_base != 0 {
-                    unsafe { core::ptr::read_volatile(
-                        (kprcb_base + 0xB40) as *const u64
-                    )}
-                } else { 0 };
-                buf.extend_from_slice(&ic.to_le_bytes());
-            }
-            Some(buf)
-        }
-        11 => {
-            let vt_num = crate::scheduler::current_vt_num();
-            let active_vt = crate::input::active_vt();
-            let mut buf = alloc::vec::Vec::with_capacity(4);
-            buf.push(vt_num);
-            buf.push(active_vt as u8);
-            Some(buf)
-        }
-        _ => None,
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════════════
 // SSDT + Permission Tables
 // ═══════════════════════════════════════════════════════════════════════
@@ -492,42 +400,39 @@ lazy_static! {
     pub static ref SYSCALL_TABLE: [Option<SyscallFn>; 256] = {
         let mut t: [Option<SyscallFn>; 256] = [None; 256];
         t[0] = Some(handler_exit as SyscallFn);
-        t[1] = Some(handler_write as SyscallFn);
-        t[2] = Some(handler_yield as SyscallFn);
-        // t[3] was handler_getpid — removed; use ob_open + ob_query_info(ProcessId)
-        t[4] = Some(handler_read as SyscallFn);
-        t[6] = Some(handler_dup2 as SyscallFn);
-        t[13] = Some(handler_close as SyscallFn);
-        t[16] = Some(handler_chdir as SyscallFn);
-        t[18] = Some(handler_brk as SyscallFn);
-        t[19] = Some(handler_mmap as SyscallFn);
-        t[20] = Some(handler_munmap as SyscallFn);
-        t[21] = Some(handler_loadlib as SyscallFn);
-        t[29] = Some(handler_set_exception_handler as SyscallFn);
-        t[40] = Some(handler_wait_alertable as SyscallFn);
-        t[41] = Some(handler_sleep_ex as SyscallFn);
-        t[47] = Some(handler_chdir_parent as SyscallFn);
-        t[53] = Some(handler_cursor_blink as SyscallFn);
-        t[58] = Some(handler_driver_unload as SyscallFn);
-        t[59] = Some(handler_poll as SyscallFn);
-        t[60] = Some(handler_ob_open as SyscallFn);
-        t[61] = Some(handler_ob_create as SyscallFn);
-        t[62] = Some(handler_ob_query_info as SyscallFn);
-        t[63] = Some(handler_ob_set_info as SyscallFn);
-        t[64] = Some(handler_ob_enum as SyscallFn);
-        t[65] = Some(handler_ob_wait as SyscallFn);
-        t[66] = Some(handler_ob_destroy as SyscallFn);
-        t[67] = Some(handler_cm_open_key as SyscallFn);
-        t[68] = Some(handler_cm_create_key as SyscallFn);
-        t[69] = Some(handler_cm_query_value as SyscallFn);
-        t[70] = Some(handler_cm_set_value as SyscallFn);
-        t[71] = Some(handler_cm_enum_key as SyscallFn);
-        t[72] = Some(handler_cm_enum_value as SyscallFn);
-        t[73] = Some(handler_cm_delete_key as SyscallFn);
-        t[74] = Some(handler_cm_flush_key as SyscallFn);
-        t[75] = Some(handler_cm_load_hive as SyscallFn);
-        t[76] = Some(handler_cm_unload_hive as SyscallFn);
-        t[77] = Some(handler_ob_service as SyscallFn);
+        t[1] = Some(handler_yield as SyscallFn);
+        t[2] = Some(handler_wait_alertable as SyscallFn);
+        t[3] = Some(handler_sleep_ex as SyscallFn);
+        t[4] = Some(handler_set_exception_handler as SyscallFn);
+        t[10] = Some(handler_brk as SyscallFn);
+        t[11] = Some(handler_mmap as SyscallFn);
+        t[12] = Some(handler_munmap as SyscallFn);
+        t[20] = Some(handler_write as SyscallFn);
+        t[21] = Some(handler_read as SyscallFn);
+        t[22] = Some(handler_dup2 as SyscallFn);
+        t[23] = Some(handler_close as SyscallFn);
+        t[24] = Some(handler_poll as SyscallFn);
+        t[25] = Some(handler_loadlib as SyscallFn);
+        t[30] = Some(handler_cursor_blink as SyscallFn);
+        t[35] = Some(handler_driver_unload as SyscallFn);
+        t[40] = Some(handler_ob_open as SyscallFn);
+        t[41] = Some(handler_ob_create as SyscallFn);
+        t[42] = Some(handler_ob_query_info as SyscallFn);
+        t[43] = Some(handler_ob_set_info as SyscallFn);
+        t[44] = Some(handler_ob_enum as SyscallFn);
+        t[45] = Some(handler_ob_wait as SyscallFn);
+        t[46] = Some(handler_ob_destroy as SyscallFn);
+        t[47] = Some(handler_ob_service as SyscallFn);
+        t[50] = Some(handler_cm_open_key as SyscallFn);
+        t[51] = Some(handler_cm_create_key as SyscallFn);
+        t[52] = Some(handler_cm_query_value as SyscallFn);
+        t[53] = Some(handler_cm_set_value as SyscallFn);
+        t[54] = Some(handler_cm_enum_key as SyscallFn);
+        t[55] = Some(handler_cm_enum_value as SyscallFn);
+        t[56] = Some(handler_cm_delete_key as SyscallFn);
+        t[57] = Some(handler_cm_flush_key as SyscallFn);
+        t[58] = Some(handler_cm_load_hive as SyscallFn);
+        t[59] = Some(handler_cm_unload_hive as SyscallFn);
         t
     };
 
@@ -536,45 +441,37 @@ lazy_static! {
         t[0] = SyscallPermission::user();
         t[1] = SyscallPermission::user();
         t[2] = SyscallPermission::user();
+        t[3] = SyscallPermission::user();
         t[4] = SyscallPermission::user();
-        t[5] = SyscallPermission::user();
-        t[6] = SyscallPermission::user();
-        t[7] = SyscallPermission::user();
-        t[8] = SyscallPermission::user();
-        t[9] = SyscallPermission::user();
         t[10] = SyscallPermission::user();
         t[11] = SyscallPermission::user();
-        t[13] = SyscallPermission::user();
-        t[16] = SyscallPermission::user();
-        t[18] = SyscallPermission::user();
-        t[19] = SyscallPermission::user();
+        t[12] = SyscallPermission::user();
         t[20] = SyscallPermission::user();
         t[21] = SyscallPermission::user();
-        t[29] = SyscallPermission::user();
+        t[22] = SyscallPermission::user();
+        t[23] = SyscallPermission::user();
+        t[24] = SyscallPermission::user();
+        t[25] = SyscallPermission::user();
+        t[30] = SyscallPermission::user();
+        t[35] = SyscallPermission::admin();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
-        t[47] = SyscallPermission::user();
+        t[42] = SyscallPermission::user();
+        t[43] = SyscallPermission::user();
+        t[44] = SyscallPermission::user();
+        t[45] = SyscallPermission::user();
+        t[46] = SyscallPermission::user();
+        t[47] = SyscallPermission::admin();
+        t[50] = SyscallPermission::user();
+        t[51] = SyscallPermission::user();
+        t[52] = SyscallPermission::user();
         t[53] = SyscallPermission::user();
+        t[54] = SyscallPermission::user();
+        t[55] = SyscallPermission::user();
+        t[56] = SyscallPermission::user();
+        t[57] = SyscallPermission::user();
         t[58] = SyscallPermission::admin();
-        t[59] = SyscallPermission::user();
-        t[60] = SyscallPermission::user();
-        t[61] = SyscallPermission::user();
-        t[62] = SyscallPermission::user();
-        t[63] = SyscallPermission::user();
-        t[64] = SyscallPermission::user();
-        t[65] = SyscallPermission::user();
-        t[66] = SyscallPermission::user();
-        t[67] = SyscallPermission::user();
-        t[68] = SyscallPermission::user();
-        t[69] = SyscallPermission::user();
-        t[70] = SyscallPermission::user();
-        t[71] = SyscallPermission::user();
-        t[72] = SyscallPermission::user();
-        t[73] = SyscallPermission::user();
-        t[74] = SyscallPermission::user();
-        t[75] = SyscallPermission::admin();
-        t[76] = SyscallPermission::admin();
-        t[77] = SyscallPermission::admin();
+        t[59] = SyscallPermission::admin();
         t
     };
 }

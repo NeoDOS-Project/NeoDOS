@@ -6,17 +6,17 @@ use crate::syscall::syscall_1;
 // ============================================================
 #[no_mangle]
 pub extern "C" fn nxl_sys_brk(new_break: u64) -> i64 {
-    ret(unsafe { syscall_1(18, new_break) })
+    ret(unsafe { syscall_1(10, new_break) })
 }
 
 #[no_mangle]
 pub extern "C" fn nxl_sys_mmap(hint: u64, len: u64, prot: u16, flags: u16, file_handle: u64) -> i64 {
-    ret(unsafe { crate::syscall::syscall_5(19, hint, len, prot as u64, flags as u64, file_handle) })
+    ret(unsafe { crate::syscall::syscall_5(11, hint, len, prot as u64, flags as u64, file_handle) })
 }
 
 #[no_mangle]
 pub extern "C" fn nxl_sys_munmap(addr: u64, len: u64) -> i64 {
-    ret(unsafe { crate::syscall::syscall_2(20, addr, len) })
+    ret(unsafe { crate::syscall::syscall_2(12, addr, len) })
 }
 
 // ============================================================
