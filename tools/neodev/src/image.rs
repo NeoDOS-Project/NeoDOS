@@ -408,7 +408,7 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
 
     // NXE binaries
     let programs_nxe = &[
-        "neoshell", "neoinit", "cmdtest", "shtest", "cd", "corehelp",
+        "neoshell", "neoinit", "cmdtest", "shtest", "stresscmd", "cd", "corehelp",
         "datetime", "ver", "neomem", "vol", "echo", "label",
         "coretype", "tree", "corecls", "corecopy", "coredel",
         "coreren", "coremd", "corerd", "drives", "ps", "keyb", "coredir",

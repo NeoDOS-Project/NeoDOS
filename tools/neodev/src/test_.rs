@@ -228,9 +228,12 @@ fn wait_for_test_completion(
             }
         }
 
-        // Check for completion
+        // Check for completion — wait for both kernel AND command tests
         let full_text = output_lines.join("\n");
-        if full_text.contains("ALL_TESTS_COMPLETE") {
+        if full_text.contains("ALL_TESTS_COMPLETE")
+            && full_text.contains("CMDTEST_COMPLETE")
+            && full_text.contains("STRESSCMD_COMPLETE")
+        {
             state = "done".to_string();
             #[allow(unused_assignments)]
             {
@@ -296,6 +299,7 @@ fn analyze_results(lines: &[String]) -> Result<TestResult> {
         });
 
     let cmd_ok = full_text.contains("ALL_COMMAND_TESTS_PASSED");
+    let stress_ok = full_text.contains("ALL_STRESS_TESTS_PASSED");
     let sh_ok = full_text.contains("SHELL_TESTS_PASSED");
 
     let mut panics = vec![];

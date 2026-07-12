@@ -144,6 +144,7 @@ pub extern "C" fn _start() -> ! {
 
     // ── Run user-mode test binaries ──
     try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
+    try_spawn_test("C:\\Programs\\stresscmd.nxe", "STRESSCMD");
     try_spawn_test("C:\\Programs\\shtest.nxe", "SHTEST");
 
     // ── Build Ob path for shell ──
