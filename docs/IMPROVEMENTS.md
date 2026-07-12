@@ -3,12 +3,12 @@
 > Items pendientes del roadmap. Los completados están en
 > [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
 
-> Version actual: **v0.49.0** — Tests: 656 — ABI: v7 — Ob API: RAX 60-76
+> Version actual: **v0.49.2** — Tests: 625 (kernel) — ABI: v7 — Ob API: RAX 60-76
 > Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
 > Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cambios.
 > Fuente de verdad: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
 
-**Próximo milestone: v0.50** (Registry bugfixes + Shell overhaul + NeoFS robustez)
+**Próximo milestone: v0.50** (Shell tokenizer + NeoFS snapshot + Power Manager Phase 2)
 
 ---
 
@@ -17,7 +17,7 @@
 1. Una fase no empieza hasta que sus prerequisitos estén marcados **[COMPLETED]**.
 2. Cada item pendiente incluye: ID, archivos, prereqs, tests.
 3. Al completar: actualizar `CHANGELOG.md` y mover a `IMPROVEMENTS_COMPLETED.md`.
-4. Validar: `cargo build` + `python3 scripts/auto_test.py` + `scripts/check_deps.py`.
+4. Validar: `cargo build` + `cargo run --bin neodev -- test` + `scripts/check_deps.py`.
 
 ---
 
@@ -25,13 +25,10 @@
 
 | ID | Item | Prio | Cat |
 |----|------|------|-----|
-| **v0.50** | **Registry bugfixes + Shell Phase 1 + NeoFS snapshot** | **HIGH** | milestone |
-| CM-FIX | Registry bugfixes (free list, delete, unmount flush) | ~~HIGH~~ COMPLETADO | registry |
+| **v0.50** | **Shell tokenizer + NeoFS snapshot + Power Phase 2** | **HIGH** | milestone |
 | NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
 | SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
-| SH-REDIR | Shell redirection (>, <, >>) | ~~HIGH~~ COMPLETADO | shell |
-| B4.11 | NeoInit auto-start servicios (→ SM-001) | ~~HIGH~~ SUPERSEDED | boot |
-| PM-PHASE1 | HAL ACPI primitives (FADT parse, S5, reboot) | **HIGH** | power |
+| PM-PHASE2 | Power Manager kernel core (ObType=21, Registry, plan mgmt) | **HIGH** | power |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
 | | | | |
 | **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
@@ -46,17 +43,12 @@
 | USR-P1c | SAM persistence to Registry hive | MEDIUM | security |
 | USR-P1d | SeAccessCheck: fix empty DACL + group SIDs | MEDIUM | security |
 | USR-P1e | ObSetInfoClass::ChangePassword (31) | MEDIUM | security |
-| SM-001 | Service Manager (ObType::Service=20, RAX 77) | MEDIUM | services |
-| PM-PHASE2 | Power Manager kernel core (ObType=21, struct, Registry, plan mgmt) | MEDIUM | power |
 | NET-1.9 | ipconfig.nxe | MEDIUM | net |
 | NET-1.10 | ping.nxe | MEDIUM | net |
 | B3.4 | NTP client | MEDIUM | net |
 | ADM-1+2 | neotop v0.2 + neostat | MEDIUM | admin |
 | ADM-4 | neotask (gestor de tareas) | MEDIUM | admin |
 | ADM-5+6 | neocfg + neofs | MEDIUM | admin |
-| KBD-PHASE1 | NeoKBD kernel module + Ob API + Event Bus + libneodos | MEDIUM | kbd |
-| KBD-PHASE2 | ps2kbd simplification + .kbd format tool | MEDIUM | kbd |
-| ADM-NEOKEY | neokey CLI (reemplaza keyb, nombres de layout) | MEDIUM | admin |
 | | | | |
 | **v0.52** | **VirtIO + Sessions + FS Security** | **MEDIUM** | milestone |
 | VIO-ARCH | Virtqueue abstraction + modern PCI transport | **HIGH** | drivers |
@@ -96,7 +88,6 @@
 | CM-WAL | Registry WAL (write-ahead logging) | LOW | registry |
 | PM-PHASE4 | Service Manager shutdown integration + libneodos wrappers + shell commands | MEDIUM | power |
 | CM-LIB | Registry libneodos wrappers (7 missing) | LOW | lib |
-| PM-PHASE5 | Power Manager polish: event handlers, async coordination, tests | LOW | power |
 | CM-REGEDIT | regedit.nxe — registry editor | LOW | admin |
 | USR-P6a | WHOAMI command | LOW | shell |
 | USR-P6b | PASSWD command | LOW | shell |
@@ -105,13 +96,11 @@
 | USR-P6e | RUNAS command | LOW | shell |
 | NET-DNS | DNS resolver (stub resolver + cache) | LOW | net |
 | I18N-P1 | i18n runtime (libneodos + NLT format) | LOW | lib |
-| PM-PHASE5 | Power Manager polish: tests completion, NeoCfg integration, event handlers | LOW | power |
 | I18N-P2 | Migrar NeoShell + NeoInit + apps core a tr!() | LOW | shell |
 | I18N-P3 | neolocale tool + archivos .nlt + segundo idioma | LOW | tools |
 | B1.1 | Kernel tracing infrastructure | LOW | kernel |
 | B1.2 | NeoTrace system | LOW | kernel |
 | ADM-3 | neolog (visor event log) | LOW | admin |
-| NET-1.7 | Kernel: nic_id + ephemeral port | ~~LOW~~ COMPLETADO | net |
 | BUG-NEM-RX | NEM e1000 no recibe paquetes | LOW | drivers |
 | AUDIT-17 | User address space constrained (36MB) | LOW | kernel |
 | B6.2 | Copy-on-write fork | LOW | kernel |
@@ -119,6 +108,7 @@
 | VFS-5.3 | Write-back ordenado | LOW | fs |
 | VFS-6.1..6.4 | VFS Features (overlay, attr, notifications, async) | LOW | fs |
 | VFS-7.1..7.3 | VFS Performance (lock, lookup cache, path cache) | LOW | fs |
+| PM-PHASE5 | Power Manager polish: event handlers, async coordination, tests | LOW | power |
 | | | | |
 | **backlog** | **Low-priority + experimental + cleanup** | **LOW** | |
 | DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | LOW | docs |
@@ -140,23 +130,11 @@
 
 ## HIGH
 
-### v0.50: Registry bugfixes + Shell + NeoFS snapshot
-
-#### Registry
-
-* [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`
-  - Fix free list: reemplazar `free_head`/`scan_next_free` por next-fit linear scan con `next_alloc_hint`.
-  - Cambiar `cells` de `[Option<Cell>; 2048]` a `Vec<Option<Cell>>` (soft max).
-  - Añadir `Hive::delete_value()`: desenlazar de lista de valores, liberar celda.
-  - Fix `RegistryDeleteValue` handler: llama a `cm_delete_value()` en vez del hack `REG_NONE`.
-  - Fix `cm_unload_hive()`: flush dirty data antes de desmontar.
-  - Fix `cm_flush_key()` deadlock: evitar doble adquisición de lock.
-  - Reemplazar `delete_key()` recursivo por iterativo con `Vec` stack explícito.
-  - **Tests:** `cm_free_list_next_fit`, `cm_delete_value`, `cm_delete_value_persist`, `cm_unmount_flush`, `cm_deep_key_deletion_iterative`, `cm_key_deletion_preserves_siblings` | **COMPLETADO**
+### v0.50: Shell tokenizer + NeoFS snapshot + Power Phase 2
 
 #### NeoFS v2
 
-* [ ] **NFSv2-SYSCALL. sys_ob_snapshot (RAX 77)** | Prereqs: NFSv2-FILESYSTEM, NFSv2-SNAPSHOT | Files: `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/object/types.rs`
+* [ ] **NFSv2-SYSCALL. sys_ob_snapshot (RAX 77)** | Prereqs: NFSv2-BTREE, NFSv2-SNAPSHOT | Files: `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/object/types.rs`
   - handler_ob_snapshot: CREATE/RESTORE/LIST/PURGE sobre handle del FS raíz.
   - SSDT entry + permission entry. Nuevos ObInfoClass si aplica.
   - **Tests:** `syscall_ob_snapshot_create`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_list`
@@ -168,32 +146,19 @@
   - `"..."` (expande %VAR%), `'...'` (literal), `^` escape, `%%` literal percent.
   - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`
 
-* [x] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
-  - Tokenizer parsea `>`, `>>`, `<`, `2>`. Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd, spawn.
-  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
+#### Power Manager — Phase 2: Kernel core
 
-#### Boot
-
-* [x] **B4.11. NeoInit: auto-start de servicios** | Prereqs: B4.10 | Files: `userbin/neoinit/`
-  - ✅ Implementación actual: leer AutoStartServices, spawn_detached(). 
-  - ⚠️ **SUPERSEDED por SM-001** — migrar al Service Manager del kernel.
-  - Diseño: `docs/design/service-manager-design.md`
-
-#### Service Manager
-
-* [x] **SM-001. Service Manager (kernel)** | Prereqs: CM-FIX | Files: `src/services/` (new), `src/object/types.rs`, `src/syscall/mod.rs`, `src/syscall/ob.rs`, `src/syscall/permission.rs`, `src/globals.rs`, `src/main.rs`, `userbin/neoinit/`, `libneodos/src/syscall.rs`
-  - Diseño completo: `docs/design/service-manager-design.md`
-  - `ObType::Service = 20` en `src/object/types.rs`
-  - 3 nuevos `ObInfoClass` (29=ServiceState, 30=ServiceConfig, 31=ServiceStatus)
-  - 4 nuevos `ObSetInfoClass` (33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig)
-  - RAX 77 `sys_ob_service` en SSDT
-  - `SERVICE_MANAGER: Mutex<ServiceManager>` global
-  - Máquina de 5 estados (Stopped→Starting→Running→Stopping→Failed) con restart policy
-  - Dependencias entre servicios con orden topológico
-  - `\Service\<Name>` en namespace Ob
-  - Backend Registry: `\Registry\Machine\System\CurrentControlSet\Services\<Name>`
-  - Migrar auto-start desde NeoInit al Sm del kernel
-  - **Tests:** 25+ tests unitarios + integración en el diseño
+* [ ] **PM-PHASE2. Power Manager kernel core** | Prereqs: -- | Files: `src/power/mod.rs` (new), `src/power/plan.rs` (new), `src/power/coordinator.rs` (new), `src/object/types.rs`, `src/cm/mod.rs`, `src/main.rs`
+  - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
+  - `PowerSystemState` enum: Active, ShuttingDown, Rebooting, Suspending, Hibernating, Off.
+  - `PowerPlan` + `PowerPolicies`: DisplayTimeout, SleepTimeout, HibernateEnabled, CpuPolicy, LidAction, PowerButtonAction.
+  - `PowerManager::load_plan_from_registry(index)`: leer plan activo desde `\Registry\Machine\System\Power\Plans\<Name>\*`.
+  - `PowerManager::save_plan_to_registry(index)`: persistir políticas activas.
+  - `src/power/coordinator.rs`: `shutdown()` y `reboot()` sin integración con servicios todavía — solo HAL calls.
+  - `src/object/types.rs`: añadir `PowerManager = 21` a `ObType`.
+  - `src/main.rs`: añadir PHASE 3.883 — crear `\Device\PowerManager` en namespace Ob, inicializar PowerManager.
+  - `src/cm/mod.rs`: añadir defaults de Power en `cm_ensure_default_values()`: `ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`.
+  - **Tests:** `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`, `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`
 
 #### Kernel Hardening
 
@@ -201,15 +166,11 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
-#### Power Manager — Phase 1: HAL ACPI primitives
-
-* [x] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Prereqs: -- | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
-  - **COMPLETED** — ACPI RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register, poweroff/reboot fallback chain. 7 tests.
-
 ---
 
 ## MEDIUM
-### v0.51: NeoFS v2 remaining + Shell Phase 2 + Networking tools
+
+### v0.51: NeoFS v2 remaining + Shell Phase 2 + SAM foundation + Network tools
 
 #### NeoFS v2 (completar implementación)
 
@@ -248,10 +209,8 @@
 
 * [ ] **SH-SEP+COMPL+BATCH. Separator + completion + scripting** | Prereqs: SH-TOKEN+QUOTE, SH-REDIR, SH-ENV+PIPE | Files: `userbin/neoshell/src/tokenizer.rs`, `userbin/neoshell/src/completion.rs`, `userbin/neoshell/src/batch.rs`
   - Token `Semicolon` en tokenizer. Completion engine con PATH cache.
-  - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`.
-  - **Tests:** `semicolon_two_commands`, `completion_command_prefix`, `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`
   - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`, `@`, `PAUSE`.
-  - **Tests:** `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`, `bat_shift_args`, `bat_pause_resume`
+  - **Tests:** `semicolon_two_commands`, `completion_command_prefix`, `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`, `bat_shift_args`, `bat_pause_resume`
 
 #### Networking — Userland tools
 
@@ -299,30 +258,45 @@
   - Estadísticas de volumen, correr fsck, cambiar label, listar montajes.
   - **Tests:** `neofs_fsck_drive`, `neofs_format_volume`, `neofs_label_roundtrip`
 
-#### Keyboard Manager — Phase 1: Kernel core + Ob API + Event Bus + libneodos
+#### Security — USR-P1: SAM foundation
 
-* [x] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Prereqs: -- | Files: `src/kbd/mod.rs`, `src/kbd/layout.rs`, `src/kbd/unicode.rs`, `src/kbd/config.rs`, `src/kbd/event.rs`, `src/kbd/hotkey.rs`, `src/object/types.rs`, `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs`, `libneodos/src/lib.rs`, `docs/design/neokbd-design.md`
-  - **COMPLETED** — Full NeoKBD implementation: ObType(22), 3 ObInfoClass, 5 ObSetInfoClass, 5 event types, kbd_init(), layout engine, dead key compose, hotkey dispatch, Registry config, libneodos API.
+> Diseño completo: `docs/design/users-security-design.md`. Modelo NT-like: SAM + Token + Session + ACL.
+> No Unix uid/gid — usar SID (ya existente en `src/security/`).
+> No nuevas syscalls — todo via Ob API (RAX 60-66) con ObType::Session=19 e info classes nuevas.
+> Cada paso es pequeño, testeable, y mantiene backward compatibility.
 
-* [x] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Prereqs: KBD-PHASE1 | Files: `drivers/ps2kbd/src/lib.rs`, `drivers/ps2kbd/build.rs`, `tools/kbdcompile/`, `drivers/ps2kbd/layouts/`
-  - **COMPLETED** — ps2kbd simplified (~150 lines removed), kbdcompile tool created, layouts built as `.kbd` files (US + Spanish), build system integrated.
+* [ ] **USR-P1a. ObType::Session + SAM built-in users** | Prereqs: -- | Files: `src/object/types.rs`, `src/main.rs`, `src/security/mod.rs`
+  - Add `Session = 19` to ObType enum
+  - Create built-in users (Administrator S-1-5-21-500, Guest S-1-5-21-501) in `init_security()`
+  - Verify SAM entries exist after boot
+  - **Tests:** `usr_type_session_exists`, `usr_builtin_admin_created`, `usr_builtin_guest_created`
 
-* [x] **ADM-NEOKEY. neokey CLI utility** | Prereqs: KBD-PHASE1 | Files: `userbin/neokey/`
-  - **COMPLETED** — `NEOKEY show/layout/layouts/repeat/delay/leds` commands, uses libneodos keyboard API, replaces keyb.nxe.
+* [ ] **USR-P1b. Token: add integrity_level + creation_time** | Prereqs: USR-P1a | Files: `src/security/token.rs`, `src/security/mod.rs`
+  - Add `IntegrityLevel` enum (Untrusted=0, Low=1, Medium=2, High=3, System=4)
+  - Add `integrity_level: IntegrityLevel` and `creation_time: u64` fields to Token
+  - Update `new_admin()` → integrity_level=System, `new_user()` → integrity_level=Medium
+  - **Tests:** `usr_token_admin_system_il`, `usr_token_user_medium_il`, `usr_token_creation_time_set`
 
-* [ ] **PM-PHASE2. Power Manager kernel core** | Prereqs: PM-PHASE1 | Files: `src/power/mod.rs` (new), `src/power/plan.rs` (new), `src/power/coordinator.rs` (new), `src/object/types.rs`, `src/cm/mod.rs`, `src/main.rs`
-  - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
-  - `PowerSystemState` enum: Active, ShuttingDown, Rebooting, Suspending, Hibernating, Off.
-  - `PowerPlan` + `PowerPolicies`: DisplayTimeout, SleepTimeout, HibernateEnabled, CpuPolicy, LidAction, PowerButtonAction.
-  - `PowerManager::load_plan_from_registry(index)`: leer plan activo desde `\Registry\Machine\System\Power\Plans\<Name>\*`.
-  - `PowerManager::save_plan_to_registry(index)`: persistir políticas activas.
-  - `src/power/coordinator.rs`: `shutdown()` y `reboot()` sin integración con servicios todavía — solo HAL calls.
-  - `src/object/types.rs`: añadir `PowerManager = 21` a `ObType`.
-  - `src/main.rs`: añadir PHASE 3.883 — crear `\Device\PowerManager` en namespace Ob, inicializar PowerManager.
-  - `src/cm/mod.rs`: añadir defaults de Power en `cm_ensure_default_values()`: `ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`.
-  - **Tests:** `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`, `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`
+* [ ] **USR-P1c. SAM persistence to Registry hive** | Prereqs: USR-P1a | Files: `src/security/sam.rs`
+  - Implement `sam_save(path)` — serialize SAM to `\Registry\Machine\SAM` via VFS (binary magic `SAM\0`, version 2)
+  - Implement `sam_load(path)` — deserialize from VFS
+  - Wire save on user create/delete/password change
+  - Wire load at boot in `init_security()`
+  - **Tests:** `usr_sam_save_load_roundtrip`, `usr_sam_persist_across_reboot`, `usr_sam_save_on_user_create`
 
-### v0.52: VirtIO + Performance + Security
+* [ ] **USR-P1d. SeAccessCheck: fix empty DACL + group SID checking** | Prereqs: USR-P1b | Files: `src/security/access.rs`, `src/security/acl.rs`
+  - Fix empty DACL: empty ACL = deny all (match NT behavior)
+  - Add group SID checking: iterate `token.groups` in addition to `token.sid` during ACL evaluation
+  - Keep admin bypass intact
+  - **Tests:** `usr_se_access_empty_dacl_denies`, `usr_se_access_group_sid_allowed`, `usr_se_access_group_sid_denied`, `usr_se_access_admin_bypass`
+
+* [ ] **USR-P1e. ObSetInfoClass::ChangePassword syscall handler** | Prereqs: USR-P1c | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+  - Add `ChangePassword = 31` to ObSetInfoClass
+  - Handler validates old password hash, updates SAM with new password hash
+  - Returns EAUTH if old password doesn't match
+  - **Tests:** `usr_change_password_ok`, `usr_change_password_wrong_old`, `usr_change_password_then_login`
+
+### v0.52: VirtIO + Sessions + FS Security
 
 #### VirtIO Driver Roadmap
 
@@ -357,123 +331,7 @@
   - Pipes sin copia de datos entre procesos.
   - **Tests:** `pipe_zero_copy_throughput`
 
-#### Security
-
-* [ ] **B5.1. Module signature validation** | Prereqs: NT6 | Files: `src/drivers/loader.rs`
-  - Validación criptográfica de módulos `.nem` antes de cargar.
-  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`
-
-* [ ] **B5.2. Driver permission enforcement** | Prereqs: NT6.3, B5.1 | Files: `src/drivers/caps.rs`
-  - Cruzar capacidad declarada del driver con token del proceso y ACL del objeto.
-  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`
-
-#### Registry (Phase 2 — dirty tracking + multi-hive)
-
-* [ ] **CM-DIRTY. Registry per-cell dirty tracking + incremental flush** | Prereqs: CM-FIX | Files: `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs`
-  - `dirty_cells: BitVec` (1 bit por slot). `slot_mut()` marca dirty; `serialize_dirty()` escribe solo celdas sucias.
-  - **Tests:** `cm_dirty_cell_set_on_write`, `cm_dirty_cleared_after_flush`, `cm_dirty_serialize_only_dirty`, `cm_dirty_full_flush_roundtrip`
-
-* [ ] **CM-MULTI. Registry multi-hive** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`
-  - Montar SOFTWARE, SECURITY, DEFAULT hives. Cada hive crea su directorio raíz en namespace Ob.
-  - **Tests:** `cm_multi_software_mounted`, `cm_multi_hive_isolation`, `cm_multi_cross_hive_path_fails`, `cm_multi_unload_reload`
-
-> **Nota:** Registry ACL security (CM-SEC) movido a USR-P4a/4b/4c — integrado con el diseño de usuarios.
-
-#### Userland
-
-* [ ] **B4.6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
-  - Editor de texto modal Ring 3. Usa `ob_open` + `ob_query_info(ReadContent)` / `ob_set_info(WriteContent)`.
-  - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`
-
-* [ ] **B4.7. Shared library per-process binding** | Prereqs: sys_loadlib | Files: `src/elf.rs`, `libneodos/`
-  - Evolucionar NXL slots globales a binding per-process. Cada EPROCESS mantiene su tabla de NXLs.
-  - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`
-
-#### Kernel
-
-* [ ] **A3.2. Kernel debugger (KD)** | Prereqs: A3.1 | Files: `src/debugger/mod.rs`
-  - INT3 breakpoints, hardware watchpoints (DR0-DR3), GDB remote protocol stub via serial.
-  - **Tests:** `kd_breakpoint_set_and_hit`, `kd_breakpoint_invalid_addr`, `kd_watchpoint_write_detect`, `kd_register_snapshot`, `kd_gdb_protocol_qSupported`
-
-#### Power Manager — Phase 3: Syscall dispatch + Event Bus
-
-* [ ] **PM-PHASE3. Power syscall dispatch + Event Bus types** | Prereqs: PM-PHASE2 | Files: `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/abi_freeze.rs`, `src/power/event.rs` (new)
-  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_set_info` para clases 37-42 (PowerShutdown, PowerReboot, PowerSuspend, PowerHibernate, PowerSetPlan, PowerSetPolicy). Admin check para shutdown/reboot/set-plan.
-  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_query_info` para clases 32-34 (PowerPlanInfo, PowerStatus, PowerSystemState). Sin admin check.
-  - `src/eventbus/mod.rs`: añadir tipos 19-26: `EVENT_SHUTDOWN_PHASE2`, `EVENT_SUSPEND`, `EVENT_RESUME`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, `EVENT_LID_OPEN`, `EVENT_BATTERY_LOW`, `EVENT_POWER_SOURCE_CHANGE`.
-  - `src/abi_freeze.rs`: validar nuevos tipos no estén en rango 0-15.
-  - `src/power/event.rs`: handlers para `EVENT_POWER_BUTTON` → ejecutar `PowerButtonAction`, `EVENT_LID_CLOSE` → ejecutar `LidAction`.
-  - **Tests:** `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`, `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
-
----
-
-## LOW
-
-### v0.53+: Hardening + Multi-hive + Docs + Cleanup
-
-#### Registry (Phase 3 — WAL + lib wrappers)
-
-* [ ] **CM-WAL. Registry WAL (write-ahead logging, crash recovery)** | Prereqs: CM-FIX | Files: `src/cm/wal.rs` (new), `src/cm/mod.rs`
-  - Cada mutación escribe entrada WAL a `C:\System\Registry\<name>.wal` + fsync antes de aplicar a hive.
-  - En mount: si existe `.wal`, hacer replay antes de cargar `.hiv`.
-  - **Tests:** `cm_wal_created_on_mutation`, `cm_wal_replay_on_load`, `cm_wal_truncated_after_flush`, `cm_wal_power_loss_recovery`
-
-* [ ] **CM-LIB. Registry libneodos wrappers** | Prereqs: CM-FIX | Files: `libneodos/src/syscall.rs`
-  - Añadir 7 wrappers: `sys_cm_create_key`, `sys_cm_delete_key`, `sys_cm_enum_key`, `sys_cm_enum_value`, `sys_cm_flush_key`, `sys_cm_load_hive`, `sys_cm_unload_hive`.
-  - **Tests:** `cm_lib_create_key_wrapper`, `cm_lib_enum_key_wrapper`, `cm_lib_enum_value_wrapper`, `cm_lib_flush_key_wrapper`
-
-* [ ] **CM-REGEDIT. regedit.nxe** | Prereqs: CM-LIB | Files: `userbin/regedit/` (new)
-  - Navegación de árbol, crear/borrar claves, set/query valores, flush manual.
-  - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
-
-#### Power Manager — Phase 4: Service Manager + libneodos + shell
-
-* [ ] **PM-PHASE4. Shutdown coordination + libneodos wrappers + shell commands** | Prereqs: PM-PHASE3 | Files: `src/services/mod.rs`, `libneodos/src/power.rs` (new), `libneodos/src/syscall.rs`, `userbin/neoshell/`
-  - `src/services/mod.rs`: añadir `ServiceManager::stop_all()` — itera servicios en orden inverso de dependencias, para cada uno llama `stop_service()` con timeout.
-  - `ServiceManager::stop_all()` es llamado por `PowerCoordinator::shutdown()` antes de `EVENT_SHUTDOWN_PHASE2`.
-  - `libneodos/src/power.rs`: wrapper `power_shutdown()`, `power_reboot()`, `power_suspend()`, `power_hibernate()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`.
-  - Tipos públicos: `PowerPlanInfo`, `PowerSystemStatus`, `PowerPolicyUpdate`.
-  - Internamente: `ob_open("\Device\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`.
-  - `userbin/neoshell/`: añadir `REBOOT` built-in. Migrar `POWEROFF` a llamar `libneodos::power_shutdown()`.
-  - **Tests:** `pm_service_manager_stop_all_order`, `pm_service_manager_stop_all_timeout`, `pm_lib_get_plan`, `pm_lib_set_plan`, `pm_lib_reboot`, `pm_lib_shutdown`
-
-#### Security (USR) — Users, Groups, Sessions
-
-> Diseño completo: `docs/design/users-security-design.md`. Modelo NT-like: SAM + Token + Session + ACL.
-> No Unix uid/gid — usar SID (ya existente en `src/security/`).
-> No nuevas syscalls — todo via Ob API (RAX 60-66) con ObType::Session=19 e info classes nuevas.
-> Cada paso es pequeño, testeable, y mantiene backward compatibility.
-
-* [ ] **USR-P1a. ObType::Session + SAM built-in users** | Prereqs: CM-FIX | Files: `src/object/types.rs`, `src/main.rs`, `src/security/mod.rs`
-  - Add `Session = 19` to ObType enum
-  - Create built-in users (Administrator S-1-5-21-500, Guest S-1-5-21-501) in `init_security()`
-  - Verify SAM entries exist after boot
-  - **Tests:** `usr_type_session_exists`, `usr_builtin_admin_created`, `usr_builtin_guest_created`
-
-* [ ] **USR-P1b. Token: add integrity_level + creation_time** | Prereqs: USR-P1a | Files: `src/security/token.rs`, `src/security/mod.rs`
-  - Add `IntegrityLevel` enum (Untrusted=0, Low=1, Medium=2, High=3, System=4)
-  - Add `integrity_level: IntegrityLevel` and `creation_time: u64` fields to Token
-  - Update `new_admin()` → integrity_level=System, `new_user()` → integrity_level=Medium
-  - **Tests:** `usr_token_admin_system_il`, `usr_token_user_medium_il`, `usr_token_creation_time_set`
-
-* [ ] **USR-P1c. SAM persistence to Registry hive** | Prereqs: USR-P1a | Files: `src/security/sam.rs`
-  - Implement `sam_save(path)` — serialize SAM to `\Registry\Machine\SAM` via VFS (binary magic `SAM\0`, version 2)
-  - Implement `sam_load(path)` — deserialize from VFS
-  - Wire save on user create/delete/password change
-  - Wire load at boot in `init_security()`
-  - **Tests:** `usr_sam_save_load_roundtrip`, `usr_sam_persist_across_reboot`, `usr_sam_save_on_user_create`
-
-* [ ] **USR-P1d. SeAccessCheck: fix empty DACL + group SID checking** | Prereqs: USR-P1b | Files: `src/security/access.rs`, `src/security/acl.rs`
-  - Fix empty DACL: empty ACL = deny all (match NT behavior)
-  - Add group SID checking: iterate `token.groups` in addition to `token.sid` during ACL evaluation
-  - Keep admin bypass intact
-  - **Tests:** `usr_se_access_empty_dacl_denies`, `usr_se_access_group_sid_allowed`, `usr_se_access_group_sid_denied`, `usr_se_access_admin_bypass`
-
-* [ ] **USR-P1e. ObSetInfoClass::ChangePassword syscall handler** | Prereqs: USR-P1c | Files: `src/object/types.rs`, `src/syscall/ob.rs`
-  - Add `ChangePassword = 31` to ObSetInfoClass
-  - Handler validates old password hash, updates SAM with new password hash
-  - Returns EAUTH if old password doesn't match
-  - **Tests:** `usr_change_password_ok`, `usr_change_password_wrong_old`, `usr_change_password_then_login`
+#### Security — USR-P2: Sessions
 
 * [ ] **USR-P2a. SessionManager global + ObCreate(Session)** | Prereqs: USR-P1a | Files: `src/globals.rs`, `src/scheduler/mod.rs`, `src/syscall/ob.rs`
   - Add `SESSION_MANAGER: Mutex<SessionManager>` global with `sessions: Vec<Option<Session>>`
@@ -509,6 +367,8 @@
   - If DefaultAutoLogin is set in Registry: auto-login as that user (skip prompt)
   - **Tests:** `usr_neoinit_spawns_neologon`, `usr_auto_login_from_registry`
 
+#### Security — USR-P3: FS Security
+
 * [ ] **USR-P3a. DirEntryV2: add owner_sid field** | Prereqs: USR-P1b | Files: `src/fs/neodos_dir.rs`, `src/fs/neodos_v2.rs`
   - Add `owner_sid: Sid` to DirEntryV2 (serialized size grows 128→136 bytes)
   - Superblock flag `FEATURE_OWNER_SID`: indicates extended dir entries
@@ -542,7 +402,43 @@
   - Directories → PERM_R|PERM_W|PERM_X|PERM_D
   - **Tests:** `usr_default_perm_nem_readonly`, `usr_default_perm_nxe_rx`, `usr_default_perm_dir_full`
 
-* [ ] **USR-P4a. cm/security.rs: Registry ACL checking module** | Prereqs: CM-FIX, USR-P1d | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`
+#### Power Manager — Phase 3: Syscall dispatch + Event Bus
+
+* [ ] **PM-PHASE3. Power syscall dispatch + Event Bus types** | Prereqs: PM-PHASE2 | Files: `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/abi_freeze.rs`, `src/power/event.rs` (new)
+  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_set_info` para clases 37-42 (PowerShutdown, PowerReboot, PowerSuspend, PowerHibernate, PowerSetPlan, PowerSetPolicy). Admin check para shutdown/reboot/set-plan.
+  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_query_info` para clases 32-34 (PowerPlanInfo, PowerStatus, PowerSystemState). Sin admin check.
+  - `src/eventbus/mod.rs`: añadir tipos 19-26: `EVENT_SHUTDOWN_PHASE2`, `EVENT_SUSPEND`, `EVENT_RESUME`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, `EVENT_LID_OPEN`, `EVENT_BATTERY_LOW`, `EVENT_POWER_SOURCE_CHANGE`.
+  - `src/abi_freeze.rs`: validar nuevos tipos no estén en rango 0-15.
+  - `src/power/event.rs`: handlers para `EVENT_POWER_BUTTON` → ejecutar `PowerButtonAction`, `EVENT_LID_CLOSE` → ejecutar `LidAction`.
+  - **Tests:** `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`, `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
+
+### v0.53: Security + Registry + Integrity
+
+#### Security — Module signing + driver permissions
+
+* [ ] **B5.1. Module signature validation** | Prereqs: NT6 | Files: `src/drivers/loader.rs`
+  - Validación criptográfica de módulos `.nem` antes de cargar.
+  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`
+
+* [ ] **B5.2. Driver permission enforcement** | Prereqs: NT6.3, B5.1 | Files: `src/drivers/caps.rs`
+  - Cruzar capacidad declarada del driver con token del proceso y ACL del objeto.
+  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`
+
+#### Registry (Phase 2 — dirty tracking + multi-hive)
+
+* [ ] **CM-DIRTY. Registry per-cell dirty tracking + incremental flush** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs`
+  - `dirty_cells: BitVec` (1 bit por slot). `slot_mut()` marca dirty; `serialize_dirty()` escribe solo celdas sucias.
+  - **Tests:** `cm_dirty_cell_set_on_write`, `cm_dirty_cleared_after_flush`, `cm_dirty_serialize_only_dirty`, `cm_dirty_full_flush_roundtrip`
+
+* [ ] **CM-MULTI. Registry multi-hive** | Prereqs: -- | Files: `src/cm/mod.rs`
+  - Montar SOFTWARE, SECURITY, DEFAULT hives. Cada hive crea su directorio raíz en namespace Ob.
+  - **Tests:** `cm_multi_software_mounted`, `cm_multi_hive_isolation`, `cm_multi_cross_hive_path_fails`, `cm_multi_unload_reload`
+
+> **Nota:** Registry ACL security (CM-SEC) integrado con USR-P4a/4b/4c.
+
+#### Security — USR-P4: Registry ACL
+
+* [ ] **USR-P4a. cm/security.rs: Registry ACL checking module** | Prereqs: USR-P1d | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`
   - New file: `cm_check_access(token, sec_desc, desired_access) -> bool`
   - Reuses `SeAccessCheck` from security subsystem
   - If key has no sec_desc_cell: default — admin full, user read-only
@@ -566,6 +462,8 @@
   - Default values: Environment\PATH, Console\colors, etc.
   - **Tests:** `usr_cm_user_hive_mounted_on_login`, `usr_cm_user_hive_has_defaults`
 
+#### Security — USR-P5: Integrity levels
+
 * [ ] **USR-P5a. Integrity level in SeAccessCheck** | Prereqs: USR-P1b | Files: `src/security/access.rs`
   - Extend `SeAccessCheck`: if `process_IL < object_IL`, deny WRITE/DELETE (allow READ)
   - Add `integrity_level` field to `SecurityDescriptor` (default=Medium)
@@ -582,6 +480,72 @@
   - Wire `token.has_privilege(bit)` in admin-only syscalls: driver_unload, cm_load_hive, cm_unload_hive
   - Token filtering: `new_admin()` → all 12 privileges; `new_user()` → only SE_CHANGE_NOTIFY
   - **Tests:** `usr_priv_admin_has_all`, `usr_priv_user_has_change_notify`, `usr_priv_driver_unload_denied_for_user`
+
+#### Kernel
+
+* [ ] **A3.2. Kernel debugger (KD)** | Prereqs: A3.1 | Files: `src/debugger/mod.rs`
+  - INT3 breakpoints, hardware watchpoints (DR0-DR3), GDB remote protocol stub via serial.
+  - **Tests:** `kd_breakpoint_set_and_hit`, `kd_breakpoint_invalid_addr`, `kd_watchpoint_write_detect`, `kd_register_snapshot`, `kd_gdb_protocol_qSupported`
+
+#### Userland
+
+* [ ] **B4.6. NeoEdit text editor** | Prereqs: A4.7, B4.4 | Files: `userbin/neoedit/`
+  - Editor de texto modal Ring 3. Usa `ob_open` + `ob_query_info(ReadContent)` / `ob_set_info(WriteContent)`.
+  - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`
+
+* [ ] **B4.7. Shared library per-process binding** | Prereqs: sys_loadlib | Files: `src/elf.rs`, `libneodos/`
+  - Evolucionar NXL slots globales a binding per-process. Cada EPROCESS mantiene su tabla de NXLs.
+  - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`
+
+---
+
+## LOW
+
+### v0.54+: Hardening + Multi-hive + Docs + Cleanup
+
+#### Registry (Phase 3 — WAL + lib wrappers)
+
+* [ ] **CM-WAL. Registry WAL (write-ahead logging, crash recovery)** | Prereqs: -- | Files: `src/cm/wal.rs` (new), `src/cm/mod.rs`
+  - Cada mutación escribe entrada WAL a `C:\System\Registry\<name>.wal` + fsync antes de aplicar a hive.
+  - En mount: si existe `.wal`, hacer replay antes de cargar `.hiv`.
+  - **Tests:** `cm_wal_created_on_mutation`, `cm_wal_replay_on_load`, `cm_wal_truncated_after_flush`, `cm_wal_power_loss_recovery`
+
+* [ ] **CM-LIB. Registry libneodos wrappers** | Prereqs: -- | Files: `libneodos/src/syscall.rs`
+  - Añadir 7 wrappers: `sys_cm_create_key`, `sys_cm_delete_key`, `sys_cm_enum_key`, `sys_cm_enum_value`, `sys_cm_flush_key`, `sys_cm_load_hive`, `sys_cm_unload_hive`.
+  - **Tests:** `cm_lib_create_key_wrapper`, `cm_lib_enum_key_wrapper`, `cm_lib_enum_value_wrapper`, `cm_lib_flush_key_wrapper`
+
+* [ ] **CM-REGEDIT. regedit.nxe** | Prereqs: CM-LIB | Files: `userbin/regedit/` (new)
+  - Navegación de árbol, crear/borrar claves, set/query valores, flush manual.
+  - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
+
+#### Power Manager — Phase 4: Service Manager + libneodos + shell
+
+* [ ] **PM-PHASE4. Shutdown coordination + libneodos wrappers + shell commands** | Prereqs: PM-PHASE3 | Files: `src/services/mod.rs`, `libneodos/src/power.rs` (new), `libneodos/src/syscall.rs`, `userbin/neoshell/`
+  - `src/services/mod.rs`: añadir `ServiceManager::stop_all()` — itera servicios en orden inverso de dependencias, para cada uno llama `stop_service()` con timeout.
+  - `ServiceManager::stop_all()` es llamado por `PowerCoordinator::shutdown()` antes de `EVENT_SHUTDOWN_PHASE2`.
+  - `libneodos/src/power.rs`: wrapper `power_shutdown()`, `power_reboot()`, `power_suspend()`, `power_hibernate()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`.
+  - Tipos públicos: `PowerPlanInfo`, `PowerSystemStatus`, `PowerPolicyUpdate`.
+  - Internamente: `ob_open("\Device\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`.
+  - `userbin/neoshell/`: añadir `REBOOT` built-in. Migrar `POWEROFF` a llamar `libneodos::power_shutdown()`.
+  - **Tests:** `pm_service_manager_stop_all_order`, `pm_service_manager_stop_all_timeout`, `pm_lib_get_plan`, `pm_lib_set_plan`, `pm_lib_reboot`, `pm_lib_shutdown`
+
+#### Power Manager — Phase 5: Polish + event-driven coordination + tests
+
+* [ ] **PM-PHASE5. Power Manager polish: async coordination, full test suite** | Prereqs: PM-PHASE4 | Files: `src/power/coordinator.rs`, `src/power/event.rs`, `src/power/mod.rs`, `docs/power-manager.md`
+  - Completar coordinación asíncrona en `coordinator.rs`: shutdown con timeout por servicio, fallback force-kill.
+  - Integrar `EVENT_POWER_BUTTON` con `PowerManager` para ejecutar `power_button_action` desde Event Bus.
+  - Integrar `EVENT_LID_CLOSE`/`EVENT_LID_OPEN` para ejecutar `lid_action`.
+  - Integración con `\Global\Info\Power` para consultas vía `ob_query_info`.
+  - Completar suite de tests (25 tests del diseño original):
+    - Inicialización: `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_capabilities_from_fadt`
+    - Planes: `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`
+    - Políticas: `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`, `pm_policy_restored_on_plan_switch`
+    - Shutdown: `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`
+    - Eventos: `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
+    - HAL/ACPI: tests de `pm_fadt_*`, `pm_hal_*`, `pm_lib_*`
+  - **Tests:** completar los 25 tests + integración en QEMU
+
+#### Security — USR-P6: User commands
 
 * [ ] **USR-P6a. WHOAMI command** | Prereqs: USR-P2c | Files: `userbin/neoshell/`
   - New built-in or .NXE: queries `TokenInfo` via `ob_query_info(process_fd, 28)`
@@ -614,33 +578,7 @@
   - Verificación encadenada bootloader → kernel → drivers.
   - **Tests:** `secure_boot_kernel_verified`, `secure_boot_driver_verified`, `secure_boot_fail_closed`
 
-#### Tracing
-
-* [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
-  - TraceBuffer con trace points registrables dinámicamente, filtrado por categoría/nivel, dump via serial con timestamps HPET.
-  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`
-
-* [ ] **B1.2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
-  - Comando `NEOTRACE` con subcomandos START/STOP/DUMP/FILTER.
-  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`
-
-#### Admin (Fase 3 — Avanzado)
-
-* [ ] **ADM-3. neolog** | Prereqs: B1.1 | Files: `userbin/neolog/`
-  - Visor de event log del kernel + EventBus. Filtro por categoría/nivel/timestamp.
-  - **Tests:** `neolog_eventbus_dump`, `neolog_trace_filter`
-
-* [ ] **ADM-7. neoctl** | Files: `userbin/neoctl/`
-* [ ] **ADM-8. neodebug** | Files: `userbin/neodebug/`
-* [ ] **ADM-9. neomem v0.2** | Files: `userbin/neomem/`
-* [ ] **B4.8. NeoTOP v0.2+** | Files: `userbin/neotop/`
-* [ ] **B4.12. Compositor 2D** | Files: `userbin/compositor/`
-
 #### Networking
-
-* [x] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
-  - Asignar NIC por defecto y puerto efímero (49152-65535) si no especificado.
-  - **Tests:** `socket_auto_port_assign`
 
 * [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
   - Stub resolver: consulta UDP a servidor DNS (puerto 53), parsea respuestas (A, AAAA, CNAME, MX).
@@ -680,21 +618,27 @@
 * [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.
 
-#### Power Manager — Phase 5: Polish + event-driven coordination + tests
+#### Tracing
 
-* [ ] **PM-PHASE5. Power Manager polish: async coordination, full test suite** | Prereqs: PM-PHASE4 | Files: `src/power/coordinator.rs`, `src/power/event.rs`, `src/power/mod.rs`, `docs/power-manager.md`
-  - Completar coordinación asíncrona en `coordinator.rs`: shutdown con timeout por servicio, fallback force-kill.
-  - Integrar `EVENT_POWER_BUTTON` con `PowerManager` para ejecutar `power_button_action` desde Event Bus.
-  - Integrar `EVENT_LID_CLOSE`/`EVENT_LID_OPEN` para ejecutar `lid_action`.
-  - Integración con `\Global\Info\Power` para consultas vía `ob_query_info`.
-  - Completar suite de tests (25 tests del diseño original):
-    - Inicialización: `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_capabilities_from_fadt`
-    - Planes: `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`
-    - Políticas: `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`, `pm_policy_restored_on_plan_switch`
-    - Shutdown: `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`
-    - Eventos: `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
-    - HAL/ACPI: tests de `pm_fadt_*`, `pm_hal_*`, `pm_lib_*`
-  - **Tests:** completar los 25 tests + integración en QEMU
+* [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
+  - TraceBuffer con trace points registrables dinámicamente, filtrado por categoría/nivel, dump via serial con timestamps HPET.
+  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`
+
+* [ ] **B1.2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
+  - Comando `NEOTRACE` con subcomandos START/STOP/DUMP/FILTER.
+  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`
+
+#### Admin (Fase 3 — Avanzado)
+
+* [ ] **ADM-3. neolog** | Prereqs: B1.1 | Files: `userbin/neolog/`
+  - Visor de event log del kernel + EventBus. Filtro por categoría/nivel/timestamp.
+  - **Tests:** `neolog_eventbus_dump`, `neolog_trace_filter`
+
+* [ ] **ADM-7. neoctl** | Files: `userbin/neoctl/`
+* [ ] **ADM-8. neodebug** | Files: `userbin/neodebug/`
+* [ ] **ADM-9. neomem v0.2** | Files: `userbin/neomem/`
+* [ ] **B4.8. NeoTOP v0.2+** | Files: `userbin/neotop/`
+* [ ] **B4.12. Compositor 2D** | Files: `userbin/compositor/`
 
 #### Kernel
 
@@ -704,6 +648,18 @@
 * [ ] **AUDIT-34. No RAII IRQL guard — 15+ manual raise/lower** | Files: `src/scheduler/mod.rs`
 * [ ] **AUDIT-33. `BIN_BUF` global static mut not re-entrant** | Files: `src/syscall/handlers.rs:79`
 * [ ] **AUDIT-47. Non-reentrant IRP pool with wraparound overwrite** | Files: `src/irp/mod.rs:13-14`
+
+#### VFS (remaining)
+
+* [ ] **VFS-3.2. `\DosDevices` dinámico** | Files: `src/vfs/mount.rs`
+* [ ] **VFS-5.3. Write-back ordenado (flush page → flush block)** | Files: `src/globals.rs`
+* [ ] **VFS-6.1. Overlay mounts** | Files: `src/fs/vfs.rs`
+* [ ] **VFS-6.2. Extended attributes VFS** | Files: `src/fs/vfs.rs`
+* [ ] **VFS-6.3. File notifications via Event Bus** | Files: `src/fs/vfs.rs`, `src/eventbus/`
+* [ ] **VFS-6.4. Async VFS operations via IRP** | Files: `src/fs/vfs.rs`
+* [ ] **VFS-7.1. Eliminar lock global de VFS** | Files: `src/globals.rs`, `src/fs/vfs.rs`
+* [ ] **VFS-7.2. Lookup cache** | Files: `src/fs/vfs.rs`
+* [ ] **VFS-7.3. Path cache** | Files: `src/fs/vfs.rs`
 
 #### Cleanup (quick wins — refactors and dead code)
 
@@ -757,6 +713,7 @@
 #### Documentation
 
 * [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
+* [ ] **DH3. Completar libneodos syscall wrappers** | Files: `libneodos/src/syscall.rs`
 * [ ] **DH-HISTORY. Mantener docs/HISTORY.md** | Files: `docs/HISTORY.md`
 
 #### Object Manager / Syscalls
@@ -765,18 +722,6 @@
 * [ ] **AI-2. Consolidate legacy syscall wrappers** | Files: `src/syscall/mod.rs`
 * [ ] **AI-3. ObObjectTable lock granularity (lock striping)** | Files: `src/object/mod.rs`
 * [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Files: `src/object/mod.rs`
-
-#### VFS (remaining)
-
-* [ ] **VFS-3.2. `\DosDevices` dinámico** | Files: `src/vfs/mount.rs`
-* [ ] **VFS-5.3. Write-back ordenado (flush page → flush block)** | Files: `src/globals.rs`
-* [ ] **VFS-6.1. Overlay mounts** | Files: `src/fs/vfs.rs`
-* [ ] **VFS-6.2. Extended attributes VFS** | Files: `src/fs/vfs.rs`
-* [ ] **VFS-6.3. File notifications via Event Bus** | Files: `src/fs/vfs.rs`, `src/eventbus/`
-* [ ] **VFS-6.4. Async VFS operations via IRP** | Files: `src/fs/vfs.rs`
-* [ ] **VFS-7.1. Eliminar lock global de VFS** | Files: `src/globals.rs`, `src/fs/vfs.rs`
-* [ ] **VFS-7.2. Lookup cache** | Files: `src/fs/vfs.rs`
-* [ ] **VFS-7.3. Path cache** | Files: `src/fs/vfs.rs`
 
 #### VirtIO (low priority)
 
@@ -804,11 +749,11 @@
 
 | Versión | Enfoque | Estado |
 |---------|---------|--------|
-| v0.50 | Registry bugfixes (CM-FIX), Shell Phase 1 (tokenizer+redirect), NeoFS snapshot syscall | **PRÓXIMO** |
-| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2 (editor, env, pipeline, batch), USR-P1 (SAM foundation) | planned |
+| v0.50 | Shell tokenizer + NeoFS snapshot syscall + Power Phase 2 + Kernel hardening | **PRÓXIMO** |
+| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2 (editor, env, pipeline, batch), USR-P1 (SAM foundation), Network tools, Admin tools | planned |
 | v0.52 | VirtIO (ARCH+NET), Sessions (USR-P2), FS security (USR-P3), Zero-copy pipes | planned |
 | v0.53 | Module sig validation, Registry dirty+multihive, Registry ACL (USR-P4), Integrity levels (USR-P5), KD, NeoEdit | planned |
-| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs, Power Manager Phase 5 | backlog |
+| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs, Power Phases 4+5 | backlog |
 | v0.55+ | Cleanup (dead code, duplicates, refactors), Backlog items | backlog |
 
 ---

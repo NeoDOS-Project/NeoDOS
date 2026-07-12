@@ -635,6 +635,20 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - Uses `libneodos::keyboard::*` API.
   - Integrated into disk image via `neodev/src/image.rs`.
 
+### SH-REDIR. Shell redirection [COMPLETED]
+
+* [x] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
+  - Tokenizer parsea `>`, `>>`, `<`, `2>`. Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd, spawn.
+  - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
+
+---
+
+### NET-1.7. Kernel: nic_id + ephemeral port [COMPLETED]
+
+* [x] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
+  - Asignar NIC por defecto y puerto efímero (49152-65535) si no especificado.
+  - **Tests:** `socket_auto_port_assign`
+
 ---
 
 ## Referencias
