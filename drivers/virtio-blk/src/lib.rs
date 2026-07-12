@@ -101,7 +101,9 @@ const PAGE_SIZE: usize = 4096;
 // ── Per-device state ─────────────────────────────────────────────────
 struct VirtioDevice {
     io_base: u16,
+    #[allow(dead_code)]
     num_sectors: u64,
+    #[allow(dead_code)]
     block_size: u32,
     dev_idx: i32,       // kernel block device index
     queue_page: [u8; PAGE_SIZE],
@@ -339,7 +341,7 @@ fn get_device(idx: usize) -> Option<&'static mut VirtioDevice> {
     if idx >= MAX_DEVICES { return None; }
     unsafe {
         let p = &raw mut DEVICES as *mut Option<VirtioDevice>;
-        match (*p.add(idx)) {
+        match *p.add(idx) {
             Some(ref mut d) => Some(d),
             None => None,
         }
@@ -430,7 +432,7 @@ pub extern "C" fn driver_fini() {
     // Unregister devices
     let count = DEV_COUNT.load(Ordering::Relaxed);
     for i in 0..count {
-        let ptr = unsafe { &raw mut DEVICES } as *mut Option<VirtioDevice>;
+        let ptr = &raw mut DEVICES as *mut Option<VirtioDevice>;
         unsafe {
             if let Some(ref mut dev) = *ptr.add(i as usize) {
                 let _ = hst_unregister_block_device(dev.dev_idx);

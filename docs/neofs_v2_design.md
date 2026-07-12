@@ -8,7 +8,7 @@
 ## 1. Experiencia de Usuario (cómo se siente)
 
 | Operación | Experiencia |
-|-----------|-------------|
+| ----------- | ------------- |
 | `DIR C:\` | Instantáneo, aunque haya 10000 archivos |
 | `COPY` de 500MB | Velocidad constante, sin fragmentación por extents |
 | `DEL C:\Proyecto\*.*` | Instantáneo — solo borra una entrada del árbol |
@@ -26,7 +26,7 @@
 
 ### 2.1 Mapa General
 
-```
+```text
 LBA 0     Superblock (512B)
 LBA 1     Root pointer (512B) — { root_btree_lba, version, timestamp }
 LBA 2+    B-tree nodes (4KB cada uno)
@@ -40,7 +40,7 @@ LBA 2+    B-tree nodes (4KB cada uno)
 
 ### 2.2 Superblock (512 bytes)
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       4     magic            "NE2\0"
 4       4     version          Formato versión = 2
@@ -64,7 +64,7 @@ Total: 512 bytes.
 
 ### 2.3 B-tree Node (4KB)
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       2     node_type        0=internal, 1=directory, 2=extent_list, 3=freelist, 4=snapshot_table
 2       2     num_entries      Entradas válidas en este nodo
@@ -76,7 +76,7 @@ Offset  Size  Campo            Descripción
 
 Cada entrada = 128 bytes:
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       8     inode_num        Número de inodo
 8       8     data_lba         LBA del bloque de datos (0 = inline data)
@@ -101,7 +101,7 @@ Offset  Size  Campo            Descripción
 
 Cada entrada = 12 bytes:
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       8     start_lba        LBA de inicio
 8       4     length           Número de bloques contiguos
@@ -113,7 +113,7 @@ Caben ~340 entradas por nodo. Con altura 2 del B-tree, un archivo puede tener ~3
 
 Cada entrada = 12 bytes:
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       8     start_lba        LBA de inicio de la región libre
 8       4     length           Número de bloques libres contiguos
@@ -125,7 +125,7 @@ Caben ~340 regiones por nodo. Si se acaba el espacio, el nodo tiene `next_lba` a
 
 Cada entrada = 16 bytes:
 
-```
+```text
 Offset  Size  Campo            Descripción
 0       8     root_btree_lba   Raíz del B-tree en ese snapshot
 8       8     timestamp        Cuándo se creó
@@ -139,7 +139,7 @@ Caben ~255 entradas por nodo. Máximo 64 snapshots (anillo circular).
 
 ### 3.1 Leer archivo
 
-```
+```text
 path = "C:\DOCS\INFORME.TXT"
 1. Cargar superblock → root_btree_lba
 2. Recorrer B-tree: por cada componente, buscar en nodo directory
@@ -154,7 +154,7 @@ path = "C:\DOCS\INFORME.TXT"
 
 ### 3.2 Escribir archivo (COW)
 
-```
+```text
 1. Leer DirEntry existente (o crear uno nuevo en el B-tree)
 2. Alocar nuevos bloques de datos (de la freelist)
 3. Escribir datos en los nuevos bloques
@@ -171,7 +171,7 @@ path = "C:\DOCS\INFORME.TXT"
 
 ### 3.3 Crear archivo
 
-```
+```text
 1. Alocar inode_num (contador en superblock, sin tabla global)
 2. Crear DirEntry: name, size=0, mode, created, link_count=1, checksum=0, inline_len=0
 3. Insertar en el B-tree del directorio padre (COW)
@@ -180,7 +180,7 @@ path = "C:\DOCS\INFORME.TXT"
 
 ### 3.4 Borrar archivo
 
-```
+```text
 DEL INFORME.TXT
 
 1. Lookup en B-tree del directorio padre
@@ -193,7 +193,7 @@ DEL INFORME.TXT
 
 ### 3.5 Borrar directorio
 
-```
+```text
 RD VACIO
 1. Si el directorio tiene entradas (archivos o subdirs): "Directory not empty"
 2. Si está vacío: eliminar entrada del B-tree (COW), root_version++
@@ -208,7 +208,7 @@ RD /F PROYECTO  (force: borra aunque tenga contenido)
 
 ### 3.6 Renombrar
 
-```
+```text
 1. Lookup del DirEntry en el directorio padre
 2. Modificar el nombre en el DirEntry
 3. Actualizar el B-tree (COW)
@@ -217,7 +217,7 @@ RD /F PROYECTO  (force: borra aunque tenga contenido)
 
 ### 3.7 Snapshot
 
-```
+```text
 SNAPSHOT CREATE
 1. Copiar (root_btree_lba, root_timestamp) a la snapshot table
 2. snapshot_count++ (circular, máximo 64)
@@ -239,7 +239,7 @@ accesibles. Solo PURGE libera espacio definitivamente.
 
 ### 3.8 FSCK (rápido)
 
-```
+```text
 1. Verificar checksum del superblock
 2. root_version coincide con el esperado?
 3. Verificar checksums de todos los nodos B-tree reachables
@@ -287,7 +287,7 @@ impl NeoDosFs {
 
 #### RAX 77 — `sys_ob_snapshot`
 
-```
+```text
 RBX = fd (handle a la raíz del FS, ej: \Global\FileSystem\C:\)
 RCX = op: 0=CREATE, 1=RESTORE, 2=LIST, 3=PURGE
 RDX = buf (para LIST: buffer de salida; para RESTORE: snapshot_id u64)
@@ -306,7 +306,7 @@ Errors: -Inval, -NoEnt, -Io, -NoSys (si no es NeoFS)
 
 ## 5. Permisos (mode bits)
 
-```
+```text
 bit 0 = R (read)
 bit 1 = W (write)
 bit 2 = X (execute)
@@ -328,7 +328,7 @@ NeoFS v1 (magic "NEOD") is **obsolete and has been removed**. The kernel rejects
 
 ## 7. Archivos creados/modificados
 
-```
+```text
 neodos-kernel/src/
 ├── fs/
 │   ├── mod.rs                          ─ módulos v2 (neodos_v2, neodos_dir, neodos_io, btree, freelist, snapshot)
@@ -354,7 +354,7 @@ neodos-kernel/src/
 ## 8. Tests (mínimos por invariante)
 
 | Test | Invariante |
-|------|-----------|
+| ------ | ----------- |
 | `neofs_v2_create_file` | Crear archivo → size=0, mode correcto, existe en B-tree |
 | `neofs_v2_write_read_roundtrip` | Escribir datos → leer → iguales |
 | `neofs_v2_cow_root_version_inc` | Escribir → root_version++ |

@@ -12,7 +12,7 @@
 ### 1.1 Auditoría de subsistemas existentes
 
 | Subsistema | Estado actual | APIs públicas disponibles | Documento de diseño |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | **Object Manager** | ✅ Completo (ObType 0–20, RAX 60–66) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/objects.md` |
 | **Registry (Cm)** | ✅ Completo (RAX 67–76, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry.md` |
 | **Service Manager** | ✅ Completo (ObType::Service=20, RAX 77) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/syscalls.md` |
@@ -45,7 +45,7 @@ Dependen de `libneodos`, target `x86_64-unknown-none`, linker script `user.ld`, 
 ### 1.3 APIs específicas para cada módulo de NeoCfg
 
 | Módulo | APIs existentes | APIs necesarias (no existen) |
-|---|---|---|
+| --- | --- | --- |
 | System | `ob_query_info(Version=8)`, `ob_query_info(Memory=10)`, `ob_query_info(CpuInfo=7)`, `ob_query_info(DateTime=9)`, `ob_open(\Global\Info\Drives)` + `ob_query_info(Drives=11)`, `ob_enum(\Ob\Process)` | Ninguna |
 | Power | — | Power Manager: `ob_set_info(PowerShutdown=37)`, `ob_set_info(PowerReboot=38)`, `ob_set_info(PowerSetPlan=41)`, `ob_query_info(PowerPlanInfo=32)`, `ob_query_info(PowerStatus=33)` |
 | Locale | — | i18n runtime: `i18n_init()`, `i18n_load()`, `i18n_get()`, `i18n_available_locales()` |
@@ -100,7 +100,7 @@ NeoCfg llena este vacío: **una aplicación Ring 3 que consume las APIs pública
 
 ### 3.2 Arquitectura general
 
-```
+```text
 NeoCfg (.NXE user binary)
 │
 ├── main.rs                 ← Entry point, módulo de navegación principal
@@ -148,7 +148,7 @@ Cada módulo se registra en un `static MODULES: &[&dyn CfgModule]` en `modules/m
 
 ### 3.4 Menú principal
 
-```
+```text
 =========================================
           tr!("neocfg.title")
           NeoCfg v0.1
@@ -171,7 +171,7 @@ tr!("neocfg.select_hint") >
 ### 3.5 Navegación
 
 | Tecla | Acción |
-|---|---|
+| --- | --- |
 | `1`–`9`, `A` | Seleccionar módulo (por índice) |
 | `Q`, `Esc` | Salir de NeoCfg / Volver al menú anterior |
 | `↑`/`↓`, `Tab`/`Shift+Tab` | Navegar entre opciones (en diálogos list) |
@@ -182,7 +182,7 @@ Implementación: usar `console::read_byte()` para captura de teclas individuales
 
 ### 3.6 Módulo System (solo lectura)
 
-```
+```text
 ===== tr!("module.system.title") =====
 
 tr!("system.kernel_version"):  NeoDOS v0.49.0
@@ -203,6 +203,7 @@ tr!("system.services"):       4  (2 running)
 ```
 
 **Implementación**: llamadas secuenciales a `ob_query_info`:
+
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)`
 - Memory → `ob_open("\Global\Info\Memory")` + `ob_query_info(Memory=10)` → `MemInfo`
 - CPU → `ob_open("\Global\Info\CpuInfo")` + `ob_query_info(CpuInfo=7)` → `CpuInfoFull`
@@ -215,7 +216,7 @@ tr!("system.services"):       4  (2 running)
 
 Dependencia: **Power Manager implementado** (PM-PHASE1+2 de `docs/power-manager.md`).
 
-```
+```text
 ===== tr!("module.power.title") =====
 
 tr!("power.active_plan"):     tr!("power.plan.balanced")
@@ -237,6 +238,7 @@ tr!("power.actions"):
 ```
 
 **Implementación** (vía Power Manager API, una vez implementado):
+
 - `ob_open("\Device\PowerManager")` → cache fd en static
 - Query: `ob_query_info(fd, PowerPlanInfo=32)` → `PowerPlanInfo`
 - Set plan: `ob_set_info(fd, PowerSetPlan=41, &plan_index)`
@@ -245,7 +247,8 @@ tr!("power.actions"):
 - Defaults: `ob_set_info(fd, PowerSetPlan=41, &0u32)` (Balanced)
 
 **Hasta que Power Manager exista**, este módulo muestra un mensaje informativo:
-```
+
+```text
 tr!("power.not_available")
 ```
 
@@ -253,7 +256,7 @@ tr!("power.not_available")
 
 Dependencia: **i18n runtime implementado** (Fase 1–2 de `docs/design/i18n-design.md`).
 
-```
+```text
 ===== tr!("module.locale.title") =====
 
 tr!("locale.current"):        es-ES
@@ -270,12 +273,14 @@ tr!("locale.actions"):
 ```
 
 **Implementación** (vía i18n runtime, una vez implementado):
+
 - `i18n_active_locale()` → muestra locale actual
 - `i18n_available_locales()` → lista del directorio `C:\System\Locale\`
 - Cambio: escribir `\Registry\Machine\System\CurrentControlSet\Control\Locale\Language` vía `cm_set_value`, luego `i18n_reload_all()`
 
 **Hasta que i18n runtime exista**, este módulo muestra:
-```
+
+```text
 tr!("locale.not_available")
 ```
 
@@ -283,7 +288,7 @@ tr!("locale.not_available")
 
 Sin dependencias externas. Implementable inmediatamente con la API Ob existente.
 
-```
+```text
 ===== tr!("module.keyboard.title") =====
 
 tr!("keyboard.current"):      tr!("keyboard.layout.sp")
@@ -299,6 +304,7 @@ tr!("keyboard.actions"):
 ```
 
 **Implementación** (vía Ob API existente, mismo patrón que `userbin/keyb/`):
+
 ```rust
 fn get_layout() -> u8 {
     let fd = sys_ob_open("\\Global\\Info\\Keyboard", ob_access::READ)?;
@@ -319,7 +325,7 @@ fn set_layout(layout: u8) {
 
 Sin dependencias externas. Implementable inmediatamente.
 
-```
+```text
 ===== tr!("module.about.title") =====
 
 tr!("about.neodos"):          NeoDOS v0.49.0
@@ -334,6 +340,7 @@ tr!("about.build"):           2026-07-11
 ```
 
 **Implementación**:
+
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)` → string del kernel
 - Valores fijos compilados: ABI, arch, NeoFS version
 - `libneodos::export::ABI_VERSION` para la versión de libneodos
@@ -418,7 +425,7 @@ pub mod i18n_keys {
 ### 3.12 Dependencia de subsistemas no implementados
 
 | Módulo | Dependencia | Estado en roadmap | Acción en v0.1 |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | System | Ninguna | ✅ Listo | Implementar completo |
 | Keyboard | Ninguna | ✅ Listo | Implementar completo |
 | About | Ninguna | ✅ Listo | Implementar completo |
@@ -432,7 +439,7 @@ Los stubs no son simples placeholders: contienen la lógica de navegación, el m
 NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs existentes:
 
 | Operación | API | RAX o clase |
-|---|---|---|
+| --- | --- | --- |
 | Abrir información del sistema | `ob_open(\Global\Info\*)` + `ob_query_info` | RAX 60, 62 |
 | Leer versión | `ob_query_info(Version=8)` | Clase 8 |
 | Leer memoria | `ob_query_info(Memory=10)` | Clase 10 |
@@ -453,7 +460,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 ### 3.14 Archivos nuevos
 
 | Ruta | Propósito | Líneas estimadas |
-|---|---|---|
+| --- | --- | --- |
 | `userbin/neocfg/Cargo.toml` | Dependencia de libneodos, target config | 15 |
 | `userbin/neocfg/src/main.rs` | Entry point, inicialización, bucle principal | 80 |
 | `userbin/neocfg/src/lib.rs` | `CfgModule` trait, `CfgResult`, `MenuContext`, claves i18n | 60 |
@@ -476,7 +483,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 ### 3.15 Cambios a archivos existentes
 
 | Archivo | Cambio |
-|---|---|
+| --- | --- |
 | `scripts/build.sh` | Añadir `neocfg` al loop de build de user binaries (línea 82) |
 | `scripts/create_ne2_image.py` | Añadir `'neocfg'` a la lista de binarios (línea 226) |
 | `docs/IMPROVEMENTS.md` | Mover ADM-5 (`neocfg`) a `completed` cuando se implemente |
@@ -493,6 +500,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 **Descripción**: En lugar de crear un binario separado, añadir subcomandos a NeoShell: `CONFIG SYSTEM`, `CONFIG POWER`, `CONFIG KEYBOARD`.
 
 **Rechazada porque**:
+
 1. **Acoplamiento**: NeoShell se convertiría en un monolito de configuración, violando SRP. Cada nuevo módulo requeriría modificar NeoShell.
 2. **Sin menús**: NeoShell es un REPL, no ofrece menús guiados. Habría que implementar un sistema de UI dentro de NeoShell.
 3. **Reutilización GUI**: La futura interfaz gráfica no podría reutilizar la lógica incrustada en NeoShell.
@@ -504,6 +512,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 **Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `keyb.nxe`, `ipconfig.nxe`, `ndreg.nxe`.
 
 **Rechazada porque**:
+
 1. **Fragmentación de la UX**: El usuario debe recordar múltiples comandos. No hay un punto de entrada único.
 2. **Duplicación de UI**: Cada herramienta implementa su propia interfaz de usuario. NeoCfg centraliza la UI en `ui/menu.rs` y `ui/dialog.rs`, reutilizables.
 3. **Dificultad de descubrimiento**: Un usuario nuevo no sabe qué herramientas existen ni qué hace cada una. NeoCfg ofrece un listado completo.
@@ -515,6 +524,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 **Descripción**: Saltar la fase de consola e implementar NeoCfg directamente como una aplicación gráfica con framebuffer/modo VESA.
 
 **Rechazada porque**:
+
 1. **NeoDOS no tiene subsistema gráfico**. No hay ventanas, widgets, ni event loop gráfico. Implementar GUI desde cero para NeoCfg sería desproporcionado.
 2. **La filosofía de NeoDOS prioriza interfaz de consola en la serie 0.x** (establecido en `ARCHITECTURAL_VISION.md`).
 3. **La capa de presentación es reemplazable**: la arquitectura propuesta separa UI de lógica. La GUI futura reutilizará los módulos de `modules/` y solo reemplazará `ui/`.
@@ -525,7 +535,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 ## 5. Affected Components
 
 | Subsistema | Impacto | Detalles |
-|---|---|---|
+| --- | --- | --- |
 | **userbin/neocfg/** | **NUEVO** — Crear proyecto .NXE | 10+ archivos nuevos, ~700 líneas |
 | **scripts/build.sh** | Bajo | Añadir `neocfg` al loop de build |
 | **scripts/create_ne2_image.py** | Bajo | Añadir `'neocfg'` a la lista de binarios |
@@ -633,7 +643,7 @@ pub fn i18n_reload_all();
 ### 7.1 Tests de navegación (invariante: el menú principal muestra todos los módulos registrados)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 1 | NeoCfg inicia y muestra menú principal con módulos System, Power, Locale, Keyboard, About | 5 opciones numeradas visibles |
 | 2 | Pulsar `Q` o `Esc` en menú principal → NeoCfg termina con código 0 | `sys_exit(0)` |
 | 3 | Pulsar `1` (System) → se ejecuta módulo System → `Esc` vuelve al menú principal | Navegación correcta |
@@ -641,7 +651,7 @@ pub fn i18n_reload_all();
 ### 7.2 Tests del módulo System (invariante: la información del sistema es correcta y no modifica estado)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 4 | System muestra versión del kernel | Coincide con `ob_query_info(Version)` |
 | 5 | System muestra uso de memoria | `used_kib + free_kib <= total_kib` (coherencia) |
 | 6 | System muestra unidades montadas | Lista al menos `C:` presente |
@@ -650,7 +660,7 @@ pub fn i18n_reload_all();
 ### 7.3 Tests del módulo Keyboard (invariante: cambiar layout cambia efectivamente el layout activo)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 8 | Keyboard muestra layout actual | Coincide con `ob_query_info(KeyboardLayout)` |
 | 9 | Seleccionar "US" → layout cambia a US | `ob_query_info(KeyboardLayout)` retorna 0 |
 | 10 | Seleccionar "Spanish" → layout cambia a Spanish | `ob_query_info(KeyboardLayout)` retorna 1 |
@@ -659,7 +669,7 @@ pub fn i18n_reload_all();
 ### 7.4 Tests del módulo About (invariante: los datos de versión son consistentes)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 12 | About muestra versión de NeoDOS | Contiene "v0." + números |
 | 13 | About muestra arquitectura "x86_64" | Campo arch == "x86_64" |
 | 14 | About muestra versión de NeoFS "NE2 v2" | Campo neofs contiene "NE2" |
@@ -667,7 +677,7 @@ pub fn i18n_reload_all();
 ### 7.5 Tests de módulos stub (invariante: los stubs muestran mensaje y no crashean)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 15 | Power muestra mensaje "not available" cuando Power Manager no existe | El stub no crashea, muestra texto informativo |
 | 16 | Locale muestra mensaje "not available" cuando i18n runtime no existe | El stub no crashea, muestra texto informativo |
 | 17 | `Esc` desde stub → vuelve al menú principal | Navegación correcta |
@@ -675,7 +685,7 @@ pub fn i18n_reload_all();
 ### 7.6 Tests de internacionalización (invariante: todos los textos visibles pasan por `tr!()`)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 18 | `tr!("neocfg.title")` devuelve string no vacío | `&str` con contenido |
 | 19 | `tr!("nonexistent.key")` devuelve `"nonexistent.key"` (fallback seguro) | Sin panic, sin crash |
 | 20 | Enumerar todas las claves i18n de neocfg → cada una tiene entrada en `en-US/neocfg.nlt` | No hay claves huérfanas |
@@ -683,7 +693,7 @@ pub fn i18n_reload_all();
 ### 7.7 Tests de integración (invariante: el binario se construye y ejecuta correctamente)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 21 | `cargo build --release` en userbin/neocfg/ → `neocfg.nxe` generado | Exit code 0, archivo existe |
 | 22 | El binario se incluye en la imagen de disco vía `create_ne2_image.py` | `'neocfg'` en la lista |
 | 23 | `NEOCFG` desde NeoShell → lanza NeoCfg | Proceso se ejecuta sin error |
@@ -698,9 +708,10 @@ pub fn i18n_reload_all();
 **Archivos:** todos en `userbin/neocfg/`
 
 1. Crear estructura de directorios:
-   ```
-   userbin/neocfg/
-   ├── Cargo.toml
+
+```text
+userbin/neocfg/
+├── Cargo.toml
    ├── rust-toolchain.toml
    ├── user.ld
    ├── .cargo/config.toml
@@ -722,9 +733,10 @@ pub fn i18n_reload_all();
        ├── en-US/
        └── es-ES/
    ```
-2. `Cargo.toml`: `libneodos = { path = "../../libneodos" }`
-3. `main.rs`: entry point con `_start()`, inicialización, bucle de menú principal
-4. `lib.rs`: `CfgModule` trait, `MenuContext`, tipos compartidos
+
+1. `Cargo.toml`: `libneodos = { path = "../../libneodos" }`
+1. `main.rs`: entry point con `_start()`, inicialización, bucle de menú principal
+1. `lib.rs`: `CfgModule` trait, `MenuContext`, tipos compartidos
 
 ### Step 2: UI framework (0.5 day)
 
@@ -736,7 +748,7 @@ pub fn i18n_reload_all();
    - Capturar tecla vía `console::read_byte()`
    - Manejar `1`–`9`, `A`, `Q`, `Esc`
    - Retornar índice seleccionado o `None` (salir)
-2. `dialog.rs`: 
+2. `dialog.rs`:
    - `show_message(title, lines)`: muestra texto informativo, espera tecla
    - `show_confirm(title, prompt) -> bool`: confirmación Sí/No
    - `show_input(title, prompt, buf)`: entrada de texto (usar `console::readline_buf`)
@@ -836,7 +848,7 @@ pub fn i18n_reload_all();
 
 ## Appendix A: i18n keys for NeoCfg
 
-```
+```text
 # Navigation
 neocfg.title            = "NeoCfg — Control Panel"
 neocfg.exit             = "Exit"
@@ -915,4 +927,4 @@ about.build             = "Build date"
 
 *Este documento constituye la especificación de diseño de NeoCfg v0.1.*
 *No se implementará código hasta la aprobación del ARB.*
-*Las dependencias externas (Power Manager, i18n runtime) se trackean en `docs/IMPROVEMENTS.md` como PM-PHASE* e I18N-PHASE* respectivamente.*
+*Las dependencias externas (Power Manager, i18n runtime) se trackean en `docs/IMPROVEMENTS.md` como PM-PHASE* e I18N-PHASE*respectivamente.*

@@ -88,7 +88,7 @@ pub fn without_interrupts<F, R>(f: F) -> R;     // NOT extern "C" — generic cl
 Since HAL v0.4, the HAL module is split into three layers to audit inline asm:
 
 | Layer | Description |
-|-------|-------------|
+| ------- | ------------- |
 | `hal/raw/` | Bare inline asm primitives (`raw_read_msr`, `raw_cpuid`, `raw_sti`, `raw_pause`, GS access, I/O ports, etc.) |
 | `hal/safe/` | Type-safe `Msr` trait: `read_msr<T: Msr>()`, `write_msr<T: Msr>()`, named MSR constants with `IS_SAFE` flag |
 | `hal/x64/` | Extern "C" ABI surface — delegates all asm calls to `hal/raw` |
@@ -273,7 +273,7 @@ A binary that claims HAL ABI v0.2 compliance MUST:
 ### 5.2 Forbidden in HAL v0.2
 
 | Forbidden | Rationale |
-|-----------|-----------|
+| ----------- | ----------- |
 | Calling the scheduler | HAL is below scheduler |
 | Allocating from the kernel heap (`Box`, `Vec`, `String`) | HAL does not depend on the heap allocator |
 | Filesystem or VFS access | HAL is hardware-only |
@@ -329,10 +329,10 @@ The current implementation of `register_irq` returns `-1` unconditionally. This 
 `ack_irq` sends End-Of-Interrupt to the 8259 PIC(s) for vectors in the range 32–47:
 
 | Vector range | Action |
-|-------------|--------|
-| 32–39       | Master PIC EOI (port `0x20`, value `0x20`) |
-| 40–47       | Slave + master EOI (port `0xA0` then `0x20`, value `0x20`) |
-| all other   | No-op (no port writes) |
+| ------------- | -------- |
+| 32–39 | Master PIC EOI (port `0x20`, value `0x20`) |
+| 40–47 | Slave + master EOI (port `0xA0` then `0x20`, value `0x20`) |
+| all other | No-op (no port writes) |
 
 ### 5.6 `sleep_hint` contract
 
@@ -453,6 +453,7 @@ HAL_PAGE_NO_CACHE      = 0x10
 ## Appendix B: Error Return Convention
 
 All functions that return `i32` use:
+
 - `0`  = success
 - `-1` = generic failure
 

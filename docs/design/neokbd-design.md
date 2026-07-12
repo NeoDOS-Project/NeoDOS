@@ -13,7 +13,7 @@
 
 El flujo de eventos desde el hardware hasta el espacio de usuario tiene 7 etapas:
 
-```
+```text
 PS/2 IRQ (IDT handler)
   → scancode raw (inb 0x60)
   → EVENT_KEYBOARD_INPUT (type 1) al Event Bus
@@ -29,7 +29,7 @@ PS/2 IRQ (IDT handler)
 ### 1.2 Archivos clave existentes
 
 | Archivo | Rol actual | Líneas |
-|---|---|---|
+| --- | --- | --- |
 | `drivers/ps2kbd/src/lib.rs` | NEM driver: scancode→byte, layout, dead keys, modifiers, UTF-8 encode | 277 |
 | `drivers/ps2kbd/build.rs` | Genera `kbd_layout.rs` desde archivos `.klc` | ~200 |
 | `drivers/ps2kbd/layouts/KBDUS.klc` | Layout US (inglés) | ~100 |
@@ -54,7 +54,7 @@ PS/2 IRQ (IDT handler)
 ### 1.3 Limitaciones identificadas
 
 | # | Limitación | Causa raíz | Impacto |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | L1 | Solo 2 layouts (US, SP), índice `u8` | `KEYBOARD_LAYOUT: AtomicU8`, layout compilado en driver NEM | No se pueden añadir layouts sin recompilar el driver |
 | L2 | Sin nombres de layout | El layout se identifica solo por número (0/1) | KEYB muestra "0" o "1", no "US"/"Spanish" |
 | L3 | Sin persistencia | `KEYBOARD_LAYOUT` es volátil, no se guarda en Registry | Al reiniciar, siempre Spanish |
@@ -116,7 +116,7 @@ Se necesita un **nuevo subsistema de kernel con un ObType propio**, no un parche
 
 ### 3.1 Arquitectura general
 
-```
+```text
 PS/2 IRQ (IDT handler)
   │
   ▼
@@ -171,7 +171,7 @@ KeyboardDevice = 22,
 ### 3.4 Nuevos archivos en kernel
 
 | Ruta | Propósito | Líneas estimadas |
-|---|---|---|
+| --- | --- | --- |
 | `src/kbd/mod.rs` | `NeoKbd` struct, `KBD` global singleton, `kbd_init()` | 150 |
 | `src/kbd/layout.rs` | Layout engine: `KbdLayout`, `KeyEntry`, carga de `.kbd`, lookup scancode→key→unicode | 250 |
 | `src/kbd/unicode.rs` | Unicode mapper: combinación dead keys, UTF-8 encode, compose tables | 120 |
@@ -185,7 +185,7 @@ KeyboardDevice = 22,
 ### 3.5 Cambios a archivos existentes
 
 | Archivo | Cambio |
-|---|---|
+| --- | --- |
 | `src/object/types.rs` | Añadir `KeyboardDevice = 22` a `ObType`, `ob_type_list` |
 | `src/object/types.rs` | Añadir `KeyboardInfo = 35`, `KeyboardCaps = 36` a `ObInfoClass` |
 | `src/object/types.rs` | Añadir `KeyboardSetLayout = 43`, `KeyboardSetRepeatDelay = 44`, `KeyboardSetRepeatRate = 45`, `KeyboardSetLeds = 46`, `KeyboardSetModifier = 47` a `ObSetInfoClass` |
@@ -207,7 +207,7 @@ KeyboardDevice = 22,
 
 Archivo binario para carga dinámica desde `C:\System\Keyboard\*.kbd` (no compilado en el driver).
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │ Magic: "KBD\0" (4 bytes)                     │
 │ Version: u32 LE = 1                          │
@@ -319,7 +319,7 @@ pub struct ModifierState {
 #### ObInfoClass (query)
 
 | Clase | Nombre | Descripción | Tamaño buf |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 35 | `KeyboardInfo` | Estado actual: modificadores + layout activo + LEDs | 12 bytes (`KbdState`) |
 | 36 | `KeyboardCaps` | Capacidades del teclado y gestor | 20 bytes (`KbdCaps`) |
 | 37 | `KeyboardLayouts` | Lista de layouts disponibles | Array de `KbdLayoutInfo` |
@@ -327,7 +327,7 @@ pub struct ModifierState {
 #### ObSetInfoClass (set)
 
 | Clase | Nombre | Descripción | buf |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | 43 | `KeyboardSetLayout` | Cambiar layout por nombre | `[u8; 32]` nombre |
 | 44 | `KeyboardSetRepeatDelay` | Tiempo antes de repetir (ms) | `u32` (250-1000) |
 | 45 | `KeyboardSetRepeatRate` | Velocidad de repetición (cps) | `u32` (2-60) |
@@ -337,7 +337,7 @@ pub struct ModifierState {
 ### 3.10 Nuevos eventos Event Bus
 
 | Constante | Valor | Descripción | data0 | data1 |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `EVENT_KEYDOWN` | 27 | Tecla presionada | scancode (u8) | modifiers (u8) |
 | `EVENT_KEYUP` | 28 | Tecla liberada | scancode (u8) | modifiers (u8) |
 | `EVENT_KEY_CHAR` | 29 | Carácter Unicode generado | codepoint (u32) | scancode (u8) |
@@ -404,6 +404,7 @@ pub const KBD_SCROLLLOCK: u8 = 0x40;
 El cambio es **progresivo**:
 
 **Fase 1 (NeoKBD como superposición):**
+
 - NeoKBD se registra como handler adicional de `EVENT_KEYBOARD_INPUT`
 - El ps2kbd NEM driver sigue traduciendo y pushing bytes como hoy
 - NeoKBD procesa los mismos eventos, mantiene estado, expone API vía Ob, pero NO interfiere con la salida
@@ -411,6 +412,7 @@ El cambio es **progresivo**:
 - Las nuevas APIs permiten consultar layout por nombre, listar layouts, configurar repeat
 
 **Fase 2 (NeoKBD como gestor principal):**
+
 - El ps2kbd NEM driver se simplifica: elimina layout tables, dead keys, UTF-8 encode
 - ps2kbd solo trackea modificadores y emite eventos (scancode + make/break)
 - NeoKBD recibe el evento, traduce, gestiona dead keys, compone Unicode
@@ -471,7 +473,7 @@ Cada dispositivo tiene su propio estado de modificadores, dead key pendiente, y 
 ## 5. Affected Components
 
 | Subsistema | Impacto | Detalles |
-|---|---|---|
+| --- | --- | --- |
 | **Object Manager** | Medio | Nuevo `ObType::KeyboardDevice(22)`. Nuevo objeto `\Device\Keyboard` en namespace. 2 nuevos query info classes, 5 nuevos set info classes. |
 | **Event Bus** | Bajo | 5 nuevos tipos de evento (27–31). No rompe frozen ABI (los tipos nuevos están fuera del rango 0–15). |
 | **Input Manager** | Bajo | NeoKBD llama a `input::push_byte()` igual que ps2kbd. Sin cambios en VT queues. |
@@ -639,7 +641,7 @@ pub struct KbdCaps {
 ### 7.1 Inicialización y objeto Ob (invariante: NeoKBD se inicializa correctamente y es accesible vía Ob)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 1 | `kbd_init()` completa sin error después de PHASE 3.875 | `KBD` global en estado `KbdState { modifiers: 0, leds: 0, active_layout_index: 0 }` |
 | 2 | `\Device\Keyboard` existe en namespace Ob | `ob_lookup_path("\Device\Keyboard")` retorna ObId válido |
 | 3 | `ob_open("\Device\Keyboard", READ)` en user space retorna fd ≥ 3 | Handle válido, ObType::KeyboardDevice |
@@ -648,7 +650,7 @@ pub struct KbdCaps {
 ### 7.2 Carga de layouts (invariante: los layouts se cargan desde disco y son consultables)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 5 | `C:\System\Keyboard\Spanish.kbd` se carga en init | Layout "Spanish" disponible, lang_tag "es-ES" |
 | 6 | `C:\System\Keyboard\US.kbd` se carga en init | Layout "US" disponible, lang_tag "en-US" |
 | 7 | `ob_query_info(fd, KeyboardLayouts, buf)` lista ambos layouts | 2 entries: "Spanish" (index 0) y "US" (index 1) |
@@ -658,7 +660,7 @@ pub struct KbdCaps {
 ### 7.3 Cambio de layout (invariante: cambiar layout actualiza el estado y persiste en Registry)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 10 | `ob_set_info(fd, KeyboardSetLayout, "US")` → layout activo cambia a US | `KbdState.active_layout_index == 1` |
 | 11 | `ob_set_info(fd, KeyboardSetLayout, "Spanish")` → layout activo vuelve a Spanish | `KbdState.active_layout_index == 0` |
 | 12 | `ob_set_info(fd, KeyboardSetLayout, "Nonexistent")` retorna `-NoEnt` | Layout activo no cambia |
@@ -668,7 +670,7 @@ pub struct KbdCaps {
 ### 7.4 Traducción scancode→Unicode (invariante: NeoKBD traduce correctamente usando el layout activo)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 15 | Scancode 0x1E (A) con layout US → `input::push_byte(b'a')` | Byte 'a' (0x61) en VT queue |
 | 16 | Scancode 0x1E (A) con layout US + Shift → `input::push_byte(b'A')` | Byte 'A' (0x41) en VT queue |
 | 17 | Scancode 0x27 (Ñ) con layout Spanish → `input::push_byte(0xC3)` + `input::push_byte(0xB1)` | UTF-8 de U+00F1 (ñ) en VT queue |
@@ -677,7 +679,7 @@ pub struct KbdCaps {
 ### 7.5 Modificadores (invariante: el estado de modificadores es correcto y consultable)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 19 | Scancode 0x2A (Shift make) → `KbdState.modifiers` bit KBD_SHIFT activo | `modifiers & KBD_SHIFT != 0` |
 | 20 | Scancode 0xAA (Shift break) → `KbdState.modifiers` bit KBD_SHIFT inactivo | `modifiers & KBD_SHIFT == 0` |
 | 21 | Scancode 0x3A (CapsLock make) → toggle Caps bit | `modifiers & KBD_CAPS` cambia de 0→1 o 1→0 |
@@ -687,7 +689,7 @@ pub struct KbdCaps {
 ### 7.6 Dead keys y composición (invariante: dead keys componen correctamente)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 24 | Dead key ´ (U+00B4) seguido de a → compone á (U+00E1) | Carácter U+00E1 emitido |
 | 25 | Dead key ¨ (U+00A8) seguido de o → compone ö (U+00F6) | Carácter U+00F6 emitido |
 | 26 | Dead key ´ seguido de otra dead key ´ → compone ´´ (no hay combinación) → "?" | 0x3F emitido |
@@ -696,7 +698,7 @@ pub struct KbdCaps {
 ### 7.7 Auto-repeat (invariante: auto-repeat configurable funciona correctamente)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 28 | Tecla mantenida > delay configurado → repite a la tasa configurada | N repeticiones en N/rate segundos |
 | 29 | `ob_set_info(fd, KeyboardSetRepeatDelay, 1000)` → delay 1 segundo | `KbdConfig.repeat_delay == 1000` |
 | 30 | `ob_set_info(fd, KeyboardSetRepeatDelay, 50)` retorna `-Inval` | delay no cambia |
@@ -705,7 +707,7 @@ pub struct KbdCaps {
 ### 7.8 LEDs (invariante: control de LEDs funciona y estado es consultable)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 32 | CapsLock ON → LED CapsLock encendido vía PS/2 command 0xED | `set_leds(0x04)` llamado |
 | 33 | `ob_set_info(fd, KeyboardSetLeds, &0x02)` → NumLock LED toggle | LED NumLock cambia, `KbdState.leds & 0x02` coincide |
 | 34 | `ob_query_info(fd, KeyboardInfo)` → `leds` refleja estado actual | `KbdState.leds` bits correctos |
@@ -713,7 +715,7 @@ pub struct KbdCaps {
 ### 7.9 Persistencia en Registry (invariante: configuración persiste entre reinicios)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 35 | Cambiar layout a "US", reiniciar → layout activo "US" | Registry leído en kbd_init() |
 | 36 | RepeatDelay=750, RepeatRate=15, reiniciar → valores recuperados | cm_query_value confirma |
 | 37 | Registry vacío (primer arranque) → defaults aplicados | Layout="Spanish", Delay=500, Rate=30 |
@@ -721,7 +723,7 @@ pub struct KbdCaps {
 ### 7.10 Integración con user space (invariante: aplicaciones existentes no se rompen)
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 38 | KEYB US desde NeoShell → layout cambia a US | `kbd_get_layout()` retorna "US" |
 | 39 | KEYB SP desde NeoShell → layout cambia a Spanish | `kbd_get_layout()` retorna "Spanish" |
 | 40 | Ctrl+Alt+Del → poweroff (hotkey manejado por NeoKBD) | Sistema se apaga |
@@ -731,7 +733,7 @@ pub struct KbdCaps {
 ### 7.11 Tests de carga de archivos .kbd
 
 | # | Test | Expected |
-|---|---|---|
+| --- | --- | --- |
 | 43 | Cargar archivo `.kbd` con 256 scancodes completos | Todos los scancodes mapeados |
 | 44 | Cargar archivo `.kbd` con compose table de 54 entradas (Spanish) | Dead keys + compose funcionan |
 | 45 | Cargar archivo `.kbd` malformado (tamaño insuficiente) | Error `-Inval`, no crash |
@@ -903,7 +905,7 @@ object::namespace::ob_insert_object("\\Device\\Keyboard", kbd_id);
 Los layouts se generan desde los mismos archivos `.klc` existentes, pero convertidos a formato `.kbd` con una herramienta (`tools/kbdcompile/`):
 
 | Archivo | Layout | LangTag | Scancodes | Compose |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | `US.kbd` | US | en-US | 256 | 0 |
 | `Spanish.kbd` | Spanish | es-ES | 256 | 54 |
 
@@ -913,7 +915,7 @@ La herramienta `kbdcompile` toma un `.klc` y produce un `.kbd` binario. Se invoc
 
 ## Appendix B: Mapa de migración ps2kbd → NeoKBD
 
-```
+```text
 Fase 1                          Fase 2 (target)
 ══════════════════════════       ══════════════════════════
 ps2kbd: layout + dead keys      ps2kbd: solo raw scancodes

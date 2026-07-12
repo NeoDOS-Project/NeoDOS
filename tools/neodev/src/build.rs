@@ -24,7 +24,7 @@ pub fn build_kernel(cfg: &Config, disc: &Discovery) -> Result<bool> {
     println!("{} Building kernel...", "[*]".bold().cyan());
 
     let status = Command::new("cargo")
-        .args(["build", "--target", &cfg.kernel_target, "--release"])
+        .args(["+nightly", "build", "--target", &cfg.kernel_target, "--release"])
         .current_dir(&kernel.path)
         .status()
         .context("Failed to run cargo build for kernel")?;

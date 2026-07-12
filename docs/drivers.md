@@ -96,7 +96,7 @@ Warnings: `driver.max < ABI_TARGET` (driver built for older kernel),
 
 Source: `src/drivers/driver_runtime.rs`. Every driver follows an 8-state lifecycle:
 
-```
+```text
                     ┌─────────┐
                     │  Loaded │
                     └────┬────┘

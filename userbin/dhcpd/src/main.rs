@@ -5,7 +5,9 @@ use libneodos::syscall;
 
 // ── DHCP constants ──
 
+#[allow(dead_code)]
 const DHCP_SERVER_PORT: u16 = 67;
+#[allow(dead_code)]
 const DHCP_CLIENT_PORT: u16 = 68;
 const DHCP_MAGIC_COOKIE: u32 = 0x63825363;
 const DHCP_OP_REQUEST: u8 = 1;
@@ -17,6 +19,7 @@ const DHCP_ACK: u8 = 5;
 const DHCP_NAK: u8 = 6;
 const DHCP_OPTION_SUBNET_MASK: u8 = 1;
 const DHCP_OPTION_ROUTER: u8 = 3;
+#[allow(dead_code)]
 const DHCP_OPTION_DNS: u8 = 6;
 const DHCP_OPTION_LEASE_TIME: u8 = 51;
 const DHCP_OPTION_DHCP_MSG_TYPE: u8 = 53;
@@ -56,7 +59,9 @@ enum DhcpState {
     Init,
     Selecting,
     Requesting,
+    #[allow(dead_code)]
     Bound,
+    #[allow(dead_code)]
     Renewing,
 }
 
@@ -150,6 +155,7 @@ fn write_reg_dword(key_fd: u8, name: &str, val: u32) {
     let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_DWORD, &val.to_le_bytes());
 }
 
+#[allow(dead_code)]
 fn write_reg_string(key_fd: u8, name: &str, val: &[u8]) {
     let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
 }
@@ -493,6 +499,7 @@ impl DhcpClient {
         None
     }
 
+    #[allow(dead_code)]
     fn renew(&mut self) -> bool {
         write_str(b"[dhcpd] Renewing lease...\r\n");
         self.send_dhcp(DHCP_REQUEST, Some(self.offered_ip));

@@ -24,7 +24,7 @@ The Registry (`src/cm/`) is an NT-style cell-based hive system:
 **Bugs:**
 
 | # | Bug | Location | Severity |
-|---|-----|----------|----------|
+| --- | ----- | ---------- | ---------- |
 | 1 | Free list allocation is broken — `free_head` is set via `scan_next_free` but never properly chained | `hive.rs:136-163` | **Critical** — allocation always linear-scans from index 0 |
 | 2 | No value deletion — `RegistryDeleteValue` sets data to empty instead of freeing the cell | `syscall/cm.rs` | **High** — cells leak permanently |
 | 3 | Unmount doesn't flush dirty data | `mod.rs:unmount()` | **High** — data loss on unload |
@@ -35,7 +35,7 @@ The Registry (`src/cm/`) is an NT-style cell-based hive system:
 **Missing features:**
 
 | # | Feature | Impact |
-|---|---------|--------|
+| --- | --------- | -------- |
 | 1 | **Security descriptors / ACL enforcement** — `sec_desc_cell` always NULL, `src/cm/security.rs` doesn't exist | **Critical** — registry is world-writable |
 | 2 | **Proper value deletion** — no `hive.delete_value()` method | **High** — keys accumulate dead values |
 | 3 | **Per-cell dirty tracking** — single `dirty: bool` for entire hive | **Medium** — every mutation forces full-hive re-flush |
@@ -49,7 +49,7 @@ The Registry (`src/cm/`) is an NT-style cell-based hive system:
 ### Why Existing Abstractions Can't Solve These
 
 | Problem | Why existing abstractions fall short |
-|---------|--------------------------------------|
+| --------- | -------------------------------------- |
 | Security | `sec_desc_cell` field exists in KeyCell but no code ever populates or checks it. Would need `SeAccessCheck` integration, SID ownership assignment on key creation, and ACE inheritance. |
 | Multi-hive | `MAX_HIVES = 8` in `CmManager` is enough, but boot only mounts SYSTEM. No policy for which hives exist, where they live, or how they're organized. |
 | WAL | Current persistence writes entire hive atomically. A WAL would require a separate log file, replay logic at mount, and careful ordering of mutations → log before data. |
@@ -82,6 +82,7 @@ No format change: the free cell walk is internal. `MAX_CELLS = 2048` becomes a s
 #### Fix 2: Value deletion
 
 Add `Hive::delete_value(key_idx, name)`:
+
 1. Walk value linked list to find target
 2. Unlink from predecessor or update `values_head`
 3. Call `free_cell(target_idx)`
@@ -167,6 +168,7 @@ pub const KEY_ALL_ACCESS: u32 = 0x001F;
 ```
 
 **Design:**
+
 1. On key creation (`cm_create_key` / `ObSetInfoClass::RegistryCreateKey`):
    - If parent has `sec_desc_cell != NULL_CELL`, copy the SecurityCell reference (or clone with inheritance rules)
    - If parent has no security, use process token to create a SecurityCell with owner=SID, DACL=default
@@ -198,7 +200,7 @@ struct Hive {
 Mount additional hives during boot:
 
 | Hive | Mount Point | File | Purpose |
-|------|-------------|------|---------|
+| ------ | ------------- | ------ | --------- |
 | SYSTEM | `\Registry\Machine\System` | `SYSTEM.hiv` | ✅ Already mounted |
 | SOFTWARE | `\Registry\Machine\Software` | `SOFTWARE.hiv` | App/user settings |
 | SECURITY | `\Registry\Machine\Security` | `SECURITY.hiv` | Security policy, SID cache |
@@ -231,6 +233,7 @@ pub enum WalEntry {
 ```
 
 **Flow:**
+
 1. Each mutation writes to WAL first (`log entry → fsync log file`)
 2. Then applies mutation to in-memory hive
 3. Checkpoint: after N mutations or on flush, replay WAL to produce serialized hive, then truncate log
@@ -255,7 +258,7 @@ pub fn sys_cm_unload_hive(mount_path: &str) -> Result<(), i64>;
 New binary: `userbin/regedit/` — full registry editor:
 
 | Command | Action |
-|---------|--------|
+| --------- | -------- |
 | `REGEDIT <path>` | Browse key tree |
 | `REGEDIT /CREATE <path>` | Create key |
 | `REGEDIT /DELETE <path>` | Delete key |
@@ -296,7 +299,7 @@ All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClas
 ## 4. Affected Components
 
 | Component | Nature of Change |
-|-----------|-----------------|
+| ----------- | ----------------- |
 | `src/cm/hive.rs` | Fix free list (next-fit), add `delete_value()`, iterative `delete_key`, per-cell dirty tracking, growable `Vec` |
 | `src/cm/mod.rs` | Fix unmount flush, add multi-hive boot, add WAL mount/replay, add security checks in CRUD dispatch |
 | `src/cm/security.rs` | **New file**: key ACL creation, inheritance, `SeAccessCheck` integration |
@@ -316,7 +319,7 @@ All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClas
 
 ### New Hive Methods
 
-```
+```rust
 impl Hive {
     pub fn delete_value(&mut self, key_idx: u32, name: &str) -> Result<(), ()>
         Args: key_idx — cell index of parent key
@@ -340,7 +343,7 @@ pub fn cm_delete_value(key_native_id: u64, name: &str) -> Result<(), ()>
 
 ### Security API (`src/cm/security.rs`)
 
-```
+```rust
 pub fn cm_check_access(
     token: &Token,
     key_native_id: u64,
@@ -372,7 +375,7 @@ pub fn cm_inherit_security(
 
 ### WAL API (`src/cm/wal.rs`)
 
-```
+```rust
 pub fn wal_ensure_path(name: &str) -> Result<Vec<u8>, ()>
     Returns the WAL file path: "C:\\System\\Registry\\{name}.wal"
 
@@ -394,7 +397,7 @@ pub fn wal_checkpoint(name: &str, hive: &Hive) -> Result<(), ()>
 
 ### Fixed `RegistryDeleteValue` Syscall (existing, unchanged ABI)
 
-```
+```text
 RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
   Args: RBX = key_fd, RCX = buf (value name)
   Returns: 0 on success, negative error
@@ -411,7 +414,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 1: Bugfixes
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Free list next-fit | Create 100 keys, delete every other, verify new allocations reuse freed slots |
 | 2 | Value deletion | `set_value("foo", REG_SZ, "bar")` → `delete_value(key, "foo")` → `query_value("foo")` returns error |
 | 3 | Value deletion persistence | Delete value, flush, reload hive — verify value is gone |
@@ -423,7 +426,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 2: Security
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Key creation assigns owner | Create key with admin token — verify SecurityCell exists, owner SID = admin |
 | 2 | Access granted | Admin token opens key with KEY_READ — succeeds |
 | 3 | Access denied | Non-admin token opens admin-only key with KEY_WRITE — fails |
@@ -435,7 +438,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 3: Per-cell Dirty Tracking
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Cell dirty on write | `set_value()` → verify `dirty_cells[cell_idx]` is set |
 | 2 | Cell clean after flush | Flush → verify `dirty_cells` cleared |
 | 3 | Only dirty cells serialized | Modify 1 of 100 values — verify serialized output is small |
@@ -445,7 +448,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 4: Multi-hive
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | SOFTWARE hive mounted | After init — `cm_open_key("\Registry\Machine\Software")` succeeds |
 | 2 | Hive isolation | Create key in SYSTEM, verify not visible in SOFTWARE |
 | 3 | Cross-hive path fails | `cm_open_key("\Registry\Machine\Software\..\System")` — fails |
@@ -454,7 +457,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 5: WAL
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | WAL created on mutation | `set_value()` → WAL file exists with matching entry |
 | 2 | WAL replay on load | Corrupt .hiv, keep .wal — replay recovers data |
 | 3 | WAL truncated after flush | Flush → .wal file deleted |
@@ -464,7 +467,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 6: libneodos + regedit
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | `sys_cm_create_key` wrapper | Create key via wrapper, verify with `cm_open_key` |
 | 2 | `sys_cm_enum_key` wrapper | Create 3 subkeys, enumerate — all 3 returned |
 | 3 | `sys_cm_enum_value` wrapper | Set 3 values on key, enumerate — all 3 returned |
@@ -475,7 +478,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Integration
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Boot with persistent hives | Create key, flush, reboot — key exists after mount |
 | 2 | Security enforced end-to-end | Non-admin process tries `RegistrySetValue` — denied |
 | 3 | WAL crash recovery | Set 10 values without flush, "crash" (drop hive), mount — all 10 recovered |
@@ -488,7 +491,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 1: Bugfixes (v0.50.0)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 1.1 | `src/cm/hive.rs` | Fix free list: replace `free_head`/`scan_next_free` with next-fit linear scan from `next_alloc_hint`. Change `cells` to `Vec<Option<Cell>>`. |
 | 1.2 | `src/cm/hive.rs` | Add `delete_value()`: unlink from value linked list, call `free_cell()`. |
 | 1.3 | `src/cm/hive.rs` | Rewrite `delete_key()` as iterative with explicit Vec stack. |
@@ -501,7 +504,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 2: Security (v0.50.1)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 2.1 | `src/cm/security.rs` | Create file with `RegistrySecurity` type, `cm_check_access()`, `cm_ensure_security()`, `cm_inherit_security()`. |
 | 2.2 | `src/cm/mod.rs` | Hook `cm_check_access()` into `cm_open_key`, `cm_create_key`, `cm_set_value`, `cm_query_value`, `cm_delete_key`, `cm_enum_key`, `cm_enum_value`. |
 | 2.3 | `src/cm/mod.rs` | Hook `cm_ensure_security()` into `cm_create_key` (on first key creation in a path). |
@@ -513,7 +516,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 3: Per-cell Dirty Tracking (v0.50.2)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 3.1 | `src/cm/hive.rs` | Add `dirty_cells: BitVec` field. Modify `slot_mut()` to set dirty bit. |
 | 3.2 | `src/cm/hive.rs` | Add `serialize_dirty()` for incremental flush. |
 | 3.3 | `src/cm/cache.rs` | Wire CellCache into `slot()`/`slot_mut()` — check cache before linear scan. |
@@ -524,7 +527,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 4: Multi-hive (v0.50.3)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 4.1 | `src/cm/mod.rs` | Add `cm_load_hive("SOFTWARE", ...)` call in `init_cm()`. |
 | 4.2 | `src/cm/mod.rs` | Add `cm_load_hive("SECURITY", ...)` call in `init_cm()`. |
 | 4.3 | `src/cm/mod.rs` | Add `cm_load_hive("DEFAULT", ...)` call in `init_cm()`. |
@@ -535,7 +538,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 5: WAL (v0.51.0)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 5.1 | `src/cm/wal.rs` | Create file with `WalEntry`, `wal_replay()`, `wal_log()`, `wal_checkpoint()`. |
 | 5.2 | `src/cm/mod.rs` | Integrate `wal_log()` into `cm_set_value`, `cm_create_key`, `cm_delete_key`, `cm_delete_value`. |
 | 5.3 | `src/cm/mod.rs` | Integrate `wal_replay()` into `cm_load_hive` (run after deserialize, before mount). |
@@ -547,7 +550,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 ### Phase 6: libneodos + regedit (v0.51.1)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 6.1 | `libneodos/src/syscall.rs` | Add `sys_cm_create_key`, `sys_cm_delete_key`, `sys_cm_enum_key`, `sys_cm_enum_value`, `sys_cm_flush_key`, `sys_cm_load_hive`, `sys_cm_unload_hive` wrappers. |
 | 6.2 | `userbin/regedit/src/main.rs` | Create registry editor binary with browse, create, delete, set, query, flush commands. |
 | 6.3 | `scripts/build.sh` | Add `regedit` to build list. |

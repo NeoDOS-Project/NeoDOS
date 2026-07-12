@@ -129,6 +129,13 @@ pub extern "C" fn _start() -> ! {
         0
     };
 
+    // ── Read EnableTests ──
+    let enable_tests = if key_fd != 0xFF {
+        read_reg_dword(key_fd, "EnableTests").unwrap_or(0)
+    } else {
+        0
+    };
+
     // ── Close registry key ──
     if key_fd != 0xFF {
         let _ = syscall::sys_close(key_fd);
@@ -142,10 +149,12 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    // ── Run user-mode test binaries ──
-    try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
-    try_spawn_test("C:\\Programs\\stresscmd.nxe", "STRESSCMD");
-    try_spawn_test("C:\\Programs\\shtest.nxe", "SHTEST");
+    // ── Run user-mode test binaries (if enabled) ──
+    if enable_tests != 0 {
+        try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
+        try_spawn_test("C:\\Programs\\stresscmd.nxe", "STRESSCMD");
+        try_spawn_test("C:\\Programs\\shtest.nxe", "SHTEST");
+    }
 
     // ── Build Ob path for shell ──
     let mut ob_path_buf = [0u8; 512];

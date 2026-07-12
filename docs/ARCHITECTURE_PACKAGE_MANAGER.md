@@ -42,7 +42,7 @@
 ### 1.2 Terminology
 
 | Term | Definition |
-|------|------------|
+| ------ | ------------ |
 | **Package** | Versioned collection of files + metadata, distributed as `.nxp` |
 | **NeoGet** | CLI tool (`neoget.nxe`) — frontend to the package system |
 | **libneopkg** | Internal library crate — engine shared by CLI, GUI, and services |
@@ -70,14 +70,14 @@ A package is a **named, versioned, signed archive** containing:
 
 A package is uniquely identified by the triple:
 
-```
+```text
 (namespace, name, version)
 ```
 
 Where:
 
 | Field | Format | Example |
-|-------|--------|---------|
+| ------- | -------- | --------- |
 | `namespace` | Reverse domain (like Java/pkgr) | `org.neodos` , `com.github.user` |
 | `name` | PascalCase, alphanumeric + hyphens | `NeoShell`, `NeoTop` |
 | `version` | Semver `major.minor.patch` | `1.2.0`, `2.0.0-alpha.1` |
@@ -87,7 +87,7 @@ The full qualified name is `namespace/name`. The user-visible short name is `nam
 ### 2.3 What a package can contain
 
 | Content type | Installed to | Example |
-|-------------|-------------|---------|
+| ------------- | ------------- | --------- |
 | Executable | `C:\Programs\<name>\` | `neotop.nxe` |
 | Library | `C:\System\NXL\` | `libfoo.nxl` |
 | Driver | `C:\System\Drivers\` | `driver.nem` |
@@ -97,7 +97,7 @@ The full qualified name is `namespace/name`. The user-visible short name is `nam
 
 ### 2.4 Package lifecycle states
 
-```
+```text
 Available ──> Downloaded ──> Verified ──> Installed ──> Upgradable
                       │                    │
                       └──> Deleted         └──> Removed
@@ -108,7 +108,7 @@ States stored in the local database (Registry) per package.
 ### 2.5 Metadata fields
 
 | Field | Type | Required | Description |
-|-------|------|----------|-------------|
+| ------- | ------ | ---------- | ------------- |
 | `Namespace` | String | Yes | Reverse domain |
 | `Name` | String | Yes | Package name |
 | `Version` | String | Yes | Semver |
@@ -131,7 +131,7 @@ States stored in the local database (Registry) per package.
 
 Binary container, little-endian, self-validating with CRC32 + optional Ed25519 signature.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │ Magic "NXP1" (4 bytes)                                   │
 ├─────────────────────────────────────────────────────────┤
@@ -161,7 +161,7 @@ Binary container, little-endian, self-validating with CRC32 + optional Ed25519 s
 ### 3.2 Header (32 bytes)
 
 | Offset | Size | Field | Notes |
-|--------|------|-------|-------|
+| -------- | ------ | ------- | ------- |
 | 0 | 4 | `magic` | `0x3150584E` = `"NXP1"` |
 | 4 | 4 | `header_crc32` | CRC32 of bytes 8..31 |
 | 8 | 2 | `fmt_ver_major` | Format version major |
@@ -177,7 +177,7 @@ Binary container, little-endian, self-validating with CRC32 + optional Ed25519 s
 Each entry: tag (4 ASCII bytes, space-padded) | length (u32) | value (length bytes).
 
 | Tag | Multi | Value | Example |
-|-----|-------|-------|---------|
+| ----- | ------- | ------- | --------- |
 | `NAME` | No | Qualified name | `org.neodos/NeoTop` |
 | `VER` | No | Semver | `1.2.0` |
 | `DESC` | No | Free text | `Process monitor and task manager` |
@@ -200,7 +200,7 @@ Each entry: tag (4 ASCII bytes, space-padded) | length (u32) | value (length byt
 ### 3.4 File Entry Table
 
 | Offset | Size | Field | Notes |
-|--------|------|-------|-------|
+| -------- | ------ | ------- | ------- |
 | 0 | 4 | `path_offset` | Index into string table |
 | 2 | 2 | `flags` | Bit 0=CORE, 1=CONFIG, 2=PATCH |
 | 4 | 2 | _padding_ | Reserved (0) |
@@ -212,8 +212,8 @@ Each file's CRC32 is stored in the local database after installation.
 
 ### 3.5 Signature block (optional)
 
-| Offset | Size | Field |
-|--------|------|-------|
+| Offset | Size | Field | Description |
+| -------- | ------ | ------- | ------------- |
 | 0 | 4 | `signature_size` | Total block size including this field |
 | 4 | 2 | `key_algorithm` | 0 = Ed25519 |
 | 6 | 4 | `key_id` | Key identifier (CRC32 of public key) |
@@ -224,10 +224,10 @@ The signature covers: `header || manifest || file_table || string_table || file_
 
 ### 3.6 Footer
 
-| Offset | Size | Field |
-|--------|------|-------|
-| 0 | 4 | `manifest_crc32` |
-| 4 | 4 | `file_table_crc32` |
+| Offset | Size | Field | Description |
+| -------- | ------ | ------- | ------------- |
+| 0 | 4 | `manifest_crc32` | |
+| 4 | 4 | `file_table_crc32` | |
 | 8 | 4 | `footer_crc32` | CRC32 of bytes 0..7 |
 
 All CRC32: polynomial `0xEDB88320`, raw (no final XOR).
@@ -252,7 +252,7 @@ For v1, no compression. Individual files inside the package may be compressed by
 The local database lives in `\Registry\Machine\Packages\`. Rationale:
 
 | Criterion | Registry | Flat files | Binary DB | SQLite |
-|-----------|----------|------------|-----------|--------|
+| ----------- | ---------- | ------------ | ----------- | -------- |
 | Already exists | ✅ | No | No | No |
 | Atomic transactions | ✅ (cells) | ❌ | ❌ | ✅ |
 | Accessible via syscalls | ✅ (RAX 67-74) | ✅ (Ob) | ❌ | ❌ |
@@ -265,7 +265,7 @@ Registry is the natural choice: it's already there, it's hierarchical, it suppor
 
 ### 4.2 Schema
 
-```
+```text
 \Registry\Machine\Packages\
   <namespace>\
     <name>\
@@ -293,7 +293,7 @@ Registry is the natural choice: it's already there, it's hierarchical, it suppor
 **State values:**
 
 | Value | Meaning |
-|-------|---------|
+| ------- | --------- |
 | 0 | Downloaded (files cached, not installed) |
 | 1 | Verified (signature + CRC32 checked) |
 | 2 | Installed (files copied, Registry written) |
@@ -303,7 +303,7 @@ Registry is the natural choice: it's already there, it's hierarchical, it suppor
 
 ### 4.3 Transaction history
 
-```
+```text
 \Registry\Machine\Packages\.History\
   <timestamp>\
     Type       REG_SZ  "install" | "remove" | "upgrade"
@@ -318,7 +318,7 @@ History is append-only. Used for `neoget history` and future rollback features.
 
 ### 4.4 Repository cache
 
-```
+```text
 \Registry\Machine\Packages\.Repositories\
   <repo_name>\
     URL         REG_SZ  "https://packages.neodos.org/official"
@@ -337,7 +337,7 @@ History is append-only. Used for `neoget history` and future rollback features.
 
 Every installed package appears in the Ob namespace:
 
-```
+```text
 \Package\
   org.neodos\
     NeoShell\        → PackageObject { name, version, ... }
@@ -349,7 +349,7 @@ Every installed package appears in the Ob namespace:
 **Supported Ob operations on `\Package\<ns>\<name>`:**
 
 | Operation | Behavior |
-|-----------|----------|
+| ----------- | ---------- |
 | `sys_ob_open(path, READ)` | Returns fd to package object |
 | `sys_ob_query_info(fd, Basic, buf)` | Returns `ObPackageInfo` struct (version, state, flags) |
 | `sys_ob_query_info(fd, Name, buf)` | Returns qualified name string |
@@ -358,7 +358,7 @@ Every installed package appears in the Ob namespace:
 
 ### 5.2 Repository as Object
 
-```
+```text
 \Repository\
   official\        → RepositoryObject { url, fingerprint, priority }
   myrepo\          → RepositoryObject { ... }
@@ -367,14 +367,14 @@ Every installed package appears in the Ob namespace:
 **Supported operations:**
 
 | Operation | Behavior |
-|-----------|----------|
+| ----------- | ---------- |
 | `sys_ob_open(path, READ)` | Returns fd to repo object |
 | `sys_ob_query_info(fd, Basic, buf)` | Returns `ObRepoInfo` (url, last sync, package count) |
 | `sys_ob_enum(fd, buf)` | Lists packages available in the repository |
 
 ### 5.3 Transaction as Object
 
-```
+```text
 \Transaction\
   <uuid>\          → TransactionObject { state, operations, ... }
 ```
@@ -397,7 +397,7 @@ Every installed package appears in the Ob namespace:
 ### 5.5 New ObTypes required
 
 | Type | Value | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | `ObType::Package` | 19 | Installed package object |
 | `ObType::Repository` | 20 | Configured repository object |
 | `ObType::Transaction` | 21 | Active transaction object |
@@ -426,7 +426,7 @@ The namespace provider reads from the Registry and materializes Ob objects on-th
 
 ### 6.1 Module map
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                    neoget (CLI)                          │
 │  userbin/neoget/src/main.rs + cmd_*.rs                  │
@@ -458,7 +458,7 @@ The namespace provider reads from the Registry and materializes Ob objects on-th
 ### 6.2 Component responsibilities
 
 | Component | File | Responsibility |
-|-----------|------|---------------|
+| ----------- | ------ | --------------- |
 | **Engine** | `engine.rs` | Orchestrates transactions: resolve → download → verify → install → db update |
 | **Parser** | `parse.rs` | Reads `.nxp` files: validate magic, CRC32, parse manifest + file table |
 | **Resolver** | `deps.rs` | Given a package name + version req, finds all transitive deps and checks conflicts |
@@ -473,7 +473,7 @@ The namespace provider reads from the Registry and materializes Ob objects on-th
 
 ### 6.3 Data flow: installation
 
-```
+```text
 1. neoget INSTALL NeoTop
        │
        ▼
@@ -519,7 +519,7 @@ The namespace provider reads from the Registry and materializes Ob objects on-th
 Every step has a corresponding rollback action:
 
 | Step failure | Rollback |
-|-------------|----------|
+| ------------- | ---------- |
 | Download CRC32 mismatch | Delete partial download, retry |
 | Signature invalid | Delete downloaded file, report error |
 | File write fails | Restore originals from Recovery, delete Registry keys |
@@ -535,7 +535,7 @@ Every step has a corresponding rollback action:
 Semver 2.0 subset, as used in Cargo:
 
 | Expression | Matches | Example |
-|-----------|---------|---------|
+| ----------- | --------- | --------- |
 | `^1.2.3` | Compatible: `>=1.2.3, <2.0.0` | Default for deps |
 | `~1.2.3` | Patch: `>=1.2.3, <1.3.0` | |
 | `>=1.2.3` | Minimum | |
@@ -548,7 +548,7 @@ Semver 2.0 subset, as used in Cargo:
 ### 7.2 Constraint types
 
 | Type | Manifest tag | Semantics |
-|------|-------------|-----------|
+| ------ | ------------- | ----------- |
 | **Required** | `DEP` | Must be installed. Resolver fails if unsatisfied. |
 | **Optional** | `DEPO` | If present in repo, install it; if not, continue. |
 | **Conflict** | `CONF` | Must NOT be installed. Resolver fails if present. |
@@ -559,7 +559,7 @@ Semver 2.0 subset, as used in Cargo:
 
 For v1, a simple backtracking resolver — sufficient for hundreds of packages:
 
-```
+```text
 function resolve(target, constraints):
     solution = {}
     queue = [(target, constraints)]
@@ -617,7 +617,7 @@ pub trait Resolver {
 A repository is a URL + public key fingerprint. Three types:
 
 | Type | URL scheme | Authentication | Caching |
-|------|-----------|---------------|---------|
+| ------ | ----------- | --------------- | --------- |
 | Official | `https://packages.neodos.org/official` | Repository index signed by NeoDOS root key | Full index + package cache |
 | Third-party | `https://mirror.example.com/neodos` | Repository index signed by third-party key | Configurable |
 | Local | `file:///C:\Packages\` | No network; packages verified individually | No |
@@ -626,7 +626,7 @@ A repository is a URL + public key fingerprint. Three types:
 
 The repository index is a signed file listing all available packages:
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │ Magic "NXI1" (4 bytes)                        │
 ├──────────────────────────────────────────────┤
@@ -645,7 +645,7 @@ The repository index is a signed file listing all available packages:
 **Entry fields (64 bytes):**
 
 | Offset | Size | Field |
-|--------|------|-------|
+| -------- | ------ | ------- |
 | 0 | 48 | Qualified name (padded with 0) |
 | 48 | 16 | Version string (null-terminated) |
 | 64 | 4 | File size in bytes |
@@ -656,7 +656,7 @@ The repository index is a signed file listing all available packages:
 
 ### 8.3 Repository sync
 
-```
+```text
 neoget repo sync official
 
 1. Download https://packages.neodos.org/official/index.nxi
@@ -669,7 +669,7 @@ neoget repo sync official
 
 ### 8.4 Repository commands (future)
 
-```
+```text
 neoget repo add myrepo https://myrepo.example.com/neodos/
 neoget repo remove myrepo
 neoget repo list
@@ -683,7 +683,7 @@ neoget repo priority myrepo 50
 
 ### 9.1 Transaction lifecycle
 
-```
+```text
 Begin ──> Prepare ──> Commit ──> Complete
             │
             └──> Rollback ──> Cleanup
@@ -721,7 +721,7 @@ enum Operation {
 
 ### 9.3 Recovery mechanism
 
-```
+```text
 C:\System\Recovery\
   <uuid>\
     manifest.txt       ← list of backed-up files with original paths
@@ -732,6 +732,7 @@ C:\System\Recovery\
 ```
 
 On reboot after crash:
+
 1. Scan `C:\System\Recovery\` for orphaned transactions
 2. For each: if `manifest.txt` exists → restore files from `files/` → delete directory
 3. Log: `"Recovery: rolled back transaction <uuid>"`
@@ -748,7 +749,7 @@ On reboot after crash:
 
 ### 10.1 Trust model
 
-```
+```text
 Root of trust (embedded in neoget binary)
     │
     ├── Official NeoDOS root public key (Ed25519)
@@ -767,7 +768,7 @@ Root of trust (embedded in neoget binary)
 ### 10.2 Verification steps
 
 | Stage | What is verified | How |
-|-------|-----------------|-----|
+| ------- | ----------------- | ----- |
 | Index download | Repository index authenticity | Ed25519 signature against known fingerprint |
 | Package download | Package integrity | CRC32 matches index entry |
 | Package verification | Package authenticity | Ed25519 signature against package signer |
@@ -804,14 +805,14 @@ struct Keyring {
 
 ### 11.1 Command structure
 
-```
+```text
 neoget <command> [options] [arguments]
 ```
 
 Global options:
 
 | Flag | Description |
-|------|-------------|
+| ------ | ------------- |
 | `-y, --yes` | Assume yes to all prompts |
 | `-q, --quiet` | Only errors |
 | `-v, --verbose` | Detailed output |
@@ -820,7 +821,7 @@ Global options:
 ### 11.2 Command reference
 
 | Command | Alias | Description | Example |
-|---------|-------|-------------|---------|
+| --------- | ------- | ------------- | --------- |
 | `install` | `in` | Install package(s) | `neoget install NeoTop` |
 | `remove` | `rm` | Remove package(s) | `neoget remove NeoTop` |
 | `upgrade` | `up` | Upgrade all upgradable packages | `neoget upgrade` |
@@ -839,7 +840,7 @@ Global options:
 
 ### 11.3 Output design
 
-```
+```text
 $ neoget install NeoTop
 
 Reading package lists... done
@@ -859,7 +860,7 @@ Done. NeoTop v1.2.0 installed.
 
 ### 11.4 Error output
 
-```
+```text
 $ neoget install NeoShell
 
 ERROR: Cannot install NeoShell v2.0.0:
@@ -994,7 +995,7 @@ neoget verify --all --json
 ### v1 (current design) — Core, minimum viable
 
 | Feature | Scope |
-|---------|-------|
+| --------- | ------- |
 | `.nxp` format + parser | Complete |
 | `INSTALL`, `REMOVE`, `LIST`, `INFO` | Functional |
 | `DEPENDS` (simple resolver) | Linear resolution |
@@ -1007,7 +1008,7 @@ neoget verify --all --json
 ### v2 — Repositories + dependencies
 
 | Feature | Scope |
-|---------|-------|
+| --------- | ------- |
 | Repository index format (`.nxi`) | Complete |
 | `UPDATE`, `UPGRADE`, `SEARCH` | Functional |
 | `https://` downloader | TLS via host (no kernel TLS) |
@@ -1020,7 +1021,7 @@ neoget verify --all --json
 ### v3 — Safety + performance
 
 | Feature | Scope |
-|---------|-------|
+| --------- | ------- |
 | SAT/backtracking resolver | pubgrub-style |
 | Transaction objects in Ob namespace | `\Transaction\<uuid>\` |
 | Repository objects in Ob namespace | `\Repository\` |
@@ -1031,7 +1032,7 @@ neoget verify --all --json
 ### v4 — Enterprise
 
 | Feature | Scope |
-|---------|-------|
+| --------- | ------- |
 | Rollback to specific version | Full history traversal |
 | Snapshots before upgrades | Full filesystem + Registry snapshot |
 | Automatic background updates | NeoGet service (Ring 3 daemon) |
@@ -1043,7 +1044,7 @@ neoget verify --all --json
 ### v5 — Ecosystem
 
 | Feature | Scope |
-|---------|-------|
+| --------- | ------- |
 | Official package repository | Hosted infrastructure |
 | CI/CD integration | Automated build + sign pipeline |
 | Dependency audit | CVE scanning |
@@ -1057,7 +1058,7 @@ neoget verify --all --json
 ### 14.1 APT (Debian)
 
 | Feature | APT | NeoGet | Take? |
-|---------|-----|--------|-------|
+| --------- | ----- | -------- | ------- |
 | Package format | `.deb` (ar archive) | `.nxp` (custom binary) | Custom — simpler parser |
 | Database | `/var/lib/dpkg/` (flat files) | Registry | ✅ NeoDOS-native |
 | Dependency resolution | `apt-get install` SAT (apt-pkg) | Backtracking v1, SAT v2 | ✅ SAT in v2 |
@@ -1070,7 +1071,7 @@ neoget verify --all --json
 ### 14.2 Pacman (Arch)
 
 | Feature | Pacman | NeoGet | Take? |
-|---------|--------|--------|-------|
+| --------- | -------- | -------- | ------- |
 | Package format | `.pkg.tar.zst` | `.nxp` | Custom |
 | Database | `/var/lib/pacman/local/` (flat files) | Registry | ✅ |
 | Sync | `pacman -Sy` | `neoget update` | ✅ Same model |
@@ -1081,7 +1082,7 @@ neoget verify --all --json
 ### 14.3 DNF (Fedora/RHEL)
 
 | Feature | DNF | NeoGet | Take? |
-|---------|-----|--------|-------|
+| --------- | ----- | -------- | ------- |
 | Resolver | libsolv (SAT) | Custom | SAT in v2 |
 | Transactions | `history` + undo | Built-in recovery | ✅ |
 | Modules | Modularity streams | Namespace-based | ✅ Via namespaces |
@@ -1092,7 +1093,7 @@ neoget verify --all --json
 ### 14.4 Winget (Windows)
 
 | Feature | Winget | NeoGet | Take? |
-|---------|--------|--------|-------|
+| --------- | -------- | -------- | ------- |
 | Manifest | YAML | TLV binary | ✅ Simpler |
 | Sources | REST API | `.nxi` index | ✅ Similar |
 | Install scope | Machine/User | CORE/User | ✅ Same concept |
@@ -1103,7 +1104,7 @@ neoget verify --all --json
 ### 14.5 Cargo (Rust)
 
 | Feature | Cargo | NeoGet | Take? |
-|---------|-------|--------|-------|
+| --------- | ------- | -------- | ------- |
 | Resolver | pubgrub (SAT) | pubgrub in v2 | ✅ SAT algorithm |
 | Registry | crates.io | `.nxi` index | ✅ Index format |
 | Semver | ^1.0.0 by default | ^1.0.0 by default | ✅ Same |
@@ -1115,7 +1116,7 @@ neoget verify --all --json
 ### 14.6 Homebrew
 
 | Feature | Homebrew | NeoGet | Take? |
-|---------|----------|--------|-------|
+| --------- | ---------- | -------- | ------- |
 | Formula | Ruby DSL | TLV manifest | Custom |
 | Cellar | `/usr/local/Cellar/` | `C:\Programs\<name>\` | ✅ Isolated per-package |
 | Keg-only | No symlink | Namespace-based | ✅ |
@@ -1126,7 +1127,7 @@ neoget verify --all --json
 ### 14.7 Nix
 
 | Feature | Nix | NeoGet | Take? |
-|---------|-----|--------|-------|
+| --------- | ----- | -------- | ------- |
 | Store | `/nix/store/<hash>-<name>-<ver>` | Not in v1 | Future |
 | Reproducible | Hash-addressable | v5 | Future |
 | Profiles | Generations | Snapshots v4 | Future |
@@ -1137,7 +1138,7 @@ neoget verify --all --json
 ### 14.8 Summary: what NeoGet takes from each
 
 | From | Concept |
-|------|---------|
+| ------ | --------- |
 | **APT** | Repository model, dependency auto-install |
 | **Pacman** | Simplicity, rolling dep model |
 | **DNF** | Transaction history with undo |
@@ -1151,7 +1152,7 @@ neoget verify --all --json
 ## Appendix A: File paths
 
 | Path | Purpose |
-|------|---------|
+| ------ | --------- |
 | `userbin/neoget/` | CLI binary source |
 | `userbin/neoget/Cargo.toml` | Depends on `libneopkg` |
 | `userbin/neoget/src/main.rs` | Entry point, arg parsing, dispatch |
@@ -1175,7 +1176,7 @@ neoget verify --all --json
 
 ## Appendix B: Registry keys summary
 
-```
+```text
 \Registry\Machine\Packages\
   .History\<ts>\
   .Repositories\<name>\
@@ -1191,7 +1192,7 @@ neoget verify --all --json
 ## Appendix C: Object types summary
 
 | ObType | Value | Name | Description |
-|--------|-------|------|-------------|
+| -------- | ------- | ------ | ------------- |
 | `ObType::Package` | 19 | Package | Installed package |
 | `ObType::Repository` | 20 | Repository | Package source |
 | `ObType::Transaction` | 21 | Transaction | Active operation |

@@ -41,6 +41,7 @@ unsafe fn syscall_2(sys_num: u64, a0: u64, a1: u64) -> i64 {
 }
 
 #[inline(always)]
+#[allow(dead_code)]
 unsafe fn syscall_3(sys_num: u64, a0: u64, a1: u64, a2: u64) -> i64 {
     let r: i64;
     asm!(

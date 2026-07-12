@@ -1,0 +1,9 @@
+{
+  "default": true,
+  "MD004": { "style": "dash" },
+  "MD013": false,
+  "MD024": { "siblings_only": true },
+  "MD033": { "allowed_elements": ["IrpId", "br", "sup", "sub", "kbd", "b", "i", "em", "strong", "a", "span", "div", "details", "summary"] },
+  "MD046": { "style": "fenced" },
+  "MD060": false
+}

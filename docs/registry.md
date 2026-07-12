@@ -5,7 +5,7 @@
 All implemented as `handler_cm_*` in `src/syscall/cm.rs`. Operate on Ob objects of type `ObType::Key` (12).
 
 | RAX | Name | Description | Parameters |
-|-----|------|-------------|------------|
+| ----- | ------ | ------------- | ------------ |
 | 67 | `cm_open_key` | Open registry key by path | rdi = path_ptr (u64), rsi = path_len (u64) -> returns fd in rax |
 | 68 | `cm_create_key` | Create subkey under key handle | rdi = parent_fd (u64), rsi = name_ptr (u64), rdx = name_len (u64) -> returns new fd |
 | 69 | `cm_query_value` | Read value by name | rdi = key_fd, rsi = name_ptr, rdx = name_len, r10 = buf_ptr, r8 = buf_len -> returns written size |
@@ -26,7 +26,7 @@ File: `src/cm/hive.rs`. Each hive is a contiguous buffer (`HiveBuffer`) of cells
 ### CellType
 
 | Value | Variant | Description |
-|-------|---------|-------------|
+| ------- | --------- | ------------- |
 | 0 | `Free` | Unallocated cell, part of free list |
 | 1 | `Key` | Registry key with subkey/value links |
 | 2 | `Value` | Named value with typed data |
@@ -34,7 +34,7 @@ File: `src/cm/hive.rs`. Each hive is a contiguous buffer (`HiveBuffer`) of cells
 
 ### KeyCell
 
-```
+```text
 KeyCell {
     name: [u8; 255],       // null-terminated UTF-8, max 254 chars
     name_len: u16,          // actual name length in bytes
@@ -49,7 +49,7 @@ KeyCell {
 
 ### ValueCell
 
-```
+```text
 ValueCell {
     name: [u8; 255],        // null-terminated UTF-8
     name_len: u16,
@@ -66,7 +66,7 @@ Cell addressing uses `u16` offsets relative to the start of the hive buffer. Cel
 
 Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespace. All registry operations go through the standard Ob handle/namespace layer.
 
-```
+```text
 \Registry
   \Machine              -> hive storage root
     \System
@@ -107,7 +107,7 @@ Dirty tracking: `cm_set_value` marks the containing cell as dirty via `Cell::set
 ### Hive File Format (planned for multi-hive architecture)
 
 | Component | File |
-|-----------|------|
+| ----------- | ------ |
 | SYSTEM hive | `C:\System\Registry\SYSTEM.hiv` |
 | SOFTWARE hive | `C:\System\Registry\SOFTWARE.hiv` |
 | SECURITY hive | `C:\System\Registry\SECURITY.hiv` |
@@ -122,7 +122,7 @@ Dirty tracking: `cm_set_value` marks the containing cell as dirty via `Cell::set
 ## Source Files
 
 | File | Responsibility |
-|------|---------------|
+| ------ | --------------- |
 | `src/cm/mod.rs` | `CmManager` + syscall dispatch |
 | `src/cm/hive.rs` | Cell-based hive buffer, key/value CRUD |
 | `src/cm/security.rs` | Key ACLs (planned) |

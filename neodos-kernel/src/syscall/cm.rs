@@ -70,7 +70,10 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
         }
         drop(cm_locked);
         match found {
-            Some(pair) => pair,
+            Some(pair) => {
+                crate::serial_println!("[CM] mount='{}' subkey='{}'", pair.0, pair.1);
+                pair
+            }
             None => return err_to_u64(SyscallError::NoEnt),
         }
     };
@@ -79,20 +82,22 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
         return err_to_u64(SyscallError::NoEnt);
     }
 
-    // Open the mount point to get its native_id (encoded cell index)
-    let mount_ob_id = match crate::object::ob_open_path(&mount_path, &token, 1) {
-        Ok(id) => id,
-        Err(_) => return err_to_u64(SyscallError::NoEnt),
+    // Get the hive's native_id directly from the mount point, bypassing
+    // the Ob namespace security check (the mount was already validated).
+    let mount_native_id = {
+        let cm_locked = cm::CM_MANAGER.lock();
+        let native = cm_locked.hives.iter()
+            .find(|hm| hm.mount_path == mount_path)
+            .and_then(|hm| crate::object::ob_lookup(hm.ob_id))
+            .map(|o| o.native_id);
+        match native {
+            Some(id) => id,
+            None => return err_to_u64(SyscallError::NoEnt),
+        }
     };
 
-    let mount_native_id = crate::object::ob_lookup(mount_ob_id)
-        .map(|o| o.native_id)
-        .unwrap_or(0);
-
-    // Close the mount point reference (we only needed its native_id)
-    let _ = crate::object::ob_close_object(mount_ob_id);
-
     // Resolve the subkey path within the hive
+    crate::serial_println!("[CM] mount_native_id={} subkey='{}'", mount_native_id, subkey_path);
     match cm::cm_open_key(mount_native_id, &subkey_path) {
         Ok(subkey_native_id) => {
             let leaf_name = subkey_path.rsplit('\\').next().unwrap_or(&subkey_path);

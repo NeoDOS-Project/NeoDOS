@@ -358,26 +358,6 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
     let mut files: Vec<FileEntry> = vec![];
     let root = &cfg.project_root;
 
-    // Config files
-    let prefs_dir = root.join("preferences");
-    for cfg_file in &["boot.cfg", "system.cfg", "input.cfg"] {
-        let p = prefs_dir.join(cfg_file);
-        if p.exists() {
-            let content = std::fs::read(&p)?;
-            let sub = if *cfg_file == "boot.cfg" {
-                "Kernel/"
-            } else {
-                ""
-            };
-            files.push(FileEntry {
-                name: format!("/System/{}config", sub),
-                content,
-                mode: MODE_FILE | PERM_R,
-                is_dir: false,
-            });
-        }
-    }
-
     // README
     files.push(FileEntry {
         name: "/README.TXT".into(),

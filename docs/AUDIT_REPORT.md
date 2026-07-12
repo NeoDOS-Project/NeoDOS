@@ -14,6 +14,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 **Estado general:** SÓLIDO — El núcleo del sistema está bien diseñado y la migración a Object Manager (Ob) se ha completado exitosamente. Los problemas identificados son principalmente deuda técnica y documentación desactualizada, no fallos arquitectónicos fundamentales.
 
 **Fortalezas principales:**
+
 - HAL raw/safe split con ASM confinado
 - Boot sequence determinista en 11 fases
 - EPROCESS/KTHREAD (modelo NT)
@@ -30,6 +31,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 - 537 tests en 50+ suites
 
 **Debilidades principales:**
+
 - `usermode.rs:WAIT_PID` static mut SMP-unsafe (**bug crítico**)
 - `driver_runtime.rs:ISOLATED_REGIONS` static mut sin sincronización (**bug crítico**)
 - NXL_REGISTRY static mut sin protección SMP
@@ -47,7 +49,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 
 ### 1.1 Mapa de Subsistemas
 
-```
+```text
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         USERMODE (Ring 3)                            │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────────────────────┐  │
@@ -103,7 +105,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 ### 1.2 Métricas del Sistema
 
 | Métrica | Valor |
-|---------|-------|
+| --------- | ------- |
 | Archivos kernel | 127 |
 | Líneas kernel | 41,798 |
 | Syscalls (total SSDT) | 66 (40 activos, 26 None) |
@@ -122,7 +124,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 ### 1.3 Hallazgos
 
 | ID | Hallazgo | Severidad | Impacto |
-|----|----------|-----------|---------|
+| ---- | ---------- | ----------- | --------- |
 | A1 | README desactualizado (v0.39.11 vs v0.44.2) | BAJA | Confusión en nuevos desarrolladores |
 | A2 | ARCHITECTURE_SOURCE_OF_TRUTH.md menciona MAX_PROCESSES fijo pero scheduler usa Vec | BAJA | Documentación desactualizada vs código |
 | A3 | IMPROVEMENTS.md mencionaba "528 tests" pero SOURCE_OF_TRUTH decía "320+" | BAJA | Inconsistencia documentación (corregido v0.48.6) |
@@ -136,7 +138,7 @@ NeoDOS v0.48.6 es un sistema operativo funcional con una base arquitectónica s�
 
 **Fases actuales:** 13 (Phase 1 → Phase 4)
 
-```
+```text
 PHASE 1     → Serial init, GDT, IDT (early exceptions)
 PHASE 2     → CPU structures: IDT, MSI, PIC remap, HPET/PIT/APIC
 PHASE 2.3   → PCIe ECAM: read MCFG, map MMIO, activate ECAM
@@ -162,7 +164,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 2.2 Memory Management
 
 | Componente | Archivo | Evaluación |
-|------------|---------|------------|
+| ------------ | --------- | ------------ |
 | Buddy allocator | `memory/buddy.rs` | ✅ SÓLIDO — 11 órdenes (4KB-4MB), bitmap dinámico, free lists |
 | Slab allocator | `slab.rs` | ✅ SÓLIDO — 9 size classes, per-CPU hot cache, refill/drain |
 | Demand paging | `arch/x64/paging.rs` | ✅ SÓLIDO — split 2MB, 4KB page fault handler |
@@ -172,7 +174,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 2.3 Scheduler
 
 | Componente | Evaluación |
-|------------|------------|
+| ------------ | ------------ |
 | Priority levels (4) | ✅ SÓLIDO — HIGH/ABOVE_NORMAL/NORMAL/IDLE |
 | Time slicing (400/200/100/50 ticks) | ✅ SÓLIDO |
 | Per-CPU run queues | ✅ SÓLIDO — 64-entry ring buffer en KPRCB |
@@ -183,7 +185,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 2.4 Interrupts & Timers
 
 | Componente | Evaluación |
-|------------|------------|
+| ------------ | ------------ |
 | IOAPIC (MADT) | ✅ SÓLIDO — reemplaza PIC, 24 pins |
 | MSI-X | ✅ SÓLIDO — per-entry table programming |
 | HPET timer (1 KHz) | ✅ SÓLIDO — periodic mode, legacy replacement |
@@ -196,7 +198,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 2.5 SMP
 
 | Componente | Evaluación |
-|------------|------------|
+| ------------ | ------------ |
 | SMP boot (INIT-SIPI-SIPI) | ✅ SÓLIDO — AP trampoline @ 0x800000 |
 | KPRCB per-CPU (4KB) | ✅ SÓLIDO — GS-segment, 20 compile-time assertions |
 | IPI reschedule (0xF0) | ✅ SÓLIDO |
@@ -206,7 +208,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 2.6 Hallazgos Kernel
 
 | ID | Hallazgo | Severidad | Archivo |
-|----|----------|-----------|---------|
+| ---- | ---------- | ----------- | --------- |
 | K1 | `usermode.rs:WAIT_PID` static mut sin protección SMP — race condition si 2 CPUs ejecutan `sys_waitpid` concurrentemente | **CRÍTICO** | `usermode.rs` |
 | K2 | `driver_runtime.rs:ISOLATED_REGIONS` static mut accedido sin sincronización | **CRÍTICO** | `driver_runtime.rs` |
 | K3 | `nxl.rs:NXL_REGISTRY` static mut sin protección contra acceso SMP | ALTA | `nxl.rs` |
@@ -221,7 +223,7 @@ PHASE 4     → NeoInit loader: PID 1 from C:\Programs\NeoInit.nxe
 ### 3.1 Estado Actual
 
 | Componente | Ring 3 | Ring 0 |
-|------------|--------|--------|
+| ------------ | -------- | -------- |
 | Shell interactivo | ✅ neoshell.nxe | ❌ Solo RUN (bootstrap) |
 | Init (PID 1) | ✅ neoinit.nxe | ❌ |
 | Todos los comandos usuario | ✅ .NXE (27 binarios) | ❌ Solo CRASH (dump) |
@@ -259,7 +261,7 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]   // parallel table
 ### 4.2 Syscall Coverage
 
 | RAX Range | Estado | Count |
-|-----------|--------|-------|
+| ----------- | -------- | ------- |
 | 0-6 | Foundation (exit, write, yield, getpid, read, pipe, dup2) | 7 |
 | 7-8 | Reserved | 0 |
 | 9-13 | Foundation (waitpid, open, readfile, writefile, close) | 5 |
@@ -277,7 +279,7 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]   // parallel table
 ### 4.3 Hallazgos Syscall
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | S1 | `ObError` y `SyscallError` son enumeraciones separadas con traducción manual — riesgo de discrepancia | MEDIA |
 | S2 | libneodos wrappers cubren solo 24/35 syscalls base (68%) — faltan thread_create/join, sleep_ex, poll, ob_destroy | MEDIA |
 | S3 | ABI freeze validación en boot (Phase 3.9) pero no cubre todas las interfaces declaradas | BAJA |
@@ -289,7 +291,7 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]   // parallel table
 
 ### 5.1 Arquitectura
 
-```
+```text
 ObObject (kernel object)
 ├── id: ObId (64-bit, monotónico)
 ├── type: ObType (16 tipos)
@@ -316,7 +318,7 @@ ObDirectory (namespace tree)
 ### 5.2 Syscalls Ob (RAX 60-66)
 
 | RAX | Syscall | Estado |
-|-----|---------|--------|
+| ----- | --------- | -------- |
 | 60 | sys_ob_open | ✅ SeAccessCheck integrado |
 | 61 | sys_ob_create | ✅ Process, Driver, Pipe, Directory, Event |
 | 62 | sys_ob_query_info | ✅ Classes 0-16 (ReadContent=15, VolumeLabel=16) |
@@ -328,7 +330,7 @@ ObDirectory (namespace tree)
 ### 5.3 Hallazgos Ob
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | O1 | `kobj_register()` tiene TOCTOU race: check if exists → then insert (no atómico) | ALTA |
 | O2 | KObjType tiene tipos (EventBus, MountPoint, Symlink) que no existen en ObType → pérdida de información | MEDIA |
 | O3 | ObObjectTable usa un solo `spin::Mutex` global — cuello de botella potencial (AI-3) | BAJA |
@@ -345,7 +347,7 @@ ObDirectory (namespace tree)
 URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 
 | Scheme | Mapping Ob |
-|--------|------------|
+| -------- | ------------ |
 | `neodos://file/...` | `\Global\FileSystem\...` |
 | `neodos://device/...` | `\Device\...` |
 | `neodos://registry/...` | `\Registry\...` |
@@ -360,7 +362,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 7.1 libneodos Library
 
 | Módulo | Archivo | Cobertura |
-|--------|---------|-----------|
+| -------- | --------- | ----------- |
 | Syscall wrappers | `src/syscall.rs` | 24/35 syscalls (68%) |
 | AbiTable v5 | `src/export.rs` | 35 entries |
 | IO (stdout/stderr/stdin) | `src/io.rs` | ✅ Completo |
@@ -369,6 +371,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 | Macros (print/println) | `src/macros.rs` | ✅ Completo |
 
 **Wrappers faltantes:**
+
 - `sys_thread_create` (RAX 22)
 - `sys_thread_join` (RAX 23)
 - `sys_sleep_ex` (RAX 41)
@@ -379,7 +382,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 7.2 User Binaries
 
 | Binario | Líneas | Syscalls Ob | Syscalls Legacy |
-|---------|--------|-------------|-----------------|
+| --------- | -------- | ------------- | ----------------- |
 | neoshell.nxe | ~2800 | ob_open, ob_enum, ob_create(Pipe/Process), ob_wait, ob_set_info(SetCwd), ob_query_info(ReadContent) | sys_cursor_blink, sys_poweroff |
 | neoinit.nxe | ~200 | ob_create(Process), ob_wait | sys_spawn |
 | neoshell (27 others) | varias | Ob completas | mínimas |
@@ -388,7 +391,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 7.3 Hallazgos Userland
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | U1 | libneodos-nxl/src/main.rs monolítico (461 líneas) — necesita dividirse en módulos (CQ1) | BAJA |
 | U2 | Faltan wrappers libneodos para thread, poll, ob_destroy | MEDIA |
 | U3 | neoinit usa `sys_spawn` legacy en vez de `ob_create(Process)` para bootstrap | INFORMATIVO |
@@ -401,7 +404,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 8.1 NEM Driver Ecosystem
 
 | Driver | Categoría | Estado | Archivos |
-|--------|-----------|--------|----------|
+| -------- | ----------- | -------- | ---------- |
 | PS/2 Keyboard | SYSTEM | ✅ Active | `drivers/nem/drivers/ps2kbd/` |
 | Serial (UART 16550A) | SYSTEM | ✅ Active | reference |
 | RTC | SYSTEM | ✅ Active | `drivers/nem/drivers/rtc/` |
@@ -415,7 +418,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 8.2 Driver Infrastructure
 
 | Componente | Evaluación |
-|------------|------------|
+| ------------ | ------------ |
 | Certification pipeline (8 estados) | ✅ SÓLIDO |
 | Capability system (12 flags) | ✅ SÓLIDO |
 | ABI negotiation (min/target/max) | ✅ SÓLIDO |
@@ -426,7 +429,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 ### 8.3 Hallazgos Drivers
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | D1 | `ISOLATED_REGIONS` static mut sin sincronización (mismo que K2) | **CRÍTICO** |
 | D2 | 7 símbolos exportados duplicados entre `v3loader.rs` y `hst.rs` | BAJA |
 | D3 | Sin firma criptográfica para drivers NEM (B5.1 futuro) | FUTURO |
@@ -438,7 +441,7 @@ URN es frontend completo de Ob desde v0.44.2 (OB-025 rewrite):
 
 ### 9.1 Filesystem Stack
 
-```
+```text
 Ring 3: sys_open / ob_open → handle table
 Ring 0: VFS resolve_path() → FileSystem trait
          ├── NeoDosFs (75 tests)
@@ -455,7 +458,7 @@ IoStack → BlockDevice trait
 ### 9.2 Evaluación
 
 | Componente | Evaluación |
-|------------|------------|
+| ------------ | ------------ |
 | IoStack unification | ✅ COMPLETO — FAT32 y NeoFS usan IoStack |
 | GPT partition parsing | ✅ COMPLETO |
 | Page cache (LRU hash map) | ✅ COMPLETO — 13 tests |
@@ -471,7 +474,7 @@ IoStack → BlockDevice trait
 ### 10.1 Document Review Matrix
 
 | Documento | Versión | Estado | Problemas |
-|-----------|---------|--------|-----------|
+| ----------- | --------- | -------- | ----------- |
 | `README.md` | v0.44.2 | ❌ DESACTUALIZADO | Dice v0.44.2 (real v0.48.6), tests 528 (real 537), syscalls 36 (real 66+7 Ob) |
 | `AGENTS.md` | v0.48.6 | ✅ ACTUALIZADO | Ahora es minimal (78 líneas, solo reglas + referencias) |
 | `ARCHITECTURE_SOURCE_OF_TRUTH.md` | v1.0 | ⚠️ PARCIAL | MAX_PROCESSES fijo (real Vec), boot phases incompletas, test counts desactualizados |
@@ -483,7 +486,7 @@ IoStack → BlockDevice trait
 ### 10.2 Hallazgos Documentación
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | D1 | README.md desactualizado — versión, tests, syscalls | ALTA |
 | D2 | ARCHITECTURE_SOURCE_OF_TRUTH.md inconsistente con scheduler actual | MEDIA |
 | D3 | KERNEL.md no verificado en esta auditoría — **ELIMINADO** (contenido en architecture.md + boot.md) | BAJA |
@@ -496,7 +499,7 @@ IoStack → BlockDevice trait
 ### 11.1 Test Coverage
 
 | Suite | Tests | Estado |
-|-------|-------|--------|
+| ------- | ------- | -------- |
 | NeoFS | 75 | ✅ |
 | Elf | 20 | ✅ |
 | NEM parsing | 23 | ✅ |
@@ -528,7 +531,7 @@ IoStack → BlockDevice trait
 ### 11.2 Hallazgos Testing
 
 | ID | Hallazgo | Severidad |
-|----|----------|-----------|
+| ---- | ---------- | ----------- |
 | T1 | No hay fuzzing infrastructure | FUTURO |
 | T2 | No hay CI/CD pipeline | FUTURO |
 | T3 | Cobertura de líneas estimada ~60% — no hay herramienta de medición | MEDIA |
@@ -564,17 +567,22 @@ IoStack → BlockDevice trait
 ## Issues Arquitectónicos (No Críticos)
 
 ### AI-1: ObInfoClass/ObSetInfoClass enums incompletos
+
 Los enums en `src/object/types.rs` no definen todas las clases que el handler soporta. Añadir:
+
 - `ObInfoClass::ReadContent = 15`, `ObInfoClass::VolumeLabel = 16`
 - `ObSetInfoClass::ProcessTerminate = 4`, `ObSetInfoClass::VfsRename = 6`, etc.
 
 ### AI-2: Símbolos exportados duplicados
+
 7 funciones `hst_*` están exportadas tanto en `v3loader.rs` como en `hst.rs`. Consolidar en una sola fuente.
 
 ### AI-3: KObjType→ObType impedance mismatch
+
 KObjType incluye tipos (EventBus=5, MountPoint=10, Symlink=9) que ObType no tiene. Al registrar vía KOBJ facade, hay mapeo con pérdida de información.
 
 ### AI-4: Unificación de códigos de error
+
 `ObError` (-1 a -9) y `SyscallError` (16 códigos) son independientes con traducción manual. Unificar en un solo conjunto.
 
 ---
@@ -582,6 +590,7 @@ KObjType incluye tipos (EventBus=5, MountPoint=10, Symlink=9) que ObType no tien
 ## Conclusiones
 
 ### Puntos Fuertes
+
 1. **Arquitectura limpia:** HAL → Kernel → Driver Runtime → Userland con boundaries claros
 2. **Modelo NT correcto:** EPROCESS/KTHREAD, handles, objetos, seguridad
 3. **Driver ecosystem maduro:** Certificación, capacidades, aislamiento, ABI negotiation, hot reload
@@ -590,12 +599,14 @@ KObjType incluye tipos (EventBus=5, MountPoint=10, Symlink=9) que ObType no tien
 6. **Rust idioms correctos:** Sin heap en IRQ, sin schedule() en spinlock, IRQL framework
 
 ### Puntos Débiles (Acción Inmediata)
+
 1. **3 bugs SMP-unsafe** (WAIT_PID, ISOLATED_REGIONS, NXL_REGISTRY)
 2. **Documentación desactualizada** (README, ARCHITECTURE_SOURCE_OF_TRUTH)
 3. **libneodos coverage 68%** — wrappers faltantes para thread, poll, ob_destroy
 4. **7 exports duplicados** entre v3loader.rs y hst.rs
 
 ### Roadmap Recomendado
+
 1. **v0.44.4** — Fix 3 bugs SMP-unsafe (CRÍTICO)
 2. **v0.44.5** — Actualizar documentación, arreglar AI-1 (InfoClass enums)
 3. **v0.44.6** — Completar libneodos wrappers, reorganizar libneodos-nxl

@@ -171,7 +171,7 @@ pub fn heap_free_range(start: u64, end: u64);
 
 ### Heap Growth Flow
 
-```
+```text
 sys_brk(new_break)
   -> write to pages in [old_break, new_break)
   -> page fault (if page not mapped)
@@ -182,7 +182,7 @@ sys_brk(new_break)
 
 ### Heap Destruction Flow
 
-```
+```text
 sys_exit -> heap_free_range(heap_base, heap_base + PROCESS_HEAP_SIZE)
   -> for each present PTE with phys != virt:
        free_frame(phys)

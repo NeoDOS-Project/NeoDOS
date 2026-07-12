@@ -8,7 +8,7 @@ directory — verified by the audit constraint below.
 
 ### Directory Structure
 
-```
+```text
 src/hal/
   mod.rs        - HAL re-exports: pub use x64::*, pub use safe::read_cr2;
                   also provides has_rdrand(), rdrand() (retry loop)
@@ -43,7 +43,7 @@ src/hal/
 ## 26 Primitives (extern "C")
 
 | Category | Primitives | Source |
-|----------|-----------|--------|
+| ---------- | ----------- | -------- |
 | CPU Control | `enable_interrupts()`, `disable_interrupts()`, `halt() -> !`, `poweroff() -> !`, `reboot() -> !`, `read_cr2()`, `read_cr3()`, `write_cr3(val)`, `flush_tlb(virt)`, `interrupts_enabled()`, `hlt_once()`, `read_cr0()`, `read_cr4()` | `x64/cpu.rs` |
 | Port I/O | `inb(port)`, `inw(port)`, `inl(port)`, `outb(port, val)`, `outw(port, val)`, `outl(port, val)` | `x64/io.rs` |
 | Page Memory | `alloc_page() -> *mut u8`, `free_page(ptr)`, `map_page(phys, virt, flags)`, `unmap_page(virt)`, `walk_ptes_4k(virt)` | `x64/mem.rs` |
@@ -53,8 +53,8 @@ src/hal/
 ### Non-ABI Helpers
 
 | Helper | Location | Purpose |
-|--------|----------|---------|
-| `without_interrupts(|| {})` | `x64/mod.rs:21` | Save RFLAGS.IF, CLI, execute closure, restore |
+| -------- | ---------- | --------- |
+| `without_interrupts(` \| \| `{})` | `x64/mod.rs:21` | Save RFLAGS.IF, CLI, execute closure, restore |
 | `walk_ptes_4k(virt)` | `x64/mem.rs:11` | Walk x86-64 page tables, return `&mut PageTableEntry` or `None` if huge page |
 | `cpu_info()` | `x64/cpu.rs:36` | Returns `CpuInfo` struct from CPUID |
 | `has_rdrand()` | `mod.rs:11` | Check RDRAND support via CPUID.01h:ECX bit 30 |
@@ -89,7 +89,7 @@ let phys_base = ApicBase::read();
 ### Typed MSR Constants
 
 | Constant | Address | Type | IS_SAFE |
-|----------|---------|------|---------|
+| ---------- | --------- | ------ | --------- |
 | `GS_BASE` | `0xC0000101` | `GsBase` | true |
 | `KERNEL_GS_BASE` | `0xC0000102` | `KernelGsBase` | true |
 | `FS_BASE` | `0xC0000100` | `FsBase` | true |
@@ -111,7 +111,7 @@ config space access via the MCFG ACPI table. The implementation lives in
 ### Core Functions
 
 | Function | Signature | Purpose |
-|----------|-----------|---------|
+| ---------- | ----------- | --------- |
 | `set_ecam_base(base)` | `fn(u64)` | Set ECAM base from MCFG, activates ECAM mode |
 | `ecam_base()` | `fn() -> u64` | Return current ECAM base (0 if unset) |
 | `ecam_is_active()` | `fn() -> bool` | Check if ECAM mode is active |
@@ -125,7 +125,7 @@ config space access via the MCFG ACPI table. The implementation lives in
 
 ### ECAM Addressing
 
-```
+```text
 addr = ECAM_BASE | (bus << 20) | (dev << 15) | (func << 12) | offset
 ```
 
@@ -168,7 +168,7 @@ hal::pci::set_ecam_base(ecam_virt);
 IRQL is a per-CPU interrupt priority mechanism stored in KPRCB (GS-segment
 offset 0x016). Five levels control interrupt masking:
 
-```
+```text
 PASSIVE  (0)  — normal kernel/user code, all interrupts enabled
 APC      (1)  — APC delivery, most device interrupts enabled
 DISPATCH (2)  — DPC + scheduler, timer/device IRQs masked (CLI)

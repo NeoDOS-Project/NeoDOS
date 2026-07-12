@@ -11,7 +11,7 @@
 ### 1.1 What Exists
 
 | Component | File | Status |
-|-----------|------|--------|
+| ----------- | ------ | -------- |
 | Registry `Services\NeoInit\AutoStartServices` | `userbin/neoinit/src/main.rs` | ✅ Reads semicolon-separated list, calls `spawn_detached()` |
 | `spawn_detached()` in NeoInit | `userbin/neoinit/src/main.rs:56` | ✅ Spawns via `ob_create(Process)`, closes handle — no tracking |
 | `\Registry\Machine\System\CurrentControlSet\Services\` | Kernel Phase 3.881 | ✅ Registry path exists |
@@ -21,7 +21,7 @@
 ### 1.2 Relevant Syscalls (Table from docs/syscalls.md)
 
 | RAX | Name | Purpose |
-|-----|------|---------|
+| ----- | ------ | --------- |
 | 60 | `ob_open` | Open Ob object by path |
 | 61 | `ob_create` | Create Ob object (Process, Pipe, etc.) |
 | 62 | `ob_query_info` | Query object properties |
@@ -32,7 +32,7 @@
 ### 1.3 Existing ObType Values (docs/objects.md)
 
 | Value | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 18 | Socket | Network socket |
 | 19 | Session | User session (planned USR-P2a) |
 | **20** | **(free)** | **Available** |
@@ -83,7 +83,7 @@ A new kernel subsystem — the **Service Manager (Sm)** — is needed to bridge 
 
 The Service Manager is a kernel subsystem (like Cm) that manages the lifecycle of Ring 3 service processes. It exposes services as Ob objects of type `ObType::Service` (20) in the namespace `\Service\`.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │                  Service Manager (Sm)                    │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐  │
@@ -109,6 +109,7 @@ The Service Manager is a kernel subsystem (like Cm) that manages the lifecycle o
 ```
 
 **Data flow:**
+
 1. Boot: Sm reads Registry `Services\*\*` to discover configured services
 2. Sm creates `ObType::Service` objects in `\Service\<Name>`
 3. Sm starts auto-start services (dependency-sorted)
@@ -204,7 +205,7 @@ pub enum ObType {
 #### ObInfoClass (new variants)
 
 | Class | Name | Description | Returns |
-|-------|------|-------------|---------|
+| ------- | ------ | ------------- | --------- |
 | 29 | ServiceState | Query service state | `ServiceState` (1 byte) + PID (4 bytes) |
 | 30 | ServiceConfig | Query service configuration | Binary: start_type(1) + restart_policy(1) + max_failures(4) + display_name(128) + binary_path(256) |
 | 31 | ServiceStatus | Comprehensive status | Binary: state(1) + pid(4) + exit_count(4) + last_exit_code(8) + failure_count(4) + uptime_ticks(8) |
@@ -212,7 +213,7 @@ pub enum ObType {
 #### ObSetInfoClass (new variants)
 
 | Class | Name | Description | Args |
-|-------|------|-------------|------|
+| ------- | ------ | ------------- | ------ |
 | 33 | ServiceStart | Start a Demand service | None |
 | 34 | ServiceStop | Stop a running service gracefully | `timeout_ms` (u32, 0 = force kill) |
 | 35 | ServiceRestart | Stop then restart | `timeout_ms` (u32) |
@@ -239,7 +240,7 @@ pub fn sys_ob_service(
 ### 3.5 New Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `src/services/mod.rs` | Module root, `ServiceManager` struct, `init_service_manager()` |
 | `src/services/manager.rs` | `ServiceManager` implementation: CRUD, dependency resolution, start/stop orchestration |
 | `src/services/state.rs` | `ServiceState`, `ServiceStartType`, `ServiceRestartPolicy` enums, state machine transitions |
@@ -250,7 +251,7 @@ pub fn sys_ob_service(
 ### 3.6 Changes to Existing Files
 
 | File | Change |
-|------|--------|
+| ------ | -------- |
 | `src/object/types.rs` | Add `Service = 20` to `ObType` enum. Add `ObInfoClass::ServiceState(29)`, `::ServiceConfig(30)`, `::ServiceStatus(31)`. Add `ObSetInfoClass::ServiceStart(33)`, `::ServiceStop(34)`, `::ServiceRestart(35)`, `::ServiceSetConfig(36)`. |
 | `src/syscall/mod.rs` | Add `MAX_VALID = 77`. Add SSDT entry for `sys_ob_service` at RAX 77. Update `validate_abi()`. |
 | `src/syscall/ob.rs` | Add `handler_ob_service()`. Add case arms in `handler_ob_query_info` for classes 29-31. Add case arms in `handler_ob_set_info` for classes 33-36. |
@@ -264,7 +265,7 @@ pub fn sys_ob_service(
 
 ### 3.7 Namespace Layout
 
-```
+```text
 \Service\                       — new root directory (created at init)
 ├── \Service\Dhcpd              — ObType::Service object for DHCP client
 ├── \Service\Ntpd               — ObType::Service object for NTP client
@@ -292,7 +293,7 @@ pub fn sys_ob_service(
 
 ### 3.8 State Machine
 
-```
+```text
                         ┌─────────────────────────────────────┐
                         │                                     │
                         v                                     │
@@ -316,7 +317,7 @@ pub fn sys_ob_service(
 Valid transitions with conditions:
 
 | From | To | Trigger | Condition |
-|------|----|---------|-----------|
+| ------ | ---- | --------- | ----------- |
 | Stopped | Starting | `sm_start()` | start_type != Disabled. Security check passes. |
 | Starting | Running | Process PID confirmed alive | Process does not exit within 5 seconds |
 | Starting | Failed | Process exits before handshake | Process exits immediately |
@@ -345,6 +346,7 @@ Valid transitions with conditions:
 A user-mode `.NXE` binary (`sm.nxe`) that reads Registry and manages processes.
 
 **Rejected because:**
+
 - A user-mode process cannot enforce security on service operations — any process with admin token could kill services
 - Restart policy enforcement on PID 1 crash: if sm.nxe crashes, all services become unmanaged
 - Cannot integrate with the Ob namespace at the kernel level — services would be invisible to `ob_enum(\Service\)`
@@ -356,6 +358,7 @@ A user-mode `.NXE` binary (`sm.nxe`) that reads Registry and manages processes.
 Make NeoInit a full supervisor: track children, implement restart policy, expose status via some IPC.
 
 **Rejected because:**
+
 - NeoInit is PID 1 — if it crashes during complex service management, the entire system goes down
 - NeoInit has no special kernel authority — it's just a user process with admin token
 - Service security (who can stop a service) would have to be implemented in user space, duplicating the kernel's SeAccessCheck
@@ -367,6 +370,7 @@ Make NeoInit a full supervisor: track children, implement restart policy, expose
 Convert all services to NEM drivers running in Ring 3 isolation slots.
 
 **Rejected because:**
+
 - NEM format is designed for kernel-adjacent code (drivers), not arbitrary user applications
 - Services like dhcpd, ntpd, syslogd are standard Ring 3 processes — forcing them into NEM format adds unnecessary complexity (ABI negotiation, certification pipeline, 1 MB slot limit)
 - NEM drivers have different lifecycle semantics (driver init/bind/activate) that don't map cleanly to service start/stop
@@ -377,7 +381,7 @@ Convert all services to NEM drivers running in Ring 3 isolation slots.
 ## 5. Affected Components
 
 | Subsystem | Nature of Change |
-|-----------|-----------------|
+| ----------- | ----------------- |
 | **Object Manager** (`src/object/types.rs`) | Add `ObType::Service=20`, 3 new `ObInfoClass` variants, 4 new `ObSetInfoClass` variants |
 | **Syscall dispatch** (`src/syscall/mod.rs`) | Add RAX 77 `sys_ob_service` to SSDT, update `MAX_VALID`, update `validate_abi()` |
 | **Syscall handlers** (`src/syscall/ob.rs`) | New `handler_ob_service()`, extend `handler_ob_query_info` and `handler_ob_set_info` |
@@ -410,6 +414,7 @@ No circular dependencies: Sm → Cm, Sm → Scheduler, Sm → Ob. None of those 
 ```rust
 pub fn sm_init()
 ```
+
 - **Args:** None
 - **Returns:** Nothing (panics on OOM)
 - **Preconditions:** Registry is initialized. Ob namespace root `\Registry\Machine\System\CurrentControlSet\Services\` exists.
@@ -421,6 +426,7 @@ pub fn sm_init()
 ```rust
 pub fn sm_start_auto_services()
 ```
+
 - **Args:** None
 - **Returns:** Nothing
 - **Preconditions:** `sm_init()` completed. Scheduler is active.
@@ -434,19 +440,21 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ```
 
 **Args:**
+
 - `fd`: Handle to service Ob object (obtained via `ob_open(\Service\<Name>)`)
 - `control`: 0=START, 1=STOP, 2=RESTART, 3=QUERY_STATUS, 4=SET_CONFIG
 - `buf`: User-space buffer pointer (for QUERY_STATUS output or SET_CONFIG input)
 - `buf_len`: Buffer size in bytes
 
 **Returns:**
+
 - `>=0`: Bytes written to `buf` (QUERY_STATUS), or 0 (START/STOP/RESTART/SET_CONFIG success)
 - `<0`: Error code
 
 **Error codes:**
 
 | Value | Name | Condition |
-|-------|------|-----------|
+| ------- | ------ | ----------- |
 | -1 | Inval | Invalid control code, or buf_len too small |
 | -2 | NoEnt | fd does not refer to a Service object |
 | -4 | Acces | Caller token does not have permission |
@@ -456,6 +464,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 | -15 | Busy | Service is in Starting/Stopping state, cannot accept command now |
 
 **Preconditions:**
+
 - `fd` must be a valid handle obtained via `ob_open(\Service\<Name>)` with appropriate access
 - `ob_open`'s `desired_access` must include ACCESS_READ for QUERY_STATUS, ACCESS_WRITE for START/STOP/RESTART/SET_CONFIG
 - For START: service start_type must not be Disabled
@@ -530,7 +539,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ### 7.1 Unit Tests (in `src/services/state.rs`)
 
 | Test | Description | Assertion |
-|------|-------------|-----------|
+| ------ | ------------- | ----------- |
 | `sm_state_transition_valid` | Stopped→Starting→Running→Stopping→Stopped | All transitions succeed |
 | `sm_state_transition_invalid` | Stopped→Stopping, Running→Starting (without restart) | Returns error |
 | `sm_state_start_disabled` | Start a Disabled service | Returns -Inval |
@@ -540,7 +549,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ### 7.2 Dependency Resolution Tests (in `src/services/dependency.rs`)
 
 | Test | Description | Assertion |
-|------|-------------|-----------|
+| ------ | ------------- | ----------- |
 | `sm_dep_no_deps` | Service with empty deps | Starts immediately |
 | `sm_dep_simple_chain` | A→B→C, start in order | C starts after B starts after A |
 | `sm_dep_cycle_detected` | A→B→A | Cycle detection returns error |
@@ -550,7 +559,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ### 7.3 Registry Backend Tests (in `src/services/registry_backend.rs`)
 
 | Test | Description | Assertion |
-|------|-------------|-----------|
+| ------ | ------------- | ----------- |
 | `sm_reg_read_service` | Read a service config from Registry | Fields match Registry values |
 | `sm_reg_write_service` | Write a service config to Registry | Read back matches written |
 | `sm_reg_enum_services` | Enumerate `Services\*` keys | Returns correct count |
@@ -559,7 +568,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ### 7.4 Integration Tests (in `testing.rs`)
 
 | Test | Description | Assertion |
-|------|-------------|-----------|
+| ------ | ------------- | ----------- |
 | `sm_init_creates_namespace` | After `sm_init()`, `\Service\` exists in Ob namespace | `ob_open("\Service\")` succeeds |
 | `sm_auto_start_services` | Services with StartType=Auto are running after boot | PID > 0, state = Running |
 | `sm_start_demand_service` | Call `ob_set_info(fd, ServiceStart)` on Demand service | PID > 0, state = Running |
@@ -588,7 +597,9 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 ## 8. Implementation Plan
 
 ### Step 1: Add enums and types
+
 **Files:** `src/services/state.rs`, `src/object/types.rs`
+
 - Create `ServiceState`, `ServiceStartType`, `ServiceRestartPolicy` enums
 - Create `Service` struct
 - Add `ObType::Service = 20`
@@ -596,40 +607,52 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 - Add `ObSetInfoClass::ServiceStart(33)`, `::ServiceStop(34)`, `::ServiceRestart(35)`, `::ServiceSetConfig(36)`
 
 ### Step 2: Create Service Manager skeleton
+
 **Files:** `src/services/mod.rs`, `src/services/manager.rs`, `src/globals.rs`
+
 - Define `ServiceManager` struct with `services: Vec<Service>`
 - Declare `SERVICE_MANAGER` global in `src/globals.rs`
 - Implement `sm_init()`: creates empty manager, creates `\Service\` in Ob namespace
 - Wire call to `sm_init()` in `src/main.rs` Phase 3.882
 
 ### Step 3: Implement Registry backend
+
 **Files:** `src/services/registry_backend.rs`
+
 - `sm_reg_load_all()`: enumerate `\Registry\Machine\System\CurrentControlSet\Services\`, parse each subkey into a `Service`
 - `sm_reg_save(name, config)`: write service config to Registry
 - `sm_reg_delete(name)`: remove service key from Registry
 - Integrate Cm syscall wrappers (already exist, reuse)
 
 ### Step 4: Implement dependency resolution
+
 **Files:** `src/services/dependency.rs`
+
 - `DependencyGraph` struct with `edges: Vec<(usize, usize)>`
 - `build_dependency_graph()`: parse each service's `dependencies` field
 - `topological_sort()`: Kahn's algorithm, detect cycles
 - `resolve_start_order(start_type: ServiceStartType) -> Vec<usize>`: returns indices in dependency order
 
 ### Step 5: Implement state machine
+
 **Files:** `src/services/state.rs` (extend)
+
 - `ServiceState::transition(target: ServiceState) -> Result<(), SmError>`
 - `SmError` enum: `InvalidTransition`, `Disabled`, `AlreadyRunning`, `AlreadyStopped`, `Busy`, `SecurityDenied`
 
 ### Step 6: Implement process tracker
+
 **Files:** `src/services/tracker.rs`
+
 - `sm_spawn_service(service: &Service) -> Result<u32, SmError>`: creates process via internal `sys_ob_create`, stores PID
 - `sm_monitor_service(service_idx: usize)`: registers KWait(ChildExit) on the process handle
 - `sm_on_process_exit(service_idx: usize, exit_code: i64)`: called when KWait triggers; applies restart policy
 - `sm_stop_service_process(service_idx: usize, timeout_ms: u32)`: sends ProcessTerminate, waits, force-kills on timeout
 
 ### Step 7: Implement syscall handler
+
 **Files:** `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/syscall/permission.rs`
+
 - Add `handler_ob_service()` for RAX 77
 - Add arms in `handler_ob_query_info` for classes 29/30/31
 - Add arms in `handler_ob_set_info` for classes 33/34/35/36
@@ -637,32 +660,42 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 - Add permission entries (admin for control, read for status)
 
 ### Step 8: Wire auto-start at boot
+
 **Files:** `src/main.rs`
+
 - After Phase 3.881 (Registry init), add Phase 3.882: `sm_init()`
 - In Phase 4 (before or after NeoInit spawn), call `sm_start_auto_services()`
 - `sm_start_auto_services()` starts System services first (dependency-sorted), then Auto services
 
 ### Step 9: Update NeoInit
+
 **Files:** `userbin/neoinit/src/main.rs`
+
 - Remove `spawn_detached()`, `spawn_service()`, `services_str` parsing
 - Keep `spawn_and_wait()` for the shell loop
 - NeoInit no longer manages services — kernel Sm handles it
 
 ### Step 10: Add libneodos wrappers
+
 **Files:** `libneodos/src/syscall.rs`
+
 - Add `ObInfoClass::ServiceState`, `::ServiceConfig`, `::ServiceStatus`
 - Add `ObSetInfoClass::ServiceStart`, `::ServiceStop`, `::ServiceRestart`, `::ServiceSetConfig`
 - Add `sys_ob_service(fd, control, buf, len)` wrapper
 
 ### Step 11: Update documentation
+
 **Files:** `docs/syscalls.md`, `docs/objects.md`, `docs/boot.md`, `docs/IMPROVEMENTS.md`
+
 - Add RAX 77 to syscall table
 - Add ObType::Service=20 to object types
 - Add Phase 3.882 to boot phases
 - Mark item as in-progress/completed
 
 ### Step 12: Write tests
+
 **Files:** `src/services/state.rs`, `src/services/dependency.rs`, `src/services/registry_backend.rs`, `testing.rs`
+
 - Implement all unit tests from §7
 - Implement integration tests
 - Run `cargo build` + `python3 scripts/auto_test.py` + `scripts/check_deps.py`
@@ -674,7 +707,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 Each service is a key under `\Registry\Machine\System\CurrentControlSet\Services\<ServiceName>`:
 
 | Value Name | Type | Default | Description |
-|------------|------|---------|-------------|
+| ------------ | ------ | --------- | ------------- |
 | `DisplayName` | REG_SZ | `""` | Human-readable name |
 | `BinaryPath` | REG_SZ | (required) | Ob path to the .NXE binary |
 | `StartType` | REG_DWORD | 3 (Demand) | 0=Boot, 1=System, 2=Auto, 3=Demand, 4=Disabled |

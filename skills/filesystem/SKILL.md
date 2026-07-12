@@ -1,9 +1,11 @@
 # Filesystem
 
 ## When to use
+
 Modifying NeoFS, VFS, FAT32 driver, GPT parser, block device manager, I/O stack, or partition handling.
 
 ## Goal
+
 Make correct filesystem changes without corrupting data, breaking mount/unmount, or violating VFS abstractions.
 
 ## Steps
@@ -27,6 +29,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
 
 4. **Filesystem driver implementation**
    For a new FS: implement `VfsDriver` trait. Key methods:
+
    ```rust
    fn mount(&self, device: &mut BlockDevice) -> Result<VfsMount, Status>;
    fn unmount(&self, mount: &VfsMount) -> Result<(), Status>;
@@ -34,6 +37,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
    fn read(&self, file: &VfsFileHandle, buf: &mut [u8], offset: u64) -> Result<u64, Status>;
    fn write(&self, file: &VfsFileHandle, buf: &[u8], offset: u64) -> Result<u64, Status>;
    ```
+
    Place in `src/fs/` or `src/drivers/` depending on the FS type.
 
 5. **IoStack** (`src/vfs/io.rs`, `src/vfs/partition.rs`)
@@ -59,6 +63,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
    - Error handling (file not found, disk full)
 
 ## Best practices
+
 - Always validate path lengths and components — no path traversal outside mount point.
 - Use `IoStack` for all block I/O — bypassing it breaks caching and ordering.
 - Flush page cache before unmount.
@@ -66,6 +71,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
 - Handle storage priority correctly — prefer NVMe over VirtIO for boot.
 
 ## Common mistakes
+
 - Bypassing the page cache and reading directly from the block device — stale data.
 - Not handling partial reads/writes — FS operations must loop until complete.
 - Forgetting to update directory entries after file write (size, timestamps).
@@ -73,6 +79,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
 - Storage priority mismatch — booting from ATA when NVMe is available.
 
 ## Final checklist
+
 - [ ] VfsDriver trait implemented (if new FS)
 - [ ] Mount/unmount tested (no leaks)
 - [ ] Page cache coherence maintained (writes invalidate cached reads)

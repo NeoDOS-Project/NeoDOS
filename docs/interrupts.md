@@ -9,7 +9,7 @@ File: `src/hal/x64/irql.rs`. Per-CPU interrupt request level mechanism replacing
 ### IRQL Levels
 
 | Level | Value | Description | Prevents |
-|-------|-------|-------------|----------|
+| ------- | ------- | ------------- | ---------- |
 | `PASSIVE` | 0 | Normal kernel and user code | Nothing |
 | `APC` | 1 | Asynchronous procedure call delivery | APC delivery, page faults allowed |
 | `DISPATCH` | 2 | DPC and scheduler | APC + page faults (INV-14: panic on #PF) |
@@ -55,7 +55,7 @@ File: `src/interrupts/ioapic.rs`. Detected via MADT (ACPI Multiple APIC Descript
 ### ISA IRQ Routing
 
 | ISA IRQ | Device | Vector | I/O APIC Pin |
-|---------|--------|--------|-------------|
+| --------- | -------- | -------- | ------------- |
 | 0 | HPET / PIT timer | 32 | 2 |
 | 1 | PS/2 keyboard | 33 | 1 |
 | 4 | Serial port (COM1) | 36 | 4 |
@@ -81,7 +81,7 @@ File: `src/interrupts/msi.rs`. Per-entry MSI-X table programming for PCI devices
 ### Capability Detection
 
 | Capability ID | Type |
-|--------------|------|
+| -------------- | ------ |
 | 0x05 | MSI (Message Signaled Interrupts) |
 | 0x11 | MSI-X (MSI with extended table) |
 
@@ -130,7 +130,7 @@ pub fn dpc_dispatch_pending();
 ### Tests
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | enqueue_dispatch | Single DPC enqueue and dispatch |
 | irq_transition | IRQL transitions during DPC lifecycle |
 | nesting_depth | Recursive DPC nesting limit enforcement |
@@ -144,7 +144,7 @@ File: `src/arch/x64/ipi.rs`. Inter-processor interrupts via Local APIC ICR.
 ### IPI Vectors
 
 | Vector | Name | Protocol | Description |
-|--------|------|----------|-------------|
+| -------- | ------ | ---------- | ------------- |
 | 0xF0 | `IPI_RESCHEDULE` | Fire-and-forget | Sets per-CPU `need_resched` flag on target |
 | 0xF1 | `IPI_TLB_SHOOTDOWN` | ACK protocol | Synchronous TLB invalidation on target CPUs |
 | 0xF2 | `IPI_CALL_FUNCTION` | ACK protocol | Execute arbitrary function on remote CPUs |
@@ -176,7 +176,7 @@ All vectors >= 32: `ack_irq()` sends End-Of-Interrupt to the Local APIC. The IPI
 ## Source Files
 
 | File | Responsibility |
-|------|---------------|
+| ------ | --------------- |
 | `src/hal/x64/irql.rs` | IRQL raise/lower, current_irql, at_dispatch, IrqMutex |
 | `src/interrupts/ioapic.rs` | I/O APIC init, mask/unmask, MADT parsing |
 | `src/interrupts/msi.rs` | MSI-X entry programming, batch setup |

@@ -1,9 +1,11 @@
 # Shell
 
 ## When to use
+
 Adding a new shell command, modifying shell behavior, or creating a new user binary.
 
 ## Goal
+
 Add a new .NXE user binary or extend the shell with a command, following the rule that all interactive commands go to userbin/ as Ring 3 binaries.
 
 ## Steps
@@ -13,10 +15,13 @@ Add a new .NXE user binary or extend the shell with a command, following the rul
    If the command needs privileged access, add an Ob-based syscall (RAX >= 77) and call it from the .NXE binary.
 
 2. **Create the user binary**
+
    ```bash
    mkdir -p userbin/mycommand/src
    ```
+
    Create `userbin/mycommand/src/main.rs`:
+
    ```rust
    #![no_std]
    #![no_main]
@@ -29,6 +34,7 @@ Add a new .NXE user binary or extend the shell with a command, following the rul
        0
    }
    ```
+
    Use libneodos wrappers for syscalls (ob_open, ob_create, console_write, etc.).
 
 3. **Add to build system**
@@ -46,12 +52,15 @@ Add a new .NXE user binary or extend the shell with a command, following the rul
    Keep the shell itself minimal — it's a launcher, not a kitchen sink.
 
 6. **Build with user binaries**
+
    ```bash
    bash scripts/build.sh --neodos-image
    ```
+
    Test in QEMU: run `mycommand` at the shell prompt.
 
 ## Best practices
+
 - Use libneodos for all syscall access — never invoke INT 0x80 directly.
 - Follow existing command patterns (e.g., `ls`, `cat`, `ps` in `userbin/`).
 - Print errors to stderr using libneodos console_write or logging.
@@ -59,6 +68,7 @@ Add a new .NXE user binary or extend the shell with a command, following the rul
 - Keep binaries small and statically linked — no dynamic linking in userspace yet.
 
 ## Common mistakes
+
 - Implementing privileged operations in userspace — add a syscall instead.
 - Forgetting `#![no_std]` and `#![no_main]` — there's no libc or standard main.
 - Not linking libneodos correctly — check the binary's Makefile/cargo config.
@@ -66,6 +76,7 @@ Add a new .NXE user binary or extend the shell with a command, following the rul
 - Hardcoding paths instead of using the shell path resolution.
 
 ## Final checklist
+
 - [ ] Binary is in `userbin/` as a Ring 3 `.NXE` executable
 - [ ] `#![no_std]` and `#![no_main]` set correctly
 - [ ] Build system updated to compile the new binary

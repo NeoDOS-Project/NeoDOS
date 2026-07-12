@@ -9,7 +9,6 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
-use libneodos::console;
 use libneodos::syscall;
 
 fn write_str(s: &[u8]) {

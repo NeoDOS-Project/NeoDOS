@@ -1,12 +1,15 @@
 # Registry (Cm — Configuration Manager)
 
 ## When to use
+
 Adding a registry key/value, modifying hive persistence, implementing registry security, working with `src/cm/` or `src/syscall/cm.rs`, or extending the cell-based hive format.
 
 ## Goal
+
 Correctly implement registry operations following the NT-style cell-based hive architecture, with proper cell allocation, sibling chains, dirty tracking, and security.
 
 ## References
+
 - `docs/registry.md` — subsystem documentation
 - `docs/design/registry-improvements.md` — planned improvements design
 - `src/cm/hive.rs` — cell-based hive buffer, key/value CRUD
@@ -22,7 +25,7 @@ Correctly implement registry operations following the NT-style cell-based hive a
 
 ## Architecture
 
-```
+```text
 RAX 67-76 (Cm syscalls)
     │
     ├── cm_open_key (67)      ─── ObType::Key open by path
@@ -55,7 +58,7 @@ ObInfoClass (RAX 62):
 The hive is a flat array of `Option<Cell>` (max 2048). Cells are 4 types:
 
 | Type | Value | Struct | Key fields |
-|------|-------|--------|------------|
+| ------ | ------- | -------- | ------------ |
 | Free | 0 | — | part of free list |
 | Key | 1 | `KeyCell` | `name`, `parent_cell`, `subkeys_head`, `subkeys_sibling`, `values_head`, `sec_desc_cell`, `last_write` |
 | Value | 2 | `ValueCell` | `name`, `value_type`, `data`, `next` |
@@ -68,6 +71,7 @@ The free list uses a `free_head` pointer, but **the current implementation is br
 ### 2. Add a new key/value
 
 In `src/cm/hive.rs`:
+
 ```rust
 // Create a subkey under parent
 let child = hive.create_key(parent_idx, "NewKey");
@@ -77,6 +81,7 @@ hive.set_value(key_idx, "MyValue", REG_DWORD, &42u32.to_le_bytes());
 ```
 
 In `src/cm/mod.rs` (via syscall dispatch):
+
 ```rust
 // Open key by path, creating intermediate keys if needed
 if let Some(key) = ensure_key_path(&mut hm.hive, root, "Path\\To\\Key") {
@@ -152,6 +157,7 @@ cm_check_access(process_token, key_native_id, KEY_READ | KEY_WRITE);
 ```
 
 The `SecurityCell` type 3 already exists in the serialization format but no code creates or checks it. Security enforcement requires:
+
 - `src/cm/security.rs` with `cm_check_access()`, `cm_ensure_security()`, `cm_inherit_security()`
 - Hooks in all cm_* syscall handlers in `src/syscall/cm.rs`
 - `SeAccessCheck` integration from `src/security/access.rs`
@@ -187,7 +193,7 @@ python3 scripts/gen_system_hiv.py
 ## Known issues
 
 | Issue | Status | Workaround |
-|-------|--------|------------|
+| ------- | -------- | ------------ |
 | Free list allocation is broken | **BUG** | `scan_next_free` doesn't properly chain freed cells. Fix: use linear next-fit scan from `next_alloc_hint`. |
 | No `delete_value` method | **v0.50+** | `RegistryDeleteValue` (26) currently sets data to empty instead of freeing the cell. Use `hive.delete_value()` once implemented. |
 | Unmount doesn't flush dirty data | **BUG** | `cm_unload_hive()` removes hive without persisting. Call `cm_flush_key()` first. |
@@ -211,6 +217,7 @@ python3 scripts/gen_system_hiv.py
 - When adding new default values, modify `cm_ensure_default_values()` in `src/cm/mod.rs`.
 
 ## Common mistakes
+
 - Using `delete_key` recursively — causes stack overflow on deep trees. Use the iterative version.
 - Forgetting `mark_clean()` after `flush_to_io()` — hive stays dirty, flushes repeatedly.
 - Using `slot(idx)` without checking bounds — `idx` must be a valid cell index.

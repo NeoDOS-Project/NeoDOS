@@ -6,7 +6,7 @@ applications trigger software interrupt `INT 0x80`.
 ## Calling Convention
 
 | Register | Purpose |
-|----------|---------|
+| ---------- | --------- |
 | `RAX` | Syscall number |
 | `RBX` | Argument 0 |
 | `RCX` | Argument 1 |
@@ -20,11 +20,13 @@ Return in `RAX`: `>= 0` success, `< 0` error. All other GPRs preserved.
 
 - Success: non-negative value (fd, PID, bytes written, etc.)
 - Error: negative value encoded via `err_to_u64()`:
+
   ```rust
   pub fn err_to_u64(e: SyscallError) -> u64 {
       (-(e as i64)) as u64
   }
   ```
+
 - User-mode checks: `cmp rax, -1` / `jg success` (positive or zero = OK)
 
 ### SyscallNum Enum
@@ -116,143 +118,191 @@ return `-Perm`.
 ### Process (RAX 0-4)
 
 #### 0 — `sys_exit`
+
 Terminates the calling process and frees all allocated resources.
+
 - **Args**: `RBX` = exit code (`u64`). 0 = success.
 - **Returns**: Does not return.
 
 #### 1 — `sys_yield`
+
 Voluntarily yields the CPU. Running->Ready, resets time slice, forces reschedule.
+
 - **Args**: None.
 - **Returns**: `0`.
 
 #### 2 — `sys_wait_alertable`
+
 Alertable wait. If APC pending, dispatches and returns `APC_ALERTED` (1).
+
 - **Args**: None.
 - **Returns**: `1` if APC delivered, `0` otherwise.
 
 #### 3 — `sys_sleep_ex`
+
 Alertable yield. Checks APCs before/after yield.
+
 - **Args**: None.
 - **Returns**: `1` if APC delivered, `0` otherwise.
 
 #### 4 — `sys_set_exception_handler`
+
 Sets SEH handler for current thread. `handler_fn=0` clears chain.
+
 - **Args**: `RBX`=handler_fn.
 - **Returns**: 0 success, -1 TEB not ready.
 
 ### Memory (RAX 10-12)
 
 #### 10 — `sys_brk`
+
 Adjusts program break. Pages allocated on demand via page fault handler.
+
 - **Args**: `RBX` = new break (0 = query).
 - **Returns**: New/current break, or error code.
 
 #### 11 — `sys_mmap`
+
 Lazy mapping: registers VMA without pages. Allocated on first access.
+
 - **Args**: `RBX`=hint, `RCX`=len, `RDX`=prot, `R8`=flags(1=anon), `R9`=fd.
 - **Returns**: Base address, or error code.
 
 #### 12 — `sys_munmap`
+
 Unmaps a previously mmap'd region.
+
 - **Args**: `RBX`=addr, `RCX`=len.
 - **Returns**: `0` on success, or error code.
 
 ### I/O (RAX 20-25)
 
 #### 20 — `sys_write`
+
 Writes a buffer to a file descriptor (stdout, stderr, pipe writer, Filesystem handle).
+
 - **Args**: `RBX`=fd, `RCX`=buf, `RDX`=len.
 - **Returns**: Bytes written, or error code.
 
 #### 21 — `sys_read`
+
 Reads data from a file descriptor (stdin, pipe reader). Blocks if pipe empty.
+
 - **Args**: `RBX`=fd, `RCX`=buf, `RDX`=count.
 - **Returns**: Bytes read, or error.
 
 #### 22 — `sys_dup2`
+
 Duplicates an fd to a target slot (redirection).
+
 - **Args**: `RBX`=old_fd, `RCX`=new_fd.
 - **Returns**: `0` on success, or error code.
 
 #### 23 — `sys_close`
+
 Closes an fd (file, pipe, device, event). For pipes, decrements refcount.
+
 - **Args**: `RBX`=fd.
 - **Returns**: `0` on success, or error code.
 
 #### 24 — `sys_poll`
+
 Poll fds for ready I/O.
+
 - **Args**: `RBX`=pfds_ptr, `RCX`=nfds, `RDX`=timeout_ms.
 - **Returns**: Ready count, or error code.
 
 #### 25 — `sys_loadlib`
+
 Loads an NXL shared library from filesystem into a free slot.
+
 - **Args**: `RBX`=path_ptr.
 - **Returns**: Base address, or error code.
 
 ### Console (RAX 30)
 
 #### 30 — `sys_cursor_blink`
+
 Enable/disable automatic cursor blinking.
+
 - **Args**: `RBX`=0 (disable), 1 (enable).
 - **Returns**: `0` on success, or error code.
 
 ### Driver (RAX 35)
 
 #### 35 — `sys_driver_unload` (admin)
+
 Unload a NEM driver by name.
+
 - **Args**: `RBX`=name_ptr, `RCX`=force_flag.
 - **Returns**: `0` on success, or error code.
 
 ### Object Manager (RAX 40-47)
 
 #### 40 — `sys_ob_open`
+
 Open an Ob namespace object by path. Security access check, allocates handle.
+
 - **Args**: `RBX`=path_ptr, `RCX`=desired_access.
 - **Returns**: fd (>=3), or error code.
 
 #### 41 — `sys_ob_create`
+
 Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory,
 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section, 18=Socket,
 21=PowerManager, 22=KeyboardDevice.
+
 - Kernel-created (NOT user-creatable): `PowerManager(21)`, `KeyboardDevice(22)`.
 - **Args**: `RBX`=path_ptr, `RCX`=type, `RDX`=fds_out, `R8`=attrs.
 - **Returns**: fd, or error code.
 
 #### 42 — `sys_ob_query_info`
+
 Query object info by fd and info class (see `ObInfoClass`).
+
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written, or error code.
 
 #### 43 — `sys_ob_set_info`
+
 Set object info by fd and set-info class (see `ObSetInfoClass`).
+
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: `0` on success, or error code.
 
 #### 44 — `sys_ob_enum`
+
 Enumerate contents of an Ob directory by fd.
+
 - **Args**: `RBX`=dir_fd, `RCX`=buf, `RDX`=max_entries.
 - **Returns**: Entries written, or error code.
 
 #### 45 — `sys_ob_wait`
+
 Wait on one or more Ob objects to become signaled.
+
 - **Args**: `RBX`=count, `RCX`=handles, `RDX`=type, `R8`=timeout.
 - **Supported**: Process (ChildExit), Pipe, Event, Timer, Thread, Semaphore.
 - **Returns**: `0` on success, or error code.
 
 #### 46 — `sys_ob_destroy`
+
 Destroy/delete an Ob object by fd (file, directory, namespace object).
+
 - **Args**: `RBX`=fd.
 - **Returns**: `0` on success, or error code.
 
 #### 47 — `sys_ob_service` (admin)
+
 Service control: START(0), STOP(1), RESTART(2), QUERY_STATUS(3), SET_CONFIG(4).
+
 - **Args**: `RBX`=fd, `RCX`=control, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written (for QUERY_STATUS), or error code.
 
 ### Registry (RAX 50-59)
 
 | RAX | Syscall | Purpose |
-|-----|---------|---------|
+| ----- | --------- | --------- |
 | 50 | `sys_cm_open_key` | Open existing registry key by path |
 | 51 | `sys_cm_create_key` | Create or open registry key |
 | 52 | `sys_cm_query_value` | Read a registry value |
@@ -273,6 +323,7 @@ Service control: START(0), STOP(1), RESTART(2), QUERY_STATUS(3), SET_CONFIG(4).
 Complete SSDT audit, cleanup, and reorganization:
 
 **Syscalls removed** (dead enum variants + handler code):
+
 - ReadDir (was 8), WaitPid (was 9), WriteFile (was 12)
 - ThreadCreate (was 22), ThreadJoin (was 23)
 - GetVolumeLabel (was 46), SetVolumeLabel (was 54)
@@ -281,17 +332,19 @@ Complete SSDT audit, cleanup, and reorganization:
 - DriverLoad (was 57)
 
 **Legacy handlers migrated to Object Manager**:
+
 - ChDir → `ob_set_info(SetCwd)` (was 16)
 - ChDirParent → `ob_set_info(SetCwd)` on parent (was 47)
 
 **Legacy wrappers removed from libneodos**:
+
 - sys_get_volume_label, sys_set_volume_label, sys_set_priority
 - sys_kill, sys_driver_load, sys_kobj_enum
 
 ### New Numbering Scheme
 
 | Category | Range | Count | Admin |
-|----------|-------|-------|-------|
+| ---------- | ------- | ------- | ------- |
 | Process Control | 0-4 | 5 | — |
 | Memory | 10-12 | 3 | — |
 | I/O | 20-25 | 6 | — |
@@ -313,11 +366,12 @@ return results via `ob_query_info`/`ob_set_info`.
 Power management is handled entirely via the Object Manager — no dedicated syscall.
 
 | Path | Operation | ObSetInfoClass |
-|------|-----------|---------------|
+| ------ | ----------- | --------------- |
 | `\System\PowerManager` | Shutdown (power off) | `PowerShutdown = 37` |
 | `\System\PowerManager` | Reboot | `PowerReboot = 38` |
 
 **Usage:**
+
 ```c
 fd = sys_ob_open("\\System\\PowerManager", WRITE);
 sys_ob_set_info(fd, PowerShutdown, NULL, 0);  // or PowerReboot

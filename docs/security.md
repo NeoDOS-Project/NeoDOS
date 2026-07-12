@@ -41,7 +41,7 @@ pub struct Token {
 ### Factory Methods
 
 | Method | Privileges | Description |
-|--------|-----------|-------------|
+| -------- | ----------- | ------------- |
 | `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | Full-privilege token for SYSTEM |
 | `new_user()` | `SE_CHANGE_NOTIFY` only | Restricted user token |
 | `new_full(sid, is_admin, groups, privs, sid)` | Custom | Complete construction |
@@ -69,7 +69,7 @@ pub struct SamEntry {
 
 ### Binary Format
 
-```
+```text
 Header:
   magic:    "SAM\0" (4 bytes)
   version:  u32 LE
@@ -119,7 +119,7 @@ pub struct SecurityDescriptor {
 ### Access Constants
 
 | Constant | Value | Bit |
-|----------|-------|-----|
+| ---------- | ------- | ----- |
 | `ACCESS_READ` | 1 | 0 |
 | `ACCESS_WRITE` | 2 | 1 |
 | `ACCESS_EXECUTE` | 4 | 2 |
@@ -153,7 +153,7 @@ pub fn se_access_check(
 ## Token Lifecycle
 
 | PID | Process | Token Source | Privileges |
-|-----|---------|-------------|-----------|
+| ----- | --------- | ------------- | ----------- |
 | 0 | Idle (kernel) | `Token::new_admin()` | Full (0xFFFF) |
 | 1 | NeoInit | Inherits from PID 0 via `add_ring3_process()` | Full (0xFFFF) |
 | N | Child processes | `inherit_from(parent)` at spawn | Parent's privileges |
@@ -163,7 +163,7 @@ Group membership: `add_group(sid)` appends to the `groups` vector. `is_in_group(
 ## Privilege Constants (12 flags, u64 bitmap)
 
 | Bit | Constant | Description |
-|-----|----------|-------------|
+| ----- | ---------- | ------------- |
 | 0 | `SE_CREATE_TOKEN_PRIVILEGE` | Create token objects |
 | 1 | `SE_TCB_PRIVILEGE` | Act as part of the OS |
 | 2 | `SE_LOAD_DRIVER_PRIVILEGE` | Load/unload device drivers |
@@ -182,7 +182,7 @@ Combined: `SE_ADMIN_PRIVILEGES = 0xFFFF` (all 12 bits set). `SE_USER_PRIVILEGES 
 ## Source Files
 
 | File | Responsibility |
-|------|---------------|
+| ------ | --------------- |
 | `src/security/sid.rs` | SID construction, parsing, formatting |
 | `src/security/token.rs` | Token creation, inheritance, privilege checks |
 | `src/security/sam.rs` | SAM database, binary serialization |

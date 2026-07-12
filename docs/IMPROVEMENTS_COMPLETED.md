@@ -6,9 +6,9 @@
 
 ---
 
-### CM-FIX. Registry bugfixes [COMPLETED]
+## CM-FIX. Registry bugfixes [COMPLETED]
 
-* [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`
+- [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`
   - **Fix free list:** reemplazar `free_head`/`scan_next_free` por next-fit linear scan con `next_alloc_hint`.
   - **Soft max cells:** cambiar `cells` de fijo `MAX_CELLS=2048` a `Vec<Option<Cell>>` dinámico.
   - **`delete_value()`:** desenlazar de lista de valores, liberar celda.
@@ -22,22 +22,22 @@
 
 ### CB1..CB3, OBF-08: SMP-unsafe static mut bugs [COMPLETED]
 
-* [x] **CB1. Fix WAIT_PID static mut SMP-unsafe** | Prereqs: KWait | Files: `src/usermode.rs`
+- [x] **CB1. Fix WAIT_PID static mut SMP-unsafe** | Prereqs: KWait | Files: `src/usermode.rs`
   - **Descripcion:** `WAIT_PID` era un `static mut` en usermode.rs. Corregido: ahora es `AtomicU32`, seguro para SMP.
   - **Severidad:** ~~CRITICO~~ COMPLETADO
   - **Tests:** `smp_waitpid_concurrent`, `smp_waitpid_no_race`
 
-* [x] **CB2. Fix ISOLATED_REGIONS static mut sin sincronizacion** | Prereqs: -- | Files: `src/drivers/isolation.rs`
+- [x] **CB2. Fix ISOLATED_REGIONS static mut sin sincronizacion** | Prereqs: -- | Files: `src/drivers/isolation.rs`
   - **Descripcion:** `ISOLATED_REGIONS` era un array estatico mutable. Corregido: ahora es `Mutex<[...]>`, todo acceso via `.lock()`.
   - **Severidad:** ~~CRITICO~~ COMPLETADO
   - **Tests:** `smp_isolated_region_concurrent_access`
 
-* [x] **CB3. Fix NXL_REGISTRY static mut sin proteccion SMP** | Prereqs: -- | Files: `src/nxl.rs`
+- [x] **CB3. Fix NXL_REGISTRY static mut sin proteccion SMP** | Prereqs: -- | Files: `src/nxl.rs`
   - **Descripcion:** `NXL_REGISTRY` era array fijo sin sincronizacion. Corregido: ahora es `Mutex<[...]>`, todo acceso via `.lock()`.
   - **Severidad:** ~~ALTA~~ COMPLETADO
   - **Tests:** `smp_nxl_concurrent_load`
 
-* [x] **OBF-08. Migrar sys_waitpid a AtomicU32 (eliminar WAIT_PID static mut)** | Prereqs: CB1 | Files: `src/usermode.rs`, `src/syscall/mod.rs`
+- [x] **OBF-08. Migrar sys_waitpid a AtomicU32 (eliminar WAIT_PID static mut)** | Prereqs: CB1 | Files: `src/usermode.rs`, `src/syscall/mod.rs`
   - **Descripcion:** `WAIT_PID` migrado de `static mut` a `AtomicU32` con operaciones atómicas SeqCst en lugar de KWait. Suficiente para SMP-safety.
   - **Severidad:** ~~CRITICO~~ COMPLETADO
   - **Tests:** `smp_waitpid_concurrent`, `smp_waitpid_no_race`
@@ -52,107 +52,107 @@
 
 ### v0.48.7 (Registry config + Audits)
 
-* [x] **B2.6. Registry defaults in boot** | Files: `src/main.rs`, `src/cm/mod.rs`
+- [x] **B2.6. Registry defaults in boot** | Files: `src/main.rs`, `src/cm/mod.rs`
   - En Phase 3.881, crear `CurrentControlSet\Services\NeoInit\DefaultShell`,
     `Network\Interfaces\0\DHCPEnabled=1`, etc. Solo si no existen.
   - **Tests:** `cm_default_values_created`
 
-* [x] **B4.10. NeoInit: leer Registry para config** | Files: `userbin/neoinit/`
+- [x] **B4.10. NeoInit: leer Registry para config** | Files: `userbin/neoinit/`
   - NeoInit lee DefaultShell, AutoStartServices, EnableVT, WaitForNetwork desde
     `\Registry\Machine\System\CurrentControlSet\Services\NeoInit`.
   - **Tests:** boot con Registry, verificar shell spawn
 
-* [x] **AUDIT-1. Registry info classes handled** | Files: `src/syscall/ob.rs`, `src/object/types.rs`
+- [x] **AUDIT-1. Registry info classes handled** | Files: `src/syscall/ob.rs`, `src/object/types.rs`
   - `ObInfoClass::RegistryKey (21)` y `::RegistryValue (22)` implementados.
   - `ObSetInfoClass::RegistryCreateKey (23)`, `::RegistryDeleteKey (24)`, `::RegistrySetValue (25)`, `::RegistryDeleteValue (26)` implementados.
 
-* [x] **AUDIT-2. libneodos ObInfoClass/ObSetInfoClass sync** | Files: `libneodos/src/syscall.rs`
+- [x] **AUDIT-2. libneodos ObInfoClass/ObSetInfoClass sync** | Files: `libneodos/src/syscall.rs`
   - Añadidos 6 variantes faltantes a ObInfoClass. ObSetInfoClass convertido a enum con 27 variantes.
   - `sys_ob_set_info` ahora toma `ObSetInfoClass` en vez de `u32`.
 
-* [x] **AUDIT-3. Dual mount systems (MAX_MOUNTS)** | Files: `src/fs/vfs.rs`
+- [x] **AUDIT-3. Dual mount systems (MAX_MOUNTS)** | Files: `src/fs/vfs.rs`
   - Renombrado `MAX_MOUNTS` a `MAX_SUBDIR_MOUNTS` en fs/vfs.rs para eliminar ambigüedad.
 
-* [x] **AUDIT-4. DPC overflow handling + tests** | Files: `src/dpc/mod.rs`
+- [x] **AUDIT-4. DPC overflow handling + tests** | Files: `src/dpc/mod.rs`
   - Añadido `DPC_DROPPED_COUNT` global. 3 nuevos tests: queue_overflow, dispatch_pending_global_api.
 
-* [x] **AUDIT-9. Kernel link address in docs** | Files: `docs/ARCHITECTURE.md`, `docs/memory.md`, `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`, `docs/DEBUG.md`
+- [x] **AUDIT-9. Kernel link address in docs** | Files: `docs/ARCHITECTURE.md`, `docs/memory.md`, `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`, `docs/DEBUG.md`
   - Corregido `0x200000`/`0x100000` → `0x4000000` en todas las referencias.
 
-* [x] **AUDIT-10. ObSetInfoClass::Security implementado** | Files: `src/syscall/ob.rs`
+- [x] **AUDIT-10. ObSetInfoClass::Security implementado** | Files: `src/syscall/ob.rs`
   - Reemplazado `err_to_u64(NoSys)` por implementación funcional que parsea SD y llama `ob_set_security`.
 
-* [x] **AUDIT-36. Docs: ARCHITECTURE.md HAL ABI self-contradiction** | Files: `docs/ARCHITECTURE.md:125 vs 178`
+- [x] **AUDIT-36. Docs: ARCHITECTURE.md HAL ABI self-contradiction** | Files: `docs/ARCHITECTURE.md:125 vs 178`
   - Line 125 now says `HAL ABI v0.4` (was `v0.3`), matching line 178.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-37. Docs: ARCHITECTURE.md kernel heap address wrong** | Files: `docs/ARCHITECTURE.md:581`
+- [x] **AUDIT-37. Docs: ARCHITECTURE.md kernel heap address wrong** | Files: `docs/ARCHITECTURE.md:581`
   - Changed `0x1000000` → `0x0240_0000` to match `src/memory/layout.rs:107`.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-38. Docs: ARCHITECTURE.md event type count stale** | Files: `docs/ARCHITECTURE.md:222-243`
+- [x] **AUDIT-38. Docs: ARCHITECTURE.md event type count stale** | Files: `docs/ARCHITECTURE.md:222-243`
   - Updated from "16 event types (0-15)" to "18 event types (0-17)". Added `EVENT_MOUSE_INPUT=16` and `EVENT_NETWORK_PACKET=17`.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-39. Docs: memory.md nxl_region address typo** | Files: `docs/memory.md:84`
+- [x] **AUDIT-39. Docs: memory.md nxl_region address typo** | Files: `docs/memory.md:84`
   - Changed `0x1E00000` → `0x1E000000` to match actual layout.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-40. Docs: objects.md ObSetInfoClass count stale** | Files: `docs/objects.md:185-216`
+- [x] **AUDIT-40. Docs: objects.md ObSetInfoClass count stale** | Files: `docs/objects.md:185-216`
   - Updated from "Supports 27 set classes" to "Supports 28 set classes". Added `SetNicIp = 27`.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-41. Docs: syscalls.md documents removed syscalls as active** | Files: `docs/syscalls.md` sections 5-13
+- [x] **AUDIT-41. Docs: syscalls.md documents removed syscalls as active** | Files: `docs/syscalls.md` sections 5-13
   - RAX 5, 7, 8, 9, 10, 11 now marked as **REMOVED** with replacement guidance (Ob equivalents).
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-42. Docs: ipc.md event struct field sizes wrong** | Files: `docs/ipc.md:180-213`
+- [x] **AUDIT-42. Docs: ipc.md event struct field sizes wrong** | Files: `docs/ipc.md:180-213`
   - Event struct: `u16`→`u32` for `event_type`, `source`, `flags`; added `driver_target: u32`; corrected event type table values and added missing entries (RTC_READ=10, RTC_DATA=11, NMI_WATCHDOG=15, MOUSE_INPUT=16, NETWORK_PACKET=17).
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-43. Docs: ipc.md pipe storage description stale** | Files: `docs/ipc.md:7`
+- [x] **AUDIT-43. Docs: ipc.md pipe storage description stale** | Files: `docs/ipc.md:7`
   - "16 static pipe buffers" → dynamic `Vec<Option<Mutex<PipeInner>>>`.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-44. Docs: drivers.md 8-state vs 7-state lifecycle** | Files: `docs/drivers.md:94`
+- [x] **AUDIT-44. Docs: drivers.md 8-state vs 7-state lifecycle** | Files: `docs/drivers.md:94`
   - Verified: doc already correct (8 states including `Unloading`), code has 8 `DriverState` variants. No change needed.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-45. Docs: ARCHITECTURE.md references "MEM.NXE" binary renamed** | Files: `docs/ARCHITECTURE.md:118`
+- [x] **AUDIT-45. Docs: ARCHITECTURE.md references "MEM.NXE" binary renamed** | Files: `docs/ARCHITECTURE.md:118`
   - Updated MEM reference to point to `userbin/neomem/`.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-46. Docs: ARCHITECTURE.md ObType count stale** | Files: `docs/ARCHITECTURE.md:576`
+- [x] **AUDIT-46. Docs: ARCHITECTURE.md ObType count stale** | Files: `docs/ARCHITECTURE.md:576`
   - Changed "ObType=17 variants" → "ObType=18 variants", added `Socket` to the list.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-53. CRC32 deduplicated to shared `fs/crc32.rs`** | Files: `src/fs/neodos_io.rs`, `src/fs/snapshot.rs`, `src/fs/freelist.rs`, `src/fs/btree.rs`
+- [x] **AUDIT-53. CRC32 deduplicated to shared `fs/crc32.rs`** | Files: `src/fs/neodos_io.rs`, `src/fs/snapshot.rs`, `src/fs/freelist.rs`, `src/fs/btree.rs`
   - Four private `fn crc32` implementations and one `pub fn crc32` consolidated into a single shared module `src/fs/crc32.rs`. All callers now `use super::crc32::crc32`.
   - **Tests:** `crc32_single_implementation`
 
-* [x] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
+- [x] **AUDIT-53. Docs: filesystem.md page cache capacity stale** | Files: `docs/filesystem.md:209`
   - Changed "64 entries" → "128 entries" (matches `CACHE_SIZE = 128` in `page_cache.rs:3`).
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
+- [x] **AUDIT-54. Docs: ARCHITECTURE.md test count stale (537 vs 656)** | Files: `docs/ARCHITECTURE.md:528,561`
   - Updated "537 tests" → "656 tests" in both locations.
   - **Tests:** (doc fix only)
 
-* [x] **AUDIT-54. GPT parsing deduplicated** | Files: `src/drivers/gpt.rs`, `src/vfs/partition.rs`
+- [x] **AUDIT-54. GPT parsing deduplicated** | Files: `src/drivers/gpt.rs`, `src/vfs/partition.rs`
   - `read_u64_le`/`read_u32_le`/`read_sector_from_dev` helpers and GPT partition loop logic consolidated into `drivers/gpt.rs` as `pub(crate)`. `vfs/partition.rs` now delegates to `gpt::parse_gpt_filter` and re-exports constants.
   - **Tests:** `gpt_parse_consistent`
 
-* [x] **AUDIT-57. MODE_DIR/MODE_FILE constants deduplicated** | Files: `src/fs/vfs.rs:43-44`, `src/fs/neodos_dir.rs:26-27`
+- [x] **AUDIT-57. MODE_DIR/MODE_FILE constants deduplicated** | Files: `src/fs/vfs.rs:43-44`, `src/fs/neodos_dir.rs:26-27`
   - `MODE_DIR = 0x40` and `MODE_FILE = 0x80` removed from `neodos_dir.rs`; re-exported via `pub use super::vfs::{MODE_DIR, MODE_FILE}`.
   - **Tests:** (compile-only)
 
-* [x] **AUDIT-5 / AUDIT-81. Dead code: processes.rs removed** | Files: `src/processes.rs`
+- [x] **AUDIT-5 / AUDIT-81. Dead code: processes.rs removed** | Files: `src/processes.rs`
   - `proc_a()`/`proc_b()`/`proc_c()`/`proc_d()` — 4 vestigial prototyping functions removed entirely. `processes.rs` deleted. Zero external references.
   - **Tests:** Remove, verify build
 
 ### v0.47 (Networking TCP/IP)
 
-* [x] **v0.47. Networking: NIC driver NEM + TCP/IP stack** | Prereqs: — | Files: `src/net/`
+- [x] **v0.47. Networking: NIC driver NEM + TCP/IP stack** | Prereqs: — | Files: `src/net/`
   - **Descripcion:** Stack TCP/IP completo (e1000 NIC, Ethernet, ARP, IPv4, ICMP, UDP, TCP, \Device\Tcp, \Device\Udp). **COMPLETADO**
   - **Tests:** 17 tests (ver sección B3)
 
@@ -177,7 +177,7 @@
 
 El Object Manager (Ob) unifica handles, objetos, seguridad y namespace en una sola abstraccion:
 
-```
+```text
 ObObject (kernel object)
 +-- id: ObId (64-bit)
 +-- type: ObType (16 tipos: Process, Driver, Device, Pipe, ..., Timer)
@@ -201,7 +201,7 @@ ObDirectory (namespace)
 #### Syscalls Ob (RAX 60-66)
 
 | RAX | Syscall | Args | Descripcion |
-|-----|---------|------|-------------|
+| ----- | --------- | ------ | ------------- |
 | 60 | `sys_ob_open` | RBX=path, RCX=access | Open named object -> handle (SeAccessCheck integrado) |
 | 61 | `sys_ob_create` | RBX=path, RCX=type, RDX=fds_out, R8=attrs | Create named object (Process=1, Driver=2, Pipe=4, Directory=11, Event=13) |
 | 62 | `sys_ob_query_info` | RBX=fd, RCX=class, RDX=buf, R8=len | Query object metadata (0-16 classes, incl. ReadContent=15, VolumeLabel=16) |
@@ -213,7 +213,7 @@ ObDirectory (namespace)
 #### Syscalls Legacy Migrados a Ob
 
 | RAX | Legacy | Estado SSDT | Equivalente Ob |
-|-----|--------|-------------|----------------|
+| ----- | -------- | ------------- | ---------------- |
 | 11 | `sys_readfile` | None | ob_query_info(ReadContent) |
 | 12 | `sys_writefile` | None | ob_set_info(WriteContent) |
 | 24 | `sys_getcpuinfo` | None | ob_open("\Global\Info\CpuInfo") + ob_query_info |
@@ -237,7 +237,7 @@ ObDirectory (namespace)
 #### Syscalls Legacy que Permanecen
 
 | RAX | Syscall | Motivo |
-|-----|---------|--------|
+| ----- | --------- | -------- |
 | 0 | `sys_exit` | Demasiado especifica para abstraer |
 | 1 | `sys_write` | Foundation: stdout/stderr/pipe write |
 | 2 | `sys_yield` | Foundation: ceder CPU |
@@ -271,7 +271,7 @@ ObDirectory (namespace)
 #### Metricas Objetivo Alcanzadas
 
 | Metrica | Antes (v0.40) | Despues (v0.44.2) |
-|---------|---------------|-------------------|
+| --------- | --------------- | ------------------- |
 | HandleEntry tipo-seguro | [PENDING] (kind hardcoded) | [DONE] (ObId ref) |
 | KOBJ + handles unificados | [PENDING] | [DONE] |
 | Security en open | [PENDING] (solo syscall 50) | [DONE] (todo acceso via SeAccessCheck) |
@@ -283,7 +283,7 @@ ObDirectory (namespace)
 #### Estado por Binario
 
 | Binario | Estado Ob | Syscalls Ob | Syscalls Legacy Restantes |
-|---------|-----------|-------------|--------------------------|
+| --------- | ----------- | ------------- | -------------------------- |
 | ps | [DONE] COMPLETO | ob_open, ob_enum, ob_query_info | -- |
 | kill | [DONE] COMPLETO | ob_open, ob_set_info | -- |
 | pri | [DONE] COMPLETO | ob_open, ob_set_info | -- |
@@ -320,10 +320,12 @@ ObDirectory (namespace)
 Migracion completa de todos los comandos del kernel shell Ring 0 a `.NXE` en Ring 3.
 
 El Ring 0 solo mantiene:
+
 - **RUN** — bootstrap loader necesario para lanzar el primer binario Ring 3 (NeoInit/neoshell) desde el kernel.
 - **CRASH** — crash dump management; es inherentemente kernel-level.
 
 **Completados:**
+
 - HELP -> corehelp.nxe (B9.1)
 - SET -> neoshell built-in (B9.2)
 - EXIT -> neoshell built-in (B9.3)
@@ -343,37 +345,37 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### OBF-01..06, OBF-09 (Fase 1 Objectification)
 
-* [x] **OBF-01. Anadir ObInfoClass::ReadContent=15, VolumeLabel=16 al enum** | Prereqs: — | Files: `src/object/types.rs`
+- [x] **OBF-01. Anadir ObInfoClass::ReadContent=15, VolumeLabel=16 al enum** | Prereqs: — | Files: `src/object/types.rs`
   - **Severidad:** BAJA — 5 min
   - **Tests:** (cobertura de compilacion)
 
-* [x] **OBF-02. Anadir ObSetInfoClass::ProcessTerminate=4, VfsRename=6, WriteContent=7, SetCwd=8, SetVolumeLabel=9 al enum** | Prereqs: — | Files: `src/object/types.rs`
+- [x] **OBF-02. Anadir ObSetInfoClass::ProcessTerminate=4, VfsRename=6, WriteContent=7, SetCwd=8, SetVolumeLabel=9 al enum** | Prereqs: — | Files: `src/object/types.rs`
   - **Severidad:** BAJA — 5 min
   - **Tests:** (cobertura de compilacion)
 
-* [x] **OBF-03. Anadir ObType::Thread = 16 al enum + to_str()** | Prereqs: — | Files: `src/object/types.rs`
+- [x] **OBF-03. Anadir ObType::Thread = 16 al enum + to_str()** | Prereqs: — | Files: `src/object/types.rs`
   - **Severidad:** BAJA — 5 min
   - **Tests:** `ob_type_thread_enum`
 
-* [x] **OBF-04. Implementar ob_create(Thread) en handler_ob_create** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
+- [x] **OBF-04. Implementar ob_create(Thread) en handler_ob_create** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
   - **Descripcion:** Crea KTHREAD, devuelve fd
   - **Severidad:** MEDIA — 2-3h
   - **Tests:** `ob_thread_create_and_destroy`
 
-* [x] **OBF-05. Implementar ob_wait(Thread) en handler_ob_wait** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
+- [x] **OBF-05. Implementar ob_wait(Thread) en handler_ob_wait** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
   - **Descripcion:** kwait_block(ThreadJoin)
   - **Severidad:** MEDIA — 1h
   - **Tests:** `ob_thread_join`
 
-* [x] **OBF-06. Implementar ob_set_info(ThreadPriority) usando fd thread** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
+- [x] **OBF-06. Implementar ob_set_info(ThreadPriority) usando fd thread** | Prereqs: OBF-03 | Files: `src/syscall/mod.rs`
   - **Severidad:** BAJA — 30 min
   - **Tests:** `ob_thread_priority`
 
-* [x] **OBF-06b. Eliminar handler_thread_create (RAX 22) y handler_thread_join (RAX 23) del SSDT** | Prereqs: OBF-04, OBF-05 | Files: `src/syscall/mod.rs`
+- [x] **OBF-06b. Eliminar handler_thread_create (RAX 22) y handler_thread_join (RAX 23) del SSDT** | Prereqs: OBF-04, OBF-05 | Files: `src/syscall/mod.rs`
   - **Severidad:** BAJA — 5 min
   - **Tests:** (verificar SSDT None)
 
-* [x] **OBF-09. Tests kernel: 8 tests (thread create/wait/kill via Ob, enum completos, error unificado)** | Prereqs: OBF-01..08 | Files: `src/testing.rs`
+- [x] **OBF-09. Tests kernel: 8 tests (thread create/wait/kill via Ob, enum completos, error unificado)** | Prereqs: OBF-01..08 | Files: `src/testing.rs`
   - **Severidad:** MEDIA — ~150 lines
   - **Tests:** `ob_thread_create_and_destroy`, `ob_thread_type_in_enum_snapshot`, etc.
 
@@ -435,7 +437,7 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### AI-5 [COMPLETED]
 
-* ~~**[COMPLETED] AI-5. Libneodos-nxl ya modularizado** | Prereqs: — | Files: `libneodos-nxl/src/`~~
+- ~~**[COMPLETED] AI-5. Libneodos-nxl ya modularizado** | Prereqs: — | Files: `libneodos-nxl/src/`~~
   - ~~**Descripcion:** `libneodos-nxl/src/` ya usa modulos separados (`syscall.rs`, `io.rs`, `fs.rs`, `process.rs`, `mem.rs`, `error.rs`). Con la limpieza ABI v7, se eliminaron las funciones `nxl_sys_pipe/dup2/waitpid/chdir/chdir_parent/readdir` (process.rs) y `nxl_sys_mkdir/unlink/rmdir/rename/writefile` (fs.rs). No requiere mas reorganizacion.~~
 
 ### Fase 2 Ob: Timer, Semaphore, Section [COMPLETADO]
@@ -443,13 +445,14 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 ~~Requieren nuevos tipos en el Object Manager y extensión de las syscalls Ob existentes.~~
 
 | ID | Tarea | Estado | Syscalls |
-|----|-------|--------|----------|
+| ---- | ------- | -------- | ---------- |
 | OBF-10 | Timer Object: create (oneshot/periodic, period_ms), set, cancel | ~~COMPLETADO~~ | ob_create(Timer) via RAX 61, ob_set_info(TimerStart/TimerCancel), ob_wait(Timer) |
 | OBF-11 | Semaphore Object: create (initial_count, max_count), release, wait | ~~COMPLETADO~~ | ob_create(Semaphore) via RAX 61, ob_set_info(SemaphoreRelease), ob_wait(Semaphore) |
 | OBF-12 | Section Object: create (size, prot), map_view, unmap | ~~COMPLETADO~~ | ob_create(Section) via RAX 61, ob_set_info(MapView), ob_set_info(UnmapView) |
 | OBF-13 | Registry Key Object: open, create key, query/set value, enum | 🔶 PENDIENTE | v0.50 (B2.1) |
 
 **Criterio de aceptación cumplido:**
+
 - ✅ Timer: `ob_create(Timer, period_ms=1000)` + `ob_wait(timer_fd)` → despierta al expirar
 - ✅ Semaphore: `ob_create(Semaphore, initial=0, max=5)` + `ob_set_info(SemaphoreRelease)` + `ob_wait(sem_fd)` → OK
 - ✅ Section: `ob_create(Section, size=4096, prot=RW)` → fd → `ob_set_info(MapView)` → dirección mapeada
@@ -459,38 +462,38 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### v0.48 (NeoFS estabilidad — VFS Fase 2/4 — NET-1 F1-F4 — DHCP)
 
-* [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
-* [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
-* [x] **VFS-1.3. Eliminar stale namespace entries** — COMPLETADO en v0.48.1: ob_remove_by_id(), cleanup en destroy/close
-* [x] **VFS-1.4. HandleTable → ObObject consistency** — COMPLETADO en v0.48.1: is_valid(), close() guardado, has_ob_object() bugfix
-* [x] **v0.48. NeoFS estabilidad** — COMPLETADO en v0.48.2: FS-1.1/1.2/1.3 (dynamic allocators, sector offsets), NS-1.1/1.2 (ownership, protected dirs), CAP_NS_WRITE
-* [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3: 5 métodos pub→pub(crate)
-* [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3: drive_id en clave PageCache
-* [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4: register escanea slots libres (índices estables), find_by_name()
-* [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4: IoStack.stale flag, operaciones fallan en stale
-* [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4: refcounts[], acquire/release, remove() protegido
-* [x] **OBF-07. Unificar ObError y SyscallError** — COMPLETADO: ob_err_to_syscall() + test
-* [x] **B3.3 D8. DHCP client** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático
-* [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
-* [x] **B2.7. Registry disk persistence (cm_flush_key)** — COMPLETADO en v0.48.6: NEOH serialization format, VFS file `C:\System\Registry\<name>.hiv`, dirty tracking, flush on shutdown. Tests: `cm_set_value_persist_roundtrip`, `cm_hive_serialization_integrity`
-* [x] **NET-1 F1-F4** — COMPLETADO en v0.48.5: Ethernet/UDP/ARP builders, ICMP Port Unreachable, socket_send, UDP/TCP dispatch, TCP three-way handshake real
+- [x] **VFS-1.1. Unificar MountManager** — COMPLETADO en v0.47.1
+- [x] **VFS-1.2. Arreglar ownership ObOpen → VFS** — COMPLETADO en v0.48.0
+- [x] **VFS-1.3. Eliminar stale namespace entries** — COMPLETADO en v0.48.1: ob_remove_by_id(), cleanup en destroy/close
+- [x] **VFS-1.4. HandleTable → ObObject consistency** — COMPLETADO en v0.48.1: is_valid(), close() guardado, has_ob_object() bugfix
+- [x] **v0.48. NeoFS estabilidad** — COMPLETADO en v0.48.2: FS-1.1/1.2/1.3 (dynamic allocators, sector offsets), NS-1.1/1.2 (ownership, protected dirs), CAP_NS_WRITE
+- [x] **VFS-2.1. Privatizar métodos de NeoFS** — COMPLETADO en v0.48.3: 5 métodos pub→pub(crate)
+- [x] **VFS-2.4. PageCache con contexto de drive** — COMPLETADO en v0.48.3: drive_id en clave PageCache
+- [x] **VFS-4.1. Device IDs estables** — COMPLETADO en v0.48.4: register escanea slots libres (índices estables), find_by_name()
+- [x] **VFS-4.2. Hot-unload safety** — COMPLETADO en v0.48.4: IoStack.stale flag, operaciones fallan en stale
+- [x] **VFS-4.3. Refcount de block devices** — COMPLETADO en v0.48.4: refcounts[], acquire/release, remove() protegido
+- [x] **OBF-07. Unificar ObError y SyscallError** — COMPLETADO: ob_err_to_syscall() + test
+- [x] **B3.3 D8. DHCP client** — COMPLETADO en v0.48.5: dhcp.rs con Discover/Offer/Request/Ack, arranque automático
+- [x] **B2.1 Z6. Registry hive database** — COMPLETADO en v0.48.0
+- [x] **B2.7. Registry disk persistence (cm_flush_key)** — COMPLETADO en v0.48.6: NEOH serialization format, VFS file `C:\System\Registry\<name>.hiv`, dirty tracking, flush on shutdown. Tests: `cm_set_value_persist_roundtrip`, `cm_hive_serialization_integrity`
+- [x] **NET-1 F1-F4** — COMPLETADO en v0.48.5: Ethernet/UDP/ARP builders, ICMP Port Unreachable, socket_send, UDP/TCP dispatch, TCP three-way handshake real
 
 ### NET-1.5..NET-1.15: Networking userland [COMPLETED]
 
-* [x] **NET-1.5. libneodos: SOCKET constants + wrappers** | Files: `libneodos/src/syscall.rs`
+- [x] **NET-1.5. libneodos: SOCKET constants + wrappers** | Files: `libneodos/src/syscall.rs`
   - Añadido `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv = 23`, y wrappers `ob_socket_create/connect/bind/listen/send/recv/close`.
   - Añadido `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) con macro `ob_syscall_5!`.
 
-* [x] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Files: `src/object/types.rs`, `src/syscall/ob.rs`
+- [x] **NET-1.6. Kernel: ObInfoClass::SocketRecv (class 23)** | Files: `src/object/types.rs`, `src/syscall/ob.rs`
   - Handler en `ob_query_info` copia `socket.recv_buf` a usuario; si vacío retorna `-EAGAIN`.
   - Tests: `net_socket_recv_data`, `net_socket_recv_empty`.
 
-* [x] **NET-1.8. net.nxl: userland network library** | Files: `libnet/` (new), `libnet-nxl/` (new)
+- [x] **NET-1.8. net.nxl: userland network library** | Files: `libnet/` (new), `libnet-nxl/` (new)
   - NXL slot 3 (`0x1e0c0000`). API (16 funciones): `iface_count/info/stats`, `socket_create/bind/connect/listen/send/recv/close`, `set_ip/get_ip/get_gateway/get_mask/get_dhcp_bound`.
   - `libnet/` — static library wrapper con lazy loading via `loadlib`.
   - `sys_cm_set_value` añadido a libneodos.
 
-* [x] **NET-1.15. netcfg.nxe: network service** | Files: `userbin/netcfg/` (new)
+- [x] **NET-1.15. netcfg.nxe: network service** | Files: `userbin/netcfg/` (new)
   - Servicio auto-iniciado por NeoInit. Lee Registry (`DHCPEnabled`), aplica IP estática o espera DHCP del kernel.
   - Si DHCP falla, asigna APIPA (169.254.1.1). Corre como daemon.
   - `ObSetInfoClass::SetNicIp = 27` para aplicar IP desde userspace.
@@ -498,11 +501,11 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### OB-FIX-001: Ob Socket object_id perdido en operaciones socket [COMPLETED]
 
-* [x] **Causa raíz:** `SocketConnect` y el primer brazo duplicado de `SocketBind` usaban `entry.offset` para obtener el `socket_id`. Durante la creación del socket, `HandleEntry::ob_object(ob_id, socket_id)` recibe `socket_id` como `_access_mask`, que es **descartado** en el cuerpo de la función (siempre fija `offset: 0`). Por tanto, `entry.offset` siempre es 0 para sockets → `socket_id == 0` → `BadF`.
+- [x] **Causa raíz:** `SocketConnect` y el primer brazo duplicado de `SocketBind` usaban `entry.offset` para obtener el `socket_id`. Durante la creación del socket, `HandleEntry::ob_object(ob_id, socket_id)` recibe `socket_id` como `_access_mask`, que es **descartado** en el cuerpo de la función (siempre fija `offset: 0`). Por tanto, `entry.offset` siempre es 0 para sockets → `socket_id == 0` → `BadF`.
 
   **Adicional:** Existían dos brazos `SocketBind` con la misma guarda (`info_class == SocketBind`). El primero (buggy, offset) matcheaba antes que el segundo (correcto, `ob_lookup`), dejando el brazo correcto como código muerto.
 
-* [x] **Análisis:**
+- [x] **Análisis:**
   1. `handler_ob_set_info` en `syscall/ob.rs:2070-2088`: Primer brazo `SocketBind` que usaba `entry.offset` como socket_id. **Eliminado.**
   2. `handler_ob_set_info` en `syscall/ob.rs:2051-2068`: `SocketConnect` que usaba `entry.offset` como socket_id. **Corregido** para usar `ob_lookup(entry.object_id).native_id`.
   3. Todos los demás brazos del mismo handler (`SocketListen`, `SocketSend`, `SocketClose`, `SocketRecv`) ya usaban correctamente `ob_lookup`.
@@ -510,17 +513,17 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   5. `socket_send` para UDP sólo acumulaba datos en `send_buf` sin transmitirlos. **Corregido** para transmitir directamente usando `socket_send_udp_raw` (extrae `local`/`remote`, suelta el lock de SOCKET_MANAGER para evitar inversión de locks con NIC_REGISTRY, construye y envía el datagrama UDP).
   6. Añadido `nic_set_mask` y `nic_get_mask` al `NicRegistry` para persistir la máscara de subred.
 
-* [x] **Archivos modificados:**
+- [x] **Archivos modificados:**
   - `neodos-kernel/src/syscall/ob.rs`: SocketConnect corregido, brazo SocketBind duplicado eliminado, SetNicIp actualizado
   - `neodos-kernel/src/net/socket.rs`: `socket_send` ahora transmite UDP en lugar de bufferizar; `socket_send_udp_raw` añadida
   - `neodos-kernel/src/net/nic.rs`: Añadido campo `mask` a `NicSlot`, funciones `get_mask`/`set_mask`
   - `userbin/dhcpd/src/main.rs`: Habilitado flujo DORA (crea socket UDP, bind a puerto 68, connect a broadcast 255.255.255.255:67, ejecuta `DhcpClient::run()`)
 
-* [x] **Tests:** 641/641 kernel tests pasan. Ningún otro tipo de objeto (file, process, event, mutex, timer, semaphore, section, pipe, etc.) se ve afectado porque todos usan `ob_lookup(entry.object_id).native_id` o `entry.offset` solo como posición de lectura/escritura para archivos.
+- [x] **Tests:** 641/641 kernel tests pasan. Ningún otro tipo de objeto (file, process, event, mutex, timer, semaphore, section, pipe, etc.) se ve afectado porque todos usan `ob_lookup(entry.object_id).native_id` o `entry.offset` solo como posición de lectura/escritura para archivos.
 
 ### NFSv2-FSCK: fsck para NE2 [COMPLETED]
 
-* [x] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs`
+- [x] **NFSv2-FSCK. fsck para formato NE2** | Prereqs: NFSv2-FILESYSTEM | Files: `src/fs/fsck.rs`
   - Verificar checksum del superblock. Walk completo del B-tree verificando CRC32 de cada nodo.
   - Verificar que freelist + used_blocks = total_blocks.
   - Modo repair: reconstruir freelist desde B-tree walk.
@@ -531,54 +534,54 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### AUDIT-66..71: Documentación corregida [COMPLETED]
 
-* [x] **AUDIT-66. ARCHITECTURE_SOURCE_OF_TRUTH.md Event struct layout wrong** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md:379-390`
+- [x] **AUDIT-66. ARCHITECTURE_SOURCE_OF_TRUTH.md Event struct layout wrong** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md:379-390`
   - Documents Event as `source: u8`, `timestamp: u32`, `flags: u16` with no `driver_target` field. Actual code has `source: EventSource` (u32), `timestamp: u64`, `flags: u32`, plus `driver_target: u32` present. Corregido para coincidir con el código.
   - **Tests:** (docs fix only)
 
-* [x] **AUDIT-67. boot.md KERNEL_VERSION_CODE at v0.10.5** | Files: `docs/boot.md:100`
+- [x] **AUDIT-67. boot.md KERNEL_VERSION_CODE at v0.10.5** | Files: `docs/boot.md:100`
   - `KERNEL_VERSION_CODE = (10 << 8) | 5 = 0x0A05` correspondía a v0.10.5. Actualizado a `(49 << 8) | 0 = 0x3100` (v0.49.0).
   - **Tests:** (docs fix only)
 
-* [x] **AUDIT-68. roadmap.md version says v0.48** | Files: `docs/roadmap.md:3`
+- [x] **AUDIT-68. roadmap.md version says v0.48** | Files: `docs/roadmap.md:3`
   - "Current: **v0.48**" cambiado a **v0.49.0**.
   - **Tests:** (docs fix only)
 
-* [x] **AUDIT-69. Test count outdated in testing.md and ARCHITECTURAL_VISION.md** | Files: `docs/testing.md:5`, `docs/ARCHITECTURAL_VISION.md:96,778`
+- [x] **AUDIT-69. Test count outdated in testing.md and ARCHITECTURAL_VISION.md** | Files: `docs/testing.md:5`, `docs/ARCHITECTURAL_VISION.md:96,778`
   - `testing.md` y `ARCHITECTURAL_VISION.md` decían "537 tests". Actualizado a **656**.
   - **Tests:** (docs fix only)
 
-* [x] **AUDIT-70. filesystem.md structs missing checksum/version fields** | Files: `docs/filesystem.md:13-79`
+- [x] **AUDIT-70. filesystem.md structs missing checksum/version fields** | Files: `docs/filesystem.md:13-79`
   - Superblock ya tenía `version: u32`. Eliminada referencia a `BLOCK_CACHE` (eliminado en v0.49 VFS-5.1). Documentación de cache layers actualizada.
   - **Tests:** (docs fix only)
 
-* [x] **AUDIT-71. syscalls.md missing Socket and Registry info classes** | Files: `docs/syscalls.md:284-296`
+- [x] **AUDIT-71. syscalls.md missing Socket and Registry info classes** | Files: `docs/syscalls.md:284-296`
   - `sys_ob_query_info` ampliado de 2 clases a 24 (0-23). `sys_ob_set_info` ampliado de 11 clases a 28 (0-27). `sys_ob_create` ahora incluye `Socket=18`.
   - **Tests:** (docs fix only)
 
 ### AUDIT-23..29 + DH1: Documentación corregida [COMPLETED]
 
-* [x] **AUDIT-23. NEM v3 header docs contradict code** | Files: `docs/ARCHITECTURE.md`, `docs/drivers.md`, `src/nem/mod.rs`
+- [x] **AUDIT-23. NEM v3 header docs contradict code** | Files: `docs/ARCHITECTURE.md`, `docs/drivers.md`, `src/nem/mod.rs`
   - Fixed offset table (added padding row at 26, corrected all subsequent offsets). Rewrote `drivers.md` table to match actual `NemHeaderV3` struct.
-* [x] **AUDIT-24. libneodos.md: syscall instruction vs int 0x80** | Files: `docs/libneodos.md`
+- [x] **AUDIT-24. libneodos.md: syscall instruction vs int 0x80** | Files: `docs/libneodos.md`
   - Changed "syscall instruction" → "int 0x80".
-* [x] **AUDIT-25. libneodos.md: user.ld base addr wrong** | Files: `docs/libneodos.md`
+- [x] **AUDIT-25. libneodos.md: user.ld base addr wrong** | Files: `docs/libneodos.md`
   - Changed "placing code at 0x400000" → "linking at address 0; runtime loads at 0x400000".
-* [x] **AUDIT-26. scheduler.md: CpuRunQueue field names wrong** | Files: `docs/scheduler.md`
+- [x] **AUDIT-26. scheduler.md: CpuRunQueue field names wrong** | Files: `docs/scheduler.md`
   - Fixed field names (head/tail → head_idx/tail_idx), added missing `count: u16`.
-* [x] **AUDIT-27. objects.md: SocketRecv class 23 (re-check)** | Files: `docs/objects.md`
+- [x] **AUDIT-27. objects.md: SocketRecv class 23 (re-check)** | Files: `docs/objects.md`
   - Already correct — SocketRecv=23 consistent everywhere.
-* [x] **AUDIT-28. memory.md: kernel_image base wrong** | Files: `docs/memory.md`
+- [x] **AUDIT-28. memory.md: kernel_image base wrong** | Files: `docs/memory.md`
   - Already fixed in prior audit.
-* [x] **AUDIT-29. Version mismatch AGENTS/Cargo/CHANGELOG** | Files: `AGENTS.md`, `neodos-kernel/Cargo.toml`
+- [x] **AUDIT-29. Version mismatch AGENTS/Cargo/CHANGELOG** | Files: `AGENTS.md`, `neodos-kernel/Cargo.toml`
   - Fixed: `Cargo.toml` bumped from 0.48.0 → 0.49.0.
-* [x] **DH1. Actualizar README.md** | Files: `README.md`
+- [x] **DH1. Actualizar README.md** | Files: `README.md`
   - Updated version badge to v0.49.0, test count to 656.
 
 ---
 
 ### SM-001. Service Manager [COMPLETED]
 
-* [x] **SM-001. Service Manager (kernel)** | Prereqs: CM-FIX | Files: `src/services/` (new), `src/object/types.rs`, `src/syscall/mod.rs`, `src/syscall/ob.rs`, `src/globals.rs`, `src/main.rs`, `libneodos/src/syscall.rs`, `scripts/gen_system_hiv.py`
+- [x] **SM-001. Service Manager (kernel)** | Prereqs: CM-FIX | Files: `src/services/` (new), `src/object/types.rs`, `src/syscall/mod.rs`, `src/syscall/ob.rs`, `src/globals.rs`, `src/main.rs`, `libneodos/src/syscall.rs`, `scripts/gen_system_hiv.py`
   - `ObType::Service = 20` en `src/object/types.rs`
   - 3 nuevos `ObInfoClass` (29=ServiceState, 30=ServiceConfig, 31=ServiceStatus)
   - 4 nuevos `ObSetInfoClass` (33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig)
@@ -594,7 +597,7 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### PM-PHASE1. HAL ACPI primitives [COMPLETED]
 
-* [x] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
+- [x] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
   - `reboot()`: ACPI reset register → 0xCF9 → PS/2 fallback chain.
   - `acpi_parse_fadt()`: RSDP → RSDT/XSDT → FADT. PM1a/b, S5 sleep type, reset register.
   - `acpi_s5_write()`: SLP_TYPa + SLP_EN to PM1a control register.
@@ -606,7 +609,7 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### KBD-PHASE1. NeoKBD kernel module [COMPLETED]
 
-* [x] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Files: `src/kbd/`, `src/object/types.rs`, `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs`, `docs/design/neokbd-design.md`
+- [x] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Files: `src/kbd/`, `src/object/types.rs`, `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs`, `docs/design/neokbd-design.md`
   - `ObType::KeyboardDevice = 22`, `ObInfoClass` 35-37, `ObSetInfoClass` 43-47.
   - 5 new Event Bus types (27-31): KEYDOWN, KEYUP, KEY_CHAR, KBD_MODIFIER, KBD_REPEAT.
   - `NeoKbd` struct with state, config, layouts, modifiers, dead key engine.
@@ -620,7 +623,7 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### KBD-PHASE2. ps2kbd simplification + kbdcompile [COMPLETED]
 
-* [x] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Files: `drivers/ps2kbd/`, `tools/kbdcompile/`, `data/keyboard/`
+- [x] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Files: `drivers/ps2kbd/`, `tools/kbdcompile/`, `data/keyboard/`
   - ps2kbd simplified: removed layout tables, translate_scancode, dead key logic (~150 lines).
   - `tools/kbdcompile/`: .klc → .kbd compiler. Supports US and Spanish layouts.
   - `.kbd` binary format: magic + version + name + lang_tag + 256 key entries + compose table.
@@ -630,14 +633,22 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### ADM-NEOKEY. neokey CLI utility [COMPLETED]
 
-* [x] **ADM-NEOKEY. neokey CLI utility** | Files: `userbin/neokey/`
+- [x] **ADM-NEOKEY. neokey CLI utility** | Files: `userbin/neokey/`
   - Replaces `keyb.nxe`: `NEOKEY show/layout/layouts/repeat/delay/leds`.
   - Uses `libneodos::keyboard::*` API.
   - Integrated into disk image via `neodev/src/image.rs`.
 
+### SH-TOKEN+QUOTE. Shell tokenizer + quoting [COMPLETED]
+
+- [x] **SH-TOKEN+QUOTE. Shell tokenizer + quoting** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
+  - State machine para pipes, redirects, quoting. `"..."` (expande %VAR%), `'...'` (literal), `^` escape.
+  - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`, `tokenizer_semicolon`, `tokenizer_unmatched_double_quote`, `tokenizer_empty`, `tokenizer_escape_in_double_quote`, `tokenizer_multiple_spaces`
+
+---
+
 ### SH-REDIR. Shell redirection [COMPLETED]
 
-* [x] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
+- [x] **SH-REDIR. Shell redirection (>, <, >>, 2>)** | Prereqs: SH-TOKEN+QUOTE | Files: `userbin/neoshell/src/redir.rs`, `userbin/neoshell/src/tokenizer.rs`
   - Tokenizer parsea `>`, `>>`, `<`, `2>`. Antes del spawn: abrir archivo target via `ob_open`/`ob_create`, `dup2` sobre el fd, spawn.
   - **Tests:** `redirect_stdout_to_file`, `redirect_stdin_from_file`, `redirect_append`, `redirect_stderr`, `redirect_file_not_found`, `redirect_permission_denied`
 
@@ -645,7 +656,7 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ### NET-1.7. Kernel: nic_id + ephemeral port [COMPLETED]
 
-* [x] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
+- [x] **NET-1.7. Kernel: nic_id + ephemeral port** | Prereqs: NET-1 F4 | Files: `src/syscall/ob.rs`, `src/net/socket.rs`
   - Asignar NIC por defecto y puerto efímero (49152-65535) si no especificado.
   - **Tests:** `socket_auto_port_assign`
 

@@ -76,7 +76,7 @@ offset for SeAccessCheck re-verification.
 ## ObType Enum
 
 | Value | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 0 | Unknown | Uninitialized/error |
 | 1 | Process | Process object (waitable on ChildExit) |
 | 2 | Driver | NEM driver object |
@@ -102,7 +102,7 @@ offset for SeAccessCheck re-verification.
 
 ## Namespace Hierarchy
 
-```
+```text
 \ (root)
 ├── \Global\
 │   ├── \Global\Info\              — virtual read-only objects
@@ -162,7 +162,7 @@ offset for SeAccessCheck re-verification.
 Supports 30 info classes:
 
 | Class | Name | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 0 | Basic | Object type + refcount |
 | 1 | Name | Object name string |
 | 2 | File | File size + attributes (VFS) |
@@ -201,7 +201,7 @@ Supports 30 info classes:
 Supports 37 set classes:
 
 | Class | Name | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 0 | ProcessPriority | Set process priority |
 | 1 | ThreadPriority | Set thread priority |
 | 2 | ObjectName | Rename object |
@@ -299,7 +299,7 @@ dedicated URN tests.
 ## ObError Codes
 
 | Value | Name | Meaning |
-|-------|------|---------|
+| ------- | ------ | --------- |
 | 0 | Success | Operation succeeded |
 | -1 | NotFound | Object path not found |
 | -2 | AlreadyExists | Object already exists at path |
@@ -316,7 +316,7 @@ dedicated URN tests.
 The legacy `kobj/` subsystem was eliminated in v0.46. All objects now use the
 Ob architecture. The mapping is straightforward:
 
-```
+```text
 KObjType::X           ->  ObType::X
 kobj_register(t,n,id) ->  ob_create_object(t,n,id,0,None)
 kobj_lookup(id)       ->  ob_lookup(id)

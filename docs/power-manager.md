@@ -13,7 +13,7 @@
 #### Kernel (`neodos-kernel/src/`)
 
 | Archivo | Relevancia |
-|---------|------------|
+| --------- | ------------ |
 | `object/power.rs` | `PowerManager` Ob object at `\System\PowerManager`, `ObType::PowerManager(21)`. Shutdown/reboot via `ob_set_info(PowerShutdown=37/PowerReboot=38)`. |
 | `hal/x64/cpu.rs` | `poweroff()` — QEMU debug ports (0x404, 0x604, 0xB004, 0x4004) + PS/2 reset. `reboot()` — new: 0xCF9 reset + PS/2 reset. |
 | `syscall/handlers.rs` | `handler_poweroff` **removed** (was at lines 229-241). Power management via Ob API. |
@@ -24,12 +24,12 @@
 | `services/mod.rs` | Service Manager: 5-state machine, Registry-backed, ObType::Service (20). `SERVICE_MANAGER` global. |
 | `eventbus/mod.rs:33` | `EVENT_SHUTDOWN = 12` (frozen). No `EVENT_SUSPEND`, `EVENT_HIBERNATE`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`. |
 | `cm/mod.rs` | Registry subsystem: cell-based hive, persistent to `C:\System\Registry\SYSTEM.hiv`. Used by Services, Networking. |
-| `main.rs` | PHASE 2.765: `object::power::init_power_manager()` — registers `\System\PowerManager`. `\System` added to namespace dirs. | 
+| `main.rs` | PHASE 2.765: `object::power::init_power_manager()` — registers `\System\PowerManager`. `\System` added to namespace dirs. |
 
 #### HAL
 
 | Primitivo | Estado |
-|-----------|--------|
+| ----------- | -------- |
 | `poweroff()` ✅ | QEMU debug ports + PS/2 reset. Also available via PowerManager Ob object. |
 | `reboot()` ✅ | `outb(0xCF9, 0x06)` + PS/2 reset. Available via PowerManager Ob object. |
 | `acpi_fadt()` ✅ | `src/power/acpi.rs` — RSDP→RSDT/XSDT→FADT parse. PM1a/b control block, S5 sleep type, reset register. |
@@ -57,7 +57,7 @@
 ### 1.2 Diagnóstico: qué existe vs. qué falta
 
 | Funcionalidad | Existe | Dónde |
-|--------------|--------|-------|
+| -------------- | -------- | ------- |
 | Apagado básico | ✅ | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown)` — via Object Manager |
 | Reboot | ✅ | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerReboot)` — via Object Manager |
 | Reinicio básico | ❌ | No hay syscall dedicada |
@@ -115,7 +115,7 @@ El Power Manager debe ser un **subsistema del kernel**, no un servicio Ring 3, p
 
 ### 3.2 Architectural overview
 
-```
+```text
                      User applications (Ring 3)
                      ┌──────────────────────────┐
                      │  libneodos API            │
@@ -256,18 +256,18 @@ pub const EVENT_POWER_SOURCE_CHANGE: EventType = 26; // AC ↔ battery switch (f
 
 ### 3.4 New info classes for `ob_query_info` / `ob_set_info`
 
-#### New ObQueryInfoClass variants (power):
+#### New ObQueryInfoClass variants (power)
 
 | Class | Name | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 32 | PowerPlanInfo | Get active plan info: name, policies |
 | 33 | PowerStatus | Get system power state: state, capabilities |
 | 34 | PowerSystemState | Get overall system power state enum |
 
-#### New ObSetInfoClass variants (power):
+#### New ObSetInfoClass variants (power)
 
 | Class | Name | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | 37 | PowerShutdown | Initiate coordinated shutdown |
 | 38 | PowerReboot | Initiate coordinated reboot |
 | 39 | PowerSuspend | Initiate S3 suspend (future) |
@@ -280,7 +280,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 ### 3.5 New files/modules
 
 | Path | Responsibility |
-|------|----------------|
+| ------ | ---------------- |
 | `src/power/mod.rs` | `PowerManager` struct, `POWER_MANAGER` global, initialization |
 | `src/power/plan.rs` | `PowerPlan`, `PowerPolicies`, serialization/deserialization to/from Registry |
 | `src/power/coordinator.rs` | Shutdown/reboot coordination: notify services, drivers, flush, halt |
@@ -290,7 +290,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 ### 3.6 Changes to existing files
 
 | File | Change |
-|------|--------|
+| ------ | -------- |
 | `src/object/types.rs` | Add `PowerManager = 21` to `ObType` enum |
 | `src/hal/x64/cpu.rs` | Add `reboot()` → `!` and `acpi_s5_write()` extern "C" functions |
 | `src/hal/x64/mod.rs` | Export new HAL primitives |
@@ -309,7 +309,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 
 ### 3.7 Power coordination flow (shutdown example)
 
-```
+```text
 1. User app calls power_shutdown()
 2. libneodos: ob_open("\Device\PowerManager") → fd
 3. libneodos: ob_set_info(fd, PowerShutdown, NULL, 0) → ! (doesn't return)
@@ -330,7 +330,7 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 
 Persistent configuration at `\Registry\Machine\System\Power\`:
 
-```
+```text
 \Registry\Machine\System\Power
 ├── ActivePlan (REG_DWORD) = 0  // 0=Balanced, 1=Performance, 2=PowerSaver
 ├── LidAction (REG_DWORD) = 1   // PowerAction enum
@@ -395,6 +395,7 @@ pub struct PowerSystemStatus {
 **Descripción:** El Power Manager se ejecuta como un servicio Ring 3 (ObType::Service), con acceso al hardware via syscalls existentes (`outb`, MMIO mapping). Se comunica con el kernel solo para operaciones que requieren Ring 0 (registries flush, CPU halt).
 
 **Rechazada porque:**
+
 1. **Latencia:** shutdown/reboot requieren ejecución atómica al final. Un servicio Ring 3 puede ser killado o no responder.
 2. **Complejidad de seguridad:** requeriría escalar capacidades (CAP_PORTIO, CAP_MMIO) a un proceso de usuario, abriendo superficie de ataque.
 3. **Sincronización:** apagar otros CPUs (IPI) y detener el scheduler solo puede hacerse desde Ring 0.
@@ -406,6 +407,7 @@ pub struct PowerSystemStatus {
 **Descripción:** Modificar `sys_poweroff (RAX=42)` para aceptar flags: `0=shutdown`, `1=reboot`, `2=suspend`. Añadir configuración via Registry pero sin objeto en el namespace.
 
 **Rechazada porque:**
+
 1. Viola la regla arquitectónica: toda nueva funcionalidad debe pasar por Ob (`RAX ≥ 77 → sys_ob_*`).
 2. No escala a consultas de planes, políticas, ni eventos de power.
 3. No permite que aplicaciones consulten el estado sin abrir un objeto.
@@ -416,6 +418,7 @@ pub struct PowerSystemStatus {
 **Descripción:** El Service Manager existente absorbe las responsabilidades de power: `SERVICE_CONTROL_SHUTDOWN`, `SERVICE_CONTROL_REBOOT`.
 
 **Rechazada porque:**
+
 1. Mezcla dominios: servicios son procesos de usuario, power es infraestructura de kernel.
 2. Service Manager podría estar siendo shutdown él mismo.
 3. No tiene acceso HAL natural.
@@ -426,7 +429,7 @@ pub struct PowerSystemStatus {
 ## 5. Affected Components
 
 | Subsystem | Impact | Details |
-|-----------|--------|---------|
+| ----------- | -------- | --------- |
 | **Object Manager** | Medium | Add `ObType::PowerManager(21)`, register singleton at boot |
 | **HAL** | High | Add `reboot()`, `acpi_fadt_parse()`, `acpi_s5_write()` ABI functions |
 | **Syscall dispatch** | Medium | New info classes 32–34, 37–42 in existing `ob_query_info`/`ob_set_info` |
@@ -485,6 +488,7 @@ pub struct PowerSystemStatus {
 ### 6.6 `ob_set_info(PowerSetPolicy = 42)` on `\Device\PowerManager` handle
 
 - **Args:** `fd` = handle, `class` = 42, `buf` = `PowerPolicyUpdate` struct, `size` = 12.
+
   ```rust
   #[repr(C)]
   pub struct PowerPolicyUpdate {
@@ -492,6 +496,7 @@ pub struct PowerSystemStatus {
       pub value: u64,
   }
   ```
+
 - **Returns:** 0 on success, `-Inval` for unknown policy_id, `-Perm` (no admin).
 - **Preconditions:** None.
 
@@ -535,7 +540,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.1 Power Manager initialization (4 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 1 | `POWER_MANAGER.lock()` after Phase 3.883 returns valid state `Active` | State == Active |
 | 2 | `\Device\PowerManager` exists in Ob namespace after init | ob_lookup_path succeeds |
 | 3 | `ob_query_info(PowerPlanInfo)` returns Balanced plan with default policies | Balanced plan, DisplayTimeout=300 |
@@ -544,7 +549,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.2 Power plan switching (4 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 5 | `ob_set_info(PowerSetPlan)` with plan=0, then query returns Balanced | plan.name == Balanced |
 | 6 | `ob_set_info(PowerSetPlan)` with plan=1, then query returns Performance | plan.name == Performance |
 | 7 | `ob_set_info(PowerSetPlan)` with plan=99 returns `-Inval` | Error code -1 |
@@ -553,7 +558,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.3 Policy modification (4 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 9 | `ob_set_info(PowerSetPolicy)` changes DisplayTimeout to 600 | query returns 600 |
 | 10 | `ob_set_info(PowerSetPolicy)` with invalid policy_id returns `-Inval` | Error code -1 |
 | 11 | After policy change, Registry value is updated | cm_query_value matches |
@@ -562,7 +567,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.4 Shutdown coordination (4 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 13 | Shutdown transitions state from Active → ShuttingDown | state == ShuttingDown |
 | 14 | Shutdown dispatches `EVENT_SHUTDOWN` and `EVENT_SHUTDOWN_PHASE2` | Event bus observers notified |
 | 15 | Shutdown calls `cm_flush_all_hives()` before `HAL::poweroff()` | (verified via mock) |
@@ -571,7 +576,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.5 ACPI detection (3 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 17 | FADT present → `acpi_parse_fadt()` returns valid `pm1a_ctrl_blk`, `s5_slp_typa` | Fields non-zero |
 | 18 | FADT absent → capabilities.supports_s5 == false | Falls back to QEMU ports |
 | 19 | Reset register present in FADT → `acpi_parse_fadt()` returns valid reset_reg | reset_reg.address != 0 |
@@ -579,7 +584,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.6 HAL primitives (3 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 20 | `reboot()` called → does not return (test in QEMU) | Process exits, QEMU resets |
 | 21 | `poweroff()` updated → tries ACPI S5 first, then QEMU ports, then PS/2 | Chain verified |
 | 22 | `acpi_s5_write()` with valid PM1a writes correct SLP_TYP | PM1a register readback matches |
@@ -587,7 +592,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ### 7.7 libneodos wrappers (3 tests)
 
 | # | Test | Expected |
-|---|------|----------|
+| --- | ------ | ---------- |
 | 23 | `power_get_active_plan()` returns valid `PowerPlanInfo` | plan_info fields match Registry |
 | 24 | `power_set_active_plan(Performance)` succeeds and updates Registry | Registry ActivePlan == 1 |
 | 25 | `power_reboot()` called from user binary → system resets | QEMU exits with reset code |
@@ -597,6 +602,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 ## 8. Implementation Plan
 
 ### Step 1: HAL primitives (2 days)
+
 **Files:** `src/hal/x64/cpu.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
 
 1. Add `reboot()`: ACPI reset register → QEMU debug port 0xCF9 → PS/2 → `halt()`
@@ -606,6 +612,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 5. Add `#[used]` ABI retention statics for new functions
 
 ### Step 2: Power Manager core (3 days)
+
 **Files:** `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`, `src/power/acpi.rs`
 
 1. `src/power/acpi.rs`: wrap `acpi_parse_fadt()`, store `AcpiPowerState`
@@ -618,6 +625,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 4. `src/power/coordinator.rs`: `shutdown()`, `reboot()` coordination logic
 
 ### Step 3: ObType and namespace (0.5 day)
+
 **Files:** `src/object/types.rs`, `main.rs`
 
 1. Add `PowerManager = 21` to `ObType` enum
@@ -627,6 +635,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
    - Store `ObId` in PowerManager for fast handle resolution
 
 ### Step 4: Syscall dispatch (1 day)
+
 **Files:** `src/syscall/ob.rs`, `src/syscall/mod.rs`
 
 1. In `handler_ob_set_info`: add match arms for classes 37–42
@@ -637,6 +646,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 3. Update `ASSIGNED` array in `mod.rs` (no new RAX needed — uses existing Ob syscalls)
 
 ### Step 5: Event Bus + ABI freeze (0.5 day)
+
 **Files:** `src/eventbus/mod.rs`, `src/abi_freeze.rs`
 
 1. Add event types 19–26 to `eventbus/mod.rs`
@@ -644,12 +654,14 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 3. Add new types to the frozen validation table
 
 ### Step 6: Service Manager integration (0.5 day)
+
 **Files:** `src/services/mod.rs`
 
 1. Add `ServiceManager::stop_all()`: iterate services in reverse dependency order, stop each with timeout
 2. `stop_all()` called by `PowerCoordinator::shutdown()` before `EVENT_SHUTDOWN_PHASE2`
 
 ### Step 7: Registry defaults (0.5 day)
+
 **Files:** `src/cm/mod.rs`
 
 1. Add `Power\ActivePlan = 0`, `Power\LidAction = 1`, `Power\PowerButtonAction = 3`
@@ -657,6 +669,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 3. All in `cm_ensure_default_values()`
 
 ### Step 8: libneodos wrappers (1 day)
+
 **Files:** `libneodos/src/syscall.rs`, `libneodos/src/power.rs` (new)
 
 1. `libneodos/src/power.rs`: `power_shutdown()`, `power_reboot()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`
@@ -665,6 +678,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 4. Update `libneodos/src/lib.rs` to export power module
 
 ### Step 9: Shell commands (0.5 day)
+
 **Files:** `userbin/neoshell/`
 
 1. Add `REBOOT` built-in: calls `libneodos::power_reboot()`
@@ -672,12 +686,14 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 3. Both require admin check (currently all processes are admin)
 
 ### Step 10: Tests (2 days)
+
 **Files:** `src/power/mod.rs` (add `#[test_case]` blocks)
 
 1. Implement tests from Section 7
 2. Add QEMU-based integration test for actual reboot/shutdown (manual test)
 
 ### Step 11: Documentation (0.5 day)
+
 **Files:** `docs/syscalls.md`, `docs/objects.md`, `docs/eventbus.md`, `docs/power-manager.md`
 
 1. Document new ObQueryInfoClass/ObSetInfoClass variants in `docs/syscalls.md`
@@ -705,7 +721,7 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 The design accommodates without redesign:
 
 | Future feature | How it fits |
-|----------------|-------------|
+| ---------------- | ------------- |
 | Battery monitoring | New event types `EVENT_BATTERY_LOW`, `EVENT_POWER_SOURCE_CHANGE`. New query class `PowerBatteryInfo`. |
 | CPU frequency scaling | New `CpuPolicy` variant + integration with `CPUID`/MSR throttling via HAL. |
 | Multiple user profiles | Per-user power plans stored under `HKEY_CURRENT_USER\Control Panel\Power`. |

@@ -8,7 +8,7 @@ or on demand via `sys_driver_load` / `loadnem.nxe`.
 
 ## Format Overview
 
-```
+```text
 ┌─────────────────────────────┐
 │ NEM v3 Header (80 bytes)    │
 ├─────────────────────────────┤
@@ -31,7 +31,7 @@ or on demand via `sys_driver_load` / `loadnem.nxe`.
 ## NEM v3 Header (80 bytes)
 
 | Offset | Size | Field | Description |
-|--------|------|-------|-------------|
+| -------- | ------ | ------- | ------------- |
 | 0 | 4 | `magic` | `"NEM3"` (0x334D454E) |
 | 4 | 4 | `version` | Format version (3) |
 | 8 | 4 | `header_size` | 80 |
@@ -58,7 +58,7 @@ or on demand via `sys_driver_load` / `loadnem.nxe`.
 ## Relocation Entry (12 bytes)
 
 | Offset | Size | Field | Description |
-|--------|------|-------|-------------|
+| -------- | ------ | ------- | ------------- |
 | 0 | 4 | `offset` | Byte offset from section base |
 | 4 | 2 | `section` | `0`=text, `1`=rodata, `2`=data |
 | 6 | 1 | `r_type` | Relocation type (`R_NEM_*`) |
@@ -68,7 +68,7 @@ or on demand via `sys_driver_load` / `loadnem.nxe`.
 ### Relocation types
 
 | Name | Value | Formula |
-|------|-------|---------|
+| ------ | ------- | --------- |
 | `R_NEM_NONE` | 0 | No operation |
 | `R_NEM_64` | 1 | `S + A` (64-bit absolute) |
 | `R_NEM_PC32` | 2 | `S + A - P` (32-bit PC-relative) |
@@ -81,7 +81,7 @@ Where `S` = symbol value, `A` = addend, `P` = place address.
 ## Symbol Entry (16 bytes)
 
 | Offset | Size | Field | Description |
-|--------|------|-------|-------------|
+| -------- | ------ | ------- | ------------- |
 | 0 | 4 | `name_off` | Offset into string table |
 | 4 | 4 | `value` | Section offset (0 for UNDEF) |
 | 8 | 2 | `section` | Section index (`0xFFFF` = UNDEF) |
@@ -91,6 +91,7 @@ Where `S` = symbol value, `A` = addend, `P` = place address.
 ## Sections
 
 Sections are laid out sequentially after the header in this order:
+
 1. **Text** — Executable code (read-only)
 2. **Rodata** — Read-only data (constants, string literals)
 3. **Data** — Initialized read-write data
@@ -102,6 +103,7 @@ The loader allocates `total_mem_size` bytes and loads text/rodata/data from the 
 ## ABI Compatibility
 
 Drivers declare three ABI version fields:
+
 - `abi_min` — Minimum kernel ABI the driver can work with
 - `abi_target` — The ABI version the driver was compiled for (preferred)
 - `abi_max` — Maximum kernel ABI the driver can work with
@@ -118,7 +120,7 @@ and driver lifecycle.
 
 ## Driver Lifecycle States
 
-```
+```text
 Unloaded → Loaded → Initialized → Registered → Bound → Active
                              ↓                        ↓
                           Faulted                 Unloading → Unloaded

@@ -13,7 +13,7 @@
 ## Resources
 
 | Document | Contents |
-|----------|----------|
+| ---------- | ---------- |
 | [`ARCHITECTURE_PACKAGE_MANAGER.md`](ARCHITECTURE_PACKAGE_MANAGER.md) | Complete architecture: format, components, Ob integration, security, transactions, CLI, API, comparison with APT/Pacman/Cargo/Nix |
 | [`IMPROVEMENTS.md`](../IMPROVEMENTS.md) sec PKG-1 | Implementation tracking, phases, tasks |
 | `userbin/neoget/` | CLI source (future) |
@@ -21,7 +21,7 @@
 
 ## Quick reference
 
-```
+```text
 neoget install  <name>      # Install package
 neoget remove   <name>      # Remove package
 neoget list                 # List installed
@@ -41,6 +41,7 @@ neoget doctor               # Diagnose issues
 See [`ARCHITECTURE_PACKAGE_MANAGER.md`](ARCHITECTURE_PACKAGE_MANAGER.md) §13 for the full roadmap (v1-v5).
 
 **Phase 1 — Foundation (v1 core):**
+
 - `.nxp` parser in `libneopkg`
 - `INSTALL`, `REMOVE`, `LIST`, `INFO` in `neoget`
 - Registry-backed database via Cm syscalls

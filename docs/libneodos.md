@@ -9,7 +9,7 @@
 The project uses three independent Cargo packages with separate `Cargo.toml` files, not a Cargo workspace:
 
 | Package | Location | Target | Description |
-|---------|----------|--------|-------------|
+| --------- | ---------- | -------- | ------------- |
 | neodos-bootloader | `neodos-bootloader/` | UEFI | UEFI bootloader |
 | neodos-kernel | `neodos-kernel/` | freestanding | Kernel binary |
 | libneodos | `libneodos/` | `x86_64-unknown-none` | User-mode library |
@@ -25,8 +25,9 @@ SSDT (System Service Dispatch Table): 256-slot `lazy_static` array mapping RAX n
 All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is the negative errno on failure.
 
 **Foundation syscalls** (RAX 0-29):
+
 | Name | RAX | Signature | Description |
-|------|-----|-----------|-------------|
+| ------ | ----- | ----------- | ------------- |
 | `exit` | 0 | `(code: i32) -> !` | Terminate process |
 | `write` | 1 | `(fd: u64, buf: &[u8]) -> usize` | Write to file/pipe |
 | `yield` | 2 | `() -> ()` | Yield CPU |
@@ -49,8 +50,9 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `set_exception_handler` | 29 | `(handler: usize) -> ()` | Set exception handler |
 
 **Extended syscalls** (RAX 40-76):
+
 | Name | RAX | Description |
-|------|-----|-------------|
+| ------ | ----- | ------------- |
 | `wait_alertable` | 40 | Wait with alertable flag |
 | `sleep_ex` | 41 | Sleep with microsecond resolution |
 | `poweroff` | _(removed)_ | Use `ob_power_shutdown()` via Ob API |
@@ -58,13 +60,14 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `ob_power_reboot` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerReboot)` |
 | `chdir_parent` | 47 | Change to parent directory |
 | `cursor_blink` | 53 | Toggle cursor blink |
-| `fsck` | _(removed)_ | Ob API | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
+| `fsck` | _(removed — Ob API)_ | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
 | `driver_unload` | 58 | Unload a NEM driver |
 | `poll` | 59 | Poll multiple fds for readiness |
 
 **Object Manager syscalls** (RAX 60-66, the Ob API):
+
 | Name | RAX | Description |
-|------|-----|-------------|
+| ------ | ----- | ------------- |
 | `ob_open` | 60 | Open Ob object by path → handle |
 | `ob_create` | 61 | Create Ob object (File, Directory, Pipe, etc.) |
 | `ob_query_info` | 62 | Query object info (ReadContent, VfsDirEnum, etc.) |
@@ -74,8 +77,9 @@ All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is t
 | `ob_destroy` | 66 | Destroy Ob object |
 
 **Registry syscalls** (RAX 67-76, the Cm API):
+
 | Name | RAX | Description |
-|------|-----|-------------|
+| ------ | ----- | ------------- |
 | `cm_open_key` | 67 | Open registry key |
 | `cm_create_key` | 68 | Create registry key |
 | `cm_query_value` | 69 | Read registry value |
@@ -132,6 +136,7 @@ pub fn munmap(addr: u64, size: u64);                                // sys_munma
 ```
 
 Constants:
+
 - `PROT_READ: i32` = 1
 - `PROT_WRITE: i32` = 2
 - `MAP_ANONYMOUS: i32` = 0x20
@@ -199,12 +204,14 @@ All output macros append `\r\n` for CRLF line endings (NT console convention). I
 ## How to Create a User Binary
 
 1. **Cargo.toml**: Add dependency:
+
    ```toml
    [dependencies]
    libneodos = { path = "../libneodos" }
    ```
 
 2. **Target**: Configure `.cargo/config.toml`:
+
    ```toml
    [build]
    target = "x86_64-unknown-none"
@@ -212,11 +219,13 @@ All output macros append `\r\n` for CRLF line endings (NT console convention). I
    ```
 
 3. **Linker script**: Use `user.ld` linking at address 0 (runtime loading places code starting at `0x400000` via ASLR slot):
-   ```
+
+   ```toml
    cargo:rustc-link-arg=-Tuser.ld
    ```
 
 4. **Entry point**:
+
    ```rust
    #![no_std]
    #![no_main]
@@ -237,7 +246,7 @@ The resulting ELF binary is the `.NXE` file placed in the disk image at `\Progra
 NXL (NeoDOS eXecutable Library) files are loaded via `sys_loadlib` (RAX 21) into region `0x1e000000..0x1e200000` (2 MB total). Divided into 8 slots of 256 KB each.
 
 | Slot | NXL | Load Policy | Description |
-|------|-----|-------------|-------------|
+| ------ | ----- | ------------- | ------------- |
 | 0 | `libneodos.nxl` | Auto-loaded at boot | Core user library routines |
 | 1 | `libmath.nxl` | Manual (`sys_loadlib`) | Math library |
 | 2 | `console.nxl` | Lazy-loaded by console module | Terminal I/O, history, completion, progress bar |

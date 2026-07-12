@@ -14,7 +14,7 @@
 **Nada.** El código actual contiene:
 
 | Componente | Strings | Mé todo de salida |
-|------------|---------|-------------------|
+| ------------ | --------- | ------------------- |
 | NeoShell | ~21 user-facing | `write_str(b"literal")` → `sys_write` |
 | NeoInit | ~17 | `write_str(b"literal")` → `sys_write` |
 | corehelp | ~16 + help blocks | `write_str(b"literal")` |
@@ -25,7 +25,7 @@
 
 ### 1.2 Mecanismo de carga de NXLs (relevante para i18n)
 
-```
+```text
 0x1e00_0000  Slot 0: libneodos.nxl (auto-load, ABI v7)
 0x1e04_0000  Slot 1: math.nxl
 0x1e08_0000  Slot 2: console.nxl (lazy-load via AtomicU64)
@@ -35,6 +35,7 @@
 ```
 
 Patrón de lazy-load existente (desde `console.rs`):
+
 ```rust
 static BASE: AtomicU64 = AtomicU64::new(0);
 fn get_table() -> Option<&'static Table> {
@@ -52,7 +53,7 @@ fn get_table() -> Option<&'static Table> {
 Actualmente existe `\Registry\Machine\System\CurrentControlSet\Control` con `WaitForNetwork`.
 No existe entrada de locale. La ruta propuesta sigue el estándar NT:
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Control\Locale
   Language        REG_SZ  "en"
   Locale          REG_SZ  "en_US.UTF-8"
@@ -77,7 +78,7 @@ No hay formateo, no hay placeholders, no hay tabla de traducción.
 
 Formato propio, binario, diseñado para carga rápida y bajo consumo:
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │ Magic: "NLT\0" (4 bytes)                     │
 │ Version: u32 LE (= 1)                        │
@@ -103,6 +104,7 @@ Formato propio, binario, diseñado para carga rápida y bajo consumo:
 ```
 
 **Campos:**
+
 - `Magic`: 4 bytes `NLT\0` (0x00544C4E LE)
 - `Version`: 1 (u32 LE). Permite evolución del formato.
 - `Count`: número de entradas (u32 LE). Máximo 65535.
@@ -116,7 +118,7 @@ Formato propio, binario, diseñado para carga rápida y bajo consumo:
 ### 2.2 Justificación del formato
 
 | Decisión | Alternativa | Por qué NLT |
-|----------|------------|-------------|
+| ---------- | ------------ | ------------- |
 | Sin hash | HashMap requiere ~2KB+ de overhead + cálculo de hash | O(n) con n<500 es ~10-50μs; hash añade complejidad sin beneficio real |
 | Sin JSON/XML | Legible pero parseo costoso y verboso | NLT se mapea directo a memoria (`mmap` o `read` plano), sin parseo |
 | Sin gettext .mo | .mo es específico de GNU, requiere toolchain externa | NLT es autónomo, el formato cabe en 50 líneas de Rust |
@@ -124,6 +126,7 @@ Formato propio, binario, diseñado para carga rápida y bajo consumo:
 | Claves en inglés | `"file.notfound"` como clave única, no el string original | Evita ambigüedad, permite cambiar el inglés también |
 
 **Tamaño estimado por aplicación:**
+
 - 100 claves × (8 bytes de overhead + 20 bytes de clave + 40 bytes de valor) ≈ 7 KB
 - Total para ~30 aplicaciones ≈ 210 KB comprimido en disco
 - La aplicación solo carga su propio archivo, no el de otras
@@ -132,7 +135,7 @@ Formato propio, binario, diseñado para carga rápida y bajo consumo:
 
 Tesitura jerárquica con puntos:
 
-```
+```text
 file.notfound       → "File not found"
 file.permission     → "Permission denied"
 cmd.help.header     → "Available commands:"
@@ -149,7 +152,7 @@ status.done         → "Done"
 
 ## 3. Organización de Archivos en Disco
 
-```
+```text
 C:\System\Locale\
   ├── en-US\
   │   ├── neoshell.nlt
@@ -171,7 +174,7 @@ C:\System\Locale\
 ### 3.1 Justificación
 
 | Decisión | Por qué |
-|----------|---------|
+| ---------- | --------- |
 | Un archivo por aplicación | Una aplicación no necesita cargar traducciones de otras. Menos I/O, menos memoria. |
 | Un directorio por idioma | Fácil de añadir/quitar idiomas. `ls C:\System\Locale\` lista idiomas disponibles. |
 | Archivo por aplicación, no por idioma | Cada `.nlt` es pequeño (~7 KB). Carga completa en RAM. Sin lecturas aleatorias. |
@@ -275,7 +278,7 @@ Nota: `format_str` es una función auxiliar que reemplaza `{0}`, `{1}`, etc. en 
 
 ### 5.1 Fuente de verdad: Registry
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Control\Locale
   Language  REG_SZ  "es"
   Locale    REG_SZ  "es_ES.UTF-8"
@@ -283,7 +286,7 @@ Nota: `format_str` es una función auxiliar que reemplaza `{0}`, `{1}`, etc. en 
 
 ### 5.2 Flujo de selección
 
-```
+```text
 i18n_init()
   → cm_open_key("\Registry\Machine\System\CurrentControlSet\Control\Locale")
   → cm_query_value("Locale") o ("Language")
@@ -317,7 +320,7 @@ Cuando exista el sistema de usuarios (USR-P2), el locale se almacenará también
 
 ### 6.1 Cadena de resolución de archivos
 
-```
+```text
 i18n_load("neoshell")
   → LOCALE = "es-ES"
   → 1. C:\System\Locale\es-ES\neoshell.nlt  (español de España)
@@ -329,7 +332,7 @@ i18n_load("neoshell")
 
 ### 6.2 Cadena de resolución de claves
 
-```
+```text
 i18n_get("file.notfound")
   → 1. Busca en el .nlt cargado para esta app
   → 2. Busca en locale.nlt (traducciones del runtime)
@@ -343,7 +346,7 @@ i18n_get("file.notfound")
 
 Cuando `i18n_load("neoshell")` carga es-ES, también carga automáticamente `en-US/neoshell.nlt` si existe. Así las claves no traducidas en es-ES caen en en-US sin I/O adicional en caliente.
 
-```
+```text
 Carga real:
   es-ES/neoshell.nlt → tabla A (100 claves)
   en-US/neoshell.nlt → tabla B (100 claves, cargada solo si difiere)
@@ -359,7 +362,7 @@ Consulta:
 ### 7.1 Estrategia
 
 | Aspecto | Decisión | Justificación |
-|---------|----------|---------------|
+| --------- | ---------- | --------------- |
 | Cuándo se carga | Al llamar `i18n_load()` | La aplicación decide cuándo. Típicamente al inicio. |
 | Dónde se almacena | En una `Vec<NltTable>` estática por-app en libneodos | Un NLT cabe en ~7 KB. Múltiples tablas son <50 KB. |
 | Liberación | `i18n_unload()` o al salir de la app | Se puede registrar un destructor vía `on_exit`. |
@@ -419,6 +422,7 @@ fn load_nlt(path: &str) -> Result<NltTable, i64> {
 ### 8.1 Cambios en main.rs
 
 **Antes:**
+
 ```rust
 fn main() -> ! {
     write_str(b"Type HELP for a list of commands.\r\n");
@@ -429,6 +433,7 @@ fn main() -> ! {
 ```
 
 **Después:**
+
 ```rust
 fn main() -> ! {
     let _ = libneodos::i18n_init();        // lee locale del Registry
@@ -446,7 +451,7 @@ fn main() -> ! {
 ### 8.2 Lista de claves para neoshell
 
 | Clave actual | Clave i18n | Propósito |
-|-------------|------------|-----------|
+| ------------- | ------------ | ----------- |
 | `b"C:\\"` (fallback CWD) | `prompt.cwd_fallback` | Default CWD en prompt |
 | `b"> "` | `prompt.suffix` | Prompt suffix |
 | `b"Type HELP for a list of commands.\r\n"` | `prompt.startup_hint` | Mensaje de bienvenida |
@@ -489,6 +494,7 @@ fn main() -> ! {
 ```
 
 Donde `APP_NAME` es una constante al inicio de cada binario:
+
 ```rust
 const APP_NAME: &str = "neoinit";  // o "corehelp", "coredir", etc.
 ```
@@ -496,7 +502,7 @@ const APP_NAME: &str = "neoinit";  // o "corehelp", "coredir", etc.
 ### 9.2 Aplicaciones objetivo (Fase 1)
 
 | App | Strings | Priority |
-|-----|---------|----------|
+| ----- | --------- | ---------- |
 | NeoShell | 16 | Crítica — primer contacto del usuario |
 | NeoInit | 12 | Alta — mensajes de boot |
 | corehelp | 14 | Alta — help del sistema |
@@ -520,10 +526,12 @@ neologon, neotop, neostat, neotask, neocfg, neofs, neolog, ping, ipconfig, dhcpd
 ### 10.1 locale.nxl — Runtime de traducción (opcional)
 
 Si el volumen de datos lo justifica, se puede crear un `locale.nxl` en slot 4 que centralice:
+
 - `locale_load()`, `locale_get()`, `locale_list()` como funciones NXL
 - Las aplicaciones llaman a libneodos que delega al NXL
 
 **Decisión:** Empezar sin NXL. Todo el runtime cabe en libneodos como Rust nativo. El NXL solo se justifica si:
+
 - El conjunto de datos crece >100 KB por aplicación
 - Se necesita compartir tablas entre procesos
 - La carga en caliente requiere aislamiento
@@ -532,7 +540,7 @@ Si el volumen de datos lo justifica, se puede crear un `locale.nxl` en slot 4 qu
 
 Nuevo archivo: `libneodos/src/i18n.rs`
 
-```
+```text
 libneodos/src/
   ├── lib.rs          + pub mod i18n;
   ├── i18n.rs         ← NUEVO: 300-400 líneas
@@ -542,6 +550,7 @@ libneodos/src/
 ```
 
 `i18n.rs` contiene:
+
 - `NltTable` struct (formato en memoria)
 - `i18n_init()` — lectura de Registry
 - `i18n_load()` — carga de archivo .nlt
@@ -585,6 +594,7 @@ dialog.show_confirm(&msg);
 ### 11.3 Bidireccionalidad (RTL)
 
 El sistema de fallback por locale permite añadir soporte RTL en el futuro:
+
 - `\Registry\Machine\...\Locale\Layout` = `"rtl"`
 - La GUI consulta esta clave para espejar el layout
 - El runtime i18n no necesita cambios (los strings RTL están en el .nlt)
@@ -597,7 +607,7 @@ El sistema de fallback por locale permite añadir soporte RTL en el futuro:
 
 Binario .NXE que valida y gestiona archivos .nlt:
 
-```
+```text
 NEOLOCALE validate <file.nlt>        → verifica formato, duplicados
 NEOLOCALE check <dir>                → busca claves faltantes entre idiomas
 NEOLOCALE diff <base> <target>       → compara dos archivos .nlt
@@ -607,7 +617,7 @@ NEOLOCALE stats <dir>                → estadísticas de traducción
 
 ### 12.2 Funciones de validación
 
-```
+```text
 validate(nlt):
   ✓ Magic "NLT\0"
   ✓ Version == 1
@@ -625,7 +635,7 @@ validate(nlt):
 ### 13.1 gettext-like .mo
 
 | Aspecto | .mo | NLT (elegido) |
-|---------|-----|---------------|
+| --------- | ----- | --------------- |
 | Formato | Binario, específico de GNU | Binario propio, 50 líneas de Rust |
 | Dependencia | Necesita toolchain gettext | Ninguna |
 | Búsqueda | Hash table (compleja) | O(n) lineal (simple, rápida para n<500) |
@@ -638,7 +648,7 @@ validate(nlt):
 ### 13.2 Archivo plano TOML/INI
 
 | Aspecto | TOML | NLT (elegido) |
-|---------|------|---------------|
+| --------- | ------ | --------------- |
 | Parseo | Necesita parser TOML completo | Mapeo directo a memoria |
 | Tamaño | ~50% overhead frente a binario | ~5% overhead (offsets) |
 | Velocidad de carga | ~500μs (parseo) | ~10μs (mmap + validación) |
@@ -651,7 +661,7 @@ validate(nlt):
 Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 
 | Aspecto | Compilado en .NXE | .nlt externo (elegido) |
-|---------|-------------------|----------------------|
+| --------- | ------------------- | ---------------------- |
 | Cambiar idioma | Recompilar | Editar archivo en disco |
 | Tamaño .NXE | Crece ~10 KB por idioma | No crece |
 | Añadir idioma | Recompilar todas las apps | Crear directorio + archivos |
@@ -666,7 +676,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### 14.1 Métricas objetivo
 
 | Operación | Objetivo | Estimación |
-|-----------|----------|------------|
+| ----------- | ---------- | ------------ |
 | `i18n_init()` | <100 μs | 1 lectura de Registry + parseo |
 | `i18n_load("app")` | <50 μs | 1 open + 1 read de ~7 KB + validación |
 | `i18n_get("clave")` | <1 μs | Scan lineal de ~100 entradas |
@@ -691,7 +701,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### 15.1 Tests unitarios (en `libneodos/src/i18n.rs`)
 
 | Test | Descripción |
-|------|-------------|
+| ------ | ------------- |
 | `i18n_parse_nlt_valid` | Parsear .nlt válido de 3 entradas |
 | `i18n_parse_nlt_magic_invalid` | Magic incorrecto → error |
 | `i18n_parse_nlt_truncated` | Archivo truncado → error |
@@ -712,7 +722,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### 15.2 Tests de integración (en `auto_test.py`)
 
 | Test | Descripción |
-|------|-------------|
+| ------ | ------------- |
 | `i18n_neoshell_spanish` | Boot con locale=es, verificar prompt en español |
 | `i18n_neoshell_english` | Boot con locale=en, verificar prompt en inglés |
 | `i18n_switch_locale_runtime` | Cambiar Registry + reload, verificar nuevo idioma |
@@ -721,7 +731,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### 15.3 Tests de herramientas
 
 | Test | Descripción |
-|------|-------------|
+| ------ | ------------- |
 | `neolocale_validate_valid` | Validar .nlt bien formado → OK |
 | `neolocale_check_missing` | Detectar clave faltante entre es-ES y en-US |
 | `neolocale_create_empty` | Crear .nlt vacío → válido |
@@ -734,7 +744,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### Fase 1 — Runtime básico (v0.54)
 
 | Paso | Archivos | Descripción |
-|------|----------|-------------|
+| ------ | ---------- | ------------- |
 | 1.1 | `libneodos/src/i18n.rs` (nuevo) | `NltTable`, `i18n_get()`, `i18n_load()`, `tr!()`, parseo de .nlt |
 | 1.2 | `libneodos/src/lib.rs` | `pub mod i18n;` |
 | 1.3 | `libneodos/src/syscall.rs` | Añadir `sys_cm_query_value` si no existe wrapper para leer Registry |
@@ -744,7 +754,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### Fase 2 — Archivos .nlt + migración de NeoShell (v0.54)
 
 | Paso | Archivos | Descripción |
-|------|----------|-------------|
+| ------ | ---------- | ------------- |
 | 2.1 | `scripts/create_ne2_image.py` | Añadir `C:\System\Locale\en-US\*.nlt` al disco |
 | 2.2 | `scripts/build.sh` | Generar .nlt desde plantillas (o crearlos manualmente) |
 | 2.3 | `userbin/neoshell/src/main.rs` | `i18n_init()`, `i18n_load("neoshell")`, reemplazar strings por `tr!(...)` |
@@ -753,7 +763,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### Fase 3 — Migración de NeoInit + apps core (v0.54)
 
 | Paso | Archivos | Descripción |
-|------|----------|-------------|
+| ------ | ---------- | ------------- |
 | 3.1 | `userbin/neoinit/src/main.rs` | `i18n_init()`, `i18n_load("neoinit")`, migrar strings |
 | 3.2 | `userbin/corehelp/src/main.rs` | Migrar strings |
 | 3.3 | `userbin/coredir/src/main.rs` | Migrar strings |
@@ -763,7 +773,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### Fase 4 — Segundo idioma + localización (v0.55+)
 
 | Paso | Archivos | Descripción |
-|------|----------|-------------|
+| ------ | ---------- | ------------- |
 | 4.1 | `locale/es-ES/*.nlt` | Crear traducciones al español |
 | 4.2 | `locale/ca-ES/*.nlt` | Crear traducciones al catalán |
 | 4.3 | `userbin/neoshell/` | Añadir comando `LANG` para cambiar locale en caliente |
@@ -772,7 +782,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ### Fase 5 — Herramientas restantes + GUI prep (v0.56+)
 
 | Paso | Archivos | Descripción |
-|------|----------|-------------|
+| ------ | ---------- | ------------- |
 | 5.1 | Apps Fase 2 (neologon, neotop, etc.) | Migrar strings |
 | 5.2 | `libneodos/src/i18n.rs` | Añadir `format_str()` con placeholders `{N}` |
 | 5.3 | `libneodos/src/i18n.rs` | Añadir caché LRU para hot path |
@@ -783,7 +793,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ## 17. Componentes Afectados
 
 | Sub sistema | Cambio | Complejidad |
-|-------------|--------|-------------|
+| ------------- | -------- | ------------- |
 | `libneodos/src/i18n.rs` | Nuevo archivo (~350 líneas) | M |
 | `libneodos/src/lib.rs` | + `pub mod i18n;` | S |
 | `libneodos/src/macros.rs` | + `tr!()` macro | S |
@@ -803,7 +813,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 ## 18. Riesgos
 
 | Riesgo | Probabilidad | Impacto | Mitigación |
-|--------|-------------|---------|------------|
+| -------- | ------------- | --------- | ------------ |
 | .nlt no se encuentra en disco | Alta (primeros despliegues) | Bajo | `tr!("clave")` devuelve la clave, no panic |
 | Formato .nlt cambia en el futuro | Media | Medio | Version field en header permite evolución |
 | Carga de archivos falla por permisos | Baja | Bajo | Error silencioso, fallback a key literal |

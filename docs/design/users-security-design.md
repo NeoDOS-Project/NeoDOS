@@ -13,7 +13,7 @@
 The kernel already has a complete NT-style security foundation in `src/security/`:
 
 | Component | File | Status |
-|-----------|------|--------|
+| ----------- | ------ | -------- |
 | SID (Security Identifier) | `sid.rs` | ✅ Complete — `S-1-5-21-*` format, up to 8 sub-authorities |
 | Token | `token.rs` | ✅ Complete — SID, groups, 12 privilege bits, session_id |
 | ACE / ACL | `acl.rs` | ✅ Complete — Allow/Deny, canonical ordering |
@@ -28,7 +28,7 @@ The kernel already has a complete NT-style security foundation in `src/security/
 ### 1.2 Security Subsystem — What Is Missing
 
 | Gap | Impact | Since |
-|-----|--------|-------|
+| ----- | -------- | ------- |
 | SAM not wired to process creation | All processes get DEFAULT_ADMIN_TOKEN | v0.44 |
 | No login/authentication flow | No way to authenticate, no sessions | never |
 | Group SIDs not checked in SeAccessCheck | `token.groups` unused by ACL evaluation | v0.44 |
@@ -69,6 +69,7 @@ struct Eprocess {
 ```
 
 **Token lifecycle:**
+
 - PID 0 (Idle): `Token::new_admin()`
 - PID 1 (NeoInit): `DEFAULT_ADMIN_TOKEN.clone()`
 - Ring 3 processes: `DEFAULT_USER_TOKEN` → then overwritten by parent's token via `parent_ep.token.clone()`
@@ -94,6 +95,7 @@ struct Eprocess {
 ### 2.1 What Model Does NeoDOS Currently Follow?
 
 NeoDOS follows an **NT-inspired hybrid model**:
+
 - **Process creation**: `CreateProcess`-style (spawn + load ELF, no fork)
 - **Object Manager**: NT `Ob` namespace with handles, types, security descriptors
 - **Security**: NT `Token` + `SID` + `ACL` + `SeAccessCheck`
@@ -121,6 +123,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 ### 2.4 Where Should User Information Live?
 
 **Decision: Token is the right abstraction** — NeoDOS already has it. User identity is `Token.sid`. What's missing:
+
 1. A name→SID mapping (SAM database — already exists but unwired)
 2. A session object to group processes under a login
 3. A way to set a process's token at creation time that differs from the parent
@@ -129,7 +132,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 ### 2.5 Components That Must Change
 
 | Component | Change Required |
-|-----------|----------------|
+| ----------- | ---------------- |
 | `src/security/sam.rs` | Wire to filesystem, add write-back on mutation |
 | `src/security/token.rs` | Add UserProfile reference, creation audit |
 | `src/scheduler/mod.rs` | Token-based process creation, session tracking |
@@ -145,7 +148,7 @@ NeoDOS follows an **NT-inspired hybrid model**:
 ### 2.6 Components That Should NOT Change
 
 | Component | Reason |
-|-----------|--------|
+| ----------- | -------- |
 | VirtIO drivers | Unrelated to security |
 | Network stack | Unrelated (except socket permission checks — future) |
 | NEM driver format | Already has capability flags |
@@ -253,7 +256,7 @@ enum IntegrityLevel {
 ### 3.5 Justification
 
 | Decision | Why |
-|----------|-----|
+| ---------- | ----- |
 | User/Group not Ob objects | They are administrative metadata, not runtime resources. SAM is a flat-file database. Making them Ob objects would clutter the namespace with administrative entries. |
 | Session IS an Ob object | Sessions are runtime entities that group processes. They need namespace visibility, enumeration (`who` command), and security descriptor support. |
 | Token remains per-process | NT model: token is the process security identity. Threads share the process token. No need for per-thread tokens initially. |
@@ -296,7 +299,7 @@ SetIntegrityLevel = 32,  // Lower process integrity level
 
 ### 4.4 Namespace Layout
 
-```
+```text
 \Session
   \1              ← session 1 (user "admin")
   \2              ← session 2 (user "jdoe")
@@ -307,7 +310,7 @@ SetIntegrityLevel = 32,  // Lower process integrity level
 
 ### 4.5 API Examples
 
-```
+```text
 // Create session (login):
 ob_handle = ob_create("\Session\2", Session, ...)
 → creates Session object, allocates Token, assigns to process
@@ -398,7 +401,7 @@ fn check_vfs_access(token: &Token, node_mode: u16, owner_sid: Option<&Sid>,
 Implemented at VFS `create()` and `mkdir()` time:
 
 | Extension | Owner | Group | Other | Notes |
-|-----------|-------|-------|-------|-------|
+| ----------- | ------- | ------- | ------- | ------- |
 | .NXE | user | users | R-X | Ring 3 executables |
 | .NEM | admin | system | R | Kernel drivers |
 | .NXL | user | users | R-X | User libraries |
@@ -410,7 +413,7 @@ Implemented at VFS `create()` and `mkdir()` time:
 ### 5.4 Enforcement Points
 
 | Operation | Where | Check |
-|-----------|-------|-------|
+| ----------- | ------- | ------- |
 | `open(path, flags)` | `handler_ob_open` | `check_vfs_access(token, mode, owner, R or W or X)` |
 | `create(dir, name)` | `handler_ob_create → mkdir/create` | `check_vfs_access(token, dir_mode, dir_owner, W)` |
 | `read(fd)` | `ob_query_info(ReadContent)` | Check already done at open time |
@@ -426,7 +429,7 @@ Implemented at VFS `create()` and `mkdir()` time:
 
 Store per-user configuration under a dedicated hive:
 
-```
+```text
 \Registry\User\{sid}
   \Environment          ← environment variables (PATH, TEMP, etc.)
   \Console              ← console settings (colors, buffer size)
@@ -459,7 +462,7 @@ Each EPROCESS has an `owner_sid` field (derived from `token.sid` at creation tim
 
 The existing token inheritance model is modified:
 
-```
+```text
 spawn(parent, binary):
   if parent has SE_CREATE_TOKEN_PRIVILEGE:
     token = create_token(sid, groups, privileges)  // NEW: spawn with different identity
@@ -477,15 +480,19 @@ spawn(parent, binary):
 ### 7.3 Session Assignment
 
 When a process is spawned within an existing session:
-```
+
+```text
 eproc.session_id = parent.session_id
 ```
+
 When a login creates a new session:
-```
+
+```text
 eproc.session_id = new_session.session_id
 ```
 
 All processes in a session share the same session_id in their tokens. This enables:
+
 - `ob_enum(\Session\{id})` → list all processes in a session
 - `SessionLock` → suspend all processes in the session
 - Clean session termination on logoff
@@ -497,7 +504,7 @@ All processes in a session share the same session_id in their tokens. This enabl
 ### 8.1 New Commands
 
 | Command | Description | Implementation |
-|---------|-------------|----------------|
+| --------- | ------------- | ---------------- |
 | `WHOAMI` | Print current username and SID | `ob_query_info(process_fd, TokenInfo, &buf)` → extract SID → SAM lookup |
 | `LOGIN` | Authenticate and create session | Spawns `neologon.nxe` with current identity |
 | `PASSWD` | Change password | `ob_set_info(session_fd, ChangePassword, &data)` |
@@ -506,7 +513,7 @@ All processes in a session share the same session_id in their tokens. This enabl
 
 ### 8.2 Login Flow (NeoLogon)
 
-```
+```text
 NeoInit boots
   ↓
 Spawns neologon.nxe (PID 2)
@@ -529,14 +536,16 @@ Shell runs as user
 ### 8.3 Privilege Escalation (SUDO concept)
 
 A `RUNAS` command:
-```
+
+```text
 RUNAS [/USER:admin] command.nxe
   → spawns command.nxe with admin token
   → requires secedit consent or admin password
 ```
 
 A `SU` command:
-```
+
+```text
 SU [username]
   → spawns new shell as username
   → requires authentication
@@ -546,7 +555,7 @@ SU [username]
 
 ## 9. System Startup Flow
 
-```
+```text
 UEFI
   ↓
 Kernel Phase 1-3 (hardware init)
@@ -588,7 +597,7 @@ Shell ready — user can run commands, spawn new sessions
 
 NT-style: **discretionary access control** with owner-managed permissions.
 
-```
+```text
 Object
   ├── Owner SID (can always change permissions)
   ├── Group SID (used for group-based access)
@@ -624,7 +633,7 @@ const ACCESS_SYSTEM: u32    = 0x0200_0000;  // SACL access
 Simple "no write up" policy prevents low-integrity compromise of high-integrity objects:
 
 | Level | Typical Processes | Can Write To |
-|-------|-------------------|--------------|
+| ------- | ------------------- | -------------- |
 | System | Kernel, drivers, NeoInit | Everything |
 | High | Admin processes, login | System, High, Medium, Low |
 | Medium | User processes | Medium, Low |
@@ -636,7 +645,7 @@ Implementation: each process token has an `integrity_level`. Each object has an 
 ### 10.4 Privilege Model (12 bits — unchanged from current)
 
 | Bit | Privilege | Description |
-|-----|-----------|-------------|
+| ----- | ----------- | ------------- |
 | 0 | `SE_CREATE_TOKEN` | Create Token objects |
 | 1 | `SE_TCB` | Act as part of the OS |
 | 2 | `SE_LOAD_DRIVER` | Load/unload device drivers |
@@ -665,7 +674,7 @@ Admin bypass (from current `SeAccessCheck`) is preserved: admin tokens skip all 
 No new syscalls needed. All operations go through the existing Ob API:
 
 | Action | API | Notes |
-|--------|-----|-------|
+| -------- | ----- | ------- |
 | Create session | `sy_ob_create(Session)` | Creates Session object, returns fd |
 | Query session | `sy_ob_query_info(SessionInfo)` | Returns session state/data |
 | Query token | `sy_ob_query_info(TokenInfo)` | Returns process token info |
@@ -699,7 +708,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 11.3 Error Codes
 
 | Error | Value | Meaning |
-|-------|-------|---------|
+| ------- | ------- | --------- |
 | `EACCES` | -4 | Access denied |
 | `ENOENT` | -2 | User/session not found |
 | `EEXIST` | -5 | User already exists |
@@ -716,7 +725,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.1 SAM & Authentication
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `sam_create_user_admin` | Create admin user, verify SID |
 | `sam_create_user_duplicate` | Duplicate username returns EEXIST |
 | `sam_authenticate_correct` | Correct password returns Ok |
@@ -730,7 +739,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.2 Session Management
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `session_create` | Create session, verify session_id |
 | `session_create_duplicate` | Same user, new session, different id |
 | `session_query_info` | Query via ObInfoClass::SessionInfo |
@@ -741,7 +750,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.3 NeoFS Permission Enforcement
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `neofs_owner_read_own_file` | Owner can read own file |
 | `neofs_owner_write_own_file` | Owner can write own file |
 | `neofs_owner_delete_own_file` | Owner can delete own file |
@@ -754,7 +763,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.4 Registry Security
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `cm_sec_key_creation_assigns_owner` | New key gets creator's SID |
 | `cm_sec_access_granted` | User can read their own key |
 | `cm_sec_access_denied` | User cannot write admin key |
@@ -764,7 +773,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.5 Integrity Levels
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `integrity_medium_writes_low` | Medium can write to Low object |
 | `integrity_medium_writes_high_denied` | Medium cannot write to High object |
 | `integrity_high_writes_medium` | High can write to Medium object |
@@ -774,7 +783,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 12.6 User Commands
 
 | Test | Description |
-|------|-------------|
+| ------ | ------------- |
 | `whoami_prints_username` | WHOAMI returns current username |
 | `login_success_creates_session` | LOGIN with correct password creates session |
 | `login_failure_no_session` | LOGIN with wrong password returns EAUTH |
@@ -789,9 +798,9 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ### 13.1 Unix-style uid/gid model
 
 | Aspect | Unix | NeoDOS (NT-like) | Decision |
-|--------|------|-------------------|----------|
+| -------- | ------ | ------------------- | ---------- |
 | Identity | u16/u32 integer | SID (variable-length) | SID chosen — already exists, extensible |
-| Groups | gid_t, max 16 groups | Vec<Sid>, unlimited | Vec chosen — NT model, SAM already supports |
+| Groups | gid_t, max 16 groups | Vec\`Sid\`, unlimited | Vec chosen — NT model, SAM already supports |
 | Filesystem | uid/gid in inode | SID in DirEntryV2 | SID chosen — consistent with rest of system |
 | Permissions | rwxrwxrwx (9 bits) | DACL with ACEs | DACL chosen — more expressive, NT standard |
 | Elevation | setuid bit | Token with privileges | Token chosen — SE_* privileges already exist |
@@ -830,7 +839,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ## 14. Affected Components
 
 | Subsystem | Change | Complexity |
-|-----------|--------|------------|
+| ----------- | -------- | ------------ |
 | `src/security/sam.rs` | Wire to Registry persistence, add user CRUD syscalls, password policy | M |
 | `src/security/token.rs` | Add integrity_level, session_ob_id, creation_time | S |
 | `src/security/access.rs` | Add group checking to SeAccessCheck, fix empty DACL semantics | S |
@@ -857,7 +866,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 ## 15. Risks
 
 | Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
+| ------ | ----------- | -------- | ------------ |
 | DirEntryV2 format change breaks existing volumes | Medium | High | Superblock feature flag, backward compat read |
 | SAM password hashing security insufficient | Low | Medium | SHA-256 + 32-byte salt is adequate for v0.5x; migrate to Argon2 in v1.0 |
 | Session management adds complexity to process lifecycle | Medium | Medium | Sessions are lightweight wrappers; processes can exist without sessions (backward compat) |
@@ -874,7 +883,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** SAM wired, tokens work, no permission enforcement yet.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 1.1 | `src/security/sam.rs` | Wire SAM persistence to `\Registry\Machine\SAM` via VFS |
 | 1.2 | `src/security/access.rs` | Fix empty DACL semantics (empty = deny), add group SID checking |
 | 1.3 | `src/security/token.rs` | Add `integrity_level`, `creation_time` fields |
@@ -887,7 +896,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** Sessions work, login possible.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 2.1 | `src/syscall/ob.rs` | Handler for `ob_create(Session)` — create session object, allocate session_id |
 | 2.2 | `src/syscall/ob.rs` | Handler for `ObInfoClass::SessionInfo` (24) |
 | 2.3 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SessionLock/Logoff` (28-29) |
@@ -902,7 +911,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** Files have owners, permissions enforced.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 3.1 | `src/fs/neodos_dir.rs` | Add `owner_sid: Sid` to DirEntryV2 |
 | 3.2 | `src/fs/neodos_v2.rs` | Superblock `FEATURE_OWNER_SID` flag, backward compat read |
 | 3.3 | `src/fs/vfs.rs` | Add `check_vfs_access()` function |
@@ -914,7 +923,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** Registry keys have owners, ACLs enforced.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 4.1 | `src/cm/hive.rs` | Default `sec_desc_cell` on key creation |
 | 4.2 | `src/cm/security.rs` | New: `cm_check_access()` for registry ACL checking |
 | 4.3 | `src/cm/mod.rs` | Wire ACL check in all Cm syscall handlers |
@@ -925,7 +934,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** MIC and privilege enforcement active.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 5.1 | `src/security/access.rs` | Add integrity level check to SeAccessCheck |
 | 5.2 | `src/syscall/ob.rs` | Handler for `ObSetInfoClass::SetIntegrityLevel` (32) — can only lower |
 | 5.3 | `src/syscall/permission.rs` | Wire `has_privilege()` checks in all admin-only syscalls |
@@ -936,7 +945,7 @@ pub fn token_set_integrity_level(fd: i64, level: IntegrityLevel) -> Result<(), i
 **Goal:** User-facing commands work.
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 6.1 | `userbin/neoshell/` | Add `WHOAMI` command |
 | 6.2 | `userbin/neoshell/` | Add `PASSWD` command |
 | 6.3 | `userbin/neoshell/` | Add `WHO` command |

@@ -17,6 +17,7 @@
 3. Loop: `prompt()` → `readline()` → `execute_line()`
 
 Two dispatch paths:
+
 - **Built-in commands** (5): CWD, SET, EXIT, POWEROFF, CALL — handled internally
 - **PATH dispatch**: All other commands probed against `\Programs\*.NXE` via `ob_open`
 
@@ -25,7 +26,7 @@ Two dispatch paths:
 **Hardcoded limits that constrain users:**
 
 | Limit | Value | Impact |
-|-------|-------|--------|
+| ------- | ------- | -------- |
 | Line buffer | 256 bytes | Commands with long paths fail silently |
 | Environment vars | 16 (array) | Complex scripts run out of slot |
 | Env key length | 32 bytes | Descriptive names truncated |
@@ -65,7 +66,7 @@ Two dispatch paths:
 ### Why Existing Abstractions Can't Solve These
 
 | Problem | Why current abstractions fall short |
-|---------|-------------------------------------|
+| --------- | ------------------------------------- |
 | Redirection | No `>` operator : current args split on spaces/TABs only. No file-open-on-spawn semantic. Would need `ob_create` with stdin/stdout override from file fd. |
 | Line editing | `console.nxl`'s `read_byte()` is single-key primitive. The shell builds its own line editor on top. A proper line editor needs buffering, cursor position tracking, and escape sequence parsing. |
 | Env expansion | Shell parses tokens but has no `%VAR%` substitution phase. Would need a post-tokenization pass. |
@@ -128,7 +129,7 @@ pub struct CompletionCtx {
 ### 2.2 New Files
 
 | Path | Purpose |
-|------|---------|
+| ------ | --------- |
 | `userbin/neoshell/src/tokenizer.rs` | Quoting-aware tokenizer: parse `"`, `^`, `%VAR%`, `>`, `>>`, `<`, `\|`, `;` |
 | `userbin/neoshell/src/env.rs` | Environment variable store: `EnvStore`, `%VAR%` expansion, SET parsing |
 | `userbin/neoshell/src/redir.rs` | I/O redirection logic: open file fd, replace stdin/stdout/stderr before spawn |
@@ -141,7 +142,7 @@ pub struct CompletionCtx {
 ### 2.3 Changes to Existing Files
 
 | File | Change |
-|------|--------|
+| ------ | -------- |
 | `userbin/neoshell/src/main.rs` | Reduce to minimal entry: `Shell::new(config)` → `shell.run()`. Extract all subsystems to new modules. |
 | `userbin/neoshell/Cargo.toml` | No new external dependencies needed. |
 | `libneodos/src/args.rs` | Add `write_args_to_addr()` for backward compat with old binaries. |
@@ -152,6 +153,7 @@ pub struct CompletionCtx {
 ### 2.4 No New Syscalls or Ob Types
 
 All improvements are user-mode only. The shell uses existing Ob API:
+
 - `ob_open` / `ob_create` for file redirection
 - `ob_create(PROCESS, attrs=fds)` for spawn with fd encoding
 - `ob_wait` for pipeline synchronization
@@ -177,6 +179,7 @@ enum TokenizerState {
 ```
 
 **Rules:**
+
 - `"hello world"` → single token `hello world`
 - `'hello %PATH%'` → single literal token `hello %PATH%` (no expansion)
 - `echo hello ^| more` → `echo`, `hello |`, `more` (pipe is escaped)
@@ -201,6 +204,7 @@ pub enum RedirKind {
 ```
 
 **Semantics:**
+
 1. Tokenizer parses `>` `>>` `<` `2>` tokens
 2. Before spawn, `Redirection::apply()`:
    - Opens target file via `ob_open` / `ob_create` with appropriate access
@@ -208,6 +212,7 @@ pub enum RedirKind {
 3. After child exits, shell closes the redirected fds
 
 **Example:** `dir > listing.txt`
+
 - Tokenize: `[Word("dir"), RedirectStdout { target: "listing.txt" }]`
 - Remove redirection tokens from command args
 - Open `listing.txt` via `ob_create(file, WriteContent)`, get fd
@@ -234,7 +239,7 @@ pub struct LineEditor {
 **Key sequences (ANSI):**
 
 | Key | Action |
-|-----|--------|
+| ----- | -------- |
 | Left / Ctrl-B | Cursor left (if pos > 0) |
 | Right / Ctrl-F | Cursor right (if pos < len) |
 | Home / Ctrl-A | Jump to line start |
@@ -250,6 +255,7 @@ pub struct LineEditor {
 | Down / Ctrl-N | History next |
 
 **Cursor rendering:**
+
 - Use ANSI escape sequences for real cursor positioning
 - `\x1B[G` — move to column 0
 - `\x1B[{n}C` — move right n columns
@@ -329,7 +335,7 @@ pub struct CompletionEngine {
 ## 4. Affected Components
 
 | Component | Nature of Change |
-|-----------|-----------------|
+| ----------- | ----------------- |
 | `userbin/neoshell/` | Major refactor: extract modules, add tokenizer, editor, history, redirection, completion, environment, batch interpreter |
 | `libneodos/` | Minor: new `sys_ob_create_with_fds()` helper in syscall.rs; backward compat in args.rs |
 | `userbin/cd/` | Update to use new arg mechanism (optional — can keep reading from 0x41F000) |
@@ -344,7 +350,7 @@ pub struct CompletionEngine {
 
 ### Shell Configuration
 
-```
+```rust
 fn ShellConfig::default() -> ShellConfig
   Returns: ShellConfig { line_buf_size: 4096, max_env: 64, history_size: 128,
             path_cache_ttl: 5_000_000_000, history_file_path: "C:\\System\\neoshell.hst" }
@@ -352,7 +358,7 @@ fn ShellConfig::default() -> ShellConfig
 
 ### Tokenizer (`tokenizer.rs`)
 
-```
+```rust
 pub fn tokenize(input: &[u8]) -> (Vec<ShellToken>, Vec<&str>)
   Args: input — raw command line bytes
   Returns: tokens — parsed token stream
@@ -363,7 +369,7 @@ pub fn tokenize(input: &[u8]) -> (Vec<ShellToken>, Vec<&str>)
 
 ### Environment (`env.rs`)
 
-```
+```rust
 impl EnvStore {
     pub fn new() -> Self
     pub fn set(&mut self, key: &[u8], value: &[u8]) -> Result<(), ()>
@@ -378,7 +384,7 @@ impl EnvStore {
 
 ### Redirection (`redir.rs`)
 
-```
+```rust
 pub fn parse_redirects(tokens: &[ShellToken], cwd: &[u8])
     -> (Vec<Vec<u8>>, Vec<Redirection>, Vec<&str>)
   Args: tokens — from tokenizer
@@ -394,7 +400,7 @@ pub fn apply_redirect(redir: &Redirection, drive: u8) -> Result<u8, ()>
 
 ### Line Editor (`editor.rs`)
 
-```
+```rust
 impl LineEditor {
     pub fn new(prompt: &[u8], history: Arc<Mutex<History>>) -> Self
     pub fn read_line(&mut self) -> Result<Vec<u8>, ()>
@@ -407,7 +413,7 @@ impl LineEditor {
 
 ### History (`history.rs`)
 
-```
+```rust
 impl History {
     pub fn new(max_entries: usize, file_path: &[u8]) -> Self
     pub fn add(&mut self, line: &[u8])
@@ -424,7 +430,7 @@ impl History {
 
 ### Completion (`completion.rs`)
 
-```
+```rust
 impl CompletionEngine {
     pub fn new(path_cache_ttl: u64) -> Self
     pub fn complete_command(&mut self, word: &[u8], drive: u8, path_dirs: &[Vec<u8>])
@@ -437,7 +443,7 @@ impl CompletionEngine {
 
 ### Pipeline (`pipeline.rs`)
 
-```
+```rust
 pub fn execute_pipeline(
     commands: &[ParsedCommand],
     drive: u8,
@@ -452,7 +458,7 @@ pub fn execute_pipeline(
 
 ### Batch (`batch.rs`)
 
-```
+```rust
 impl BatchInterpreter {
     pub fn new(file_path: &[u8]) -> Self
     pub fn run(&mut self) -> Result<(), ()>
@@ -468,12 +474,12 @@ impl BatchInterpreter {
 ### Tokenizer Tests
 
 | # | Test | Input → Expected |
-|---|------|-----------------|
+| --- | ------ | ----------------- |
 | 1 | Simple words | `echo hello` → `[Word("echo"), Word("hello")]` |
 | 2 | Double quotes | `echo "hello world"` → `[Word("echo"), Word("hello world")]` |
 | 3 | Single quotes literal | `echo 'hello %PATH%'` → `[Word("echo"), Word("hello %PATH%")]` no expansion |
-| 4 | Escape char | `echo hello ^| more` → `[Word("echo"), Word("hello |"), Word("more")]` |
-| 5 | Pipe token | `cmd1 | cmd2` → `[Word("cmd1"), Pipe, Word("cmd2")]` |
+| 4 | Escape char | `echo hello ^` \| `more` → `[Word("echo"), Word("hello` \| `"), Word("more")]` |
+| 5 | Pipe token | `cmd1` \| `cmd2` → `[Word("cmd1"), Pipe, Word("cmd2")]` |
 | 6 | Redirect stdout | `dir > out.txt` → `[Word("dir"), RedirectStdout("out.txt")]` |
 | 7 | Redirect append | `echo hi >> log.txt` → `[Word("echo"), Word("hi"), RedirectAppend("log.txt")]` |
 | 8 | Redirect stdin | `sort < input.txt` → `[Word("sort"), RedirectStdin("input.txt")]` |
@@ -486,7 +492,7 @@ impl BatchInterpreter {
 ### Environment Expansion Tests
 
 | # | Test | Input → Expected |
-|---|------|-----------------|
+| --- | ------ | ----------------- |
 | 1 | Simple expansion | `%PATH%` with PATH=`\Programs` → `\Programs` |
 | 2 | Multiple expansions | `%A%%B%` → concatenated values |
 | 3 | Unknown var | `%UNDEFINED%` → error |
@@ -498,7 +504,7 @@ impl BatchInterpreter {
 ### Editor Tests
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Basic input | Type `hello\n` → line = `hello` |
 | 2 | Backspace | Type `helloo\x08\n` → line = `hello` |
 | 3 | Left/Right | Type `hel\xc2ll\xc2o\n` → line = `hello` (left arrows) |
@@ -512,7 +518,7 @@ impl BatchInterpreter {
 ### Redirection Tests
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Stdout to file | `echo hello > test.txt` → file contains `hello` |
 | 2 | Append to file | `echo line1 > log.txt; echo line2 >> log.txt` → file contains both lines |
 | 3 | Stdin from file | `sort < input.txt` → sorted output |
@@ -523,19 +529,19 @@ impl BatchInterpreter {
 ### Pipeline Tests
 
 | # | Test | Description |
-|---|------|-------------|
-| 1 | Simple pipe | `dir | sort` → sorted directory listing |
-| 2 | Three-stage pipe | `dir | sort | more` → sorted, paged |
-| 3 | Pipe with redirection | `dir | sort > out.txt` → sorted output to file |
-| 4 | Empty command in pipe | `dir | | sort` → error "Invalid pipe syntax" |
+| --- | ------ | ------------- |
+| 1 | Simple pipe | `dir` \| `sort` → sorted directory listing |
+| 2 | Three-stage pipe | `dir` \| `sort` \| `more` → sorted, paged |
+| 3 | Pipe with redirection | `dir` \| `sort > out.txt` → sorted output to file |
+| 4 | Empty command in pipe | `dir` \| \| `sort` → error "Invalid pipe syntax" |
 | 5 | Pipeline wait | Shell waits for all processes, reports exit codes |
-| 6 | Pipe with built-in | `echo | more` → error "Cannot pipe built-in" |
+| 6 | Pipe with built-in | `echo` \| `more` → error "Cannot pipe built-in" |
 | 7 | Exit code propagation | Pipeline fails if any command returns non-zero (future `&&`) |
 
 ### Batch Tests
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Simple batch | `CALL test.bat` → executes lines |
 | 2 | IF EXIST | `IF EXIST file.txt ECHO found` |
 | 3 | GOTO label | `GOTO :end` → jumps to `:end` |
@@ -547,10 +553,10 @@ impl BatchInterpreter {
 ### Integration Tests
 
 | # | Test | Description |
-|---|------|-------------|
+| --- | ------ | ------------- |
 | 1 | Environment SET/use | `SET NAME=World` then `ECHO %NAME%` → prints "World" |
 | 2 | CWD change + command | `cd \Programs; dir` → lists Programs directory |
-| 3 | Complex pipeline | `dir | find ".nxe" | sort > nxe_list.txt` |
+| 3 | Complex pipeline | `dir` \| `find ".nxe"` \| `sort > nxe_list.txt` |
 | 4 | Quoting with spaces in path | `cd "C:\Program Files"` → changes to dir with space |
 | 5 | Environment in path | `SET TARGET=C:\Out; type %TARGET%\file.txt` |
 | 6 | Semicolon commands | `cls; ver; mem` → three commands sequentially |
@@ -564,7 +570,7 @@ impl BatchInterpreter {
 ### Phase 1: Infrastructure (v0.50.0)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 1.1 | `userbin/neoshell/src/tokenizer.rs` | Implement tokenizer with quoted strings, escape, pipe, redirection, semicolon tokens. |
 | 1.2 | `userbin/neoshell/src/env.rs` | Implement `EnvStore` with dynamic Vec, `%VAR%` expansion, SET parsing. |
 | 1.3 | `userbin/neoshell/src/completion.rs` | Implement `CompletionEngine` with PATH cache and filename completion. |
@@ -576,7 +582,7 @@ impl BatchInterpreter {
 ### Phase 2: Line Editor (v0.50.1)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 2.1 | `userbin/neoshell/src/editor.rs` | Implement `LineEditor` with ANSI cursor control, Ctrl keys, insert/overwrite. |
 | 2.2 | `userbin/neoshell/src/history.rs` | Implement `History` with file persistence, Ctrl-R search. |
 | 2.3 | `userbin/neoshell/src/main.rs` | Replace old `readline()` with new `LineEditor`. Wire Ctrl-R. |
@@ -586,7 +592,7 @@ impl BatchInterpreter {
 ### Phase 3: Pipeline and Scripting (v0.50.2)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 3.1 | `userbin/neoshell/src/pipeline.rs` | Refactor pipeline execution: wait for all processes, collect exit codes. |
 | 3.2 | `userbin/neoshell/src/batch.rs` | Implement batch interpreter: labels, GOTO, IF, FOR, SHIFT. |
 | 3.3 | `userbin/neoshell/src/main.rs` | Wire batch interpreter into `cmd_call()`. Wire `;` command separator. |
@@ -597,7 +603,7 @@ impl BatchInterpreter {
 ### Phase 4: Polish and Docs (v0.50.3)
 
 | Step | Files | Description |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 4.1 | `docs/shell.md` | Update documentation to cover new features. |
 | 4.2 | `userbin/neoshell/src/main.rs` | Code cleanup: remove dead code, deprecated methods. |
 | 4.3 | All Phase 1-3 files | Address edge cases: fuzz test tokenizer, stress test editor, large env sets. |
@@ -619,8 +625,8 @@ impl BatchInterpreter {
 ## 9. Out of Scope (Future)
 
 | Feature | Why not now |
-|---------|-------------|
-| `&&` / `||` conditional chaining | Requires exit code tracking in pipeline, straightforward add-on |
+| --------- | ------------- |
+| `&&` / \| \| conditional chaining | Requires exit code tracking in pipeline, straightforward add-on |
 | Tab autocomplete for filenames with wildcard matching | Depends on Phase 2 completion engine |
 | Ctrl-R incremental history search (like bash) | Added to Phase 2 in editor design |
 | Job control (`bg`, `fg`, `jobs`) | No kernel job object support yet |

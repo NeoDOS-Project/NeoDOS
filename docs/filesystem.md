@@ -46,7 +46,7 @@ Located at LBA 0, exactly 512 bytes. Magic value: `0x0032454E` ("NE2\0").
 ### Files
 
 | File | Purpose |
-|------|---------|
+| ------ | --------- |
 | `src/fs/neodos_v2.rs` | NeoFS v2 implementation (`FileSystem` trait) |
 | `src/fs/neodos_dir.rs` | B-tree directory operations (`DirEntryV2`) |
 | `src/fs/neodos_io.rs` | Extent-based read/write + inline data |
@@ -176,6 +176,7 @@ Dirty tracking with pending-write accounting. Checked by file-backed mmap before
 issuing a VFS read.
 
 The page cache is global:
+
 ```rust
 pub static PAGE_CACHE: Mutex<PageCache>;
 ```

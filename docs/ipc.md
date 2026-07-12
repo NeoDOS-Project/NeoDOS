@@ -42,7 +42,7 @@ Per-EPROCESS `HandleTable` stores a `Vec<HandleEntry>`. Grows dynamically; no ma
 ### HandleEntry Variants
 
 | Variant | Payload |
-|---------|---------|
+| --------- | --------- |
 | `Closed` | None |
 | `Stdin` | None |
 | `Stdout` | None |
@@ -65,6 +65,7 @@ File handles carry a per-open `offset` field (u64) allowing independent read/wri
 ### Cleanup on Exit
 
 `sys_exit` iterates all HandleEntry values and:
+
 - Closes pipe readers/writers (decrements refcount)
 - Calls `ob_close` on ObObject handles
 
@@ -73,12 +74,15 @@ File handles carry a per-open `offset` field (u64) allowing independent read/wri
 ### Data Structures
 
 **IrpOp** (u8 enum):
+
 - `Read(0)`, `Write(1)`, `Flush(2)`, `Discard(3)`, `Ioctl(4)`
 
 **IrpStatus** (u8 enum):
+
 - `Pending(0)`, `Completed(1)`, `Error(2)`
 
 **Irp** (`#[repr(C)]` struct):
+
 - `op: IrpOp` — operation type
 - `buffer: *mut u8` — data buffer
 - `length: usize` — buffer length
@@ -104,6 +108,7 @@ Per-device FIFO ring buffer of 32 entries. Used by block device drivers to queue
 2. Sets `Irp::status` to `Completed` or `Error`.
 3. Wakes waiting thread: `waiting_pid` matched against scheduler; thread state restored from `Blocked` to `Ready`.
 4. Dispatches callback via `WORK_QUEUE.push_high(callback_fn, ctx)` if callback exists.
+
 ### Scheduler Integration
 
 `irp_complete` calls `irp_wake_waiter(id)` to find and unblock the thread waiting on the IRP.
@@ -118,6 +123,7 @@ pub trait BlockDevice {
 ```
 
 5 implementors:
+
 - `RamDisk` — synthetic in-memory disk
 - `BootAta` — legacy ATA PIO driver
 - `AhciDriver` — AHCI SATA driver
@@ -133,6 +139,7 @@ pub trait BlockDevice {
 ### Architecture
 
 Two-level priority queue:
+
 - **High-priority**: Processed on syscall return (in `clear_need_resched()`), before returning to user mode.
 - **Low-priority**: Processed in idle loop, before executing `HLT` instruction.
 
@@ -176,7 +183,7 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 `#[repr(C)]` 56-byte struct with ABI-stable layout for NEM driver compatibility:
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `event_id` | u64 | Unique event ID |
 | `event_type` | u32 | Event type constant |
 | `source` | u32 | Event source |
@@ -190,7 +197,7 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 ### Event Type Constants
 
 | Constant | Value | Description |
-|----------|-------|-------------|
+| ---------- | ------- | ------------- |
 | `TIMER_TICK` | 0 | Periodic PIT/HPET timer |
 | `KEYBOARD_INPUT` | 1 | PS/2 or USB key event |
 | `SERIAL_DATA` | 2 | Serial port data available |
@@ -235,6 +242,7 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 ### Delivery Queues
 
 Two lock-free SPSC ring buffers:
+
 - **High priority**: 16 slots (for time-sensitive events like keyboard input)
 - **Normal priority**: 64 slots (for general events like disk completion)
 
@@ -266,6 +274,7 @@ If the target queue is full, `push_event()` and `push_event_with_dyn_payload()` 
 - `dispatch_pending()`: Drain all pending events (high first, then normal).
 
 Called from:
+
 - `clear_need_resched()` — high-priority dispatch on syscall return
 - Idle loop — drain all pending before HLT
 - Shell input loop — periodic dispatch during user interaction

@@ -22,7 +22,7 @@ neodev config               Mostrar configuración
 
 ## Arquitectura
 
-```
+```text
 tools/neodev/
 ├── Cargo.toml
 ├── src/
@@ -55,7 +55,7 @@ No existen listas manuales de programas. NeoDev analiza:
 | image   | Crear sistema de archivos NE2, partición ESP FAT32, imagen GPT unificada |
 | run     | Ejecutar QEMU con soporte AHCI/ATA/NVMe/VirtIO, SLiRP/TAP/Bridge, KVM/TCG |
 | test    | Lanzar QEMU headless, monitorizar serial, analizar resultados de NeoTest |
-| clean   | Eliminar artefactos de compilación (target/, *.nxe, *.nxl, *.nem, imágenes) |
+| clean   | Eliminar artefactos de compilación (target/, *.nxe,*.nxl, *.nem, imágenes) |
 | config  | Configuración centralizada en `neodev.toml` |
 | report  | Generar informes de compilación y pruebas |
 
@@ -87,7 +87,7 @@ monitoriza el log serial, y analiza los resultados cuando detecta
 ## Scripts sustituidos
 
 | Script original | Sustituido por |
-|----------------|----------------|
+| ---------------- | ---------------- |
 | `scripts/build.sh` | `neodev build` |
 | `scripts/qemu-debug.sh` | `neodev run` |
 | `scripts/qemu-net.sh` | `neodev run --net tap` |

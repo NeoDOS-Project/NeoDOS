@@ -6,7 +6,7 @@ Provides IDE features for kernel, driver, user-mode, and system library code.
 ## Features
 
 | Feature | Status | Description |
-|---------|--------|-------------|
+| --------- | -------- | ------------- |
 | **Completion** | ✅ | Symbol completion with NeoDOS-specific syscall, shell command, and capability entries |
 | **Go to Definition** | ✅ | Navigate to symbol declarations across the workspace |
 | **Find References** | ✅ | Find all references to a symbol |
@@ -21,7 +21,7 @@ Provides IDE features for kernel, driver, user-mode, and system library code.
 
 ## Architecture
 
-```
+```text
 ┌──────────────────────────────────────────────────┐
 │                  Editor (LSP Client)             │
 │         VS Code / Neovim / Helix / Emacs         │
@@ -52,7 +52,7 @@ Provides IDE features for kernel, driver, user-mode, and system library code.
 ### Module responsibilities
 
 | Module | Lines | Responsibility |
-|--------|-------|---------------|
+| -------- | ------- | --------------- |
 | `server.rs` | 518 | JSON-RPC/stdio transport, message framing, lifecycle management |
 | `handlers.rs` | 778 | All LSP request/notification handlers, diagnostics engine |
 | `indexer.rs` | 900 | Rust source parser, symbol extraction, NeoDOS pattern detection |
@@ -74,7 +74,7 @@ Provides IDE features for kernel, driver, user-mode, and system library code.
 
 The indexer recognizes these NeoDOS constructs:
 
-```
+```rust
 #[syscall(42)]                            → SyscallHandler item
 pub fn sys_write(...)                     → SyscallHandler (naming convention)
 SyscallNum { Exit = 0, Read = 4, ... }   → SyscallNum variants
@@ -99,6 +99,7 @@ Binary at `target/release/neodos-lsp`.
 ### Integration with editors
 
 **VS Code** (`.vscode/settings.json`):
+
 ```json
 {
   "rust-analyzer.rustfmt.overrideCommand": null,
@@ -114,6 +115,7 @@ Binary at `target/release/neodos-lsp`.
 ```
 
 **Neovim** (lspconfig):
+
 ```lua
 require('lspconfig').neodos_lsp = {
   cmd = { 'neodos-lsp' },
@@ -123,6 +125,7 @@ require('lspconfig').neodos_lsp = {
 ```
 
 **Helix**:
+
 ```toml
 [language-server.neodos-lsp]
 command = "neodos-lsp"
@@ -135,7 +138,7 @@ language-servers = ["neodos-lsp", "rust-analyzer"]
 ### Environment variables
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `NEODOS_LSP_ROOT` | `.` | Workspace root directory |
 | `NEODOS_LSP_MAX_FILES` | `10000` | Max files to index |
 | `NEODOS_LSP_CACHE_SIZE` | `256` | Max cached documents |
@@ -144,6 +147,7 @@ language-servers = ["neodos-lsp", "rust-analyzer"]
 | `RUST_LOG` | `neodos_lsp=info` | Log level (`trace` for full LSP message dump) |
 
 Run with verbose logging:
+
 ```bash
 RUST_LOG=neodos_lsp=trace neodos-lsp
 ```
@@ -151,21 +155,25 @@ RUST_LOG=neodos_lsp=trace neodos-lsp
 ## Design decisions
 
 ### Why a custom parser instead of `syn`?
+
 - `syn` parses valid Rust only; NeoDOS source has `#[feature(...)]`, incomplete modules, and nightly-only constructs
 - Linear-scan parsing is O(n) and trivially parallelizable
 - NeoDOS-specific patterns (syscalls, shell commands, drivers) are structural, not semantic
 
 ### Why DashMap for the database?
+
 - Lock-free concurrent reads from multiple handlers
 - Background indexing writes without blocking LSP requests
 - O(1) symbol lookup by ID, O(k) by name prefix
 
 ### Why polling instead of inotify?
+
 - Cross-platform (Linux, macOS, Windows)
 - Simplifies implementation (no platform-specific dependencies)
 - 2-second polling interval is sufficient for a kernel codebase
 
 ### Incremental updates
+
 - `didChange` notifications trigger per-file re-parsing
 - `replace_file_index` atomically swaps old → new symbols in the database
 - Document cache maintains LRU eviction to bound memory

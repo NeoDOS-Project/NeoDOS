@@ -4,7 +4,7 @@ NeoDOS lee `CONFIG.SYS` de la raíz del disco al arrancar (antes de `AUTOEXEC.BA
 
 ## Formato
 
-```
+```text
 CLAVE=VALOR
 ; comentarios con punto y coma
 # comentarios con numeral

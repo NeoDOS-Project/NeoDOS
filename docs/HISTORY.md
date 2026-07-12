@@ -34,6 +34,7 @@ principal.
 ### 4–9 de mayo de 2026 — Primer kernel funcional
 
 Tras los primeros commits, el kernel adquiere forma rápidamente:
+
 - Shell con 18 comandos integrados (DIR, TYPE, CD, MD, RD, COPY, DEL, REN, DATE, TIME,
   CLS, ECHO, MEM, VOL, VER, HELP, PROMPT, SET).
 - Sistema de archivos NeoDOS con inodos de 256 bytes y bloques de 4 KB.
@@ -47,6 +48,7 @@ con una base de código manejable.
 ### 10 de mayo de 2026 — v0.8.0: Multitarea real
 
 Primera versión con soporte real de procesos en Ring 3:
+
 - `RUN` no bloqueante — ejecuta procesos en segundo plano.
 - Slots de usuario por proceso (`user_slot`).
 - `KILL` command para terminar procesos.
@@ -155,6 +157,7 @@ etc.), módulos IO/FS/Mem, macros `print!`/`println!`. Los binarios de usuario
 se convierten en proyectos Cargo individuales.
 
 **26 de mayo:**
+
 - **Slab allocator (A3):** 9 clases de tamaño (8–2048 bytes), O(1) alloc/free
   mediante free list. Reemplaza al `linked_list_allocator` como `#[global_allocator]`.
 - **Migración RTC a NEM v3:** Primer driver de sistema migrado a NEM standalone.
@@ -292,6 +295,7 @@ y se ejecuta como un proceso de usuario. Nuevas syscalls A4.6. BOOT.CFG pasa
 a ser configurable.
 
 **v0.38.0 (15–16 junio):**
+
 - `HELP.NXE` como binario Ring 3 que escanea `C:\BIN`.
 - Reestructuración del sistema de archivos NeoDOS.
 - `sys_get_version`, `sys_get_datetime`, `DATETIME.NXE`, `VER.NXE`.
@@ -322,6 +326,7 @@ reduciendo la superficie del kernel.
 ### 21 de junio de 2026 — NT6 Security Reference Monitor
 
 Implementación del modelo de seguridad NT:
+
 - **SID (Security Identifier):** Formato `S-R-I-S*`.
 - **Token:** Identidad + grupos + privilegios.
 - **ACL/ACE:** Listas de control de acceso con entradas deny/allow.
@@ -401,6 +406,7 @@ destruye hijo prematuro).
 ### 28 de junio de 2026 — Networking TCP/IP
 
 **v0.47.0 — Networking:** Pila TCP/IP completa en el kernel:
+
 - Driver e1000 NEM para NIC Intel.
 - Capas: Ethernet, ARP (64 entradas, timeout 300s), IPv4, ICMP, UDP, TCP
   (3-way handshake, sliding window 16 KB, FIN/RST).
@@ -433,6 +439,7 @@ BINARY, MULTI_SZ, EXPAND_SZ, QWORD).
 
 **NeoKBD (Keyboard Manager):** Nuevo subsistema de kernel `src/kbd/` que reemplaza
 la lógica de traducción de scancodes del driver PS/2. Proporciona:
+
 - `ObType::KeyboardDevice = 22` en `\Device\Keyboard`.
 - 3 nuevos `ObInfoClass` (35=KeyboardInfo, 36=KeyboardCaps, 37=KeyboardLayouts).
 - 5 nuevos `ObSetInfoClass` (43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay,
@@ -448,6 +455,7 @@ la lógica de traducción de scancodes del driver PS/2. Proporciona:
 - `libneodos/src/keyboard.rs`: API user-level para control de teclado.
 
 **ACPI Power Management (`src/power/acpi.rs`):** Implementación completa de:
+
 - RSDP discovery (EBDA, BIOS areas, bootloader pointer).
 - RSDT/XSDT parsing → FADT extraction.
 - S5 sleep (soft-off) via PM1a/b control registers.
@@ -477,6 +485,7 @@ Prioridad de almacenamiento: NVMe > VirtIO > AHCI > ATA.
 periódico.
 
 **NET-1.5–1.15 (5 julio):** Networking userland completa:
+
 - `libneodos` wrappers SOCKET.
 - `net.nxl` biblioteca de red para usuario.
 - `netcfg.nxe` servicio de red con DHCP/APIPA.
@@ -494,26 +503,31 @@ entre código y documentación. Sincronización de enums libneodos-kernel.
 ## Evolución de la filosofía del sistema
 
 ### Fase 1: DOS Revival (v0.5 – v0.9)
+
 NeoDOS nace como un "DOS moderno" con sabor a retro. Shell en Ring 0, comandos
 tipo DOS (DIR, COPY, DEL, REN), sistema de archivos propio, pantalla negra con
 letras verdes. La prioridad es tener algo funcionando.
 
 ### Fase 2: Kernel multiproceso (v0.10 – v0.15)
+
 El sistema adquiere capacidades de sistema operativo moderno: procesos en Ring 3,
 syscalls, gestión de memoria dinámica. La arquitectura de drivers comienza a
 tomar forma con el primer intento (NDM) que luego se descarta.
 
 ### Fase 3: Arquitectura de drivers madura (v0.16 – v0.24)
+
 NEM v3, Event Bus, HAL, certificación, capacidades, aislamiento. El modelo de
 drivers se estabiliza y se convierte en la seña de identidad de NeoDOS.
 Decisión clave: los drivers no son kernel ni user-mode, son un **tercer espacio**.
 
 ### Fase 4: NT-like y Object Manager (v0.32 – v0.44)
+
 Migración masiva a Ring 3. SMP, IRQL, SSDT, Security Reference Monitor, Ob.
 NeoDOS abandona su herencia DOS y adopta una arquitectura NT-like con Object
 Manager como abstracción central. El shell se convierte en un proceso de usuario más.
 
 ### Fase 5: Expansión (v0.46 – presente)
+
 Networking TCP/IP, Registry persistente, VirtIO, SAM. El sistema se expande
 horizontalmente añadiendo subsistemas completos mientras mantiene la coherencia
 arquitectónica alrededor del Object Manager.
@@ -523,7 +537,7 @@ arquitectónica alrededor del Object Manager.
 ## Decisiones de diseño relevantes
 
 | Decisión | Fecha | Contexto |
-|----------|-------|----------|
+| ---------- | ------- | ---------- |
 | Rust como único lenguaje | May 2026 | Todo el código, incluyendo drivers, en Rust. Sin C. |
 | INT 0x80 para syscalls | May 2026 | Elección deliberada sobre `syscall`/`sysret` por simplicidad del trampoline. |
 | HAL raw/safe split | Jun 2026 | Todo `asm!()` confinado a `hal/raw/`. Capa segura encima. |
@@ -541,7 +555,7 @@ arquitectónica alrededor del Object Manager.
 ## Cronología resumida
 
 | Fecha | Hito | Versión |
-|-------|------|---------|
+| ------- | ------ | --------- |
 | 2026-05-04 | Primer commit: bootloader + kernel | v0.5 |
 | 2026-05-06 | "The Rusty DOS Revival" | v0.6 |
 | 2026-05-09 | Tests, FAT32, RTC, layouts teclado | v0.7 |
@@ -585,7 +599,7 @@ arquitectónica alrededor del Object Manager.
 ## Componentes nacidos en cada etapa
 
 | Componente | Fecha | Descripción |
-|-----------|-------|-------------|
+| ----------- | ------- | ------------- |
 | Bootloader UEFI | May 4 | `neodos-bootloader/` — Carga kernel.elf y NeoDOS FS |
 | Kernel base | May 4 | GDT, IDT, PIC, serial, paging, ATA, keyboard, VGA |
 | NeoDOS FS | May 4 | Sistema de archivos propio con inodos y bloques |
@@ -631,10 +645,12 @@ arquitectónica alrededor del Object Manager.
 ## Lugares donde ha crecido NeoDOS
 
 ### 🌱 Girona — Lugar de nacimiento
+
 Todo el desarrollo hasta la fecha se ha realizado íntegramente en Girona.
 Aquí nació NeoDOS el 4 de mayo de 2026 y aquí continúa su evolución.
 
 ### 🚀 Lleida — Pendiente de confirmar
+
 Futura ubicación del desarrollo principal si el proyecto se traslada.
 No marcar como completada hasta que ocurra el traslado.
 
@@ -643,7 +659,7 @@ No marcar como completada hasta que ocurra el traslado.
 ## Métricas de crecimiento
 
 | Fecha | Commits | Tests | Líneas kernel | Versión |
-|-------|---------|-------|---------------|---------|
+| ------- | --------- | ------- | --------------- | --------- |
 | 2026-05-04 | 1 | 0 | ~2.000 | v0.5 |
 | 2026-05-09 | ~15 | ~10 | ~5.000 | v0.7 |
 | 2026-05-19 | ~40 | ~45 | ~10.000 | v0.12 |
@@ -661,6 +677,7 @@ Este documento debe actualizarse cuando ocurra un cambio arquitectónico importa
 No registrar pequeños cambios o correcciones menores.
 
 **Criterios para añadir un hito:**
+
 - Nuevo subsistema o componente importante.
 - Refactorización que afecte a múltiples módulos.
 - Cambio en la filosofía de diseño.

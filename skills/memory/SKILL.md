@@ -1,9 +1,11 @@
 # Memory
 
 ## When to use
+
 Modifying the frame allocator, page table management, heap allocation, mmap region, slab allocator, or demand paging.
 
 ## Goal
+
 Change memory subsystem correctly without breaking allocation invariants or introducing leaks/corruption.
 
 ## Steps
@@ -50,6 +52,7 @@ Change memory subsystem correctly without breaking allocation invariants or intr
    - Heap: repeated alloc/free patterns, ensure no corruption
 
 ## Best practices
+
 - Always zero frames before handing to userspace (security).
 - Slab allocations from a single class must be 8-byte aligned minimum.
 - Use `allocate_frames()` / `free_frames()` for physical pages — never touch the buddy metadata directly.
@@ -57,6 +60,7 @@ Change memory subsystem correctly without breaking allocation invariants or intr
 - Validate mmap region bounds against `MMAP_END` before mapping.
 
 ## Common mistakes
+
 - Coalescing buddies that are not actually buddies (wrong order or not adjacent).
 - Leaking slab objects when hot cache is discarded without returning to central pool.
 - Forgetting TLB flush after modifying page table entries.
@@ -64,6 +68,7 @@ Change memory subsystem correctly without breaking allocation invariants or intr
 - Overlapping heap and mmap regions after adjusting bounds.
 
 ## Final checklist
+
 - [ ] Buddy allocator maintains coalescing invariant (no memory leak)
 - [ ] Slab hot cache refill/return policy correct
 - [ ] TLB flush after any page table modification

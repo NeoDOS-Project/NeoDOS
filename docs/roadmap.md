@@ -7,7 +7,7 @@ See [IMPROVEMENTS.md](IMPROVEMENTS.md) for the full detailed roadmap with per-it
 ## Milestones
 
 | Version | Focus | Priority |
-|---------|-------|----------|
+| --------- | ------- | ---------- |
 | v0.48 | NeoFS stability (NS-1/2, FS-1/2/4) | HIGH |
 | v0.49 | NeoFS robustness (indirect blocks, journaling, checksums) | MEDIUM |
 | v0.50 | Async I/O + Registry persistence | LOW |

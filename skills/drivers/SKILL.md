@@ -1,9 +1,11 @@
 # Drivers
 
 ## When to use
+
 Developing a new NEM driver, modifying the driver runtime, changing the ABI negotiation, updating capability flags, or altering the driver lifecycle.
 
 ## Goal
+
 Create or modify a NEM driver correctly — from .nxe module through ABI negotiation, capability declaration, isolation, and lifecycle management.
 
 ## Steps
@@ -18,6 +20,7 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
 
 3. **Create the NEM module source**
    Place in `drivers/<name>/src/main.rs`. Structure:
+
    ```rust
    #![no_std]
    #![no_main]
@@ -74,12 +77,14 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
    If BOOT or SYSTEM category: register the driver in the boot loader's driver list so it's loaded automatically.
 
 10. **Build and test**
+
     ```bash
     bash scripts/build.sh --neodos-image
     python3 scripts/auto_test.py
     ```
 
 ## Best practices
+
 - Request exactly the capabilities needed — over-privilege is a security risk.
 - Handle all state transitions gracefully, especially `Faulted → Unloaded`.
 - Use `DriverContext` for all resource registration (IRQs, MMIO, DMA).
@@ -87,6 +92,7 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
 - Keep init/unload functions idempotent where possible.
 
 ## Common mistakes
+
 - Setting `abi_max` too high — the driver may load on a kernel that breaks compatibility.
 - Not releasing IRQs in `unload` — causes double-free on the IRQ line.
 - Requesting `CAP_ISOLATION` without testing — isolation adds significant complexity.
@@ -94,6 +100,7 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
 - Accessing hardware directly without going through HAL abstractions.
 
 ## Final checklist
+
 - [ ] NEM v2 header valid (magic, checksum, version fields)
 - [ ] ABI version range intersects `KERNEL_ABI_VERSION`
 - [ ] Capabilities declared (minimum required set)

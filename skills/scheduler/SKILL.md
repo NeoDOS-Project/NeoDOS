@@ -1,9 +1,11 @@
 # Scheduler
 
 ## When to use
+
 Modifying scheduling policy, priority management, SMP load balancing, thread/process state transitions, or timeslice allocation.
 
 ## Goal
+
 Make correct scheduler changes without breaking preemption, fairness, or SMP invariants.
 
 ## Steps
@@ -48,11 +50,13 @@ Make correct scheduler changes without breaking preemption, fairness, or SMP inv
    - Timeslice exhaustion triggers reschedule
 
 8. **Build and test**
+
    ```bash
    cargo build && python3 scripts/auto_test.py
    ```
 
 ## Best practices
+
 - Keep the scheduler lock-free where possible — use atomic operations on thread states.
 - Always yield the current timeslice before blocking (voluntary preemption).
 - Work stealing must be O(1) on the steal target — don't scan all threads.
@@ -60,6 +64,7 @@ Make correct scheduler changes without breaking preemption, fairness, or SMP inv
 - Use `SCHED_DEBUG` or trace points for scheduler diagnostics, not printk.
 
 ## Common mistakes
+
 - Introducing deadlocks by acquiring scheduler lock while holding another spinlock.
 - Breaking the invariant: a thread in Running state must be on exactly one CPU's run queue.
 - Forgetting to send IPI after moving threads between CPU run queues.
@@ -67,6 +72,7 @@ Make correct scheduler changes without breaking preemption, fairness, or SMP inv
 - Not updating `ThreadState` atomically — leading to inconsistent scheduler views.
 
 ## Final checklist
+
 - [ ] Thread state machine transitions correct (no invalid transitions)
 - [ ] Timeslice values aligned with priority levels
 - [ ] SMP work stealing tested under concurrent load

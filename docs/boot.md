@@ -48,7 +48,7 @@ pub struct BootInfo {
 Sequence from `src/main.rs` `rust_start()`:
 
 | Phase | Description | Key Code |
-|-------|-------------|----------|
+| ------- | ------------- | ---------- |
 | 0 | Verify boot info magic + version. Halt on bad magic | `rust_start():106` |
 | 1 | Graphics init, Caps Lock LED on, RAM disk setup, serial init, boot benchmark init | `:113` |
 | 2 | GDT (5 selectors + TSS), IDT (exception + IRQ + INT 0x80 trampoline), MSI init, PIC remap (master 0x20, slave 0xA0) | `:148-158` |
@@ -84,7 +84,7 @@ Sequence from `src/main.rs` `rust_start()`:
 ## Unified GPT Disk Layout
 
 | Partition | Filesystem | LBA Range | Mount Point | GPT Type GUID |
-|-----------|-----------|-----------|-------------|---------------|
+| ----------- | ----------- | ----------- | ------------- | --------------- |
 | 1 | FAT32 (ESP) | 2048-206847 | A: | C12A7328-F81F-11D2-BA4B-00A0C93EC93B |
 | 2 | NeoDOS FS | 206848-227327 | C: | EBD0A0A2-B9E5-4433-87C0-68B6B72699C7 |
 
@@ -95,7 +95,7 @@ partition 2.
 ## Boot ABI
 
 | Constant | Value | Description |
-|----------|-------|-------------|
+| ---------- | ------- | ------------- |
 | `BOOTINFO_MAGIC` | `0x4E444F53` | "NDOS" magic in BootInfo |
 | `KERNEL_VERSION_CODE` | `(49 << 8) \| 0` = `0x3100` | v0.49.0 |
 | `BOOT_VERSION` | `(10 << 8) \| 5` | Must match kernel version code |

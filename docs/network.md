@@ -7,7 +7,7 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 ### Module Overview
 
 | File | Lines | Responsibility |
-|------|-------|---------------|
+| ------ | ------- | --------------- |
 | `types.rs` | ~80 | `MacAddr`, `Ipv4Addr`, `SocketAddrV4`, `TcpState`, `SocketType`, `SocketDirection` |
 | `ethernet.rs` | ~120 | Ethernet frame header (14 bytes: dst MAC, src MAC, ethertype), FCS computation, `build_ethernet_frame()` |
 | `arp.rs` | ~250 | ARP protocol, 64-entry cache with 300s timeout, static entries, request/reply, `arp_resolve()` |
@@ -49,7 +49,7 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 ### ObInfoClass (query)
 
 | Class ID | Name | Returns |
-|----------|------|---------|
+| ---------- | ------ | --------- |
 | 17 | `SocketInfo` | Socket state, type, local/remote addresses |
 | 18 | `SocketAddr` | Bound address and port |
 | 19 | `TcpStatus` | TCP connection state |
@@ -59,7 +59,7 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 ### ObSetInfoClass (mutate)
 
 | Class ID | Name | Effect |
-|----------|------|--------|
+| ---------- | ------ | -------- |
 | 18 | `SocketConnect` | Initiate TCP connection or set UDP remote |
 | 19 | `SocketBind` | Bind socket to local address/port |
 | 20 | `SocketListen` | Start listening for TCP connections |
@@ -74,7 +74,7 @@ Socket creation via `ob_create` with `attrs` encoding: bits 0-7 = socket type (1
 Socket objects support KWait (kernel wait) for blocking I/O operations:
 
 | Wait Reason | Triggers On |
-|-------------|-------------|
+| ------------- | ------------- |
 | `SocketRead` | Data arrives in socket receive buffer |
 | `SocketConnect` | TCP handshake completes (SYN+ACK received) |
 | `SocketAccept` | New connection arrives on listening socket |
@@ -83,7 +83,7 @@ Blocking syscalls suspend the calling thread via KWait and wake when the corresp
 
 ## Packet Flow
 
-```
+```text
 NIC (e1000)
   -> poll_packet() -> 2048 byte buffer
     -> ethernet::EthernetHeader parse (dst MAC, src MAC, ethertype)
@@ -137,7 +137,7 @@ pub struct NicRegistry {
 
 ### Architecture
 
-```
+```text
 dhcpd.nxe (Ring 3 user service)
   │
   ├─ Creates UDP socket (ObType::Socket = 18)
@@ -170,6 +170,7 @@ Kernel (Ring 0) provides:
 ### Lease Renewal
 
 After binding, `dhcpd.nxe` enters a loop that:
+
 - Tracks elapsed time via `sys_yield()` batches (approximating seconds)
 - At 50% of lease time, sends unicast DHCPREQUEST to the serving DHCP server
 - On ACK: lease is extended, timer resets
@@ -178,12 +179,14 @@ After binding, `dhcpd.nxe` enters a loop that:
 ### Why Userspace?
 
 The previous kernel-based DHCP implementation had fundamental architectural problems:
+
 - `build_dhcp_packet()` used `Vec` (heap allocation) from timer IRQ context
 - `nic_send_packet()` acquired `NIC_REGISTRY.lock()` (spinlock) from IRQ context, risking deadlock
 - `dhcp_tick()` in the idle loop never ran because user threads were always `Ready`
 - Result: DHCP never progressed, and `netcfg` always fell back to APIPA
 
 Moving DHCP to userspace resolves all these issues:
+
 - All memory allocation happens in process context (safe)
 - No spinlocks held in IRQ context
 - Socket operations are fully preemptible
@@ -192,7 +195,8 @@ Moving DHCP to userspace resolves all these issues:
 ### Registry Integration
 
 `dhcpd.nxe` stores network configuration in:
-```
+
+```text
 \Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
   DHCPEnabled = 1 (DWORD)
   IPAddress   = <assigned IP> (DWORD, big-endian byte order)
@@ -222,6 +226,7 @@ bash scripts/qemu-debug.sh --tap
 ```
 
 TAP networking requires:
+
 - `/dev/net/tun` access (requires `CAP_NET_ADMIN` or root)
 - A preconfigured `tap0` interface on the host
 
@@ -230,7 +235,7 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 ## Source Files
 
 | File | Path |
-|------|------|
+| ------ | ------ |
 | types.rs | `src/net/types.rs` |
 | ethernet.rs | `src/net/ethernet.rs` |
 | arp.rs | `src/net/arp.rs` |

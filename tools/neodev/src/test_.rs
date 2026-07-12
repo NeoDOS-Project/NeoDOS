@@ -299,7 +299,7 @@ fn analyze_results(lines: &[String]) -> Result<TestResult> {
         });
 
     let cmd_ok = full_text.contains("ALL_COMMAND_TESTS_PASSED");
-    let stress_ok = full_text.contains("ALL_STRESS_TESTS_PASSED");
+    let _stress_ok = full_text.contains("ALL_STRESS_TESTS_PASSED");
     let sh_ok = full_text.contains("SHELL_TESTS_PASSED");
 
     let mut panics = vec![];

@@ -190,7 +190,7 @@ creates its idle thread, and enters the scheduler's idle loop.
 
 ### Timer ISR Assembly Stub
 
-```
+```text
 timer_stub:
     push all GPRs
     mov rdi, rsp         // pass current RSP as argument

@@ -1,9 +1,11 @@
 # Object Manager
 
 ## When to use
+
 Adding a new Ob type, extending the Ob API (new ObInfoClass/ObSetInfoClass variant), modifying namespace resolution, or changing handle management.
 
 ## Goal
+
 Extend the Object Manager correctly — the central abstraction for all kernel objects, handles, security, and namespace.
 
 ## Steps
@@ -18,6 +20,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
 
 3. **Implement ObOperation**
    Create or extend a struct in the relevant subsystem that implements `ObOperation`:
+
    ```rust
    impl ObOperation for MyObject {
        fn obj_type(&self) -> ObType { ObType::MyType }
@@ -26,6 +29,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
        fn set_info(&mut self, class: ObSetInfoClass, buf: &[u8]) -> Result<(), Status> { /* ... */ }
    }
    ```
+
    Place in e.g. `src/object/my_object.rs` or the owning subsystem.
 
 4. **Add ObInfoClass / ObSetInfoClass variants (if needed)**
@@ -56,6 +60,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
    Update `docs/objects.md` with the new type, its ObInfoClass variants, and operation semantics.
 
 ## Best practices
+
 - Every Ob type must have exactly one `ObType` variant — no sharing.
 - `ObOperation::close()` must be idempotent (called at most once per object).
 - Use `ObObjectTable::with_handle()` for safe handle-to-object access.
@@ -63,6 +68,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
 - Handle values are opaque u64 — never dereference them directly.
 
 ## Common mistakes
+
 - Forgetting to implement `ObOperation` — the object can't be managed by the Ob infrastructure.
 - Using the same ObType number twice.
 - Not calling `close()` or relying on Drop for cleanup — Ob uses explicit reference counting.
@@ -70,6 +76,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
 - Allowing handle leak (creating without tracking) or use-after-free (dropping handle while still referenced).
 
 ## Final checklist
+
 - [ ] `ObType` variant added with unique number
 - [ ] `ObOperation` implemented for the new type
 - [ ] `ObInfoClass`/`ObSetInfoClass` variants added (if applicable)

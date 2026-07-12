@@ -14,7 +14,7 @@
 3. [Filosofía de Diseño](#3-filosofía-de-diseño)
 4. [Arquitectura Ideal](#4-arquitectura-ideal)
 5. [Diagnóstico: Estado Actual vs. Ideal](#5-diagnóstico-estado-actual-vs-ideal)
-6. [Decisiones a Cambiar](#6-decisiones-a-cambiar)
+6. [Decisiones que Cambiaría](#6-decisiones-que-cambiaría)
 7. [Nuevas Abstracciones Fundamentales](#7-nuevas-abstracciones-fundamentales)
 8. [Congelación de Interfaces (ABI/API Freeze)](#8-congelación-de-interfaces-abiapi-freeze)
 9. [Roadmap por Versiones](#9-roadmap-por-versiones)
@@ -27,6 +27,7 @@
 NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel monolítico con subsistema de drivers basado en microkernel). Está escrito en Rust, arranca en UEFI, y ofrece un modelo de procesos estilo NT con planificación prioritaria, drivers en espacio aislado, y un sistema de archivos propio con influencias DOS.
 
 **Fortalezas actuales:**
+
 - Código 100% Rust (sin C en la base)
 - HAL con asm aislado en `hal/raw/`
 - 537 tests automáticos en kernel
@@ -39,6 +40,7 @@ NeoDOS es un sistema operativo de 64 bits con arquitectura híbrida (kernel mono
 - Event Bus centralizado con prioridades y filtros
 
 **Debilidades estructurales:**
+
 - Arrays de tamaño fijo en 8 subsistemas críticos
 - Espacio de usuario de solo 4 MB
 - Bitmap de buddy allocator limitado a 4 GB
@@ -101,7 +103,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 ### 4.1 Mapa de Subsistemas y Capas
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        USERMODE (Ring 3)                           │
 │  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌──────────────────────┐  │
@@ -168,7 +170,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 Todo recurso del sistema es un **objeto** administrado por el **KOBJ Registry**:
 
-```
+```text
 KObj (Kernel Object)
 ├── Type: Process, Thread, Driver, Device, Pipe, File, 
 │         EventBus, BlockDevice, Filesystem, MemoryRegion,
@@ -187,7 +189,7 @@ KObj (Kernel Object)
 
 ### 4.3 Modelo de Procesos (estilo NT, no Unix)
 
-```
+```text
 EPROCESS (Process)
 ├── PID (u64)
 ├── Token (Security)
@@ -206,7 +208,7 @@ EPROCESS (Process)
 
 ### 4.4 Modelo de Drivers (servicio aislado)
 
-```
+```text
 NEM Driver
 ├── Categoría: BOOT | SYSTEM | DEMAND
 ├── Pipeline: Loaded → Init → Registered → Bound → Active
@@ -222,7 +224,7 @@ NEM Driver
 
 ### 4.5 Modelo de Seguridad
 
-```
+```text
 Token (cada proceso)
 ├── SID (identidad, formato S-R-I-S*)
 ├── IsAdmin (bool)
@@ -253,7 +255,7 @@ Security Descriptor (por objeto)
 ### 5.1 Lo que ya está bien (NO TOCAR)
 
 | Componente | Estado | Razón |
-|-----------|--------|-------|
+| ----------- | -------- | ------- |
 | HAL v0.4 raw/safe split | ✅ Excelente | Asm confinado, tipos seguros, MSR trait |
 | Boot phases | ✅ Sólido | 11 fases con orden determinista |
 | EPROCESS/KTHREAD split | ✅ Correcto | Modelo NT limpio |
@@ -282,7 +284,7 @@ Security Descriptor (por objeto)
 ### 5.2 Lo que necesita refactorización (MEJORAR)
 
 | Componente | Problema | Prioridad |
-|-----------|----------|-----------|
+| ----------- | ---------- | ----------- |
 | Arrays fijos | 8 subsistemas con límites duros | **ALTA** |
 | Buddy bitmap 4GB | Frame allocator no escala a >4GB | **ALTA** |
 | User window 4MB | Demasiado pequeño para aplicaciones reales | **ALTA** |
@@ -297,7 +299,7 @@ Security Descriptor (por objeto)
 ### 5.3 Lo que falta (AÑADIR)
 
 | Componente | Descripción | Prioridad |
-|-----------|-------------|-----------|
+| ----------- | ------------- | ----------- |
 | Red/Networking | NIC driver + TCP/IP stack | **MEDIA** |
 | sys_fork (o clone) | Creación ligera de procesos | **BAJA** (no NT-style) |
 | Gestión de energía | Suspend/resume, S-states | **BAJA** |
@@ -310,7 +312,7 @@ Security Descriptor (por objeto)
 ### 5.4 Matriz de Riesgos Arquitectónicos
 
 | Riesgo | Probabilidad | Impacto | Mitigación |
-|--------|-------------|---------|------------|
+| -------- | ------------- | --------- | ------------ |
 | Arrays fijos saturan | Alta (próximos 6 meses) | Alto (pánico en runtime) | Convertir a dinámicos (Vec/ slab) |
 | Buddy bitmap overflow | Media (si RAM >4GB) | Alto (kernel no arranca) | Bitmap dinámico por rango |
 | User window overflow | Alta (al crecer apps) | Medio (carga ELF falla) | Ampliar a 32MB mínimo |
@@ -338,6 +340,7 @@ Security Descriptor (por objeto)
 **Dónde:** `memory/buddy.rs` — `BITMAP_WORDS = 16384`
 
 **Qué hacer:** Convertir el bitmap de un array fijo a una estructura de rango dinámico:
+
 - Soporte para múltiples rangos de bitmap (cada rango ≤4GB)
 - O añadir listas de bloques libres por orden para memoria >4GB
 - Alternativa: usar radix tree (como Linux) para el estado de frames
@@ -363,6 +366,7 @@ Security Descriptor (por objeto)
 **Dónde:** `security/access.rs`
 
 **Qué hacer:** Actualmente el algoritmo itera ACEs y retorna en el primer match. Para NT-compatibilidad, debe:
+
 1. Evaluar TODOS los deny ACEs primero
 2. Luego evaluar TODOS los allow ACEs
 3. Si algún deny match → DENY
@@ -374,6 +378,7 @@ Security Descriptor (por objeto)
 #### 6. ASLR (Address Space Layout Randomization)
 
 Implementar ASLR gradual:
+
 1. **Enlace aleatorio** (v1): offset aleatorio en la base de carga del ELF, manteniendo el layout relativo
 2. **Pila aleatoria** (v2): posición aleatoria de la pila Ring 3
 3. **Heap aleatorio** (v3): posición aleatoria del heap de usuario
@@ -381,6 +386,7 @@ Implementar ASLR gradual:
 #### 7. Namespace de procesos
 
 Cada EPROCESS debería tener su propia vista del namespace global:
+
 - `/dev`, `/proc`, `/sys` virtuales por proceso
 - Opens y fds aislados (que ya lo están via handle table)
 - Chroot-lite: restringir la resolución de VFS a un subárbol
@@ -388,6 +394,7 @@ Cada EPROCESS debería tener su propia vista del namespace global:
 #### 8. Compatibilidad POSIX básica (opcional)
 
 Si se desea ejecutar software POSIX, añadir:
+
 - `sys_fork` o `sys_clone`
 - `sys_execve` (reemplazar imagen de proceso)
 - `sys_signal` (o equivalente NT-style)
@@ -398,7 +405,7 @@ Si se desea ejecutar software POSIX, añadir:
 ### 6.3 Decisiones de No-Cambio (proteger)
 
 | Decisión | No cambiar porque |
-|----------|------------------|
+| ---------- | ------------------ |
 | HAL raw/safe split | Es la base de toda portabilidad |
 | SSDT dispatch (O(1)) | Es más rápido y predecible que match |
 | Modelo de drivers NEM | Diferencia competitiva de NeoDOS |
@@ -412,7 +419,7 @@ Si se desea ejecutar software POSIX, añadir:
 
 ## 7. Nuevas Abstracciones Fundamentales
 
-### 7.1 Slab<T> — Contenedor de capacidad variable
+### 7.1 Slab\`T\` — Contenedor de capacidad variable
 
 **Qué es:** Un contenedor que combina la eficiencia de un array de tamaño fijo (para el caso común) con la flexibilidad de un Vec (para overflow). Similar a `smallvec` pero integrado con el slab allocator del kernel.
 
@@ -446,6 +453,7 @@ pub enum WaitReason {
 ```
 
 **Dónde usar:**
+
 - `sys_read` en pipe vacío → KWait::PipeRead
 - `sys_waitpid` → KWait::ChildExit
 - `sys_thread_join` → KWait::ThreadJoin
@@ -456,6 +464,7 @@ pub enum WaitReason {
 ### 7.3 Device Tree + Resource Manager
 
 **Qué es:** Un árbol jerárquico de dispositivos físicos y lógicos, detectados automáticamente y manejados por el kernel. Cada dispositivo tiene:
+
 - Tipo (PCI, USB, ACPI, Legacy)
 - Dirección de bus (bus:dev:func para PCI)
 - Recursos asignados (MMIO, IRQ, DMA, I/O ports)
@@ -475,6 +484,7 @@ pub struct DeviceNode {
 ```
 
 **Dónde usar:**
+
 - PCI bus scan → registra dispositivos PCI
 - ACPI → registra dispositivos ACPI (HPET, IOAPIC)
 - ISA/Legacy → registra dispositivos heredados (PIT, PIC, PS/2)
@@ -487,7 +497,7 @@ pub struct DeviceNode {
 
 **Qué es:** Una base de datos jerárquica tipo Windows Registry con claves, valores, y tipos. Persistente en disco en `C:\System\Config\`.
 
-```
+```text
 HKEY_LOCAL_MACHINE\
 ├── Hardware\
 │   ├── DeviceTree\     (auto-generado del Device Tree)
@@ -507,6 +517,7 @@ HKEY_CURRENT_USER\
 ```
 
 **Dónde usar:**
+
 - Configuración de drivers (en lugar de boot.cfg)
 - Variables de entorno persistentes
 - Preferencias de usuario
@@ -527,6 +538,7 @@ pub struct IoCompletionPort {
 ```
 
 **Dónde usar:**
+
 - Aplicaciones de red (servidores)
 - E/S de archivos asíncrona
 - Timers
@@ -541,7 +553,7 @@ pub struct IoCompletionPort {
 ### 8.1 Interfaces Congeladas desde v0.40
 
 | Interfaz | Versión | Notas |
-|----------|---------|-------|
+| ---------- | --------- | ------- |
 | HAL ABI v0.4 | v0.40 | 26 funciones extern "C". No añadir, no quitar, no cambiar firma. Solo añadir nuevas v0.5 paralelas. |
 | Syscall números 0–30 | v0.40 | RAX 0–30 no se reasignan. Añadir nuevas syscalls en ranuras 31+. |
 | BootInfo struct | v0.40 | Contrato UEFI bootloader→kernel. No cambiar campos. Añadir al final si es necesario. |
@@ -556,7 +568,7 @@ pub struct IoCompletionPort {
 ### 8.2 Interfaces en Congelación Progresiva (v0.42–v0.45)
 
 | Interfaz | Congela en | Notas |
-|----------|-----------|-------|
+| ---------- | ----------- | ------- |
 | Event types (0–15) | v0.42 | No reasignar types existentes. Añadir nuevos en 16+. |
 | Event struct (56 bytes) | v0.42 | Formato ABI de eventos. |
 | Capability flags (1–2048) | v0.42 | No reasignar bits existentes. Añadir en bit 12+. |
@@ -569,7 +581,7 @@ pub struct IoCompletionPort {
 
 ### 8.3 Política de Versionado
 
-```
+```text
 vMAJOR.MINOR.PATCH
 
 MAJOR: Cambio ABI/API incompatible (rompe drivers/binarios existentes)
@@ -578,6 +590,7 @@ PATCH: Bugfixes, optimizaciones, tests
 ```
 
 **Reglas:**
+
 - v0.40.x: ciclo actual (API inestable, cambios mayores permitidos)
 - v1.0.0: primera API estable (todas las interfaces de 8.1 + 8.2 congeladas)
 - v1.x.x: API estable, solo cambios compatibles
@@ -588,18 +601,19 @@ PATCH: Bugfixes, optimizaciones, tests
 ## 9. Roadmap por Versiones
 
 ### Fase 1: Maduración (v0.40 – v0.45)
-*Duración estimada: 6 meses*
+
+#### Duración estimada: 6 meses
 
 **Objetivo:** Eliminar las limitaciones estructurales que impedirán escalar.
 
 | Versión | Hitos | Impacto |
-|---------|-------|---------|
+| --------- | ------- | --------- |
 | **v0.40** | — Buddy bitmap dinámico (soporte >4GB RAM) | ✅ Alto |
 | | — User window 4MB → 32MB | ⚠️ Breaking |
 | | — Static buffers → heap allocation | ✅ Alto |
 | | — Priority 0 eliminada del roadmap | |
-| **v0.41** | — Slab<T> contenedor para arrays fijos | ✅ Alto |
-| | — Scheduler: Vec<EPROCESS>, Vec<KTHREAD> | ⚠️ Breaking |
+| **v0.41** | — Slab\`T\` contenedor para arrays fijos | ✅ Alto |
+| | — Scheduler: Vec\`EPROCESS\`, Vec\`KTHREAD\` | ⚠️ Breaking |
 | | — Pipe: Vec de buffers, 4KB → 16KB por defecto | ✅ Medio |
 | | — Driver slots: Vec dinámico | ✅ Medio |
 | **v0.42** | — IOAPIC/MSI-X: congelar ABI | ✅ COMPLETADO |
@@ -621,12 +635,13 @@ PATCH: Bugfixes, optimizaciones, tests
 | | — Refactor completo de VFS (preparar symlinks) | ✅ Medio |
 
 ### Fase 2: Expansión (v0.46 – v0.50)
-*Duración estimada: 4 meses*
+
+#### Duración estimada: 4 meses
 
 **Objetivo:** Añadir funcionalidades transformadoras.
 
 | Versión | Hitos | Impacto |
-|---------|-------|---------|
+| --------- | ------- | --------- |
 | **v0.46** | — Device Tree + Resource Manager | ✅ Alto |
 | | — PCI: auto-vincular drivers a dispositivos | ✅ Medio |
 | | — sys_ioctl() para control de dispositivos | ✅ Medio |
@@ -644,12 +659,13 @@ PATCH: Bugfixes, optimizaciones, tests
 | | — Audit trail (SACL) | ✅ Bajo |
 
 ### Fase 3: Estabilización (v0.51 – v1.0.0)
-*Duración estimada: 6 meses*
+
+#### Duración estimada: 6 meses
 
 **Objetivo:** Bugfixes, documentación, tests, y preparación para v1.0 estable.
 
 | Versión | Hitos | Impacto |
-|---------|-------|---------|
+| --------- | ------- | --------- |
 | **v0.51** | — sys_fork (bajo demanda) | ✅ Medio |
 | | — sys_signal (mínimo) | ✅ Medio |
 | **v0.52** | — Stack de red completo (UDP, DNS, DHCP) | ✅ Alto |
@@ -678,7 +694,7 @@ PATCH: Bugfixes, optimizaciones, tests
 
 1. **v0.40: Buddy bitmap >4GB** — Sin esto, el kernel no arranca con >4GB RAM
 2. **v0.40: User window → 32MB** — Sin esto, las apps no crecen
-3. **v0.41: Slab<T> contenedor** — Sin esto, los arrays fijos saturan
+3. **v0.41: Slab\`T\` contenedor** — Sin esto, los arrays fijos saturan
 4. **v0.42: KWait engine** — Sin esto, el bloqueo ad-hoc es frágil
 5. **v0.46: Device Tree** — Sin esto, los drivers dependen de scan ad-hoc
 6. **v0.47: Networking** — Con esto, NeoDOS sale al mundo
@@ -693,7 +709,7 @@ PATCH: Bugfixes, optimizaciones, tests
 ### Filosofía de decisiones
 
 | Situación | Decisión correcta |
-|-----------|------------------|
+| ----------- | ------------------ |
 | Duda entre complejidad y simplicidad | Elegir simplicidad. Siempre se puede añadir complejidad después. |
 | Duda entre rendimiento y claridad | Elegir claridad primero, optimizar después con benchmarks. |
 | Duda entre feature nueva y deuda técnica | Pagar deuda técnica. |
@@ -704,7 +720,7 @@ PATCH: Bugfixes, optimizaciones, tests
 
 ## Apéndice A: Mapa de Dependencias por Subsistema
 
-```
+```text
 LEGEND:
 ─── depends on
 -.- may use (optional)
@@ -773,7 +789,7 @@ HAL ─── Arch (x86_64)
 ## Apéndice B: Métricas Objetivo v1.0
 
 | Métrica | Actual | Objetivo v1.0 |
-|---------|--------|---------------|
+| --------- | -------- | --------------- |
 | Líneas de código kernel | ~45.580 | <60K |
 | Tests automáticos | 656 (test_case!) | >800 |
 | Cobertura de líneas | ~60% | >90% |

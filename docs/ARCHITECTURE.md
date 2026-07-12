@@ -10,7 +10,7 @@ This document describes the *current* NeoDOS boot/runtime architecture as implem
 
 ## Boot Flow
 
-```
+```text
 UEFI Firmware (OVMF)
   └─ parses GPT → finds ESP → loads `bootloader.efi` from `/EFI/BOOT/BOOTX64.EFI`
        ↓
@@ -54,7 +54,7 @@ NeoDOS Kernel (x86_64-unknown-none)
 
 Todo el sistema cabe en una sola imagen de disco con tabla de particiones GUID (GPT):
 
-```
+```text
 ┌──────────────────────────────┐
 │  LBA 0:  Protective MBR     │
 │  LBA 1:  GPT Header         │
@@ -76,10 +76,12 @@ por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
 El kernel usa una arquitectura de dos niveles para ATA:
 
 ### Boot stub (`neodos-kernel/src/drivers/ata.rs`)
+
 `BootAta` — PIO only, primary channel only. Used during early boot (PHASE 3.6–3.8) for GPT
 parsing, NeoDOS superblock read, and block cache warmup before NEM drivers are loaded.
 
 ### NEM v3 standalone driver (`drivers/ata/` → `ata.nem`, SYSTEM category)
+
 Full-featured ATA driver loaded at PHASE 3.85 by the boot loader. Scans PCI for IDE controller
 (class 0x01, subclass 0x01) with bus-master capability (prog-if bit 7). Enables bus-master bit
 in PCI command register. Initializes primary + secondary channels. Supports DMA read/write (via
@@ -87,6 +89,7 @@ PRDT, up to 8 sectors / 4 KB) and PIO multi-sector fallback. Each active channel
 block device via `hst_register_block_device()` with the kernel's `NemBlockDevice` registry.
 
 ### AHCI fallback
+
 If an AHCI controller is found after PCI scan, the storage manager uses AHCI in preference to
 ATA. The AHCI driver uses DMA polling per port with separate buffers, supports ATA (READ/WRITE
 DMA EXT) and ATAPI (PACKET + READ_10 CDB). If AHCI has no active ports, falls back to ATA boot
@@ -130,7 +133,7 @@ The memory map buffer is intentionally leaked by the bootloader after `ExitBootS
 
 NeoDOS implements a **layered driver architecture** with full hardware access mediation. No driver touches hardware directly; all access goes through `driver → Event Bus → HAL ABI v0.4 → hardware`.
 
-```
+```text
 ┌──────────────────────────────────────────────────────────┐
 │                    Drivers (NEM v3 / built-in)            │
 │   AHCI · ATA · PS/2 · FAT32 · RTC · PCI · NVMe · USB    │
@@ -164,7 +167,7 @@ NeoDOS implements a **layered driver architecture** with full hardware access me
 Unified object manager system for creating, tracking, referencing, and enumerating kernel objects. Replaces legacy KOBJ (eliminado en v0.46). Includes hierarchical object namespace with symbolic links (NT5), case-insensitive path lookup, and VFS mount point integration.
 
 | Concept | Location | Description |
-|---------|----------|-------------|
+| --------- | ---------- | ------------- |
 | **ObObject** | `src/object/mod.rs` | Per-object metadata: ObId (u64), ObType, 128-byte name, refcount, flags, native_id, ObOperations callbacks |
 | **ObObjectTable** | `src/object/mod.rs` | Dynamic `Vec<Option<ObObject>>`, no hard limit, protected by `spin::Mutex`, global via `lazy_static!` |
 | **ObType** | `src/object/types.rs` | Enum (u32): Unknown(0), Process(1), Driver(2), Device(3), Pipe(4), EventBus(5), BlockDevice(6), Filesystem(7), MemoryRegion(8), Symlink(9), MountPoint(10), Directory(11), Key(12), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17) |
@@ -173,8 +176,8 @@ Unified object manager system for creating, tracking, referencing, and enumerati
 | **Mount points** | `src/vfs/mount.rs` | `MountManager` with `MountPoint` struct, `FilesystemType` enum, DosDevices symlink creation, global `MOUNT_MANAGER` |
 | **Public API** | `src/object/mod.rs` | `ob_create_object()`, `ob_destroy_object()`, `ob_lookup()`, `ob_open_object(id)`, `ob_close_object(id)`, `ob_reference()`, `ob_dereference()`, `ob_count()`, `ob_enum_snapshot()`, `ob_open_path(path, token, access)` |
 | **Namespace API** | `src/object/namespace.rs` | `ob_insert_object()`/`ob_remove_object()`, `ob_lookup_path()`, `ob_create_directory()`, `ob_enumerate_namespace()`, `ob_insert_symlink()`, `ob_find_path_by_id()`, `normalize_path()`, `ob_insert_object_auto()`/`ob_remove_object_auto()` |
-| **Integration** | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
-| **CLI** | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=64) — lists all namespace objects |
+| **Integration** | | Processes, drivers, pipes, timers, semaphores, sections auto-register on creation and auto-unregister on destruction. Mount points register via `vfs_mount()` during boot |
+| **CLI** | | `KOBJ` via Ring 3 `kobj.nxe` (ob_enum RAX=64) — lists all namespace objects |
 
 The Ob registry is populated at boot by driver loading and at runtime by process/pipe/timer/semaphore/section creation. Objects are automatically removed when their lifecycle ends (process exit, driver unload, pipe close, timer/semaphore free). Directory entries for `\Device`, `\DosDevices`, `\Global`, `\Driver`, `\FileSystem`, `\Ob`, `\Registry`, `\Process` are created at boot via `init_object_namespace()`. MountPoints for `C:` (NeoDOS FS) and `A:` (FAT32 ESP) are registered during PHASE 3.6.
 
@@ -185,7 +188,7 @@ The Ob registry is populated at boot by driver loading and at runtime by process
 Lowest kernel layer. All inline assembly confined to `src/hal/` (55 asm calls). Zero `asm!()` outside.
 
 | Layer | Module | Contents |
-|-------|--------|----------|
+| ------- | -------- | ---------- |
 | **raw** | `hal/raw/` | Bare asm primitives: `raw_read_msr`, `raw_write_msr`, `raw_pause`, `raw_sti/cli`, `raw_halt`, `raw_read_tsc`, `raw_cpuid`, `raw_read_cr0/2/3/4`, `raw_write_cr3`, `raw_invlpg`, `raw_invpcid`, `raw_read_rflags`, `raw_lgdt/lidt/ltr`, `raw_set_segment_regs`, `raw_gs_read/write_u64/u32/u16/u8`, `raw_inb/outb/inw/outw/inl/outl`, `raw_rep_stosd` |
 | **safe** | `hal/safe/` | Type-safe wrappers: `Msr` trait with `read_msr<T: Msr>()` / `write_msr<T: Msr>()`, MSR constants (`GS_BASE`, `APIC_BASE_MSR`, `EFER`), `IsSafe` flag, `read_cr2()` |
 | **x64 ABI** | `hal/x64/` | Extern "C" ABI surface (26 primitives), delegates to `hal/raw`. `cpu.rs`, `io.rs`, `mem.rs`, `irq.rs`, `time.rs`, `irql.rs`, `mod.rs` |
@@ -193,7 +196,7 @@ Lowest kernel layer. All inline assembly confined to `src/hal/` (55 asm calls). 
 **Extern "C" primitives (ABI surface):**
 
 | Module | Primitives |
-|--------|------------|
+| -------- | ------------ |
 | CPU | `enable_interrupts()`, `disable_interrupts()`, `halt()`, `poweroff()`, `reboot()`, `read_cr2()`, `read_cr3()`, `write_cr3()`, `flush_tlb()`, `interrupts_enabled()`, `hlt_once()` |
 | Port I/O | `inb()`, `outb()`, `inw()`, `outw()`, `inl()`, `outl()` |
 | Page Memory | `alloc_page()`, `free_page()`, `map_page()`, `unmap_page()`, `memory_barrier()` |
@@ -212,6 +215,7 @@ CPU initialization code (GDT, IDT, PIC, paging) stays in `arch/x64/` — it is a
 **Centralized event routing layer** with priority queues, subscription filters, dynamic payload, and backpressure. Transforms raw IRQs into normalized events.
 
 **`Event` structure** (56 bytes, `#[repr(C)]`, ABI-stable for NEM drivers):
+
 ```rust
 struct Event {
     event_id: u64,       // monotonically increasing
@@ -228,7 +232,7 @@ struct Event {
 **18 event types (FROZEN v0.42 — types 0–17 MUST NOT be reassigned):**
 
 | Constant | Value | Description |
-|-----------|-------|-------------|
+| ----------- | ------- | ------------- |
 | `EVENT_TIMER_TICK` | 0 | Timer tick (PIT IRQ0) |
 | `EVENT_KEYBOARD_INPUT` | 1 | Key pressed (PS/2 IRQ1) |
 | `EVENT_SERIAL_DATA` | 2 | Serial data received |
@@ -251,6 +255,7 @@ struct Event {
 | `EVENT_WILDCARD` | 0xFFFFFFFF | Matches any type |
 
 **Internal architecture:**
+
 - **Priority queues**: Two lock-free SPSC ring buffers — **high** (16 slots) for timers/IRQ completions, **normal** (64 slots) for system events. High queue drained first in all dispatch paths.
 - **Handlers**: Up to 64 callbacks `fn(&Event)`, protected by `Mutex<[Option<RegisteredHandler>; 64]>`. Each handler has an `EventFilter` (event_type, source_mask bitfield, device_id).
 - **Subscription**: `register_handler_v2(filter, callback, name)` with structured `EventFilter`. v1 `register_handler(type, callback, name)` creates a type-only filter (backward compatible).
@@ -270,7 +275,8 @@ struct Event {
 NeoDOS Driver Format v3. 80-byte header + sections (text, rodata, data, bss) + relocation table + symbol table + string table.
 
 **`NemHeaderV3` (80 bytes):**
-```
+
+```text
 Offset  Size   Field              Description
 0       4      magic              "NEM3"
 4       4      version            3
@@ -310,6 +316,7 @@ Offset  Size   Field              Description
 **Parser:** `parse_nem_v3(data) → Option<ParsedNemV3>` — zero-copy, no alloc. Validates magic, version, size, ranges, offsets.
 
 **ABI validation:** A driver is ABI-compatible if:
+
 - `abi_min ≤ ABI_MAX_VALID` (driver doesn't require a newer kernel)
 - `abi_max ≥ ABI_MIN_VALID` (driver is not too old)
 - `ABI_MIN_VALID ≤ abi_target ≤ ABI_MAX_VALID`
@@ -323,6 +330,7 @@ ABI constants: `ABI_MIN_VALID=1`, `ABI_TARGET=1`, `ABI_MAX_VALID=2`
 Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, applies relocations, and resolves symbols against the **Kernel Export Table (KET)**.
 
 **Load flow:**
+
 1. Parse NEM v3 header with `parse_nem_v3()`
 2. Validate ABI with `validate_v3_abi()`
 3. Allocate contiguous memory via `alloc_driver_memory()` (max 1 MB per driver)
@@ -333,7 +341,7 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 **Kernel Export Table (KET):** 13 symbols exported to NEM v3 drivers. Each symbol requires the calling driver to hold the corresponding capability (X3 Capability System):
 
 | Symbol | Description | Required Capability |
-|---------|-------------|-------------------|
+| --------- | ------------- | ------------------- |
 | `hst_push_input_byte(byte)` | Push byte to kernel input buffer | `CAP_INPUT` |
 | `hst_log(level, msg, len)` | Logging | `CAP_LOG` |
 | `hst_get_ticks()` | Get tick counter | `CAP_TIMING` |
@@ -353,13 +361,13 @@ Standalone NEM v3 binary driver loader. Loads a `.nem` from NeoFS or raw data, a
 
 Strict **7-state state machine** for driver lifecycle management.
 
-```
+```text
 Loaded(0) → Initialized(1) → Registered(2) → Bound(3) → Active(4)
 Any state → Faulted(5) | Unloaded(6)
 ```
 
 | State | Description |
-|--------|-------------|
+| -------- | ------------- |
 | `Loaded` | Binary loaded in memory, not verified |
 | `Initialized` | `driver_init()` executed successfully |
 | `Registered` | Registered in Driver Runtime + Event Bus notified |
@@ -371,6 +379,7 @@ Any state → Faulted(5) | Unloaded(6)
 **Transition rules:** Only sequential forward transitions are allowed. Any skip (e.g., Loaded → Active) is rejected with `TransitionError`. Any state can transition to Faulted or Unloaded.
 
 **`DriverInstance`** — per-driver struct with:
+
 - `id`, `name[8]`, `driver_type`, `state`
 - `api_version`, `compat_flags`, `abi_min/target/max`, `category`
 - `events_received`, `tick_count`, `last_event_type/tick`, `registered_at_tick`
@@ -381,6 +390,7 @@ Any state → Faulted(5) | Unloaded(6)
 **Error codes:** `ERR_NONE=0`, `ERR_INIT_FAILED=1`, `ERR_REGISTRATION_FAILED=2`, `ERR_BIND_FAILED=3`, `ERR_SANDBOX_REJECTED=4`, `ERR_CERTIFICATION_FAILED=5`, `ERR_OUT_OF_MEMORY=6`, `ERR_POLICY_VIOLATION=7`, `ERR_LOAD_FAILED=8`, `ERR_CAPABILITY_DENIED=9`.
 
 **`certify_and_activate(id)`**: Only promotes to Active if:
+
 1. Current state == Bound (proves the sequence was followed)
 2. `last_error == 0` (no prior errors)
 3. Not Faulted
@@ -394,7 +404,7 @@ Any state → Faulted(5) | Unloaded(6)
 Fine-grained resource access control for NEM drivers. Each driver inherits a 64-bit capability bitmap at load time based on its category:
 
 | Category | Default Capabilities |
-|----------|---------------------|
+| ---------- | --------------------- |
 | **BOOT** | All 11 flags (`CAP_ALL`) |
 | **SYSTEM** | `CAP_PORTIO \| CAP_IRQ \| CAP_MMIO \| CAP_DMA \| CAP_EVENT_BUS \| CAP_INPUT \| CAP_LOG \| CAP_TIMING` |
 | **DEMAND** | `CAP_EVENT_BUS \| CAP_LOG \| CAP_TIMING` |
@@ -412,12 +422,14 @@ See `docs/drivers.md` for the complete capability flag table and `docs/hal.md` f
 Automatic NEM v3 driver loading orchestrator at system startup (PHASE 3.85 in `main.rs`).
 
 **Load order:**
+
 1. **BOOT drivers** — scanned from `C:\System\Drivers\` (essential for init)
 
 2. **SYSTEM drivers** — scanned from `C:\System\Drivers\` (standard extensions)
 If any BOOT driver fails, boot continues (no panic) and the driver is marked FAULTED.
 
 **API:**
+
 ```rust
 fn driver_scan(path: &str) -> Vec<String>     // Scan directory for *.nem files
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str>
@@ -425,7 +437,8 @@ fn boot_load_all()                             // Full orchestrator
 ```
 
 **Per-driver flow:**
-```
+
+```text
 read_nem_file() → parse_nem_v3() → validate ABI → load_nem_v3()
   → register_driver() [Loaded]
   → driver_init() [Initialized]
@@ -445,7 +458,7 @@ read_nem_file() → parse_nem_v3() → validate ABI → load_nem_v3()
 Drivers embedded in the kernel that register as Event Bus callbacks.
 
 | Driver | NEM Type | Events received | Behavior |
-|--------|----------|--------------------|----------------|
+| -------- | ---------- | -------------------- | ---------------- |
 | `null` | Null | TIMER_TICK | Only counts events |
 | `echo` | Echo | TIMER_TICK + KEYBOARD_INPUT | Counts events |
 | `timer_listener` | Lifecycle | TIMER_TICK | Counts ticks, certification pipeline demo |
@@ -474,8 +487,9 @@ Shared library (NXL) loading subsystem for user-mode processes.
 **NXL region**: `0x1e000000..0x1e200000` (2 MB, 8 slots of 256 KB each). Split into 4 KB page tables during boot (PHASE 3.87).
 
 **Available NXLs**:
+
 | NXL | Slot | Address | Load |
-|-----|------|---------|------|
+| ----- | ------ | --------- | ------ |
 | `libneodos.nxl` | 0 | `0x1e000000` | Auto-loaded at boot |
 | `libmath.nxl` | 1 | `0x1e040000` | Manual via `LOADLIB` |
 | `console.nxl` | 2 | `0x1e080000` | Auto-loaded on first use by libneodos |
@@ -493,7 +507,7 @@ Shared library (NXL) loading subsystem for user-mode processes.
 A `regedit`-style tool for inspecting the driver registry.
 
 | Subcommand | Description |
-|-----------|-------------|
+| ----------- | ------------- |
 | `NDREG LIST [path]` | List .nem drivers with state + error + visual progress bar (5 chars: L-I-R-B-A) |
 | `NDREG SHOW <name>` | Full details + certification check + error diagnostics |
 | `NDREG QUERY` | Summary: FS total, runtime state breakdown |
@@ -502,7 +516,7 @@ A `regedit`-style tool for inspecting the driver registry.
 | `NDREG DEBUG <name>` | 5-stage diagnosis (LOAD → INIT → REG → BIND → CERTIFY) |
 | `NDREG LOAD <path>` | Load driver through full pipeline → Active if all pass |
 
-**Pipeline visualization:** `█████` = 5/5 steps completed, `█    ` = only Loaded.
+**Pipeline visualization:** `█████` = 5/5 steps completed, `█` = only Loaded.
 
 ---
 
@@ -511,7 +525,7 @@ A `regedit`-style tool for inspecting the driver registry.
 Beyond the NEM driver framework, the kernel includes integrated hardware drivers:
 
 | Driver | File | Description |
-|--------|---------|-------------|
+| -------- | --------- | ------------- |
 | ATA (boot stub) | `drivers/ata.rs` | PIO only, primary channel, used before NEM driver loads |
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI (boot + NEM) | `drivers/ahci.rs` + `drivers/ahci/` | DMA polling + NCQ (v0.46.2), per-port, ATA + ATAPI, PRDT scatter-gather |
@@ -537,7 +551,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 The kernel testing framework includes **625 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
-|-------|-------|-------------|
+| ------- | ------- | ------------- |
 | NEM | 23 | v3 parsing, ABI, relocations, edge cases |
 | Event Bus | 17 | Creation, push/pop, order, overflow, IDs, dispatch, filters |
 | Driver State | 21 | 7-state pipeline, transition matrix, certification |
@@ -566,7 +580,6 @@ The kernel testing framework includes **625 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-
 Tests run automatically at boot. The kernel runs 625 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
@@ -581,8 +594,9 @@ Tests run automatically at boot. The kernel runs 625 tests (200+ test_case! regi
 - `without_interrupts()` is used for critical sections that cannot be interrupted.
 
 ## Kernel Subsystems (High-Level)
+
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
-- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=20 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section, Socket, Service, PowerManager, KeyboardDevice). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=20 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section, Socket, Service, PowerManager, KeyboardDevice). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle.`KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
 - **kbd**: `src/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
 - **power**: `src/power/` — ACPI power management: RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep (soft-off), reset register
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
@@ -591,12 +605,14 @@ Tests run automatically at boot. The kernel runs 625 tests (200+ test_case! regi
 - **fs**: **VFS layer** (`fs/vfs.rs`) — `Vfs` struct with 26 drive slots (A-Z), `FileSystem` trait (`read`/`write`/`lookup`/`readdir`/`mkdir`/`create`/`stat`/`remove_file`/`remove_dir`/`rename`), `VfsNode { inode, mode, size }`, path resolution with `walk_components`, mount point support. Implementations: `NeoDosFs` (native format, mounted on C:), `Fat32Driver` (ESP, mounted on A:). **Mount points** (`vfs/mount.rs`) register KObjType::MountPoint entries and DosDevices symlinks via `MountManager`.
 - **memory**: frame allocator (bitmap, 4 GiB max), external heap allocator (`linked_list_allocator` 16 MB @ 0x0240_0000), user heap demand-paging (0x10000000..0x12000000, 32 MB, 16 × 2 MB slots → 4 KB PTs)
 - **process**: `Process` struct with PID, state, registers, `user_slot`, `cwd_drive`/`cwd_path`, `heap_base`/`heap_break`, `waiting_for`, `kernel_stack` (private `Option<Box<AlignedKStack>>`), `handle_table` (unified handle table: files, pipes, devices, events), `mmap_regions`, `ob_id` (optional Ob reference)
-- **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), procesos ilimitados (Vec<Option<Eprocess>> dinámica), idle process (PID 0) siempre presente. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
+- **scheduler**: round-robin (`schedule()`), timer-driven (`on_timer_tick` every 100 ticks ≈ 5.5 Hz), procesos ilimitados (Vec\<Option\`Eprocess\`\> dinámica), idle process (PID 0) siempre presente. `recycle_terminated(pid)` removes a process from the table, dropping its kernel stack and freeing the slot. `cleanup_terminated_process(pid)` is the public wrapper called from `cmd_run` (sys_exit path) and `sys_waitpid`.
 - **usermode**: Ring 3 execution via `execute_usermode_asm` (IRETQ), process lifecycle in `spawn_usermode`/`wait_for_process`/`sys_exit` → `exit_to_kernel`. On exit: external resources freed in `syscall_dispatch`, then `cmd_run` calls `cleanup_terminated_process(pid)` to recycle the slot and free the kernel stack. The `KILL` command calls `kill_pid()` which does complete cleanup including heap, mmap, pipes, user slot, and kernel stack, then recycles the slot immediately.
 - **shell**: Ring 3 shell (`neoshell.nxe`) via NeoInit (PID 1), PATH dispatch to .NXE commands, TAB autocomplete, pipeline support, environment variables
 
 ## Kernel Safety and Synchronization (v0.10.4+)
+
 The kernel architecture prioritizes memory safety and reentrancy:
+
 - **Global State**: Managed via `spin::Mutex<Option<T>>` or `spin::Mutex<T>`. Access helpers: `with_vfs(f)`, `with_ata(f)`, `with_cache(f)` in `globals.rs`.
 - **Atomic State**: `RAM_DISK_BASE`/`RAM_DISK_SIZE` (AtomicU64), `TIMER_TICKS` (AtomicU64), `NEED_CACHE_FLUSH` (AtomicBool), console cursor positions.
 - **Periodic cache flush**: Timer tick handler sets `NEED_CACHE_FLUSH` every 180 ticks; flushed in `clear_need_resched()` before syscall returns.
@@ -608,11 +624,11 @@ The kernel architecture prioritizes memory safety and reentrancy:
 Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8 = arg3, R9 = arg4. Return in RAX.
 
 | # | Syscall | Args | Description |
-|---|---------|------|-------------|
+| --- | --------- | ------ | ------------- |
 | 0 | sys_exit | RBX=code | Terminate process |
 | 1 | sys_write | RBX=fd, RCX=ptr, RDX=len | Write to fd (1=console, pipe writer) |
 | 2 | sys_yield | — | Yield CPU |
-| 3 | _(removed)_ | Ob API | Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
+| 3 | *(removed)* | Ob API | Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
 | 4 | sys_read | RBX=fd, RCX=buf, RDX=count | Read from fd (0=stdin, pipe reader) |
 | 5 | sys_pipe | RBX=fds_ptr | Create pipe, returns [read_fd, write_fd] |
 | 6 | sys_dup2 | RBX=old_fd, RCX=new_fd | Duplicate file descriptor |
@@ -629,10 +645,10 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 | 23 | sys_thread_join | RBX=tid | Wait for thread termination |
 | 40 | sys_wait_alertable | — | Alertable wait: dispatch pending APC or block |
 | 41 | sys_sleep_ex | — | Alertable yield: check APC before/after yielding |
-| 42 | _(removed)_ | PowerManager Ob | Use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
+| 42 | *(removed)* | PowerManager Ob | Use `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown/Reboot)` |
 | 47 | sys_chdir_parent | RBX=path_ptr | Change parent process cwd (legacy) |
 | 53 | sys_cursor_blink | RBX=0/1 | Enable/disable cursor blink |
-| 55 | _(removed)_ | Ob API | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
+| 55 | *(removed)* | Ob API | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
 | 58 | sys_driver_unload | RBX=name, RCX=force | Unload NEM driver (admin) |
 | 59 | sys_poll | RBX=pfds, RCX=nfds, RDX=timeout | Poll fds for ready I/O |
 | 60 | sys_ob_open | RBX=path, RCX=access | Open Ob namespace object |
@@ -658,8 +674,8 @@ See `docs/DEBUG.md` for a walkthrough.
 ## Current vs. Ideal Architecture Summary
 
 | Aspecto | Actual | Ideal (v1.0) | Prioridad |
-|---------|--------|---------------|-----------|
-| **Arrays fijos** | 8 subsistemas con límites duros (16 EPROCESS, 32 KTHREAD, 16 pipes, etc.) | Slab<T> dinámico + Vec overflow | **ALTA — v0.41** |
+| --------- | -------- | --------------- | ----------- |
+| **Arrays fijos** | 8 subsistemas con límites duros (16 EPROCESS, 32 KTHREAD, 16 pipes, etc.) | Slab\`T\` dinámico + Vec overflow | **ALTA — v0.41** |
 | **Buddy bitmap** | 16384 words → 4GB máximo | Bitmap dinámico por rango o radix tree | **ALTA — v0.40** |
 | **User window** | 4 MB (0x400000..0x800000) | 32+ MB mínimo | **ALTA — v0.40** |
 | **Static buffers** | BIN_BUF[64KB], CMD_BUF[64KB] globales | Allocación dinámica por llamada | **ALTA — v0.40** |

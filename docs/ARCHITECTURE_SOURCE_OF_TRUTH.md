@@ -28,7 +28,7 @@ bootloader → kernel → NeoInit (PID 1) startup sequence.
 The dependency graph MUST be a DAG. The following couplings are hard-forbidden:
 
 | Consumer | May NOT depend on |
-|----------|-------------------|
+| ---------- | ------------------- |
 | Scheduler | VFS, block drivers, AHCI/ATA, filesystems, event bus dispatch |
 | IRQ handler | `schedule()`, VFS, heap allocation, pipe operations |
 | Block driver | Scheduler, filesystems, other block drivers |
@@ -48,6 +48,7 @@ IRQ handlers MUST NOT acquire spinlocks that can contend with non-IRQ context (u
 
 **INV-4. NO SCHEDULER INVOCATION FROM RING 0 (KERNEL) EXCEPT EXPLICIT SITES.**
 The scheduler is invoked at exactly these points:
+
 - Syscall return (when `NEED_RESCHED` is set)
 - Timer tick preempting Ring 3 (CS=0x1B)
 - `sys_yield` from Ring 3
@@ -90,7 +91,7 @@ and launched via NeoInit / neoshell.
 
 The kernel boot sequence is a strict linear pipeline of phases:
 
-```
+```text
 PHASE 1     Serial init, GDT, IDT (early exceptions)
 PHASE 2     CPU structures: IDT, MSI, PIC remap, HPET/PIT/APIC timer
 PHASE 2.3   PCIe ECAM: read MCFG, map MMIO as UC-, activate ECAM (after heap + pagetables)
@@ -124,7 +125,7 @@ and boot continues.
 ### 3.2 Kernel Address Space Layout
 
 | Region | Base | Size | Owner |
-|--------|------|------|-------|
+| -------- | ------ | ------ | ------- |
 | Kernel image | 0x4000000 | ~1.2 MB | Kernel (read-only exec) |
 | Kernel .rodata | 0x00100000 | ~1 MB | Kernel (read-only) |
 | Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
@@ -157,7 +158,7 @@ unhandled or if error encoding is incorrect.
 
 ### 4.1 Process States
 
-```
+```text
 Ready ──→ Running ──→ Ready        (preemption / yield)
 Running ──→ Blocked                (pipe read, IRP wait, waitpid)
 Blocked ──→ Ready                  (wake event)
@@ -223,7 +224,7 @@ Each slot's memory is freed ONLY by `free_driver_slot` / `free_isolated_range`.
 ### 6.1 Priority Model
 
 | Level | Constant | Time Slice | Purpose |
-|-------|----------|-----------|---------|
+| ------- | ---------- | ----------- | --------- |
 | 0 | `PRIORITY_HIGH` | 400 ticks | System-critical processes |
 | 1 | `PRIORITY_ABOVE_NORMAL` | 200 ticks | Important user processes |
 | 2 | `PRIORITY_NORMAL` | 100 ticks | Default |
@@ -255,7 +256,7 @@ after `sys_exit` and before slot recycle.
 
 ### 7.1 IRP Lifecycle
 
-```
+```text
 irp_alloc() → Pending
   → submit to device queue
   → device processes → irp_complete() → Completed / Error
@@ -300,7 +301,7 @@ that collide with live IRPs. (Pool size 64 vs 32-bit ID space makes this safe.)
 ### 8.1 Header Format (v3)
 
 | Offset | Size | Field | Valid Range |
-|--------|------|-------|-------------|
+| -------- | ------ | ------- | ------------- |
 | 0 | 4 | magic | `b"NEM\0"` |
 | 4 | 4 | version | 3 |
 | 8 | 2 | header_size | 48 |
@@ -317,7 +318,7 @@ that collide with live IRPs. (Pool size 64 vs 32-bit ID space makes this safe.)
 
 ### 8.2 Lifecycle States (W2 Hot Reload compatible)
 
-```
+```text
 Loaded ──→ Initialized ──→ Registered ──→ Bound ──→ Active
 Active ──→ Unloading ──→ Unloaded ──→ Loaded (reload loop)
 Any ──→ Faulted
@@ -327,6 +328,7 @@ Any ──→ Unloaded
 **Rule 8.2.1**: Only the transitions listed above are valid. All others produce
 `TransitionError`.
 **Rule 8.2.2**: A driver is `Active` ONLY IF:
+
 - State == `Bound` (all prior transitions passed)
 - `last_error == ERR_NONE`
 - Not `Faulted`
@@ -336,6 +338,7 @@ state stays unchanged and `last_error = ERR_CERTIFICATION_FAILED`.
 ### 8.3 ABI Negotiation
 
 **Rule 8.3.1**: A driver is compatible iff ALL of:
+
 - `driver.abi_min ≥ 1`
 - `driver.abi_max ≥ ABI_MIN_VALID`
 - `driver.abi_min ≤ ABI_MAX_VALID`
@@ -350,6 +353,7 @@ issues `CompatibleWithWarnings("Driver ABI predates kernel target...")`.
 **Rule 8.4.1**: Every `hst_*` export function MUST call `check_cap(required_cap)` before
 executing. If denied, return error sentinel (0, -1, or no-op).
 **Rule 8.4.2**: Category defaults:
+
 - BOOT → `CAP_ALL` (all 11 flags)
 - SYSTEM → `CAP_PORTIO | CAP_IRQ | CAP_MMIO | CAP_DMA | CAP_EVENT_BUS | CAP_INPUT | CAP_LOG | CAP_TIMING`
 - DEMAND → `CAP_EVENT_BUS | CAP_LOG | CAP_TIMING`
@@ -364,6 +368,7 @@ DEMAND MUST NOT escalate.
 **Rule 8.5.1**: `DRIVER_ISO_BASE` = `0x30000000`, size = `0x1000000` (16 MB).
 **Rule 8.5.2**: `MAX_ISOLATED_DRIVERS` = 16, `DRIVER_SLOT_SIZE` = `0x100000` (1 MB).
 **Rule 8.5.3**: `validate_driver_ptr` accepts only:
+
 - Driver's own isolated slot
 - Kernel heap (`0x01000000..0x02000000`)
 - Kernel .rodata/.text (`0x00100000..0x01000000`)
@@ -400,6 +405,7 @@ struct Event {
 ### 9.2 Queue Architecture
 
 **Rule 9.2.1**: Two priority queues:
+
 - **High** (16 slots) — timers, IRQ completions
 - **Normal** (64 slots) — system events, keyboard, disk
 
@@ -411,6 +417,7 @@ producer MUST handle this.
 ### 9.3 Dispatch
 
 **Rule 9.3.1**: `dispatch_pending()` is called from:
+
 1. `clear_need_resched()` on every syscall return
 2. The idle loop (before HLT)
 3. The shell input loop
@@ -443,6 +450,7 @@ pointing to the kernel console.
 ### 10.2 Privileges
 
 **Rule 10.2.1**: NeoInit MAY:
+
 - Create pipes (`sys_pipe`)
 - Spawn child processes via `cmd_run` or equivalent
 - Redirect child fds via `sys_dup2` before spawn
@@ -450,6 +458,7 @@ pointing to the kernel console.
 - Receive SIGCHLD equivalent when children exit
 
 **Rule 10.2.2**: NeoInit MUST NOT:
+
 - Call `sys_exit` (this panics the kernel — INV-10)
 - Be killed by `kill_pid(1)` (this panics)
 - Have its priority reduced below `PRIORITY_HIGH` by user command
@@ -468,12 +477,14 @@ was intentional).
 ### 11.1 VT Architecture (A4.4)
 
 **Rule 11.1.1**: The kernel manages exactly 4 Virtual Terminals (VT0–VT3), each with:
+
 - Independent `VtInputQueue` (4 KB lock-free ring buffer accessed via atomics)
 - Independent console state (`ConsoleState`: cursor row/col, foreground/background color, bold, cursor visibility)
 - Independent shadow buffer (`VtShadowBuffer`: 160×50 char array for framebuffer redraw)
 - Foreground PID tracking (which process receives keyboard input when this VT is active)
 
 **Rule 11.1.2**: `InputManager` (global singleton in `src/input/manager.rs`) owns all VT state:
+
 - `active_vt: AtomicUsize` — which VT is currently displayed
 - `vt_queues[4]` — per-VT input ring buffers
 - `vt_states[4]` — per-VT console state snapshots
@@ -511,12 +522,14 @@ inactive VT processes from corrupting the visible display.
 ### 11.4 VT Switching
 
 **Rule 11.4.1**: VT switching is triggered by Alt+F1–F4 in the PS/2 IRQ1 handler:
+
 - Alt+F1 → VT0 (scancode 0x3B)
 - Alt+F2 → VT1 (scancode 0x3C)
 - Alt+F3 → VT2 (scancode 0x3D)
 - Alt+F4 → VT3 (scancode 0x3E)
 
 **Rule 11.4.2**: On VT switch, the kernel:
+
 1. Saves the current VT's `ConsoleState` (cursor, colors, visibility)
 2. Restores the target VT's saved `ConsoleState`
 3. Clears the physical framebuffer
@@ -593,7 +606,7 @@ MUST be appended to the end.
 ### 12.2 Migration Path (v0.42+)
 
 | Original mechanism | Replaced by | Status |
-|-------------------|-------------|--------|
+| ------------------- | ------------- | -------- |
 | Pipe blocking (0xFFFF_0000 magic) | `kwait_block(PipeRead(id))` | API ready |
 | IRP wait (0xAAAA_0000 magic) | `kwait_block(IrpComplete(id))` | API ready |
 | Thread join (scheduler ad-hoc) | `kwait_block(ThreadJoin(tid))` | API ready |
@@ -609,7 +622,7 @@ and panic on any mismatch.
 **Rule 12.3.2**: The following interfaces are FROZEN at v0.42:
 
 | Interface | Frozen values | Rule |
-|-----------|--------------|------|
+| ----------- | -------------- | ------ |
 | Event types 0–15 | 16 named constants | MUST NOT reassign |
 | Event struct layout | 56-byte `#[repr(C)]` | MUST NOT change |
 | Capability flags (bits 0–11) | 12 named constants | MUST NOT reassign |
@@ -625,7 +638,7 @@ bit 12+. New WaitReason variants MUST be appended after `Alertable`.
 
 ### 13.1 Calling Convention
 
-```
+```text
 RAX = syscall number
 RBX = arg0
 RCX = arg1
@@ -657,7 +670,7 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permission
 ### 12.2 Syscall Table
 
 | RAX | Name | Signature | Stability |
-|-----|------|-----------|-----------|
+| ----- | ------ | ----------- | ----------- |
 | 0 | `exit` | `(code)` | STABLE |
 | 1 | `write` | `(fd, buf, len)` | STABLE |
 | 2 | `yield` | `()` | STABLE |
@@ -711,6 +724,7 @@ with `Sandbox` mode — the driver is marked `Faulted` but the kernel continues.
 ### 14.2 Driver Failure
 
 **Rule 14.2.1**: If a driver crashes (page fault, GPF) in its isolation slot:
+
 - `Sandbox` mode: driver → `Faulted`, `handle_isolated_page_fault` returns true.
 - `Basic` or `None` mode: kernel panics.
 
@@ -777,6 +791,7 @@ syscall; use `KILL` command or `kill_pid` internal.)
 ### 15.1 Version Format
 
 The kernel version follows `MAJOR.MINOR.PATCH`:
+
 - **MAJOR**: ABI-breaking changes (syscall semantics change, NEM ABI change, IRP format change).
 - **MINOR**: Feature additions without breaking ABI (new syscall at next RAX, new driver,
   new shell command).
@@ -787,7 +802,7 @@ The kernel version follows `MAJOR.MINOR.PATCH`:
 The following changes are ALWAYS breaking (MAJOR bump):
 
 | Component | Breaking Change |
-|-----------|----------------|
+| ----------- | ---------------- |
 | Syscall ABI | Change any syscall number, signature, or return convention |
 | Syscall ABI | Change error encoding (negative u64) |
 | NEM header | Change field offset, size, or interpretation |
@@ -814,7 +829,7 @@ Every invariant below MUST have a corresponding automated test in `testing.rs`.
 The test suite MUST be run before every release.
 
 | # | Invariant | Test type | What to assert |
-|---|-----------|-----------|----------------|
+| --- | ----------- | ----------- | ---------------- |
 | T1 | INV-1: No circular dep | Static analysis | `scripts/check_deps.py` exits 0 |
 | T2 | INV-2: No alloc in IRQ | Code review + test | IRQ handlers never call heap alloc. Test IRQ handler list. |
 | T3 | INV-4: Scheduler not invoked from Ring 0 shell | Functional | Shell process priority stays unchanged across timer ticks |

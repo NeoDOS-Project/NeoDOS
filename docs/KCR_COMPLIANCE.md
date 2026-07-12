@@ -21,7 +21,7 @@ hardware manipulation remains in KCR code.
 ### HAL extensions (v0.3 additions)
 
 | Function | File | Purpose |
-|----------|------|---------|
+| ---------- | ------ | --------- |
 | `inw`/`outw` | `hal/x64/io.rs` | 16-bit port I/O (ATA data, UHCI) |
 | `inl`/`outl` | `hal/x64/io.rs` | 32-bit port I/O (PCI config, UHCI) |
 | `read_cr2` | `hal/x64/cpu.rs` | Page-fault address for page fault handler |
@@ -36,7 +36,7 @@ hardware manipulation remains in KCR code.
 ### Resolved violations
 
 | # | Type | Fix |
-|---|------|------|
+| --- | ------ | ------ |
 | V001 | Direct port I/O | All drivers (ATA, PCI, keyboard, RTC, UHCI, serial, PIC) converted to `hal::inb/outb/inw/outw/inl/outl` |
 | V002 | Direct STI/CLI | 12 `without_interrupts` calls switched to `hal::without_interrupts` |
 | V003 | Direct HLT | 5 raw `asm!("hlt")` replaced with `hal::hlt_once()` |
@@ -57,7 +57,8 @@ hardware manipulation remains in KCR code.
 ## 3. VERIFICATION
 
 ### Symbol export (nm)
-```
+
+```text
 T ack_irq, T alloc_page, T disable_interrupts, T enable_interrupts,
 T flush_tlb, T free_page, T get_ticks, T halt, T hlt_once,
 T inb, T increment_ticks, T inl, T interrupts_enabled, T inw,
@@ -65,19 +66,22 @@ T memory_barrier, T outb, T outl, T outw, T poweroff,
 T read_cr2, T read_cr3, T register_irq, T sleep_hint,
 T unmap_page, T write_cr3
 ```
+
 All 26 symbols are global `T`. No local `t` HAL symbols.
 
 ### Calling convention
+
 All extern "C" functions verified via objdump: args in `%rdi`, `%rsi`, `%rdx`, `%rcx`. Correct System V AMD64 ABI.
 
 ### Tests
+
 45 kernel tests + 4 user-mode binaries: **PASS**.
 
 ---
 
 ## 4. EXECUTION SAFETY VERDICT
 
-# ✅ SAFE
+## ✅ SAFE
 
 **Reasoning:**
 

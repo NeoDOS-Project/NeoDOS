@@ -166,15 +166,6 @@ impl BootBenchmarkResult {
     }
 
     pub fn print(&self) {
-        crate::serial_println!("{}:", self.driver_name);
-        if self.timed_out {
-            crate::serial_println!("  Status: FAILED_TIMEOUT at stage '{}'", self.timeout_stage);
-        }
-        crate::serial_println!("  - init:       {} ms", self.storage_init_ms);
-        crate::serial_println!("  - first read: {} ms", self.first_read_ms);
-        crate::serial_println!("  - mount:      {} ms", self.fs_mount_ms);
-        crate::serial_println!("  - shell:      {} ms", self.shell_load_ms);
-        crate::serial_println!("  - TOTAL:      {} ms", self.total_boot_ms);
         crate::println!("{}:", self.driver_name);
         if self.timed_out {
             crate::println!("  Status: FAILED_TIMEOUT at stage '{}'", self.timeout_stage);
@@ -239,16 +230,7 @@ pub fn print_ahci_debug() {
     let dma   = AHCI_DMA_FAILURES.load(Ordering::Relaxed);
     let avg   = total.checked_div(cmds).unwrap_or(0);
 
-    let msg = "[AHCI DEBUG]";
-    crate::serial_println!("{}", msg);
-    crate::serial_println!("  commands:      {}", cmds);
-    crate::serial_println!("  avg wait:      {} ms", avg);
-    crate::serial_println!("  max wait:      {} ms", max);
-    crate::serial_println!("  poll loops:    {}", polls);
-    crate::serial_println!("  timeouts:      {}", tmo);
-    crate::serial_println!("  dma_failures:  {}", dma);
-
-    crate::println!("{}", msg);
+    crate::println!("[AHCI DEBUG]");
     crate::println!("  commands:      {}", cmds);
     crate::println!("  avg wait:      {} ms", avg);
     crate::println!("  max wait:      {} ms", max);
@@ -342,82 +324,24 @@ pub static ENABLE_AHCI_DEBUG_OUTPUT: AtomicBool = AtomicBool::new(true);
 /// Initialize boot configuration with default values.
 /// Configuration can be changed at runtime using the BENCH shell command.
 pub fn load_config() {
-    // Both flags default to true (original behavior)
-    // Try to read from C:\SYSTEM\BOOT.CFG if VFS is available
-    
-    // Attempt to read BOOT.CFG from the filesystem
-    if let Ok(content) = read_boot_config() {
-        parse_boot_config(&content);
-    }
-    
-    crate::serial_println!("[BENCH] Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",
-        if ENABLE_BOOT_BENCHMARK_REPORT.load(Ordering::Relaxed) { 1 } else { 0 },
-        if ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) { 1 } else { 0 });
-}
-
-/// Try to read BOOT.CFG from the filesystem
-fn read_boot_config() -> Result<alloc::string::String, &'static str> {
-    use alloc::string::String;
-    
-    let path = "C:\\System\\Kernel\\boot.cfg";
-    
-    crate::globals::with_vfs(|vfs| {
-        // Resolve path to get drive index and file metadata
-        let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| "Failed to resolve BOOT.CFG")?;
-        
-        // Verify it's a file, not a directory
-        const MODE_FILE: u16 = 0x80;
-        if node.mode & MODE_FILE == 0 {
-            return Err("BOOT.CFG is not a regular file");
+    // Read BenchmarkReport and AhciDebug from registry
+    // Default (no value or non-zero) = true
+    if let Ok(key) = crate::cm::cm_open_key(0, "CurrentControlSet\\Control") {
+        if let Ok(vc) = crate::cm::cm_query_value(key, "BenchmarkReport") {
+            if let Some(v) = vc.as_dword() {
+                ENABLE_BOOT_BENCHMARK_REPORT.store(v != 0, Ordering::Relaxed);
+            }
         }
-        
-        // Read file content (up to 1024 bytes)
-        let size = (node.size as usize).min(1024);
-        let mut buf = alloc::vec![0u8; size];
-        
-        vfs.read(drive_idx, node.inode, 0, &mut buf)
-            .map_err(|_| "Failed to read BOOT.CFG")?;
-        
-        // Convert to string
-        String::from_utf8(buf).map_err(|_| "BOOT.CFG is not valid UTF-8")
-    })
-}
-
-/// Parse BOOT.CFG content and set configuration flags
-fn parse_boot_config(content: &str) {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        
-        // Skip comments and empty lines
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        
-        // Parse KEY=VALUE
-        if let Some(pos) = trimmed.find('=') {
-            let key = trimmed[..pos].trim();
-            let value = trimmed[pos+1..].trim();
-            
-            match key {
-                "BENCHMARK_REPORT" => {
-                    if value == "1" || value.eq_ignore_ascii_case("ON") || value.eq_ignore_ascii_case("YES") {
-                        ENABLE_BOOT_BENCHMARK_REPORT.store(true, Ordering::Relaxed);
-                    } else if value == "0" || value.eq_ignore_ascii_case("OFF") || value.eq_ignore_ascii_case("NO") {
-                        ENABLE_BOOT_BENCHMARK_REPORT.store(false, Ordering::Relaxed);
-                    }
-                }
-                "AHCI_DEBUG" => {
-                    if value == "1" || value.eq_ignore_ascii_case("ON") || value.eq_ignore_ascii_case("YES") {
-                        ENABLE_AHCI_DEBUG_OUTPUT.store(true, Ordering::Relaxed);
-                    } else if value == "0" || value.eq_ignore_ascii_case("OFF") || value.eq_ignore_ascii_case("NO") {
-                        ENABLE_AHCI_DEBUG_OUTPUT.store(false, Ordering::Relaxed);
-                    }
-                }
-
-                _ => {} // Ignore unknown keys
+        if let Ok(vc) = crate::cm::cm_query_value(key, "AhciDebug") {
+            if let Some(v) = vc.as_dword() {
+                ENABLE_AHCI_DEBUG_OUTPUT.store(v != 0, Ordering::Relaxed);
             }
         }
     }
+
+    crate::serial_println!("[BENCH] Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",
+        if ENABLE_BOOT_BENCHMARK_REPORT.load(Ordering::Relaxed) { 1 } else { 0 },
+        if ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) { 1 } else { 0 });
 }
 
 /// Set benchmark report flag (for testing/dynamic config).
@@ -439,8 +363,6 @@ pub fn print_report(driver_name: &'static str) {
         return;
     }
 
-    crate::serial_println!();
-    crate::serial_println!("[BOOT BENCHMARK RESULTS]");
     crate::println!();
     crate::println!("[BOOT BENCHMARK RESULTS]");
 
@@ -468,11 +390,9 @@ pub fn print_report(driver_name: &'static str) {
 
     // Print detailed AHCI debug stats only if both benchmark AND ahci_debug are enabled
     if cmds > 0 && ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) {
-        crate::serial_println!();
         crate::println!();
         print_ahci_debug();
     }
 
-    crate::serial_println!();
     crate::println!();
 }

@@ -208,28 +208,33 @@ def build_default_system_hive_v2() -> bytes:
     _V_SHELL = 9
     _V_VT = 10
     _V_AUTO = 11
-    _V_DHCP = 12
-    _V_WAIT = 13
-    _V_DNAME = 14
-    _V_BPATH = 15
-    _V_IPATH = 16
-    _V_STYPE = 17
-    _V_RPOL = 18
-    _V_MFAIL = 19
-    _V_DEPS = 20
-    _V_DESC = 21
+    _V_TESTS = 12
+    _V_DHCP = 13
+    _V_WAIT = 14
+    _V_BENCH = 23
+    _V_AHCI = 24
+    _V_DNAME = 15
+    _V_BPATH = 16
+    _V_IPATH = 17
+    _V_STYPE = 18
+    _V_RPOL = 19
+    _V_MFAIL = 20
+    _V_DEPS = 21
+    _V_DESC = 22
 
     # Pre-alloc: ensure next_idx doesn't conflict
-    b.next_idx = 22
+    b.next_idx = 23
 
     # ── VALUES (linked lists) ──
-    # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices
+    # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests
     b.add_value(_V_SHELL, "DefaultShell", REG_SZ,
                 b"C:\\Programs\\neoshell.nxe\x00")
     b.add_value(_V_VT, "EnableVT", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_SHELL)
     b.add_value(_V_AUTO, "AutoStartServices", REG_SZ,
                 b"\x00", next_val=_V_VT)
+    b.add_value(_V_TESTS, "EnableTests", REG_DWORD,
+                struct.pack("<I", 0), next_val=_V_AUTO)
 
     # Dhcpc values: Description -> Dependencies -> MaxFailures -> RestartPolicy -> StartType -> ImagePath -> BinaryPath -> DisplayName
     b.add_value(_V_DESC, "Description", REG_SZ,
@@ -253,13 +258,17 @@ def build_default_system_hive_v2() -> bytes:
     b.add_value(_V_DHCP, "DHCPEnabled", REG_DWORD,
                 struct.pack("<I", 1))
 
-    # Control values: WaitForNetwork
-    b.add_value(_V_WAIT, "WaitForNetwork", REG_DWORD,
+    # Control values: BenchmarkReport(1) -> AhciDebug(1) -> WaitForNetwork(0)
+    b.add_value(_V_BENCH, "BenchmarkReport", REG_DWORD,
                 struct.pack("<I", 0))
+    b.add_value(_V_AHCI, "AhciDebug", REG_DWORD,
+                struct.pack("<I", 0), next_val=_V_BENCH)
+    b.add_value(_V_WAIT, "WaitForNetwork", REG_DWORD,
+                struct.pack("<I", 0), next_val=_V_AHCI)
 
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
-    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_AUTO)
+    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS)
 
     # Dhcpc (child of Services, sibling of NeoInit)
     b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME)
@@ -274,7 +283,7 @@ def build_default_system_hive_v2() -> bytes:
     b.add_key(_NET, "Network", _SVC, subkeys_head=_IFC)
 
     # Services: subkeys = NeoInit -> Dhcpc -> Network (sibling chain)
-    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_AUTO,
+    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS,
               subkeys_sibling=_DHCPC)
     b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME,
               subkeys_sibling=_NET)
@@ -301,12 +310,13 @@ def main():
     output.write_bytes(data)
     size = len(data)
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: {22}")
+    print(f"  Cells: {25}")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\NeoInit\\EnableVT = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\NeoInit\\AutoStartServices = '' (REG_SZ)")
+    print("    CurrentControlSet\\Services\\NeoInit\\EnableTests = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
@@ -317,6 +327,8 @@ def main():
     print("    CurrentControlSet\\Services\\Dhcpc\\Description = 'DHCP Client Service' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
+    print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
+    print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
 
 
 if __name__ == "__main__":

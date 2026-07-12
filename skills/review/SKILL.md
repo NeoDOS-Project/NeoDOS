@@ -1,9 +1,11 @@
 # Review
 
 ## When to use
+
 You are reviewing a pull request or code change, or need a systematic checklist before committing.
 
 ## Goal
+
 Catch architectural violations, missed invariants, missing docs, and breaking changes before they land.
 
 ## Steps
@@ -39,6 +41,7 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
    - Only intended files staged (no `Cargo.lock`, no `target/`, no IDE files).
 
 6. **Run full verification**
+
    ```bash
    cargo build
    python3 scripts/auto_test.py
@@ -51,6 +54,7 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
    - If major architectural violation: reject with reference to the violated rule.
 
 ## Best practices
+
 - Be specific in review comments — reference file paths and line numbers.
 - Distinguish between style nits (non-blocking) and correctness issues (blocking).
 - Check for unsafe code — every `unsafe` block needs a safety comment.
@@ -58,6 +62,7 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
 - Review for integer overflow, arithmetic edge cases, and signed/unsigned mismatches.
 
 ## Common mistakes
+
 - Approving changes that add new Ring 0 shell commands.
 - Missing ABI version bumps when NEM driver structs change.
 - Letting through commits that modify `AGENTS.md` without updating doc pointers.
@@ -65,6 +70,7 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
 - Missing safety comments on `unsafe` blocks.
 
 ## Final checklist
+
 - [ ] All AGENTS.md permanent rules satisfied
 - [ ] `scripts/check_deps.py` passes (no forbidden imports)
 - [ ] Public API docs updated (syscalls, objects, drivers, libneodos)

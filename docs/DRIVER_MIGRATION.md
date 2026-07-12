@@ -5,7 +5,7 @@ relación con los drivers .nem.
 
 ## Taxonomía de Drivers
 
-```
+```text
 ┌─────────────────────────────────────────────────────────┐
 │  Drivers .nem (7)     │  Kernel stubs (5)               │
 │                       │                                  │
@@ -31,7 +31,7 @@ relación con los drivers .nem.
 ## 1. Drivers .nem Existentes
 
 | # | Driver | Cat | Líneas | Hardware | Kernel stub | Entry points |
-|---|--------|-----|--------|----------|-------------|-------------|
+| --- | -------- | ----- | -------- | ---------- | ------------- | ------------- |
 | 1 | `ps2kbd.nem` | BOOT | 268 | PS/2 keyboard: scan code → keycode, modifiers, dead keys, 2 layouts (US/SP) | `ps2.rs` (76L) | init, activate, on_event |
 | 2 | `serial.nem` | BOOT | 103 | COM1 serial: 115200 8N1, FIFO, IRQ4, push bytes a input buffer | — | init, activate, on_event |
 | 3 | `rtc.nem` | BOOT | 142 | CMOS RTC: BCD→bin, EVENT_RTC_READ → EVENT_RTC_DATA | `rtc_bridge.rs` (59L) | init, activate, on_event |
@@ -48,7 +48,7 @@ Estos son drivers que tienen una versión mínima en el kernel para el arranque
 temprano y una versión completa en .nem:
 
 | Kernel stub | Líneas | .nem | Líneas | Relación |
-|-------------|--------|------|--------|----------|
+| ------------- | -------- | ------ | -------- | ---------- |
 | `ata.rs` | 133 | `ata.nem` | 616 | Stub PIO solo canal primario. .nem añade DMA + secundario |
 | `boot_ahci.rs` | 532 | `ahci.nem` | 794 | Stub single-port DMA polling. .nem multi-port + ATAPI |
 | `ps2.rs` | 76 | `ps2kbd.nem` | 268 | Stub = init HW (controlador). .nem = traducción scan codes |
@@ -57,6 +57,7 @@ temprano y una versión completa en .nem:
 
 **Principio arquitectónico**: Los stubs del kernel son **deliberadamente
 mínimos** y solo existen porque:
+
 1. Se necesitan antes de que el boot loader de .nem se ejecute (Phase 3 vs 3.85)
 2. Proveen primitivas de bajo nivel (ECAM, port I/O) que los .nem consumen vía `hst_*`
 3. Sirven como fallback si el .nem equivalente falla (ATA PIO boot stub)
@@ -64,7 +65,7 @@ mínimos** y solo existen porque:
 ## 3. Drivers Solo en Kernel (sin .nem)
 
 | Driver | Líneas | Boot-critical | ¿Migrable a .nem? | Razón |
-|--------|--------|---------------|-------------------|-------|
+| -------- | -------- | --------------- | ------------------- | ------- |
 | `nvme.rs` | 837 | Sí (Phase 3) | No | 837 líneas, acoplado a PCI/MSI-X/PRP/MMIO. Migrar requeriría exponer demasiado del kernel vía hst_*. Sin beneficio. |
 | `fat32.rs` | 523 | Sí (Phase 3) | No | Filesystem driver. El modelo NEM es para drivers de hardware, no filesystems. Además se necesita en Phase 3 antes del boot loader .nem. |
 | `gpt.rs` | 178 | Sí (Phase 3) | No | Parser de particiones. Corre en Phase 3 antes que cualquier .nem. Sin él no se encuentran las particiones. |
@@ -78,7 +79,7 @@ Estos módulos **no deben migrarse** porque son la infraestructura que sostiene
 el ecosistema .nem:
 
 | Módulo | Líneas | Rol |
-|--------|--------|-----|
+| -------- | -------- | ----- |
 | `block.rs` | 394 | Define el trait `BlockDevice`. Es la interfaz, no una implementación. |
 | `driver_runtime.rs` | 944 | Máquina de estados del ciclo de vida de drivers .nem (8 estados) |
 | `isolation.rs` | 795 | Sandbox de aislamiento para drivers .nem (16 MB, 16 slots) |
@@ -99,7 +100,7 @@ el ecosistema .nem:
 
 ## 6. Mapa de Dependencias en Boot
 
-```
+```text
 Phase 2:   ps2.rs (init controlador teclado)
 Phase 2.3: pci.rs (ECAM init)
 Phase 3:   storage_manager.rs → nvme.rs | boot_ahci.rs | ata.rs
@@ -111,7 +112,7 @@ Phase 3.85: boot_loader/ → carga todos los .nem (BOOT → SYSTEM)
 ## 7. Resumen
 
 | Categoría | Count | Total líneas |
-|-----------|-------|-------------|
+| ----------- | ------- | ------------- |
 | Drivers .nem | 7 | 2,516 |
 | Kernel stubs (con .nem) | 5 | 1,019 |
 | Kernel-only drivers | 6 | 2,820 |

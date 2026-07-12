@@ -1,11 +1,13 @@
 # NeoDOS VFS Usage Patterns - Complete Reference
 
 ## Overview
+
 The NeoDOS VFS (Virtual File System) is a unified filesystem interface accessed through a global `Mutex<Vfs>` protected by helper functions in `globals.rs`.
 
 ## Global VFS Access
 
 ### Method 1: Using `with_vfs()` Helper (Recommended)
+
 The preferred pattern for accessing VFS in kernel code:
 
 ```rust
@@ -20,6 +22,7 @@ let result = crate::globals::with_vfs(|vfs| {
 **Location**: [`neodos-kernel/src/globals.rs`](neodos-kernel/src/globals.rs)
 
 **Definition**:
+
 ```rust
 pub fn with_vfs<F, R>(f: F) -> R
 where
@@ -31,6 +34,7 @@ where
 ```
 
 ### Method 2: Direct Lock (Legacy)
+
 ```rust
 match crate::globals::VFS.lock().read_file(inode_num, 0, &mut buf) {
     Ok(bytes_read) => { /* ... */ }
@@ -51,6 +55,7 @@ pub struct Vfs {
 ```
 
 ### VfsNode - File/Directory Metadata
+
 ```rust
 pub struct VfsNode {
     pub inode: u32,     // Inode number
@@ -60,12 +65,14 @@ pub struct VfsNode {
 ```
 
 ### Mode Constants
+
 ```rust
 pub const MODE_DIR: u16 = 0x40;   // Directory
 pub const MODE_FILE: u16 = 0x80;  // Regular file
 ```
 
 ### VfsError Enum
+
 ```rust
 pub enum VfsError {
     NotFound,
@@ -90,16 +97,20 @@ pub enum VfsError {
 ### 1. Path Resolution
 
 #### `resolve_path(path: &str) -> Result<(usize, VfsNode), VfsError>`
+
 Resolves a full path and returns drive index + file metadata.
 
 **Parameters**:
+
 - `path`: Full path like `"C:\\System\\Config\\system.cfg"`
 
-**Returns**: 
+**Returns**:
+
 - `Ok((drive_idx, VfsNode))` - drive index (0-25) and file metadata
 - `Err(VfsError)` - if path is invalid or file not found
 
 **Example**:
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     match vfs.resolve_path("C:\\readme.txt") {
@@ -119,19 +130,23 @@ crate::globals::with_vfs(|vfs| {
 ### 2. File Reading
 
 #### `read(drive_idx: usize, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError>`
+
 Reads file content at specified offset.
 
 **Parameters**:
+
 - `drive_idx`: Drive index (from `resolve_path`)
 - `inode`: Inode number (from `VfsNode`)
 - `offset`: Byte offset in file
 - `buf`: Mutable buffer to read into
 
-**Returns**: 
+**Returns**:
+
 - `Ok(bytes_read)` - number of bytes read
 - `Err(VfsError)` - on I/O or permission error
 
 **Example**:
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     let (drive_idx, node) = vfs.resolve_path("C:\\test.nxe")?;
@@ -148,6 +163,7 @@ crate::globals::with_vfs(|vfs| {
 ```
 
 **Real example from codebase** ([`neodos-kernel/src/drivers/boot_loader/mod.rs`](neodos-kernel/src/drivers/boot_loader/mod.rs)):
+
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
     crate::globals::with_vfs(|vfs| {
@@ -175,15 +191,18 @@ fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
 ### 3. File Writing
 
 #### `write(drive_idx: usize, inode: u32, offset: u64, buf: &[u8]) -> Result<usize, VfsError>`
+
 Writes data to a file.
 
 **Parameters**:
+
 - `drive_idx`: Drive index
 - `inode`: Inode number
 - `offset`: Byte offset
 - `buf`: Data to write
 
-**Returns**: 
+**Returns**:
+
 - `Ok(bytes_written)` - number of bytes written
 - `Err(VfsError)` - on I/O or permission error
 
@@ -192,9 +211,11 @@ Writes data to a file.
 ### 4. Directory Navigation
 
 #### `readdir(drive_idx: usize, inode: u32, index: usize) -> Result<Option<DirEntry>, VfsError>`
+
 Lists directory entries.
 
 **Returns**:
+
 - `Ok(Some(DirEntry))` - next directory entry
 - `Ok(None)` - end of directory
 - `Err(VfsError)` - if not a directory or I/O error
@@ -211,6 +232,7 @@ pub struct DirEntry {
 ### 5. File/Directory Metadata
 
 #### `stat(drive_idx: usize, inode: u32) -> Result<VfsNode, VfsError>`
+
 Gets file/directory information (size, type, etc).
 
 ---
@@ -218,9 +240,11 @@ Gets file/directory information (size, type, etc).
 ### 6. File/Directory Creation
 
 #### `create(path: &str) -> Result<VfsNode, VfsError>`
+
 Creates a new file.
 
 #### `mkdir(path: &str) -> Result<VfsNode, VfsError>`
+
 Creates a new directory.
 
 ---
@@ -228,9 +252,11 @@ Creates a new directory.
 ### 7. File/Directory Deletion
 
 #### `remove_file(path: &str) -> Result<(), VfsError>`
+
 Deletes a file.
 
 #### `remove_dir(path: &str) -> Result<(), VfsError>`
+
 Deletes an empty directory.
 
 ---
@@ -238,6 +264,7 @@ Deletes an empty directory.
 ### 8. File Operations
 
 #### `rename(path: &str, new_name: &str) -> Result<(), VfsError>`
+
 Renames a file or directory.
 
 ---
@@ -245,15 +272,19 @@ Renames a file or directory.
 ### 9. Drive/Mount Operations
 
 #### `mount(letter: char, fs: Box<dyn FileSystem>) -> Result<(), VfsError>`
+
 Mounts a filesystem on a drive letter (A-Z).
 
 #### `unmount(letter: char) -> Result<(), VfsError>`
+
 Unmounts a filesystem.
 
 #### `mount_at_path(path: &str, mounted_drive: char) -> Result<(), VfsError>`
+
 Mounts a drive at a subdirectory.
 
 #### `unmount_path(path: &str) -> Result<(), VfsError>`
+
 Unmounts from a subdirectory.
 
 ---
@@ -261,9 +292,11 @@ Unmounts from a subdirectory.
 ### 10. Volume Operations
 
 #### `volume_label(drive: char) -> Result<String, VfsError>`
+
 Gets the volume label of a drive.
 
 #### `set_volume_label(drive: char, label: &str) -> Result<(), VfsError>`
+
 Sets the volume label.
 
 ---
@@ -302,6 +335,7 @@ pub trait FileSystem: Send {
 ```
 
 **Current implementations**:
+
 - [`NeoDosFsV2`](neodos-kernel/src/fs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
 - [`Fat32Driver`](neodos-kernel/src/drivers/fat32.rs) - FAT32 (ESP boot partition)
 - [`Iso9660Driver`](neodos-kernel/src/drivers/iso9660.rs) - ISO 9660 (CD-ROM)
@@ -311,6 +345,7 @@ pub trait FileSystem: Send {
 ## Common Usage Patterns
 
 ### Pattern 1: Read Entire File
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     let (drive_idx, node) = vfs.resolve_path("C:\\file.txt")?;
@@ -328,6 +363,7 @@ crate::globals::with_vfs(|vfs| {
 ```
 
 ### Pattern 2: Read File by Handle (From Syscall)
+
 ```rust
 // From sys_readfile syscall
 let result = crate::globals::with_vfs(|vfs| {
@@ -345,6 +381,7 @@ match result {
 ```
 
 ### Pattern 3: List Directory
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     let (drive_idx, dir_node) = vfs.resolve_path("C:\\System")?;
@@ -359,6 +396,7 @@ crate::globals::with_vfs(|vfs| {
 ```
 
 ### Pattern 4: Create and Write File
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     let file_node = vfs.create("C:\\newfile.txt")?;
@@ -378,10 +416,12 @@ pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new
 ```
 
 **Safe access patterns**:
+
 1. ✅ Use `with_vfs()` helper (auto-locks/unlocks)
 2. ✅ Lock directly with `VFS.lock()` if performing multiple operations
 
 **Unsafe patterns**:
+
 1. ❌ Hold the lock across syscall boundaries
 2. ❌ Allocate memory while holding the lock (deadlock risk)
 3. ❌ Call blocking functions while locked
@@ -391,7 +431,9 @@ pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new
 ## Examples from Codebase
 
 ### 1. Syscall Handler - `sys_readfile`
+
 [`neodos-kernel/src/syscall.rs` line ~737](neodos-kernel/src/syscall.rs#L737)
+
 ```rust
 let result = crate::globals::with_vfs(|vfs| {
     vfs.read(drive_idx, inode_num, offset, &mut temp_buf)
@@ -399,7 +441,9 @@ let result = crate::globals::with_vfs(|vfs| {
 ```
 
 ### 2. Driver Loader - Reading .nem Files
+
 [`neodos-kernel/src/drivers/boot_loader/mod.rs` line ~274](neodos-kernel/src/drivers/boot_loader/mod.rs#L274)
+
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
     crate::globals::with_vfs(|vfs| {
@@ -415,7 +459,9 @@ fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
 ```
 
 ### 3. Shell Command - `TYPE` (Display File)
+
 [`userbin/coretype/src/main.rs`](userbin/coretype/src/main.rs)
+
 ```rust
 crate::globals::with_vfs(|vfs| {
     let (drive_idx, node) = vfs.resolve_path(path)?;
@@ -424,7 +470,9 @@ crate::globals::with_vfs(|vfs| {
 ```
 
 ### 4. Boot Benchmark - Reading BOOT.CFG
+
 [`neodos-kernel/src/boot_benchmark.rs` line ~364](neodos-kernel/src/boot_benchmark.rs#L364)
+
 ```rust
 match crate::globals::VFS.lock().open_file(path) {
     Ok(inode_num) => {
@@ -446,4 +494,3 @@ match crate::globals::VFS.lock().open_file(path) {
 4. **Error handling**: All operations return `Result<T, VfsError>`
 5. **Zero-copy reads**: Data copied directly to user buffers where possible
 6. **Mount points**: Supports mounting drives at directory locations
-

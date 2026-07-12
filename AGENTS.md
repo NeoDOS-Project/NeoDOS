@@ -5,7 +5,7 @@
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `cargo run --bin neodev -- test` → `scripts/check_deps.py`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `cargo run --bin neodev -- test` → `scripts/check_deps.py` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
@@ -27,6 +27,7 @@ cargo run --bin neodev -- list                     # show discovered projects
 cargo run --bin neodev -- clean                    # clean artifacts
 bash scripts/build.sh                              # legacy (still available)
 ```
+
 Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`
 or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/Cargo.toml --'`
 
@@ -34,15 +35,16 @@ or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/
 
 1. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
 2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
-3. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
-4. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
+3. `npx markdownlint '**/*.md' --config .markdownlint.json`
+4. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
+5. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
 
 ## Architecture
 
 For every subsystem, consult its doc — not this file:
 
 | Subsystem | Doc | Contents |
-|-----------|-----|----------|
+| ----------- | ----- | ---------- |
 | NeoDev | `tools/neodev/README.md` | Development tool: build, image, run, test |
 | Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
 | Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
@@ -70,7 +72,7 @@ For every subsystem, consult its doc — not this file:
 ## Skills (specialized task checklists)
 
 | Skill | When to use | File |
-|-------|-------------|------|
+| ------- | ------------- | ------ |
 | Build | Build/run/test cycle | `skills/build/SKILL.md` |
 | Syscalls | Add/modify a syscall | `skills/syscalls/SKILL.md` |
 | Object Manager | Extend Ob types/API | `skills/object-manager/SKILL.md` |

@@ -21,7 +21,7 @@ NeoDOS supports three networking modes, selected via flags to
 `scripts/qemu-debug.sh`:
 
 | Mode | Flag | Sudo needed? | Guest → Internet | Host → Guest | Setup |
-|------|------|-------------|-----------------|-------------|-------|
+| ------ | ------ | ------------- | ----------------- | ------------- | ------- |
 | SLiRP | _(default)_ | No | Yes (NAT) | No | None |
 | Bridge | `--bridge` | Setup only | Yes (NAT) | Yes | `setup-network.sh` |
 | TAP | `--tap` | Each session | Configurable | Configurable | Manual |
@@ -33,6 +33,7 @@ out of the box. The guest receives an IP via QEMU's virtual DHCP server and
 can access the internet through NAT.
 
 **Limitations:**
+
 - The host cannot directly reach the guest.
 - Performance is slightly lower than bridge mode.
 - No support for advanced features (e.g., VLANs).
@@ -44,6 +45,7 @@ TAP interfaces. The bridge is created by `setup-network.sh` and persists
 across reboots.
 
 **Advantages:**
+
 - Host can reach the guest (e.g., for network service testing).
 - Guest appears as a real device on the bridge subnet.
 - Better performance than SLiRP.
@@ -64,6 +66,7 @@ full control over the TAP device is needed (e.g., connecting to an existing
 network bridge or VLAN).
 
 Requires the TAP device to be created before running QEMU:
+
 ```bash
 sudo ip tuntap add tap0 mode tap user $(whoami)
 sudo ip addr add 10.0.1.1/24 dev tap0
@@ -98,7 +101,7 @@ sudo NEODOS_BRIDGE=mybridge NEODOS_SUBNET=192.168.100.0/24 bash scripts/setup-ne
 ```
 
 | Variable | Default | Description |
-|----------|---------|-------------|
+| ---------- | --------- | ------------- |
 | `NEODOS_BRIDGE` | `neodos0` | Bridge interface name |
 | `NEODOS_SUBNET` | `10.0.2.0/24` | Bridge subnet (CIDR) |
 | `NEODOS_IP` | `10.0.2.1` | Bridge IP address |
@@ -118,6 +121,7 @@ sudo bash scripts/setup-network.sh --remove
 ```
 
 This removes:
+
 - The bridge and its NetworkManager connection.
 - The `allow` line from `/etc/qemu/bridge.conf`.
 - NAT rules for the bridge subnet.
@@ -128,7 +132,7 @@ This removes:
 
 ### Bridge Mode Packet Flow
 
-```
+```text
 ┌─────────────────────────────────────────────────┐
 │ Host                                            │
 │                                                 │
@@ -150,7 +154,7 @@ This removes:
 ### Bridge Mode vs. TAP Mode
 
 | Aspect | Bridge Mode | TAP Mode |
-|--------|-------------|----------|
+| -------- | ------------- | ---------- |
 | TAP creation | Automatic via helper | Manual (`ip tuntap add`) |
 | Runtime privilege | None (helper is SUID) | None (if pre-created) |
 | Persistence | Bridge persists across reboots | TAP deleted on reboot |
@@ -165,10 +169,12 @@ This removes:
 the standard, intended mechanism for unprivileged bridge networking.
 
 **What it allows:**
+
 - Any user (via QEMU) to create TAP interfaces and attach them to
   bridge interfaces allowed in `/etc/qemu/bridge.conf`.
 
 **What it prevents:**
+
 - Only bridges listed in `/etc/qemu/bridge.conf` can be used.
 - The helper only creates TAP interfaces; it cannot modify other network
   configuration.
@@ -177,6 +183,7 @@ the standard, intended mechanism for unprivileged bridge networking.
 
 **Risk:** A compromised QEMU process could create TAP interfaces on allowed
 bridges. Mitigated by:
+
 - Limited to bridges in `bridge.conf` (only `neodos0` in our setup).
 - QEMU's sandboxing options (Seccomp, namespace isolation).
 - The helper drops to the calling user's UID after setup.
@@ -185,6 +192,7 @@ bridges. Mitigated by:
 
 The setup script adds the user to the `kvm` group for `/dev/kvm` access. This
 is a standard, low-risk privilege:
+
 - Allows hardware-accelerated virtualization.
 - Does not grant root or other elevated privileges.
 - The `kvm` group membership is restricted by the system administrator on
@@ -199,6 +207,7 @@ sudo setcap cap_net_admin+ep /usr/bin/qemu-system-x86_64
 ```
 
 **Why we do NOT use this:**
+
 - Broadens the attack surface (any user running QEMU gets `CAP_NET_ADMIN`).
 - Harder to audit and control (capability applies to the whole binary).
 - Not compatible with all QEMU deployments (snap, flatpak, etc.).
@@ -211,6 +220,7 @@ appropriate SELinux context (`virtd_t` or `qemu_bridge_helper_t`). The setup
 script does not modify SELinux policies.
 
 If you encounter SELinux denials:
+
 ```bash
 sudo ausearch -m avc -ts recent
 sudo sealert -a /var/log/audit/audit.log  # if setroubleshoot is installed
@@ -237,6 +247,7 @@ sudo sealert -a /var/log/audit/audit.log  # if setroubleshoot is installed
 - **Network:** NetworkManager or systemd-networkd
 
 **Check helper location:**
+
 ```bash
 dpkg -L qemu-system-x86 | grep bridge-helper
 ```
@@ -296,6 +307,7 @@ ls -la /dev/net/tun
 # Fix (if not world-accessible)
 sudo chmod 666 /dev/net/tun
 ```
+
 Note: Making `/dev/net/tun` world-accessible is less secure than using
 `qemu-bridge-helper`. Prefer the bridge helper approach.
 
@@ -326,7 +338,7 @@ sudo firewall-cmd --reload
 ## Comparison of Approaches
 
 | Approach | Runtime Sudo? | Setup Sudo? | Persistence | Security |
-|----------|:------------:|:-----------:|:-----------:|:--------:|
+| ---------- | :------------: | :-----------: | :-----------: | :--------: |
 | **Bridge + qemu-bridge-helper** | No | Yes (once) | ✓ Bridge persistent | ★★★ Granular |
 | SLiRP (default) | No | No | N/A | ★★★★★ No setup |
 | TAP (pre-created) | No | Yes (per boot) | ✗ | ★★★★ |

@@ -1,6 +1,4 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::path::Path;
 
 const KBD_MAGIC: &[u8; 4] = b"KBD\0";
 
@@ -45,7 +43,7 @@ fn main() {
     for _ in 0..256 {
         entries.push(KeyEntry::empty());
     }
-    let mut compose: Vec<ComposeEntry> = Vec::new();
+    let compose: Vec<ComposeEntry> = Vec::new();
 
     // Parse KLC format — very simple parser
     let mut in_layout = false;

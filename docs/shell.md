@@ -22,6 +22,7 @@ Callback registered via `register_completion()` against `console.nxl` (NXL slot 
 `console.nxl` provides a circular buffer of 32 entries. Up arrow sends sentinel byte `0x01` to stdin; down arrow sends `0x02`. The shell interprets these sentinels and requests the previous/next entry via `history_prev()`, `history_next()` API. Entries are added via `history_add_raw()` after each command execution. History is in-memory only, not persisted to disk.
 
 API exposed by console module:
+
 - `history_add_raw(line: &str)`
 - `history_prev() -> Option<&str>`
 - `history_next() -> Option<&str>`
@@ -34,6 +35,7 @@ API exposed by console module:
 The `|` operator chains commands. Up to 16 commands in a single pipeline.
 
 Pipeline flow:
+
 1. For each `|`, neoshell calls `sys_pipe` (RAX 5) which allocates a 4 KB kernel pipe buffer and returns `[read_fd, write_fd]`.
 2. Left command spawned via `sys_spawn` with `stdout_fd` redirected to pipe write end.
 3. Right command spawned with `stdin_fd` redirected to pipe read end.
@@ -44,7 +46,7 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 ## File Management Commands
 
 | Command | Implementation | ABI |
-|---------|---------------|-----|
+| --------- | --------------- | ----- |
 | DEL `<path>` | `ob_destroy` (RAX 66) on file ObObject | `sys_ob_destroy(path)` |
 | REN `<src> <dst>` | `ob_set_info` with `VfsRename` info class | `sys_ob_set_info(src, VfsRename, &dst)` |
 | RD `<dir>` | `ob_destroy` (RAX 66) on directory ObObject | `sys_ob_destroy(path)` |
@@ -60,7 +62,7 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 ## System Commands
 
 | Command | Implementation |
-|---------|---------------|
+| --------- | --------------- |
 | FSCK `<drive>` | `sys_fsck` (RAX 55) — invokes kernel fsck on specified drive |
 | LOADLIB `<nxl>` | `sys_loadlib` (RAX 21) — loads NXL into slot region |
 | NDREG | Opens `\Global\Info\Drivers` — reads driver registration info |
@@ -84,7 +86,7 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/`:
 
 | Binary | Category | Description |
-|--------|----------|-------------|
+| -------- | ---------- | ------------- |
 | neoshell | core | Interactive command shell |
 | neoinit | core | PID 1 — system initialization |
 | neomem | monitor | Memory usage display |
@@ -136,6 +138,7 @@ Address range `0x400000..0x2400000` (32 MB total). Divided into 32 slots of 128 
 ASLR v1: Random slot selection via `RDRAND` instruction with `RDTSC` fallback if RDRAND unavailable. The slot index determines code base address: `0x400000 + slot * 0x20000`.
 
 Each slot layout:
+
 - Code section at slot base
 - Stack grows downward from slot top
 - Heap region within slot boundaries
@@ -145,6 +148,7 @@ Each slot layout:
 Address range `0x10000000..0x12000000` (32 MB total). Divided into 16 slots of 2 MB each. Demand-paged at 4 KB granularity via `sys_mmap`/`sys_munmap`.
 
 Heap managed by user-mode brk/sbrk:
+
 - `brk(addr)`: set program break
 - `sbrk(increment)`: increment program break
 - Backed by `sys_brk` (RAX 18) or `sys_mmap` (RAX 19)

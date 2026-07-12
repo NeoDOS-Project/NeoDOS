@@ -18,7 +18,7 @@
 8. [Roadmap](#8-roadmap)
 9. [Diagramas de Flujo](#9-diagramas-de-flujo)
 10. [Consideraciones de Implementación](#10-consideraciones-de-implementación)
-11. [Apéndice: Cambios por Archivo](#11-apéndice-cambios-por-archivo)
+11. [Apéndice: Cambios por Archivo](#11-apéndice-cambios-por-archivo-implementados-en-v03)
 
 ---
 
@@ -32,7 +32,7 @@ del sistema usando Registry + filesystem, y sienta las bases del sistema de paqu
 ### 1.1 Principios de diseño
 
 | Principio | Descripción |
-|-----------|-------------|
+| ----------- | ------------- |
 | **Separación de capas** | net.nxl no toca hardware, no conoce e1000, no implementa TCP/IP |
 | **Configuración estructural** en Registry | Solo estructura del sistema, no datos de usuario |
 | **Datos de usuario** en NeoFS | Logs, perfiles, documentos, configuraciones editables |
@@ -43,7 +43,7 @@ del sistema usando Registry + filesystem, y sienta las bases del sistema de paqu
 
 ### 1.2 Stack completo
 
-```
+```text
 Aplicaciones NXE                          ← Ring 3
   (ipconfig.nxe, ping.nxe, dhcp.nxe)
         |
@@ -89,6 +89,7 @@ Hardware (e1000 NIC)                     ← Hardware
 (`0x1e0c0000`) bajo demanda.
 
 **No debe:**
+
 - Acceder a hardware (MMIO, PCI, DMA)
 - Conocer e1000 ni ningún NIC driver específico
 - Implementar protocolos TCP/IP, ARP, ICMP, DHCP (eso es kernel o app)
@@ -96,6 +97,7 @@ Hardware (e1000 NIC)                     ← Hardware
 - Hacer operaciones bloqueantes fuera del mecanismo ObWait
 
 **Debe proporcionar:**
+
 - Abstracción de interfaces de red (listar, consultar estado)
 - Abstracción de sockets (crear, conectar, enviar, recibir, cerrar)
 - Consulta de estadísticas de red
@@ -173,6 +175,7 @@ pub extern "C" fn net_socket_close(fd: i32) -> i32;
 ```
 
 **Particularidades de la implementación:**
+
 - `net_socket_create` genera un path único (`\NetSock-{hex}`) porque `ob_create` requiere path en namespace. `sock_type` se codifica en `attrs` (bits 0-7).
 - `bind`/`connect` reciben `ip: u32` (big-endian) y `port: u16` (host order), no un struct.
 - `send` retorna bytes enviados como valor positivo.
@@ -217,7 +220,7 @@ net.nxl.
 `net_socket_recv` es la función más compleja. El kernel actual no tiene un
 `ObInfoClass` específico para receive de datos de socket. Dos opciones:
 
-**Opción A: Nuevo ObInfoClass::SocketRecv = 23**
+#### Opción A: Nuevo ObInfoClass::SocketRecv = 23
 
 Añadir en el kernel `ObInfoClass::SocketRecv = 23`. El handler en
 `src/syscall/ob.rs`:
@@ -240,7 +243,7 @@ _ if info_class == ObInfoClass::SocketRecv as u32 => {
 }
 ```
 
-**Opción B: ob_wait para bloqueo, luego SocketInfo query**
+#### Opción B: ob_wait para bloqueo, luego SocketInfo query
 
 - `ob_wait(fd)` se señaliza cuando llegan datos al socket
 - Después de `ob_wait`, consultar SocketInfo (class 17) que incluye recv_available
@@ -320,6 +323,7 @@ pub struct NetAbiTable {
 ```
 
 **Diferencias con el diseño original:**
+
 - `path` eliminado de `socket_create` — se genera automáticamente
 - `ip` pasado como `u32` (big-endian) en vez de `*const u8` array
 - Se añadieron `get_ip`, `get_gateway`, `get_mask`, `get_dhcp_bound`
@@ -374,7 +378,7 @@ en el shell — el shell solo dispatching a PATH como ahora.
 
 ### 3.1 ipconfig.nxe
 
-```
+```text
 IPCONFIG [/ALL]
 
   /ALL   Muestra información detallada de todas las interfaces
@@ -410,12 +414,13 @@ fn main() {
 **Ubicación:** `userbin/ipconfig/` → `C:\Programs\ipconfig.nxe`
 
 **Dependencias:**
+
 - libneodos (sys_write, loadlib)
 - net.nxl (net_interface_count, net_get_interface_info)
 
 ### 3.2 ping.nxe
 
-```
+```text
 PING <host> [/n count] [/w timeout_ms] [/4]
 
   <host>       Dirección IPv4 (x.x.x.x)
@@ -481,6 +486,7 @@ fn ping(ip: [u8; 4], count: u32, timeout_ms: u32) {
 pueda enviar datos que se encapsulan directamente en Ethernet (con type 0x0800 para
 IPv4). El kernel construye el header Ethernet + IP si el socket tiene tipo Raw y
 se ha "conectado" a una IP destino. Es decir, para Raw:
+
 - `SocketSend` → construir Ethernet + IPv4 con proto=1 (ICMP) + payload
 - No construir header TCP/UDP
 - El checksum IP lo calcula el kernel
@@ -494,13 +500,14 @@ rápido sin implementar raw sockets. **Pero rompe la arquitectura limpia.**
 No se recomienda.
 
 **Decisión:** Implementar raw sockets correctamente. El kernel:
+
 1. `socket_send` con tipo Raw → construir Ethernet + IPv4 con proto del payload ICMP
 2. `net_handle_incoming_packet` con proto ICMP → mirar si hay socket Raw escuchando
    en esa IP y entregar payload
 
 ### 3.3 dhcp.nxe
 
-```
+```text
 DHCP [/RENEW] [/RELEASE]
 
   Sin args: Obtiene configuración DHCP y la aplica
@@ -513,7 +520,7 @@ DHCP [/RENEW] [/RELEASE]
 Un paquete DHCP se transmite sobre UDP (puerto 67 server, 68 cliente).
 Formato BOOTP extendido (236 bytes fijos + opciones variables):
 
-```
+```text
 Byte 0:     op (1=request, 2=reply)
 Byte 1:     htype (1=ethernet)
 Byte 2:     hlen (6)
@@ -589,6 +596,7 @@ fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
 ```
 
 **Limitación:** DHCP requiere que el kernel tenga:
+
 1. UDP socket funcional (bind puerto 68, enviar a 255.255.255.255:67)
 2. Broadcast ethernet (dest FF:FF:FF:FF:FF:FF)
 3. El kernel construya header UDP+IP+Ethernet desde `socket_send`
@@ -596,7 +604,7 @@ fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
 
 ### 3.4 dnsresv.nxe (futuro)
 
-```
+```text
 DNSRESV <hostname> [/s dns_server]
 
   Resuelve hostname a IPv4 via DNS server configurado o especificado.
@@ -638,6 +646,7 @@ fn spawn() -> Result<u32, i64> {
 ```
 
 **Problemas:**
+
 - Path `C:\Programs\NeoShell.nxe` hardcoded
 - No usa Registry
 - No inicia servicios (net, logger, etc.)
@@ -649,7 +658,7 @@ NeoInit debe leer su configuración de `\Registry\Machine\System\CurrentControlS
 
 **Jerarquía Registry:**
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Services\NeoInit
 ├── DefaultShell        REG_SZ   "C:\Programs\NeoShell.nxe"
 ├── AutoStartServices   REG_MULTI_SZ   "netcfg"
@@ -660,7 +669,7 @@ NeoInit debe leer su configuración de `\Registry\Machine\System\CurrentControlS
 
 **Claves de soporte para servicios:**
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Services
 ├── netcfg
 │   ├── Path            REG_SZ   "C:\Programs\netcfg.nxe"
@@ -875,7 +884,7 @@ pub extern "C" fn _start() -> ! {
 
 **Implementación real (`userbin/netcfg/src/main.rs`):**
 
-```
+```text
 netcfg.nxe
   │
   ├── Cargar net.nxl vía libnet (lazy load)
@@ -898,6 +907,7 @@ netcfg.nxe
 ```
 
 **Diferencias con el diseño original:**
+
 - No ejecuta `dhcp.nxe` — espera al kernel DHCP (vía `dhcp_tick()` en idle loop)
 - Path Registry: `CurrentControlSet\Services\Network\Interfaces\0` (no `\System\Network\...`)
 - netcfg corre como daemon (no termina tras configurar)
@@ -913,6 +923,7 @@ background. No hay interacción directa con la shell. Cuando el shell está acti
 los servicios simplemente existen como procesos.
 
 Para comunicación shell↔servicio:
+
 - Pipe nombrado vía Ob (future)
 - Registry (lectura de estado)
 - EventBus (eventos de sistema)
@@ -926,7 +937,7 @@ En la primera versión, los servicios son fire-and-forget.
 ### 5.1 Separación Registry vs Filesystem
 
 | Almacén | Registry | NeoFS |
-|---------|----------|-------|
+| --------- | ---------- | ------- |
 | Config estructural del sistema | ✅ DefaultShell, servicios, interfaces de red, paquetes instalados | ❌ |
 | Hardware info | ✅ DeviceMap, driver bindings | ❌ |
 | Perfiles de usuario | ✅ SID, grupos, paths de perfil (referencias) | ✅ Datos reales |
@@ -949,7 +960,7 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 
 ### 5.3 Jerarquía completa propuesta
 
-```
+```text
 \Registry
 ├── Machine
 │   ├── Hardware
@@ -1030,7 +1041,7 @@ pub fn cm_flush_key(key_native_id: u64) -> Result<(), ()> {
 
 **Formato de serialización del hive:**
 
-```
+```text
 ┌──────────────────────────────────┐
 │ Magic: "NEOH" (4 bytes)          │
 │ Version: u32 (1)                 │
@@ -1126,7 +1137,7 @@ NeoPkg es el sistema de gestión de paquetes de NeoDOS. Opera a nivel userland
 
 ### 6.2 Formato .npkg (binario)
 
-```
+```text
 ┌──────────────────────────────────────────────────────────┐
 │ Magic: 4 bytes "NPKG"                                    │
 │ Header version: u16 = 1                                  │
@@ -1161,7 +1172,7 @@ NeoPkg es el sistema de gestión de paquetes de NeoDOS. Opera a nivel userland
 
 **Manifest detallado:**
 
-```
+```text
 name=netutils
 version=1.0.0
 type=User           # Core | System | User
@@ -1191,7 +1202,7 @@ struct NpkgFileEntry {
 
 ### 6.3 Herramientas pkg.nxe
 
-```
+```text
 PKG INSTALL <file.npkg> [/F] [/S]
 
   Instala un paquete. /F = force (ignora dependencias),
@@ -1217,7 +1228,7 @@ PKG VERIFY <name>
 
 **PKG INSTALL — algoritmo:**
 
-```
+```text
 1. Parsear .npkg (validar magic, manifest, estructura)
 2. Verificar dependencias contra Registry\Machine\Packages
 3. Si falta dependencia → error (o /F para ignorar)
@@ -1241,7 +1252,7 @@ PKG VERIFY <name>
 
 **PKG REMOVE — algoritmo:**
 
-```
+```text
 1. Abrir \Registry\Machine\Packages\<name>
 2. Leer "Type" — si Core → ERROR (protegido)
 3. Leer "Type" — si System y no /F → preguntar confirmación
@@ -1313,7 +1324,7 @@ const CORE_COMPONENTS: &[&str] = &[
 
 ### 6.6 Ubicaciones en NeoFS
 
-```
+```text
 C:\Packages\                ← archivos .npkg almacenados
 C:\Programs\                ← NXEs instalados
 C:\System\Libraries\       ← NXLs instalados
@@ -1330,7 +1341,7 @@ C:\Logs\pkg.log            ← log de operaciones pkg
 ### 7.1 Estado actual del kernel (TCP/IP)
 
 | Componente | Archivo | Estado | Detalle |
-|-----------|---------|--------|---------|
+| ----------- | --------- | -------- | --------- |
 | Ethernet | `src/net/ethernet.rs` | ✅ | Header 14B, type ETH_TYPE_ARP/IPV4, FCS computation |
 | ARP | `src/net/arp.rs` | ✅ | Cache 64 entradas, 300s timeout, request/reply, static entries |
 | IPv4 | `src/net/ipv4.rs` | ✅ | Header 20B, checksum, build_ipv4_header(), sin fragmentación |
@@ -1464,7 +1475,7 @@ pero no rutea paquetes TCP/UDP a sockets.
 
 **Código actual (en `src/net/mod.rs:72-191`):**
 
-```
+```text
 net_handle_incoming_packet(nic_id, packet)
   → parse Ethernet header
   → if ARP: handle arp request/reply
@@ -1610,6 +1621,7 @@ if port != 0 {
 **Fase 1 — Transmit path (socket → NIC):**
 
 Archivos a modificar:
+
 - `src/net/socket.rs` — `socket_send()` construye headers y transmite
 - `src/net/udp.rs` — función `build_udp_datagram()` + `calc_udp_checksum()`
 - `src/net/tcp.rs` — función `build_tcp_segment()` (segmento TCP con seq/ack)
@@ -1619,6 +1631,7 @@ Archivos a modificar:
 **Fase 2 — UDP dispatch (NIC → socket UDP):**
 
 Archivos a modificar:
+
 - `src/net/mod.rs` — `net_handle_incoming_packet()` añadir rama UDP
 - `src/net/socket.rs` — `find_socket_by_port()` para UDP
 - `src/net/icmp.rs` — `build_port_unreachable()` para ICMP Port Unreachable
@@ -1626,6 +1639,7 @@ Archivos a modificar:
 **Fase 3 — TCP dispatch (NIC → socket TCP):**
 
 Archivos a modificar:
+
 - `src/net/mod.rs` — `net_handle_incoming_packet()` añadir rama TCP
 - `src/net/tcp.rs` — manejar paquetes entrantes (SYN, ACK, data, FIN, RST)
 - `src/net/socket.rs` — `find_socket_by_port()` para TCP
@@ -1633,6 +1647,7 @@ Archivos a modificar:
 **Fase 4 — TCP real (three-way handshake):**
 
 Arquitectura completa de la conexión TCP:
+
 1. `socket_connect()` → envía SYN → estado SYN_SENT
 2. NIC recibe SYN+ACK → kernel pone socket en estado Established → wake connect waiter
 3. `socket_send()` → envía segmentos TCP con seq++ y ACK
@@ -1641,7 +1656,7 @@ Arquitectura completa de la conexión TCP:
 
 ### 7.4 Timeline de dependencias
 
-```
+```text
 Fase 1 (kernel): Transmit path (socket_send → NIC)
   ├── socket_send construye Ethernet+IP+protocolo
   ├── UDP datagram builder
@@ -1674,7 +1689,7 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 ### 8.1 Antes de v1.0 (orden de implementación)
 
 | # | Fase | Tarea | Archivos | Esfuerzo |
-|---|------|-------|----------|----------|
+| --- | ------ | ------- | ---------- | ---------- |
 | 1 | F1 | Kernel: Ethernet frame builder | `ethernet.rs` | Pequeño |
 | 2 | F1 | Kernel: UDP datagram builder | `udp.rs` | Pequeño |
 | 3 | F1 | Kernel: ARP resolve síncrono para TX | `arp.rs` | Medio |
@@ -1698,7 +1713,7 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 ### 8.2 Después de v1.0
 
 | # | Tarea | Descripción |
-|---|-------|-------------|
+| --- | ------- | ------------- |
 | 20 | DNS: resolución en net.nxl | Consulta DNS sobre UDP |
 | 21 | dnsresv.nxe | Herramienta de resolución DNS |
 | 22 | TCP accept() | Aceptar conexiones entrantes |
@@ -1715,7 +1730,7 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 
 ### 9.1 Boot completo con red
 
-```
+```text
 Bootloader (UEFI)
   ↓
 Kernel
@@ -1800,7 +1815,7 @@ Kernel
 
 ### 9.2 Flujo detallado: net_socket_send (UDP)
 
-```
+```text
 user: net_socket_send(fd=3, data=DHCP_Discover)
 
   1. net.nxl (Ring 3):
@@ -1871,7 +1886,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 
 ### 9.3 Flujo detallado: net_socket_recv (UDP)
 
-```
+```text
   Hardware: e1000 NIC recibe paquete Ethernet
 
        ↓
@@ -1937,7 +1952,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 **Decisión:** NXL independiente en slot 3 (`0x1e0c0000`).
 
 | Aspecto | NXL separado | Linked static en libneodos |
-|---------|-------------|---------------------------|
+| --------- | ------------- | --------------------------- |
 | Tamaño de libneodos | Pequeño (solo base) | Crece con net |
 | Carga | Bajo demanda | Siempre cargado |
 | Actualización | Independiente | Requiere recompilar libneodos |
@@ -1993,13 +2008,14 @@ fn ob_create(path: *const u8, obj_type: u32, fds: *mut u64, attrs: u64) -> i64 {
 
 Los sockets se crean con paths únicos en el namespace Ob:
 
-```
+```text
 \Ob\Socket\<pid>\<name>
 ```
 
 Donde `<name>` es el path proporcionado por `net_socket_create()`.
 
 Ejemplos:
+
 - `\Ob\Socket\2\DhcpClient` — socket DHCP de netcfg (PID 2)
 - `\Ob\Socket\3\Ping` — socket ping de ping.nxe (PID 3)
 
@@ -2081,7 +2097,7 @@ fn alloc_ephemeral_port() -> u16 {
 
 ### 10.6 netcfg.nxe — implementación
 
-```
+```text
 netcfg.nxe
   │
   ├── loadlib("C:\\System\\Libraries\\net.nxl")
@@ -2114,6 +2130,7 @@ netcfg.nxe
 ### 10.7 Persistencia del Registry
 
 El hive SYSTEM se serializa a disco en:
+
 - `C:\System\Registry\SYSTEM.hiv`
 
 En boot, antes de `init_cm()`, el kernel intenta cargar el hive desde disco:
@@ -2138,7 +2155,7 @@ fn init_cm() {
 ### 10.8 Estrategia de test
 
 | Componente | Tests | Herramienta |
-|-----------|-------|-------------|
+| ----------- | ------- | ------------- |
 | Kernel transmit path | Tests unitarios de socket_send con mock NIC | kernel test framework |
 | Kernel receive path | Tests con paquetes Ethernet sintéticos | kernel test framework |
 | Socket UDP dispatch | Crear socket UDP, enviar paquete sintético, verificar recv_buf | kernel test framework |
@@ -2157,7 +2174,7 @@ fn init_cm() {
 ### 11.1 Kernel source
 
 | Archivo | Cambio | Estado |
-|---------|--------|--------|
+| --------- | -------- | -------- |
 | `src/object/types.rs` | `ObInfoClass::SocketRecv = 23`, `ObSetInfoClass::SetNicIp = 27` | ✅ |
 | `src/syscall/ob.rs` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
 | `src/syscall/ob.rs` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
@@ -2167,7 +2184,7 @@ fn init_cm() {
 ### 11.2 libneodos
 
 | Archivo | Cambio | Estado |
-|---------|--------|--------|
+| --------- | -------- | -------- |
 | `src/syscall.rs` | `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv=23` | ✅ |
 | `src/syscall.rs` | Wrappers: `ob_socket_create/connect/bind/listen/send/recv/close` | ✅ |
 | `src/syscall.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) + `ob_syscall_5!` macro | ✅ |
@@ -2176,7 +2193,7 @@ fn init_cm() {
 ### 11.3 Nuevos proyectos
 
 | Proyecto | Path | Produce | Estado |
-|----------|------|---------|--------|
+| ---------- | ------ | --------- | -------- |
 | libnet-nxl | `libnet-nxl/` | `net.nxl` → `C:\System\Libraries\net.nxl` (slot 3, `0x1e0c0000`) | ✅ |
 | libnet | `libnet/` | Static library wrapper con lazy loading | ✅ |
 | netcfg | `userbin/netcfg/` | `netcfg.nxe` → servicio de red (daemon) | ✅ |

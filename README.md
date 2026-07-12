@@ -12,7 +12,7 @@ NeoDOS es un sistema operativo de 64 bits escrito en Rust con arquitectura híbr
 
 ## Arquitectura en 30 segundos
 
-```
+```text
 Boot UEFI → Bootloader → Kernel (11 fases de boot) → NeoInit (PID 1) → NeoShell (Ring 3)
 ```
 
@@ -29,7 +29,7 @@ El kernel se organiza en 5 capas verticales:
 ## Estado Actual
 
 | Aspecto | Estado |
-|---------|--------|
+| --------- | -------- |
 | **Kernel** | v0.49.0 — 656 tests, 32 syscalls SSDT activos, 24 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
@@ -57,7 +57,7 @@ python3 scripts/auto_test.py             # Test runner automático headless
 ## Documentación Clave
 
 | Documento | Descripción |
-|-----------|-------------|
+| ----------- | ------------- |
 | [Visión Arquitectónica](docs/ARCHITECTURAL_VISION.md) | Plan director, diagnóstico, roadmap v0.40→v1.0 |
 | [Arquitectura](docs/ARCHITECTURE.md) | Arquitectura actual del sistema |
 | [Source of Truth](docs/ARCHITECTURE_SOURCE_OF_TRUTH.md) | Invariantes y contratos arquitectónicos |

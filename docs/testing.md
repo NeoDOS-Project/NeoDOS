@@ -5,6 +5,7 @@
 In-kernel test harness. No external test runner required. 656 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
+
 1. **Boot-time**: `test` shell command (built-in) calls `testing::run_all()` — prints PASS/FAIL per test, returns summary count.
 2. **Automated**: `python3 scripts/auto_test.py` boots QEMU headless with serial output, waits for test completion line, parses PASS/FAIL counts from serial console.
 
@@ -39,7 +40,7 @@ test_case!("my_test", {
 ## Full Suite Table
 
 | Suite | Count | Description |
-|-------|-------|-------------|
+| ------- | ------- | ------------- |
 | NeoFS | - | NeoFS v1 removed. NeoFS v2 tests via btree, freelist, snapshot, neodos_dir |
 | NEM | 23 | v1/v2/v3 parsing, header validation, type decoding, ABI field extraction, category parsing, v3 relocations/symbols/sections |
 | ELF | 20 | Header validation, segment loading, edge cases (empty, truncated, corrupted), PIE offset/relocation, address space validation |
