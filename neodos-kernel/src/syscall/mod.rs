@@ -34,7 +34,7 @@ pub use permission::{SyscallPermission, CAP_ADMIN};
 use self::handlers::*;
 use self::ob::*;
 use self::cm::*;
-pub use self::tests::register_syscall_table_tests;
+pub use self::tests::{register_syscall_table_tests, register_sync_tests};
 
 // ── Syscall Number Constants (frozen ABI) ──
 

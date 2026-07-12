@@ -309,4 +309,13 @@ pub fn register_tests() {
         mask_irq(0);
         unmask_irq(0);
     });
+
+    test_case!("ioapic_pic_disabled_when_ioapic_active", {
+        if is_active() {
+            let master_mask = crate::hal::inb(0x21);
+            let slave_mask = crate::hal::inb(0xA1);
+            test_eq!(master_mask, 0xFF);
+            test_eq!(slave_mask, 0xFF);
+        }
+    });
 }

@@ -473,3 +473,63 @@ pub fn register_syscall_table_tests() {
         test_true!(result.is_ok());
     });
 }
+
+pub fn register_sync_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+
+    test_case!("need_resched_init_false", {
+        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
+        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), false);
+    });
+
+    test_case!("need_resched_set", {
+        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
+        super::set_need_resched();
+        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), true);
+    });
+
+    test_case!("need_resched_clear", {
+        super::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+        let prev = super::clear_need_resched();
+        test_eq!(prev, true);
+        test_eq!(super::NEED_RESCHED.load(core::sync::atomic::Ordering::SeqCst), false);
+    });
+
+    test_case!("need_resched_clear_returns_prev", {
+        super::NEED_RESCHED.store(false, core::sync::atomic::Ordering::SeqCst);
+        let prev = super::clear_need_resched();
+        test_eq!(prev, false);
+    });
+
+    // ── Syscall stress ──
+
+    test_case!("stress_syscall_rapid_getpid", {
+        for _ in 0..200 {
+            let pid = crate::hal::without_interrupts(|| {
+                crate::scheduler::current_scheduler().lock().current_pid()
+            });
+            test_true!(pid < 1000);
+        }
+    });
+
+    test_case!("stress_syscall_invalid_numbers", {
+        let expected = super::err_to_u64(super::SyscallError::NoSys);
+        for num in &[100u64, 255, 0xFFFFFFFF] {
+            let result = super::syscall_dispatch(*num, 0, 0, 0, 0, 0);
+            test_eq!(result, expected);
+        }
+    });
+
+    test_case!("stress_syscall_ptr_validation", {
+        let kernel_addr: u64 = 0x4000000;
+        let valid = super::is_user_ptr_valid(kernel_addr, 10);
+        test_eq!(valid, false);
+        let valid2 = super::is_user_ptr_valid(kernel_addr, 1);
+        test_eq!(valid2, false);
+        let user_addr: u64 = 0x400000;
+        let valid3 = super::is_user_ptr_valid(user_addr, 10);
+        test_eq!(valid3, true);
+    });
+}

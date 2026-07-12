@@ -365,4 +365,78 @@ pub fn max_phys_addr() -> u64 {
     MMAP.lock().highest_addr()
 }
 
+// ── Stress tests ───────────────────────────────────────────────────
+
+pub fn register_stress_tests() {
+    extern crate alloc;
+    use crate::test_case;
+    use crate::test_eq;
+    use alloc::boxed::Box;
+    use alloc::vec::Vec;
+    use alloc::string::String;
+
+    test_case!("buddy_alloc_free_sanity", {
+        let p = allocate_frame().expect("alloc failed");
+        free_frame(p);
+    });
+
+    test_case!("buddy_multiple_orders", {
+        for order in 0..=4 {
+            let p = alloc_frames(order).expect("alloc failed");
+            free_frames(p, order);
+        }
+    });
+
+    test_case!("buddy_stress_100k_cycles", {
+        let start = crate::hal::get_ticks();
+        for _ in 0..100_000 {
+            let p = allocate_frame().expect("alloc failed");
+            free_frame(p);
+        }
+        let elapsed = crate::hal::get_ticks().wrapping_sub(start);
+        let _ = elapsed;
+    });
+
+    test_case!("buddy_stress_random_orders", {
+        for _ in 0..1000 {
+            let order = (0usize..=6).map(|i| i * 3 % 7).next().unwrap_or(0);
+            let p = alloc_frames(order).expect("alloc failed");
+            free_frames(p, order);
+        }
+    });
+
+    test_case!("stress_mem_alloc_free_storm", {
+        for _ in 0..200 {
+            let b = Box::new(42u64);
+            let v = *b;
+            core::mem::drop(b);
+            test_eq!(v, 42);
+        }
+    });
+
+    test_case!("stress_mem_vec_churn", {
+        let mut v = Vec::new();
+        for i in 0..100 { v.push(i); }
+        test_eq!(v.len(), 100);
+        while v.pop().is_some() {}
+        test_eq!(v.len(), 0);
+        for i in 0..50 { v.push(i * 2); }
+        test_eq!(v.len(), 50);
+        test_eq!(v[0], 0);
+        test_eq!(v[49], 98);
+    });
+
+    test_case!("stress_mem_string_churn", {
+        let mut s = String::new();
+        for i in 0..50 {
+            s.push_str("hello");
+            test_eq!(s.len(), (i + 1) * 5);
+        }
+        s.clear();
+        test_eq!(s.len(), 0);
+        for _ in 0..30 { s.push('x'); }
+        test_eq!(s.len(), 30);
+    });
+}
+
 

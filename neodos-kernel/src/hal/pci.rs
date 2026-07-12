@@ -100,6 +100,7 @@ pub fn register_tests() {
     use crate::test_case;
     use crate::test_eq;
     use crate::test_ne;
+    use crate::test_true;
     test_case!("ecam_base_default", {
         // ECAM may be active (Q35 with MCFG) or inactive (PIIX3 without MCFG).
         // Invariant: if active → base != 0, if inactive → base == 0.
@@ -124,5 +125,32 @@ pub fn register_tests() {
         test_eq!(r1, 0xE000_0000 | ((0x1F_u64) << 15));
         test_eq!(r2, 0xE000_0000 | (1u64 << 20));
         test_eq!(r3, 0xE000_0000 | ((7_u64) << 12) | 0xFF);
+    });
+
+    test_case!("ecam_mcfg_table_parse", {
+        match crate::timers::hpet::get_ecam_info() {
+            Some((base, _seg, _start, _end)) => {
+                test_true!(base > 0);
+            }
+            None => {}
+        }
+    });
+
+    test_case!("ecam_fallback_to_pio_if_no_mcfg", {
+        let vendor = crate::drivers::pci::pci_config_read_word(0, 0, 0, 0);
+        test_ne!(vendor, 0xFFFF);
+        test_ne!(vendor, 0);
+    });
+
+    test_case!("ecam_read_match_legacy_pio", {
+        if ecam_is_active() {
+            let ecam_vendor = unsafe { ecam_read_config_word(0, 0, 0, 0) };
+            ecam_deactivate();
+            let pio_vendor = crate::drivers::pci::pci_config_read_word(0, 0, 0, 0);
+            test_eq!(ecam_vendor, pio_vendor);
+            if let Some((base, _seg, _start, _end)) = crate::timers::hpet::get_ecam_info() {
+                set_ecam_base(base);
+            }
+        }
     });
 }

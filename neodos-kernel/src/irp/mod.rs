@@ -687,4 +687,118 @@ pub fn register_tests() {
     test_case!("ncq_tag_32_concurrent", { test_ncq_tag_32_concurrent()?; });
     test_case!("ncq_tag_reuse", { test_ncq_tag_reuse()?; });
     test_case!("ncq_tag_round_robin_hint", { test_ncq_tag_round_robin_hint()?; });
+
+    // Additional NCQ tests from the historical test suite
+    test_case!("ahci_ncq_32_concurrent_dispatch", {
+        let mut map = IrpTagMap::new();
+        let mut irp_ids = [0u32; 32];
+        let mut tags = [0u8; 32];
+        for i in 0..32 {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc failed")?;
+            irp_ids[i] = id;
+            let tag = map.alloc_tag().ok_or("alloc_tag failed")?;
+            test_true!(map.assign(tag, id));
+            tags[i] = tag;
+        }
+        test_true!(map.is_full());
+        test_eq!(map.in_use(), 32);
+        for i in 0..32 {
+            let mapped = map.lookup(tags[i]);
+            test_eq!(mapped, Some(irp_ids[i]));
+        }
+        for i in 0..32 {
+            let freed = map.free(tags[i]);
+            test_eq!(freed, Some(irp_ids[i]));
+            irp_free(irp_ids[i]);
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_tag_based_completion", {
+        let mut map = IrpTagMap::new();
+        let id = irp_alloc(IrpOp::Read, 100, 1,
+            core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+            .ok_or("irp_alloc")?;
+        let tag = map.alloc_tag().ok_or("alloc_tag")?;
+        test_true!(map.assign(tag, id));
+        let matched = map.lookup(tag);
+        test_eq!(matched, Some(id));
+        irp_complete_result(id, Ok(()));
+        let _ = map.free(tag);
+        irp_free(id);
+    });
+
+    test_case!("ahci_ncq_fallback_to_legacy", {
+        let mut map = IrpTagMap::new();
+        let mut ids = [0u32; 32];
+        for (i, id_slot) in ids.iter_mut().enumerate() {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc")?;
+            *id_slot = id;
+            let tag = map.alloc_tag().ok_or("alloc_tag")?;
+            test_true!(map.assign(tag, id));
+        }
+        test_true!(map.alloc_tag().is_none());
+        test_true!(map.is_full());
+        for (i, &id) in ids.iter().enumerate() {
+            let freed = map.free(i as u8);
+            test_eq!(freed, Some(id));
+            irp_free(id);
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_out_of_order_completion", {
+        let mut map = IrpTagMap::new();
+        let mut tags = [0u8; 32];
+        for (i, tag_slot) in tags.iter_mut().enumerate() {
+            let id = irp_alloc(IrpOp::Read, i as u64, 1,
+                core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                .ok_or("irp_alloc")?;
+            let tag = map.alloc_tag().ok_or("alloc_tag")?;
+            test_true!(map.assign(tag, id));
+            *tag_slot = tag;
+            irp_free(id);
+        }
+        for i in (0..32).step_by(2).rev() {
+            let freed = map.free(tags[i]);
+            test_true!(freed.is_some());
+        }
+        test_eq!(map.in_use(), 16);
+        for i in (1..32).step_by(2).rev() {
+            let freed = map.free(tags[i]);
+            test_true!(freed.is_some());
+        }
+        test_true!(map.is_empty());
+    });
+
+    test_case!("ahci_ncq_stress_load", {
+        let mut map = IrpTagMap::new();
+        for cycle in 0..100 {
+            let mut irp_ids = [0u32; 32];
+            let mut tags = [0u8; 32];
+            for i in 0..32 {
+                let id = irp_alloc(IrpOp::Read, (cycle * 32 + i) as u64, 1,
+                    core::ptr::null_mut(), 512, None, core::ptr::null_mut())
+                    .ok_or("irp_alloc")?;
+                irp_ids[i] = id;
+                let tag = map.alloc_tag().ok_or("alloc_tag")?;
+                test_true!(map.assign(tag, id));
+                tags[i] = tag;
+            }
+            test_eq!(map.in_use(), 32);
+            for i in 0..32 {
+                let id = map.free(tags[i]);
+                test_eq!(id, Some(irp_ids[i]));
+                irp_free(irp_ids[i]);
+            }
+            if cycle % 10 == 0 {
+                test_true!(map.is_empty());
+            }
+        }
+        test_true!(map.is_empty());
+    });
 }

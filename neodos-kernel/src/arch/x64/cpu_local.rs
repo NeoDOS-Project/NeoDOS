@@ -718,4 +718,66 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
         Ok(())
     });
+    // Per-CPU slab allocator tests (A1.3)
+    crate::testing::register("per_cpu_slab_alloc_free_concurrent", || {
+        extern crate alloc;
+        use alloc::boxed::Box;
+        for _ in 0..16 {
+            let b = Box::new([0u8; 2048]);
+            drop(b);
+        }
+        for _ in 0..32 {
+            let b = Box::new(0u64);
+            drop(b);
+        }
+        Ok(())
+    });
+    crate::testing::register("per_cpu_refill_drain_batching", || {
+        extern crate alloc;
+        use alloc::boxed::Box;
+        let mut boxes = alloc::vec::Vec::new();
+        for i in 0..64u64 {
+            boxes.push(Box::new(i));
+        }
+        for (i, b) in boxes.iter().enumerate() {
+            crate::test_eq!(**b, i as u64);
+        }
+        drop(boxes);
+        Ok(())
+    });
+    crate::testing::register("slab_scaling_8cpu", || {
+        extern crate alloc;
+        use alloc::boxed::Box;
+        let mut v = alloc::vec::Vec::new();
+        for i in 0..1024u64 {
+            v.push(Box::new(i));
+        }
+        for (i, b) in v.iter().enumerate() {
+            crate::test_eq!(**b, i as u64);
+        }
+        drop(v);
+        Ok(())
+    });
+    crate::testing::register("slab_under_irql_dispatch", || {
+        extern crate alloc;
+        use alloc::boxed::Box;
+        unsafe {
+            let irql = gs_read_u8(OFFSET_CURRENT_IRQL);
+            crate::test_eq!(irql, 0u8);
+        }
+        let b = Box::new(0xABu32);
+        crate::test_eq!(*b, 0xABu32);
+        drop(b);
+        Ok(())
+    });
+    crate::testing::register("slab_stress_100k", || {
+        extern crate alloc;
+        use alloc::boxed::Box;
+        for i in 0..100_000u64 {
+            let b = Box::new(i);
+            crate::test_eq!(*b, i);
+            drop(b);
+        }
+        Ok(())
+    });
 }

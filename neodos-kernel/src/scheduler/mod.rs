@@ -1144,3 +1144,322 @@ pub fn block_current_for_thread(tid: u32) {
 pub fn wake_thread_joiner(tid: u32) {
     crate::kwait::kwait_wake(&crate::kwait::WaitReason::ThreadJoin { tid });
 }
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+pub fn register_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_ne;
+    use crate::test_true;
+
+    // ── Process tests ──
+
+    test_case!("kthread_new_initial_state", {
+        let k = Kthread::new_idle(1, 0, 0x400000, 0x800000);
+        test_eq!(k.tid, 1);
+        test_eq!(k.rip, 0x400000);
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.cpu_ticks, 0);
+        test_eq!(k.pid, 0);
+        test_eq!(k.priority, PRIORITY_NORMAL);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+    });
+
+    test_case!("kthread_state_debug", {
+        let mut k = Kthread::new_idle(1, 0, 0x400000, 0x800000);
+        test_eq!(k.state, ThreadState::Ready);
+        k.state = ThreadState::Running;
+        test_eq!(k.state, ThreadState::Running);
+        k.state = ThreadState::Blocked { waiting_for: 42 };
+        test_eq!(k.state, ThreadState::Blocked { waiting_for: 42 });
+        k.state = ThreadState::Terminated;
+        test_eq!(k.state, ThreadState::Terminated);
+    });
+
+    test_case!("kthread_state_partial_eq", {
+        let s1 = ThreadState::Ready;
+        let s2 = ThreadState::Ready;
+        test_eq!(s1, s2);
+        test_ne!(ThreadState::Ready, ThreadState::Running);
+        test_ne!(ThreadState::Blocked { waiting_for: 1 }, ThreadState::Blocked { waiting_for: 2 });
+    });
+
+    test_case!("eprocess_new_ring3", {
+        let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000, 0);
+        test_eq!(ep.pid, 42);
+        test_eq!(ep.heap_base, 0x10000000);
+        test_eq!(ep.heap_break, 0x10000000);
+        test_eq!(ep.thread_count, 1);
+        test_eq!(ep.cwd_drive, 2);
+    });
+
+    // ── Scheduler priority tests ──
+
+    fn add_test_thread(sched: &mut Scheduler, tid: u32, pid: u32, entry: u64, priority: u8, state: ThreadState) {
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(tid, pid, entry, 0x800000);
+        k.state = state;
+        k.priority = priority;
+        k.time_slice_remaining = TIME_SLICES[priority as usize];
+        sched.kthreads[slot] = Some(k);
+        if sched.find_eprocess(pid).is_none() {
+            let ep_slot = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000, 0));
+        }
+        if tid >= sched.next_tid {
+            sched.next_tid = tid + 1;
+        }
+    }
+
+    test_case!("sched_priority_high_picked_first", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
+    });
+
+    test_case!("sched_priority_round_robin_same_level", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        let first = sched.schedule();
+        let first_tid = unsafe { (*first).tid };
+        test_ne!(first_tid, 0);
+        let second = sched.schedule();
+        let second_tid = unsafe { (*second).tid };
+        test_ne!(second_tid, first_tid);
+    });
+
+    test_case!("sched_priority_idle_last", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        test_eq!(picked, 2);
+    });
+
+    test_case!("sched_time_slice_default_values", {
+        let k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        test_eq!(k.priority, PRIORITY_NORMAL);
+    });
+
+    test_case!("sched_on_timer_tick_decrements_slice", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        sched.current_tid = 1;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 5;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(k);
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        sched.on_timer_tick();
+        let remaining = sched.kthreads[slot].as_ref().unwrap().time_slice_remaining;
+        test_eq!(remaining, 4);
+    });
+
+    test_case!("sched_on_timer_tick_expire_yields", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        sched.current_tid = 1;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 1;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(k);
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        sched.on_timer_tick();
+        let state = sched.kthreads[slot].as_ref().unwrap().state;
+        test_eq!(state, ThreadState::Ready);
+    });
+
+    test_case!("sched_aging_boosts_starved", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        sched.current_tid = 1;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        k.priority = PRIORITY_IDLE;
+        k.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
+        k.time_slice_remaining = 50;
+        sched.kthreads[slot] = Some(k);
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        for _ in 0..AGING_INTERVAL_TICKS + 5 {
+            sched.on_timer_tick();
+        }
+        let boosted = sched.kthreads[slot].as_ref().unwrap();
+        test_true!(boosted.priority < PRIORITY_IDLE);
+    });
+
+    test_case!("sched_set_process_priority", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Ready;
+        sched.kthreads[slot] = Some(k);
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_HIGH);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_HIGH as usize]);
+        test_true!(sched.set_process_priority(1, PRIORITY_IDLE));
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_IDLE);
+        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_IDLE as usize]);
+        test_true!(!sched.set_process_priority(1, 99));
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.priority, PRIORITY_IDLE);
+        test_true!(!sched.set_process_priority(999, PRIORITY_HIGH));
+    });
+
+    test_case!("sched_priority_preempt_higher_ready", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 2;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        test_eq!(picked, 1);
+    });
+
+    test_case!("sched_priority_blocked_ignored", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 2;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 99 });
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        test_eq!(picked, 3);
+    });
+
+    test_case!("sched_priority_unblock_picks_higher", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        sched.current_tid = 2;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000 });
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_IDLE, ThreadState::Running);
+        sched.kthreads.iter_mut().find(|t| t.as_ref().is_some_and(|k| k.tid == 1))
+            .and_then(|t| t.as_mut()).unwrap().state = ThreadState::Ready;
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        test_eq!(picked, 1);
+    });
+
+    // ── Mmap tests ──
+
+    test_case!("mmap_region_create", {
+        let r = MmapRegion {
+            base: 0x20000000, len: 0x1000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_eq!(r.base, 0x20000000);
+        test_eq!(r.len, 0x1000);
+        test_eq!(r.prot, 3);
+        test_eq!(r.flags, 1);
+    });
+
+    test_case!("mmap_region_anonymous", {
+        let r = MmapRegion {
+            base: 0x20001000, len: 0x4000, prot: 1, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_true!((r.flags & 1) != 0);
+        test_eq!(r.prot & 2, 0);
+        test_eq!(r.prot & 1, 1);
+    });
+
+    test_case!("mmap_region_file_backed", {
+        let r = MmapRegion {
+            base: 0x20010000, len: 0x2000, prot: 3, flags: 0,
+            drive: 2, inode: 42, file_size: 8192,
+        };
+        test_eq!(r.flags & 1, 0);
+        test_eq!(r.drive, 2);
+        test_eq!(r.inode, 42);
+        test_eq!(r.file_size, 8192);
+    });
+
+    test_case!("mmap_region_contains", {
+        let r = MmapRegion {
+            base: 0x20000000, len: 0x10000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        test_true!(0x20000000 >= r.base && 0x20000000 < r.base + r.len);
+        test_true!(0x2000FFF0 >= r.base && 0x2000FFF0 < r.base + r.len);
+        test_true!(!(0x20010000 >= r.base && 0x20010000 < r.base + r.len));
+    });
+
+    test_case!("mmap_is_mmap_virtual_addr", {
+        test_true!(crate::arch::x64::paging::is_mmap_virtual_addr(0x20000000));
+        test_true!(crate::arch::x64::paging::is_mmap_virtual_addr(0x21FFFFFF));
+        test_true!(!crate::arch::x64::paging::is_mmap_virtual_addr(0x1FFFFFFF));
+        test_true!(!crate::arch::x64::paging::is_mmap_virtual_addr(0x22000000));
+    });
+
+    test_case!("mmap_process_add_remove", {
+        let mut ep = Eprocess::new_ring3(99, 0, 2, "\\", 0x10000000, 0);
+        test_eq!(ep.mmap_regions.len(), 0);
+        let r1 = MmapRegion {
+            base: 0x20000000, len: 0x1000, prot: 3, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        ep.mmap_regions.push(r1);
+        test_eq!(ep.mmap_regions.len(), 1);
+        test_eq!(ep.mmap_regions[0].base, 0x20000000);
+        let r2 = MmapRegion {
+            base: 0x20001000, len: 0x2000, prot: 1, flags: 1,
+            drive: 0, inode: 0, file_size: 0,
+        };
+        ep.mmap_regions.push(r2);
+        test_eq!(ep.mmap_regions.len(), 2);
+        let idx = ep.mmap_regions.iter().position(|r| r.base == 0x20000000);
+        test_true!(idx.is_some());
+        ep.mmap_regions.remove(idx.unwrap());
+        test_eq!(ep.mmap_regions.len(), 1);
+        test_eq!(ep.mmap_regions[0].base, 0x20001000);
+    });
+
+    // ── Scheduler stress ──
+
+    test_case!("stress_sched_rapid_yield", {
+        for i in 0..500 {
+            crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
+            let prev = crate::syscall::clear_need_resched();
+            test_true!(prev);
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+            let _ = i;
+        }
+    });
+
+    test_case!("stress_sched_state_transitions", {
+        let mut p = Kthread::new_idle(99, 0, 0x400000, 0x800000);
+        test_eq!(p.state, ThreadState::Ready);
+        for _ in 0..200 {
+            p.state = ThreadState::Running;
+            p.state = ThreadState::Ready;
+        }
+        p.state = ThreadState::Terminated;
+        test_eq!(p.state, ThreadState::Terminated);
+    });
+}

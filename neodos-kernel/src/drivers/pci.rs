@@ -217,3 +217,88 @@ pub fn map_bar_mmio(bus: u8, dev: u8, func: u8, bar_index: u8) -> Option<(u64, u
 
     Some((base_phys, size))
 }
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+pub fn register_tests() {
+    use crate::test_case;
+    use crate::test_true;
+
+    test_case!("pci_bus0_has_qemu_devices", {
+        let mut count = 0u16;
+        let mut found_vga = false;
+        let mut found_ahci = false;
+        let mut found_net = false;
+        let mut found_isa = false;
+        for dev in 0..32 {
+            let vendor = pci_config_read_word(0, dev, 0, 0);
+            if vendor == 0xFFFF || vendor == 0 {
+                continue;
+            }
+            let header_type = pci_config_read_word(0, dev, 0, 0x0E);
+            let is_multi = (header_type & 0x80) != 0;
+            let max_func = if is_multi { 8 } else { 1 };
+            for func in 0..max_func {
+                let vendor = pci_config_read_word(0, dev, func, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    continue;
+                }
+                let device = pci_config_read_word(0, dev, func, 2);
+                if vendor == 0x1234 && device == 0x1111 { found_vga = true; }
+                if vendor == 0x8086 && device == 0x100E { found_net = true; }
+                if vendor == 0x8086 && device == 0x10D3 { found_net = true; }
+                if vendor == 0x8086 && device == 0x2922 { found_ahci = true; }
+                if vendor == 0x8086 && device == 0x2918 { found_isa = true; }
+                if vendor == 0x8086 && device == 0x1237 { found_isa = true; }
+                if vendor == 0x8086 && device == 0x7000 { found_isa = true; }
+                count += 1;
+            }
+        }
+        test_true!(found_vga);
+        test_true!(found_ahci);
+        test_true!(found_net);
+        test_true!(found_isa);
+        test_true!(count >= 5);
+    });
+
+    test_case!("pci_bus1_empty", {
+        let mut found = false;
+        for dev in 0..32 {
+            let vendor = pci_config_read_word(1, dev, 0, 0);
+            if vendor != 0xFFFF && vendor != 0 {
+                found = true;
+                break;
+            }
+        }
+        test_true!(!found);
+    });
+
+    test_case!("pci_algo_no_false_bridges", {
+        let mut bridges = 0u16;
+        let mut multi_devs = 0u16;
+        for dev in 0..32 {
+            let vendor = pci_config_read_word(0, dev, 0, 0);
+            if vendor == 0xFFFF || vendor == 0 {
+                continue;
+            }
+            let header_type = pci_config_read_word(0, dev, 0, 0x0E);
+            let is_multi = (header_type & 0x80) != 0;
+            if is_multi { multi_devs += 1; }
+            let max_func = if is_multi { 8usize } else { 1usize };
+            for func in 0..max_func {
+                let vendor = pci_config_read_word(0, dev, func as u8, 0);
+                if vendor == 0xFFFF || vendor == 0 {
+                    continue;
+                }
+                let class_rev = pci_config_read_dword(0, dev, func as u8, 0x08);
+                let class = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+                if class == 0x06 && subclass == 0x04 {
+                    bridges += 1;
+                }
+            }
+        }
+        test_true!(bridges == 0);
+        test_true!(multi_devs >= 1);
+    });
+}

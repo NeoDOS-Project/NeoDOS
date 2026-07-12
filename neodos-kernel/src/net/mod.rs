@@ -8,6 +8,7 @@ pub mod tcp;
 pub mod socket;
 pub mod nic;
 pub mod e1000;
+pub mod dns;
 mod tests;
 
 use types::SocketType;
@@ -63,6 +64,7 @@ pub fn net_tick() {
     if !net_is_initialized() { return; }
     network_poll_all();
     arp::arp_tick();
+    dns::dns_tick();
 }
 
 pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {

@@ -304,3 +304,138 @@ pub fn alloc_handle(table: &mut HandleTable, entry: HandleEntry) -> Option<u8> {
 pub fn alloc_two_handles(table: &mut HandleTable, e1: HandleEntry, e2: HandleEntry) -> Option<(u8, u8)> {
     table.alloc_two_handles(e1, e2)
 }
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+pub fn register_tests() {
+    use crate::test_case;
+    use crate::test_eq;
+    use crate::test_true;
+    use crate::object::ObType;
+
+    test_case!("handle_table_250_handles", {
+        let mut ht = HandleTable::with_defaults();
+        for i in 0..250 {
+            let fd = ht.alloc_handle(HandleEntry::file(0, i));
+            test_true!(fd.is_some());
+            test_eq!(fd.unwrap() as usize, 3 + i as usize);
+        }
+        test_eq!(ht.len(), 3 + 250);
+        for i in 0..250 {
+            let entry = ht.get((3 + i) as u8);
+            test_eq!(entry.obj_type(), Some(ObType::Filesystem));
+            let nid = entry.native_id().unwrap_or(0xFFFFFFFF);
+            test_eq!(nid, i as u64);
+        }
+    });
+
+    test_case!("handle_table_reuse_closed_slots", {
+        let mut ht = HandleTable::with_defaults();
+        for i in 0..10 {
+            ht.alloc_handle(HandleEntry::file(0, i));
+        }
+        test_eq!(ht.len(), 13);
+        ht.set(3, HandleEntry::closed());
+        ht.set(4, HandleEntry::closed());
+        ht.set(5, HandleEntry::closed());
+        let fd = ht.alloc_handle(HandleEntry::file(1, 42));
+        test_eq!(fd, Some(3));
+        test_eq!(ht.get(3).native_id().unwrap_or(0), 42);
+    });
+
+    test_case!("handle_table_default", {
+        let table = default_handle_table();
+        test_true!(table[0].is_stdin());
+        test_true!(table[1].is_stdout());
+        test_true!(table[2].is_stderr());
+        for i in 3..16 {
+            test_true!(!table[i].is_open());
+        }
+    });
+
+    test_case!("handle_table_closed", {
+        let table = closed_handle_table();
+        for i in 0..16 {
+            test_true!(!table[i].is_open());
+        }
+    });
+
+    test_case!("handle_entry_constructors", {
+        let r = HandleEntry::pipe_read(5);
+        test_true!(r.is_pipe_read());
+        test_eq!(r.native_id(), Some(5));
+        let w = HandleEntry::pipe_write(3);
+        test_true!(w.is_pipe_write());
+        test_eq!(w.native_id(), Some(3));
+        let f = HandleEntry::file(2, 42);
+        test_eq!(f.obj_type(), Some(ObType::Filesystem));
+        test_eq!(f.native_id(), Some(42));
+        test_eq!(f.drive(), Some(2));
+        test_eq!(f.offset, 0);
+    });
+
+    test_case!("vfs_ownership_is_valid", {
+        let entry = HandleEntry::file(0, 100);
+        test_true!(entry.has_ob_object());
+        test_true!(entry.is_open());
+        test_true!(entry.is_valid());
+        test_true!(entry.is_open_and_valid());
+        test_eq!(entry.obj_type(), Some(ObType::Filesystem));
+        test_eq!(entry.native_id(), Some(100));
+        let mut e = entry;
+        e.close();
+        test_true!(!e.is_open());
+    });
+
+    test_case!("vfs_ownership_is_valid_after_obj_destroyed", {
+        let entry = HandleEntry::file(0, 200);
+        let obj_id = entry.object_id;
+        test_true!(entry.is_valid());
+        crate::object::ob_destroy_object(obj_id).unwrap();
+        test_true!(!entry.is_valid());
+        test_true!(!entry.is_open_and_valid());
+        test_true!(entry.obj_type().is_none());
+        test_true!(entry.native_id().is_none());
+        test_true!(entry.drive().is_none());
+        let mut e = entry;
+        e.close();
+        test_true!(!e.is_open());
+    });
+
+    test_case!("vfs_ownership_double_close_safe", {
+        let entry = HandleEntry::file(0, 300);
+        let obj_id = entry.object_id;
+        test_true!(crate::object::ob_lookup(obj_id).is_some());
+        let mut e1 = entry;
+        e1.close();
+        test_true!(!e1.is_open());
+        e1.close();
+        test_true!(!e1.is_open());
+        let entry2 = HandleEntry::file(0, 400);
+        let obj_id2 = entry2.object_id;
+        let mut e2 = entry2;
+        crate::object::ob_destroy_object(obj_id2).unwrap();
+        test_true!(e2.is_open());
+        test_true!(!e2.is_valid());
+        e2.close();
+        test_true!(!e2.is_open());
+    });
+
+    test_case!("vfs_ownership_stdio_always_valid", {
+        let sin = HandleEntry::stdin();
+        let sout = HandleEntry::stdout();
+        let serr = HandleEntry::stderr();
+        test_true!(sin.is_valid());
+        test_true!(sout.is_valid());
+        test_true!(serr.is_valid());
+        test_true!(!sin.has_ob_object());
+        test_true!(!sout.has_ob_object());
+        test_true!(!serr.has_ob_object());
+    });
+
+    test_case!("vfs_ownership_closed_not_valid", {
+        let entry = HandleEntry::closed();
+        test_true!(!entry.is_open());
+        test_true!(entry.is_valid());
+    });
+}
