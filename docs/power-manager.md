@@ -1,8 +1,8 @@
 # Power Manager — Design Document
 
-> **Versión:** v0.2  
-> **Estado:** Implementado (Fase 1 — migración a Object Manager)  
-> **Versión de NeoDOS:** v0.49.1+  
+> **Versión:** v0.3  
+> **Estado:** Implementado (Fase 1 — migración a Object Manager + ACPI primitives)  
+> **Versión de NeoDOS:** v0.49.2+  
 
 ---
 
@@ -32,12 +32,12 @@
 |-----------|--------|
 | `poweroff()` ✅ | QEMU debug ports + PS/2 reset. Also available via PowerManager Ob object. |
 | `reboot()` ✅ | `outb(0xCF9, 0x06)` + PS/2 reset. Available via PowerManager Ob object. |
-| `acpi_fadt()` ❌ | No se parsea FADT. |
-| `acpi_s5_write()` ❌ | No existe. |
+| `acpi_fadt()` ✅ | `src/power/acpi.rs` — RSDP→RSDT/XSDT→FADT parse. PM1a/b control block, S5 sleep type, reset register. |
+| `acpi_s5_write()` ✅ | `src/power/acpi.rs` — writes SLP_TYPa + SLP_EN to PM1a control register. |
 
 #### Object Manager
 
-- 18 ObTypes (0–20), Service(20) es el último.
+- 20 ObTypes (0–22), Service(20), PowerManager(21), KeyboardDevice(22).
 - `ob_query_info`: classes 0–31 (27 query classes).
 - `ob_set_info`: classes 0–36 (33 set classes — 33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig).
 - `sys_ob_service` (RAX=77): control de servicios via handle.

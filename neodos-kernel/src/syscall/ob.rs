@@ -7,7 +7,7 @@ use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use super::{err_to_u64, ob_err_to_syscall, SyscallError, is_user_ptr_valid, copy_user_string,
            current_handle_entry,
-           copy_handle_entry_for_child, resolve_chdir_target, KEYBOARD_LAYOUT};
+           copy_handle_entry_for_child, resolve_chdir_target};
 
 // ── Ob-specific ABI structs ──
 
@@ -1274,13 +1274,94 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),
             };
+            if obj.obj_type == crate::object::ObType::KeyboardDevice {
+                if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+                let kbd = crate::kbd::KBD.lock();
+                unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, kbd.state.active_layout_index as u8); }
+                return 1u64;
+            }
             if obj.obj_type != crate::object::ObType::Key || obj.native_id != 9 {
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
-            let layout = KEYBOARD_LAYOUT.load(core::sync::atomic::Ordering::Relaxed);
-            unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, layout); }
+            let kbd = crate::kbd::KBD.lock();
+            unsafe { core::ptr::write_volatile(buf_ptr as *mut u8, kbd.state.active_layout_index as u8); }
             1u64
+        }
+        _ if info_class == ObInfoClass::KeyboardInfo as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<crate::kbd::KbdState>();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let kbd = crate::kbd::KBD.lock();
+            let state = crate::kbd::KbdState {
+                modifiers: kbd.state.modifiers,
+                leds: kbd.state.leds,
+                active_layout_index: kbd.state.active_layout_index,
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &state as *const crate::kbd::KbdState as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::KeyboardCaps as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<crate::kbd::KbdCaps>();
+            if buf_size < sz { return err_to_u64(SyscallError::Inval); }
+            let kbd = crate::kbd::KBD.lock();
+            let caps = crate::kbd::KbdCaps {
+                max_layouts: 64,
+                supports_repeat_config: true,
+                supports_led_control: true,
+                supports_hotkeys: true,
+                num_layouts: kbd.layouts.len() as u32,
+                _pad: [0u8; 3],
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    &caps as *const crate::kbd::KbdCaps as *const u8,
+                    buf_ptr as *mut u8, sz,
+                );
+            }
+            sz as u64
+        }
+        _ if info_class == ObInfoClass::KeyboardLayouts as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let kbd = crate::kbd::KBD.lock();
+            let entry_sz = core::mem::size_of::<crate::kbd::KbdLayoutInfo>();
+            let max_entries = buf_size / entry_sz;
+            let count = kbd.layouts.len().min(max_entries);
+            for i in 0..count {
+                let info = kbd.layouts[i].to_info(i as u32);
+                let offset = i * entry_sz;
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &info as *const crate::kbd::KbdLayoutInfo as *const u8,
+                        (buf_ptr + offset as u64) as *mut u8, entry_sz,
+                    );
+                }
+            }
+            (count * entry_sz) as u64
         }
         _ if info_class == ObInfoClass::ReadContent as u32 => {
             let (drive_idx, inode_num, handle_offset) = crate::hal::without_interrupts(|| {
@@ -1973,21 +2054,127 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 Some(o) => o,
                 None => return err_to_u64(SyscallError::BadF),
             };
+            if obj.obj_type == crate::object::ObType::KeyboardDevice {
+                if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+                let layout = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+                let mut kbd = crate::kbd::KBD.lock();
+                if (layout as usize) >= kbd.layouts.len() {
+                    return err_to_u64(SyscallError::NoEnt);
+                }
+                kbd.state.active_layout_index = layout as u32;
+                kbd.config.layout_name = kbd.layouts[layout as usize].name_str().to_string();
+                let _ = crate::kbd::config::kbd_save_config(&kbd.config);
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_KEYB_LAYOUT,
+                    crate::eventbus::SOURCE_KERNEL,
+                    3, layout as u64, 0, 0,
+                );
+                return 0;
+            }
             if obj.obj_type != crate::object::ObType::Key || obj.native_id != 9 {
                 return err_to_u64(SyscallError::Inval);
             }
             if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
             let layout = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
-            if layout > 1 { return err_to_u64(SyscallError::Inval); }
-            KEYBOARD_LAYOUT.store(layout, core::sync::atomic::Ordering::Relaxed);
-            match crate::eventbus::EVENT_BUS.push_event(
+            let mut kbd = crate::kbd::KBD.lock();
+            if (layout as usize) >= kbd.layouts.len() {
+                return err_to_u64(SyscallError::NoEnt);
+            }
+            kbd.state.active_layout_index = layout as u32;
+            let _ = crate::eventbus::EVENT_BUS.push_event(
                 crate::eventbus::EVENT_KEYB_LAYOUT,
                 crate::eventbus::SOURCE_KERNEL,
                 3, layout as u64, 0, 0,
-            ) {
-                Ok(_) => 0,
-                Err(_) => err_to_u64(SyscallError::Again),
+            );
+            0
+        }
+        _ if info_class == ObSetInfoClass::KeyboardSetLayout as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
             }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let name_len = buf_size.min(32);
+            let mut name_buf = [0u8; 32];
+            unsafe {
+                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, name_buf.as_mut_ptr(), name_len);
+            }
+            let name_end = name_buf.iter().position(|&b| b == 0).unwrap_or(name_len);
+            let name = match core::str::from_utf8(&name_buf[..name_end]) {
+                Ok(s) => s,
+                Err(_) => return err_to_u64(SyscallError::Inval),
+            };
+            let mut kbd = crate::kbd::KBD.lock();
+            match kbd.set_layout_by_name(name) {
+                Ok(()) => 0,
+                Err(()) => err_to_u64(SyscallError::NoEnt),
+            }
+        }
+        _ if info_class == ObSetInfoClass::KeyboardSetRepeatDelay as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            let delay = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut kbd = crate::kbd::KBD.lock();
+            match kbd.set_repeat_delay(delay) {
+                Ok(()) => 0,
+                Err(()) => err_to_u64(SyscallError::Inval),
+            }
+        }
+        _ if info_class == ObSetInfoClass::KeyboardSetRepeatRate as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 4 { return err_to_u64(SyscallError::Inval); }
+            let rate = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let mut kbd = crate::kbd::KBD.lock();
+            match kbd.set_repeat_rate(rate) {
+                Ok(()) => 0,
+                Err(()) => err_to_u64(SyscallError::Inval),
+            }
+        }
+        _ if info_class == ObSetInfoClass::KeyboardSetLeds as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            let leds = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut kbd = crate::kbd::KBD.lock();
+            kbd.set_leds(leds);
+            0
+        }
+        _ if info_class == ObSetInfoClass::KeyboardSetModifier as u32 => {
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            if obj.obj_type != crate::object::ObType::KeyboardDevice {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if buf_size < 1 { return err_to_u64(SyscallError::Inval); }
+            if !crate::syscall::is_current_admin() {
+                return err_to_u64(SyscallError::Perm);
+            }
+            let mods = unsafe { core::ptr::read_volatile(buf_ptr as *const u8) };
+            let mut kbd = crate::kbd::KBD.lock();
+            kbd.set_modifiers(mods);
+            0
         }
         _ if info_class == ObSetInfoClass::VfsRename as u32 => {
             if entry.object_id == 0 {

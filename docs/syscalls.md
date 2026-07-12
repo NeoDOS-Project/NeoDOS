@@ -274,7 +274,8 @@ Open an Ob namespace object by path. Security access check, allocates handle.
 - **Returns**: fd (>=3), or error code.
 
 ### 61 — `sys_ob_create`
-Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section, 18=Socket.
+Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event, 14=Semaphore, 15=Timer, 16=Thread, 17=Section, 18=Socket, 21=PowerManager, 22=KeyboardDevice.
+- Kernel-created types: `PowerManager(21)` and `KeyboardDevice(22)` are NOT user-creatable via `ob_create`. They are created internally at boot.
 - **Args**: `RBX`=path_ptr, `RCX`=type, `RDX`=fds_out, `R8`=attrs.
   - `type=14 (Semaphore)`: `attrs[0:15]=initial_count`, `attrs[16:31]=max_count`
   - `type=15 (Timer)`: `attrs[0:30]=period_ms`, `attrs[31]=1 (periodic) / 0 (oneshot)`
@@ -282,12 +283,22 @@ Create an Ob object. Types: 1=Process, 2=Driver, 4=Pipe, 11=Directory, 13=Event,
 - **Returns**: fd, or error code.
 
 ### 62 — `sys_ob_query_info`
-Query object info. Classes: 0=Basic, 1=Name, 2=File, 3=Process, 4=Thread, 5=Pipe, 6=Device, 7=CpuInfo, 8=Version, 9=DateTime, 10=Memory, 11=Drives, 12=Drivers, 13=Cwd, 14=KeyboardLayout, 15=ReadContent, 16=VolumeLabel, 17=SocketInfo, 18=SocketAddr, 19=TcpStatus, 20=NicInfo, 21=RegistryKey, 22=RegistryValue, 23=SocketRecv, 29=ServiceState, 30=ServiceConfig, 31=ServiceStatus, 33=FsckStatus, 34=ProcessId.
+Query object info. Classes: 0=Basic, 1=Name, 2=File, 3=Process, 4=Thread, 5=Pipe, 6=Device, 7=CpuInfo, 8=Version, 9=DateTime, 10=Memory, 11=Drives, 12=Drivers, 13=Cwd, 14=KeyboardLayout, 15=ReadContent, 16=VolumeLabel, 17=SocketInfo, 18=SocketAddr, 19=TcpStatus, 20=NicInfo, 21=RegistryKey, 22=RegistryValue, 23=SocketRecv, 29=ServiceState, 30=ServiceConfig, 31=ServiceStatus, 33=FsckStatus, 34=ProcessId, 35=KeyboardInfo, 36=KeyboardCaps, 37=KeyboardLayouts.
+- `class=14 (KeyboardLayout)` — legacy alias for `KeyboardInfo` on `\Global\Info\Keyboard`.
+- `class=35 (KeyboardInfo)` — query from `\Device\Keyboard` returns `KbdState` (modifiers, leds, active_layout_index).
+- `class=36 (KeyboardCaps)` — query from `\Device\Keyboard` returns `KbdCaps` (max_layouts, capabilities, num_layouts).
+- `class=37 (KeyboardLayouts)` — query from `\Device\Keyboard` returns array of `KbdLayoutInfo` (name, lang_tag, scancode/compose counts).
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written, or error code.
 
 ### 63 — `sys_ob_set_info`
-Set object info. Classes: 0=ProcessPriority, 1=ThreadPriority, 2=ObjectName, 3=Security, 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=SectionMapView, 14=SectionUnmapView, 15=FileCreate, 16=FileDelete, 17=SetProcessVt, 18=SocketConnect, 19=SocketBind, 20=SocketListen, 21=SocketSend, 22=SocketClose, 23=RegistryCreateKey, 24=RegistryDeleteKey, 25=RegistrySetValue, 26=RegistryDeleteValue, 27=SetNicIp, 33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig, 37=PowerShutdown, 38=PowerReboot, 39=FsckRepair.
+Set object info. Classes: 0=ProcessPriority, 1=ThreadPriority, 2=ObjectName, 3=Security, 4=ProcessTerminate, 5=KeyboardLayout, 6=VfsRename, 7=WriteContent, 8=SetCwd, 9=SetVolumeLabel, 10=TimerStart, 11=TimerCancel, 12=SemaphoreRelease, 13=SectionMapView, 14=SectionUnmapView, 15=FileCreate, 16=FileDelete, 17=SetProcessVt, 18=SocketConnect, 19=SocketBind, 20=SocketListen, 21=SocketSend, 22=SocketClose, 23=RegistryCreateKey, 24=RegistryDeleteKey, 25=RegistrySetValue, 26=RegistryDeleteValue, 27=SetNicIp, 33=ServiceStart, 34=ServiceStop, 35=ServiceRestart, 36=ServiceSetConfig, 37=PowerShutdown, 38=PowerReboot, 39=FsckRepair, 43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay, 45=KeyboardSetRepeatRate, 46=KeyboardSetLeds, 47=KeyboardSetModifier.
+- `class=5 (KeyboardLayout)` — legacy alias on `\Global\Info\Keyboard`; use `KeyboardSetLayout(43)` on `\Device\Keyboard` for by-name switching.
+- `class=43 (KeyboardSetLayout)` — set active layout by name string on `\Device\Keyboard`.
+- `class=44 (KeyboardSetRepeatDelay)` — set repeat delay in ms (u32 LE) on `\Device\Keyboard`.
+- `class=45 (KeyboardSetRepeatRate)` — set repeat rate in cps (u32 LE) on `\Device\Keyboard`.
+- `class=46 (KeyboardSetLeds)` — set LED state byte on `\Device\Keyboard` (bit 0=Caps, 1=Num, 2=Scroll).
+- `class=47 (KeyboardSetModifier)` — set modifier byte (admin only) on `\Device\Keyboard`.
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
   - `class=10 (TimerStart)`: Starts the timer. `buf` unused. Returns 0.
   - `class=11 (TimerCancel)`: Cancels a running timer. `buf` unused. Returns 0.

@@ -97,6 +97,8 @@ offset for SeAccessCheck re-verification.
 | 17 | Section | Shared memory section (maps to VMA) |
 | 18 | Socket | Network socket (Tcp/Udp) |
 | 20 | Service | Managed service process (Sm) |
+| 21 | PowerManager | Power management (kernel-created, `\System\PowerManager`) |
+| 22 | KeyboardDevice | Keyboard device — NeoKBD (kernel-created, `\Device\Keyboard`) |
 
 ## Namespace Hierarchy
 
@@ -121,6 +123,7 @@ offset for SeAccessCheck re-verification.
 │   ├── Harddisk0                  — primary block device
 │   ├── NeoDosVolume0              — NeoDOS FS volume
 │   ├── EspVolume0                 — ESP FAT32 volume
+│   ├── Keyboard                   — keyboard device (NeoKBD, ObType::KeyboardDevice)
 │   └── ...
 ├── \Driver\                       — NEM driver objects
 │   ├── Ahci                       — AHCI NEM driver
@@ -147,7 +150,8 @@ offset for SeAccessCheck re-verification.
 
 1. Validate ObType — only user-creatable types: Process(1), Driver(2), Pipe(4),
    Directory(11), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17),
-   Service(20)
+   Service(20).
+   PowerManager(21) and KeyboardDevice(22) are kernel-created only.
 2. Call `ob_create_object()` in the global table with given name + type
 3. Insert into namespace at the given path
 4. Allocate handle entries for any returned fds (pipe creates bidirectional pair)
@@ -155,7 +159,7 @@ offset for SeAccessCheck re-verification.
 
 ### ob_query_info (RAX=62)
 
-Supports 27 info classes:
+Supports 30 info classes:
 
 | Class | Name | Description |
 |-------|------|-------------|
@@ -188,10 +192,13 @@ Supports 27 info classes:
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
 | 33 | FsckStatus | FsckStatsRaw — filesystem integrity check results (read-only) |
 | 34 | ProcessId | u32 LE — current process PID |
+| 35 | KeyboardInfo | KbdState (modifiers, leds, active_layout_index) — `\Device\Keyboard` |
+| 36 | KeyboardCaps | KbdCaps (max_layouts, capabilities, num_layouts) — `\Device\Keyboard` |
+| 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
 
 ### ob_set_info (RAX=63)
 
-Supports 32 set classes:
+Supports 37 set classes:
 
 | Class | Name | Description |
 |-------|------|-------------|
@@ -230,6 +237,11 @@ Supports 32 set classes:
 | 37 | PowerShutdown | Initiate coordinated system shutdown |
 | 38 | PowerReboot | Initiate coordinated system reboot |
 | 39 | FsckRepair | Run fsck with repair flag (buf[0] != 0 = repair) |
+| 43 | KeyboardSetLayout | Set layout by name (string) — `\Device\Keyboard` |
+| 44 | KeyboardSetRepeatDelay | Set repeat delay in ms (u32 LE) — `\Device\Keyboard` |
+| 45 | KeyboardSetRepeatRate | Set repeat rate in cps (u32 LE) — `\Device\Keyboard` |
+| 46 | KeyboardSetLeds | Set LED state byte — `\Device\Keyboard` |
+| 47 | KeyboardSetModifier | Set modifier byte (admin) — `\Device\Keyboard` |
 
 ### ob_enum (RAX=64)
 

@@ -22,8 +22,16 @@ pub extern "C" fn halt() -> ! {
 #[inline(never)]
 pub extern "C" fn reboot() -> ! {
     disable_interrupts();
+    // 1. ACPI reset register (from FADT)
+    if let Some(state) = crate::power::acpi::get_state() {
+        crate::power::acpi::acpi_reset(state);
+    }
+    // 2. QEMU / legacy reset via 0xCF9
     unsafe {
         raw::raw_outb(0xCF9, 0x06);
+    }
+    // 3. PS/2 keyboard controller reset
+    unsafe {
         raw::raw_outb(0x64, 0xFE);
     }
     halt()
@@ -33,11 +41,19 @@ pub extern "C" fn reboot() -> ! {
 #[inline(never)]
 pub extern "C" fn poweroff() -> ! {
     disable_interrupts();
+    // 1. ACPI S5 (soft-off)
+    if let Some(state) = crate::power::acpi::get_state() {
+        crate::power::acpi::acpi_s5_write(state);
+    }
+    // 2. QEMU / virtual machine debug ports
     unsafe {
         for &(port, val) in &[(0x404u16, 0x2000u16), (0x604u16, 0x2000u16),
                               (0xB004u16, 0x2000u16), (0x4004u16, 0x3400u16)] {
             raw::raw_outw(port, val);
         }
+    }
+    // 3. PS/2 keyboard controller (legacy)
+    unsafe {
         raw::raw_outb(0x64u16, 0xFEu8);
     }
     halt()

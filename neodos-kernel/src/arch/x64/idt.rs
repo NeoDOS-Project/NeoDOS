@@ -705,48 +705,12 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     };
 
     if let Some(scancode) = scancode {
-        static mut CTRL_PRESSED: bool = false;
-        static mut ALT_PRESSED: bool = false;
-
-        // Track Ctrl and Alt for Ctrl+Alt+Del detection only
-        let released = (scancode & 0x80) != 0;
-        let code = scancode & 0x7F;
-        unsafe {
-            if code == 0x1D { CTRL_PRESSED = !released; }
-            if code == 0x38 { ALT_PRESSED = !released; }
-        }
-
-        // Ctrl+Alt+Del → poweroff
-        let is_del = code == 0x53 && !released;
-        if is_del {
-            let ctrl; let alt;
-            unsafe { ctrl = CTRL_PRESSED; alt = ALT_PRESSED; }
-            if ctrl && alt {
-                crate::serial_println!("[IRQ] [Ctrl+Alt+Del] Shutting down...");
-                crate::hal::ack_irq(33);
-                crate::object::power::power_shutdown();
-            }
-        }
-
-        // A4.4: Alt+F1-F4 → VT switching (scancodes 0x3B-0x3E)
-        if !released && (0x3B..=0x3E).contains(&code) {
-            let alt;
-            unsafe { alt = ALT_PRESSED; }
-            if alt {
-                let vt_num = (code - 0x3B) as usize;
-                crate::input::switch_vt(vt_num);
-                crate::hal::ack_irq(33);
-                return;
-            }
-        }
-
-        // Push KeyboardInput event — the NEM ps2kbd driver will
-        // translate the scancode and push the resulting byte(s)
-        // into the input ring buffer via HST push_input_byte.
+        // Lock-free: push scancode to NeoKBD via Event Bus
+        // NeoKBD processes it during dispatch (safe, no lock held).
         let _ = crate::eventbus::EVENT_BUS.push_event(
             crate::eventbus::EVENT_KEYBOARD_INPUT,
             crate::eventbus::SOURCE_HAL,
-            3,   // ps2kbd device_id
+            3,
             scancode as u64,
             0,
             0,

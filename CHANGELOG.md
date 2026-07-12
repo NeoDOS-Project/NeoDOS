@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.49.2 — 2026-07-12
+
+### Added
+- **NeoKBD kernel module** — New `src/kbd/` subsystem (6 files): core keyboard manager with layout engine, Unicode composition, dead key support, hotkey dispatch (Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch), auto-repeat, and Registry-backed config.
+  - `ObType::KeyboardDevice = 22` in `src/object/types.rs`.
+  - 3 new `ObInfoClass` (35=KeyboardInfo, 36=KeyboardCaps, 37=KeyboardLayouts).
+  - 5 new `ObSetInfoClass` (43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay, 45=KeyboardSetRepeatRate, 46=KeyboardSetLeds, 47=KeyboardSetModifier).
+  - 5 new Event Bus types: `EVENT_KEYDOWN=27`, `EVENT_KEYUP=28`, `EVENT_KEY_CHAR=29`, `EVENT_KBD_MODIFIER=30`, `EVENT_KBD_REPEAT=31`.
+  - Initialization at PHASE 3.875: `kbd::kbd_init()` — creates `\Device\Keyboard`, loads `.kbd` layouts from `C:\System\Keyboard\`, reads config from Registry, registers event handler.
+- **ACPI Power Management** — New `src/power/acpi.rs` module: RSDP discovery (EBDA, BIOS areas, bootloader pointer), RSDT/XSDT parsing, FADT extraction, S5 sleep (soft-off) via PM1a/b control registers, reset register support (IO/MMIO). 7 tests.
+  - HAL `poweroff()`: ACPI S5 → QEMU debug ports → PS/2 (fallback chain).
+  - HAL `reboot()`: ACPI reset register → 0xCF9 → PS/2 (fallback chain).
+- **`libneodos/src/keyboard.rs`** — New public module: user-mode keyboard API (`kbd_get_layout`, `kbd_set_layout`, `kbd_list_layouts`, `kbd_get_state`, `kbd_set_leds`, `kbd_get_repeat`, `kbd_set_repeat`, `KbdState`, `KbdLayoutInfo` structs, modifier constants).
+- **`userbin/neokey/`** — New `.NXE` binary replacing `keyb.nxe`. Commands: `NEOKEY show`, `NEOKEY layout <name>`, `NEOKEY layouts`, `NEOKEY repeat <cps>`, `NEOKEY delay <ms>`, `NEOKEY leds`.
+- **`tools/kbdcompile/`** — New layout compiler: converts `.klc` (Microsoft KLC format) to binary `.kbd` format. Compiles US and Spanish layouts.
+- **`data/keyboard/`** — Layout files directory: `KBDUS.klc`, `KBDSP.klc` (source), `US.kbd`, `Spanish.kbd` (compiled).
+- **Registry keyboard defaults** — `\Registry\Machine\System\Keyboard\*`: Layout, RepeatDelay, RepeatRate, NumLockOnBoot, CapsLockOnBoot.
+- **`neodev image` keyboard layout support** — `.kbd` files copied to `C:\System\Keyboard\` in disk image.
+- **`docs/HISTORY.md`** — NeoKBD + ACPI Power Management milestones added.
+
+### Changed
+- **ps2kbd NEM driver simplified** — Removed ~150 lines of layout translation logic (`translate_scancode`, `encode_utf8_first`, `klc_layout` module, `LAYOUT`/`DEAD_KEY`/`OUTPUT_PENDING` atomics). Now emits raw scancodes only; NeoKBD handles translation.
+- **PS/2 IRQ handler** — Ctrl+Alt+Del and Alt+F1-F4 checks moved from `idt.rs` to `kbd/hotkey.rs`. Handler pushes raw scancode to Event Bus for NeoKBD processing.
+- **HAL poweroff/reboot** — ACPI S5/reset register integration with fallback chain.
+- **`ObInfoClass`/`ObSetInfoClass` enums** — Keyboard info/set classes added to both kernel and `libneodos`.
+
+### Fixed
+- **Ctrl+Alt+Del poweroff** — Now goes through NeoKBD hotkey dispatcher (was directly in IRQ handler).
+
+### Tests
+- New power/acpi tests: `pm_acpi_fadt_valid_parses_s5`, `pm_acpi_fadt_reset_register`, `pm_hal_s5_write_correct_slp_typ`, etc.
+- Total: 625 kernel tests.
+
 ## v0.49.1 — 2026-07-11
 
 ### Added

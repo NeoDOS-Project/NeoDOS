@@ -156,6 +156,35 @@ pub fn progress_finish();
 
 The console module is lazy-loaded via `sys_loadlib` on first use from `console.nxl` (NXL slot 2). All history and completion callbacks are provided by the NXL.
 
+### Keyboard (`src/keyboard.rs`)
+
+User-mode keyboard management API wrapping `\Device\Keyboard` Ob object:
+
+```rust
+pub struct KbdState {
+    pub modifiers: u8,
+    pub leds: u8,
+    pub active_layout_index: u32,
+}
+pub struct KbdLayoutInfo {
+    pub index: u32,
+    pub name: [u8; 32],
+    pub lang_tag: [u8; 16],
+    pub scancode_count: u16,
+    pub compose_count: u16,
+}
+pub fn kbd_get_layout() -> Result<[u8; 32], i64>;       // active layout name
+pub fn kbd_set_layout(name: &str) -> Result<(), i64>;    // switch by name
+pub fn kbd_list_layouts() -> Result<LayoutList, i64>;    // all loaded layouts
+pub fn kbd_get_state() -> Result<KbdState, i64>;         // modifiers, leds, layout
+pub fn kbd_set_leds(leds: u8) -> Result<(), i64>;
+pub fn kbd_get_repeat() -> Result<(u32, u32), i64>;      // (delay_ms, rate_cps)
+pub fn kbd_set_repeat(delay: u32, rate: u32) -> Result<(), i64>;
+```
+
+Modifier constants: `KBD_SHIFT`, `KBD_CTRL`, `KBD_ALT`, `KBD_ALTGR`,
+`KBD_CAPS`, `KBD_NUMLOCK`, `KBD_SCROLLLOCK`.
+
 ### Macros (`src/macros.rs`)
 
 ```rust

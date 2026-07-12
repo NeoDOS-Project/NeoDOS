@@ -203,13 +203,8 @@
 
 #### Power Manager — Phase 1: HAL ACPI primitives
 
-* [ ] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Prereqs: -- | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs` (new), `src/hal/x64/mod.rs`, `src/hal/mod.rs`
-  - Añadir `reboot()` en HAL: ACPI reset register → QEMU debug port 0xCF9 → PS/2 → `halt()`. Nuevo extern "C" + `#[used]` ABI retention.
-  - Añadir `acpi_parse_fadt()`: parsear FADT desde RSDP → XSDT/RSDT, extraer PM1a/b control block, S5 sleep type (SLP_TYPa/b), reset register.
-  - Añadir `acpi_s5_write()`: escribir SLP_TYPa + SLP_EN a PM1a control register.
-  - Actualizar `poweroff()`: intentar ACPI S5 primero, fallback a QEMU debug ports, luego PS/2.
-  - `src/power/acpi.rs`: wrapper que llama a `acpi_parse_fadt()` y almacena `AcpiPowerState`.
-  - **Tests:** `pm_acpi_fadt_valid_parses_s5`, `pm_acpi_fadt_absent_fallback_ports`, `pm_acpi_fadt_reset_register`, `pm_hal_reboot_does_not_return`, `pm_hal_poweroff_tries_acpi_first`, `pm_hal_s5_write_correct_slp_typ`
+* [x] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Prereqs: -- | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
+  - **COMPLETED** — ACPI RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep, reset register, poweroff/reboot fallback chain. 7 tests.
 
 ---
 
@@ -306,45 +301,14 @@
 
 #### Keyboard Manager — Phase 1: Kernel core + Ob API + Event Bus + libneodos
 
-* [ ] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Prereqs: -- | Files: `src/kbd/mod.rs` (new), `src/kbd/layout.rs` (new), `src/kbd/unicode.rs` (new), `src/kbd/config.rs` (new), `src/kbd/event.rs` (new), `src/kbd/hotkey.rs` (new), `src/object/types.rs`, `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs` (new), `libneodos/src/lib.rs`, `docs/design/neokbd-design.md`
-  - Diseño completo: `docs/design/neokbd-design.md`
-  - `ObType::KeyboardDevice = 22` en `src/object/types.rs`
-  - 2 nuevos `ObInfoClass` (35=KeyboardInfo, 36=KeyboardCaps)
-  - 5 nuevos `ObSetInfoClass` (43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay, 45=KeyboardSetRepeatRate, 46=KeyboardSetLeds, 47=KeyboardSetModifier)
-  - `src/kbd/mod.rs`: `NeoKbd` struct con state, config, layouts vec, modifiers, dead_key. `pub static KBD: Mutex<NeoKbd>`. `kbd_init()`: escanea `C:\System\Keyboard\*.kbd`, carga layouts, aplica defaults Registry.
-  - `src/kbd/layout.rs`: `KbdLayout` struct con nombre, lang_tag, `[KeyEntry; 256]`, `Vec<ComposeEntry>`. `load_kbd()`: parsea `.kbd` binario. `lookup()`: scancode + mods → codepoint.
-  - `src/kbd/unicode.rs`: `unicode_to_utf8()`: codepoint a UTF-8. Dead key compose engine.
-  - `src/kbd/config.rs`: load/save config desde `\Registry\Machine\System\Keyboard\*`.
-  - `src/kbd/event.rs`: handler de `EVENT_KEYBOARD_INPUT`, llama a `kbd_process_scancode()`.
-  - `src/kbd/hotkey.rs`: hotkey dispatcher (Ctrl+Alt+Del → poweroff, Alt+F1-F4 → VT switch). Reemplaza checks hardcodeados en `idt.rs`.
-  - `src/eventbus/mod.rs`: añadir `EVENT_KEYDOWN=27`, `EVENT_KEYUP=28`, `EVENT_KEY_CHAR=29`, `EVENT_KBD_MODIFIER=30`, `EVENT_KBD_REPEAT=31`.
-  - `src/main.rs`: PHASE 3.875 `kbd::kbd_init()` (después de input init, antes de driver loader). Crear `\Device\Keyboard` en namespace.
-  - `src/cm/mod.rs`: defaults: `Layout=Spanish`, `RepeatDelay=500`, `RepeatRate=30`, `NumLockOnBoot=1`, `CapsLockOnBoot=0`.
-  - `src/arch/x64/idt.rs`: eliminar Ctrl+Alt+Del y Alt+F# checks hardcodeados (NeoKBD los maneja).
-  - `libneodos/src/keyboard.rs`: `kbd_get_layout()`, `kbd_set_layout()`, `kbd_list_layouts()`, `kbd_get_repeat()`, `kbd_set_repeat()`, `kbd_get_state()`, `kbd_set_leds()`. Tipos `KbdState`, `KbdLayoutInfo`.
-  - **Tests:** `kbd_init_ob_namespace`, `kbd_query_info`, `kbd_set_layout_by_name`, `kbd_set_layout_invalid`, `kbd_layout_persists_registry`, `kbd_scancode_us_a`, `kbd_scancode_sp_n_tilde`, `kbd_dead_key_acute_compose`, `kbd_modifiers_state`, `kbd_leds_set_query`, `kbd_repeat_config`, `kbd_hotkey_ctrl_alt_del`, `kbd_hotkey_alt_f1_vt_switch`, `kbd_load_kbd_file`, `kbd_load_kbd_invalid_rejected`
+* [x] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Prereqs: -- | Files: `src/kbd/mod.rs`, `src/kbd/layout.rs`, `src/kbd/unicode.rs`, `src/kbd/config.rs`, `src/kbd/event.rs`, `src/kbd/hotkey.rs`, `src/object/types.rs`, `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs`, `libneodos/src/lib.rs`, `docs/design/neokbd-design.md`
+  - **COMPLETED** — Full NeoKBD implementation: ObType(22), 3 ObInfoClass, 5 ObSetInfoClass, 5 event types, kbd_init(), layout engine, dead key compose, hotkey dispatch, Registry config, libneodos API.
 
-* [ ] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Prereqs: KBD-PHASE1 | Files: `drivers/ps2kbd/src/lib.rs`, `drivers/ps2kbd/build.rs`, `tools/kbdcompile/` (new), `drivers/ps2kbd/layouts/`, `docs/keyboard.md` (new)
-  - Simplificar `drivers/ps2kbd/src/lib.rs`: eliminar `klc_layout` module, `translate_scancode()`, `encode_utf8_first()`, `LAYOUT` atomic, `DEAD_KEY` atomic, `OUTPUT_PENDING0/1` atomics (~150 líneas eliminadas).
-  - `process_scancode()` simplificado: solo actualizar modificadores (make/set, break/clear, toggle para Caps/Num) y emitir evento raw via `hst_push_key_event(scancode, is_make)`.
-  - Nueva HST call `hst_push_key_event()`: llama a `kbd::kbd_event(scancode, is_make)`, NeoKBD hace traducción + composición + push bytes.
-  - `drivers/ps2kbd/build.rs`: eliminar generación de `kbd_layout.rs`. Los layouts ahora son archivos `.kbd`.
-  - `tools/kbdcompile/`: herramienta que convierte `.klc` → `.kbd` binario. Se invoca en build de imagen, no en runtime.
-  - Layouts iniciales `.kbd`: `US.kbd` (en-US, 256 scancodes, 0 compose), `Spanish.kbd` (es-ES, 256 scancodes, 54 compose).
-  - `docs/keyboard.md`: guía de arquitectura, cómo añadir layouts, API pública, integración con NeoCfg.
-  - **Tests:** `kbd_phase2_driver_no_layout_tables`, `kbd_phase2_raw_event_flow`, `kbd_phase2_kbdcompile_us_layout`, `kbd_phase2_kbdcompile_spanish_layout`, `kbd_phase2_backward_compat_legacy_keyb`
+* [x] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Prereqs: KBD-PHASE1 | Files: `drivers/ps2kbd/src/lib.rs`, `drivers/ps2kbd/build.rs`, `tools/kbdcompile/`, `drivers/ps2kbd/layouts/`
+  - **COMPLETED** — ps2kbd simplified (~150 lines removed), kbdcompile tool created, layouts built as `.kbd` files (US + Spanish), build system integrated.
 
-* [ ] **ADM-NEOKEY. neokey CLI utility** | Prereqs: KBD-PHASE1 | Files: `userbin/neokey/` (new), `scripts/build.sh`, `scripts/create_ne2_image.py`
-  - Reemplaza el `keyb.nxe` actual (índices numéricos 0/1) por `neokey.nxe` con nombres de layout.
-  - `NEOKEY show` — muestra layout activo, estado modificadores, LEDs.
-  - `NEOKEY layout <name>` — cambia layout por nombre (ej. `NEOKEY layout Spanish`, `NEOKEY layout US`).
-  - `NEOKEY layouts` — lista todos los layouts disponibles en `C:\System\Keyboard\`.
-  - `NEOKEY repeat <cps>` — configura velocidad de repetición (2–60 cps).
-  - `NEOKEY delay <ms>` — configura retardo antes de repetir (100–2000 ms).
-  - `NEOKEY leds` — muestra estado actual de LEDs.
-  - Usa `libneodos::keyboard::*` API (kbd_get_layout, kbd_set_layout, kbd_list_layouts, etc.).
-  - Incluye `::HELP::` block para auto-documentación en NeoShell.
-  - **Tests:** `neokey_show_displays_layout`, `neokey_layout_change_by_name`, `neokey_layouts_list`, `neokey_repeat_config`, `neokey_delay_config`, `neokey_help_flag`
+* [x] **ADM-NEOKEY. neokey CLI utility** | Prereqs: KBD-PHASE1 | Files: `userbin/neokey/`
+  - **COMPLETED** — `NEOKEY show/layout/layouts/repeat/delay/leds` commands, uses libneodos keyboard API, replaces keyb.nxe.
 
 * [ ] **PM-PHASE2. Power Manager kernel core** | Prereqs: PM-PHASE1 | Files: `src/power/mod.rs` (new), `src/power/plan.rs` (new), `src/power/coordinator.rs` (new), `src/object/types.rs`, `src/cm/mod.rs`, `src/main.rs`
   - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.

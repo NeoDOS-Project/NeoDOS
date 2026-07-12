@@ -57,12 +57,14 @@ mod crash;
 mod security;
 mod exception;  // A3.4 SEH + Exception Dispatcher
 mod urn;
+pub mod power;
 mod object;
 mod kwait;
 mod net;
 mod cm;
 mod services;
 mod virtio;
+mod kbd;
 mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
@@ -162,6 +164,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
     if boot_info.acpi_rsdp_addr != 0 {
         println!("[+] ACPI RSDP at 0x{:x}", boot_info.acpi_rsdp_addr);
+    }
+    // ACPI power state (FADT, S5, reset register)
+    power::acpi::init();
+    if power::acpi::is_available() {
+        println!("[+] ACPI power management initialized");
+    } else {
+        println!("[!] ACPI power management not available");
     }
     timers::init();
     if timers::active() == timers::TimerSource::Hpet {
@@ -472,6 +481,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // A4.4: Initialize Input Manager (VT subsystem)
     input::init();
+
+    // ============================================
+    // PHASE 3.875: Keyboard Manager (NeoKBD)
+    // Initializes ObType::KeyboardDevice at \Device\Keyboard,
+    // loads layouts from C:\System\Keyboard\*.kbd,
+    // reads config from Registry, and registers
+    // event handler for keyboard input.
+    // ============================================
+    kbd::kbd_init();
 
     // ============================================
     // PHASE 3.80: X4 — Driver Isolation Layer

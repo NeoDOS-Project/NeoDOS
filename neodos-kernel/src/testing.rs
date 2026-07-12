@@ -1655,6 +1655,9 @@ pub fn register_tests() {
 
     // SM-001: Service Manager tests
     crate::services::register_service_tests();
+
+    // PM-PHASE1: HAL ACPI reboot/FADT/S5 primitives
+    crate::power::acpi::register_pm_tests();
 }
 
 

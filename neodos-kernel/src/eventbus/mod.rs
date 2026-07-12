@@ -50,6 +50,11 @@ pub const EVENT_PCI_WRITE_DONE: EventType     = 0x1003;
 pub const EVENT_MSI_CONFIGURE: EventType      = 0x1010;
 /// pci.nem → kernel: MSI configured OK.  data0 = packed BDF.
 pub const EVENT_MSI_CONFIGURED: EventType     = 0x1011;
+pub const EVENT_KEYDOWN: EventType = 27;
+pub const EVENT_KEYUP: EventType = 28;
+pub const EVENT_KEY_CHAR: EventType = 29;
+pub const EVENT_KBD_MODIFIER: EventType = 30;
+pub const EVENT_KBD_REPEAT: EventType = 31;
 pub const EVENT_USER: EventType = 0x2000;
 pub const EVENT_WILDCARD: EventType = 0xFFFFFFFF;
 

@@ -635,6 +635,9 @@ pub enum ObInfoClass {
     ServiceStatus = 31,
     FsckStatus = 33,
     ProcessId = 34,
+    KeyboardInfo = 35,
+    KeyboardCaps = 36,
+    KeyboardLayouts = 37,
 }
 
 pub mod ob_type {
@@ -688,6 +691,11 @@ pub enum ObSetInfoClass {
     PowerShutdown = 37,
     PowerReboot = 38,
     FsckRepair = 39,
+    KeyboardSetLayout = 43,
+    KeyboardSetRepeatDelay = 44,
+    KeyboardSetRepeatRate = 45,
+    KeyboardSetLeds = 46,
+    KeyboardSetModifier = 47,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -727,6 +735,11 @@ pub mod ob_set_info_class {
     pub const SERVICE_SET_CONFIG: ObSetInfoClass = ObSetInfoClass::ServiceSetConfig;
     pub const POWER_SHUTDOWN: ObSetInfoClass = ObSetInfoClass::PowerShutdown;
     pub const POWER_REBOOT: ObSetInfoClass = ObSetInfoClass::PowerReboot;
+    pub const KEYBOARD_SET_LAYOUT: ObSetInfoClass = ObSetInfoClass::KeyboardSetLayout;
+    pub const KEYBOARD_SET_REPEAT_DELAY: ObSetInfoClass = ObSetInfoClass::KeyboardSetRepeatDelay;
+    pub const KEYBOARD_SET_REPEAT_RATE: ObSetInfoClass = ObSetInfoClass::KeyboardSetRepeatRate;
+    pub const KEYBOARD_SET_LEDS: ObSetInfoClass = ObSetInfoClass::KeyboardSetLeds;
+    pub const KEYBOARD_SET_MODIFIER: ObSetInfoClass = ObSetInfoClass::KeyboardSetModifier;
 }
 
 /// ObBasicInfo — ABI-compatible with kernel's ObBasicInfo (RAX=62, class=0).

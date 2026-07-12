@@ -106,6 +106,12 @@ PHASE 3.7   Block cache init, NeoFS mount
 PHASE 3.8   VFS init, working directory
 PHASE 3.80  Driver isolation region init (0x30000000)
 PHASE 3.85  Boot driver loader (from C:\System\Drivers, dependency-sorted)
+PHASE 3.87  ACPI power init: RSDP discovery → FADT parse → S5/reset register
+PHASE 3.875 Keyboard Manager (NeoKBD) init: `kbd::kbd_init()` — loads layouts,
+           creates `\Device\Keyboard`, registers event handler
+PHASE 3.882 Service Manager init: load service definitions from Registry,
+           create `\Service\` namespace, resolve dependencies
+PHASE 3.883 Power Manager object init: creates `\System\PowerManager` Ob object
 PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\NeoInit.nxe`
 ```
 
@@ -483,8 +489,11 @@ NEM ps2kbd driver translates scancode to ASCII → `hst_push_input_byte(byte)` �
 `eprocess.vt_num`. Each process has a `vt_num` field (u8) inherited from its parent at
 spawn time.
 
-**Rule 11.2.3**: The keyboard layout tables (US index 0, SP index 1) produce `u16` Unicode
-codepoints from scancodes. Layout switching is via event bus (`EVENT_KEYB_LAYOUT` type 9).
+**Rule 11.2.3**: Keyboard input flows through NeoKBD (`src/kbd/`). The PS/2 IRQ handler
+pushes raw scancodes to the Event Bus as `EVENT_KEYBOARD_INPUT`. NeoKBD processes them
+through the layout engine, producing `EVENT_KEYDOWN` (27), `EVENT_KEYUP` (28),
+`EVENT_KEY_CHAR` (29), and `EVENT_KBD_MODIFIER` (30) events. Layout switching is via
+`ob_set_info(KeyboardSetLayout=43)` on `\Device\Keyboard`.
 
 **Rule 11.2.4**: The input system produces sentinel bytes `0x01` (up arrow) and `0x02`
 (down arrow) for shell history navigation.
@@ -529,12 +538,23 @@ either reading the file content (returns `[vt_num, active_vt, ...]`) or calling
 with WRITE access and calling `ob_set_info(fd, 17, &[new_vt])`.
 This affects which VT queue `sys_read(fd=0)` reads from for that process.
 
-### 11.6 Keyboard Layout
+### 11.6 Keyboard Layout (NeoKBD)
 
-**Rule 11.6.1**: The PS/2 keyboard driver stores scan code → ASCII tables generated at
-build time from `.klc` files. Two layouts: US (index 0), SP (index 1, default).
-**Rule 11.6.2**: Layout switching is via Event Bus (`EVENT_KEYB_LAYOUT` type 9) sent by
-the `KEYB` shell command.
+**Rule 11.6.1**: NeoKBD (`src/kbd/`) is the kernel keyboard manager. It loads `.kbd` binary
+layout files from `C:\System\Keyboard\` at boot and exposes them through `\Device\Keyboard`
+(ObType::KeyboardDevice = 22). Layouts are compiled from `.klc` source files by
+`tools/kbdcompile/` and bundled into the disk image.
+
+**Rule 11.6.2**: The PS/2 driver (`ps2kbd.nem`) emits raw scancodes — it no longer performs
+layout translation. NeoKBD handles scancode → Unicode conversion, dead key composition,
+modifier tracking, and hotkey dispatch (Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch).
+
+**Rule 11.6.3**: Layout switching is via `ob_set_info(KeyboardSetLayout=43)` on
+`\Device\Keyboard` with a layout name string (e.g., "Spanish", "US"). The `neokey.nxe`
+binary provides the user interface: `NEOKEY layout <name>`, `NEOKEY layouts`, `NEOKEY show`.
+
+**Rule 11.6.4**: Keyboard configuration (active layout, repeat delay/rate, NumLock/CapsLock
+on boot) is persisted in `\Registry\Machine\System\Keyboard\*` and applied at boot.
 
 ---
 

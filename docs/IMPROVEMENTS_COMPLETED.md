@@ -1,7 +1,7 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.49.0 (CM-FIX completado).
+> Version actual: v0.49.2 (NeoKBD + ACPI Power Management completados).
 > Proximo milestone: v0.50 (Shell Phase 1 + NeoFS snapshot).
 
 ---
@@ -591,6 +591,51 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - `sm_init()` en Phase 3.882, `sm_start_auto_services()` en Phase 4
   - Default Dhcpd service en `scripts/gen_system_hiv.py` (Auto, OnCrash, MaxFailures=3)
   - 22 tests unitarios (state machine, dependencies, registry backend, error codes, process exit handling)
+
+### PM-PHASE1. HAL ACPI primitives [COMPLETED]
+
+* [x] **PM-PHASE1. HAL ACPI reboot/FADT/S5 primitives** | Files: `src/hal/x64/cpu.rs`, `src/power/acpi.rs`, `src/hal/x64/mod.rs`, `src/hal/mod.rs`
+  - `reboot()`: ACPI reset register → 0xCF9 → PS/2 fallback chain.
+  - `acpi_parse_fadt()`: RSDP → RSDT/XSDT → FADT. PM1a/b, S5 sleep type, reset register.
+  - `acpi_s5_write()`: SLP_TYPa + SLP_EN to PM1a control register.
+  - `poweroff()`: ACPI S5 → QEMU debug ports → PS/2 fallback chain.
+  - `src/power/acpi.rs`: stores `AcpiPowerState`, public API.
+  - 7 tests: FADT parsing, reset register, S5 write.
+
+---
+
+### KBD-PHASE1. NeoKBD kernel module [COMPLETED]
+
+* [x] **KBD-PHASE1. NeoKBD kernel module + ObType + API** | Files: `src/kbd/`, `src/object/types.rs`, `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/main.rs`, `src/cm/mod.rs`, `libneodos/src/keyboard.rs`, `docs/design/neokbd-design.md`
+  - `ObType::KeyboardDevice = 22`, `ObInfoClass` 35-37, `ObSetInfoClass` 43-47.
+  - 5 new Event Bus types (27-31): KEYDOWN, KEYUP, KEY_CHAR, KBD_MODIFIER, KBD_REPEAT.
+  - `NeoKbd` struct with state, config, layouts, modifiers, dead key engine.
+  - `kbd_init()`: PHASE 3.875, scans `C:\System\Keyboard\*.kbd`, loads config from Registry.
+  - Layout engine: `KbdLayout` with `[KeyEntry; 256]` + compose table, Unicode mapping.
+  - Hotkey dispatch: Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch.
+  - Registry defaults: Layout, RepeatDelay, RepeatRate, NumLockOnBoot, CapsLockOnBoot.
+  - `libneodos/src/keyboard.rs`: user-mode API with wrappers.
+
+---
+
+### KBD-PHASE2. ps2kbd simplification + kbdcompile [COMPLETED]
+
+* [x] **KBD-PHASE2. ps2kbd driver simplification + .kbd format tool** | Files: `drivers/ps2kbd/`, `tools/kbdcompile/`, `data/keyboard/`
+  - ps2kbd simplified: removed layout tables, translate_scancode, dead key logic (~150 lines).
+  - `tools/kbdcompile/`: .klc → .kbd compiler. Supports US and Spanish layouts.
+  - `.kbd` binary format: magic + version + name + lang_tag + 256 key entries + compose table.
+  - Layout files in `data/keyboard/`: KBDUS.klc, KBDSP.klc, US.kbd, Spanish.kbd.
+
+---
+
+### ADM-NEOKEY. neokey CLI utility [COMPLETED]
+
+* [x] **ADM-NEOKEY. neokey CLI utility** | Files: `userbin/neokey/`
+  - Replaces `keyb.nxe`: `NEOKEY show/layout/layouts/repeat/delay/leds`.
+  - Uses `libneodos::keyboard::*` API.
+  - Integrated into disk image via `neodev/src/image.rs`.
+
+---
 
 ## Referencias
 

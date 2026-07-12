@@ -1,11 +1,11 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.49.1 | **Tests:** 625 (kernel) | **ABI:** v7 | **Ob API:** RAX 60-76
+**Version:** v0.49.2 | **Tests:** 625 (kernel) | **ABI:** v7 | **Ob API:** RAX 60-76
 
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `python3 scripts/auto_test.py` → `scripts/check_deps.py`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `cargo run --bin neodev -- test` → `scripts/check_deps.py`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
@@ -26,7 +26,6 @@ cargo run --bin neodev -- test                     # run automated tests
 cargo run --bin neodev -- list                     # show discovered projects
 cargo run --bin neodev -- clean                    # clean artifacts
 bash scripts/build.sh                              # legacy (still available)
-python3 scripts/auto_test.py                       # legacy test runner
 ```
 Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`
 or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/Cargo.toml --'`
@@ -34,7 +33,7 @@ or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/
 ## Git Workflow
 
 1. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
-2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test` (or `python3 scripts/auto_test.py`)
+2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
 3. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
 4. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
 

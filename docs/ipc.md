@@ -209,6 +209,20 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 | `EVENT_NMI_WATCHDOG` | 15 | NMI watchdog timeout |
 | `EVENT_MOUSE_INPUT` | 16 | PS/2 mouse raw bytes |
 | `EVENT_NETWORK_PACKET` | 17 | NIC received a packet |
+| `EVENT_PS2_SHUTDOWN` | 18 | PS/2 shutdown request |
+| `EVENT_PM_SUSPEND` | 19 | Power management suspend |
+| `EVENT_PM_RESUME` | 20 | Power management resume |
+| `EVENT_PM_BATTERY` | 21 | Battery status change |
+| `EVENT_PM_THERMAL` | 22 | Thermal event |
+| `EVENT_PM_DISPLAY` | 23 | Display power state |
+| `EVENT_PM_IDLE` | 24 | System idle notification |
+| `EVENT_PM_POWER_BUTTON` | 25 | Power button pressed |
+| `EVENT_PM_SLEEP_BUTTON` | 26 | Sleep button pressed |
+| `EVENT_KEYDOWN` | 27 | Key pressed (scancode in data0) |
+| `EVENT_KEYUP` | 28 | Key released (scancode in data0) |
+| `EVENT_KEY_CHAR` | 29 | Character typed (Unicode codepoint in data0) |
+| `EVENT_KBD_MODIFIER` | 30 | Modifier state change (new mods byte in data0) |
+| `EVENT_KBD_REPEAT` | 31 | Key repeat event |
 | `USER` | 0x1000+ | User-defined event types |
 
 ### Event Sources

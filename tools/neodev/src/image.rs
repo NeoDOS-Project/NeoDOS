@@ -416,7 +416,7 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
     ];
     let tools_nxe = &[
         "kill", "pri", "fsck", "ndreg", "loadnem", "progress",
-        "neotop", "dhcpd", "netcfg", "ipconfig", "cpuinfo",
+        "neotop", "dhcpd", "netcfg", "ipconfig", "cpuinfo", "neokey",
     ];
 
     for name in programs_nxe.iter().chain(tools_nxe) {
@@ -453,6 +453,21 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
                 name: format!("/System/Libraries/{}", dst_name),
                 content,
                 mode: MODE_FILE | PERM_R | PERM_X,
+                is_dir: false,
+            });
+        }
+    }
+
+    // Keyboard layouts (.kbd)
+    let kbd_layouts = &["US", "Spanish"];
+    for layout_name in kbd_layouts {
+        let p = root.join("data/keyboard").join(format!("{}.kbd", layout_name));
+        if p.exists() {
+            let content = std::fs::read(&p).unwrap_or_default();
+            files.push(FileEntry {
+                name: format!("/System/Keyboard/{}.kbd", layout_name),
+                content,
+                mode: MODE_FILE | PERM_R,
                 is_dir: false,
             });
         }

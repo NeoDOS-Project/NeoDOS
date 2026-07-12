@@ -28,6 +28,7 @@ pub enum ObType {
     Socket = 18,
     Service = 20,
     PowerManager = 21,
+    KeyboardDevice = 22,
 }
 
 impl ObType {
@@ -54,6 +55,7 @@ impl ObType {
             ObType::Socket => "SOCKET",
             ObType::Service => "SERVICE",
             ObType::PowerManager => "POWERMANAGER",
+            ObType::KeyboardDevice => "KEYBOARD",
         }
     }
 }
@@ -144,6 +146,9 @@ pub enum ObInfoClass {
     PowerState = 32,
     FsckStatus = 33,
     ProcessId = 34,
+    KeyboardInfo = 35,
+    KeyboardCaps = 36,
+    KeyboardLayouts = 37,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -185,6 +190,11 @@ pub enum ObSetInfoClass {
     PowerShutdown = 37,
     PowerReboot = 38,
     FsckRepair = 39,
+    KeyboardSetLayout = 43,
+    KeyboardSetRepeatDelay = 44,
+    KeyboardSetRepeatRate = 45,
+    KeyboardSetLeds = 46,
+    KeyboardSetModifier = 47,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

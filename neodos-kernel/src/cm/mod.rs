@@ -258,6 +258,26 @@ pub fn cm_ensure_default_values() {
     }
 
     // 4. Default services (fallback when no SYSTEM.hiv on disk)
+    // 5. Keyboard defaults: \Registry\Machine\System\Keyboard
+    if let Some(key) = ensure_key_path(&mut hm.hive, root, "Keyboard") {
+        if hm.hive.find_value(key, "Layout").is_none() {
+            hm.hive.set_value(key, "Layout", hive::REG_SZ, b"Spanish");
+        }
+        if hm.hive.find_value(key, "RepeatDelay").is_none() {
+            hm.hive.set_value(key, "RepeatDelay", hive::REG_DWORD, &500u32.to_le_bytes());
+        }
+        if hm.hive.find_value(key, "RepeatRate").is_none() {
+            hm.hive.set_value(key, "RepeatRate", hive::REG_DWORD, &30u32.to_le_bytes());
+        }
+        if hm.hive.find_value(key, "NumLockOnBoot").is_none() {
+            hm.hive.set_value(key, "NumLockOnBoot", hive::REG_DWORD, &1u32.to_le_bytes());
+        }
+        if hm.hive.find_value(key, "CapsLockOnBoot").is_none() {
+            hm.hive.set_value(key, "CapsLockOnBoot", hive::REG_DWORD, &0u32.to_le_bytes());
+        }
+    }
+
+    // 4. Default services
     if let Some(dhcpc_key) = ensure_key_path(&mut hm.hive, root,
         "CurrentControlSet\\Services\\Dhcpc")
     {

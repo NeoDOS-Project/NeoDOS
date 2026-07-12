@@ -42,7 +42,10 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Driver Isolation Layer (X4): 16×1 MB slots @ 0x30000000
    - Networking init (PHASE 3.88): e1000 NIC probe, ARP cache, \Device\Tcp/\Device\Udp
    - Cm Registry init (PHASE 3.881): mount SYSTEM hive, ensure defaults
+   - ACPI power init (PHASE 3.87): RSDP discovery → FADT parse → S5/reset register
+   - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
+   - Power Manager object init (PHASE 3.883): create \System\PowerManager Ob object
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
    - Ring 3 shell (neoshell.nxe via NeoInit, 602 kernel tests + user commands)
 ```
@@ -512,7 +515,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 | ATA (boot stub) | `drivers/ata.rs` | PIO only, primary channel, used before NEM driver loads |
 | ATA (NEM v3) | `drivers/ata/` (standalone) | DMA + PIO, primary + secondary, ~137 GB, registered via NemBlockDevice |
 | AHCI (boot + NEM) | `drivers/ahci.rs` + `drivers/ahci/` | DMA polling + NCQ (v0.46.2), per-port, ATA + ATAPI, PRDT scatter-gather |
-| PS/2 | `drivers/ps2.rs` | IRQ1, scan code → ASCII via KLC layouts |
+| PS/2 | `drivers/ps2.rs` | IRQ1, raw scancode → Event Bus → NeoKBD translates via .kbd layouts |
 | PCI | `drivers/pci.rs` | Config space primitives via ECAM MMIO with legacy PIO fallback (0xCF8/0xCFC). Init at Phase 2.3 from ACPI MCFG. BAR read/map utilities. |
 | GPT | `drivers/gpt.rs` | GUID partition table parser |
 | FAT32 | `drivers/fat32.rs` | ESP partition, absolute LBAs |
@@ -531,7 +534,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **656 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **625 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 |-------|-------|-------------|
@@ -564,7 +567,7 @@ The kernel testing framework includes **656 tests** (200+ test_case! macros) wit
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
 
-Tests run automatically at boot. The kernel runs 656 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+Tests run automatically at boot. The kernel runs 625 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 
@@ -579,7 +582,9 @@ Tests run automatically at boot. The kernel runs 656 tests (200+ test_case! regi
 
 ## Kernel Subsystems (High-Level)
 - **apc**: `src/apc/mod.rs` — Asynchronous Procedure Call engine. Per-thread kernel/user APC queues (max 64 each). Kernel APCs dispatched at PASSIVE_LEVEL on syscall return. User APCs dispatched one-at-a-time before IRETQ to Ring 3. Used for IRP completion delivery (DIRQL→DPC→APC flow) and deferred callback execution.
-- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=18 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section, Socket). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **object**: `src/object/` — Object Manager (Ob). Unified object tracking with reference counting, type identification (ObType=20 variants: Process, Driver, Device, Pipe, EventBus, BlockDevice, Filesystem, MemoryRegion, Symlink, MountPoint, Directory, Key, Event, Semaphore, Timer, Thread, Section, Socket, Service, PowerManager, KeyboardDevice). Hierarchical object namespace with Directory entries, case-insensitive path lookup, symlinks, and security descriptors. Objects auto-register for lifecycle via `ObOperations::on_destroy\). Filesystem objects (Timer, Semaphore, Section, Pipe) use the Object Manager for resource lifecycle. `KOBJ` via Ring 3 `kobj.nxe` lists all live objects.
+- **kbd**: `src/kbd/` — Keyboard Manager (NeoKBD): layout engine, Unicode composition, dead key compose, hotkey dispatch, auto-repeat, Registry-backed config, `ObType::KeyboardDevice(22)`, `\Device\Keyboard` namespace object
+- **power**: `src/power/` — ACPI power management: RSDP discovery, RSDT/XSDT parsing, FADT extraction, S5 sleep (soft-off), reset register
 - **arch/x64**: GDT, IDT, PIC, paging (4-level, 2 MB huge pages + 4 KB demand-paging), interrupt handlers (timer IRQ0, keyboard IRQ1, syscall INT 0x80)
 - **drivers**: ATA (PIO boot stub + NEM v3 standalone DMA driver), AHCI, PS/2 keyboard, USB HID, PCI NEM driver (bus scan + Event Bus service), device event infrastructure
 - **buffer**: `buffer/block_cache.rs` — block cache (periodic flush via timer); `buffer/page_cache.rs` — page cache (128-entry, 512 KB hash map O(1) + LRU cache for file data I/O, dirty write-back with `flush_batch()`, timer-driven via `NEED_PAGE_CACHE_FLUSH`)

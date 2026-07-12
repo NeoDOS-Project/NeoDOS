@@ -17,6 +17,7 @@ pub mod macros;
 pub mod args;
 pub mod seh;
 pub mod console;
+pub mod keyboard;
 
 /// Load a shared library (NXL) from the filesystem.
 /// Returns the base address where the NXL was loaded, which is also

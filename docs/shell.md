@@ -67,7 +67,7 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 | PS | `ob_enum(\Ob\Process)` then `ob_query_info` per process for name/pid/state |
 | KILL `<pid>` | `ob_set_info(Process, ProcessTerminate)` on target process object |
 | PRI `<pid> <level>` | `ob_set_info(Process, ProcessPriority, &level)` |
-| KEYB `<layout>` | `ob_set_info(KeyboardLayout)` on keyboard device object |
+| KEYB `<layout>` | Legacy — use `NEOKEY layout <name>` instead. `ob_set_info(KeyboardLayout)` on keyboard device object. |
 | POWEROFF | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerShutdown)` — via Object Manager |
 | REBOOT | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerReboot)` — via Object Manager |
 | VER | `ob_open(\Global\Info\Version)` → `ob_query_info` → print version string |
@@ -81,7 +81,7 @@ Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if 
 
 ## userbin/.NXE Binaries
 
-All 41 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/`:
+All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/`:
 
 | Binary | Category | Description |
 |--------|----------|-------------|
@@ -117,7 +117,8 @@ All 41 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | tree | utility | Recursive directory listing |
 | type | utility | Display file contents |
 | drives | utility | List mounted drives |
-| keyb | utility | Keyboard layout control |
+| keyb | utility | Keyboard layout control (legacy — use neokey) |
+| neokey | utility | Keyboard management: show state, switch layout, list layouts, set repeat rate/delay, show LEDs |
 | kill | system | Terminate processes |
 | pri | system | Set process priority |
 | label | utility | Volume label management |

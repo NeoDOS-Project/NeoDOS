@@ -590,7 +590,7 @@ pub fn check_syscall_permission(num: u64, is_admin: bool) -> Result<(), u64> {
     Ok(())
 }
 
-fn is_current_admin() -> bool {
+pub(crate) fn is_current_admin() -> bool {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let lock = s.lock();

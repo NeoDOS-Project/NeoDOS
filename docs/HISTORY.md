@@ -429,6 +429,43 @@ sincroniza `Vfs.drives` + Ob MountPoint + DosDevices.
 con hives cell-based, paths separados por `\`, y 6 tipos de valor (SZ, DWORD,
 BINARY, MULTI_SZ, EXPAND_SZ, QWORD).
 
+### 11–12 de julio de 2026 — NeoKBD, ACPI Power Management y kbdcompile
+
+**NeoKBD (Keyboard Manager):** Nuevo subsistema de kernel `src/kbd/` que reemplaza
+la lógica de traducción de scancodes del driver PS/2. Proporciona:
+- `ObType::KeyboardDevice = 22` en `\Device\Keyboard`.
+- 3 nuevos `ObInfoClass` (35=KeyboardInfo, 36=KeyboardCaps, 37=KeyboardLayouts).
+- 5 nuevos `ObSetInfoClass` (43=KeyboardSetLayout, 44=KeyboardSetRepeatDelay,
+  45=KeyboardSetRepeatRate, 46=KeyboardSetLeds, 47=KeyboardSetModifier).
+- Carga dinámica de layouts `.kbd` desde `C:\System\Keyboard\`.
+- Motor de composición de teclas muertas con tablas de compose.
+- Hotkey dispatch (Ctrl+Alt+Del → poweroff, Alt+F1-F8 → VT switch) — reemplaza
+  checks hardcodeados en `idt.rs`.
+- 5 nuevos eventos Event Bus: `EVENT_KEYDOWN=27`, `EVENT_KEYUP=28`,
+  `EVENT_KEY_CHAR=29`, `EVENT_KBD_MODIFIER=30`, `EVENT_KBD_REPEAT=31`.
+- Registry-backed config: Layout, RepeatDelay, RepeatRate, NumLockOnBoot,
+  CapsLockOnBoot en `\Registry\Machine\System\Keyboard`.
+- `libneodos/src/keyboard.rs`: API user-level para control de teclado.
+
+**ACPI Power Management (`src/power/acpi.rs`):** Implementación completa de:
+- RSDP discovery (EBDA, BIOS areas, bootloader pointer).
+- RSDT/XSDT parsing → FADT extraction.
+- S5 sleep (soft-off) via PM1a/b control registers.
+- Reset register support (IO/MMIO).
+- Integración en HAL: `poweroff()` intenta ACPI S5 primero, luego QEMU debug
+  ports, luego PS/2. `reboot()` intenta ACPI reset register, luego 0xCF9, luego PS/2.
+- 7 tests de ACPI power management.
+
+**ps2kbd NEM driver simplificado:** Eliminada la lógica de traducción de layouts
+(~150 líneas), ahora emite scancodes raw. NeoKBD hace la traducción.
+
+**kbdcompile (`tools/kbdcompile/`):** Herramienta que convierte layouts `.klc`
+(Microsoft KLC format) a `.kbd` binario. Compila US y Spanish.
+
+**neokey (`userbin/neokey/`):** Nueva utilidad Ring 3 que reemplaza a `keyb.nxe`.
+Comandos: `NEOKEY show`, `NEOKEY layout <name>`, `NEOKEY layouts`,
+`NEOKEY repeat <cps>`, `NEOKEY delay <ms>`, `NEOKEY leds`.
+
 ### 1–5 de julio de 2026 — VirtIO, Registry persistente, networking userland
 
 **A5.2 VirtIO Block driver:** Primer driver VirtIO para dispositivos de bloque.
@@ -541,6 +578,7 @@ arquitectónica alrededor del Object Manager.
 | 2026-07-01 | VirtIO Block, DHCP, networking stack | v0.48 |
 | 2026-07-04 | Registry disk persistence | v0.48.7 |
 | 2026-07-05 | Networking userland, auditorías | v0.48.8 |
+| 2026-07-12 | **NeoKBD + ACPI Power Management** | v0.49.2 |
 
 ---
 
@@ -583,6 +621,10 @@ arquitectónica alrededor del Object Manager.
 | SAM | Jun 30 | Security Account Manager |
 | VirtIO Block | Jul 3 | `src/drivers/virtio_blk.rs` |
 | net.nxl | Jul 5 | Biblioteca de red para Ring 3 |
+| NeoKBD | Jul 12 | `src/kbd/` — Keyboard Manager con layouts dinámicos |
+| ACPI Power | Jul 12 | `src/power/acpi.rs` — ACPI S5, reset register, FADT |
+| kbdcompile | Jul 12 | `tools/kbdcompile/` — Layout .klc → .kbd compiler |
+| neokey | Jul 12 | `userbin/neokey/` — Keyboard management CLI |
 
 ---
 
@@ -609,6 +651,7 @@ No marcar como completada hasta que ocurra el traslado.
 | 2026-06-06 | ~100 | ~260 | ~25.000 | v0.24 |
 | 2026-06-22 | ~180 | ~400 | ~35.000 | v0.42 |
 | 2026-07-05 | ~280 | ~646 | ~45.580 | v0.48.8 |
+| 2026-07-12 | ~310 | ~662 | ~47.200 | v0.49.2 |
 
 ---
 
