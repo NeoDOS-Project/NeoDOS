@@ -32,6 +32,11 @@
 | SSDT-MIGRATE-DUP2 | sys_dup2 (RAX 22) → Ob API | **LOW** | kernel |
 | PM-PHASE2 | Power Manager kernel core (ObType=21, Registry, plan mgmt) | **HIGH** | power |
 | AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
+| AUDIT-33 | Boot/init hardening: panic → Result/fallback seguros | **HIGH** | kernel |
+| AUDIT-34 | Validación de rutas críticas de syscall/interrupt | **HIGH** | kernel |
+| AUDIT-35 | Registry persistence hardening (flush atómico + recovery) | **MEDIUM** | registry |
+| AUDIT-36 | Userland build/linker pipeline para `.NXE` | **HIGH** | userland |
+| AUDIT-37 | Suite de tests de integración boot/registry/shell | **MEDIUM** | testing |
 | | | | |
 | **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
 | NFSv2-BTREE | B-tree persistente genérico | MEDIUM | fs |
@@ -132,6 +137,31 @@
 ---
 
 ## HIGH
+
+### Audit review checklist (qué revisar)
+
+- [ ] **Arranque e inicialización**: revisar el flujo de boot, orden de servicios, defaults del registry y manejo de fallos parciales antes de llegar al shell.
+- [ ] **Runtime de bajo nivel**: revisar syscalls, interrupciones, contexto de CPU, reschedule y validación de ABI en rutas críticas.
+- [ ] **Registry y persistencia**: revisar carga/guardado de hives, flush, atomicidad, recovery y manejo de datos incompletos.
+- [ ] **Userland y packaging**: revisar entrypoints, linker scripts, binarios .NXE, carga de imágenes y compatibilidad de librerías.
+- [ ] **Objetos y ciclo de vida**: revisar creación/destrucción de objetos, refcount, handles, ownership y races en el Object Manager.
+- [ ] **Seguridad y permisos**: revisar tokens, ACLs, sesiones, integridad y validación de derechos en syscalls y servicios.
+- [ ] **Integración end-to-end**: revisar flujos reales de boot → registry → servicios → shell → procesos de usuario.
+
+### Audit hardening backlog (post-audit)
+
+- [ ] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
+  - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
+  - Definir política de tolerancia para servicios críticos y registro ausente.
+  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
+
+- [ ] **AUDIT-34. Low-level syscall/interrupt validation** | Prereqs: -- | Files: `src/arch/x64/idt.rs`, `src/arch/x64/cpu_local.rs`, `src/syscall/mod.rs`
+  - Añadir guardas de ABI, estado de interrupciones y resched para rutas críticas.
+  - **Tests:** `syscall_invalid_arg_returns_error`, `interrupt_state_consistency`, `preempt_reschedule_guard`
+
+- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld`, `tools/neodev/`
+  - Normalizar entrypoint `_start`, linker scripts y empaquetado de `.NXE`.
+  - **Tests:** `userbin_link_smoke`, `neoinit_shell_spawn_smoke`
 
 ### v0.50: Shell tokenizer + NeoFS snapshot + Power Phase 2
 

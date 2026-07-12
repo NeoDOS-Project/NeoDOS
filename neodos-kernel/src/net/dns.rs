@@ -233,6 +233,21 @@ impl DnsResourceRecord {
     pub fn rdlength(&self) -> u16 { u16::from_be(self.rdlength) }
 }
 
+/// Record fields without the name (used after decode_dns_name consumes the name).
+#[repr(C, packed)]
+pub struct DnsRecordFields {
+    pub rtype: u16,
+    pub rclass: u16,
+    pub ttl: u32,
+    pub rdlength: u16,
+}
+
+impl DnsRecordFields {
+    pub fn rtype(&self) -> u16 { u16::from_be(self.rtype) }
+    pub fn rdlength(&self) -> u16 { u16::from_be(self.rdlength) }
+    pub fn ttl(&self) -> u32 { u32::from_be(self.ttl) }
+}
+
 /// Build a complete DNS query packet.
 pub fn build_dns_query(name: &str, qtype: u16, id: u16) -> Vec<u8> {
     let encoded_name = encode_dns_name(name);
@@ -319,7 +334,7 @@ pub fn parse_dns_response(data: &[u8]) -> Result<DnsResponse, ()> {
 
         if offset + 10 > data.len() { return Err(()); } // type(2)+class(2)+ttl(4)+rdlength(2)
 
-        let rr: &DnsResourceRecord = unsafe { &*(data[offset..].as_ptr() as *const DnsResourceRecord) };
+        let rr: &DnsRecordFields = unsafe { &*(data[offset..].as_ptr() as *const DnsRecordFields) };
         offset += 10;
 
         let rdlength = rr.rdlength() as usize;
@@ -608,12 +623,6 @@ pub fn test_make_a_response(name: &str, ip: Ipv4Addr, id: u16, ttl: u32) -> Vec<
 
     let question = DnsQuestion::new(DNS_TYPE_A);
 
-    let rr_name_ptr: u16 = 0xC00Cu16.to_be();
-    let rr_type: u16 = DNS_TYPE_A.to_be();
-    let rr_class: u16 = (1u16).to_be();
-    let rr_ttl: u32 = ttl.to_be();
-    let rr_rdlength: u16 = (4u16).to_be();
-
     let mut packet = Vec::new();
 
     let hdr_bytes = unsafe {
@@ -632,11 +641,12 @@ pub fn test_make_a_response(name: &str, ip: Ipv4Addr, id: u16, ttl: u32) -> Vec<
     };
     packet.extend_from_slice(q_bytes);
 
-    packet.extend_from_slice(&rr_name_ptr.to_be_bytes());
-    packet.extend_from_slice(&rr_type.to_be_bytes());
-    packet.extend_from_slice(&rr_class.to_be_bytes());
-    packet.extend_from_slice(&rr_ttl.to_be_bytes());
-    packet.extend_from_slice(&rr_rdlength.to_be_bytes());
+    // Write answer section — use to_be_bytes() directly (no intermediate .to_be())
+    packet.extend_from_slice(&0xC00Cu16.to_be_bytes());  // name pointer to offset 12
+    packet.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
+    packet.extend_from_slice(&1u16.to_be_bytes());
+    packet.extend_from_slice(&ttl.to_be_bytes());
+    packet.extend_from_slice(&4u16.to_be_bytes());
     packet.extend_from_slice(&ip.0);
 
     packet
@@ -671,32 +681,25 @@ pub fn test_make_cname_a_response(alias: &str, canonical: &str, ip: Ipv4Addr, id
     };
     packet.extend_from_slice(q_bytes);
 
-    // Answer 1: CNAME
-    let rr_type: u16 = DNS_TYPE_CNAME.to_be();
-    let rr_class: u16 = (1u16).to_be();
-    let rr_ttl: u32 = ttl.to_be();
-    let rr_rdlength: u16 = (cname_encoded.len() as u16).to_be();
-
+    // Answer 1: CNAME — use to_be_bytes() directly, no intermediate .to_be()
+    let cname_rdlength = cname_encoded.len() as u16;
     packet.extend_from_slice(&0xC00Cu16.to_be_bytes());
-    packet.extend_from_slice(&rr_type.to_be_bytes());
-    packet.extend_from_slice(&rr_class.to_be_bytes());
-    packet.extend_from_slice(&rr_ttl.to_be_bytes());
-    packet.extend_from_slice(&rr_rdlength.to_be_bytes());
+    packet.extend_from_slice(&DNS_TYPE_CNAME.to_be_bytes());
+    packet.extend_from_slice(&1u16.to_be_bytes());
+    packet.extend_from_slice(&ttl.to_be_bytes());
+    packet.extend_from_slice(&cname_rdlength.to_be_bytes());
     packet.extend_from_slice(&cname_encoded);
 
     // Answer 2: A record with compressed name pointing to CNAME rdata
     let cname_answer_start = core::mem::size_of::<DnsHeader>() + encoded_alias.len() + 4;
     let cname_rdata_offset = cname_answer_start + 10;
-    let cname_target_ptr: u16 = (0xC000 | (cname_rdata_offset as u16)).to_be();
-
-    let rr_type_a: u16 = DNS_TYPE_A.to_be();
-    let rr_rdlength_a: u16 = (4u16).to_be();
+    let cname_target_ptr: u16 = 0xC000 | (cname_rdata_offset as u16);
 
     packet.extend_from_slice(&cname_target_ptr.to_be_bytes());
-    packet.extend_from_slice(&rr_type_a.to_be_bytes());
-    packet.extend_from_slice(&rr_class.to_be_bytes());
-    packet.extend_from_slice(&rr_ttl.to_be_bytes());
-    packet.extend_from_slice(&rr_rdlength_a.to_be_bytes());
+    packet.extend_from_slice(&DNS_TYPE_A.to_be_bytes());
+    packet.extend_from_slice(&1u16.to_be_bytes());
+    packet.extend_from_slice(&ttl.to_be_bytes());
+    packet.extend_from_slice(&4u16.to_be_bytes());
     packet.extend_from_slice(&ip.0);
 
     packet

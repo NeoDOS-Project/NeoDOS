@@ -382,6 +382,9 @@ fn test_dpc_dispatch_pending_global_api() -> Result<(), &'static str> {
 
     let prev_dropped = DPC_DROPPED_COUNT.load(Ordering::Relaxed);
 
+    // Run at DISPATCH_LEVEL to prevent timer ISR from consuming the DPC
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+
     test_true!(insert_queue_dpc(global_cb, core::ptr::null_mut()));
     test_true!(dpc_has_pending());
 
@@ -389,6 +392,8 @@ fn test_dpc_dispatch_pending_global_api() -> Result<(), &'static str> {
     test_true!(count >= 1);
     test_eq!(CALLED.load(Ordering::Relaxed), 42);
     test_true!(!dpc_has_pending());
+
+    unsafe { crate::hal::irql::lower_irql(old_irql); }
 
     test_eq!(DPC_DROPPED_COUNT.load(Ordering::Relaxed) - prev_dropped, 0);
     Ok(())

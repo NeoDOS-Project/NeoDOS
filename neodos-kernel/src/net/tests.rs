@@ -252,8 +252,7 @@ pub fn register_net_tests() {
         SOCKET_MANAGER.lock().free_socket(id2);
     });
 
-    // ── DNS tests (FIXME: parse_dns_response currently broken) ──
-    /*
+    // ── DNS tests ──
     test_case!("dns_parse_a_response", {
         let ip = Ipv4Addr::new([8, 8, 8, 8]);
         let data = super::dns::test_make_a_response("google.com", ip, 42, 300);
@@ -269,9 +268,7 @@ pub fn register_net_tests() {
             _ => panic!("Expected A record"),
         }
     });
-    */
 
-    /*
     test_case!("dns_parse_cname_chain", {
         let ip = Ipv4Addr::new([142, 250, 80, 46]);
         let data = super::dns::test_make_cname_a_response("www.google.com", "forcesafesearch.google.com", ip, 7, 300);
@@ -290,7 +287,6 @@ pub fn register_net_tests() {
         test_true!(resolved.is_some());
         test_eq!(resolved.unwrap(), ip);
     });
-    */
 
     test_case!("dns_cache_hit_ttl", {
         let mut cache = super::dns::DnsCache::new();
