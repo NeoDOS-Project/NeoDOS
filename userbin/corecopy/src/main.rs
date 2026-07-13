@@ -14,10 +14,10 @@ use libneodos::i18n;
 use libneodos::tr_id;
 
 // ── String IDs (from TOML) ──
-const IDS_MISSING_SRC_DST: u32 = 1002;
-const IDS_READ_FAILED: u32 = 1004;
-const IDS_WRITE_FAILED: u32 = 1005;
-const IDS_OPEN_SRC_FAILED: u32 = 1006;
+const IDS_MISSING_SRC_DST: u32 = 1001;
+const IDS_READ_FAILED: u32 = 1002;
+const IDS_WRITE_FAILED: u32 = 1003;
+const IDS_OPEN_SRC_FAILED: u32 = 1004;
 
 const APP_NAME: &str = "corecopy";
 

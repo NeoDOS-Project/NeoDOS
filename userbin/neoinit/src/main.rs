@@ -14,7 +14,7 @@ use libneodos::syscall;
 use libneodos::tr_id;
 
 // ── String IDs (from TOML) ──
-const IDS_SHELL_SPAWN: u32 = 1003;
+const IDS_SHELL_SPAWN: u32 = 1001;
 
 const APP_NAME: &str = "neoinit";
 const NEOINIT_VERSION: &str = env!("CARGO_PKG_VERSION");

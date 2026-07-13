@@ -16,10 +16,10 @@ use libneodos::tr_id;
 
 // ── String IDs (from TOML) ──
 const IDS_DIR_OF: u32 = 1001;
-const IDS_PROMPT_PAUSE: u32 = 1003;
-const IDS_FILE_COUNT: u32 = 1004;
-const IDS_DIR_LABEL: u32 = 1006;
-const IDS_PATH_NOT_FOUND: u32 = 1008;
+const IDS_PROMPT_PAUSE: u32 = 1002;
+const IDS_FILE_COUNT: u32 = 1003;
+const IDS_DIR_LABEL: u32 = 1004;
+const IDS_PATH_NOT_FOUND: u32 = 1005;
 
 const APP_NAME: &str = "coredir";
 

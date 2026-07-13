@@ -59,22 +59,22 @@ t("en-US", "neoshell", [
 ])
 
 t("en-US", "neoinit", [
-    ("IDS_SHELL_SPAWN", 1003, "Spawning shell..."),
+    ("IDS_SHELL_SPAWN", 1001, "Spawning shell..."),
 ])
 
 t("en-US", "coredir", [
     ("IDS_DIR_OF", 1001, "Directory of "),
-    ("IDS_PROMPT_PAUSE", 1003, "Press any key to continue . . ."),
-    ("IDS_FILE_COUNT", 1004, "File(s)"),
-    ("IDS_DIR_LABEL", 1006, "<DIR>"),
-    ("IDS_PATH_NOT_FOUND", 1008, "Path not found"),
+    ("IDS_PROMPT_PAUSE", 1002, "Press any key to continue . . ."),
+    ("IDS_FILE_COUNT", 1003, "File(s)"),
+    ("IDS_DIR_LABEL", 1004, "<DIR>"),
+    ("IDS_PATH_NOT_FOUND", 1005, "Path not found"),
 ])
 
 t("en-US", "corecopy", [
-    ("IDS_MISSING_SRC_DST", 1002, "COPY: missing source or destination"),
-    ("IDS_READ_FAILED", 1004, "COPY: cannot read source"),
-    ("IDS_WRITE_FAILED", 1005, "COPY: cannot write destination"),
-    ("IDS_OPEN_SRC_FAILED", 1006, "COPY: cannot open source"),
+    ("IDS_MISSING_SRC_DST", 1001, "COPY: missing source or destination"),
+    ("IDS_READ_FAILED", 1002, "COPY: cannot read source"),
+    ("IDS_WRITE_FAILED", 1003, "COPY: cannot write destination"),
+    ("IDS_OPEN_SRC_FAILED", 1004, "COPY: cannot open source"),
 ])
 
 t("en-US", "coretype", [
@@ -131,22 +131,22 @@ t("es-ES", "neoshell", [
 ])
 
 t("es-ES", "neoinit", [
-    ("IDS_SHELL_SPAWN", 1003, "Iniciando el int\u00e9rprete de comandos..."),
+    ("IDS_SHELL_SPAWN", 1001, "Iniciando el int\u00e9rprete de comandos..."),
 ])
 
 t("es-ES", "coredir", [
     ("IDS_DIR_OF", 1001, "Directorio de "),
-    ("IDS_PROMPT_PAUSE", 1003, "Presione una tecla para continuar . . ."),
-    ("IDS_FILE_COUNT", 1004, "Archivo(s)"),
-    ("IDS_DIR_LABEL", 1006, "<DIR>"),
-    ("IDS_PATH_NOT_FOUND", 1008, "Ruta no encontrada"),
+    ("IDS_PROMPT_PAUSE", 1002, "Presione una tecla para continuar . . ."),
+    ("IDS_FILE_COUNT", 1003, "Archivo(s)"),
+    ("IDS_DIR_LABEL", 1004, "<DIR>"),
+    ("IDS_PATH_NOT_FOUND", 1005, "Ruta no encontrada"),
 ])
 
 t("es-ES", "corecopy", [
-    ("IDS_MISSING_SRC_DST", 1002, "COPY: falta el origen o el destino"),
-    ("IDS_READ_FAILED", 1004, "COPY: no se puede leer el origen"),
-    ("IDS_WRITE_FAILED", 1005, "COPY: no se puede escribir el destino"),
-    ("IDS_OPEN_SRC_FAILED", 1006, "COPY: no se puede abrir el origen"),
+    ("IDS_MISSING_SRC_DST", 1001, "COPY: falta el origen o el destino"),
+    ("IDS_READ_FAILED", 1002, "COPY: no se puede leer el origen"),
+    ("IDS_WRITE_FAILED", 1003, "COPY: no se puede escribir el destino"),
+    ("IDS_OPEN_SRC_FAILED", 1004, "COPY: no se puede abrir el origen"),
 ])
 
 t("es-ES", "coretype", [

@@ -3,7 +3,7 @@ app = "neoinit"
 language = "es-ES"
 
 [ids]
-IDS_SHELL_SPAWN = 1003
+IDS_SHELL_SPAWN = 1001
 
 [strings]
 IDS_SHELL_SPAWN = "Iniciando el intérprete de comandos..."

@@ -3,7 +3,7 @@ app = "neoinit"
 language = "en-US"
 
 [ids]
-IDS_SHELL_SPAWN = 1003
+IDS_SHELL_SPAWN = 1001
 
 [strings]
 IDS_SHELL_SPAWN = "Spawning shell..."
