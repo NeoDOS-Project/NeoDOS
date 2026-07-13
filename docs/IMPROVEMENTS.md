@@ -615,7 +615,15 @@
   - Servidores DNS desde Registry (`HKLM\Network\Interfaces\0\DnsServer`), configurable via ipconfig.
   - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
 
-#### i18n — Internacionalización (completado, movido a COMPLETED)`
+#### i18n — Internacionalización
+
+> Diseño completo: `docs/design/i18n-design.md`. Formato NLT (Neodos Language Table), runtime en libneodos.
+> El kernel NO traduce. Las aplicaciones traducen vía `tr!("clave")` → `i18n_get()`. Fallback: es-ES → es → en-US → clave literal.
+
+- [x] **I18N-P1. Runtime i18n en libneodos + formato NLT** | Prereqs: -- | Files: `libneodos/src/i18n.rs` (new), `libneodos/src/lib.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/mod.rs`
+- [ ] **I18N-P2. Migrar NeoShell + NeoInit + apps core** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+  - PENDIENTE: kill, ps, label, fsck, ndreg, poweroff, reboot, loadnem, datetime, ver, echo, drives, pri, cd, neomem, neotop, colors, neokey, progress, vol, corerd, coremd, coreren, coredel, corecls, tree, dhcpd, netcfg, ipconfig, cpuinfo, stresscmd, cmdtest, shtest, neolocale.
+- [x] **I18N-P3. neolocale tool + archivos .nlt + segundo idioma** | Prereqs: I18N-P2 | Files: `tools/neolocale/` (new), `locale/en-US/*.nlt`, `locale/es-ES/*.nlt`, `scripts/create_ne2_image.py`
 
 - [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.
