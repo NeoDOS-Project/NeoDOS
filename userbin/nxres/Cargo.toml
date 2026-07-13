@@ -1,0 +1,22 @@
+[package]
+name = "nxres"
+version = "0.1.0"
+edition = "2021"
+description = "Resource explorer for NXE apps"
+
+[[bin]]
+name = "nxres"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+libneodos = { path = "../../libneodos" }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

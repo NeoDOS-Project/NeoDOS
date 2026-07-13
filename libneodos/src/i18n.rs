@@ -367,3 +367,207 @@ pub fn i18n_loaded_count() -> usize {
 pub fn i18n_is_loaded(app: &str) -> bool {
     find_table_idx(app).is_some()
 }
+
+// ── Current app name tracking ──────────────────────────────────────
+// Used by the resource system to know which app's resources to open.
+
+static mut CURRENT_APP: [u8; MAX_APP_NAME] = [0; MAX_APP_NAME];
+static mut CURRENT_APP_LEN: usize = 0;
+
+/// Register the current application name for resource resolution.
+pub fn i18n_set_app_name(app: &str) {
+    unsafe {
+        let bytes = app.as_bytes();
+        let len = bytes.len().min(MAX_APP_NAME - 1);
+        CURRENT_APP[..len].copy_from_slice(&bytes[..len]);
+        CURRENT_APP_LEN = len;
+    }
+}
+
+/// Get the current application name (for resource resolution).
+pub fn current_app_name() -> Option<&'static str> {
+    unsafe {
+        if CURRENT_APP_LEN == 0 {
+            return None;
+        }
+        let s = core::slice::from_raw_parts(
+            core::ptr::addr_of!(CURRENT_APP) as *const u8,
+            CURRENT_APP_LEN,
+        );
+        str::from_utf8(s).ok()
+    }
+}
+
+// ── i18n_load_from_package ─────────────────────────────────────────
+
+/// Load the NLTv2 translation file from the app's own package resources.
+/// This enables self-contained apps with bundled translations.
+pub fn i18n_load_from_package() -> Result<(), ()> {
+    let app = current_app_name().ok_or(())?;
+    if i18n_is_loaded(app) {
+        return Ok(());
+    }
+    let lang = lang_str();
+
+    // Build "locale/{lang}/{app}.nlt" manually (no format! in no_std)
+    let locale_prefix = b"locale/";
+    let sep = b"/";
+    let ext = b".nlt";
+    let total = locale_prefix.len() + lang.len() + sep.len() + app.len() + ext.len();
+    let mut locale_path_buf = [0u8; 256];
+    if total <= 255 {
+        let mut pos = 0;
+        locale_path_buf[pos..pos + locale_prefix.len()].copy_from_slice(locale_prefix);
+        pos += locale_prefix.len();
+        locale_path_buf[pos..pos + lang.len()].copy_from_slice(lang.as_bytes());
+        pos += lang.len();
+        locale_path_buf[pos..pos + sep.len()].copy_from_slice(sep);
+        pos += sep.len();
+        locale_path_buf[pos..pos + app.len()].copy_from_slice(app.as_bytes());
+        pos += app.len();
+        locale_path_buf[pos..pos + ext.len()].copy_from_slice(ext);
+        pos += ext.len();
+
+        let locale_path = str::from_utf8(&locale_path_buf[..pos]).map_err(|_| ())?;
+
+        // Try from package resources
+        if let Ok(fd) = crate::res::res_open_locale(app, locale_path) {
+            let mut buf = [0u8; MAX_NLT_SIZE];
+            let n = crate::res::res_read_all(fd, &mut buf).map_err(|_| ())?;
+            let _ = crate::syscall::sys_close(fd);
+
+            if validate_nltv2(&buf[..n]).is_none() {
+                return Err(());
+            }
+
+            unsafe {
+                let idx = NLT_COUNT;
+                if idx >= MAX_TABLES {
+                    return Err(());
+                }
+                let app_bytes = app.as_bytes();
+                NLT_NAMES[idx][..app_bytes.len()].copy_from_slice(app_bytes);
+                NLT_NAME_LENS[idx] = app_bytes.len();
+                NLT_DATA[idx][..n].copy_from_slice(&buf[..n]);
+                NLT_DATA_LENS[idx] = n;
+                NLT_COUNT = idx + 1;
+            }
+            return Ok(());
+        }
+    }
+
+    // Fall back to system locale directory
+    i18n_load(app)
+}
+
+// ── i18n_available_locales ─────────────────────────────────────────
+
+/// List available locales by enumerating `C:\System\Locale\` directories.
+/// Returns a semicolon-separated list of locale tags.
+/// Returns empty string on error.
+pub fn i18n_available_locales() -> &'static str {
+    const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\System\\Locale";
+
+    let mut result: [u8; 256] = [0; 256];
+    let mut result_len = 0usize;
+
+    if let Ok(fd) = crate::syscall::sys_ob_open(LOCALE_PATH, crate::syscall::ob_access::READ) {
+        let mut entries: [crate::syscall::ObEnumEntry; 16] = core::array::from_fn(|_| {
+            crate::syscall::ObEnumEntry {
+                id: 0, obj_type: 0, name: [0; 32], mode: 0, _pad: [0; 2], size: 0,
+            }
+        });
+        loop {
+            match crate::syscall::sys_ob_enum(fd, &mut entries) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => {
+                    for i in 0..count.min(entries.len()) {
+                        if result_len > 0 && result_len < 255 {
+                            result[result_len] = b';';
+                            result_len += 1;
+                        }
+                        let name = entries[i].name_str();
+                        let remaining = 255 - result_len;
+                        let to_copy = name.len().min(remaining);
+                        result[result_len..result_len + to_copy]
+                            .copy_from_slice(name[..to_copy].as_bytes());
+                        result_len += to_copy;
+                    }
+                }
+            }
+        }
+        let _ = crate::syscall::sys_close(fd);
+    }
+
+    unsafe {
+        static mut LOCALE_RESULT: [u8; 256] = [0; 256];
+        static mut LOCALE_RESULT_LEN: usize = 0;
+        LOCALE_RESULT[..result_len].copy_from_slice(&result[..result_len]);
+        LOCALE_RESULT_LEN = result_len;
+        if result_len == 0 {
+            return "";
+        }
+        let s = core::slice::from_raw_parts(
+            core::ptr::addr_of!(LOCALE_RESULT) as *const u8,
+            LOCALE_RESULT_LEN,
+        );
+        str::from_utf8(s).unwrap_or("")
+    }
+}
+
+// ── i18n_format (placeholder-based formatting) ─────────────────────
+
+/// Format a string with `{0}`, `{1}` placeholder substitution.
+/// Returns a formatted string from a fixed-size static buffer.
+/// The template is looked up via `i18n_get_id(id)`.
+///
+/// # Example
+/// ```ignore
+/// let s = i18n_format(1001, &["Hello", "World"]);
+/// // template "IDS_FORMAT = "{0}, {1}!" → "Hello, World!"
+/// ```
+pub fn i18n_format(id: u32, args: &[&str]) -> &'static str {
+    let template = i18n_get_id(id);
+    if template == "?" {
+        return "?";
+    }
+
+    unsafe {
+        static mut FORMAT_BUF: [u8; 256] = [0; 256];
+        let mut pos = 0usize;
+        let template_bytes = template.as_bytes();
+        let mut i = 0;
+
+        while i < template_bytes.len() && pos < 250 {
+            if template_bytes[i] == b'{' {
+                let end = template_bytes[i + 1..].iter().position(|&b| b == b'}');
+                if let Some(end) = end {
+                    let num_str = core::str::from_utf8(&template_bytes[i + 1..i + 1 + end]);
+                    if let Ok(num_str) = num_str {
+                        if let Ok(idx) = num_str.parse::<usize>() {
+                            if idx < args.len() {
+                                let arg = args[idx].as_bytes();
+                                let to_copy = arg.len().min(255 - pos);
+                                FORMAT_BUF[pos..pos + to_copy].copy_from_slice(&arg[..to_copy]);
+                                pos += to_copy;
+                            }
+                            i += end + 2;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if pos < 255 {
+                FORMAT_BUF[pos] = template_bytes[i];
+                pos += 1;
+            }
+            i += 1;
+        }
+
+        let s = core::slice::from_raw_parts(
+            core::ptr::addr_of!(FORMAT_BUF) as *const u8,
+            pos,
+        );
+        str::from_utf8(s).unwrap_or("?")
+    }
+}

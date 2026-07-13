@@ -136,6 +136,14 @@ enum Commands {
     Config,
     /// List discovered projects
     List,
+    /// Build NXP packages
+    Nxp {
+        /// Build NXP for all discovered user binaries
+        #[arg(long)]
+        all: bool,
+        /// Build NXP for specific user binary
+        name: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -190,6 +198,7 @@ fn main() -> Result<()> {
         } => cmd_clean(&cfg, &disc, *all, *kernel, *bootloader, *userbin, *nxl, *nem, *images),
         Commands::Config => cmd_config(&cfg),
         Commands::List => cmd_list(&cfg),
+        Commands::Nxp { all, name } => cmd_nxp(&cfg, &disc, *all, name.as_deref()),
     }
 }
 
@@ -437,4 +446,8 @@ fn cmd_config(cfg: &config::Config) -> Result<()> {
 
 fn cmd_list(cfg: &config::Config) -> Result<()> {
     report::print_discovery_report(cfg)
+}
+
+fn cmd_nxp(cfg: &config::Config, disc: &discovery::Discovery, all: bool, name: Option<&str>) -> Result<()> {
+    build::build_nxp_packages(cfg, disc, all, name)
 }

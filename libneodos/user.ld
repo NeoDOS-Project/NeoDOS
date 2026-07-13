@@ -7,7 +7,14 @@ SECTIONS
     .text : {
         *(.text.entry)
         *(.text*)
+    }
+
+    .rodata : {
         *(.rodata*)
+    }
+
+    .note : {
+        *(.note*)
     }
 
     .data : {

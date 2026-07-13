@@ -1,0 +1,9 @@
+[package]
+name = "nxpkg"
+version = "0.1.0"
+edition = "2021"
+description = "NXP package tool — create, extract, list, verify"
+
+[[bin]]
+name = "nxpkg"
+path = "src/main.rs"

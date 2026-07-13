@@ -117,7 +117,9 @@
 | VFS-7.1..7.3 | VFS Performance (lock, lookup cache, path cache) | LOW | fs |
 | PM-PHASE5 | Power Manager polish: event handlers, async coordination, tests | LOW | power |
 | | | | |
-| **backlog** | **Low-priority + experimental + cleanup** | **LOW** | |
+| **backlog** | **Low-priority + experimental + cleanup** | **LOW** |
+| | | | |
+| **NXE-ECOSYSTEM** | **NXE/NXP ecosystem (design complete, phased implementation)** | **MEDIUM** | milestone | |
 | DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | LOW | docs |
 | DH3 | Completar libneodos syscall wrappers | LOW | lib |
 | DH-HISTORY | Mantener docs/HISTORY.md actualizado | LOW | docs |
@@ -131,6 +133,17 @@
 | B4.12 | Compositor 2D | LOW | userland |
 | B7.1..B7.6 | Experimental (GUI, TPM, package mgr, etc.) | LOW | xp |
 | PKG-1 | NeoGet v1 (diferido a v0.70) | LOW | xp |
+| NXE-ECO-1 | NXE metadata section (.note.neodos) | MEDIUM | nxe |
+| NXE-ECO-2 | nxeinfo host tool | MEDIUM | tools |
+| NXE-ECO-3 | nxpkg host tool | MEDIUM | tools |
+| NXE-ECO-4 | nxdump host tool | MEDIUM | tools |
+| NXE-ECO-5 | libneodos resource module (res.rs) | MEDIUM | lib |
+| NXE-ECO-6 | i18n: load from package, available_locales, format | MEDIUM | lib |
+| NXE-ECO-7 | nxres Ring 3 binary | MEDIUM | userland |
+| NXE-ECO-8 | nxlocale Ring 3 binary | MEDIUM | userland |
+| NXE-ECO-9 | nxverify Ring 3 binary | MEDIUM | userland |
+| NXE-ECO-10 | NeoDev NXP integration | MEDIUM | tools |
+| NXE-ECO-11 | NXE/NXP design docs | MEDIUM | docs |
 | VIO-CON...BALLOON | VirtIO Console/RNG/SCSI/GPU/VSOCK/Sound/Balloon | LOW | drivers |
 | CLEANUP-1..35 | Dead code, duplicates, refactors (see LOW section) | LOW | cleanup |
 
@@ -777,7 +790,184 @@
 
 ---
 
-## Milestones
+## NXE-ECOSYSTEM — NXE/NXP ecosystem
+
+### NXE-ECO-1. NXE metadata section (.note.neodos) [DESIGN COMPLETE]
+
+| Aspect | Detail |
+|--------|--------|
+**Design:** `docs/nxe-format.md` | Format spec for `.note.neodos` ELF note |
+**Status:** Design complete, needs auto-injection at build time |
+**Implementation:** |
+1. Generate metadata binary blob in each NXE build.rs |
+2. Use `#[link_section = ".note.neodos"]` static to embed |
+3. Fallback: `objcopy --add-section` post-build |
+**Tools:** `nxinfo --metadata` can read it |
+**Prereqs:** NXE-ECO-2 (nxinfo) |
+
+- [ ] **NXE-ECO-1a. Auto-generate metadata in build pipeline** | Files: `libneodos/user.ld`, `tools/neodev/src/build.rs`
+  - Add `.note` section to user.ld (DONE)
+  - Create build.rs helper for metadata generation
+  - Wire in NeoDev: inject .note.neodos after cargo build
+  - **Tests:** `nxe_metadata_elf_section_exists`, `nxe_metadata_tlv_roundtrip`
+
+### NXE-ECO-2. nxeinfo host tool [COMPLETED]
+
+**Location:** `tools/nxeinfo/`
+**Implementation:** Complete CLI tool with modes: brief, metadata, sections, headers, json, check
+
+- [x] **NXE-ECO-2a. Core nxeinfo implementation** | Files: `tools/nxeinfo/src/main.rs`
+  - ELF64 header parsing, program headers, section headers
+  - `.note.neodos` metadata extraction and display
+  - Validation (--check): magic, class, machine, type, size limits
+  - JSON output (--json) via serde_json
+  - **Tests:** run `nxinfo ver.nxe --brief`
+
+### NXE-ECO-3. nxpkg host tool [COMPLETED]
+
+**Location:** `tools/nxpkg/`
+**Implementation:** Complete CLI tool with create, extract, list, info, verify
+
+- [x] **NXE-ECO-3a. Core nxpkg implementation** | Files: `tools/nxpkg/src/main.rs`
+  - NXPv1 format: header, TLV manifest, file table, string pool
+  - CRC32 integrity on header and per-file
+  - Create from directory, extract to directory
+  - List, info, verify commands
+  - **Tests:** `nxpkg create`, `nxpkg list`, `nxpkg verify`
+
+### NXE-ECO-4. nxdump host tool [COMPLETED]
+
+**Location:** `tools/nxdump/`
+**Implementation:** Complete CLI tool for technical ELF dumping
+
+- [x] **NXE-ECO-4a. Core nxdump implementation** | Files: `tools/nxdump/src/main.rs`
+  - Hex dump, ELF structures, relocations, strings, segments
+  - Memory map display with permissions
+  - Size limit check (64 KB max)
+  - **Tests:** `nxdump ver.nxe --segments`
+
+### NXE-ECO-5. libneodos resource module [COMPLETED]
+
+**Location:** `libneodos/src/res.rs`
+**Implementation:** Resource API for accessing bundled app resources
+
+- [x] **NXE-ECO-5a. Core res module** | Files: `libneodos/src/res.rs`
+  - `res_open(path)` — open resource for current app
+  - `res_open_app(app, path)` — open for any app
+  - `res_open_locale(app, path)` — locale-aware resolution with fallback
+  - `res_read(fd, buf)` — read content
+  - `res_size(fd)` — get resource size
+  - `res_read_all(fd, buf)` — read entire resource
+  - **Tests:** (integration via existing ob_open/ob_read)
+
+- [ ] **NXE-ECO-5b. Ob namespace integration for resources** | Files: `neodos-kernel/src/object/mod.rs`
+  - Long-term: expose `\Resource\<app>\` as a virtual namespace
+  - Short-term: resources accessed via `\Global\FileSystem\C:\Programs\<app>\resources\`
+  - **Tests:** `res_open_roundtrip`
+
+### NXE-ECO-6. i18n extensions [COMPLETED]
+
+**Location:** `libneodos/src/i18n.rs`
+**Implementation:** App name tracking, package-loaded translations, locale listing, format
+
+- [x] **NXE-ECO-6a. i18n_set_app_name / current_app_name** | Files: `libneodos/src/i18n.rs`
+  - Track current application name for resource resolution
+- [x] **NXE-ECO-6b. i18n_load_from_package** | Files: `libneodos/src/i18n.rs`
+  - Load NLT translations from app's own package resources
+  - Fallback to system locale directory
+- [x] **NXE-ECO-6c. i18n_available_locales** | Files: `libneodos/src/i18n.rs`
+  - Enumerate `C:\System\Locale\` directories
+  - Return semicolon-separated locale tags
+- [x] **NXE-ECO-6d. i18n_format** | Files: `libneodos/src/i18n.rs`
+  - `{0}`, `{1}` placeholder substitution
+  - Static buffer, 256 bytes max
+  - Falls back to `"?"` on missing template
+- [ ] **NXE-ECO-6e. Auto-generate ID constants via nltc --generate-rust** | Files: `tools/nltc/`
+  - Already exists as `--generate-rust` flag
+  - Needs to be wired into the build pipeline
+  - **Tests:** `nltc_generate_rust_produces_valid_ids`
+
+### NXE-ECO-7. nxres Ring 3 binary [COMPLETED]
+
+**Location:** `userbin/nxres/`
+**Implementation:** Resource explorer for NXE apps
+
+- [x] **NXE-ECO-7a. Core nxres implementation** | Files: `userbin/nxres/src/main.rs`
+  - `nxres list <app>` — list resources
+  - `nxres cat <app> <path>` — display resource content
+  - `nxres tree <app>` — tree view (stub)
+  - `nxres find <app> <pattern>` — search (stub)
+  - `nxres locale <app>` — show locales
+  - **Tests:** integration (run in QEMU)
+
+### NXE-ECO-8. nxlocale Ring 3 binary [COMPLETED]
+
+**Location:** `userbin/nxlocale/`
+**Implementation:** Locale manager
+
+- [x] **NXE-ECO-8a. Core nxlocale implementation** | Files: `userbin/nxlocale/src/main.rs`
+  - `nxlocale list` — list installed locales
+  - `nxlocale current` — show current locale
+  - `nxlocale set <locale>` — change system locale via Registry
+  - `nxlocale check [app]` — translation coverage (stub)
+  - `nxlocale stats [app]` — translation statistics
+  - `nxlocale show <app>` — show loaded translations
+  - **Tests:** integration
+
+### NXE-ECO-9. nxverify Ring 3 binary [COMPLETED]
+
+**Location:** `userbin/nxverify/`
+**Implementation:** Integrity verification
+
+- [x] **NXE-ECO-9a. Core nxverify implementation** | Files: `userbin/nxverify/src/main.rs`
+  - `nxverify file <path>` — verify single NXE/NXP
+  - `nxverify app <name>` — verify installed app
+  - `nxverify all` — verify all installed apps
+  - `nxverify package <nxp>` — verify NXP package CRC32
+  - **Tests:** integration
+
+### NXE-ECO-10. NeoDev NXP integration [COMPLETED]
+
+**Location:** `tools/neodev/src/build.rs`
+**Implementation:** NXP package build support in NeoDev
+
+- [x] **NXE-ECO-10a. discover_nxp_projects + build_nxp_packages** | Files: `tools/neodev/src/build.rs`
+  - Scan `userbin/` for `neopkg.toml` files
+  - Scan `packages/` for NXP projects
+  - Build NXP via nxpkg tool
+  - `neodev nxpkg [--all] [name]` command
+- [x] **NXE-ECO-10b. Add nxres/nxlocale/nxverify to image** | Files: `tools/neodev/src/image.rs`
+  - Added to programs_nxe list
+  - Placed at `/Programs/{name}.nxe`
+
+### NXE-ECO-11. NXE/NXP design docs [COMPLETED]
+
+**Location:** `docs/nxe-ecosystem-design.md`, `docs/nxe-format.md`, `docs/nxp-format.md`
+
+- [x] **NXE-ECO-11a. Master design document** | Files: `docs/nxe-ecosystem-design.md`
+  - Complete architecture: principles, formats, resources, i18n, tools, installation
+- [x] **NXE-ECO-11b. NXE format reference** | Files: `docs/nxe-format.md`
+  - Base format, metadata note, TLV tags, tools usage
+- [x] **NXE-ECO-11c. NXP format reference** | Files: `docs/nxp-format.md`
+  - Container layout, manifest, file table, commands
+- [x] **NXE-ECO-11d. Linker script update** | Files: `libneodos/user.ld`
+  - Added `.note` section for metadata
+
+### NXE-ECO backlog — Future phases
+
+| ID | Item | Priority | Phase |
+|----|------|----------|-------|
+| NXE-ECO-12 | NXE metadata auto-generation in build pipeline | MEDIUM | Phase 2 |
+| NXE-ECO-13 | `\Resource\<app>\` virtual Ob namespace | MEDIUM | Phase 2 |
+| NXE-ECO-14 | NXE file header validation in kernel (size, type) | LOW | Phase 2 |
+| NXE-ECO-15 | Digital signature verification infrastructure | LOW | Phase 3 |
+| NXE-ECO-16 | NXP repository support (remote packages) | LOW | Phase 3 |
+| NXE-ECO-17 | Package auto-update | LOW | Phase 4 |
+| NXE-ECO-18 | NeoStore GUI | LOW | Phase 4 |
+| NXE-ECO-19 | Transactional install with rollback | LOW | Phase 4 |
+| NXE-ECO-20 | Dependency graph resolver for NXP | LOW | Phase 4 |
+| NXE-ECO-21 | Installation policies (GPO-like) | LOW | Phase 5 |
+| NXE-ECO-22 | Content-addressable package store | LOW | Phase 5 |
 
 | Versión | Enfoque | Estado |
 | --------- | --------- | -------- |

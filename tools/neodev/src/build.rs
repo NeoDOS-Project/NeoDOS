@@ -342,6 +342,114 @@ pub fn build_all(cfg: &Config, disc: &Discovery) -> Result<BuildReport> {
     })
 }
 
+/// Discover NXP packages (neopkg.toml files in userbin/ or standalone dirs)
+pub struct NxpProject {
+    pub name: String,
+    pub dir: std::path::PathBuf,
+}
+
+pub fn discover_nxp_projects(root: &std::path::Path) -> Vec<NxpProject> {
+    let mut projects = Vec::new();
+
+    // Scan userbin/ for neopkg.toml files
+    let userbin_dir = root.join("userbin");
+    if userbin_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&userbin_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() { continue; }
+                let toml_path = path.join("neopkg.toml");
+                if toml_path.exists() {
+                    let name = path.file_name().unwrap().to_string_lossy().to_string();
+                    projects.push(NxpProject { name, dir: path });
+                }
+            }
+        }
+    }
+
+    // Also scan root-level packages/ directory
+    let pkg_dir = root.join("packages");
+    if pkg_dir.exists() {
+        if let Ok(entries) = std::fs::read_dir(&pkg_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if !path.is_dir() { continue; }
+                let toml_path = path.join("neopkg.toml");
+                if toml_path.exists() {
+                    let name = path.file_name().unwrap().to_string_lossy().to_string();
+                    // Avoid duplicates from userbin/
+                    if !projects.iter().any(|p| p.name == name) {
+                        projects.push(NxpProject { name, dir: path });
+                    }
+                }
+            }
+        }
+    }
+
+    projects
+}
+
+pub fn build_nxp_packages(
+    _cfg: &Config,
+    disc: &Discovery,
+    all: bool,
+    name: Option<&str>,
+) -> Result<()> {
+    let projects = discover_nxp_projects(&_cfg.project_root);
+    if projects.is_empty() {
+        println!("  {} No NXP projects found (no neopkg.toml files)", "[!]".bold().yellow());
+        println!("  {} To create one: place a neopkg.toml in userbin/<name>/", "   ".bold().cyan());
+        return Ok(());
+    }
+
+    let mut built = 0;
+    for project in &projects {
+        if let Some(n) = name {
+            if project.name != n { continue; }
+        }
+
+        let nxp_output = _cfg.project_root.join("packages").join(format!("{}.nxp", project.name));
+        std::fs::create_dir_all(nxp_output.parent().unwrap())?;
+
+        print!("  {:20} ", project.name);
+        std::io::Write::flush(&mut std::io::stdout())?;
+
+        // Check if the NXE binary exists for this project
+        let nxe_path = _cfg.project_root.join("userbin").join(format!("{}.nxe", project.name));
+        if !nxe_path.exists() && !all {
+            println!("{} [SKIP - no .nxe]", "[!]".bold().yellow());
+            continue;
+        }
+
+        // Look for the nxpkg tool
+        let nxpkg_path = _cfg.project_root.join("tools").join("nxpkg")
+            .join("target").join("debug").join("nxpkg");
+        let nxpkg_exists = nxpkg_path.exists();
+
+        if !nxpkg_exists {
+            println!("{} [SKIP - nxpkg not built]", "[!]".bold().yellow());
+            continue;
+        }
+
+        let status = std::process::Command::new(&nxpkg_path)
+            .args(["create", project.dir.to_str().unwrap(), nxp_output.to_str().unwrap()])
+            .status()
+            .with_context(|| format!("Failed to create NXP for {}", project.name))?;
+
+        if status.success() {
+            println!("{} [OK]", "[✓]".bold().green());
+            built += 1;
+        } else {
+            println!("{} [FAIL]", "[✗]".bold().red());
+        }
+    }
+
+    if built > 0 {
+        println!("  {} NXP packages built", "[✓]".bold().green());
+    }
+    Ok(())
+}
+
 pub fn ensure_targets(cfg: &Config) -> Result<()> {
     for target in [&cfg.bootloader_target, &cfg.kernel_target] {
         let status = Command::new("rustup")

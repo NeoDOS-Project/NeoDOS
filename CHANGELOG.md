@@ -4,7 +4,34 @@
 
 ## v0.50.0 — 2026-07-13
 
-### Added
+### Added (NXE/NXP Ecosystem)
+
+- **NXE metadata note (.note.neodos)** — Los ejecutables NXE pueden incluir metadatos en un ELF note section (producto, versión, descripción, dependencias). El kernel ELF loader lo ignora; las herramientas lo leen.
+  - **Formato**: TLV (tag, length, value) dentro de una nota ELF PT_NOTE.
+  - **Tags**: producto, versión, descripción, autor, licencia, arquitectura, subsistema, idioma, kernel mínimo, dependencias, flags de manifiesto.
+  - **Linker script** (`libneodos/user.ld`): añadida sección `.note`.
+- **`tools/nxeinfo/`** — Inspector de ejecutables NXE. Subcomandos: --brief, --metadata, --sections, --headers, --json, --check.
+- **`tools/nxpkg/`** — Creador/gestor de paquetes NXP. Subcomandos: create, extract, list, info, verify.
+  - **Formato NXP1**: header 32B + manifest TLV + file table + string pool + file data + espacio para firmas.
+  - CRC32 de header y por archivo. Sin compresión en v1.
+- **`tools/nxdump/`** — Volcado técnico de ELF/NXE/NEM: hex dump, ELF structures, relocations, strings, memory map.
+- **libneodos Resource API** (`libneodos/src/res.rs`) — Acceso a recursos de aplicaciones empaquetadas.
+  - `res_open(path)`, `res_open_app(app, path)`, `res_open_locale(app, path)` con cadena de fallback.
+  - `res_read(fd, buf)`, `res_size(fd)`, `res_read_all(fd, buf)`.
+- **libneodos i18n extensions** — Nuevas funciones de internacionalización:
+  - `i18n_set_app_name(name)` / `current_app_name()` — seguimiento de app activa.
+  - `i18n_load_from_package()` — carga NLTv2 desde recursos del paquete.
+  - `i18n_available_locales()` — enumera `C:\System\Locale\`.
+  - `i18n_format(id, args)` — sustitución de placeholders `{0}`, `{1}`.
+- **`userbin/nxres/`** — Explorador de recursos Ring 3: list, cat, locale.
+- **`userbin/nxlocale/`** — Gestor de idiomas Ring 3: list, current, set, stats, show.
+- **`userbin/nxverify/`** — Verificador de integridad Ring 3: file, app, all, package (CRC32).
+- **NeoDev integration** — Nueva subcomando `neodev nxpkg` para construir paquetes NXP.
+  - `build_nxp_packages()`: descubre proyectos con `neopkg.toml` y genera .nxp.
+  - Image builder actualizado para incluir nxres, nxlocale, nxverify.
+- **Documentación técnica** — `docs/nxe-ecosystem-design.md`, `docs/nxe-format.md`, `docs/nxp-format.md`.
+
+### Added (i18n)
 
 - **NLTv2 (Neo Language Table v2)** — Sistema de internacionalización completamente rediseñado con IDs numéricos.
   - **Formato NLTv2**: magic `NLT2`, version=2, header 32B con LanguageID/ApplicationID/Flags/CRC32.

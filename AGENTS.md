@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls)
+**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Tools:** nxeinfo, nxpkg, nxdump, nxres, nxlocale, nxverify
 
 ## Permanent Rules (MUST always follow)
 
@@ -68,6 +68,9 @@ For every subsystem, consult its doc — not this file:
 | Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items |
 | Debug | `docs/DEBUG.md` | GDB setup, debug tips |
 | Vision | `docs/ARCHITECTURAL_VISION.md` | Long-term strategy v0.40→v1.0 |
+| NXE Ecosystem | `docs/nxe-ecosystem-design.md` | NXE/NXP format, resources, i18n, tools |
+| NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
+| NXP Format | `docs/nxp-format.md` | Package container format, manifest |
 
 ## Skills (specialized task checklists)
 
