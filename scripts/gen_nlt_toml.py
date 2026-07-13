@@ -66,8 +66,7 @@ t("en-US", "coredir", [
     ("IDS_DIR_OF", 1001, "Directory of "),
     ("IDS_PROMPT_PAUSE", 1002, "Press any key to continue . . ."),
     ("IDS_FILE_COUNT", 1003, "File(s)"),
-    ("IDS_DIR_LABEL", 1004, "<DIR>"),
-    ("IDS_PATH_NOT_FOUND", 1005, "Path not found"),
+    ("IDS_PATH_NOT_FOUND", 1004, "Path not found"),
 ])
 
 t("en-US", "corecopy", [
@@ -138,8 +137,7 @@ t("es-ES", "coredir", [
     ("IDS_DIR_OF", 1001, "Directorio de "),
     ("IDS_PROMPT_PAUSE", 1002, "Presione una tecla para continuar . . ."),
     ("IDS_FILE_COUNT", 1003, "Archivo(s)"),
-    ("IDS_DIR_LABEL", 1004, "<DIR>"),
-    ("IDS_PATH_NOT_FOUND", 1005, "Ruta no encontrada"),
+    ("IDS_PATH_NOT_FOUND", 1004, "Ruta no encontrada"),
 ])
 
 t("es-ES", "corecopy", [

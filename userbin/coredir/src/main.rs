@@ -18,7 +18,6 @@ use libneodos::tr_id;
 const IDS_DIR_OF: u32 = 1001;
 const IDS_PROMPT_PAUSE: u32 = 1002;
 const IDS_FILE_COUNT: u32 = 1003;
-const IDS_DIR_LABEL: u32 = 1004;
 const IDS_PATH_NOT_FOUND: u32 = 1005;
 
 const APP_NAME: &str = "coredir";
@@ -298,7 +297,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     let name_len = n.len().min(12);
                     line_buf[..name_len].copy_from_slice(&n.as_bytes()[..name_len]);
 
-                    let type_str: &[u8] = if e.dir { tr_id!(IDS_DIR_LABEL).as_bytes() } else { b"     " };
+                    let type_str: &[u8] = if e.dir { b"<DIR>" } else { b"     " };
                     line_buf[13..18].copy_from_slice(type_str);
 
                     line_buf[19..24].copy_from_slice(&perms);

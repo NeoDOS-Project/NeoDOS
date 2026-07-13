@@ -6,12 +6,10 @@ language = "es-ES"
 IDS_DIR_OF = 1001
 IDS_PROMPT_PAUSE = 1002
 IDS_FILE_COUNT = 1003
-IDS_DIR_LABEL = 1004
-IDS_PATH_NOT_FOUND = 1005
+IDS_PATH_NOT_FOUND = 1004
 
 [strings]
 IDS_DIR_OF = "Directorio de "
 IDS_PROMPT_PAUSE = "Presione una tecla para continuar . . ."
 IDS_FILE_COUNT = "Archivo(s)"
-IDS_DIR_LABEL = "<DIR>"
 IDS_PATH_NOT_FOUND = "Ruta no encontrada"

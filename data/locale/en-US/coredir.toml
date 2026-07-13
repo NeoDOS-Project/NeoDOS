@@ -6,12 +6,10 @@ language = "en-US"
 IDS_DIR_OF = 1001
 IDS_PROMPT_PAUSE = 1002
 IDS_FILE_COUNT = 1003
-IDS_DIR_LABEL = 1004
-IDS_PATH_NOT_FOUND = 1005
+IDS_PATH_NOT_FOUND = 1004
 
 [strings]
 IDS_DIR_OF = "Directory of "
 IDS_PROMPT_PAUSE = "Press any key to continue . . ."
 IDS_FILE_COUNT = "File(s)"
-IDS_DIR_LABEL = "<DIR>"
 IDS_PATH_NOT_FOUND = "Path not found"
