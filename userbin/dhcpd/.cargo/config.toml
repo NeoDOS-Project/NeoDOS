@@ -2,4 +2,4 @@
 target = "x86_64-unknown-none"
 
 [target.x86_64-unknown-none]
-rustflags = ["-C", "link-arg=-Tuser.ld", "-C", "link-arg=-melf_x86_64", "-C", "relocation-model=pie"]
+rustflags = ["-C", "link-arg=-T../../libneodos/user.ld", "-C", "link-arg=-melf_x86_64", "-C", "relocation-model=pie"]

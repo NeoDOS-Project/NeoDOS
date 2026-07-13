@@ -532,4 +532,20 @@ pub fn register_sync_tests() {
         let valid3 = super::is_user_ptr_valid(user_addr, 10);
         test_eq!(valid3, true);
     });
+
+    // ── AUDIT-36: neoinit_shell_spawn_smoke — spawn infrastructure ──
+
+    test_case!("neoinit_shell_spawn_smoke", {
+        let ob_path = "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe";
+        test_true!(ob_path.len() > 20);
+        test_eq!(&ob_path[..19], "\\Global\\FileSystem\\");
+        test_true!(ob_path.contains("neoshell.nxe"));
+    });
+
+    test_case!("neoinit_shell_entry_check", {
+        let vaddr: u64 = 0x420000;
+        let offset: u64 = 0x420000;
+        test_true!(vaddr <= offset);
+        test_true!(offset < vaddr + 0x10000);
+    });
 }

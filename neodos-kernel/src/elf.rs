@@ -101,6 +101,7 @@ pub enum ElfLoadError {
     PhdrTableOutOfBounds,
     SegmentDataOutOfBounds,
     AddressSpaceViolation(i64),
+    EntryNotInSegment,
     RelocationError(&'static str),
 }
 
@@ -328,8 +329,11 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>, load_off
         segments.push(SegmentInfo { vaddr, memsz, flags });
     }
 
-    // Check 5: entry point not in any PT_LOAD — log warning
+    // Check 5: entry point must be in a PT_LOAD segment
     if !entry_in_segment && !segments.is_empty() {
+        if addr_space.is_some() {
+            return Err(ElfLoadError::EntryNotInSegment);
+        }
         crate::serial_println!("[ELF] WARNING: entry 0x{:x} not contained in any PT_LOAD segment", entry);
     }
 
@@ -750,5 +754,35 @@ pub fn register_elf_tests() {
         let mut addr_space = AddressSpace::new();
         let result = load_elf(&raw, Some(&mut addr_space), offset);
         test_true!(result.is_err());
+    });
+
+    // ── AUDIT-36: userbin_link_smoke — entry point validation ──
+
+    test_case!("userbin_link_smoke", {
+        let code = [0xccu8; 16];
+        let raw = build_valid_elf(0x400000, 0x400000, &code);
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
+        test_true!(result.is_ok());
+        let r = result.unwrap();
+        test_eq!(r.entry, 0x400000);
+        test_eq!(r.segments.len(), 1);
+        test_true!(r.segments[0].vaddr <= r.entry);
+        test_true!(r.entry < r.segments[0].vaddr + r.segments[0].memsz);
+    });
+
+    test_case!("elf_entry_not_in_segment_returns_error", {
+        let code = [0xccu8; 16];
+        let raw = build_valid_elf(0x500000, 0x400000, &code);
+        let mut addr_space = AddressSpace::new();
+        let result = load_elf(&raw, Some(&mut addr_space), 0);
+        test_eq!(result, Err(ElfLoadError::EntryNotInSegment));
+    });
+
+    test_case!("elf_entry_outside_segment_warns_without_addrspace", {
+        let code = [0xccu8; 16];
+        let raw = build_valid_elf(0x500000, 0x400000, &code);
+        let result = load_elf(&raw, None, 0);
+        test_true!(result.is_ok());
     });
 }
