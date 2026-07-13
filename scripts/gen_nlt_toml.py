@@ -55,7 +55,7 @@ t("en-US", "neoshell", [
     ("IDS_CALL_USAGE", 1009, "Usage: CALL batchfile"),
     ("IDS_CALL_NOT_FOUND", 1010, "Batch file not found"),
     ("IDS_CALL_READ_ERROR", 1011, "Error reading batch"),
-    ("IDS_PROMPT_PAUSE", 1013, "Press any key to continue . . ."),
+    ("IDS_PROMPT_PAUSE", 1012, "Press any key to continue . . ."),
 ])
 
 t("en-US", "neoinit", [
@@ -127,7 +127,7 @@ t("es-ES", "neoshell", [
     ("IDS_CALL_USAGE", 1009, "Uso: CALL archivo.bat"),
     ("IDS_CALL_NOT_FOUND", 1010, "Archivo batch no encontrado"),
     ("IDS_CALL_READ_ERROR", 1011, "Error al leer el archivo batch"),
-    ("IDS_PROMPT_PAUSE", 1013, "Presione una tecla para continuar . . ."),
+    ("IDS_PROMPT_PAUSE", 1012, "Presione una tecla para continuar . . ."),
 ])
 
 t("es-ES", "neoinit", [

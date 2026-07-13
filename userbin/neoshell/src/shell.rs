@@ -14,7 +14,7 @@ const IDS_PIPE_BUILTIN: u32 = 1008;
 const IDS_CALL_USAGE: u32 = 1009;
 const IDS_CALL_NOT_FOUND: u32 = 1010;
 const IDS_CALL_READ_ERROR: u32 = 1011;
-const IDS_PROMPT_PAUSE: u32 = 1013;
+const IDS_PROMPT_PAUSE: u32 = 1012;
 
 use neoshell_lib::env::{EnvVar, MAX_ENV};
 use neoshell_lib::pipeline::{self, MAX_PIPELINE};
