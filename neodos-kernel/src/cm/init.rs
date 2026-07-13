@@ -92,9 +92,8 @@ pub fn ensure_language_default() {
         Ok(k) => k,
         Err(_) => return,
     };
-    if crate::cm::cm_query_value(locale, "Language").is_err() {
-        let _ = crate::cm::cm_set_value(locale, "Language", crate::cm::hive::REG_SZ, b"en-US");
-    }
+    // No default — the hive (gen_system_hiv.py) provides the value.
+    // userspace i18n_init() falls back to DEFAULT_LANG if absent.
 }
 
 pub fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {
