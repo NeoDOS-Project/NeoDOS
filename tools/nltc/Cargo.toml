@@ -1,0 +1,14 @@
+[package]
+name = "nltc"
+version = "0.1.0"
+edition = "2021"
+description = "Neo Language Table Compiler — compiles TOML sources to NLTv2 binary format"
+
+[[bin]]
+name = "nltc"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1.1.2+spec-1.1.0"

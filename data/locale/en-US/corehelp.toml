@@ -1,0 +1,35 @@
+[meta]
+app = "corehelp"
+language = "en-US"
+
+[ids]
+IDS_HEADER = 1001
+IDS_COMMANDS_SUFFIX = 1002
+IDS_TYPE_FOR_DETAILS = 1003
+IDS_EXAMPLE = 1004
+IDS_NO_PROGRAMS_DIR = 1005
+IDS_CREATE_PROGRAMS_DIR = 1006
+IDS_ERROR_READING_DIR = 1007
+IDS_NO_DESCRIPTION = 1008
+IDS_NO_HELP = 1009
+IDS_CMD_NOT_FOUND = 1010
+IDS_HELP_USAGE = 1011
+IDS_USAGE_DESC1 = 1012
+IDS_USAGE_DESC2 = 1013
+IDS_USAGE_DESC3 = 1014
+
+[strings]
+IDS_HEADER = "NeoDOS Core Tools"
+IDS_COMMANDS_SUFFIX = " command(s) available"
+IDS_TYPE_FOR_DETAILS = "Type HELP <command> for details on a specific command."
+IDS_EXAMPLE = "  Example: HELP CLS"
+IDS_NO_PROGRAMS_DIR = "No Programs directory found."
+IDS_CREATE_PROGRAMS_DIR = "Create C:\\Programs with .NXE tools."
+IDS_ERROR_READING_DIR = "(error reading directory)"
+IDS_NO_DESCRIPTION = "(no description)"
+IDS_NO_HELP = "No help available for this command."
+IDS_CMD_NOT_FOUND = "HELP: command not found"
+IDS_HELP_USAGE = "HELP [command]"
+IDS_USAGE_DESC1 = "  Lists available commands with descriptions."
+IDS_USAGE_DESC2 = "  HELP <command>     Shows detailed help for a specific command."
+IDS_USAGE_DESC3 = "  HELP              Lists all commands."

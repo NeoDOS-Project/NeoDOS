@@ -1,0 +1,35 @@
+[meta]
+app = "corehelp"
+language = "es-ES"
+
+[ids]
+IDS_HEADER = 1001
+IDS_COMMANDS_SUFFIX = 1002
+IDS_TYPE_FOR_DETAILS = 1003
+IDS_EXAMPLE = 1004
+IDS_NO_PROGRAMS_DIR = 1005
+IDS_CREATE_PROGRAMS_DIR = 1006
+IDS_ERROR_READING_DIR = 1007
+IDS_NO_DESCRIPTION = 1008
+IDS_NO_HELP = 1009
+IDS_CMD_NOT_FOUND = 1010
+IDS_HELP_USAGE = 1011
+IDS_USAGE_DESC1 = 1012
+IDS_USAGE_DESC2 = 1013
+IDS_USAGE_DESC3 = 1014
+
+[strings]
+IDS_HEADER = "Herramientas Principal de NeoDOS"
+IDS_COMMANDS_SUFFIX = " comando(s) disponibles"
+IDS_TYPE_FOR_DETAILS = "Escriba AYUDA <comando> para detalles de un comando específico."
+IDS_EXAMPLE = "  Ejemplo: AYUDA CLS"
+IDS_NO_PROGRAMS_DIR = "No se encontró el directorio de programas."
+IDS_CREATE_PROGRAMS_DIR = "Cree C:\\Programs con herramientas .NXE."
+IDS_ERROR_READING_DIR = "(error al leer el directorio)"
+IDS_NO_DESCRIPTION = "(sin descripción)"
+IDS_NO_HELP = "No hay ayuda disponible para este comando."
+IDS_CMD_NOT_FOUND = "AYUDA: comando no encontrado"
+IDS_HELP_USAGE = "AYUDA [comando]"
+IDS_USAGE_DESC1 = "  Lista los comandos disponibles con descripciones."
+IDS_USAGE_DESC2 = "  AYUDA <comando>    Muestra ayuda detallada de un comando."
+IDS_USAGE_DESC3 = "  AYUDA              Lista todos los comandos."

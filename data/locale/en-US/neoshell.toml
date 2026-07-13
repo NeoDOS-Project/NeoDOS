@@ -1,0 +1,33 @@
+[meta]
+app = "neoshell"
+language = "en-US"
+
+[ids]
+IDS_STARTUP_HINT = 1001
+IDS_INVALID_DRIVE = 1002
+IDS_OB_WAIT_ERROR = 1003
+IDS_CD_NOT_FOUND = 1004
+IDS_BAD_COMMAND = 1005
+IDS_PIPE_ERROR = 1006
+IDS_PIPE_SYNTAX = 1007
+IDS_PIPE_BUILTIN = 1008
+IDS_CALL_USAGE = 1009
+IDS_CALL_NOT_FOUND = 1010
+IDS_CALL_READ_ERROR = 1011
+IDS_STATUS_POWEROFF = 1012
+IDS_PROMPT_PAUSE = 1013
+
+[strings]
+IDS_STARTUP_HINT = "Type HELP for a list of commands."
+IDS_INVALID_DRIVE = "Invalid drive"
+IDS_OB_WAIT_ERROR = "ob_wait error"
+IDS_CD_NOT_FOUND = "cd: directory not found"
+IDS_BAD_COMMAND = "Bad command or file name"
+IDS_PIPE_ERROR = "Pipe error"
+IDS_PIPE_SYNTAX = "Invalid pipe syntax"
+IDS_PIPE_BUILTIN = "Cannot pipe built-in"
+IDS_CALL_USAGE = "Usage: CALL batchfile"
+IDS_CALL_NOT_FOUND = "Batch file not found"
+IDS_CALL_READ_ERROR = "Error reading batch"
+IDS_STATUS_POWEROFF = "powering off..."
+IDS_PROMPT_PAUSE = "Press any key to continue . . ."

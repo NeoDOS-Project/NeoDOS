@@ -1,0 +1,33 @@
+[meta]
+app = "neoshell"
+language = "es-ES"
+
+[ids]
+IDS_STARTUP_HINT = 1001
+IDS_INVALID_DRIVE = 1002
+IDS_OB_WAIT_ERROR = 1003
+IDS_CD_NOT_FOUND = 1004
+IDS_BAD_COMMAND = 1005
+IDS_PIPE_ERROR = 1006
+IDS_PIPE_SYNTAX = 1007
+IDS_PIPE_BUILTIN = 1008
+IDS_CALL_USAGE = 1009
+IDS_CALL_NOT_FOUND = 1010
+IDS_CALL_READ_ERROR = 1011
+IDS_STATUS_POWEROFF = 1012
+IDS_PROMPT_PAUSE = 1013
+
+[strings]
+IDS_STARTUP_HINT = "Escriba AYUDA para una lista de comandos."
+IDS_INVALID_DRIVE = "Unidad no válida"
+IDS_OB_WAIT_ERROR = "error de espera"
+IDS_CD_NOT_FOUND = "cd: directorio no encontrado"
+IDS_BAD_COMMAND = "Comando o nombre de archivo incorrecto"
+IDS_PIPE_ERROR = "Error de tubería"
+IDS_PIPE_SYNTAX = "Sintaxis de tubería no válida"
+IDS_PIPE_BUILTIN = "No se puede usar tubería con comandos internos"
+IDS_CALL_USAGE = "Uso: CALL archivo.bat"
+IDS_CALL_NOT_FOUND = "Archivo batch no encontrado"
+IDS_CALL_READ_ERROR = "Error al leer el archivo batch"
+IDS_STATUS_POWEROFF = "apagando..."
+IDS_PROMPT_PAUSE = "Presione una tecla para continuar . . ."

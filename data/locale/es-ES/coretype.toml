@@ -1,0 +1,13 @@
+[meta]
+app = "coretype"
+language = "es-ES"
+
+[ids]
+IDS_FILE_NOT_FOUND = 1001
+IDS_READ_ERROR = 1002
+IDS_USAGE = 1003
+
+[strings]
+IDS_FILE_NOT_FOUND = "Archivo no encontrado"
+IDS_READ_ERROR = "Error al leer el archivo"
+IDS_USAGE = "Uso: TYPE <archivo>"

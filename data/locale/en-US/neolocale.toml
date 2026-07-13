@@ -1,0 +1,27 @@
+[meta]
+app = "neolocale"
+language = "en-US"
+
+[ids]
+IDS_TOOL_USAGE = 1001
+IDS_TOOL_VALIDATE = 1002
+IDS_TOOL_STATS = 1003
+IDS_TOOL_DIFF = 1004
+IDS_TOOL_CHECK = 1005
+IDS_TOOL_CREATE = 1006
+IDS_STATUS_VALID = 1007
+IDS_STATUS_INVALID = 1008
+IDS_ERROR_CANNOT_OPEN = 1009
+IDS_ERROR_UNKNOWN_CMD = 1010
+
+[strings]
+IDS_TOOL_USAGE = "NeoLocale v0.2 — NLT translation file tool"
+IDS_TOOL_VALIDATE = "  neolocale validate <file.nlt>     Validate format and structure"
+IDS_TOOL_STATS = "  neolocale stats    <file.nlt>     Show entry statistics"
+IDS_TOOL_DIFF = "  neolocale diff     <f1> <f2>      Key-by-key differences"
+IDS_TOOL_CHECK = "  neolocale check    [dir]          Cross-locale missing check"
+IDS_TOOL_CREATE = "  neolocale create   <app> [locale] Empty NLT scaffold (stdout)"
+IDS_STATUS_VALID = "VALID"
+IDS_STATUS_INVALID = "INVALID"
+IDS_ERROR_CANNOT_OPEN = "ERROR: cannot open file"
+IDS_ERROR_UNKNOWN_CMD = "Unknown command"
