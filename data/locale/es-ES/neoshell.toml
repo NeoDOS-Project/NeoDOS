@@ -14,7 +14,6 @@ IDS_PIPE_BUILTIN = 1008
 IDS_CALL_USAGE = 1009
 IDS_CALL_NOT_FOUND = 1010
 IDS_CALL_READ_ERROR = 1011
-IDS_STATUS_POWEROFF = 1012
 IDS_PROMPT_PAUSE = 1013
 
 [strings]
@@ -29,5 +28,4 @@ IDS_PIPE_BUILTIN = "No se puede usar tubería con comandos internos"
 IDS_CALL_USAGE = "Uso: CALL archivo.bat"
 IDS_CALL_NOT_FOUND = "Archivo batch no encontrado"
 IDS_CALL_READ_ERROR = "Error al leer el archivo batch"
-IDS_STATUS_POWEROFF = "apagando..."
 IDS_PROMPT_PAUSE = "Presione una tecla para continuar . . ."

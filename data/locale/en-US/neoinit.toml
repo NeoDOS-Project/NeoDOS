@@ -3,19 +3,7 @@ app = "neoinit"
 language = "en-US"
 
 [ids]
-IDS_STATUS_BOOT = 1001
-IDS_INIT_COMPLETE = 1002
 IDS_SHELL_SPAWN = 1003
-IDS_REG_READ_ERROR = 1004
-IDS_SHELL_NOT_FOUND = 1005
-IDS_REGISTRATION_OK = 1006
-IDS_REGISTRATION_FAIL = 1007
 
 [strings]
-IDS_STATUS_BOOT = "NeoDOS Kernel v{ver} - The Rusty DOS Revival"
-IDS_INIT_COMPLETE = "Initialization complete."
 IDS_SHELL_SPAWN = "Spawning shell..."
-IDS_REG_READ_ERROR = "Registry read error"
-IDS_SHELL_NOT_FOUND = "Shell not found."
-IDS_REGISTRATION_OK = "Registration successful."
-IDS_REGISTRATION_FAIL = "Registration failed."

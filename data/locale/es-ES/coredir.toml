@@ -4,20 +4,14 @@ language = "es-ES"
 
 [ids]
 IDS_DIR_OF = 1001
-IDS_VOLUME = 1002
 IDS_PROMPT_PAUSE = 1003
 IDS_FILE_COUNT = 1004
-IDS_BYTES = 1005
 IDS_DIR_LABEL = 1006
-IDS_NO_LABEL = 1007
 IDS_PATH_NOT_FOUND = 1008
 
 [strings]
 IDS_DIR_OF = "Directorio de "
-IDS_VOLUME = " Volumen en unidad "
 IDS_PROMPT_PAUSE = "Presione una tecla para continuar . . ."
 IDS_FILE_COUNT = "Archivo(s)"
-IDS_BYTES = "bytes"
 IDS_DIR_LABEL = "<DIR>"
-IDS_NO_LABEL = "sin etiqueta"
 IDS_PATH_NOT_FOUND = "Ruta no encontrada"

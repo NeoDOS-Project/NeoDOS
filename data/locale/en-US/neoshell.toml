@@ -14,7 +14,6 @@ IDS_PIPE_BUILTIN = 1008
 IDS_CALL_USAGE = 1009
 IDS_CALL_NOT_FOUND = 1010
 IDS_CALL_READ_ERROR = 1011
-IDS_STATUS_POWEROFF = 1012
 IDS_PROMPT_PAUSE = 1013
 
 [strings]
@@ -29,5 +28,4 @@ IDS_PIPE_BUILTIN = "Cannot pipe built-in"
 IDS_CALL_USAGE = "Usage: CALL batchfile"
 IDS_CALL_NOT_FOUND = "Batch file not found"
 IDS_CALL_READ_ERROR = "Error reading batch"
-IDS_STATUS_POWEROFF = "powering off..."
 IDS_PROMPT_PAUSE = "Press any key to continue . . ."

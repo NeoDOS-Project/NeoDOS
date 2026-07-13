@@ -55,39 +55,26 @@ t("en-US", "neoshell", [
     ("IDS_CALL_USAGE", 1009, "Usage: CALL batchfile"),
     ("IDS_CALL_NOT_FOUND", 1010, "Batch file not found"),
     ("IDS_CALL_READ_ERROR", 1011, "Error reading batch"),
-    ("IDS_STATUS_POWEROFF", 1012, "powering off..."),
     ("IDS_PROMPT_PAUSE", 1013, "Press any key to continue . . ."),
 ])
 
 t("en-US", "neoinit", [
-    ("IDS_STATUS_BOOT", 1001, "NeoDOS Kernel v{ver} - The Rusty DOS Revival"),
-    ("IDS_INIT_COMPLETE", 1002, "Initialization complete."),
     ("IDS_SHELL_SPAWN", 1003, "Spawning shell..."),
-    ("IDS_REG_READ_ERROR", 1004, "Registry read error"),
-    ("IDS_SHELL_NOT_FOUND", 1005, "Shell not found."),
-    ("IDS_REGISTRATION_OK", 1006, "Registration successful."),
-    ("IDS_REGISTRATION_FAIL", 1007, "Registration failed."),
 ])
 
 t("en-US", "coredir", [
     ("IDS_DIR_OF", 1001, "Directory of "),
-    ("IDS_VOLUME", 1002, " Volume in drive "),
     ("IDS_PROMPT_PAUSE", 1003, "Press any key to continue . . ."),
     ("IDS_FILE_COUNT", 1004, "File(s)"),
-    ("IDS_BYTES", 1005, "bytes"),
     ("IDS_DIR_LABEL", 1006, "<DIR>"),
-    ("IDS_NO_LABEL", 1007, "has no label"),
     ("IDS_PATH_NOT_FOUND", 1008, "Path not found"),
 ])
 
 t("en-US", "corecopy", [
-    ("IDS_MISSING_SRC", 1001, "COPY: missing source"),
     ("IDS_MISSING_SRC_DST", 1002, "COPY: missing source or destination"),
-    ("IDS_SAME_FILE", 1003, "COPY: source and destination are the same"),
     ("IDS_READ_FAILED", 1004, "COPY: cannot read source"),
     ("IDS_WRITE_FAILED", 1005, "COPY: cannot write destination"),
     ("IDS_OPEN_SRC_FAILED", 1006, "COPY: cannot open source"),
-    ("IDS_COPIED", 1007, " file(s) copied"),
 ])
 
 t("en-US", "coretype", [
@@ -140,39 +127,26 @@ t("es-ES", "neoshell", [
     ("IDS_CALL_USAGE", 1009, "Uso: CALL archivo.bat"),
     ("IDS_CALL_NOT_FOUND", 1010, "Archivo batch no encontrado"),
     ("IDS_CALL_READ_ERROR", 1011, "Error al leer el archivo batch"),
-    ("IDS_STATUS_POWEROFF", 1012, "apagando..."),
     ("IDS_PROMPT_PAUSE", 1013, "Presione una tecla para continuar . . ."),
 ])
 
 t("es-ES", "neoinit", [
-    ("IDS_STATUS_BOOT", 1001, "NeoDOS Kernel v{ver} - El Renacimiento de DOS en Rust"),
-    ("IDS_INIT_COMPLETE", 1002, "Inicializaci\u00f3n completa."),
     ("IDS_SHELL_SPAWN", 1003, "Iniciando el int\u00e9rprete de comandos..."),
-    ("IDS_REG_READ_ERROR", 1004, "Error al leer el registro"),
-    ("IDS_SHELL_NOT_FOUND", 1005, "Int\u00e9rprete de comandos no encontrado."),
-    ("IDS_REGISTRATION_OK", 1006, "Registro exitoso."),
-    ("IDS_REGISTRATION_FAIL", 1007, "Error de registro."),
 ])
 
 t("es-ES", "coredir", [
     ("IDS_DIR_OF", 1001, "Directorio de "),
-    ("IDS_VOLUME", 1002, " Volumen en unidad "),
     ("IDS_PROMPT_PAUSE", 1003, "Presione una tecla para continuar . . ."),
     ("IDS_FILE_COUNT", 1004, "Archivo(s)"),
-    ("IDS_BYTES", 1005, "bytes"),
     ("IDS_DIR_LABEL", 1006, "<DIR>"),
-    ("IDS_NO_LABEL", 1007, "sin etiqueta"),
     ("IDS_PATH_NOT_FOUND", 1008, "Ruta no encontrada"),
 ])
 
 t("es-ES", "corecopy", [
-    ("IDS_MISSING_SRC", 1001, "COPY: falta el origen"),
     ("IDS_MISSING_SRC_DST", 1002, "COPY: falta el origen o el destino"),
-    ("IDS_SAME_FILE", 1003, "COPY: el origen y el destino son el mismo"),
     ("IDS_READ_FAILED", 1004, "COPY: no se puede leer el origen"),
     ("IDS_WRITE_FAILED", 1005, "COPY: no se puede escribir el destino"),
     ("IDS_OPEN_SRC_FAILED", 1006, "COPY: no se puede abrir el origen"),
-    ("IDS_COPIED", 1007, " archivo(s) copiado(s)"),
 ])
 
 t("es-ES", "coretype", [

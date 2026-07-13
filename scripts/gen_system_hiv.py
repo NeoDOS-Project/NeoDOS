@@ -337,7 +337,7 @@ def main():
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
-    print("    CurrentControlSet\\Control\\Locale\\Language = 'en-US' (REG_SZ)")
+    print("    CurrentControlSet\\Control\\Locale\\Language = 'es-ES' (REG_SZ)")
 
 
 if __name__ == "__main__":

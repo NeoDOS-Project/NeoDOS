@@ -3,19 +3,13 @@ app = "corecopy"
 language = "en-US"
 
 [ids]
-IDS_MISSING_SRC = 1001
 IDS_MISSING_SRC_DST = 1002
-IDS_SAME_FILE = 1003
 IDS_READ_FAILED = 1004
 IDS_WRITE_FAILED = 1005
 IDS_OPEN_SRC_FAILED = 1006
-IDS_COPIED = 1007
 
 [strings]
-IDS_MISSING_SRC = "COPY: missing source"
 IDS_MISSING_SRC_DST = "COPY: missing source or destination"
-IDS_SAME_FILE = "COPY: source and destination are the same"
 IDS_READ_FAILED = "COPY: cannot read source"
 IDS_WRITE_FAILED = "COPY: cannot write destination"
 IDS_OPEN_SRC_FAILED = "COPY: cannot open source"
-IDS_COPIED = " file(s) copied"
