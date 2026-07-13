@@ -1,7 +1,24 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall;
+extern crate alloc;
+
+use core::alloc::{GlobalAlloc, Layout};
+use libneodos::{mem, syscall};
+
+struct SbrkAlloc;
+
+unsafe impl GlobalAlloc for SbrkAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(8) as i64;
+        let ptr = mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
+        if ptr.is_null() { core::ptr::null_mut() } else { ptr }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[global_allocator]
+static ALLOC: SbrkAlloc = SbrkAlloc;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
