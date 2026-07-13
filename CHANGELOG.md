@@ -2,6 +2,32 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.50.0 — 2026-07-13
+
+### Added
+
+- **NLTv2 (Neo Language Table v2)** — Sistema de internacionalización completamente rediseñado con IDs numéricos.
+  - **Formato NLTv2**: magic `NLT2`, version=2, header 32B con LanguageID/ApplicationID/Flags/CRC32.
+  - Búsqueda binaria O(log n). Sin compatibilidad con NLTv1 (string-key).
+  - **Runtime** (`libneodos/src/i18n.rs`): `i18n_get_id(id)`, `i18n_try_get_id()`, `i18n_unload()`, `i18n_reload_all()`, `i18n_active_locale()`.
+  - **Macro** `tr_id!(ID)` para lookup por ID numérico. `tr!()` ahora es no-op (devuelve literal).
+- **`tools/nltc/`** — Compilador NLT oficial: TOML → NLTv2 binario.
+  - Subcomandos: compile, --check, --generate-ids, --generate-rust, --scaffold, --list-langs, --info, --generate-all.
+  - Tablas de LanguageID (25 idiomas estándar) y ApplicationID (40 apps estándar).
+- **Fuentes TOML** — `data/locale/*/*.toml` (7 en-US + 7 es-ES) con IDs numéricos.
+  - `scripts/gen_nlt_toml.py`: genera TOML desde tablas de traducción.
+- **neolocale tool** (`userbin/neolocale/`) — Actualizado a NLTv2: validate (CRC32, IDs duplicados), stats, diff, check, create.
+- **Integración NeoDev** — `neodev build` y `neodev image` compilan automáticamente .toml → .nlt.
+- **Documentación** — `docs/nlt.md`: formato, API, herramientas, flujo de trabajo.
+
+### Changed
+
+- **`libneodos/src/i18n.rs`**: Reescrito para NLTv2. Eliminados `i18n_get()`, `try_get()` (string-key).
+- **`libneodos/src/macros.rs`**: `tr!()` → no-op (devuelve literal). Nuevo `tr_id!()` para IDs.
+- **`data/locale/*/.nlt`**: Todos los archivos regenerados como NLTv2.
+- **`docs/IMPROVEMENTS.md`**: I18N section actualizada con NLTv2 y futuros items.
+- **`docs/IMPROVEMENTS_COMPLETED.md`**: I18N subsections reorganizadas.
+
 ## v0.49.2 — 2026-07-12
 
 ### Added

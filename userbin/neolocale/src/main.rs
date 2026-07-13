@@ -64,33 +64,65 @@ fn path_to_ob<'a>(vfs_path: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
 }
 
-// ── NLT parsing ───────────────────────────────────────────────────────
+// ── NLTv2 parsing (only format supported) ─────────────────────────────
+//
+// NLTv2 Header (32 bytes):
+//   [0..4)   Magic: "NLT2"
+//   [4..6)   Version: u16 = 2
+//   [6..8)   HeaderSize: u16 = 32
+//   [8..12)  LanguageID: u32 LE
+//   [12..16) ApplicationID: u32 LE
+//   [16..20) StringCount: u32 LE
+//   [20..24) Flags: u32 LE
+//   [24..28) Checksum: u32 LE
+//   [28..32) Reserved: u32
+//   [32..)   IndexTable: { id: u32, offset: u32 }[N]
+//   [..)     StringData: UTF-8 null-terminated
 
-const NLT_MAGIC: [u8; 4] = [b'N', b'L', b'T', 0];
+const NLT2_MAGIC: [u8; 4] = [b'N', b'L', b'T', b'2'];
+const NLT2_HEADER_SIZE: usize = 32;
+
+fn crc32_ne(data: &[u8]) -> u32 {
+    let mut crc = 0xFFFFFFFFu32;
+    for &b in data {
+        crc ^= b as u32;
+        for _ in 0..8 {
+            if crc & 1 != 0 {
+                crc = (crc >> 1) ^ 0xEDB88320;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    crc ^ 0xFFFFFFFF
+}
 
 #[derive(Clone, Copy)]
-struct Entry {
-    kstart: u16,
+struct Nltv2Entry {
+    id: u32,
+    offset: u32,
     klen: u16,
-    vstart: u16,
     vlen: u16,
 }
 
-struct NltFile {
+struct Nltv2File {
     data: [u8; 65536],
     len: usize,
     valid: bool,
     count: usize,
-    entries: [Entry; 1024],
+    lang_id: u32,
+    app_id: u32,
+    entries: [Nltv2Entry; 2048],
     errors: [u8; 2048],
     err_len: usize,
 }
 
-impl NltFile {
+impl Nltv2File {
     fn new() -> Self {
-        NltFile {
+        Nltv2File {
             data: [0; 65536], len: 0, valid: false, count: 0,
-            entries: [Entry { kstart: 0, klen: 0, vstart: 0, vlen: 0 }; 1024],
+            lang_id: 0, app_id: 0,
+            entries: [Nltv2Entry { id: 0, offset: 0, klen: 0, vlen: 0 }; 2048],
             errors: [0; 2048], err_len: 0,
         }
     }
@@ -112,7 +144,7 @@ impl NltFile {
 
     fn load(path: &str) -> Option<Self> {
         let mut file = File::open(path).ok()?;
-        let mut nlt = NltFile::new();
+        let mut nlt = Nltv2File::new();
         nlt.len = file.read(&mut nlt.data).ok()?;
         nlt.parse();
         Some(nlt)
@@ -120,115 +152,147 @@ impl NltFile {
 
     fn parse(&mut self) {
         let len = self.len;
-        if len < 12 {
-            self.add_err(b"ERROR: file too small (<12 bytes)");
+        if len < NLT2_HEADER_SIZE {
+            self.add_err(b"ERROR: file too small (<32 bytes for NLTv2 header)");
             return;
         }
-        if self.data[..4] != NLT_MAGIC {
-            self.add_err(b"ERROR: invalid magic (expected NLT\\0)");
+        if self.data[..4] != NLT2_MAGIC {
+            self.add_err(b"ERROR: invalid magic (expected NLT2)");
             return;
         }
-        let ver = u32::from_le_bytes([self.data[4], self.data[5], self.data[6], self.data[7]]);
-        if ver != 1 {
-            self.add_err(b"ERROR: unsupported version (expected 1)");
+        let ver = u16::from_le_bytes([self.data[4], self.data[5]]);
+        if ver != 2 {
+            self.add_err(b"ERROR: unsupported version (expected 2)");
             return;
         }
-        let count = u32::from_le_bytes([self.data[8], self.data[9], self.data[10], self.data[11]]) as usize;
-        if count > 1024 {
-            self.add_err(b"ERROR: too many entries (max 1024)");
+        self.lang_id = u32::from_le_bytes([self.data[8], self.data[9], self.data[10], self.data[11]]);
+        self.app_id = u32::from_le_bytes([self.data[12], self.data[13], self.data[14], self.data[15]]);
+        let count = u32::from_le_bytes([self.data[16], self.data[17], self.data[18], self.data[19]]);
+        let flags = u32::from_le_bytes([self.data[20], self.data[21], self.data[22], self.data[23]]);
+        let stored_crc = u32::from_le_bytes([self.data[24], self.data[25], self.data[26], self.data[27]]);
+
+        if count > 2048 {
+            self.add_err(b"ERROR: too many entries (max 2048)");
             return;
-        }
-        let ko_off = 12;
-        let vo_off = 12 + count * 4;
-        let min_sz = vo_off + count * 4;
-        if len < min_sz {
-            self.add_err(b"ERROR: file too small for offset tables");
-            return;
-        }
-        // Collect key/value strings and offsets, deferring error reporting
-        // to avoid borrow conflicts with self.add_err.
-        let mut local_ok = true;
-        #[derive(Clone, Copy)]
-        struct RawEntry { ko: u32, vo: u32, koff: u16, klen: u16, voff: u16, vlen: u16 }
-        let mut raw = [RawEntry { ko: 0, vo: 0, koff: 0, klen: 0, voff: 0, vlen: 0 }; 1024];
-        for i in 0..count {
-            let kp = ko_off + i * 4;
-            let vp = vo_off + i * 4;
-            let ko = u32::from_le_bytes([self.data[kp], self.data[kp+1], self.data[kp+2], self.data[kp+3]]);
-            let vo = u32::from_le_bytes([self.data[vp], self.data[vp+1], self.data[vp+2], self.data[vp+3]]);
-            raw[i].ko = ko;
-            raw[i].vo = vo;
-            match null_str(&self.data[..len], ko) {
-                Some(s) => {
-                    raw[i].koff = (s.as_ptr() as u64 - self.data.as_ptr() as u64) as u16;
-                    raw[i].klen = s.len() as u16;
-                }
-                None => { local_ok = false; }
-            }
-            match null_str(&self.data[..len], vo) {
-                Some(s) => {
-                    raw[i].voff = (s.as_ptr() as u64 - self.data.as_ptr() as u64) as u16;
-                    raw[i].vlen = s.len() as u16;
-                }
-                None => { local_ok = false; }
-            }
-        }
-        if !local_ok {
-            self.add_err(b"ERROR: key or value offset out of range");
-        }
-        // Check duplicates (copy keys to stack first to avoid borrow conflicts)
-        let mut dup_err = [0u8; 256];
-        for i in 0..count {
-            if raw[i].klen == 0 { continue; }
-            for j in i+1..count {
-                if raw[j].klen == 0 { continue; }
-                if raw[i].klen == raw[j].klen {
-                    let ki = &self.data[raw[i].koff as usize..][..raw[i].klen as usize];
-                    let kj = &self.data[raw[j].koff as usize..][..raw[j].klen as usize];
-                    if ki == kj {
-                        let n = ki.len().min(250);
-                        dup_err[..n].copy_from_slice(&ki[..n]);
-                        self.add_err(b"ERROR: duplicate key");
-                        self.add_err(&dup_err[..n]);
-                        local_ok = false;
-                    }
-                }
-            }
-        }
-        // Commit entries
-        self.count = count;
-        for i in 0..count {
-            self.entries[i] = Entry {
-                kstart: raw[i].koff, klen: raw[i].klen,
-                vstart: raw[i].voff, vlen: raw[i].vlen,
-            };
         }
         if count == 0 {
             self.add_err(b"WARNING: empty translation table");
         }
+
+        // Verify CRC32
+        let mut crc_data = [0u8; 65536];
+        let crc_len = len.min(65536);
+        crc_data[..crc_len].copy_from_slice(&self.data[..crc_len]);
+        // Zero out checksum field for CRC calculation
+        crc_data[24..28].copy_from_slice(&[0, 0, 0, 0]);
+        let actual_crc = crc32_ne(&crc_data[..crc_len]);
+        if stored_crc != 0 && stored_crc != actual_crc {
+            self.add_err(b"ERROR: CRC32 mismatch (file may be corrupt)");
+            // Continue parsing for additional errors
+        }
+
+        // Validate size
+        let min_sz = NLT2_HEADER_SIZE + count as usize * 8;
+        if len < min_sz {
+            self.add_err(b"ERROR: file too small for index table");
+            return;
+        }
+
+        // Parse index table and collect strings
+        let mut local_ok = true;
+        #[derive(Clone, Copy)]
+        struct RawEntry { id: u32, offset: u32, klen: u16, vlen: u16 }
+        let mut raw = [RawEntry { id: 0, offset: 0, klen: 0, vlen: 0 }; 2048];
+
+        let index_start = NLT2_HEADER_SIZE;
+        for i in 0..count as usize {
+            let off = index_start + i * 8;
+            let sid = u32::from_le_bytes([self.data[off], self.data[off+1], self.data[off+2], self.data[off+3]]);
+            let str_off = u32::from_le_bytes([self.data[off+4], self.data[off+5], self.data[off+6], self.data[off+7]]);
+            raw[i].id = sid;
+            raw[i].offset = str_off;
+
+            if str_off as usize >= len {
+                self.add_err(b"ERROR: string offset out of range");
+                local_ok = false;
+                continue;
+            }
+            let end = self.data[str_off as usize..].iter().position(|&b| b == 0).unwrap_or(len - str_off as usize);
+            raw[i].klen = 0; // NLTv2 has no key string, just ID
+            raw[i].vlen = end as u16;
+        }
+
+        // Check for duplicate IDs
+        for i in 0..count as usize {
+            if raw[i].id == 0 && raw[i].offset == 0 { continue; }
+            for j in i + 1..count as usize {
+                if raw[j].id == 0 && raw[j].offset == 0 { continue; }
+                if raw[i].id == raw[j].id {
+                    self.add_err(b"ERROR: duplicate string ID");
+                    local_ok = false;
+                }
+            }
+        }
+
+        // Check ID ordering (should be sorted for binary search)
+        let mut prev_id = 0u32;
+        for i in 0..count as usize {
+            if raw[i].id < prev_id {
+                self.add_err(b"WARNING: IDs not sorted (will degrade binary search)");
+                break;
+            }
+            prev_id = raw[i].id;
+        }
+
+        // Check flags for unknown bits
+        const KNOWN_FLAGS: u32 = 0;
+        if flags & !KNOWN_FLAGS != 0 {
+            self.add_err(b"WARNING: unknown flags set");
+        }
+
+        self.count = count as usize;
+        for i in 0..count as usize {
+            self.entries[i] = Nltv2Entry {
+                id: raw[i].id,
+                offset: raw[i].offset,
+                klen: raw[i].klen,
+                vlen: raw[i].vlen,
+            };
+        }
         self.valid = local_ok;
     }
 
-    fn key_at(&self, i: usize) -> &[u8] {
-        &self.data[self.entries[i].kstart as usize..][..self.entries[i].klen as usize]
+    fn str_at(&self, i: usize) -> &[u8] {
+        let off = self.entries[i].offset as usize;
+        let max_len = self.len - off;
+        let end = self.data[off..].iter().position(|&b| b == 0).unwrap_or(max_len);
+        &self.data[off..off + end]
     }
-    fn val_at(&self, i: usize) -> &[u8] {
-        &self.data[self.entries[i].vstart as usize..][..self.entries[i].vlen as usize]
+
+    fn id_at(&self, i: usize) -> u32 {
+        self.entries[i].id
     }
 }
 
-fn null_str<'a>(data: &'a [u8], off: u32) -> Option<&'a str> {
-    let start = off as usize;
-    if start >= data.len() { return None; }
-    let end = data[start..].iter().position(|&b| b == 0)?;
-    core::str::from_utf8(&data[start..start + end]).ok()
+// ── Helpers ────────────────────────────────────────────────────────────
+
+fn lang_id_to_name(id: u32) -> &'static str {
+    match id {
+        1 => "en-US", 2 => "es-ES", 3 => "fr-FR", 4 => "de-DE",
+        5 => "it-IT", 6 => "pt-PT", 7 => "pt-BR", 8 => "ca-ES",
+        9 => "eu-ES", 10 => "gl-ES", 11 => "en-GB", 12 => "ja-JP",
+        13 => "zh-CN", 14 => "ru-RU", 15 => "ar-SA", 16 => "nl-NL",
+        17 => "pl-PL", 18 => "sv-SE", 19 => "da-DK", 20 => "fi-FI",
+        21 => "nb-NO", 22 => "ko-KR", 23 => "tr-TR", 24 => "cs-CZ",
+        25 => "hu-HU", _ => "unknown",
+    }
 }
 
 // ── Commands ──────────────────────────────────────────────────────────
 
 fn cmd_validate(path: &[u8]) {
     let p = core::str::from_utf8(path).unwrap_or("");
-    let nlt = match NltFile::load(p) {
+    let nlt = match Nltv2File::load(p) {
         Some(n) => n,
         None => { writeln_str("ERROR: cannot open file"); return; }
     };
@@ -237,6 +301,7 @@ fn cmd_validate(path: &[u8]) {
     }
     if nlt.valid {
         write_stdout(b"VALID  entries="); write_u64(nlt.count as u64);
+        write_stdout(b" lang="); write_str(lang_id_to_name(nlt.lang_id));
         write_stdout(b" size="); write_u64(nlt.len as u64); writeln(b" bytes");
     } else {
         writeln_str("INVALID");
@@ -245,27 +310,26 @@ fn cmd_validate(path: &[u8]) {
 
 fn cmd_stats(path: &[u8]) {
     let p = core::str::from_utf8(path).unwrap_or("");
-    let nlt = match NltFile::load(p) {
+    let nlt = match Nltv2File::load(p) {
         Some(n) => n,
         None => { writeln_str("ERROR: cannot open file"); return; }
     };
     if nlt.err_len > 0 { nlt.print_errors(); }
     if !nlt.valid { return; }
 
-    let mut total_k = 0usize;
     let mut total_v = 0usize;
     for i in 0..nlt.count {
-        total_k += nlt.entries[i].klen as usize;
         total_v += nlt.entries[i].vlen as usize;
     }
-    writeln_str("=== NLT Statistics ===");
+    writeln_str("=== NLTv2 Statistics ===");
     write_stdout(b"  File:        "); write_stdout(path); writeln(b"");
+    write_stdout(b"  Format:      NLTv2"); writeln(b"");
     write_stdout(b"  Size:        "); write_u64(nlt.len as u64); writeln(b" bytes");
+    write_stdout(b"  Language:    "); write_str(lang_id_to_name(nlt.lang_id)); writeln(b"");
+    write_stdout(b"  App ID:      "); write_u64(nlt.app_id as u64); writeln(b"");
     write_stdout(b"  Entries:     "); write_u64(nlt.count as u64); writeln(b"");
-    write_stdout(b"  Key bytes:   "); write_u64(total_k as u64); writeln(b"");
     write_stdout(b"  Value bytes: "); write_u64(total_v as u64); writeln(b"");
     if nlt.count > 0 {
-        write_stdout(b"  Avg key:     "); write_u64((total_k / nlt.count) as u64); writeln(b" bytes");
         write_stdout(b"  Avg value:   "); write_u64((total_v / nlt.count) as u64); writeln(b" bytes");
     }
 }
@@ -278,42 +342,44 @@ fn cmd_diff(args: &[u8]) {
     }
     let p1 = core::str::from_utf8(parts[0]).unwrap_or("");
     let p2 = core::str::from_utf8(parts[1]).unwrap_or("");
-    let a = match NltFile::load(p1) { Some(n) => n, None => { writeln_str("ERROR: cannot open first file"); return; } };
-    let b = match NltFile::load(p2) { Some(n) => n, None => { writeln_str("ERROR: cannot open second file"); return; } };
+    let a = match Nltv2File::load(p1) { Some(n) => n, None => { writeln_str("ERROR: cannot open first file"); return; } };
+    let b = match Nltv2File::load(p2) { Some(n) => n, None => { writeln_str("ERROR: cannot open second file"); return; } };
 
     let mut changed = 0u64;
     let mut only_a = 0u64;
     let mut only_b = 0u64;
 
     for i in 0..a.count {
-        let ka = a.key_at(i);
-        let va = a.val_at(i);
+        let id_a = a.id_at(i);
+        let va = a.str_at(i);
         let mut found = false;
         for j in 0..b.count {
-            if ka == b.key_at(j) {
+            if id_a == b.id_at(j) {
                 found = true;
-                if va != b.val_at(j) {
-                    write_stdout(b"  ~ "); write_stdout(ka); writeln(b"");
+                if va != b.str_at(j) {
+                    write_stdout(b"  ~ ID "); write_u64(id_a as u64); writeln(b"");
                     write_stdout(b"    - "); write_stdout(va); writeln(b"");
-                    write_stdout(b"    + "); write_stdout(b.val_at(j)); writeln(b"");
+                    write_stdout(b"    + "); write_stdout(b.str_at(j)); writeln(b"");
                     changed += 1;
                 }
                 break;
             }
         }
         if !found {
-            write_stdout(b"  - "); write_stdout(ka); writeln(b"  (only in first)");
+            write_stdout(b"  - ID "); write_u64(id_a as u64);
+            write_stdout(b"  (only in first)"); writeln(b"");
             only_a += 1;
         }
     }
     for j in 0..b.count {
-        let kb = b.key_at(j);
+        let id_b = b.id_at(j);
         let mut found = false;
         for i in 0..a.count {
-            if kb == a.key_at(i) { found = true; break; }
+            if id_b == a.id_at(i) { found = true; break; }
         }
         if !found {
-            write_stdout(b"  + "); write_stdout(kb); writeln(b"  (only in second)");
+            write_stdout(b"  + ID "); write_u64(id_b as u64);
+            write_stdout(b"  (only in second)"); writeln(b"");
             only_b += 1;
         }
     }
@@ -330,22 +396,26 @@ fn cmd_diff(args: &[u8]) {
 fn cmd_create(args: &[u8]) {
     let parts = split_two_args(args);
     let app = parts[0];
-    let _locale = if parts[1].is_empty() { b"en-US" } else { parts[1] };
 
     if app.is_empty() {
         writeln_str("Usage: neolocale create <app> [locale]");
-        writeln_str("  Creates an empty NLT scaffold (stdout). Redirect to file:");
-        writeln_str("    neolocale create myapp > myapp.nlt");
+        writeln_str("  Creates an empty NLTv2 scaffold (stdout).");
         return;
     }
 
-    let mut hdr = [0u8; 12];
-    hdr[..4].copy_from_slice(b"NLT\0");
-    hdr[4..8].copy_from_slice(&1u32.to_le_bytes());
-    hdr[8..12].copy_from_slice(&0u32.to_le_bytes());
+    // Write a minimal NLTv2 header with 0 entries
+    let mut hdr = [0u8; 32];
+    hdr[..4].copy_from_slice(b"NLT2");
+    hdr[4..6].copy_from_slice(&2u16.to_le_bytes());     // version = 2
+    hdr[6..8].copy_from_slice(&32u16.to_le_bytes());    // header_size = 32
+    hdr[8..12].copy_from_slice(&1u32.to_le_bytes());    // lang = en-US
+    // app_id at 12..16 is 0
+    // count at 16..20 is 0
+    // flags at 20..24 is 0
+    // checksum at 24..28 is 0
     write_stdout(&hdr);
 
-    write_stderr(b"Created empty NLT scaffold. Use gen_nlt.py to add entries.\r\n");
+    write_stderr(b"Created empty NLTv2 scaffold. Use nltc to add entries.\r\n");
 }
 
 fn cmd_check(args: &[u8]) {
@@ -354,7 +424,6 @@ fn cmd_check(args: &[u8]) {
     writeln_str("Checking locale directory: ");
     writeln_str(dir_str);
 
-    // List locale subdirectories via Ob
     let mut ob_buf = [0u8; 512];
     let ob_path = path_to_ob(dir_str, &mut ob_buf);
     let dir_fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
@@ -391,7 +460,6 @@ fn cmd_check(args: &[u8]) {
     write_stdout(b"Found "); write_u64(loc_count as u64); writeln(b" locale(s)");
     for li in 0..loc_count {
         let loc = unsafe { core::str::from_utf8_unchecked(&locales[li][..loc_lens[li]]) };
-        // List .nlt files in this locale dir
         let sub_path_buf = build_sub_path(dir_str, loc);
         let mut ob_buf2 = [0u8; 512];
         let ob_sub = path_to_ob(unsafe { core::str::from_utf8_unchecked(&sub_path_buf) }, &mut ob_buf2);
@@ -418,7 +486,6 @@ fn cmd_check(args: &[u8]) {
     if loc_count > 1 {
         writeln_str("");
         writeln_str("Checking for missing translations...");
-        // Compare first locale (en-US reference) against others
         let ref_loc = unsafe { core::str::from_utf8_unchecked(&locales[0][..loc_lens[0]]) };
         let ref_path = build_sub_path(dir_str, ref_loc);
 
@@ -436,7 +503,6 @@ fn cmd_check(args: &[u8]) {
                 for j in 0..m {
                     let n = e[j].name_str();
                     if n.len() < 5 || !n.ends_with(".nlt") { continue; }
-                    if n == "." || n == ".." { continue; }
                     let app_part = &n[..n.len() - 4];
                     let b = app_part.as_bytes();
                     let blen = b.len().min(31);
@@ -486,7 +552,7 @@ fn cmd_check(args: &[u8]) {
     writeln_str("CHECK COMPLETE");
 }
 
-fn build_sub_path<'a>(dir: &str, sub: &str) -> [u8; 260] {
+fn build_sub_path(dir: &str, sub: &str) -> [u8; 260] {
     let mut buf = [0u8; 260];
     let db = dir.as_bytes();
     let sb = sub.as_bytes();
@@ -500,14 +566,14 @@ fn build_sub_path<'a>(dir: &str, sub: &str) -> [u8; 260] {
 
 fn print_usage() {
     writeln_str("");
-    writeln_str("NeoLocale v0.1 — NLT translation file tool");
+    writeln_str("NeoLocale v0.2 — NLTv2 translation file tool");
     writeln_str("");
     writeln_str("Usage:");
-    writeln_str("  neolocale validate <file.nlt>     Validate format and structure");
+    writeln_str("  neolocale validate <file.nlt>     Validate NLTv2 format");
     writeln_str("  neolocale stats    <file.nlt>     Show entry statistics");
-    writeln_str("  neolocale diff     <f1> <f2>      Key-by-key differences");
+    writeln_str("  neolocale diff     <f1> <f2>      ID-by-ID differences");
     writeln_str("  neolocale check    [dir]          Cross-locale missing check");
-    writeln_str("  neolocale create   <app> [locale] Empty NLT scaffold (stdout)");
+    writeln_str("  neolocale create   <app>          Empty NLTv2 scaffold");
     writeln_str("");
 }
 

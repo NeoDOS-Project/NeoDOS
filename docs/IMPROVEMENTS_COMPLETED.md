@@ -644,32 +644,56 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - State machine para pipes, redirects, quoting. `"..."` (expande %VAR%), `'...'` (literal), `^` escape.
   - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`, `tokenizer_semicolon`, `tokenizer_unmatched_double_quote`, `tokenizer_empty`, `tokenizer_escape_in_double_quote`, `tokenizer_multiple_spaces`
 
-### I18N-P1. Runtime i18n en libneodos + formato NLT [COMPLETED]
+### I18N-P1. Runtime i18n NLTv2 + IDs numéricos [COMPLETED]
 
-- [x] **I18N-P1. Runtime i18n en libneodos + formato NLT** | Files: `libneodos/src/i18n.rs` (new), `libneodos/src/lib.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/init.rs`
-  - Nuevo `libneodos/src/i18n.rs`: `NltTable`, `i18n_get()`, `i18n_load()`, `i18n_init()`, `tr!()` macro.
-  - Formato NLT: magic `NLT\0`, version=1, offsets u32, búsqueda O(n), zero-copy.
-  - `i18n_init()`: lee `\Registry\Machine\System\CurrentControlSet\Control\Locale\Language` del Registry.
-  - `i18n_load("app")`: busca `C:\System\Locale\{locale}\{app}.nlt` con cadena de fallback (es-ES → es → en-US).
-  - `tr!("clave")`: si no encuentra traducción, devuelve la clave literal (nunca panic).
-  - Kernel: añade `Language = "en-US"` por defecto en Registry vía `ensure_language_default()`.
-  - `File::open` fix: antepone `\Global\FileSystem\` al path para compatibilidad con Ob namespace.
+- [x] **I18N-P1. Runtime i18n NLTv2 (nunca NLTv1)** | Files: `libneodos/src/i18n.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/init.rs`
+  - Runtime reescrito: solo NLTv2 (formato binario con IDs numéricos u32).
+  - Formato: magic `NLT2`, version=2, header 32 bytes, LanguageID, ApplicationID, Flags, CRC32.
+  - Búsqueda binaria O(log n) sobre índice ordenado por ID.
+  - Nuevas APIs: `i18n_get_id()`, `i18n_try_get_id()`, `i18n_unload()`, `i18n_reload_all()`, `i18n_active_locale()`.
+  - `tr!()`: ahora es no-op (devuelve el literal). `tr_id!()`: nueva macro para IDs numéricos.
+  - Eliminadas: `i18n_get()`, `try_get()` (string-key). Sin compatibilidad con NLTv1.
 
-### I18N-P2. Migrar NeoShell + NeoInit + apps core [PARTIAL]
+### I18N-P2. Migrar apps core a tr_id!() [PENDING]
 
-- [x] **I18N-P2 (parcial). Migrar apps core a tr!()** | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/coretype/`
-  - Migrados: **corehelp** (14 strings), **coretype** (3), **coredir** (8), **corecopy** (7), **neoinit** (1), **neoshell** (14).
-  - Total: ~47 strings reemplazados por `tr!("clave")`.
-  - Restan: kill, ps, label, fsck, ndreg, poweroff, reboot, etc. (~25 strings).
+- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+  - PENDIENTE: todas las apps existentes. `tr!()` ahora es no-op (devuelve literal).
+  - Las apps deben migrar a `tr_id!(IDS_CONSTANT)` con constantes numéricas.
 
-### I18N-P3. neolocale tool + archivos .nlt + segundo idioma [COMPLETED]
+### I18N-P3a. Compilador nltc [COMPLETED]
 
-- [x] **I18N-P3. neolocale tool + archivos .nlt + segundo idioma** | Files: `userbin/neolocale/` (new), `scripts/gen_nlt.py`, `data/locale/en-US/*.nlt`, `data/locale/es-ES/*.nlt`
-  - Nueva herramienta `neolocale.nxe`: validate, check, diff, create, stats.
-  - `scripts/gen_nlt.py` — genera NLT binaries desde tablas de traducción.
-  - Creados 14 archivos `.nlt`: 7 en-US + 7 es-ES (corehelp, neoshell, neoinit, coredir, corecopy, coretype, neolocale).
-  - Integrados en la imagen de disco via `tools/neodev/src/image.rs` (`collect_files()` escanea `data/locale/`).
-  - `neolocale` registrado en `tools_nxe` para inclusión en `/System/Tools/`.
+- [x] **I18N-P3a. Compilador nltc** | Files: `tools/nltc/` (new)
+  - `nltc`: compilador TOML → NLTv2 binario.
+  - Subcomandos: compile, --check, --generate-ids, --generate-rust, --scaffold, --list-langs, --lang-id, --app-id, --info, --generate-all.
+  - Validación: sintaxis TOML, [meta] requerido, IDs duplicados, CRC32.
+  - Tablas de LanguageID (25 estándar) y ApplicationID (40 estándar).
+  - `--generate-rust`: genera `pub const IDS_XXX: u32 = N;` para apps Rust.
+
+### I18N-P3b. Fuentes TOML + NLTv2 binarios [COMPLETED]
+
+- [x] **I18N-P3b. Fuentes TOML y binarios NLTv2** | Files: `data/locale/*/*.toml`, `data/locale/*/*.nlt`, `scripts/gen_nlt_toml.py`
+  - 14 fuentes TOML (7 en-US + 7 es-ES) con IDs numéricos.
+  - `scripts/gen_nlt_toml.py`: genera TOML desde tablas de traducción.
+  - Compilados a NLTv2 via `nltc --generate-all`.
+  - Apps: corehelp, coredir, corecopy, coretype, neoshell, neoinit, neolocale.
+
+### I18N-P3c. neolocale tool (NLTv2) [COMPLETED]
+
+- [x] **I18N-P3c. neolocale tool (NLTv2)** | Files: `userbin/neolocale/src/main.rs`
+  - `neolocale` actualizado: solo soporta NLTv2.
+  - validate: verifica magic, version, CRC32, IDs duplicados, ordenación.
+  - stats: tamaño, entradas, idioma, app ID.
+  - diff: comparación ID por ID entre dos archivos NLT.
+  - create: scaffold NLTv2 vacío.
+  - check: búsqueda de traducciones faltantes entre locales.
+
+### I18N-P3d. Integración NeoDev + disco [COMPLETED]
+
+- [x] **I18N-P3d. Integración NeoDev** | Files: `tools/neodev/src/build.rs`, `tools/neodev/src/main.rs`
+  - `compile_nlt_files()` en build.rs: compila todos los .toml → .nlt antes del build completo.
+  - Hook en `cmd_image()` y `build_all()` para compilar NLTs antes de generar imagen.
+  - `image.rs` ya escanea `data/locale/` para incluir .nlt en `/System/Locale/`.
+  - `docs/nlt.md`: documentación completa del sistema NLT.
 
 ---
 

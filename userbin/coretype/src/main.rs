@@ -11,7 +11,12 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 
 use libneodos::syscall;
 use libneodos::i18n;
-use libneodos::tr;
+use libneodos::tr_id;
+
+// ── String IDs (from TOML) ──
+const IDS_FILE_NOT_FOUND: u32 = 1001;
+const IDS_READ_ERROR: u32 = 1002;
+const IDS_USAGE: u32 = 1003;
 
 const APP_NAME: &str = "coretype";
 
@@ -93,7 +98,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 
 fn print_usage() {
     write_str(b"\r\n");
-    write_str(tr!("error.usage").as_bytes());
+    write_str(tr_id!(IDS_USAGE).as_bytes());
     write_str(b"\r\n");
     write_str(b"  Display the contents of a text file.\r\n");
     write_str(b"  TYPE C:\\Programs\\test.txt\r\n");
@@ -135,7 +140,7 @@ pub extern "C" fn _start() -> ! {
         Ok(f) => f,
         Err(_) => {
             write_err(b"\r\n");
-            write_err(tr!("error.file_not_found").as_bytes());
+            write_err(tr_id!(IDS_FILE_NOT_FOUND).as_bytes());
             write_err(b"\r\n");
             syscall::sys_exit(1);
         }
@@ -150,7 +155,7 @@ pub extern "C" fn _start() -> ! {
             }
             Err(e) => {
                 write_err(b"\r\n");
-                write_err(tr!("error.read_error").as_bytes());
+                write_err(tr_id!(IDS_READ_ERROR).as_bytes());
                 write_err(b": ");
                 let err_str: &[u8] = match e {
                     -1 => b"EINVAL" as &[u8],

@@ -11,7 +11,10 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 
 use libneodos::i18n;
 use libneodos::syscall;
-use libneodos::tr;
+use libneodos::tr_id;
+
+// ── String IDs (from TOML) ──
+const IDS_SHELL_SPAWN: u32 = 1003;
 
 const APP_NAME: &str = "neoinit";
 const NEOINIT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -178,7 +181,7 @@ pub extern "C" fn _start() -> ! {
     write_str(b"[neoinit] entering spawn loop...\r\n");
     loop {
         write_str(b"[neoinit] ");
-        write_str(tr!("status.shell_spawn").as_bytes());
+        write_str(tr_id!(IDS_SHELL_SPAWN).as_bytes());
         write_str(b"\r\n");
         if enable_vt != 0 {
             set_vt(0);

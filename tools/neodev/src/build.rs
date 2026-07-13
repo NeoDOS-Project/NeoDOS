@@ -258,11 +258,72 @@ pub fn build_nem_drivers(disc: &Discovery) -> Result<Vec<(String, bool)>> {
     Ok(results)
 }
 
+pub fn compile_nlt_files(cfg: &Config) -> Result<()> {
+    let nltc_path = cfg.project_root.join("tools").join("nltc");
+    let nltc_bin = nltc_path.join("target").join("debug").join("nltc");
+
+    // Build nltc first if binary doesn't exist
+    if !nltc_bin.exists() {
+        println!("  {} Building nltc (NLT compiler)...", "[*]".bold().cyan());
+        let status = Command::new("cargo")
+            .args(["build"])
+            .current_dir(&nltc_path)
+            .status()
+            .context("Failed to build nltc")?;
+        if !status.success() {
+            anyhow::bail!("nltc build failed");
+        }
+    }
+
+    // Compile all TOML files in data/locale/
+    let locale_dir = cfg.project_root.join("data").join("locale");
+    if !locale_dir.exists() {
+        println!("  {} No locale directory found at {}", "[!]".bold().yellow(), locale_dir.display());
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(&locale_dir)? {
+        let entry = entry?;
+        let lang_dir = entry.path();
+        if !lang_dir.is_dir() { continue; }
+
+        let mut compiled = 0;
+        for file_entry in std::fs::read_dir(&lang_dir)? {
+            let file_entry = file_entry?;
+            let path = file_entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("toml") { continue; }
+
+            let input = &path;
+            let mut output = path.to_path_buf();
+            output.set_extension("nlt");
+
+            let status = Command::new(&nltc_bin)
+                .args([input.to_str().unwrap(), output.to_str().unwrap()])
+                .status()
+                .with_context(|| format!("Failed to compile NLT: {}", input.display()))?;
+
+            if status.success() {
+                compiled += 1;
+            } else {
+                anyhow::bail!("NLT compilation failed for: {}", input.display());
+            }
+        }
+        if compiled > 0 {
+            println!("  {} NLT files compiled for {}", "[✓]".bold().green(), lang_dir.file_name().unwrap().to_string_lossy());
+        }
+    }
+    Ok(())
+}
+
 pub fn build_all(cfg: &Config, disc: &Discovery) -> Result<BuildReport> {
     let overall_start = Instant::now();
 
     // Ensure required Rust targets are installed
     ensure_targets(cfg)?;
+
+    // Compile NLT files
+    println!("{} Compiling NLT translation files...", "[*]".bold().cyan());
+    compile_nlt_files(cfg)?;
 
     let kernel = build_kernel(cfg, disc).ok();
     let bootloader = build_bootloader(cfg, disc).ok();

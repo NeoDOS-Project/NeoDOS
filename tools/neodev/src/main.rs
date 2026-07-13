@@ -288,6 +288,10 @@ fn cmd_image(
     println!();
 
     if !no_build {
+        // Compile NLT files before image generation
+        println!("  Compiling NLT translation files...");
+        let _ = build::compile_nlt_files(cfg);
+
         // Quick build of kernel + bootloader if needed
         if !cfg.project_root.join("kernel.elf").exists()
             || !cfg.project_root.join("bootloader.efi").exists()

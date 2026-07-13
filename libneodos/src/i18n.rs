@@ -1,10 +1,29 @@
 use core::str;
 use crate::syscall;
 
+// ── NLTv2 Binary Format ───────────────────────────────────────────────
+//
+//   Offset  Size  Field
+//   ──────  ────  ─────
+//   0       4     Magic: "NLT2"
+//   4       2     Version: u16 = 2
+//   6       2     HeaderSize: u16
+//   8       4     LanguageID: u32 LE
+//   12      4     ApplicationID: u32 LE
+//   16      4     StringCount: u32 LE  (= N)
+//   20      4     Flags: u32 LE
+//   24      4     Checksum: u32 LE
+//   28      4     Reserved: u32
+//   32      8*N   IndexTable: { id: u32 LE, offset: u32 LE }[N]
+//   32+8*N  ~     StringData: UTF-8 null-terminated strings
+//
+//   The index table is sorted by ID for binary search.
+//   Only NLTv2 is supported. NLTv1 (string-key) is NOT supported.
+
 // ── Constants ──────────────────────────────────────────────────────────
 
 const MAX_TABLES: usize = 8;
-const MAX_NLT_SIZE: usize = 8192;
+const MAX_NLT_SIZE: usize = 16384;
 const MAX_APP_NAME: usize = 32;
 const MAX_LANG: usize = 16;
 
@@ -13,10 +32,10 @@ const REG_LOCALE_KEY: &str =
 const REG_LANG_VALUE: &str = "Language";
 const DEFAULT_LANG: &str = "en-US";
 
+const NLT2_MAGIC: [u8; 4] = [b'N', b'L', b'T', b'2'];
+const NLT2_HEADER_SIZE: usize = 32;
+
 // ── Static state ───────────────────────────────────────────────────────
-// Loaded NLT tables are stored as parallel arrays.  Immutable after load.
-// SAFETY: accessed during i18n_init/load (single-threaded at app start)
-// and during i18n_get/try_get (potentially multi-threaded, but only reads).
 
 static mut NLT_NAMES: [[u8; MAX_APP_NAME]; MAX_TABLES] = [[0; MAX_APP_NAME]; MAX_TABLES];
 static mut NLT_NAME_LENS: [usize; MAX_TABLES] = [0; MAX_TABLES];
@@ -50,7 +69,7 @@ fn set_lang(s: &str) {
 }
 
 /// Return a null-terminated string at offset `off` within `data`.
-fn nlt_str_at<'a>(data: &'a [u8], off: u32) -> Option<&'a str> {
+fn nlt_str_at(data: &[u8], off: u32) -> Option<&str> {
     let start = off as usize;
     if start >= data.len() {
         return None;
@@ -59,44 +78,55 @@ fn nlt_str_at<'a>(data: &'a [u8], off: u32) -> Option<&'a str> {
     str::from_utf8(&data[start..start + end]).ok()
 }
 
-/// NLT format:
-///   [0..4)   magic  "NLT\0"
-///   [4..8)   version u32 LE  (must be 1)
-///   [8..12)  count   u32 LE  (= N)
-///   [12..12+4N)  key_off[0..N)  u32 LE each
-///   [12+4N..12+8N)  val_off[0..N)  u32 LE each
-///   [12+8N..)     key strings, val strings (null-terminated)
-///
-/// Returns `Some(&str)` pointing into `data` (zero-copy), or `None`.
-fn nlt_lookup<'a>(data: &'a [u8], key: &str) -> Option<&'a str> {
-    if data.len() < 12 {
+fn validate_nltv2(data: &[u8]) -> Option<u32> {
+    if data.len() < NLT2_HEADER_SIZE {
         return None;
     }
-    if &data[..4] != b"NLT\0" {
+    if &data[..4] != NLT2_MAGIC {
         return None;
     }
-    let count = u32::from_le_bytes([data[8], data[9], data[10], data[11]]) as usize;
-    let keys_off = 12usize;
-    let vals_off = 12usize + count * 4;
+    let ver = u16::from_le_bytes([data[4], data[5]]);
+    if ver != 2 {
+        return None;
+    }
+    let count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+    let min_size = NLT2_HEADER_SIZE + count as usize * 8;
+    if data.len() < min_size {
+        return None;
+    }
+    Some(count)
+}
 
-    for i in 0..count {
-        let kp = keys_off + i * 4;
-        let vp = vals_off + i * 4;
-        if kp + 4 > data.len() || vp + 4 > data.len() {
-            break;
-        }
-        let ko = u32::from_le_bytes([data[kp], data[kp + 1], data[kp + 2], data[kp + 3]]);
-        let vo = u32::from_le_bytes([data[vp], data[vp + 1], data[vp + 2], data[vp + 3]]);
-        if let Some(k) = nlt_str_at(data, ko) {
-            if k == key {
-                return nlt_str_at(data, vo);
-            }
+/// Binary search for string ID in NLTv2 data.
+/// Returns the string data slice or None.
+fn nlt_lookup_id(data: &[u8], id: u32) -> Option<&str> {
+    let count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
+    if count == 0 {
+        return None;
+    }
+
+    let entry_size = 8usize;
+    let index_start = NLT2_HEADER_SIZE;
+
+    let mut lo = 0i32;
+    let mut hi = count as i32 - 1;
+
+    while lo <= hi {
+        let mid = lo + (hi - lo) / 2;
+        let off = index_start + mid as usize * entry_size;
+        let mid_id = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+        if mid_id == id {
+            let str_off = u32::from_le_bytes([data[off + 4], data[off + 5], data[off + 6], data[off + 7]]);
+            return nlt_str_at(data, str_off);
+        } else if mid_id < id {
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
         }
     }
     None
 }
 
-/// Locate a table by app name.  Returns its index or `None`.
 fn find_table_idx(app: &str) -> Option<usize> {
     unsafe {
         for i in 0..NLT_COUNT {
@@ -112,8 +142,6 @@ fn find_table_idx(app: &str) -> Option<usize> {
     None
 }
 
-/// Build `C:\System\Locale\{locale}\{app}.nlt` into a fixed buffer.
-/// Returns (buffer, length) on success.
 fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
     let prefix = b"C:\\System\\Locale\\";
     let sep = b"\\";
@@ -137,14 +165,11 @@ fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
     Ok((buf, pos))
 }
 
-/// Try to load one NLT file for `app` in `locale`.  Validates magic + version.
-/// Uses the Ob API directly (sys_ob_open + sys_ob_query_info).
 fn try_load_table(app: &str, locale: &str) -> Result<(), ()> {
     let (path_buf, path_len) = build_nlt_path(app, locale)?;
     let path_slice = &path_buf[..path_len];
     let path_str = str::from_utf8(path_slice).map_err(|_| ())?;
 
-    // Build Ob namespace path: \Global\FileSystem\C:\...
     const FS_PREFIX: &str = "\\Global\\FileSystem\\";
     let mut ob_buf = [0u8; 512];
     let ob_bytes = FS_PREFIX.as_bytes();
@@ -163,16 +188,10 @@ fn try_load_table(app: &str, locale: &str) -> Result<(), ()> {
 
     let _ = syscall::sys_close(fd);
 
-    if n < 12 {
+    if validate_nltv2(&buf[..n]).is_none() {
         return Err(());
     }
-    if &buf[..4] != b"NLT\0" {
-        return Err(());
-    }
-    let ver = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
-    if ver != 1 {
-        return Err(());
-    }
+
     unsafe {
         let idx = NLT_COUNT;
         if idx >= MAX_TABLES {
@@ -191,11 +210,7 @@ fn try_load_table(app: &str, locale: &str) -> Result<(), ()> {
 // ── Public API ─────────────────────────────────────────────────────────
 
 /// Initialise the i18n subsystem.
-///
-/// Reads `Language` from
-/// `\Registry\Machine\System\CurrentControlSet\Control\Locale`.
-/// Falls back to `"en-US"` if the value is absent or unreadable.
-/// Safe to call multiple times — subsequent calls are no-ops.
+/// Reads `Language` from Registry, falls back to `"en-US"`.
 pub fn i18n_init() {
     unsafe {
         if INITIALIZED {
@@ -239,15 +254,14 @@ pub fn i18n_language() -> &'static str {
     lang_str()
 }
 
-/// Load the NLT translation file for `app` under the current language.
+/// Load the NLTv2 translation file for `app` under the current language.
 ///
-/// Fallback chain (tries files in order):
+/// Fallback chain:
 ///   1. `C:\System\Locale\{lang}\{app}.nlt`
 ///   2. `C:\System\Locale\{lang-only}\{app}.nlt`   (e.g. `es`)
 ///   3. `C:\System\Locale\en-US\{app}.nlt`
 ///
-/// If no file is found, `tr!()` will return keys untranslated (never panics).
-/// Idempotent: subsequent calls for the same app are no-ops.
+/// Only NLTv2 format is supported.
 pub fn i18n_load(app: &str) -> Result<(), ()> {
     if find_table_idx(app).is_some() {
         return Ok(());
@@ -271,15 +285,14 @@ pub fn i18n_load(app: &str) -> Result<(), ()> {
     Err(())
 }
 
-/// Look up `key` in all loaded NLT tables.
-///
-/// Returns `Some(translation)` or `None` (no match in any table).
-pub fn try_get(key: &str) -> Option<&'static str> {
+/// Look up `id` in all loaded NLTv2 tables.
+/// Returns the translated string or `None`.
+pub fn i18n_try_get_id(id: u32) -> Option<&'static str> {
     unsafe {
         for i in 0..NLT_COUNT {
             let ptr = core::ptr::addr_of!(NLT_DATA[i]) as *const u8;
             let data = core::slice::from_raw_parts(ptr, NLT_DATA_LENS[i]);
-            if let Some(val) = nlt_lookup(data, key) {
+            if let Some(val) = nlt_lookup_id(data, id) {
                 return Some(val);
             }
         }
@@ -287,13 +300,70 @@ pub fn try_get(key: &str) -> Option<&'static str> {
     None
 }
 
-/// Look up `key` in all loaded NLT tables.
-///
-/// Returns the translation if found, otherwise returns `key` unchanged.
+/// Look up `id` in all loaded NLTv2 tables.
+/// Returns the translation if found, otherwise returns `"?"`.
 /// **Never panics.**
-pub fn i18n_get<'a>(key: &'a str) -> &'a str {
-    match try_get(key) {
-        Some(t) => t,
-        None => key,
+pub fn i18n_get_id(id: u32) -> &'static str {
+    match i18n_try_get_id(id) {
+        Some(s) => s,
+        None => "?",
     }
+}
+
+/// Unload the NLT table for `app`.
+pub fn i18n_unload(app: &str) {
+    unsafe {
+        let idx = match find_table_idx(app) {
+            Some(i) => i,
+            None => return,
+        };
+        // Shift remaining tables down
+        for i in idx..NLT_COUNT - 1 {
+            NLT_NAMES[i] = NLT_NAMES[i + 1];
+            NLT_NAME_LENS[i] = NLT_NAME_LENS[i + 1];
+            NLT_DATA[i] = NLT_DATA[i + 1];
+            NLT_DATA_LENS[i] = NLT_DATA_LENS[i + 1];
+        }
+        if NLT_COUNT > 0 {
+            NLT_COUNT -= 1;
+        }
+    }
+}
+
+/// Reload all loaded NLT tables from disk (for hot language switching).
+pub fn i18n_reload_all() {
+    unsafe {
+        // Snapshot loaded app names
+        let mut apps: [([u8; MAX_APP_NAME], usize); MAX_TABLES] =
+            [([0; MAX_APP_NAME], 0); MAX_TABLES];
+        let count = NLT_COUNT;
+        for i in 0..count {
+            apps[i] = (NLT_NAMES[i], NLT_NAME_LENS[i]);
+        }
+        NLT_COUNT = 0;
+
+        for i in 0..count {
+            let ptr = core::ptr::addr_of!(apps[i].0) as *const u8;
+            let name_slice = core::slice::from_raw_parts(ptr, apps[i].1);
+            if let Ok(app_name) = str::from_utf8(name_slice) {
+                // Re-read language from registry
+                let _ = i18n_load(app_name);
+            }
+        }
+    }
+}
+
+/// Return the active locale string (e.g. `"es-ES"`).
+pub fn i18n_active_locale() -> &'static str {
+    lang_str()
+}
+
+/// Return the number of currently loaded NLT tables (for diagnostics).
+pub fn i18n_loaded_count() -> usize {
+    unsafe { NLT_COUNT }
+}
+
+/// Check if a given app has its NLT table loaded.
+pub fn i18n_is_loaded(app: &str) -> bool {
+    find_table_idx(app).is_some()
 }

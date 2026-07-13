@@ -12,7 +12,23 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
 use libneodos::i18n;
-use libneodos::tr;
+use libneodos::tr_id;
+
+// ── String IDs (from TOML) ──
+const IDS_HEADER: u32 = 1001;
+const IDS_COMMANDS_SUFFIX: u32 = 1002;
+const IDS_TYPE_FOR_DETAILS: u32 = 1003;
+const IDS_EXAMPLE: u32 = 1004;
+const IDS_NO_PROGRAMS_DIR: u32 = 1005;
+const IDS_CREATE_PROGRAMS_DIR: u32 = 1006;
+const IDS_ERROR_READING_DIR: u32 = 1007;
+const IDS_NO_DESCRIPTION: u32 = 1008;
+const IDS_NO_HELP: u32 = 1009;
+const IDS_CMD_NOT_FOUND: u32 = 1010;
+const IDS_HELP_USAGE: u32 = 1011;
+const IDS_USAGE_DESC1: u32 = 1012;
+const IDS_USAGE_DESC2: u32 = 1013;
+const IDS_USAGE_DESC3: u32 = 1014;
 
 const APP_NAME: &str = "corehelp";
 const PROGRAMS_DIR: &str = "C:\\Programs";
@@ -93,7 +109,7 @@ fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
 
 fn cmd_list_all() {
     write_str(b"\r\n");
-    writeln(tr!("help.header").as_bytes());
+    writeln(tr_id!(IDS_HEADER).as_bytes());
     write_str(b"------------------\r\n\r\n");
 
     let mut ob_buf = [0u8; 512];
@@ -124,7 +140,7 @@ fn cmd_list_all() {
                         name_count += 1;
                     }
                 }
-                Err(_) => { writeln(tr!("error.reading_dir").as_bytes()); }
+                Err(_) => { writeln(tr_id!(IDS_ERROR_READING_DIR).as_bytes()); }
             }
             let _ = syscall::sys_close(fd);
 
@@ -206,7 +222,7 @@ fn cmd_list_all() {
                 if desc_len > 0 {
                     write_str(&desc[..desc_len]);
                 } else {
-                    write_str(tr!("tooltip.no_description").as_bytes());
+                    write_str(tr_id!(IDS_NO_DESCRIPTION).as_bytes());
                 }
                 write_str(b"\r\n");
                 count += 1;
@@ -214,14 +230,14 @@ fn cmd_list_all() {
 
             write_str(b"\r\n");
             write_u64(count);
-            writeln(tr!("help.commands_suffix").as_bytes());
-            writeln(tr!("help.type_for_details").as_bytes());
-            writeln(tr!("help.example").as_bytes());
+            writeln(tr_id!(IDS_COMMANDS_SUFFIX).as_bytes());
+            writeln(tr_id!(IDS_TYPE_FOR_DETAILS).as_bytes());
+            writeln(tr_id!(IDS_EXAMPLE).as_bytes());
             write_str(b"\r\n");
         }
         Err(_) => {
-            writeln(tr!("error.no_programs_dir").as_bytes());
-            writeln(tr!("error.create_programs_dir").as_bytes());
+            writeln(tr_id!(IDS_NO_PROGRAMS_DIR).as_bytes());
+            writeln(tr_id!(IDS_CREATE_PROGRAMS_DIR).as_bytes());
             write_str(b"\r\n");
         }
     }
@@ -343,11 +359,11 @@ fn cmd_show_detail(cmd_name: &str) {
             write_str(full_help);
             write_str(b"\r\n");
         } else {
-            write_err(tr!("error.no_help").as_bytes());
+            write_err(tr_id!(IDS_NO_HELP).as_bytes());
             write_str(b"\r\n");
         }
     } else {
-        write_err(tr!("error.cmd_not_found").as_bytes());
+        write_err(tr_id!(IDS_CMD_NOT_FOUND).as_bytes());
         write_str(b"\r\n");
     }
     write_str(b"\r\n");
@@ -364,10 +380,10 @@ HELP [command]\r\n\
 
 fn print_help() {
     write_str(b"\r\n");
-    writeln(tr!("help.usage").as_bytes());
-    writeln(tr!("help.usage_desc1").as_bytes());
-    writeln(tr!("help.usage_desc2").as_bytes());
-    writeln(tr!("help.usage_desc3").as_bytes());
+    writeln(tr_id!(IDS_HELP_USAGE).as_bytes());
+    writeln(tr_id!(IDS_USAGE_DESC1).as_bytes());
+    writeln(tr_id!(IDS_USAGE_DESC2).as_bytes());
+    writeln(tr_id!(IDS_USAGE_DESC3).as_bytes());
     write_str(b"\r\n");
 }
 

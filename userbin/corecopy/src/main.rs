@@ -11,7 +11,13 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 
 use libneodos::syscall;
 use libneodos::i18n;
-use libneodos::tr;
+use libneodos::tr_id;
+
+// ── String IDs (from TOML) ──
+const IDS_MISSING_SRC_DST: u32 = 1002;
+const IDS_READ_FAILED: u32 = 1004;
+const IDS_WRITE_FAILED: u32 = 1005;
+const IDS_OPEN_SRC_FAILED: u32 = 1006;
 
 const APP_NAME: &str = "corecopy";
 
@@ -133,7 +139,7 @@ pub extern "C" fn _start() -> ! {
 
     if src_token.is_empty() || dst_token.is_empty() {
         write_err(b"\r\n");
-        write_err(tr!("error.missing_src_dst").as_bytes());
+        write_err(tr_id!(IDS_MISSING_SRC_DST).as_bytes());
         write_err(b"\r\n");
         syscall::sys_exit(1);
     }
@@ -152,7 +158,7 @@ pub extern "C" fn _start() -> ! {
         Ok(f) => f,
         Err(_) => {
             write_err(b"\r\n");
-            write_err(tr!("error.open_src").as_bytes());
+            write_err(tr_id!(IDS_OPEN_SRC_FAILED).as_bytes());
             write_err(b"\r\n");
             syscall::sys_exit(1);
         }
@@ -172,7 +178,7 @@ pub extern "C" fn _start() -> ! {
         Ok(f) => f,
         Err(e) => {
             write_err(b"\r\n");
-            write_err(tr!("error.write_failed").as_bytes());
+            write_err(tr_id!(IDS_WRITE_FAILED).as_bytes());
             write_err(b": ");
             let err_str: &[u8] = match e {
                 -1 => b"EINVAL",
@@ -196,14 +202,14 @@ pub extern "C" fn _start() -> ! {
             Ok(n) => {
                 if syscall::sys_ob_set_info(dst_fd, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, &buf[..n]).is_err() {
                     write_err(b"\r\n");
-                    write_err(tr!("error.write_failed").as_bytes());
+                    write_err(tr_id!(IDS_WRITE_FAILED).as_bytes());
                     write_err(b"\r\n");
                     break;
                 }
             }
             Err(e) => {
                 write_err(b"\r\n");
-                write_err(tr!("error.read_failed").as_bytes());
+                write_err(tr_id!(IDS_READ_FAILED).as_bytes());
                 write_err(b": ");
                 let err_str: &[u8] = match e {
                     -1 => b"-1",

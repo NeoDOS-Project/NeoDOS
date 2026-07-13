@@ -1,6 +1,20 @@
 use libneodos::{console, syscall};
-use libneodos::tr;
+use libneodos::tr_id;
 use core;
+
+// ── String IDs (from TOML) ──
+const IDS_STARTUP_HINT: u32 = 1001;
+const IDS_INVALID_DRIVE: u32 = 1002;
+const IDS_OB_WAIT_ERROR: u32 = 1003;
+const IDS_CD_NOT_FOUND: u32 = 1004;
+const IDS_BAD_COMMAND: u32 = 1005;
+const IDS_PIPE_ERROR: u32 = 1006;
+const IDS_PIPE_SYNTAX: u32 = 1007;
+const IDS_PIPE_BUILTIN: u32 = 1008;
+const IDS_CALL_USAGE: u32 = 1009;
+const IDS_CALL_NOT_FOUND: u32 = 1010;
+const IDS_CALL_READ_ERROR: u32 = 1011;
+const IDS_PROMPT_PAUSE: u32 = 1013;
 
 use neoshell_lib::env::{EnvVar, MAX_ENV};
 use neoshell_lib::pipeline::{self, MAX_PIPELINE};
@@ -277,7 +291,7 @@ impl Shell {
             if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Cwd", syscall::ob_access::WRITE) {
                 let _ = syscall::sys_ob_set_info(fd, syscall::ob_set_info_class::SET_CWD, &path);
                 let _ = syscall::sys_close(fd);
-            } else { write_err(b"\r\n"); write_err(tr!("error.invalid_drive").as_bytes()); write_err(b"\r\n"); }
+            } else { write_err(b"\r\n"); write_err(tr_id!(IDS_INVALID_DRIVE).as_bytes()); write_err(b"\r\n"); }
             return;
         }
         let parsed = redir::parse_line(trimmed);
@@ -322,7 +336,7 @@ impl Shell {
                             Ok(fd) => {
                                 fds.close_all();
                                 write_str(b"[OB "); write_u64(fd as u64); write_str(b"] "); write_str(cmd_slice); write_str(b"\r\n");
-                                if syscall::sys_ob_wait(fd).is_err() { write_err(tr!("error.ob_wait").as_bytes()); write_err(b"\r\n"); }
+                                if syscall::sys_ob_wait(fd).is_err() { write_err(tr_id!(IDS_OB_WAIT_ERROR).as_bytes()); write_err(b"\r\n"); }
                                 else if iscd {
                                     let mut rb = [0u8; 256];
                                     unsafe { core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, rb.as_mut_ptr(), 256); }
@@ -334,7 +348,7 @@ impl Shell {
                                         if let Ok(cf) = syscall::sys_ob_open("\\Global\\Info\\Cwd", syscall::ob_access::WRITE) {
                                             let _ = syscall::sys_ob_set_info(cf, syscall::ob_set_info_class::SET_CWD, pb);
                                             let _ = syscall::sys_close(cf);
-                                        } else { write_err(tr!("error.cd_not_found").as_bytes()); write_err(b"\r\n"); }
+                                        } else { write_err(tr_id!(IDS_CD_NOT_FOUND).as_bytes()); write_err(b"\r\n"); }
                                     }
                                 }
                                 let _ = syscall::sys_close(fd);
@@ -347,7 +361,7 @@ impl Shell {
                 }
                 if !ok {
                     fds.close_all();
-                    write_err(tr!("error.bad_command").as_bytes()); write_err(b"\r\n");
+                    write_err(tr_id!(IDS_BAD_COMMAND).as_bytes()); write_err(b"\r\n");
                 }
             }
         }
@@ -365,14 +379,14 @@ impl Shell {
             else { let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; } for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; } }
             pn[pos]=0;
             let ps = unsafe { core::str::from_utf8_unchecked(&pn[..pos]) };
-            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() { write_err(b"\r\n"); write_err(tr!("error.pipe").as_bytes()); write_err(b"\r\n"); return; }
+            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); return; }
             rf[i]=fds[0] as u8; wf[i]=fds[1] as u8;
         }
         let mut err = false; let mut cs = 0;
         for ci in 0..nc {
             let ce = if ci<pp.len() { pp[ci] } else { line.len() };
             let sl = trim_ascii(&line[cs..ce]); cs = ce+1;
-            if sl.is_empty() { write_err(b"\r\n"); write_err(tr!("error.pipe_syntax").as_bytes()); write_err(b"\r\n"); err=true; break; }
+            if sl.is_empty() { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_SYNTAX).as_bytes()); write_err(b"\r\n"); err=true; break; }
             let parsed = redir::parse_line(sl);
             if let Some(e) = parsed.error {
                 write_err(b"\r\n"); write_err(e.as_bytes()); write_err(b"\r\n"); err=true; break;
@@ -383,7 +397,7 @@ impl Shell {
             let mut cu=[0u8;32]; let cl={let n=cn.len().min(31); cu[..n].copy_from_slice(&cn[..n]); make_ascii_uppercase(&mut cu[..n]); n};
             if BUILTINS.iter().any(|&bi| bi == &cu[..cl]) {
                 pfds.close_all();
-                write_err(b"\r\n"); write_err(tr!("error.pipe_builtin").as_bytes()); write_err(b"\r\n"); err=true; break;
+                write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_BUILTIN).as_bytes()); write_err(b"\r\n"); err=true; break;
             }
             match self.resolve_path(&cu[..cl]) {
                 Ok(full) => {
@@ -444,7 +458,7 @@ impl Shell {
 
     fn cmd_call(&mut self, line: &[u8]) {
         let r = after_first_token(line);
-        if r.is_empty() { write_str(b"\r\n"); write_str(tr!("error.call_usage").as_bytes()); write_str(b"\r\n"); return; }
+        if r.is_empty() { write_str(b"\r\n"); write_str(tr_id!(IDS_CALL_USAGE).as_bytes()); write_str(b"\r\n"); return; }
         let dr = self.get_drive();
         let mut fp = [0u8; 260]; let mut pos = 0;
         fp[pos]=dr; pos+=1; fp[pos]=b':'; pos+=1;
@@ -458,11 +472,11 @@ impl Shell {
         let fs = core::str::from_utf8(&fp[..pos]).unwrap_or("");
         let mut ob = [0u8; 512];
         let fd = match syscall::sys_ob_open(to_ob_path(fs,&mut ob), syscall::ob_access::READ) {
-            Ok(f) => f, Err(_) => { write_err(b"\r\n"); write_err(tr!("error.call_not_found").as_bytes()); write_err(b"\r\n"); return; }
+            Ok(f) => f, Err(_) => { write_err(b"\r\n"); write_err(tr_id!(IDS_CALL_NOT_FOUND).as_bytes()); write_err(b"\r\n"); return; }
         };
         let mut ct = [0u8; 4096];
         let rl = match syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut ct) {
-            Ok(n) => n, Err(_) => { let _=syscall::sys_close(fd); write_err(b"\r\n"); write_err(tr!("error.call_read").as_bytes()); write_err(b"\r\n"); return; }
+            Ok(n) => n, Err(_) => { let _=syscall::sys_close(fd); write_err(b"\r\n"); write_err(tr_id!(IDS_CALL_READ_ERROR).as_bytes()); write_err(b"\r\n"); return; }
         };
         let _ = syscall::sys_close(fd);
         let mut ls = 0usize;
@@ -470,7 +484,7 @@ impl Shell {
             let mut le = ls; while le < rl && ct[le]!=b'\n' { le+=1; }
             let rl2 = trim_ascii(&ct[ls..le]); ls = le+1;
             if rl2.is_empty() || rl2[0]==b':' || rl2[0]==b'@' { continue; }
-            if rl2.eq_ignore_ascii_case(b"pause") { write_str(tr!("prompt.pause").as_bytes()); write_str(b"\r\n"); let _ = syscall::sys_read(0, &mut [0;1]); continue; }
+            if rl2.eq_ignore_ascii_case(b"pause") { write_str(tr_id!(IDS_PROMPT_PAUSE).as_bytes()); write_str(b"\r\n"); let _ = syscall::sys_read(0, &mut [0;1]); continue; }
             self.execute_line(rl2);
         }
     }
@@ -485,7 +499,7 @@ impl Shell {
             let _ = syscall::sys_close(fd); b
         } else { b"?.?.?" };
         write_str(ver); write_str(b" [VT"); write_str(&[b'0'+get_vt_num()]); write_str(b"]\r\n");
-        write_str(tr!("prompt.startup_hint").as_bytes()); write_str(b"\r\n");
+        write_str(tr_id!(IDS_STARTUP_HINT).as_bytes()); write_str(b"\r\n");
 
         console::register_completion(Some(shell_complete));
 

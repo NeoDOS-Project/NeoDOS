@@ -615,15 +615,37 @@
   - Servidores DNS desde Registry (`HKLM\Network\Interfaces\0\DnsServer`), configurable via ipconfig.
   - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
 
-#### i18n — Internacionalización
+#### i18n — Internacionalización (NLTv2)
 
-> Diseño completo: `docs/design/i18n-design.md`. Formato NLT (Neodos Language Table), runtime en libneodos.
-> El kernel NO traduce. Las aplicaciones traducen vía `tr!("clave")` → `i18n_get()`. Fallback: es-ES → es → en-US → clave literal.
+> Arquitectura: `docs/nlt.md`. Formato NLTv2 (IDs numéricos), compilador `tools/nltc`, runtime en `libneodos/src/i18n.rs`.
+> El kernel NO traduce. Las aplicaciones llaman `tr_id!(ID)` → `i18n_get_id(id)`. Fallback: es-ES → es → en-US → "?".
+> Solo NLTv2. Sin compatibilidad con NLTv1 (string-key).
 
-- [x] **I18N-P1. Runtime i18n en libneodos + formato NLT** | Prereqs: -- | Files: `libneodos/src/i18n.rs` (new), `libneodos/src/lib.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/mod.rs`
-- [ ] **I18N-P2. Migrar NeoShell + NeoInit + apps core** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
-  - PENDIENTE: kill, ps, label, fsck, ndreg, poweroff, reboot, loadnem, datetime, ver, echo, drives, pri, cd, neomem, neotop, colors, neokey, progress, vol, corerd, coremd, coreren, coredel, corecls, tree, dhcpd, netcfg, ipconfig, cpuinfo, stresscmd, cmdtest, shtest, neolocale.
-- [x] **I18N-P3. neolocale tool + archivos .nlt + segundo idioma** | Prereqs: I18N-P2 | Files: `tools/neolocale/` (new), `locale/en-US/*.nlt`, `locale/es-ES/*.nlt`, `scripts/create_ne2_image.py`
+- [x] **I18N-P1. Runtime i18n NLTv2 + IDs numéricos** | Files: `libneodos/src/i18n.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/init.rs`
+- [x] **I18N-P3a. Compilador nltc** | Files: `tools/nltc/` (new)
+- [x] **I18N-P3b. Fuentes TOML + NLTv2 binarios** | Files: `data/locale/*/*.toml`, `data/locale/*/*.nlt`, `scripts/gen_nlt_toml.py`
+- [x] **I18N-P3c. neolocale tool (NLTv2)** | Files: `userbin/neolocale/src/main.rs`
+- [x] **I18N-P3d. Integración NeoDev** | Files: `tools/neodev/src/build.rs`, `tools/neodev/src/main.rs`
+- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+  - PENDIENTE: todas las apps existentes (ver gen_nlt_toml.py para lista completa)
+- [ ] **I18N-P4. format_str() con placeholders {0}** | Prereqs: I18N-P1 | Prio: MEDIUM | Complexity: LOW
+  - Reemplazo de `{0}`, `{1}` en strings traducidos. Buffer de stack de 256 bytes.
+- [ ] **I18N-P5. i18n_available_locales()** | Prereqs: I18N-P1 | Prio: LOW | Complexity: LOW
+  - Enumerar directorios en `C:\System\Locale\` para listar idiomas disponibles.
+- [ ] **I18N-P6. Per-user locale (Registry)** | Prereqs: USR-P1 | Prio: LOW | Complexity: MEDIUM
+  - `\Registry\User\{sid}\Control\Locale\Language` con prioridad sobre sistema.
+- [ ] **I18N-P7. Compresión NLT** | Prereqs: I18N-P1 | Prio: LOW | Complexity: HIGH
+  - Flag `NLT_FLAG_COMPRESSED` (0x0001) para compresión LZSS/LZ4 de StringData.
+- [ ] **I18N-P8. UTF-16 support** | Prereqs: I18N-P1 | Prio: LOW | Complexity: MEDIUM
+  - Flag en header para elegir UTF-8/UTF-16 en StringData.
+- [ ] **I18N-P9. Pluralización** | Files: `libneodos/src/i18n.rs` | Prio: LOW | Complexity: HIGH
+  - Sistema de plurales: `IDS_FILE_0 = "0 files"`, `IDS_FILE_1 = "1 file"`, `IDS_FILE_N = "{0} files"`.
+- [ ] **I18N-P10. Formatos regionales (fechas, monedas, calendarios)** | Prio: LOW | Complexity: HIGH
+  - Hint: cargar desde archivos NLT de sistema, no desde runtime.
+- [ ] **I18N-P11. Soporte RTL/bidi** | Prio: LOW | Complexity: HIGH
+  - Flag `NLT_FLAG_RTL` (0x0002) + consulta Registry `Layout` para espejar GUI.
+- [ ] **I18N-P12. Firmas digitales en NLT** | Prio: LOW | Complexity: HIGH
+  - Campo reservado en header + flag `NLT_FLAG_SIGNED` para verificar integridad.
 
 - [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.

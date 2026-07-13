@@ -12,7 +12,14 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
 use libneodos::i18n;
-use libneodos::tr;
+use libneodos::tr_id;
+
+// ── String IDs (from TOML) ──
+const IDS_DIR_OF: u32 = 1001;
+const IDS_PROMPT_PAUSE: u32 = 1003;
+const IDS_FILE_COUNT: u32 = 1004;
+const IDS_DIR_LABEL: u32 = 1006;
+const IDS_PATH_NOT_FOUND: u32 = 1008;
 
 const APP_NAME: &str = "coredir";
 
@@ -213,7 +220,7 @@ struct Info {
 
 fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
     write_str(b"\r\n ");
-    write_str(tr!("header.dir_of").as_bytes());
+    write_str(tr_id!(IDS_DIR_OF).as_bytes());
     write_str(dir_path);
     write_str(b"\r\n\r\n");
 
@@ -275,7 +282,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     write_str(b"\r\n");
                     line_count += 1;
                     if pause && line_count >= PAGE_LINES {
-                        write_str(tr!("prompt.pause").as_bytes());
+                        write_str(tr_id!(IDS_PROMPT_PAUSE).as_bytes());
                         read_key();
                         write_str(b"\r\n");
                         line_count = 0;
@@ -291,7 +298,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     let name_len = n.len().min(12);
                     line_buf[..name_len].copy_from_slice(&n.as_bytes()[..name_len]);
 
-                    let type_str: &[u8] = if e.dir { tr!("label.dir").as_bytes() } else { b"     " };
+                    let type_str: &[u8] = if e.dir { tr_id!(IDS_DIR_LABEL).as_bytes() } else { b"     " };
                     line_buf[13..18].copy_from_slice(type_str);
 
                     line_buf[19..24].copy_from_slice(&perms);
@@ -320,7 +327,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
 
                     line_count += 1;
                     if pause && line_count >= PAGE_LINES {
-                        write_str(tr!("prompt.pause").as_bytes());
+                        write_str(tr_id!(IDS_PROMPT_PAUSE).as_bytes());
                         read_key();
                         write_str(b"\r\n");
                         line_count = 0;
@@ -330,11 +337,11 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
 
             write_str(b"\r\n");
             write_u64(count as u64);
-            write_str(tr!("label.file_count").as_bytes());
+            write_str(tr_id!(IDS_FILE_COUNT).as_bytes());
             write_str(b"\r\n");
         }
         Err(_) => {
-            write_str(tr!("error.path_not_found").as_bytes());
+            write_str(tr_id!(IDS_PATH_NOT_FOUND).as_bytes());
             write_str(b"\r\n");
         }
     }

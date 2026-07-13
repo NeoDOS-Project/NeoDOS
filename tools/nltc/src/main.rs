@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 const NLT2_MAGIC: &[u8; 4] = b"NLT2";
 const NLT2_VERSION: u16 = 2;
 const NLT2_HEADER_SIZE: u16 = 32;
-
 fn crc32(data: &[u8]) -> u32 {
     let mut crc = 0xFFFFFFFFu32;
     for &b in data {
