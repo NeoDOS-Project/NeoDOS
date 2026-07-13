@@ -9,8 +9,11 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr;
 
+const APP_NAME: &str = "neoinit";
 const NEOINIT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const REG_KEY_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\NeoInit";
 const OB_FS_PREFIX: &[u8] = b"\\Global\\FileSystem\\";
@@ -82,6 +85,9 @@ fn try_spawn_test(path: &str, tag: &str) {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+
     write_str(b"\r\n");
     write_str(b"NeoInit v");
     write_str(NEOINIT_VERSION.as_bytes());
@@ -171,7 +177,9 @@ pub extern "C" fn _start() -> ! {
     // ── Spawn loop ──
     write_str(b"[neoinit] entering spawn loop...\r\n");
     loop {
-        write_str(b"[neoinit] spawning shell...\r\n");
+        write_str(b"[neoinit] ");
+        write_str(tr!("status.shell_spawn").as_bytes());
+        write_str(b"\r\n");
         if enable_vt != 0 {
             set_vt(0);
         }

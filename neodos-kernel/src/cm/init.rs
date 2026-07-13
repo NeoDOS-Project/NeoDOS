@@ -78,6 +78,25 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     })
 }
 
+/// Ensure `Language = "en-US"` exists in the SYSTEM hive under
+/// `CurrentControlSet\Control\Locale`.  Called once at boot so that
+/// userspace `i18n_init()` always finds a value.
+pub fn ensure_language_default() {
+    let ctrl = match crate::cm::cm_open_key(0, "CurrentControlSet\\Control") {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    let locale = crate::cm::cm_open_key(ctrl, "Locale")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "Locale"));
+    let locale = match locale {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    if crate::cm::cm_query_value(locale, "Language").is_err() {
+        let _ = crate::cm::cm_set_value(locale, "Language", crate::cm::hive::REG_SZ, b"en-US");
+    }
+}
+
 pub fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {
     let parts: Vec<&str> = path.split('\\').filter(|p| !p.is_empty()).collect();
     let mut curr = start;

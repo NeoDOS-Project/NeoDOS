@@ -1,7 +1,7 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
-> Version actual: v0.49.2 (NeoKBD + ACPI Power Management completados).
+> Version actual: v0.50-dev (i18n I18N-P1/P3 completados, P2 parcial).
 > Proximo milestone: v0.50 (Shell Phase 1 + NeoFS snapshot).
 
 ---
@@ -643,6 +643,33 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 - [x] **SH-TOKEN+QUOTE. Shell tokenizer + quoting** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
   - State machine para pipes, redirects, quoting. `"..."` (expande %VAR%), `'...'` (literal), `^` escape.
   - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`, `tokenizer_semicolon`, `tokenizer_unmatched_double_quote`, `tokenizer_empty`, `tokenizer_escape_in_double_quote`, `tokenizer_multiple_spaces`
+
+### I18N-P1. Runtime i18n en libneodos + formato NLT [COMPLETED]
+
+- [x] **I18N-P1. Runtime i18n en libneodos + formato NLT** | Files: `libneodos/src/i18n.rs` (new), `libneodos/src/lib.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/init.rs`
+  - Nuevo `libneodos/src/i18n.rs`: `NltTable`, `i18n_get()`, `i18n_load()`, `i18n_init()`, `tr!()` macro.
+  - Formato NLT: magic `NLT\0`, version=1, offsets u32, búsqueda O(n), zero-copy.
+  - `i18n_init()`: lee `\Registry\Machine\System\CurrentControlSet\Control\Locale\Language` del Registry.
+  - `i18n_load("app")`: busca `C:\System\Locale\{locale}\{app}.nlt` con cadena de fallback (es-ES → es → en-US).
+  - `tr!("clave")`: si no encuentra traducción, devuelve la clave literal (nunca panic).
+  - Kernel: añade `Language = "en-US"` por defecto en Registry vía `ensure_language_default()`.
+  - `File::open` fix: antepone `\Global\FileSystem\` al path para compatibilidad con Ob namespace.
+
+### I18N-P2. Migrar NeoShell + NeoInit + apps core [PARTIAL]
+
+- [x] **I18N-P2 (parcial). Migrar apps core a tr!()** | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/coretype/`
+  - Migrados: **corehelp** (14 strings), **coretype** (3), **coredir** (8), **corecopy** (7), **neoinit** (1), **neoshell** (14).
+  - Total: ~47 strings reemplazados por `tr!("clave")`.
+  - Restan: kill, ps, label, fsck, ndreg, poweroff, reboot, etc. (~25 strings).
+
+### I18N-P3. neolocale tool + archivos .nlt + segundo idioma [COMPLETED]
+
+- [x] **I18N-P3. neolocale tool + archivos .nlt + segundo idioma** | Files: `userbin/neolocale/` (new), `scripts/gen_nlt.py`, `data/locale/en-US/*.nlt`, `data/locale/es-ES/*.nlt`
+  - Nueva herramienta `neolocale.nxe`: validate, check, diff, create, stats.
+  - `scripts/gen_nlt.py` — genera NLT binaries desde tablas de traducción.
+  - Creados 14 archivos `.nlt`: 7 en-US + 7 es-ES (corehelp, neoshell, neoinit, coredir, corecopy, coretype, neolocale).
+  - Integrados en la imagen de disco via `tools/neodev/src/image.rs` (`collect_files()` escanea `data/locale/`).
+  - `neolocale` registrado en `tools_nxe` para inclusión en `/System/Tools/`.
 
 ---
 

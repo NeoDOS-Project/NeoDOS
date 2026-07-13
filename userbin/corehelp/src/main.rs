@@ -11,7 +11,10 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
+use libneodos::i18n;
+use libneodos::tr;
 
+const APP_NAME: &str = "corehelp";
 const PROGRAMS_DIR: &str = "C:\\Programs";
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
@@ -31,6 +34,11 @@ fn write_str(s: &[u8]) {
 
 fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
+}
+
+fn writeln(s: &[u8]) {
+    write_str(s);
+    write_str(b"\r\n");
 }
 
 fn write_u64(mut v: u64) {
@@ -56,7 +64,6 @@ fn is_nxe(name: &str) -> bool {
 }
 
 fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
-    // Find "::HELP::" marker followed by "::END::" within 500 bytes
     let help_marker = b"::HELP::";
     let end_marker = b"::END::";
     let mut search_start = 0;
@@ -65,7 +72,6 @@ fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
         let abs_pos = search_start + pos;
         let after_marker = &data[abs_pos + help_marker.len()..];
 
-        // Check if ::END:: exists within the next 500 bytes
         let after_end = after_marker.windows(end_marker.len()).position(|w| w == end_marker);
         match after_end {
             Some(end_pos) if end_pos < 500 => {
@@ -78,7 +84,6 @@ fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
                     .unwrap_or(trimmed.len());
                 return Some(&trimmed[..first_line_end]);
             }
-            // False positive (::HELP:: in code), try next occurrence
             _ => {
                 search_start = abs_pos + 1;
             }
@@ -88,7 +93,7 @@ fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
 
 fn cmd_list_all() {
     write_str(b"\r\n");
-    write_str(b"NeoDOS Core Tools\r\n");
+    writeln(tr!("help.header").as_bytes());
     write_str(b"------------------\r\n\r\n");
 
     let mut ob_buf = [0u8; 512];
@@ -97,7 +102,6 @@ fn cmd_list_all() {
         Ok(fd) => {
             let mut count = 0u64;
 
-            // Collect .NXE file names
             let mut names: [[u8; 32]; 128] = [[0u8; 32]; 128];
             let mut name_lens: [usize; 128] = [0; 128];
             let mut name_count = 0usize;
@@ -120,15 +124,13 @@ fn cmd_list_all() {
                         name_count += 1;
                     }
                 }
-                Err(_) => { write_str(b"  (error reading directory)\r\n"); }
+                Err(_) => { writeln(tr!("error.reading_dir").as_bytes()); }
             }
             let _ = syscall::sys_close(fd);
 
-            // For each .NXE, open and read help description
             for i in 0..name_count {
                 let name = &names[i][..name_lens[i]];
 
-                // Build path: C:\Programs\NAME.NXE
                 let mut path_buf = [0u8; 260];
                 let mut pos = 0;
                 for &b in PROGRAMS_DIR.as_bytes() {
@@ -146,7 +148,6 @@ fn cmd_list_all() {
                 let mut ob_buf2 = [0u8; 512];
                 let ob_path2 = to_ob_path(path_str, &mut ob_buf2);
                 if let Ok(nxe_fd) = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ) {
-                    // Read file in 4096-byte chunks (kernel max per sys_readfile)
                     let mut accumulated = [0u8; 32768];
                     let mut total = 0usize;
                     loop {
@@ -165,7 +166,6 @@ fn cmd_list_all() {
                     let _ = syscall::sys_close(nxe_fd);
 
                     if let Some(help_line) = extract_help_desc(&accumulated[..total]) {
-                        // Extract first 60 bytes of description
                         let dlen = help_line.len().min(79);
                         desc[..dlen].copy_from_slice(&help_line[..dlen]);
                         desc_len = dlen;
@@ -176,7 +176,6 @@ fn cmd_list_all() {
                     desc_len = 0;
                 }
 
-                // Strip .NXE extension for display (case-insensitive)
                 let display_name = if name_lens[i] >= 4 {
                     let ext = &name[name_lens[i]-4..name_lens[i]];
                     let is_nxe_ext = ext.len() == 4
@@ -194,7 +193,6 @@ fn cmd_list_all() {
                 };
                 let dlen = display_name.len();
 
-                // Print: "  CMDNAME      description"
                 write_str(b"  ");
                 let mut n_upper = [0u8; 32];
                 let ulen = dlen.min(31);
@@ -208,23 +206,23 @@ fn cmd_list_all() {
                 if desc_len > 0 {
                     write_str(&desc[..desc_len]);
                 } else {
-                    write_str(b"(no description)");
+                    write_str(tr!("tooltip.no_description").as_bytes());
                 }
                 write_str(b"\r\n");
                 count += 1;
             }
 
-            // Remove ".NXE" suffix for display
             write_str(b"\r\n");
             write_u64(count);
-            write_str(b" command(s) available\r\n");
+            writeln(tr!("help.commands_suffix").as_bytes());
+            writeln(tr!("help.type_for_details").as_bytes());
+            writeln(tr!("help.example").as_bytes());
             write_str(b"\r\n");
-            write_str(b"Type HELP <command> for details on a specific command.\r\n");
-            write_str(b"  Example: HELP CLS\r\n\r\n");
         }
         Err(_) => {
-            write_str(b"\r\nNo Programs directory found.\r\n");
-            write_str(b"Create C:\\Programs with .NXE tools.\r\n\r\n");
+            writeln(tr!("error.no_programs_dir").as_bytes());
+            writeln(tr!("error.create_programs_dir").as_bytes());
+            write_str(b"\r\n");
         }
     }
 }
@@ -288,7 +286,6 @@ fn cmd_show_detail(cmd_name: &str) {
         upper[i] = if b >= b'a' && b <= b'z' { b - 32 } else { b };
     }
 
-    // Build path: C:\Programs\CMD.NXE
     let mut path_buf = [0u8; 260];
     let mut pos = 0;
     for &b in PROGRAMS_DIR.as_bytes() {
@@ -307,7 +304,6 @@ fn cmd_show_detail(cmd_name: &str) {
     let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
 
     write_str(b"\r\n");
-    // First try to spawn CMD.NXE /? with pipe capture
     let mut fds = [0u64; 2];
     if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds), 0).is_ok() {
         let read_fd = fds[0] as u8;
@@ -336,12 +332,10 @@ fn cmd_show_detail(cmd_name: &str) {
             Err(_) => {
                 let _ = syscall::sys_close(read_fd);
                 let _ = syscall::sys_close(write_fd);
-                // Fall through to direct file read
             }
         }
     }
 
-    // Fallback: read help text directly from the binary
     let mut content = [0u8; 32768];
     let total = read_file_content(path_str, &mut content);
     if total > 0 {
@@ -349,10 +343,12 @@ fn cmd_show_detail(cmd_name: &str) {
             write_str(full_help);
             write_str(b"\r\n");
         } else {
-            write_err(b"No help available for this command.\r\n");
+            write_err(tr!("error.no_help").as_bytes());
+            write_str(b"\r\n");
         }
     } else {
-        write_err(b"HELP: command not found\r\n");
+        write_err(tr!("error.cmd_not_found").as_bytes());
+        write_str(b"\r\n");
     }
     write_str(b"\r\n");
 }
@@ -367,14 +363,19 @@ HELP [command]\r\n\
 ::END::";
 
 fn print_help() {
-    write_str(b"\r\nHELP [command]\r\n");
-    write_str(b"  Lists available commands with descriptions.\r\n");
-    write_str(b"  HELP CLS          Shows help for the CLS command.\r\n");
-    write_str(b"  HELP              Lists all commands.\r\n\r\n");
+    write_str(b"\r\n");
+    writeln(tr!("help.usage").as_bytes());
+    writeln(tr!("help.usage_desc1").as_bytes());
+    writeln(tr!("help.usage_desc2").as_bytes());
+    writeln(tr!("help.usage_desc3").as_bytes());
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 

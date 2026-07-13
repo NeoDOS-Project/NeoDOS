@@ -10,6 +10,10 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 }
 
 use libneodos::syscall;
+use libneodos::i18n;
+use libneodos::tr;
+
+const APP_NAME: &str = "corecopy";
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
@@ -109,6 +113,9 @@ fn print_usage() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -125,7 +132,9 @@ pub extern "C" fn _start() -> ! {
     let (src_token, dst_token) = split_first_token(args);
 
     if src_token.is_empty() || dst_token.is_empty() {
-        write_err(b"\r\nCOPY: missing source or destination\r\n");
+        write_err(b"\r\n");
+        write_err(tr!("error.missing_src_dst").as_bytes());
+        write_err(b"\r\n");
         syscall::sys_exit(1);
     }
 
@@ -142,7 +151,9 @@ pub extern "C" fn _start() -> ! {
     let src_fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            write_err(b"\r\nCOPY: source file not found\r\n");
+            write_err(b"\r\n");
+            write_err(tr!("error.open_src").as_bytes());
+            write_err(b"\r\n");
             syscall::sys_exit(1);
         }
     };
@@ -160,7 +171,9 @@ pub extern "C" fn _start() -> ! {
     let dst_fd = match syscall::ob_file_create(dst_path) {
         Ok(f) => f,
         Err(e) => {
-            write_err(b"\r\nCOPY: cannot create destination: ");
+            write_err(b"\r\n");
+            write_err(tr!("error.write_failed").as_bytes());
+            write_err(b": ");
             let err_str: &[u8] = match e {
                 -1 => b"EINVAL",
                 -2 => b"ENOENT",
@@ -182,12 +195,16 @@ pub extern "C" fn _start() -> ! {
             Ok(0) => break,
             Ok(n) => {
                 if syscall::sys_ob_set_info(dst_fd, libneodos::syscall::ob_set_info_class::WRITE_CONTENT, &buf[..n]).is_err() {
-                    write_err(b"\r\nCOPY: write error\r\n");
+                    write_err(b"\r\n");
+                    write_err(tr!("error.write_failed").as_bytes());
+                    write_err(b"\r\n");
                     break;
                 }
             }
             Err(e) => {
-                write_err(b"\r\nCOPY: read error code=");
+                write_err(b"\r\n");
+                write_err(tr!("error.read_failed").as_bytes());
+                write_err(b": ");
                 let err_str: &[u8] = match e {
                     -1 => b"-1",
                     -2 => b"-2",

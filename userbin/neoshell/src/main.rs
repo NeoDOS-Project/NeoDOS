@@ -13,7 +13,13 @@ mod completion;
 mod redir;
 mod shell;
 
+use libneodos::i18n;
+
+const APP_NAME: &str = "neoshell";
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     shell::Shell::new().run()
 }

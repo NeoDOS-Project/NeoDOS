@@ -10,6 +10,10 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 }
 
 use libneodos::syscall;
+use libneodos::i18n;
+use libneodos::tr;
+
+const APP_NAME: &str = "coretype";
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
@@ -88,13 +92,18 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 }
 
 fn print_usage() {
-    write_str(b"\r\nUsage: TYPE [drive:][path]filename\r\n");
+    write_str(b"\r\n");
+    write_str(tr!("error.usage").as_bytes());
+    write_str(b"\r\n");
     write_str(b"  Display the contents of a text file.\r\n");
     write_str(b"  TYPE C:\\Programs\\test.txt\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -125,7 +134,9 @@ pub extern "C" fn _start() -> ! {
     let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            write_err(b"\r\nFile not found\r\n");
+            write_err(b"\r\n");
+            write_err(tr!("error.file_not_found").as_bytes());
+            write_err(b"\r\n");
             syscall::sys_exit(1);
         }
     };
@@ -138,7 +149,9 @@ pub extern "C" fn _start() -> ! {
                 let _ = syscall::sys_write(1, &buf[..n]);
             }
             Err(e) => {
-                write_err(b"\r\nError reading file: ");
+                write_err(b"\r\n");
+                write_err(tr!("error.read_error").as_bytes());
+                write_err(b": ");
                 let err_str: &[u8] = match e {
                     -1 => b"EINVAL" as &[u8],
                     -2 => b"ENOENT" as &[u8],

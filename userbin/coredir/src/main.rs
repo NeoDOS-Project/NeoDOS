@@ -10,7 +10,11 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 }
 
 use libneodos::syscall;
-use libneodos::syscall::{ObEnumEntry};
+use libneodos::syscall::ObEnumEntry;
+use libneodos::i18n;
+use libneodos::tr;
+
+const APP_NAME: &str = "coredir";
 
 const PERM_R: u16 = 0x0001;
 const PERM_W: u16 = 0x0002;
@@ -208,7 +212,8 @@ struct Info {
 }
 
 fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
-    write_str(b"\r\n Directory of ");
+    write_str(b"\r\n ");
+    write_str(tr!("header.dir_of").as_bytes());
     write_str(dir_path);
     write_str(b"\r\n\r\n");
 
@@ -270,7 +275,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     write_str(b"\r\n");
                     line_count += 1;
                     if pause && line_count >= PAGE_LINES {
-                        write_str(b"Press any key to continue...");
+                        write_str(tr!("prompt.pause").as_bytes());
                         read_key();
                         write_str(b"\r\n");
                         line_count = 0;
@@ -286,7 +291,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
                     let name_len = n.len().min(12);
                     line_buf[..name_len].copy_from_slice(&n.as_bytes()[..name_len]);
 
-                    let type_str: &[u8] = if e.dir { b"<DIR>" } else { b"     " };
+                    let type_str: &[u8] = if e.dir { tr!("label.dir").as_bytes() } else { b"     " };
                     line_buf[13..18].copy_from_slice(type_str);
 
                     line_buf[19..24].copy_from_slice(&perms);
@@ -315,7 +320,7 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
 
                     line_count += 1;
                     if pause && line_count >= PAGE_LINES {
-                        write_str(b"Press any key to continue...");
+                        write_str(tr!("prompt.pause").as_bytes());
                         read_key();
                         write_str(b"\r\n");
                         line_count = 0;
@@ -325,10 +330,12 @@ fn list_directory(dir_path: &[u8], wide: bool, pause: bool) {
 
             write_str(b"\r\n");
             write_u64(count as u64);
-            write_str(b" File(s)\r\n");
+            write_str(tr!("label.file_count").as_bytes());
+            write_str(b"\r\n");
         }
         Err(_) => {
-            write_str(b"Path not found\r\n");
+            write_str(tr!("error.path_not_found").as_bytes());
+            write_str(b"\r\n");
         }
     }
 }
@@ -349,6 +356,9 @@ fn print_help() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+
     if libneodos::args::is_help_flag(&libneodos::args::read_args()) {
         print_help();
         syscall::sys_exit(0);

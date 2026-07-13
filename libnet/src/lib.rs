@@ -268,7 +268,7 @@ fn dns_get_server() -> [u8; 4] {
 
     let mut buf = [0u8; 64];
     let res = libneodos::sys_cm_query_value(key, DNS_SERVER_VALUE, &mut buf);
-    let _ = libneodos::sys_close(key as i32);
+    let _ = libneodos::sys_close(key);
 
     match res {
         Ok(total) if total >= 8 => {

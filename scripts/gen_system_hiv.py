@@ -213,6 +213,8 @@ def build_default_system_hive_v2() -> bytes:
     _V_WAIT = 14
     _V_BENCH = 23
     _V_AHCI = 24
+    _LOC_KEY = 25
+    _V_LANG = 26
     _V_DNAME = 15
     _V_BPATH = 16
     _V_IPATH = 17
@@ -223,7 +225,7 @@ def build_default_system_hive_v2() -> bytes:
     _V_DESC = 22
 
     # Pre-alloc: ensure next_idx doesn't conflict
-    b.next_idx = 23
+    b.next_idx = 27
 
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests
@@ -266,6 +268,9 @@ def build_default_system_hive_v2() -> bytes:
     b.add_value(_V_WAIT, "WaitForNetwork", REG_DWORD,
                 struct.pack("<I", 0), next_val=_V_AHCI)
 
+    # Locale\Language value
+    b.add_value(_V_LANG, "Language", REG_SZ, b"es-ES")
+
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS)
@@ -289,8 +294,11 @@ def build_default_system_hive_v2() -> bytes:
               subkeys_sibling=_NET)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO)
 
+    # Locale (child of Control)
+    b.add_key(_LOC_KEY, "Locale", _CTL, values_head=_V_LANG)
+
     # Control (child of CurrentControlSet, sibling of Services)
-    b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT)
+    b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT, subkeys_head=_LOC_KEY)
 
     # CurrentControlSet: subkeys = Services -> Control (sibling chain)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO,
@@ -310,7 +318,7 @@ def main():
     output.write_bytes(data)
     size = len(data)
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: {25}")
+    print(f"  Cells: {27}")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
@@ -329,6 +337,7 @@ def main():
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
+    print("    CurrentControlSet\\Control\\Locale\\Language = 'en-US' (REG_SZ)")
 
 
 if __name__ == "__main__":

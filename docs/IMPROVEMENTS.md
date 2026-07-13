@@ -615,33 +615,7 @@
   - Servidores DNS desde Registry (`HKLM\Network\Interfaces\0\DnsServer`), configurable via ipconfig.
   - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
 
-#### i18n — Internacionalización
-
-> Diseño completo: `docs/design/i18n-design.md`. Formato NLT (Neodos Language Table), runtime en libneodos.
-> El kernel NO traduce. Las aplicaciones traducen vía `tr!("clave")` → `i18n_get()`. Fallback: es-ES → es → en-US → clave literal.
-
-- [ ] **I18N-P1. Runtime i18n en libneodos + formato NLT** | Prereqs: -- | Files: `libneodos/src/i18n.rs` (new), `libneodos/src/lib.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/mod.rs`
-  - Nuevo `libneodos/src/i18n.rs`: `NltTable`, `i18n_get()`, `i18n_load()`, `i18n_init()`, `tr!()` macro.
-  - Formato NLT: magic `NLT\0`, version=1, offsets u32, búsqueda O(n), zero-copy.
-  - `i18n_init()`: lee `\Registry\Machine\...\Control\Locale\Language` del Registry.
-  - `i18n_load("app")`: busca `C:\System\Locale\{locale}\{app}.nlt` con cadena de fallback.
-  - `tr!("clave")`: si no encuentra traducción, devuelve la clave literal (nunca panic).
-  - Kernel: añadir valor `Language` = `"en-US"` por defecto en Registry.
-  - **Tests:** `i18n_parse_nlt_valid`, `i18n_get_exact_match`, `i18n_get_missing_returns_key`, `i18n_fallback_chain`, `i18n_load_app_not_found`
-
-- [ ] **I18N-P2. Migrar NeoShell + NeoInit + apps core** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
-  - Añadir `i18n_init()` + `i18n_load("app_name")` al inicio de cada main().
-  - Reemplazar ~72 strings hardcoded por `tr!("clave")`.
-  - Claves con convención jerárquica: `error.bad_command`, `prompt.suffix`, `status.running`.
-  - Los `b"\r\n"` y caracteres de control se mantienen separados (no se traducen).
-  - **Tests:** integración — boot con locale=en-US, verificar mensajes en inglés.
-
-- [ ] **I18N-P3. neolocale tool + archivos .nlt + segundo idioma** | Prereqs: I18N-P2 | Files: `tools/neolocale/` (new), `locale/en-US/*.nlt`, `locale/es-ES/*.nlt`, `scripts/create_ne2_image.py`
-  - Nueva herramienta `neolocale.nxe`: validate, check, diff, create, stats.
-  - Crear archivos `.nlt` para en-US (inglés por defecto).
-  - Crear archivos `.nlt` para es-ES (español, segundo idioma).
-  - Integrar `.nlt` en la imagen de disco via `scripts/create_ne2_image.py`.
-  - **Tests:** `neolocale_validate_valid`, `neolocale_check_missing`, `i18n_switch_locale_runtime`
+#### i18n — Internacionalización (completado, movido a COMPLETED)`
 
 - [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
   - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.

@@ -18,6 +18,10 @@ pub mod args;
 pub mod seh;
 pub mod console;
 pub mod keyboard;
+pub mod i18n;
+
+// Re-export commonly used syscall helpers for convenience.
+pub use syscall::{sys_cm_open_key, sys_cm_query_value, sys_close, sys_ob_open};
 
 /// Load a shared library (NXL) from the filesystem.
 /// Returns the base address where the NXL was loaded, which is also

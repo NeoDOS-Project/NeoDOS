@@ -392,11 +392,11 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
         "datetime", "ver", "neomem", "vol", "echo", "label",
         "coretype", "tree", "corecls", "corecopy", "coredel",
         "coreren", "coremd", "corerd", "drives", "ps", "keyb", "coredir",
-        "poweroff", "reboot", "colors",
+        "poweroff", "reboot", "colors", "neokey",
     ];
     let tools_nxe = &[
         "kill", "pri", "fsck", "ndreg", "loadnem", "progress",
-        "neotop", "dhcpd", "netcfg", "ipconfig", "cpuinfo", "neokey",
+        "neotop", "dhcpd", "netcfg", "ipconfig", "cpuinfo", "neolocale",
     ];
 
     for name in programs_nxe.iter().chain(tools_nxe) {
@@ -450,6 +450,43 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
                 mode: MODE_FILE | PERM_R,
                 is_dir: false,
             });
+        }
+    }
+
+    // Locale / NLT translation files
+    let locale_dir = root.join("data/locale");
+    if locale_dir.exists() {
+        if let Ok(lang_entries) = std::fs::read_dir(&locale_dir) {
+            for lang_entry in lang_entries.flatten() {
+                let lang_path = lang_entry.path();
+                if !lang_path.is_dir() { continue; }
+                let lang_name = match lang_path.file_name().and_then(|n| n.to_str()) {
+                    Some(n) => n,
+                    None => continue,
+                };
+                if let Ok(nlt_entries) = std::fs::read_dir(&lang_path) {
+                    for nlt_entry in nlt_entries.flatten() {
+                        let p = nlt_entry.path();
+                        if p.extension().and_then(|e| e.to_str()) != Some("nlt") {
+                            continue;
+                        }
+                        let content = match std::fs::read(&p) {
+                            Ok(c) => c,
+                            Err(_) => continue,
+                        };
+                        let fname = match p.file_name().and_then(|n| n.to_str()) {
+                            Some(n) => n,
+                            None => continue,
+                        };
+                        files.push(FileEntry {
+                            name: format!("/System/Locale/{}/{}", lang_name, fname),
+                            content,
+                            mode: MODE_FILE | PERM_R,
+                            is_dir: false,
+                        });
+                    }
+                }
+            }
         }
     }
 
