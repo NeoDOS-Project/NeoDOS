@@ -1,6 +1,7 @@
 # NeoDOS — Items Completados
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
+> El roadmap maestro está en [`/ROADMAP.md`](../ROADMAP.md).
 > Version actual: v0.50-dev (i18n I18N-P1/P3 completados, P2 parcial).
 > Proximo milestone: v0.50 (Shell Phase 1 + NeoFS snapshot).
 

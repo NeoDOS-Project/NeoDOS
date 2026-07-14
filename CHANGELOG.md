@@ -55,6 +55,37 @@
 - **`docs/IMPROVEMENTS.md`**: I18N section actualizada con NLTv2 y futuros items.
 - **`docs/IMPROVEMENTS_COMPLETED.md`**: I18N subsections reorganizadas.
 
+## v0.50.1 — 2026-07-15
+
+### Added
+
+- **sys_ob_snapshot (RAX=48)** — New syscall for NeoFS snapshot operations: CREATE, RESTORE, LIST, PURGE.
+  - `handler_ob_snapshot` in `syscall/ob.rs` with handle-based drive resolution.
+  - Tests: `syscall_ob_snapshot_create`, `syscall_ob_snapshot_list`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_purge`.
+- **L2 write-back cache** — `IoStack::write_sectors` now caches single-sector writes through `PAGE_CACHE` with `NEED_CACHE_FLUSH` dirty tracking.
+- **ROADMAP.md** — New root-level roadmap replacing `docs/roadmap.md`. Roadmap completamente reorganizado en fases (v0.50–v4.x).
+
+### Changed
+
+- **docs/IMPROVEMENTS.md** — Roadmap items reorganized by phases and milestones. Deuda técnica grouped into TD.1–TD.6.
+- **docs/roadmap.md** — Now points to `/ROADMAP.md` as canonical source.
+- **docs/syscalls.md** — Added RAX 48 entry for `sys_ob_snapshot`.
+- **docs/neofs_v2_design.md** — RAX reference corrected from 77 to 48.
+- **VFS trait** — Added snapshot methods with default `NotImplemented` impl.
+
+### Removed
+
+- **GDB stub (`debugger/mod.rs`)** — Dead code removed (438 lines). The serial-based GDB stub was never reliable and duplicated existing HAL debug output.
+- **ISO9660 driver (`drivers/iso9660.rs`)** — Dead code removed (352 lines). Filesystem type was never used; FAT32 and NeoFS cover all use cases.
+- **VirtIO orphan tests (`virtio/mod.rs`)** — `register_tests()` removed (never called from testing harness).
+- **`unregister_all()` in NEM driver** — No-op method removed.
+- **`Iso9660` variant from `FilesystemType` enum** and mount test updated.
+
+### Cleanup
+
+- **`#![allow(dead_code)]`** removed from `main.rs`, `globals.rs`, `vfs/io.rs`.
+- **`CryptoContext` stub** removed from `vfs/io.rs`.
+
 ## v0.49.2 — 2026-07-12
 
 ### Added

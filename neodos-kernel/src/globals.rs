@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;

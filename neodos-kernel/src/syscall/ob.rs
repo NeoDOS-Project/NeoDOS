@@ -3186,7 +3186,7 @@ pub(super) fn handler_ob_destroy(regs: super::Registers) -> u64 {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// OB-021: ObService — RAX=77
+// OB-021: ObService — RAX=47
 // ═══════════════════════════════════════════════════════════════════════
 
 const SERVICE_CONTROL_START: u32 = 0;
@@ -3194,6 +3194,116 @@ const SERVICE_CONTROL_STOP: u32 = 1;
 const SERVICE_CONTROL_RESTART: u32 = 2;
 const SERVICE_CONTROL_QUERY_STATUS: u32 = 3;
 const SERVICE_CONTROL_SET_CONFIG: u32 = 4;
+
+// ═══════════════════════════════════════════════════════════════════════
+// OB-077: ObSnapshot — RAX=48
+// ═══════════════════════════════════════════════════════════════════════
+
+const SNAPSHOT_OP_CREATE: u32 = 0;
+const SNAPSHOT_OP_RESTORE: u32 = 1;
+const SNAPSHOT_OP_LIST: u32 = 2;
+const SNAPSHOT_OP_PURGE: u32 = 3;
+
+/// Resolve drive index from a filesystem root handle.
+fn resolve_handle_drive(fd: u8) -> Result<usize, u64> {
+    let entry = current_handle_entry(fd);
+    if !entry.is_open() {
+        return Err(err_to_u64(SyscallError::BadF));
+    }
+
+    let obj = match crate::object::ob_lookup(entry.object_id) {
+        Some(o) => o,
+        None => return Err(err_to_u64(SyscallError::BadF)),
+    };
+
+    if obj.obj_type != crate::object::ObType::Directory {
+        return Err(err_to_u64(SyscallError::Inval));
+    }
+
+    let drive_idx = if let Some(d) = entry.drive() {
+        d as usize
+    } else {
+        return Err(err_to_u64(SyscallError::Inval));
+    };
+
+    Ok(drive_idx)
+}
+
+pub(super) fn handler_ob_snapshot(regs: super::Registers) -> u64 {
+    let fd = regs.rbx as u8;
+    let op = regs.rcx as u32;
+    let buf_ptr = regs.rdx;
+    let buf_size = regs.r8 as usize;
+
+    let drive_idx = match resolve_handle_drive(fd) {
+        Ok(d) => d,
+        Err(e) => return e,
+    };
+
+    match op {
+        SNAPSHOT_OP_CREATE => {
+            let id = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_create(drive_idx)
+            });
+            match id {
+                Ok(id) => id,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        SNAPSHOT_OP_RESTORE => {
+            if buf_ptr == 0 || buf_size < 8 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, 8) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let snapshot_id = unsafe { core::ptr::read_volatile(buf_ptr as *const u64) };
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_restore(drive_idx, snapshot_id)
+            });
+            match result {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        SNAPSHOT_OP_LIST => {
+            if buf_ptr == 0 || buf_size < 24 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            if !is_user_ptr_valid(buf_ptr, buf_size as u64) {
+                return err_to_u64(SyscallError::Fault);
+            }
+            let mut kernel_buf = alloc::vec::Vec::with_capacity(buf_size);
+            kernel_buf.resize(buf_size, 0u8);
+            let count = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_list(drive_idx, &mut kernel_buf)
+            });
+            match count {
+                Ok(n) => {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            kernel_buf.as_ptr(),
+                            buf_ptr as *mut u8,
+                            buf_size.min(n * core::mem::size_of::<crate::fs::snapshot::SnapshotEntryRaw>()),
+                        );
+                    }
+                    n as u64
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        SNAPSHOT_OP_PURGE => {
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_purge(drive_idx)
+            });
+            match result {
+                Ok(()) => 0,
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
+        }
+        _ => err_to_u64(SyscallError::NoSys),
+    }
+}
 
 pub(super) fn handler_ob_service(regs: super::Registers) -> u64 {
     let fd = regs.rbx as u8;

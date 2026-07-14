@@ -13,7 +13,6 @@ const MAX_MOUNTS: usize = 16;
 pub enum FilesystemType {
     NeoDosFs,
     Fat32,
-    Iso9660,
 }
 
 impl FilesystemType {
@@ -21,7 +20,6 @@ impl FilesystemType {
         match self {
             FilesystemType::NeoDosFs => "NEODOSFS",
             FilesystemType::Fat32 => "FAT32",
-            FilesystemType::Iso9660 => "ISO9660",
         }
     }
 }
@@ -233,7 +231,7 @@ pub fn register_mount_tests() {
 
     crate::test_case!("vfs_mount_unmount", {
         let mut mgr = MountManager::new();
-        mgr.mount("\\Device\\Test", 'X', FilesystemType::Iso9660).unwrap();
+        mgr.mount("\\Device\\Test", 'X', FilesystemType::Fat32).unwrap();
         crate::test_eq!(mgr.count(), 1);
         crate::test_true!(mgr.unmount(0));
         crate::test_eq!(mgr.count(), 0);

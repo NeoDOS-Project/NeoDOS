@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::vfs::partition::PartitionInfo;
 use crate::drivers::block::BlockDevice;
 use crate::test_case;
@@ -11,9 +9,6 @@ pub enum PageCacheLevel {
     L1,
     L2,
 }
-
-/// Future: AES-XTS crypto context stub.
-pub struct CryptoContext;
 
 /// Unified I/O stack for block devices with partition awareness and caching.
 ///
@@ -111,10 +106,25 @@ impl IoStack {
 
     /// Write sectors through the unified I/O path.
     ///
-    /// Translates LBA and writes directly to the device.
+    /// Translates LBA and writes to the device. L2 uses write-back caching:
+    /// single-sector writes go through the page cache and are marked dirty
+    /// for deferred flush; multi-sector or L1 writes go direct to device.
     pub fn write_sectors(&self, lba: u64, count: u64, buf: &[u8]) -> Result<(), ()> {
         if self.stale { return Err(()); }
         let abs_lba = self.translate_lba(lba);
+
+        if self.cache_level == PageCacheLevel::L2 && count == 1 && buf.len() >= 512 {
+            let mut cache_lock = crate::globals::PAGE_CACHE.lock();
+            let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
+            if let Some(dev) = bdevs_lock.get(self.device_id) {
+                if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, dev) {
+                    sector.copy_from_slice(&buf[..512]);
+                    crate::globals::NEED_CACHE_FLUSH.store(true, core::sync::atomic::Ordering::Relaxed);
+                    return Ok(());
+                }
+            }
+        }
+
         let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
         let dev = bdevs_lock.get(self.device_id).ok_or(())?;
         dev.write_blocks(abs_lba, count as u8, buf)

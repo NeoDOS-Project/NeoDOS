@@ -88,13 +88,4 @@ impl NemDriver {
         Ok(())
     }
 
-    /// Unregister every handler this driver added – called during driver unload.
-    pub fn unregister_all(&self) {
-        let mut handlers = self.callbacks.lock();
-        for _name in handlers.drain(..) {
-            // The EventBus API only removes by callback function pointer, not by name.
-            // For this simplified demo we ignore the removal; a full implementation
-            // would store the function pointer alongside the name.
-        }
-    }
 }

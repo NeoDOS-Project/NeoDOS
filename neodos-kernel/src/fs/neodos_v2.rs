@@ -10,6 +10,7 @@ use crate::fs::btree::{BTree, BTreeNode, BTreeIO, NodeType, NODE_SIZE};
 use crate::fs::freelist::FreeList;
 use crate::fs::neodos_dir::{DirEntryV2, dir_lookup, dir_readdir, dir_count, DIRENTRY_SIZE, PERM_R, PERM_W, PERM_X, PERM_D};
 use crate::fs::neodos_io::{file_read, file_write, file_free_extents, crc32};
+use crate::fs::snapshot::{SnapshotTable, SnapshotEntryRaw};
 
 const SUPERBLOCK_MAGIC: u32 = 0x0032454E; // "NE2\0"
 
@@ -38,6 +39,7 @@ pub struct NeoDosFsV2 {
     pub io_stack: IoStack,
     inode_cache: Vec<Option<(u64, DirEntryV2)>>,
     next_inode: u32,
+    pub snapshot_table: SnapshotTable,
 }
 
 impl BTreeIO for NeoDosFsV2 {
@@ -92,10 +94,29 @@ impl NeoDosFsV2 {
         // Freelist: num_used tells how many blocks are allocated (0 to num_used-1)
         let first_free = sb.num_used;
         let free_count = sb.num_blocks.saturating_sub(first_free);
+        let snapshot_table = if sb.snapshot_table_lba > 0 {
+            let mut node_buf = [0u8; NODE_SIZE];
+            let sector_lba = sb.snapshot_table_lba * 8;
+            let abs_sector = io_stack.translate_lba(sector_lba);
+            let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
+            if let Some(dev) = bdevs.get(io_stack.device_id) {
+                for i in 0..8usize {
+                    if let Ok(s) = dev.read_sector(abs_sector + i as u64) {
+                        node_buf[i * 512..(i + 1) * 512].copy_from_slice(&s);
+                    }
+                }
+            }
+            drop(bdevs);
+            SnapshotTable::deserialize(&node_buf).unwrap_or_else(|| SnapshotTable::new())
+        } else {
+            SnapshotTable::new()
+        };
+
         Ok(NeoDosFsV2 {
             sb, freelist: FreeList::with_range(first_free, free_count),
             io_stack,
             inode_cache, next_inode: 1,
+            snapshot_table,
         })
     }
 
@@ -300,6 +321,51 @@ impl FileSystem for NeoDosFsV2 {
 
     fn fs_type(&self) -> &'static str { "NE2" }
     fn total_sectors(&self) -> u64 { self.sb.num_blocks * 8 }
+
+    fn snapshot_create(&mut self) -> Result<u64, VfsError> {
+        let root_lba = self.sb.root_btree_lba;
+        let timestamp = crate::hal::get_ticks();
+        let id = self.snapshot_table.create(root_lba, timestamp);
+        self.save_sb().map_err(|_| VfsError::IOError)?;
+        Ok(id)
+    }
+
+    fn snapshot_restore(&mut self, id: u64) -> Result<(), VfsError> {
+        let root_lba = self.snapshot_table.restore(id).ok_or(VfsError::NotFound)?;
+        self.sb.root_btree_lba = root_lba;
+        self.save_sb().map_err(|_| VfsError::IOError)
+    }
+
+    fn snapshot_list(&mut self, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let entries = self.snapshot_table.list();
+        let entry_size = core::mem::size_of::<SnapshotEntryRaw>();
+        let max_entries = buf.len() / entry_size;
+        let count = entries.len().min(max_entries);
+        for i in 0..count {
+            let (id, snap) = &entries[i];
+            let raw = SnapshotEntryRaw {
+                id: *id,
+                root_lba: snap.root_lba,
+                timestamp: snap.timestamp,
+            };
+            let offset = i * entry_size;
+            if offset + entry_size <= buf.len() {
+                unsafe {
+                    core::ptr::copy_nonoverlapping(
+                        &raw as *const SnapshotEntryRaw as *const u8,
+                        buf.as_mut_ptr().add(offset),
+                        entry_size,
+                    );
+                }
+            }
+        }
+        Ok(entries.len())
+    }
+
+    fn snapshot_purge(&mut self) -> Result<(), VfsError> {
+        self.snapshot_table.purge();
+        self.save_sb().map_err(|_| VfsError::IOError)
+    }
     fn fsck(&mut self, repair: bool, deep: bool, stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
         let s = crate::fs::fsck::fsck_ne2(&self.io_stack, repair, deep);
         *stats = s.to_raw();

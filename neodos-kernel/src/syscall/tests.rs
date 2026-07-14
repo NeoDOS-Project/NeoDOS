@@ -33,7 +33,7 @@ pub fn register_syscall_table_tests() {
             10, 11, 12,
             20, 21, 22, 23, 24, 25,
             30, 35,
-            40, 41, 42, 43, 44, 45, 46, 47,
+            40, 41, 42, 43, 44, 45, 46, 47, 48,
             50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
         ];
         for &n in ASSIGNED {
@@ -452,6 +452,98 @@ pub fn register_syscall_table_tests() {
             Ok(())
         });
         test_true!(result.is_ok());
+    });
+
+    // ═══════════════════════════════════════════════════════════════════
+    // OB-077: sys_ob_snapshot (RAX=48) tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    test_case!("syscall_ob_snapshot_create", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        let id0 = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        test_true!(id0.is_ok());
+        if let Ok(id) = id0 {
+            // First snapshot should have ID 0
+            test_eq!(id, 0);
+        }
+        let id1 = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        test_true!(id1.is_ok());
+        if let Ok(id) = id1 {
+            test_eq!(id, 1);
+        }
+    });
+
+    test_case!("syscall_ob_snapshot_list", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        // Create two snapshots
+        let _ = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        let _ = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        let mut buf = [0u8; 128];
+        let count = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_list(drive_c, &mut buf)
+        });
+        test_true!(count.is_ok());
+        if let Ok(n) = count {
+            test_true!(n >= 2);
+            // Verify first entry has id=0
+            use crate::fs::snapshot::SnapshotEntryRaw;
+            let _entry_size = core::mem::size_of::<SnapshotEntryRaw>();
+            if n > 0 {
+                let raw: SnapshotEntryRaw = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const SnapshotEntryRaw) };
+                test_eq!(raw.id, 0);
+                test_true!(raw.root_lba > 0);
+                test_true!(raw.timestamp > 0);
+            }
+        }
+    });
+
+    test_case!("syscall_ob_snapshot_restore", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        let id = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        test_true!(id.is_ok());
+        if let Ok(_id) = id {
+            let result = crate::globals::with_vfs(|vfs| {
+                vfs.snapshot_restore(drive_c, _id)
+            });
+            test_true!(result.is_ok());
+        }
+    });
+
+    test_case!("syscall_ob_snapshot_purge", {
+        if crate::globals::VFS.try_lock().is_none() { return Ok(()); }
+        let drive_c = crate::fs::vfs::Vfs::drive_index('C').unwrap();
+        let _ = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_create(drive_c)
+        });
+        let count_before = crate::globals::with_vfs(|vfs| {
+            let mut buf = [0u8; 128];
+            let _ = vfs.snapshot_list(drive_c, &mut buf);
+            // Re-read list count from snapshot_table
+            vfs.snapshot_list(drive_c, &mut buf).unwrap_or(0)
+        });
+        test_true!(count_before > 0);
+        let result = crate::globals::with_vfs(|vfs| {
+            vfs.snapshot_purge(drive_c)
+        });
+        test_true!(result.is_ok());
+        let count_after = crate::globals::with_vfs(|vfs| {
+            let mut buf = [0u8; 128];
+            vfs.snapshot_list(drive_c, &mut buf).unwrap_or(0)
+        });
+        test_eq!(count_after, 0);
     });
 
     test_case!("cow_extent_write_read", {

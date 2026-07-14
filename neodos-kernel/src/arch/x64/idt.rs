@@ -157,15 +157,7 @@ lazy_static! {
         idt.divide_error.set_handler_fn(divide_error_handler);
         idt.debug.set_handler_fn(debug_handler);
         idt.non_maskable_interrupt.set_handler_fn(nmi_handler);
-        // Use GDB stub trampoline for breakpoint handler
-        unsafe {
-            extern "C" {
-                static gdb_breakpoint_entry: u8;
-            }
-            idt.breakpoint.set_handler_addr(
-                x86_64::VirtAddr::from_ptr(core::ptr::addr_of!(gdb_breakpoint_entry))
-            );
-        }
+        idt.breakpoint.set_handler_fn(breakpoint_handler);
         idt.overflow.set_handler_fn(overflow_handler);
         idt.bound_range_exceeded.set_handler_fn(bounds_handler);
         idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);

@@ -71,6 +71,8 @@ pub enum SyscallNum {
     ObWait = 45,
     ObDestroy = 46,
     ObService = 47,
+    // Object Manager (48) — snapshot
+    ObSnapshot = 48,
     // Registry Cm (50-59)
     CmOpenKey = 50,
     CmCreateKey = 51,
@@ -123,7 +125,8 @@ impl SyscallNum {
             56 => Some(Self::CmDeleteKey),
             57 => Some(Self::CmFlushKey),
             58 => Some(Self::CmLoadHive),
-            59 => Some(Self::CmUnloadHive),
+             59 => Some(Self::CmUnloadHive),
+             77 => Some(Self::ObSnapshot),
             _ => None,
         }
     }
@@ -182,7 +185,7 @@ pub fn validate_abi() {
         10, 11, 12,
         20, 21, 22, 23, 24, 25,
         30, 35,
-        40, 41, 42, 43, 44, 45, 46, 47,
+        40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
     ];
 
@@ -423,6 +426,7 @@ lazy_static! {
         t[45] = Some(handler_ob_wait as SyscallFn);
         t[46] = Some(handler_ob_destroy as SyscallFn);
         t[47] = Some(handler_ob_service as SyscallFn);
+        t[48] = Some(handler_ob_snapshot as SyscallFn);
         t[50] = Some(handler_cm_open_key as SyscallFn);
         t[51] = Some(handler_cm_create_key as SyscallFn);
         t[52] = Some(handler_cm_query_value as SyscallFn);
@@ -462,6 +466,7 @@ lazy_static! {
         t[45] = SyscallPermission::user();
         t[46] = SyscallPermission::user();
         t[47] = SyscallPermission::admin();
+        t[48] = SyscallPermission::admin();
         t[50] = SyscallPermission::user();
         t[51] = SyscallPermission::user();
         t[52] = SyscallPermission::user();

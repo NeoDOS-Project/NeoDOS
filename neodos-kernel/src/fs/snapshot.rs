@@ -1,8 +1,15 @@
 //! Snapshot table — anillo circular de 64 entradas.
 //! Almacenada en nodo de 4KB (tipo 4). Cada snapshot guarda root_btree_lba + timestamp.
 
-#![allow(dead_code)]
+/// ABI-stable entry for snapshot list operations.
+#[repr(C)]
+pub struct SnapshotEntryRaw {
+    pub id: u64,
+    pub root_lba: u64,
+    pub timestamp: u64,
+}
 
+#[allow(dead_code)]
 use alloc::vec::Vec;
 use super::crc32::crc32;
 

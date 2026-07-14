@@ -237,7 +237,7 @@ Unload a NEM driver by name.
 - **Args**: `RBX`=name_ptr, `RCX`=force_flag.
 - **Returns**: `0` on success, or error code.
 
-### Object Manager (RAX 40-47)
+### Object Manager (RAX 40-48)
 
 #### 40 — `sys_ob_open`
 
@@ -298,6 +298,13 @@ Service control: START(0), STOP(1), RESTART(2), QUERY_STATUS(3), SET_CONFIG(4).
 
 - **Args**: `RBX`=fd, `RCX`=control, `RDX`=buf, `R8`=size.
 - **Returns**: Bytes written (for QUERY_STATUS), or error code.
+
+#### 48 — `sys_ob_snapshot` (admin)
+
+Filesystem snapshot operations: CREATE(0), RESTORE(1), LIST(2), PURGE(3).
+
+- **Args**: `RBX`=fd, `RCX`=op, `RDX`=buf, `R8`=size.
+- **Returns**: snapshot_id (CREATE), count (LIST), or error code.
 
 ### Registry (RAX 50-59)
 

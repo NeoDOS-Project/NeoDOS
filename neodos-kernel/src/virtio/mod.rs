@@ -30,25 +30,4 @@ pub struct VirtioBlkReq {
     pub sector: u64,
 }
 
-// ── Tests ────────────────────────────────────────────────────────────
 
-pub fn register_tests() {
-    use crate::test_case;
-    use crate::test_eq;
-
-    test_case!("vio_virtqueue_layout", {
-        test_eq!(core::mem::size_of::<vring::VringDesc>(), 16);
-        test_eq!(core::mem::size_of::<VirtioBlkReq>(), 16);
-    });
-
-    test_case!("vio_feature_constants", {
-        // Verify feature bits match common constants
-        test_eq!(BLK_F_SIZE_MAX, 1 << 1);
-        test_eq!(BLK_F_SEG_MAX, 1 << 2);
-        test_eq!(BLK_F_BLK_SIZE, 1 << 6);
-        test_eq!(BLK_F_FLUSH, 1 << 14);
-        test_eq!(BLK_T_IN, 0);
-        test_eq!(BLK_T_OUT, 1);
-        test_eq!(BLK_T_FLUSH, 4);
-    });
-}

@@ -1,182 +1,31 @@
-# NeoDOS — Roadmap
+# NeoDOS — Plan de Implementación Detallado
 
-> Items pendientes del roadmap. Los completados están en
-> [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md).
+> **Versión del proyecto:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
-> Version actual: **v0.50-dev** — SSDT reorganized: RAX 0-59
-> Objetivo: v1.0 — executive NT-like arquitectónicamente sólido.
-> Leer [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) antes de planificar cambios.
-> Fuente de verdad: [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
-
-**Próximo milestone: v0.50** (Shell tokenizer + NeoFS snapshot + Power Manager Phase 2)
+> Este documento contiene el detalle granular de cada tarea: archivos,
+> prerrequisitos, tests y descripción técnica.
+>
+> Para la visión general, fases, milestones y prioridades, consultar
+> **[ROADMAP.md](../ROADMAP.md)** (documento maestro).
+>
+> Documentos relacionados:
+> - [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) — Visión a largo plazo
+> - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — Invariantes MUST/MUST NOT
 
 ---
 
 ## Execution Rules
 
-1. Una fase no empieza hasta que sus prerequisitos estén marcados **[COMPLETED]**.
+1. Una fase no empieza hasta que sus prerrequisitos están marcados **[COMPLETED]**.
 2. Cada item pendiente incluye: ID, archivos, prereqs, tests.
 3. Al completar: actualizar `CHANGELOG.md` y mover a `IMPROVEMENTS_COMPLETED.md`.
 4. Validar: `cargo build` + `cargo run --bin neodev -- test` + `scripts/check_deps.py`.
 
 ---
 
-## PRIORITY OVERVIEW
+## Fase 0: Consolidación (v0.50)
 
-| ID | Item | Prio | Cat |
-| ---- | ------ | ------ | ----- |
-| **v0.50** | **Shell tokenizer + NeoFS snapshot + Power Phase 2** | **HIGH** | milestone |
-| NFSv2-SYSCALL | sys_ob_snapshot (RAX 77) | **HIGH** | fs |
-| SH-TOKEN+QUOTE | Shell tokenizer + quoting/escaping | **HIGH** | shell |
-| SSDT-DRVUNLOAD | sys_driver_unload (RAX 35) → ob_destroy | **MEDIUM** | kernel |
-| SSDT-MIGRATE-DUP2 | sys_dup2 (RAX 22) → Ob API | **LOW** | kernel |
-| PM-PHASE2 | Power Manager kernel core (ObType=21, Registry, plan mgmt) | **HIGH** | power |
-| AUDIT-32 | 5+ `.expect()` panic paths → Result | **HIGH** | kernel |
-| AUDIT-33 | Boot/init hardening: panic → Result/fallback seguros | **HIGH** | kernel |
-| AUDIT-34 | Validación de rutas críticas de syscall/interrupt | **HIGH** | kernel |
-| AUDIT-35 | Registry persistence hardening (flush atómico + recovery) | **MEDIUM** | registry |
-| AUDIT-36 | Userland build/linker pipeline para `.NXE` | **HIGH** | userland |
-| AUDIT-37 | Suite de tests de integración boot/registry/shell | **MEDIUM** | testing |
-| | | | |
-| **v0.51** | **NeoFS v2 + Shell Phase 2 + USR-P1 (SAM)** | **MEDIUM** | milestone |
-| NFSv2-BTREE | B-tree persistente genérico | MEDIUM | fs |
-| NFSv2-FREELIST+SNAP | Free list + Snapshot table (64 circular) | MEDIUM | fs |
-| NFSv2-SHELL+MKFS | Shell snapshot cmds + mkfs.neodos | MEDIUM | fs+shell |
-| SH-EDITOR+HISTORY | Line editor + history persistence | MEDIUM | shell |
-| SH-ENV+PIPE | Env expansion (%VAR%) + pipeline wait | MEDIUM | shell |
-| SH-SEP+COMPL+BATCH | Semicolon + completion + batch scripting | MEDIUM | shell |
-| USR-P1a | ObType::Session=19 + SAM built-in users | MEDIUM | security |
-| USR-P1b | Token: integrity_level + creation_time | MEDIUM | security |
-| USR-P1c | SAM persistence to Registry hive | MEDIUM | security |
-| USR-P1d | SeAccessCheck: fix empty DACL + group SIDs | MEDIUM | security |
-| USR-P1e | ObSetInfoClass::ChangePassword (31) | MEDIUM | security |
-| NET-1.9 | ipconfig.nxe | MEDIUM | net |
-| NET-1.10 | ping.nxe | MEDIUM | net |
-| B3.4 | NTP client | MEDIUM | net |
-| ADM-1+2 | neotop v0.2 + neostat | MEDIUM | admin |
-| ADM-4 | neotask (gestor de tareas) | MEDIUM | admin |
-| ADM-5+6 | neocfg + neofs | MEDIUM | admin |
-| | | | |
-| **v0.52** | **VirtIO + Sessions + FS Security** | **MEDIUM** | milestone |
-| VIO-ARCH | Virtqueue abstraction + modern PCI transport | **HIGH** | drivers |
-| VIO-NET | VirtIO Network (0x1000) | **HIGH** | drivers |
-| VIO-9P+BLK2+INPUT | VirtIO 9P + Block NEM + Input | MEDIUM | drivers |
-| B6.1 | Zero-copy pipes | MEDIUM | kernel |
-| USR-P2a | SessionManager + ob_create(Session) | MEDIUM | ob |
-| USR-P2b | SessionInfo + SessionLock/Logoff | MEDIUM | ob |
-| USR-P2c | TokenInfo (28) + session_id inheritance | MEDIUM | ob |
-| USR-P2d | neologon.nxe login binary | MEDIUM | userland |
-| USR-P2e | NeoInit spawns neologon | MEDIUM | boot |
-| USR-P3a | DirEntryV2: owner_sid field | MEDIUM | fs |
-| USR-P3b | VFS permission check function | MEDIUM | fs |
-| USR-P3c | Wire VFS checks in syscall handlers | MEDIUM | syscall |
-| USR-P3d | Default permissions by extension | MEDIUM | fs |
-| VFS-2.2 | Refactorizar FSCK | MEDIUM | fs |
-| PM-PHASE3 | Power syscall dispatch + Event Bus types | MEDIUM | power |
-| | | | |
-| **v0.53** | **Security + Registry + Integrity** | **MEDIUM** | milestone |
-| B5.1 | Module signature validation | MEDIUM | security |
-| B5.2 | Driver permission enforcement | MEDIUM | security |
-| CM-DIRTY | Registry per-cell dirty tracking | MEDIUM | registry |
-| CM-MULTI | Registry multi-hive (SOFTWARE, SECURITY, DEFAULT) | MEDIUM | registry |
-| USR-P4a | cm/security.rs: Registry ACL module | MEDIUM | registry |
-| USR-P4b | Wire sec_desc_cell on key creation | MEDIUM | registry |
-| USR-P4c | ACL checks in Cm syscall handlers | MEDIUM | registry |
-| USR-P4d | User profile hive auto-mount | MEDIUM | registry |
-| USR-P5a | Integrity level in SeAccessCheck | MEDIUM | security |
-| USR-P5b | SetIntegrityLevel + IntegrityLevel query | MEDIUM | ob |
-| USR-P5c | Privilege enforcement in admin syscalls | MEDIUM | syscall |
-| A3.2 | Kernel debugger (KD) | MEDIUM | kernel |
-| B4.6 | NeoEdit text editor | MEDIUM | userland |
-| B4.7 | Shared library per-process binding | MEDIUM | userland |
-| | | | |
-| **v0.54** | **Hardening + User commands + Docs + DNS + i18n** | **LOW** | milestone |
-| B5.3 | Secure boot chain | LOW | security |
-| CM-WAL | Registry WAL (write-ahead logging) | LOW | registry |
-| PM-PHASE4 | Service Manager shutdown integration + libneodos wrappers + shell commands | MEDIUM | power |
-| CM-LIB | Registry libneodos wrappers (7 missing) | LOW | lib |
-| CM-REGEDIT | regedit.nxe — registry editor | LOW | admin |
-| USR-P6a | WHOAMI command | LOW | shell |
-| USR-P6b | PASSWD command | LOW | shell |
-| USR-P6c | WHO + LOGOFF commands | LOW | shell |
-| USR-P6d | SU command | LOW | shell |
-| USR-P6e | RUNAS command | LOW | shell |
-| NET-DNS | DNS resolver (stub resolver + cache) | LOW | net |
-| I18N-P1 | i18n runtime (libneodos + NLT format) | LOW | lib |
-| I18N-P2 | Migrar NeoShell + NeoInit + apps core a tr!() | LOW | shell |
-| I18N-P3 | neolocale tool + archivos .nlt + segundo idioma | LOW | tools |
-| B1.1 | Kernel tracing infrastructure | LOW | kernel |
-| B1.2 | NeoTrace system | LOW | kernel |
-| ADM-3 | neolog (visor event log) | LOW | admin |
-| BUG-NEM-RX | NEM e1000 no recibe paquetes | LOW | drivers |
-| AUDIT-17 | User address space constrained (36MB) | LOW | kernel |
-| B6.2 | Copy-on-write fork | LOW | kernel |
-| VFS-3.2 | `\DosDevices` dinámico | LOW | fs |
-| VFS-5.3 | Write-back ordenado | LOW | fs |
-| VFS-6.1..6.4 | VFS Features (overlay, attr, notifications, async) | LOW | fs |
-| VFS-7.1..7.3 | VFS Performance (lock, lookup cache, path cache) | LOW | fs |
-| PM-PHASE5 | Power Manager polish: event handlers, async coordination, tests | LOW | power |
-| | | | |
-| **backlog** | **Low-priority + experimental + cleanup** | **LOW** |
-| | | | |
-| **NXE-ECOSYSTEM** | **NXE/NXP ecosystem (design complete, phased implementation)** | **MEDIUM** | milestone | |
-| DH2 | Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md | LOW | docs |
-| DH3 | Completar libneodos syscall wrappers | LOW | lib |
-| DH-HISTORY | Mantener docs/HISTORY.md actualizado | LOW | docs |
-| AI-1 | Completar ObInfoClass/ObSetInfoClass enums | LOW | ob |
-| AI-2 | Consolidate legacy syscall wrappers | LOW | syscall |
-| SSDT-FINAL | SSDT audit, cleanup, renumbering (DONE v0.49→v0.50) | **DONE** | syscall |
-| AI-3 | ObObjectTable lock granularity | LOW | ob |
-| AI-4 | Arreglar TOCTOU race en kobj_register | LOW | ob |
-| ADM-7+8+9 | neoctl + neodebug + neomem v0.2 | LOW | admin |
-| B4.8 | NeoTOP v0.2+ | LOW | admin |
-| B4.12 | Compositor 2D | LOW | userland |
-| B7.1..B7.6 | Experimental (GUI, TPM, package mgr, etc.) | LOW | xp |
-| PKG-1 | NeoGet v1 (diferido a v0.70) | LOW | xp |
-| NXE-ECO-1 | NXE metadata section (.note.neodos) | MEDIUM | nxe |
-| NXE-ECO-2 | nxeinfo host tool | MEDIUM | tools |
-| NXE-ECO-3 | nxpkg host tool | MEDIUM | tools |
-| NXE-ECO-4 | nxdump host tool | MEDIUM | tools |
-| NXE-ECO-5 | libneodos resource module (res.rs) | MEDIUM | lib |
-| NXE-ECO-6 | i18n: load from package, available_locales, format | MEDIUM | lib |
-| NXE-ECO-7 | nxres Ring 3 binary | MEDIUM | userland |
-| NXE-ECO-8 | nxlocale Ring 3 binary | MEDIUM | userland |
-| NXE-ECO-9 | nxverify Ring 3 binary | MEDIUM | userland |
-| NXE-ECO-10 | NeoDev NXP integration | MEDIUM | tools |
-| NXE-ECO-11 | NXE/NXP design docs | MEDIUM | docs |
-| VIO-CON...BALLOON | VirtIO Console/RNG/SCSI/GPU/VSOCK/Sound/Balloon | LOW | drivers |
-| CLEANUP-1..35 | Dead code, duplicates, refactors (see LOW section) | LOW | cleanup |
-
----
-
-## HIGH
-
-### Audit review checklist (qué revisar)
-
-- [ ] **Arranque e inicialización**: revisar el flujo de boot, orden de servicios, defaults del registry y manejo de fallos parciales antes de llegar al shell.
-- [ ] **Runtime de bajo nivel**: revisar syscalls, interrupciones, contexto de CPU, reschedule y validación de ABI en rutas críticas.
-- [ ] **Registry y persistencia**: revisar carga/guardado de hives, flush, atomicidad, recovery y manejo de datos incompletos.
-- [ ] **Userland y packaging**: revisar entrypoints, linker scripts, binarios .NXE, carga de imágenes y compatibilidad de librerías.
-- [ ] **Objetos y ciclo de vida**: revisar creación/destrucción de objetos, refcount, handles, ownership y races en el Object Manager.
-- [ ] **Seguridad y permisos**: revisar tokens, ACLs, sesiones, integridad y validación de derechos en syscalls y servicios.
-- [ ] **Integración end-to-end**: revisar flujos reales de boot → registry → servicios → shell → procesos de usuario.
-
-### Audit hardening backlog (post-audit)
-
-- [ ] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
-  - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
-  - Definir política de tolerancia para servicios críticos y registro ausente.
-  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
-
-- [ ] **AUDIT-34. Low-level syscall/interrupt validation** | Prereqs: -- | Files: `src/arch/x64/idt.rs`, `src/arch/x64/cpu_local.rs`, `src/syscall/mod.rs`
-  - Añadir guardas de ABI, estado de interrupciones y resched para rutas críticas.
-  - **Tests:** `syscall_invalid_arg_returns_error`, `interrupt_state_consistency`, `preempt_reschedule_guard`
-
-- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld`, `tools/neodev/`
-  - Normalizar entrypoint `_start`, linker scripts y empaquetado de `.NXE`.
-  - **Tests:** `userbin_link_smoke`, `neoinit_shell_spawn_smoke`
-
-### v0.50: Shell tokenizer + NeoFS snapshot + Power Phase 2
+### M0.1 — Shell tokenizer + Power Phase 2 + Hardening
 
 #### NeoFS v2
 
@@ -186,6 +35,10 @@
   - **Tests:** `syscall_ob_snapshot_create`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_list`
 
 #### Shell (Phase 1 — foundation)
+
+- [ ] **SH-TOKEN+QUOTE. Shell tokenizer + quoting/escaping** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
+  - State machine para pipes, redirects, quoting. `"..."` (expande %VAR%), `'...'` (literal), `^` escape.
+  - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`, `tokenizer_semicolon`, `tokenizer_unmatched_double_quote`, `tokenizer_empty`, `tokenizer_escape_in_double_quote`, `tokenizer_multiple_spaces`
 
 #### Power Manager — Phase 2: Kernel core
 
@@ -207,13 +60,30 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
+- [ ] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
+  - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
+  - Definir política de tolerancia para servicios críticos y registro ausente.
+  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
+
+- [ ] **AUDIT-34. Low-level syscall/interrupt validation** | Prereqs: -- | Files: `src/arch/x64/idt.rs`, `src/arch/x64/cpu_local.rs`, `src/syscall/mod.rs`
+  - Añadir guardas de ABI, estado de interrupciones y resched para rutas críticas.
+  - **Tests:** `syscall_invalid_arg_returns_error`, `interrupt_state_consistency`, `preempt_reschedule_guard`
+
+- [ ] **AUDIT-35. Registry persistence hardening (flush atómico + recovery)** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`, `src/cm/hive.rs`
+  - **Tests:** `cm_atomic_flush`, `cm_recovery_on_corrupt_hive`
+
+- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld`, `tools/neodev/`
+  - Normalizar entrypoint `_start`, linker scripts y empaquetado de `.NXE`.
+  - **Tests:** `userbin_link_smoke`, `neoinit_shell_spawn_smoke`
+
+- [ ] **AUDIT-37. Suite de tests de integración boot/registry/shell** | Prereqs: -- | Files: `src/testing.rs`
+  - **Tests:** `boot_to_shell_integration`, `registry_persist_across_reboot`, `shell_command_execution_flow`
+
 ---
 
-## MEDIUM
+## Fase 1: Kernel Maduro (v0.51–v0.55)
 
-### v0.51: NeoFS v2 remaining + Shell Phase 2 + SAM foundation + Network tools
-
-#### NeoFS v2 (completar implementación)
+### M1.1 — NeoFS v2 Completion (v0.51)
 
 - [ ] **NFSv2-BTREE. B-tree persistente genérico** | Prereqs: -- | Files: `src/fs/btree.rs`
   - B-tree con orden configurable, nodos 4KB. Operaciones: insert, lookup, delete, walk inorder.
@@ -228,7 +98,7 @@
   - Tabla circular de 64 entradas. CREATE copia root_btree_lba actual. RESTORE cambia superblock.
   - **Tests:** `snapshot_create_list`, `snapshot_restore`, `snapshot_circular_64`
 
-- [ ] **NFSv2-MKFS. Herramienta mkfs.neodos** | Prereqs: NFSv2-FILESYSTEM | Files: `userbin/mkfs/` (o script build)
+- [ ] **NFSv2-MKFS. Herramienta mkfs.neodos** | Prereqs: NFSv2-FREELIST | Files: `userbin/mkfs/` (o script build)
   - Escribir superblock "NE2\0", B-tree raíz vacío, freelist con todo el espacio libre.
   - **Tests:** `mkfs_creates_valid_ne2_superblock`
 
@@ -236,7 +106,7 @@
   - Extraer lógica común a trait `FsckIntegrity`, mover a `drivers/fsck_neodos.rs`.
   - **Tests:** 6 tests existentes + 2 de integración
 
-#### Shell (Phase 2 — editor, env, pipeline)
+### M1.2 — Shell Phase 2 (v0.51)
 
 - [ ] **SH-EDITOR+HISTORY. Shell line editor + history** | Prereqs: -- | Files: `userbin/neoshell/src/editor.rs`, `userbin/neoshell/src/history.rs`
   - Reemplaza readline() con `LineEditor`: posicionamiento ANSI, Ctrl-A/E/K/U/R, Insert.
@@ -253,58 +123,9 @@
   - Intérprete batch: `ECHO`, `SET`, `IF EXIST/ERRORLEVEL`, `GOTO :label`, `CALL`, `FOR %%F`, `SHIFT`, `REM`, `@`, `PAUSE`.
   - **Tests:** `semicolon_two_commands`, `completion_command_prefix`, `bat_echo_set`, `bat_if_goto`, `bat_call_subroutine`, `bat_for_loop`, `bat_shift_args`, `bat_pause_resume`
 
-#### Networking — Userland tools
-
-- [ ] **NET-1.9. ipconfig.nxe** | Prereqs: -- | Files: `userbin/ipconfig/` (new)
-  - `IPCONFIG [/ALL]` — interfaces, MAC, IP, gateway, DNS, stats.
-  - **Tests:** integración
-
-- [ ] **NET-1.10. ping.nxe** | Prereqs: -- | Files: `userbin/ping/` (new)
-  - `PING <host> [/n count] [/w ms]`. Socket raw ICMP echo request.
-  - **Tests:** ping a QEMU host
-
-- [ ] **B3.4. NTP client** | Prereqs: -- | Files: `src/net/ntp.rs`
-  - Cliente NTP (RFC 5905, SNTP simplificado). Sincroniza RTC del sistema.
-  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`
-
-#### Admin Tools (Fase 1 — Monitorización + Control)
-
-- [ ] **ADM-1. neotop v0.2** | Prereqs: -- | Files: `userbin/neotop/`
-  - Añadir per-thread CPU, I/O stats, network bar.
-  - **Tests:** `neotop_v0.2_cpu_io_network`
-
-- [ ] **ADM-2. neostat** | Prereqs: -- | Files: `userbin/neostat/`
-  - Terminal dashboard: CPU%, memoria, disco, red. Muestreo periódico 1s.
-  - **Tests:** `neostat_displays_all_gauges`
-
-- [ ] **ADM-4. neotask** | Prereqs: -- | Files: `userbin/neotask/`
-  - Listar procesos, matar, cambiar prioridad, crear proceso.
-  - **Tests:** `neotask_kill_pid`, `neotask_set_priority`, `neotask_spawn`
-
-- [ ] **ADM-5. neocfg (Panel de Control)** | Prereqs: -- | Files: `userbin/neocfg/` (new), `scripts/build.sh`, `scripts/create_ne2_image.py`, `docs/design/neocfg-design.md`
-  - Aplicación Ring 3 .NXE: panel de control modular que consume exclusivamente APIs públicas de libneodos.
-  - `CfgModule` trait: cada subsistema (System, Keyboard, About, Power, Locale) implementa interfaz común.
-  - `ui/menu.rs`: renderizado de menús con navegación por teclado (↑↓, Enter, Esc, 1-9).
-  - `ui/dialog.rs`: diálogos de entrada, confirmación, mensajes informativos.
-  - Módulo System (solo lectura): version, memory, cpu, drives, processes, services via `ob_query_info`.
-  - Módulo Keyboard: listar/cambiar layouts via `ob_set_info(KeyboardLayout=5)`, `ob_query_info(KeyboardLayout=14)`.
-  - Módulo About: version strings via `ob_query_info(Version=8)`.
-  - Módulo Power (stub): mensaje "not available" hasta PM-PHASE2 completado.
-  - Módulo Locale (stub): mensaje "not available" hasta I18N-P1 completado.
-  - Todos los textos visibles via `tr!()` macro (i18n desde el diseño).
-  - Preparado para GUI: la lógica en `modules/` se reutiliza sin cambios.
-  - **Tests:** `neocfg_menu_navigation`, `neocfg_system_info`, `neocfg_keyboard_set_layout`, `neocfg_about_version`, `neocfg_stubs_no_crash`, `neocfg_i18n_all_keys_present`, `neocfg_no_direct_registry_access`
-
-- [ ] **ADM-6. neofs** | Prereqs: -- | Files: `userbin/neofs/`
-  - Estadísticas de volumen, correr fsck, cambiar label, listar montajes.
-  - **Tests:** `neofs_fsck_drive`, `neofs_format_volume`, `neofs_label_roundtrip`
+### M1.3 — SAM Foundation + Network Tools (v0.51)
 
 #### Security — USR-P1: SAM foundation
-
-> Diseño completo: `docs/design/users-security-design.md`. Modelo NT-like: SAM + Token + Session + ACL.
-> No Unix uid/gid — usar SID (ya existente en `src/security/`).
-> No nuevas syscalls — todo via Ob API (RAX 60-66) con ObType::Session=19 e info classes nuevas.
-> Cada paso es pequeño, testeable, y mantiene backward compatibility.
 
 - [ ] **USR-P1a. ObType::Session + SAM built-in users** | Prereqs: -- | Files: `src/object/types.rs`, `src/main.rs`, `src/security/mod.rs`
   - Add `Session = 19` to ObType enum
@@ -337,11 +158,47 @@
   - Returns EAUTH if old password doesn't match
   - **Tests:** `usr_change_password_ok`, `usr_change_password_wrong_old`, `usr_change_password_then_login`
 
-### v0.52: VirtIO + Sessions + FS Security
+#### Networking — Userland tools
 
-#### VirtIO Driver Roadmap
+- [ ] **NET-1.9. ipconfig.nxe** | Prereqs: -- | Files: `userbin/ipconfig/` (new)
+  - `IPCONFIG [/ALL]` — interfaces, MAC, IP, gateway, DNS, stats.
+  - **Tests:** integración
 
-> VIO-ARCH es prerrequisito transversal para VIO-NET, VIO-9P, VIO-BLK2, VIO-INPUT.
+- [ ] **NET-1.10. ping.nxe** | Prereqs: -- | Files: `userbin/ping/` (new)
+  - `PING <host> [/n count] [/w ms]`. Socket raw ICMP echo request.
+  - **Tests:** ping a QEMU host
+
+- [ ] **B3.4. NTP client** | Prereqs: -- | Files: `src/net/ntp.rs`
+  - Cliente NTP (RFC 5905, SNTP simplificado). Sincroniza RTC del sistema.
+  - **Tests:** `ntp_request_parse_response`, `ntp_offset_calculation`
+
+#### Admin Tools — Phase 1
+
+- [ ] **ADM-1. neotop v0.2** | Prereqs: -- | Files: `userbin/neotop/`
+  - Añadir per-thread CPU, I/O stats, network bar.
+  - **Tests:** `neotop_v0.2_cpu_io_network`
+
+- [ ] **ADM-2. neostat** | Prereqs: -- | Files: `userbin/neostat/`
+  - Terminal dashboard: CPU%, memoria, disco, red. Muestreo periódico 1s.
+  - **Tests:** `neostat_displays_all_gauges`
+
+- [ ] **ADM-4. neotask** | Prereqs: -- | Files: `userbin/neotask/`
+  - Listar procesos, matar, cambiar prioridad, crear proceso.
+  - **Tests:** `neotask_kill_pid`, `neotask_set_priority`, `neotask_spawn`
+
+- [ ] **ADM-5. neocfg (Panel de Control)** | Prereqs: -- | Files: `userbin/neocfg/` (new), `scripts/build.sh`, `scripts/create_ne2_image.py`, `docs/design/neocfg-design.md`
+  - Aplicación Ring 3 .NXE: panel de control modular.
+  - `CfgModule` trait: cada subsistema (System, Keyboard, About, Power, Locale) implementa interfaz común.
+  - `ui/menu.rs`, `ui/dialog.rs`.
+  - Módulo System (solo lectura), Keyboard, About, Power (stub), Locale (stub).
+  - Todos los textos visibles via `tr!()` macro (i18n desde el diseño).
+  - **Tests:** `neocfg_menu_navigation`, `neocfg_system_info`, `neocfg_keyboard_set_layout`, `neocfg_about_version`, `neocfg_stubs_no_crash`, `neocfg_i18n_all_keys_present`, `neocfg_no_direct_registry_access`
+
+- [ ] **ADM-6. neofs** | Prereqs: -- | Files: `userbin/neofs/`
+  - Estadísticas de volumen, correr fsck, cambiar label, listar montajes.
+  - **Tests:** `neofs_fsck_drive`, `neofs_format_volume`, `neofs_label_roundtrip`
+
+### M1.4 — VirtIO Architecture (v0.52)
 
 - [ ] **VIO-ARCH. Virtqueue abstraction + modern PCI transport** | Prereqs: A2.1 | Files: `src/virtio/` (new)
   - Capa base: virtqueue split vring 1.0, legacy I/O BAR + modern MMIO BAR (VirtIO 1.0+),
@@ -354,175 +211,140 @@
     link status polling, legacy + modern transport. Se integra con `src/net/nic.rs`.
   - **Tests:** `vio_net_probe`, `vio_net_send_recv`, `vio_net_mac_config`
 
-- [ ] **VIO-9P. VirtIO 9P (0x1009)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-9p/` (NEM), `src/fs/9p.rs`
-  - Filesystem 9P2000.L sobre VirtIO para compartir directorios host-huésped.
-  - **Tests:** `vio_9p_version_attach`, `vio_9p_walk_open_read`, `vio_9p_write_close`
-
 - [ ] **VIO-BLK2. VirtIO Block NEM driver** | Prereqs: VIO-ARCH | Files: `drivers/virtio-blk/` (new, NEM SYSTEM)
   - Reemplazar BOOT_DRIVER inline por NEM standalone. Hotplug multi-dispositivo. MSI-X con DPC.
   - **Tests:** `vio_blk_probe`, `vio_blk_read_write`, `vio_blk_multi_device`
+
+- [ ] **VIO-9P. VirtIO 9P (0x1009)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-9p/` (NEM), `src/fs/9p.rs`
+  - Filesystem 9P2000.L sobre VirtIO para compartir directorios host-huésped.
+  - **Tests:** `vio_9p_version_attach`, `vio_9p_walk_open_read`, `vio_9p_write_close`
 
 - [ ] **VIO-INPUT. VirtIO Input (0x1013)** | Prereqs: VIO-ARCH | Files: `drivers/virtio-input/` (NEM)
   - Teclado, ratón, tablet vía VirtIO. Integración con `src/input/manager.rs`.
   - **Tests:** `vio_input_key_event`, `vio_input_abs_event`, `vio_input_multi_device`
 
-#### Performance
-
-- [ ] **B6.1. Zero-copy pipes** | Prereqs: -- | Files: `src/pipe.rs`
-  - Pipes sin copia de datos entre procesos.
-  - **Tests:** `pipe_zero_copy_throughput`
+### M1.5 — Sessions + FS Security (v0.52)
 
 #### Security — USR-P2: Sessions
 
 - [ ] **USR-P2a. SessionManager global + ObCreate(Session)** | Prereqs: USR-P1a | Files: `src/globals.rs`, `src/scheduler/mod.rs`, `src/syscall/ob.rs`
-  - Add `SESSION_MANAGER: Mutex<SessionManager>` global with `sessions: Vec<Option<Session>>`
-  - Handler for `sys_ob_create(Session)` — allocates session_id (1-based), creates Session struct
+  - Add `SESSION_MANAGER: Mutex<SessionManager>` global
+  - Handler for `sys_ob_create(Session)` — allocates session_id (1-based)
   - Auto-path: `\Session\{session_id}` in namespace
-  - Session struct: `{ session_id, user_sid, token, login_time, state, vt_num, process_count }`
   - **Tests:** `usr_session_create_alloc_id`, `usr_session_namespace_path`, `usr_session_create_then_query`
 
 - [ ] **USR-P2b. ObInfoClass::SessionInfo + ObSetInfoClass::SessionLock/Logoff** | Prereqs: USR-P2a | Files: `src/object/types.rs`, `src/syscall/ob.rs`
-  - Add `SessionInfo = 24` to ObInfoClass: returns session_id, user_sid, state, login_time, process_count
+  - Add `SessionInfo = 24` to ObInfoClass
   - Add `SessionLock = 28` and `SessionLogoff = 29` to ObSetInfoClass
-  - SessionLock: sets state=Locked, blocks input on associated VT
-  - SessionLogoff: terminates all processes in session, frees session slot
   - **Tests:** `usr_session_query_info`, `usr_session_lock_state`, `usr_session_logoff_cleans_up`
 
 - [ ] **USR-P2c. TokenInfo + Token inheritance with session_id** | Prereqs: USR-P2a | Files: `src/object/types.rs`, `src/syscall/ob.rs`, `src/scheduler/mod.rs`
-  - Add `TokenInfo = 28` to ObInfoClass: returns sid, is_admin, groups, privileges, integrity_level, session_id
+  - Add `TokenInfo = 28` to ObInfoClass
   - Modify `add_ring3_process()`: child inherits `session_id` from parent's token
   - **Tests:** `usr_token_info_query`, `usr_process_inherits_session_id`
 
 - [ ] **USR-P2d. neologon.nxe: login binary** | Prereqs: USR-P2b, USR-P2c | Files: `userbin/neologon/` (new), `libneodos/src/syscall.rs`
-  - New user binary: `userbin/neologon/` with `_start()` entry
   - Prints login prompt, reads username + password
   - Calls `sys_ob_create(Session)` → kernel validates SAM credentials
-  - On success: spawns shell (`C:\Programs\neoshell.nxe`) within the new session
-  - On failure: prints error, re-prompts (max 3 attempts)
-  - libneodos wrappers: `session_create()`, `session_lock()`, `session_logoff()`, `change_password()`
   - **Tests:** `usr_neologon_login_ok`, `usr_neologon_login_bad_password`, `usr_neologon_max_attempts`
 
 - [ ] **USR-P2e. NeoInit spawns neologon instead of shell** | Prereqs: USR-P2d | Files: `userbin/neoinit/`
   - NeoInit Phase 4: spawn `C:\Programs\neologon.nxe` instead of shell directly
-  - neologon handles the shell spawn after authentication
-  - If DefaultAutoLogin is set in Registry: auto-login as that user (skip prompt)
+  - If DefaultAutoLogin is set: auto-login as that user
   - **Tests:** `usr_neoinit_spawns_neologon`, `usr_auto_login_from_registry`
 
 #### Security — USR-P3: FS Security
 
 - [ ] **USR-P3a. DirEntryV2: add owner_sid field** | Prereqs: USR-P1b | Files: `src/fs/neodos_dir.rs`, `src/fs/neodos_v2.rs`
-  - Add `owner_sid: Sid` to DirEntryV2 (serialized size grows 128→136 bytes)
-  - Superblock flag `FEATURE_OWNER_SID`: indicates extended dir entries
-  - Backward compat: read old NE2 without owner_sid → assign default S-1-5-21-0-0-0-1000
-  - Write new dir entries with current process token.sid as owner
+  - Add `owner_sid: Sid` to DirEntryV2
+  - Backward compat: read old NE2 without owner_sid → assign default
   - **Tests:** `usr_direntry_owner_sid_written`, `usr_direntry_backward_compat_read`, `usr_direntry_default_owner`
 
 - [ ] **USR-P3b. VFS permission checking function** | Prereqs: USR-P1d, USR-P3a | Files: `src/fs/vfs.rs`
-  - Add `check_vfs_access(token, mode, owner_sid, desired) -> bool` to VFS
-  - Logic: owner check → group member check → other check
-  - Admin bypass: admin always granted
-  - Uses existing PERM_R/W/X/D bits from `mode` field
+  - Add `check_vfs_access(token, mode, owner_sid, desired) -> bool`
   - **Tests:** `usr_vfs_check_owner_rw`, `usr_vfs_check_other_ro`, `usr_vfs_check_admin_bypass`
 
 - [ ] **USR-P3c. Wire VFS permission checks in syscall handlers** | Prereqs: USR-P3b | Files: `src/syscall/ob.rs`
-  - `handler_ob_open` (VFS paths): check READ/WRITE/EXECUTE against file mode + owner
-  - `handler_ob_create` (VFS mkdir/create): check WRITE against parent dir
-  - `handler_ob_destroy` (VFS unlink): check DELETE against file
-  - `handler_ob_set_info(VfsRename)`: check WRITE+DELETE against file
-  - Returns `ObError::AccessDenied` on failure
+  - Check READ/WRITE/EXECUTE in ob_open, ob_create, ob_destroy, ob_set_info
   - **Tests:** `usr_vfs_open_read_ok`, `usr_vfs_open_write_denied`, `usr_vfs_create_in_own_dir`, `usr_vfs_delete_own_file_ok`, `usr_vfs_delete_other_file_denied`
 
 - [ ] **USR-P3d. Default permissions by extension** | Prereqs: USR-P3c | Files: `src/fs/vfs.rs`
   - On `create()`: apply default PERM_* bits based on file extension
-  - .NEM → PERM_R|PERM_S (admin-only read, system file)
-  - .SYS → PERM_R|PERM_S (admin-only read, system file)
-  - .NXE → PERM_R|PERM_X (world-readable+executable)
-  - .NXL → PERM_R|PERM_X (world-readable+executable)
-  - .CFG/.INI → PERM_R|PERM_W (user config)
-  - (other) → PERM_R|PERM_W (user files)
-  - Directories → PERM_R|PERM_W|PERM_X|PERM_D
+  - .NEM/.SYS → admin-only, .NXE/.NXL → world r+x, etc.
   - **Tests:** `usr_default_perm_nem_readonly`, `usr_default_perm_nxe_rx`, `usr_default_perm_dir_full`
 
-#### Power Manager — Phase 3: Syscall dispatch + Event Bus
+### M1.6 — Power Phase 3 + Zero-copy (v0.52)
 
 - [ ] **PM-PHASE3. Power syscall dispatch + Event Bus types** | Prereqs: PM-PHASE2 | Files: `src/syscall/ob.rs`, `src/eventbus/mod.rs`, `src/abi_freeze.rs`, `src/power/event.rs` (new)
-  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_set_info` para clases 37-42 (PowerShutdown, PowerReboot, PowerSuspend, PowerHibernate, PowerSetPlan, PowerSetPolicy). Admin check para shutdown/reboot/set-plan.
-  - `src/syscall/ob.rs`: añadir dispatch en `handler_ob_query_info` para clases 32-34 (PowerPlanInfo, PowerStatus, PowerSystemState). Sin admin check.
-  - `src/eventbus/mod.rs`: añadir tipos 19-26: `EVENT_SHUTDOWN_PHASE2`, `EVENT_SUSPEND`, `EVENT_RESUME`, `EVENT_POWER_BUTTON`, `EVENT_LID_CLOSE`, `EVENT_LID_OPEN`, `EVENT_BATTERY_LOW`, `EVENT_POWER_SOURCE_CHANGE`.
-  - `src/abi_freeze.rs`: validar nuevos tipos no estén en rango 0-15.
-  - `src/power/event.rs`: handlers para `EVENT_POWER_BUTTON` → ejecutar `PowerButtonAction`, `EVENT_LID_CLOSE` → ejecutar `LidAction`.
+  - Dispatch en `handler_ob_set_info` para clases 37-42 (PowerShutdown, PowerReboot, PowerSuspend, etc.)
+  - Dispatch en `handler_ob_query_info` para clases 32-34 (PowerPlanInfo, PowerStatus, PowerSystemState)
+  - Tipos 19-26 en Event Bus: `EVENT_SHUTDOWN_PHASE2`, `EVENT_SUSPEND`, `EVENT_RESUME`, etc.
   - **Tests:** `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`, `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
 
-### v0.53: Security + Registry + Integrity
+- [ ] **B6.1. Zero-copy pipes** | Prereqs: -- | Files: `src/pipe.rs`
+  - Pipes sin copia de datos entre procesos.
+  - **Tests:** `pipe_zero_copy_throughput`
 
-#### Security — Module signing + driver permissions
+### M1.7 — Registry Phase 2 + Integrity Levels (v0.53)
 
-- [ ] **B5.1. Module signature validation** | Prereqs: NT6 | Files: `src/drivers/loader.rs`
-  - Validación criptográfica de módulos `.nem` antes de cargar.
-  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`
-
-- [ ] **B5.2. Driver permission enforcement** | Prereqs: NT6.3, B5.1 | Files: `src/drivers/caps.rs`
-  - Cruzar capacidad declarada del driver con token del proceso y ACL del objeto.
-  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`
-
-#### Registry (Phase 2 — dirty tracking + multi-hive)
+#### Registry — Phase 2
 
 - [ ] **CM-DIRTY. Registry per-cell dirty tracking + incremental flush** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/cache.rs`, `src/cm/mod.rs`
-  - `dirty_cells: BitVec` (1 bit por slot). `slot_mut()` marca dirty; `serialize_dirty()` escribe solo celdas sucias.
+  - `dirty_cells: BitVec` (1 bit por slot). `serialize_dirty()` escribe solo celdas sucias.
   - **Tests:** `cm_dirty_cell_set_on_write`, `cm_dirty_cleared_after_flush`, `cm_dirty_serialize_only_dirty`, `cm_dirty_full_flush_roundtrip`
 
 - [ ] **CM-MULTI. Registry multi-hive** | Prereqs: -- | Files: `src/cm/mod.rs`
-  - Montar SOFTWARE, SECURITY, DEFAULT hives. Cada hive crea su directorio raíz en namespace Ob.
+  - Montar SOFTWARE, SECURITY, DEFAULT hives.
   - **Tests:** `cm_multi_software_mounted`, `cm_multi_hive_isolation`, `cm_multi_cross_hive_path_fails`, `cm_multi_unload_reload`
-
-> **Nota:** Registry ACL security (CM-SEC) integrado con USR-P4a/4b/4c.
 
 #### Security — USR-P4: Registry ACL
 
 - [ ] **USR-P4a. cm/security.rs: Registry ACL checking module** | Prereqs: USR-P1d | Files: `src/cm/security.rs` (new), `src/cm/mod.rs`
   - New file: `cm_check_access(token, sec_desc, desired_access) -> bool`
-  - Reuses `SeAccessCheck` from security subsystem
+  - Reuses `SeAccessCheck`
   - If key has no sec_desc_cell: default — admin full, user read-only
-  - Helper: `cm_default_sec_desc(creator_sid)` — creates SD with creator as owner
   - **Tests:** `usr_cm_sec_check_admin_full`, `usr_cm_sec_check_user_readonly`, `usr_cm_sec_default_sd`
 
 - [ ] **USR-P4b. Wire sec_desc_cell on key creation** | Prereqs: USR-P4a | Files: `src/cm/hive.rs`
-  - On `KeyCell` creation: inherit parent's `sec_desc_cell` or create default via `cm_default_sec_desc()`
-  - Store `sec_desc_cell` as index to a Security cell in the hive
-  - Serialize/deserialize Security cells in NEOH format
+  - On `KeyCell` creation: inherit parent's `sec_desc_cell` or create default
   - **Tests:** `usr_cm_key_inherits_parent_sec`, `usr_cm_key_default_sec_when_no_parent`
 
-- [ ] **USR-P4c. ACL checks in Cm syscall handlers** | Prereqs: USR-P4b | Files: `src/syscall/cm.rs` or `src/syscall/ob.rs` (Registry handlers)
-  - Wire `cm_check_access()` in: open_key, create_key, delete_key, set_value, delete_value, enum_key, enum_value
-  - Returns `ObError::AccessDenied` if check fails
+- [ ] **USR-P4c. ACL checks in Cm syscall handlers** | Prereqs: USR-P4b | Files: `src/syscall/cm.rs` or `src/syscall/ob.rs`
+  - Wire `cm_check_access()` in all Registry handlers
   - **Tests:** `usr_cm_open_key_admin`, `usr_cm_create_key_user_denied`, `usr_cm_delete_key_admin_only`
 
 - [ ] **USR-P4d. User profile hive auto-mount** | Prereqs: USR-P4c | Files: `src/cm/mod.rs`
   - On session creation: auto-mount `\Registry\User\{sid}` hive
-  - Profile hive stored at `C:\Users\{username}\ntuser.hiv`
-  - Default values: Environment\PATH, Console\colors, etc.
   - **Tests:** `usr_cm_user_hive_mounted_on_login`, `usr_cm_user_hive_has_defaults`
 
 #### Security — USR-P5: Integrity levels
 
 - [ ] **USR-P5a. Integrity level in SeAccessCheck** | Prereqs: USR-P1b | Files: `src/security/access.rs`
   - Extend `SeAccessCheck`: if `process_IL < object_IL`, deny WRITE/DELETE (allow READ)
-  - Add `integrity_level` field to `SecurityDescriptor` (default=Medium)
-  - Admin bypass: SYSTEM integrity level always passes
   - **Tests:** `usr_il_medium_read_high_ok`, `usr_il_medium_write_high_denied`, `usr_il_system_bypass`
 
 - [ ] **USR-P5b. SetIntegrityLevel + IntegrityLevel info classes** | Prereqs: USR-P5a | Files: `src/object/types.rs`, `src/syscall/ob.rs`
-  - Add `SetIntegrityLevel = 32` to ObSetInfoClass — can only lower IL, never raise
-  - Add `IntegrityLevel = 27` to ObInfoClass — query object/process IL
-  - Handler validates: new_IL < current_IL (can't raise), returns Inval if try to raise
+  - Add `SetIntegrityLevel = 32` to ObSetInfoClass (can only lower)
+  - Add `IntegrityLevel = 27` to ObInfoClass
   - **Tests:** `usr_il_drop_from_high_to_medium`, `usr_il_raise_denied`, `usr_il_query_current`
 
 - [ ] **USR-P5c. Privilege enforcement in admin syscalls** | Prereqs: USR-P1b | Files: `src/syscall/permission.rs`, `src/syscall/ob.rs`
-  - Wire `token.has_privilege(bit)` in admin-only syscalls: driver_unload, cm_load_hive, cm_unload_hive
-  - Token filtering: `new_admin()` → all 12 privileges; `new_user()` → only SE_CHANGE_NOTIFY
+  - Wire `token.has_privilege(bit)` in driver_unload, cm_load_hive, cm_unload_hive
   - **Tests:** `usr_priv_admin_has_all`, `usr_priv_user_has_change_notify`, `usr_priv_driver_unload_denied_for_user`
 
-#### Kernel
+### M1.8 — Module Signing + KD + Shared Libraries (v0.53)
+
+#### Security — Module signing
+
+- [ ] **B5.1. Module signature validation** | Prereqs: -- | Files: `src/drivers/loader.rs`
+  - Validación criptográfica de módulos `.nem` antes de cargar.
+  - **Tests:** `nem_signature_valid_accepts`, `nem_signature_invalid_rejects`, `nem_signature_tamper_detected`
+
+- [ ] **B5.2. Driver permission enforcement** | Prereqs: B5.1 | Files: `src/drivers/caps.rs`
+  - Cruzar capacidad declarada del driver con token del proceso y ACL del objeto.
+  - **Tests:** `driver_caps_allow_admin`, `driver_caps_deny_user`, `driver_caps_acl_intersection`
+
+#### Kernel debugger
 
 - [ ] **A3.2. Kernel debugger (KD)** | Prereqs: A3.1 | Files: `src/debugger/mod.rs`
   - INT3 breakpoints, hardware watchpoints (DR0-DR3), GDB remote protocol stub via serial.
@@ -535,19 +357,62 @@
   - **Tests:** `neoedit_open_display`, `neoedit_edit_save`, `neoedit_scroll`
 
 - [ ] **B4.7. Shared library per-process binding** | Prereqs: sys_loadlib | Files: `src/elf.rs`, `libneodos/`
-  - Evolucionar NXL slots globales a binding per-process. Cada EPROCESS mantiene su tabla de NXLs.
+  - Evolucionar NXL slots globales a binding per-process.
   - **Tests:** `nxl_per_process_isolation`, `nxl_unload_on_exit`, `nxl_version_coexistence`
 
----
+### M1.9 — Power Phase 4 + User Commands + DNS (v0.54)
 
-## LOW
+- [ ] **PM-PHASE4. Power Manager: shutdown coordination + libneodos + shell** | Prereqs: PM-PHASE3 | Files: `src/services/mod.rs`, `libneodos/src/power.rs` (new), `libneodos/src/syscall.rs`, `userbin/neoshell/`
+  - `ServiceManager::stop_all()` en orden inverso de dependencias
+  - libneodos wrappers: `power_shutdown()`, `power_reboot()`, `power_suspend()`, etc.
+  - Shell commands: `REBOOT` built-in, `POWEROFF` migrado
+  - **Tests:** `pm_service_manager_stop_all_order`, `pm_service_manager_stop_all_timeout`, `pm_lib_get_plan`, `pm_lib_set_plan`, `pm_lib_reboot`, `pm_lib_shutdown`
 
-### v0.54+: Hardening + Multi-hive + Docs + Cleanup
+#### Security — USR-P6: User commands
 
-#### Registry (Phase 3 — WAL + lib wrappers)
+- [ ] **USR-P6a. WHOAMI command** | Prereqs: USR-P2c | Files: `userbin/neoshell/`
+  - **Tests:** `usr_whoami_prints_username`, `usr_whoami_shows_sid`
 
-- [ ] **CM-WAL. Registry WAL (write-ahead logging, crash recovery)** | Prereqs: -- | Files: `src/cm/wal.rs` (new), `src/cm/mod.rs`
-  - Cada mutación escribe entrada WAL a `C:\System\Registry\<name>.wal` + fsync antes de aplicar a hive.
+- [ ] **USR-P6b. PASSWD command** | Prereqs: USR-P2d | Files: `userbin/neoshell/`
+  - **Tests:** `usr_passwd_change_ok`, `usr_passwd_wrong_old`, `usr_passwd_mismatch_confirm`
+
+- [ ] **USR-P6c. WHO + LOGOFF commands** | Prereqs: USR-P2b | Files: `userbin/neoshell/`
+  - **Tests:** `usr_who_lists_sessions`, `usr_logoff_terminates_shell`
+
+- [ ] **USR-P6d. SU command** | Prereqs: USR-P2d, USR-P2e | Files: `userbin/neoshell/`
+  - **Tests:** `usr_su_correct_password`, `usr_su_wrong_password`, `usr_su_spawns_as_target`
+
+- [ ] **USR-P6e. RUNAS command** | Prereqs: USR-P6d | Files: `userbin/neoshell/`
+  - **Tests:** `usr_runas_admin_command`, `usr_runas_user_denied_without_password`
+
+#### Networking
+
+- [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
+  - Stub resolver: consulta UDP a servidor DNS (puerto 53)
+  - Caché local con TTL (hasta 64 entradas)
+  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
+
+#### Tracing
+
+- [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: -- | Files: `src/trace/mod.rs`
+  - TraceBuffer, trace points registrables, filtrado por categoría/nivel, dump serial con timestamps.
+  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`
+
+- [ ] **B1.2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
+  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`
+
+#### Admin — Phase 3
+
+- [ ] **ADM-3. neolog** | Prereqs: B1.1 | Files: `userbin/neolog/`
+  - Visor de event log del kernel + EventBus.
+  - **Tests:** `neolog_eventbus_dump`, `neolog_trace_filter`
+
+### M1.10 — Registry WAL + Secure Boot + VFS Advanced (v0.55)
+
+#### Registry — Phase 3
+
+- [ ] **CM-WAL. Registry WAL (write-ahead logging, crash recovery)** | Prereqs: CM-DIRTY | Files: `src/cm/wal.rs` (new), `src/cm/mod.rs`
+  - Cada mutación escribe entrada WAL a `C:\System\Registry\<name>.wal` + fsync antes de aplicar.
   - En mount: si existe `.wal`, hacer replay antes de cargar `.hiv`.
   - **Tests:** `cm_wal_created_on_mutation`, `cm_wal_replay_on_load`, `cm_wal_truncated_after_flush`, `cm_wal_power_loss_recovery`
 
@@ -556,219 +421,331 @@
   - **Tests:** `cm_lib_create_key_wrapper`, `cm_lib_enum_key_wrapper`, `cm_lib_enum_value_wrapper`, `cm_lib_flush_key_wrapper`
 
 - [ ] **CM-REGEDIT. regedit.nxe** | Prereqs: CM-LIB | Files: `userbin/regedit/` (new)
-  - Navegación de árbol, crear/borrar claves, set/query valores, flush manual.
   - **Tests:** `regedit_browse_tree`, `regedit_create_delete_key`, `regedit_set_query_value`, `regedit_flush`
 
-#### Power Manager — Phase 4: Service Manager + libneodos + shell
-
-- [ ] **PM-PHASE4. Shutdown coordination + libneodos wrappers + shell commands** | Prereqs: PM-PHASE3 | Files: `src/services/mod.rs`, `libneodos/src/power.rs` (new), `libneodos/src/syscall.rs`, `userbin/neoshell/`
-  - `src/services/mod.rs`: añadir `ServiceManager::stop_all()` — itera servicios en orden inverso de dependencias, para cada uno llama `stop_service()` con timeout.
-  - `ServiceManager::stop_all()` es llamado por `PowerCoordinator::shutdown()` antes de `EVENT_SHUTDOWN_PHASE2`.
-  - `libneodos/src/power.rs`: wrapper `power_shutdown()`, `power_reboot()`, `power_suspend()`, `power_hibernate()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_set_policy()`.
-  - Tipos públicos: `PowerPlanInfo`, `PowerSystemStatus`, `PowerPolicyUpdate`.
-  - Internamente: `ob_open("\Device\PowerManager")` → cache fd → `ob_set_info`/`ob_query_info`.
-  - `userbin/neoshell/`: añadir `REBOOT` built-in. Migrar `POWEROFF` a llamar `libneodos::power_shutdown()`.
-  - **Tests:** `pm_service_manager_stop_all_order`, `pm_service_manager_stop_all_timeout`, `pm_lib_get_plan`, `pm_lib_set_plan`, `pm_lib_reboot`, `pm_lib_shutdown`
-
-#### Power Manager — Phase 5: Polish + event-driven coordination + tests
-
-- [ ] **PM-PHASE5. Power Manager polish: async coordination, full test suite** | Prereqs: PM-PHASE4 | Files: `src/power/coordinator.rs`, `src/power/event.rs`, `src/power/mod.rs`, `docs/power-manager.md`
-  - Completar coordinación asíncrona en `coordinator.rs`: shutdown con timeout por servicio, fallback force-kill.
-  - Integrar `EVENT_POWER_BUTTON` con `PowerManager` para ejecutar `power_button_action` desde Event Bus.
-  - Integrar `EVENT_LID_CLOSE`/`EVENT_LID_OPEN` para ejecutar `lid_action`.
-  - Integración con `\Global\Info\Power` para consultas vía `ob_query_info`.
-  - Completar suite de tests (25 tests del diseño original):
-    - Inicialización: `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_capabilities_from_fadt`
-    - Planes: `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`
-    - Políticas: `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`, `pm_policy_restored_on_plan_switch`
-    - Shutdown: `pm_shutdown_transition_state`, `pm_shutdown_dispatches_event`, `pm_shutdown_flushes_hives`, `pm_shutdown_second_call_busy`
-    - Eventos: `pm_event_power_button_triggers_action`, `pm_event_lid_close_triggers_action`
-    - HAL/ACPI: tests de `pm_fadt_*`, `pm_hal_*`, `pm_lib_*`
-  - **Tests:** completar los 25 tests + integración en QEMU
-
-#### Security — USR-P6: User commands
-
-- [ ] **USR-P6a. WHOAMI command** | Prereqs: USR-P2c | Files: `userbin/neoshell/`
-  - New built-in or .NXE: queries `TokenInfo` via `ob_query_info(process_fd, 28)`
-  - Extracts SID → SAM lookup → prints `username [SID]`
-  - **Tests:** `usr_whoami_prints_username`, `usr_whoami_shows_sid`
-
-- [ ] **USR-P6b. PASSWD command** | Prereqs: USR-P2d | Files: `userbin/neoshell/`
-  - Prompts for old password, new password, confirm new password
-  - Calls `ob_set_info(session_fd, ChangePassword, buffer)`
-  - Prints success or error message
-  - **Tests:** `usr_passwd_change_ok`, `usr_passwd_wrong_old`, `usr_passwd_mismatch_confirm`
-
-- [ ] **USR-P6c. WHO + LOGOFF commands** | Prereqs: USR-P2b | Files: `userbin/neoshell/`
-  - `WHO`: `ob_enum(\Session\)` → for each session, query SessionInfo → print user + since
-  - `LOGOFF`: `ob_set_info(session_fd, SessionLogoff)` → kernel terminates all session processes
-  - **Tests:** `usr_who_lists_sessions`, `usr_logoff_terminates_shell`
-
-- [ ] **USR-P6d. SU command** | Prereqs: USR-P2d, USR-P2e | Files: `userbin/neoshell/`
-  - `SU <username>`: prompts for target user's password
-  - On auth: spawns new shell in target user's session
-  - Uses existing `sys_ob_create(Process)` with attrs encoding target token
-  - **Tests:** `usr_su_correct_password`, `usr_su_wrong_password`, `usr_su_spawns_as_target`
-
-- [ ] **USR-P6e. RUNAS command** | Prereqs: USR-P6d | Files: `userbin/neoshell/`
-  - `RUNAS [/USER:admin] <command>`: spawns command with different token
-  - Requires target user's password (or admin consent)
-  - **Tests:** `usr_runas_admin_command`, `usr_runas_user_denied_without_password`
+#### Security
 
 - [ ] **B5.3. Secure boot chain** | Prereqs: B5.1 | Files: `neodos-bootloader/`, `src/boot/secure.rs`
   - Verificación encadenada bootloader → kernel → drivers.
   - **Tests:** `secure_boot_kernel_verified`, `secure_boot_driver_verified`, `secure_boot_fail_closed`
 
-#### Networking
+#### Power Manager — Phase 5
 
-- [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
-  - Stub resolver: consulta UDP a servidor DNS (puerto 53), parsea respuestas (A, AAAA, CNAME, MX).
-  - Caché local con TTL (hasta 64 entradas, expiración por timer).
-  - Integración con libnet: `dns_resolve(hostname) -> Ipv4Addr`.
-  - Servidores DNS desde Registry (`HKLM\Network\Interfaces\0\DnsServer`), configurable via ipconfig.
-  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
+- [ ] **PM-PHASE5. Power Manager polish: async coordination, full tests** | Prereqs: PM-PHASE4 | Files: `src/power/coordinator.rs`, `src/power/event.rs`, `src/power/mod.rs`, `docs/power-manager.md`
+  - Completar coordinación asíncrona: shutdown con timeout por servicio, force-kill fallback
+  - Integración Event Bus completa (EVENT_POWER_BUTTON, EVENT_LID_CLOSE/OPEN)
+  - **Tests:** completar los 25 tests del diseño original
 
-#### i18n — Internacionalización (NLTv2)
-
-> Arquitectura: `docs/nlt.md`. Formato NLTv2 (IDs numéricos), compilador `tools/nltc`, runtime en `libneodos/src/i18n.rs`.
-> El kernel NO traduce. Las aplicaciones llaman `tr_id!(ID)` → `i18n_get_id(id)`. Fallback: es-ES → es → en-US → "?".
-> Solo NLTv2. Sin compatibilidad con NLTv1 (string-key).
-
-- [x] **I18N-P1. Runtime i18n NLTv2 + IDs numéricos** | Files: `libneodos/src/i18n.rs`, `libneodos/src/macros.rs`, `neodos-kernel/src/cm/init.rs`
-- [x] **I18N-P3a. Compilador nltc** | Files: `tools/nltc/` (new)
-- [x] **I18N-P3b. Fuentes TOML + NLTv2 binarios** | Files: `data/locale/*/*.toml`, `data/locale/*/*.nlt`, `scripts/gen_nlt_toml.py`
-- [x] **I18N-P3c. neolocale tool (NLTv2)** | Files: `userbin/neolocale/src/main.rs`
-- [x] **I18N-P3d. Integración NeoDev** | Files: `tools/neodev/src/build.rs`, `tools/neodev/src/main.rs`
-- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
-  - PENDIENTE: todas las apps existentes (ver gen_nlt_toml.py para lista completa)
-- [ ] **I18N-P4. format_str() con placeholders {0}** | Prereqs: I18N-P1 | Prio: MEDIUM | Complexity: LOW
-  - Reemplazo de `{0}`, `{1}` en strings traducidos. Buffer de stack de 256 bytes.
-- [ ] **I18N-P5. i18n_available_locales()** | Prereqs: I18N-P1 | Prio: LOW | Complexity: LOW
-  - Enumerar directorios en `C:\System\Locale\` para listar idiomas disponibles.
-- [ ] **I18N-P6. Per-user locale (Registry)** | Prereqs: USR-P1 | Prio: LOW | Complexity: MEDIUM
-  - `\Registry\User\{sid}\Control\Locale\Language` con prioridad sobre sistema.
-- [ ] **I18N-P7. Compresión NLT** | Prereqs: I18N-P1 | Prio: LOW | Complexity: HIGH
-  - Flag `NLT_FLAG_COMPRESSED` (0x0001) para compresión LZSS/LZ4 de StringData.
-- [ ] **I18N-P8. UTF-16 support** | Prereqs: I18N-P1 | Prio: LOW | Complexity: MEDIUM
-  - Flag en header para elegir UTF-8/UTF-16 en StringData.
-- [ ] **I18N-P9. Pluralización** | Files: `libneodos/src/i18n.rs` | Prio: LOW | Complexity: HIGH
-  - Sistema de plurales: `IDS_FILE_0 = "0 files"`, `IDS_FILE_1 = "1 file"`, `IDS_FILE_N = "{0} files"`.
-- [ ] **I18N-P10. Formatos regionales (fechas, monedas, calendarios)** | Prio: LOW | Complexity: HIGH
-  - Hint: cargar desde archivos NLT de sistema, no desde runtime.
-- [ ] **I18N-P11. Soporte RTL/bidi** | Prio: LOW | Complexity: HIGH
-  - Flag `NLT_FLAG_RTL` (0x0002) + consulta Registry `Layout` para espejar GUI.
-- [ ] **I18N-P12. Firmas digitales en NLT** | Prio: LOW | Complexity: HIGH
-  - Campo reservado en header + flag `NLT_FLAG_SIGNED` para verificar integridad.
-
-- [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
-  - `e1000_poll()` nunca detecta paquetes entrantes (bit DD no seteado). Workaround: `default_nic_id()` prefiere kernel e1000.
-
-#### Tracing
-
-- [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: A2.4 | Files: `src/trace/mod.rs`
-  - TraceBuffer con trace points registrables dinámicamente, filtrado por categoría/nivel, dump via serial con timestamps HPET.
-  - **Tests:** `trace_register_dynamic_point`, `trace_filter_by_category`, `trace_dump_serial_format`
-
-- [ ] **B1.2. NeoTrace system** | Prereqs: B1.1 | Files: `userbin/neotrace/`
-  - Comando `NEOTRACE` con subcomandos START/STOP/DUMP/FILTER.
-  - **Tests:** `neotrace_start_stop_toggle`, `neotrace_dump_output`
-
-#### Admin (Fase 3 — Avanzado)
-
-- [ ] **ADM-3. neolog** | Prereqs: B1.1 | Files: `userbin/neolog/`
-  - Visor de event log del kernel + EventBus. Filtro por categoría/nivel/timestamp.
-  - **Tests:** `neolog_eventbus_dump`, `neolog_trace_filter`
-
-- [ ] **ADM-7. neoctl** | Files: `userbin/neoctl/`
-- [ ] **ADM-8. neodebug** | Files: `userbin/neodebug/`
-- [ ] **ADM-9. neomem v0.2** | Files: `userbin/neomem/`
-- [ ] **B4.8. NeoTOP v0.2+** | Files: `userbin/neotop/`
-- [ ] **B4.12. Compositor 2D** | Files: `userbin/compositor/`
-
-#### Kernel
-
-- [ ] **B6.2. Copy-on-write fork** | Prereqs: -- | Files: `src/memory/cow.rs`, `src/syscall.rs`
-- [ ] **AUDIT-17. User address space constrained (USER_LIMIT=36MB)** | Files: `src/arch/x64/paging.rs`
-- [ ] **AUDIT-48. Fixed 16 KB kernel stack with no guard page** | Files: `src/scheduler/mod.rs:21`
-- [ ] **AUDIT-34. No RAII IRQL guard — 15+ manual raise/lower** | Files: `src/scheduler/mod.rs`
-- [ ] **AUDIT-33. `BIN_BUF` global static mut not re-entrant** | Files: `src/syscall/handlers.rs:79`
-- [ ] **AUDIT-47. Non-reentrant IRP pool with wraparound overwrite** | Files: `src/irp/mod.rs:13-14`
-
-#### VFS (remaining)
+#### VFS — remaining features
 
 - [ ] **VFS-3.2. `\DosDevices` dinámico** | Files: `src/vfs/mount.rs`
 - [ ] **VFS-5.3. Write-back ordenado (flush page → flush block)** | Files: `src/globals.rs`
 - [ ] **VFS-6.1. Overlay mounts** | Files: `src/fs/vfs.rs`
 - [ ] **VFS-6.2. Extended attributes VFS** | Files: `src/fs/vfs.rs`
 - [ ] **VFS-6.3. File notifications via Event Bus** | Files: `src/fs/vfs.rs`, `src/eventbus/`
-- [ ] **VFS-6.4. Async VFS operations via IRP** | Files: `src/fs/vfs.rs`
+- [ ] **VFS-6.4. Async VFS operations via IOCP (not IRP)** | Files: `src/fs/vfs.rs`
 - [ ] **VFS-7.1. Eliminar lock global de VFS** | Files: `src/globals.rs`, `src/fs/vfs.rs`
 - [ ] **VFS-7.2. Lookup cache** | Files: `src/fs/vfs.rs`
 - [ ] **VFS-7.3. Path cache** | Files: `src/fs/vfs.rs`
 
-#### Cleanup (quick wins — refactors and dead code)
+---
 
-- [ ] **CLEANUP-1. Dead code mask `#![allow(dead_code)]` in main.rs + globals.rs** | Files: `src/main.rs:9`, `src/globals.rs:1`
-  - Remove `#[allow(dead_code)]`, fix revealed dead items. Merged from AUDIT-30/AUDIT-82.
-  - **Tests:** (compile-only)
+## Fase 2: Ecosistema de Usuario (v0.56–v0.60)
 
+### M2.1 — NXE/NXP Ecosystem Completion (v0.56)
+
+#### NXE/NXP — Phase 2
+
+- [ ] **NXE-ECO-12. NXE metadata auto-generation in build pipeline** | Prereqs: NXE-ECO-1 | Files: `tools/neodev/src/build.rs`, `libneodos/user.ld`
+  - Generación automática de metadatos en build.rs de cada proyecto NXE.
+  - Wire en NeoDev: inject .note.neodos después de cargo build.
+  - **Tests:** `nxe_metadata_elf_section_exists`, `nxe_metadata_tlv_roundtrip`
+
+- [ ] **NXE-ECO-13. `\Resource\<app>\` virtual Ob namespace** | Prereqs: NXE-ECO-5 | Files: `neodos-kernel/src/object/mod.rs`
+  - Exponer recursos de aplicación como namespace Ob virtual.
+  - **Tests:** `res_open_roundtrip`
+
+- [ ] **NXE-ECO-14. NXE file header validation in kernel (size, type)** | Files: `src/elf.rs`
+  - Validación de cabecera NXE al cargar (tamaño, tipo de ejecutable).
+  - **Tests:** `nxe_header_validation_size`, `nxe_header_validation_type`
+
+- [ ] **NXE-ECO-15. Digital signature verification infrastructure** | Files: `src/security/signature.rs`
+  - Infraestructura para verificación de firmas digitales en NXE/NXP.
+  - **Tests:** `signature_verify_valid`, `signature_verify_tampered`
+
+#### i18n — Migration
+
+- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+  - Migrar todas las apps existentes de `tr!()` (no-op) a `tr_id!(IDS_CONSTANT)`.
+  - **Tests:** (integración)
+
+- [ ] **I18N-P4. format_str() con placeholders {0}** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Reemplazo de `{0}`, `{1}` en strings traducidos. Buffer de stack de 256 bytes.
+  - **Tests:** `i18n_format_simple`, `i18n_format_multiple_args`, `i18n_format_missing_args`
+
+- [ ] **I18N-P5. i18n_available_locales()** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Enumerar directorios en `C:\System\Locale\` para listar idiomas disponibles.
+  - **Tests:** `i18n_available_locales_returns_list`
+
+- [ ] **I18N-P6. Per-user locale (Registry)** | Prereqs: USR-P1 | Files: `libneodos/src/i18n.rs`
+  - `\Registry\User\{sid}\Control\Locale\Language` con prioridad sobre sistema.
+
+### M2.2 — Executive Manager (v0.57)
+
+- [ ] **EXEC-CM. Configuration Manager** | Prereqs: CM-MULTI | Files: `src/cm/config_mgr.rs` (new)
+  - Consolidación de Registry + boot settings en un Configuration Manager.
+  - Gestión de CurrentControlSet, perfiles de hardware.
+  - **Tests:** `cm_config_mgr_current_set`, `cm_config_mgr_profile_switch`
+
+- [ ] **EXEC-SM. Session Manager** | Prereqs: USR-P2a | Files: `src/session/` (new)
+  - Gestión completa de sesiones de usuario (login, logout, lock, switch).
+  - Integración con Service Manager para sesiones por usuario.
+  - **Tests:** `session_create_destroy`, `session_switch_user`
+
+- [ ] **EXEC-OM. Object Namespace Manager** | Prereqs: -- | Files: `src/object/namespace.rs`
+  - Virtualización de namespace por proceso (per-process view).
+  - Directorios /dev, /proc, /sys virtuales por proceso.
+  - **Tests:** `namespace_per_process_isolation`, `namespace_virtual_dirs`
+
+- [ ] **EXEC-PM. Power Manager final** | Prereqs: PM-PHASE5 | Files: `src/power/coordinator.rs`
+  - Power Manager como servicio Executive completo con políticas, planos, eventos.
+  - **Tests:** `exec_power_manager_policies`, `exec_power_manager_events`
+
+### M2.3 — Herramientas Oficiales (v0.58)
+
+- [ ] **TOOL-NEODEV. NeoDev v2** | Prereqs: -- | Files: `tools/neodev/`
+  - Build, Image, ISO, Run, Test, QEMU + VirtualBox backends.
+  - Auto-descubrimiento de proyectos.
+  - Sustitución completa de scripts heredados (build.sh, qemu-debug.sh, auto_test.py,
+    create_ne2_image.py, create_gpt_image.py).
+
+- [ ] **TOOL-NEODEV-VBOX. VirtualBox backend** | Prereqs: TOOL-NEODEV | Files: `tools/neodev/src/vbox.rs`
+  - Soporte para VirtualBox: crear VM, iniciar, detener, importar/exportar VDI.
+
+- [ ] **TOOL-NEODEV-LEGACY. Eliminar scripts heredados** | Prereqs: TOOL-NEODEV | Files: `scripts/`
+  - Eliminar build.sh, qemu-debug.sh, auto_test.py, create_ne2_image.py, etc.
+  - Documentar migración en CHANGELOG.md.
+
+- [ ] **TOOL-NEOCFG. neocfg completar módulos** | Prereqs: ADM-5 | Files: `userbin/neocfg/`
+  - Completar módulos Power y Locale (actualmente stubs).
+
+- [ ] **TOOL-ADM. Herramientas de administración** | Prereqs: -- | Files: `userbin/neomem/`, `userbin/neotop/`, `userbin/neotask/`, `userbin/neolog/`
+  - neomem v0.2, neotop v0.2+, neotask completo, neolog.
+
+- [ ] **TOOL-NXE. Herramientas NXE** | Prereqs: NXE-ECO-2/3/4/7/8/9 | Files: `tools/nxeinfo/`, `tools/nxpkg/`, `tools/nxdump/`, `userbin/nxres/`, `userbin/nxlocale/`, `userbin/nxverify/`
+  - Completar todos los modos, flags, y comportamiento.
+
+### M2.4 — Instalación y Bootstrap (v0.59)
+
+- [ ] **INSTALL-NEOFS. Creación de NeoFS desde cero** | Prereqs: NFSv2-MKFS | Files: `userbin/install/`
+  - Crear partición GPT, formatear como NE2, crear estructura de directorios base.
+
+- [ ] **INSTALL-BOOTSTRAP. Bootstrap inicial** | Prereqs: INSTALL-NEOFS | Files: `neodos-bootloader/`
+  - Bootloader que detecta instalación vs. arranque normal.
+  - Si no hay instalación: lanzar install.nxe.
+
+- [ ] **INSTALL-NXE. install.nxe** | Prereqs: INSTALL-NEOFS | Files: `userbin/install/src/main.rs`
+  - Asistente interactivo: seleccionar disco, particionar, formatear, copiar sistema.
+  - Configuración inicial: teclado, idioma, contraseña admin.
+
+- [ ] **INSTALL-CONFIG. Configuración inicial** | Prereqs: USR-P1 | Files: `userbin/install/src/config.rs`
+  - Crear usuario admin, configurar keyboard layout, locale.
+
+- [ ] **INSTALL-PACKAGES. Despliegue de paquetes base** | Prereqs: NXP-ECO | Files: `userbin/install/src/packages.rs`
+  - Copiar NXP base a la instalación, registrar servicios.
+
+### M2.5 — NLT i18n + Regional Formats (v0.60)
+
+- [ ] **I18N-P7. Compresión NLT** | Prereqs: I18N-P1 | Files: `tools/nltc/`, `libneodos/src/i18n.rs`
+  - Flag `NLT_FLAG_COMPRESSED` (0x0001) para compresión LZSS/LZ4 de StringData.
+
+- [ ] **I18N-P8. UTF-16 support** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Flag en header para elegir UTF-8/UTF-16 en StringData.
+
+- [ ] **I18N-P9. Pluralización** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Sistema de plurales: `IDS_FILE_0 = "0 files"`, `IDS_FILE_1 = "1 file"`, `IDS_FILE_N = "{0} files"`.
+
+- [ ] **I18N-P10. Formatos regionales** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Fechas, monedas, calendarios desde archivos NLT de sistema.
+
+- [ ] **I18N-P11. Soporte RTL/bidi** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Flag `NLT_FLAG_RTL` (0x0002) + consulta Registry Layout para espejar GUI.
+
+- [ ] **I18N-P12. Firmas digitales en NLT** | Prereqs: I18N-P1 | Files: `libneodos/src/i18n.rs`
+  - Campo reservado en header + flag `NLT_FLAG_SIGNED` para verificar integridad.
+
+---
+
+## Fase 3: Seguridad y Estabilidad (v0.61–v0.69)
+
+### M3.1 — Security Hardening (v0.61–v0.62)
+
+- [ ] **SEC-AUDIT-FULL. Auditoría de seguridad completa** | Prereqs: -- | Files: `docs/SECURITY_AUDIT.md` (new)
+  - Revisión de todas las syscalls, accesos a memoria, validación de punteros.
+
+- [ ] **SEC-FUZZ-SYSCALLS. Fuzzing de syscalls (0–77)** | Prereqs: -- | Files: `tools/fuzzer/` (new)
+  - Fuzzing automatizado de todas las syscalls con argumentos aleatorios.
+
+- [ ] **SEC-FUZZ-DRIVERS. Fuzzing de interfaz HST** | Prereqs: -- | Files: `tools/fuzzer/drivers/`
+  - Fuzzing de las exportaciones HST de drivers NEM (hst_log, hst_read_io, etc.).
+
+- [ ] **SEC-ASLR-V2. ASLR v2: pila aleatoria + heap aleatorio** | Prereqs: ASLR v1 | Files: `src/arch/x64/paging.rs`, `src/elf.rs`
+  - Posición aleatoria de la pila Ring 3 y del heap de usuario.
+
+- [ ] **SEC-ASLR-V3. ASLR v3: full randomization** | Prereqs: SEC-ASLR-V2 | Files: `src/arch/x64/paging.rs`
+  - Randomización completa: ELF + stack + heap + mmap.
+
+- [ ] **SEC-NX. Non-executable stack enforcement** | Prereqs: -- | Files: `src/arch/x64/paging.rs`
+  - Marcar páginas de pila como no ejecutables (NX bit).
+
+- [ ] **SEC-NX-HEAP. Non-executable heap enforcement** | Prereqs: -- | Files: `src/arch/x64/paging.rs`
+  - Marcar páginas de heap como no ejecutables.
+
+### M3.2 — Performance (v0.63)
+
+- [ ] **PERF-SCHED-LOCKFREE. Scheduler lock-free** | Prereqs: -- | Files: `src/scheduler/mod.rs`
+  - Per-CPU run queues con operaciones lock-free.
+
+- [ ] **PERF-SLAB-NUMA. Per-CPU heaps NUMA-aware** | Prereqs: -- | Files: `src/allocator.rs`
+  - Slab allocator con conocimiento de nodos NUMA.
+
+- [ ] **PERF-BENCH-SUITE. Benchmarking suite automática** | Prereqs: -- | Files: `tools/bench/`
+  - Suite de benchmarks para medir rendimiento del kernel.
+
+- [ ] **PERF-PGO. Profile-guided optimization** | Prereqs: PERF-BENCH-SUITE | Files: `build.rs`, `Cargo.toml`
+  - Optimización guiada por perfiles de ejecución real.
+
+### M3.3 — Documentación y Test Coverage (v0.64–v0.65)
+
+- [ ] **DOCS-API-COMPLETE. Documentación completa de API** | Prereqs: -- | Files: `docs/syscalls.md`, `docs/libneodos.md`, `docs/drivers.md`
+  - Documentar todas las syscalls, wrappers libneodos, y API de drivers NEM.
+
+- [ ] **DOCS-SUBSYSTEMS. Documentación de subsistemas** | Prereqs: -- | Files: `docs/*.md`
+  - Completar docs de todos los subsistemas kernel.
+
+- [ ] **DOCS-TUTORIALS. Tutoriales** | Prereqs: DOCS-API-COMPLETE | Files: `docs/tutorials/`
+  - Escribir driver NEM, crear app Ring 3, contribuir al proyecto.
+
+- [ ] **TEST-COVERAGE-80. Coverage >80%** | Prereqs: -- | Files: `src/testing.rs`
+  - Alcanzar >80% de cobertura de líneas en todo el kernel.
+
+- [ ] **TEST-COVERAGE-95. Coverage >95%** | Prereqs: TEST-COVERAGE-80 | Files: `src/testing.rs`
+  - Alcanzar >95% de cobertura.
+
+### M3.4 — Bugfixes y Hardening (v0.66–v0.69)
+
+- [ ] **AUDIT-FUZZ-ROUND2. Segunda ronda de fuzzing** | Prereqs: SEC-FUZZ-SYSCALLS
+- [ ] **BUG-ALL. Corrección de todos los bugs detectados**
+- [ ] **HARDEN-STATIC-BUFS. Eliminar buffers estáticos globales** | Files: `src/syscall/mod.rs`, `src/crash/mod.rs`
+- [ ] **HARDEN-OOB. Auditoría de bounds checking en syscalls**
+- [ ] **ABI-FREEZE-FINAL. Congelación final de ABI para v1.0**
+
+---
+
+## Fase 4: v1.0 — Primera API Estable
+
+- [ ] **V1.0-RELEASE. Release v1.0.0**
+- [ ] **V1.0-ABI-FROZEN. Todas las interfaces congeladas**
+- [ ] **V1.0-DOCS. Documentación de release**
+- [ ] **V1.0-TESTS. Suite completa (800+)**
+- [ ] **V1.0-NXE-COMPAT. Binarios compilados contra ABI final**
+
+---
+
+## Deuda Técnica (transversal)
+
+### TD.1 — Arrays Fijos Residuales
+
+Verificar que no queden arrays de tamaño fijo en el kernel tras la migración a
+`Vec<T>` y `Slab<T>` completada en v0.41.
+
+### TD.3 — Static Buffers Globales
+
+| Tarea | Archivos | Prioridad |
+|-------|----------|-----------|
+| Eliminar BIN_BUF[65536] | `src/syscall/mod.rs` | ALTA |
+| Eliminar CMD_BUF[65536] | `src/syscall/mod.rs` | ALTA |
+| Eliminar buffers fijos en crash dump | `src/crash/mod.rs` | MEDIA |
+| Eliminar buffers fijos en serial | `src/arch/x64/serial.rs` | BAJA |
+
+### TD.4 — Cleanup (CLEANUP-1..35)
+
+Agrupados en paquetes de trabajo:
+
+<details>
+<summary>CLEANUP-DEADCODE (14 items)</summary>
+
+- [ ] **CLEANUP-1. Dead code mask `#![allow(dead_code)]` en main.rs + globals.rs** | Files: `src/main.rs:9`, `src/globals.rs:1`
 - [ ] **CLEANUP-2. Unused macros + functions + enum variants + constants** | Files: multiple
-  - Merged from AUDIT-31. Remove `with_current!`, `trace_irq_enter!`/`trace_irq_exit!`, `register_tests()` (virtio), `with_cache`, `nic_get_mask`, `socket_next_accept_id`, `pipe_peek_read_closed`, `clear`/`segment_count`, `ObError::TableFull`, `ObType::EventBus`, `PIT_HZ`.
-  - **Tests:** verify build
+- [ ] **CLEANUP-3. virtio::register_tests() orphaned** | Files: `src/virtio/mod.rs:35`
+- [ ] **CLEANUP-4. unregister_all() does nothing** | Files: `src/drivers/nem/driver.rs:92-98`
+- [ ] **CLEANUP-9. iso9660.rs dead filesystem driver** | Files: `src/drivers/iso9660.rs`
+- [ ] **CLEANUP-10. debugger/mod.rs GDB stub dead code** | Files: `src/debugger/mod.rs`
+- [ ] **CLEANUP-11. kbd_layout.rs never compiled** | Files: `src/drivers/nem/drivers/kbd_layout.rs`
+- [ ] **CLEANUP-12. 23 dead functions** | Files: multiple
+- [ ] **CLEANUP-13. PageCacheLevel unused variants** | Files: `src/vfs/io.rs:9`
+- [x] **CLEANUP-14. CryptoContext stub removed** | Files: `src/vfs/io.rs:16` | Revisitar si se implementa AES-XTS
+</details>
 
-- [ ] **CLEANUP-3. AUDIT-35. virtio::register_tests() orphaned** | Files: `src/virtio/mod.rs:35`
-  - `register_tests()` defined but never called from `testing.rs`. Add call.
-  - **Tests:** Add call to `virtio::register_tests()` in `testing.rs`
+<details>
+<summary>CLEANUP-DUPLICATES (10 items)</summary>
 
-- [ ] **CLEANUP-4. AUDIT-51. unregister_all() does nothing** | Files: `src/drivers/nem/driver.rs:92-98`
-- [ ] **CLEANUP-5. AUDIT-55/77. ABI validation duplicated** | Files: `src/drivers/abi/mod.rs:50-80`, `src/drivers/nem/policy.rs:27-57`
-  - `abi::negotiate()` and `policy::validate_abi()` implement same three checks. Make `validate_abi()` delegate to `negotiate()`.
+- [ ] **CLEANUP-5. ABI validation duplicated** | Files: `src/drivers/abi/mod.rs:50-80`, `src/drivers/nem/policy.rs:27-57`
+- [ ] **CLEANUP-6. Dual mount managers** | Files: `src/fs/vfs.rs:84-95`, `src/vfs/mount.rs:38-123`
+- [ ] **CLEANUP-7. Error constants duplicated libneodos/libneodos-nxl** | Files: `libneodos/src/syscall.rs:3-17`, `libneodos-nxl/src/error.rs:4-18`
+- [ ] **CLEANUP-15. `lazy_static!` → `LazyLock`** | Files: multiple (27 usages)
+- [ ] **CLEANUP-16. net/mod.rs monolithic protocol dispatch** | Files: `src/net/mod.rs:68-197`
+- [ ] **CLEANUP-18. SPSC ring buffer triplicated** | Files: `src/work_queue.rs`, `src/input/vt.rs`, `src/arch/x64/cpu_local.rs`
+- [ ] **CLEANUP-24. IPI function duplicates** | Files: `src/arch/x64/smp.rs`
+- [ ] **CLEANUP-25. AHCI structs defined twice** | Files: `src/drivers/boot_ahci.rs`, `drivers/ahci/src/lib.rs`
+- [ ] **CLEANUP-26. PCI config access in 7 files** | Files: `src/drivers/pci.rs`, `drivers/*/src/lib.rs`
+- [ ] **CLEANUP-27. HST extern in 8 NEM drivers** | Files: `drivers/*/src/lib.rs`
+- [ ] **CLEANUP-28. PAGE_SIZE defined 7 times** | Files: multiple
+</details>
 
-- [ ] **CLEANUP-6. AUDIT-56. Dual mount managers** | Files: `src/fs/vfs.rs:84-95`, `src/vfs/mount.rs:38-123`
-- [ ] **CLEANUP-7. AUDIT-58. Error constants duplicated libneodos/libneodos-nxl** | Files: `libneodos/src/syscall.rs:3-17`, `libneodos-nxl/src/error.rs:4-18`
-- [ ] **CLEANUP-8. AUDIT-59. 10+ enums with manual `to_str()` instead of `Display`** | Files: multiple
-- [ ] **CLEANUP-9. AUDIT-60. iso9660.rs dead filesystem driver** | Files: `src/drivers/iso9660.rs`
-- [ ] **CLEANUP-10. AUDIT-61. debugger/mod.rs GDB stub dead code** | Files: `src/debugger/mod.rs`
-- [ ] **CLEANUP-11. AUDIT-62. kbd_layout.rs never compiled** | Files: `src/drivers/nem/drivers/kbd_layout.rs`
-- [ ] **CLEANUP-12. AUDIT-63. 23 dead functions** | Files: multiple (see AUDIT-63 description)
-- [ ] **CLEANUP-13. AUDIT-64. PageCacheLevel unused variants** | Files: `src/vfs/io.rs:9`
-- [ ] **CLEANUP-14. AUDIT-65. Dead struct CryptoContext** | Files: `src/vfs/io.rs:16`
-- [ ] **CLEANUP-15. AUDIT-50/80. `lazy_static!` → `LazyLock`** | Files: multiple (27 usages)
-- [ ] **CLEANUP-16. AUDIT-72. net/mod.rs monolithic protocol dispatch** | Files: `src/net/mod.rs:68-197`
-- [ ] **CLEANUP-17. AUDIT-73. Storage probe hardcoded to 4 drivers** | Files: `src/drivers/storage_manager.rs:2-5`
-- [ ] **CLEANUP-18. AUDIT-74. SPSC ring buffer triplicated** | Files: `src/work_queue.rs`, `src/input/vt.rs`, `src/arch/x64/cpu_local.rs`
-- [ ] **CLEANUP-19. AUDIT-75. 27 fixed-size arrays across kernel** | Files: multiple
-- [ ] **CLEANUP-20. AUDIT-76. Network unsafe pointer casts (9×)** | Files: `src/net/mod.rs`
-- [ ] **CLEANUP-21. AUDIT-78. kernel_stack_trace fixed crash buffers** | Files: `src/crash/mod.rs:34,66,70`
-- [ ] **CLEANUP-22. AUDIT-79. from_u8/from_u16 → TryFrom** | Files: `src/drivers/nem/mod.rs:46-98`
-- [ ] **CLEANUP-23. AUDIT-83. TOCTOU in storage probe** | Files: `src/drivers/storage_manager.rs`
-- [ ] **CLEANUP-24. AUDIT-11. IPI function duplicates** | Files: `src/arch/x64/smp.rs`
-- [ ] **CLEANUP-25. AUDIT-12. AHCI structs defined twice** | Files: `src/drivers/boot_ahci.rs`, `drivers/ahci/src/lib.rs`
-- [ ] **CLEANUP-26. AUDIT-13. PCI config access in 7 files** | Files: `src/drivers/pci.rs`, `drivers/*/src/lib.rs`
-- [ ] **CLEANUP-27. AUDIT-14. HST extern in 8 NEM drivers** | Files: `drivers/*/src/lib.rs`
-- [ ] **CLEANUP-28. AUDIT-15. PAGE_SIZE defined 7 times** | Files: multiple
-- [ ] **CLEANUP-29. AUDIT-16. Error enums overlapping variants** | Files: `src/fs/vfs.rs`, `src/fs/neodos_fs.rs`, `src/drivers/fat32.rs`, `src/drivers/iso9660.rs`
-- [ ] **CLEANUP-30. AUDIT-18. Idle loops without `hlt`** | Files: `src/main.rs`, `src/hal/raw/cpu.rs`
-- [ ] **CLEANUP-31. AUDIT-19. Global static mut without sync (40+)** | Files: multiple
-- [ ] **CLEANUP-32. AUDIT-20. Split syscall/ob.rs (2280 lines) + handlers.rs (1771)** | Files: `src/syscall/ob.rs`, `src/syscall/handlers.rs`
-- [ ] **CLEANUP-33. AUDIT-21. Scheduler panics on table full** | Files: `src/scheduler/mod.rs`
-- [ ] **CLEANUP-34. AUDIT-22. Page cache O(n) linear scans** | Files: `src/buffer/page_cache.rs`
-- [ ] **CLEANUP-35. AUDIT-49. 10 inconsistent name buffer sizes** | Files: multiple
+<details>
+<summary>CLEANUP-REFACTOR (11 items)</summary>
 
-#### Documentation
+- [ ] **CLEANUP-8. 10+ enums with manual `to_str()` instead of `Display`** | Files: multiple
+- [ ] **CLEANUP-17. Storage probe hardcoded to 4 drivers** | Files: `src/drivers/storage_manager.rs:2-5`
+- [ ] **CLEANUP-19. 27 fixed-size arrays across kernel** | Files: multiple
+- [ ] **CLEANUP-20. Network unsafe pointer casts (9×)** | Files: `src/net/mod.rs`
+- [ ] **CLEANUP-21. kernel_stack_trace fixed crash buffers** | Files: `src/crash/mod.rs:34,66,70`
+- [ ] **CLEANUP-22. from_u8/from_u16 → TryFrom** | Files: `src/drivers/nem/mod.rs:46-98`
+- [ ] **CLEANUP-23. TOCTOU in storage probe** | Files: `src/drivers/storage_manager.rs`
+- [ ] **CLEANUP-29. Error enums overlapping variants** | Files: `src/fs/vfs.rs`, `src/fs/neodos_fs.rs`, `src/drivers/fat32.rs`, `src/drivers/iso9660.rs`
+- [ ] **CLEANUP-30. Idle loops without `hlt`** | Files: `src/main.rs`, `src/hal/raw/cpu.rs`
+- [ ] **CLEANUP-31. Global static mut without sync (40+)** | Files: multiple
+- [ ] **CLEANUP-32. Split syscall/ob.rs (2280 lines) + handlers.rs (1771)** | Files: `src/syscall/ob.rs`, `src/syscall/handlers.rs`
+- [ ] **CLEANUP-33. Scheduler panics on table full** | Files: `src/scheduler/mod.rs`
+- [ ] **CLEANUP-34. Page cache O(n) linear scans** | Files: `src/buffer/page_cache.rs`
+- [ ] **CLEANUP-35. 10 inconsistent name buffer sizes** | Files: multiple
+</details>
 
-- [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
-- [ ] **DH3. Completar libneodos syscall wrappers** | Files: `libneodos/src/syscall.rs`
-- [ ] **DH-HISTORY. Mantener docs/HISTORY.md** | Files: `docs/HISTORY.md`
-
-#### Object Manager / Syscalls
+### TD.5 — Object Manager Consolidation
 
 - [ ] **AI-1. Completar ObInfoClass/ObSetInfoClass enums** | Files: `libneodos/src/syscall.rs`
 - [ ] **AI-2. Consolidate legacy syscall wrappers** | Files: `src/syscall/mod.rs`
 - [ ] **AI-3. ObObjectTable lock granularity (lock striping)** | Files: `src/object/mod.rs`
 - [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Files: `src/object/mod.rs`
 
-#### VirtIO (low priority)
+### TD.6 — Estabilización ABI
+
+- [ ] **SSDT-DRVUNLOAD. Migrar sys_driver_unload a Ob API** | Files: `src/syscall/mod.rs`, `src/drivers/hotreload.rs`, `userbin/loadnem/`
+  - Asegurar drivers en `\Driver\` namespace Ob.
+  - Usar `ob_destroy()` para unload en lugar de syscall legacy.
+  - Eliminar `handler_driver_unload` del SSDT.
+
+---
+
+## Bugs Conocidos
+
+- [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
+  - `e1000_poll()` nunca detecta paquetes entrantes. Workaround: `default_nic_id()` prefiere kernel e1000.
+
+---
+
+## VirtIO (baja prioridad)
 
 - [ ] **VIO-CON. VirtIO Console (0x1002)** | Files: `drivers/virtio-console/`
 - [ ] **VIO-RNG. VirtIO RNG (0x1003)** | Files: `drivers/virtio-rng/`
@@ -778,280 +755,32 @@
 - [ ] **VIO-SOUND. VirtIO Sound (0x1015)** | Files: `drivers/virtio-sound/`
 - [ ] **VIO-BALLOON. VirtIO Memory Balloon (0x1004)** | Files: `drivers/virtio-balloon/`
 
-#### Experimental
+---
+
+## Experimental (post-1.0)
 
 - [ ] **B7.1. Full GUI system** | Files: `userbin/gui/`
 - [ ] **B7.2. Advanced secure boot (TPM)** | Files: `src/boot/tpm.rs`
-- [ ] **B7.3. Package manager** | Files: `userbin/neopkg/`
+- [ ] **B7.3. Package manager (NeoStore)** | Files: `userbin/neopkg/`
 - [ ] **B7.4. Time-travel debugging** | Files: `src/debugger/timetravel.rs`
 - [ ] **B7.5. Live kernel patching** | Files: `src/patch/mod.rs`
 - [ ] **B7.6. Distributed NeoDOS nodes** | Files: `src/cluster/`
-- [ ] **PKG-1. NeoGet v1 (diferido a v0.70)** | Files: (design only)
+- [ ] **B6.2. Copy-on-write fork** | Files: `src/memory/cow.rs`, `src/syscall.rs` (NOTA: contradice modelo NT)
 
 ---
 
-## NXE-ECOSYSTEM — NXE/NXP ecosystem
+## Documentation backlog
 
-### NXE-ECO-1. NXE metadata section (.note.neodos) [DESIGN COMPLETE]
-
-| Aspect | Detail |
-|--------|--------|
-**Design:** `docs/nxe-format.md` | Format spec for `.note.neodos` ELF note |
-**Status:** Design complete, needs auto-injection at build time |
-**Implementation:** |
-1. Generate metadata binary blob in each NXE build.rs |
-2. Use `#[link_section = ".note.neodos"]` static to embed |
-3. Fallback: `objcopy --add-section` post-build |
-**Tools:** `nxinfo --metadata` can read it |
-**Prereqs:** NXE-ECO-2 (nxinfo) |
-
-- [ ] **NXE-ECO-1a. Auto-generate metadata in build pipeline** | Files: `libneodos/user.ld`, `tools/neodev/src/build.rs`
-  - Add `.note` section to user.ld (DONE)
-  - Create build.rs helper for metadata generation
-  - Wire in NeoDev: inject .note.neodos after cargo build
-  - **Tests:** `nxe_metadata_elf_section_exists`, `nxe_metadata_tlv_roundtrip`
-
-### NXE-ECO-2. nxeinfo host tool [COMPLETED]
-
-**Location:** `tools/nxeinfo/`
-**Implementation:** Complete CLI tool with modes: brief, metadata, sections, headers, json, check
-
-- [x] **NXE-ECO-2a. Core nxeinfo implementation** | Files: `tools/nxeinfo/src/main.rs`
-  - ELF64 header parsing, program headers, section headers
-  - `.note.neodos` metadata extraction and display
-  - Validation (--check): magic, class, machine, type, size limits
-  - JSON output (--json) via serde_json
-  - **Tests:** run `nxinfo ver.nxe --brief`
-
-### NXE-ECO-3. nxpkg host tool [COMPLETED]
-
-**Location:** `tools/nxpkg/`
-**Implementation:** Complete CLI tool with create, extract, list, info, verify
-
-- [x] **NXE-ECO-3a. Core nxpkg implementation** | Files: `tools/nxpkg/src/main.rs`
-  - NXPv1 format: header, TLV manifest, file table, string pool
-  - CRC32 integrity on header and per-file
-  - Create from directory, extract to directory
-  - List, info, verify commands
-  - **Tests:** `nxpkg create`, `nxpkg list`, `nxpkg verify`
-
-### NXE-ECO-4. nxdump host tool [COMPLETED]
-
-**Location:** `tools/nxdump/`
-**Implementation:** Complete CLI tool for technical ELF dumping
-
-- [x] **NXE-ECO-4a. Core nxdump implementation** | Files: `tools/nxdump/src/main.rs`
-  - Hex dump, ELF structures, relocations, strings, segments
-  - Memory map display with permissions
-  - Size limit check (64 KB max)
-  - **Tests:** `nxdump ver.nxe --segments`
-
-### NXE-ECO-5. libneodos resource module [COMPLETED]
-
-**Location:** `libneodos/src/res.rs`
-**Implementation:** Resource API for accessing bundled app resources
-
-- [x] **NXE-ECO-5a. Core res module** | Files: `libneodos/src/res.rs`
-  - `res_open(path)` — open resource for current app
-  - `res_open_app(app, path)` — open for any app
-  - `res_open_locale(app, path)` — locale-aware resolution with fallback
-  - `res_read(fd, buf)` — read content
-  - `res_size(fd)` — get resource size
-  - `res_read_all(fd, buf)` — read entire resource
-  - **Tests:** (integration via existing ob_open/ob_read)
-
-- [ ] **NXE-ECO-5b. Ob namespace integration for resources** | Files: `neodos-kernel/src/object/mod.rs`
-  - Long-term: expose `\Resource\<app>\` as a virtual namespace
-  - Short-term: resources accessed via `\Global\FileSystem\C:\Programs\<app>\resources\`
-  - **Tests:** `res_open_roundtrip`
-
-### NXE-ECO-6. i18n extensions [COMPLETED]
-
-**Location:** `libneodos/src/i18n.rs`
-**Implementation:** App name tracking, package-loaded translations, locale listing, format
-
-- [x] **NXE-ECO-6a. i18n_set_app_name / current_app_name** | Files: `libneodos/src/i18n.rs`
-  - Track current application name for resource resolution
-- [x] **NXE-ECO-6b. i18n_load_from_package** | Files: `libneodos/src/i18n.rs`
-  - Load NLT translations from app's own package resources
-  - Fallback to system locale directory
-- [x] **NXE-ECO-6c. i18n_available_locales** | Files: `libneodos/src/i18n.rs`
-  - Enumerate `C:\System\Locale\` directories
-  - Return semicolon-separated locale tags
-- [x] **NXE-ECO-6d. i18n_format** | Files: `libneodos/src/i18n.rs`
-  - `{0}`, `{1}` placeholder substitution
-  - Static buffer, 256 bytes max
-  - Falls back to `"?"` on missing template
-- [ ] **NXE-ECO-6e. Auto-generate ID constants via nltc --generate-rust** | Files: `tools/nltc/`
-  - Already exists as `--generate-rust` flag
-  - Needs to be wired into the build pipeline
-  - **Tests:** `nltc_generate_rust_produces_valid_ids`
-
-### NXE-ECO-7. nxres Ring 3 binary [COMPLETED]
-
-**Location:** `userbin/nxres/`
-**Implementation:** Resource explorer for NXE apps
-
-- [x] **NXE-ECO-7a. Core nxres implementation** | Files: `userbin/nxres/src/main.rs`
-  - `nxres list <app>` — list resources
-  - `nxres cat <app> <path>` — display resource content
-  - `nxres tree <app>` — tree view (stub)
-  - `nxres find <app> <pattern>` — search (stub)
-  - `nxres locale <app>` — show locales
-  - **Tests:** integration (run in QEMU)
-
-### NXE-ECO-8. nxlocale Ring 3 binary [COMPLETED]
-
-**Location:** `userbin/nxlocale/`
-**Implementation:** Locale manager
-
-- [x] **NXE-ECO-8a. Core nxlocale implementation** | Files: `userbin/nxlocale/src/main.rs`
-  - `nxlocale list` — list installed locales
-  - `nxlocale current` — show current locale
-  - `nxlocale set <locale>` — change system locale via Registry
-  - `nxlocale check [app]` — translation coverage (stub)
-  - `nxlocale stats [app]` — translation statistics
-  - `nxlocale show <app>` — show loaded translations
-  - **Tests:** integration
-
-### NXE-ECO-9. nxverify Ring 3 binary [COMPLETED]
-
-**Location:** `userbin/nxverify/`
-**Implementation:** Integrity verification
-
-- [x] **NXE-ECO-9a. Core nxverify implementation** | Files: `userbin/nxverify/src/main.rs`
-  - `nxverify file <path>` — verify single NXE/NXP
-  - `nxverify app <name>` — verify installed app
-  - `nxverify all` — verify all installed apps
-  - `nxverify package <nxp>` — verify NXP package CRC32
-  - **Tests:** integration
-
-### NXE-ECO-10. NeoDev NXP integration [COMPLETED]
-
-**Location:** `tools/neodev/src/build.rs`
-**Implementation:** NXP package build support in NeoDev
-
-- [x] **NXE-ECO-10a. discover_nxp_projects + build_nxp_packages** | Files: `tools/neodev/src/build.rs`
-  - Scan `userbin/` for `neopkg.toml` files
-  - Scan `packages/` for NXP projects
-  - Build NXP via nxpkg tool
-  - `neodev nxpkg [--all] [name]` command
-- [x] **NXE-ECO-10b. Add nxres/nxlocale/nxverify to image** | Files: `tools/neodev/src/image.rs`
-  - Added to programs_nxe list
-  - Placed at `/Programs/{name}.nxe`
-
-### NXE-ECO-11. NXE/NXP design docs [COMPLETED]
-
-**Location:** `docs/nxe-ecosystem-design.md`, `docs/nxe-format.md`, `docs/nxp-format.md`
-
-- [x] **NXE-ECO-11a. Master design document** | Files: `docs/nxe-ecosystem-design.md`
-  - Complete architecture: principles, formats, resources, i18n, tools, installation
-- [x] **NXE-ECO-11b. NXE format reference** | Files: `docs/nxe-format.md`
-  - Base format, metadata note, TLV tags, tools usage
-- [x] **NXE-ECO-11c. NXP format reference** | Files: `docs/nxp-format.md`
-  - Container layout, manifest, file table, commands
-- [x] **NXE-ECO-11d. Linker script update** | Files: `libneodos/user.ld`
-  - Added `.note` section for metadata
-
-### NXE-ECO backlog — Future phases
-
-| ID | Item | Priority | Phase |
-|----|------|----------|-------|
-| NXE-ECO-12 | NXE metadata auto-generation in build pipeline | MEDIUM | Phase 2 |
-| NXE-ECO-13 | `\Resource\<app>\` virtual Ob namespace | MEDIUM | Phase 2 |
-| NXE-ECO-14 | NXE file header validation in kernel (size, type) | LOW | Phase 2 |
-| NXE-ECO-15 | Digital signature verification infrastructure | LOW | Phase 3 |
-| NXE-ECO-16 | NXP repository support (remote packages) | LOW | Phase 3 |
-| NXE-ECO-17 | Package auto-update | LOW | Phase 4 |
-| NXE-ECO-18 | NeoStore GUI | LOW | Phase 4 |
-| NXE-ECO-19 | Transactional install with rollback | LOW | Phase 4 |
-| NXE-ECO-20 | Dependency graph resolver for NXP | LOW | Phase 4 |
-| NXE-ECO-21 | Installation policies (GPO-like) | LOW | Phase 5 |
-| NXE-ECO-22 | Content-addressable package store | LOW | Phase 5 |
-
-| Versión | Enfoque | Estado |
-| --------- | --------- | -------- |
-| v0.50 | Shell tokenizer + NeoFS snapshot syscall + Power Phase 2 + Kernel hardening | **PRÓXIMO** |
-| v0.51 | NeoFS v2 remaining (B-tree, freelist, snapshot, mkfs), Shell Phase 2 (editor, env, pipeline, batch), USR-P1 (SAM foundation), Network tools, Admin tools | planned |
-| v0.52 | VirtIO (ARCH+NET), Sessions (USR-P2), FS security (USR-P3), Zero-copy pipes | planned |
-| v0.53 | Module sig validation, Registry dirty+multihive, Registry ACL (USR-P4), Integrity levels (USR-P5), KD, NeoEdit | planned |
-| v0.54 | Secure boot, WAL, lib wrappers, User commands (USR-P6), DNS resolver, Tracing, User address space, Docs, Power Phases 4+5 | backlog |
-| v0.55+ | Cleanup (dead code, duplicates, refactors), Backlog items | backlog |
+- [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`
+- [ ] **DH3. Completar libneodos syscall wrappers** | Files: `libneodos/src/syscall.rs`
+- [ ] **DH-HISTORY. Mantener docs/HISTORY.md** | Files: `docs/HISTORY.md`
 
 ---
 
-## SSDT — Pending Migrations (v0.50+)
+## Referencias
 
-### SSDT-DRVUNLOAD: Migrate sys_driver_unload → Ob API
-
-**Current state:** `sys_driver_unload` (RAX 35 / was 58) is a name-based legacy
-syscall that unloads a NEM driver by name string. It goes through
-`drivers::hotreload::unload_driver(&name, force)`.
-
-**Problem:** The Ob API provides `ob_destroy(fd)` for object destruction, but
-driver unloading is name-based, not fd-based. The driver is not registered as
-a namespace object in the current implementation — it's only in the driver
-registry.
-
-**Proposed architecture:**
-
-1. Ensure all loaded NEM drivers are discoverable as Ob namespace objects
-   under `\Driver\` (e.g. `\Driver\PS2MOUSE`).
-2. Change `loadnem.nxe` to:
-   - Load: `ob_create("\Driver\<name>", DRIVER, ...)` — already done
-   - Unload: `ob_open("\Driver\<name>", ...)` + `ob_destroy(fd)` — NOT done
-3. Remove `handler_driver_unload` and the `sys_driver_unload` wrapper.
-
-**Impact:**
-
-- `loadnem.nxe`: must be updated to use Ob API for unload
-- `libneodos`: remove `sys_driver_unload` wrapper
-- Kernel: remove `handler_driver_unload` from SSDT
-- Drivers: must register in Ob namespace on load
-
-**Steps:**
-
-1. [ ] Add driver namespace registration in `load_nem_driver()`
-2. [ ] Update `loadnem.nxe` to use `ob_destroy()` for unload
-3. [ ] Remove `handler_driver_unload` from SSDT
-4. [ ] Remove `sys_driver_unload` from libneodos
-
-### SSDT-MIGRATE-DUP2: Migrate sys_dup2 → Ob handle duplication
-
-**Current state:** `sys_dup2` (RAX 22 / was 6) duplicates a file descriptor
-slot within the process handle table.
-
-**Analysis:** Dup2 is inherently process-local (handle table manipulation).
-It could be exposed as `ob_set_info(HandleDuplicate)` on a process object,
-but this adds complexity with no immediate benefit. The current implementation
-is simple and efficient.
-
-**Veredict:** Keep as-is. Not a candidate for Ob migration.
-
----
-
-## REFERENCE — Design docs and removed content
-
-### Objectification Roadmap
-
-Mostly completed. See [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md) for:
-
-- OBF-01..12 (Fase 1 + Fase 2 Ob: Thread, Timer, Semaphore, Section)
-- X7 (Object Manager unification — handles, KOBJ, URN, security)
-- All 16 ObTypes defined, 7 Ob syscalls (RAX 60-66)
-
-### QEMU Bridge Infrastructure
-
-- **scripts/setup-network.sh** — Creates `neodos0` bridge via NetworkManager
-- **scripts/qemu-debug.sh** — `--bridge` flag uses `qemu-bridge-helper` (SUID root)
-- **docs/qemu-setup.md** — Full documentation
-
----
-
-## See also
-
-- `docs/` for full subsystem design docs
-- `skills/` for task checklists
-- [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md)
-- [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md)
-- [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md)
+- [ROADMAP.md](../ROADMAP.md) — Visión general, fases, milestones, prioridades
+- [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — Invariantes MUST/MUST NOT
+- [ARCHITECTURAL_VISION.md](ARCHITECTURAL_VISION.md) — Visión a largo plazo v0.40 → v4.x
+- [IMPROVEMENTS_COMPLETED.md](IMPROVEMENTS_COMPLETED.md) — Items completados
+- [CHANGELOG.md](../CHANGELOG.md) — Historial de cambios por versión

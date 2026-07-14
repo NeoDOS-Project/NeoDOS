@@ -12,7 +12,6 @@ pub mod fat32;
 pub mod gpt;
 pub mod hotreload;
 pub mod isolation;
-pub mod iso9660;
 pub mod storage_manager;
 pub mod ps2;
 pub mod nem;

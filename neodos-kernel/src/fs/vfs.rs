@@ -80,6 +80,22 @@ pub trait FileSystem: Send {
     fn fsck(&mut self, _repair: bool, _deep: bool, _stats: &mut crate::fs::fsck::FsckStatsRaw) -> Result<(), VfsError> {
         Err(VfsError::NotImplemented)
     }
+
+    fn snapshot_create(&mut self) -> Result<u64, VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+
+    fn snapshot_restore(&mut self, _id: u64) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+
+    fn snapshot_list(&mut self, _buf: &mut [u8]) -> Result<usize, VfsError> {
+        Err(VfsError::NotImplemented)
+    }
+
+    fn snapshot_purge(&mut self) -> Result<(), VfsError> {
+        Err(VfsError::NotImplemented)
+    }
 }
 
 const MAX_SUBDIR_MOUNTS: usize = 8;
@@ -402,5 +418,25 @@ impl Vfs {
 
         let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
         fs.rename(parent_inode, leaf, new_leaf)
+    }
+
+    pub fn snapshot_create(&mut self, drive_idx: usize) -> Result<u64, VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_create()
+    }
+
+    pub fn snapshot_restore(&mut self, drive_idx: usize, id: u64) -> Result<(), VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_restore(id)
+    }
+
+    pub fn snapshot_list(&mut self, drive_idx: usize, buf: &mut [u8]) -> Result<usize, VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_list(buf)
+    }
+
+    pub fn snapshot_purge(&mut self, drive_idx: usize) -> Result<(), VfsError> {
+        let fs = self.drives[drive_idx].as_mut().ok_or(VfsError::NotFound)?;
+        fs.snapshot_purge()
     }
 }

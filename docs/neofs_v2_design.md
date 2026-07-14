@@ -285,7 +285,7 @@ impl NeoDosFs {
 
 ### 4.3 Syscall nueva
 
-#### RAX 77 — `sys_ob_snapshot`
+#### RAX 48 — `sys_ob_snapshot`
 
 ```text
 RBX = fd (handle a la raíz del FS, ej: \Global\FileSystem\C:\)
@@ -343,7 +343,7 @@ neodos-kernel/src/
 │   ├── fsck.rs                         ─ ELIMINADO (fsck v1 eliminado con v1)
 │   └── journal.rs                      ─ ELIMINADO (reemplazado por COW)
 ├── syscall/
-│   ├── mod.rs                          ─ añadir handler_ob_snapshot en SSDT (RAX 77)
+│   ├── mod.rs                          ─ añadir handler_ob_snapshot en SSDT (RAX 48)
 │   └── ob.rs                           ─ añadir handler_ob_snapshot
 └── object/
     └── types.rs                        ─ posible ObInfoClass::Snapshot
@@ -385,7 +385,7 @@ neodos-kernel/src/
 3. `src/fs/snapshot.rs` — Snapshot table: create, list, restore, purge
 4. `src/fs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
 5. `src/fs/fsck.rs` — Scrub de B-tree + checksums
-6. `src/syscall/ob.rs` — handler_ob_snapshot (RAX 77)
+6. `src/syscall/ob.rs` — handler_ob_snapshot (RAX 48)
 7. Tests
 
 ---

@@ -6,7 +6,6 @@
 #![cfg_attr(test, test_runner(noop_test_runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
 #![allow(static_mut_refs)]
-#![allow(dead_code)]
 
 #[cfg(test)]
 fn noop_test_runner(_tests: &[&dyn Fn()]) {
@@ -36,7 +35,6 @@ mod handle;
 mod eventbus;
 mod work_queue;
 mod dpc;
-mod debugger;
 
 mod memory;
 mod globals;

@@ -55,6 +55,7 @@ For every subsystem, consult its doc — not this file:
 | Filesystem | `docs/filesystem.md` | NeoFS, VFS, IoStack, FAT32, page cache |
 | Registry | `docs/registry.md` | Cm syscalls, cell-based hive, paths |
 | Security | `docs/security.md` | SID, Token, ACL, SAM, SeAccessCheck |
+| Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
 | Shell | `docs/shell.md` | Commands, pipeline, TAB, user binaries |
 | IPC | `docs/ipc.md` | Pipes, IRP, work queue, event bus |
 | Network | `docs/network.md` | TCP/IP stack, sockets, DHCP, e1000 |
@@ -64,7 +65,8 @@ For every subsystem, consult its doc — not this file:
 | Object Manager | `docs/objects.md` | Ob types, namespace, ObOperation trait |
 | HAL | `docs/hal.md` | Hardware abstraction layer, primitives |
 | Interrupts | `docs/interrupts.md` | IRQL, IOAPIC, MSI-X, DPC, IPI |
-| Roadmap | `docs/IMPROVEMENTS.md` | Pending items by priority |
+| Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
+| Tasks | `docs/IMPROVEMENTS.md` | Detailed task breakdown by milestone |
 | Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items |
 | Debug | `docs/DEBUG.md` | GDB setup, debug tips |
 | Vision | `docs/ARCHITECTURAL_VISION.md` | Long-term strategy v0.40→v1.0 |
