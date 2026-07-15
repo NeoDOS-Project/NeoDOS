@@ -18,7 +18,8 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
 | `nic.rs` | ~150 | `NetworkInterface` trait, `NicRegistry` (4 slots), IP/next-hop/gateway management |
 | `e1000.rs` | ~350 | Intel e1000 NIC driver (82540EM, 82543GM, 82543GC, 82545EM, 82574L), ring buffers, RX/TX descriptors, MMIO |
-| `tests.rs` | ~300 | 17+ integration tests |
+| `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
+| `tests.rs` | ~300 | 18+ integration tests |
 
 ### TCP State Machine
 
@@ -291,7 +292,7 @@ When a packet needs to be sent to an IP address (e.g., ICMP ping), the ARP resol
 
 - Only one ARP resolution can be in-flight at a time (no pending queue for concurrent requests).
 - The e1000 RX descriptor status is read without explicit `read_volatile`, relying on the compiler generating fresh memory reads via `&mut self` reference.
-- No ARP probe/gratuitous ARP on IP address change.
+- Gratuitous ARP sent automatically on IP address change via `nic_set_ip()`.
 
 ## Tests
 

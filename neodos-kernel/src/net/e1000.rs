@@ -259,13 +259,23 @@ impl NetworkInterface for E1000Nic {
         desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
         desc.status = 0;
 
+        if len >= 14 {
+            let dst_mac = MacAddr::from_slice(&packet[0..6]);
+            let src_mac = MacAddr::from_slice(&packet[6..12]);
+            let ethertype = u16::from_be_bytes([packet[12], packet[13]]);
+            serial_println!("[E1000] TX desc={} len={} Dst={} Src={} EtherType=0x{:04X}",
+                self.tx_cur, len, dst_mac, src_mac, ethertype);
+        } else {
+            serial_println!("[E1000] TX desc={} len={}", self.tx_cur, len);
+        }
+        crate::net::counters::COUNTERS.tx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        crate::net::counters::COUNTERS.tx_bytes.fetch_add(len as u64, core::sync::atomic::Ordering::Relaxed);
+
         // Ensure descriptor writes are visible to hardware before ringing TX doorbell
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
 
         let old_tdt = self.read_reg(REG_TDT);
         self.write_reg(REG_TDT, (old_tdt + 1) % E1000_NUM_TX_DESC as u32);
-
-        serial_println!("[E1000] TX {} bytes (desc={})", len, self.tx_cur);
 
         self.tx_cur = (self.tx_cur + 1) % E1000_NUM_TX_DESC;
         Ok(())
@@ -287,12 +297,27 @@ impl NetworkInterface for E1000Nic {
         }
         buf[..len].copy_from_slice(&self.rx_bufs[self.rx_cur][..len]);
 
+        let dma_addr = self.rx_descs[self.rx_cur].addr;
+        let status = self.rx_descs[self.rx_cur].status;
+        serial_println!("[E1000] RX desc={} len={} status=0x{:02X} dma=0x{:016X}",
+            self.rx_cur, len, status, dma_addr);
+        if len >= 14 {
+            let raw = &self.rx_bufs[self.rx_cur];
+            let dst_mac = MacAddr::from_slice(&raw[0..6]);
+            let src_mac = MacAddr::from_slice(&raw[6..12]);
+            let ethertype = u16::from_be_bytes([raw[12], raw[13]]);
+            serial_println!("[E1000]   Dst={}", dst_mac);
+            serial_println!("[E1000]   Src={}", src_mac);
+            serial_println!("[E1000]   EtherType=0x{:04X}", ethertype);
+        }
+        crate::net::counters::COUNTERS.rx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        crate::net::counters::COUNTERS.rx_bytes.fetch_add(len as u64, core::sync::atomic::Ordering::Relaxed);
+
         self.rx_descs[self.rx_cur].status = 0;
         core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         let old_rdt = self.read_reg(REG_RDT);
         self.write_reg(REG_RDT, (old_rdt + 1) % E1000_NUM_RX_DESC as u32);
         self.rx_cur = (self.rx_cur + 1) % E1000_NUM_RX_DESC;
-        serial_println!("[E1000] RX {} bytes", len);
         Some(len)
     }
 

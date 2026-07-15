@@ -304,5 +304,7 @@ pub fn build_echo_reply(request: &IcmpHeader, data: &[u8]) -> alloc::vec::Vec<u8
     let cs_bytes = checksum.to_be_bytes();
     reply[2] = cs_bytes[0];
     reply[3] = cs_bytes[1];
+    crate::serial_println!("[ICMP] build_echo_reply: id={} seq={} checksum=0x{:04X} data_len={} reply_len={}",
+        request.echo_identifier(), request.echo_sequence(), checksum, data.len(), reply.len());
     reply
 }

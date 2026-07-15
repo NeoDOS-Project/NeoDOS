@@ -183,11 +183,17 @@ pub fn arp_tick() {
 }
 
 pub fn arp_make_packet(op: u16, sender_mac: MacAddr, sender_ip: Ipv4Addr, target_mac: MacAddr, target_ip: Ipv4Addr) -> ArpPacket {
-    match op {
+    let packet = match op {
         ARP_OP_REQUEST => ArpPacket::new_request(sender_mac, sender_ip, target_ip),
         ARP_OP_REPLY => ArpPacket::new_reply(sender_mac, sender_ip, target_mac, target_ip),
         _ => ArpPacket::new_request(sender_mac, sender_ip, target_ip),
+    };
+    if op == ARP_OP_REPLY {
+        crate::serial_println!("[ARP] Built reply: sender_mac={} sender_ip={} target_mac={} target_ip={}",
+            MacAddr(packet.sender_mac), Ipv4Addr(packet.sender_ip),
+            MacAddr(packet.target_mac), Ipv4Addr(packet.target_ip));
     }
+    packet
 }
 
 pub fn arp_cache_entries() -> alloc::vec::Vec<(Ipv4Addr, MacAddr)> {
@@ -225,4 +231,37 @@ pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
     );
     let _ = crate::net::nic::nic_send_packet(nic_id, &frame);
     None
+}
+
+pub fn send_gratuitous_arp(nic_id: u32) {
+    let mut registry = crate::net::nic::NIC_REGISTRY.lock();
+    let nic = match registry.get_mut(nic_id) {
+        Some(n) => n,
+        None => return,
+    };
+    let src_mac = nic.mac_address();
+    let src_ip = nic.ip_address();
+    drop(registry);
+
+    if src_ip.is_unspecified() {
+        crate::serial_println!("[ARP] Gratuitous ARP skipped: no IP assigned");
+        return;
+    }
+
+    crate::serial_println!("[ARP] Sending Gratuitous ARP: IP={} MAC={}", src_ip, src_mac);
+
+    let arp_pkt = ArpPacket::new_request(src_mac, src_ip, src_ip);
+    let arp_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &arp_pkt as *const ArpPacket as *const u8,
+            core::mem::size_of::<ArpPacket>(),
+        )
+    };
+    let frame = crate::net::ethernet::build_ethernet_frame(
+        MacAddr::broadcast(), src_mac, crate::net::ethernet::ETH_TYPE_ARP, arp_bytes,
+    );
+    let _ = crate::net::nic::nic_send_packet(nic_id, &frame);
+
+    crate::net::counters::COUNTERS.tx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    crate::net::counters::COUNTERS.tx_bytes.fetch_add(frame.len() as u64, core::sync::atomic::Ordering::Relaxed);
 }

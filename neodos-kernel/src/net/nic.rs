@@ -176,7 +176,21 @@ pub fn nic_get_ip(nic_id: u32) -> Option<Ipv4Addr> {
 }
 
 pub fn nic_set_ip(nic_id: u32, ip: Ipv4Addr) {
-    NIC_REGISTRY.lock().set_ip(nic_id, ip);
+    let mut send_gratuitous = false;
+    {
+        let mut reg = NIC_REGISTRY.lock();
+        reg.set_ip(nic_id, ip);
+        // Propagate to all NICs (multiple drivers may share same hardware)
+        for i in 0..MAX_NICS {
+            if i != nic_id as usize && reg.get(i as u32).is_some() {
+                reg.set_ip(i as u32, ip);
+            }
+        }
+        send_gratuitous = !ip.is_unspecified();
+    }
+    if send_gratuitous {
+        crate::net::arp::send_gratuitous_arp(nic_id);
+    }
 }
 
 pub fn nic_get_mask(nic_id: u32) -> Option<Ipv4Addr> {
@@ -184,7 +198,13 @@ pub fn nic_get_mask(nic_id: u32) -> Option<Ipv4Addr> {
 }
 
 pub fn nic_set_mask(nic_id: u32, mask: Ipv4Addr) {
-    NIC_REGISTRY.lock().set_mask(nic_id, mask);
+    let mut reg = NIC_REGISTRY.lock();
+    reg.set_mask(nic_id, mask);
+    for i in 0..MAX_NICS {
+        if i != nic_id as usize && reg.get(i as u32).is_some() {
+            reg.set_mask(i as u32, mask);
+        }
+    }
 }
 
 pub fn nic_default_id() -> Option<u32> {

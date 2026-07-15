@@ -113,6 +113,15 @@ fn write_dec_u32(mut v: u32) {
     write_str(&buf[i + 1..=9]);
 }
 
+fn write_dec_i32(v: i32) {
+    if v < 0 {
+        write_str(b"-");
+        write_dec_u32((-v) as u32);
+    } else {
+        write_dec_u32(v as u32);
+    }
+}
+
 fn write_ip(ip: u32) {
     let octets = ip.to_be_bytes();
     for (i, &o) in octets.iter().enumerate() {
@@ -651,7 +660,15 @@ pub extern "C" fn _start() -> ! {
     }
     // ── Apply IP configuration FIRST (needed for ping to work) ──
     if dora_ok {
-        let _ = libnet::set_ip(0, offered_ip, subnet_mask);
+        write_str(b"[DHCPTEST] Calling libnet::set_ip(iface=0, ip=0x");
+        write_hex(offered_ip);
+        write_str(b", mask=0x");
+        write_hex(subnet_mask);
+        write_str(b")...\r\n");
+        let result = libnet::set_ip(0, offered_ip, subnet_mask);
+        write_str(b"[DHCPTEST] libnet::set_ip returned ");
+        write_dec_i32(result);
+        write_str(b"\r\n");
         write_reg_dword(key_fd, "IPAddress", offered_ip);
         write_reg_dword(key_fd, "SubnetMask", subnet_mask);
         write_reg_dword(key_fd, "Gateway", gateway);
@@ -733,6 +750,10 @@ pub extern "C" fn _start() -> ! {
         write_reg_dword(key_fd, "IPAddress", apipa);
         write_reg_dword(key_fd, "DHCPBound", 0);
     }
+
+    write_str(b"[DHCPTEST] Waiting 30s for manual host tests...\r\n");
+    // Give the user time to test host→NeoDOS ping
+    for _ in 0..30000000 { syscall::sys_yield(); }
 
     write_str(b"DHCPTEST_COMPLETE\r\n");
 

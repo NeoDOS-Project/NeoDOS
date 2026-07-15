@@ -94,6 +94,19 @@
 - **`#![allow(dead_code)]`** removed from `main.rs`, `globals.rs`, `vfs/io.rs`.
 - **`CryptoContext` stub** removed from `vfs/io.rs`.
 
+### Fixed
+
+- **libnet-nxl syscall ABI** — Syscall number now passed via `r10` instead of direct `rax`, matching x86_64 `syscall` instruction convention (rcx/r11 clobber-safe). Fixes potential corruption on syscalls with many arguments.
+- **REG_SZ null-terminator** — `ValueCell::as_str()` now strips trailing null byte from REG_SZ registry values.
+- **Network deadlock** — `net_handle_incoming_packet()` receives `&mut dyn NetworkInterface` directly instead of re-acquiring `NIC_REGISTRY.lock()`, eliminating the reentrant spinlock deadlock in packet dispatch.
+- **IP/mask propagation** — `nic_set_ip()` and `nic_set_mask()` now propagate values to all registered NICs (multiple drivers may share the same hardware).
+
+### Added
+
+- **Gratuitous ARP** — `send_gratuitous_arp()` called automatically on `nic_set_ip()`, announcing the new IP to the network.
+- **Network counters** — New `src/net/counters.rs` module: per-protocol packet/byte counters (RX/TX/ARP/ICMP) with periodic dump every 1000 ticks.
+- **Test: `net_handle_incoming_no_deadlock`** — Validates that ARP request/reply dispatch does not deadlock when NIC_REGISTRY lock is already held.
+
 ## v0.49.2 — 2026-07-12
 
 ### Added

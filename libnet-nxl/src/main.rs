@@ -30,11 +30,12 @@ unsafe fn syscall_2(sys_num: u64, a0: u64, a1: u64) -> i64 {
         "push rbx",
         "mov rbx, {a0}",
         "mov rcx, {a1}",
-        "mov rax, {n}",
+        "mov r10, {n}",
+        "mov rax, r10",
         "int 0x80",
         "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, n = in(reg) sys_num,
-        out("rax") r,
+        lateout("rax") r, lateout("r10") _,
         out("rcx") _, out("r8") _, out("r9") _,
     );
     r
@@ -49,11 +50,12 @@ unsafe fn syscall_3(sys_num: u64, a0: u64, a1: u64, a2: u64) -> i64 {
         "mov rbx, {a0}",
         "mov rcx, {a1}",
         "mov rdx, {a2}",
-        "mov rax, {n}",
+        "mov r10, {n}",
+        "mov rax, r10",
         "int 0x80",
         "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, a2 = in(reg) a2, n = in(reg) sys_num,
-        out("rax") r,
+        lateout("rax") r, lateout("r10") _,
         out("rcx") _, out("rdx") _, out("r8") _, out("r9") _,
     );
     r
@@ -67,12 +69,13 @@ unsafe fn syscall_4(sys_num: u64, a0: u64, a1: u64, a2: u64, a3: u64) -> i64 {
         "mov rbx, {a0}",
         "mov rcx, {a1}",
         "mov rdx, {a2}",
-        "mov r8, {a3}",
-        "mov rax, {n}",
+        "mov r8,  {a3}",
+        "mov r10, {n}",
+        "mov rax, r10",
         "int 0x80",
         "pop rbx",
         a0 = in(reg) a0, a1 = in(reg) a1, a2 = in(reg) a2, a3 = in(reg) a3, n = in(reg) sys_num,
-        out("rax") r,
+        lateout("rax") r, lateout("r10") _,
         out("rcx") _, out("rdx") _, out("r8") _, out("r9") _,
     );
     r

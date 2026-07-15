@@ -508,6 +508,9 @@ pub(crate) fn is_current_admin() -> bool {
 
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u64, r9: u64) -> u64 {
+    if rax == 40 || rax == 43 {
+        serial_println!("[SYS] syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
+    }
     crate::trace_syscall!(rax, rbx, rcx, rdx);
 
     if rax >= 256 {

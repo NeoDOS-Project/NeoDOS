@@ -9,6 +9,7 @@ pub mod socket;
 pub mod nic;
 pub mod e1000;
 pub mod dns;
+pub mod counters;
 mod tests;
 
 use types::SocketType;
@@ -16,6 +17,7 @@ use socket::SOCKET_MANAGER;
 use nic::NIC_REGISTRY;
 
 static NET_INITIALIZED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static TICK_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 pub fn init_networking() {
     if NET_INITIALIZED.load(core::sync::atomic::Ordering::Relaxed) {
@@ -39,6 +41,7 @@ pub fn init_networking() {
 
     crate::object::namespace::ob_create_directory("\\Device\\Nic").unwrap_or(());
 
+    // Probe kernel e1000 driver (may coexist with NEM driver)
     let _has_kernel_nic = crate::net::e1000::probe_e1000();
 
     let nic_count = crate::net::nic::nic_count();
@@ -65,9 +68,14 @@ pub fn net_tick() {
     network_poll_all();
     arp::arp_tick();
     dns::dns_tick();
+
+    let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    if t > 0 && t % 1000 == 0 {
+        crate::net::counters::dump_counters();
+    }
 }
 
-pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
+pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
     if packet.len() < crate::net::ethernet::ETH_HDR_LEN { return; }
 
     let eth_hdr: &crate::net::ethernet::EthernetHeader = unsafe {
@@ -86,45 +94,52 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
         };
 
         if arp_pkt.operation() == crate::net::arp::ARP_OP_REQUEST {
+            crate::net::counters::COUNTERS.arp_requests_rx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let target_ip = arp_pkt.target_ip_addr();
-            let mut registry = NIC_REGISTRY.lock();
-            if let Some(nic) = registry.get_mut(nic_id) {
-                if nic.ip_address() == target_ip {
-                    let reply = arp::arp_make_packet(
-                        crate::net::arp::ARP_OP_REPLY,
-                        nic.mac_address(), target_ip,
-                        arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(),
-                    );
-                    let mut reply_buf = alloc::vec::Vec::with_capacity(
-                        crate::net::ethernet::ETH_HDR_LEN + core::mem::size_of::<crate::net::arp::ArpPacket>(),
-                    );
-                    let eth = crate::net::ethernet::EthernetHeader::new(
-                        arp_pkt.sender_mac_addr(),
-                        nic.mac_address(),
-                        crate::net::ethernet::ETH_TYPE_ARP,
-                    );
-                    let eth_bytes = unsafe {
-                        core::slice::from_raw_parts(
-                            &eth as *const crate::net::ethernet::EthernetHeader as *const u8,
-                            core::mem::size_of::<crate::net::ethernet::EthernetHeader>(),
-                        )
-                    };
-                    reply_buf.extend_from_slice(eth_bytes);
-                    let arp_bytes = unsafe {
-                        core::slice::from_raw_parts(
-                            &reply as *const crate::net::arp::ArpPacket as *const u8,
-                            core::mem::size_of::<crate::net::arp::ArpPacket>(),
-                        )
-                    };
-                    reply_buf.extend_from_slice(arp_bytes);
-                    let _ = nic.send_packet(&reply_buf);
-                }
+            let target_mac = crate::net::types::MacAddr(arp_pkt.target_mac);
+            crate::serial_println!("[ARP] Request RX: op=1 sender_mac={} sender_ip={} target_mac={} target_ip={}",
+                arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(), target_mac, target_ip);
+            crate::serial_println!("[ARP] Request target={} our_ip={} mac={}",
+                target_ip, nic.ip_address(), nic.mac_address());
+            if nic.ip_address() == target_ip {
+                crate::serial_println!("[ARP] Reply TX: our_mac={} our_ip={} dst_mac={} dst_ip={}",
+                    nic.mac_address(), target_ip,
+                    arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr());
+                crate::net::counters::COUNTERS.arp_replies_tx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                let reply = arp::arp_make_packet(
+                    crate::net::arp::ARP_OP_REPLY,
+                    nic.mac_address(), target_ip,
+                    arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(),
+                );
+                let mut reply_buf = alloc::vec::Vec::with_capacity(
+                    crate::net::ethernet::ETH_HDR_LEN + core::mem::size_of::<crate::net::arp::ArpPacket>(),
+                );
+                let eth = crate::net::ethernet::EthernetHeader::new(
+                    arp_pkt.sender_mac_addr(),
+                    nic.mac_address(),
+                    crate::net::ethernet::ETH_TYPE_ARP,
+                );
+                let eth_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &eth as *const crate::net::ethernet::EthernetHeader as *const u8,
+                        core::mem::size_of::<crate::net::ethernet::EthernetHeader>(),
+                    )
+                };
+                reply_buf.extend_from_slice(eth_bytes);
+                let arp_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &reply as *const crate::net::arp::ArpPacket as *const u8,
+                        core::mem::size_of::<crate::net::arp::ArpPacket>(),
+                    )
+                };
+                reply_buf.extend_from_slice(arp_bytes);
+                crate::serial_println!("[ARP] Reply pkt: {} bytes, about to send via nic.send_packet", reply_buf.len());
+                let _ = nic.send_packet(&reply_buf);
             }
-            drop(registry);
         } else if arp_pkt.operation() == crate::net::arp::ARP_OP_REPLY {
             let sender_ip = arp_pkt.sender_ip_addr();
             let sender_mac = arp_pkt.sender_mac_addr();
-            crate::serial_println!("[ARP] Reply: {} -> {}", sender_ip, sender_mac);
+            crate::serial_println!("[ARP] Reply RX: {} -> {}", sender_ip, sender_mac);
             arp::arp_insert(sender_ip, sender_mac);
         }
     } else if eth_hdr.is_ipv4() {
@@ -157,54 +172,62 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
                 &*(payload.as_ptr() as *const crate::net::icmp::IcmpHeader)
             };
             if icmp_hdr.is_echo_reply() {
+                crate::serial_println!("[ICMP] EchoReply RX: src={} dst={} id={} seq={}",
+                    ip_hdr.src_ip(), ip_hdr.dst_ip(),
+                    icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence());
                 crate::net::icmp::notify_ping_reply(
                     icmp_hdr.echo_identifier(),
                     icmp_hdr.echo_sequence(),
                 );
             } else if icmp_hdr.is_echo_request() {
+                crate::net::counters::COUNTERS.icmp_requests_rx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                crate::serial_println!("[ICMP] EchoRequest RX: src={} dst={} id={} seq={}",
+                    ip_hdr.src_ip(), ip_hdr.dst_ip(),
+                    icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence());
                 let icmp_data = &payload[core::mem::size_of::<crate::net::icmp::IcmpHeader>()..];
                 let reply_icmp = crate::net::icmp::build_echo_reply(icmp_hdr, icmp_data);
+                crate::net::counters::COUNTERS.icmp_replies_tx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                crate::serial_println!("[ICMP] EchoReply TX: src={} dst={} id={} seq={} reply_len={}",
+                    ip_hdr.dst_ip(), ip_hdr.src_ip(),
+                    icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence(), reply_icmp.len());
 
-                let mut registry = NIC_REGISTRY.lock();
-                if let Some(nic) = registry.get_mut(nic_id) {
-                    let reply_ip = crate::net::ipv4::build_ipv4_header(
-                        ip_hdr.dst_ip(),
-                        ip_hdr.src_ip(),
-                        crate::net::ipv4::IPV4_PROTO_ICMP,
-                        reply_icmp.len(),
-                        0,
-                    );
+                let reply_ip = crate::net::ipv4::build_ipv4_header(
+                    ip_hdr.dst_ip(),
+                    ip_hdr.src_ip(),
+                    crate::net::ipv4::IPV4_PROTO_ICMP,
+                    reply_icmp.len(),
+                    0,
+                );
 
-                    let mut reply_pkt = alloc::vec::Vec::with_capacity(
-                        crate::net::ethernet::ETH_HDR_LEN
-                        + crate::net::ipv4::IPV4_HDR_MIN_LEN
-                        + reply_icmp.len(),
-                    );
+                let mut reply_pkt = alloc::vec::Vec::with_capacity(
+                    crate::net::ethernet::ETH_HDR_LEN
+                    + crate::net::ipv4::IPV4_HDR_MIN_LEN
+                    + reply_icmp.len(),
+                );
 
-                    let eth = crate::net::ethernet::EthernetHeader::new(
-                        eth_hdr.src_mac(),
-                        nic.mac_address(),
-                        crate::net::ethernet::ETH_TYPE_IPV4,
-                    );
-                    let eth_bytes = unsafe {
-                        core::slice::from_raw_parts(
-                            &eth as *const crate::net::ethernet::EthernetHeader as *const u8,
-                            core::mem::size_of::<crate::net::ethernet::EthernetHeader>(),
-                        )
-                    };
-                    reply_pkt.extend_from_slice(eth_bytes);
+                let eth = crate::net::ethernet::EthernetHeader::new(
+                    eth_hdr.src_mac(),
+                    nic.mac_address(),
+                    crate::net::ethernet::ETH_TYPE_IPV4,
+                );
+                let eth_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &eth as *const crate::net::ethernet::EthernetHeader as *const u8,
+                        core::mem::size_of::<crate::net::ethernet::EthernetHeader>(),
+                    )
+                };
+                reply_pkt.extend_from_slice(eth_bytes);
 
-                    let ip_bytes = unsafe {
-                        core::slice::from_raw_parts(
-                            &reply_ip as *const crate::net::ipv4::Ipv4Header as *const u8,
-                            crate::net::ipv4::IPV4_HDR_MIN_LEN,
-                        )
-                    };
-                    reply_pkt.extend_from_slice(ip_bytes);
-                    reply_pkt.extend_from_slice(&reply_icmp);
+                let ip_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &reply_ip as *const crate::net::ipv4::Ipv4Header as *const u8,
+                        crate::net::ipv4::IPV4_HDR_MIN_LEN,
+                    )
+                };
+                reply_pkt.extend_from_slice(ip_bytes);
+                reply_pkt.extend_from_slice(&reply_icmp);
 
-                    let _ = nic.send_packet(&reply_pkt);
-                }
+                let _ = nic.send_packet(&reply_pkt);
             }
         }
     }
@@ -216,7 +239,7 @@ pub fn network_poll_all() {
     registry.for_each(|nic_id, nic| {
         let mut buf = [0u8; 2048];
         while let Some(len) = nic.poll_packet(&mut buf) {
-            net_handle_incoming_packet(nic_id, &buf[..len]);
+            net_handle_incoming_packet(nic_id, &mut **nic, &buf[..len]);
         }
     });
 }

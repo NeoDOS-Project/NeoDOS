@@ -440,7 +440,7 @@ def main():
                         type=Path, help='Output path for SYSTEM.HIV')
     parser.add_argument('--enable-tests', action='store_true',
                         help='Set EnableTests=1 for boot-time tests')
-    parser.add_argument('--enable-network-test', action='store_true',
+    parser.add_argument('--enable-network-test', action='store_true', default=False,
                         help='Set EnableNetworkTest=1 for DHCP test')
     args = parser.parse_args()
 

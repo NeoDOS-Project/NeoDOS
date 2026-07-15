@@ -178,6 +178,54 @@ pub fn register_net_tests() {
         test_true!(reg.default_nic_id().is_none());
     });
 
+    test_case!("net_handle_incoming_no_deadlock", {
+        use super::nic::NIC_REGISTRY;
+        use super::arp::ArpPacket;
+        use super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_ARP};
+        use super::types::{MacAddr, Ipv4Addr};
+        use super::net_handle_incoming_packet;
+
+        let mut registry = NIC_REGISTRY.lock();
+        if let Some(nic_id) = registry.default_nic_id() {
+            if let Some(nic) = registry.get_mut(nic_id) {
+                let target_ip = Ipv4Addr::new([192, 168, 99, 99]);
+
+                let arp = ArpPacket::new_request(
+                    MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
+                    Ipv4Addr::new([10, 99, 99, 99]),
+                    target_ip,
+                );
+                let arp_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &arp as *const ArpPacket as *const u8,
+                        core::mem::size_of::<ArpPacket>(),
+                    )
+                };
+                let eth = EthernetHeader::new(
+                    MacAddr::broadcast(),
+                    MacAddr::new([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01]),
+                    ETH_TYPE_ARP,
+                );
+                let eth_bytes = unsafe {
+                    core::slice::from_raw_parts(
+                        &eth as *const EthernetHeader as *const u8,
+                        ETH_HDR_LEN,
+                    )
+                };
+                let mut packet = alloc::vec::Vec::with_capacity(ETH_HDR_LEN + core::mem::size_of::<ArpPacket>());
+                packet.extend_from_slice(eth_bytes);
+                packet.extend_from_slice(arp_bytes);
+
+                net_handle_incoming_packet(nic_id, &mut **nic, &packet);
+
+                let orig_ip = nic.ip_address();
+                nic.set_ip_address(target_ip);
+                net_handle_incoming_packet(nic_id, &mut **nic, &packet);
+                nic.set_ip_address(orig_ip);
+            }
+        }
+    });
+
     test_case!("net_socket_recv_data", {
         let id = {
             let mut mgr = SOCKET_MANAGER.lock();

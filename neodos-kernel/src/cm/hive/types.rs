@@ -63,7 +63,12 @@ impl ValueCell {
 
     pub fn as_str(&self) -> Option<&str> {
         if self.value_type == REG_SZ {
-            core::str::from_utf8(&self.data).ok()
+            let data = if self.data.last() == Some(&0) {
+                &self.data[..self.data.len()-1]
+            } else {
+                &self.data[..]
+            };
+            core::str::from_utf8(data).ok()
         } else {
             None
         }
