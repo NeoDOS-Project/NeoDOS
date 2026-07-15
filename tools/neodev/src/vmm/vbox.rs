@@ -200,14 +200,18 @@ impl HypervisorBackend for VirtualBoxBackend {
         Ok(())
     }
 
-    fn start_headless(&self, cfg: &Config, vmcfg: &VmConfig) -> Result<Box<dyn VmInstance>> {
-        self.ensure_vm(cfg, vmcfg)?;
-
+    fn start_headless(&self, _cfg: &Config, vmcfg: &VmConfig) -> Result<Box<dyn VmInstance>> {
+        // NOT calling ensure_vm here — caller already does it.
+        // Calling it again would poweroff the running VM via vm_poweroff().
         let name = &vmcfg.name;
 
-        // Ensure headless mode
+        if !vm_exists(name) {
+            anyhow::bail!("VM '{}' does not exist. Run 'neodev vm create' first.", name);
+        }
+
+        // Start VM in headless mode
         let output = Command::new("VBoxManage")
-            .args(["startvm", name, "--type", "separate"])
+            .args(["startvm", name, "--type", "headless"])
             .output()
             .context("Failed to start VM in headless mode")?;
 
@@ -487,10 +491,16 @@ fn attach_storage(name: &str, vdi_path: &Path) -> Result<()> {
         .args(["closemedium", "disk", vdi_path.to_str().unwrap()])
         .status();
 
-    // Add AHCI controller (idempotent)
+    // Remove existing AHCI controller if present, then re-add
     let _ = Command::new("VBoxManage")
-        .args(["storagectl", name, "--name", "AHCI", "--add", "sata", "--controller", "IntelAhci"])
+        .args(["storagectl", name, "--name", "AHCI", "--remove"])
         .status();
+
+    // Add AHCI controller
+    Command::new("VBoxManage")
+        .args(["storagectl", name, "--name", "AHCI", "--add", "sata", "--controller", "IntelAhci"])
+        .status()
+        .context("Failed to add AHCI storage controller")?;
 
     // Attach VDI
     Command::new("VBoxManage")
