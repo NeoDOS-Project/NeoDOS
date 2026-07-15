@@ -22,7 +22,6 @@ const IDS_EXAMPLE: u32 = 1004;
 const IDS_NO_PROGRAMS_DIR: u32 = 1005;
 const IDS_CREATE_PROGRAMS_DIR: u32 = 1006;
 const IDS_ERROR_READING_DIR: u32 = 1007;
-const IDS_NO_DESCRIPTION: u32 = 1008;
 const IDS_CMD_NOT_FOUND: u32 = 1010;
 const IDS_HELP_USAGE: u32 = 1011;
 const IDS_USAGE_DESC1: u32 = 1012;
@@ -129,34 +128,6 @@ fn is_nxe(name: &str) -> bool {
         && (ext[3] == b'E' || ext[3] == b'e')
 }
 
-fn extract_help_desc(data: &[u8]) -> Option<&[u8]> {
-    let help_marker = b"::HELP::";
-    let end_marker = b"::END::";
-    let mut search_start = 0;
-    loop {
-        let pos = data[search_start..].windows(help_marker.len()).position(|w| w == help_marker)?;
-        let abs_pos = search_start + pos;
-        let after_marker = &data[abs_pos + help_marker.len()..];
-
-        let after_end = after_marker.windows(end_marker.len()).position(|w| w == end_marker);
-        match after_end {
-            Some(end_pos) if end_pos < 500 => {
-                let help_text = &after_marker[..end_pos];
-                let trimmed = libneodos::args::trim_ascii(help_text);
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let first_line_end = trimmed.iter().position(|&b| b == b'\r' || b == b'\n')
-                    .unwrap_or(trimmed.len());
-                return Some(&trimmed[..first_line_end]);
-            }
-            _ => {
-                search_start = abs_pos + 1;
-            }
-        }
-    }
-}
-
 fn cmd_list_all() {
     write_str(b"\r\n");
     writeln(tr_id!(IDS_HEADER).as_bytes());
@@ -227,89 +198,61 @@ fn cmd_list_all() {
         return;
     }
 
+    let mut display: [[u8; 32]; 128] = [[0u8; 32]; 128];
+    let mut dcount = 0usize;
     for i in 0..name_count {
         let name = &names[i][..name_lens[i]];
-
-        let mut path_buf = [0u8; 260];
-        let mut pos = 0;
-        for &b in b"C:\\Programs" {
-            if pos < 259 { path_buf[pos] = b; pos += 1; }
-        }
-        if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
-        for &b in name {
-            if pos < 259 { path_buf[pos] = b; pos += 1; }
-        }
-        let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
-
-        let mut desc = [0u8; 80];
-        let desc_len: usize;
-
-        let mut ob_buf2 = [0u8; 512];
-        let ob_path2 = to_ob_path(path_str, &mut ob_buf2);
-        if let Ok(nxe_fd) = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ) {
-            let mut accumulated = [0u8; 32768];
-            let mut total = 0usize;
-            loop {
-                let mut chunk = [0u8; 4096];
-                match syscall::sys_ob_query_info(nxe_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut chunk) {
-                    Ok(0) => break,
-                    Ok(n2) => {
-                        let copy = n2.min(accumulated.len() - total);
-                        accumulated[total..total+copy].copy_from_slice(&chunk[..copy]);
-                        total += copy;
-                    }
-                    Err(_) => break,
-                }
-                if total >= accumulated.len() { break; }
-            }
-            let _ = syscall::sys_close(nxe_fd);
-
-            if let Some(help_line) = extract_help_desc(&accumulated[..total]) {
-                let dlen = help_line.len().min(79);
-                desc[..dlen].copy_from_slice(&help_line[..dlen]);
-                desc_len = dlen;
-            } else {
-                desc_len = 0;
-            }
-        } else {
-            desc_len = 0;
-        }
-
-        let display_name = if name_lens[i] >= 4 {
-            let ext = &name[name_lens[i]-4..name_lens[i]];
-            let is_nxe_ext = ext.len() == 4
-                && (ext[0] == b'.' || ext[0] == b'.')
-                && (ext[1] == b'N' || ext[1] == b'n')
-                && (ext[2] == b'X' || ext[2] == b'x')
-                && (ext[3] == b'E' || ext[3] == b'e');
-            if is_nxe_ext {
-                &name[..name_lens[i]-4]
-            } else {
-                name
-            }
+        let dn = if name_lens[i] >= 4
+            && name[name_lens[i]-4..].eq_ignore_ascii_case(b".NXE") {
+            &name[..name_lens[i]-4]
         } else {
             name
         };
-        let dlen = display_name.len();
+        let blen = dn.len().min(31);
+        let mut upper = [0u8; 32];
+        upper[..blen].copy_from_slice(dn);
+        for b in &mut upper[..blen] { if *b >= b'a' && *b <= b'z' { *b -= 32; } }
+        display[dcount][..blen].copy_from_slice(&upper[..blen]);
+        dcount += 1;
+    }
 
-        write_str(b"  ");
-        let mut n_upper = [0u8; 32];
-        let ulen = dlen.min(31);
-        n_upper[..ulen].copy_from_slice(&display_name[..ulen]);
-        for b in n_upper[..ulen].iter_mut() {
-            if *b >= b'a' && *b <= b'z' { *b -= 32; }
+    for i in 0..dcount {
+        for j in i+1..dcount {
+            let a = &display[i];
+            let b2 = &display[j];
+            let la = a.iter().position(|&x| x == 0).unwrap_or(32);
+            let lb = b2.iter().position(|&x| x == 0).unwrap_or(32);
+            let minl = if la < lb { la } else { lb };
+            let mut cmp = 0;
+            for k in 0..minl {
+                if a[k] != b2[k] { cmp = a[k] as i32 - b2[k] as i32; break; }
+            }
+            if cmp == 0 && la != lb { cmp = la as i32 - lb as i32; }
+            if cmp > 0 {
+                let tmp = display[i]; display[i] = display[j]; display[j] = tmp;
+            }
         }
-        write_str(&n_upper[..ulen]);
-        for _ in ulen..15 { write_str(b" "); }
+    }
 
-        if desc_len > 0 {
-            write_str(&desc[..desc_len]);
-        } else {
-            write_str(tr_id!(IDS_NO_DESCRIPTION).as_bytes());
+    const COLS: usize = 5;
+    const CW: usize = 15;
+    let rows = (dcount + COLS - 1) / COLS;
+
+    for r in 0..rows {
+        write_str(b"  ");
+        for c in 0..COLS {
+            let idx = c * rows + r;
+            if idx < dcount {
+                let name = &display[idx];
+                let nlen = name.iter().position(|&x| x == 0).unwrap_or(32);
+                write_str(&name[..nlen]);
+                for _ in nlen..CW { write_str(b" "); }
+            }
         }
         write_str(b"\r\n");
         count += 1;
     }
+
 
     write_str(b"\r\n");
     write_u64(count);
