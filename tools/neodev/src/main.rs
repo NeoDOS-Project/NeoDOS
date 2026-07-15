@@ -6,6 +6,7 @@ mod image;
 mod report;
 mod run;
 mod test_;
+mod vmm;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -75,7 +76,7 @@ enum Commands {
         #[arg(long)]
         no_build: bool,
     },
-    /// Run NeoDOS in QEMU
+    /// Run NeoDOS in a VM
     Run {
         /// Storage controller: ahci, ata, nvme, virtio
         #[arg(long, default_value = "ahci")]
@@ -83,13 +84,13 @@ enum Commands {
         /// Network mode: user, tap, bridge
         #[arg(long, default_value = "user")]
         net: String,
-        /// Enable KVM acceleration
+        /// Enable KVM acceleration (QEMU only)
         #[arg(long)]
         kvm: bool,
         /// Enable GDB server on :1234
         #[arg(long)]
         gdb: bool,
-        /// BDM mode (persistent OVMF vars)
+        /// BDM mode (persistent OVMF vars, QEMU only)
         #[arg(long)]
         bdm: bool,
         /// Headless mode (no display)
@@ -98,18 +99,33 @@ enum Commands {
         /// Serial output to file instead of stdio
         #[arg(long)]
         serial: Option<String>,
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
     },
     /// Run tests (NeoTest integration)
     Test {
         /// Storage controller: ahci, ata, virtio
         #[arg(long, default_value = "ahci")]
         storage: String,
-        /// Enable KVM acceleration
+        /// Enable KVM acceleration (QEMU only)
         #[arg(long)]
         kvm: bool,
         /// Number of iterations
         #[arg(long, default_value_t = 1)]
         iterations: u32,
+        /// Test timeout in seconds
+        #[arg(long, default_value_t = 180)]
+        timeout: u64,
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Run DHCP integration test (requires VirtualBox in bridge mode)
+    Dhcp {
+        /// VirtualBox backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
         /// Test timeout in seconds
         #[arg(long, default_value_t = 180)]
         timeout: u64,
@@ -150,6 +166,60 @@ enum Commands {
         /// Build NXP for specific user binary
         name: Option<String>,
     },
+    /// Manage NeoDOS virtual machines
+    Vm {
+        #[command(subcommand)]
+        action: VmAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum VmAction {
+    /// Start the VM
+    Start {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+        /// Headless mode
+        #[arg(long)]
+        headless: bool,
+        /// Network mode: nat, bridged (default from config)
+        #[arg(long)]
+        net: Option<String>,
+    },
+    /// Stop the VM (ACPI shutdown)
+    Stop {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Reset the VM
+    Reset {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Show VM status
+    Status {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+    },
+    /// Create/recreate the VM
+    Create {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+        /// Network mode: nat, bridged (default from config)
+        #[arg(long)]
+        net: Option<String>,
+    },
+    /// Delete the VM
+    Delete {
+        /// Hypervisor backend (default from config)
+        #[arg(long)]
+        backend: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -188,13 +258,16 @@ fn main() -> Result<()> {
             bdm,
             headless,
             serial,
-        } => cmd_run(&cfg, storage, net, *kvm, *gdb, *bdm, *headless, serial.as_deref()),
+            backend,
+        } => cmd_run(&cfg, storage, net, *kvm, *gdb, *bdm, *headless, serial.as_deref(), backend.as_deref()),
         Commands::Test {
             storage,
             kvm,
             iterations,
             timeout,
-        } => cmd_test(&cfg, storage, *kvm, *iterations, *timeout),
+            backend,
+        } => cmd_test(&cfg, storage, *kvm, *iterations, *timeout, backend.as_deref()),
+        Commands::Dhcp { backend, timeout } => cmd_dhcp(&cfg, &disc, backend.as_deref(), *timeout),
         Commands::Clean {
             all,
             kernel,
@@ -207,6 +280,7 @@ fn main() -> Result<()> {
         Commands::Config => cmd_config(&cfg),
         Commands::List => cmd_list(&cfg),
         Commands::Nxp { all, name } => cmd_nxp(&cfg, &disc, *all, name.as_deref()),
+        Commands::Vm { action } => cmd_vm(&cfg, action),
     }
 }
 
@@ -359,6 +433,7 @@ fn cmd_run(
     bdm: bool,
     headless: bool,
     serial: Option<&str>,
+    backend: Option<&str>,
 ) -> Result<()> {
     let storage = match storage_str {
         "ahci" => run::StorageMode::Ahci,
@@ -375,6 +450,8 @@ fn cmd_run(
         _ => anyhow::bail!("Unknown net mode: {}. Use: user, tap, bridge", net_str),
     };
 
+    let actual_backend = backend.unwrap_or(&cfg.vm_backend);
+
     let opts = run::RunOptions {
         storage,
         net,
@@ -383,10 +460,10 @@ fn cmd_run(
         headless,
         bdm,
         serial_file: serial.map(|s| s.to_string()),
-        ..Default::default()
+        backend: actual_backend.to_string(),
     };
 
-    run::run_qemu(cfg, &opts)
+    run::run_vm(cfg, &opts)
 }
 
 fn cmd_test(
@@ -395,24 +472,52 @@ fn cmd_test(
     kvm: bool,
     iterations: u32,
     timeout: u64,
+    backend: Option<&str>,
 ) -> Result<()> {
-    use test_::TestOptions;
-
+    use vmm::StorageMode;
     let storage = match storage_str {
-        "ahci" => run::StorageMode::Ahci,
-        "ata" => run::StorageMode::Ata,
-        "virtio" => run::StorageMode::Virtio,
+        "ahci" => StorageMode::Ahci,
+        "ata" => StorageMode::Ata,
+        "virtio" => StorageMode::Virtio,
         _ => anyhow::bail!("Unknown storage mode: {}. Use: ahci, ata, virtio", storage_str),
     };
 
-    let opts = TestOptions {
+    let actual_backend = backend.unwrap_or(&cfg.vm_backend);
+
+    let opts = test_::TestOptions {
         storage,
         kvm,
         iterations,
         timeout,
+        backend: actual_backend.to_string(),
     };
 
     test_::run_tests(cfg, &opts)?;
+    Ok(())
+}
+
+fn cmd_dhcp(
+    cfg: &config::Config,
+    disc: &discovery::Discovery,
+    backend: Option<&str>,
+    timeout: u64,
+) -> Result<()> {
+    let actual_backend = backend.unwrap_or(&cfg.vm_backend);
+
+    println!("{} NeoDOS DHCP Integration Test", "[*]".bold().cyan());
+    println!("  Backend: {}", actual_backend);
+    println!("  Timeout: {}s", timeout);
+    println!();
+
+    // Validate backend is virtualbox
+    if actual_backend != "virtualbox" {
+        anyhow::bail!(
+            "DHCP test requires VirtualBox bridge mode.\n\
+            Use 'neodev dhcp --backend virtualbox'"
+        );
+    }
+
+    test_::run_dhcp_test(cfg, disc, actual_backend, timeout)?;
     Ok(())
 }
 
@@ -446,7 +551,10 @@ fn cmd_config(cfg: &config::Config) -> Result<()> {
     println!("  Bootloader target: {}", cfg.bootloader_target);
     println!("  ESP size:         {} MB", cfg.esp_size_mb);
     println!("  NeoDOS FS size:   {} MB", cfg.neodos_size_mb);
-    println!("  QEMU memory:      {}", cfg.qemu_memory);
+    println!("  VM backend:       {}", cfg.vm_backend);
+    println!("  VM memory:        {} MB", cfg.vm_memory_mb);
+    println!("  VM CPUs:          {}", cfg.vm_cpus);
+    println!("  VM network:       {}", cfg.vm_network);
     println!("  OVMF code:        {}", cfg.ovmf_code.display());
     println!("  OVMF vars:        {}", cfg.ovmf_vars_template.display());
 
@@ -460,4 +568,67 @@ fn cmd_list(cfg: &config::Config) -> Result<()> {
 
 fn cmd_nxp(cfg: &config::Config, disc: &discovery::Discovery, all: bool, name: Option<&str>) -> Result<()> {
     build::build_nxp_packages(cfg, disc, all, name)
+}
+
+fn cmd_vm(cfg: &config::Config, action: &VmAction) -> Result<()> {
+    use colored::*;
+
+    let resolve = |cli: &Option<String>| -> String {
+        cli.clone().unwrap_or_else(|| cfg.vm_backend.clone())
+    };
+
+    match action {
+        VmAction::Start { backend, headless, net } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            b.check_prerequisites(cfg)?;
+            let vmcfg = vmm::vmcfg_from_config_net(cfg, net.as_deref());
+            let vmcfg = vmm::VmConfig { headless: *headless, ..vmcfg };
+            // Force-unlock any stale session before starting
+            let _ = b.stop(cfg, &vmcfg);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            b.ensure_vm(cfg, &vmcfg)?;
+            println!("{} Starting VM (backend: {})", "[*]".bold().cyan(), actual_backend);
+            b.run(cfg, &vmcfg)
+        }
+        VmAction::Stop { backend } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            let vmcfg = vmm::vmcfg_from_config(cfg);
+            println!("{} Stopping VM (backend: {})", "[*]".bold().cyan(), actual_backend);
+            b.stop(cfg, &vmcfg)
+        }
+        VmAction::Reset { backend } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            let vmcfg = vmm::vmcfg_from_config(cfg);
+            println!("{} Resetting VM (backend: {})", "[*]".bold().cyan(), actual_backend);
+            b.reset(cfg, &vmcfg)
+        }
+        VmAction::Status { backend } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            let vmcfg = vmm::vmcfg_from_config(cfg);
+            let status = b.status(cfg, &vmcfg)?;
+            println!("{} VM Status (backend: {})", "[*]".bold().cyan(), actual_backend);
+            vmm::print_vm_status(&status);
+            println!("  Name: {}", vmcfg.name);
+            Ok(())
+        }
+        VmAction::Create { backend, net } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            b.check_prerequisites(cfg)?;
+            let vmcfg = vmm::vmcfg_from_config_net(cfg, net.as_deref());
+            println!("{} Creating VM (backend: {})", "[*]".bold().cyan(), actual_backend);
+            b.ensure_vm(cfg, &vmcfg)
+        }
+        VmAction::Delete { backend } => {
+            let actual_backend = resolve(backend);
+            let b = vmm::create_backend(&actual_backend)?;
+            let vmcfg = vmm::vmcfg_from_config(cfg);
+            println!("{} Deleting VM (backend: {})", "[*]".bold().cyan(), actual_backend);
+            b.delete_vm(cfg, &vmcfg)
+        }
+    }
 }

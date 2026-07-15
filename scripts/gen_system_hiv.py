@@ -7,11 +7,16 @@ Produces a NEOHv1 binary hive file matching the kernel's cell-based format
 cm_ensure_default_values() in src/cm/mod.rs.
 
 Usage:
-  python3 scripts/gen_system_hiv.py [output_path]
+  python3 scripts/gen_system_hiv.py [options] [output_path]
 
-  Default output: scripts/system.hiv (copied to neodos_image.img later)
+Options:
+  --enable-tests         Set EnableTests=1 (runs cmdtest/shtest/stresscmd at boot)
+  --enable-network-test  Set EnableNetworkTest=1 (runs dhcptest at boot)
+
+Default output: scripts/system.hiv (copied to neodos_image.img later)
 """
 
+import argparse
 import struct
 import sys
 from pathlib import Path
@@ -179,16 +184,20 @@ def build_default_system_hive() -> bytes:
     return b.serialize()
 
 
-def build_default_system_hive_v2() -> bytes:
+def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) -> bytes:
     """
     Build SYSTEM.HIV with proper tree structure matching kernel's
     ensure_key_path() traversal. Includes default service entries
     (Dhcpd) for the Service Manager (SM-001) and Power plan defaults
     for the Power Manager (PM-PHASE2).
+
+    Args:
+        enable_tests: Set EnableTests=1 for boot-time test execution
+        enable_network_test: Set EnableNetworkTest=1 for DHCP test
     """
     b = HiveBuilder()
 
-    # Total cells: 51 — root + CurrentControlSet tree (27) + Power tree (24)
+    # Total cells: 52 — root + CurrentControlSet tree (27) + Power tree (24) + EnableNetworkTest (1)
 
     # ── ALLOCATE all cells first ──
     _ROOT = 0
@@ -245,10 +254,15 @@ def build_default_system_hive_v2() -> bytes:
     _V_SAV_LA = 49
     _V_SAV_PBA = 50
 
-    b.next_idx = 51
+    # ── Network test flag cell ──
+    _V_NETTEST = 51
+
+    b.next_idx = 52
 
     # ── VALUES (linked lists) ──
-    # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests
+    # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests -> EnableNetworkTest
+    tests_val = 1 if enable_tests else 0
+    net_test_val = 1 if enable_network_test else 0
     b.add_value(_V_SHELL, "DefaultShell", REG_SZ,
                 b"C:\\Programs\\neoshell.nxe\x00")
     b.add_value(_V_VT, "EnableVT", REG_DWORD,
@@ -256,7 +270,9 @@ def build_default_system_hive_v2() -> bytes:
     b.add_value(_V_AUTO, "AutoStartServices", REG_SZ,
                 b"\x00", next_val=_V_VT)
     b.add_value(_V_TESTS, "EnableTests", REG_DWORD,
-                struct.pack("<I", 0), next_val=_V_AUTO)
+                struct.pack("<I", tests_val), next_val=_V_AUTO)
+    b.add_value(_V_NETTEST, "EnableNetworkTest", REG_DWORD,
+                struct.pack("<I", net_test_val), next_val=_V_TESTS)
 
     # Dhcpc values: Description -> Dependencies -> MaxFailures -> RestartPolicy -> StartType -> ImagePath -> BinaryPath -> DisplayName
     b.add_value(_V_DESC, "Description", REG_SZ,
@@ -321,7 +337,7 @@ def build_default_system_hive_v2() -> bytes:
 
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
-    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS)
+    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_NETTEST)
 
     # Dhcpc (child of Services, sibling of NeoInit)
     b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME)
@@ -336,7 +352,7 @@ def build_default_system_hive_v2() -> bytes:
     b.add_key(_NET, "Network", _SVC, subkeys_head=_IFC)
 
     # Services: subkeys = NeoInit -> Dhcpc -> Network (sibling chain)
-    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS,
+    b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_NETTEST,
               subkeys_sibling=_DHCPC)
     b.add_key(_DHCPC, "Dhcpc", _SVC, values_head=_V_DNAME,
               subkeys_sibling=_NET)
@@ -369,19 +385,34 @@ def build_default_system_hive_v2() -> bytes:
 
 
 def main():
-    output = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("scripts/system.hiv")
-    data = build_default_system_hive_v2()
+    parser = argparse.ArgumentParser(description='Generate NeoDOS SYSTEM.HIV')
+    parser.add_argument('output', nargs='?', default=Path("scripts/system.hiv"),
+                        type=Path, help='Output path for SYSTEM.HIV')
+    parser.add_argument('--enable-tests', action='store_true',
+                        help='Set EnableTests=1 for boot-time tests')
+    parser.add_argument('--enable-network-test', action='store_true',
+                        help='Set EnableNetworkTest=1 for DHCP test')
+    args = parser.parse_args()
+
+    output = args.output
+    data = build_default_system_hive_v2(
+        enable_tests=args.enable_tests,
+        enable_network_test=args.enable_network_test,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
     size = len(data)
+    tests_val = 1 if args.enable_tests else 0
+    net_test_val = 1 if args.enable_network_test else 0
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: {51}")
+    print(f"  Cells: 52")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\NeoInit\\EnableVT = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\NeoInit\\AutoStartServices = '' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\NeoInit\\EnableTests = 0 (REG_DWORD)")
+    print(f"    CurrentControlSet\\Services\\NeoInit\\EnableTests = {tests_val} (REG_DWORD)")
+    print(f"    CurrentControlSet\\Services\\NeoInit\\EnableNetworkTest = {net_test_val} (REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")

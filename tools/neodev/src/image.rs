@@ -3,7 +3,7 @@ use crate::discovery::Discovery;
 use anyhow::{Context, Result};
 use colored::*;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -398,6 +398,7 @@ fn collect_files(cfg: &Config, _disc: &Discovery) -> Result<Vec<FileEntry>> {
     let tools_nxe = &[
         "kill", "pri", "fsck", "ndreg", "loadnem", "progress",
         "neotop", "dhcpd", "netcfg", "ipconfig", "cpuinfo", "neolocale",
+        "dhcptest",
     ];
 
     for name in programs_nxe.iter().chain(tools_nxe) {
@@ -734,6 +735,29 @@ pub fn generate_registry_hive(cfg: &Config) -> Result<()> {
         output.display()
     );
     Ok(())
+}
+
+pub fn generate_test_hive(cfg: &Config, enable_network_test: bool) -> Result<PathBuf> {
+    let gen_script = cfg.project_root.join("scripts").join("gen_system_hiv.py");
+    let output = cfg.project_root.join("scripts").join("system_test.hiv");
+
+    let mut cmd = Command::new("python3");
+    cmd.arg(&gen_script).arg(&output).arg("--enable-tests");
+    if enable_network_test {
+        cmd.arg("--enable-network-test");
+    }
+
+    let status = cmd.status().context("Failed to run gen_system_hiv.py")?;
+    if !status.success() {
+        anyhow::bail!("Test registry hive generation failed");
+    }
+    println!(
+        "{} Test SYSTEM.HIV: {} {}",
+        "[✓]".bold().green(),
+        output.display(),
+        if enable_network_test { "(with network test enabled)" } else { "" }
+    );
+    Ok(output)
 }
 
 fn which(cmd: &str) -> Option<std::path::PathBuf> {

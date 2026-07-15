@@ -400,6 +400,49 @@
 - [ ] **VFS-7.2. Lookup cache** | Files: `src/fs/vfs.rs`
 - [ ] **VFS-7.3. Path cache** | Files: `src/fs/vfs.rs`
 
+### M1.11 — Font Manager (v0.55)
+
+- [ ] **FONT-P1. Font Manager core + PSF provider** | Prereqs: -- | Files: `src/font/mod.rs` (new), `src/font/provider.rs` (new), `src/font/psf.rs` (new), `src/font/cache.rs` (new), `src/font/embedded.rs` (new)
+  - FontProvider trait, PSF v1/v2 format parser, format detection (magic bytes).
+  - FontMetrics/Glyph/FontHandle types, FontRegistry with `Mutex` protection.
+  - Embedded PSF v2 font (replaces current `src/font.rs` const array) for boot-time fallback.
+  - `font_render_glyph()` with `put_pixel` callback (framebuffer-agnostic).
+  - **Tests:** `font_detect_psf2_magic`, `font_detect_random_data`, `font_parse_psf2_valid`, `font_parse_psf2_corrupt_version`, `font_glyph_by_index_ascii`, `font_glyph_missing_codepoint`, `font_metrics_matches_header`, `font_register_provider`, `font_no_providers_registered`
+
+- [ ] **FONT-P2. ObType::Font + namespace + ObInfoClass/ObSetInfoClass** | Prereqs: FONT-P1 | Files: `src/font/mod.rs`, `src/object/types.rs`, `src/syscall/handlers.rs`, `src/object/mod.rs`
+  - Add `ObType::Font = 23` (kernel-created only).
+  - Add `ObInfoClass::FontMetrics = 38`, `FontGlyph = 39`.
+  - Add `ObSetInfoClass::FontLoad = 48`, `FontSetDefault = 49` (admin-only).
+  - Create `\Font\` namespace directory with `Default` symlink.
+  - ObOperations for Font (free buffer on destroy).
+  - **Tests:** `font_load_from_path`, `font_load_nonexistent_path`, `font_load_unsupported_format`, `font_load_not_admin`, `font_set_default`, `font_set_default_not_admin`, `font_destroy_releases_memory`, `font_metrics_ob_query`, `font_metrics_on_invalid_type`
+
+- [ ] **FONT-P3. Console integration** | Prereqs: FONT-P2 | Files: `src/console.rs`, `src/font/mod.rs`, `src/main.rs`
+  - Replace `font::FONT_WIDTH` / `font::FONT_HEIGHT` / `font::draw_char()` with Font Manager API.
+  - Console resolves glyphs via `font_get_glyph(default_font_id, codepoint)`.
+  - Boot sequence: init Font Manager in Phase 3 (embedded fallback), switch to disk font after VFS ready.
+  - Dynamic console dimensions based on font metrics (remove `VGA_WIDTH`/`VGA_HEIGHT` fixed constants dependency).
+  - **Tests:** `console_uses_font_manager`, `console_fallback_font_embedded`, `console_switch_font_dynamic`
+
+- [ ] **FONT-P4. Registry configuration** | Prereqs: FONT-P2 | Files: `scripts/gen_system_hiv.py`
+  - Add `Services\FontManager\DefaultFont = "Terminus"` (REG_SZ).
+  - Add `Services\FontManager\FontPath = "\System\Fonts"` (REG_SZ).
+  - **Tests:** `font_registry_keys_exist`
+
+- [ ] **FONT-P5. NeoDev integration + default PSF font** | Prereqs: FONT-P1 | Files: `tools/neodev/src/config.rs`, `tools/neodev/src/build.rs`, `tools/neodev/src/image.rs`, `tools/fonts/default.psf` (new)
+  - Add `fonts: Vec<String>` to NeoDev Config.
+  - Font validation stage: check PSF magic, report metrics.
+  - Copy `.psf` fonts to `C:\System\Fonts\` in disk image.
+  - Generate `fonts.list` manifest.
+  - Add `tools/fonts/default.psf` (Terminus 8x16 or equivalent).
+  - **Tests:** `neodev_validate_valid_psf`, `neodev_validate_invalid_file`, `neodev_font_copied_to_image`
+
+- [ ] **FONT-P6. Eliminar font.rs + build_font.py** | Prereqs: FONT-P3 | Files: `neodos-kernel/src/font.rs`, `neodos-kernel/build_font.py`, `neodos-kernel/src/console.rs`
+  - Remove old `font.rs` (const array with `draw_char()`).
+  - Remove `build_font.py` (manual OTF-to-Rust generator).
+  - Purge all remaining direct references to `font::FONT_WIDTH` / `font::FONT_HEIGHT` / `font::draw_char()`.
+  - **Tests:** `console_embedded_font_matches_old` (pixel-for-pixel identical comparison) -- debe pasar con el nuevo Font Manager.
+
 ---
 
 ## Fase 2: Ecosistema de Usuario (v0.56–v0.60)
@@ -471,8 +514,26 @@
   - Sustitución completa de scripts heredados (build.sh, qemu-debug.sh, auto_test.py,
     create_ne2_image.py, create_gpt_image.py).
 
-- [ ] **TOOL-NEODEV-VBOX. VirtualBox backend** | Prereqs: TOOL-NEODEV | Files: `tools/neodev/src/vbox.rs`
-  - Soporte para VirtualBox: crear VM, iniciar, detener, importar/exportar VDI.
+- [x] **TOOL-NEODEV-VBOX. VirtualBox backend** | Prereqs: TOOL-NEODEV | Files: `tools/neodev/src/vmm/vbox.rs`
+  - Backend VirtualBox completo: crear VM, iniciar, detener, reset, estado, importar VDI.
+  - Arquitectura `HypervisorBackend` trait con factory `create_backend()`.
+  - QEMU extraído a `tools/neodev/src/vmm/qemu.rs`.
+  - CLI: `--backend qemu|virtualbox` en run/test, `neodev vm start|stop|reset|status|create|delete`.
+  - Config generalizada con `[vm]` section en `neodev.toml`.
+  - Test runner backend-agnostic (QEMU + VirtualBox).
+  - `scripts/vbox-setup.sh` eliminado.
+
+- [x] **TOOL-NEODEV-DHCP. DHCP Integration Test** | Prereqs: TOOL-NEODEV-VBOX | Files: `tools/neodev/src/test_.rs`, `tools/neodev/src/main.rs`, `tools/neodev/src/image.rs`, `scripts/gen_system_hiv.py`, `userbin/dhcptest/`, `userbin/neoinit/src/main.rs`, `userbin/ipconfig/src/main.rs`
+  - Prueba DHCP automatizada usando VirtualBox Bridge Mode.
+  - `neodev dhcp --backend virtualbox` — subcomando dedicado.
+  - `userbin/dhcptest/` binario NXE con DORA embebido, validación y display.
+  - Detección inteligente de interfaz bridge (Ethernet > Wi-Fi, carrier check, IP check).
+  - Validaciones: IP != 0, no APIPA, máscara, gateway, DNS, lease time.
+  - Marcadores `DHCPTEST_PASSED` / `DHCPTEST_FAILED` / `DHCPTEST_COMPLETE`.
+  - `gen_system_hiv.py` flags `--enable-tests` y `--enable-network-test`.
+  - `ipconfig.nxe` mejorado con máscara, gateway, DNS, origen DHCP, lease time.
+  - `EnableNetworkTest` registry key para arranque condicional de dhcptest.
+  - Logging detallado: selección de interfaz, DORA completo, validaciones, ipconfig.
 
 - [ ] **TOOL-NEODEV-LEGACY. Eliminar scripts heredados** | Prereqs: TOOL-NEODEV | Files: `scripts/`
   - Eliminar build.sh, qemu-debug.sh, auto_test.py, create_ne2_image.py, etc.

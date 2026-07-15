@@ -44,6 +44,8 @@ struct NetIfaceStats {
     tx_errors: u32,
 }
 
+const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
+
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
@@ -78,7 +80,40 @@ fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
-fn print_iface(idx: u32, net: &NetAbiTable) {
+fn read_reg_dword(key_fd: u8, name: &str) -> Option<u32> {
+    let mut reg_buf = [0u8; 12];
+    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
+    if total < 12 { return None; }
+    let value_type = u32::from_le_bytes([reg_buf[0], reg_buf[1], reg_buf[2], reg_buf[3]]);
+    if value_type != syscall::REG_DWORD { return None; }
+    Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
+}
+
+fn read_reg_str(key_fd: u8, name: &str, buf: &mut [u8]) -> Option<usize> {
+    let mut reg_buf = [0u8; 64];
+    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
+    if total < 8 { return None; }
+    let data_len = u32::from_le_bytes([reg_buf[4], reg_buf[5], reg_buf[6], reg_buf[7]]) as usize;
+    let copy_len = data_len.min(buf.len());
+    if copy_len > 0 {
+        buf[..copy_len].copy_from_slice(&reg_buf[8..8 + copy_len]);
+    }
+    Some(copy_len)
+}
+
+fn write_ip_label(label: &[u8], ip: u32) {
+    write_str(label);
+    if ip == 0 {
+        write_str(b"0.0.0.0");
+    } else {
+        let mut ipb = [0u8; 16];
+        let ipl = format_ip(ip, &mut ipb);
+        write_str(&ipb[..ipl]);
+    }
+    write_str(b"\r\n");
+}
+
+fn print_iface(idx: u32, net: &NetAbiTable, reg_key_fd: Option<u8>) {
     let mut info = NetIfaceInfo { nic_id: 0, mac: [0; 6], ip: [0; 4], link_up: 0 };
     let r = unsafe { (net.iface_info)(idx, &mut info as *mut NetIfaceInfo) };
     if r < 0 { return; }
@@ -89,7 +124,10 @@ fn print_iface(idx: u32, net: &NetAbiTable) {
     write_str(&ib[..il]);
     write_str(b":\r\n");
 
-    write_str(b"   MAC: ");
+    write_str(b"   Description:  ");
+    write_str(b"Intel PRO/1000 (e1000)\r\n");
+
+    write_str(b"   MAC:          ");
     for (i, &b) in info.mac.iter().enumerate() {
         let hex = [b"0123456789ABCDEF"[((b >> 4) & 0xF) as usize],
                    b"0123456789ABCDEF"[(b & 0xF) as usize]];
@@ -99,14 +137,59 @@ fn print_iface(idx: u32, net: &NetAbiTable) {
     write_str(b"\r\n");
 
     let ip_u32 = u32::from_be_bytes(info.ip);
-    write_str(b"   IP:  ");
-    let mut ipb = [0u8; 16];
-    let ipl = format_ip(ip_u32, &mut ipb);
-    if ipl > 0 { write_str(&ipb[..ipl]); } else { write_str(b"0.0.0.0"); }
+
+    let mask_val = (net.get_mask)(idx);
+    let gw = (net.get_gateway)(idx);
+
+    write_ip_label(b"   IPv4:         ", ip_u32);
+    write_ip_label(b"   Subnet mask:  ", mask_val);
+    write_ip_label(b"   Gateway:      ", gw);
+
+    // Try to read DNS from registry
+    if let Some(fd) = reg_key_fd {
+        let mut dns_buf = [0u8; 16];
+        if let Some(len) = read_reg_str(fd, "DnsServer", &mut dns_buf) {
+            if len > 0 {
+                // Truncate at null terminator
+                let end = dns_buf[..len].iter().position(|&c| c == 0).unwrap_or(len);
+                if end > 0 {
+                    write_str(b"   DNS:          ");
+                    write_str(&dns_buf[..end]);
+                    write_str(b"\r\n");
+                }
+            }
+        }
+    }
+
+    // Origin: DHCP or Static
+    let dhcp_bound = (net.get_dhcp_bound)();
+    write_str(b"   Origin:       ");
+    if dhcp_bound != 0 {
+        write_str(b"DHCP");
+    } else if ip_u32 != 0 {
+        write_str(b"Static");
+    } else {
+        write_str(b"None");
+    }
     write_str(b"\r\n");
 
-    write_str(b"   Status: ");
+    write_str(b"   Status:       ");
     write_str(if info.link_up != 0 { b"Up" } else { b"Down" });
+    write_str(b"\r\n");
+
+    // Try to read lease info from registry
+    if let Some(fd) = reg_key_fd {
+        if dhcp_bound != 0 {
+            if let Some(lease) = read_reg_dword(fd, "LeaseTime") {
+                write_str(b"   Lease time:   ");
+                let mut lb = [0u8; 10];
+                let ll = u32_to_str(lease, &mut lb);
+                write_str(&lb[..ll]);
+                write_str(b" s\r\n");
+            }
+        }
+    }
+
     write_str(b"\r\n");
 }
 
@@ -123,6 +206,9 @@ pub extern "C" fn _start() -> ! {
     };
     let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
 
+    // Open registry for DNS / lease info
+    let reg_fd = syscall::sys_cm_open_key(REG_NET_PATH).ok();
+
     let count = (net.iface_count)();
     if count == 0 {
         write_str(b"No network interfaces found.\r\n");
@@ -130,9 +216,12 @@ pub extern "C" fn _start() -> ! {
     }
 
     for i in 0..count {
-        print_iface(i, net);
+        print_iface(i, net, reg_fd);
     }
 
-    write_str(b"\r\n");
+    if let Some(fd) = reg_fd {
+        let _ = syscall::sys_close(fd);
+    }
+
     loop { syscall::sys_yield(); }
 }
