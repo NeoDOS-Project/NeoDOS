@@ -1,3 +1,8 @@
+---
+name: testing
+description: Write kernel tests, debug failures, modify test framework
+---
+
 # Testing
 
 ## When to use

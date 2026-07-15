@@ -1,3 +1,8 @@
+---
+name: scheduler
+description: Modify scheduling policy, priorities, SMP, thread states, timeslices
+---
+
 # Scheduler
 
 ## When to use

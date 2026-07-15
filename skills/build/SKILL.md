@@ -1,3 +1,8 @@
+---
+name: build
+description: Compile kernel, bootloader, run in QEMU, execute tests
+---
+
 # Build
 
 ## When to use

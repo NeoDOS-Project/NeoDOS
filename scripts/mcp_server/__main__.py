@@ -38,10 +38,13 @@ def _find_neodos_root() -> str:
 
 def build_server(root_dir: str):
     """Build and configure the MCP server with all tools, resources, and prompts."""
-    from .server import McpServer, ToolSpec, ResourceSpec, PromptSpec
+    from .server import McpServer, ToolSpec, ResourceSpec, PromptSpec, get_neodos_version
 
     # Configure tool modules
-    from .tools import kernel_tools, vfs_tools, module_tools, libneodos_tools, system_tools, lsp_tools, registry_tools
+    from .tools import (
+        kernel_tools, vfs_tools, module_tools, libneodos_tools,
+        system_tools, lsp_tools, registry_tools, subsystem_tools,
+    )
 
     kernel_tools.configure(root_dir)
     vfs_tools.configure(root_dir)
@@ -50,8 +53,9 @@ def build_server(root_dir: str):
     system_tools.configure(root_dir)
     lsp_tools.configure(root_dir)
     registry_tools.configure(root_dir)
+    subsystem_tools.configure(root_dir)
 
-    server = McpServer(name="neodos-mcp", version="0.28.0")
+    server = McpServer(name="neodos-mcp", version=get_neodos_version(root_dir))
 
     # ── Tools ──
 
@@ -205,16 +209,21 @@ def build_server(root_dir: str):
         input_schema={
             "type": "object",
             "properties": {
-                "path": {
-                    "type": "string",
-                    "description": "Root path for tree",
-                    "default": "\\",
-                },
-                "drive": {
-                    "type": "string",
-                    "description": "Drive letter",
-                    "default": "C",
-                },
+                    "path": {
+                        "type": "string",
+                        "description": "Root path for tree",
+                        "default": "\\",
+                    },
+                    "drive": {
+                        "type": "string",
+                        "description": "Drive letter",
+                        "default": "C",
+                    },
+                    "max_depth": {
+                        "type": "integer",
+                        "description": "Maximum recursion depth (default 8, 0 = no limit)",
+                        "default": 8,
+                    },
             },
         },
         handler=vfs_tools.vfs_tree,
@@ -488,6 +497,43 @@ def build_server(root_dir: str):
         handler=system_tools.check_consistency,
     ))
 
+    # ── Subsystem Analysis Tools ──
+
+    server.register_tool(ToolSpec(
+        name="security_info",
+        description="Show security subsystem: SIDs, tokens, ACL structure, access check logic",
+        input_schema={"type": "object", "properties": {}},
+        handler=subsystem_tools.security_info,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="scheduler_info",
+        description="Show scheduler state: processes, threads, run queues, priorities",
+        input_schema={"type": "object", "properties": {}},
+        handler=subsystem_tools.scheduler_info,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="ipc_info",
+        description="Show IPC subsystem: pipes, IRP pool, work queue, event bus",
+        input_schema={"type": "object", "properties": {}},
+        handler=subsystem_tools.ipc_info,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="boot_phases",
+        description="Describe kernel boot phases and initialization sequence",
+        input_schema={"type": "object", "properties": {}},
+        handler=subsystem_tools.boot_phases,
+    ))
+
+    server.register_tool(ToolSpec(
+        name="memory_layout",
+        description="Show kernel memory layout: regions, allocators, page tables",
+        input_schema={"type": "object", "properties": {}},
+        handler=subsystem_tools.memory_layout,
+    ))
+
     # ── LSP Analysis Tools ──
 
     server.register_tool(ToolSpec(
@@ -608,6 +654,32 @@ def build_server(root_dir: str):
         mime_type="text/plain",
         handler=lambda: libneodos_tools.analyze_libneodos_api(detail="full"),
     ))
+
+    # ── Resource Templates ──
+
+    server.register_resource_template(
+        "neodos://vfs/{drive}/{path}",
+        ResourceSpec(
+            uri="neodos://vfs/{drive}/{path}",
+            name="VFS Path",
+            description="Read a file or directory listing from NeoDOS filesystem. "
+                        "drive=C|D|A, path=\\path\\to\\entry",
+            mime_type="text/plain",
+            handler=lambda: "Use with drive and path parameters via tools/vfs_list or vfs_read",
+        ),
+    )
+
+    server.register_resource_template(
+        "neodos://registry/{hive}/{key_path}",
+        ResourceSpec(
+            uri="neodos://registry/{hive}/{key_path}",
+            name="Registry Key",
+            description="Read a registry key from a hive. "
+                        "hive=SYSTEM|SOFTWARE|SAM|SECURITY|DEFAULT, key_path=\\path\\to\\key",
+            mime_type="text/plain",
+            handler=lambda: "Use with hive and key_path parameters via tools/registry_list",
+        ),
+    )
 
     # ── Prompts ──
 

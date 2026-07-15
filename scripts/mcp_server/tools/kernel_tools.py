@@ -159,35 +159,44 @@ def search_symbol(query: str, max_results: int = 30) -> str:
 
 def get_kernel_architecture() -> str:
     """Return kernel memory layout, boot phases, and subsystem boundaries."""
+    from . import subsystem_tools
+    phases = subsystem_tools.boot_phases()
+    # Extract just the phase table from boot_phases output
+    phase_lines = []
+    capture = False
+    for line in phases.splitlines():
+        if line.startswith("Phase") and "Description" in line:
+            capture = True
+            continue
+        if capture and line.strip().startswith("Source"):
+            break
+        if capture and line.strip():
+            phase_lines.append("  " + line)
+    phases_str = "\n".join(phase_lines) if phase_lines else "  (see boot_phases tool)"
+
     return (
         "Memory Layout:\n"
-        "  Kernel image            0x200000       ~1 MB\n"
-        "  Kernel .rodata/.text    0x00100000     ~1 MB\n"
-        "  Kernel heap             0x01000000     16 MB (slab allocator)\n"
-        "  User window             0x400000       4 MB (32 x 128 KB slots)\n"
+        "  Kernel image            0x00400000     ~1 MB (ELF loaded at 0x4000000)\n"
+        "  Kernel heap             0x01000000     16 MB (slab + linked_list_allocator)\n"
+        "  User window             0x00400000     4 MB (32 x 128 KB process slots)\n"
         "  User heap               0x10000000     32 MB (16 x 2 MB, demand-paged)\n"
-        "  DLL region              0x1E000000     2 MB (8 x 256 KB slots)\n"
+        "  DLL region              0x1E000000     2 MB (8 x 256 KB NXL slots)\n"
+        "  TEB                     0x00007000     4 KB (USER_ACCESSIBLE, SEH)\n"
         "  mmap region             0x20000000     32 MB (lazy allocation)\n"
-        "  Driver isolation        0x30000000     16 MB (16 x 1 MB slots)\n"
+        "  Driver isolation        0x30000000     16 MB (16 x 1 MB NEM slots)\n"
         "\n"
         "Boot Phases:\n"
-        "  0          Verify boot info magic\n"
-        "  1          Framebuffer + serial init\n"
-        "  2          GDT, IDT, PIC, HPET/APIC, PS/2\n"
-        "  2.5       Heap init (buddy -> slab -> global allocator)\n"
-        "  3          Page tables (2MB -> 4KB split)\n"
-        "  3.5       Storage init (NVMe > AHCI > ATA) + GPT + NeoFS mount\n"
-        "  3.75      Built-in drivers\n"
-        "  3.80      X4 Driver Isolation region init\n"
-        "  3.85      Boot driver loader (from C:\\System\\Drivers, dependency-sorted)\n"
-        "  3.87      DLL region init + libneodos.nxl auto-load\n"
-        "  3.9       Syscall ABI validation\n"
-        "  4         Shell start\n"
+        f"{phases_str}\n"
         "\n"
-        "Subsystems (16):\n"
-        "  syscall, vfs, exec, shell, input, console,\n"
-        "  memory, block_device, ata, ahci, storage,\n"
-        "  scheduler, interrupt, hal, module/tsr, nem_driver_runtime\n"
+        "Syscall Table:\n"
+        "  RAX 0-4:   Process (Exit, Yield, WaitAlertable, SleepEx, SetExceptionHandler)\n"
+        "  RAX 10-12: Memory (Brk, Mmap, Munmap)\n"
+        "  RAX 20-25: I/O (Write, Read, Dup2, Close, Poll, LoadLib)\n"
+        "  RAX 30:    Console (CursorBlink)\n"
+        "  RAX 35:    Driver (DriverUnload)\n"
+        "  RAX 40-48: Object Manager (ObOpen..ObSnapshot)\n"
+        "  RAX 50-59: Registry Cm (CmOpenKey..CmUnloadHive)\n"
+        "  Total: 32 syscalls, SSDT dispatch via INT 0x80\n"
         "\n"
         "Forbidden Dependencies:\n"
         "  Scheduler   -> NO VFS, BlockDevice, AHCI/ATA\n"

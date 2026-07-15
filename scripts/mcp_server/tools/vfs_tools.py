@@ -13,19 +13,34 @@ from ..parsers.neodos_v2_fs import NeoDosFsV2Image, open_image, SuperblockNE2
 
 NEODOS_ROOT: Optional[Path] = None
 _IMAGES: dict[str, NeoDosFsV2Image] = {}
+_IMAGE_MTIMES: dict[str, float] = {}  # mtime-based cache invalidation
 
 
 def configure(root_dir: str):
     global NEODOS_ROOT
     NEODOS_ROOT = Path(root_dir)
     _IMAGES.clear()
+    _IMAGE_MTIMES.clear()
 
 
 def _get_image(drive_letter: str = "C") -> NeoDosFsV2Image:
-    """Get or cache the image parser for a drive letter."""
+    """Get or cache the image parser for a drive letter.
+
+    Invalidates cache if the image file's mtime has changed.
+    """
     drive = drive_letter.upper()
+
+    # Check cache with mtime invalidation
     if drive in _IMAGES:
-        return _IMAGES[drive]
+        cached_mtime = _IMAGE_MTIMES.get(drive)
+        if cached_mtime is not None:
+            current_mtime = _get_image_mtime(drive)
+            if current_mtime is not None and current_mtime == cached_mtime:
+                return _IMAGES[drive]
+            else:
+                # Image changed, invalidate
+                del _IMAGES[drive]
+                _IMAGE_MTIMES.pop(drive, None)
 
     if NEODOS_ROOT is None:
         raise FileNotFoundError("NEODOS_ROOT not configured")
@@ -41,6 +56,7 @@ def _get_image(drive_letter: str = "C") -> NeoDosFsV2Image:
             extracted = _extract_neodos_partition(str(disk_img))
             if extracted:
                 _IMAGES[drive] = extracted
+                _IMAGE_MTIMES[drive] = disk_img.stat().st_mtime
                 return extracted
     elif drive == "D":
         candidates = [
@@ -52,6 +68,7 @@ def _get_image(drive_letter: str = "C") -> NeoDosFsV2Image:
             try:
                 img = open_image(str(img_path))
                 _IMAGES[drive] = img
+                _IMAGE_MTIMES[drive] = img_path.stat().st_mtime
                 return img
             except ValueError:
                 continue
@@ -60,6 +77,24 @@ def _get_image(drive_letter: str = "C") -> NeoDosFsV2Image:
         f"No NeoDOS image found for drive {drive}.\n"
         f"Searched: {[str(p) for p in candidates]}"
     )
+
+
+def _get_image_mtime(drive: str) -> Optional[float]:
+    """Get current mtime of the image file for a drive."""
+    if NEODOS_ROOT is None:
+        return None
+    candidates = []
+    if drive == "C":
+        candidates = [
+            NEODOS_ROOT / "scripts" / "neodos_image.img",
+            NEODOS_ROOT / "disk_image.img",
+        ]
+    elif drive == "D":
+        candidates = [NEODOS_ROOT / "scripts" / "neodos_image2.img"]
+    for p in candidates:
+        if p.exists():
+            return p.stat().st_mtime
+    return None
 
 
 def _extract_neodos_partition(disk_img_path: str) -> Optional[NeoDosFsV2Image]:
@@ -251,8 +286,17 @@ def vfs_dump_inodes(drive: str = "C") -> str:
     return "NeoFS v2: uses B-tree directories (no fixed inode table)"
 
 
-def vfs_tree(path: str = "\\", drive: str = "C", indent: str = "") -> str:
-    """Recursive directory tree listing."""
+def vfs_tree(path: str = "\\", drive: str = "C", max_depth: int = 8, _depth: int = 0, _indent: str = "") -> str:
+    """Recursive directory tree listing with configurable depth limit.
+
+    Args:
+        path: Root directory path.
+        drive: Drive letter (C, D, A).
+        max_depth: Maximum recursion depth (default 8, 0 = no limit).
+    """
+    if _depth >= max_depth > 0:
+        return f"{_indent}└── ... (max depth {max_depth} reached)"
+
     try:
         img = _get_image(drive)
     except FileNotFoundError as e:
@@ -271,13 +315,14 @@ def vfs_tree(path: str = "\\", drive: str = "C", indent: str = "") -> str:
     files = [e for e in entries if e["type"] == "file"]
 
     for e in files:
-        lines.append(f"{indent}├── {e['name']}  ({e['size']} bytes)")
+        lines.append(f"{_indent}├── {e['name']}  ({e['size']} bytes)")
 
     for i, d in enumerate(dirs):
         prefix = "└── " if i == len(dirs) - 1 and not files else "├── "
-        lines.append(f"{indent}{prefix}{d['name']}/")
+        lines.append(f"{_indent}{prefix}{d['name']}/")
         child_prefix = "    " if i == len(dirs) - 1 else "│   "
-        sub = vfs_tree(f"{path}\\{d['name']}", drive, indent + child_prefix)
-        lines.append(sub)
+        sub = vfs_tree(f"{path}\\{d['name']}", drive, max_depth,
+                       _depth + 1, _indent + child_prefix)
+        lines.append(sub if sub else "")
 
     return "\n".join(lines)

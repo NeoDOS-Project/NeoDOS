@@ -1,3 +1,8 @@
+---
+name: memory
+description: Modify frame allocator, page tables, heap, slab, mmap, or demand paging
+---
+
 # Memory
 
 ## When to use

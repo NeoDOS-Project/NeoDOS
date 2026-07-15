@@ -1,3 +1,8 @@
+---
+name: review
+description: Review pull requests or code changes for architecture, deps, tests, docs
+---
+
 # Review
 
 ## When to use

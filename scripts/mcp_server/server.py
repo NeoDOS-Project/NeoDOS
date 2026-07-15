@@ -22,8 +22,36 @@ Environment:
 import json
 import sys
 import os
+import re
+import logging
 import traceback
 from typing import Any, Callable
+from pathlib import Path
+
+
+# ── Logging ──
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[MCP] %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("mcp")
+
+
+# ── Version from AGENTS.md ──
+
+def get_neodos_version(root_dir: str = None) -> str:
+    """Read version from AGENTS.md to avoid hardcoding."""
+    if root_dir is None:
+        root_dir = os.environ.get("NEODOS_ROOT", "")
+    agents = Path(root_dir) / "AGENTS.md"
+    if agents.exists():
+        for line in open(agents):
+            m = re.match(r'\*\*Version:\*\* v([\w.-]+)', line)
+            if m:
+                return m.group(1)
+    return "dev"
 
 
 # ── MCP Protocol Constants ──
@@ -133,11 +161,12 @@ class PromptSpec:
 # ── MCP Server Engine ──
 
 class McpServer:
-    def __init__(self, name: str = "neodos-mcp", version: str = "0.28.0"):
+    def __init__(self, name: str = "neodos-mcp", version: str = None):
         self.name = name
-        self.version = version
+        self.version = version or get_neodos_version()
         self.tools: dict[str, ToolSpec] = {}
         self.resources: dict[str, ResourceSpec] = {}
+        self.resource_templates: dict[str, ResourceSpec] = {}
         self.prompts: dict[str, PromptSpec] = {}
         self._initialized = False
         self._client_capabilities = {}
@@ -145,6 +174,7 @@ class McpServer:
             "tools": {},
             "resources": {},
             "prompts": {},
+            "resourceTemplates": {},
         }
 
     def register_tool(self, spec: ToolSpec):
@@ -152,6 +182,9 @@ class McpServer:
 
     def register_resource(self, spec: ResourceSpec):
         self.resources[spec.uri] = spec
+
+    def register_resource_template(self, uri_template: str, spec: ResourceSpec):
+        self.resource_templates[uri_template] = spec
 
     def register_prompt(self, spec: PromptSpec):
         self.prompts[spec.name] = spec
@@ -181,14 +214,17 @@ class McpServer:
 
         try:
             result = self._dispatch(method, params)
+            log.debug("→ %s (%s)", method, "ok" if result else "no response")
             if is_notification:
                 return None
             return make_response(id_, result)
         except McpError as e:
+            log.warning("→ %s error: %s", method, e.message)
             if is_notification:
                 return None
             return make_error(id_, e.code, e.message, e.data)
         except Exception as e:
+            log.error("→ %s exception: %s", method, e)
             if is_notification:
                 return None
             tb = traceback.format_exc()
@@ -200,12 +236,14 @@ class McpServer:
             "initialize": self._handle_initialize,
             "initialized": self._handle_initialized,
             "ping": lambda p: {},
+            "notifications/initialized": lambda p: self._handle_initialized(p),
             # Tools
             "tools/list": self._handle_tools_list,
             "tools/call": self._handle_tools_call,
             # Resources
             "resources/list": self._handle_resources_list,
             "resources/read": self._handle_resources_read,
+            "resources/templates/list": self._handle_resource_templates_list,
             # Prompts
             "prompts/list": self._handle_prompts_list,
             "prompts/get": self._handle_prompts_get,
@@ -269,6 +307,11 @@ class McpServer:
             }]
         }
 
+    # ── Resource Templates Handlers ──
+
+    def _handle_resource_templates_list(self, params: dict) -> dict:
+        return {"resourceTemplates": [r.to_dict() for r in self.resource_templates.values()]}
+
     # ── Prompts Handlers ──
 
     def _handle_prompts_list(self, params: dict) -> dict:
@@ -286,6 +329,10 @@ class McpServer:
 
     def run_stdio(self):
         """Run server over stdin/stdout (one JSON-RPC message per line)."""
+        log.info("MCP server v%s starting (neodos %s)", MCP_VERSION, self.version)
+        log.info("%d tools, %d resources, %d templates, %d prompts",
+                  len(self.tools), len(self.resources),
+                  len(self.resource_templates), len(self.prompts))
         for line in sys.stdin:
             response = self.handle_line(line)
             if response is not None:

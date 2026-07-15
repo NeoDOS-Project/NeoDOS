@@ -91,4 +91,8 @@ For every subsystem, consult its doc — not this file:
 | Review | Code review checklist | `skills/review/SKILL.md` |
 | Documentation | Update docs | `skills/documentation/SKILL.md` |
 | Release | Release process | `skills/release/SKILL.md` |
+| Boot | Bootloader, boot phases, BootInfo ABI | `skills/boot/SKILL.md` |
+| IPC | Pipes, handle table, IRP, work queue, event bus | `skills/ipc/SKILL.md` |
 | NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` |
+| Network | TCP/IP stack, sockets, ARP, DNS, e1000 | `skills/network/SKILL.md` |
+| Security | SID, Token, ACL, SAM, SeAccessCheck | `skills/security/SKILL.md` |

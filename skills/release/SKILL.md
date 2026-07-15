@@ -1,3 +1,8 @@
+---
+name: release
+description: Cut releases, bump versions, prepare changelogs
+---
+
 # Release
 
 ## When to use

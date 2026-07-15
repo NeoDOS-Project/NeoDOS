@@ -1,3 +1,8 @@
+---
+name: object-manager
+description: Add Ob types, extend ObInfoClass, modify namespace or handle management
+---
+
 # Object Manager
 
 ## When to use

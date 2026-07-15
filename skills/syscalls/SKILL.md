@@ -1,3 +1,8 @@
+---
+name: syscalls
+description: Add or modify syscall handlers, SSDT dispatch, libneodos wrappers
+---
+
 # Syscalls
 
 ## When to use

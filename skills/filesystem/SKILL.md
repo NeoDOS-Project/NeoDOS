@@ -1,3 +1,8 @@
+---
+name: filesystem
+description: Modify NeoFS, VFS, FAT32, GPT, block device manager, or I/O stack
+---
+
 # Filesystem
 
 ## When to use

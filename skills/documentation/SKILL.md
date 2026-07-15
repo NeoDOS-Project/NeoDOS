@@ -1,3 +1,8 @@
+---
+name: documentation
+description: Update or create documentation, doc comments, and architectural docs
+---
+
 # Documentation
 
 ## When to use

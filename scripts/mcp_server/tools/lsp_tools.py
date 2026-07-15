@@ -16,19 +16,47 @@ from typing import Optional
 
 _ROOT_DIR: str = ""
 
-# ── Syscall name → number map (from neodos-kernel/src/syscall/mod.rs) ──
+# ── Syscall name ↔ number map (parsed from neodos-kernel/src/syscall/mod.rs) ──
 
-KNOWN_SYSCALLS: dict[str, int] = {
-    "exit": 0, "write": 1, "yield": 2, "getpid": 3, "read": 4,
-    "pipe": 5, "dup2": 6, "spawn": 7, "readdir": 8, "waitpid": 9,
-    "open": 10, "readfile": 11, "writefile": 12, "close": 13,
-    "chdir": 16, "getcwd": 17, "brk": 18, "mmap": 19, "munmap": 20,
-    "loadlib": 21, "thread_create": 22, "thread_join": 23, "getcpuinfo": 24,
-    "mkdir": 25, "unlink": 26, "rmdir": 27, "rename": 28,
-    "wait_alertable": 40, "sleep_ex": 41,
-    "get_version": 43, "get_datetime": 44, "get_meminfo": 45,
-    "get_volume_label": 46, "chdir_parent": 47, "kobj_enum": 48,
-}
+def _get_root_dir():
+    return _ROOT_DIR
+
+
+def _parse_syscall_nums(root_dir: str = None) -> dict[str, int]:
+    """Parse SyscallNum enum from kernel source to avoid hardcoding."""
+    root = Path(root_dir or _ROOT_DIR)
+    syscall_mod = root / "neodos-kernel" / "src" / "syscall" / "mod.rs"
+    result: dict[str, int] = {}
+    if not syscall_mod.exists():
+        return result
+    content = syscall_mod.read_text()
+    in_enum = False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("pub enum SyscallNum"):
+            in_enum = True
+            continue
+        if in_enum:
+            if stripped.startswith("}") or stripped.startswith("impl"):
+                break
+            m = re.match(r'(\w+)\s*=\s*(\d+),?\s*(//.*)?', stripped)
+            if m:
+                name, num = m.group(1), int(m.group(2))
+                # Convert CamelCase to snake_case
+                snake = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
+                result[snake] = num
+                result[name] = num  # also store CamelCase
+    return result
+
+
+def _parse_syscall_nums_reverse(root_dir: str = None) -> dict[int, str]:
+    """Return number→name map (snake_case)."""
+    forward = _parse_syscall_nums(root_dir)
+    reverse: dict[int, str] = {}
+    for name, num in forward.items():
+        if num not in reverse and '_' in name:
+            reverse[num] = name
+    return reverse
 
 # ── Capability flags (from neodos-kernel/src/drivers/caps.rs) ──
 
@@ -263,115 +291,52 @@ def lsp_list_symbols(path: str = "", recursive: bool = False) -> str:
 
 
 def lsp_search_symbol(query: str, max_results: int = 30) -> str:
-    """Search for symbols (functions, structs, enums, traits) across the NeoDOS codebase.
+    """Search for symbols across the NeoDOS codebase.
 
-    Searches neodos-kernel/, libneodos/, userbin/, and drivers/.
-
-    Args:
-        query: Symbol name to search for (case-insensitive, partial match).
-        max_results: Maximum results to return (default: 30).
+    Delegates to kernel_tools.search_symbol for unified implementation.
     """
-    q = query.lower()
-    results: list[tuple[str, str, int, str]] = []  # (file, kind, line, name)
-
-    search_dirs = ["neodos-kernel/src", "libneodos/src", "userbin", "drivers"]
-    for sd in search_dirs:
-        for f in _find_rs_files(sd):
-            try:
-                content = f.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                continue
-            for sym in _parse_rust_symbols(content):
-                if q in sym["name"].lower():
-                    rel = Path(_ROOT_DIR).name / f.relative_to(Path(_ROOT_DIR))
-                    results.append((str(rel), sym["kind"], sym["line"], sym["name"]))
-                    if len(results) >= max_results:
-                        break
-            if len(results) >= max_results:
-                break
-        if len(results) >= max_results:
-            break
-
-    if not results:
-        return f"No symbols found matching '{query}'."
-
-    lines = [f"Found {len(results)} symbol(s) matching '{query}':\n"]
-    for file, kind, line, name in results:
-        lines.append(f"  [{kind:>8}] {name:<30}  {file}:{line}")
-
-    return "\n".join(lines)
+    from . import kernel_tools as kt
+    return kt.search_symbol(query, max_results)
 
 
 def lsp_get_syscalls() -> str:
     """List all NeoDOS syscalls with their numbers, names, and kernel handler locations."""
+    syscalls = _parse_syscall_nums()
+    # Build number→name map preferring snake_case over CamelCase
+    display: dict[int, str] = {}
+    for name, num in syscalls.items():
+        if num not in display or '_' in name:
+            display[num] = name  # snake_case preferred
+
+    handler_lines: dict[int, list[str]] = {}
+    for f in _find_rs_files("neodos-kernel/src/syscall"):
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        for num, name in display.items():
+            # Search for handler dispatch: ObCreate => symbol in match
+            pattern = rf'\b{name}\b'
+            for m in re.finditer(pattern, content, re.IGNORECASE):
+                # Only count if near a match arm or function call
+                line_num = content[:m.start()].count('\n') + 1
+                rel = f.relative_to(Path(_ROOT_DIR))
+                handler_lines.setdefault(num, []).append(f"{rel}:{line_num}")
+
     lines: list[str] = []
     lines.append("┌──────┬────────────────────────────────────────┬──────────────────────────────────┐")
     lines.append("│ Num  │ Syscall                               │ Handler                         │")
     lines.append("├──────┼────────────────────────────────────────┼──────────────────────────────────┤")
 
-    # Try to find syscall dispatch in kernel source
-    handler_map: dict[int, list[str]] = {}
-    for f in _find_rs_files("neodos-kernel/src/syscall"):
-        content = f.read_text(encoding="utf-8", errors="replace")
-        for sym in _parse_rust_symbols(content):
-            if sym["name"].startswith("sys_") or sym["name"].startswith("SyscallNum"):
-                pass  # capture info
-
-    # Parse SyscallNum enum directly to build variant→number map
-    enum_variants: dict[int, str] = {}
-    handler_lines: dict[int, list[str]] = {}
-
-    for f in _find_rs_files("neodos-kernel/src/syscall"):
-        try:
-            content = f.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-
-        # Parse enum variants: Exit = 0, Write = 1, ...
-        in_enum = False
-        for line in content.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("pub enum SyscallNum"):
-                in_enum = True
-                continue
-            if in_enum:
-                if stripped.startswith("}"):
-                    break
-                m = re.match(r'(\w+)\s*=\s*(\d+),?\s*(//.*)?', stripped)
-                if m:
-                    name, num = m.group(1), int(m.group(2))
-                    enum_variants[num] = name
-
-        # Where is each syscall handled?
-        for num, variant_name in enum_variants.items():
-            pattern = rf'{variant_name}\s*=>'
-            for m in re.finditer(pattern, content):
-                line_num = content[:m.start()].count('\n') + 1
-                rel = f.relative_to(Path(_ROOT_DIR))
-                handler_lines.setdefault(num, []).append(f"{rel}:{line_num}")
-
-    # Also try to parse SyscallNum enum
-    for f in _find_rs_files("neodos-kernel/src/syscall"):
-        try:
-            content = f.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        for m in re.finditer(r'(\w+)\s*=\s*(\d+),?\s*(//.*)?', content):
-            name, num_str = m.group(1), m.group(2)
-            if name[0].isupper():
-                num = int(num_str)
-                rest = name.lower()
-                if rest not in {v: k for k, v in KNOWN_SYSCALLS.items()}:
-                    pass
-
-    # Build the table from parsed enum variants + found dispatch lines
-    for num in sorted(enum_variants):
-        variant = enum_variants[num]
+    for num in sorted(display):
+        name = display[num]
+        # Convert CamelCase to snake_case for display
+        display_name = re.sub(r'(?<!^)(?=[A-Z])', '_', name).lower()
         handler_str = ", ".join(handler_lines.get(num, ["SSDT dispatch"]))
-        lines.append(f"│ {num:<4} │ sys_{variant:<34} │ {handler_str:<33} │")
+        lines.append(f"│ {num:<4} │ sys_{display_name:<34} │ {handler_str:<33} │")
 
     lines.append("└──────┴────────────────────────────────────────┴──────────────────────────────────┘")
-    lines.append(f"\nTotal: {len(enum_variants)} syscalls")
+    lines.append(f"\nTotal: {len(display)} syscalls")
 
     return "\n".join(lines)
 

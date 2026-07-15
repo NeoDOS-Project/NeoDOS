@@ -1,3 +1,8 @@
+---
+name: shell
+description: Add shell commands, modify shell behavior, create NXE user binaries
+---
+
 # Shell
 
 ## When to use

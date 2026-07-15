@@ -1,3 +1,8 @@
+---
+name: registry
+description: Add registry keys, modify hive persistence, implement registry security
+---
+
 # Registry (Cm — Configuration Manager)
 
 ## When to use
