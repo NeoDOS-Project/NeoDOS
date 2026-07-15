@@ -175,6 +175,7 @@ pub fn arp_lookup(ip: Ipv4Addr) -> Option<MacAddr> {
 
 pub fn arp_insert(ip: Ipv4Addr, mac: MacAddr) {
     ARP_CACHE.lock().insert(ip, mac);
+    crate::serial_println!("[ARP] Cache insert: {} -> {}", ip, mac);
 }
 
 pub fn arp_tick() {

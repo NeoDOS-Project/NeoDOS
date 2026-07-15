@@ -141,7 +141,7 @@ pub fn build_port_unreachable(original_ip: &Ipv4Header, original_udp: &[u8]) -> 
 pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Option<u64> {
     use crate::net::types::Ipv4Addr;
     use crate::net::nic::{nic_send_packet, nic_default_id, nic_get_ip};
-    use crate::net::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4};
+    use crate::net::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4, ETH_TYPE_ARP};
     use crate::net::ipv4::{build_ipv4_header, IPV4_HDR_MIN_LEN, IPV4_PROTO_ICMP};
     use crate::net::arp::ArpPacket;
     use crate::net::nic::NIC_REGISTRY;
@@ -170,7 +170,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
             )
         };
         let eth = EthernetHeader::new(
-            crate::net::types::MacAddr::broadcast(), src_mac, ETH_TYPE_IPV4,
+            crate::net::types::MacAddr::broadcast(), src_mac, ETH_TYPE_ARP,
         );
         let eth_bytes = unsafe {
             core::slice::from_raw_parts(
@@ -183,15 +183,26 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         arp_pkt.extend_from_slice(arp_bytes);
         let _ = nic_send_packet(nic_id, &arp_pkt);
 
-        // Poll for ARP reply
-        for _ in 0..200 {
+        crate::serial_println!("[ARP] Request sent for {}", dest_ip);
+
+        // Poll for ARP reply with RDTSC-based timeout (500ms)
+        let arp_start = crate::boot_benchmark::rdtsc();
+        let arp_tsc_per_us = crate::boot_benchmark::get_tsc_khz() / 1000;
+        let arp_timeout_ticks = arp_tsc_per_us * 500_000;
+
+        loop {
             crate::net::network_poll_all();
             if let Some(mac) = crate::net::arp::arp_lookup(dest_ip) {
+                crate::serial_println!("[ARP] Resolved {} -> {}", dest_ip, mac);
                 return Some(mac);
+            }
+            let now = crate::boot_benchmark::rdtsc();
+            if now.wrapping_sub(arp_start) > arp_timeout_ticks {
+                crate::serial_println!("[ARP] Timeout resolving {}", dest_ip);
+                return None;
             }
             core::hint::spin_loop();
         }
-        None
     })?;
 
     // Build ICMP echo request

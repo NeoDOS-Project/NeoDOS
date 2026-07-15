@@ -119,7 +119,10 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
             }
             drop(registry);
         } else if arp_pkt.operation() == crate::net::arp::ARP_OP_REPLY {
-            arp::arp_insert(arp_pkt.sender_ip_addr(), arp_pkt.sender_mac_addr());
+            let sender_ip = arp_pkt.sender_ip_addr();
+            let sender_mac = arp_pkt.sender_mac_addr();
+            crate::serial_println!("[ARP] Reply: {} -> {}", sender_ip, sender_mac);
+            arp::arp_insert(sender_ip, sender_mac);
         }
     } else if eth_hdr.is_ipv4() {
         let ip_offset = crate::net::ethernet::ETH_HDR_LEN;

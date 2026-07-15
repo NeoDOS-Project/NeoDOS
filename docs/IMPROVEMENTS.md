@@ -734,6 +734,20 @@ Agrupados en paquetes de trabajo:
 - [ ] **AI-3. ObObjectTable lock granularity (lock striping)** | Files: `src/object/mod.rs`
 - [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Files: `src/object/mod.rs`
 
+### NET.ARP — ARP Reliability Improvements
+
+- [ ] **ARP-1. Volatile reads for e1000 RX descriptor status** | Files: `neodos-kernel/src/net/e1000.rs` | Prioridad: Media | Complejidad: Baja
+  - The e1000 `poll_packet()` reads `desc.status` without `read_volatile`. On real hardware or certain emulators, the compiler may optimize away the DMA-coherent memory read. Use `core::ptr::addr_of!` with `read_volatile` for descriptor status and length.
+  - **Justificación:** DHCP works without it (broadcast packets are continuously polled), but ARP replies (single unicast frame) may be missed if the compiler caches the descriptor read.
+
+- [ ] **ARP-2. Refactor ARP resolution out of icmp_ping()** | Files: `neodos-kernel/src/net/icmp.rs`, `neodos-kernel/src/net/arp.rs` | Prioridad: Media | Complejidad: Media
+  - The `icmp_ping()` function contains duplicated ARP resolution logic inline. The existing `arp_resolve()` function is fire-and-forget (returns None immediately). Add a new `arp_resolve_blocking(target_ip, timeout_us)` that sends the request and waits for the reply with a timeout.
+  - **Justificación:** Elimina duplicación, centraliza la lógica ARP, facilita mantener consistencia entre todos los clientes que necesiten resolución ARP.
+
+- [ ] **ARP-3. Pending packet queue for concurrent ARP resolutions** | Files: `neodos-kernel/src/net/arp.rs` | Prioridad: Baja | Complejidad: Alta
+  - Currently, if multiple threads attempt ARP resolution simultaneously, each sends its own ARP request. Implement a pending queue: thread A sends ARP request, thread B detects the pending resolution and waits on the same entry.
+  - **Justificación:** Reduce tráfico ARP en la red y evita respuestas duplicadas.
+
 ### TD.6 — Estabilización ABI
 
 - [ ] **SSDT-DRVUNLOAD. Migrar sys_driver_unload a Ob API** | Files: `src/syscall/mod.rs`, `src/drivers/hotreload.rs`, `userbin/loadnem/`

@@ -250,6 +250,49 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 
 User-mode DHCP service: `userbin/dhcpd/src/main.rs`
 
+## ARP Resolution Flow
+
+When a packet needs to be sent to an IP address (e.g., ICMP ping), the ARP resolution follows this sequence:
+
+1. **Cache lookup**: `arp_lookup(target_ip)` checks the 64-entry ARP cache.
+   - Broadcast IP → broadcast MAC (no ARP needed).
+   - Cache hit → returns MAC immediately.
+   - Cache miss → proceeds to send ARP request.
+
+2. **ARP Request**: An Ethernet frame is built with:
+   - Destination MAC: `FF:FF:FF:FF:FF:FF` (broadcast)
+   - Ethertype: `ETH_TYPE_ARP (0x0806)`
+   - ARP operation: `ARP_OP_REQUEST (1)`
+   - Sender MAC/IP: NIC's MAC and IP
+   - Target IP: the IP to resolve
+
+3. **Wait for Reply**: The sender polls `network_poll_all()` in a tight loop with RDTSC-based timeout (500ms). Each poll checks for received packets via the e1000 RX ring.
+
+4. **ARP Reply Reception**: `net_handle_incoming_packet()` processes incoming Ethernet frames:
+   - If ethertype is `ETH_TYPE_ARP (0x0806)` and operation is `ARP_OP_REPLY (2)`:
+     - Extracts sender IP and MAC from the ARP payload
+     - Calls `arp_insert()` to add/update the cache entry
+   - `arp_insert()` updates existing entries or inserts new ones (LRU eviction at 64 entries)
+
+5. **Resolution Complete**: The polling loop in `icmp_ping()` detects the cache entry and returns the resolved MAC address.
+
+6. **ICMP Echo Request**: The resolved MAC is used as the destination in the Ethernet frame, and the ICMP echo request is sent.
+
+7. **ICMP Echo Reply Wait**: Polls `LAST_PING_REPLY` atomic with RDTSC-based timeout (configurable, default 1s).
+
+### Important implementation details
+
+- The `icmp_ping()` function in `icmp.rs` contains its own ARP resolution logic (inline in `or_else` closure) rather than calling `arp_resolve()`. This is because `icmp_ping()` needs to block waiting for the reply, while `arp_resolve()` is fire-and-forget.
+- The ARP request Ethernet frame **must** use `ETH_TYPE_ARP (0x0806)` as the ethertype. Using `ETH_TYPE_IPV4 (0x0800)` will cause the receiver to reject the frame.
+- The ARP cache is protected by `spin::Mutex`. Entries expire after 300 seconds (checked every 10 ticks).
+- QEMU user-mode (SLiRP) networking supports ARP. VirtualBox Bridge Mode forwards ARP to the physical network.
+
+### Known limitations
+
+- Only one ARP resolution can be in-flight at a time (no pending queue for concurrent requests).
+- The e1000 RX descriptor status is read without explicit `read_volatile`, relying on the compiler generating fresh memory reads via `&mut self` reference.
+- No ARP probe/gratuitous ARP on IP address change.
+
 ## Tests
 
 17+ tests in `src/net/tests.rs` covering: MAC address formatting, IPv4 header checksum, ARP cache operations, TCP state machine transitions, TCP full lifecycle (listen -> connect -> established -> close), ICMP echo request/reply, socket creation/lookup/bind/connect, UDP header construction, NIC registry add/remove.
