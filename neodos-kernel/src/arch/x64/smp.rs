@@ -386,6 +386,36 @@ unsafe fn patch_trampoline(stack_ptr: u64, pml4_ptr: u64, entry_ptr: u64) {
     *((base + entry_offset as u64) as *mut u64) = entry_ptr;
 }
 
+/// Quick check if APs might be present.
+/// VirtualBox can hang on IPI delivery, so skip multi-CPU init
+/// if the APIC version register suggests only 1 CPU.
+unsafe fn detect_aps() -> bool {
+    let apic_base = msr::read_apic_base_msr();
+    if apic_base == 0 { return false; }
+    // Check APIC version register
+    let version_reg = (apic_base + 0x030) as *const u32;
+    let version = core::ptr::read_volatile(version_reg);
+    if version == 0xFFFFFFFF || version == 0 { return false; }
+    // Max LVT entries is a rough proxy; 0 or 1 means single CPU
+    let max_lvt = ((version >> 16) & 0xFF) + 1;
+    if max_lvt <= 1 { return false; }
+    // Also check: if ICR delivery status never clears, there are no APs
+    let start: u64;
+    core::arch::asm!("rdtsc", out("eax") start, out("edx") _);
+    let icr_low = (apic_base + 0x308) as *const u32;
+    loop {
+        let status = core::ptr::read_volatile(icr_low);
+        if (status & 0x1000) == 0 { break; } // ICR_DELIVERY_STATUS clear
+        let now: u64;
+        core::arch::asm!("rdtsc", out("eax") now, out("edx") _);
+        if now.wrapping_sub(start) > 500_000 { // ~500 µs timeout
+            return false;
+        }
+        core::hint::spin_loop();
+    }
+    true
+}
+
 // ── BSP: INIT-SIPI-SIPI sequence ────────────────────────────────────────
 
 /// Wait for a specified number of milliseconds using HPET or port 0x80.
@@ -430,7 +460,18 @@ pub fn init_smp() -> usize {
         crate::serial_println!("[SMP] BSP KPRCB at 0x{:x}, GS base set", bsp_kprcb);
     }
 
-    // Step 2: Allocate stacks for APs
+    // Step 2: Detect AP count by checking if we have any APs
+    // Send INIT IPI briefly and check ICR — in VirtualBox IPIs to non-existent APs
+    // can hang, so we detect this early and skip AP startup.
+    let has_aps = unsafe { detect_aps() };
+
+    if !has_aps {
+        crate::serial_println!("[SMP] No APs detected (single CPU mode)");
+        TOTAL_CPUS.store(1, Ordering::SeqCst);
+        return 1;
+    }
+
+    // Step 3: Allocate stacks for APs
     unsafe {
         for (cpu, slot) in AP_STACK_PTRS.iter_mut().enumerate().take(MAX_CPUS).skip(1) {
             let stack_page = crate::hal::alloc_page();
@@ -442,24 +483,24 @@ pub fn init_smp() -> usize {
         }
     }
 
-    // Step 3: Copy trampoline to low memory
+    // Step 4: Copy trampoline to low memory
     unsafe { copy_trampoline(); }
 
-    // Step 4: Get PML4 physical address
+    // Step 5: Get PML4 physical address
     let _pml4_phys = crate::hal::read_cr3();
 
-    // Step 5: Send INIT IPI
+    // Step 6: Send INIT IPI
     crate::serial_println!("[SMP] Sending INIT IPI...");
     unsafe { send_init_ipi(); }
     wait_ms(10);
 
-    // Step 6: Send SIPI (vector = AP_TRAMPOLINE_ADDR >> 12 = 0x80)
+    // Step 7: Send SIPI (vector = AP_TRAMPOLINE_ADDR >> 12 = 0x80)
     let sipi_vector = (AP_TRAMPOLINE_ADDR >> 12) as u8;
     crate::serial_println!("[SMP] Sending SIPI (vector=0x{:x})...", sipi_vector);
     unsafe { send_sipi(sipi_vector); }
     wait_ms(10);
 
-    // Step 7: Wait for APs to become ready
+    // Step 8: Wait for APs to become ready
     let mut ap_count = 0u32;
     let mut attempts = 0u32;
     let max_attempts = 100; // 100 × 10ms = 1 second timeout
@@ -479,7 +520,7 @@ pub fn init_smp() -> usize {
         return 1;
     }
 
-    // Step 8: Second SIPI if needed
+    // Step 9: Second SIPI if needed
     if ap_count == 0 {
         crate::serial_println!("[SMP] Retrying SIPI...");
         unsafe { send_sipi(sipi_vector); }

@@ -391,8 +391,8 @@ pub fn run_dhcp_test(cfg: &Config, disc: &Discovery, backend: &str, timeout_secs
     // Cleanup
     let _ = instance.kill();
 
-    // Regenerate original hive for subsequent builds
-    let _ = image::generate_registry_hive(cfg);
+    // Restore original hive
+    let _ = image::restore_hive(cfg);
 
     let elapsed = start.elapsed();
 
@@ -469,6 +469,122 @@ fn print_dhcp_test_result(lines: &[String], dhcp_passed: bool, dhcp_done: bool, 
         println!("{} DHCP INTEGRATION TEST: FAILED", "[✗]".bold().red());
     }
     println!("  Duration: {:.1}s", elapsed.as_secs_f64());
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DHCP Integration Test (QEMU mode — built-in DHCP server)
+// ═══════════════════════════════════════════════════════════════════════
+
+pub fn run_dhcp_test_qemu(cfg: &Config, disc: &Discovery, timeout_secs: u64) -> Result<DhcpTestResult> {
+    let start = Instant::now();
+    println!("{} NeoDOS DHCP Integration Test (QEMU)", "[*]".bold().cyan());
+    println!("  Backend: qemu");
+    println!("  Network: user-mode (SLiRP) with built-in DHCP server");
+    println!();
+
+    // Clean serial log
+    let _ = std::fs::remove_file(SERIAL_LOG);
+
+    let disk_image = cfg.project_root.join("disk_image.img");
+    if !disk_image.exists() {
+        anyhow::bail!("disk_image.img not found. Run 'neodev build --image' first.");
+    }
+
+    // Build test hive with EnableTests and EnableNetworkTest
+    println!("  Generating test registry hive...");
+    image::generate_test_hive(cfg, true)?;
+
+    // Rebuild disk image with test hive
+    println!("  Rebuilding disk image with test hive...");
+    let fs_image = cfg.project_root.join("scripts").join("neodos_image.img");
+    image::build_ne2_image(cfg, disc, &fs_image, "NEODOS", 25600)?;
+    let esp_image = image::create_esp_image(cfg)?;
+    image::create_gpt_image(cfg, &esp_image, &fs_image, &disk_image)?;
+    let _ = std::fs::remove_file(&esp_image);
+
+    // Create QEMU backend
+    let backend = vmm::create_backend("qemu")?;
+    backend.check_prerequisites(cfg)?;
+
+    // Build VM config with user-mode networking (QEMU built-in DHCP at 10.0.1.x)
+    let serial_path = std::path::PathBuf::from(SERIAL_LOG);
+    let vmcfg = VmConfig {
+        name: "NeoDOS".into(),
+        memory_mb: cfg.vm_memory_mb,
+        cpus: cfg.vm_cpus,
+        efi: true,
+        disk_image: disk_image.clone(),
+        disk_vdi: cfg.project_root.join("disk_image.vdi"),
+        serial_file: Some(serial_path),
+        network: NetworkMode::User,
+        headless: true,
+        gdb: false,
+        gdb_port: 1234,
+        storage_mode: StorageMode::Ahci,
+    };
+
+    // Start VM headless
+    println!("  Starting QEMU...");
+    let backend_ref: &dyn vmm::HypervisorBackend = backend.as_ref();
+    let mut instance = backend_ref.start_headless(cfg, &vmcfg)?;
+
+    println!("  Waiting for DHCP test to complete...");
+    std::thread::sleep(Duration::from_secs(3));
+
+    // Monitor serial output
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let mut output_lines: Vec<String> = vec![];
+    let mut last_serial_len = 0u64;
+    let mut dhcp_done = false;
+    let mut dhcp_passed = false;
+
+    while Instant::now() < deadline {
+        if let Some(exit_code) = instance.wait_timeout(Duration::from_millis(100))? {
+            println!("  {} VM exited early (code {})", "[!]".bold().red(), exit_code);
+            break;
+        }
+
+        if let Ok(new_data) = read_serial_since(last_serial_len) {
+            last_serial_len += new_data.len() as u64;
+            for line in new_data.split('\n') {
+                let clean = strip_ansi(line);
+                if !clean.is_empty() {
+                    output_lines.push(clean.clone());
+                    print_dhcp_serial_line(&clean);
+                }
+            }
+        }
+
+        let full_text = output_lines.join("\n");
+        if full_text.contains("DHCPTEST_COMPLETE") {
+            dhcp_done = true;
+            dhcp_passed = full_text.contains("DHCPTEST_PASSED");
+            println!("{} DHCP test {}", "[*]".bold().cyan(),
+                if dhcp_passed { "PASSED" } else { "FAILED" });
+            break;
+        }
+
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    // Cleanup
+    let _ = instance.kill();
+    let _ = image::restore_hive(cfg);
+
+    let elapsed = start.elapsed();
+
+    if !dhcp_done {
+        println!("  {} DHCP test timed out after {:.0}s", "[!]".bold().red(), elapsed.as_secs_f64());
+    }
+
+    println!();
+    print_dhcp_test_result(&output_lines, dhcp_passed, dhcp_done, elapsed);
+
+    Ok(DhcpTestResult {
+        dhcp_passed,
+        output_lines,
+        total_duration: elapsed,
+    })
 }
 
 fn strip_ansi(s: &str) -> String {

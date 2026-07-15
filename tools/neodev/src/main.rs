@@ -509,15 +509,18 @@ fn cmd_dhcp(
     println!("  Timeout: {}s", timeout);
     println!();
 
-    // Validate backend is virtualbox
-    if actual_backend != "virtualbox" {
+    // For QEMU: use user-mode networking (built-in DHCP server)
+    // For VirtualBox: use bridge mode
+    if actual_backend == "qemu" {
+        test_::run_dhcp_test_qemu(cfg, disc, timeout)?;
+    } else if actual_backend == "virtualbox" {
+        test_::run_dhcp_test(cfg, disc, actual_backend, timeout)?;
+    } else {
         anyhow::bail!(
-            "DHCP test requires VirtualBox bridge mode.\n\
-            Use 'neodev dhcp --backend virtualbox'"
+            "DHCP test supports 'qemu' or 'virtualbox' backends.\n\
+            Use 'neodev dhcp --backend qemu' or 'neodev dhcp --backend virtualbox'"
         );
     }
-
-    test_::run_dhcp_test(cfg, disc, actual_backend, timeout)?;
     Ok(())
 }
 

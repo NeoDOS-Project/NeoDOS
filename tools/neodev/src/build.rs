@@ -391,7 +391,7 @@ pub fn discover_nxp_projects(root: &std::path::Path) -> Vec<NxpProject> {
 
 pub fn build_nxp_packages(
     _cfg: &Config,
-    disc: &Discovery,
+    _disc: &Discovery,
     all: bool,
     name: Option<&str>,
 ) -> Result<()> {

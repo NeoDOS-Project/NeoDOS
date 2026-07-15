@@ -739,10 +739,17 @@ pub fn generate_registry_hive(cfg: &Config) -> Result<()> {
 
 pub fn generate_test_hive(cfg: &Config, enable_network_test: bool) -> Result<PathBuf> {
     let gen_script = cfg.project_root.join("scripts").join("gen_system_hiv.py");
-    let output = cfg.project_root.join("scripts").join("system_test.hiv");
+    let orig = cfg.project_root.join("scripts").join("system.hiv");
+    let backup = cfg.project_root.join("scripts").join("system.hiv.bak");
 
+    // Backup original hive
+    if orig.exists() {
+        std::fs::copy(&orig, &backup)?;
+    }
+
+    // Generate test hive at the original path so build_ne2_image picks it up
     let mut cmd = Command::new("python3");
-    cmd.arg(&gen_script).arg(&output).arg("--enable-tests");
+    cmd.arg(&gen_script).arg(&orig).arg("--enable-tests");
     if enable_network_test {
         cmd.arg("--enable-network-test");
     }
@@ -754,10 +761,20 @@ pub fn generate_test_hive(cfg: &Config, enable_network_test: bool) -> Result<Pat
     println!(
         "{} Test SYSTEM.HIV: {} {}",
         "[✓]".bold().green(),
-        output.display(),
+        orig.display(),
         if enable_network_test { "(with network test enabled)" } else { "" }
     );
-    Ok(output)
+    Ok(backup)
+}
+
+pub fn restore_hive(cfg: &Config) -> Result<()> {
+    let orig = cfg.project_root.join("scripts").join("system.hiv");
+    let backup = cfg.project_root.join("scripts").join("system.hiv.bak");
+    if backup.exists() {
+        std::fs::copy(&backup, &orig)?;
+        let _ = std::fs::remove_file(&backup);
+    }
+    Ok(())
 }
 
 fn which(cmd: &str) -> Option<std::path::PathBuf> {
