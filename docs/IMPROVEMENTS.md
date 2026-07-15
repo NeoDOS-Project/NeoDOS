@@ -797,6 +797,30 @@ Agrupados en paquetes de trabajo:
 
 ---
 
+## PATH y Entorno (v0.50+)
+
+- [ ] **PATH-REG-SET. Persistir SET PATH en el Registry** | Prioridad: Media | Complejidad: Baja | Impacto: Bajo
+  - Cuando el usuario ejecuta `SET PATH=...`, persistir el valor en `\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment\PATH`.
+  - Requiere re-exportar `sys_cm_set_value` en `libneodos/src/lib.rs`.
+  - **Archivos:** `userbin/neoshell/src/shell.rs`, `libneodos/src/lib.rs`.
+  - **Tests:** `shell_set_path_persists_to_registry`, `shell_restart_preserves_custom_path`.
+
+- [ ] **PATH-REG-ENV. Entorno de sistema completo desde Registry** | Prioridad: Baja | Complejidad: Media | Impacto: Medio
+  - Leer todas las variables de entorno desde `Session Manager\Environment` del Registry (no solo PATH).
+  - Permitir variables como `TEMP`, `PROMPT`, `PATHEXT`.
+  - Sincronizar cambios de `SET` con el Registry.
+  - **Archivos:** `userbin/neoshell/src/shell.rs`, `scripts/gen_system_hiv.py`.
+  - **Tests:** `shell_env_from_registry`, `shell_env_sync_bidirectional`.
+
+- [ ] **COREHELP-PATH. corehelp descubre comandos en todos los directorios del PATH** | Prioridad: Media | Complejidad: Baja | Impacto: Bajo
+  - `cmd_show_detail` actualmente busca en todos los directorios del PATH (implementado).
+  - `cmd_list_all` actualmente enumera `C:\Programs` para leer los metadatos `::HELP::` de cada NXE.
+  - Debería leer los NXE desde el directorio donde se encontraron originalmente (no hardcodear `C:\Programs`).
+  - **Archivos:** `userbin/corehelp/src/main.rs`.
+  - **Tests:** `corehelp_lists_tools_from_system_tools`, `corehelp_detail_finds_in_system_tools`.
+
+---
+
 ## Experimental (post-1.0)
 
 - [ ] **B7.1. Full GUI system** | Files: `userbin/gui/`

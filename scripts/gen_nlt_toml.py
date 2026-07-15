@@ -166,6 +166,77 @@ t("es-ES", "neolocale", [
     ("IDS_ERROR_UNKNOWN_CMD", 1010, "Comando desconocido"),
 ])
 
+# ── ca-ES ───────────────────────────────────────────────────────────────
+
+t("ca-ES", "corehelp", [
+    ("IDS_HEADER", 1001, "Eines Principals de NeoDOS"),
+    ("IDS_COMMANDS_SUFFIX", 1002, " ordre(s) disponible(s)"),
+    ("IDS_TYPE_FOR_DETAILS", 1003, "Escriviu AJUDA <ordre> per a detalls d'una ordre espec\u00edfica."),
+    ("IDS_EXAMPLE", 1004, "  Exemple: AJUDA CLS"),
+    ("IDS_NO_PROGRAMS_DIR", 1005, "No s'ha trobat cap directori d'ordres."),
+    ("IDS_CREATE_PROGRAMS_DIR", 1006, "Creeu C:\\Programs amb eines .NXE."),
+    ("IDS_ERROR_READING_DIR", 1007, "(error en llegir el directori)"),
+    ("IDS_NO_DESCRIPTION", 1008, "(sense descripci\u00f3)"),
+    ("IDS_NO_HELP", 1009, "No hi ha ajuda disponible per a aquesta ordre."),
+    ("IDS_CMD_NOT_FOUND", 1010, "AJUDA: ordre no trobada"),
+    ("IDS_HELP_USAGE", 1011, "AJUDA [ordre]"),
+    ("IDS_USAGE_DESC1", 1012, "  Llista les ordres disponibles amb descripcions."),
+    ("IDS_USAGE_DESC2", 1013, "  AJUDA <ordre>    Mostra ajuda detallada d'una ordre."),
+    ("IDS_USAGE_DESC3", 1014, "  AJUDA            Llista totes les ordres."),
+])
+
+t("ca-ES", "neoshell", [
+    ("IDS_STARTUP_HINT", 1001, "Escriviu AJUDA per a una llista d'ordres."),
+    ("IDS_INVALID_DRIVE", 1002, "Unitat no v\u00e0lida"),
+    ("IDS_OB_WAIT_ERROR", 1003, "error d'espera"),
+    ("IDS_CD_NOT_FOUND", 1004, "cd: directori no trobat"),
+    ("IDS_BAD_COMMAND", 1005, "Ordre o nom de fitxer incorrecte"),
+    ("IDS_PIPE_ERROR", 1006, "Error de canonada"),
+    ("IDS_PIPE_SYNTAX", 1007, "Sintaxi de canonada no v\u00e0lida"),
+    ("IDS_PIPE_BUILTIN", 1008, "No es pot usar canonada amb ordres internes"),
+    ("IDS_CALL_USAGE", 1009, "\u00das: CALL fitxer.bat"),
+    ("IDS_CALL_NOT_FOUND", 1010, "Fitxer batch no trobat"),
+    ("IDS_CALL_READ_ERROR", 1011, "Error en llegir el fitxer batch"),
+    ("IDS_PROMPT_PAUSE", 1012, "Premeu una tecla per a continuar . . ."),
+])
+
+t("ca-ES", "neoinit", [
+    ("IDS_SHELL_SPAWN", 1001, "Iniciant l'int\u00e8rpret d'ordres..."),
+])
+
+t("ca-ES", "coredir", [
+    ("IDS_DIR_OF", 1001, "Directori de "),
+    ("IDS_PROMPT_PAUSE", 1002, "Premeu una tecla per a continuar . . ."),
+    ("IDS_FILE_COUNT", 1003, "Fitxer(s)"),
+    ("IDS_PATH_NOT_FOUND", 1004, "Ruta no trobada"),
+])
+
+t("ca-ES", "corecopy", [
+    ("IDS_MISSING_SRC_DST", 1001, "COPY: falta l'origen o la destinaci\u00f3"),
+    ("IDS_READ_FAILED", 1002, "COPY: no es pot llegir l'origen"),
+    ("IDS_WRITE_FAILED", 1003, "COPY: no es pot escriure la destinaci\u00f3"),
+    ("IDS_OPEN_SRC_FAILED", 1004, "COPY: no es pot obrir l'origen"),
+])
+
+t("ca-ES", "coretype", [
+    ("IDS_FILE_NOT_FOUND", 1001, "Fitxer no trobat"),
+    ("IDS_READ_ERROR", 1002, "Error en llegir el fitxer"),
+    ("IDS_USAGE", 1003, "\u00das: TYPE <fitxer>"),
+])
+
+t("ca-ES", "neolocale", [
+    ("IDS_TOOL_USAGE", 1001, "NeoLocale v0.2 — Eina d'arxius NLT"),
+    ("IDS_TOOL_VALIDATE", 1002, "  neolocale validar <fitxer.nlt>     Validar format i estructura"),
+    ("IDS_TOOL_STATS", 1003, "  neolocale stats  <fitxer.nlt>     Mostrar estad\u00edstiques"),
+    ("IDS_TOOL_DIFF", 1004, "  neolocale diff   <a> <b>           Difer\u00e8ncies clau a clau"),
+    ("IDS_TOOL_CHECK", 1005, "  neolocale check  [dir]             Verificar traduccions absents"),
+    ("IDS_TOOL_CREATE", 1006, "  neolocale crear  <app> [locale]    Crear bastida NLT buida"),
+    ("IDS_STATUS_VALID", 1007, "V\u00c0LID"),
+    ("IDS_STATUS_INVALID", 1008, "NO V\u00c0LID"),
+    ("IDS_ERROR_CANNOT_OPEN", 1009, "ERROR: no es pot obrir el fitxer"),
+    ("IDS_ERROR_UNKNOWN_CMD", 1010, "Ordre desconeguda"),
+])
+
 # ── TOML generation ─────────────────────────────────────────────────────
 
 def generate_toml(locale, app, entries):

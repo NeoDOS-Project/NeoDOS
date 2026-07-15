@@ -50,8 +50,14 @@ pub extern "C" fn shell_complete(input: *const u8, cursor: i32, cand: *mut u8, m
         while e < store.len() && store[e] != b';' { e += 1; }
         let dir = &store[s..e];
         let mut dp = [0u8; 260]; let mut dp_pos = 0;
-        dp[dp_pos] = drive_byte; dp_pos += 1; dp[dp_pos] = b':'; dp_pos += 1;
-        for &b in dir { if dp_pos < 255 { dp[dp_pos] = b; dp_pos += 1; } }
+        let is_abs = dir.len() >= 2 && dir[1] == b':'
+            && ((dir[0] >= b'A' && dir[0] <= b'Z') || (dir[0] >= b'a' && dir[0] <= b'z'));
+        if is_abs {
+            for &b in dir { if dp_pos < 255 { dp[dp_pos] = b; dp_pos += 1; } }
+        } else {
+            dp[dp_pos] = drive_byte; dp_pos += 1; dp[dp_pos] = b':'; dp_pos += 1;
+            for &b in dir { if dp_pos < 255 { dp[dp_pos] = b; dp_pos += 1; } }
+        }
         let ds = core::str::from_utf8(&dp[..dp_pos]).unwrap_or("");
         let mut ob = [0u8; 512];
         let obp = to_ob_path(ds, &mut ob);

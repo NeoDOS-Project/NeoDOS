@@ -1,0 +1,27 @@
+[meta]
+app = "neolocale"
+language = "ca-ES"
+
+[ids]
+IDS_TOOL_USAGE = 1001
+IDS_TOOL_VALIDATE = 1002
+IDS_TOOL_STATS = 1003
+IDS_TOOL_DIFF = 1004
+IDS_TOOL_CHECK = 1005
+IDS_TOOL_CREATE = 1006
+IDS_STATUS_VALID = 1007
+IDS_STATUS_INVALID = 1008
+IDS_ERROR_CANNOT_OPEN = 1009
+IDS_ERROR_UNKNOWN_CMD = 1010
+
+[strings]
+IDS_TOOL_USAGE = "NeoLocale v0.2 — Eina d'arxius NLT"
+IDS_TOOL_VALIDATE = "  neolocale validar <fitxer.nlt>     Validar format i estructura"
+IDS_TOOL_STATS = "  neolocale stats  <fitxer.nlt>     Mostrar estadístiques"
+IDS_TOOL_DIFF = "  neolocale diff   <a> <b>           Diferències clau a clau"
+IDS_TOOL_CHECK = "  neolocale check  [dir]             Verificar traduccions absents"
+IDS_TOOL_CREATE = "  neolocale crear  <app> [locale]    Crear bastida NLT buida"
+IDS_STATUS_VALID = "VÀLID"
+IDS_STATUS_INVALID = "NO VÀLID"
+IDS_ERROR_CANNOT_OPEN = "ERROR: no es pot obrir el fitxer"
+IDS_ERROR_UNKNOWN_CMD = "Ordre desconeguda"

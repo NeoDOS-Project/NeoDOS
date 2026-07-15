@@ -8,14 +8,35 @@ Ring 3 binary `neoshell.nxe` in `userbin/neoshell/`. Spawned by NeoInit (PID 1) 
 
 Two dispatch paths:
 
-- **Built-in commands**: CWD, SET, POWEROFF, EXIT, CALL. Handled internally by neoshell without spawning a child process.
-- **PATH dispatch**: All other command names scanned against `\Programs\*.NXE` path. If found, neoshell spawns the binary via `sys_spawn` (RAX 7) with stdin/stdout inherited. PATH search is fallback after built-in check.
+- **Built-in commands**: CWD, SET, EXIT, CALL. Handled internally by neoshell without spawning a child process.
+- **PATH dispatch**: All other command names scanned against PATH directories. PATH is semicolon-delimited (`;`), read from Registry at startup. Default PATH:
+
+  ```
+  \Programs;\System\Tools
+  ```
+
+  Search order:
+  1. `{drive}:\Programs\{cmd}.NXE`
+  2. `{drive}:\System\Tools\{cmd}.NXE`
+  3. Current working directory
+
+  Relative entries (starting with `\`) are resolved against the current drive. Absolute entries (`X:\...`) are used as-is. If found, neoshell spawns the binary via `sys_ob_create(PROCESS)` with stdin/stdout inherited. PATH search is fallback after built-in check.
 
 Built-in commands are not pipeable. Only .NXE binaries can appear in pipelines.
 
+## PATH Configuration
+
+PATH is stored in the Registry at:
+
+```
+\Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment\PATH
+```
+
+The shell reads this value at startup. If the registry key is unavailable or empty, the shell falls back to `\Programs`. The user can override PATH at runtime with `SET PATH=...`, which modifies the in-memory environment (not persisted to Registry). Future versions may persist runtime SET changes to the Registry.
+
 ## TAB Autocomplete
 
-Callback registered via `register_completion()` against `console.nxl` (NXL slot 2, lazy-loaded by console module). The shell scans PATH directories for case-insensitive prefix match on `.NXE` filenames. Matching candidates are printed to stdout on each TAB press. If exactly one match, the name is auto-completed in the input buffer.
+Callback registered via `register_completion()` against `console.nxl` (NXL slot 2, lazy-loaded by console module). The shell scans all PATH directories for case-insensitive prefix match on `.NXE` filenames. Matching candidates are printed to stdout on each TAB press. If exactly one match, the name is auto-completed in the input buffer. Built-in commands are also offered as completion candidates.
 
 ## History
 

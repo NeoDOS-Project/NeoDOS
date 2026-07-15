@@ -1,0 +1,13 @@
+[meta]
+app = "coretype"
+language = "ca-ES"
+
+[ids]
+IDS_FILE_NOT_FOUND = 1001
+IDS_READ_ERROR = 1002
+IDS_USAGE = 1003
+
+[strings]
+IDS_FILE_NOT_FOUND = "Fitxer no trobat"
+IDS_READ_ERROR = "Error en llegir el fitxer"
+IDS_USAGE = "Ús: TYPE <fitxer>"

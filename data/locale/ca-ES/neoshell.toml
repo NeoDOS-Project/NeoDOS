@@ -1,0 +1,31 @@
+[meta]
+app = "neoshell"
+language = "ca-ES"
+
+[ids]
+IDS_STARTUP_HINT = 1001
+IDS_INVALID_DRIVE = 1002
+IDS_OB_WAIT_ERROR = 1003
+IDS_CD_NOT_FOUND = 1004
+IDS_BAD_COMMAND = 1005
+IDS_PIPE_ERROR = 1006
+IDS_PIPE_SYNTAX = 1007
+IDS_PIPE_BUILTIN = 1008
+IDS_CALL_USAGE = 1009
+IDS_CALL_NOT_FOUND = 1010
+IDS_CALL_READ_ERROR = 1011
+IDS_PROMPT_PAUSE = 1012
+
+[strings]
+IDS_STARTUP_HINT = "Escriviu AJUDA per a una llista d'ordres."
+IDS_INVALID_DRIVE = "Unitat no vàlida"
+IDS_OB_WAIT_ERROR = "error d'espera"
+IDS_CD_NOT_FOUND = "cd: directori no trobat"
+IDS_BAD_COMMAND = "Ordre o nom de fitxer incorrecte"
+IDS_PIPE_ERROR = "Error de canonada"
+IDS_PIPE_SYNTAX = "Sintaxi de canonada no vàlida"
+IDS_PIPE_BUILTIN = "No es pot usar canonada amb ordres internes"
+IDS_CALL_USAGE = "Ús: CALL fitxer.bat"
+IDS_CALL_NOT_FOUND = "Fitxer batch no trobat"
+IDS_CALL_READ_ERROR = "Error en llegir el fitxer batch"
+IDS_PROMPT_PAUSE = "Premeu una tecla per a continuar . . ."

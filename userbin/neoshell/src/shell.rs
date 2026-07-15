@@ -72,7 +72,30 @@ impl Shell {
             pending: [0; LINE_BUF_SIZE], pending_len: 0,
             env: [EnvVar { key: [0;32], key_len:0, val:[0;128], val_len:0 }; MAX_ENV], env_count: 0,
         };
-        s.env_set(b"PATH", b"\\Programs"); s
+        let default_path = b"\\Programs";
+        if let Ok(fd) = syscall::sys_cm_open_key(
+            "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Session Manager\\Environment"
+        ) {
+            let mut buf = [0u8; 256];
+            if let Ok(total) = syscall::sys_cm_query_value(fd, "PATH", &mut buf) {
+                if total >= 8 {
+                    let dlen = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+                    let dmax = total.saturating_sub(8);
+                    let n = dlen.min(dmax);
+                    if n > 0 {
+                        let data = &buf[8..8 + n];
+                        let trimmed = if data.last() == Some(&0) { &data[..n.saturating_sub(1)] } else { data };
+                        if !trimmed.is_empty() {
+                            s.env_set(b"PATH", trimmed);
+                            return s;
+                        }
+                    }
+                }
+            }
+            let _ = syscall::sys_close(fd);
+        }
+        s.env_set(b"PATH", default_path);
+        s
     }
 
     fn env_get(&self, key: &[u8]) -> Option<&[u8]> {
@@ -253,8 +276,14 @@ impl Shell {
             let mut e = s; while e < pv.len() && pv[e] != b';' { e += 1; }
             let dir = &pv[s..e];
             let mut f = [0u8; 260]; let mut p = 0;
-            f[p] = dr; p += 1; f[p] = b':'; p += 1;
-            for &b in dir { if p < 255 { f[p] = b; p += 1; } }
+            let is_abs = dir.len() >= 2 && dir[1] == b':'
+                && ((dir[0] >= b'A' && dir[0] <= b'Z') || (dir[0] >= b'a' && dir[0] <= b'z'));
+            if is_abs {
+                for &b in dir { if p < 255 { f[p] = b; p += 1; } }
+            } else {
+                f[p] = dr; p += 1; f[p] = b':'; p += 1;
+                for &b in dir { if p < 255 { f[p] = b; p += 1; } }
+            }
             if p > 0 && f[p-1] != b'\\' && p < 255 { f[p] = b'\\'; p += 1; }
             for &b in cmd { if p < 255 { f[p] = if b.is_ascii_uppercase() { b + 32 } else { b }; p += 1; } }
             if p+4 < 260 { f[p]=b'.'; f[p+1]=b'n'; f[p+2]=b'x'; f[p+3]=b'e'; p+=4; }

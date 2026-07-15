@@ -247,7 +247,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     """
     b = HiveBuilder()
 
-    # Total cells: 52 — root + CurrentControlSet tree (27) + Power tree (24) + EnableNetworkTest (1)
+    # Total cells: 55 — root + CurrentControlSet tree (30) + Power tree (24) + EnableNetworkTest (1)
 
     # ── ALLOCATE all cells first ──
     _ROOT = 0
@@ -278,36 +278,41 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     _V_DEPS = 21
     _V_DESC = 22
 
+    # ── Session Manager + Environment cells ──
+    _SM = 27
+    _ENV = 28
+    _V_PATH = 29
+
     # ── Power tree cells (PM-PHASE2) ──
-    _PWR = 27
-    _PLN = 28
-    _BAL = 29
-    _PER = 30
-    _SAV = 31
-    _V_AP = 32
-    _V_BAL_DT = 33
-    _V_BAL_ST = 34
-    _V_BAL_HE = 35
-    _V_BAL_CP = 36
-    _V_BAL_LA = 37
-    _V_BAL_PBA = 38
-    _V_PER_DT = 39
-    _V_PER_ST = 40
-    _V_PER_HE = 41
-    _V_PER_CP = 42
-    _V_PER_LA = 43
-    _V_PER_PBA = 44
-    _V_SAV_DT = 45
-    _V_SAV_ST = 46
-    _V_SAV_HE = 47
-    _V_SAV_CP = 48
-    _V_SAV_LA = 49
-    _V_SAV_PBA = 50
+    _PWR = 30
+    _PLN = 31
+    _BAL = 32
+    _PER = 33
+    _SAV = 34
+    _V_AP = 35
+    _V_BAL_DT = 36
+    _V_BAL_ST = 37
+    _V_BAL_HE = 38
+    _V_BAL_CP = 39
+    _V_BAL_LA = 40
+    _V_BAL_PBA = 41
+    _V_PER_DT = 42
+    _V_PER_ST = 43
+    _V_PER_HE = 44
+    _V_PER_CP = 45
+    _V_PER_LA = 46
+    _V_PER_PBA = 47
+    _V_SAV_DT = 48
+    _V_SAV_ST = 49
+    _V_SAV_HE = 50
+    _V_SAV_CP = 51
+    _V_SAV_LA = 52
+    _V_SAV_PBA = 53
 
     # ── Network test flag cell ──
-    _V_NETTEST = 51
+    _V_NETTEST = 54
 
-    b.next_idx = 52
+    b.next_idx = 55
 
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests -> EnableNetworkTest
@@ -334,7 +339,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_RPOL, "RestartPolicy", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_MFAIL)  # OnCrash
     b.add_value(_V_STYPE, "StartType", REG_DWORD,
-                struct.pack("<I", 2), next_val=_V_RPOL)  # Auto
+                struct.pack("<I", 4), next_val=_V_RPOL)  # Disabled
     b.add_value(_V_IPATH, "ImagePath", REG_SZ,
                 b"C:\\System\\Tools\\dhcpd.nxe\x00", next_val=_V_STYPE)
     b.add_value(_V_BPATH, "BinaryPath", REG_SZ,
@@ -344,7 +349,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
 
     # Interfaces\0 values: DHCPEnabled
     b.add_value(_V_DHCP, "DHCPEnabled", REG_DWORD,
-                struct.pack("<I", 1))
+                struct.pack("<I", 0))
 
     # Control values: BenchmarkReport(1) -> AhciDebug(1) -> WaitForNetwork(0)
     b.add_value(_V_BENCH, "BenchmarkReport", REG_DWORD,
@@ -385,6 +390,10 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     # ActivePlan = 0 (Balanced)
     b.add_value(_V_AP, "ActivePlan", REG_DWORD, struct.pack("<I", 0))
 
+    # Environment\PATH value
+    b.add_value(_V_PATH, "PATH", REG_SZ,
+                b"\\Programs;\\System\\Tools\x00")
+
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_NETTEST)
@@ -408,8 +417,14 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
               subkeys_sibling=_NET)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO)
 
-    # Locale (child of Control)
-    b.add_key(_LOC_KEY, "Locale", _CTL, values_head=_V_LANG)
+    # Locale (child of Control, sibling of Session Manager)
+    b.add_key(_LOC_KEY, "Locale", _CTL, values_head=_V_LANG, subkeys_sibling=_SM)
+
+    # Environment (child of Session Manager)
+    b.add_key(_ENV, "Environment", _SM, values_head=_V_PATH)
+
+    # Session Manager (child of Control, sibling of Locale)
+    b.add_key(_SM, "Session Manager", _CTL, subkeys_head=_ENV)
 
     # Control (child of CurrentControlSet, sibling of Services)
     b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT, subkeys_head=_LOC_KEY)
@@ -455,7 +470,7 @@ def main():
     tests_val = 1 if args.enable_tests else 0
     net_test_val = 1 if args.enable_network_test else 0
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: 52")
+    print(f"  Cells: 55")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
@@ -466,16 +481,17 @@ def main():
     print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 2 (Auto, REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 4 (Disabled, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\RestartPolicy = 1 (OnCrash, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\MaxFailures = 3 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Dependencies = '' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Description = 'DHCP Client Service' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 1 (REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\Locale\\Language = 'es-ES' (REG_SZ)")
+    print("    CurrentControlSet\\Control\\Session Manager\\Environment\\PATH = '\\\\Programs;\\\\System\\\\Tools' (REG_SZ)")
     print("    Power\\ActivePlan = 0 (Balanced, REG_DWORD)")
     print("    Power\\Plans\\Balanced\\DisplayTimeout = 10 (REG_DWORD)")
     print("    Power\\Plans\\Balanced\\SleepTimeout = 30 (REG_DWORD)")

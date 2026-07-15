@@ -1,0 +1,9 @@
+[meta]
+app = "neoinit"
+language = "ca-ES"
+
+[ids]
+IDS_SHELL_SPAWN = 1001
+
+[strings]
+IDS_SHELL_SPAWN = "Iniciant l'intèrpret d'ordres..."

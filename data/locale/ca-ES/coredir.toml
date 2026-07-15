@@ -1,0 +1,15 @@
+[meta]
+app = "coredir"
+language = "ca-ES"
+
+[ids]
+IDS_DIR_OF = 1001
+IDS_PROMPT_PAUSE = 1002
+IDS_FILE_COUNT = 1003
+IDS_PATH_NOT_FOUND = 1004
+
+[strings]
+IDS_DIR_OF = "Directori de "
+IDS_PROMPT_PAUSE = "Premeu una tecla per a continuar . . ."
+IDS_FILE_COUNT = "Fitxer(s)"
+IDS_PATH_NOT_FOUND = "Ruta no trobada"

@@ -23,7 +23,6 @@ const IDS_NO_PROGRAMS_DIR: u32 = 1005;
 const IDS_CREATE_PROGRAMS_DIR: u32 = 1006;
 const IDS_ERROR_READING_DIR: u32 = 1007;
 const IDS_NO_DESCRIPTION: u32 = 1008;
-const IDS_NO_HELP: u32 = 1009;
 const IDS_CMD_NOT_FOUND: u32 = 1010;
 const IDS_HELP_USAGE: u32 = 1011;
 const IDS_USAGE_DESC1: u32 = 1012;
@@ -31,7 +30,9 @@ const IDS_USAGE_DESC2: u32 = 1013;
 const IDS_USAGE_DESC3: u32 = 1014;
 
 const APP_NAME: &str = "corehelp";
-const PROGRAMS_DIR: &str = "C:\\Programs";
+
+const DEFAULT_PATHS: &[&str] = &["C:\\Programs"];
+const MAX_PATH_DIRS: usize = 8;
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
@@ -42,6 +43,55 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     buf[prefix.len()..total].copy_from_slice(vfs_bytes);
     buf[total] = 0;
     unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
+
+fn get_path_dirs(buf: &mut [[u8; 260]; MAX_PATH_DIRS]) -> usize {
+    let mut count = 0usize;
+    if let Ok(fd) = syscall::sys_cm_open_key(
+        "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Session Manager\\Environment"
+    ) {
+        let mut rb = [0u8; 256];
+        if let Ok(total) = syscall::sys_cm_query_value(fd, "PATH", &mut rb) {
+            if total >= 8 {
+                let dlen = u32::from_le_bytes([rb[4], rb[5], rb[6], rb[7]]) as usize;
+                let dmax = total.saturating_sub(8);
+                let n = dlen.min(dmax);
+                if n > 0 {
+                    let data = &rb[8..8 + n];
+                    let trimmed = if data.last() == Some(&0) { &data[..n.saturating_sub(1)] } else { data };
+                    let mut s = 0usize;
+                    while s < trimmed.len() && count < MAX_PATH_DIRS {
+                        while s < trimmed.len() && trimmed[s] == b';' { s += 1; }
+                        if s >= trimmed.len() { break; }
+                        let mut e = s;
+                        while e < trimmed.len() && trimmed[e] != b';' { e += 1; }
+                        let entry = &trimmed[s..e];
+                        let elen = entry.len().min(259);
+                        let d = &mut buf[count];
+                        let is_abs = elen >= 2 && entry[1] == b':'
+                            && ((entry[0] >= b'A' && entry[0] <= b'Z') || (entry[0] >= b'a' && entry[0] <= b'z'));
+                        if is_abs {
+                            d[..elen].copy_from_slice(&entry[..elen]);
+                        } else {
+                            d[0] = b'C'; d[1] = b':';
+                            d[2..2+elen].copy_from_slice(&entry[..elen]);
+                        }
+                        count += 1;
+                        s = e + 1;
+                    }
+                }
+            }
+        }
+        let _ = syscall::sys_close(fd);
+    }
+    if count == 0 {
+        for (i, def) in DEFAULT_PATHS.iter().enumerate() {
+            let blen = def.len().min(259);
+            buf[i][..blen].copy_from_slice(def.as_bytes());
+            count += 1;
+        }
+    }
+    count
 }
 
 fn write_str(s: &[u8]) {
@@ -112,135 +162,161 @@ fn cmd_list_all() {
     writeln(tr_id!(IDS_HEADER).as_bytes());
     write_str(b"------------------\r\n\r\n");
 
-    let mut ob_buf = [0u8; 512];
-    let ob_path = to_ob_path(PROGRAMS_DIR, &mut ob_buf);
-    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-        Ok(fd) => {
-            let mut count = 0u64;
+    let mut path_dirs: [[u8; 260]; MAX_PATH_DIRS] = [[0u8; 260]; MAX_PATH_DIRS];
+    let ndirs = get_path_dirs(&mut path_dirs);
 
-            let mut names: [[u8; 32]; 128] = [[0u8; 32]; 128];
-            let mut name_lens: [usize; 128] = [0; 128];
-            let mut name_count = 0usize;
+    let mut count = 0u64;
+    let mut names: [[u8; 32]; 128] = [[0u8; 32]; 128];
+    let mut name_lens: [usize; 128] = [0; 128];
+    let mut name_count = 0usize;
 
-            let mut ob_entries: [ObEnumEntry; 128] = core::array::from_fn(|_| ObEnumEntry {
-                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
-            });
-            match syscall::sys_ob_enum(fd, &mut ob_entries) {
-                Ok(n) => {
-                    for i in 0..n {
-                        let raw = &ob_entries[i];
-                        let n = raw.name_str();
-                        if n.is_empty() || n == "." || n == ".." { continue; }
-                        if !is_nxe(n) { continue; }
-                        if name_count >= 128 { break; }
-                        let bytes = n.as_bytes();
-                        let len = bytes.len().min(31);
-                        names[name_count][..len].copy_from_slice(&bytes[..len]);
-                        name_lens[name_count] = len;
-                        name_count += 1;
-                    }
-                }
-                Err(_) => { writeln(tr_id!(IDS_ERROR_READING_DIR).as_bytes()); }
-            }
-            let _ = syscall::sys_close(fd);
+    for di in 0..ndirs {
+        let dir_bytes = &path_dirs[di];
+        let dir_len = dir_bytes.iter().position(|&b| b == 0).unwrap_or(dir_bytes.len());
+        let dir_str = core::str::from_utf8(&dir_bytes[..dir_len]).unwrap_or("");
 
-            for i in 0..name_count {
-                let name = &names[i][..name_lens[i]];
-
-                let mut path_buf = [0u8; 260];
-                let mut pos = 0;
-                for &b in PROGRAMS_DIR.as_bytes() {
-                    if pos < 259 { path_buf[pos] = b; pos += 1; }
-                }
-                if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
-                for &b in name {
-                    if pos < 259 { path_buf[pos] = b; pos += 1; }
-                }
-                let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
-
-                let mut desc = [0u8; 80];
-                let desc_len: usize;
-
-                let mut ob_buf2 = [0u8; 512];
-                let ob_path2 = to_ob_path(path_str, &mut ob_buf2);
-                if let Ok(nxe_fd) = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ) {
-                    let mut accumulated = [0u8; 32768];
-                    let mut total = 0usize;
-                    loop {
-                        let mut chunk = [0u8; 4096];
-                        match syscall::sys_ob_query_info(nxe_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut chunk) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                let copy = n.min(accumulated.len() - total);
-                                accumulated[total..total+copy].copy_from_slice(&chunk[..copy]);
-                                total += copy;
+        let mut ob_buf = [0u8; 512];
+        let ob_path = to_ob_path(dir_str, &mut ob_buf);
+        match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
+            Ok(fd) => {
+                let mut ob_entries: [ObEnumEntry; 128] = core::array::from_fn(|_| ObEnumEntry {
+                    id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+                });
+                match syscall::sys_ob_enum(fd, &mut ob_entries) {
+                    Ok(n) => {
+                        for i in 0..n {
+                            let raw = &ob_entries[i];
+                            let n2 = raw.name_str();
+                            if n2.is_empty() || n2 == "." || n2 == ".." { continue; }
+                            if !is_nxe(n2) { continue; }
+                            if name_count >= 128 { break; }
+                            let base_name = if n2.len() >= 4 {
+                                &n2[..n2.len()-4]
+                            } else {
+                                n2
+                            };
+                            let mut already = false;
+                            for j in 0..name_count {
+                                if name_lens[j] == base_name.len()
+                                    && &names[j][..name_lens[j]] == base_name.as_bytes()
+                                {
+                                    already = true;
+                                    break;
+                                }
                             }
-                            Err(_) => break,
+                            if already { continue; }
+                            let bytes = n2.as_bytes();
+                            let len = bytes.len().min(31);
+                            names[name_count][..len].copy_from_slice(&bytes[..len]);
+                            name_lens[name_count] = len;
+                            name_count += 1;
                         }
-                        if total >= accumulated.len() { break; }
                     }
-                    let _ = syscall::sys_close(nxe_fd);
-
-                    if let Some(help_line) = extract_help_desc(&accumulated[..total]) {
-                        let dlen = help_line.len().min(79);
-                        desc[..dlen].copy_from_slice(&help_line[..dlen]);
-                        desc_len = dlen;
-                    } else {
-                        desc_len = 0;
-                    }
-                } else {
-                    desc_len = 0;
+                    Err(_) => { writeln(tr_id!(IDS_ERROR_READING_DIR).as_bytes()); }
                 }
-
-                let display_name = if name_lens[i] >= 4 {
-                    let ext = &name[name_lens[i]-4..name_lens[i]];
-                    let is_nxe_ext = ext.len() == 4
-                        && (ext[0] == b'.' || ext[0] == b'.')
-                        && (ext[1] == b'N' || ext[1] == b'n')
-                        && (ext[2] == b'X' || ext[2] == b'x')
-                        && (ext[3] == b'E' || ext[3] == b'e');
-                    if is_nxe_ext {
-                        &name[..name_lens[i]-4]
-                    } else {
-                        name
-                    }
-                } else {
-                    name
-                };
-                let dlen = display_name.len();
-
-                write_str(b"  ");
-                let mut n_upper = [0u8; 32];
-                let ulen = dlen.min(31);
-                n_upper[..ulen].copy_from_slice(&display_name[..ulen]);
-                for b in n_upper[..ulen].iter_mut() {
-                    if *b >= b'a' && *b <= b'z' { *b -= 32; }
-                }
-                write_str(&n_upper[..ulen]);
-                for _ in ulen..15 { write_str(b" "); }
-
-                if desc_len > 0 {
-                    write_str(&desc[..desc_len]);
-                } else {
-                    write_str(tr_id!(IDS_NO_DESCRIPTION).as_bytes());
-                }
-                write_str(b"\r\n");
-                count += 1;
+                let _ = syscall::sys_close(fd);
             }
-
-            write_str(b"\r\n");
-            write_u64(count);
-            writeln(tr_id!(IDS_COMMANDS_SUFFIX).as_bytes());
-            writeln(tr_id!(IDS_TYPE_FOR_DETAILS).as_bytes());
-            writeln(tr_id!(IDS_EXAMPLE).as_bytes());
-            write_str(b"\r\n");
-        }
-        Err(_) => {
-            writeln(tr_id!(IDS_NO_PROGRAMS_DIR).as_bytes());
-            writeln(tr_id!(IDS_CREATE_PROGRAMS_DIR).as_bytes());
-            write_str(b"\r\n");
+            Err(_) => {}
         }
     }
+
+    if name_count == 0 {
+        writeln(tr_id!(IDS_NO_PROGRAMS_DIR).as_bytes());
+        writeln(tr_id!(IDS_CREATE_PROGRAMS_DIR).as_bytes());
+        write_str(b"\r\n");
+        return;
+    }
+
+    for i in 0..name_count {
+        let name = &names[i][..name_lens[i]];
+
+        let mut path_buf = [0u8; 260];
+        let mut pos = 0;
+        for &b in b"C:\\Programs" {
+            if pos < 259 { path_buf[pos] = b; pos += 1; }
+        }
+        if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
+        for &b in name {
+            if pos < 259 { path_buf[pos] = b; pos += 1; }
+        }
+        let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
+
+        let mut desc = [0u8; 80];
+        let desc_len: usize;
+
+        let mut ob_buf2 = [0u8; 512];
+        let ob_path2 = to_ob_path(path_str, &mut ob_buf2);
+        if let Ok(nxe_fd) = syscall::sys_ob_open(ob_path2, libneodos::syscall::ob_access::READ) {
+            let mut accumulated = [0u8; 32768];
+            let mut total = 0usize;
+            loop {
+                let mut chunk = [0u8; 4096];
+                match syscall::sys_ob_query_info(nxe_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut chunk) {
+                    Ok(0) => break,
+                    Ok(n2) => {
+                        let copy = n2.min(accumulated.len() - total);
+                        accumulated[total..total+copy].copy_from_slice(&chunk[..copy]);
+                        total += copy;
+                    }
+                    Err(_) => break,
+                }
+                if total >= accumulated.len() { break; }
+            }
+            let _ = syscall::sys_close(nxe_fd);
+
+            if let Some(help_line) = extract_help_desc(&accumulated[..total]) {
+                let dlen = help_line.len().min(79);
+                desc[..dlen].copy_from_slice(&help_line[..dlen]);
+                desc_len = dlen;
+            } else {
+                desc_len = 0;
+            }
+        } else {
+            desc_len = 0;
+        }
+
+        let display_name = if name_lens[i] >= 4 {
+            let ext = &name[name_lens[i]-4..name_lens[i]];
+            let is_nxe_ext = ext.len() == 4
+                && (ext[0] == b'.' || ext[0] == b'.')
+                && (ext[1] == b'N' || ext[1] == b'n')
+                && (ext[2] == b'X' || ext[2] == b'x')
+                && (ext[3] == b'E' || ext[3] == b'e');
+            if is_nxe_ext {
+                &name[..name_lens[i]-4]
+            } else {
+                name
+            }
+        } else {
+            name
+        };
+        let dlen = display_name.len();
+
+        write_str(b"  ");
+        let mut n_upper = [0u8; 32];
+        let ulen = dlen.min(31);
+        n_upper[..ulen].copy_from_slice(&display_name[..ulen]);
+        for b in n_upper[..ulen].iter_mut() {
+            if *b >= b'a' && *b <= b'z' { *b -= 32; }
+        }
+        write_str(&n_upper[..ulen]);
+        for _ in ulen..15 { write_str(b" "); }
+
+        if desc_len > 0 {
+            write_str(&desc[..desc_len]);
+        } else {
+            write_str(tr_id!(IDS_NO_DESCRIPTION).as_bytes());
+        }
+        write_str(b"\r\n");
+        count += 1;
+    }
+
+    write_str(b"\r\n");
+    write_u64(count);
+    writeln(tr_id!(IDS_COMMANDS_SUFFIX).as_bytes());
+    writeln(tr_id!(IDS_TYPE_FOR_DETAILS).as_bytes());
+    writeln(tr_id!(IDS_EXAMPLE).as_bytes());
+    write_str(b"\r\n");
 }
 
 fn extract_full_help(data: &[u8]) -> Option<&[u8]> {
@@ -302,71 +378,78 @@ fn cmd_show_detail(cmd_name: &str) {
         upper[i] = if b >= b'a' && b <= b'z' { b - 32 } else { b };
     }
 
-    let mut path_buf = [0u8; 260];
-    let mut pos = 0;
-    for &b in PROGRAMS_DIR.as_bytes() {
-        if pos < 259 { path_buf[pos] = b; pos += 1; }
-    }
-    if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
-    for &b in &upper[..cmd_len] {
-        if pos < 259 { path_buf[pos] = b; pos += 1; }
-    }
-    if pos + 4 < 260 {
-        path_buf[pos] = b'.'; pos += 1;
-        path_buf[pos] = b'N'; pos += 1;
-        path_buf[pos] = b'X'; pos += 1;
-        path_buf[pos] = b'E'; pos += 1;
-    }
-    let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
-
     write_str(b"\r\n");
-    let mut fds = [0u64; 2];
-    if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds), 0).is_ok() {
-        let read_fd = fds[0] as u8;
-        let write_fd = fds[1] as u8;
 
-        let packed = (0xFFu64) | ((write_fd as u64) << 8) | ((0xFFu64) << 16);
-        let mut ob_buf2 = [0u8; 512];
-        let ob_cmd_path = to_ob_path(path_str, &mut ob_buf2);
-        match syscall::sys_ob_create(ob_cmd_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
-            Ok(proc_fd) => {
-                let _ = syscall::sys_close(write_fd);
-                let mut buf = [0u8; 512];
-                loop {
-                    match syscall::sys_read(read_fd, &mut buf) {
-                        Ok(0) => break,
-                        Ok(n) => { let _ = syscall::sys_write(1, &buf[..n]); }
-                        Err(_) => break,
+    let mut path_dirs: [[u8; 260]; MAX_PATH_DIRS] = [[0u8; 260]; MAX_PATH_DIRS];
+    let ndirs = get_path_dirs(&mut path_dirs);
+
+    for di in 0..ndirs {
+        let dir_bytes = &path_dirs[di];
+        let dir_len = dir_bytes.iter().position(|&b| b == 0).unwrap_or(dir_bytes.len());
+        if dir_len == 0 { continue; }
+
+        let mut path_buf = [0u8; 260];
+        let mut pos = 0;
+        for &b in &dir_bytes[..dir_len] {
+            if pos < 259 { path_buf[pos] = b; pos += 1; }
+        }
+        if pos < 259 { path_buf[pos] = b'\\'; pos += 1; }
+        for &b in &upper[..cmd_len] {
+            if pos < 259 { path_buf[pos] = b; pos += 1; }
+        }
+        if pos + 4 < 260 {
+            path_buf[pos] = b'.'; pos += 1;
+            path_buf[pos] = b'N'; pos += 1;
+            path_buf[pos] = b'X'; pos += 1;
+            path_buf[pos] = b'E'; pos += 1;
+        }
+        let path_str = core::str::from_utf8(&path_buf[..pos]).unwrap_or("");
+
+        let mut fds = [0u64; 2];
+        if syscall::sys_ob_create("\\Pipe\\help_capture", 4, Some(&mut fds), 0).is_ok() {
+            let read_fd = fds[0] as u8;
+            let write_fd = fds[1] as u8;
+
+            let packed = (0xFFu64) | ((write_fd as u64) << 8) | ((0xFFu64) << 16);
+            let mut ob_buf2 = [0u8; 512];
+            let ob_cmd_path = to_ob_path(path_str, &mut ob_buf2);
+            match syscall::sys_ob_create(ob_cmd_path, libneodos::syscall::ob_type::PROCESS, None, packed) {
+                Ok(proc_fd) => {
+                    let _ = syscall::sys_close(write_fd);
+                    let mut buf = [0u8; 512];
+                    loop {
+                        match syscall::sys_read(read_fd, &mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => { let _ = syscall::sys_write(1, &buf[..n]); }
+                            Err(_) => break,
+                        }
                     }
+                    let _ = syscall::sys_close(read_fd);
+                    let _ = syscall::sys_ob_wait(proc_fd);
+                    let _ = syscall::sys_close(proc_fd);
+                    write_str(b"\r\n");
+                    return;
                 }
-                let _ = syscall::sys_close(read_fd);
-                let _ = syscall::sys_ob_wait(proc_fd);
-                let _ = syscall::sys_close(proc_fd);
-                write_str(b"\r\n");
+                Err(_) => {
+                    let _ = syscall::sys_close(read_fd);
+                    let _ = syscall::sys_close(write_fd);
+                }
+            }
+        }
+
+        let mut content = [0u8; 32768];
+        let total = read_file_content(path_str, &mut content);
+        if total > 0 {
+            if let Some(full_help) = extract_full_help(&content[..total]) {
+                write_str(full_help);
+                write_str(b"\r\n\r\n");
                 return;
             }
-            Err(_) => {
-                let _ = syscall::sys_close(read_fd);
-                let _ = syscall::sys_close(write_fd);
-            }
         }
     }
 
-    let mut content = [0u8; 32768];
-    let total = read_file_content(path_str, &mut content);
-    if total > 0 {
-        if let Some(full_help) = extract_full_help(&content[..total]) {
-            write_str(full_help);
-            write_str(b"\r\n");
-        } else {
-            write_err(tr_id!(IDS_NO_HELP).as_bytes());
-            write_str(b"\r\n");
-        }
-    } else {
-        write_err(tr_id!(IDS_CMD_NOT_FOUND).as_bytes());
-        write_str(b"\r\n");
-    }
-    write_str(b"\r\n");
+    write_err(tr_id!(IDS_CMD_NOT_FOUND).as_bytes());
+    write_str(b"\r\n\r\n");
 }
 
 #[used]
