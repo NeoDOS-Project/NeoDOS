@@ -202,9 +202,8 @@ fn idle_task() -> ! {
     loop {
         crate::hal::without_interrupts(|| {
             crate::work_queue::WORK_QUEUE.process_high();
-        });
-        crate::hal::without_interrupts(|| {
             crate::work_queue::WORK_QUEUE.process_low();
+            crate::net::net_tick();
         });
         crate::eventbus::EVENT_BUS.dispatch_pending();
         crate::hal::hlt_once();

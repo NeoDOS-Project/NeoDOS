@@ -82,7 +82,7 @@ enum Commands {
         #[arg(long, default_value = "ahci")]
         storage: String,
         /// Network mode: user, tap, bridge
-        #[arg(long, default_value = "user")]
+        #[arg(long, default_value = "bridge")]
         net: String,
         /// Enable KVM acceleration (QEMU only)
         #[arg(long)]

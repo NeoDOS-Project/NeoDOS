@@ -42,8 +42,8 @@ const DHCP_OPTION_SERVER_ID: u8 = 54;
 const DHCP_OPTION_REQUEST_LIST: u8 = 55;
 const DHCP_OPTION_END: u8 = 255;
 const DHCP_BROADCAST_FLAG: u16 = 0x8000;
-const MAX_RETRIES: u8 = 3;
-const TIMEOUT_ITERATIONS: u32 = 400;
+const MAX_RETRIES: u8 = 5;
+const TIMEOUT_ITERATIONS: u32 = 4000;
 const YIELD_BATCH: u32 = 100;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
@@ -147,6 +147,8 @@ fn yield_for(batches: u32) {
         for _ in 0..YIELD_BATCH {
             let _ = syscall::sys_yield();
         }
+        // Busy-wait to ensure real time passes (sys_yield is a no-op with 1 process)
+        for _ in 0..50000 { core::hint::spin_loop(); }
     }
 }
 
@@ -681,6 +683,31 @@ pub extern "C" fn _start() -> ! {
                         rtt_i -= 1;
                     }
                     write_str(&rtt_dec[rtt_i..=9]);
+                    write_str(b" us\r\n");
+                    break;
+                }
+                for _ in 0..10000 { syscall::sys_yield(); }
+            }
+
+            // Ping host to populate ARP caches for bidirectional communication
+            let host_ip = 0x0A00010A; // 10.0.1.10
+            write_str(b"[DHCPTEST] Pinging host ");
+            write_ip(host_ip);
+            write_str(b"...\r\n");
+            for _ in 0..3 {
+                let rtt = syscall::sys_icmp_ping(host_ip);
+                if rtt > 0 {
+                    write_str(b"[DHCPTEST] [PASS] Host reachable, RTT=");
+                    let mut buf = [0u8; 10];
+                    let mut i = 9;
+                    let mut v = rtt;
+                    loop {
+                        buf[i] = b'0' + (v % 10) as u8;
+                        v /= 10;
+                        if v == 0 || i == 0 { break; }
+                        i -= 1;
+                    }
+                    write_str(&buf[i..=9]);
                     write_str(b" us\r\n");
                     break;
                 }

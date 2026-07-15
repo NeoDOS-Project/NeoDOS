@@ -219,16 +219,6 @@ impl E1000Nic {
             self.rx_descs[i].status = 0;
         }
 
-        // Program MAC address in Receive Address register 0 (RA[0])
-        let mac_lo = self.mac.0[0] as u32
-            | (self.mac.0[1] as u32) << 8
-            | (self.mac.0[2] as u32) << 16
-            | (self.mac.0[3] as u32) << 24;
-        let mac_hi = self.mac.0[4] as u32
-            | (self.mac.0[5] as u32) << 8;
-        self.write_reg(REG_RA, mac_lo);
-        self.write_reg(REG_RA + 4, mac_hi | 0x80000000); // bit 31 = Address Valid (AV)
-
         self.write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 
         let tx_desc_phys = self.tx_descs.as_ptr() as u64;

@@ -46,7 +46,7 @@ impl Config {
             ovmf_vars_template: PathBuf::from("/usr/share/OVMF/OVMF_VARS.fd"),
             vm_backend: "virtualbox".into(),
             vm_memory_mb: 512,
-            vm_cpus: 2,
+            vm_cpus: 1,
             vm_network: "bridged".into(),
             qemu_kvm: false,
             qemu_bdm: false,

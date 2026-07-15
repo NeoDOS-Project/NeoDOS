@@ -33,13 +33,13 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             storage: StorageMode::Ahci,
-            net: NetMode::User,
+            net: NetMode::Bridge,
             kvm: false,
             gdb: false,
             headless: false,
             bdm: false,
             serial_file: None,
-            backend: "qemu".into(),
+            backend: "virtualbox".into(),
         }
     }
 }
