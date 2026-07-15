@@ -647,9 +647,7 @@ pub extern "C" fn _start() -> ! {
         write_str(b"[DHCPTEST] Some checks failed\r\n");
         write_str(b"DHCPTEST_FAILED\r\n");
     }
-    write_str(b"DHCPTEST_COMPLETE\r\n");
-
-    // ── Apply configuration (best-effort) ──
+    // ── Apply IP configuration FIRST (needed for ping to work) ──
     if dora_ok {
         let _ = libnet::set_ip(0, offered_ip, subnet_mask);
         write_reg_dword(key_fd, "IPAddress", offered_ip);
@@ -661,12 +659,55 @@ pub extern "C" fn _start() -> ! {
             write_reg_dword(key_fd, "DnsServer", dns);
         }
         write_str(b"[DHCPTEST] Configuration applied\r\n");
+
+        // ── Ping test (ping gateway to verify connectivity) ──
+        if gateway != 0 {
+            write_str(b"\r\n[DHCPTEST] === Ping Test ===\r\n");
+            write_str(b"[DHCPTEST] Pinging gateway ");
+            write_ip(gateway);
+            write_str(b"...\r\n");
+
+            for _ in 0..3 {
+                let rtt = syscall::sys_icmp_ping(gateway);
+                if rtt > 0 {
+                    write_str(b"[DHCPTEST] [PASS] Gateway reachable, RTT=");
+                    let mut rtt_dec = [0u8; 10];
+                    let mut rtt_i = 9;
+                    let mut rtt_v = rtt;
+                    loop {
+                        rtt_dec[rtt_i] = b'0' + (rtt_v % 10) as u8;
+                        rtt_v /= 10;
+                        if rtt_v == 0 || rtt_i == 0 { break; }
+                        rtt_i -= 1;
+                    }
+                    write_str(&rtt_dec[rtt_i..=9]);
+                    write_str(b" us\r\n");
+                    break;
+                }
+                for _ in 0..10000 { syscall::sys_yield(); }
+            }
+
+            // Also ping DNS server if different from gateway
+            if dns != 0 && dns != gateway {
+                write_str(b"[DHCPTEST] Pinging DNS ");
+                write_ip(dns);
+                write_str(b"...\r\n");
+                let rtt2 = syscall::sys_icmp_ping(dns);
+                if rtt2 > 0 {
+                    write_str(b"[DHCPTEST] [PASS] DNS reachable\r\n");
+                } else {
+                    write_str(b"[DHCPTEST] [WARN] DNS not reachable\r\n");
+                }
+            }
+        }
     } else {
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
         write_reg_dword(key_fd, "IPAddress", apipa);
         write_reg_dword(key_fd, "DHCPBound", 0);
     }
+
+    write_str(b"DHCPTEST_COMPLETE\r\n");
 
     // Close
     let _ = syscall::sys_close(key_fd);

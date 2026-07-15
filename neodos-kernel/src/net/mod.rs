@@ -150,7 +150,12 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
             let icmp_hdr: &crate::net::icmp::IcmpHeader = unsafe {
                 &*(payload.as_ptr() as *const crate::net::icmp::IcmpHeader)
             };
-            if icmp_hdr.is_echo_request() {
+            if icmp_hdr.is_echo_reply() {
+                crate::net::icmp::notify_ping_reply(
+                    icmp_hdr.echo_identifier(),
+                    icmp_hdr.echo_sequence(),
+                );
+            } else if icmp_hdr.is_echo_request() {
                 let icmp_data = &payload[core::mem::size_of::<crate::net::icmp::IcmpHeader>()..];
                 let reply_icmp = crate::net::icmp::build_echo_reply(icmp_hdr, icmp_data);
 

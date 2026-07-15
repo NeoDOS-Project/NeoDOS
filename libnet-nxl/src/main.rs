@@ -245,7 +245,15 @@ pub extern "C" fn net_set_ip(iface: u32, ip: u32, mask: u32) -> i32 {
     buf[..4].copy_from_slice(&iface.to_le_bytes());
     buf[4..8].copy_from_slice(&ip.to_be_bytes());
     buf[8..12].copy_from_slice(&mask.to_be_bytes());
-    let r = unsafe { ob_set_info(0, SET_NIC_IP, buf.as_ptr(), 12) };
+    // Open \Global\Info\Network to set IP (fd 0 is stdin, not valid here)
+    let fd = unsafe {
+        match ob_open("\\Global\\Info\\Network\0", 3) { // OB_READ|OB_WRITE
+            r if r >= 0 => r as u8,
+            _ => return -1,
+        }
+    };
+    let r = unsafe { ob_set_info(fd, SET_NIC_IP, buf.as_ptr(), 12) };
+    unsafe { ob_close(fd) };
     if r < 0 { r as i32 } else { 0 }
 }
 

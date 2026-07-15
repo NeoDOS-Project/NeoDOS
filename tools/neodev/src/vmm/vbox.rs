@@ -207,7 +207,7 @@ impl HypervisorBackend for VirtualBoxBackend {
 
         // Ensure headless mode
         let output = Command::new("VBoxManage")
-            .args(["startvm", name, "--type", "headless"])
+            .args(["startvm", name, "--type", "separate"])
             .output()
             .context("Failed to start VM in headless mode")?;
 

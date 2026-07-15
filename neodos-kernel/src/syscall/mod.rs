@@ -418,6 +418,7 @@ lazy_static! {
         t[25] = Some(handler_loadlib as SyscallFn);
         t[30] = Some(handler_cursor_blink as SyscallFn);
         t[35] = Some(handler_driver_unload as SyscallFn);
+        t[36] = Some(handler_icmp_ping as SyscallFn);
         t[40] = Some(handler_ob_open as SyscallFn);
         t[41] = Some(handler_ob_create as SyscallFn);
         t[42] = Some(handler_ob_query_info as SyscallFn);
@@ -458,6 +459,7 @@ lazy_static! {
         t[25] = SyscallPermission::user();
         t[30] = SyscallPermission::user();
         t[35] = SyscallPermission::admin();
+        t[36] = SyscallPermission::user();
         t[40] = SyscallPermission::user();
         t[41] = SyscallPermission::user();
         t[42] = SyscallPermission::user();

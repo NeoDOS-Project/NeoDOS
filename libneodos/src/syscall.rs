@@ -1056,3 +1056,22 @@ pub fn sys_ob_service(fd: u8, control: u32, buf: &mut [u8]) -> Result<usize, i64
     let r = unsafe { ob_syscall_4!(47, fd as u64, control as u64, buf_ptr, buf_len) };
     if r < 0 { Err(r as i64) } else { Ok(r as usize) }
 }
+
+/// RAX 36: icmp_ping(ipv4_addr_be32) -> rtt_us
+/// Sends an ICMP echo request and returns RTT in microseconds, or 0 on failure.
+pub fn sys_icmp_ping(ip: u32) -> u64 {
+    let r: u64;
+    unsafe {
+        core::arch::asm!(
+            "push rbx",
+            "mov rax, 36",
+            "mov rbx, {ip}",
+            "int 0x80",
+            "pop rbx",
+            ip = in(reg) ip as u64,
+            out("rax") r,
+            options(nostack),
+        );
+    }
+    r
+}

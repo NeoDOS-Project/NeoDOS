@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use core::sync::atomic::{Ordering, AtomicU64};
 use crate::net::ipv4::{Ipv4Header, IPV4_HDR_MIN_LEN};
 use crate::net::udp::UdpHeader;
 
@@ -133,6 +134,132 @@ pub fn build_port_unreachable(original_ip: &Ipv4Header, original_udp: &[u8]) -> 
     reply[2] = (cs >> 8) as u8;
     reply[3] = (cs & 0xFF) as u8;
     reply
+}
+
+/// Send an ICMP echo request and wait for reply.
+/// Returns Some(rtt_us) on success, None on timeout or ARP failure.
+pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Option<u64> {
+    use crate::net::types::Ipv4Addr;
+    use crate::net::nic::{nic_send_packet, nic_default_id, nic_get_ip};
+    use crate::net::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_IPV4};
+    use crate::net::ipv4::{build_ipv4_header, IPV4_HDR_MIN_LEN, IPV4_PROTO_ICMP};
+    use crate::net::arp::ArpPacket;
+    use crate::net::nic::NIC_REGISTRY;
+    use core::sync::atomic::{AtomicU16, AtomicU64};
+    use alloc::vec::Vec;
+
+    static PING_ID: AtomicU16 = AtomicU16::new(1);
+    let id = PING_ID.fetch_add(1, Ordering::Relaxed);
+    let seq = 1u16;
+
+    let nic_id = nic_default_id()?;
+    let src_ip = nic_get_ip(nic_id).unwrap_or(Ipv4Addr::unspecified());
+    if src_ip == Ipv4Addr::unspecified() { return None; }
+
+    // Get source MAC
+    let src_mac = NIC_REGISTRY.lock().get(nic_id)?.mac_address();
+
+    // Resolve destination MAC — try ARP cache first
+    let dest_mac = crate::net::arp::arp_lookup(dest_ip).or_else(|| {
+        // Send ARP request
+        let arp_req = ArpPacket::new_request(src_mac, src_ip, dest_ip);
+        let arp_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &arp_req as *const ArpPacket as *const u8,
+                core::mem::size_of::<ArpPacket>(),
+            )
+        };
+        let eth = EthernetHeader::new(
+            crate::net::types::MacAddr::broadcast(), src_mac, ETH_TYPE_IPV4,
+        );
+        let eth_bytes = unsafe {
+            core::slice::from_raw_parts(
+                &eth as *const EthernetHeader as *const u8,
+                core::mem::size_of::<EthernetHeader>(),
+            )
+        };
+        let mut arp_pkt = Vec::with_capacity(ETH_HDR_LEN + core::mem::size_of::<ArpPacket>());
+        arp_pkt.extend_from_slice(eth_bytes);
+        arp_pkt.extend_from_slice(arp_bytes);
+        let _ = nic_send_packet(nic_id, &arp_pkt);
+
+        // Poll for ARP reply
+        for _ in 0..200 {
+            crate::net::network_poll_all();
+            if let Some(mac) = crate::net::arp::arp_lookup(dest_ip) {
+                return Some(mac);
+            }
+            core::hint::spin_loop();
+        }
+        None
+    })?;
+
+    // Build ICMP echo request
+    let icmp_hdr = IcmpHeader::echo_request(id, seq);
+    let payload = [0x00u8; 56];
+    let icmp_checksum = compute_icmp_checksum(&icmp_hdr, &payload);
+    let mut hdr_with_cs = icmp_hdr;
+    hdr_with_cs.checksum = icmp_checksum;
+    let hdr_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &hdr_with_cs as *const IcmpHeader as *const u8,
+            core::mem::size_of::<IcmpHeader>(),
+        )
+    };
+    let mut icmp_pkt = Vec::with_capacity(core::mem::size_of::<IcmpHeader>() + payload.len());
+    icmp_pkt.extend_from_slice(hdr_bytes);
+    icmp_pkt.extend_from_slice(&payload);
+
+    // Build IP header
+    let ip_hdr = build_ipv4_header(src_ip, dest_ip, IPV4_PROTO_ICMP, icmp_pkt.len(), 0);
+    let ip_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &ip_hdr as *const Ipv4Header as *const u8,
+            IPV4_HDR_MIN_LEN,
+        )
+    };
+
+    // Build Ethernet frame
+    let eth = EthernetHeader::new(dest_mac, src_mac, ETH_TYPE_IPV4);
+    let eth_bytes = unsafe {
+        core::slice::from_raw_parts(
+            &eth as *const EthernetHeader as *const u8,
+            core::mem::size_of::<EthernetHeader>(),
+        )
+    };
+
+    // Assemble and send
+    let mut packet = Vec::with_capacity(ETH_HDR_LEN + IPV4_HDR_MIN_LEN + icmp_pkt.len());
+    packet.extend_from_slice(eth_bytes);
+    packet.extend_from_slice(ip_bytes);
+    packet.extend_from_slice(&icmp_pkt);
+    nic_send_packet(nic_id, &packet).ok()?;
+
+    // Poll for ICMP echo reply
+    LAST_PING_REPLY.store(0, Ordering::Release);
+    let start = crate::boot_benchmark::rdtsc();
+    let tsc_per_us = crate::boot_benchmark::get_tsc_khz() / 1000;
+    let max_ticks = tsc_per_us * timeout_us;
+
+    loop {
+        crate::net::network_poll_all();
+        if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
+            let elapsed = crate::boot_benchmark::rdtsc().wrapping_sub(start);
+            return Some(elapsed / tsc_per_us.max(1));
+        }
+        let now = crate::boot_benchmark::rdtsc();
+        if now.wrapping_sub(start) > max_ticks {
+            return None;
+        }
+        core::hint::spin_loop();
+    }
+}
+
+static LAST_PING_REPLY: AtomicU64 = AtomicU64::new(0);
+
+/// Called from net_handle_incoming_packet when an ICMP echo reply is received.
+pub fn notify_ping_reply(id: u16, _seq: u16) {
+    LAST_PING_REPLY.store(id as u64, Ordering::Release);
 }
 
 pub fn build_echo_reply(request: &IcmpHeader, data: &[u8]) -> alloc::vec::Vec<u8> {

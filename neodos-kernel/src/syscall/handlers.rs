@@ -3,6 +3,7 @@
 
 use crate::serial_println;
 use crate::scheduler::{self, ThreadState};
+use crate::net::types::Ipv4Addr;
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
            current_handle_entry, set_current_handle, set_need_resched};
 
@@ -731,4 +732,17 @@ pub(super) fn handler_poll(regs: super::Registers) -> u64 {
     }
 
     ready_count
+}
+
+/// RAX 36: icmp_ping(ipv4_addr_be32) -> rtt_us or 0 on failure
+/// Sends an ICMP echo request to the given IPv4 address (in big-endian u32)
+/// and waits up to ~1 second for a reply. Returns round-trip time in microseconds,
+/// or 0 if the ping failed (timeout, ARP failure, no NIC).
+pub(super) fn handler_icmp_ping(regs: super::Registers) -> u64 {
+    let ip_be = regs.rbx as u32;
+    let dest_ip = Ipv4Addr::from_u32(ip_be);
+    match crate::net::icmp::icmp_ping(dest_ip, 1_000_000) {
+        Some(rtt_us) => rtt_us,
+        None => 0,
+    }
 }
