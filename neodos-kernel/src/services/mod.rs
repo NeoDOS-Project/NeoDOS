@@ -613,37 +613,40 @@ pub fn sm_start_auto_services() {
         let sm = SERVICE_MANAGER.lock();
         sm.dependency_order.clone()
     };
-    if order.is_empty() { return; }
 
-    crate::serial_println!("[SM] Starting auto/system services...");
-    let mut started = 0;
-    let mut failed = 0;
+    if !order.is_empty() {
+        crate::serial_println!("[SM] Starting auto/system services...");
+        let mut started = 0;
+        let mut failed = 0;
 
-    for &idx in &order {
-        let should_start = {
-            let sm = SERVICE_MANAGER.lock();
-            if idx >= sm.services.len() {
-                continue;
-            }
-            let svc = &sm.services[idx];
-            svc.start_type == ServiceStartType::System || svc.start_type == ServiceStartType::Auto
-        };
-        if should_start {
-            let mut sm = SERVICE_MANAGER.lock();
-            match sm.start_service(idx) {
-                Ok(()) => {
-                    crate::serial_println!("[SM] Started: {}", sm.services[idx].name);
-                    started += 1;
+        for &idx in &order {
+            let should_start = {
+                let sm = SERVICE_MANAGER.lock();
+                if idx >= sm.services.len() {
+                    continue;
                 }
-                Err(e) => {
-                    sm.services[idx].state = ServiceState::Failed;
-                    crate::serial_println!("[SM] Failed to start {}: {:?}", sm.services[idx].name, e);
-                    failed += 1;
+                let svc = &sm.services[idx];
+                svc.start_type == ServiceStartType::System || svc.start_type == ServiceStartType::Auto
+            };
+            if should_start {
+                let mut sm = SERVICE_MANAGER.lock();
+                match sm.start_service(idx) {
+                    Ok(()) => {
+                        crate::serial_println!("[SM] Started: {}", sm.services[idx].name);
+                        started += 1;
+                    }
+                    Err(e) => {
+                        sm.services[idx].state = ServiceState::Failed;
+                        crate::serial_println!("[SM] Failed to start {}: {:?}", sm.services[idx].name, e);
+                        failed += 1;
+                    }
                 }
             }
         }
+        crate::serial_println!("[SM] Auto-start complete: {} started, {} failed", started, failed);
+    } else {
+        crate::serial_println!("[SM] No services in dependency order (dependency resolution may have failed)");
     }
-    crate::serial_println!("[SM] Auto-start complete: {} started, {} failed", started, failed);
 }
 
 // ═══════════════════════════════════════════════════════════════════════

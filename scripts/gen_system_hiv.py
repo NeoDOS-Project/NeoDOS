@@ -75,15 +75,65 @@ class HiveBuilder:
         return idx
 
     def serialize(self) -> bytes:
-        """Serialize all cells into NEOH binary format."""
+        """Serialize all cells into NEOH binary format.
+        Checksum must match Rust's calc in cm/hive/serialize.rs:
+        For Key(1): idx + type + name_len + name_bytes + parent + subkeys_head
+                    + subkeys_sibling + values_head + sec_desc + last_write(high+low)
+        For Value(2): idx + type + name_len + name_bytes + value_type
+                      + data_len + data_bytes + next_val
+        """
         entries = sorted(self.cells.items())
         raw_payload = b"".join(data for _, data in entries)
 
-        # Checksum: wrapping_add of all cell idx + type + payload words
+        # Compute checksum matching Rust's algorithm
         checksum = 0
-        for _, data in entries:
-            for b in data:
+        for idx, data in entries:
+            # Read fields from raw bytes to compute checksum like Rust does
+            # The raw data starts with [idx][type][payload...]
+            cell_idx = struct.unpack("<I", data[0:4])[0]
+            cell_type = data[4]
+            checksum = (checksum + cell_idx) & 0xFFFFFFFF
+            checksum = (checksum + cell_type) & 0xFFFFFFFF
+            pos = 5
+            name_len = struct.unpack("<H", data[pos:pos+2])[0]
+            checksum = (checksum + name_len) & 0xFFFFFFFF
+            pos += 2
+            for b in data[pos:pos+name_len]:
                 checksum = (checksum + b) & 0xFFFFFFFF
+            pos += name_len
+            if cell_type == 1:  # Key
+                parent = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + parent) & 0xFFFFFFFF
+                pos += 4
+                subkeys_head = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + subkeys_head) & 0xFFFFFFFF
+                pos += 4
+                subkeys_sibling = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + subkeys_sibling) & 0xFFFFFFFF
+                pos += 4
+                values_head = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + values_head) & 0xFFFFFFFF
+                pos += 4
+                sec_desc = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + sec_desc) & 0xFFFFFFFF
+                pos += 4
+                last_write = struct.unpack("<Q", data[pos:pos+8])[0]
+                lw_low = last_write & 0xFFFFFFFF
+                lw_high = (last_write >> 32) & 0xFFFFFFFF
+                checksum = (checksum + lw_low) & 0xFFFFFFFF
+                checksum = (checksum + lw_high) & 0xFFFFFFFF
+            elif cell_type == 2:  # Value
+                value_type = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + value_type) & 0xFFFFFFFF
+                pos += 4
+                data_len = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + data_len) & 0xFFFFFFFF
+                pos += 4
+                for b in data[pos:pos+data_len]:
+                    checksum = (checksum + b) & 0xFFFFFFFF
+                pos += data_len
+                nxt = struct.unpack("<I", data[pos:pos+4])[0]
+                checksum = (checksum + nxt) & 0xFFFFFFFF
 
         header = struct.pack("<IIII", NEOH_MAGIC, NEOH_VERSION,
                              len(entries), checksum)
@@ -268,7 +318,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_VT, "EnableVT", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_SHELL)
     b.add_value(_V_AUTO, "AutoStartServices", REG_SZ,
-                b"\x00", next_val=_V_VT)
+                b"", next_val=_V_VT)
     b.add_value(_V_TESTS, "EnableTests", REG_DWORD,
                 struct.pack("<I", tests_val), next_val=_V_AUTO)
     b.add_value(_V_NETTEST, "EnableNetworkTest", REG_DWORD,
@@ -278,7 +328,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_DESC, "Description", REG_SZ,
                 b"DHCP Client Service\x00")
     b.add_value(_V_DEPS, "Dependencies", REG_SZ,
-                b"\x00", next_val=_V_DESC)
+                b"", next_val=_V_DESC)
     b.add_value(_V_MFAIL, "MaxFailures", REG_DWORD,
                 struct.pack("<I", 3), next_val=_V_DEPS)
     b.add_value(_V_RPOL, "RestartPolicy", REG_DWORD,

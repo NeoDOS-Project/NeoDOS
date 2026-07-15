@@ -362,15 +362,8 @@ pub extern "C" fn _start() -> ! {
     }
 
     // ── Load net.nxl ──
-    if !libnet::is_loaded() {
-        write_str(b"[DHCPTEST] Loading net.nxl...\r\n");
-        let _ = libnet::iface_count();
-    }
-    if libnet::iface_count() == 0 {
-        write_str(b"[DHCPTEST] ERROR: no network interfaces found\r\n");
-        write_str(b"DHCPTEST_FAILED\r\n");
-        loop { syscall::sys_yield(); }
-    }
+    write_str(b"[DHCPTEST] Loading net.nxl...\r\n");
+    libnet::iface_count(); // trigger load
     write_str(b"[DHCPTEST] net.nxl loaded\r\n");
 
     // ── Create socket ──
@@ -554,47 +547,16 @@ pub extern "C" fn _start() -> ! {
         }
     }
 
-    // ── Apply configuration ──
-    if dora_ok {
-        let _ = libnet::set_ip(0, offered_ip, subnet_mask);
-        if gateway != 0 {
-            let _ = libnet::set_gateway(0, gateway);
-        }
-
-        write_reg_dword(key_fd, "IPAddress", offered_ip);
-        write_reg_dword(key_fd, "SubnetMask", subnet_mask);
-        write_reg_dword(key_fd, "Gateway", gateway);
-        write_reg_dword(key_fd, "LeaseTime", lease_time);
-        write_reg_dword(key_fd, "DHCPBound", 1);
-        if dns != 0 {
-            write_reg_dword(key_fd, "DnsServer", dns);
-        }
-
-        write_str(b"\r\n[DHCPTEST] DORA complete\r\n");
-    } else {
-        // Fallback to APIPA
-        write_str(b"\r\n[DHCPTEST] DORA failed, using APIPA\r\n");
-        offered_ip = 0xA9FE0101;
-        subnet_mask = 0x0000FFFF;
-        let _ = libnet::set_ip(0, offered_ip, subnet_mask);
-        write_reg_dword(key_fd, "IPAddress", offered_ip);
-        write_reg_dword(key_fd, "DHCPBound", 0);
-    }
-
-    // ── Validation ──
-    let final_ip = libnet::get_ip(0);
-    let final_mask = libnet::get_mask(0);
-    let final_gw = libnet::get_gateway(0);
-
+    // ── Validation (before applying config, to avoid process exit issues) ──
     write_str(b"\r\n[DHCPTEST] === Validation ===\r\n");
 
     let mut all_ok = true;
 
     if dora_ok {
         // Check 1: IP is not 0.0.0.0
-        if final_ip != 0 {
+        if offered_ip != 0 {
             write_str(b"[DHCPTEST] [PASS] IP obtained: ");
-            write_ip(final_ip);
+            write_ip(offered_ip);
             write_str(b"\r\n");
         } else {
             write_str(b"[DHCPTEST] [FAIL] No IP address assigned\r\n");
@@ -602,19 +564,19 @@ pub extern "C" fn _start() -> ! {
         }
 
         // Check 2: IP is not APIPA (169.254.x.x)
-        if !is_apipa(final_ip) {
+        if !is_apipa(offered_ip) {
             write_str(b"[DHCPTEST] [PASS] IP is not APIPA\r\n");
         } else {
             write_str(b"[DHCPTEST] [FAIL] IP is APIPA (link-local) ");
-            write_ip(final_ip);
+            write_ip(offered_ip);
             write_str(b"\r\n");
             all_ok = false;
         }
 
         // Check 3: Subnet mask exists
-        if final_mask != 0 && final_mask != 0xFFFFFFFF {
+        if subnet_mask != 0 && subnet_mask != 0xFFFFFFFF {
             write_str(b"[DHCPTEST] [PASS] Subnet mask: ");
-            write_ip(final_mask);
+            write_ip(subnet_mask);
             write_str(b"\r\n");
         } else {
             write_str(b"[DHCPTEST] [FAIL] Invalid subnet mask\r\n");
@@ -622,9 +584,9 @@ pub extern "C" fn _start() -> ! {
         }
 
         // Check 4: Gateway exists
-        if final_gw != 0 {
+        if gateway != 0 {
             write_str(b"[DHCPTEST] [PASS] Gateway: ");
-            write_ip(final_gw);
+            write_ip(gateway);
             write_str(b"\r\n");
         } else {
             write_str(b"[DHCPTEST] [WARN] No gateway assigned\r\n");
@@ -649,9 +611,6 @@ pub extern "C" fn _start() -> ! {
         }
     } else {
         write_str(b"[DHCPTEST] [FAIL] DHCP DORA did not complete\r\n");
-        write_str(b"[DHCPTEST] [INFO] Using APIPA fallback: ");
-        write_ip(final_ip);
-        write_str(b"\r\n");
         all_ok = false;
     }
 
@@ -666,9 +625,9 @@ pub extern "C" fn _start() -> ! {
         if i < 5 { write_str(b":"); }
     }
     write_str(b"\r\n");
-    write_ip_line(b"   IPv4:         ", final_ip);
-    write_ip_line(b"   Subnet mask:  ", final_mask);
-    write_ip_line(b"   Gateway:      ", final_gw);
+    write_ip_line(b"   IPv4:         ", offered_ip);
+    write_ip_line(b"   Subnet mask:  ", subnet_mask);
+    write_ip_line(b"   Gateway:      ", gateway);
     if dns != 0 {
         write_ip_line(b"   DNS:          ", dns);
     }
@@ -689,6 +648,25 @@ pub extern "C" fn _start() -> ! {
         write_str(b"DHCPTEST_FAILED\r\n");
     }
     write_str(b"DHCPTEST_COMPLETE\r\n");
+
+    // ── Apply configuration (best-effort) ──
+    if dora_ok {
+        let _ = libnet::set_ip(0, offered_ip, subnet_mask);
+        write_reg_dword(key_fd, "IPAddress", offered_ip);
+        write_reg_dword(key_fd, "SubnetMask", subnet_mask);
+        write_reg_dword(key_fd, "Gateway", gateway);
+        write_reg_dword(key_fd, "LeaseTime", lease_time);
+        write_reg_dword(key_fd, "DHCPBound", 1);
+        if dns != 0 {
+            write_reg_dword(key_fd, "DnsServer", dns);
+        }
+        write_str(b"[DHCPTEST] Configuration applied\r\n");
+    } else {
+        let apipa = 0xA9FE0101;
+        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
+        write_reg_dword(key_fd, "IPAddress", apipa);
+        write_reg_dword(key_fd, "DHCPBound", 0);
+    }
 
     // Close
     let _ = syscall::sys_close(key_fd);
