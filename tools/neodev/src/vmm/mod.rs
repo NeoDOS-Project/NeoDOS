@@ -53,7 +53,7 @@ impl Default for VmConfig {
             disk_image: PathBuf::from("disk_image.img"),
             disk_vdi: PathBuf::from("disk_image.vdi"),
             serial_file: None,
-            network: NetworkMode::User,
+            network: NetworkMode::Bridged,
             headless: false,
             gdb: false,
             gdb_port: 1234,

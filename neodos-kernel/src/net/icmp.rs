@@ -145,7 +145,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     use crate::net::ipv4::{build_ipv4_header, IPV4_HDR_MIN_LEN, IPV4_PROTO_ICMP};
     use crate::net::arp::ArpPacket;
     use crate::net::nic::NIC_REGISTRY;
-    use core::sync::atomic::{AtomicU16, AtomicU64};
+    use core::sync::atomic::AtomicU16;
     use alloc::vec::Vec;
 
     static PING_ID: AtomicU16 = AtomicU16::new(1);
@@ -157,12 +157,24 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     if src_ip == Ipv4Addr::unspecified() { return None; }
 
     // Get source MAC
-    let src_mac = NIC_REGISTRY.lock().get(nic_id)?.mac_address();
+    let (src_mac, subnet_mask, gateway) = {
+        let mut registry = NIC_REGISTRY.lock();
+        let nic = registry.get_mut(nic_id)?;
+        (nic.mac_address(), nic.subnet_mask(), nic.gateway())
+    };
+
+    // Determine target IP for ARP resolution (gateway if off-subnet)
+    let arp_target = if (dest_ip.to_u32() & subnet_mask.to_u32()) == (src_ip.to_u32() & subnet_mask.to_u32()) {
+        dest_ip
+    } else {
+        crate::serial_println!("[ICMP] {} is off-subnet, routing via gateway {}", dest_ip, gateway);
+        gateway
+    };
 
     // Resolve destination MAC — try ARP cache first
-    let dest_mac = crate::net::arp::arp_lookup(dest_ip).or_else(|| {
+    let dest_mac = crate::net::arp::arp_lookup(arp_target).or_else(|| {
         // Send ARP request
-        let arp_req = ArpPacket::new_request(src_mac, src_ip, dest_ip);
+        let arp_req = ArpPacket::new_request(src_mac, src_ip, arp_target);
         let arp_bytes = unsafe {
             core::slice::from_raw_parts(
                 &arp_req as *const ArpPacket as *const u8,
@@ -183,7 +195,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         arp_pkt.extend_from_slice(arp_bytes);
         let _ = nic_send_packet(nic_id, &arp_pkt);
 
-        crate::serial_println!("[ARP] Request sent for {}", dest_ip);
+        crate::serial_println!("[ARP] Request sent for {}", arp_target);
 
         // Poll for ARP reply with RDTSC-based timeout (500ms)
         let arp_start = crate::boot_benchmark::rdtsc();
@@ -192,13 +204,13 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
 
         loop {
             crate::net::network_poll_all();
-            if let Some(mac) = crate::net::arp::arp_lookup(dest_ip) {
-                crate::serial_println!("[ARP] Resolved {} -> {}", dest_ip, mac);
+            if let Some(mac) = crate::net::arp::arp_lookup(arp_target) {
+                crate::serial_println!("[ARP] Resolved {} -> {}", arp_target, mac);
                 return Some(mac);
             }
             let now = crate::boot_benchmark::rdtsc();
             if now.wrapping_sub(arp_start) > arp_timeout_ticks {
-                crate::serial_println!("[ARP] Timeout resolving {}", dest_ip);
+                crate::serial_println!("[ARP] Timeout resolving {}", arp_target);
                 return None;
             }
             core::hint::spin_loop();
@@ -210,7 +222,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     let payload = [0x00u8; 56];
     let icmp_checksum = compute_icmp_checksum(&icmp_hdr, &payload);
     let mut hdr_with_cs = icmp_hdr;
-    hdr_with_cs.checksum = icmp_checksum;
+    hdr_with_cs.checksum = icmp_checksum.to_be();
     let hdr_bytes = unsafe {
         core::slice::from_raw_parts(
             &hdr_with_cs as *const IcmpHeader as *const u8,
@@ -244,6 +256,8 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     packet.extend_from_slice(eth_bytes);
     packet.extend_from_slice(ip_bytes);
     packet.extend_from_slice(&icmp_pkt);
+    crate::serial_println!("[ICMP] Echo Request id={} seq={} {} -> {} (dst_mac={})",
+        id, seq, src_ip, dest_ip, dest_mac);
     nic_send_packet(nic_id, &packet).ok()?;
 
     // Poll for ICMP echo reply
@@ -256,10 +270,12 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         crate::net::network_poll_all();
         if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
             let elapsed = crate::boot_benchmark::rdtsc().wrapping_sub(start);
+            crate::serial_println!("[ICMP] Echo Reply id={} rtt={}us", id, elapsed / tsc_per_us.max(1));
             return Some(elapsed / tsc_per_us.max(1));
         }
         let now = crate::boot_benchmark::rdtsc();
         if now.wrapping_sub(start) > max_ticks {
+            crate::serial_println!("[ICMP] Timeout waiting for Echo Reply id={}", id);
             return None;
         }
         core::hint::spin_loop();

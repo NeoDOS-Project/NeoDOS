@@ -457,6 +457,7 @@ fn modify_vm(name: &str, vmcfg: &VmConfig) -> Result<()> {
                     "--bridgeadapter1", &bridge_iface,
                     "--nictype1", "82540EM",
                     "--cableconnected1", "on",
+                    "--nicpromisc1", "allow-all",
                 ])
                 .status()
                 .context("Failed to configure bridged network")?;

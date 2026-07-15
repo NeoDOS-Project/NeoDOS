@@ -74,6 +74,9 @@ pub fn net_handle_incoming_packet(nic_id: u32, packet: &[u8]) {
         &*(packet.as_ptr() as *const crate::net::ethernet::EthernetHeader)
     };
 
+    crate::serial_println!("[ETH] RX {} bytes, src={} dst={} type=0x{:04x}",
+        packet.len(), eth_hdr.src_mac(), eth_hdr.dst_mac(), eth_hdr.ethertype());
+
     if eth_hdr.is_arp() {
         if packet.len() < crate::net::ethernet::ETH_HDR_LEN + core::mem::size_of::<crate::net::arp::ArpPacket>() {
             return;

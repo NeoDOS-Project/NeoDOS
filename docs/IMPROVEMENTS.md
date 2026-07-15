@@ -735,11 +735,12 @@ Agrupados en paquetes de trabajo:
 - [ ] **AI-4. Arreglar TOCTOU race en kobj_register** | Files: `src/object/mod.rs`
 
 ### NET.ARP — ARP Reliability Improvements
-
 - [ ] **ARP-1. Volatile reads for e1000 RX descriptor status** | Files: `neodos-kernel/src/net/e1000.rs` | Prioridad: Media | Complejidad: Baja
-  - The e1000 `poll_packet()` reads `desc.status` without `read_volatile`. On real hardware or certain emulators, the compiler may optimize away the DMA-coherent memory read. Use `core::ptr::addr_of!` with `read_volatile` for descriptor status and length.
-  - **Justificación:** DHCP works without it (broadcast packets are continuously polled), but ARP replies (single unicast frame) may be missed if the compiler caches the descriptor read.
 
+  - The e1000 `poll_packet()` reads `desc.status` without `read_volatile`. On real hardware or certain emulators, the compiler may optimize away the DMA-coherent memory read. Use `core::ptr::addr_of!` with `read_volatile` for descriptor status and length.
+  - **Nota:** Se añadió `core::sync::atomic::fence(Ordering::Release)` como barrera de memoria entre la escritura del descriptor y el doorbell TDT/RDT. Pendiente: cambiar la lectura de `desc.status` a `read_volatile` para evitar optimizaciones del compilador.
+
+  - **Justificación:** DHCP works without it (broadcast packets are continuously polled), but ARP replies (single unicast frame) may be missed if the compiler caches the descriptor read.
 - [ ] **ARP-2. Refactor ARP resolution out of icmp_ping()** | Files: `neodos-kernel/src/net/icmp.rs`, `neodos-kernel/src/net/arp.rs` | Prioridad: Media | Complejidad: Media
   - The `icmp_ping()` function contains duplicated ARP resolution logic inline. The existing `arp_resolve()` function is fire-and-forget (returns None immediately). Add a new `arp_resolve_blocking(target_ip, timeout_us)` that sends the request and waits for the reply with a timeout.
   - **Justificación:** Elimina duplicación, centraliza la lógica ARP, facilita mantener consistencia entre todos los clientes que necesiten resolución ARP.
@@ -756,6 +757,26 @@ Agrupados en paquetes de trabajo:
   - Eliminar `handler_driver_unload` del SSDT.
 
 ---
+
+## Fixed (v0.50)
+
+- [x] **NET-ICMP-CKSUM. ICMP echo request checksum endianness** | Files: `neodos-kernel/src/net/icmp.rs`
+  - `icmp_ping()` almacenaba el checksum ICMP en little-endian en lugar de network byte order. El receptor (Linux, routers) validaba y descartaba el paquete. DHCP funcionaba (UDP checksum bien) pero ICMP nunca recibía respuesta. Afectaba a QEMU y VirtualBox por igual; en QEMU user-mode el bug pasaba desapercibido porque QEMU no valida checksums ICMP.
+
+- [x] **NET-ROUTE. `next_hop_mac()` hardcoded a 10.0.2.0/24** | Files: `neodos-kernel/src/net/nic.rs`
+  - La función usaba una máscara fija `0xFFFFFF00` comparando con `0x0A000200` (10.0.2.0/24, subnet de QEMU). Cambiado a usar la máscara real de la NIC. `icmp_ping()` también ignoraba el gateway para destinos fuera de subred.
+
+- [x] **NET-E1000-BARRIER. Missing memory barriers en e1000 TX/RX** | Files: `neodos-kernel/src/net/e1000.rs`
+  - Las escrituras a descriptores TX podían ser reordenadas respecto al doorbell TDT. En VirtualBox (emulación multi-thread), el hardware leía descriptores stale. Añadido `core::sync::atomic::fence(Ordering::Release)` entre escritura de descriptor y actualización de TDT/RDT.
+
+- [x] **NET-E1000-RA. MAC address no programada en RA register** | Files: `neodos-kernel/src/net/e1000.rs`
+  - El registro RA (Receive Address) no se inicializaba explícitamente con la MAC. Aunque RCTL_UPE acepta todo unicast, algunos emuladores (VirtualBox) requieren RA[0] para filtrar correctamente.
+
+- [x] **NET-VBOX-PROMISC. VirtualBox bridge sin promiscuous mode** | Files: `tools/neodev/src/vmm/vbox.rs`
+  - Añadido `--nicpromisc1 allow-all` para que VirtualBox bridge acepte todo el tráfico.
+
+- [x] **NET-DEFAULT-BRIDGED. NeoDev default network mode cambiado a bridged** | Files: `tools/neodev/src/vmm/mod.rs`, `tools/neodev/src/config.rs`
+  - Default backend: virtualbox. Default network: bridged (DHCP desde router físico).
 
 ## Bugs Conocidos
 

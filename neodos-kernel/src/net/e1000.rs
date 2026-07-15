@@ -219,6 +219,16 @@ impl E1000Nic {
             self.rx_descs[i].status = 0;
         }
 
+        // Program MAC address in Receive Address register 0 (RA[0])
+        let mac_lo = self.mac.0[0] as u32
+            | (self.mac.0[1] as u32) << 8
+            | (self.mac.0[2] as u32) << 16
+            | (self.mac.0[3] as u32) << 24;
+        let mac_hi = self.mac.0[4] as u32
+            | (self.mac.0[5] as u32) << 8;
+        self.write_reg(REG_RA, mac_lo);
+        self.write_reg(REG_RA + 4, mac_hi | 0x80000000); // bit 31 = Address Valid (AV)
+
         self.write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
 
         let tx_desc_phys = self.tx_descs.as_ptr() as u64;
@@ -259,8 +269,13 @@ impl NetworkInterface for E1000Nic {
         desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
         desc.status = 0;
 
+        // Ensure descriptor writes are visible to hardware before ringing TX doorbell
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+
         let old_tdt = self.read_reg(REG_TDT);
         self.write_reg(REG_TDT, (old_tdt + 1) % E1000_NUM_TX_DESC as u32);
+
+        serial_println!("[E1000] TX {} bytes (desc={})", len, self.tx_cur);
 
         self.tx_cur = (self.tx_cur + 1) % E1000_NUM_TX_DESC;
         Ok(())
@@ -274,6 +289,7 @@ impl NetworkInterface for E1000Nic {
         let len = desc.length as usize;
         if len > buf.len() || len == 0 {
             self.rx_descs[self.rx_cur].status = 0;
+            core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
             let old_rdt = self.read_reg(REG_RDT);
             self.write_reg(REG_RDT, (old_rdt + 1) % E1000_NUM_RX_DESC as u32);
             self.rx_cur = (self.rx_cur + 1) % E1000_NUM_RX_DESC;
@@ -282,9 +298,11 @@ impl NetworkInterface for E1000Nic {
         buf[..len].copy_from_slice(&self.rx_bufs[self.rx_cur][..len]);
 
         self.rx_descs[self.rx_cur].status = 0;
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         let old_rdt = self.read_reg(REG_RDT);
         self.write_reg(REG_RDT, (old_rdt + 1) % E1000_NUM_RX_DESC as u32);
         self.rx_cur = (self.rx_cur + 1) % E1000_NUM_RX_DESC;
+        serial_println!("[E1000] RX {} bytes", len);
         Some(len)
     }
 

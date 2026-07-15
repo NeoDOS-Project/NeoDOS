@@ -124,13 +124,12 @@ impl NicRegistry {
     }
 
     pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
-        let gateway = if self.active_count > 0 {
-            if let Some(ref nic) = self.nics[0].interface {
-                nic.gateway()
-            } else { dest_ip }
-        } else { dest_ip };
+        let nic = self.nics[0].interface.as_ref()?;
+        let my_ip = nic.ip_address();
+        let mask = nic.subnet_mask();
+        let gateway = nic.gateway();
 
-        let target = if (dest_ip.to_u32() & 0xFFFFFF00) == 0x0A000200 {
+        let target = if (dest_ip.to_u32() & mask.to_u32()) == (my_ip.to_u32() & mask.to_u32()) {
             dest_ip
         } else {
             gateway

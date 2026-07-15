@@ -125,11 +125,21 @@
 ### Fixed
 
 - **Ctrl+Alt+Del poweroff** — Now goes through NeoKBD hotkey dispatcher (was directly in IRQ handler).
+- **NET-ICMP-CKSUM: ICMP checksum byte order** — `icmp_ping()` almacenaba el checksum ICMP en little-endian (x86 nativo) en lugar de network byte order. El receptor (Linux, routers) validaba y descartaba el paquete silenciosamente. DHCP seguía funcionando porque su checksum UDP sí se almacenaba correctamente. Añadido `.to_be()` en field assignment.
+- **NET-ROUTE: Routing hardcoded a QEMU** — `next_hop_mac()` en `nic.rs` usaba máscara fija `0xFFFFFF00` contra `0x0A000200` (10.0.2.0/24). Cambiado a usar máscara real de la NIC. `icmp_ping()` también ignoraba gateway para destinos fuera de subred.
+- **NET-E1000-BARRIER: Memory barriers en e1000** — Faltaban barreras de memoria entre escritura de descriptores TX/RX y actualización de los registros doorbell TDT/RDT. En VirtualBox (emulación multi-thread), el hardware podía leer descriptores stale. Añadido `core::sync::atomic::fence(Ordering::Release)` en ambas rutas.
+- **NET-E1000-RA: MAC address en RA register** — El registro RA (Receive Address) del e1000 no se programaba explícitamente con la MAC. Algunos emuladores requieren RA[0] con AV bit para filtrar correctamente el tráfico unicast, incluso con RCTL_UPE activo.
+- **NET-VBOX-PROMISC: VirtualBox bridge promiscuous** — Añadido `--nicpromisc1 allow-all` en la configuración de VirtualBox bridge para asegurar que todo el tráfico de red llega a la VM.
+
+### Changed
+
+- **Default backend: virtualbox** — NeoDev cambia de QEMU a VirtualBox como backend predeterminado (`tools/neodev/src/config.rs`).
+- **Default network: bridged** — El modo de red predeterminado pasa de NAT/USER a Bridged, para que la VM obtenga IP directamente del router físico (`tools/neodev/src/vmm/mod.rs`, `tools/neodev/src/config.rs`).
 
 ### Tests
 
 - New power/acpi tests: `pm_acpi_fadt_valid_parses_s5`, `pm_acpi_fadt_reset_register`, `pm_hal_s5_write_correct_slp_typ`, etc.
-- Total: 625 kernel tests.
+- Total: 664 kernel tests (666 with new net tests).
 
 ## v0.49.1 — 2026-07-11
 
