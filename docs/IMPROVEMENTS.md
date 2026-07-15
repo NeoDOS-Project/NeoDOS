@@ -27,34 +27,6 @@
 
 ### M0.1 — Shell tokenizer + Power Phase 2 + Hardening
 
-#### NeoFS v2
-
-- [ ] **NFSv2-SYSCALL. sys_ob_snapshot (RAX 77)** | Prereqs: NFSv2-BTREE, NFSv2-SNAPSHOT | Files: `src/syscall/ob.rs`, `src/syscall/mod.rs`, `src/object/types.rs`
-  - handler_ob_snapshot: CREATE/RESTORE/LIST/PURGE sobre handle del FS raíz.
-  - SSDT entry + permission entry. Nuevos ObInfoClass si aplica.
-  - **Tests:** `syscall_ob_snapshot_create`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_list`
-
-#### Shell (Phase 1 — foundation)
-
-- [ ] **SH-TOKEN+QUOTE. Shell tokenizer + quoting/escaping** | Prereqs: -- | Files: `userbin/neoshell/src/tokenizer.rs`
-  - State machine para pipes, redirects, quoting. `"..."` (expande %VAR%), `'...'` (literal), `^` escape.
-  - **Tests:** `tokenizer_pipe`, `tokenizer_redirect`, `tokenizer_quoted_arg`, `tokenizer_double_quotes`, `tokenizer_escape_char`, `tokenizer_semicolon`, `tokenizer_unmatched_double_quote`, `tokenizer_empty`, `tokenizer_escape_in_double_quote`, `tokenizer_multiple_spaces`
-
-#### Power Manager — Phase 2: Kernel core
-
-- [x] **PM-PHASE2. Power Manager kernel core** ✅ (v0.50.1) | Prereqs: PM-PHASE1 | Files: `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`, `src/object/types.rs`, `scripts/gen_system_hiv.py`, `src/main.rs`
-  - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
-  - `PowerSystemState` enum: Active, ShuttingDown, Rebooting, Suspending, Hibernating, Off.
-  - `PowerPlan` + `PowerPolicies`: DisplayTimeout, SleepTimeout, HibernateEnabled, CpuPolicy, LidAction, PowerButtonAction.
-  - `PowerManager::load_plan_from_registry(index)`: leer plan activo desde `\Registry\Machine\System\Power\Plans\<Name>\*`.
-  - `PowerManager::save_plan_to_registry(index)`: persistir políticas activas.
-  - `src/power/coordinator.rs`: `shutdown()` y `reboot()` sin integración con servicios todavía — solo HAL calls.
-  - `src/object/types.rs`: añadir `PowerManager = 21` a `ObType`.
-  - `src/main.rs`: añadir PHASE 3.883 — inicializar PowerManager (namespace `\System\PowerManager`).
-  - `scripts/gen_system_hiv.py`: defaults de Power (`ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`).
-  - **Tests:** `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`, `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`
-  - **Nota:** Ob syscall dispatch para `PowerState`/`PowerPlanInfo`/`PowerStatus` query y `PowerSuspend`/`PowerHibernate`/`PowerSetPlan`/`PowerSetPolicy` set no están implementados — pasan a PM-PHASE3.
-
 #### Kernel Hardening
 
 - [ ] **AUDIT-32. 5+ `.expect()` panic paths → Result<()>** | Files: `src/scheduler/mod.rs:485-487`, `src/main.rs:334`, `src/globals.rs:38`, `src/arch/x64/serial.rs:73`, `src/urn/mod.rs:383`
@@ -85,27 +57,6 @@
 ## Fase 1: Kernel Maduro (v0.51–v0.55)
 
 ### M1.1 — NeoFS v2 Completion (v0.51)
-
-- [ ] **NFSv2-BTREE. B-tree persistente genérico** | Prereqs: -- | Files: `src/fs/btree.rs`
-  - B-tree con orden configurable, nodos 4KB. Operaciones: insert, lookup, delete, walk inorder.
-  - COW en escritura: insert/delete crea nuevos nodos hasta la raíz, devuelve nueva root_lba.
-  - **Tests:** `btree_insert_lookup`, `btree_delete`, `btree_walk_inorder`, `btree_cow_new_root`, `btree_cow_preserves_old_root`
-
-- [ ] **NFSv2-FREELIST. Free list** | Prereqs: -- | Files: `src/fs/freelist.rs`
-  - Lista de regiones libres (start_lba, length). Alocar: first-fit. Liberar: merge con adyacentes.
-  - **Tests:** `freelist_alloc_marks_used`, `freelist_free_reclaims`, `freelist_merge_adjacent`, `freelist_multi_node`
-
-- [ ] **NFSv2-SNAPSHOT. Snapshot table** | Prereqs: NFSv2-BTREE | Files: `src/fs/snapshot.rs`
-  - Tabla circular de 64 entradas. CREATE copia root_btree_lba actual. RESTORE cambia superblock.
-  - **Tests:** `snapshot_create_list`, `snapshot_restore`, `snapshot_circular_64`
-
-- [ ] **NFSv2-MKFS. Herramienta mkfs.neodos** | Prereqs: NFSv2-FREELIST | Files: `userbin/mkfs/` (o script build)
-  - Escribir superblock "NE2\0", B-tree raíz vacío, freelist con todo el espacio libre.
-  - **Tests:** `mkfs_creates_valid_ne2_superblock`
-
-- [ ] **VFS-2.2. Refactorizar FSCK** | Prereqs: -- | Files: `src/fs/fsck.rs`
-  - Extraer lógica común a trait `FsckIntegrity`, mover a `drivers/fsck_neodos.rs`.
-  - **Tests:** 6 tests existentes + 2 de integración
 
 ### M1.2 — Shell Phase 2 (v0.51)
 
@@ -674,18 +625,10 @@ Verificar que no queden arrays de tamaño fijo en el kernel tras la migración a
 Agrupados en paquetes de trabajo:
 
 <details>
-<summary>CLEANUP-DEADCODE (14 items)</summary>
+<summary>CLEANUP-DEADCODE (2 items)</summary>
 
-- [ ] **CLEANUP-1. Dead code mask `#![allow(dead_code)]` en main.rs + globals.rs** | Files: `src/main.rs:9`, `src/globals.rs:1`
 - [ ] **CLEANUP-2. Unused macros + functions + enum variants + constants** | Files: multiple
-- [ ] **CLEANUP-3. virtio::register_tests() orphaned** | Files: `src/virtio/mod.rs:35`
-- [ ] **CLEANUP-4. unregister_all() does nothing** | Files: `src/drivers/nem/driver.rs:92-98`
-- [ ] **CLEANUP-9. iso9660.rs dead filesystem driver** | Files: `src/drivers/iso9660.rs`
-- [ ] **CLEANUP-10. debugger/mod.rs GDB stub dead code** | Files: `src/debugger/mod.rs`
-- [ ] **CLEANUP-11. kbd_layout.rs never compiled** | Files: `src/drivers/nem/drivers/kbd_layout.rs`
 - [ ] **CLEANUP-12. 23 dead functions** | Files: multiple
-- [ ] **CLEANUP-13. PageCacheLevel unused variants** | Files: `src/vfs/io.rs:9`
-- [x] **CLEANUP-14. CryptoContext stub removed** | Files: `src/vfs/io.rs:16` | Revisitar si se implementa AES-XTS
 </details>
 
 <details>
