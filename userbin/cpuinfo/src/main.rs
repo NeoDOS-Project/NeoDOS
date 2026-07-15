@@ -9,9 +9,50 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
-use libneodos::println;
-use libneodos::syscall::{self, ob_access, ObInfoClass, sys_ob_open, sys_ob_query_info, sys_close, sys_getpid, ObProcessInfo};
+use libneodos::i18n;
+use libneodos::syscall::{self, ob_access, ObInfoClass};
+use libneodos::tr_id;
 use core::mem::size_of;
+
+const APP_NAME: &str = "cpuinfo";
+const IDS_CPU_INFO: u32 = 1004;
+const IDS_TOPOLOGY: u32 = 1005;
+const IDS_FEATURES: u32 = 1006;
+const IDS_VENDOR: u32 = 1007;
+const IDS_BRAND: u32 = 1008;
+const IDS_CORES: u32 = 1009;
+const IDS_THREADS: u32 = 1010;
+const IDS_FAMILY: u32 = 1011;
+const IDS_MODEL: u32 = 1012;
+const IDS_STEPPING: u32 = 1013;
+const IDS_YES: u32 = 1014;
+const IDS_NO: u32 = 1015;
+const IDS_UNAVAIL: u32 = 1016;
+
+fn write_str(s: &[u8]) {
+    let _ = syscall::sys_write(1, s);
+}
+
+fn write_u64(mut v: u64) {
+    if v == 0 { write_str(b"0"); return; }
+    let mut buf = [0u8; 20];
+    let mut i = 19;
+    while v > 0 {
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        i -= 1;
+    }
+    write_str(&buf[i + 1..]);
+}
+
+fn write_u32(v: u32) {
+    write_u64(v as u64);
+}
+
+fn str_from_bytes(bytes: &[u8]) -> &str {
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    core::str::from_utf8(&bytes[..end]).unwrap_or("")
+}
 
 #[repr(C)]
 struct CpuInfoFull {
@@ -37,179 +78,114 @@ struct CpuInfoFull {
     pub tick_rate_hz: u64,
 }
 
-impl CpuInfoFull {
-    fn vendor_str(&self) -> &str {
-        let end = self.vendor_id.iter().position(|&b| b == 0).unwrap_or(12);
-        core::str::from_utf8(&self.vendor_id[..end]).unwrap_or("Unknown")
-    }
-    fn brand_str(&self) -> &str {
-        let mut end = self.brand.len();
-        while end > 0 && (self.brand[end - 1] == 0 || self.brand[end - 1] == b' ') { end -= 1; }
-        core::str::from_utf8(&self.brand[..end]).unwrap_or("Unknown")
-    }
-    fn has_feature(&self, feat: &str) -> bool {
-        match feat {
-            "SSE"    => (self.features_edx >> 25) & 1 == 1,
-            "SSE2"   => (self.features_edx >> 26) & 1 == 1,
-            "SSE3"   => (self.features_ecx >> 0) & 1 == 1,
-            "SSSE3"  => (self.features_ecx >> 9) & 1 == 1,
-            "SSE4.1" => (self.features_ecx >> 19) & 1 == 1,
-            "SSE4.2" => (self.features_ecx >> 20) & 1 == 1,
-            "AVX"    => (self.features_ecx >> 28) & 1 == 1,
-            "AVX2"   => (self.features_ebx_leaf7 >> 5) & 1 == 1,
-            "AES"    => (self.features_ecx >> 25) & 1 == 1,
-            "FMA"    => (self.features_ecx >> 12) & 1 == 1,
-            "POPCNT" => (self.features_ecx >> 23) & 1 == 1,
-            "RDRAND" => (self.features_ecx >> 30) & 1 == 1,
-            "NX"     => (self.ext_features_edx >> 20) & 1 == 1,
-            "x86-64" => (self.ext_features_edx >> 29) & 1 == 1,
-            "SYSCALL"=> (self.ext_features_edx >> 11) & 1 == 1,
-            "MMX"    => (self.features_edx >> 23) & 1 == 1,
-            _ => false,
-        }
+fn has_feature(info: &CpuInfoFull, feat: &str) -> bool {
+    match feat {
+        "SSE"    => (info.features_edx >> 25) & 1 == 1,
+        "SSE2"   => (info.features_edx >> 26) & 1 == 1,
+        "SSE3"   => (info.features_ecx >> 0) & 1 == 1,
+        "SSSE3"  => (info.features_ecx >> 9) & 1 == 1,
+        "SSE4.1" => (info.features_ecx >> 19) & 1 == 1,
+        "SSE4.2" => (info.features_ecx >> 20) & 1 == 1,
+        "AVX"    => (info.features_ecx >> 28) & 1 == 1,
+        "AVX2"   => (info.features_ebx_leaf7 >> 5) & 1 == 1,
+        "AES"    => (info.features_ecx >> 25) & 1 == 1,
+        "RDRAND" => (info.features_ecx >> 30) & 1 == 1,
+        _ => false,
     }
 }
-
-fn timer_name(source: u8) -> &'static str {
-    match source { 0 => "PIT", 1 => "HPET", 2 => "APIC Timer", _ => "Unknown" }
-}
-
-fn cpu_type_name(t: u32) -> &'static str {
-    match t { 0 => "Reserved", 1 => "Other", 2 => "Unknown", 3 => "Normal", _ => "Unknown" }
-}
-
-#[used]
-#[link_section = ".rodata"]
-static CPUINFO_HELP: &[u8] = b"::HELP::\
-CPUINFO\r\n\
-  Displays CPU information: vendor, brand, features, topology, timers.\r\n\
-::END::";
 
 fn print_help() {
-    libneodos::println!("CPUINFO");
-    libneodos::println!("  Displays CPU information: vendor, brand, features, topology, timers.");
+    write_str(b"\r\nCPUINFO\r\n  Displays CPU information.\r\n\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     if libneodos::args::is_help_flag(&libneodos::args::read_args()) {
         print_help();
         syscall::sys_exit(0);
     }
 
-    let fd = match sys_ob_open("\\Global\\Info\\CpuInfo", ob_access::READ) {
+    let fd = match syscall::sys_ob_open("\\Global\\Info\\CpuInfo", ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            libneodos::println!("CPU info not available");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_UNAVAIL).as_bytes());
+            write_str(b"\r\n\r\n");
             syscall::sys_exit(1);
         }
     };
 
-    let mut info: CpuInfoFull = unsafe { core::mem::zeroed() };
-    let buf = unsafe {
-        core::slice::from_raw_parts_mut(&mut info as *mut CpuInfoFull as *mut u8, size_of::<CpuInfoFull>())
-    };
-    let n = match sys_ob_query_info(fd, ObInfoClass::CpuInfo, buf) {
+    let mut buf = [0u8; size_of::<CpuInfoFull>()];
+    let n = match syscall::sys_ob_query_info(fd, ObInfoClass::CpuInfo, &mut buf) {
         Ok(n) => n,
         Err(_) => {
-            let _ = sys_close(fd);
-            libneodos::println!("CPU info query failed");
+            let _ = syscall::sys_close(fd);
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_UNAVAIL).as_bytes());
+            write_str(b"\r\n\r\n");
             syscall::sys_exit(1);
         }
     };
-    let _ = sys_close(fd);
+    let _ = syscall::sys_close(fd);
 
     if n < size_of::<CpuInfoFull>() {
-        libneodos::println!("CPU info truncated");
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_UNAVAIL).as_bytes());
+        write_str(b"\r\n\r\n");
         syscall::sys_exit(1);
     }
 
-    println!("======================================================");
-    println!("              CPU INFORMATION");
-    println!("======================================================");
-    println!("Vendor:     {}", info.vendor_str());
-    println!("Brand:      {}", info.brand_str());
-    println!("Family: {}  Model: {}  Stepping: {}",
-        info.family, info.model, info.stepping);
-    println!("Type: {} ({})", info.cpu_type, cpu_type_name(info.cpu_type));
-    println!("------------------------------------------------------");
-    println!("TOPOLOGY");
-    println!("  Logical CPUs:  {}", info.cpu_count);
-    println!("  APIC ID:       {}", info.apic_id);
-    println!("  BSP:           {}", if info.is_bsp { "Yes" } else { "No" });
-    println!("------------------------------------------------------");
-    println!("ADDRESSING");
-    println!("  Physical:  {} bits", info.phys_addr_bits);
-    println!("  Virtual:   {} bits", info.virt_addr_bits);
-    println!("------------------------------------------------------");
-    println!("TIMERS");
-    if info.tsc_khz >= 1_000_000 {
-        let ghz = info.tsc_khz / 1_000_000;
-        let mhz = (info.tsc_khz % 1_000_000) / 1000;
-        println!("  TSC:       {}.{:03} GHz", ghz, mhz);
-    } else {
-        println!("  TSC:       {} KHz", info.tsc_khz);
-    }
-    println!("  Source:    {}", timer_name(info.timer_source));
-    println!("  Tick rate: {} Hz", info.tick_rate_hz);
-    println!("------------------------------------------------------");
-    println!("FEATURES");
+    let info: &CpuInfoFull = unsafe { &*(buf.as_ptr() as *const CpuInfoFull) };
 
-    let features = ["MMX", "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2",
-        "AVX", "AVX2", "AES", "FMA", "POPCNT", "RDRAND", "NX", "x86-64", "SYSCALL"];
-    let mut detected = 0u32;
-    for &f in &features {
-        if info.has_feature(f) {
-            println!("  {}", f);
-            detected += 1;
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_CPU_INFO).as_bytes());
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_VENDOR).as_bytes());
+    write_str(str_from_bytes(&info.vendor_id).as_bytes());
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_BRAND).as_bytes());
+    write_str(str_from_bytes(&info.brand).as_bytes());
+    write_str(b"\r\n");
+
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_TOPOLOGY).as_bytes());
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_CORES).as_bytes());
+    write_u32(info.cpu_count);
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_FAMILY).as_bytes());
+    write_u32(info.family);
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_MODEL).as_bytes());
+    write_u32(info.model);
+    write_str(b"\r\n");
+    write_str(b"  ");
+    write_str(tr_id!(IDS_STEPPING).as_bytes());
+    write_u32(info.stepping);
+    write_str(b"\r\n");
+
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_FEATURES).as_bytes());
+    write_str(b"\r\n");
+    for feat in &["SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2", "AVX", "AVX2", "AES", "RDRAND"] {
+        write_str(b"    ");
+        write_str(feat.as_bytes());
+        write_str(b": ");
+        if has_feature(info, feat) {
+            write_str(tr_id!(IDS_YES).as_bytes());
+        } else {
+            write_str(tr_id!(IDS_NO).as_bytes());
         }
+        write_str(b"\r\n");
     }
-
-    println!();
-    println!("  {} features detected", detected);
-    println!("======================================================");
-    println!();
-    println!("======================================================");
-    println!("              PROCESS INFORMATION");
-    println!("======================================================");
-
-    let pid = sys_getpid();
-    println!("PID:          {}", pid);
-
-    let mut path_buf = [0u8; 64];
-    let prefix = b"\\Ob\\Process\\";
-    path_buf[..prefix.len()].copy_from_slice(prefix);
-    let mut pos = prefix.len();
-    let mut n = pid;
-    let mut digits = [0u8; 10];
-    let mut nd = 0;
-    if n == 0 { digits[nd] = b'0'; nd = 1; }
-    while n > 0 {
-        digits[nd] = b'0' + (n % 10) as u8;
-        n /= 10;
-        nd += 1;
-    }
-    for i in (0..nd).rev() {
-        path_buf[pos] = digits[i];
-        pos += 1;
-    }
-    let ob_path = unsafe { core::str::from_utf8_unchecked(&path_buf[..pos]) };
-
-    if let Ok(fd) = sys_ob_open(ob_path, ob_access::READ) {
-        let mut pi: ObProcessInfo = unsafe { core::mem::zeroed() };
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(&mut pi as *mut ObProcessInfo as *mut u8, size_of::<ObProcessInfo>())
-        };
-        if sys_ob_query_info(fd, ObInfoClass::Process, buf).is_ok() {
-            println!("Parent PID:   {}", pi.parent_pid);
-            println!("Priority:     {} ({})", pi.priority, pi.priority_str());
-            println!("Threads:      {}", pi.thread_count);
-            println!("State:        {}", pi.state_str());
-        }
-        let _ = sys_close(fd);
-    }
-
-    println!("======================================================");
+    write_str(b"\r\n");
 
     syscall::sys_exit(0)
 }

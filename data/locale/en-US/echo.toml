@@ -1,0 +1,15 @@
+[meta]
+app = "echo"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+
+[strings]
+IDS_USAGE = "ECHO [text]"
+IDS_USAGE_LINE2 = "  Print text."
+IDS_USAGE_LINE3 = "  ECHO               prints a blank line."
+IDS_USAGE_LINE4 = "  ECHO Hello world   prints \"Hello world\"."

@@ -1,0 +1,17 @@
+[meta]
+app = "netcfg"
+language = "en-US"
+
+[ids]
+IDS_ERR_KEY = 1001
+IDS_STATIC = 1002
+IDS_DHCP_WAIT = 1003
+IDS_DHCP_TIMEOUT = 1004
+IDS_OK = 1005
+
+[strings]
+IDS_ERR_KEY = "netcfg: registry key not found"
+IDS_STATIC = "static: IP "
+IDS_DHCP_WAIT = "DHCP: waiting for dhcpd..."
+IDS_DHCP_TIMEOUT = "DHCP: timeout"
+IDS_OK = "netcfg: OK"

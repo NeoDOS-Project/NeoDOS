@@ -1,0 +1,29 @@
+[meta]
+app = "neotop"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_TITLE = 1005
+IDS_COL_PID = 1006
+IDS_COL_NAME = 1007
+IDS_COL_STATE = 1008
+IDS_COL_PRI = 1009
+IDS_COL_THR = 1010
+IDS_ERR_OPEN = 1011
+
+[strings]
+IDS_USAGE = "NEOTOP"
+IDS_USAGE_LINE2 = "  Mostra el monitor del sistema amb llista de processos."
+IDS_USAGE_LINE3 = "  Mostra els processos ordenats per ús de CPU."
+IDS_USAGE_LINE4 = "  Premeu Q per a sortir."
+IDS_TITLE = "NeoTOP - Monitor del Sistema"
+IDS_COL_PID = "PID"
+IDS_COL_NAME = "NOM"
+IDS_COL_STATE = "ESTAT"
+IDS_COL_PRI = "PRI"
+IDS_COL_THR = "FIL"
+IDS_ERR_OPEN = "No es pot obrir la llista de processos"

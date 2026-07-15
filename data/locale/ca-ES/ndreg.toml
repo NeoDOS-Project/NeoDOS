@@ -1,0 +1,29 @@
+[meta]
+app = "ndreg"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_USAGE_LINE6 = 1006
+IDS_HEADER_LOADED = 1007
+IDS_NO_DRIVERS = 1008
+IDS_ERR_ENUM = 1009
+IDS_STATE = 1010
+IDS_UNKNOWN_CMD = 1011
+
+[strings]
+IDS_USAGE = "NDREG [subordre]"
+IDS_USAGE_LINE2 = "  Eina de registre de controladors NEM."
+IDS_USAGE_LINE3 = "  NDREG list       llista els controladors carregats"
+IDS_USAGE_LINE4 = "  NDREG info <n>   mostra informació del controlador"
+IDS_USAGE_LINE5 = "  NDREG state <n>  mostra l'estat del controlador"
+IDS_USAGE_LINE6 = "  NDREG help       mostra aquesta ajuda"
+IDS_HEADER_LOADED = "Controladors carregats:"
+IDS_NO_DRIVERS = "No hi ha controladors carregats."
+IDS_ERR_ENUM = "Error en enumerar els controladors"
+IDS_STATE = "Estat: "
+IDS_UNKNOWN_CMD = "Subordre NDREG desconeguda."

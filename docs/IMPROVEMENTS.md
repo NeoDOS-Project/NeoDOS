@@ -833,6 +833,28 @@ Agrupados en paquetes de trabajo:
 
 ---
 
+## i18n/NLT (post-migración)
+
+- [ ] **I18N-NXRESOURCE. nxres no implementa visualización de contenido de recurso** | Prioridad: Baja | Complejidad: Media | Impacto: Bajo
+  - El subcomando `<resource>` de nxres muestra "not yet implemented".
+  - Requiere implementar lectura de contenido de recursos desde el paquete NXE/NXP.
+  - **Archivos:** `userbin/nxres/src/main.rs`.
+
+- [ ] **I18N-NLT-KBD. Traducción de nombres de modificadores de teclado** | Prioridad: Baja | Complejidad: Baja | Impacto: Bajo
+  - Los nombres de modificadores (LCTRL, LSHIFT, etc.) y LEDs se muestran en inglés en neokey.
+  - Podrían traducirse mediante NLT si se desea localización completa.
+  - **Archivos:** `userbin/neokey/src/main.rs`, `data/locale/*/neokey.toml`.
+
+- [ ] **I18N-PLURALS. Sistema de pluralización para NLT** | Prioridad: Baja | Complejidad: Alta | Impacto: Arquitectónico
+  - Actualmente NLT no soporta pluralización. Los mensajes como "X file(s)" requieren manejo de plurales por idioma.
+  - Requiere extensión del formato NLTv2 (nuevo flag, tabla de plurales).
+  - Diferimiento a v0.60+.
+
+- [ ] **I18N-TEST-AUTOMATION. Tests automatizados de cambio de idioma** | Prioridad: Media | Complejidad: Media | Impacto: Medio
+  - No existen tests que verifiquen que todos los mensajes cambian correctamente al cambiar de idioma.
+  - Requiere framework de test en QEMU con cambio de locale y captura de salida.
+  - **Archivos:** `tests/`, `tools/neodev/src/test_.rs`.
+
 ## Documentation backlog
 
 - [ ] **DH2. Corregir ARCHITECTURE_SOURCE_OF_TRUTH.md** | Files: `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md`

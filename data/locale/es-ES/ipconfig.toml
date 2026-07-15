@@ -1,0 +1,37 @@
+[meta]
+app = "ipconfig"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_NXL = 1004
+IDS_NO_IFACES = 1005
+IDS_ETHERNET = 1006
+IDS_DESCRIPTION = 1007
+IDS_IPV4 = 1008
+IDS_MAC = 1009
+IDS_DHCP = 1010
+IDS_STATIC = 1011
+IDS_NONE = 1012
+IDS_UP = 1013
+IDS_DOWN = 1014
+IDS_STATUS = 1015
+
+[strings]
+IDS_USAGE = "IPCONFIG"
+IDS_USAGE_LINE2 = "  Muestra la configuración de las interfaces de red."
+IDS_USAGE_LINE3 = "  Muestra direcciones IP, MAC y estado de las interfaces."
+IDS_ERR_NXL = "IPCONFIG: net.nxl no encontrado"
+IDS_NO_IFACES = "No se encontraron interfaces de red."
+IDS_ETHERNET = "Adaptador Ethernet"
+IDS_DESCRIPTION = "Descripción: "
+IDS_IPV4 = "IPv4: "
+IDS_MAC = "MAC: "
+IDS_DHCP = "DHCP"
+IDS_STATIC = "Estática"
+IDS_NONE = "Ninguna"
+IDS_UP = "Activa"
+IDS_DOWN = "Inactiva"
+IDS_STATUS = "Estado: "

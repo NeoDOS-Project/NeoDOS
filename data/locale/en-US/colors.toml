@@ -1,0 +1,15 @@
+[meta]
+app = "colors"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_UNKNOWN_OPT = 1004
+
+[strings]
+IDS_USAGE = "COLORS"
+IDS_USAGE_LINE2 = "  Display terminal color chart."
+IDS_USAGE_LINE3 = "  Shows available terminal colors with their codes."
+IDS_UNKNOWN_OPT = "Unknown option"

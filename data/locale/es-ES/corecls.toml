@@ -1,0 +1,11 @@
+[meta]
+app = "corecls"
+language = "es-ES"
+
+[ids]
+IDS_HELP_USAGE = 1001
+IDS_HELP_DESC = 1002
+
+[strings]
+IDS_HELP_USAGE = "CLS"
+IDS_HELP_DESC = "  Limpia la pantalla."

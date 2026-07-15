@@ -1,0 +1,29 @@
+[meta]
+app = "ndreg"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_USAGE_LINE6 = 1006
+IDS_HEADER_LOADED = 1007
+IDS_NO_DRIVERS = 1008
+IDS_ERR_ENUM = 1009
+IDS_STATE = 1010
+IDS_UNKNOWN_CMD = 1011
+
+[strings]
+IDS_USAGE = "NDREG [subcommand]"
+IDS_USAGE_LINE2 = "  NEM driver registry tool."
+IDS_USAGE_LINE3 = "  NDREG list       lists loaded drivers"
+IDS_USAGE_LINE4 = "  NDREG info <n>   shows driver info"
+IDS_USAGE_LINE5 = "  NDREG state <n>  shows driver state"
+IDS_USAGE_LINE6 = "  NDREG help       shows this help"
+IDS_HEADER_LOADED = "Loaded drivers:"
+IDS_NO_DRIVERS = "No drivers loaded."
+IDS_ERR_ENUM = "Error enumerating drivers"
+IDS_STATE = "State: "
+IDS_UNKNOWN_CMD = "Unknown NDREG subcommand."

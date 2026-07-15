@@ -1,0 +1,29 @@
+[meta]
+app = "nxverify"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_ELF_NXE = 1006
+IDS_NXP = 1007
+IDS_UNKNOWN_FMT = 1008
+IDS_VALID = 1009
+IDS_CRC_OK = 1010
+IDS_VERIFY_ALL = 1011
+
+[strings]
+IDS_USAGE = "NXVERIFY <archivo>"
+IDS_USAGE_LINE2 = "  Verifica la integridad de un archivo NXE o NXP."
+IDS_USAGE_LINE3 = "  NXVERIFY <archivo>   verifica un archivo .NXE o .NXP"
+IDS_USAGE_LINE4 = "  NXVERIFY --all       verifica todas las apps instaladas"
+IDS_USAGE_LINE5 = "  NXVERIFY --help      muestra esta ayuda"
+IDS_ELF_NXE = "ELF NXE:"
+IDS_NXP = "Paquete NXP:"
+IDS_UNKNOWN_FMT = "Formato desconocido"
+IDS_VALID = "VÁLIDO"
+IDS_CRC_OK = "CRC32 de cabecera: OK"
+IDS_VERIFY_ALL = "Verificando todas las apps instaladas..."

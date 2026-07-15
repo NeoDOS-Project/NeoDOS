@@ -1,206 +1,128 @@
 #![no_std]
 #![no_main]
 
-use libneodos::syscall;
-use libneodos::syscall::{ObEnumEntry, ObInfoClass};
 use libneodos::i18n;
+use libneodos::syscall;
+use libneodos::tr_id;
 
-fn write_stdout(s: &[u8]) {
+const APP_NAME: &str = "nxlocale";
+const IDS_CURRENT: u32 = 1006;
+const IDS_AVAILABLE: u32 = 1007;
+const IDS_SET_SUCCESS: u32 = 1008;
+const IDS_ERR_UNKNOWN: u32 = 1010;
+const IDS_ERR_SET: u32 = 1011;
+const IDS_ERR_UNKNOWN_LOCALE: u32 = 1012;
+const IDS_NO_LOCALES: u32 = 1013;
+
+fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-fn writeln(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
-    let _ = syscall::sys_write(1, b"\r\n");
+fn write_err(s: &[u8]) {
+    let _ = syscall::sys_write(2, s);
 }
 
-fn write_str(s: &str) {
-    write_stdout(s.as_bytes());
+fn print_help() {
+    write_str(b"\r\n");
+    write_str(b"NXLOCALE [subcommand]\r\n");
+    write_str(b"  Locale management tool.\r\n");
+    write_str(b"  NXLOCALE                  shows current locale\r\n");
+    write_str(b"  NXLOCALE list             lists available locales\r\n");
+    write_str(b"  NXLOCALE set <locale>     changes system locale\r\n\r\n");
 }
 
-fn help() {
-    writeln(b"Usage: nxlocale <command> [options]");
-    writeln(b"  list                    List installed locales");
-    writeln(b"  current                 Show current locale");
-    writeln(b"  set     <locale>        Change system locale");
-    writeln(b"  check   [app]           Check translation coverage");
-    writeln(b"  stats   [app]           Translation statistics");
-    writeln(b"  show    <app>           Show app's loaded strings");
+fn is_cmd(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.eq_ignore_ascii_case(y))
 }
 
-fn split_args(args: &[u8]) -> [&[u8]; 4] {
-    let mut parts = [&[][..], &[][..], &[][..], &[][..]];
-    let mut pi = 0usize;
-    let mut i = 0usize;
-    while i < args.len() && pi < 4 {
-        while i < args.len() && (args[i] == b' ' || args[i] == b'\t') { i += 1; }
-        if i >= args.len() { break; }
-        let start = i;
-        while i < args.len() && args[i] != b' ' && args[i] != b'\t' { i += 1; }
-        if i > start {
-            parts[pi] = &args[start..i];
-            pi += 1;
-        }
-    }
-    parts
-}
-
-fn args_cmp(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() { return false; }
-    for i in 0..a.len() {
-        let ca = if a[i] >= b'a' && a[i] <= b'z' { a[i] }
-            else if a[i] >= b'A' && a[i] <= b'Z' { a[i] + 32 }
-            else { a[i] };
-        let cb = if b[i] >= b'a' && b[i] <= b'z' { b[i] }
-            else if b[i] >= b'A' && b[i] <= b'Z' { b[i] + 32 }
-            else { b[i] };
-        if ca != cb { return false; }
-    }
-    true
-}
-
-fn write_u64(n: u64) {
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    let mut v = n;
-    if v == 0 { write_stdout(b"0"); return; }
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_stdout(&buf[i + 1..]);
-}
-
+#[no_mangle]
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
-    let _ = i18n::i18n_load("nxlocale");
+    let _ = i18n::i18n_load(APP_NAME);
 
     let raw = libneodos::args::read_args();
-    if libneodos::args::is_help_flag(&raw) {
-        help();
+    let args = libneodos::args::trim_ascii(&raw);
+
+    if args.is_empty() || libneodos::args::is_help_flag(&raw) {
+        if libneodos::args::is_help_flag(&raw) {
+            print_help();
+            syscall::sys_exit(0);
+        }
+
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_CURRENT).as_bytes());
+        write_str(i18n::i18n_language().as_bytes());
+        write_str(b"\r\n\r\n");
         syscall::sys_exit(0);
     }
 
-    let parts = split_args(&raw);
-    let cmd = parts[0];
-    let arg1 = parts[1];
+    if is_cmd(args, b"list") || is_cmd(args, b"-l") || is_cmd(args, b"--list") {
+        let locales = i18n::i18n_available_locales();
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_AVAILABLE).as_bytes());
+        write_str(b"\r\n");
 
-    if cmd.is_empty() || args_cmp(cmd, b"help") {
-        help();
+        if locales.is_empty() {
+            write_str(b"  ");
+            write_str(tr_id!(IDS_NO_LOCALES).as_bytes());
+            write_str(b"\r\n");
+        } else {
+            for locale in locales.split(';') {
+                if !locale.is_empty() {
+                    write_str(b"  ");
+                    write_str(locale.as_bytes());
+                    write_str(b"\r\n");
+                }
+            }
+        }
+        write_str(b"\r\n");
         syscall::sys_exit(0);
     }
 
-    if args_cmp(cmd, b"list") || args_cmp(cmd, b"ls") {
-        cmd_list();
-    } else if args_cmp(cmd, b"current") || args_cmp(cmd, b"cur") {
-        cmd_current();
-    } else if args_cmp(cmd, b"set") {
-        cmd_set(arg1);
-    } else if args_cmp(cmd, b"check") {
-        cmd_check(arg1);
-    } else if args_cmp(cmd, b"stats") {
-        cmd_stats();
-    } else if args_cmp(cmd, b"show") {
-        cmd_show(arg1);
-    } else {
-        writeln(b"Unknown command");
-        help();
-    }
+    if is_cmd(args, b"set") || is_cmd(args, b"-s") || is_cmd(args, b"--set") {
+        let rest = &args[3..];
+        let rest = libneodos::args::trim_ascii(rest);
 
-    syscall::sys_exit(0);
-}
+        if rest.is_empty() {
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_UNKNOWN_LOCALE).as_bytes());
+            write_err(b"\r\n\r\n");
+            syscall::sys_exit(1);
+        }
 
-fn cmd_list() {
-    writeln(b"Available locales:");
-    let locale_path = "\\Global\\FileSystem\\C:\\System\\Locale";
-    match syscall::sys_ob_open(locale_path, syscall::ob_access::READ) {
-        Ok(fd) => {
-            let mut entries: [ObEnumEntry; 16] = core::array::from_fn(|_| ObEnumEntry {
-                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
-            });
-            if let Ok(n) = syscall::sys_ob_enum(fd, &mut entries) {
-                for i in 0..n {
-                    let name = entries[i].name_str();
-                    write_stdout(b"  ");
-                    write_str(name);
-                    writeln(b"");
+        let locale_str = core::str::from_utf8(rest).unwrap_or("");
+        let key = "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Locale";
+        match syscall::sys_cm_open_key(key) {
+            Ok(fd) => {
+                match syscall::sys_cm_set_value(fd, "Language", syscall::REG_SZ, locale_str.as_bytes()) {
+                    Ok(_) => {
+                        let _ = syscall::sys_close(fd);
+                        i18n::i18n_reload_all();
+                        write_str(b"\r\n");
+                        write_str(tr_id!(IDS_SET_SUCCESS).as_bytes());
+                        write_str(b"\r\n\r\n");
+                    }
+                    Err(_) => {
+                        let _ = syscall::sys_close(fd);
+                        write_err(b"\r\n");
+                        write_err(tr_id!(IDS_ERR_SET).as_bytes());
+                        write_err(b"\r\n\r\n");
+                        syscall::sys_exit(1);
+                    }
                 }
             }
-            let _ = syscall::sys_close(fd);
-        }
-        Err(_) => {
-            writeln(b"No locales found (check C:\\System\\Locale)");
-        }
-    }
-}
-
-fn cmd_current() {
-    write_stdout(b"Current locale: ");
-    write_str(i18n::i18n_language());
-    writeln(b"");
-}
-
-fn cmd_set(locale: &[u8]) {
-    if locale.is_empty() {
-        writeln(b"Usage: nxlocale set <locale>");
-        return;
-    }
-
-    let reg_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Locale";
-    match syscall::sys_cm_open_key(reg_path) {
-        Ok(fd) => {
-            let name = "Language";
-            let val_type = 1u32;
-            match syscall::sys_cm_set_value(fd, name, val_type, locale) {
-                Ok(_) => {
-                    write_stdout(b"Locale changed to: ");
-                    write_stdout(locale);
-                    writeln(b"");
-                    writeln(b"Restart applications to apply.");
-                }
-                Err(_) => {
-                    writeln(b"Error setting locale");
-                }
+            Err(_) => {
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_ERR_UNKNOWN).as_bytes());
+                write_err(b"\r\n\r\n");
+                syscall::sys_exit(1);
             }
-            let _ = syscall::sys_close(fd);
         }
-        Err(_) => {
-            writeln(b"Cannot open Registry");
-        }
+        syscall::sys_exit(0);
     }
-}
 
-fn cmd_check(_app: &[u8]) {
-    writeln(b"check: not yet fully implemented");
-}
-
-fn cmd_stats() {
-    let count = i18n::i18n_loaded_count();
-    write_stdout(b"Loaded NLT tables: ");
-    write_u64(count as u64);
-    writeln(b"");
-    write_stdout(b"Current locale: ");
-    write_str(i18n::i18n_language());
-    writeln(b"");
-}
-
-fn cmd_show(app: &[u8]) {
-    if app.is_empty() {
-        writeln(b"Usage: nxlocale show <app>");
-        return;
-    }
-    let app_str = unsafe { core::str::from_utf8_unchecked(app) };
-    match i18n::i18n_load(app_str) {
-        Ok(_) => {
-            write_stdout(b"Translations loaded for: ");
-            write_stdout(app);
-            writeln(b"");
-        }
-        Err(_) => {
-            write_stdout(b"No translations available for: ");
-            write_stdout(app);
-            writeln(b"");
-        }
-    }
+    write_err(b"\r\n");
+    write_err(tr_id!(IDS_ERR_UNKNOWN).as_bytes());
+    write_err(b"\r\n\r\n");
+    syscall::sys_exit(1)
 }

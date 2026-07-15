@@ -1,0 +1,19 @@
+[meta]
+app = "drives"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_ERR_LISTING = 1003
+IDS_ERR_NONE = 1004
+IDS_HEADER = 1005
+IDS_NO_LABEL = 1006
+
+[strings]
+IDS_USAGE = "DRIVES"
+IDS_USAGE_LINE2 = "  Llista totes les unitats muntades."
+IDS_ERR_LISTING = "Error en llistar les unitats"
+IDS_ERR_NONE = "No s'han trobat unitats"
+IDS_HEADER = "Unitats muntades:"
+IDS_NO_LABEL = "(sense etiqueta)"

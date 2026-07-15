@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
-use libneodos::{mem, syscall};
+use libneodos::{i18n, mem, syscall, tr_id};
 
 struct SbrkAlloc;
 
@@ -19,6 +19,13 @@ unsafe impl GlobalAlloc for SbrkAlloc {
 
 #[global_allocator]
 static ALLOC: SbrkAlloc = SbrkAlloc;
+
+const APP_NAME: &str = "netcfg";
+const IDS_ERR_KEY: u32 = 1001;
+const IDS_STATIC: u32 = 1002;
+const IDS_DHCP_WAIT: u32 = 1003;
+const IDS_DHCP_TIMEOUT: u32 = 1004;
+const IDS_OK: u32 = 1005;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
@@ -59,59 +66,125 @@ fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     pos
 }
 
+#[repr(C)]
+struct NetAbiTable {
+    version: u32,
+    iface_count: extern "C" fn() -> u32,
+    iface_info: unsafe extern "C" fn(u32, *mut NetIfaceInfo) -> i32,
+    iface_stats: extern "C" fn(u32, *mut NetIfaceStats) -> i32,
+    socket_create: extern "C" fn(u32) -> i32,
+    socket_bind: extern "C" fn(i32, u32, u16) -> i32,
+    socket_connect: extern "C" fn(i32, u32, u16) -> i32,
+    socket_listen: extern "C" fn(i32) -> i32,
+    socket_send: unsafe extern "C" fn(i32, *const u8, u32) -> i32,
+    socket_recv: unsafe extern "C" fn(i32, *mut u8, u32) -> i32,
+    socket_close: extern "C" fn(i32) -> i32,
+    set_ip: extern "C" fn(u32, u32, u32) -> i32,
+    set_gateway: extern "C" fn(u32, u32) -> i32,
+    get_ip: extern "C" fn(u32) -> u32,
+    get_gateway: extern "C" fn(u32) -> u32,
+    get_mask: extern "C" fn(u32) -> u32,
+    get_dhcp_bound: extern "C" fn() -> i32,
+    _reserved: [u64; 7],
+}
+
+#[repr(C)]
+struct NetIfaceInfo {
+    nic_id: u32,
+    mac: [u8; 6],
+    ip: [u8; 4],
+    link_up: u8,
+}
+
+#[repr(C)]
+struct NetIfaceStats {
+    rx_packets: u64,
+    tx_packets: u64,
+    rx_bytes: u64,
+    tx_bytes: u64,
+    rx_errors: u32,
+    tx_errors: u32,
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    write_str(b"\r\n");
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
 
-    let reg_key = syscall::sys_cm_open_key(REG_NET_PATH);
-    let key_fd;
-    match reg_key {
-        Ok(fd) => { key_fd = fd; }
+    let reg_fd = match syscall::sys_cm_open_key(REG_NET_PATH) {
+        Ok(fd) => fd,
         Err(_) => {
-            write_str(b"netcfg: registry key not found\r\n");
+            write_str(tr_id!(IDS_ERR_KEY).as_bytes());
+            write_str(b"\r\n");
             loop { syscall::sys_yield(); }
         }
-    }
+    };
 
-    let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
+    let dhcp_enabled = read_reg_dword(reg_fd, "DHCPEnabled").unwrap_or(1) != 0;
 
-    if dhcp_enabled == 0 {
-        // Static IP mode: read and set from registry
-        let ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
+    if !dhcp_enabled {
+        let ip = read_reg_dword(reg_fd, "IP").unwrap_or(0);
+        let mask = read_reg_dword(reg_fd, "Mask").unwrap_or(0);
+        let gw = read_reg_dword(reg_fd, "Gateway").unwrap_or(0);
+
+        let base = match syscall::sys_loadlib("C:\\System\\Libraries\\net.nxl\0") {
+            Ok(b) => b,
+            Err(_) => {
+                write_str(tr_id!(IDS_ERR_KEY).as_bytes());
+                write_str(b"\r\n");
+                loop { syscall::sys_yield(); }
+            }
+        };
+        let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
+
         if ip != 0 {
-            let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
-            let _ = libnet::set_ip(0, ip, mask);
-            let mut buf = [0u8; 16];
-            let len = format_ip(ip, &mut buf);
-            write_str(b"static: IP ");
-            write_str(&buf[..len]);
-            write_str(b"\r\n");
+            (net.set_ip)(0, ip, mask);
+            if gw != 0 {
+                (net.set_gateway)(0, gw);
+            }
         }
-    } else {
-        // DHCP mode: wait for dhcpd to assign an IP
-        write_str(b"DHCP: waiting for dhcpd...\r\n");
-        let mut ip = 0u32;
-        for i in 0..2000 {
-            if i % 100 == 0 { write_str(b"."); }
-            let _ = syscall::sys_sleep_ex();
-            ip = libnet::get_ip(0);
-            if ip != 0 { break; }
-        }
+
+        write_str(tr_id!(IDS_STATIC).as_bytes());
+        let mut buf = [0u8; 16];
+        let len = format_ip(ip, &mut buf);
+        write_str(&buf[..len]);
         write_str(b"\r\n");
-        if ip != 0 {
-            let mut buf = [0u8; 16];
-            let len = format_ip(ip, &mut buf);
-            write_str(b"DHCP: IP ");
-            write_str(&buf[..len]);
-            write_str(b"\r\n");
-            write_reg_dword(key_fd, "IPAddress", ip);
-        } else {
-            write_str(b"DHCP: timeout waiting for dhcpd\r\n");
-        }
+        let _ = syscall::sys_close(reg_fd);
+        loop { syscall::sys_yield(); }
     }
 
-    write_str(b"netcfg: OK\r\n");
-    loop {
-        for _ in 0..10000 { syscall::sys_yield(); }
+    // DHCP mode — wait for it
+    write_str(tr_id!(IDS_DHCP_WAIT).as_bytes());
+    write_str(b"\r\n");
+
+    let base = match syscall::sys_loadlib("C:\\System\\Libraries\\net.nxl\0") {
+        Ok(b) => b,
+        Err(_) => {
+            write_str(tr_id!(IDS_ERR_KEY).as_bytes());
+            write_str(b"\r\n");
+            loop { syscall::sys_yield(); }
+        }
+    };
+    let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
+
+    for _ in 0..100 {
+        let ip = (net.get_ip)(0);
+        if ip != 0 {
+            write_reg_dword(reg_fd, "IP", ip);
+            let mut ip_buf = [0u8; 16];
+            let ip_len = format_ip(ip, &mut ip_buf);
+            write_str(tr_id!(IDS_OK).as_bytes());
+            write_str(b" ");
+            write_str(&ip_buf[..ip_len]);
+            write_str(b"\r\n");
+            let _ = syscall::sys_close(reg_fd);
+            loop { syscall::sys_yield(); }
+        }
+        for _ in 0..1000000 { core::hint::spin_loop(); }
     }
+
+    write_str(tr_id!(IDS_DHCP_TIMEOUT).as_bytes());
+    write_str(b"\r\n");
+    let _ = syscall::sys_close(reg_fd);
+    loop { syscall::sys_yield(); }
 }

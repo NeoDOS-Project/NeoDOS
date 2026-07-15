@@ -1,0 +1,19 @@
+[meta]
+app = "drives"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_ERR_LISTING = 1003
+IDS_ERR_NONE = 1004
+IDS_HEADER = 1005
+IDS_NO_LABEL = 1006
+
+[strings]
+IDS_USAGE = "DRIVES"
+IDS_USAGE_LINE2 = "  Lista todas las unidades montadas."
+IDS_ERR_LISTING = "Error al listar las unidades"
+IDS_ERR_NONE = "No se encontraron unidades"
+IDS_HEADER = "Unidades montadas:"
+IDS_NO_LABEL = "(sin etiqueta)"

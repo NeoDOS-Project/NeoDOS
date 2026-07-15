@@ -233,3 +233,45 @@ neolocale diff     <f1> <f2>      Comparar dos archivos NLT
 neolocale check    [dir]          Buscar traducciones faltantes
 neolocale create   <app>          Crear scaffold NLTv2 vacío
 ```
+
+---
+
+## 12. Aplicaciones con NLT
+
+**Todas las 42 aplicaciones User-Bin** tienen NLT completo:
+
+| Categoría | Aplicaciones |
+|-----------|-------------|
+| Core | corecls, corecopy, coredel, coredir, corerd, coreren, coremd, corehelp, coretype, cd, echo, tree |
+| Sistema | neoinit, neoshell, poweroff, reboot, ver, vol, label, drives |
+| Procesos | kill, ps, pri, neotop |
+| Memoria | neomem |
+| Teclado | keyb, neokey |
+| Red | dhcpd, dhcptest, ipconfig, netcfg, ping |
+| Drivers | loadnem, ndreg |
+| Utilidades | colors, cpuinfo, datetime, fsck, nxlocale, nxres, nxverify, progress |
+| Tests | cmdtest, shtest, stresscmd |
+
+Cada una con traducciones completas a en-US, es-ES, ca-ES.
+
+## 13. Norma de desarrollo
+
+**No se permiten cadenas visibles hardcodeadas en User-Bin nuevos o existentes.**
+Todo mensaje visible debe añadirse al sistema NLT y traducirse simultáneamente a:
+- en-US
+- es-ES
+- ca-ES
+
+## 14. Añadir un nuevo idioma
+
+1. Crear `data/locale/{locale}/` con los archivos `.toml` para cada app
+2. Ejecutar `nltc --generate-all data/locale/{locale}`
+3. El sistema NLT cargará automáticamente los archivos `.nlt` desde `C:\System\Locale\{locale}\`
+4. Si el idioma no está en la lista de IDs conocidos, se usará un hash CRC32
+
+## 15. Añadir una nueva clave
+
+1. Añadir la entrada en `[ids]` y `[strings]` en los tres archivos `.toml` (`en-US`, `es-ES`, `ca-ES`)
+2. Recompilar: `nltc --generate-all data/locale/{locale}`
+3. En el código: definir constante `const IDS_NUEVA: u32 = N;` y usar `tr_id!(IDS_NUEVA)`
+```

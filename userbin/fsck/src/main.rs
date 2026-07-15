@@ -9,7 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "fsck";
+const IDS_ERR_OPEN: u32 = 1004;
+const IDS_ERR_GENERIC: u32 = 1005;
+const IDS_INVALID: u32 = 1006;
+const IDS_CHECKING: u32 = 1007;
+const IDS_HEADER: u32 = 1008;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -60,26 +69,23 @@ fn trim_ascii(s: &[u8]) -> &[u8] {
     &s[start..end]
 }
 
-#[used]
-#[link_section = ".rodata"]
-static FSCK_HELP: &[u8] = b"::HELP::\
-FSCK [drive:] [/F]\r\n\
-  Check filesystem integrity on a NeoDOS volume.\r\n\
-  Without /F, only checks and reports errors.\r\n\
-  With /F, attempts to repair detected issues.\r\n\
-  FSCK C:             check-only on C:\r\n\
-  FSCK C: /F          check and repair C:\r\n\
-::END::";
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+}
 
 fn print_help() {
     write_str(b"\r\nFSCK [drive:] [/F]\r\n  Check filesystem integrity on a NeoDOS volume.\r\n  Without /F, only checks and reports errors.\r\n  With /F, attempts to repair detected issues.\r\n\r\n  FSCK C:             check-only on C:\r\n  FSCK C: /F          check and repair C:\r\n\r\n");
 }
 
 fn write_u32(mut v: u32) {
-    if v == 0 {
-        write_str(b"0");
-        return;
-    }
+    if v == 0 { write_str(b"0"); return; }
     let mut buf = [0u8; 10];
     let mut i = 9;
     while v > 0 {
@@ -90,56 +96,43 @@ fn write_u32(mut v: u32) {
     write_str(&buf[i + 1..]);
 }
 
-fn write_u64(mut v: u64) {
-    if v == 0 {
-        write_str(b"0");
-        return;
+fn print_report(stats: &libneodos::syscall::FsckStats, drive: u8) {
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_CHECKING).as_bytes());
+    write_str(&[drive, b':']);
+    write_str(b"\r\n\r\n");
+    write_str(tr_id!(IDS_HEADER).as_bytes());
+    write_str(b"\r\n");
+    write_str(b"  Blocks: ");
+    write_u32(stats.total_blocks as u32);
+    write_str(b" total, ");
+    write_u32(stats.used_blocks as u32);
+    write_str(b" used, ");
+    write_u32(stats.free_blocks as u32);
+    write_str(b" free\r\n");
+    write_str(b"  Nodes: ");
+    write_u32(stats.total_nodes as u32);
+    write_str(b" total, ");
+    write_u32(stats.total_dirs as u32);
+    write_str(b" dirs, ");
+    write_u32(stats.total_files as u32);
+    write_str(b" files\r\n");
+    if stats.errors > 0 || stats.warnings > 0 {
+        write_str(b"  Errors: ");
+        write_u32(stats.errors);
+        write_str(b" errors, ");
+        write_u32(stats.warnings);
+        write_str(b" warnings, ");
+        write_u32(stats.repaired);
+        write_str(b" repaired\r\n");
     }
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_str(&buf[i + 1..]);
-}
-
-fn print_report(stats: &syscall::FsckStats) {
     write_str(b"\r\n");
-    write_str(b"========================================\r\n");
-    write_str(b"  NeoDOS  FSCK   Report\r\n");
-    write_str(b"========================================\r\n");
-    write_str(b"\r\n");
-
-    write_str(b"  Summary:\r\n");
-    write_str(b"    Total blocks: "); write_u64(stats.total_blocks); write_str(b"\r\n");
-    write_str(b"    Used blocks:  "); write_u64(stats.used_blocks); write_str(b"\r\n");
-    write_str(b"    Free blocks:  "); write_u64(stats.free_blocks); write_str(b"\r\n");
-    write_str(b"\r\n");
-
-    write_str(b"  B-tree nodes:\r\n");
-    write_str(b"    Total:   "); write_u64(stats.total_nodes); write_str(b"\r\n");
-    write_str(b"    Dirs:    "); write_u64(stats.total_dirs); write_str(b"\r\n");
-    write_str(b"    Files:   "); write_u64(stats.total_files); write_str(b"\r\n");
-    write_str(b"\r\n");
-
-    write_str(b"  Errors:      "); write_u32(stats.errors); write_str(b"\r\n");
-    write_str(b"  Warnings:    "); write_u32(stats.warnings); write_str(b"\r\n");
-
-    write_str(b"\r\n");
-    if stats.errors == 0 && stats.warnings == 0 {
-        write_str(b"  STATUS: OK -- No errors found.\r\n");
-    } else if stats.repaired != 0 {
-        write_str(b"  STATUS: "); write_u32(stats.errors + stats.warnings); write_str(b" issue(s) repaired.\r\n");
-    } else {
-        write_str(b"  STATUS: "); write_u32(stats.errors + stats.warnings); write_str(b" issue(s) found (use /F to repair).\r\n");
-    }
-    write_str(b"========================================\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let args = read_args();
     if is_help_flag(&args) {
         print_help();
@@ -148,79 +141,50 @@ pub extern "C" fn _start() -> ! {
 
     let arg_str = {
         let end = args.iter().position(|&b| b == 0).unwrap_or(0);
-        &args[..end]
+        trim_ascii(&args[..end])
     };
 
-    let arg_str = trim_ascii(arg_str);
-
-    // Parse drive and /F flag
-    let (drive, repair) = if arg_str.is_empty() {
-        (current_drive(), false)
+    let drive = if !arg_str.is_empty() && arg_str.len() >= 2 && arg_str[1] == b':' {
+        arg_str[0].to_ascii_uppercase()
     } else {
-        let repair = arg_str.iter().any(|&b| b == b'/')
-            || arg_str.iter().any(|&b| b == b'-');
-        if arg_str.len() >= 2 && arg_str[1] == b':' {
-            (arg_str[0].to_ascii_uppercase(), repair)
-        } else {
-            (current_drive(), repair)
-        }
+        current_drive()
     };
 
-    if drive < b'A' || drive > b'Z' {
-        write_err(b"\r\nInvalid drive letter.\r\n");
-        syscall::sys_exit(1);
-    }
+    let repair = arg_str.iter().any(|&b| b == b'/' || b == b'-')
+        && arg_str.iter().any(|&b| b == b'F' || b == b'f');
 
-    if repair {
-        write_str(b"\r\nFSCK /F: Checking and repairing drive "); write_str(&[drive]); write_str(b"...\r\n");
-    } else {
-        write_str(b"\r\nFSCK: Checking drive "); write_str(&[drive]); write_str(b"... (use /F to repair errors)\r\n");
-    }
+    let drive_str = [drive, b':', b'\\'];
+    let vfs_str = core::str::from_utf8(&drive_str).unwrap_or("C:\\");
+    let mut ob_buf = [0u8; 512];
+    let ob_path = to_ob_path(vfs_str, &mut ob_buf);
 
-    // Open drive root via Ob to obtain a Filesystem handle
-    let mut path_buf = [0u8; 32];
-    let prefix = b"\\Global\\FileSystem\\";
-    path_buf[..prefix.len()].copy_from_slice(prefix);
-    let len = prefix.len();
-    path_buf[len] = drive;
-    path_buf[len + 1] = b':';
-    path_buf[len + 2] = b'\\';
-    let fd = match syscall::sys_ob_open(
-        unsafe { core::str::from_utf8_unchecked(&path_buf[..len + 3]) },
-        0x01, // READ access
-    ) {
+    let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            write_err(b"\r\nFSCK: Cannot open drive.\r\n");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_OPEN).as_bytes());
+            write_err(&[drive]);
+            write_err(b"\r\n\r\n");
             syscall::sys_exit(1);
         }
     };
 
-    let result = if repair {
-        syscall::ob_fsck_repair(fd, true).map(|_| {
-            // After repair, query status to get stats
-            syscall::ob_fsck_status(fd).unwrap_or(syscall::FsckStats {
-                total_blocks: 0, used_blocks: 0, free_blocks: 0,
-                total_nodes: 0, total_dirs: 0, total_files: 0,
-                errors: 0, warnings: 0, repaired: 1,
-            })
-        })
-    } else {
-        syscall::ob_fsck_status(fd)
-    };
+    if repair {
+        let _ = syscall::ob_fsck_repair(fd, true);
+    }
 
-    let _ = syscall::sys_close(fd);
-
-    match result {
+    match syscall::ob_fsck_status(fd) {
         Ok(stats) => {
-            print_report(&stats);
+            print_report(&stats, drive);
         }
-        Err(e) => {
-            write_err(b"\r\nFSCK error: ");
-            write_u32((-e) as u32);
+        Err(_) => {
             write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_GENERIC).as_bytes());
+            write_err(tr_id!(IDS_INVALID).as_bytes());
+            write_err(b"\r\n\r\n");
         }
     }
 
+    let _ = syscall::sys_close(fd);
     syscall::sys_exit(0)
 }

@@ -1,0 +1,41 @@
+[meta]
+app = "pri"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_USAGE_LINE6 = 1006
+IDS_USAGE_LINE7 = 1007
+IDS_ERR_INVALID_PID = 1008
+IDS_ERR_INVALID_PRI = 1009
+IDS_ERR_PROCESS_NOT_FOUND = 1010
+IDS_MSG_SET = 1011
+IDS_MSG_TO = 1012
+IDS_PRI_HIGH = 1013
+IDS_PRI_ABOVE_NORMAL = 1014
+IDS_PRI_NORMAL = 1015
+IDS_PRI_IDLE = 1016
+IDS_ERR_FAILED = 1017
+
+[strings]
+IDS_USAGE = "PRI <pid> <prioritat>"
+IDS_USAGE_LINE2 = "  Estableix la prioritat de planificació d'un procés."
+IDS_USAGE_LINE3 = "  Nivells de prioritat:"
+IDS_USAGE_LINE4 = "    0 = ALTA (400 ticks)"
+IDS_USAGE_LINE5 = "    1 = SOBRE_NORMAL (200 ticks)"
+IDS_USAGE_LINE6 = "    2 = NORMAL (100 ticks) - per defecte"
+IDS_USAGE_LINE7 = "    3 = INACTIU (50 ticks)"
+IDS_ERR_INVALID_PID = "PID no vàlid."
+IDS_ERR_INVALID_PRI = "Prioritat no vàlida. Useu 0-3."
+IDS_ERR_PROCESS_NOT_FOUND = "Procés no trobat."
+IDS_MSG_SET = " prioritat establerta a "
+IDS_MSG_TO = " ("
+IDS_PRI_HIGH = "ALTA"
+IDS_PRI_ABOVE_NORMAL = "SOBRE_NORMAL"
+IDS_PRI_NORMAL = "NORMAL"
+IDS_PRI_IDLE = "INACTIU"
+IDS_ERR_FAILED = "Error en establir la prioritat."

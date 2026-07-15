@@ -39,7 +39,7 @@ impl Default for RunOptions {
             headless: false,
             bdm: false,
             serial_file: None,
-            backend: "virtualbox".into(),
+            backend: "qemu".into(),
         }
     }
 }

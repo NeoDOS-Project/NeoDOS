@@ -9,9 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
-use libneodos::syscall::{self, DriverInfo, ob_access, ObInfoClass};
+use libneodos::i18n;
+use libneodos::syscall;
+use libneodos::tr_id;
 
-const MAX_DRIVERS: usize = 64;
+const APP_NAME: &str = "ndreg";
+const IDS_HEADER_LOADED: u32 = 1007;
+const IDS_NO_DRIVERS: u32 = 1008;
+const IDS_ERR_ENUM: u32 = 1009;
+const IDS_STATE: u32 = 1010;
+const IDS_UNKNOWN_CMD: u32 = 1011;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -21,286 +28,186 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
-fn read_args() -> [u8; 256] {
-    let ptr = 0x41F000 as *const u8;
-    let mut buf = [0u8; 256];
-    unsafe {
-        let mut i = 0;
-        while i < 255 {
-            let b = ptr.add(i).read();
-            buf[i] = b;
-            if b == 0 { break; }
-            i += 1;
-        }
-    }
-    buf
+fn print_help() {
+    write_str(b"\r\nNDREG [subcommand]\r\n");
+    write_str(b"  NEM driver registry tool.\r\n");
+    write_str(b"  NDREG list       lists loaded drivers\r\n");
+    write_str(b"  NDREG info <n>   shows driver info\r\n");
+    write_str(b"  NDREG state <n>  shows driver state\r\n");
+    write_str(b"  NDREG help       shows this help\r\n\r\n");
 }
 
-fn is_help_flag(buf: &[u8; 256]) -> bool {
-    let s = unsafe { core::str::from_utf8_unchecked(buf) };
-    let s = s.trim();
-    s.eq_ignore_ascii_case("/?") || s.eq_ignore_ascii_case("-h") || s.eq_ignore_ascii_case("--help")
+fn is_cmd(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.eq_ignore_ascii_case(y))
 }
 
-fn trim_ascii(s: &[u8]) -> &[u8] {
-    let mut start = 0;
-    while start < s.len() && (s[start] == b' ' || s[start] == b'\t') {
-        start += 1;
+fn parse_u32(s: &[u8]) -> Option<u32> {
+    if s.is_empty() { return None; }
+    let mut n: u32 = 0;
+    for &b in s {
+        if b < b'0' || b > b'9' { return None; }
+        n = n.saturating_mul(10).saturating_add((b - b'0') as u32);
     }
-    let mut end = s.len();
-    while end > start && (s[end - 1] == b' ' || s[end - 1] == b'\t') {
-        end -= 1;
-    }
-    &s[start..end]
+    Some(n)
 }
 
-fn write_u32(mut v: u32) {
-    if v == 0 {
-        write_str(b"0");
-        return;
-    }
-    let mut buf = [0u8; 10];
-    let mut i = 9;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_str(&buf[i + 1..]);
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct DriverEntry {
+    name: [u8; 64],
+    state: u32,
+    version: u32,
 }
 
-fn write_u64(mut v: u64) {
-    if v == 0 {
-        write_str(b"0");
-        return;
+fn driver_state_str(state: u32) -> &'static [u8] {
+    match state {
+        0 => b"Stopped",
+        1 => b"Loaded",
+        2 => b"Running",
+        3 => b"Error",
+        _ => b"Unknown",
     }
-    let mut buf = [0u8; 20];
-    let mut i = 19;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_str(&buf[i + 1..]);
-}
-
-fn write_hex64(v: u64) {
-    let chars = b"0123456789ABCDEF";
-    let mut buf = [0u8; 18];
-    buf[0] = b'0';
-    buf[1] = b'x';
-    for i in 0..16 {
-        buf[2 + i] = chars[((v >> (60 - i * 4)) & 0xF) as usize];
-    }
-    write_str(&buf);
-}
-
-fn error_str(e: u32) -> &'static str {
-    match e {
-        0 => "None",
-        1 => "InitFailed",
-        2 => "RegistrationFailed",
-        3 => "BindFailed",
-        4 => "SandboxRejected",
-        5 => "CertificationFailed",
-        6 => "OutOfMemory",
-        7 => "PolicyViolation",
-        8 => "LoadFailed",
-        9 => "CapabilityDenied",
-        10 => "UnloadFailed",
-        11 => "UnloadTimeout",
-        _ => "Unknown",
-    }
-}
-
-fn read_all_drivers() -> Result<[DriverInfo; MAX_DRIVERS], i64> {
-    let fd = syscall::sys_ob_open("\\Global\\Info\\Drivers", ob_access::READ)?;
-    let entry_size = core::mem::size_of::<DriverInfo>();
-    let mut buf = [0u8; 4096];
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::Drivers, &mut buf)?;
-    let _ = syscall::sys_close(fd);
-    let count = n / entry_size;
-    let count = count.min(MAX_DRIVERS);
-    let mut drivers = [DriverInfo {
-        id: 0, state: 0, category: 0, driver_type: 0,
-        api_version: 0, abi_min: 0, abi_target: 0, abi_max: 0,
-        last_error: 0, caps: 0, isolation_mode: 0,
-        events_received: 0, tick_count: 0, registered_at_tick: 0,
-        name: [0; 8],
-    }; MAX_DRIVERS];
-    let src = unsafe {
-        core::slice::from_raw_parts(buf.as_ptr() as *const DriverInfo, count)
-    };
-    drivers[..count].copy_from_slice(src);
-    Ok(drivers)
-}
-
-#[used]
-#[link_section = ".rodata"]
-static NDREG_HELP: &[u8] = b"::HELP::\
-NDREG [LIST|SHOW <name>|QUERY|RUNTIME]\r\n\
-  NeoDOS Driver Registry - inspect driver metadata.\r\n\
-  NDREG LIST            List all loaded drivers\r\n\
-  NDREG SHOW <name>     Show full driver details\r\n\
-  NDREG QUERY           Summarize driver registry\r\n\
-  NDREG RUNTIME         Show runtime state snapshot\r\n\
-::END::";
-
-fn driver_count(drivers: &[DriverInfo; MAX_DRIVERS]) -> usize {
-    let mut count = 0;
-    for d in drivers {
-        if d.id == 0 && d.name[0] == 0 { break; }
-        count += 1;
-    }
-    count
-}
-
-fn cmd_list() {
-    let drivers = match read_all_drivers() {
-        Ok(d) => d,
-        Err(_) => { write_err(b"\r\nError enumerating drivers\r\n\r\n"); return; }
-    };
-    let count = driver_count(&drivers);
-    write_str(b"\r\nLoaded drivers:\r\n");
-    write_str(b"-----------------------------\r\n");
-    for info in &drivers[..count] {
-        write_str(b"  ID:"); write_u32(info.id);
-        write_str(b"  "); write_str(info.name_str().as_bytes());
-        write_str(b"  ["); write_str(info.state_str().as_bytes());
-        write_str(b"]");
-        if info.last_error != 0 {
-            write_str(b"  ERR:"); write_str(error_str(info.last_error).as_bytes());
-        }
-        write_str(b"\r\n");
-    }
-    if count == 0 {
-        write_str(b"  No drivers loaded.\r\n");
-    }
-    write_str(b"\r\n");
-}
-
-fn cmd_show(name: &[u8]) {
-    let drivers = match read_all_drivers() {
-        Ok(d) => d,
-        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
-    };
-    let count = driver_count(&drivers);
-    for info in &drivers[..count] {
-        if info.name_str().as_bytes().eq_ignore_ascii_case(name) {
-            write_str(b"\r\n========================================\r\n");
-            write_str(b"  Driver: "); write_str(info.name_str().as_bytes()); write_str(b"\r\n");
-            write_str(b"========================================\r\n");
-            write_str(b"  ID:              "); write_u32(info.id); write_str(b"\r\n");
-            write_str(b"  State:           "); write_str(info.state_str().as_bytes()); write_str(b"\r\n");
-            write_str(b"  Category:        "); write_str(info.category_str().as_bytes()); write_str(b"\r\n");
-            write_str(b"  Type:            "); write_u32(info.driver_type as u32); write_str(b"\r\n");
-            write_str(b"  API Version:     "); write_u32(info.api_version as u32); write_str(b"\r\n");
-            write_str(b"  ABI:             "); write_u32(info.abi_min as u32); write_str(b"-"); write_u32(info.abi_target as u32); write_str(b"-"); write_u32(info.abi_max as u32); write_str(b"\r\n");
-            write_str(b"  Caps:            "); write_hex64(info.caps); write_str(b"\r\n");
-            write_str(b"  Last Error:      "); write_str(error_str(info.last_error).as_bytes()); write_str(b"\r\n");
-            write_str(b"  Isolation:       "); write_u32(info.isolation_mode as u32); write_str(b"\r\n");
-            write_str(b"  Events Received: "); write_u64(info.events_received); write_str(b"\r\n");
-            write_str(b"  Tick Count:      "); write_u64(info.tick_count); write_str(b"\r\n");
-            write_str(b"  Registered at:   "); write_u64(info.registered_at_tick); write_str(b"\r\n");
-            write_str(b"\r\n");
-            return;
-        }
-    }
-    write_str(b"\r\nDriver '");
-    write_str(name);
-    write_str(b"' not found.\r\n\r\n");
-}
-
-fn cmd_query() {
-    let drivers = match read_all_drivers() {
-        Ok(d) => d,
-        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
-    };
-    let count = driver_count(&drivers);
-    let mut total = 0u32;
-    let mut active = 0u32;
-    let mut loaded = 0u32;
-    let mut faulted = 0u32;
-    let mut unloaded = 0u32;
-    for info in &drivers[..count] {
-        total += 1;
-        match info.state {
-            4 => active += 1,
-            0 | 1 | 2 | 3 => loaded += 1,
-            5 => faulted += 1,
-            6 | 7 => unloaded += 1,
-            _ => {}
-        }
-    }
-    write_str(b"\r\nDriver Registry Summary:\r\n");
-    write_str(b"  Total:  "); write_u32(total); write_str(b"\r\n");
-    write_str(b"  Active: "); write_u32(active); write_str(b"\r\n");
-    write_str(b"  Loaded: "); write_u32(loaded); write_str(b"\r\n");
-    write_str(b"  Faulted:"); write_u32(faulted); write_str(b"\r\n");
-    write_str(b"  Unloaded:"); write_u32(unloaded); write_str(b"\r\n");
-    write_str(b"\r\n");
-}
-
-fn cmd_runtime() {
-    let drivers = match read_all_drivers() {
-        Ok(d) => d,
-        Err(_) => { write_err(b"\r\nError reading drivers\r\n\r\n"); return; }
-    };
-    let count = driver_count(&drivers);
-    write_str(b"\r\nRuntime Snapshot:\r\n");
-    write_str(b"-----------------------------\r\n");
-    for info in &drivers[..count] {
-        write_str(b"  ["); write_str(info.state_str().as_bytes());
-        write_str(b"] "); write_str(info.name_str().as_bytes());
-        write_str(b" (ID:"); write_u32(info.id); write_str(b", ");
-        write_str(info.category_str().as_bytes());
-        if info.isolation_mode > 0 {
-            write_str(b", ISO:");
-            write_u32(info.isolation_mode as u32);
-        }
-        write_str(b")\r\n");
-    }
-    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    let args = read_args();
-    if is_help_flag(&args) {
-        write_str(b"\r\nNDREG [LIST|SHOW <name>|QUERY|RUNTIME]\r\n  NeoDOS Driver Registry - inspect driver metadata.\r\n  NDREG LIST            List all loaded drivers\r\n  NDREG SHOW <name>     Show full driver details\r\n  NDREG QUERY           Summarize driver registry\r\n  NDREG RUNTIME         Show runtime state snapshot\r\n\r\n");
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+    let raw = libneodos::args::read_args();
+    if libneodos::args::is_help_flag(&raw) {
+        print_help();
         syscall::sys_exit(0);
     }
 
-    let arg_str = {
-        let end = args.iter().position(|&b| b == 0).unwrap_or(0);
-        trim_ascii(&args[..end])
-    };
-
-    if arg_str.is_empty() {
-        cmd_list();
-        syscall::sys_exit(0);
-    }
-
-    // Split first word and rest
-    let first_space = arg_str.iter().position(|&b| b == b' ' || b == b'\t').unwrap_or(arg_str.len());
-    let cmd = &arg_str[..first_space];
-    let rest = trim_ascii(&arg_str[first_space..]);
-
-    if cmd.eq_ignore_ascii_case(b"LIST") {
-        cmd_list();
-    } else if cmd.eq_ignore_ascii_case(b"SHOW") {
-        if rest.is_empty() {
-            write_err(b"\r\nUsage: NDREG SHOW <name>\r\n\r\n");
-        } else {
-            cmd_show(rest);
+    let args = libneodos::args::trim_ascii(&raw);
+    if args.is_empty() || is_cmd(args, b"list") || is_cmd(args, b"help") {
+        if is_cmd(args, b"help") {
+            print_help();
+            syscall::sys_exit(0);
         }
-    } else if cmd.eq_ignore_ascii_case(b"QUERY") {
-        cmd_query();
-    } else if cmd.eq_ignore_ascii_case(b"RUNTIME") {
-        cmd_runtime();
-    } else {
-        write_err(b"\r\nUnknown NDREG subcommand. Try: NDREG LIST, SHOW, QUERY, or RUNTIME\r\n\r\n");
+
+        let fd = match syscall::sys_ob_open("\\Global\\Info\\Drivers", libneodos::syscall::ob_access::READ) {
+            Ok(f) => f,
+            Err(_) => {
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_ERR_ENUM).as_bytes());
+                write_err(b"\r\n");
+                syscall::sys_exit(1);
+            }
+        };
+
+        let mut buf = [0u8; 64 * 32];
+        let n = match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Drivers, &mut buf) {
+            Ok(n) => n,
+            Err(_) => {
+                let _ = syscall::sys_close(fd);
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_ERR_ENUM).as_bytes());
+                write_err(b"\r\n");
+                syscall::sys_exit(1);
+            }
+        };
+        let _ = syscall::sys_close(fd);
+
+        if n < core::mem::size_of::<DriverEntry>() {
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_NO_DRIVERS).as_bytes());
+            write_str(b"\r\n\r\n");
+            syscall::sys_exit(0);
+        }
+
+        let count = n / core::mem::size_of::<DriverEntry>();
+        let entries: &[DriverEntry] = unsafe {
+            core::slice::from_raw_parts(buf.as_ptr() as *const DriverEntry, count)
+        };
+
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_HEADER_LOADED).as_bytes());
+        write_str(b"\r\n");
+        for (i, entry) in entries.iter().enumerate() {
+            if entry.name[0] == 0 { continue; }
+            let name_end = entry.name.iter().position(|&b| b == 0).unwrap_or(64);
+            write_str(b"  [");
+            write_num(i as u64);
+            write_str(b"] ");
+            write_str(&entry.name[..name_end]);
+            write_str(b"  ");
+            write_str(tr_id!(IDS_STATE).as_bytes());
+            write_str(driver_state_str(entry.state));
+            write_str(b"\r\n");
+        }
+        write_str(b"\r\n");
+        syscall::sys_exit(0);
     }
 
-    syscall::sys_exit(0)
+    if is_cmd(args, b"info") || is_cmd(args, b"state") {
+        let rest = &args[4..];
+        let rest = libneodos::args::trim_ascii(rest);
+        let idx = match parse_u32(rest) {
+            Some(i) => i,
+            None => {
+                print_help();
+                syscall::sys_exit(1);
+            }
+        };
+
+        let fd = match syscall::sys_ob_open("\\Global\\Info\\Drivers", libneodos::syscall::ob_access::READ) {
+            Ok(f) => f,
+            Err(_) => {
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_ERR_ENUM).as_bytes());
+                write_err(b"\r\n");
+                syscall::sys_exit(1);
+            }
+        };
+
+        let mut entry: DriverEntry = DriverEntry {
+            name: [0u8; 64],
+            state: 0,
+            version: 0,
+        };
+        let entry_size = core::mem::size_of::<DriverEntry>();
+        let offset = idx as usize * entry_size;
+        let buf = unsafe {
+            core::slice::from_raw_parts_mut(&mut entry as *mut DriverEntry as *mut u8, entry_size)
+        };
+        match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Drivers, &mut buf[..]) {
+            Ok(n) if n >= entry_size => {}
+            _ => {
+                let _ = syscall::sys_close(fd);
+                write_err(b"\r\nDriver not found\r\n");
+                syscall::sys_exit(1);
+            }
+        };
+        let _ = syscall::sys_close(fd);
+
+        let name_end = entry.name.iter().position(|&b| b == 0).unwrap_or(64);
+        write_str(b"\r\nDriver: ");
+        write_str(&entry.name[..name_end]);
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_STATE).as_bytes());
+        write_str(driver_state_str(entry.state));
+        write_str(b"\r\n");
+        write_str(b"Version: ");
+        write_num(entry.version as u64);
+        write_str(b"\r\n\r\n");
+        syscall::sys_exit(0);
+    }
+
+    write_err(b"\r\n");
+    write_err(tr_id!(IDS_UNKNOWN_CMD).as_bytes());
+    write_err(b"\r\n");
+    syscall::sys_exit(1)
+}
+
+fn write_num(mut v: u64) {
+    if v == 0 { write_str(b"0"); return; }
+    let mut buf = [0u8; 20];
+    let mut i = 20;
+    while v > 0 {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    write_str(&buf[i..]);
 }

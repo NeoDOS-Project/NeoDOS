@@ -9,121 +9,104 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
-use libneodos::console;
+use core::fmt::Write;
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "progress";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_TITLE: u32 = 1004;
+const IDS_DONE: u32 = 1005;
+const IDS_COMPLETED: u32 = 1006;
+const IDS_ALL_DONE: u32 = 1007;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-fn write_u32(mut v: u32) {
-    if v == 0 { write_str(b"0"); return; }
-    let mut buf = [0u8; 10];
-    let mut i = 9;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
+struct BufWriter<'a>(&'a mut [u8], &'a mut usize);
+
+impl<'a> Write for BufWriter<'a> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let bytes = s.as_bytes();
+        let avail = self.0.len() - *self.1;
+        let n = bytes.len().min(avail);
+        self.0[*self.1..*self.1 + n].copy_from_slice(&bytes[..n]);
+        *self.1 += n;
+        Ok(())
     }
-    write_str(&buf[i + 1..]);
 }
 
-#[used]
-#[link_section = ".rodata"]
-static PROGRESS_HELP: &[u8] = b"::HELP::\
-PROGRESS [n]\r\n\
-  Demo de barras de progreso.\r\n\
-  n  Numero de barras (1-8, default 3).\r\n\
-::END::";
-
-fn print_help() {
-    write_str(b"\r\nPROGRESS [n]\r\n");
-    write_str(b"  Demo de barras de progreso.\r\n");
-    write_str(b"  n  Numero de barras (1-8, default 3).\r\n\r\n");
-}
-
-fn args_to_slice(buf: &[u8; 256]) -> &[u8] {
-    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    &buf[..end]
-}
-
-fn parse_u32(s: &[u8]) -> Option<u32> {
-    if s.is_empty() { return None; }
-    let mut n: u32 = 0;
-    for &b in s {
-        if b < b'0' || b > b'9' { return None; }
-        n = n.saturating_mul(10).saturating_add((b - b'0') as u32);
+fn progress_bar(percent: u8) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    let mut pos = 0;
+    buf[pos] = b'['; pos += 1;
+    let filled = (percent as usize) / 5;
+    let mut i = 0;
+    while i < filled && i < 20 {
+        buf[pos] = b'#'; pos += 1; i += 1;
     }
-    Some(n)
+    while i < 20 {
+        buf[pos] = b'.'; pos += 1; i += 1;
+    }
+    buf[pos] = b']'; pos += 1;
+    buf[pos] = b' '; pos += 1;
+    let tens = percent / 10;
+    let ones = percent % 10;
+    buf[pos] = b'0' + tens; pos += 1;
+    buf[pos] = b'0' + ones; pos += 1;
+    buf[pos] = b'%'; pos += 1;
+    buf
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw = libneodos::args::read_args();
     if libneodos::args::is_help_flag(&raw) {
-        print_help();
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE).as_bytes());
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+        write_str(b"\r\n\r\n");
         syscall::sys_exit(0);
     }
-    let args = args_to_slice(&raw);
 
-    let num_bars = if args.is_empty() {
-        3u32
-    } else {
-        match parse_u32(libneodos::args::trim_ascii(args)) {
-            Some(n) if n >= 1 && n <= 8 => n,
-            _ => {
-                write_str(b"\r\nUso: PROGRESS [n]  (n = 1-8)\r\n");
-                syscall::sys_exit(1);
-            }
+    let mut nbars = 3usize;
+    let arg_slice = libneodos::args::trim_ascii(&raw);
+    if !arg_slice.is_empty() {
+        if let Ok(v) = core::str::from_utf8(arg_slice).unwrap_or("").parse::<usize>() {
+            if v >= 1 && v <= 8 { nbars = v; }
         }
-    };
+    }
 
-    write_str(b"\r\nBarras de progreso: ");
-    write_u32(num_bars);
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_TITLE).as_bytes());
     write_str(b"\r\n\r\n");
 
-    let titles: &[&str] = &[
-        "Alfa  ",
-        "Beta  ",
-        "Gamma ",
-        "Delta ",
-        "Epsilon",
-        "Zeta  ",
-        "Eta   ",
-        "Theta ",
-    ][..num_bars as usize];
-
-    let totals: [u64; 8] = [100, 80, 60, 50, 40, 30, 20, 10];
-
-    let mut ids = [0i32; 8];
-    let mut currents = [0u64; 8];
-    let mut done = 0u32;
-
-    for (i, t) in titles.iter().enumerate() {
-        ids[i] = console::progress_create(t, totals[i]);
-    }
-
-    while done < num_bars {
-        for i in 0..num_bars as usize {
-            if currents[i] < totals[i] {
-                currents[i] = core::cmp::min(currents[i] + 1, totals[i]);
-                console::progress_update(ids[i], currents[i]);
-                if currents[i] >= totals[i] {
-                    console::progress_set_message(ids[i], "listo!");
-                    done += 1;
-                }
-            }
+    for bar in 0..nbars {
+        let label = [b"A", b"B", b"C", b"D", b"E", b"F", b"G", b"H"][bar];
+        write_str(b"  [");
+        write_str(&[label[0]]);
+        write_str(b"] ");
+        for p in 0..=100 {
+            let bar_bytes = progress_bar(p as u8);
+            write_str(b"\r");
+            write_str(&bar_bytes);
+            for _ in 0..10000000 { core::hint::spin_loop(); }
         }
-        for _ in 0..3 {
-            syscall::sys_yield();
-        }
+        write_str(tr_id!(IDS_DONE).as_bytes());
+        write_str(b"\r\n");
     }
 
-    for i in 0..num_bars as usize {
-        console::progress_set_message(ids[i], "completado");
-        console::progress_finish(ids[i]);
-    }
-
-    write_str(b"\r\nTodo listo!\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_ALL_DONE).as_bytes());
+    write_str(b"\r\n\r\n");
     syscall::sys_exit(0)
 }

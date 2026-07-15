@@ -1,0 +1,29 @@
+[meta]
+app = "ndreg"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_USAGE_LINE6 = 1006
+IDS_HEADER_LOADED = 1007
+IDS_NO_DRIVERS = 1008
+IDS_ERR_ENUM = 1009
+IDS_STATE = 1010
+IDS_UNKNOWN_CMD = 1011
+
+[strings]
+IDS_USAGE = "NDREG [subcomando]"
+IDS_USAGE_LINE2 = "  Herramienta de registro de controladores NEM."
+IDS_USAGE_LINE3 = "  NDREG list       lista los controladores cargados"
+IDS_USAGE_LINE4 = "  NDREG info <n>   muestra información del controlador"
+IDS_USAGE_LINE5 = "  NDREG state <n>  muestra el estado del controlador"
+IDS_USAGE_LINE6 = "  NDREG help       muestra esta ayuda"
+IDS_HEADER_LOADED = "Controladores cargados:"
+IDS_NO_DRIVERS = "No hay controladores cargados."
+IDS_ERR_ENUM = "Error al enumerar los controladores"
+IDS_STATE = "Estado: "
+IDS_UNKNOWN_CMD = "Subcomando NDREG desconocido."

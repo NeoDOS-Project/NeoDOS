@@ -9,7 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "corerd";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_ERR_CANNOT_REMOVE: u32 = 1004;
+const IDS_ERR_CANNOT_OPEN: u32 = 1005;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -18,14 +27,6 @@ fn write_str(s: &[u8]) {
 fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
-
-#[used]
-#[link_section = ".rodata"]
-static RD_HELP: &[u8] = b"::HELP::\
-RD [drive:]path\r\n\
-  Remove an empty directory.\r\n\
-  RD C:\\EmptyFolder\r\n\
-::END::";
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
@@ -73,13 +74,19 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 }
 
 fn print_usage() {
-    write_str(b"\r\nUsage: RD [drive:]path\r\n");
-    write_str(b"  Remove an empty directory.\r\n");
-    write_str(b"  RD C:\\EmptyFolder\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -108,13 +115,17 @@ pub extern "C" fn _start() -> ! {
                 }
                 Err(_) => {
                     let _ = syscall::sys_close(fd);
-                    write_err(b"\r\nRD: cannot remove directory (destroy failed)\r\n");
+                    write_err(b"\r\n");
+                    write_err(tr_id!(IDS_ERR_CANNOT_REMOVE).as_bytes());
+                    write_err(b"\r\n");
                     syscall::sys_exit(1);
                 }
             }
         }
         Err(_) => {
-            write_err(b"\r\nRD: cannot open directory\r\n");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_CANNOT_OPEN).as_bytes());
+            write_err(b"\r\n");
             syscall::sys_exit(1);
         }
     }

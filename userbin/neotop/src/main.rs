@@ -9,14 +9,24 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall::{self, ObEnumEntry, ObProcessInfo};
-use libneodos::console;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "neotop";
+const IDS_TITLE: u32 = 1005;
+const IDS_COL_PID: u32 = 1006;
+const IDS_COL_NAME: u32 = 1007;
+const IDS_COL_STATE: u32 = 1008;
+const IDS_COL_PRI: u32 = 1009;
+const IDS_COL_THR: u32 = 1010;
+const IDS_ERR_OPEN: u32 = 1011;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-fn write_u32(v: u32, width: usize) {
+fn write_u32_right(v: u32, width: usize) {
     let mut buf = [0u8; 12];
     let mut i = 11;
     let mut n = v;
@@ -43,6 +53,13 @@ fn write_u32(v: u32, width: usize) {
         }
         write_str(&buf[digits_start..digits_end]);
     }
+}
+
+fn pad_right(s: &[u8], width: usize) -> [u8; 32] {
+    let mut buf = [0u8; 32];
+    let len = s.len().min(width);
+    buf[..len].copy_from_slice(&s[..len]);
+    buf
 }
 
 fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
@@ -86,38 +103,77 @@ fn parse_pid_from_name(name: &str) -> Option<u32> {
     Some(n)
 }
 
-fn render_snapshot() {
-    write_str(b"\x1b[2J\x1b[H");
-    write_str(b"============================================================\r\n");
-    write_str(b"              NeoTOP - System Monitor\r\n");
-    write_str(b"============================================================\r\n");
+fn print_help() {
+    write_str(b"\r\n");
+    write_str(b"NEOTOP\r\n");
+    write_str(b"  Display system monitor with process list.\r\n");
+    write_str(b"  Shows processes sorted by CPU usage.\r\n");
+    write_str(b"  Press Q to quit.\r\n\r\n");
+}
+
+#[no_mangle]
+pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+    let raw = libneodos::args::read_args();
+    if libneodos::args::is_help_flag(&raw) {
+        print_help();
+        syscall::sys_exit(0);
+    }
 
     let dir_fd = match syscall::sys_ob_open("\\Process", libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            write_str(b"Cannot open process list\r\n");
-            return;
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_ERR_OPEN).as_bytes());
+            write_str(b"\r\n");
+            syscall::sys_exit(1);
         }
     };
 
     let mut entries: [ObEnumEntry; 64] = core::array::from_fn(|_| ObEnumEntry {
-        id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+        id: 0,
+        obj_type: 0,
+        name: [0u8; 32],
+        mode: 0,
+        _pad: [0u8; 2],
+        size: 0,
     });
 
     let count = match syscall::sys_ob_enum(dir_fd, &mut entries) {
         Ok(c) => c,
-        Err(_) => { let _ = syscall::sys_close(dir_fd); return; }
+        Err(_) => {
+            let _ = syscall::sys_close(dir_fd);
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_ERR_OPEN).as_bytes());
+            write_str(b"\r\n");
+            syscall::sys_exit(1);
+        }
     };
     let _ = syscall::sys_close(dir_fd);
 
     write_str(b"\r\n");
-    write_str(b" PID  PPID PRI THR STATE     \r\n");
-    write_str(b" ---- ---- --- --- ----------\r\n");
+    write_str(tr_id!(IDS_TITLE).as_bytes());
+    write_str(b"\r\n\r\n");
+
+    write_str(tr_id!(IDS_COL_PID).as_bytes());
+    write_str(b"  ");
+    write_str(tr_id!(IDS_COL_NAME).as_bytes());
+    write_str(b"          ");
+    write_str(tr_id!(IDS_COL_STATE).as_bytes());
+    write_str(b"  ");
+    write_str(tr_id!(IDS_COL_PRI).as_bytes());
+    write_str(b" ");
+    write_str(tr_id!(IDS_COL_THR).as_bytes());
+    write_str(b"\r\n");
+    write_str(b"---  ----            -----    --- ---\r\n");
 
     let mut path_buf = [0u8; 128];
+
     for i in 0..count.min(64) {
-        let e_name = entries[i].name_str();
-        let pid = match parse_pid_from_name(&e_name) {
+        let e = &entries[i];
+        let name_str = e.name_str();
+        let pid = match parse_pid_from_name(&name_str) {
             Some(p) => p,
             None => continue,
         };
@@ -137,101 +193,28 @@ fn render_snapshot() {
         let _ = syscall::sys_close(proc_fd);
 
         if written < 20 { continue; }
+
         let info: ObProcessInfo = unsafe { core::ptr::read(info_buf.as_ptr() as *const ObProcessInfo) };
 
-        write_str(b" ");
-        write_u32(info.pid, 3);
+        write_u32_right(info.pid, 3);
         write_str(b"  ");
-        write_u32(info.parent_pid, 3);
-        write_str(b"  ");
-        write_str(info.priority_str().as_bytes());
-        write_str(b" ");
-        write_u32(info.thread_count, 2);
+        let n = pad_right(name_str.as_bytes(), 14);
+        write_str(&n[..14]);
         write_str(b" ");
         let state = info.state_str();
         write_str(state.as_bytes());
-        for _ in 0..(10 - state.len()) { write_str(b" "); }
+        for _ in 0..(8 - state.len()) {
+            write_str(b" ");
+        }
+        let prio = info.priority_str();
+        write_str(prio.as_bytes());
+        for _ in 0..(4 - prio.len()) {
+            write_str(b" ");
+        }
+        write_u32_right(info.thread_count, 3);
         write_str(b"\r\n");
     }
 
-    // Memory stats with console.nxl progress bar
-    if let Ok(fd) = syscall::sys_ob_open("\\Global\\Info\\Memory", libneodos::syscall::ob_access::READ) {
-        let mut mibuf = [0u8; 48];
-        if syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Memory, &mut mibuf).is_ok() {
-            let arr = unsafe { &*(mibuf.as_ptr() as *const [u64; 6]) };
-            let total_kib = arr[1]; // MemoryStats.total_kib at offset 8
-            let free_kib  = arr[3]; // MemoryStats.free_kib  at offset 24
-            let used_kib  = arr[4]; // MemoryStats.used_kib  at offset 32
-            let mut msg = [0u8; 64];
-            let mp = b"total=";
-            msg[..mp.len()].copy_from_slice(mp);
-            let mut pos = mp.len();
-            let mut n = total_kib;
-            let mut digits = [0u8; 20];
-            let mut nd = 0;
-            if n == 0 { digits[nd] = b'0'; nd = 1; }
-            while n > 0 { digits[nd] = b'0' + (n % 10) as u8; n /= 10; nd += 1; }
-            for i in (0..nd).rev() { msg[pos] = digits[i]; pos += 1; }
-            let sp = b" free=";
-            msg[pos..pos+sp.len()].copy_from_slice(sp); pos += sp.len();
-            n = free_kib;
-            nd = 0;
-            if n == 0 { digits[nd] = b'0'; nd = 1; }
-            while n > 0 { digits[nd] = b'0' + (n % 10) as u8; n /= 10; nd += 1; }
-            for i in (0..nd).rev() { msg[pos] = digits[i]; pos += 1; }
-            let mem_id = console::progress_create("MEM", total_kib);
-            console::progress_update(mem_id, used_kib);
-            console::progress_set_message(mem_id,
-                unsafe { core::str::from_utf8_unchecked(&msg[..pos]) });
-            console::progress_finish(mem_id);
-        }
-        let _ = syscall::sys_close(fd);
-    }
-
-    write_str(b"============================================================\r\n");
-}
-
-#[used]
-#[link_section = ".rodata"]
-static NEOTOP_HELP: &[u8] = b"::HELP::\
-NEOTOP [/W]\r\n\
-  System monitor. Shows processes and memory.\r\n\
-  /W    Watch mode: refresh every ~1 second (press any key to exit).\r\n\
-::END::";
-
-fn print_help() {
-    write_str(b"\r\nNEOTOP [/W]\r\n");
-    write_str(b"  System monitor. Shows processes and memory.\r\n");
-    write_str(b"  /W    Watch mode: refresh every ~1 second (press any key to exit).\r\n\r\n");
-}
-
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
-    let raw = libneodos::args::read_args();
-    if libneodos::args::is_help_flag(&raw) {
-        print_help();
-        syscall::sys_exit(0);
-    }
-
-    let watch = raw.iter().any(|&b| b == b'w' || b == b'W');
-
-    if !watch {
-        render_snapshot();
-        syscall::sys_exit(0);
-    }
-
-    loop {
-        render_snapshot();
-        // Busy-wait ~1 sec: yield ~10000 times (1000 Hz timer tick)
-        for _ in 0..10000 {
-            syscall::sys_yield();
-        }
-        // Quick non-blocking stdin check
-        let mut ch = [0u8; 1];
-        if let Ok(1) = syscall::sys_read(0, &mut ch) {
-            if ch[0] == b'q' || ch[0] == b'\x1b' { break; }
-        }
-    }
-
+    write_str(b"\r\n");
     syscall::sys_exit(0)
 }

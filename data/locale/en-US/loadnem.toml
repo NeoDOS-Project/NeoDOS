@@ -1,0 +1,29 @@
+[meta]
+app = "loadnem"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_LOADING = 1005
+IDS_LOADED = 1006
+IDS_UNLOADING = 1007
+IDS_UNLOADED = 1008
+IDS_ERR_OPEN = 1009
+IDS_ERR_LOAD = 1010
+IDS_ERR_UNLOAD = 1011
+
+[strings]
+IDS_USAGE = "LOADNEM <driver.nem>"
+IDS_USAGE_LINE2 = "  Load a NEM driver."
+IDS_USAGE_LINE3 = "  LOADNEM driver.nem    loads the driver"
+IDS_USAGE_LINE4 = "  LOADNEM /U driver.nem unloads the driver"
+IDS_LOADING = "Loading driver: "
+IDS_LOADED = "Driver loaded successfully"
+IDS_UNLOADING = "Unloading driver: "
+IDS_UNLOADED = "Driver unloaded successfully."
+IDS_ERR_OPEN = " cannot open"
+IDS_ERR_LOAD = "Failed to load driver"
+IDS_ERR_UNLOAD = "Failed to unload driver"

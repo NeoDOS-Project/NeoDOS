@@ -1,0 +1,17 @@
+[meta]
+app = "coredel"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_CANNOT_DELETE = 1004
+IDS_ERR_FILE_NOT_FOUND = 1005
+
+[strings]
+IDS_USAGE = "Usage: DEL [drive:][path]filename"
+IDS_USAGE_LINE2 = "  Delete a file."
+IDS_USAGE_LINE3 = "  DEL C:\\file.txt"
+IDS_ERR_CANNOT_DELETE = "DEL: cannot delete"
+IDS_ERR_FILE_NOT_FOUND = "DEL: file not found"

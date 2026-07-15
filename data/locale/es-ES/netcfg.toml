@@ -1,0 +1,17 @@
+[meta]
+app = "netcfg"
+language = "es-ES"
+
+[ids]
+IDS_ERR_KEY = 1001
+IDS_STATIC = 1002
+IDS_DHCP_WAIT = 1003
+IDS_DHCP_TIMEOUT = 1004
+IDS_OK = 1005
+
+[strings]
+IDS_ERR_KEY = "netcfg: clave de registro no encontrada"
+IDS_STATIC = "estática: IP "
+IDS_DHCP_WAIT = "DHCP: esperando a dhcpd..."
+IDS_DHCP_TIMEOUT = "DHCP: tiempo de espera agotado"
+IDS_OK = "netcfg: OK"

@@ -1,0 +1,23 @@
+[meta]
+app = "keyb"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_LAYOUT = 1005
+IDS_ERR_READING = 1006
+IDS_ERR_INVALID = 1007
+IDS_ERR_CHANGE = 1008
+
+[strings]
+IDS_USAGE = "KEYB [distribució]"
+IDS_USAGE_LINE2 = "  Mostra o canvia la distribució del teclat."
+IDS_USAGE_LINE3 = "  KEYB                mostra la distribució actual"
+IDS_USAGE_LINE4 = "  KEYB es             canvia a distribució espanyola"
+IDS_LAYOUT = "Distribució del teclat: "
+IDS_ERR_READING = "Error en llegir la distribució del teclat."
+IDS_ERR_INVALID = "Distribució no vàlida."
+IDS_ERR_CHANGE = "Error: no s'ha pogut canviar la distribució del teclat."

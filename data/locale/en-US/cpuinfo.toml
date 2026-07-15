@@ -1,0 +1,39 @@
+[meta]
+app = "cpuinfo"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_CPU_INFO = 1004
+IDS_TOPOLOGY = 1005
+IDS_FEATURES = 1006
+IDS_VENDOR = 1007
+IDS_BRAND = 1008
+IDS_CORES = 1009
+IDS_THREADS = 1010
+IDS_FAMILY = 1011
+IDS_MODEL = 1012
+IDS_STEPPING = 1013
+IDS_YES = 1014
+IDS_NO = 1015
+IDS_UNAVAIL = 1016
+
+[strings]
+IDS_USAGE = "CPUINFO"
+IDS_USAGE_LINE2 = "  Display CPU information."
+IDS_USAGE_LINE3 = "  Shows vendor, brand, topology, and features."
+IDS_CPU_INFO = "CPU INFORMATION"
+IDS_TOPOLOGY = "TOPOLOGY"
+IDS_FEATURES = "FEATURES"
+IDS_VENDOR = "Vendor: "
+IDS_BRAND = "Brand: "
+IDS_CORES = "Cores: "
+IDS_THREADS = "Threads: "
+IDS_FAMILY = "Family: "
+IDS_MODEL = "Model: "
+IDS_STEPPING = "Stepping: "
+IDS_YES = "Yes"
+IDS_NO = "No"
+IDS_UNAVAIL = "CPU info not available"

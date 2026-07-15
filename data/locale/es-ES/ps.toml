@@ -1,0 +1,23 @@
+[meta]
+app = "ps"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_CANNOT_OPEN = 1004
+IDS_ERR_ENUM_FAILED = 1005
+IDS_ERR_NO_PROCESSES = 1006
+IDS_HEADER = 1007
+IDS_SEPARATOR = 1008
+
+[strings]
+IDS_USAGE = "PS"
+IDS_USAGE_LINE2 = "  Muestra la lista de procesos."
+IDS_USAGE_LINE3 = "  Muestra PID, padre, prioridad, hilos y estado."
+IDS_ERR_CANNOT_OPEN = "PS: no se puede abrir la lista de procesos"
+IDS_ERR_ENUM_FAILED = "PS: error de enumeración"
+IDS_ERR_NO_PROCESSES = "No hay procesos"
+IDS_HEADER = "PID  PPID PRI HIL ESTADO      NOMBRE"
+IDS_SEPARATOR = "---- ---- --- --- ---------- ------------------------"

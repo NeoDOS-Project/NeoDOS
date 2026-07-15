@@ -1,0 +1,15 @@
+[meta]
+app = "colors"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_UNKNOWN_OPT = 1004
+
+[strings]
+IDS_USAGE = "COLORS"
+IDS_USAGE_LINE2 = "  Mostra la taula de colors de la terminal."
+IDS_USAGE_LINE3 = "  Mostra els colors disponibles amb els seus codis."
+IDS_UNKNOWN_OPT = "Opció desconeguda"

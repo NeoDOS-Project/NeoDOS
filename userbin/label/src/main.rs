@@ -9,7 +9,19 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "label";
+const IDS_VOL_IN: u32 = 1005;
+const IDS_IS: u32 = 1006;
+const IDS_HAS_NO_LABEL: u32 = 1007;
+const IDS_IS_NOW: u32 = 1008;
+const IDS_ERR_INVALID_DRIVE: u32 = 1009;
+const IDS_ERR_INVALID_LABEL: u32 = 1010;
+const IDS_ERR_TOO_LONG: u32 = 1011;
+const IDS_ERR_SETTING_LABEL: u32 = 1012;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -82,24 +94,14 @@ fn parse_drive(args: &[u8]) -> Option<(u8, &[u8])> {
     }
 }
 
-#[used]
-#[link_section = ".rodata"]
-static LABEL_HELP: &[u8] = b"::HELP::\
-LABEL [drive:][label]\r\n\
-  Display or change the volume label of a drive.\r\n\
-  LABEL C:          shows current label on C:\r\n\
-  LABEL C:MYDISK    sets C: label to MYDISK\r\n\
-  LABEL MYDISK      sets current drive label to MYDISK\r\n\
-::END::";
-
 fn print_help() {
     write_str(b"\r\nLABEL [drive:][label]\r\n  Display or change the volume label of a drive.\r\n  LABEL C:          shows current label on C:\r\n  LABEL C:MYDISK    sets C: label to MYDISK\r\n  LABEL MYDISK      sets current drive label to MYDISK\r\n\r\n");
 }
 
-
-
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let args = read_args();
     if is_help_flag(&args) {
         print_help();
@@ -121,7 +123,9 @@ pub extern "C" fn _start() -> ! {
 
     if let Some((drive, rest)) = parse_drive(arg_str) {
         if drive < b'A' || drive > b'Z' {
-            write_err(b"\r\nInvalid drive letter.\r\n");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_INVALID_DRIVE).as_bytes());
+            write_err(b"\r\n");
             syscall::sys_exit(1);
         }
         if rest.is_empty() {
@@ -148,24 +152,29 @@ fn show_label(drive: u8) {
             match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::VolumeLabel, &mut label_buf) {
                 Ok(n) if n > 0 => {
                     let actual = label_buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
-                    write_str(b"\r\n Volume in drive ");
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_VOL_IN).as_bytes());
                     write_str(&[drive]);
-                    write_str(b" is ");
+                    write_str(tr_id!(IDS_IS).as_bytes());
                     write_str(&label_buf[..actual]);
                     write_str(b"\r\n\r\n");
                 }
                 _ => {
-                    write_str(b"\r\n Volume in drive ");
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_VOL_IN).as_bytes());
                     write_str(&[drive]);
-                    write_str(b" has no label\r\n\r\n");
+                    write_str(tr_id!(IDS_HAS_NO_LABEL).as_bytes());
+                    write_str(b"\r\n\r\n");
                 }
             }
             let _ = syscall::sys_close(fd);
         }
         Err(_) => {
-            write_str(b"\r\n Volume in drive ");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_VOL_IN).as_bytes());
             write_str(&[drive]);
-            write_str(b" has no label\r\n\r\n");
+            write_str(tr_id!(IDS_HAS_NO_LABEL).as_bytes());
+            write_str(b"\r\n\r\n");
         }
     }
 }
@@ -173,15 +182,21 @@ fn show_label(drive: u8) {
 fn set_label(drive: u8, label: &[u8]) {
     let label = trim_ascii(label);
     if label.is_empty() {
-        write_err(b"\r\nInvalid volume label.\r\n");
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_INVALID_LABEL).as_bytes());
+        write_err(b"\r\n");
         return;
     }
     if label.len() > 11 {
-        write_err(b"\r\nVolume label must be 11 characters or fewer.\r\n");
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_TOO_LONG).as_bytes());
+        write_err(b"\r\n");
         return;
     }
     if !label.iter().all(|&b| b.is_ascii() && b >= 0x20) {
-        write_err(b"\r\nInvalid volume label.\r\n");
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_INVALID_LABEL).as_bytes());
+        write_err(b"\r\n");
         return;
     }
 
@@ -193,20 +208,25 @@ fn set_label(drive: u8, label: &[u8]) {
         Ok(fd) => {
             match syscall::sys_ob_set_info(fd, libneodos::syscall::ob_set_info_class::SET_VOLUME_LABEL, label) {
                 Ok(()) => {
-                    write_str(b"\r\n Volume in drive ");
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_VOL_IN).as_bytes());
                     write_str(&[drive]);
-                    write_str(b" is now ");
-                    write_str(&label);
+                    write_str(tr_id!(IDS_IS_NOW).as_bytes());
+                    write_str(label);
                     write_str(b"\r\n\r\n");
                 }
                 Err(_) => {
-                    write_err(b"\r\n Error setting volume label.\r\n");
+                    write_err(b"\r\n");
+                    write_err(tr_id!(IDS_ERR_SETTING_LABEL).as_bytes());
+                    write_err(b"\r\n");
                 }
             }
             let _ = syscall::sys_close(fd);
         }
         Err(_) => {
-            write_err(b"\r\n Error setting volume label.\r\n");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_SETTING_LABEL).as_bytes());
+            write_err(b"\r\n");
         }
     }
 }

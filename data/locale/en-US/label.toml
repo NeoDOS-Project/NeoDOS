@@ -1,0 +1,31 @@
+[meta]
+app = "label"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_VOL_IN = 1005
+IDS_IS = 1006
+IDS_HAS_NO_LABEL = 1007
+IDS_IS_NOW = 1008
+IDS_ERR_INVALID_DRIVE = 1009
+IDS_ERR_INVALID_LABEL = 1010
+IDS_ERR_TOO_LONG = 1011
+IDS_ERR_SETTING_LABEL = 1012
+
+[strings]
+IDS_USAGE = "LABEL [drive:][label]"
+IDS_USAGE_LINE2 = "  Display or change the volume label of a drive."
+IDS_USAGE_LINE3 = "  LABEL C:          shows current label on C:"
+IDS_USAGE_LINE4 = "  LABEL C:MYDISK    sets C: label to MYDISK"
+IDS_VOL_IN = " Volume in drive "
+IDS_IS = " is "
+IDS_HAS_NO_LABEL = " has no label"
+IDS_IS_NOW = " is now "
+IDS_ERR_INVALID_DRIVE = "Invalid drive letter."
+IDS_ERR_INVALID_LABEL = "Invalid volume label."
+IDS_ERR_TOO_LONG = "Volume label must be 11 characters or fewer."
+IDS_ERR_SETTING_LABEL = " Error setting volume label."

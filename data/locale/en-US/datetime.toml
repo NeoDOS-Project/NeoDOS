@@ -1,0 +1,23 @@
+[meta]
+app = "datetime"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_CUR_DATE = 1006
+IDS_CUR_TIME = 1007
+IDS_RTC_UNAVAIL = 1008
+
+[strings]
+IDS_USAGE = "DATETIME [/D] [/T]"
+IDS_USAGE_LINE2 = "  Shows the current date and/or time."
+IDS_USAGE_LINE3 = "  /D     Show date only"
+IDS_USAGE_LINE4 = "  /T     Show time only"
+IDS_USAGE_LINE5 = "  (no flags = show both date and time)"
+IDS_CUR_DATE = "Current date: "
+IDS_CUR_TIME = "Current time: "
+IDS_RTC_UNAVAIL = "RTC not available"

@@ -1,0 +1,13 @@
+[meta]
+app = "reboot"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_MSG = 1003
+
+[strings]
+IDS_USAGE = "REBOOT"
+IDS_USAGE_LINE2 = "  Reinicia el sistema."
+IDS_MSG = "reiniciando..."

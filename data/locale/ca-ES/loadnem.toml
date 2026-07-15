@@ -1,0 +1,29 @@
+[meta]
+app = "loadnem"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_LOADING = 1005
+IDS_LOADED = 1006
+IDS_UNLOADING = 1007
+IDS_UNLOADED = 1008
+IDS_ERR_OPEN = 1009
+IDS_ERR_LOAD = 1010
+IDS_ERR_UNLOAD = 1011
+
+[strings]
+IDS_USAGE = "LOADNEM <controlador.nem>"
+IDS_USAGE_LINE2 = "  Carrega un controlador NEM."
+IDS_USAGE_LINE3 = "  LOADNEM driver.nem    carrega el controlador"
+IDS_USAGE_LINE4 = "  LOADNEM /U driver.nem descarrega el controlador"
+IDS_LOADING = "Carregant controlador: "
+IDS_LOADED = "Controlador carregat correctament"
+IDS_UNLOADING = "Descarregant controlador: "
+IDS_UNLOADED = "Controlador descarregat correctament."
+IDS_ERR_OPEN = " no es pot obrir"
+IDS_ERR_LOAD = "Error en carregar el controlador"
+IDS_ERR_UNLOAD = "Error en descarregar el controlador"

@@ -1,0 +1,29 @@
+[meta]
+app = "nxverify"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_ELF_NXE = 1006
+IDS_NXP = 1007
+IDS_UNKNOWN_FMT = 1008
+IDS_VALID = 1009
+IDS_CRC_OK = 1010
+IDS_VERIFY_ALL = 1011
+
+[strings]
+IDS_USAGE = "NXVERIFY <fitxer>"
+IDS_USAGE_LINE2 = "  Verifica la integritat d'un fitxer NXE o NXP."
+IDS_USAGE_LINE3 = "  NXVERIFY <fitxer>    verifica un fitxer .NXE o .NXP"
+IDS_USAGE_LINE4 = "  NXVERIFY --all       verifica totes les apps instal·lades"
+IDS_USAGE_LINE5 = "  NXVERIFY --help      mostra aquesta ajuda"
+IDS_ELF_NXE = "ELF NXE:"
+IDS_NXP = "Paquet NXP:"
+IDS_UNKNOWN_FMT = "Format desconegut"
+IDS_VALID = "VÀLID"
+IDS_CRC_OK = "CRC32 de capçalera: OK"
+IDS_VERIFY_ALL = "Verificant totes les apps instal·lades..."

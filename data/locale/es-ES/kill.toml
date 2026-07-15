@@ -1,0 +1,23 @@
+[meta]
+app = "kill"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_INVALID_PID = 1004
+IDS_ERR_CANNOT_KILL_IDLE = 1005
+IDS_ERR_PROCESS_NOT_FOUND = 1006
+IDS_MSG_TERMINATED = 1007
+IDS_ERR_FAILED = 1008
+
+[strings]
+IDS_USAGE = "KILL <pid>"
+IDS_USAGE_LINE2 = "  Termina un proceso por su número de PID."
+IDS_USAGE_LINE3 = "  Use PS para listar los procesos en ejecución y sus PIDs."
+IDS_ERR_INVALID_PID = "PID no válido."
+IDS_ERR_CANNOT_KILL_IDLE = "No se puede terminar el proceso idle."
+IDS_ERR_PROCESS_NOT_FOUND = "Proceso no encontrado."
+IDS_MSG_TERMINATED = " terminado."
+IDS_ERR_FAILED = "Error al terminar el proceso."

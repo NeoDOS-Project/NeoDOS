@@ -1,0 +1,39 @@
+[meta]
+app = "neomem"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_TOTAL = 1004
+IDS_USED = 1005
+IDS_FREE = 1006
+IDS_PHYSICAL = 1007
+IDS_KERNEL = 1008
+IDS_USER = 1009
+IDS_PAGING = 1010
+IDS_HEAP = 1011
+IDS_SLAB = 1012
+IDS_PAGE_TABLES = 1013
+IDS_CACHED = 1014
+IDS_UNAVAIL = 1015
+IDS_READ_FAIL = 1016
+
+[strings]
+IDS_USAGE = "NEOMEM"
+IDS_USAGE_LINE2 = "  Display system memory information."
+IDS_USAGE_LINE3 = "  Shows physical, kernel, user, and paging memory."
+IDS_TOTAL = "Total: "
+IDS_USED = "Used: "
+IDS_FREE = "Free: "
+IDS_PHYSICAL = "Physical Memory"
+IDS_KERNEL = "Kernel Memory"
+IDS_USER = "User Memory"
+IDS_PAGING = "Paging"
+IDS_HEAP = "Heap"
+IDS_SLAB = "Slab"
+IDS_PAGE_TABLES = "Page Tables"
+IDS_CACHED = "Cached"
+IDS_UNAVAIL = "Memory info not available"
+IDS_READ_FAIL = "Memory info read failed"

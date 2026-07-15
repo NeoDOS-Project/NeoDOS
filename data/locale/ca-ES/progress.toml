@@ -1,0 +1,21 @@
+[meta]
+app = "progress"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_TITLE = 1004
+IDS_DONE = 1005
+IDS_COMPLETED = 1006
+IDS_ALL_DONE = 1007
+
+[strings]
+IDS_USAGE = "PROGRESS [n]"
+IDS_USAGE_LINE2 = "  Demo de barres de progrés."
+IDS_USAGE_LINE3 = "  n  Nombre de barres (1-8, per defecte 3)."
+IDS_TITLE = "Barres de progrés:"
+IDS_DONE = "llest!"
+IDS_COMPLETED = "completat"
+IDS_ALL_DONE = "Tot llest!"

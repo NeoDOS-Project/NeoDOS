@@ -1,0 +1,33 @@
+[meta]
+app = "nxlocale"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_CURRENT = 1006
+IDS_AVAILABLE = 1007
+IDS_SET_SUCCESS = 1008
+IDS_ERR_CANNOT_OPEN = 1009
+IDS_ERR_UNKNOWN = 1010
+IDS_ERR_SET = 1011
+IDS_ERR_UNKNOWN_LOCALE = 1012
+IDS_NO_LOCALES = 1013
+
+[strings]
+IDS_USAGE = "NXLOCALE [subcomando]"
+IDS_USAGE_LINE2 = "  Herramienta de gestión de idioma."
+IDS_USAGE_LINE3 = "  NXLOCALE                  muestra el idioma actual"
+IDS_USAGE_LINE4 = "  NXLOCALE list             lista los idiomas disponibles"
+IDS_USAGE_LINE5 = "  NXLOCALE set <locale>     cambia el idioma del sistema"
+IDS_CURRENT = "Idioma actual: "
+IDS_AVAILABLE = "Idiomas disponibles:"
+IDS_SET_SUCCESS = "Idioma cambiado correctamente."
+IDS_ERR_CANNOT_OPEN = "No se puede abrir la clave de idioma"
+IDS_ERR_UNKNOWN = "Comando desconocido"
+IDS_ERR_SET = "No se puede cambiar el idioma"
+IDS_ERR_UNKNOWN_LOCALE = "Idioma desconocido"
+IDS_NO_LOCALES = "No hay idiomas disponibles"

@@ -1,0 +1,29 @@
+[meta]
+app = "nxres"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_ERR_APP_REQUIRED = 1006
+IDS_ERR_NOT_FOUND = 1007
+IDS_ERR_RES_NOT_FOUND = 1008
+IDS_LOCALES = 1009
+IDS_NO_LOCALE_RES = 1010
+IDS_NOT_IMPL = 1011
+
+[strings]
+IDS_USAGE = "NXRES <app> [recurs]"
+IDS_USAGE_LINE2 = "  Visor de recursos NXE."
+IDS_USAGE_LINE3 = "  NXRES <app>            llista els recursos de l'app"
+IDS_USAGE_LINE4 = "  NXRES <app> <rec>     mostra el contingut del recurs"
+IDS_USAGE_LINE5 = "  NXRES <app> --locales  mostra els idiomes disponibles"
+IDS_ERR_APP_REQUIRED = "Error: nom de l'app requerit"
+IDS_ERR_NOT_FOUND = "App no trobada o sense recursos"
+IDS_ERR_RES_NOT_FOUND = "Recurs no trobat"
+IDS_LOCALES = "Idiomes disponibles:"
+IDS_NO_LOCALE_RES = "No s'han trobat recursos d'idioma"
+IDS_NOT_IMPL = "encara no implementat"

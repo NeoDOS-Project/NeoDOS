@@ -9,9 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::syscall::DateTime;
 use libneodos::syscall::ObInfoClass;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "datetime";
+const IDS_CUR_DATE: u32 = 1006;
+const IDS_CUR_TIME: u32 = 1007;
+const IDS_RTC_UNAVAIL: u32 = 1008;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -25,7 +32,7 @@ fn write_u8_pad(v: u8) {
 }
 
 fn show_date(dt: &DateTime) {
-    write_str(b"Current date: ");
+    write_str(tr_id!(IDS_CUR_DATE).as_bytes());
     write_u8_pad(dt.day);
     write_str(b"/");
     write_u8_pad(dt.month);
@@ -34,26 +41,12 @@ fn show_date(dt: &DateTime) {
 }
 
 fn show_time(dt: &DateTime) {
-    write_str(b"Current time: ");
+    write_str(tr_id!(IDS_CUR_TIME).as_bytes());
     write_u8_pad(dt.hour);
     write_str(b":");
     write_u8_pad(dt.minute);
     write_str(b":");
     write_u8_pad(dt.second);
-}
-
-#[used]
-#[link_section = ".rodata"]
-static DATETIME_HELP: &[u8] = b"::HELP::\
-DATETIME [/D] [/T]\r\n\
-  Shows the current date and/or time.\r\n\
-  /D     Show date only\r\n\
-  /T     Show time only\r\n\
-  (no flags = show both date and time)\r\n\
-::END::";
-
-fn print_help() {
-    write_str(b"\r\nDATETIME [/D] [/T]\r\n  Shows the current date and/or time.\r\n  /D     Show date only\r\n  /T     Show time only\r\n  (no flags = show both date and time)\r\n\r\n");
 }
 
 fn get_datetime_via_ob(dt: &mut DateTime) -> Result<(), i64> {
@@ -67,9 +60,16 @@ fn get_datetime_via_ob(dt: &mut DateTime) -> Result<(), i64> {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw = libneodos::args::read_args();
     if libneodos::args::is_help_flag(&raw) {
-        print_help();
+        write_str(b"\r\n");
+        write_str(b"DATETIME [/D] [/T]\r\n");
+        write_str(b"  Shows the current date and/or time.\r\n");
+        write_str(b"  /D     Show date only\r\n");
+        write_str(b"  /T     Show time only\r\n");
+        write_str(b"  (no flags = show both date and time)\r\n\r\n");
         syscall::sys_exit(0);
     }
     let arglen = raw.iter().position(|&b| b == 0).unwrap_or(raw.len());
@@ -99,7 +99,9 @@ pub extern "C" fn _start() -> ! {
     match get_datetime_via_ob(&mut dt) {
         Ok(_) => {
             if dt.valid == 0 {
-                write_str(b"\r\nRTC not available\r\n");
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_RTC_UNAVAIL).as_bytes());
+                write_str(b"\r\n");
                 syscall::sys_exit(1);
             }
 
@@ -116,7 +118,9 @@ pub extern "C" fn _start() -> ! {
             write_str(b"\r\n\r\n");
         }
         Err(_) => {
-            write_str(b"\r\nRTC not available\r\n\r\n");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_RTC_UNAVAIL).as_bytes());
+            write_str(b"\r\n\r\n");
         }
     }
     syscall::sys_exit(0)

@@ -9,7 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "coredel";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_ERR_CANNOT_DELETE: u32 = 1004;
+const IDS_ERR_FILE_NOT_FOUND: u32 = 1005;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -29,14 +38,6 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     buf[total] = 0;
     unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
 }
-
-#[used]
-#[link_section = ".rodata"]
-static DEL_HELP: &[u8] = b"::HELP::\
-DEL [drive:][path]filename\r\n\
-  Delete a file.\r\n\
-  DEL C:\\file.txt\r\n\
-::END::";
 
 fn normalize_path(input: &[u8]) -> [u8; 260] {
     let path_str = core::str::from_utf8(input).unwrap_or("");
@@ -73,13 +74,19 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 }
 
 fn print_usage() {
-    write_str(b"\r\nUsage: DEL [drive:][path]filename\r\n");
-    write_str(b"  Delete a file.\r\n");
-    write_str(b"  DEL C:\\file.txt\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -109,13 +116,17 @@ pub extern "C" fn _start() -> ! {
                 }
                 Err(_) => {
                     let _ = syscall::sys_close(fd);
-                    write_err(b"\r\nDEL: cannot delete\r\n");
+                    write_err(b"\r\n");
+                    write_err(tr_id!(IDS_ERR_CANNOT_DELETE).as_bytes());
+                    write_err(b"\r\n");
                     syscall::sys_exit(1);
                 }
             }
         }
         Err(_) => {
-            write_err(b"\r\nDEL: file not found\r\n");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_FILE_NOT_FOUND).as_bytes());
+            write_err(b"\r\n");
             syscall::sys_exit(1);
         }
     }

@@ -1,0 +1,39 @@
+[meta]
+app = "cpuinfo"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_CPU_INFO = 1004
+IDS_TOPOLOGY = 1005
+IDS_FEATURES = 1006
+IDS_VENDOR = 1007
+IDS_BRAND = 1008
+IDS_CORES = 1009
+IDS_THREADS = 1010
+IDS_FAMILY = 1011
+IDS_MODEL = 1012
+IDS_STEPPING = 1013
+IDS_YES = 1014
+IDS_NO = 1015
+IDS_UNAVAIL = 1016
+
+[strings]
+IDS_USAGE = "CPUINFO"
+IDS_USAGE_LINE2 = "  Mostra informació de la CPU."
+IDS_USAGE_LINE3 = "  Mostra fabricant, marca, topologia i característiques."
+IDS_CPU_INFO = "INFORMACIÓ DE LA CPU"
+IDS_TOPOLOGY = "TOPOLOGIA"
+IDS_FEATURES = "CARACTERÍSTIQUES"
+IDS_VENDOR = "Fabricant: "
+IDS_BRAND = "Marca: "
+IDS_CORES = "Nuclis: "
+IDS_THREADS = "Fils: "
+IDS_FAMILY = "Família: "
+IDS_MODEL = "Model: "
+IDS_STEPPING = "Revisió: "
+IDS_YES = "Sí"
+IDS_NO = "No"
+IDS_UNAVAIL = "Informació de CPU no disponible"

@@ -75,6 +75,11 @@
 
 ### Changed
 
+- **Internacionalización completa de todos los User-Bin (42/42)** — Todos los User-Bin de NeoDOS ahora usan NLT para mensajes visibles.
+  - 35 nuevos paquetes de recursos NLT (.toml + .nlt) × 3 idiomas (en-US, es-ES, ca-ES).
+  - Todas las cadenas visibles hardcodeadas reemplazadas por `tr_id!(IDS_*)`.
+  - Docs NLT actualizadas con lista completa de apps y normas de desarrollo.
+  - Ver: `docs/nlt.md`, `docs/IMPROVEMENTS.md`.
 - **docs/IMPROVEMENTS.md** — Roadmap items reorganized by phases and milestones. Deuda técnica grouped into TD.1–TD.6.
 - **docs/roadmap.md** — Now points to `/ROADMAP.md` as canonical source.
 - **docs/syscalls.md** — Added RAX 48 entry for `sys_ob_snapshot`.

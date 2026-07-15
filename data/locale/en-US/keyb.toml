@@ -1,0 +1,23 @@
+[meta]
+app = "keyb"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_LAYOUT = 1005
+IDS_ERR_READING = 1006
+IDS_ERR_INVALID = 1007
+IDS_ERR_CHANGE = 1008
+
+[strings]
+IDS_USAGE = "KEYB [layout]"
+IDS_USAGE_LINE2 = "  Display or set the keyboard layout."
+IDS_USAGE_LINE3 = "  KEYB                shows current layout"
+IDS_USAGE_LINE4 = "  KEYB es             sets layout to Spanish"
+IDS_LAYOUT = "Keyboard layout: "
+IDS_ERR_READING = "Error reading keyboard layout."
+IDS_ERR_INVALID = "Invalid layout."
+IDS_ERR_CHANGE = "Error: failed to change keyboard layout."

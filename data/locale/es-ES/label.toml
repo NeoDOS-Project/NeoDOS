@@ -1,0 +1,31 @@
+[meta]
+app = "label"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_VOL_IN = 1005
+IDS_IS = 1006
+IDS_HAS_NO_LABEL = 1007
+IDS_IS_NOW = 1008
+IDS_ERR_INVALID_DRIVE = 1009
+IDS_ERR_INVALID_LABEL = 1010
+IDS_ERR_TOO_LONG = 1011
+IDS_ERR_SETTING_LABEL = 1012
+
+[strings]
+IDS_USAGE = "LABEL [unidad:][etiqueta]"
+IDS_USAGE_LINE2 = "  Muestra o cambia la etiqueta de volumen de una unidad."
+IDS_USAGE_LINE3 = "  LABEL C:          muestra la etiqueta actual de C:"
+IDS_USAGE_LINE4 = "  LABEL C:MIDISCO   establece la etiqueta de C: a MIDISCO"
+IDS_VOL_IN = " El volumen de la unidad "
+IDS_IS = " es "
+IDS_HAS_NO_LABEL = " no tiene etiqueta"
+IDS_IS_NOW = " ahora es "
+IDS_ERR_INVALID_DRIVE = "Letra de unidad no válida."
+IDS_ERR_INVALID_LABEL = "Etiqueta de volumen no válida."
+IDS_ERR_TOO_LONG = "La etiqueta debe tener 11 caracteres o menos."
+IDS_ERR_SETTING_LABEL = " Error al establecer la etiqueta de volumen."

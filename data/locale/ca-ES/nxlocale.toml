@@ -1,0 +1,33 @@
+[meta]
+app = "nxlocale"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_CURRENT = 1006
+IDS_AVAILABLE = 1007
+IDS_SET_SUCCESS = 1008
+IDS_ERR_CANNOT_OPEN = 1009
+IDS_ERR_UNKNOWN = 1010
+IDS_ERR_SET = 1011
+IDS_ERR_UNKNOWN_LOCALE = 1012
+IDS_NO_LOCALES = 1013
+
+[strings]
+IDS_USAGE = "NXLOCALE [subordre]"
+IDS_USAGE_LINE2 = "  Eina de gestió d'idioma."
+IDS_USAGE_LINE3 = "  NXLOCALE                  mostra l'idioma actual"
+IDS_USAGE_LINE4 = "  NXLOCALE list             llista els idiomes disponibles"
+IDS_USAGE_LINE5 = "  NXLOCALE set <locale>     canvia l'idioma del sistema"
+IDS_CURRENT = "Idioma actual: "
+IDS_AVAILABLE = "Idiomes disponibles:"
+IDS_SET_SUCCESS = "Idioma canviat correctament."
+IDS_ERR_CANNOT_OPEN = "No es pot obrir la clau d'idioma"
+IDS_ERR_UNKNOWN = "Ordre desconeguda"
+IDS_ERR_SET = "No es pot canviar l'idioma"
+IDS_ERR_UNKNOWN_LOCALE = "Idioma desconegut"
+IDS_NO_LOCALES = "No hi ha idiomes disponibles"

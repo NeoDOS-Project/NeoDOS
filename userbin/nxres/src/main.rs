@@ -1,193 +1,176 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(test, feature(custom_test_frameworks))]
+#![cfg_attr(test, test_runner(noop_test_runner))]
+#![cfg_attr(test, reexport_test_harness_main = "test_main")]
 
+#[cfg(test)]
+fn noop_test_runner(_tests: &[&dyn Fn()]) {
+    loop {}
+}
+
+use libneodos::i18n;
 use libneodos::syscall;
-use libneodos::syscall::ObEnumEntry;
+use libneodos::tr_id;
 
-fn write_stdout(s: &[u8]) {
+const APP_NAME: &str = "nxres";
+const IDS_ERR_APP_REQUIRED: u32 = 1006;
+const IDS_ERR_NOT_FOUND: u32 = 1007;
+const IDS_ERR_RES_NOT_FOUND: u32 = 1008;
+const IDS_LOCALES: u32 = 1009;
+const IDS_NO_LOCALE_RES: u32 = 1010;
+const IDS_NOT_IMPL: u32 = 1011;
+
+fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-fn writeln(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
-    let _ = syscall::sys_write(1, b"\r\n");
+fn write_err(s: &[u8]) {
+    let _ = syscall::sys_write(2, s);
 }
 
-fn write_str(s: &str) {
-    write_stdout(s.as_bytes());
+fn print_help() {
+    write_str(b"\r\nNXRES <app> [resource]\r\n");
+    write_str(b"  NXE resource viewer.\r\n");
+    write_str(b"  NXRES <app>            lists resources of app\r\n");
+    write_str(b"  NXRES <app> <res>     shows resource content\r\n");
+    write_str(b"  NXRES <app> --locales  shows available locales\r\n\r\n");
 }
 
-fn help() {
-    writeln(b"Usage: nxres <command> [options]");
-    writeln(b"  list    <app>         List resources");
-    writeln(b"  cat     <app> <path>  Display resource content");
-    writeln(b"  tree    <app>         Tree view");
-    writeln(b"  find    <app> <pat>   Search resources");
-    writeln(b"  locale  <app>         Show available locales");
+fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
+    let prefix = b"\\Global\\FileSystem\\";
+    let vfs_bytes = vfs.as_bytes();
+    let total = prefix.len() + vfs_bytes.len();
+    if total > 510 { return vfs; }
+    buf[..prefix.len()].copy_from_slice(prefix);
+    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
+    buf[total] = 0;
+    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
 }
 
-fn split_args(args: &[u8]) -> [&[u8]; 4] {
-    let mut parts = [&[][..], &[][..], &[][..], &[][..]];
-    let mut pi = 0usize;
-    let mut i = 0usize;
-    while i < args.len() && pi < 4 {
-        while i < args.len() && (args[i] == b' ' || args[i] == b'\t') { i += 1; }
-        if i >= args.len() { break; }
-        let start = i;
-        while i < args.len() && args[i] != b' ' && args[i] != b'\t' { i += 1; }
-        if i > start {
-            parts[pi] = &args[start..i];
-            pi += 1;
-        }
-    }
-    parts
-}
-
-fn args_cmp(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() { return false; }
-    for i in 0..a.len() {
-        let ca = if a[i] >= b'a' && a[i] <= b'z' { a[i] } else if a[i] >= b'A' && a[i] <= b'Z' { a[i] + 32 } else { a[i] };
-        let cb = if b[i] >= b'a' && b[i] <= b'z' { b[i] } else if b[i] >= b'A' && b[i] <= b'Z' { b[i] + 32 } else { b[i] };
-        if ca != cb { return false; }
-    }
-    true
-}
-
-fn build_res_path(app: &[u8], file_path: &[u8]) -> ([u8; 256], usize) {
-    let prefix = b"\\Global\\FileSystem\\C:\\Programs\\";
-    let mid = b"\\resources\\";
-    let total = prefix.len() + app.len() + mid.len() + file_path.len();
-    let mut buf = [0u8; 256];
-    let mut pos = 0;
-    if total > 255 { return (buf, 0); }
-    buf[pos..pos + prefix.len()].copy_from_slice(prefix);
-    pos += prefix.len();
-    buf[pos..pos + app.len()].copy_from_slice(app);
-    pos += app.len();
-    buf[pos..pos + mid.len()].copy_from_slice(mid);
-    pos += mid.len();
-    buf[pos..pos + file_path.len()].copy_from_slice(file_path);
-    pos += file_path.len();
-    (buf, pos)
-}
-
+#[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw = libneodos::args::read_args();
     if libneodos::args::is_help_flag(&raw) {
-        help();
+        print_help();
         syscall::sys_exit(0);
     }
 
-    let parts = split_args(&raw);
-    let cmd = parts[0];
-    let app = parts[1];
-    let extra = parts[2];
-
-    if cmd.is_empty() || args_cmp(cmd, b"help") {
-        help();
-        syscall::sys_exit(0);
-    }
-
-    if parts[1].is_empty() && !args_cmp(cmd, b"help") {
-        writeln(b"Error: app name required");
-        help();
+    let args = libneodos::args::trim_ascii(&raw);
+    if args.is_empty() {
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_APP_REQUIRED).as_bytes());
+        write_err(b"\r\n");
         syscall::sys_exit(1);
     }
 
-    if args_cmp(cmd, b"list") || args_cmp(cmd, b"ls") {
-        cmd_list(app);
-    } else if args_cmp(cmd, b"cat") || args_cmp(cmd, b"show") {
-        cmd_cat(app, extra);
-    } else if args_cmp(cmd, b"locale") || args_cmp(cmd, b"locales") {
-        cmd_locale(app);
-    } else if args_cmp(cmd, b"tree") || args_cmp(cmd, b"find") {
-        write_stdout(cmd);
-        writeln(b": not yet implemented");
+    let first_space = args.iter().position(|&b| b == b' ' || b == b'\t');
+    let (app_name, rest) = if let Some(pos) = first_space {
+        (&args[..pos], libneodos::args::trim_ascii(&args[pos + 1..]))
     } else {
-        writeln(b"Unknown command");
-        help();
+        (args, &[][..])
+    };
+
+    let mut path_buf = [0u8; 512];
+    let prefix = b"\\Global\\FileSystem\\C:\\Programs\\";
+    {
+        let total = prefix.len() + app_name.len() + 10;
+        path_buf[..prefix.len()].copy_from_slice(prefix);
+        path_buf[prefix.len()..prefix.len() + app_name.len()].copy_from_slice(app_name);
+        let off = prefix.len() + app_name.len();
+        path_buf[off..off + 10].copy_from_slice(b"\\resources");
     }
+    let resources_dir = unsafe { core::str::from_utf8_unchecked(&path_buf[..prefix.len() + app_name.len() + 10]) };
 
-    syscall::sys_exit(0);
-}
+    let fd = match syscall::sys_ob_open(resources_dir, libneodos::syscall::ob_access::READ) {
+        Ok(f) => f,
+        Err(_) => {
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
+            write_err(b"\r\n");
+            syscall::sys_exit(1);
+        }
+    };
 
-fn cmd_list(app: &[u8]) {
-    let (path_buf, path_len) = build_res_path(app, b"");
-    if path_len == 0 { writeln(b"Error: path too long"); return; }
-    let path_str = unsafe { core::str::from_utf8_unchecked(&path_buf[..path_len]) };
-
-    match syscall::sys_ob_open(path_str, syscall::ob_access::READ) {
-        Ok(fd) => {
-            let mut entries: [ObEnumEntry; 64] = core::array::from_fn(|_| ObEnumEntry {
-                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
-            });
-            if let Ok(n) = syscall::sys_ob_enum(fd, &mut entries) {
+    if rest.is_empty() {
+        let mut entries: [syscall::ObEnumEntry; 64] = core::array::from_fn(|_| syscall::ObEnumEntry {
+            id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+        });
+        match syscall::sys_ob_enum(fd, &mut entries) {
+            Ok(n) if n > 0 => {
+                write_str(b"\r\n");
+                write_str(app_name);
+                write_str(b" resources:\r\n");
                 for i in 0..n {
                     let name = entries[i].name_str();
-                    write_stdout(b"  ");
-                    write_str(name);
-                    writeln(b"");
+                    if name == "." || name == ".." { continue; }
+                    write_str(b"  ");
+                    write_str(name.as_bytes());
+                    write_str(b"\r\n");
                 }
-            } else {
-                writeln(b"(empty or error reading)");
+                write_str(b"\r\n");
             }
-            let _ = syscall::sys_close(fd);
-        }
-        Err(_) => {
-            writeln(b"App not found or no resources");
-        }
-    }
-}
-
-fn cmd_cat(app: &[u8], file_path: &[u8]) {
-    if file_path.is_empty() {
-        writeln(b"Usage: nxres cat <app> <path>");
-        return;
-    }
-    let (path_buf, path_len) = build_res_path(app, file_path);
-    if path_len == 0 { writeln(b"Error: path too long"); return; }
-    let path_str = unsafe { core::str::from_utf8_unchecked(&path_buf[..path_len]) };
-
-    match syscall::sys_ob_open(path_str, syscall::ob_access::READ) {
-        Ok(fd) => {
-            loop {
-                let mut buf = [0u8; 4096];
-                match syscall::sys_read(fd, &mut buf) {
-                    Ok(0) | Err(_) => break,
-                    Ok(n) => { write_stdout(&buf[..n]); }
-                }
+            _ => {
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
+                write_str(b"\r\n");
             }
-            let _ = syscall::sys_close(fd);
         }
-        Err(_) => {
-            writeln(b"Resource not found");
+    } else if rest == b"--locales" || rest == b"-l" {
+        let mut locale_buf = [0u8; 512];
+        let lprefix = b"\\Global\\FileSystem\\C:\\Programs\\";
+        {
+            let total = lprefix.len() + app_name.len() + 16;
+            locale_buf[..lprefix.len()].copy_from_slice(lprefix);
+            locale_buf[lprefix.len()..lprefix.len() + app_name.len()].copy_from_slice(app_name);
+            let off = lprefix.len() + app_name.len();
+            locale_buf[off..off + 16].copy_from_slice(b"\\resources\\locale");
         }
-    }
-}
+        let locale_dir = unsafe { core::str::from_utf8_unchecked(&locale_buf[..lprefix.len() + app_name.len() + 16]) };
 
-fn cmd_locale(app: &[u8]) {
-    let (mut path_buf, mut path_len) = build_res_path(app, b"locale");
-    if path_len == 0 { writeln(b"Error: path too long"); return; }
-    let path_str = unsafe { core::str::from_utf8_unchecked(&path_buf[..path_len]) };
+        let locale_fd = match syscall::sys_ob_open(locale_dir, libneodos::syscall::ob_access::READ) {
+            Ok(f) => f,
+            Err(_) => {
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_NO_LOCALE_RES).as_bytes());
+                write_str(b"\r\n");
+                let _ = syscall::sys_close(fd);
+                syscall::sys_exit(0);
+            }
+        };
 
-    match syscall::sys_ob_open(path_str, syscall::ob_access::READ) {
-        Ok(fd) => {
-            writeln(b"Available locales:");
-            let mut entries: [ObEnumEntry; 16] = core::array::from_fn(|_| ObEnumEntry {
-                id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
-            });
-            if let Ok(n) = syscall::sys_ob_enum(fd, &mut entries) {
+        let mut entries: [syscall::ObEnumEntry; 64] = core::array::from_fn(|_| syscall::ObEnumEntry {
+            id: 0, obj_type: 0, name: [0u8; 32], mode: 0, _pad: [0u8; 2], size: 0,
+        });
+        match syscall::sys_ob_enum(locale_fd, &mut entries) {
+            Ok(n) if n > 0 => {
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_LOCALES).as_bytes());
+                write_str(b"\r\n");
                 for i in 0..n {
                     let name = entries[i].name_str();
-                    write_stdout(b"  ");
-                    write_str(name);
-                    writeln(b"");
+                    if name == "." || name == ".." { continue; }
+                    write_str(b"  ");
+                    write_str(name.as_bytes());
+                    write_str(b"\r\n");
                 }
+                write_str(b"\r\n");
             }
-            let _ = syscall::sys_close(fd);
+            _ => {
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_NO_LOCALE_RES).as_bytes());
+                write_str(b"\r\n");
+            }
         }
-        Err(_) => {
-            writeln(b"No locale resources found for this app");
-        }
+        let _ = syscall::sys_close(locale_fd);
+    } else {
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_NOT_IMPL).as_bytes());
+        write_str(b"\r\n\r\n");
     }
+
+    let _ = syscall::sys_close(fd);
+    syscall::sys_exit(0)
 }

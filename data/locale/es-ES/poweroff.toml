@@ -1,0 +1,13 @@
+[meta]
+app = "poweroff"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_MSG = 1003
+
+[strings]
+IDS_USAGE = "POWEROFF"
+IDS_USAGE_LINE2 = "  Apaga el sistema."
+IDS_MSG = "apagando..."

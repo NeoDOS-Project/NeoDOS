@@ -9,7 +9,16 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall::{self, ObEnumEntry, ObProcessInfo};
+use libneodos::tr_id;
+
+const APP_NAME: &str = "ps";
+const IDS_ERR_CANNOT_OPEN: u32 = 1004;
+const IDS_ERR_ENUM_FAILED: u32 = 1005;
+const IDS_ERR_NO_PROCESSES: u32 = 1006;
+const IDS_HEADER: u32 = 1007;
+const IDS_SEPARATOR: u32 = 1008;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -51,7 +60,6 @@ fn pad_right(s: &[u8], width: usize) -> [u8; 32] {
     buf
 }
 
-/// Build an Ob namespace path like "\\Ob\\Process\\eproc/N" into a fixed buffer.
 fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
     let prefix = b"\\Process\\";
     let plen = prefix.len();
@@ -79,14 +87,6 @@ fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
     unsafe { core::str::from_utf8_unchecked(&buf[..i]) }
 }
 
-#[used]
-#[link_section = ".rodata"]
-static PS_HELP: &[u8] = b"::HELP::\
-PS\r\n\
-  Show process list.\r\n\
-  Displays PID, parent, priority, thread count, and state.\r\n\
-::END::";
-
 fn print_help() {
     write_str(b"\r\nPS\r\n  Show process list.\r\n  Displays PID, parent, priority, thread count, and state.\r\n\r\n");
 }
@@ -107,6 +107,8 @@ fn parse_pid_from_name(name: &str) -> Option<u32> {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw = libneodos::args::read_args();
     if libneodos::args::is_help_flag(&raw) {
         print_help();
@@ -116,7 +118,9 @@ pub extern "C" fn _start() -> ! {
     let dir_fd = match syscall::sys_ob_open("\\Process", libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
         Err(_) => {
-            write_str(b"\r\nPS: cannot open process list\r\n");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_ERR_CANNOT_OPEN).as_bytes());
+            write_str(b"\r\n");
             syscall::sys_exit(1);
         }
     };
@@ -133,7 +137,9 @@ pub extern "C" fn _start() -> ! {
     let count = match syscall::sys_ob_enum(dir_fd, &mut entries) {
         Ok(c) => c,
         Err(_) => {
-            write_str(b"\r\nPS: enumeration failed\r\n");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_ERR_ENUM_FAILED).as_bytes());
+            write_str(b"\r\n");
             let _ = syscall::sys_close(dir_fd);
             syscall::sys_exit(1);
         }
@@ -142,13 +148,17 @@ pub extern "C" fn _start() -> ! {
     let _ = syscall::sys_close(dir_fd);
 
     if count == 0 {
-        write_str(b"\r\nNo processes\r\n");
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_ERR_NO_PROCESSES).as_bytes());
+        write_str(b"\r\n");
         syscall::sys_exit(0);
     }
 
     write_str(b"\r\n");
-    write_str(b"PID  PPID PRI THR STATE      NAME\r\n");
-    write_str(b"---- ---- --- --- ---------- ------------------------\r\n");
+    write_str(tr_id!(IDS_HEADER).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_SEPARATOR).as_bytes());
+    write_str(b"\r\n");
 
     let mut path_buf = [0u8; 128];
 
@@ -179,7 +189,6 @@ pub extern "C" fn _start() -> ! {
             continue;
         }
 
-        // Interpret as ObProcessInfo
         let info: ObProcessInfo = unsafe { core::ptr::read(info_buf.as_ptr() as *const ObProcessInfo) };
 
         write_str(b" ");

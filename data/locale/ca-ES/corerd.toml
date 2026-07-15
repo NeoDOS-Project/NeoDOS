@@ -1,0 +1,17 @@
+[meta]
+app = "corerd"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_CANNOT_REMOVE = 1004
+IDS_ERR_CANNOT_OPEN = 1005
+
+[strings]
+IDS_USAGE = "Ús: RD [unitat:]ruta"
+IDS_USAGE_LINE2 = "  Elimina un directori buit."
+IDS_USAGE_LINE3 = "  RD C:\\CarpetaBuida"
+IDS_ERR_CANNOT_REMOVE = "RD: no es pot eliminar el directori (error en destruir)"
+IDS_ERR_CANNOT_OPEN = "RD: no es pot obrir el directori"

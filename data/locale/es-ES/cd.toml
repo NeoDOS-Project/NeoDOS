@@ -1,0 +1,15 @@
+[meta]
+app = "cd"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_NOT_FOUND = 1004
+
+[strings]
+IDS_USAGE = "Uso: CD [ruta]"
+IDS_USAGE_LINE2 = "       CD             muestra el directorio actual"
+IDS_USAGE_LINE3 = "       CD C:\\Ruta     cambia el directorio de trabajo"
+IDS_ERR_NOT_FOUND = "cd: directorio no encontrado"

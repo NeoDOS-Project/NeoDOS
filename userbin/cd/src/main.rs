@@ -9,7 +9,15 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "cd";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_ERR_NOT_FOUND: u32 = 1004;
 
 const ARGS_ADDR: u64 = 0x41F000;
 
@@ -110,7 +118,6 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
         if end > comp_start {
             let comp = &rest[comp_start..end];
             if comp == b"." {
-                // skip
             } else if comp == b".." {
                 while pos > drive_len && out[pos - 1] == b'\\' {
                     pos -= 1;
@@ -181,13 +188,19 @@ fn validate_directory(path: &str) -> bool {
 }
 
 fn print_usage() {
-    write_str(b"\r\nUsage: CD [path]\r\n");
-    write_str(b"       CD             shows current directory\r\n");
-    write_str(b"       CD C:\\Path     changes the shell cwd\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -220,7 +233,9 @@ pub extern "C" fn _start() -> ! {
     let path = core::str::from_utf8(&normalized[..end]).unwrap_or("C:\\");
 
     if !validate_directory(path) {
-        write_err(b"\r\ncd: directory not found\r\n");
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
+        write_err(b"\r\n");
         syscall::sys_exit(1);
     }
 

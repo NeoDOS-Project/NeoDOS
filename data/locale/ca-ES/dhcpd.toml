@@ -1,0 +1,39 @@
+[meta]
+app = "dhcpd"
+language = "ca-ES"
+
+[ids]
+IDS_PREFIX = 1001
+IDS_DISCOVER = 1002
+IDS_OFFER = 1003
+IDS_REQUEST = 1004
+IDS_ACK = 1005
+IDS_NAK = 1006
+IDS_RETRY = 1007
+IDS_ERROR = 1008
+IDS_APIPA = 1009
+IDS_STATIC = 1010
+IDS_ENABLED = 1011
+IDS_BOUND = 1012
+IDS_RENEW = 1013
+IDS_TIMEOUT = 1014
+IDS_STARTED = 1015
+IDS_STOPPED = 1016
+
+[strings]
+IDS_PREFIX = "[dhcpd] "
+IDS_DISCOVER = "DESCUBRIR"
+IDS_OFFER = "OFERTA de "
+IDS_REQUEST = "SOL·LICITUD"
+IDS_ACK = "ACK: "
+IDS_NAK = "NAK rebut"
+IDS_RETRY = "Reintent "
+IDS_ERROR = "ERROR: "
+IDS_APIPA = "APIPA"
+IDS_STATIC = "IP Estàtica"
+IDS_ENABLED = "DHCP habilitat"
+IDS_BOUND = "Vinculat a "
+IDS_RENEW = "Renovant concessió"
+IDS_TIMEOUT = "Temps esgotat"
+IDS_STARTED = "Client DHCP iniciat"
+IDS_STOPPED = "Client DHCP aturat"

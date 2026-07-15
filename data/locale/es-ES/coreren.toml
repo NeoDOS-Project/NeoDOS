@@ -1,0 +1,31 @@
+[meta]
+app = "coreren"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_MISSING_NAME = 1004
+IDS_ERR_CANNOT_RENAME = 1005
+IDS_ERR_FILE_NOT_FOUND = 1006
+IDS_ERR_EINVAL = 1007
+IDS_ERR_ENOENT = 1008
+IDS_ERR_EACCES = 1009
+IDS_ERR_EEXIST = 1010
+IDS_ERR_EIO = 1011
+IDS_ERR_UNKNOWN = 1012
+
+[strings]
+IDS_USAGE = "Uso: REN [unidad:][ruta]nombre [unidad:][ruta]nuevonombre"
+IDS_USAGE_LINE2 = "  Renombra un archivo o directorio."
+IDS_USAGE_LINE3 = "  REN C:\\antiguo.txt C:\\nuevo.txt"
+IDS_ERR_MISSING_NAME = "REN: falta el nombre antiguo o nuevo"
+IDS_ERR_CANNOT_RENAME = "REN: no se puede renombrar: "
+IDS_ERR_FILE_NOT_FOUND = "REN: archivo no encontrado"
+IDS_ERR_EINVAL = "EINVAL"
+IDS_ERR_ENOENT = "ENOENT"
+IDS_ERR_EACCES = "EACCES"
+IDS_ERR_EEXIST = "EEXIST"
+IDS_ERR_EIO = "EIO"
+IDS_ERR_UNKNOWN = "DESCONOCIDO"

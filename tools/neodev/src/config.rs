@@ -44,7 +44,7 @@ impl Config {
             gpt_padding_mb: 12,
             ovmf_code: PathBuf::from("/usr/share/OVMF/OVMF_CODE.fd"),
             ovmf_vars_template: PathBuf::from("/usr/share/OVMF/OVMF_VARS.fd"),
-            vm_backend: "virtualbox".into(),
+            vm_backend: "qemu".into(),
             vm_memory_mb: 512,
             vm_cpus: 1,
             vm_network: "bridged".into(),

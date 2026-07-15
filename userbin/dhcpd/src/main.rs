@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
-use libneodos::{mem, syscall};
+use libneodos::{i18n, mem, syscall, tr_id};
 
 struct SbrkAlloc;
 
@@ -28,6 +28,9 @@ static ALLOC: SbrkAlloc = SbrkAlloc;
 const DHCP_SERVER_PORT: u16 = 67;
 #[allow(dead_code)]
 const DHCP_CLIENT_PORT: u16 = 68;
+const APP_NAME: &str = "dhcpd";
+const IDS_PREFIX: u32 = 1001;
+
 const DHCP_MAGIC_COOKIE: u32 = 0x63825363;
 const DHCP_OP_REQUEST: u8 = 1;
 const DHCP_OP_REPLY: u8 = 2;
@@ -100,6 +103,8 @@ struct DhcpClient {
 }
 
 // ── Helpers ──
+
+
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -393,7 +398,9 @@ impl DhcpClient {
                 DhcpState::Selecting => {
                     if let Some(ip) = self.poll_response() {
                         self.offered_ip = ip;
-                        write_str(b"[dhcpd] OFFER from ");
+                        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"OFFER from ");
                         write_ip(self.server_ip);
                         write_str(b": IP=");
                         write_ip(self.offered_ip);
@@ -428,7 +435,9 @@ impl DhcpClient {
 
                     loop {
                         if let Some(ip) = self.poll_response() {
-                            write_str(b"[dhcpd] ACK: IP=");
+                            write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"ACK: IP=");
                             write_ip(ip);
                             write_str(b" mask=");
                             write_ip(self.subnet_mask);
@@ -520,19 +529,25 @@ impl DhcpClient {
 
     #[allow(dead_code)]
     fn renew(&mut self) -> bool {
-        write_str(b"[dhcpd] Renewing lease...\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Renewing lease...\r\n");
         self.send_dhcp(DHCP_REQUEST, Some(self.offered_ip));
         for _ in 0..TIMEOUT_ITERATIONS {
             if let Some(ip) = self.poll_response() {
                 if ip == 0xFFFFFFFF { return false; }
-                write_str(b"[dhcpd] Renewal OK: IP=");
+                write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Renewal OK: IP=");
                 write_ip(ip);
                 write_str(b"\r\n");
                 return true;
             }
             yield_for(1);
         }
-        write_str(b"[dhcpd] Renewal failed\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Renewal failed\r\n");
         false
     }
 }
@@ -541,14 +556,20 @@ impl DhcpClient {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
-    write_str(b"\r\n[dhcpd] NeoDOS DHCP Service v0.1\r\n");
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_PREFIX).as_bytes());
+    write_str(b"NeoDOS DHCP Service v0.1\r\n");
 
     let reg_key = syscall::sys_cm_open_key(REG_NET_PATH);
     let key_fd;
     match reg_key {
         Ok(fd) => { key_fd = fd; }
         Err(_) => {
-            write_str(b"[dhcpd] ERROR: registry key not found\r\n");
+            write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"ERROR: registry key not found\r\n");
             loop { syscall::sys_yield(); }
         }
     }
@@ -557,33 +578,45 @@ pub extern "C" fn _start() -> ! {
 
     if dhcp_enabled == 0 {
         // Static IP mode
-        write_str(b"[dhcpd] Static IP config\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Static IP config\r\n");
         let ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
         if ip != 0 {
             let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
             let _ = libnet::set_ip(0, ip, mask);
-            write_str(b"[dhcpd] Static IP=");
+            write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Static IP=");
             write_ip(ip);
             write_str(b"\r\n");
             write_reg_dword(key_fd, "IPAddress", ip);
         }
-        write_str(b"[dhcpd] OK\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"OK\r\n");
         loop { syscall::sys_yield(); }
     }
 
     // ── DHCP mode ──
-    write_str(b"[dhcpd] DHCP enabled, starting DORA...\r\n");
+    write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"DHCP enabled, starting DORA...\r\n");
 
     let sock_path = "\\Socket\\DHCP\\0";
     let sock_fd = match syscall::ob_socket_create(sock_path, 2, 0) {
         Ok(fd) => fd,
         Err(e) => {
-            write_str(b"[dhcpd] ERROR: socket create err=");
+            write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"ERROR: socket create err=");
             write_hex(e as u32);
             write_str(b"\r\n");
             let apipa = 0xA9FE0101;
             let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-            write_str(b"[dhcpd] APIPA 169.254.1.1 (socket create failed)\r\n");
+            write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"APIPA 169.254.1.1 (socket create failed)\r\n");
             write_reg_dword(key_fd, "IPAddress", apipa);
             write_reg_dword(key_fd, "DHCPBound", 1);
             loop { syscall::sys_yield(); }
@@ -592,12 +625,16 @@ pub extern "C" fn _start() -> ! {
 
     // Bind to 0.0.0.0:68 (DHCP client port)
     if let Err(e) = syscall::ob_socket_bind(sock_fd, [0u8; 4], 68) {
-        write_str(b"[dhcpd] ERROR: socket bind err=");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"ERROR: socket bind err=");
         write_hex(e as u32);
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        write_str(b"[dhcpd] APIPA 169.254.1.1 (bind failed)\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"APIPA 169.254.1.1 (bind failed)\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
         write_reg_dword(key_fd, "DHCPBound", 1);
         loop { syscall::sys_yield(); }
@@ -605,12 +642,16 @@ pub extern "C" fn _start() -> ! {
 
     // Connect to broadcast 255.255.255.255:67 (DHCP server port)
     if let Err(e) = syscall::ob_socket_connect(sock_fd, [255u8; 4], 67) {
-        write_str(b"[dhcpd] ERROR: socket connect err=");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"ERROR: socket connect err=");
         write_hex(e as u32);
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        write_str(b"[dhcpd] APIPA 169.254.1.1 (connect failed)\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"APIPA 169.254.1.1 (connect failed)\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
         write_reg_dword(key_fd, "DHCPBound", 1);
         loop { syscall::sys_yield(); }
@@ -625,12 +666,16 @@ pub extern "C" fn _start() -> ! {
     };
     let mac = if libnet::iface_info(0, &mut iface) == 0 {
         let cur_ip = u32::from_be_bytes(iface.ip);
-        write_str(b"[dhcpd] NIC IP=");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"NIC IP=");
         write_ip(cur_ip);
         write_str(b"\r\n");
         iface.mac
     } else {
-        write_str(b"[dhcpd] WARN: no NIC info, using fake MAC\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"WARN: no NIC info, using fake MAC\r\n");
         [0x02, 0x00, 0x00, 0x00, 0x00, 0x01]
     };
 
@@ -639,7 +684,9 @@ pub extern "C" fn _start() -> ! {
     let ip = client.run();
 
     if ip != 0 {
-        write_str(b"[dhcpd] DORA complete, IP=");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"DORA complete, IP=");
         write_ip(ip);
         write_str(b" mask=");
         write_ip(client.subnet_mask);
@@ -658,12 +705,18 @@ pub extern "C" fn _start() -> ! {
         write_reg_dword(key_fd, "LeaseTime", client.lease_time);
         write_reg_dword(key_fd, "DHCPBound", 1);
 
-        write_str(b"[dhcpd] Network configured\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"Network configured\r\n");
     } else {
-        write_str(b"[dhcpd] DORA failed, using APIPA fallback\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"DORA failed, using APIPA fallback\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        write_str(b"[dhcpd] APIPA 169.254.1.1\r\n");
+        write_str(b"");
+                    write_str(tr_id!(IDS_PREFIX).as_bytes());
+                    write_str(b"APIPA 169.254.1.1\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
         write_reg_dword(key_fd, "DHCPBound", 1);
     }

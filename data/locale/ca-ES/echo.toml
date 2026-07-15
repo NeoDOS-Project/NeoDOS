@@ -1,0 +1,15 @@
+[meta]
+app = "echo"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+
+[strings]
+IDS_USAGE = "ECHO [text]"
+IDS_USAGE_LINE2 = "  Imprimeix text."
+IDS_USAGE_LINE3 = "  ECHO               imprimeix una línia en blanc."
+IDS_USAGE_LINE4 = "  ECHO Hola món     imprimeix \"Hola món\"."

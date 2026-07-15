@@ -1,0 +1,17 @@
+[meta]
+app = "tree"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_ERR_ENUM = 1005
+
+[strings]
+IDS_USAGE = "TREE [unidad:][ruta]"
+IDS_USAGE_LINE2 = "  Muestra el árbol de directorios."
+IDS_USAGE_LINE3 = "  TREE            muestra el árbol del directorio actual"
+IDS_USAGE_LINE4 = "  TREE C:\\        muestra el árbol de C:\\"
+IDS_ERR_ENUM = "error de enumeración"

@@ -1,0 +1,17 @@
+[meta]
+app = "tree"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_ERR_ENUM = 1005
+
+[strings]
+IDS_USAGE = "TREE [drive:][path]"
+IDS_USAGE_LINE2 = "  Display directory tree."
+IDS_USAGE_LINE3 = "  TREE            shows tree of current directory"
+IDS_USAGE_LINE4 = "  TREE C:\\        shows tree of C:\\"
+IDS_ERR_ENUM = "enum error"

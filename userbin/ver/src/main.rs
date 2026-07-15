@@ -9,22 +9,26 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::syscall::ObInfoClass;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "ver";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_FALLBACK: u32 = 1003;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-#[used]
-#[link_section = ".rodata"]
-static VER_HELP: &[u8] = b"::HELP::\
-VER\r\n\
-  Shows the NeoDOS kernel version.\r\n\
-::END::";
-
 fn print_help() {
-    write_str(b"\r\nVER\r\n  Shows the NeoDOS kernel version.\r\n\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n\r\n");
 }
 
 fn get_version_via_ob(buf: &mut [u8]) -> Result<usize, i64> {
@@ -37,6 +41,8 @@ fn get_version_via_ob(buf: &mut [u8]) -> Result<usize, i64> {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     if libneodos::args::is_help_flag(&libneodos::args::read_args()) {
         print_help();
         syscall::sys_exit(0);
@@ -49,7 +55,9 @@ pub extern "C" fn _start() -> ! {
             write_str(b"\r\n\r\n");
         }
         _ => {
-            write_str(b"\r\nNeoDOS Kernel\r\n\r\n");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_FALLBACK).as_bytes());
+            write_str(b"\r\n\r\n");
         }
     }
     syscall::sys_exit(0)

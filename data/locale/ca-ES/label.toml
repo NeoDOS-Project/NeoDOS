@@ -1,0 +1,31 @@
+[meta]
+app = "label"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_VOL_IN = 1005
+IDS_IS = 1006
+IDS_HAS_NO_LABEL = 1007
+IDS_IS_NOW = 1008
+IDS_ERR_INVALID_DRIVE = 1009
+IDS_ERR_INVALID_LABEL = 1010
+IDS_ERR_TOO_LONG = 1011
+IDS_ERR_SETTING_LABEL = 1012
+
+[strings]
+IDS_USAGE = "LABEL [unitat:][etiqueta]"
+IDS_USAGE_LINE2 = "  Mostra o canvia l'etiqueta de volum d'una unitat."
+IDS_USAGE_LINE3 = "  LABEL C:          mostra l'etiqueta actual de C:"
+IDS_USAGE_LINE4 = "  LABEL C:ELMEUDISC estableix l'etiqueta de C: a ELMEUDISC"
+IDS_VOL_IN = " El volum de la unitat "
+IDS_IS = " és "
+IDS_HAS_NO_LABEL = " no té etiqueta"
+IDS_IS_NOW = " ara és "
+IDS_ERR_INVALID_DRIVE = "Lletra de unitat no vàlida."
+IDS_ERR_INVALID_LABEL = "Etiqueta de volum no vàlida."
+IDS_ERR_TOO_LONG = "L'etiqueta ha de tenir 11 caràcters o menys."
+IDS_ERR_SETTING_LABEL = " Error en establir l'etiqueta de volum."

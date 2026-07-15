@@ -9,8 +9,17 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "tree";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
+const IDS_USAGE_LINE4: u32 = 1004;
+const IDS_ERR_ENUM: u32 = 1005;
 
 const ARGS_ADDR: u64 = 0x41F000;
 const MAX_DEPTH: usize = 6;
@@ -125,7 +134,7 @@ fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize 
                         let b = name_str.as_bytes();
                         let cl = b.len().min(259);
                         nb[..cl].copy_from_slice(&b[..cl]);
-                        let is_dir = raw.obj_type == 11; // ObType::Directory
+                        let is_dir = raw.obj_type == 11;
                         entries[count] = Entry {
                             name: nb,
                             is_directory: is_dir,
@@ -133,7 +142,11 @@ fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize 
                         count += 1;
                     }
                 }
-                Err(_) => { write_str(b"\r\nenum error\r\n"); }
+                Err(_) => {
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_ERR_ENUM).as_bytes());
+                    write_str(b"\r\n");
+                }
             }
             let _ = syscall::sys_close(fd);
             count
@@ -258,18 +271,10 @@ fn print_tree(dir_path: &str, prefix: &[u8], depth: usize) {
     }
 }
 
-#[used]
-#[link_section = ".rodata"]
-static TREE_HELP: &[u8] = b"::HELP::\
-TREE [drive:][path]\r\n\
-  Display directory tree.\r\n\
-  TREE            shows tree of current directory\r\n\
-  TREE C:\\        shows tree of C:\\\r\n\
-  TREE \\Programs  shows tree of \\Programs\r\n\
-::END::";
-
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let path_buf = read_args();
     let arg_slice = {
         let mut arg_buf = [0u8; 256];
@@ -285,7 +290,15 @@ pub extern "C" fn _start() -> ! {
 
     let arg_slice_ref = libneodos::args::trim_ascii(&arg_slice);
     if libneodos::args::is_help_flag(arg_slice_ref) {
-        write_str(b"\r\nTREE [drive:][path]\r\n  Display directory tree.\r\n  TREE            shows tree of current directory\r\n  TREE C:\\        shows tree of C:\\\r\n  TREE \\Programs  shows tree of \\Programs\r\n\r\n");
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE).as_bytes());
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_USAGE_LINE4).as_bytes());
+        write_str(b"\r\n\r\n");
         syscall::sys_exit(0);
     }
 

@@ -1,0 +1,23 @@
+[meta]
+app = "ps"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_CANNOT_OPEN = 1004
+IDS_ERR_ENUM_FAILED = 1005
+IDS_ERR_NO_PROCESSES = 1006
+IDS_HEADER = 1007
+IDS_SEPARATOR = 1008
+
+[strings]
+IDS_USAGE = "PS"
+IDS_USAGE_LINE2 = "  Show process list."
+IDS_USAGE_LINE3 = "  Displays PID, parent, priority, thread count, and state."
+IDS_ERR_CANNOT_OPEN = "PS: cannot open process list"
+IDS_ERR_ENUM_FAILED = "PS: enumeration failed"
+IDS_ERR_NO_PROCESSES = "No processes"
+IDS_HEADER = "PID  PPID PRI THR STATE      NAME"
+IDS_SEPARATOR = "---- ---- --- --- ---------- ------------------------"

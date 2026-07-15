@@ -1,0 +1,33 @@
+[meta]
+app = "nxlocale"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_USAGE_LINE5 = 1005
+IDS_CURRENT = 1006
+IDS_AVAILABLE = 1007
+IDS_SET_SUCCESS = 1008
+IDS_ERR_CANNOT_OPEN = 1009
+IDS_ERR_UNKNOWN = 1010
+IDS_ERR_SET = 1011
+IDS_ERR_UNKNOWN_LOCALE = 1012
+IDS_NO_LOCALES = 1013
+
+[strings]
+IDS_USAGE = "NXLOCALE [subcommand]"
+IDS_USAGE_LINE2 = "  Locale management tool."
+IDS_USAGE_LINE3 = "  NXLOCALE                  shows current locale"
+IDS_USAGE_LINE4 = "  NXLOCALE list             lists available locales"
+IDS_USAGE_LINE5 = "  NXLOCALE set <locale>     changes system locale"
+IDS_CURRENT = "Current locale: "
+IDS_AVAILABLE = "Available locales:"
+IDS_SET_SUCCESS = "Locale changed successfully."
+IDS_ERR_CANNOT_OPEN = "Cannot open locale key"
+IDS_ERR_UNKNOWN = "Unknown command"
+IDS_ERR_SET = "Cannot change locale"
+IDS_ERR_UNKNOWN_LOCALE = "Unknown locale"
+IDS_NO_LOCALES = "No locales available"

@@ -9,7 +9,21 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "coremd";
+const IDS_USAGE: u32 = 1004;
+const IDS_USAGE_LINE2: u32 = 1005;
+const IDS_USAGE_LINE3: u32 = 1006;
+const IDS_ERR_CANNOT_CREATE: u32 = 1007;
+const IDS_ERR_EINVAL: u32 = 1008;
+const IDS_ERR_ENOENT: u32 = 1009;
+const IDS_ERR_EACCES: u32 = 1010;
+const IDS_ERR_EEXIST: u32 = 1011;
+const IDS_ERR_EIO: u32 = 1012;
+const IDS_ERR_UNKNOWN: u32 = 1013;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -29,14 +43,6 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     buf[total] = 0;
     unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
 }
-
-#[used]
-#[link_section = ".rodata"]
-static MD_HELP: &[u8] = b"::HELP::\
-MD [drive:]path\r\n\
-  Create a directory.\r\n\
-  MD C:\\NewFolder\r\n\
-::END::";
 
 fn normalize_path(input: &[u8]) -> [u8; 260] {
     let path_str = core::str::from_utf8(input).unwrap_or("");
@@ -73,13 +79,19 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
 }
 
 fn print_usage() {
-    write_str(b"\r\nUsage: MD [drive:]path\r\n");
-    write_str(b"  Create a directory.\r\n");
-    write_str(b"  MD C:\\NewFolder\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     let raw_args = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw_args);
 
@@ -105,14 +117,15 @@ pub extern "C" fn _start() -> ! {
             syscall::sys_exit(0);
         }
         Err(e) => {
-            write_err(b"\r\nMD: cannot create directory: ");
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_CANNOT_CREATE).as_bytes());
             let err_str: &[u8] = match e {
-                -1 => b"EINVAL",
-                -2 => b"ENOENT",
-                -4 => b"EACCES",
-                -10 => b"EEXIST",
-                -13 => b"EIO",
-                _ => b"UNKNOWN",
+                -1 => tr_id!(IDS_ERR_EINVAL).as_bytes(),
+                -2 => tr_id!(IDS_ERR_ENOENT).as_bytes(),
+                -4 => tr_id!(IDS_ERR_EACCES).as_bytes(),
+                -10 => tr_id!(IDS_ERR_EEXIST).as_bytes(),
+                -13 => tr_id!(IDS_ERR_EIO).as_bytes(),
+                _ => tr_id!(IDS_ERR_UNKNOWN).as_bytes(),
             };
             write_err(err_str);
             write_err(b"\r\n");

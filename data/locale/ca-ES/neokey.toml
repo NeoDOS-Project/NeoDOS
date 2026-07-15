@@ -1,0 +1,27 @@
+[meta]
+app = "neokey"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_USAGE_LINE4 = 1004
+IDS_KBD_STATE = 1005
+IDS_MODIFIERS = 1006
+IDS_LEDS = 1007
+IDS_ACTIVE_LAYOUT = 1008
+IDS_AVAIL_LAYOUTS = 1009
+IDS_UNKNOWN_CMD = 1010
+
+[strings]
+IDS_USAGE = "NEOKEY [opció]"
+IDS_USAGE_LINE2 = "  Mostra l'estat del teclat i les distribucions disponibles."
+IDS_USAGE_LINE3 = "  NEOKEY              mostra l'estat del teclat"
+IDS_USAGE_LINE4 = "  NEOKEY --list       llista les distribucions disponibles"
+IDS_KBD_STATE = "Estat del teclat:"
+IDS_MODIFIERS = "Modificadors:"
+IDS_LEDS = "LEDs:"
+IDS_ACTIVE_LAYOUT = "Distribució activa: "
+IDS_AVAIL_LAYOUTS = "Distribucions de teclat disponibles:"
+IDS_UNKNOWN_CMD = "Ordre desconeguda."

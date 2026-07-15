@@ -1,0 +1,13 @@
+[meta]
+app = "ver"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_FALLBACK = 1003
+
+[strings]
+IDS_USAGE = "VER"
+IDS_USAGE_LINE2 = "  Shows the NeoDOS kernel version."
+IDS_FALLBACK = "NeoDOS Kernel"

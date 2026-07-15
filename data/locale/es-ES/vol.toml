@@ -1,0 +1,19 @@
+[meta]
+app = "vol"
+language = "es-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_VOL_IN = 1004
+IDS_IS = 1005
+IDS_HAS_NO_LABEL = 1006
+
+[strings]
+IDS_USAGE = "VOL [unidad:]"
+IDS_USAGE_LINE2 = "  Muestra la etiqueta de volumen de la unidad especificada,"
+IDS_USAGE_LINE3 = "  o de la unidad actual si no se especifica ninguna."
+IDS_VOL_IN = " El volumen de la unidad "
+IDS_IS = " es "
+IDS_HAS_NO_LABEL = " no tiene etiqueta"

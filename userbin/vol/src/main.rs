@@ -9,7 +9,14 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+use libneodos::i18n;
 use libneodos::syscall;
+use libneodos::tr_id;
+
+const APP_NAME: &str = "vol";
+const IDS_VOL_IN: u32 = 1004;
+const IDS_IS: u32 = 1005;
+const IDS_HAS_NO_LABEL: u32 = 1006;
 
 const ARGS_ADDR: u64 = 0x41F000;
 
@@ -27,14 +34,6 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
-
-#[used]
-#[link_section = ".rodata"]
-static VOL_HELP: &[u8] = b"::HELP::\
-VOL [drive:]\r\n\
-  Show the volume label of the specified drive,\r\n\
-  or the current drive if none given.\r\n\
-::END::";
 
 fn current_drive() -> u8 {
     let mut buf = [0u8; 64];
@@ -76,6 +75,8 @@ fn print_help() {
 
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
+    i18n::i18n_init();
+    let _ = i18n::i18n_load(APP_NAME);
     if libneodos::args::is_help_flag(&libneodos::args::read_args()) {
         print_help();
         syscall::sys_exit(0);
@@ -92,24 +93,29 @@ pub extern "C" fn _start() -> ! {
             match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::VolumeLabel, &mut label_buf) {
                 Ok(n) if n > 0 => {
                     let actual = label_buf[..n].iter().position(|&b| b == 0).unwrap_or(n);
-                    write_str(b"\r\n Volume in drive ");
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_VOL_IN).as_bytes());
                     write_str(&[drive]);
-                    write_str(b" is ");
+                    write_str(tr_id!(IDS_IS).as_bytes());
                     write_str(&label_buf[..actual]);
                     write_str(b"\r\n\r\n");
                 }
                 _ => {
-                    write_str(b"\r\n Volume in drive ");
+                    write_str(b"\r\n");
+                    write_str(tr_id!(IDS_VOL_IN).as_bytes());
                     write_str(&[drive]);
-                    write_str(b" has no label\r\n\r\n");
+                    write_str(tr_id!(IDS_HAS_NO_LABEL).as_bytes());
+                    write_str(b"\r\n\r\n");
                 }
             }
             let _ = syscall::sys_close(fd);
         }
         Err(_) => {
-            write_str(b"\r\n Volume in drive ");
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_VOL_IN).as_bytes());
             write_str(&[drive]);
-            write_str(b" has no label\r\n\r\n");
+            write_str(tr_id!(IDS_HAS_NO_LABEL).as_bytes());
+            write_str(b"\r\n\r\n");
         }
     }
 

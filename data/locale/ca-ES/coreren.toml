@@ -1,0 +1,31 @@
+[meta]
+app = "coreren"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_USAGE_LINE3 = 1003
+IDS_ERR_MISSING_NAME = 1004
+IDS_ERR_CANNOT_RENAME = 1005
+IDS_ERR_FILE_NOT_FOUND = 1006
+IDS_ERR_EINVAL = 1007
+IDS_ERR_ENOENT = 1008
+IDS_ERR_EACCES = 1009
+IDS_ERR_EEXIST = 1010
+IDS_ERR_EIO = 1011
+IDS_ERR_UNKNOWN = 1012
+
+[strings]
+IDS_USAGE = "Ús: REN [unitat:][ruta]nom [unitat:][ruta]nounom"
+IDS_USAGE_LINE2 = "  Canvia el nom d'un fitxer o directori."
+IDS_USAGE_LINE3 = "  REN C:\\antic.txt C:\\nou.txt"
+IDS_ERR_MISSING_NAME = "REN: falta el nom antic o nou"
+IDS_ERR_CANNOT_RENAME = "REN: no es pot reanomenar: "
+IDS_ERR_FILE_NOT_FOUND = "REN: fitxer no trobat"
+IDS_ERR_EINVAL = "EINVAL"
+IDS_ERR_ENOENT = "ENOENT"
+IDS_ERR_EACCES = "EACCES"
+IDS_ERR_EEXIST = "EEXIST"
+IDS_ERR_EIO = "EIO"
+IDS_ERR_UNKNOWN = "DESCONEGUT"
