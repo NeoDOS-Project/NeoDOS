@@ -368,14 +368,21 @@ Total active: 34 syscalls | Reserved slots: 25 | Highest: 59
 Ob objects in the namespace, receive handles via `ob_open`/`ob_create`, and
 return results via `ob_query_info`/`ob_set_info`.
 
-## Power Manager Object (via ObSetInfoClass)
+## Power Manager Object (via ObSetInfoClass/ObQueryInfoClass)
 
 Power management is handled entirely via the Object Manager — no dedicated syscall.
 
-| Path | Operation | ObSetInfoClass |
-| ------ | ----------- | --------------- |
-| `\System\PowerManager` | Shutdown (power off) | `PowerShutdown = 37` |
-| `\System\PowerManager` | Reboot | `PowerReboot = 38` |
+| Path | Operation | Class |
+| ------ | ----------- | ------- |
+| `\System\PowerManager` | Query power system state | `ObQueryInfoClass::PowerState = 32` |
+| `\System\PowerManager` | Query active plan info | `ObQueryInfoClass::PowerPlanInfo = 33` (planned) |
+| `\System\PowerManager` | Query power capabilities | `ObQueryInfoClass::PowerStatus = 34` (planned) |
+| `\System\PowerManager` | Shutdown (power off) | `ObSetInfoClass::PowerShutdown = 37` |
+| `\System\PowerManager` | Reboot | `ObSetInfoClass::PowerReboot = 38` |
+| `\System\PowerManager` | Suspend to RAM | `ObSetInfoClass::PowerSuspend = 39` (planned) |
+| `\System\PowerManager` | Hibernate to disk | `ObSetInfoClass::PowerHibernate = 40` (planned) |
+| `\System\PowerManager` | Set active power plan | `ObSetInfoClass::PowerSetPlan = 41` (planned) |
+| `\System\PowerManager` | Set power policy value | `ObSetInfoClass::PowerSetPolicy = 42` (planned) |
 
 **Usage:**
 

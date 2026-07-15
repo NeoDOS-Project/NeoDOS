@@ -336,7 +336,7 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
             let need = cpu_local_mod::this_cpu_need_resched();
             if need {
                 cpu_local_mod::this_cpu_set_need_resched(false);
-                // TODO: call local scheduler schedule()
+                // TODO(smp): wire up local scheduler schedule() — APs spin with HLT but never yield
             }
         }
         unsafe { crate::hal::raw::raw_hlt_once(); }

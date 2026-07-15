@@ -593,6 +593,8 @@ arquitectónica alrededor del Object Manager.
 | 2026-07-04 | Registry disk persistence | v0.48.7 |
 | 2026-07-05 | Networking userland, auditorías | v0.48.8 |
 | 2026-07-12 | **NeoKBD + ACPI Power Management** | v0.49.2 |
+| 2026-07-13 | **NXE/NXP Ecosystem, i18n NLTv2** | v0.50.0 |
+| 2026-07-15 | **sys_ob_snapshot, dead code cleanup, roadmap reorganizado** | v0.50.1 |
 
 ---
 
@@ -639,6 +641,17 @@ arquitectónica alrededor del Object Manager.
 | ACPI Power | Jul 12 | `src/power/acpi.rs` — ACPI S5, reset register, FADT |
 | kbdcompile | Jul 12 | `tools/kbdcompile/` — Layout .klc → .kbd compiler |
 | neokey | Jul 12 | `userbin/neokey/` — Keyboard management CLI |
+| nxeinfo | Jul 13 | `tools/nxeinfo/` — Inspector de ejecutables NXE |
+| nxpkg | Jul 13 | `tools/nxpkg/` — Creador/gestor de paquetes NXP |
+| nxdump | Jul 13 | `tools/nxdump/` — Volcado técnico ELF/NXE/NEM |
+| libneodos res API | Jul 13 | `libneodos/src/res.rs` — Recurso de aplicaciones |
+| nltc | Jul 13 | `tools/nltc/` — Compilador NLT (TOML → NLTv2 binario) |
+| neolocale | Jul 13 | `userbin/neolocale/` — Locale manager CLI |
+| nxres | Jul 13 | `userbin/nxres/` — Resource explorer |
+| nxlocale | Jul 13 | `userbin/nxlocale/` — Locale manager |
+| nxverify | Jul 13 | `userbin/nxverify/` — Integrity verifier |
+| sys_ob_snapshot | Jul 15 | `syscall/ob.rs` — NeoFS snapshot syscall (RAX=48) |
+| ROADMAP.md | Jul 15 | Roadmap oficial reorganizado por fases (raíz del proyecto) |
 
 ---
 
@@ -668,6 +681,7 @@ No marcar como completada hasta que ocurra el traslado.
 | 2026-06-22 | ~180 | ~400 | ~35.000 | v0.42 |
 | 2026-07-05 | ~280 | ~646 | ~45.580 | v0.48.8 |
 | 2026-07-12 | ~310 | ~662 | ~47.200 | v0.49.2 |
+| 2026-07-15 | ~350 | ~670 | ~46.500 | v0.50.1 |
 
 ---
 

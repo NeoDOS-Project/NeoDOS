@@ -129,6 +129,8 @@ offset for SeAccessCheck re-verification.
 │   ├── Ahci                       — AHCI NEM driver
 │   ├── E1000                      — e1000 NIC driver
 │   └── ...
+├── \System\                       — system objects
+│   └── PowerManager               — power management (ObType::PowerManager, selo shutdown/reboot via ob_set_info)
 ├── \Registry\                     — registry keys (Cm)
 ├── \Service\                      — registered service objects (ObType::Service)
 ├── \Ob\Process\                   — PID-indexed process objects
@@ -195,6 +197,9 @@ Supports 30 info classes:
 | 35 | KeyboardInfo | KbdState (modifiers, leds, active_layout_index) — `\Device\Keyboard` |
 | 36 | KeyboardCaps | KbdCaps (max_layouts, capabilities, num_layouts) — `\Device\Keyboard` |
 | 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
+| 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager` |
+| 33 | PowerPlanInfo | Active plan index + name (planned) — `\System\PowerManager` |
+| 34 | PowerStatus | Power capabilities bitmask (planned) — `\System\PowerManager` |
 
 ### ob_set_info (RAX=63)
 
@@ -236,6 +241,10 @@ Supports 37 set classes:
 | 36 | ServiceSetConfig | Modify service configuration (start type, restart policy, max failures) |
 | 37 | PowerShutdown | Initiate coordinated system shutdown |
 | 38 | PowerReboot | Initiate coordinated system reboot |
+| 39 | PowerSuspend | Suspend to RAM (planned) — `\System\PowerManager` |
+| 40 | PowerHibernate | Hibernate to disk (planned) — `\System\PowerManager` |
+| 41 | PowerSetPlan | Set active power plan by index (planned) — `\System\PowerManager` |
+| 42 | PowerSetPolicy | Set individual power policy value (planned) — `\System\PowerManager` |
 | 39 | FsckRepair | Run fsck with repair flag (buf[0] != 0 = repair) |
 | 43 | KeyboardSetLayout | Set layout by name (string) — `\Device\Keyboard` |
 | 44 | KeyboardSetRepeatDelay | Set repeat delay in ms (u32 LE) — `\Device\Keyboard` |

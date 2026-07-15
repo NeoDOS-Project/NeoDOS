@@ -175,7 +175,7 @@ pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 
 #[no_mangle]
 pub extern "C" fn net_socket_create(sock_type: u32) -> i32 {
     let mut id_buf = [0u8; 16];
-    // TODO: Use Ob API for getpid (RAX=3 removed, use ob_open + ob_query_info(ProcessId))
+    // TODO(net): Use Ob API for getpid (RAX=3 removed, use ob_open + ob_query_info(ProcessId))
     let id = 0u64;
     let path_len = {
         let s = b"\\NetSock-";

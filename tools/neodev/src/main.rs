@@ -47,6 +47,12 @@ enum Commands {
         /// Generate image after build
         #[arg(long)]
         image: bool,
+        /// NeoDOS FS size in MB (default: 100)
+        #[arg(long, default_value_t = 100)]
+        neodos_size: u64,
+        /// NE2 filesystem blocks (default: 25600 = 100 MB at 4 KB/block)
+        #[arg(long, default_value_t = 25600)]
+        neodos_blocks: u64,
     },
     /// Create disk images (NE2, ESP, GPT)
     Image {
@@ -57,10 +63,10 @@ enum Commands {
         #[arg(long, default_value_t = 100)]
         esp_size: u64,
         /// NeoDOS FS size in MB
-        #[arg(long, default_value_t = 10)]
+        #[arg(long, default_value_t = 100)]
         neodos_size: u64,
-        /// NE2 filesystem blocks
-        #[arg(long, default_value_t = 2560)]
+        /// NE2 filesystem blocks (default: 25600 = 100 MB at 4 KB/block)
+        #[arg(long, default_value_t = 25600)]
         blocks: u64,
         /// Label for the NE2 volume
         #[arg(long, default_value = "NEODOS")]
@@ -163,7 +169,9 @@ fn main() -> Result<()> {
             all,
             quick,
             image,
-        } => cmd_build(&cfg, &disc, *kernel, *bootloader, *userbin, *nxl, *nem, *all, *quick, *image),
+            neodos_size,
+            neodos_blocks,
+        } => cmd_build(&cfg, &disc, *kernel, *bootloader, *userbin, *nxl, *nem, *all, *quick, *image, *neodos_size, *neodos_blocks),
         Commands::Image {
             output,
             esp_size,
@@ -229,6 +237,8 @@ fn cmd_build(
     all: bool,
     quick: bool,
     image: bool,
+    neodos_size: u64,
+    neodos_blocks: u64,
 ) -> Result<()> {
     println!("{} NeoDOS Build", "[*]".bold().cyan());
     println!();
@@ -238,7 +248,7 @@ fn cmd_build(
         let report = build::build_all(cfg, disc)?;
         report::print_build_report(&report);
         if image && report.bootloader.unwrap_or(false) {
-            cmd_image(cfg, disc, &cfg.project_root.join("disk_image.img"), cfg.esp_size_mb, cfg.neodos_size_mb, 2560, "NEODOS", true)?;
+            cmd_image(cfg, disc, &cfg.project_root.join("disk_image.img"), cfg.esp_size_mb, neodos_size, neodos_blocks, "NEODOS", true)?;
         } else if image {
             println!("  {} Skipping image generation (build had failures)", "[!]".bold().yellow());
         }
@@ -251,7 +261,7 @@ fn cmd_build(
         build::build_kernel(cfg, disc)?;
         build::build_bootloader(cfg, disc)?;
         if image {
-            cmd_image(cfg, disc, &cfg.project_root.join("disk_image.img"), cfg.esp_size_mb, cfg.neodos_size_mb, 2560, "NEODOS", true)?;
+            cmd_image(cfg, disc, &cfg.project_root.join("disk_image.img"), cfg.esp_size_mb, neodos_size, neodos_blocks, "NEODOS", true)?;
         }
         return Ok(());
     }

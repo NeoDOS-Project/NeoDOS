@@ -554,6 +554,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     services::sm_init();
 
     // ============================================
+    // PHASE 3.883: Power Manager runtime init
+    // Initializes PowerManager singleton, loads
+    // active plan and policies from registry
+    // (defaults pre-populated by gen_system_hiv.py).
+    // ============================================
+    println!("[+] Initializing Power Manager runtime...");
+    power::init_power_manager();
+
+    // ============================================
     // PHASE 3.9: Validate syscall ABI + ABI freeze
     // ============================================
     println!("[+] Validating syscall ABI...");

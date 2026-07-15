@@ -321,10 +321,9 @@ impl LspServer {
                 let count = indexer.index_workspace(&files);
 
                 log::info!(
-                    "indexed {} symbols in {} files ({} suites, ~431 kernel tests expected)",
+                    "indexed {} symbols in {} files",
                     count,
                     files.len(),
-                    "TODO",
                 );
 
                 // Register workspace file list.

@@ -42,7 +42,7 @@
 
 #### Power Manager — Phase 2: Kernel core
 
-- [ ] **PM-PHASE2. Power Manager kernel core** | Prereqs: -- | Files: `src/power/mod.rs` (new), `src/power/plan.rs` (new), `src/power/coordinator.rs` (new), `src/object/types.rs`, `src/cm/mod.rs`, `src/main.rs`
+- [x] **PM-PHASE2. Power Manager kernel core** ✅ (v0.50.1) | Prereqs: PM-PHASE1 | Files: `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`, `src/object/types.rs`, `scripts/gen_system_hiv.py`, `src/main.rs`
   - Implementar `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
   - `PowerSystemState` enum: Active, ShuttingDown, Rebooting, Suspending, Hibernating, Off.
   - `PowerPlan` + `PowerPolicies`: DisplayTimeout, SleepTimeout, HibernateEnabled, CpuPolicy, LidAction, PowerButtonAction.
@@ -50,9 +50,10 @@
   - `PowerManager::save_plan_to_registry(index)`: persistir políticas activas.
   - `src/power/coordinator.rs`: `shutdown()` y `reboot()` sin integración con servicios todavía — solo HAL calls.
   - `src/object/types.rs`: añadir `PowerManager = 21` a `ObType`.
-  - `src/main.rs`: añadir PHASE 3.883 — crear `\Device\PowerManager` en namespace Ob, inicializar PowerManager.
-  - `src/cm/mod.rs`: añadir defaults de Power en `cm_ensure_default_values()`: `ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`.
+  - `src/main.rs`: añadir PHASE 3.883 — inicializar PowerManager (namespace `\System\PowerManager`).
+  - `scripts/gen_system_hiv.py`: defaults de Power (`ActivePlan=0`, `Plans\Balanced\*`, `Plans\Performance\*`, `Plans\PowerSaver\*`).
   - **Tests:** `pm_init_state_active`, `pm_device_namespace_exists`, `pm_query_plan_defaults`, `pm_set_plan_balanced`, `pm_set_plan_performance`, `pm_set_plan_invalid`, `pm_plan_persists_to_registry`, `pm_set_policy_display_timeout`, `pm_set_policy_invalid_id`, `pm_policy_persists`
+  - **Nota:** Ob syscall dispatch para `PowerState`/`PowerPlanInfo`/`PowerStatus` query y `PowerSuspend`/`PowerHibernate`/`PowerSetPlan`/`PowerSetPolicy` set no están implementados — pasan a PM-PHASE3.
 
 #### Kernel Hardening
 

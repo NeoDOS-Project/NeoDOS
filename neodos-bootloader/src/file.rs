@@ -9,7 +9,7 @@ pub fn load_kernel_binary<BS>(
 where
     BS: ?Sized + core::fmt::Debug,
 {
-    // TODO: Implement file loading for uefi 0.37
+    // TODO(bootloader): Implement file loading for uefi 0.37 — currently returns dummy address
     let _ = writeln!(stdout, "[*] File loading not yet implemented\n");
     
     // For now, return a dummy address

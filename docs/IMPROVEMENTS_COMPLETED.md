@@ -606,6 +606,18 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - `src/power/acpi.rs`: stores `AcpiPowerState`, public API.
   - 7 tests: FADT parsing, reset register, S5 write.
 
+### PM-PHASE2. Power Manager kernel core [COMPLETED] (v0.50.1)
+
+- [x] **PM-PHASE2. Power Manager kernel core** | Files: `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`, `src/object/types.rs`, `scripts/gen_system_hiv.py`, `src/main.rs`
+  - `PowerManager` struct con `POWER_MANAGER: Mutex<PowerManager>` global.
+  - `PowerPlan`, `PowerPolicies`, `CpuPolicy`, `PowerAction` data structures.
+  - `load_plan_from_registry()` / `save_plan_to_registry()` — Registry persistence.
+  - `power::coordinator::shutdown()` / `reboot()` — HAL chain + hive flush + event bus.
+  - `ObType::PowerManager = 21` en `src/object/types.rs`.
+  - PHASE 3.883: `power::init_power_manager()` en `src/main.rs`.
+  - Power defaults en `scripts/gen_system_hiv.py` (3 planes, 51 cells).
+  - 12 tests unitarios kernel-side.
+
 ---
 
 ### KBD-PHASE1. NeoKBD kernel module [COMPLETED]

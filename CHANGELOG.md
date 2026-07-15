@@ -63,6 +63,14 @@
   - `handler_ob_snapshot` in `syscall/ob.rs` with handle-based drive resolution.
   - Tests: `syscall_ob_snapshot_create`, `syscall_ob_snapshot_list`, `syscall_ob_snapshot_restore`, `syscall_ob_snapshot_purge`.
 - **L2 write-back cache** — `IoStack::write_sectors` now caches single-sector writes through `PAGE_CACHE` with `NEED_CACHE_FLUSH` dirty tracking.
+- **PM-PHASE2: Power Manager kernel core** — `src/power/mod.rs`, `src/power/plan.rs`, `src/power/coordinator.rs`
+  - `PowerManager` struct with `POWER_MANAGER: Mutex<PowerManager>` global singleton.
+  - `PowerPlan`, `PowerPolicies`, `CpuPolicy`, `PowerAction` enums and data structures.
+  - `PowerManager::load_plan_from_registry()` / `save_plan_to_registry()` — Registry persistence for Balanced, Performance, PowerSaver plans.
+  - `power::init_power_manager()` — PHASE 3.883 initialization in `src/main.rs`.
+  - `power::coordinator::shutdown()` / `reboot()` — HAL chain with hive flush and event bus dispatch.
+  - 12 kernel test cases (`pm_*`): plan defaults, set/get, registry persistence, policy validation.
+- **Power plan defaults in SYSTEM.HIV** — `scripts/gen_system_hiv.py` now generates `Power\*` keys with 3 power plans (Balanced, Performance, PowerSaver), each with 6 policy values + `ActivePlan` root value (51 cells total).
 - **ROADMAP.md** — New root-level roadmap replacing `docs/roadmap.md`. Roadmap completamente reorganizado en fases (v0.50–v4.x).
 
 ### Changed

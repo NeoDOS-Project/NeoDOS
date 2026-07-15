@@ -274,6 +274,8 @@ pub fn register_tests() {
     crate::services::register_service_tests();
     // PM-PHASE1: HAL ACPI reboot/FADT/S5 primitives
     crate::power::acpi::register_pm_tests();
+    // PM-PHASE2: Power Manager kernel core
+    crate::power::register_tests();
     // Memory stress tests
     crate::memory::register_stress_tests();
     // UTF-8 tests

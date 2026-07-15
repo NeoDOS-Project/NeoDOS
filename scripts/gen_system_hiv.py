@@ -183,17 +183,12 @@ def build_default_system_hive_v2() -> bytes:
     """
     Build SYSTEM.HIV with proper tree structure matching kernel's
     ensure_key_path() traversal. Includes default service entries
-    (Dhcpd) for the Service Manager (SM-001).
+    (Dhcpd) for the Service Manager (SM-001) and Power plan defaults
+    for the Power Manager (PM-PHASE2).
     """
     b = HiveBuilder()
 
-    # Total cells needed: root + CurrentControlSet + Services + NeoInit +
-    #   Network + Interfaces + 0 + Control +
-    #   Dhcpc + DhcpcDisplayName + DhcpcBinaryPath + DhcpcImagePath +
-    #   DhcpcStartType + DhcpcRestartPolicy + DhcpcMaxFailures + DhcpcDeps +
-    #   DefaultShell + EnableVT + AutoStartServices +
-    #   DHCPEnabled + WaitForNetwork
-    # = 22 cells
+    # Total cells: 51 — root + CurrentControlSet tree (27) + Power tree (24)
 
     # ── ALLOCATE all cells first ──
     _ROOT = 0
@@ -224,8 +219,33 @@ def build_default_system_hive_v2() -> bytes:
     _V_DEPS = 21
     _V_DESC = 22
 
-    # Pre-alloc: ensure next_idx doesn't conflict
-    b.next_idx = 27
+    # ── Power tree cells (PM-PHASE2) ──
+    _PWR = 27
+    _PLN = 28
+    _BAL = 29
+    _PER = 30
+    _SAV = 31
+    _V_AP = 32
+    _V_BAL_DT = 33
+    _V_BAL_ST = 34
+    _V_BAL_HE = 35
+    _V_BAL_CP = 36
+    _V_BAL_LA = 37
+    _V_BAL_PBA = 38
+    _V_PER_DT = 39
+    _V_PER_ST = 40
+    _V_PER_HE = 41
+    _V_PER_CP = 42
+    _V_PER_LA = 43
+    _V_PER_PBA = 44
+    _V_SAV_DT = 45
+    _V_SAV_ST = 46
+    _V_SAV_HE = 47
+    _V_SAV_CP = 48
+    _V_SAV_LA = 49
+    _V_SAV_PBA = 50
+
+    b.next_idx = 51
 
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests
@@ -271,6 +291,34 @@ def build_default_system_hive_v2() -> bytes:
     # Locale\Language value
     b.add_value(_V_LANG, "Language", REG_SZ, b"es-ES")
 
+    # ── Power plan values (PM-PHASE2) ──
+    # Balanced chain: PowerButtonAction -> LidAction -> CpuPolicy -> HibernateEnabled -> SleepTimeout -> DisplayTimeout
+    b.add_value(_V_BAL_DT, "DisplayTimeout", REG_DWORD, struct.pack("<I", 10))
+    b.add_value(_V_BAL_ST, "SleepTimeout", REG_DWORD, struct.pack("<I", 30), next_val=_V_BAL_DT)
+    b.add_value(_V_BAL_HE, "HibernateEnabled", REG_DWORD, struct.pack("<I", 1), next_val=_V_BAL_ST)
+    b.add_value(_V_BAL_CP, "CpuPolicy", REG_SZ, b"Balanced", next_val=_V_BAL_HE)
+    b.add_value(_V_BAL_LA, "LidAction", REG_DWORD, struct.pack("<I", 1), next_val=_V_BAL_CP)
+    b.add_value(_V_BAL_PBA, "PowerButtonAction", REG_DWORD, struct.pack("<I", 3), next_val=_V_BAL_LA)
+
+    # Performance chain
+    b.add_value(_V_PER_DT, "DisplayTimeout", REG_DWORD, struct.pack("<I", 30))
+    b.add_value(_V_PER_ST, "SleepTimeout", REG_DWORD, struct.pack("<I", 60), next_val=_V_PER_DT)
+    b.add_value(_V_PER_HE, "HibernateEnabled", REG_DWORD, struct.pack("<I", 0), next_val=_V_PER_ST)
+    b.add_value(_V_PER_CP, "CpuPolicy", REG_SZ, b"Performance", next_val=_V_PER_HE)
+    b.add_value(_V_PER_LA, "LidAction", REG_DWORD, struct.pack("<I", 0), next_val=_V_PER_CP)
+    b.add_value(_V_PER_PBA, "PowerButtonAction", REG_DWORD, struct.pack("<I", 3), next_val=_V_PER_LA)
+
+    # PowerSaver chain
+    b.add_value(_V_SAV_DT, "DisplayTimeout", REG_DWORD, struct.pack("<I", 3))
+    b.add_value(_V_SAV_ST, "SleepTimeout", REG_DWORD, struct.pack("<I", 10), next_val=_V_SAV_DT)
+    b.add_value(_V_SAV_HE, "HibernateEnabled", REG_DWORD, struct.pack("<I", 1), next_val=_V_SAV_ST)
+    b.add_value(_V_SAV_CP, "CpuPolicy", REG_SZ, b"PowerSave", next_val=_V_SAV_HE)
+    b.add_value(_V_SAV_LA, "LidAction", REG_DWORD, struct.pack("<I", 1), next_val=_V_SAV_CP)
+    b.add_value(_V_SAV_PBA, "PowerButtonAction", REG_DWORD, struct.pack("<I", 2), next_val=_V_SAV_LA)
+
+    # ActivePlan = 0 (Balanced)
+    b.add_value(_V_AP, "ActivePlan", REG_DWORD, struct.pack("<I", 0))
+
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_TESTS)
@@ -300,12 +348,21 @@ def build_default_system_hive_v2() -> bytes:
     # Control (child of CurrentControlSet, sibling of Services)
     b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT, subkeys_head=_LOC_KEY)
 
+    # ── Power keys (PM-PHASE2) ──
+    b.add_key(_PWR, "Power", _ROOT, subkeys_head=_PLN, values_head=_V_AP)
+    b.add_key(_PLN, "Plans", _PWR, subkeys_head=_BAL)
+    # Plans subkey chain: Balanced -> Performance -> PowerSaver
+    b.add_key(_BAL, "Balanced", _PLN, values_head=_V_BAL_PBA, subkeys_sibling=_PER)
+    b.add_key(_PER, "Performance", _PLN, values_head=_V_PER_PBA, subkeys_sibling=_SAV)
+    b.add_key(_SAV, "PowerSaver", _PLN, values_head=_V_SAV_PBA)
+
     # CurrentControlSet: subkeys = Services -> Control (sibling chain)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO,
               subkeys_sibling=_CTL)
-    b.add_key(_CCS, "CurrentControlSet", _ROOT, subkeys_head=_SVC)
+    b.add_key(_CCS, "CurrentControlSet", _ROOT, subkeys_head=_SVC,
+              subkeys_sibling=_PWR)  # Power is sibling under root
 
-    # Root: subkeys = CurrentControlSet
+    # Root: subkeys = CurrentControlSet -> Power
     b.add_key(_ROOT, "SYSTEM", NULL_CELL, subkeys_head=_CCS)
 
     return b.serialize()
@@ -318,7 +375,7 @@ def main():
     output.write_bytes(data)
     size = len(data)
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: {27}")
+    print(f"  Cells: {51}")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
@@ -338,6 +395,25 @@ def main():
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\Locale\\Language = 'es-ES' (REG_SZ)")
+    print("    Power\\ActivePlan = 0 (Balanced, REG_DWORD)")
+    print("    Power\\Plans\\Balanced\\DisplayTimeout = 10 (REG_DWORD)")
+    print("    Power\\Plans\\Balanced\\SleepTimeout = 30 (REG_DWORD)")
+    print("    Power\\Plans\\Balanced\\HibernateEnabled = 1 (REG_DWORD)")
+    print("    Power\\Plans\\Balanced\\CpuPolicy = 'Balanced' (REG_SZ)")
+    print("    Power\\Plans\\Balanced\\LidAction = 1 (Sleep, REG_DWORD)")
+    print("    Power\\Plans\\Balanced\\PowerButtonAction = 3 (Shutdown, REG_DWORD)")
+    print("    Power\\Plans\\Performance\\DisplayTimeout = 30 (REG_DWORD)")
+    print("    Power\\Plans\\Performance\\SleepTimeout = 60 (REG_DWORD)")
+    print("    Power\\Plans\\Performance\\HibernateEnabled = 0 (REG_DWORD)")
+    print("    Power\\Plans\\Performance\\CpuPolicy = 'Performance' (REG_SZ)")
+    print("    Power\\Plans\\Performance\\LidAction = 0 (Nothing, REG_DWORD)")
+    print("    Power\\Plans\\Performance\\PowerButtonAction = 3 (Shutdown, REG_DWORD)")
+    print("    Power\\Plans\\PowerSaver\\DisplayTimeout = 3 (REG_DWORD)")
+    print("    Power\\Plans\\PowerSaver\\SleepTimeout = 10 (REG_DWORD)")
+    print("    Power\\Plans\\PowerSaver\\HibernateEnabled = 1 (REG_DWORD)")
+    print("    Power\\Plans\\PowerSaver\\CpuPolicy = 'PowerSave' (REG_SZ)")
+    print("    Power\\Plans\\PowerSaver\\LidAction = 1 (Sleep, REG_DWORD)")
+    print("    Power\\Plans\\PowerSaver\\PowerButtonAction = 2 (Hibernate, REG_DWORD)")
 
 
 if __name__ == "__main__":
