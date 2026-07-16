@@ -18,14 +18,12 @@
 ## Quick Reference
 
 ```bash
-cargo run --bin neodev -- build --quick --image    # build kernel + bl + image (preferred)
-cargo run --bin neodev -- build --image            # build everything + image
+cargo run --bin neodev -- build --quick --image    # build kernel + bl + image 
+cargo run --bin neodev -- build --image            # build everything + image (preferred)
 cargo run --bin neodev -- run                      # QEMU + OVMF + GDB :1234
-cargo run --bin neodev -- run --kvm                # KVM mode
 cargo run --bin neodev -- test                     # run automated tests
 cargo run --bin neodev -- list                     # show discovered projects
 cargo run --bin neodev -- clean                    # clean artifacts
-bash scripts/build.sh                              # legacy (still available)
 ```
 
 Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`

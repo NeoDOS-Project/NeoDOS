@@ -70,7 +70,7 @@ pub fn init() {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    SERIAL1.lock().write_fmt(args).expect("Printing to serial failed");
+    let _ = SERIAL1.lock().write_fmt(args);
 }
 
 #[macro_export]
