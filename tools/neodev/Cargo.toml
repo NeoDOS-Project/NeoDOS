@@ -9,11 +9,11 @@ name = "neodev"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4.6.2", features = ["derive"] }
 anyhow = "1"
-serde = { version = "1", features = ["derive"] }
-toml = "0.8"
-colored = "2"
-walkdir = "2"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.3+spec-1.1.0"
+colored = "2.2.0"
+walkdir = "2.5.0"
 
 

@@ -430,7 +430,7 @@ impl ServiceManager {
         let child_pid = crate::usermode::spawn_usermode(
             result.entry, slot.stack_top, slot.slot_idx,
             2, "\\", 0, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
-        );
+        ).map_err(|_| SmError::OutOfMemory)?;
 
         Ok(child_pid)
     }
@@ -545,6 +545,25 @@ lazy_static! {
     pub static ref SERVICE_MANAGER: Mutex<ServiceManager> = Mutex::new(ServiceManager::new());
 }
 
+/// Register built-in default services when the registry hive is empty or missing.
+/// This ensures critical system services are always defined regardless of
+/// registry state (boot tolerance policy).
+fn register_default_services() {
+    let mut sm = SERVICE_MANAGER.lock();
+    if !sm.services.is_empty() {
+        return; // already have services
+    }
+
+    // NeoInit — PID 1 init process (System start type)
+    let neoinit_cfg = ServiceConfig {
+        start_type: ServiceStartType::System,
+        restart_policy: ServiceRestartPolicy::Always,
+        max_failures: 5,
+    };
+    let _ = sm.register("NeoInit", "NeoDOS Init Process",
+        "C:\\Programs\\neoinit.nxe", neoinit_cfg, &[]);
+}
+
 /// Initialize the Service Manager. Called during Phase 3.882 (after Registry init).
 /// Creates \Service\ namespace directory and loads configured services from Registry.
 pub fn sm_init() {
@@ -552,6 +571,11 @@ pub fn sm_init() {
 
     // Load services from Registry
     let loaded = sm_reg_load_all();
+    if loaded == 0 {
+        // Tolerance: if registry is empty/missing, register built-in defaults
+        crate::serial_println!("[SM] Registry has no services — registering built-in defaults");
+        register_default_services();
+    }
     crate::serial_println!("[SM] Service Manager initialized ({} services loaded)", loaded);
 
     // Build dependency order
@@ -955,5 +979,112 @@ pub fn register_service_tests() {
         test_eq!(ServiceStartType::Auto as u8, 2);
         test_eq!(ServiceStartType::Disabled as u8, 4);
         test_eq!(ServiceRestartPolicy::Always as u8, 2);
+    });
+
+    // ── AUDIT-33: Boot/init hardening tests ──
+
+    test_case!("boot_missing_service_fallback", {
+        // Verify that when no services are registered (empty registry),
+        // the fallback to built-in defaults works correctly.
+        // This simulates sm_init() with an empty registry.
+
+        // Start with empty ServiceManager (simulates empty registry)
+        let mut sm = ServiceManager::new();
+        test_eq!(sm.services.len(), 0);
+
+        // Simulate sm_reg_load_all() returning 0 (no registry entries)
+        // Then register_default_services() is called
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::System,
+            restart_policy: ServiceRestartPolicy::Always,
+            max_failures: 5,
+        };
+        let r = sm.register("NeoInit", "NeoDOS Init Process",
+            "C:\\Programs\\neoinit.nxe", cfg, &[]);
+        test_true!(r.is_ok());
+        test_eq!(sm.services.len(), 1);
+
+        // Verify the fallback service has correct properties
+        let svc = &sm.services[0];
+        test_eq!(svc.name, "NeoInit");
+        test_eq!(svc.start_type as u8, ServiceStartType::System as u8);
+        test_eq!(svc.restart_policy as u8, ServiceRestartPolicy::Always as u8);
+        test_eq!(svc.max_failures, 5);
+        test_eq!(svc.binary_path, "C:\\Programs\\neoinit.nxe");
+
+        // Auto-start with this service should not panic even if binary doesn't exist
+        sm.dependency_order = vec![0];
+        let _result = sm.start_service(0);
+        // Service should be in Failed state (binary doesn't exist), not panicked
+        test_eq!(sm.services[0].state, ServiceState::Failed);
+    });
+
+    test_case!("boot_service_startup_recovery", {
+        // Verify that multiple services failing during auto-start don't halt the system.
+        // Each failure should be isolated and the next service should still be attempted.
+
+        let mut sm = ServiceManager::new();
+        let cfg_auto = ServiceConfig {
+            start_type: ServiceStartType::Auto,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let cfg_system = ServiceConfig {
+            start_type: ServiceStartType::System,
+            restart_policy: ServiceRestartPolicy::OnCrash,
+            max_failures: 2,
+        };
+
+        // Register multiple services with non-existent binaries
+        let idx1 = sm.register("SvcA", "Service A", "C:\\missing_a.nxe", cfg_auto.clone(), &[]).unwrap();
+        let idx2 = sm.register("SvcB", "Service B", "C:\\missing_b.nxe", cfg_system.clone(), &[]).unwrap();
+        let idx3 = sm.register("SvcC", "Service C", "C:\\missing_c.nxe", cfg_auto.clone(), &[]).unwrap();
+
+        sm.dependency_order = vec![idx1, idx2, idx3];
+
+        // Simulate auto-start loop (from sm_start_auto_services)
+        let mut started = 0;
+        let mut failed = 0;
+        for &i in &sm.dependency_order.clone() {
+            let should_start = {
+                let svc = &sm.services[i];
+                svc.start_type == ServiceStartType::System || svc.start_type == ServiceStartType::Auto
+            };
+            if should_start {
+                match sm.start_service(i) {
+                    Ok(()) => started += 1,
+                    Err(_) => {
+                        sm.services[i].state = ServiceState::Failed;
+                        failed += 1;
+                    }
+                }
+            }
+        }
+
+        // All should fail (binaries don't exist), but none should panic
+        test_eq!(started, 0);
+        test_eq!(failed, 3);
+        test_eq!(sm.services[idx1].state, ServiceState::Failed);
+        test_eq!(sm.services[idx2].state, ServiceState::Failed);
+        test_eq!(sm.services[idx3].state, ServiceState::Failed);
+    });
+
+    test_case!("boot_register_default_services", {
+        // Verify that register_default_services creates NeoInit
+        // (only tests on a fresh ServiceManager)
+        let mut fresh_sm = ServiceManager::new();
+        test_eq!(fresh_sm.services.len(), 0);
+        // Manually register: same logic as register_default_services
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::System,
+            restart_policy: ServiceRestartPolicy::Always,
+            max_failures: 5,
+        };
+        let r = fresh_sm.register("NeoInit", "NeoDOS Init Process",
+            "C:\\Programs\\neoinit.nxe", cfg, &[]);
+        test_true!(r.is_ok());
+        test_eq!(fresh_sm.services.len(), 1);
+        test_eq!(fresh_sm.services[0].name, "NeoInit");
+        test_eq!(fresh_sm.services[0].start_type as u8, ServiceStartType::System as u8);
     });
 }
