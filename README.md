@@ -3,6 +3,9 @@
 [![Version](https://img.shields.io/badge/version-v0.49.0-blue.svg)](CHANGELOG.md)
 [![Tests](https://img.shields.io/badge/tests-656-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
+[![Organization](https://img.shields.io/badge/org-NeoDOS--Project-blueviolet.svg)](https://github.com/NeoDOS-Project)
+
+> **Official repository moved to the [NeoDOS-Project](https://github.com/NeoDOS-Project) organization.**
 
 NeoDOS es un sistema operativo de 64 bits escrito en Rust con arquitectura híbrida: kernel monolítico con subsistema de drivers aislados estilo microkernel. Arranca en UEFI, soporta SMP, tiene un planificador prioritario estilo NT, drivers con certificación y capacidades, un sistema de archivos propio, y un modelo de seguridad ACL-based.
 
@@ -39,6 +42,17 @@ El kernel se organiza en 5 capas verticales:
 | **SMP** | 16 CPUs, per-CPU KPRCB, IPI (reschedule, TLB shootdown, call-function) |
 | **Seguridad** | NT6 SRM: SID, Token, ACL, ACE, SeAccessCheck |
 | **Rendimiento** | HPET → APIC timer 1 KHz, slab con per-CPU hot cache, work stealing |
+
+---
+
+## Project Organization
+
+NeoDOS is now developed under the [NeoDOS-Project](https://github.com/NeoDOS-Project) GitHub organization.
+
+| Repository | Description |
+|------------|-------------|
+| [NeoDOS](https://github.com/NeoDOS-Project/NeoDOS) | Main repository (kernel, bootloader, drivers, tools, docs) |
+| [.github](https://github.com/NeoDOS-Project/.github) | Community health files, issue and PR templates |
 
 ---
 

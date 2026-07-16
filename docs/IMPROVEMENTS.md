@@ -863,6 +863,51 @@ Agrupados en paquetes de trabajo:
 
 ---
 
+## Organization & Ecosystem (NeoDOS-Project)
+
+Future improvements for the GitHub organization and project ecosystem:
+
+- [ ] **ORG-TEAMS. Create GitHub teams with proper permissions** | Prioridad: Baja | Complejidad: Baja | Impacto: Alto
+  - Create teams: `core` (admin), `contributors` (write), `drivers` (maintain), `docs` (maintain).
+  - **Archivos:** Organización NeoDOS-Project en GitHub.
+
+- [ ] **ORG-RULES. Add branch protection rules** | Prioridad: Baja | Complejidad: Baja | Impacto: Alto
+  - Require PR reviews for `main` branch, require CI passing, require linear history.
+  - **Archivos:** Organización NeoDOS-Project en GitHub.
+
+- [ ] **ORG-CODEOWNERS. Add CODEOWNERS file** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - Define ownership for kernel, drivers, bootloader, docs, tools.
+  - **Archivos:** `.github/CODEOWNERS`
+
+- [ ] **ORG-DEPENDABOT. Configure Dependabot** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - Enable dependency updates for Rust (Cargo), GitHub Actions.
+  - **Archivos:** `.github/dependabot.yml`
+
+- [ ] **ORG-PROJECTS. Migrate to GitHub Projects v2** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - Set up kanban boards for roadmap tracking, sprint planning.
+  - **Archivos:** Organización NeoDOS-Project en GitHub.
+
+- [ ] **ORG-DISCUSSIONS. Enable GitHub Discussions** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - Categories: Announcements, General, Q&A, Ideas, Show and tell.
+  - **Archivos:** Repositorio NeoDOS en GitHub.
+
+- [ ] **ORG-SPONSORS. Configure GitHub Sponsors** | Prioridad: Muy Baja | Complejidad: Baja | Impacto: Alto
+  - Enable sponsors button for financial support.
+
+- [ ] **ORG-PACKAGES. Enable GitHub Package Registry** | Prioridad: Baja | Complejidad: Media | Impacto: Medio
+  - Publish NXE/NXL/NEM artifacts as packages for distribution.
+
+- [ ] **ORG-RELEASES. Automate releases with GitHub Actions** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - Auto-tag, auto-build, auto-release on version bumps.
+
+- [ ] **ORG-PAGES. Set up GitHub Pages site** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - Documentation site for NeoDOS with mdBook or similar.
+
+- [ ] **ORG-METRICS. Track community health metrics** | Prioridad: Muy Baja | Complejidad: Baja | Impacto: Bajo
+  - Enable insights, contributor graphs, dependency graphs.
+
+---
+
 ## Referencias
 
 - [ROADMAP.md](../ROADMAP.md) — Visión general, fases, milestones, prioridades
