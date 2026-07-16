@@ -1,6 +1,6 @@
 # NeoDOS — Plan de Implementación Detallado
 
-> **Versión del proyecto:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
+> **Versión del proyecto:** v0.50-dev | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
 > Este documento contiene el detalle granular de cada tarea: archivos,
 > prerrequisitos, tests y descripción técnica.
@@ -33,7 +33,7 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
-- [ ] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
+- [x] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
   - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
   - Definir política de tolerancia para servicios críticos y registro ausente.
   - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`

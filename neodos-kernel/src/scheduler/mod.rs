@@ -472,18 +472,18 @@ impl Scheduler {
         cwd_path: &str,
         heap_base: u64,
         parent_pid: u32,
-    ) -> u32 {
+    ) -> Result<u32, &'static str> {
+        // Find free slots first before consuming PID/TID
+        let ep_slot = self.alloc_eprocess_slot()
+            .ok_or("EPROCESS table full")?;
+        let th_slot = self.alloc_kthread_slot()
+            .ok_or("KTHREAD table full")?;
+
         let pid = self.next_pid;
         self.next_pid += 1;
 
         let tid = self.next_tid;
         self.next_tid += 1;
-
-        // Find free slots
-        let ep_slot = self.alloc_eprocess_slot()
-            .expect("EPROCESS table full");
-        let th_slot = self.alloc_kthread_slot()
-            .expect("KTHREAD table full");
 
         let mut eproc = Eprocess::new_ring3(pid, slot_idx, cwd_drive, cwd_path, heap_base, parent_pid);
         let mut thread = Kthread::new_ring3(tid, pid, entry, user_stack_top);
@@ -538,7 +538,7 @@ impl Scheduler {
         }
 
         crate::trace_sched!(1, pid, 0); // ADD_PROCESS
-        pid
+        Ok(pid)
     }
 
     /// Add an additional thread to an existing EPROCESS (Ring 3).

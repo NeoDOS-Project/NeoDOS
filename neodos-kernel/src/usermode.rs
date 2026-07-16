@@ -121,7 +121,7 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
-pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> u32 {
+pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> Result<u32, &'static str> {
     let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
     let heap_base = match heap_slot {
         Some(slot) => slot.base,

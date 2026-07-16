@@ -7,6 +7,16 @@
 
 ---
 
+## AUDIT-33. Boot/init hardening [COMPLETED]
+
+- [x] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `src/cm/init.rs`
+  - **Panic→graceful halt:** boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found (with fallback), spawn_usermode failure, NeoInit exit.
+  - **Registry tolerance:** `ensure_boot_defaults()` creates critical boot defaults (Language, DefaultShell, EnableVT, WaitForNetwork) if missing from empty/corrupted hive.
+  - **Service fallback:** `register_default_services()` registers built-in NeoInit service when registry is empty; `sm_init()` calls it when `sm_reg_load_all()` returns 0.
+  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`, `boot_register_default_services`
+
+---
+
 ## CM-FIX. Registry bugfixes [COMPLETED]
 
 - [x] **CM-FIX. Registry bugfixes** | Prereqs: -- | Files: `src/cm/hive.rs`, `src/cm/mod.rs`, `src/syscall/ob.rs`

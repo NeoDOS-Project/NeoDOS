@@ -92,8 +92,52 @@ pub fn ensure_language_default() {
         Ok(k) => k,
         Err(_) => return,
     };
-    // No default — the hive (gen_system_hiv.py) provides the value.
-    // userspace i18n_init() falls back to DEFAULT_LANG if absent.
+    // Set language default if absent (tolerance for missing registry hive)
+    if crate::cm::cm_query_value(locale, "Language").is_err() {
+        let _ = crate::cm::cm_set_value(locale, "Language", crate::cm::hive::REG_SZ, b"en-US");
+    }
+}
+
+/// Ensure critical boot defaults exist in the SYSTEM hive.
+/// Called at boot to guarantee the system can start even with
+/// an empty or corrupted registry hive (tolerance policy).
+pub fn ensure_boot_defaults() {
+    use crate::cm::hive;
+
+    // ── CurrentControlSet\Control\Locale — language ──
+    let ctrl = crate::cm::cm_open_key(0, "CurrentControlSet\\Control")
+        .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Control"));
+    let ctrl = match ctrl {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    let locale = crate::cm::cm_open_key(ctrl, "Locale")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "Locale"));
+    if let Ok(locale) = locale {
+        if crate::cm::cm_query_value(locale, "Language").is_err() {
+            let _ = crate::cm::cm_set_value(locale, "Language", hive::REG_SZ, b"en-US");
+        }
+    }
+
+    // ── CurrentControlSet\Services\NeoInit — init process config ──
+    let svc = crate::cm::cm_open_key(0, "CurrentControlSet\\Services\\NeoInit")
+        .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Services\\NeoInit"));
+    let svc = match svc {
+        Ok(k) => k,
+        Err(_) => return,
+    };
+    if crate::cm::cm_query_value(svc, "DefaultShell").is_err() {
+        let _ = crate::cm::cm_set_value(svc, "DefaultShell", hive::REG_SZ,
+            b"C:\\Programs\\neoshell.nxe");
+    }
+    if crate::cm::cm_query_value(svc, "EnableVT").is_err() {
+        let _ = crate::cm::cm_set_value(svc, "EnableVT", hive::REG_DWORD,
+            &1u32.to_le_bytes());
+    }
+    if crate::cm::cm_query_value(svc, "WaitForNetwork").is_err() {
+        let _ = crate::cm::cm_set_value(svc, "WaitForNetwork", hive::REG_DWORD,
+            &0u32.to_le_bytes());
+    }
 }
 
 pub fn ensure_key_path(hive: &mut Hive, start: u32, path: &str) -> Option<u32> {

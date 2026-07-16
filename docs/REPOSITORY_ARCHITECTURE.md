@@ -282,7 +282,51 @@ Sub-repo CI would trigger independently.
 
 ---
 
-## 5. Migration Plan
+---
+
+## 5. Branch Strategy (pre-v1.0)
+
+While NeoDOS lives in a monorepo, a clear branch strategy keeps development organized:
+
+```
+master         ← Stable. Only merges from develop via release PRs.
+develop        ← Daily integration. Default branch for PRs.
+├── feat/*     ← Features (feat/ob-namespace-v2, feat/ahci-msi)
+├── fix/*      ← Bug fixes (fix/page-fault-leak)
+├── refactor/* ← Code refactors (refactor/driver-abi)
+└── release/*  ← Release preparation (release/v0.51.0)
+```
+
+### Rules
+
+| Branch | Protected | Requires PR | Requires CI | Deletes after merge |
+|--------|-----------|-------------|-------------|---------------------|
+| `master` | Yes | Yes | Yes | — |
+| `develop` | Yes | Yes (≥1 approval) | Yes | — |
+| `feat/*`, `fix/*`, `refactor/*` | No | Yes → `develop` | Yes | Yes |
+| `release/*` | No | Yes → `master` | Yes | Yes |
+
+### Workflow
+
+1. Create feature branch from `develop`: `feat/name`
+2. Work, commit, push
+3. Open PR → `develop` with label (`feat:`, `fix:`, `refactor:`)
+4. CI must pass + 1 approval
+5. Squash-merge to `develop`
+6. Delete feature branch
+7. When ready for release: `release/vX.Y.Z` from `develop` → PR → `master`
+8. Tag `master` with version, create GitHub Release
+
+### Hotfix flow (rare)
+
+For critical bugs in `master`:
+1. Branch `fix/critical-name` from `master`
+2. Fix, PR → `master` (urgent, skip `develop`)
+3. Cherry-pick to `develop` to keep sync
+
+---
+
+## 6. Migration Plan
 
 No immediate migration. All proposals are for **post-v1.0** unless otherwise noted.
 
