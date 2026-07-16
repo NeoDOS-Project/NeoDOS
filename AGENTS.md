@@ -73,6 +73,7 @@ For every subsystem, consult its doc — not this file:
 | NXE Ecosystem | `docs/nxe-ecosystem-design.md` | NXE/NXP format, resources, i18n, tools |
 | NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
 | NXP Format | `docs/nxp-format.md` | Package container format, manifest |
+| Repository Architecture | `docs/REPOSITORY_ARCHITECTURE.md` | Multi-repo proposal, dependency analysis, separation candidates |
 
 ## Skills (specialized task checklists)
 
