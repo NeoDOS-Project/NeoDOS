@@ -33,11 +33,14 @@ or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/
 
 ## Git Workflow
 
-1. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
-2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
-3. `npx markdownlint '**/*.md' --config .markdownlint.json`
-4. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
-5. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
+1. Work is done on `develop` branch (default). Create feature branches: `feat/name`, `fix/name`, `refactor/name`.
+2. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
+3. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
+4. `npx markdownlint '**/*.md' --config .markdownlint.json`
+5. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
+6. Open PR → `develop`, get approval, merge (squash).
+7. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
+8. Releases: branch `release/vX.Y.Z` from `develop` → PR → `master`, tag, GitHub Release.
 
 ## Architecture
 
