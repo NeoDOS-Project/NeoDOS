@@ -41,6 +41,23 @@ fn print_usage() {
     write_str(b"\r\n\r\n");
 }
 
+fn read_nlt_header(path: &str) -> Result<[u8; 32], ()> {
+    let mut ob_buf = [0u8; 512];
+    let prefix = b"\\Global\\FileSystem\\";
+    let total = prefix.len() + path.len();
+    if total > 511 { return Err(()); }
+    ob_buf[..prefix.len()].copy_from_slice(prefix);
+    ob_buf[prefix.len()..total].copy_from_slice(path.as_bytes());
+    let ob_path = unsafe { core::str::from_utf8_unchecked(&ob_buf[..total]) };
+
+    let fd = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ).map_err(|_| ())?;
+    let mut header = [0u8; 32];
+    let n = syscall::sys_read(fd, &mut header).map_err(|_| ())?;
+    let _ = syscall::sys_close(fd);
+    if n < 32 { return Err(()); }
+    Ok(header)
+}
+
 fn cmd_validate(path: &[u8]) {
     let path_str = core::str::from_utf8(path).unwrap_or("");
     if path_str.is_empty() {
@@ -50,47 +67,26 @@ fn cmd_validate(path: &[u8]) {
         return;
     }
 
-    let mut ob_buf = [0u8; 512];
-    let prefix = b"\\Global\\FileSystem\\";
-    let total = prefix.len() + path.len();
-    if total > 511 {
-        write_err(b"  Path too long\r\n");
-        return;
-    }
-    ob_buf[..prefix.len()].copy_from_slice(prefix);
-    ob_buf[prefix.len()..total].copy_from_slice(path);
-    let ob_path = unsafe { core::str::from_utf8_unchecked(&ob_buf[..total]) };
-
-    let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-        Ok(f) => f,
+    match read_nlt_header(path_str) {
+        Ok(header) => {
+            let magic = &header[0..4];
+            let valid = magic == b"NLT2"
+                && u16::from_le_bytes([header[4], header[5]]) == 2
+                && u16::from_le_bytes([header[6], header[7]]) >= 32;
+            write_str(b"  ");
+            if valid {
+                write_str(tr_id!(IDS_STATUS_VALID).as_bytes());
+            } else {
+                write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
+            }
+            write_str(b"\r\n");
+        }
         Err(_) => {
             write_err(b"  ");
             write_err(tr_id!(IDS_ERROR_CANNOT_OPEN).as_bytes());
             write_err(b"\r\n");
-            return;
-        }
-    };
-
-    let mut buf = [0u8; 256];
-    match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::NltValidate, &mut buf) {
-        Ok(n) if n > 0 => {
-            if buf[0] == 1 {
-                write_str(b"  ");
-                write_str(tr_id!(IDS_STATUS_VALID).as_bytes());
-                write_str(b"\r\n");
-            } else {
-                write_str(b"  ");
-                write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
-                write_str(b"\r\n");
-            }
-        }
-        _ => {
-            write_str(b"  ");
-            write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
-            write_str(b"\r\n");
         }
     }
-    let _ = syscall::sys_close(fd);
 }
 
 fn cmd_stats(path: &[u8]) {
@@ -102,45 +98,45 @@ fn cmd_stats(path: &[u8]) {
         return;
     }
 
-    let mut ob_buf = [0u8; 512];
-    let prefix = b"\\Global\\FileSystem\\";
-    let total = prefix.len() + path.len();
-    if total > 511 {
-        write_err(b"  Path too long\r\n");
-        return;
-    }
-    ob_buf[..prefix.len()].copy_from_slice(prefix);
-    ob_buf[prefix.len()..total].copy_from_slice(path);
-    let ob_path = unsafe { core::str::from_utf8_unchecked(&ob_buf[..total]) };
+    match read_nlt_header(path_str) {
+        Ok(header) => {
+            let magic = &header[0..4];
+            if magic != b"NLT2" {
+                write_str(b"  ");
+                write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
+                write_str(b"\r\n");
+                return;
+            }
+            let count = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
+            let lang_id = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
+            let app_id = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
 
-    let fd = match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-        Ok(f) => f,
-        Err(_) => {
-            write_err(b"  ");
-            write_err(tr_id!(IDS_ERROR_CANNOT_OPEN).as_bytes());
-            write_err(b"\r\n");
-            return;
-        }
-    };
-
-    let mut buf = [0u8; 16];
-    match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::NltStats, &mut buf) {
-        Ok(n) if n >= 8 => {
-            let count = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            let lang_id = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
             write_str(b"  Strings: ");
-            write_num(count as u64);
+            write_u32(count);
             write_str(b", Language ID: ");
-            write_num(lang_id as u64);
+            write_u32(lang_id);
+            write_str(b", App ID: ");
+            write_u32(app_id);
             write_str(b"\r\n");
         }
-        _ => {
+        Err(_) => {
             write_str(b"  ");
             write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
             write_str(b"\r\n");
         }
     }
-    let _ = syscall::sys_close(fd);
+}
+
+fn write_u32(mut v: u32) {
+    if v == 0 { write_str(b"0"); return; }
+    let mut buf = [0u8; 10];
+    let mut i = 9;
+    while v > 0 {
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+        i -= 1;
+    }
+    write_str(&buf[i + 1..]);
 }
 
 fn cmd_check(args: &[u8]) {
@@ -159,18 +155,6 @@ fn cmd_create(args: &[u8]) {
     write_str(b"  ");
     write_str(tr_id!(IDS_TOOL_CREATE).as_bytes());
     write_str(b"\r\n");
-}
-
-fn write_num(mut v: u64) {
-    if v == 0 { write_str(b"0"); return; }
-    let mut buf = [0u8; 20];
-    let mut i = 20;
-    while v > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    write_str(&buf[i..]);
 }
 
 fn is_cmd(a: &[u8], b: &[u8]) -> bool {
