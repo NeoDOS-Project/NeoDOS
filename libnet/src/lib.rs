@@ -45,7 +45,11 @@ pub struct NetAbiTable {
     pub get_gateway: extern "C" fn(u32) -> u32,
     pub get_mask: extern "C" fn(u32) -> u32,
     pub get_dhcp_bound: extern "C" fn() -> i32,
-    _reserved: [u64; 7],
+    pub get_dns: extern "C" fn(u32) -> u32,
+    pub get_dhcp_enabled: extern "C" fn(u32) -> i32,
+    pub get_lease_seconds: extern "C" fn(u32) -> u32,
+    pub get_hostname: extern "C" fn(u32) -> u32,
+    _reserved: [u64; 3],
 }
 
 fn get_table() -> Option<&'static NetAbiTable> {
@@ -175,6 +179,34 @@ pub fn get_dhcp_bound() -> i32 {
     match get_table() {
         Some(t) => (t.get_dhcp_bound)(),
         None => -1,
+    }
+}
+
+pub fn get_dns(iface: u32) -> u32 {
+    match get_table() {
+        Some(t) => (t.get_dns)(iface),
+        None => 0,
+    }
+}
+
+pub fn get_dhcp_enabled(iface: u32) -> i32 {
+    match get_table() {
+        Some(t) => (t.get_dhcp_enabled)(iface),
+        None => 0,
+    }
+}
+
+pub fn get_lease_seconds(iface: u32) -> u32 {
+    match get_table() {
+        Some(t) => (t.get_lease_seconds)(iface),
+        None => 0,
+    }
+}
+
+pub fn get_hostname(iface: u32) -> u32 {
+    match get_table() {
+        Some(t) => (t.get_hostname)(iface),
+        None => 0,
     }
 }
 
