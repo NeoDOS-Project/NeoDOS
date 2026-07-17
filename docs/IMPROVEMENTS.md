@@ -984,6 +984,49 @@ See [REPOSITORY_ARCHITECTURE.md](REPOSITORY_ARCHITECTURE.md) for full analysis.
   - NEM ABI v8 is stable. Drivers compile independently.
   - **Re-evaluate at v1.0** when ABI is frozen. Not before.
 
+- [ ] **REPO-SEP-008. Extract NeoTools to separate repo** | Prioridad: Alta | Complejidad: Baja | Impacto: Medio
+  - Move `tools/nxeinfo`, `tools/nxpkg`, `tools/nxdump` to `NeoDOS-Project/NeoTools`.
+  - Standalone host tools, no kernel dependencies. Cargo workspace with 3 crates.
+  - CI: build, lint, smoke tests. Releases independent from kernel.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-009. Extract NeoDOS-LSP to separate repo** | Prioridad: Alta | Complejidad: Baja | Impacto: Medio
+  - Move `neodos-lsp/` to `NeoDOS-Project/NeoDOS-LSP`.
+  - Standalone LSP server with 15+ host Rust dependencies. Zero kernel deps.
+  - CI: build, lint, unit tests. Useful for any NeoDOS development setup.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-010. Extract NeoMCP to separate repo** | Prioridad: Media | Complejidad: Baja | Impacto: Bajo
+  - Move `scripts/mcp_server/` to `NeoDOS-Project/NeoMCP`.
+  - Python MCP server, completely independent of kernel.
+  - CI: ruff, pytest. Can evolve at own pace.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-011. Define NEM ABI manifest for driver publication** | Prioridad: Media | Complejidad: Media | Impacto: Alto
+  - Create YAML/JSON manifest declaring: ABI version, host service table, capabilities, required kernel version.
+  - Prerequisite for NeoDrivers separation post-v1.0.
+  - See `docs/AUDIT_REPORT.md` §5.2 for specification.
+
+- [ ] **REPO-SEP-012. Create versioned kernel ABI manifest** | Prioridad: Media | Complejidad: Media | Impacto: Alto
+  - Declare syscall SSDT table, ObInfoClass enums, NXL ABI, boot protocol version.
+  - Enables external tools (NeoTools, LSP, SDK) to verify compatibility.
+  - See `docs/AUDIT_REPORT.md` §5.2 for specification.
+
+- [ ] **REPO-SEP-013. Publish libneodos as standalone crate on crates.io (post-v1.0)** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - Extract libneodos as published crate for third-party app development.
+  - Blocking: syscall ABI freeze (v1.0), application demand.
+  - See `docs/AUDIT_REPORT.md` §3.2 (NeoSDK analysis).
+
+- [ ] **REPO-SEP-014. Add independent CI for drivers/ within monorepo** | Prioridad: Media | Complejidad: Baja | Impacto: Medio
+  - Each driver builds independently. Add CI matrix to verify all compile.
+  - Prepare for eventual NeoDrivers separation.
+  - See `docs/AUDIT_REPORT.md` §3.3 (NeoDrivers analysis).
+
+- [ ] **REPO-SEP-015. Freeze NLT format for NeoTranslations separation** | Prioridad: Media | Complejidad: Alta | Impacto: Alto
+  - Complete I18N-P7..P12 (compression, UTF-16, pluralization, RTL) before freezing.
+  - Blocking: community translation contributions via NeoTranslations repo.
+  - See `docs/AUDIT_REPORT.md` §3.10 (NeoTranslations analysis).
+
 ---
 
 ## Referencias

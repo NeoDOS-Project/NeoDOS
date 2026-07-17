@@ -69,19 +69,18 @@
   },
   "lsp": {
     "neodos-lsp": {
-      "command": ["./neodos-lsp/target/release/neodos-lsp"],
+      "command": ["neodos-lsp"],
       "extensions": ["rs"],
       "disabled": false,
       "env": {
-        "RUST_LOG": "neodos_lsp=info",
-        "NEODOS_LSP_ROOT": "."
+        "RUST_LOG": "neodos_lsp=info"
       }
     }
   },
   "mcp": {
     "neodos-mcp": {
       "type": "local",
-      "command": ["bash", "scripts/mcp-server.sh"],
+      "command": ["neodos-mcp"],
       "enabled": true
     },
     "memory": {
