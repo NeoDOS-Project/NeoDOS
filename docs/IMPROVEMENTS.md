@@ -1,6 +1,6 @@
 # NeoDOS — Plan de Implementación Detallado
 
-> **Versión del proyecto:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
+> **Versión del proyecto:** v0.50-dev | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
 > Este documento contiene el detalle granular de cada tarea: archivos,
 > prerrequisitos, tests y descripción técnica.
@@ -33,7 +33,7 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
-- [ ] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
+- [x] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
   - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
   - Definir política de tolerancia para servicios críticos y registro ausente.
   - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
@@ -932,6 +932,44 @@ Future improvements for the GitHub organization and project ecosystem:
 
 - [ ] **ORG-METRICS. Track community health metrics** | Prioridad: Muy Baja | Complejidad: Baja | Impacto: Bajo
   - Enable insights, contributor graphs, dependency graphs.
+
+---
+
+## Repository Architecture (Multi-Repo Separation)
+
+Future improvements for splitting the monorepo into multiple repositories.
+See [REPOSITORY_ARCHITECTURE.md](REPOSITORY_ARCHITECTURE.md) for full analysis.
+
+- [ ] **REPO-SEP-001. Extract NeoDev to separate repo** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - `neodev/` is fully standalone (host Rust tool, no kernel deps).
+  - Move to own repo with independent versioning and release cycle.
+  - **Post-v1.0** — not urgent, benefits appear when external contributors use the tool.
+
+- [ ] **REPO-SEP-002. Extract NeoTools to separate repo** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - `nxdump`, `nxeinfo`, `nxpkg` are standalone analysis tools.
+  - Group as workspace in `NeoTools` repo.
+  - **Post-v1.0** — useful for OS format analysis without cloning kernel.
+
+- [ ] **REPO-SEP-003. Extract NeoMCP to separate repo** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - `scripts/mcp_server/` is a standalone Python application.
+  - **Post-v1.0** — extract when MCP server needs its own CI/deployment.
+
+- [ ] **REPO-SEP-004. Extract NeoTranslations to separate repo** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - `data/locale/` + `tools/nltc/` + `scripts/gen_nlt*.py`
+  - Enables community translation contributions without kernel access.
+  - **Post-v1.0** — valuable for internationalization community.
+
+- [ ] **REPO-SEP-005. Extract NeoDOS-LSP to separate repo** | Prioridad: Baja | Complejidad: Baja | Impacto: Medio
+  - `neodos-lsp/` is fully standalone LSP server.
+  - **Post-v1.0** — extract when LSP has stable features and external users.
+
+- [ ] **REPO-SEP-006. Move docs/ to NeoDocs repo** | Prioridad: Muy Baja | Complejidad: Media | Impacto: Bajo
+  - Documentation references kernel code directly, creating sync burden.
+  - **Post-v1.0** — only if docs are stable and external contributions increase.
+
+- [ ] **REPO-SEP-007. Re-evaluate drivers/ separation at v1.0** | Prioridad: Muy Baja | Complejidad: Alta | Impacto: Alto
+  - NEM ABI v8 is stable. Drivers compile independently.
+  - **Re-evaluate at v1.0** when ABI is frozen. Not before.
 
 ---
 

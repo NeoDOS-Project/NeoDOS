@@ -380,7 +380,7 @@ pub fn register_urn_tests() {
         let inode = 77u32;
         let name = alloc::format!("URNFILE{}", inode);
         let ob_id = object::ob_create_object(ObType::Filesystem, &name, inode as u64, 0, None)
-            .expect("ob create");
+            .map_err(|_| "ob create")?;
         test_true!(ob_id > 0);
         let obj = ob_lookup(ob_id).unwrap();
         test_eq!(obj.obj_type, ObType::Filesystem);

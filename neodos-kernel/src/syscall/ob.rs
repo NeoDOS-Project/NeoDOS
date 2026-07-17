@@ -382,10 +382,16 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 (cwd.0, cwd.1, pid)
             });
 
-            let child_pid = crate::usermode::spawn_usermode(
+            let child_pid = match crate::usermode::spawn_usermode(
                 result.entry, slot.stack_top, slot.slot_idx,
                 cwd_drive, &cwd_path, parent_pid,
-            );
+            ) {
+                Ok(pid) => pid,
+                Err(_) => {
+                    crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+                    return err_to_u64(SyscallError::NoMem);
+                }
+            };
 
             if stdin_fd != 0xFF || stdout_fd != 0xFF || stderr_fd != 0xFF {
                 let (parent_stdin_entry, parent_stdout_entry, parent_stderr_entry) = crate::hal::without_interrupts(|| {

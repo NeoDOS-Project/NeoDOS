@@ -18,14 +18,12 @@
 ## Quick Reference
 
 ```bash
-cargo run --bin neodev -- build --quick --image    # build kernel + bl + image (preferred)
-cargo run --bin neodev -- build --image            # build everything + image
+cargo run --bin neodev -- build --quick --image    # build kernel + bl + image 
+cargo run --bin neodev -- build --image            # build everything + image (preferred)
 cargo run --bin neodev -- run                      # QEMU + OVMF + GDB :1234
-cargo run --bin neodev -- run --kvm                # KVM mode
 cargo run --bin neodev -- test                     # run automated tests
 cargo run --bin neodev -- list                     # show discovered projects
 cargo run --bin neodev -- clean                    # clean artifacts
-bash scripts/build.sh                              # legacy (still available)
 ```
 
 Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`
@@ -33,11 +31,14 @@ or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/
 
 ## Git Workflow
 
-1. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
-2. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
-3. `npx markdownlint '**/*.md' --config .markdownlint.json`
-4. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
-5. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
+1. Work is done on `develop` branch (default). Create feature branches: `feat/name`, `fix/name`, `refactor/name`.
+2. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
+3. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
+4. `npx markdownlint '**/*.md' --config .markdownlint.json`
+5. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
+6. Open PR → `develop`, get approval, merge (squash).
+7. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
+8. Releases: branch `release/vX.Y.Z` from `develop` → PR → `master`, tag, GitHub Release.
 
 ## Architecture
 
@@ -73,6 +74,7 @@ For every subsystem, consult its doc — not this file:
 | NXE Ecosystem | `docs/nxe-ecosystem-design.md` | NXE/NXP format, resources, i18n, tools |
 | NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
 | NXP Format | `docs/nxp-format.md` | Package container format, manifest |
+| Repository Architecture | `docs/REPOSITORY_ARCHITECTURE.md` | Multi-repo proposal, dependency analysis, separation candidates |
 
 ## Skills (specialized task checklists)
 

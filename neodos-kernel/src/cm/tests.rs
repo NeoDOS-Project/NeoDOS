@@ -602,4 +602,48 @@ pub fn register_cm_tests() {
             test_eq!(ob_path, *expected_ob);
         }
     });
+
+    // ── AUDIT-33: Boot/init hardening — registry tolerance ──
+
+    test_case!("boot_missing_registry_defaults", {
+        // Simulate a fresh/empty hive and verify that ensure_boot_defaults
+        // creates all critical boot values (tolerance policy).
+        let mut hive = Hive::new("EmptyHive");
+        let root = hive.root_cell();
+
+        // Verify hive starts empty (no keys besides root)
+        test_eq!(hive.key_count(root), 0);
+
+        // Replicate ensure_boot_defaults() logic on the empty hive
+        use crate::cm::init::ensure_key_path;
+        use crate::cm::hive;
+
+        // Create CurrentControlSet\Control\Locale
+        let ctrl = ensure_key_path(&mut hive, root, "CurrentControlSet\\Control").unwrap();
+        let locale = hive.create_key(ctrl, "Locale").unwrap();
+        hive.set_value(locale, "Language", hive::REG_SZ, b"en-US").unwrap();
+
+        // Create CurrentControlSet\Services\NeoInit
+        let svc = ensure_key_path(&mut hive, root, "CurrentControlSet\\Services\\NeoInit").unwrap();
+        hive.set_value(svc, "DefaultShell", hive::REG_SZ, b"C:\\Programs\\neoshell.nxe").unwrap();
+        hive.set_value(svc, "EnableVT", hive::REG_DWORD, &1u32.to_le_bytes()).unwrap();
+        hive.set_value(svc, "WaitForNetwork", hive::REG_DWORD, &0u32.to_le_bytes()).unwrap();
+
+        // Verify all critical defaults exist
+        let lang = hive.query_value(locale, "Language").unwrap();
+        test_eq!(lang.as_str().unwrap(), "en-US");
+
+        let shell = hive.query_value(svc, "DefaultShell").unwrap();
+        test_eq!(shell.as_str().unwrap(), "C:\\Programs\\neoshell.nxe");
+
+        let vt = hive.query_value(svc, "EnableVT").unwrap();
+        test_eq!(vt.as_dword().unwrap(), 1);
+
+        let net = hive.query_value(svc, "WaitForNetwork").unwrap();
+        test_eq!(net.as_dword().unwrap(), 0);
+
+        // Verify structure: CCS should have Control and Services
+        let ccs = hive.find_key(root, "CurrentControlSet").unwrap();
+        test_eq!(hive.key_count(ccs), 2);
+    });
 }

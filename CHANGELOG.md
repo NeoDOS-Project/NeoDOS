@@ -2,6 +2,15 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.50.0-dev — Unreleased
+
+### Changed (Boot/init hardening — AUDIT-33)
+
+- **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `serial_println!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.
+- **Registry tolerance**: New `cm::init::ensure_boot_defaults()` creates critical boot defaults (Language, DefaultShell, EnableVT, WaitForNetwork) if missing from empty/corrupted hive. `ensure_language_default()` now sets `en-US` if absent.
+- **Service fallback**: New `register_default_services()` registers built-in NeoInit service when registry is empty. `sm_init()` calls it when `sm_reg_load_all()` returns 0. `spawn_process()` returns `Result` instead of panicking.
+- **Tests added**: `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`, `boot_register_default_services` (665 total, up from 625).
+
 ## v0.50.0 — 2026-07-13
 
 ### Added (NXE/NXP Ecosystem)

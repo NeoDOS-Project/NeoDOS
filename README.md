@@ -81,6 +81,7 @@ python3 scripts/auto_test.py             # Test runner automático headless
 | [Memory](docs/memory.md) | Buddy allocator, slab, demand paging |
 | [Drivers](docs/drivers.md) | NEM format, certificación, capacidades |
 | [Filesystem](docs/filesystem.md) | NeoFS, VFS, IoStack |
+| [Repository Architecture](docs/REPOSITORY_ARCHITECTURE.md) | Propuesta de organización multi-repositorio |
 | [Roadmap](docs/IMPROVEMENTS.md) | Items pendientes y completados |
 | [Debug](docs/DEBUG.md) | Guía de depuración con GDB |
 
