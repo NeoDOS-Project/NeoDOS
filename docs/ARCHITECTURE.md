@@ -40,7 +40,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - FAT32 ESP mount on A:
    - Boot driver loader (PHASE 3.85): carga NEM drivers (BOOT → SYSTEM, dependency-sorted)
    - Driver Isolation Layer (X4): 16×1 MB slots @ 0x30000000
-   - Networking init (PHASE 3.88): e1000 NIC probe, ARP cache, \Device\Tcp/\Device\Udp
+    - Networking init (PHASE 3.88): ARP cache, \Device\Tcp/\Device\Udp. NICs via NEM drivers
    - Cm Registry init (PHASE 3.881): mount SYSTEM hive, ensure defaults
    - ACPI power init (PHASE 3.87): RSDP discovery → FADT parse → S5/reset register
    - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard

@@ -6,40 +6,30 @@ use libneodos::syscall;
 use libneodos::tr_id;
 
 const APP_NAME: &str = "ipconfig";
-const IDS_ERR_NXL: u32 = 1004;
-const IDS_NO_IFACES: u32 = 1005;
-const IDS_ETHERNET: u32 = 1006;
-const IDS_DESCRIPTION: u32 = 1007;
-const IDS_IPV4: u32 = 1008;
-const IDS_MAC: u32 = 1009;
-const IDS_DHCP: u32 = 1010;
-const IDS_STATIC: u32 = 1011;
-const IDS_NONE: u32 = 1012;
-const IDS_UP: u32 = 1013;
-const IDS_DOWN: u32 = 1014;
-const IDS_STATUS: u32 = 1015;
-
-#[repr(C)]
-struct NetAbiTable {
-    version: u32,
-    iface_count: extern "C" fn() -> u32,
-    iface_info: unsafe extern "C" fn(u32, *mut NetIfaceInfo) -> i32,
-    iface_stats: extern "C" fn(u32, *mut NetIfaceStats) -> i32,
-    socket_create: extern "C" fn(u32) -> i32,
-    socket_bind: extern "C" fn(i32, u32, u16) -> i32,
-    socket_connect: extern "C" fn(i32, u32, u16) -> i32,
-    socket_listen: extern "C" fn(i32) -> i32,
-    socket_send: unsafe extern "C" fn(i32, *const u8, u32) -> i32,
-    socket_recv: unsafe extern "C" fn(i32, *mut u8, u32) -> i32,
-    socket_close: extern "C" fn(i32) -> i32,
-    set_ip: extern "C" fn(u32, u32, u32) -> i32,
-    set_gateway: extern "C" fn(u32, u32) -> i32,
-    get_ip: extern "C" fn(u32) -> u32,
-    get_gateway: extern "C" fn(u32) -> u32,
-    get_mask: extern "C" fn(u32) -> u32,
-    get_dhcp_bound: extern "C" fn() -> i32,
-    _reserved: [u64; 7],
-}
+const IDS_HEADER: u32 = 1001;
+const IDS_HOSTNAME: u32 = 1002;
+const IDS_ETHERNET: u32 = 1003;
+const IDS_DESCRIPTION: u32 = 1004;
+const IDS_DRIVER: u32 = 1005;
+const IDS_PCI_DEVICE: u32 = 1006;
+const IDS_LINK_STATUS: u32 = 1007;
+const IDS_MAC: u32 = 1008;
+const IDS_IPV4: u32 = 1009;
+const IDS_SUBNET_MASK: u32 = 1010;
+const IDS_GATEWAY: u32 = 1011;
+const IDS_DNS: u32 = 1012;
+const IDS_DHCP_ENABLED: u32 = 1013;
+const IDS_CONFIG_SOURCE: u32 = 1014;
+const IDS_LEASE_TIME: u32 = 1015;
+const IDS_UP: u32 = 1016;
+const IDS_DOWN: u32 = 1017;
+const IDS_DHCP: u32 = 1018;
+const IDS_STATIC: u32 = 1019;
+const IDS_NONE: u32 = 1020;
+const IDS_YES: u32 = 1021;
+const IDS_NO: u32 = 1022;
+const IDS_ERR_NXL: u32 = 1023;
+const IDS_NO_IFACES: u32 = 1024;
 
 #[repr(C)]
 struct NetIfaceInfo {
@@ -49,157 +39,146 @@ struct NetIfaceInfo {
     link_up: u8,
 }
 
-#[repr(C)]
-struct NetIfaceStats {
-    rx_packets: u64,
-    tx_packets: u64,
-    rx_bytes: u64,
-    tx_bytes: u64,
-    rx_errors: u32,
-    tx_errors: u32,
-}
-
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
-fn write_str(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
-}
+fn write_str(s: &[u8]) { let _ = syscall::sys_write(1, s); }
 
-fn u32_to_str(mut v: u32, buf: &mut [u8]) -> usize {
-    let mut i = if buf.len() > 0 { buf.len() - 1 } else { return 0; };
-    loop {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        if v == 0 || i == 0 { break; }
-        i -= 1;
-    }
-    let start = if v == 0 && i < buf.len() - 1 { i } else { if buf.len() > 0 { 0 } else { return 0; } };
-    let n = buf.len() - start;
-    if start > 0 && n < buf.len() {
-        for j in 0..n { buf[j] = buf[start + j]; }
-    }
-    n
-}
+fn write_label(id: u32) { write_str(tr_id!(id).as_bytes()); }
 
 fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
-    let octets = ip.to_be_bytes();
     let mut pos = 0;
-    for (i, &o) in octets.iter().enumerate() {
-        if i > 0 { if pos < buf.len() { buf[pos] = b'.'; pos += 1; } }
-        let mut d = [0u8; 3];
-        let n = u32_to_str(o as u32, &mut d);
-        for j in 0..n {
-            if pos < buf.len() { buf[pos] = d[j]; pos += 1; }
-        }
+    let o = ip.to_be_bytes();
+    for (idx, &b) in o.iter().enumerate() {
+        if idx > 0 { if pos < buf.len() { buf[pos] = b'.'; pos += 1; } }
+        if b >= 100 { buf[pos] = b'0' + b / 100; pos += 1; }
+        if b >= 10  { buf[pos] = b'0' + (b / 10) % 10; pos += 1; }
+        buf[pos] = b'0' + (b % 10); pos += 1;
     }
     pos
 }
 
-fn read_reg_str(key_fd: u8, name: &str, buf: &mut [u8]) -> Option<usize> {
-    let mut reg_buf = [0u8; 64];
-    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
-    if total < 8 { return None; }
-    let data_len = u32::from_le_bytes([reg_buf[4], reg_buf[5], reg_buf[6], reg_buf[7]]) as usize;
-    let copy_len = data_len.min(buf.len());
-    if copy_len > 0 {
-        buf[..copy_len].copy_from_slice(&reg_buf[8..8 + copy_len]);
-    }
-    Some(copy_len)
+fn fmt_u32(v: u32, buf: &mut [u8]) -> usize {
+    if v == 0 { buf[0] = b'0'; return 1; }
+    let mut tmp = [0u8; 12];
+    let mut i = 12;
+    let mut n = v;
+    while n > 0 { i -= 1; tmp[i] = b'0' + (n % 10) as u8; n /= 10; }
+    let len = 12 - i;
+    buf[..len].copy_from_slice(&tmp[i..12]);
+    len
 }
 
-fn write_ip_label(label: &[u8], ip: u32) {
-    write_str(label);
-    if ip == 0 {
-        write_str(b"0.0.0.0");
-    } else {
-        let mut ipb = [0u8; 16];
-        let ipl = format_ip(ip, &mut ipb);
-        write_str(&ipb[..ipl]);
-    }
+fn write_ip_label(id: u32, ip: u32) {
+    write_label(id);
+    let mut b = [0u8; 16];
+    let n = format_ip(ip, &mut b);
+    write_str(&b[..n]);
     write_str(b"\r\n");
 }
 
-fn print_iface(idx: u32, net: &NetAbiTable, reg_key_fd: Option<u8>) {
-    let mut info = NetIfaceInfo { nic_id: 0, mac: [0; 6], ip: [0; 4], link_up: 0 };
-    let r = unsafe { (net.iface_info)(idx, &mut info as *mut NetIfaceInfo) };
-    if r < 0 { return; }
+fn write_val_label(id: u32, val: u32, suffix: &[u8]) {
+    write_label(id);
+    let mut b = [0u8; 16];
+    let n = fmt_u32(val, &mut b);
+    write_str(&b[..n]);
+    if suffix.len() > 0 { write_str(suffix); }
+    write_str(b"\r\n");
+}
 
-    write_str(b" ");
-    write_str(tr_id!(IDS_ETHERNET).as_bytes());
-    write_str(b" ");
-    let mut ib = [0u8; 4];
-    let il = u32_to_str(info.nic_id, &mut ib);
-    write_str(&ib[..il]);
-    write_str(b":\r\n");
-
-    write_str(b"   ");
-    write_str(tr_id!(IDS_DESCRIPTION).as_bytes());
-    write_str(b"Intel PRO/1000 (e1000)\r\n");
-
-    write_str(b"   ");
-    write_str(tr_id!(IDS_MAC).as_bytes());
-    for (i, &b) in info.mac.iter().enumerate() {
-        let hex = [b"0123456789ABCDEF"[((b >> 4) & 0xF) as usize],
-                   b"0123456789ABCDEF"[(b & 0xF) as usize]];
-        write_str(&[hex[0], hex[1]]);
+fn write_mac(mac: &[u8; 6]) {
+    for (i, &b) in mac.iter().enumerate() {
+        let h = b"0123456789ABCDEF"[((b >> 4) & 0xF) as usize];
+        let l = b"0123456789ABCDEF"[(b & 0xF) as usize];
+        write_str(&[h, l]);
         if i < 5 { write_str(b":"); }
     }
     write_str(b"\r\n");
+}
 
-    let ip_u32 = u32::from_be_bytes(info.ip);
-    let mask_val = (net.get_mask)(idx);
-    let gw = (net.get_gateway)(idx);
-
-    write_ip_label(b"   ", ip_u32);
-    write_ip_label(b"   Subnet mask:  ", mask_val);
-    write_ip_label(b"   Gateway:      ", gw);
-
-    if let Some(fd) = reg_key_fd {
-        let mut dns_buf = [0u8; 16];
-        if let Some(len) = read_reg_str(fd, "DnsServer", &mut dns_buf) {
-            if len > 0 {
-                let end = dns_buf[..len].iter().position(|&c| c == 0).unwrap_or(len);
-                if end > 0 {
-                    write_str(b"   DNS:          ");
-                    write_str(&dns_buf[..end]);
-                    write_str(b"\r\n");
-                }
+fn read_reg_dword(fd: u8, name: &str) -> u32 {
+    let mut buf = [0u8; 16];
+    let r = syscall::sys_cm_query_value(fd, name, &mut buf);
+    match r {
+        Ok(n) if n >= 12 => {
+            let t = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            if t == syscall::REG_DWORD {
+                return u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
             }
         }
+        _ => {}
     }
+    0
+}
 
-    let dhcp_bound = (net.get_dhcp_bound)();
-    write_str(b"   Origin:       ");
-    if dhcp_bound != 0 {
-        write_str(tr_id!(IDS_DHCP).as_bytes());
-    } else if ip_u32 != 0 {
-        write_str(tr_id!(IDS_STATIC).as_bytes());
-    } else {
-        write_str(tr_id!(IDS_NONE).as_bytes());
+fn read_reg_str(fd: u8, name: &str, buf: &mut [u8]) -> usize {
+    let mut reg_buf = [0u8; 64];
+    match syscall::sys_cm_query_value(fd, name, &mut reg_buf) {
+        Ok(n) if n >= 8 => {
+            let dlen = u32::from_le_bytes([reg_buf[4], reg_buf[5], reg_buf[6], reg_buf[7]]) as usize;
+            let len = dlen.min(buf.len());
+            if len > 0 { buf[..len].copy_from_slice(&reg_buf[8..8+len]); }
+            len
+        }
+        _ => 0,
+    }
+}
+
+fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
+    let _ = iface_idx;
+    write_str(b"\r\n");
+    write_label(IDS_ETHERNET);
+    write_str(b" ");
+    let mut ib = [0u8; 4];
+    let il = fmt_u32(info.nic_id, &mut ib);
+    write_str(&ib[..il]);
+    write_str(b":\r\n\r\n");
+
+    write_label(IDS_DESCRIPTION);
+    write_str(b"Intel 82540EM Gigabit Ethernet\r\n");
+
+    write_label(IDS_DRIVER);
+    write_str(b"e1000.nem\r\n");
+
+    write_label(IDS_PCI_DEVICE);
+    write_str(b"8086:100E\r\n");
+
+    write_label(IDS_LINK_STATUS);
+    if info.link_up != 0 { write_label(IDS_UP); } else { write_label(IDS_DOWN); }
+    write_str(b"\r\n\r\n");
+
+    let ip_u32 = u32::from_be_bytes(info.ip);
+    let mask = read_reg_dword(reg_fd, "SubnetMask");
+    let gw = read_reg_dword(reg_fd, "Gateway");
+    let dns = read_reg_dword(reg_fd, "DnsServer");
+
+    write_label(IDS_MAC);
+    write_mac(&info.mac);
+
+    write_ip_label(IDS_IPV4, ip_u32);
+    write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { 0x00FFFFFF });
+    write_ip_label(IDS_GATEWAY, gw);
+    if dns != 0 {
+        write_ip_label(IDS_DNS, dns);
     }
     write_str(b"\r\n");
 
-    write_str(b"   ");
-    write_str(tr_id!(IDS_STATUS).as_bytes());
-    write_str(if info.link_up != 0 { tr_id!(IDS_UP).as_bytes() } else { tr_id!(IDS_DOWN).as_bytes() });
+    let dhcp_enabled = read_reg_dword(reg_fd, "DHCPEnabled") != 0;
+    let dhcp_bound = read_reg_dword(reg_fd, "DHCPBound") != 0;
+
+    write_label(IDS_DHCP_ENABLED);
+    if dhcp_enabled { write_label(IDS_YES); } else { write_label(IDS_NO); }
     write_str(b"\r\n");
 
-    if let Some(fd) = reg_key_fd {
-        if dhcp_bound != 0 {
-            let mut reg_buf = [0u8; 12];
-            if let Ok(n) = syscall::sys_cm_query_value(fd, "LeaseTime", &mut reg_buf) {
-                if n >= 12 {
-                    let data_type = u32::from_le_bytes([reg_buf[0], reg_buf[1], reg_buf[2], reg_buf[3]]);
-                    if data_type == syscall::REG_DWORD {
-                        let lease = u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]);
-                        write_str(b"   Lease time:   ");
-                        let mut lb = [0u8; 10];
-                        let ll = u32_to_str(lease, &mut lb);
-                        write_str(&lb[..ll]);
-                        write_str(b" s\r\n");
-                    }
-                }
-            }
+    write_label(IDS_CONFIG_SOURCE);
+    if dhcp_bound { write_label(IDS_DHCP); }
+    else if ip_u32 != 0 { write_label(IDS_STATIC); }
+    else { write_label(IDS_NONE); }
+    write_str(b"\r\n");
+
+    if dhcp_bound {
+        let lease = read_reg_dword(reg_fd, "LeaseTime");
+        if lease > 0 {
+            write_val_label(IDS_LEASE_TIME, lease, b" s");
         }
     }
 
@@ -210,34 +189,72 @@ fn print_iface(idx: u32, net: &NetAbiTable, reg_key_fd: Option<u8>) {
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
-    write_str(b"\r\n");
 
-    let base = match syscall::sys_loadlib("C:\\System\\Libraries\\net.nxl\0") {
-        Ok(b) => b,
+    write_str(b"\r\n");
+    write_label(IDS_HEADER);
+    write_str(b"\r\n\r\n");
+
+    write_label(IDS_HOSTNAME);
+    let mut hn_buf = [0u8; 64];
+    match syscall::sys_get_hostname(&mut hn_buf) {
+        Ok(n) if n > 0 => {
+            let end = hn_buf.iter().position(|&b| b == 0).unwrap_or(n);
+            write_str(&hn_buf[..end]);
+        }
+        _ => {
+            write_str(b"NeoDOS-PC");
+        }
+    }
+    write_str(b"\r\n\r\n");
+
+    let reg_fd = match syscall::sys_cm_open_key(REG_NET_PATH) {
+        Ok(fd) => fd,
         Err(_) => {
-            write_str(tr_id!(IDS_ERR_NXL).as_bytes());
+            write_label(IDS_NO_IFACES);
             write_str(b"\r\n");
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(0);
         }
     };
-    let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
 
-    let reg_fd = syscall::sys_cm_open_key(REG_NET_PATH).ok();
+    // Read NIC info via ObInfoClass (doesn't need NXL)
+    let obj_fd = match syscall::sys_ob_open("\\Global\\Info\\Network", 1) {
+        Ok(fd) => fd,
+        Err(_) => {
+            write_label(IDS_NO_IFACES);
+            write_str(b"\r\n");
+            let _ = syscall::sys_close(reg_fd);
+            syscall::sys_exit(0);
+        }
+    };
 
-    let count = (net.iface_count)();
+    let mut buf = [0u8; 256];
+    let r = syscall::sys_ob_query_info(obj_fd, syscall::ObInfoClass::NicInfo, &mut buf);
+    let _ = syscall::sys_close(obj_fd);
+
+    if r.is_err() { write_label(IDS_NO_IFACES); write_str(b"\r\n"); let _ = syscall::sys_close(reg_fd); syscall::sys_exit(0); }
+    let total = r.unwrap() as usize;
+    let entry_size = 15;
+    let count = total / entry_size;
     if count == 0 {
-        write_str(tr_id!(IDS_NO_IFACES).as_bytes());
+        write_label(IDS_NO_IFACES);
         write_str(b"\r\n");
-        loop { syscall::sys_yield(); }
+        let _ = syscall::sys_close(reg_fd);
+        syscall::sys_exit(0);
     }
 
     for i in 0..count {
-        print_iface(i, net, reg_fd);
+        let off = i * entry_size;
+        if off + entry_size > buf.len() { break; }
+        let raw = &buf[off..off+entry_size];
+        let info = NetIfaceInfo {
+            nic_id: u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]),
+            mac: [raw[4], raw[5], raw[6], raw[7], raw[8], raw[9]],
+            ip: [raw[10], raw[11], raw[12], raw[13]],
+            link_up: raw[14],
+        };
+        print_iface(i as u32, &info, reg_fd);
     }
 
-    if let Some(fd) = reg_fd {
-        let _ = syscall::sys_close(fd);
-    }
-
-    loop { syscall::sys_yield(); }
+    let _ = syscall::sys_close(reg_fd);
+    syscall::sys_exit(0);
 }
