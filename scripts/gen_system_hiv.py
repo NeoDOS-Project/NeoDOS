@@ -312,7 +312,11 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     # ── Network test flag cell ──
     _V_NETTEST = 54
 
-    b.next_idx = 55
+    # ── ComputerName cells ──
+    _COMP = 55
+    _V_COMPNAME = 56
+
+    b.next_idx = 57
 
     # ── VALUES (linked lists) ──
     # NeoInit values: DefaultShell -> EnableVT -> AutoStartServices -> EnableTests -> EnableNetworkTest
@@ -339,7 +343,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_RPOL, "RestartPolicy", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_MFAIL)  # OnCrash
     b.add_value(_V_STYPE, "StartType", REG_DWORD,
-                struct.pack("<I", 4), next_val=_V_RPOL)  # Disabled
+                struct.pack("<I", 2), next_val=_V_RPOL)  # Automatic
     b.add_value(_V_IPATH, "ImagePath", REG_SZ,
                 b"C:\\System\\Tools\\dhcpd.nxe\x00", next_val=_V_STYPE)
     b.add_value(_V_BPATH, "BinaryPath", REG_SZ,
@@ -349,7 +353,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
 
     # Interfaces\0 values: DHCPEnabled
     b.add_value(_V_DHCP, "DHCPEnabled", REG_DWORD,
-                struct.pack("<I", 0))
+                struct.pack("<I", 1))
 
     # Control values: BenchmarkReport(1) -> AhciDebug(1) -> WaitForNetwork(0)
     b.add_value(_V_BENCH, "BenchmarkReport", REG_DWORD,
@@ -394,6 +398,9 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_PATH, "PATH", REG_SZ,
                 b"\\Programs;\\System\\Tools\x00")
 
+    # ComputerName\ComputerName value
+    b.add_value(_V_COMPNAME, "ComputerName", REG_SZ, b"NeoDOS-PC\x00")
+
     # ── KEYS (bottom-up) ──
     # NeoInit (child of Services)
     b.add_key(_NEO, "NeoInit", _SVC, values_head=_V_NETTEST)
@@ -417,6 +424,9 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
               subkeys_sibling=_NET)
     b.add_key(_SVC, "Services", _CCS, subkeys_head=_NEO)
 
+    # ComputerName (child of Control, sibling of Locale)
+    b.add_key(_COMP, "ComputerName", _CTL, values_head=_V_COMPNAME, subkeys_sibling=_LOC_KEY)
+
     # Locale (child of Control, sibling of Session Manager)
     b.add_key(_LOC_KEY, "Locale", _CTL, values_head=_V_LANG, subkeys_sibling=_SM)
 
@@ -427,7 +437,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_key(_SM, "Session Manager", _CTL, subkeys_head=_ENV)
 
     # Control (child of CurrentControlSet, sibling of Services)
-    b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT, subkeys_head=_LOC_KEY)
+    b.add_key(_CTL, "Control", _CCS, values_head=_V_WAIT, subkeys_head=_COMP)
 
     # ── Power keys (PM-PHASE2) ──
     b.add_key(_PWR, "Power", _ROOT, subkeys_head=_PLN, values_head=_V_AP)
@@ -470,7 +480,7 @@ def main():
     tests_val = 1 if args.enable_tests else 0
     net_test_val = 1 if args.enable_network_test else 0
     print(f"Generated {output} ({size} bytes, NEOHv1)")
-    print(f"  Cells: 55")
+    print(f"  Cells: 57")
     print(f"  Root key: SYSTEM")
     print("  Values:")
     print("    CurrentControlSet\\Services\\NeoInit\\DefaultShell = 'C:\\Programs\\NeoShell.nxe' (REG_SZ)")
@@ -481,16 +491,17 @@ def main():
     print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 4 (Disabled, REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 2 (Automatic, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\RestartPolicy = 1 (OnCrash, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\MaxFailures = 3 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Dependencies = '' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Description = 'DHCP Client Service' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 0 (REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\Locale\\Language = 'es-ES' (REG_SZ)")
+    print("    CurrentControlSet\\Control\\ComputerName\\ComputerName = 'NeoDOS-PC' (REG_SZ)")
     print("    CurrentControlSet\\Control\\Session Manager\\Environment\\PATH = '\\\\Programs;\\\\System\\\\Tools' (REG_SZ)")
     print("    Power\\ActivePlan = 0 (Balanced, REG_DWORD)")
     print("    Power\\Plans\\Balanced\\DisplayTimeout = 10 (REG_DWORD)")

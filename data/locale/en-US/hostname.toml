@@ -1,0 +1,11 @@
+[meta]
+app = "hostname"
+language = "en-US"
+
+[ids]
+IDS_USAGE = 1001
+IDS_ERR_READ = 1002
+
+[strings]
+IDS_USAGE = "Displays or sets the system hostname."
+IDS_ERR_READ = "hostname: could not read hostname from system."

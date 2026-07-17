@@ -75,7 +75,7 @@ Sequence from `src/main.rs` `rust_start()`:
 | 3.85 | Boot Driver Loader: auto-scan and load BOOT .nem drivers first, then SYSTEM .nem drivers (dependency-sorted) | `:457` |
 | 3.86 | AHCI port reclaim (BootAhci DMA register fix after NEM AHCI init) | `:464` |
 | 3.87 | NEM bridges (RTC), NXL region init, hot-reload, NXL loader | `:469-472` |
-| 3.88 | Networking init: e1000 NIC probe, ARP cache, `\Device\Tcp` + `\Device\Udp` namespace objects | `:480` |
+| 3.88 | Networking init: ARP cache, `\Device\Tcp` + `\Device\Udp` namespace objects. NICs via NEM drivers | `:480` |
 | 3.881 | Registry init (Cm): create `\Registry` namespace tree, mount SYSTEM hive | `:488` |
 | 3.881b | Default registry values: `CurrentControlSet\Services\NeoInit\DefaultShell`, `Network\Interfaces\0\DHCPEnabled`, `Control\WaitForNetwork` | `:497` |
 | 3.9 | ABI freeze validation: `syscall::validate_abi()` asserts SSDT completeness, `abi_freeze::verify_all_frozen_abis()` checks frozen ABI structs | `:503-507` |

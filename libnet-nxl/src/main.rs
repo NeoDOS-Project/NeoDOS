@@ -9,6 +9,7 @@ const OB_TYPE_SOCKET: u32 = 18;
 
 // ── ObInfoClass constants ──
 const INFO_CLASS_NIC_INFO: u32 = 20;
+const INFO_CLASS_HOSTNAME: u32 = 38;
 
 // ── ObSetInfoClass constants ──
 const SET_SOCKET_CONNECT: u32 = 18;
@@ -287,20 +288,115 @@ pub extern "C" fn net_get_ip(iface: u32) -> u32 {
 
 #[no_mangle]
 pub extern "C" fn net_get_gateway(_iface: u32) -> u32 {
-    0
+    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+    let fd = unsafe {
+        match ob_open(key_path, 3) { // OB_READ|OB_WRITE
+            r if r >= 0 => r as u8,
+            _ => return 0,
+        }
+    };
+    let mut buf = [0u8; 16];
+    let val_name = b"Gateway\0";
+    let r = unsafe {
+        syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    };
+    unsafe { ob_close(fd) };
+    if r < 12 { return 0; }
+    u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])
 }
 
 #[no_mangle]
 pub extern "C" fn net_get_dhcp_bound() -> i32 {
-    // DHCP bound status: check if NIC 0 has a non-zero IP
-    // (dhcpd.nxe sets IP via net_set_ip when bound)
     let ip = net_get_ip(0);
     if ip != 0 { 1 } else { 0 }
 }
 
 #[no_mangle]
+pub extern "C" fn net_get_dns(_iface: u32) -> u32 {
+    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+    let fd = unsafe {
+        match ob_open(key_path, 1) {
+            r if r >= 0 => r as u8,
+            _ => return 0,
+        }
+    };
+    let mut buf = [0u8; 64];
+    let val_name = b"DnsServer\0";
+    let r = unsafe {
+        syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    };
+    unsafe { ob_close(fd) };
+    if r < 12 { return 0; }
+    u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])
+}
+
+#[no_mangle]
+pub extern "C" fn net_get_dhcp_enabled(_iface: u32) -> i32 {
+    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+    let fd = unsafe {
+        match ob_open(key_path, 1) {
+            r if r >= 0 => r as u8,
+            _ => return 0,
+        }
+    };
+    let mut buf = [0u8; 16];
+    let val_name = b"DHCPEnabled\0";
+    let r = unsafe {
+        syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    };
+    unsafe { ob_close(fd) };
+    if r < 12 { return 1; }
+    u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as i32
+}
+
+#[no_mangle]
+pub extern "C" fn net_get_lease_seconds(_iface: u32) -> u32 {
+    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+    let fd = unsafe {
+        match ob_open(key_path, 1) {
+            r if r >= 0 => r as u8,
+            _ => return 0,
+        }
+    };
+    let mut buf = [0u8; 16];
+    let val_name = b"LeaseTime\0";
+    let r = unsafe {
+        syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    };
+    unsafe { ob_close(fd) };
+    if r < 12 { return 0; }
+    u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn net_get_hostname(buf: *mut u8, buf_len: u32) -> u32 {
+    if buf.is_null() || buf_len == 0 { return 0; }
+    let fd = match ob_open("\\Global\\Info\\Network\0", OB_READ) {
+        r if r >= 0 => r as u8,
+        _ => return 0,
+    };
+    let r = ob_query_info(fd, INFO_CLASS_HOSTNAME, buf, buf_len as usize);
+    ob_close(fd);
+    if r > 0 { r as u32 } else { 0 }
+}
+
+#[no_mangle]
 pub extern "C" fn net_get_mask(_iface: u32) -> u32 {
-    0x00FFFFFF
+    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+    let fd = unsafe {
+        match ob_open(key_path, 3) {
+            r if r >= 0 => r as u8,
+            _ => return 0x00FFFFFF,
+        }
+    };
+    let mut buf = [0u8; 16];
+    let val_name = b"SubnetMask\0";
+    let r = unsafe {
+        syscall_4(52, fd as u64, val_name.as_ptr() as u64, buf.as_mut_ptr() as u64, buf.len() as u64)
+    };
+    unsafe { ob_close(fd) };
+    if r < 12 { return 0x00FFFFFF; }
+    u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]])
 }
 
 // ── Export table ──
@@ -324,7 +420,11 @@ pub struct NetAbiTable {
     pub get_gateway: extern "C" fn(u32) -> u32,
     pub get_mask: extern "C" fn(u32) -> u32,
     pub get_dhcp_bound: extern "C" fn() -> i32,
-    _reserved: [u64; 7],
+    pub get_dns: extern "C" fn(u32) -> u32,
+    pub get_dhcp_enabled: extern "C" fn(u32) -> i32,
+    pub get_lease_seconds: extern "C" fn(u32) -> u32,
+    pub get_hostname: unsafe extern "C" fn(*mut u8, u32) -> u32,
+    _reserved: [u64; 3],
 }
 
 #[no_mangle]
@@ -347,7 +447,11 @@ pub static NET_EXPORT_TABLE: NetAbiTable = NetAbiTable {
     get_gateway: net_get_gateway,
     get_mask: net_get_mask,
     get_dhcp_bound: net_get_dhcp_bound,
-    _reserved: [0; 7],
+    get_dns: net_get_dns,
+    get_dhcp_enabled: net_get_dhcp_enabled,
+    get_lease_seconds: net_get_lease_seconds,
+    get_hostname: net_get_hostname,
+    _reserved: [0; 3],
 };
 
 // ── NXL boilerplate ──

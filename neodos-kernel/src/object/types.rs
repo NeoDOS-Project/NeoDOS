@@ -149,6 +149,7 @@ pub enum ObInfoClass {
     KeyboardInfo = 35,
     KeyboardCaps = 36,
     KeyboardLayouts = 37,
+    Hostname = 38,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
@@ -195,6 +196,7 @@ pub enum ObSetInfoClass {
     KeyboardSetRepeatRate = 45,
     KeyboardSetLeds = 46,
     KeyboardSetModifier = 47,
+    SetHostname = 49,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

@@ -1,0 +1,11 @@
+[meta]
+app = "hostname"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_ERR_READ = 1002
+
+[strings]
+IDS_USAGE = "Mostra o estableix el nom de l'equip."
+IDS_ERR_READ = "hostname: no s'ha pogut llegir el nom de l'equip del sistema."

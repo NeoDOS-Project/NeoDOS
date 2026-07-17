@@ -16,8 +16,8 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 | `udp.rs` | ~150 | UDP header (8 bytes), pseudo-header checksum, `build_udp_datagram()` |
 | `tcp.rs` | ~800 | TCP state machine (11 states), connection lifecycle, send/recv buffers (16 KB sliding window), segment building |
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
-| `nic.rs` | ~150 | `NetworkInterface` trait, `NicRegistry` (4 slots), IP/next-hop/gateway management |
-| `e1000.rs` | ~350 | Intel e1000 NIC driver (82540EM, 82543GM, 82543GC, 82545EM, 82574L), ring buffers, RX/TX descriptors, MMIO |
+| `nic.rs` | ~150 | `NetworkInterface` trait, `NicRegistry` (4 slots), IP/next-hop/gateway management. NICs registered via NEM bridge |
+| `net_bridge.rs` | ~100 | NEM network bridge: `hst_register_network_device`, wraps NEM callbacks as `NetworkInterface` |
 | `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
 | `tests.rs` | ~300 | 18+ integration tests |
 

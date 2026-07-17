@@ -79,7 +79,11 @@ Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespa
         \0
           DHCPEnabled
     \Control
+      \ComputerName
+        \ComputerName
       \WaitForNetwork
+      \Locale
+        \Language
 ```
 
 ### CmManager
@@ -97,6 +101,7 @@ Default keys created at boot (Phase 3.881):
 - `\Registry\Machine\System\CurrentControlSet\Services\NeoInit\DefaultShell` = `"shell.nxe"`
 - `\Registry\Machine\Network\Interfaces\0\DHCPEnabled` = `1` (REG_DWORD)
 - `\Registry\Machine\Control\WaitForNetwork` = `0` (REG_DWORD)
+- `\Registry\Machine\System\CurrentControlSet\Control\ComputerName\ComputerName` = `"NeoDOS-PC"` (REG_SZ)
 
 ### Power Plan Registry Structure (Phase 3.883, PM-PHASE2)
 

@@ -1855,6 +1855,53 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
             }
             sz as u64
         }
+        _ if info_class == ObInfoClass::Hostname as u32 => {
+            let root_native = crate::cm::encode_cell(0, 0);
+            let key_native = match crate::cm::cm_open_key(root_native, "CurrentControlSet\\Control\\ComputerName") {
+                Ok(nid) => nid,
+                Err(_) => {
+                    let default = b"NeoDOS-PC";
+                    if buf_size > 0 {
+                        let len = default.len().min(buf_size - 1);
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(default.as_ptr(), buf_ptr as *mut u8, len);
+                            core::ptr::write((buf_ptr + len as u64) as *mut u8, 0u8);
+                        }
+                        return (len + 1) as u64;
+                    }
+                    return 0;
+                }
+            };
+            match crate::cm::cm_query_value(key_native, "ComputerName") {
+                Ok(vc) => {
+                    let data = &vc.data;
+                    let len = data.len().min(buf_size);
+                    let copy_len = if len > 0 && data[len - 1] == 0 { len - 1 } else { len };
+                    if buf_size > 0 {
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(data.as_ptr(), buf_ptr as *mut u8, copy_len.min(buf_size - 1));
+                            core::ptr::write((buf_ptr + copy_len.min(buf_size - 1) as u64) as *mut u8, 0u8);
+                        }
+                        (copy_len.min(buf_size - 1) + 1) as u64
+                    } else {
+                        0
+                    }
+                }
+                Err(_) => {
+                    let default = b"NeoDOS-PC";
+                    if buf_size > 0 {
+                        let len = default.len().min(buf_size - 1);
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(default.as_ptr(), buf_ptr as *mut u8, len);
+                            core::ptr::write((buf_ptr + len as u64) as *mut u8, 0u8);
+                        }
+                        (len + 1) as u64
+                    } else {
+                        0
+                    }
+                }
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -2927,6 +2974,51 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
                 }
             });
             0
+        }
+        _ if info_class == ObSetInfoClass::SetHostname as u32 => {
+            if !crate::syscall::is_current_admin() {
+                return err_to_u64(SyscallError::Perm);
+            }
+            if buf_size == 0 || buf_size > 64 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let hostname_bytes = {
+                let mut tmp = [0u8; 64];
+                let copy_len = buf_size.min(63);
+                unsafe {
+                    core::ptr::copy_nonoverlapping(buf_ptr as *const u8, tmp.as_mut_ptr(), copy_len);
+                }
+                tmp[copy_len] = 0;
+                let s = match core::str::from_utf8(&tmp[..copy_len]) {
+                    Ok(s) => s.trim_end_matches('\0'),
+                    Err(_) => return err_to_u64(SyscallError::Inval),
+                };
+                if s.is_empty() {
+                    return err_to_u64(SyscallError::Inval);
+                }
+                let mut v = alloc::vec![0u8; s.len() + 1];
+                v[..s.len()].copy_from_slice(s.as_bytes());
+                v
+            };
+            let root_native = crate::cm::encode_cell(0, 0);
+            let ctrl_native = match crate::cm::cm_open_key(root_native, "CurrentControlSet\\Control") {
+                Ok(nid) => nid,
+                Err(_) => return err_to_u64(SyscallError::NoEnt),
+            };
+            let key_native = match crate::cm::cm_open_key(ctrl_native, "ComputerName") {
+                Ok(nid) => nid,
+                Err(_) => match crate::cm::cm_create_key(ctrl_native, "ComputerName") {
+                    Ok(nid) => nid,
+                    Err(_) => return err_to_u64(SyscallError::Io),
+                },
+            };
+            match crate::cm::cm_set_value(key_native, "ComputerName", 1, &hostname_bytes) {
+                Ok(()) => {
+                    let _ = crate::cm::cm_flush_key(key_native);
+                    0
+                }
+                Err(_) => err_to_u64(SyscallError::Io),
+            }
         }
         _ => err_to_u64(SyscallError::Inval),
     }

@@ -7,7 +7,6 @@ pub mod udp;
 pub mod tcp;
 pub mod socket;
 pub mod nic;
-pub mod e1000;
 pub mod dns;
 pub mod counters;
 mod tests;
@@ -41,9 +40,7 @@ pub fn init_networking() {
 
     crate::object::namespace::ob_create_directory("\\Device\\Nic").unwrap_or(());
 
-    // Probe kernel e1000 driver (may coexist with NEM driver)
-    let _has_kernel_nic = crate::net::e1000::probe_e1000();
-
+    // NICs are registered by NEM drivers (e.g. e1000.nem) via hst_register_network_device
     let nic_count = crate::net::nic::nic_count();
 
     {
