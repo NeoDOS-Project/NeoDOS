@@ -726,6 +726,16 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ---
 
+### NET-E1000-NEM-REGRESSION. Regresion de red en e1000.nem [COMPLETED]
+
+- [x] **NET-E1000-NEM-REGRESSION. Fix e1000.nem DHCP/ARP regression** | Prereqs: -- | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/net/mod.rs`, `neodos-kernel/src/net/e1000.rs`
+  - **Causa raiz:** `probe_e1000()` llamaba a `init_e1000_hw(mmio)` antes de establecer `MMIO_BASE`. Todos los registros (RCTL, TCTL, RDBAL, TDBAL, IMS) se escribian a direccion 0x0 en vez del BAR MMIO del e1000. El hardware nunca se inicializaba.
+  - **Fix:** `init_e1000_hw()` ahora establece `MMIO_BASE` al inicio antes de cualquier `write_reg`. Verificacion de retorno de `hst_virt_to_phys()` (no zero). Memory fences (`Release`) antes de doorbell TX/RX.
+  - **Migracion:** Codigo kernel e1000 (`neodos-kernel/src/net/e1000.rs`) eliminado completamente. Solo `e1000.nem` gestiona el hardware. DHCP habilitado en SYSTEM hive.
+  - **Doc:** `docs/network.md`, `docs/ARCHITECTURE.md`, `docs/boot.md` actualizados.
+
+---
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

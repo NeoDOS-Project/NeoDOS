@@ -278,7 +278,8 @@ fn pci_read_bar(bus: u8, dev: u8, func: u8, bar: u8) -> u32 {
 
 // ── e1000 hardware init ──
 
-unsafe fn init_e1000_hw(_mmio: u32) -> bool {
+unsafe fn init_e1000_hw(mmio: u32) -> bool {
+    MMIO_BASE.store(mmio, Ordering::Relaxed);
     // Reset NIC
     write_reg(REG_CTRL, 0);
     let ctrl = read_reg(REG_CTRL);
@@ -290,6 +291,7 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
     // Set up RX descriptor ring (translate virtual → physical for DMA)
     let rx_virt = &raw const RX_DESCS as u64;
     let rx_phys = hst_virt_to_phys(rx_virt);
+    if rx_phys == 0 { return false; }
     write_reg(REG_RDBAL, (rx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_RDBAH, (rx_phys >> 32) as u32);
     write_reg(REG_RDLEN, (NUM_RX_DESC * core::mem::size_of::<RxDesc>()) as u32);
@@ -302,7 +304,9 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
     );
     for (i, desc) in rx_descs.iter_mut().enumerate() {
         let buf_virt = (&BUF_POOL.0[i * RX_BUF_SIZE] as *const u8) as u64;
-        desc.addr = hst_virt_to_phys(buf_virt);
+        let buf_phys = hst_virt_to_phys(buf_virt);
+        if buf_phys == 0 { return false; }
+        desc.addr = buf_phys;
         desc.status = 0;
     }
 
@@ -311,6 +315,7 @@ unsafe fn init_e1000_hw(_mmio: u32) -> bool {
 
     let tx_virt = &raw const TX_DESCS as u64;
     let tx_phys = hst_virt_to_phys(tx_virt);
+    if tx_phys == 0 { return false; }
     write_reg(REG_TDBAL, (tx_phys & 0xFFFFFFFF) as u32);
     write_reg(REG_TDBAH, (tx_phys >> 32) as u32);
     write_reg(REG_TDLEN, (NUM_TX_DESC * core::mem::size_of::<TxDesc>()) as u32);
@@ -347,6 +352,8 @@ unsafe extern "C" fn e1000_send(device_id: u32, buf: *const u8, len: u32) -> i32
     desc.cmd = CMD_EOP | CMD_IFCS | CMD_RS;
     desc.status = 0;
 
+    core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+
     let old_tdt = read_reg(REG_TDT);
     write_reg(REG_TDT, old_tdt.wrapping_add(1) % NUM_TX_DESC as u32);
     TX_CUR.store((tx_cur + 1) as u32, Ordering::Relaxed);
@@ -368,6 +375,7 @@ unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32)
     let pkt_len = rx_descs[rx_cur].length as usize;
     if pkt_len == 0 || pkt_len > RX_BUF_SIZE {
         rx_descs[rx_cur].status = 0;
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         let old_rdt = read_reg(REG_RDT);
         write_reg(REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
         RX_CUR.store((rx_cur + 1) as u32, Ordering::Relaxed);
@@ -383,6 +391,7 @@ unsafe extern "C" fn e1000_poll(device_id: u32, buf: *mut u8, out_len: *mut u32)
 
     // Return buffer to NIC
     rx_descs[rx_cur].status = 0;
+    core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
     let old_rdt = read_reg(REG_RDT);
     write_reg(REG_RDT, (old_rdt + 1) % NUM_RX_DESC as u32);
     RX_CUR.store((rx_cur + 1) as u32, Ordering::Relaxed);
@@ -442,10 +451,9 @@ fn probe_e1000() -> bool {
                 let cmd = pci_config_read(bus, dev, func, 4);
                 pci_config_write(bus, dev, func, 4, cmd | 0x7);
 
-                if !unsafe { init_e1000_hw(mmio) } { continue; }
+            if !unsafe { init_e1000_hw(mmio) } { continue; }
 
-                MMIO_BASE.store(mmio, Ordering::Relaxed);
-                RX_CUR.store(0, Ordering::Relaxed);
+            RX_CUR.store(0, Ordering::Relaxed);
                 TX_CUR.store(0, Ordering::Relaxed);
 
                 // Build driver name as stack buffer

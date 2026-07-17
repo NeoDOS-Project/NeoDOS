@@ -780,8 +780,10 @@ Agrupados en paquetes de trabajo:
 
 ## Bugs Conocidos
 
-- [ ] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
-  - `e1000_poll()` nunca detecta paquetes entrantes. Workaround: `default_nic_id()` prefiere kernel e1000.
+- [x] **BUG-NEM-RX. NEM e1000 driver no recibe paquetes** | Files: `drivers/e1000/src/lib.rs`, `neodos-kernel/src/drivers/nem/net_bridge.rs`
+  - Causa raíz: `probe_e1000()` llamaba a `init_e1000_hw(mmio)` antes de establecer `MMIO_BASE`, por lo que todos los registros se escribían a dirección 0 en lugar del BAR MMIO del e1000. El hardware nunca se configuraba.
+  - Fix: `init_e1000_hw` ahora establece `MMIO_BASE` al inicio. Añadidas fences de memoria (`Release`) antes de doorbell TX/RX. Verificación de retorno de `hst_virt_to_phys`.
+  - Kernel e1000 driver (`src/net/e1000.rs`) eliminado completamente. Solo `e1000.nem` gestiona el hardware.
 
 ---
 

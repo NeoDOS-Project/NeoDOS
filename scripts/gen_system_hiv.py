@@ -339,7 +339,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
     b.add_value(_V_RPOL, "RestartPolicy", REG_DWORD,
                 struct.pack("<I", 1), next_val=_V_MFAIL)  # OnCrash
     b.add_value(_V_STYPE, "StartType", REG_DWORD,
-                struct.pack("<I", 4), next_val=_V_RPOL)  # Disabled
+                struct.pack("<I", 2), next_val=_V_RPOL)  # Automatic
     b.add_value(_V_IPATH, "ImagePath", REG_SZ,
                 b"C:\\System\\Tools\\dhcpd.nxe\x00", next_val=_V_STYPE)
     b.add_value(_V_BPATH, "BinaryPath", REG_SZ,
@@ -349,7 +349,7 @@ def build_default_system_hive_v2(enable_tests=False, enable_network_test=False) 
 
     # Interfaces\0 values: DHCPEnabled
     b.add_value(_V_DHCP, "DHCPEnabled", REG_DWORD,
-                struct.pack("<I", 0))
+                struct.pack("<I", 1))
 
     # Control values: BenchmarkReport(1) -> AhciDebug(1) -> WaitForNetwork(0)
     b.add_value(_V_BENCH, "BenchmarkReport", REG_DWORD,
@@ -481,12 +481,12 @@ def main():
     print("    CurrentControlSet\\Services\\Dhcpc\\DisplayName = 'DHCP Client' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\BinaryPath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\ImagePath = 'C:\\System\\Tools\\dhcpd.nxe' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 4 (Disabled, REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Dhcpc\\StartType = 2 (Automatic, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\RestartPolicy = 1 (OnCrash, REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\MaxFailures = 3 (REG_DWORD)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Dependencies = '' (REG_SZ)")
     print("    CurrentControlSet\\Services\\Dhcpc\\Description = 'DHCP Client Service' (REG_SZ)")
-    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 0 (REG_DWORD)")
+    print("    CurrentControlSet\\Services\\Network\\Interfaces\\0\\DHCPEnabled = 1 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\WaitForNetwork = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\BenchmarkReport = 0 (REG_DWORD)")
     print("    CurrentControlSet\\Control\\AhciDebug = 0 (REG_DWORD)")

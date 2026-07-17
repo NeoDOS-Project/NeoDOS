@@ -522,8 +522,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // ============================================
     // PHASE 3.88: Networking subsystem initialization
-    // Probes PCI for e1000 NIC, initializes ARP cache,
-    // creates \Device\Tcp and \Device\Udp namespace objects.
+    // Creates \Device\Tcp and \Device\Udp namespace objects.
+    // NICs are registered by NEM drivers (e.g. e1000.nem).
     // ============================================
     println!("[+] Initializing networking subsystem...");
     net::init_networking();
