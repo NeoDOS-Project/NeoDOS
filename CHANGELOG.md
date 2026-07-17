@@ -4,6 +4,14 @@
 
 ## v0.50.0-dev — Unreleased
 
+### Changed (NeoDev extraído a repositorio independiente)
+
+- **NeoDev separado de NeoDOS**: La herramienta de desarrollo se ha extraído a un repositorio independiente en `github.com/NeoDOS-Project/NeoDev`.
+- **CLI actualizada**: Todos los comandos cambian de `cargo run --manifest-path tools/neodev/Cargo.toml -- <cmd>` a `neodev <cmd>`. Instalar con `cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`.
+- **tools/neodev/ eliminado**: El directorio `tools/neodev/` ya no forma parte de este repositorio.
+- **Documentación actualizada**: AGENTS.md, skills/, .opencode/ y opencode.json actualizados para reflejar el nuevo comando `neodev`.
+- **Compatibilidad mantenida**: NeoDev 0.2+ sigue siendo completamente compatible con la estructura de proyecto de NeoDOS.
+
 ### Changed (Boot/init hardening — AUDIT-33)
 
 - **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `serial_println!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.

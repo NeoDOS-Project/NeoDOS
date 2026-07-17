@@ -25,5 +25,5 @@ RED → GREEN → REFACTOR → REPEAT
 ## Test Framework
 
 Tests use `test_case!` in neodos-kernel/src/testing.rs.
-Run with: `cargo run --manifest-path tools/neodev/Cargo.toml -- test <group>`
+Run with: `neodev test` (group-specific tests: future)
 Groups: ob, syscall, mm, scheduler, vfs, hal, driver, registry, security, ipc, boot

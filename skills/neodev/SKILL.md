@@ -5,57 +5,52 @@ description: Use the NeoDev development tool for build, run, test, and image man
 
 # NeoDev
 
-## When to use
+NeoDev is now an independent project at [https://github.com/NeoDOS-Project/NeoDev](https://github.com/NeoDOS-Project/NeoDev).
 
-You are asked to build, run, test, or manage the NeoDOS development environment using the neodev tool.
-
-## Goal
-
-Use neodev correctly for building the kernel, creating disk images, running in QEMU, and executing tests.
+Install it first, then use:
 
 ## Steps
 
 1. **Build kernel + bootloader + image**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image
+   neodev build --quick --image
    ```
 
 2. **Full build with user binaries**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- build --image
+   neodev build --image
    ```
 
 3. **Run in QEMU**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- run
-   cargo run --manifest-path tools/neodev/Cargo.toml -- run --kvm   # with KVM
+   neodev run
+   neodev run --kvm   # with KVM
    ```
 
 4. **Run tests**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- test
+   neodev test
    ```
 
 5. **List projects**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- list
+   neodev list
    ```
 
 6. **Clean artifacts**
    ```bash
-   cargo run --manifest-path tools/neodev/Cargo.toml -- clean
+   neodev clean
    ```
 
 ## Common mistakes
 
-- Running neodev outside the project root directory
+- Running neodev outside the NeoDOS project directory (use `--neodos-path` or `NEODOS_PATH`)
 - Forgetting `--image` flag when building (only compiles, doesn't create disk image)
 - Not using `--quick` for fast kernel-only iteration (skips user binaries)
-- Using the legacy `bash scripts/build.sh` instead of neodev
 
 ## Final checklist
 
-- [x] Use `cargo run --manifest-path tools/neodev/Cargo.toml` from project root
-- [ ] Build succeeds
-- [ ] Tests pass (if applicable)
-- [ ] QEMU boots to shell (if running)
+- [ ] NeoDev installed (`cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`)
+- [ ] Build succeeds: `neodev build --quick`
+- [ ] Tests pass (if applicable): `neodev test`
+- [ ] QEMU boots to shell (if running): `neodev run`

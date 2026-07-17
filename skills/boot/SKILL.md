@@ -175,7 +175,7 @@ NeoInit source is in `userbin/neoinit/src/main.rs`. The kernel launches it at ph
 - [ ] `BOOT_VERSION` bumped if BootInfo ABI changed
 - [ ] GPT layout changes reflected in image builder and `drivers/gpt.rs`
 - [ ] RAM disk loads and mounts correctly
-- [ ] Tests pass: `cargo run --bin neodev -- test`
-- [ ] Image builds: `cargo run --bin neodev -- build --image`
+- [ ] Tests pass: `neodev test`
+- [ ] Image builds: `neodev build --image`
 - [ ] `docs/boot.md` updated with new phase descriptions
 - [ ] `scripts/check_deps.py` passes

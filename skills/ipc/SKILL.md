@@ -227,6 +227,6 @@ Tests are registered via `register_tests()` in each subsystem file and called fr
 - [ ] IRQ handler pushes work to work queue (no heap alloc)
 - [ ] Event bus push → dispatch → handler invocation works
 - [ ] Backpressure handled for full queues (event bus, work queue)
-- [ ] Tests registered and pass (`cargo run --bin neodev -- test`)
+- [ ] Tests registered and pass (`neodev test`)
 - [ ] `docs/ipc.md` updated for new event types, IRP ops, or handle variants
 - [ ] `cargo build` succeeds, `scripts/check_deps.py` passes

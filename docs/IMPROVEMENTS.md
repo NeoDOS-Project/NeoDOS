@@ -45,7 +45,7 @@
 - [ ] **AUDIT-35. Registry persistence hardening (flush atómico + recovery)** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`, `src/cm/hive.rs`
   - **Tests:** `cm_atomic_flush`, `cm_recovery_on_corrupt_hive`
 
-- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld`, `tools/neodev/`
+- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld` | Repo: `NeoDev`
   - Normalizar entrypoint `_start`, linker scripts y empaquetado de `.NXE`.
   - **Tests:** `userbin_link_smoke`, `neoinit_shell_spawn_smoke`
 
@@ -429,7 +429,7 @@
   - Add `Services\FontManager\FontPath = "\System\Fonts"` (REG_SZ).
   - **Tests:** `font_registry_keys_exist`
 
-- [ ] **FONT-P5. NeoDev integration + default PSF font** | Prereqs: FONT-P1 | Files: `tools/neodev/src/config.rs`, `tools/neodev/src/build.rs`, `tools/neodev/src/image.rs`, `tools/fonts/default.psf` (new)
+- [ ] **FONT-P5. NeoDev integration + default PSF font** | Prereqs: FONT-P1 | Files: `tools/fonts/default.psf` (new) | Repo: `NeoDev`
   - Add `fonts: Vec<String>` to NeoDev Config.
   - Font validation stage: check PSF magic, report metrics.
   - Copy `.psf` fonts to `C:\System\Fonts\` in disk image.
@@ -451,7 +451,7 @@
 
 #### NXE/NXP — Phase 2
 
-- [ ] **NXE-ECO-12. NXE metadata auto-generation in build pipeline** | Prereqs: NXE-ECO-1 | Files: `tools/neodev/src/build.rs`, `libneodos/user.ld`
+- [ ] **NXE-ECO-12. NXE metadata auto-generation in build pipeline** | Prereqs: NXE-ECO-1 | Files: `libneodos/user.ld` | Repo: `NeoDev`
   - Generación automática de metadatos en build.rs de cada proyecto NXE.
   - Wire en NeoDev: inject .note.neodos después de cargo build.
   - **Tests:** `nxe_metadata_elf_section_exists`, `nxe_metadata_tlv_roundtrip`
@@ -508,11 +508,21 @@
 
 ### M2.3 — Herramientas Oficiales (v0.58)
 
-- [ ] **TOOL-NEODEV. NeoDev v2** | Prereqs: -- | Files: `tools/neodev/`
+- [x] **TOOL-NEODEV. NeoDev v2** | Prereqs: -- | Files: `tools/neodev/`
   - Build, Image, ISO, Run, Test, QEMU + VirtualBox backends.
   - Auto-descubrimiento de proyectos.
   - Sustitución completa de scripts heredados (build.sh, qemu-debug.sh, auto_test.py,
     create_ne2_image.py, create_gpt_image.py).
+  - Extraído a repositorio independiente: `github.com/NeoDOS-Project/NeoDev`.
+  - Comandos CLI: `neodev build|run|test|image|clean|list|config|vm`.
+
+- [x] **TOOL-NEODEV-EXTRACT. NeoDev standalone repo** | Prereqs: TOOL-NEODEV, TOOL-NEODEV-VBOX | Files: `tools/neodev/`
+  - NeoDev extraído de `tools/neodev/` a repositorio independiente.
+  - Dependencias de ruta hardcodeadas reemplazadas por `--neodos-path`, `NEODOS_PATH`, y auto-detección.
+  - Sistema de configuración multi-capa (global, proyecto, CLI, entorno).
+  - Documentación propia: README, CHANGELOG, LICENSE, CONTRIBUTING, docs/*.md.
+  - improvements.md con 20 mejoras identificadas.
+  - `neodev.toml` sigue siendo compatible en el proyecto NeoDOS.
 
 - [x] **TOOL-NEODEV-VBOX. VirtualBox backend** | Prereqs: TOOL-NEODEV | Files: `tools/neodev/src/vmm/vbox.rs`
   - Backend VirtualBox completo: crear VM, iniciar, detener, reset, estado, importar VDI.
