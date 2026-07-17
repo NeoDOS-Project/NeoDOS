@@ -84,7 +84,7 @@
   "mcp": {
     "neodos-mcp": {
       "type": "local",
-      "command": ["neodos-mcp"],
+      "command": ["/home/amartinper/rust-os/neodos-dev-server/target/release/neodos-mcp"],
       "enabled": true
     },
     "memory": {

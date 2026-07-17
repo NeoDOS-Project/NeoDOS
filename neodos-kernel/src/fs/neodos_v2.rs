@@ -16,6 +16,7 @@ const SUPERBLOCK_MAGIC: u32 = 0x0032454E; // "NE2\0"
 
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
+#[repr(C)]
 pub(super) struct SuperblockNE2 {
     magic: u32,
     version: u32,
@@ -85,8 +86,30 @@ impl BTreeIO for NeoDosFsV2 {
 impl NeoDosFsV2 {
     pub fn new(io_stack: IoStack) -> Result<Self, ()> {
         let raw = io_stack.read_sector(0)?;
-        let sb: SuperblockNE2 = unsafe { core::mem::transmute(raw) };
-        if sb.magic != SUPERBLOCK_MAGIC { return Err(()); }
+        // Manually parse to avoid transmute layout issues
+        let magic = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+        if magic != SUPERBLOCK_MAGIC { return Err(()); }
+        let root_btree_lba = u64::from_le_bytes([raw[8], raw[9], raw[10], raw[11], raw[12], raw[13], raw[14], raw[15]]);
+        let version = u32::from_le_bytes([raw[4], raw[5], raw[6], raw[7]]);
+        let root_version = u64::from_le_bytes([raw[16], raw[17], raw[18], raw[19], raw[20], raw[21], raw[22], raw[23]]);
+        let root_timestamp = u64::from_le_bytes([raw[24], raw[25], raw[26], raw[27], raw[28], raw[29], raw[30], raw[31]]);
+        let num_blocks = u64::from_le_bytes([raw[32], raw[33], raw[34], raw[35], raw[36], raw[37], raw[38], raw[39]]);
+        let num_used = u64::from_le_bytes([raw[40], raw[41], raw[42], raw[43], raw[44], raw[45], raw[46], raw[47]]);
+        let num_free = u64::from_le_bytes([raw[48], raw[49], raw[50], raw[51], raw[52], raw[53], raw[54], raw[55]]);
+        let label_len = raw[56];
+        let mut label = [0u8; 32];
+        label.copy_from_slice(&raw[57..89]);
+        let flags = u32::from_le_bytes([raw[89], raw[90], raw[91], raw[92]]);
+        let freelist_lba = u64::from_le_bytes([raw[93], raw[94], raw[95], raw[96], raw[97], raw[98], raw[99], raw[100]]);
+        let snapshot_table_lba = u64::from_le_bytes([raw[101], raw[102], raw[103], raw[104], raw[105], raw[106], raw[107], raw[108]]);
+        let reserved = {
+            let mut r = [0u8; 403];
+            let len = r.len().min(512 - 109);
+            r[..len].copy_from_slice(&raw[109..109 + len]);
+            r
+        };
+        let sb = SuperblockNE2 { magic, version, root_btree_lba, root_version, root_timestamp,
+            num_blocks, num_used, num_free, label_len, label, flags, freelist_lba, snapshot_table_lba, reserved };
 
         let mut inode_cache = Vec::new();
         let root_entry = DirEntryV2::new_dir("\\");
