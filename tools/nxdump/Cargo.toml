@@ -1,9 +1,0 @@
-[package]
-name = "nxdump"
-version = "0.1.0"
-edition = "2021"
-description = "Technical ELF/NXE/NEM dump tool"
-
-[[bin]]
-name = "nxdump"
-path = "src/main.rs"

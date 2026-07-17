@@ -23,8 +23,12 @@
       "description": "Build bootloader, kernel, user binaries, and disk image"
     },
     "build-lsp": {
-      "template": "Build the NeoDOS LSP server: `cd neodos-lsp && cargo build --release`. The binary will be at neodos-lsp/target/release/neodos-lsp.",
+      "template": "Build the NeoDOS LSP server from neodos-dev-server repo: `cd neodos-dev-server && cargo build --release`. The binary will be at neodos-dev-server/target/release/neodos-lsp.",
       "description": "Build the NeoDOS LSP server"
+    },
+    "build-neotools": {
+      "template": "Build NeoTools from the NeoTools repo: `cd neotools && cargo build --release`. Binaries: nxeinfo, nxpkg, nxdump at target/release/.",
+      "description": "Build NeoTools: nxeinfo, nxpkg, nxdump"
     },
     "run": {
       "template": "Launch NeoDOS in QEMU with neodev: `neodev run`. Options: --kvm, --gdb, --storage ahci|ata|nvme|virtio, --net user|tap|bridge, --bdm (persistent OVMF vars), --headless, --serial <file>.",

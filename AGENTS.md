@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Tools:** nxeinfo, nxpkg, nxdump, nxres, nxlocale, nxverify | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server)
+**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
@@ -50,6 +50,7 @@ For every subsystem, consult its doc — not this file:
 | ----------- | ----- | ---------- |
 | NeoDev | `https://github.com/NeoDOS-Project/NeoDev` | Development tool: build, image, run, test |
 | NeoDOS Dev Server | `https://github.com/NeoDOS-Project/neodos-dev-server` | LSP server + MCP server + shared toolkit (replaces old neodos-lsp/ and scripts/mcp_server/) |
+| NeoTools | `https://github.com/NeoDOS-Project/NeoTools` | Host tools: nxeinfo, nxpkg, nxdump (replaces tools/nxeinfo, tools/nxpkg, tools/nxdump) |
 | Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
 | Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
 | Syscalls | `docs/syscalls.md` | Full table, calling convention, migration status |
