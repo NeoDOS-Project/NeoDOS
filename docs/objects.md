@@ -197,13 +197,14 @@ Supports 30 info classes:
 | 35 | KeyboardInfo | KbdState (modifiers, leds, active_layout_index) — `\Device\Keyboard` |
 | 36 | KeyboardCaps | KbdCaps (max_layouts, capabilities, num_layouts) — `\Device\Keyboard` |
 | 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
+| 38 | Hostname | System hostname string (null-terminated) — any Ob object, reads from Registry |
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager` |
 | 33 | PowerPlanInfo | Active plan index + name (planned) — `\System\PowerManager` |
 | 34 | PowerStatus | Power capabilities bitmask (planned) — `\System\PowerManager` |
 
 ### ob_set_info (RAX=63)
 
-Supports 37 set classes:
+Supports 38 set classes:
 
 | Class | Name | Description |
 | ------- | ------ | ------------- |
@@ -251,6 +252,7 @@ Supports 37 set classes:
 | 45 | KeyboardSetRepeatRate | Set repeat rate in cps (u32 LE) — `\Device\Keyboard` |
 | 46 | KeyboardSetLeds | Set LED state byte — `\Device\Keyboard` |
 | 47 | KeyboardSetModifier | Set modifier byte (admin) — `\Device\Keyboard` |
+| 49 | SetHostname | Set system hostname (REG_SZ) — any Ob object, admin only |
 
 ### ob_enum (RAX=64)
 

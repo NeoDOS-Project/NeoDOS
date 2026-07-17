@@ -863,6 +863,31 @@ Agrupados en paquetes de trabajo:
 - [ ] **DH3. Completar libneodos syscall wrappers** | Files: `libneodos/src/syscall.rs`
 - [ ] **DH-HISTORY. Mantener docs/HISTORY.md** | Files: `docs/HISTORY.md`
 
+## Hostname Infrastructure
+
+Improvements detected during hostname implementation:
+
+- [ ] **HN-01. Dynamic hostname change without reboot** | Prioridad: Alta | Complejidad: Media | Impacto: Arquitectonico
+  - Implement `sys_set_hostname()` notification so the DHCP client can update DNS dynamically
+  - Notify network services (DHCP, DNS, NetBIOS) on hostname change via event bus or registry notification.
+  - **Archivos:** `neodos-kernel/src/syscall/ob.rs`, `libnet-nxl/src/main.rs`, `userbin/dhcpd/src/main.rs`
+
+- [ ] **HN-02. DHCP Option 12 (Host Name)** | Prioridad: Alta | Complejidad: Media | Impacto: Red
+  - Send the system hostname in DHCP DISCOVER/REQUEST packets via Option 12.
+  - **Archivos:** `userbin/dhcpd/src/main.rs`, `libnet-nxl/src/main.rs`
+
+- [ ] **HN-03. DNS dynamic update on hostname/IP change** | Prioridad: Media | Complejidad: Alta | Impacto: Red
+  - Auto-register hostname in DNS when IP changes or on boot.
+  - **Archivos:** `userbin/dhcpd/src/main.rs`, `libnet/src/lib.rs`
+
+- [ ] **HN-04. NetBIOS name service (NBNS) integration** | Prioridad: Baja | Complejidad: Alta | Impacto: Red
+  - Register hostname as NetBIOS name on the local network.
+  - **Archivos:** New module `neodos-kernel/src/net/netbios.rs`
+
+- [ ] **HN-05. Hostname validation rules** | Prioridad: Media | Complejidad: Baja | Impacto: Estabilidad
+  - RFC 952/1123 hostname validation: max 63 chars, alphanumeric + hyphen, no leading/trailing hyphen.
+  - **Archivos:** `neodos-kernel/src/syscall/ob.rs`
+
 ---
 
 ## Organization & Ecosystem (NeoDOS-Project)

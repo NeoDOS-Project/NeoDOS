@@ -48,7 +48,7 @@ pub struct NetAbiTable {
     pub get_dns: extern "C" fn(u32) -> u32,
     pub get_dhcp_enabled: extern "C" fn(u32) -> i32,
     pub get_lease_seconds: extern "C" fn(u32) -> u32,
-    pub get_hostname: extern "C" fn(u32) -> u32,
+    pub get_hostname: unsafe extern "C" fn(*mut u8, u32) -> u32,
     _reserved: [u64; 3],
 }
 
@@ -203,9 +203,9 @@ pub fn get_lease_seconds(iface: u32) -> u32 {
     }
 }
 
-pub fn get_hostname(iface: u32) -> u32 {
+pub fn get_hostname(buf: &mut [u8]) -> u32 {
     match get_table() {
-        Some(t) => (t.get_hostname)(iface),
+        Some(t) => unsafe { (t.get_hostname)(buf.as_mut_ptr(), buf.len() as u32) },
         None => 0,
     }
 }

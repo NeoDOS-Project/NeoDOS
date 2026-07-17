@@ -9,6 +9,7 @@ const OB_TYPE_SOCKET: u32 = 18;
 
 // ── ObInfoClass constants ──
 const INFO_CLASS_NIC_INFO: u32 = 20;
+const INFO_CLASS_HOSTNAME: u32 = 38;
 
 // ── ObSetInfoClass constants ──
 const SET_SOCKET_CONNECT: u32 = 18;
@@ -368,11 +369,15 @@ pub extern "C" fn net_get_lease_seconds(_iface: u32) -> u32 {
 }
 
 #[no_mangle]
-pub extern "C" fn net_get_hostname(_iface: u32) -> u32 {
-    // Placeholder: hostname not yet stored in registry
-    // Returns 0 (system will use default "NeoDOS-PC")
-    let _ = _iface;
-    0
+pub unsafe extern "C" fn net_get_hostname(buf: *mut u8, buf_len: u32) -> u32 {
+    if buf.is_null() || buf_len == 0 { return 0; }
+    let fd = match ob_open("\\Global\\Info\\Network\0", OB_READ) {
+        r if r >= 0 => r as u8,
+        _ => return 0,
+    };
+    let r = ob_query_info(fd, INFO_CLASS_HOSTNAME, buf, buf_len as usize);
+    ob_close(fd);
+    if r > 0 { r as u32 } else { 0 }
 }
 
 #[no_mangle]
@@ -418,7 +423,7 @@ pub struct NetAbiTable {
     pub get_dns: extern "C" fn(u32) -> u32,
     pub get_dhcp_enabled: extern "C" fn(u32) -> i32,
     pub get_lease_seconds: extern "C" fn(u32) -> u32,
-    pub get_hostname: extern "C" fn(u32) -> u32,
+    pub get_hostname: unsafe extern "C" fn(*mut u8, u32) -> u32,
     _reserved: [u64; 3],
 }
 

@@ -455,6 +455,7 @@ pub enum ObInfoClass {
     KeyboardInfo = 35,
     KeyboardCaps = 36,
     KeyboardLayouts = 37,
+    Hostname = 38,
 }
 
 pub mod ob_type {
@@ -513,6 +514,7 @@ pub enum ObSetInfoClass {
     KeyboardSetRepeatRate = 45,
     KeyboardSetLeds = 46,
     KeyboardSetModifier = 47,
+    SetHostname = 49,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -770,6 +772,20 @@ pub fn sys_ob_set_info(fd: u8, info_class: ObSetInfoClass, buf: &[u8]) -> Result
     let len = buf.len() as u64;
     let r = unsafe { ob_syscall_4!(43, fd as u64, info_class as u32 as u64, ptr, len) };
     if r < 0 { Err(r) } else { Ok(()) }
+}
+
+pub fn sys_get_hostname(buf: &mut [u8]) -> Result<usize, i64> {
+    let fd = sys_ob_open("\\Global\\Info\\Network", 1)?;
+    let r = sys_ob_query_info(fd, ObInfoClass::Hostname, buf);
+    let _ = sys_close(fd);
+    r
+}
+
+pub fn sys_set_hostname(name: &str) -> Result<(), i64> {
+    let fd = sys_ob_open("\\Global\\Info\\Network", 3)?;
+    let r = sys_ob_set_info(fd, ObSetInfoClass::SetHostname, name.as_bytes());
+    let _ = sys_close(fd);
+    r
 }
 
 /// sys_ob_enum (RAX=64): enumerate objects in a namespace directory by fd.

@@ -195,14 +195,24 @@ pub extern "C" fn _start() -> ! {
     write_str(b"\r\n\r\n");
 
     write_label(IDS_HOSTNAME);
-    write_str(b"NeoDOS-PC\r\n\r\n");
+    let mut hn_buf = [0u8; 64];
+    match syscall::sys_get_hostname(&mut hn_buf) {
+        Ok(n) if n > 0 => {
+            let end = hn_buf.iter().position(|&b| b == 0).unwrap_or(n);
+            write_str(&hn_buf[..end]);
+        }
+        _ => {
+            write_str(b"NeoDOS-PC");
+        }
+    }
+    write_str(b"\r\n\r\n");
 
     let reg_fd = match syscall::sys_cm_open_key(REG_NET_PATH) {
         Ok(fd) => fd,
         Err(_) => {
             write_label(IDS_NO_IFACES);
             write_str(b"\r\n");
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(0);
         }
     };
 
@@ -213,7 +223,7 @@ pub extern "C" fn _start() -> ! {
             write_label(IDS_NO_IFACES);
             write_str(b"\r\n");
             let _ = syscall::sys_close(reg_fd);
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(0);
         }
     };
 
@@ -221,7 +231,7 @@ pub extern "C" fn _start() -> ! {
     let r = syscall::sys_ob_query_info(obj_fd, syscall::ObInfoClass::NicInfo, &mut buf);
     let _ = syscall::sys_close(obj_fd);
 
-    if r.is_err() { write_label(IDS_NO_IFACES); write_str(b"\r\n"); let _ = syscall::sys_close(reg_fd); loop { syscall::sys_yield(); } }
+    if r.is_err() { write_label(IDS_NO_IFACES); write_str(b"\r\n"); let _ = syscall::sys_close(reg_fd); syscall::sys_exit(0); }
     let total = r.unwrap() as usize;
     let entry_size = 15;
     let count = total / entry_size;
@@ -229,7 +239,7 @@ pub extern "C" fn _start() -> ! {
         write_label(IDS_NO_IFACES);
         write_str(b"\r\n");
         let _ = syscall::sys_close(reg_fd);
-        loop { syscall::sys_yield(); }
+        syscall::sys_exit(0);
     }
 
     for i in 0..count {
@@ -246,5 +256,5 @@ pub extern "C" fn _start() -> ! {
     }
 
     let _ = syscall::sys_close(reg_fd);
-    loop { syscall::sys_yield(); }
+    syscall::sys_exit(0);
 }

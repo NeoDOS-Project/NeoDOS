@@ -22,7 +22,7 @@ pub mod i18n;
 pub mod res;
 
 // Re-export commonly used syscall helpers for convenience.
-pub use syscall::{sys_cm_open_key, sys_cm_query_value, sys_close, sys_ob_open};
+pub use syscall::{sys_cm_open_key, sys_cm_query_value, sys_close, sys_ob_open, sys_get_hostname};
 
 /// Load a shared library (NXL) from the filesystem.
 /// Returns the base address where the NXL was loaded, which is also
