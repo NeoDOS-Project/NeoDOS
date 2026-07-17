@@ -762,6 +762,20 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
 
 ---
 
+---
+
+## NET-DNS. DNS resolver + nslookup [COMPLETED]
+
+- [x] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/src/lib.rs`, `userbin/nslookup/`
+  - Stub resolver kernel UDP con caché de 64 entradas, TTL-based expiry
+  - `libnet::dns_resolve()` userspace: Transaction ID aleatorio, validación de respuesta ID matching, reintentos (1 retry), caché local en libnet
+  - **DHCP fix:** parse option 6 (DNS server) y escribe `DnsServer` en Registry tras DORA
+  - **nslookup.nxe:** Nueva herramienta de usuario que resuelve nombres vía `libnet::dns_resolve()` y muestra Server + Address
+  - **Bugfix:** `DnsHeader` doble `#[repr(C)]` eliminado
+  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`, `dns_cache_max_entries`, `dns_cache_clear`
+
+---
+
 ## Referencias
 
 - [ARCHITECTURE_SOURCE_OF_TRUTH.md](ARCHITECTURE_SOURCE_OF_TRUTH.md) — invariantes MUST/MUST NOT

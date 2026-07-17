@@ -96,6 +96,7 @@ struct DhcpClient {
     offered_ip: u32,
     subnet_mask: u32,
     gateway: u32,
+    dns: u32,
     lease_time: u32,
     renew_interval: u64,
     ticks_in_state: u64,
@@ -276,6 +277,7 @@ struct DhcpOptions {
     server_id: u32,
     subnet_mask: u32,
     gateway: u32,
+    dns: u32,
     lease_time: u32,
 }
 
@@ -291,6 +293,7 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let mut server_id = 0u32;
     let mut subnet_mask = 0x00FFFFFFu32;
     let mut gateway = 0u32;
+    let mut dns = 0u32;
     let mut lease_time = 86400u32;
 
     let mut i = 0;
@@ -325,6 +328,14 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 }
                 i += options[i + 1] as usize + 2;
             }
+            DHCP_OPTION_DNS => {
+                if i + 5 < options.len() {
+                    dns = u32::from_be_bytes([
+                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
+                    ]);
+                }
+                i += options[i + 1] as usize + 2;
+            }
             DHCP_OPTION_LEASE_TIME => {
                 if i + 5 < options.len() {
                     lease_time = u32::from_be_bytes([
@@ -347,6 +358,7 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         server_id,
         subnet_mask,
         gateway,
+        dns,
         lease_time,
     })
 }
@@ -364,6 +376,7 @@ impl DhcpClient {
             offered_ip: 0,
             subnet_mask: 0x00FFFFFF,
             gateway: 0,
+            dns: 0,
             lease_time: 86400,
             renew_interval: 43200,
             ticks_in_state: 0,
@@ -500,6 +513,7 @@ impl DhcpClient {
                         self.offered_ip = u32::from_be_bytes(hdr.yiaddr);
                         self.subnet_mask = opts.subnet_mask;
                         if opts.gateway != 0 { self.gateway = opts.gateway; }
+                        if opts.dns != 0 { self.dns = opts.dns; }
                         self.lease_time = opts.lease_time;
                         self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                         return Some(self.offered_ip);
@@ -512,6 +526,7 @@ impl DhcpClient {
                     self.server_ip = opts.server_id;
                     if opts.subnet_mask != 0 { self.subnet_mask = opts.subnet_mask; }
                     if opts.gateway != 0 { self.gateway = opts.gateway; }
+                    if opts.dns != 0 { self.dns = opts.dns; }
                     self.lease_time = opts.lease_time;
                     self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                     return Some(ip);
@@ -702,6 +717,7 @@ pub extern "C" fn _start() -> ! {
         write_reg_dword(key_fd, "IPAddress", ip);
         write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
         write_reg_dword(key_fd, "Gateway", client.gateway);
+        if client.dns != 0 { write_reg_dword(key_fd, "DnsServer", client.dns); }
         write_reg_dword(key_fd, "LeaseTime", client.lease_time);
         write_reg_dword(key_fd, "DHCPBound", 1);
 

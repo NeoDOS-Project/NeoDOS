@@ -339,10 +339,13 @@
 
 #### Networking
 
-- [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
+- [x] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`, `userbin/nslookup/`
   - Stub resolver: consulta UDP a servidor DNS (puerto 53)
   - Caché local con TTL (hasta 64 entradas)
+  - Transaction ID aleatorio, validación de respuesta, reintentos
   - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
+  - **Mejora DHCP:** Parse option 6 (DNS) y almacena DnsServer en Registry
+  - **nslookup.nxe:** Nueva herramienta de usuario para resolución DNS
 
 #### Tracing
 
