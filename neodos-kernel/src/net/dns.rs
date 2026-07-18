@@ -167,7 +167,6 @@ pub fn decode_dns_name(data: &[u8], mut offset: usize) -> Result<(String, usize)
 
 #[repr(C, packed)]
 #[derive(Debug, Clone, Copy)]
-#[repr(C)]
 pub struct DnsHeader {
     pub id: u16,
     pub flags: u16,

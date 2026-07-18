@@ -9,7 +9,7 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
-use core::fmt::Write;
+use libneodos::console;
 use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::tr_id;
@@ -22,44 +22,14 @@ const IDS_TITLE: u32 = 1004;
 const IDS_DONE: u32 = 1005;
 const IDS_COMPLETED: u32 = 1006;
 const IDS_ALL_DONE: u32 = 1007;
+const IDS_SPINNER: u32 = 1008;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
-struct BufWriter<'a>(&'a mut [u8], &'a mut usize);
-
-impl<'a> Write for BufWriter<'a> {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        let bytes = s.as_bytes();
-        let avail = self.0.len() - *self.1;
-        let n = bytes.len().min(avail);
-        self.0[*self.1..*self.1 + n].copy_from_slice(&bytes[..n]);
-        *self.1 += n;
-        Ok(())
-    }
-}
-
-fn progress_bar(percent: u8) -> [u8; 32] {
-    let mut buf = [0u8; 32];
-    let mut pos = 0;
-    buf[pos] = b'['; pos += 1;
-    let filled = (percent as usize) / 5;
-    let mut i = 0;
-    while i < filled && i < 20 {
-        buf[pos] = b'#'; pos += 1; i += 1;
-    }
-    while i < 20 {
-        buf[pos] = b'.'; pos += 1; i += 1;
-    }
-    buf[pos] = b']'; pos += 1;
-    buf[pos] = b' '; pos += 1;
-    let tens = percent / 10;
-    let ones = percent % 10;
-    buf[pos] = b'0' + tens; pos += 1;
-    buf[pos] = b'0' + ones; pos += 1;
-    buf[pos] = b'%'; pos += 1;
-    buf
+fn spin_delay() {
+    for _ in 0..3000000 { core::hint::spin_loop(); }
 }
 
 #[no_mangle]
@@ -92,18 +62,27 @@ pub extern "C" fn _start() -> ! {
 
     for bar in 0..nbars {
         let label = [b"A", b"B", b"C", b"D", b"E", b"F", b"G", b"H"][bar];
-        write_str(b"  [");
-        write_str(&[label[0]]);
-        write_str(b"] ");
+        let title_buf = [label[0], 0u8];
+        let title = core::str::from_utf8(&title_buf[..1]).unwrap_or("?");
+        let id = console::progress_begin(title, 100);
+        if id < 0 { continue; }
         for p in 0..=100 {
-            let bar_bytes = progress_bar(p as u8);
-            write_str(b"\r");
-            write_str(&bar_bytes);
-            for _ in 0..10000000 { core::hint::spin_loop(); }
+            console::progress_update(id, p);
+            spin_delay();
         }
+        console::progress_finish(id);
         write_str(tr_id!(IDS_DONE).as_bytes());
         write_str(b"\r\n");
     }
+
+    write_str(b"\r\n");
+    console::spinner_begin(tr_id!(IDS_SPINNER));
+    for _ in 0..20 {
+        console::spinner_update();
+        spin_delay();
+    }
+    console::spinner_finish();
+    write_str(b" [OK]\r\n");
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_ALL_DONE).as_bytes());

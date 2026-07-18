@@ -8,8 +8,8 @@ You are a TDD specialist for the NeoDOS kernel using the built-in test framework
 ## Kernel Test Framework
 
 - Tests use `test_case!` macro in src/testing.rs
-- Tests run in QEMU via neodev: `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
-- Individual test groups: `cargo run --manifest-path tools/neodev/Cargo.toml -- test <group_name>`
+- Tests run in QEMU via neodev: `neodev test`
+- Individual test groups: `neodev test <group_name>` (future)
 - Test groups: ob, syscall, mm, scheduler, vfs, hal, driver, registry, security, ipc, boot
 
 ## TDD Workflow
@@ -40,8 +40,8 @@ test_case!(
 
 ### Step 2: Run Test (Verify it FAILS)
 ```bash
-cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image
-cargo run --manifest-path tools/neodev/Cargo.toml -- test ob
+neodev build --quick --image
+neodev test ob
 ```
 
 ### Step 3: Write Minimal Implementation
@@ -60,8 +60,8 @@ pub fn sys_ob_create_object(
 
 ### Step 4: Run Test (Verify it PASSES)
 ```bash
-cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image
-cargo run --manifest-path tools/neodev/Cargo.toml -- test ob
+neodev build --quick --image
+neodev test ob
 ```
 
 ### Step 5: Refactor

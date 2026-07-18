@@ -1,42 +1,28 @@
----
-description: Run complete verification for NeoDOS — build kernel, run tests, check dependencies, and lint docs.
----
+description: Full verification — compile kernel, run tests, check deps, lint
 
-# Verify NeoDOS
+## Steps
 
-Run comprehensive verification in this exact order:
+1. Build kernel:
+   ```bash
+   cargo build --manifest-path neodos-kernel/Cargo.toml
+   ```
 
-1. **Build Kernel**
-   cargo build in neodos-kernel/
-   If it fails, report errors and STOP
+2. Quick build via neodev:
+   ```bash
+   neodev build --quick
+   ```
 
-2. **Build Image**
-   cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick
-   If it fails, report errors and STOP
+3. Run tests:
+   ```bash
+   neodev test
+   ```
 
-3. **Run Tests**
-   cargo run --manifest-path tools/neodev/Cargo.toml -- test
-   Report pass/fail count
-
-4. **Check Dependencies**
+4. Check deps:
+   ```bash
    scripts/check_deps.py
+   ```
 
-5. **Lint Docs**
+5. Markdown lint:
+   ```bash
    npx markdownlint '**/*.md' --config .markdownlint.json
-
-6. **Git Status**
-   git status (uncommitted changes)
-
-## Output
-
-```
-VERIFICATION: [PASS/FAIL]
-
-Build:     [OK/FAIL]
-Image:     [OK/FAIL]
-Tests:     [X/Y passed]
-Deps:      [OK/FAIL]
-Docs:      [OK/X warnings]
-
-Ready for commit: [YES/NO]
-```
+   ```

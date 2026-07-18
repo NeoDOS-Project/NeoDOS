@@ -2,8 +2,8 @@
 
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
 > El roadmap maestro está en [`/ROADMAP.md`](../ROADMAP.md).
-> Version actual: v0.50-dev (i18n I18N-P1/P3 completados, P2 parcial).
-> Proximo milestone: v0.50 (Shell Phase 1 + NeoFS snapshot).
+> Version actual: v0.50.2 (i18n I18N-P1/P2/P3 completados).
+> Proximo milestone: v0.51 (Kernel Maturity — NeoFS v2 Completion, Shell Phase 2).
 
 ---
 
@@ -693,11 +693,10 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - `tr!()`: ahora es no-op (devuelve el literal). `tr_id!()`: nueva macro para IDs numéricos.
   - Eliminadas: `i18n_get()`, `try_get()` (string-key). Sin compatibilidad con NLTv1.
 
-### I18N-P2. Migrar apps core a tr_id!() [PENDING]
+### I18N-P2. Migrar apps core a tr_id!() [COMPLETED v0.50.1]
 
-- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
-  - PENDIENTE: todas las apps existentes. `tr!()` ahora es no-op (devuelve literal).
-  - Las apps deben migrar a `tr_id!(IDS_CONSTANT)` con constantes numéricas.
+- [x] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+  - Apps core migradas de `tr!()` (no-op) a `tr_id!(IDS_CONSTANT)` con constantes numéricas. 35 nuevos paquetes de recursos NLT (.toml + .nlt) × 3 idiomas (en-US, es-ES, ca-ES).
 
 ### I18N-P3a. Compilador nltc [COMPLETED]
 
@@ -759,6 +758,20 @@ Los comandos de gestion de archivos (DEL, REN, MD, RD, COPY, TYPE, DIR, TREE, CD
   - **Fix:** `init_e1000_hw()` ahora establece `MMIO_BASE` al inicio antes de cualquier `write_reg`. Verificacion de retorno de `hst_virt_to_phys()` (no zero). Memory fences (`Release`) antes de doorbell TX/RX.
   - **Migracion:** Codigo kernel e1000 (`neodos-kernel/src/net/e1000.rs`) eliminado completamente. Solo `e1000.nem` gestiona el hardware. DHCP habilitado en SYSTEM hive.
   - **Doc:** `docs/network.md`, `docs/ARCHITECTURE.md`, `docs/boot.md` actualizados.
+
+---
+
+---
+
+## NET-DNS. DNS resolver + nslookup [COMPLETED]
+
+- [x] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/src/lib.rs`, `userbin/nslookup/`
+  - Stub resolver kernel UDP con caché de 64 entradas, TTL-based expiry
+  - `libnet::dns_resolve()` userspace: Transaction ID aleatorio, validación de respuesta ID matching, reintentos (1 retry), caché local en libnet
+  - **DHCP fix:** parse option 6 (DNS server) y escribe `DnsServer` en Registry tras DORA
+  - **nslookup.nxe:** Nueva herramienta de usuario que resuelve nombres vía `libnet::dns_resolve()` y muestra Server + Address
+  - **Bugfix:** `DnsHeader` doble `#[repr(C)]` eliminado
+  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`, `dns_cache_max_entries`, `dns_cache_clear`
 
 ---
 

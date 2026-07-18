@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(static_mut_refs)]
 
 use core::sync::atomic::{AtomicU64, Ordering};
 use libneodos::loadlib;
@@ -214,15 +215,68 @@ pub fn get_hostname(buf: &mut [u8]) -> u32 {
 
 const DNS_PORT: u16 = 53;
 const DNS_TYPE_A: u16 = 1;
+#[allow(dead_code)]
 const DNS_TYPE_CNAME: u16 = 5;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 const DNS_SERVER_VALUE: &str = "DnsServer";
+const DNS_CACHE_SIZE: usize = 16;
+const DNS_MAX_RETRIES: usize = 1;
 
 extern crate alloc;
 use alloc::vec::Vec;
 use alloc::string::String;
 use alloc::string::ToString;
+
+struct DnsCacheEntry {
+    name: String,
+    ip: [u8; 4],
+}
+
+static mut DNS_CACHE: [Option<DnsCacheEntry>; DNS_CACHE_SIZE] = [const { None }; DNS_CACHE_SIZE];
+
+static DNS_ID_COUNTER: core::sync::atomic::AtomicU16 = core::sync::atomic::AtomicU16::new(1);
+
+fn dns_next_id() -> u16 {
+    DNS_ID_COUNTER.fetch_add(1, core::sync::atomic::Ordering::Relaxed)
+}
+
+fn dns_cache_lookup(name: &str) -> Option<[u8; 4]> {
+    unsafe {
+        for entry in DNS_CACHE.iter() {
+            if let Some(e) = entry {
+                if e.name.as_str() == name {
+                    return Some(e.ip);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn dns_cache_insert(name: &str, ip: [u8; 4]) {
+    unsafe {
+        // Check for existing entry
+        for entry in DNS_CACHE.iter_mut() {
+            if let Some(e) = entry {
+                if e.name.as_str() == name {
+                    e.ip = ip;
+                    return;
+                }
+            }
+        }
+        // Find empty slot
+        for entry in DNS_CACHE.iter_mut() {
+            if entry.is_none() {
+                *entry = Some(DnsCacheEntry {
+                    name: name.to_string(),
+                    ip,
+                });
+                return;
+            }
+        }
+    }
+}
 
 /// Encode a domain name into DNS label format.
 fn dns_encode_name(name: &str) -> Vec<u8> {
@@ -304,7 +358,6 @@ fn dns_get_server() -> [u8; 4] {
 
     match res {
         Ok(total) if total >= 8 => {
-            // buf[0..4] = type (u32 LE), buf[4..8] = data_len (u32 LE), buf[8..] = data
             let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
             let value_type = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
             let data_start = 8;
@@ -312,7 +365,6 @@ fn dns_get_server() -> [u8; 4] {
             let data_end = data_start + data_len.min(available).min(buf.len() - data_start);
 
             if value_type == 2 && data_len >= 4 {
-                // REG_DWORD
                 let ip_u32 = u32::from_le_bytes([buf[data_start], buf[data_start + 1], buf[data_start + 2], buf[data_start + 3]]);
                 return [(ip_u32 >> 24) as u8, (ip_u32 >> 16) as u8, (ip_u32 >> 8) as u8, ip_u32 as u8];
             }
@@ -322,7 +374,6 @@ fn dns_get_server() -> [u8; 4] {
             }
 
             if value_type == 1 && data_end > data_start {
-                // REG_SZ: parse dotted decimal
                 let s = core::str::from_utf8(&buf[data_start..data_end]).unwrap_or("");
                 let trimmed = s.trim().trim_matches('\0');
                 if let Some(ip) = parse_dotted_ip(trimmed) {
@@ -345,47 +396,109 @@ fn parse_dotted_ip(s: &str) -> Option<[u8; 4]> {
     Some(octets)
 }
 
-/// Parse a DNS response and extract the first A record IP address,
+/// Parse a DNS response, validate the query ID, and extract the first A record,
 /// following CNAME chains if necessary.
-fn parse_a_record_response(data: &[u8]) -> Option<[u8; 4]> {
+fn parse_a_record_response(data: &[u8], expected_id: u16) -> Option<[u8; 4]> {
     if data.len() < 12 { return None; }
 
+    let resp_id = u16::from_be_bytes([data[0], data[1]]);
+    if resp_id != expected_id { return None; }
+
     let flags = u16::from_be_bytes([data[2], data[3]]);
-    if flags & 0x8000 == 0 { return None; } // not a response
-    if flags & 0x0F != 0 { return None; } // rcode != 0
+    if flags & 0x8000 == 0 { return None; }
+    if flags & 0x0F != 0 { return None; }
 
     let ancount = u16::from_be_bytes([data[6], data[7]]);
     if ancount == 0 { return None; }
 
     let mut offset = 12usize;
 
-    // Skip question section
     let qdcount = u16::from_be_bytes([data[4], data[5]]);
     for _ in 0..qdcount {
         let (_, new_off) = dns_decode_name(data, offset).ok()?;
-        offset = new_off + 4; // qtype(2) + qclass(2)
+        offset = new_off + 4;
     }
 
-    // Parse answer section
+    let mut first_a: Option<[u8; 4]> = None;
+
     for _ in 0..ancount {
         let (_, new_off) = dns_decode_name(data, offset).ok()?;
         offset = new_off;
 
         if offset + 10 > data.len() { return None; }
         let rtype = u16::from_be_bytes([data[offset], data[offset + 1]]);
-        let _rclass = u16::from_be_bytes([data[offset + 2], data[offset + 3]]);
-        offset += 8; // skip type(2) + class(2) + ttl(4)
+        offset += 8;
         let rdlength = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
         offset += 2;
 
         if offset + rdlength > data.len() { return None; }
 
         if rtype == DNS_TYPE_A && rdlength >= 4 {
-            return Some([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+            let ip = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
+            if first_a.is_none() {
+                first_a = Some(ip);
+            }
         }
 
-        // For CNAME, skip rdata but continue looking for A record
         offset += rdlength;
+    }
+
+    first_a
+}
+
+fn do_dns_query(hostname: &str, dns_server: [u8; 4]) -> Option<[u8; 4]> {
+    let table = get_table()?;
+    let dns_ip_u32 = u32::from_be_bytes(dns_server);
+
+    let query_id = dns_next_id();
+    let query = dns_build_query(hostname, query_id);
+
+    for attempt in 0..=DNS_MAX_RETRIES {
+        let fd = (table.socket_create)(2);
+        if fd < 0 { continue; }
+
+        let bind_result = (table.socket_bind)(fd, 0, 0);
+        if bind_result < 0 {
+            let _ = (table.socket_close)(fd);
+            continue;
+        }
+
+        let connect_result = (table.socket_connect)(fd, dns_ip_u32, DNS_PORT);
+        if connect_result < 0 {
+            let _ = (table.socket_close)(fd);
+            continue;
+        }
+
+        let send_result = unsafe { (table.socket_send)(fd, query.as_ptr(), query.len() as u32) };
+        if send_result < 0 {
+            let _ = (table.socket_close)(fd);
+            continue;
+        }
+
+        let mut buf = [0u8; 512];
+        let mut result = None;
+
+        for _ in 0..100 {
+            let recv_result = unsafe { (table.socket_recv)(fd, buf.as_mut_ptr(), buf.len() as u32) };
+            if recv_result > 0 {
+                let len = recv_result as usize;
+                result = parse_a_record_response(&buf[..len], query_id);
+                if result.is_some() {
+                    break;
+                }
+            }
+            libneodos::syscall::sys_yield();
+        }
+
+        let _ = (table.socket_close)(fd);
+
+        if result.is_some() {
+            return result;
+        }
+
+        if attempt < DNS_MAX_RETRIES {
+            for _ in 0..20 {             libneodos::syscall::sys_yield(); }
+        }
     }
 
     None
@@ -393,55 +506,20 @@ fn parse_a_record_response(data: &[u8]) -> Option<[u8; 4]> {
 
 /// Resolve a hostname to an IPv4 address.
 ///
-/// Queries the configured DNS server (from Registry or 8.8.8.8) via UDP.
+/// Checks the local cache first. On miss, queries the configured DNS server
+/// (from Registry or 8.8.8.8) via UDP. Caches the result.
 /// Returns `Some([a, b, c, d])` on success, `None` on failure.
 pub fn dns_resolve(hostname: &str) -> Option<[u8; 4]> {
-    let table = get_table()?;
+    if let Some(cached) = dns_cache_lookup(hostname) {
+        return Some(cached);
+    }
 
     let dns_server = dns_get_server();
-    let dns_ip_u32 = u32::from_be_bytes(dns_server);
+    let result = do_dns_query(hostname, dns_server);
 
-    // Create UDP socket
-    let fd = (table.socket_create)(2); // 2 = UDP
-    if fd < 0 { return None; }
-
-    // Bind to any available port
-    let bind_result = (table.socket_bind)(fd, 0, 0);
-    if bind_result < 0 {
-        let _ = (table.socket_close)(fd);
-        return None;
+    if let Some(ip) = result {
+        dns_cache_insert(hostname, ip);
     }
 
-    // Connect to DNS server:53
-    let connect_result = (table.socket_connect)(fd, dns_ip_u32, DNS_PORT);
-    if connect_result < 0 {
-        let _ = (table.socket_close)(fd);
-        return None;
-    }
-
-    let query_id: u16 = 1;
-    let query = dns_build_query(hostname, query_id);
-
-    // Send query
-    let send_result = unsafe { (table.socket_send)(fd, query.as_ptr(), query.len() as u32) };
-    if send_result < 0 {
-        let _ = (table.socket_close)(fd);
-        return None;
-    }
-
-    // Receive response with polling
-    let mut buf = [0u8; 512];
-    let mut result = None;
-
-    for _ in 0..50 {
-        let recv_result = unsafe { (table.socket_recv)(fd, buf.as_mut_ptr(), buf.len() as u32) };
-        if recv_result > 0 {
-            let len = recv_result as usize;
-            result = parse_a_record_response(&buf[..len]);
-            break;
-        }
-    }
-
-    let _ = (table.socket_close)(fd);
     result
 }

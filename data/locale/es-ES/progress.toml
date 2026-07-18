@@ -10,12 +10,14 @@ IDS_TITLE = 1004
 IDS_DONE = 1005
 IDS_COMPLETED = 1006
 IDS_ALL_DONE = 1007
+IDS_SPINNER = 1008
 
 [strings]
 IDS_USAGE = "PROGRESS [n]"
-IDS_USAGE_LINE2 = "  Demo de barras de progreso."
+IDS_USAGE_LINE2 = "  Demo de barras de progreso y spinner."
 IDS_USAGE_LINE3 = "  n  Número de barras (1-8, por defecto 3)."
 IDS_TITLE = "Barras de progreso:"
 IDS_DONE = "listo!"
 IDS_COMPLETED = "completado"
+IDS_SPINNER = "Simulando red"
 IDS_ALL_DONE = "Todo listo!"

@@ -36,13 +36,13 @@ VBoxManage --version
 
 ```bash
 # 1. Build NeoDOS disk image
-cargo run --manifest-path tools/neodev/Cargo.toml -- build --image
+neodev build --image
 
 # 2. Run with VirtualBox (auto-creates VM)
-cargo run --manifest-path tools/neodev/Cargo.toml -- run --backend virtualbox
+neodev run --backend virtualbox
 
 # Run headless
-cargo run --manifest-path tools/neodev/Cargo.toml -- run --backend virtualbox --headless
+neodev run --backend virtualbox --headless
 ```
 
 ## VM Lifecycle
@@ -123,10 +123,10 @@ The VirtualBox backend automatically configures:
 
 ```bash
 # With QEMU (default)
-cargo run --manifest-path tools/neodev/Cargo.toml -- test
+neodev test
 
 # With VirtualBox
-cargo run --manifest-path tools/neodev/Cargo.toml -- test --backend virtualbox
+neodev test --backend virtualbox
 ```
 
 The test runner starts the VM headless, monitors the serial log for
@@ -169,10 +169,10 @@ network router.
 
 ```bash
 # 1. Build NeoDOS with all components
-cargo run --manifest-path tools/neodev/Cargo.toml -- build --image
+neodev build --image
 
 # 2. Run the DHCP integration test
-cargo run --manifest-path tools/neodev/Cargo.toml -- dhcp --backend virtualbox
+neodev dhcp --backend virtualbox
 ```
 
 ### What the Test Does
@@ -233,7 +233,7 @@ does not complete within this time, the test fails with a timeout error.
 This can be overridden with `--timeout`:
 
 ```bash
-cargo run --manifest-path tools/neodev/Cargo.toml -- dhcp --backend virtualbox --timeout 300
+neodev dhcp --backend virtualbox --timeout 300
 ```
 
 ## Backend Comparison

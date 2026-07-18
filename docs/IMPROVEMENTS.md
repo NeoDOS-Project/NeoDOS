@@ -1,6 +1,6 @@
 # NeoDOS — Plan de Implementación Detallado
 
-> **Versión del proyecto:** v0.50-dev | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
+> **Versión del proyecto:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
 > Este documento contiene el detalle granular de cada tarea: archivos,
 > prerrequisitos, tests y descripción técnica.
@@ -33,11 +33,6 @@
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
 
-- [x] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
-  - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
-  - Definir política de tolerancia para servicios críticos y registro ausente.
-  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
-
 - [ ] **AUDIT-34. Low-level syscall/interrupt validation** | Prereqs: -- | Files: `src/arch/x64/idt.rs`, `src/arch/x64/cpu_local.rs`, `src/syscall/mod.rs`
   - Añadir guardas de ABI, estado de interrupciones y resched para rutas críticas.
   - **Tests:** `syscall_invalid_arg_returns_error`, `interrupt_state_consistency`, `preempt_reschedule_guard`
@@ -45,7 +40,7 @@
 - [ ] **AUDIT-35. Registry persistence hardening (flush atómico + recovery)** | Prereqs: CM-FIX | Files: `src/cm/mod.rs`, `src/cm/hive.rs`
   - **Tests:** `cm_atomic_flush`, `cm_recovery_on_corrupt_hive`
 
-- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld`, `tools/neodev/`
+- [ ] **AUDIT-36. Userland build/linker pipeline** | Prereqs: -- | Files: `userbin/**`, `libneodos/`, `user.ld` | Repo: `NeoDev`
   - Normalizar entrypoint `_start`, linker scripts y empaquetado de `.NXE`.
   - **Tests:** `userbin_link_smoke`, `neoinit_shell_spawn_smoke`
 
@@ -339,11 +334,6 @@
 
 #### Networking
 
-- [ ] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`
-  - Stub resolver: consulta UDP a servidor DNS (puerto 53)
-  - Caché local con TTL (hasta 64 entradas)
-  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
-
 #### Tracing
 
 - [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: -- | Files: `src/trace/mod.rs`
@@ -429,7 +419,7 @@
   - Add `Services\FontManager\FontPath = "\System\Fonts"` (REG_SZ).
   - **Tests:** `font_registry_keys_exist`
 
-- [ ] **FONT-P5. NeoDev integration + default PSF font** | Prereqs: FONT-P1 | Files: `tools/neodev/src/config.rs`, `tools/neodev/src/build.rs`, `tools/neodev/src/image.rs`, `tools/fonts/default.psf` (new)
+- [ ] **FONT-P5. NeoDev integration + default PSF font** | Prereqs: FONT-P1 | Files: `tools/fonts/default.psf` (new) | Repo: `NeoDev`
   - Add `fonts: Vec<String>` to NeoDev Config.
   - Font validation stage: check PSF magic, report metrics.
   - Copy `.psf` fonts to `C:\System\Fonts\` in disk image.
@@ -451,7 +441,7 @@
 
 #### NXE/NXP — Phase 2
 
-- [ ] **NXE-ECO-12. NXE metadata auto-generation in build pipeline** | Prereqs: NXE-ECO-1 | Files: `tools/neodev/src/build.rs`, `libneodos/user.ld`
+- [ ] **NXE-ECO-12. NXE metadata auto-generation in build pipeline** | Prereqs: NXE-ECO-1 | Files: `libneodos/user.ld` | Repo: `NeoDev`
   - Generación automática de metadatos en build.rs de cada proyecto NXE.
   - Wire en NeoDev: inject .note.neodos después de cargo build.
   - **Tests:** `nxe_metadata_elf_section_exists`, `nxe_metadata_tlv_roundtrip`
@@ -470,7 +460,7 @@
 
 #### i18n — Migration
 
-- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+- [x] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
   - Migrar todas las apps existentes de `tr!()` (no-op) a `tr_id!(IDS_CONSTANT)`.
   - **Tests:** (integración)
 
@@ -508,11 +498,21 @@
 
 ### M2.3 — Herramientas Oficiales (v0.58)
 
-- [ ] **TOOL-NEODEV. NeoDev v2** | Prereqs: -- | Files: `tools/neodev/`
+- [x] **TOOL-NEODEV. NeoDev v2** | Prereqs: -- | Files: `tools/neodev/`
   - Build, Image, ISO, Run, Test, QEMU + VirtualBox backends.
   - Auto-descubrimiento de proyectos.
   - Sustitución completa de scripts heredados (build.sh, qemu-debug.sh, auto_test.py,
     create_ne2_image.py, create_gpt_image.py).
+  - Extraído a repositorio independiente: `github.com/NeoDOS-Project/NeoDev`.
+  - Comandos CLI: `neodev build|run|test|image|clean|list|config|vm`.
+
+- [x] **TOOL-NEODEV-EXTRACT. NeoDev standalone repo** | Prereqs: TOOL-NEODEV, TOOL-NEODEV-VBOX | Files: `tools/neodev/`
+  - NeoDev extraído de `tools/neodev/` a repositorio independiente.
+  - Dependencias de ruta hardcodeadas reemplazadas por `--neodos-path`, `NEODOS_PATH`, y auto-detección.
+  - Sistema de configuración multi-capa (global, proyecto, CLI, entorno).
+  - Documentación propia: README, CHANGELOG, LICENSE, CONTRIBUTING, docs/*.md.
+  - improvements.md con 20 mejoras identificadas.
+  - `neodev.toml` sigue siendo compatible en el proyecto NeoDOS.
 
 - [x] **TOOL-NEODEV-VBOX. VirtualBox backend** | Prereqs: TOOL-NEODEV | Files: `tools/neodev/src/vmm/vbox.rs`
   - Backend VirtualBox completo: crear VM, iniciar, detener, reset, estado, importar VDI.
@@ -970,6 +970,49 @@ See [REPOSITORY_ARCHITECTURE.md](REPOSITORY_ARCHITECTURE.md) for full analysis.
 - [ ] **REPO-SEP-007. Re-evaluate drivers/ separation at v1.0** | Prioridad: Muy Baja | Complejidad: Alta | Impacto: Alto
   - NEM ABI v8 is stable. Drivers compile independently.
   - **Re-evaluate at v1.0** when ABI is frozen. Not before.
+
+- [ ] **REPO-SEP-008. Extract NeoTools to separate repo** | Prioridad: Alta | Complejidad: Baja | Impacto: Medio
+  - Move `tools/nxeinfo`, `tools/nxpkg`, `tools/nxdump` to `NeoDOS-Project/NeoTools`.
+  - Standalone host tools, no kernel dependencies. Cargo workspace with 3 crates.
+  - CI: build, lint, smoke tests. Releases independent from kernel.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-009. Extract NeoDOS-LSP to separate repo** | Prioridad: Alta | Complejidad: Baja | Impacto: Medio
+  - Move `neodos-lsp/` to `NeoDOS-Project/NeoDOS-LSP`.
+  - Standalone LSP server with 15+ host Rust dependencies. Zero kernel deps.
+  - CI: build, lint, unit tests. Useful for any NeoDOS development setup.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-010. Extract NeoMCP to separate repo** | Prioridad: Media | Complejidad: Baja | Impacto: Bajo
+  - Move `scripts/mcp_server/` to `NeoDOS-Project/NeoMCP`.
+  - Python MCP server, completely independent of kernel.
+  - CI: ruff, pytest. Can evolve at own pace.
+  - See `docs/AUDIT_REPORT.md` §7.1 for migration plan.
+
+- [ ] **REPO-SEP-011. Define NEM ABI manifest for driver publication** | Prioridad: Media | Complejidad: Media | Impacto: Alto
+  - Create YAML/JSON manifest declaring: ABI version, host service table, capabilities, required kernel version.
+  - Prerequisite for NeoDrivers separation post-v1.0.
+  - See `docs/AUDIT_REPORT.md` §5.2 for specification.
+
+- [ ] **REPO-SEP-012. Create versioned kernel ABI manifest** | Prioridad: Media | Complejidad: Media | Impacto: Alto
+  - Declare syscall SSDT table, ObInfoClass enums, NXL ABI, boot protocol version.
+  - Enables external tools (NeoTools, LSP, SDK) to verify compatibility.
+  - See `docs/AUDIT_REPORT.md` §5.2 for specification.
+
+- [ ] **REPO-SEP-013. Publish libneodos as standalone crate on crates.io (post-v1.0)** | Prioridad: Baja | Complejidad: Media | Impacto: Alto
+  - Extract libneodos as published crate for third-party app development.
+  - Blocking: syscall ABI freeze (v1.0), application demand.
+  - See `docs/AUDIT_REPORT.md` §3.2 (NeoSDK analysis).
+
+- [ ] **REPO-SEP-014. Add independent CI for drivers/ within monorepo** | Prioridad: Media | Complejidad: Baja | Impacto: Medio
+  - Each driver builds independently. Add CI matrix to verify all compile.
+  - Prepare for eventual NeoDrivers separation.
+  - See `docs/AUDIT_REPORT.md` §3.3 (NeoDrivers analysis).
+
+- [ ] **REPO-SEP-015. Freeze NLT format for NeoTranslations separation** | Prioridad: Media | Complejidad: Alta | Impacto: Alto
+  - Complete I18N-P7..P12 (compression, UTF-16, pluralization, RTL) before freezing.
+  - Blocking: community translation contributions via NeoTranslations repo.
+  - See `docs/AUDIT_REPORT.md` §3.10 (NeoTranslations analysis).
 
 ---
 

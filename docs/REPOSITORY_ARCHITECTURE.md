@@ -15,7 +15,6 @@ future multi-repository organization under the [NeoDOS-Project](https://github.c
 neodos/
 ├── neodos-kernel/          # Kernel (52,945 lines, 49 modules)
 ├── neodos-bootloader/      # UEFI bootloader
-├── neodos-lsp/             # Language Server Protocol server
 ├── libneodos/              # Standard user library (syscall wrappers)
 ├── libneodos-nxl/          # NXL DLL — core runtime
 ├── libmath-nxl/            # NXL DLL — math
@@ -102,7 +101,8 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 | Component | Reason |
 |-----------|--------|
 | `neodev` | Host-only tool, no kernel deps. Already has own Cargo.toml. |
-| `neodos-lsp` | Completely independent LSP server. |
+| `neodos-lsp` | **Migrated** to [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) |
+| `scripts/mcp_server/` | **Migrated** to [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) (rewritten in Rust as neodos-mcp) |
 | `nltc` | Host tool, parses TOML → NLT binary. |
 | `nxdump` | Host tool, reads ELF/NXE/NEM files. |
 | `nxeinfo` | Host tool, reads NXE headers. |
@@ -139,7 +139,7 @@ kbdcompile (host)   ───→ data/keyboard (layout sources)
 | Component | Repository | Reasoning |
 |-----------|-----------|-----------|
 | `neodev` | `NeoDev` | Fully standalone host tool. Standard Rust deps (clap, anyhow, serde). Changes at own pace. Can version independently. Build/test/image creation for any repo. |
-| `neodos-lsp` | `NeoDOS-LSP` | Standalone LSP server with 10+ host Rust deps. Independent of kernel. Useful for any NeoDOS development. |
+| `neodos-lsp` + `scripts/mcp_server` | `NeoDOS Dev Server` (merged) | **Migrated.** LSP + MCP merged into single Rust workspace at [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server). Shared toolkit (neodos-toolkit) + LSP binary + MCP binary. |
 | `nltc, kbdcompile` | `NeoToolchain` or separate | Both are host-side compilers for OS data formats. Can evolve independently of kernel version. |
 | `nxdump, nxeinfo, nxpkg` | `NeoTools` | UX-focused analysis tools. Independent release cycle. Useful for OS analysis even without building kernel. |
 | `scripts/mcp_server` | `NeoMCP` | Python MCP server for AI-assisted development. Completely independent of kernel. |
@@ -165,9 +165,8 @@ NeoDOS-Project/
 ├── NeoDOS                    # Kernel, bootloader, libneodos, NXLs, userbin, drivers, scripts, docs
 │                              # (core OS — tightly coupled components)
 ├── NeoDev                    # Build/run/test toolchain
-├── NeoDOS-LSP                # Language Server Protocol server
+├── neodos-dev-server         # LSP server + MCP server + shared toolkit (merged)
 ├── NeoTools                  # nxdump, nxeinfo, nxpkg (OS analysis tools)
-├── NeoMCP                    # MCP server for AI-assisted development
 ├── NeoTranslations           # Locale data (NLT files) + translation tools (nltc)
 ├── .github                   # Community health files (already exists)
 ```
@@ -250,10 +249,11 @@ NeoDOS-Project/
 
 ```
 NeoDOS (core)
-├── NeoDev        [dev dependency: reads artifacts]
-├── NeoDOS-LSP    [dev dependency: reads source]
-└── NeoTools      [dev dependency: reads artifacts]
-    └── NeoMCP    [dev dependency: parses artifacts]
+├── NeoDev              [dev dependency: reads artifacts]
+├── neodos-dev-server   [dev dependency: reads source / artifacts]
+│   ├── neodos-lsp      [LSP server]
+│   └── neodos-mcp      [MCP server]
+├── NeoTools            [dev dependency: reads artifacts]
 
 NeoTranslations   [independent, consumed by NeoDOS at build time]
 ```
@@ -335,9 +335,10 @@ No immediate migration. All proposals are for **post-v1.0** unless otherwise not
 - Add items to `docs/IMPROVEMENTS.md`
 - Ensure new components are written with separation in mind
 
-### Phase 2 (v0.60+ — minor improvements only)
-- Extract `neodev` to standalone repo if dev workflow benefits
-- Extract `NeoMCP` if AI integration needs evolve independently
+### Phase 2 (v0.60+ — completed)
+- Extract `neodev` to standalone repo ✅
+- Merge `neodos-lsp` + `NeoMCP` into single `neodos-dev-server` Rust workspace ✅
+- Rewrite MCP server from Python to Rust ✅
 
 ### Phase 3 (v1.0+ — major separation)
 - Extract `NeoTranslations` for community translation contributions

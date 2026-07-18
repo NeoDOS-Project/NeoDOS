@@ -19,15 +19,19 @@
   },
   "command": {
     "build": {
-      "template": "Build NeoDOS using neodev: `cargo run --manifest-path tools/neodev/Cargo.toml -- build --image`. For quick (kernel+bootloader only): `--quick --image`. Kernel requires nightly Rust: `RUSTUP_TOOLCHAIN=nightly cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image`. Verify with `python3 scripts/check_deps.py`.",
+      "template": "Build NeoDOS using neodev: `neodev build --image`. For quick (kernel+bootloader only): `neodev build --quick --image`. Kernel requires nightly Rust: `RUSTUP_TOOLCHAIN=nightly neodev build --quick --image`. Verify with `neodev check-deps`.",
       "description": "Build bootloader, kernel, user binaries, and disk image"
     },
     "build-lsp": {
-      "template": "Build the NeoDOS LSP server: `cd neodos-lsp && cargo build --release`. The binary will be at neodos-lsp/target/release/neodos-lsp.",
+      "template": "Build the NeoDOS LSP server from neodos-dev-server repo: `cd neodos-dev-server && cargo build --release`. The binary will be at neodos-dev-server/target/release/neodos-lsp.",
       "description": "Build the NeoDOS LSP server"
     },
+    "build-neotools": {
+      "template": "Build NeoTools from the NeoTools repo: `cd neotools && cargo build --release`. Binaries: nxeinfo, nxpkg, nxdump at target/release/.",
+      "description": "Build NeoTools: nxeinfo, nxpkg, nxdump"
+    },
     "run": {
-      "template": "Launch NeoDOS in QEMU with neodev: `cargo run --manifest-path tools/neodev/Cargo.toml -- run`. Options: --kvm, --gdb, --storage ahci|ata|nvme|virtio, --net user|tap|bridge, --bdm (persistent OVMF vars), --headless, --serial <file>.",
+      "template": "Launch NeoDOS in QEMU with neodev: `neodev run`. Options: --kvm, --gdb, --storage ahci|ata|nvme|virtio, --net user|tap|bridge, --bdm (persistent OVMF vars), --headless, --serial <file>.",
       "description": "Run NeoDOS in QEMU with neodev"
     },
     "debug": {
@@ -35,7 +39,7 @@
       "description": "Debug with GDB"
     },
     "github": {
-      "template": "Review uncommitted changes in the repo. Check that `docs/` files (SYSCALLS.md, ARCHITECTURE.md, ARCHITECTURE_SOURCE_OF_TRUTH.md, IMPROVEMENTS.md, CHANGELOG.md, etc.) are up to date. Run `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/, then `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick`, then `scripts/check_deps.py`. Commit with `git add -A && git commit -m \"feat|fix|refactor: ...\" && git push`.",
+      "template": "Review uncommitted changes in the repo. Check that `docs/` files (SYSCALLS.md, ARCHITECTURE.md, ARCHITECTURE_SOURCE_OF_TRUTH.md, IMPROVEMENTS.md, CHANGELOG.md, etc.) are up to date. Run `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/, then `neodev build --quick`, then `neodev check-deps`. Commit with `git add -A && git commit -m \"feat|fix|refactor: ...\" && git push`.",
       "description": "Build, test, commit, and push to GitHub"
     },
     "audit": {
@@ -43,7 +47,7 @@
       "description": "Full project audit: dead code, duplicates, API consistency, docs, architecture"
     },
     "review": {
-      "template": "Review the current code changes for NeoDOS. Check:\n1. Potential bugs: look for unwrap(), expect(), indexing without bounds check, integer overflow, unsafe without safety comments.\n2. Rust errors: run `cargo build` in neodos-kernel/.\n3. Architecture compliance: verify new code follows NT-like design (Ob handles, not raw pointers; no Ring 0 shell commands; RAX >= 77 → sys_ob_* for new syscalls).\n4. Naming consistency: kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars (AGENTS.md rule 10).\n5. Cross-subsystem dependencies: run `scripts/check_deps.py`.\n6. Documentation: check if docs/<subsystem>.md needs updating for changed APIs.\nProvide a verdict: approve, changes-requested (with file/line refs), or reject (with rule reference).",
+      "template": "Review the current code changes for NeoDOS. Check:\n1. Potential bugs: look for unwrap(), expect(), indexing without bounds check, integer overflow, unsafe without safety comments.\n2. Rust errors: run `cargo build` in neodos-kernel/.\n3. Architecture compliance: verify new code follows NT-like design (Ob handles, not raw pointers; no Ring 0 shell commands; RAX >= 77 → sys_ob_* for new syscalls).\n4. Naming consistency: kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars (AGENTS.md rule 10).\n5. Cross-subsystem dependencies: run `neodev check-deps`.\n6. Documentation: check if docs/<subsystem>.md needs updating for changed APIs.\nProvide a verdict: approve, changes-requested (with file/line refs), or reject (with rule reference).",
       "description": "Review code changes: bugs, architecture, naming, deps, docs"
     },
     "docs": {
@@ -59,7 +63,7 @@
       "description": "Find and remove dead code, old TODOs, FIXMEs, commented code, duplicates"
     },
     "testing": {
-      "template": "Validate NeoDOS changes with the complete test suite.\n1. Build: `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/ — fix any compilation errors first.\n2. Run kernel tests: `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick --image && cargo run --manifest-path tools/neodev/Cargo.toml -- test` — all tests must pass.\n3. Check dependency rules: `scripts/check_deps.py`.\n4. If tests fail: identify the failing test group (printed in output), inspect the test code in src/testing.rs, fix the issue, re-run.\n5. Check test coverage: look at the feature being changed — are there existing tests? If the feature lacks tests, propose new test_case! entries in the appropriate module with descriptions.\n6. For user-mode changes: build with `cargo run --manifest-path tools/neodev/Cargo.toml -- build --image` and boot in QEMU to verify.\n7. Report: summary of passed tests, any regressions, and test coverage gaps found.",
+      "template": "Validate NeoDOS changes with the complete test suite.\n1. Build: `RUSTUP_TOOLCHAIN=nightly cargo build` in neodos-kernel/ — fix any compilation errors first.\n2. Run kernel tests: `neodev build --quick --image && neodev test` — all tests must pass.\n3. Check dependency rules: `scripts/check_deps.py`.\n4. If tests fail: identify the failing test group (printed in output), inspect the test code in src/testing.rs, fix the issue, re-run.\n5. Check test coverage: look at the feature being changed — are there existing tests? If the feature lacks tests, propose new test_case! entries in the appropriate module with descriptions.\n6. For user-mode changes: build with `neodev build --image` and boot in QEMU to verify.\n7. Report: summary of passed tests, any regressions, and test coverage gaps found.",
       "description": "Run tests, check coverage, propose new tests for uncovered code"
     },
     "roadmap": {
@@ -69,19 +73,18 @@
   },
   "lsp": {
     "neodos-lsp": {
-      "command": ["./neodos-lsp/target/release/neodos-lsp"],
+      "command": ["neodos-lsp"],
       "extensions": ["rs"],
       "disabled": false,
       "env": {
-        "RUST_LOG": "neodos_lsp=info",
-        "NEODOS_LSP_ROOT": "."
+        "RUST_LOG": "neodos_lsp=info"
       }
     }
   },
   "mcp": {
     "neodos-mcp": {
       "type": "local",
-      "command": ["bash", "scripts/mcp-server.sh"],
+      "command": ["/home/amartinper/rust-os/neodos-dev-server/target/release/neodos-mcp"],
       "enabled": true
     },
     "memory": {

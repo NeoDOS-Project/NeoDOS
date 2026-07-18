@@ -1,11 +1,11 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Tools:** nxeinfo, nxpkg, nxdump, nxres, nxlocale, nxverify
+**Version:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `cargo run --bin neodev -- test` → `scripts/check_deps.py` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `scripts/check_deps.py` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
@@ -17,23 +17,25 @@
 
 ## Quick Reference
 
+NeoDev is now an [independent project](https://github.com/NeoDOS-Project/NeoDev).
+Install it first, then use:
+
 ```bash
-cargo run --bin neodev -- build --quick --image    # build kernel + bl + image 
-cargo run --bin neodev -- build --image            # build everything + image (preferred)
-cargo run --bin neodev -- run                      # QEMU + OVMF + GDB :1234
-cargo run --bin neodev -- test                     # run automated tests
-cargo run --bin neodev -- list                     # show discovered projects
-cargo run --bin neodev -- clean                    # clean artifacts
+neodev build --quick --image    # build kernel + bl + image 
+neodev build --image            # build everything + image (preferred)
+neodev run                      # QEMU + OVMF + GDB :1234
+neodev test                     # run automated tests
+neodev list                     # show discovered projects
+neodev clean                    # clean artifacts
 ```
 
-Note: run neodev from project root with `--manifest-path tools/neodev/Cargo.toml`
-or set an alias: `alias neodev='cargo run --manifest-path /path/to/tools/neodev/Cargo.toml --'`
+Install: `cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`
 
 ## Git Workflow
 
 1. Work is done on `develop` branch (default). Create feature branches: `feat/name`, `fix/name`, `refactor/name`.
-2. `cargo run --manifest-path tools/neodev/Cargo.toml -- build --quick` (or `cargo build` in `neodos-kernel/`)
-3. `cargo run --manifest-path tools/neodev/Cargo.toml -- test`
+2. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
+3. `neodev test`
 4. `npx markdownlint '**/*.md' --config .markdownlint.json`
 5. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
 6. Open PR → `develop`, get approval, merge (squash).
@@ -46,7 +48,9 @@ For every subsystem, consult its doc — not this file:
 
 | Subsystem | Doc | Contents |
 | ----------- | ----- | ---------- |
-| NeoDev | `tools/neodev/README.md` | Development tool: build, image, run, test |
+| NeoDev | `https://github.com/NeoDOS-Project/NeoDev` | Development tool: build, image, run, test |
+| NeoDOS Dev Server | `https://github.com/NeoDOS-Project/neodos-dev-server` | LSP server + MCP server + shared toolkit (replaces old neodos-lsp/ and scripts/mcp_server/) |
+| NeoTools | `https://github.com/NeoDOS-Project/NeoTools` | Host tools: nxeinfo, nxpkg, nxdump (replaces tools/nxeinfo, tools/nxpkg, tools/nxdump) |
 | Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
 | Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
 | Syscalls | `docs/syscalls.md` | Full table, calling convention, migration status |
@@ -56,7 +60,6 @@ For every subsystem, consult its doc — not this file:
 | Filesystem | `docs/filesystem.md` | NeoFS, VFS, IoStack, FAT32, page cache |
 | Registry | `docs/registry.md` | Cm syscalls, cell-based hive, paths |
 | Security | `docs/security.md` | SID, Token, ACL, SAM, SeAccessCheck |
-| Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
 | Shell | `docs/shell.md` | Commands, pipeline, TAB, user binaries |
 | IPC | `docs/ipc.md` | Pipes, IRP, work queue, event bus |
 | Network | `docs/network.md` | TCP/IP stack, sockets, DHCP, e1000 |
@@ -75,6 +78,9 @@ For every subsystem, consult its doc — not this file:
 | NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
 | NXP Format | `docs/nxp-format.md` | Package container format, manifest |
 | Repository Architecture | `docs/REPOSITORY_ARCHITECTURE.md` | Multi-repo proposal, dependency analysis, separation candidates |
+| NLT/i18n | `docs/nlt.md` | NLTv2 format, API, compiler, workflow |
+| Power Manager | `docs/power-manager.md` | Power plans, ACPI, shutdown coordination |
+| NeoFS v2 | `docs/neofs_v2_design.md` | NE2 filesystem design, indirect blocks, journaling |
 
 ## Skills (specialized task checklists)
 
@@ -95,6 +101,6 @@ For every subsystem, consult its doc — not this file:
 | Release | Release process | `skills/release/SKILL.md` |
 | Boot | Bootloader, boot phases, BootInfo ABI | `skills/boot/SKILL.md` |
 | IPC | Pipes, handle table, IRP, work queue, event bus | `skills/ipc/SKILL.md` |
-| NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` |
+| NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` (see also `https://github.com/NeoDOS-Project/NeoDev`) |
 | Network | TCP/IP stack, sockets, ARP, DNS, e1000 | `skills/network/SKILL.md` |
 | Security | SID, Token, ACL, SAM, SeAccessCheck | `skills/security/SKILL.md` |
