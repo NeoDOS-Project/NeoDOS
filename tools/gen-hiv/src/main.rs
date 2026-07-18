@@ -318,12 +318,12 @@ fn print_usage() {
     eprintln!("Options:");
     eprintln!("  --enable-tests         Set EnableTests=1 (boot-time tests)");
     eprintln!("  --enable-network-test  Set EnableNetworkTest=1");
-    eprintln!("Default output: scripts/system.hiv");
+    eprintln!("Default output: data/system.hiv");
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let mut output = PathBuf::from("scripts/system.hiv");
+    let mut output = PathBuf::from("data/system.hiv");
     let mut enable_tests = false;
     let mut enable_network_test = false;
     let mut i = 1;

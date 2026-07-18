@@ -4,9 +4,9 @@
 # Uses qemu-bridge-helper (SUID root) for TAP creation.
 #
 # Usage:
-#   sudo bash scripts/setup-network.sh          # Interactive setup
-#   sudo bash scripts/setup-network.sh --check   # Check current status only
-#   sudo bash scripts/setup-network.sh --remove  # Teardown everything
+#   sudo bash data/setup-network.sh          # Interactive setup
+#   sudo bash data/setup-network.sh --check   # Check current status only
+#   sudo bash data/setup-network.sh --remove  # Teardown everything
 #
 # Run once after cloning the repo. After setup, QEMU runs without sudo.
 
@@ -383,10 +383,10 @@ case "${1:-}" in
         echo "NeoDOS QEMU Network Setup"
         echo ""
         echo "Usage:"
-        echo "  sudo bash scripts/setup-network.sh              Create bridge + configure"
-        echo "  sudo bash scripts/setup-network.sh --check      Check current status"
-        echo "  sudo bash scripts/setup-network.sh --remove     Teardown everything"
-        echo "  sudo bash scripts/setup-network.sh --help       This help"
+        echo "  sudo bash data/setup-network.sh              Create bridge + configure"
+        echo "  sudo bash data/setup-network.sh --check      Check current status"
+        echo "  sudo bash data/setup-network.sh --remove     Teardown everything"
+        echo "  sudo bash data/setup-network.sh --help       This help"
         echo ""
         echo "Environment variables (optional):"
         echo "  NEODOS_BRIDGE=neodos0       Bridge name (default: neodos0)"
