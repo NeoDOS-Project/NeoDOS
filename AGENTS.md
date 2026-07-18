@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.50-dev | **Tests:** 625 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
+**Version:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 
@@ -60,7 +60,6 @@ For every subsystem, consult its doc — not this file:
 | Filesystem | `docs/filesystem.md` | NeoFS, VFS, IoStack, FAT32, page cache |
 | Registry | `docs/registry.md` | Cm syscalls, cell-based hive, paths |
 | Security | `docs/security.md` | SID, Token, ACL, SAM, SeAccessCheck |
-| Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
 | Shell | `docs/shell.md` | Commands, pipeline, TAB, user binaries |
 | IPC | `docs/ipc.md` | Pipes, IRP, work queue, event bus |
 | Network | `docs/network.md` | TCP/IP stack, sockets, DHCP, e1000 |
@@ -79,6 +78,9 @@ For every subsystem, consult its doc — not this file:
 | NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
 | NXP Format | `docs/nxp-format.md` | Package container format, manifest |
 | Repository Architecture | `docs/REPOSITORY_ARCHITECTURE.md` | Multi-repo proposal, dependency analysis, separation candidates |
+| NLT/i18n | `docs/nlt.md` | NLTv2 format, API, compiler, workflow |
+| Power Manager | `docs/power-manager.md` | Power plans, ACPI, shutdown coordination |
+| NeoFS v2 | `docs/neofs_v2_design.md` | NE2 filesystem design, indirect blocks, journaling |
 
 ## Skills (specialized task checklists)
 

@@ -1,6 +1,6 @@
 # NeoDOS — Plan de Implementación Detallado
 
-> **Versión del proyecto:** v0.50-dev | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
+> **Versión del proyecto:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
 > Este documento contiene el detalle granular de cada tarea: archivos,
 > prerrequisitos, tests y descripción técnica.
@@ -32,11 +32,6 @@
 - [ ] **AUDIT-32. 5+ `.expect()` panic paths → Result<()>** | Files: `src/scheduler/mod.rs:485-487`, `src/main.rs:334`, `src/globals.rs:38`, `src/arch/x64/serial.rs:73`, `src/urn/mod.rs:383`
   - Scheduler slot full, block device missing, serial write failure — all crash the kernel instead of returning `Result`.
   - **Tests:** `scheduler_slot_exhaustion_graceful`, `urn_create_failure_propagated`
-
-- [x] **AUDIT-33. Boot/init hardening** | Prereqs: -- | Files: `src/main.rs`, `src/services/`, `userbin/neoinit/src/main.rs`
-  - Reemplazar puntos de fallo de arranque por `Result`/fallback seguros.
-  - Definir política de tolerancia para servicios críticos y registro ausente.
-  - **Tests:** `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`
 
 - [ ] **AUDIT-34. Low-level syscall/interrupt validation** | Prereqs: -- | Files: `src/arch/x64/idt.rs`, `src/arch/x64/cpu_local.rs`, `src/syscall/mod.rs`
   - Añadir guardas de ABI, estado de interrupciones y resched para rutas críticas.
@@ -339,14 +334,6 @@
 
 #### Networking
 
-- [x] **NET-DNS. DNS resolver (stub resolver + cache)** | Prereqs: NET-1.9 | Files: `src/net/dns.rs`, `libnet/`, `userbin/nslookup/`
-  - Stub resolver: consulta UDP a servidor DNS (puerto 53)
-  - Caché local con TTL (hasta 64 entradas)
-  - Transaction ID aleatorio, validación de respuesta, reintentos
-  - **Tests:** `dns_parse_a_response`, `dns_parse_cname_chain`, `dns_cache_hit_ttl`, `dns_cache_expiry`, `dns_resolve_localhost`, `dns_server_from_registry`
-  - **Mejora DHCP:** Parse option 6 (DNS) y almacena DnsServer en Registry
-  - **nslookup.nxe:** Nueva herramienta de usuario para resolución DNS
-
 #### Tracing
 
 - [ ] **B1.1. Kernel tracing infrastructure** | Prereqs: -- | Files: `src/trace/mod.rs`
@@ -473,7 +460,7 @@
 
 #### i18n — Migration
 
-- [ ] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
+- [x] **I18N-P2. Migrar apps core a tr_id!()** | Prereqs: I18N-P1 | Files: `userbin/neoshell/`, `userbin/neoinit/`, `userbin/corehelp/`, `userbin/coredir/`, `userbin/corecopy/`, `userbin/kill/`, `userbin/ps/`
   - Migrar todas las apps existentes de `tr!()` (no-op) a `tr_id!(IDS_CONSTANT)`.
   - **Tests:** (integración)
 
