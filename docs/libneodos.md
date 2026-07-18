@@ -154,12 +154,18 @@ pub fn history_reset();
 pub fn history_get_count() -> u32;
 pub fn history_get_entry(index: u32) -> Option<&str>;
 pub fn register_completion(callback: CompletionFn);
-pub fn progress_init(current: u64, total: u64);
-pub fn progress_update(current: u64);
-pub fn progress_finish();
+pub fn progress_begin(title: &str, total: u64) -> i32;
+pub fn progress_update(id: i32, current: u64);
+pub fn progress_set_message(id: i32, text: &str);
+pub fn progress_finish(id: i32);
+pub fn spinner_begin(title: &str);
+pub fn spinner_update();
+pub fn spinner_finish();
 ```
 
 The console module is lazy-loaded via `sys_loadlib` on first use from `console.nxl` (NXL slot 2). All history and completion callbacks are provided by the NXL.
+
+Progress bars render with Unicode block characters (`▓` filled, `░` empty), adapt to terminal width, show percentage and `(current/total)` ratio, and only redraw when the percentage changes. The spinner cycles through `| / - \` for tasks with unknown duration.
 
 ### Keyboard (`src/keyboard.rs`)
 

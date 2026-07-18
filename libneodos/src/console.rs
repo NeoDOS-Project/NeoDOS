@@ -1,4 +1,4 @@
-//! Console NXL wrapper — readline, history, completion, progress bars.
+//! Console NXL wrapper — readline, history, completion, progress bars, spinner.
 //!
 //! Loaded lazily on first use via `sys_loadlib`.
 //! ```ignore
@@ -35,13 +35,16 @@ pub struct ConsoleAbiTable {
     pub history_get_count: extern "C" fn() -> i32,
     pub history_get_entry: extern "C" fn(i32) -> *const u8,
     pub completion_register: extern "C" fn(Option<CompletionHandler>),
-    pub progress_create: extern "C" fn(*const u8, u64) -> i32,
+    pub progress_begin: extern "C" fn(*const u8, u64) -> i32,
     pub progress_update: extern "C" fn(i32, u64),
     pub progress_set_message: extern "C" fn(i32, *const u8),
     pub progress_finish: extern "C" fn(i32),
+    pub spinner_begin: extern "C" fn(*const u8),
+    pub spinner_update: extern "C" fn(),
+    pub spinner_finish: extern "C" fn(),
     pub set_color_256: extern "C" fn(u8, u8),
     pub set_truecolor: extern "C" fn(u8, u8, u8, u8, u8, u8),
-    _reserved: [u64; 6],
+    _reserved: [u64; 4],
 }
 
 fn get_table() -> Option<&'static ConsoleAbiTable> {
@@ -223,8 +226,8 @@ pub fn register_completion(handler: Option<CompletionHandler>) {
 
 // ── Progress bars ──────────────────────────────
 
-/// Create a new progress bar.
-pub fn progress_create(title: &str, total: u64) -> i32 {
+/// Create a new progress bar with a title and total.
+pub fn progress_begin(title: &str, total: u64) -> i32 {
     let table = match get_table() {
         Some(t) => t,
         None => return -1,
@@ -233,10 +236,10 @@ pub fn progress_create(title: &str, total: u64) -> i32 {
     let len = core::cmp::min(title.len(), 63);
     buf[..len].copy_from_slice(&title.as_bytes()[..len]);
     buf[len] = 0;
-    (table.progress_create)(buf.as_ptr(), total)
+    (table.progress_begin)(buf.as_ptr(), total)
 }
 
-/// Update progress bar position.
+/// Update progress bar current position.
 pub fn progress_update(id: i32, current: u64) {
     if let Some(t) = get_table() {
         (t.progress_update)(id, current);
@@ -258,5 +261,32 @@ pub fn progress_set_message(id: i32, text: &str) {
 pub fn progress_finish(id: i32) {
     if let Some(t) = get_table() {
         (t.progress_finish)(id);
+    }
+}
+
+// ── Spinner ────────────────────────────────────
+
+/// Start a spinner with a title (for tasks with unknown duration).
+pub fn spinner_begin(title: &str) {
+    if let Some(t) = get_table() {
+        let mut buf = [0u8; 64];
+        let len = core::cmp::min(title.len(), 63);
+        buf[..len].copy_from_slice(&title.as_bytes()[..len]);
+        buf[len] = 0;
+        (t.spinner_begin)(buf.as_ptr());
+    }
+}
+
+/// Advance the spinner animation frame.
+pub fn spinner_update() {
+    if let Some(t) = get_table() {
+        (t.spinner_update)();
+    }
+}
+
+/// Stop the spinner and clear its line.
+pub fn spinner_finish() {
+    if let Some(t) = get_table() {
+        (t.spinner_finish)();
     }
 }
