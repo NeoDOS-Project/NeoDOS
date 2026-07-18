@@ -852,7 +852,7 @@ SUBSYSTEMS = {
             "object", "security", "cm", "handle",
             "drivers/block", "irp", "eventbus",
             "graphics", "font", "usermode",
-            "urn", "trace",
+            "urn", "trace", "net",
         ],
         "forbidden_deps": [
             "drivers/ata", "drivers/boot_ahci", "drivers/fat32",
