@@ -1,0 +1,11 @@
+[package]
+name = "crashdump"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS Crash Dump Analyzer — parses binary crash dumps from kernel"
+
+[[bin]]
+name = "crashdump"
+path = "src/main.rs"
+
+[dependencies]

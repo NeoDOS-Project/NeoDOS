@@ -1,0 +1,11 @@
+[package]
+name = "gen-hiv"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS SYSTEM.HIV registry hive generator — NEOHv1 binary format"
+
+[[bin]]
+name = "gen-hiv"
+path = "src/main.rs"
+
+[dependencies]
