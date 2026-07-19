@@ -22,14 +22,23 @@ sync_issues() {
 
   # Cachear todas las issues existentes
   local all_issues_json
+  info "  Fetching existing issues..."
   all_issues_json="$($GH api "/repos/$repo/issues?state=all&per_page=100" --paginate 2>/dev/null)"
+  info "  Fetched $(echo "$all_issues_json" | grep -c '"number":') issues"
 
   local created=0 updated=0 skipped=0 closed=0
-  local in_item=false
+  local in_item=false in_code_block=false
   local current_id="" current_title="" current_body=""
   local prio="" milestone="" labels="" state="open" deps=""
 
   while IFS= read -r line; do
+    # Saltar bloques de código (formato de ejemplo)
+    if [[ "$line" =~ ^\x60{3,} ]]; then
+      if $in_code_block; then in_code_block=false; else in_code_block=true; fi
+      continue
+    fi
+    $in_code_block && continue
+
     # Detectar inicio de item: - **ID**: Título `backtick` `tokens`
     if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*\*\*([A-Za-z0-9_.-]+)\*\*:[[:space:]]*(.+)$ ]]; then
       # Procesar item anterior
@@ -43,6 +52,7 @@ sync_issues() {
       local title_raw="${BASH_REMATCH[2]}"
       current_body=""; prio=""; milestone=""; labels=""; state="open"; deps=""
       in_item=true
+      info "  #$current_id: parsing..."
 
       # Extraer tokens backtick
       local tokens=() token

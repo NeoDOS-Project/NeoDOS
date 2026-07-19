@@ -673,6 +673,18 @@ pub fn sm_start_auto_services() {
     }
 }
 
+/// Mark the NeoInit service as Running with the given PID.
+/// Called by the kernel after manually spawning NeoInit as PID 1,
+/// before sm_start_auto_services() tries to start it again.
+pub fn sm_mark_neoinit_running(pid: u32) {
+    let mut sm = SERVICE_MANAGER.lock();
+    if let Some(idx) = sm.find_by_name("NeoInit") {
+        sm.services[idx].state = ServiceState::Running;
+        sm.services[idx].pid = pid;
+        crate::serial_println!("[SM] NeoInit already running (PID {}) via manual kernel spawn", pid);
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
@@ -1000,7 +1012,7 @@ pub fn register_service_tests() {
             max_failures: 5,
         };
         let r = sm.register("NeoInit", "NeoDOS Init Process",
-            "C:\\Programs\\neoinit.nxe", cfg, &[]);
+            "C:\\nonexistent.nxe", cfg, &[]);
         test_true!(r.is_ok());
         test_eq!(sm.services.len(), 1);
 
@@ -1010,7 +1022,7 @@ pub fn register_service_tests() {
         test_eq!(svc.start_type as u8, ServiceStartType::System as u8);
         test_eq!(svc.restart_policy as u8, ServiceRestartPolicy::Always as u8);
         test_eq!(svc.max_failures, 5);
-        test_eq!(svc.binary_path, "C:\\Programs\\neoinit.nxe");
+        test_eq!(svc.binary_path, "C:\\nonexistent.nxe");
 
         // Auto-start with this service should not panic even if binary doesn't exist
         sm.dependency_order = vec![0];
