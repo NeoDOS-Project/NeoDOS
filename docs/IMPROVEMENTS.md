@@ -2,6 +2,13 @@
 
 > **Versión del proyecto:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8 | **SSDT:** RAX 0–59
 >
+> ⚠️ **Este archivo se mantiene como referencia local. La fuente de verdad
+> para la planificación es [GitHub Issues](https://github.com/NeoDOS-Project/neodos/issues).**
+>
+> El flujo de trabajo oficial usa `roadmap/improvements.md` como lista de ideas
+> y `scripts/sync-roadmap.sh` para sincronizar con GitHub Issues.
+> Consulta `roadmap/README.md` y `ROADMAP.md` (Apéndice B) para más detalles.
+>
 > Este documento contiene el detalle granular de cada tarea: archivos,
 > prerrequisitos, tests y descripción técnica.
 >

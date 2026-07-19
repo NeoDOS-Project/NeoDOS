@@ -67,8 +67,8 @@
       "description": "Run tests, check coverage, propose new tests for uncovered code"
     },
     "roadmap": {
-      "template": "Analyze and improve the NeoDOS roadmap in docs/IMPROVEMENTS.md.\n1. Read `docs/IMPROVEMENTS.md` completely.\n2. Read `docs/IMPROVEMENTS_COMPLETED.md` to understand what's been done.\n3. Categorize all pending items:\n   - Kernel: boot, HAL, init, SMP, IRQL, DPC\n   - Object Manager: Ob types, namespace, ObOperation\n   - Syscalls: new syscalls, wrappers, ABI\n   - Memory: allocators, paging, regions\n   - Scheduler: priorities, aging, SMP\n   - Drivers: NEM format, lifecycle, caps, isolation\n   - Shell: commands, pipeline, scripting\n   - Filesystem: NeoFS, VFS, FAT32\n   - Registry: Cm hive, persistence\n   - Network: TCP/IP, DHCP, userland tools\n   - Security: SAM, tokens, ACL\n   - Documentation: stale docs, missing refs\n   - Tools: build scripts, test infra, CI\n4. For each category, check for:\n   - Duplicate items (same task listed in multiple places)\n   - Stale items (already completed, not moved to COMPLETED)\n   - Overlapping items (merge into one)\n5. Re-prioritize by: impact (how many subsystems benefit), complexity (estimated effort), dependencies (prerequisites).\n6. Update the PRIORITY OVERVIEW table with correct ordering.\n7. Remove or merge any duplicates found.",
-      "description": "Analyze IMPROVEMENTS.md: categorize, deduplicate, prioritize by impact"
+      "template": "Sync the NeoDOS roadmap with GitHub Issues. Run `scripts/sync-roadmap.sh check` first to verify the connection, then `scripts/sync-roadmap.sh sync` to sync all labels, milestones, and issues. Alternatively, run individual steps: `scripts/sync-roadmap.sh labels && scripts/sync-roadmap.sh milestones && scripts/sync-roadmap.sh issues`. For changelog generation: `scripts/sync-roadmap.sh changelog`. The local source is `roadmap/improvements.md`; labels in `roadmap/labels.yaml`; milestones in `roadmap/milestones.yaml`.",
+      "description": "Sync roadmap with GitHub Issues"
     }
   },
   "lsp": {

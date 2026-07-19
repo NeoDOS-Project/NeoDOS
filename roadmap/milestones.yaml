@@ -1,0 +1,160 @@
+# NeoDOS — GitHub Milestones (Versiones)
+# Se crean/actualizan automáticamente con: scripts/sync-roadmap.sh milestones
+#
+# due_on: fecha ISO 8601 estimada (opcional, puede omitirse)
+#         Se usa para ordenar milestones en GitHub.
+
+- title: "v0.50 — Consolidation"
+  description: |
+    Completar iniciativas en curso: Shell tokenizer, Power Phase 2,
+    hardening de boot/init, tests de integración.
+  due_on: "2026-08-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.51 — NeoFS v2 + Shell Phase 2 + SAM"
+  description: |
+    NeoFS v2 completo (B-tree, freelist, snapshot, mkfs),
+    Shell Phase 2 (line editor, history, pipes, scripting),
+    SAM foundation + Network tools + Admin tools.
+  due_on: "2026-09-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.52 — VirtIO + Sessions + FS Security"
+  description: |
+    VirtIO architecture (virtqueue, net, block, 9p, input),
+    Sessions (SessionManager, neologon, login flow),
+    FS Security (owner_sid, permission checks, default perms),
+    Power Phase 3 + Zero-copy pipes.
+  due_on: "2026-10-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.53 — Registry Phase 2 + Integrity + Signing"
+  description: |
+    Registry multi-hive, per-cell dirty tracking, ACL checking,
+    Integrity levels, privilege enforcement,
+    Module signing, kernel debugger, shared libraries.
+  due_on: "2026-11-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.54 — Power Phase 4 + User Commands + DNS"
+  description: |
+    Power shutdown coordination, libneodos wrappers,
+    User commands (WHOAMI, PASSWD, WHO, SU, RUNAS),
+    DNS resolver, kernel tracing, admin tools.
+  due_on: "2026-12-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.55 — WAL + Secure Boot + VFS Advanced"
+  description: |
+    Registry WAL (crash recovery), secure boot chain,
+    VFS remaining features (DosDevices, write-back, overlay, EA, notifications, IOCP),
+    Power Phase 5 polish, Font Manager.
+  due_on: "2027-01-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.56 — NXE/NXP Ecosystem"
+  description: |
+    NXE metadata auto-generation, virtual Resource namespace,
+    NXE header validation, digital signatures,
+    i18n migration to tr_id!(), format_str(), per-user locale.
+  due_on: "2027-02-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.57 — Executive Manager"
+  description: |
+    Configuration Manager (Registry + boot consolidation),
+    Session Manager (user sessions, login/logout/switch),
+    Object Namespace Manager (per-process namespace virtualization),
+    Power Manager final (policies, plans, events).
+  due_on: "2027-03-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.58 — Official Tools"
+  description: |
+    NeoDev v2 complete, neocfg modules, admin tools (neomem, neotop, neotask, neolog),
+    NXE tools complete (nxeinfo, nxpkg, nxdump, nxres, nxlocale, nxverify).
+  due_on: "2027-04-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.59 — Installation & Bootstrap"
+  description: |
+    install.nxe interactive installer, NeoFS creation from scratch,
+    bootstrap detection, initial configuration, package deployment.
+  due_on: "2027-05-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.60 — NLT i18n + Regional Formats"
+  description: |
+    NLT compression, UTF-16 support, pluralization,
+    regional formats (dates, currencies, calendars),
+    RTL/bidi support, digital signatures in NLT.
+  due_on: "2027-06-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.61 — Security Hardening"
+  description: |
+    Full security audit, syscall fuzzing (RAX 0-77),
+    NEM driver HST fuzzing, ASLR v2 (stack + heap).
+  due_on: "2027-07-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.62 — Security Hardening II"
+  description: |
+    ASLR v3 (full randomization), NX stack + heap enforcement.
+  due_on: "2027-08-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.63 — Performance"
+  description: |
+    Lock-free scheduler (per-CPU run queues),
+    NUMA-aware per-CPU heaps, benchmark suite, PGO.
+  due_on: "2027-09-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.64 — Documentation & Test Coverage"
+  description: |
+    Complete API documentation (syscalls, libneodos, drivers),
+    Subsystem documentation, tutorials,
+    >80% line coverage.
+  due_on: "2027-10-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.65 — Documentation & Test Coverage II"
+  description: |
+    >95% line coverage.
+  due_on: "2027-11-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.66 — Bugfixes & Hardening"
+  description: |
+    Second fuzzing round, static buffer elimination,
+    bounds checking audit.
+  due_on: "2027-12-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.67 — Bugfixes & Hardening II"
+  description: |
+    Bug fixes from audits.
+  due_on: "2028-01-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.68 — Bugfixes & Hardening III"
+  description: |
+    Bug fixes continued.
+  due_on: "2028-02-01T00:00:00Z"
+  state: "open"
+
+- title: "v0.69 — ABI Freeze"
+  description: |
+    Final ABI freeze for v1.0, all interfaces frozen,
+    syscalls 0-77 stable, NEM ABI frozen, NeoFS format frozen.
+  due_on: "2028-03-01T00:00:00Z"
+  state: "open"
+
+- title: "v1.0 — First Stable API"
+  description: |
+    Primera versión con API estable. Todo lo congelado en v1.0
+    no cambia hasta v2.0: drivers NEM v3, syscalls 0-77,
+    formato NXE/NXP, formato NeoFS v2, ABI de libneodos.
+  due_on: "2028-04-01T00:00:00Z"
+  state: "open"

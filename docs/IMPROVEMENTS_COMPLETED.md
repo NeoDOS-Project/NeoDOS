@@ -1,5 +1,8 @@
 # NeoDOS — Items Completados
 
+> ⚠️ **Este archivo se mantiene como referencia local. La fuente de verdad
+> para el histórico completo del proyecto es [GitHub Issues](https://github.com/NeoDOS-Project/neodos/issues).**
+>
 > Items completados del roadmap, movidos desde `IMPROVEMENTS.md`.
 > El roadmap maestro está en [`/ROADMAP.md`](../ROADMAP.md).
 > Version actual: v0.50.2 (i18n I18N-P1/P2/P3 completados).

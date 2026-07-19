@@ -21,26 +21,69 @@ NeoDev is now an [independent project](https://github.com/NeoDOS-Project/NeoDev)
 Install it first, then use:
 
 ```bash
-neodev build --quick --image    # build kernel + bl + image 
-neodev build --image            # build everything + image (preferred)
-neodev run                      # QEMU + OVMF + GDB :1234
-neodev test                     # run automated tests
-neodev list                     # show discovered projects
-neodev clean                    # clean artifacts
+scripts/sync-roadmap.sh sync     # sync roadmap → GitHub Issues (idempotent)
+scripts/sync-roadmap.sh check    # verify GitHub connection and local files
+neodev build --quick --image     # build kernel + bl + image 
+neodev build --image             # build everything + image (preferred)
+neodev run                       # QEMU + OVMF + GDB :1234
+neodev test                      # run automated tests
+neodev list                      # show discovered projects
+neodev clean                     # clean artifacts
 ```
 
 Install: `cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`
 
-## Git Workflow
+## GitHub Workflow (SSOT)
 
-1. Work is done on `develop` branch (default). Create feature branches: `feat/name`, `fix/name`, `refactor/name`.
-2. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
-3. `neodev test`
-4. `npx markdownlint '**/*.md' --config .markdownlint.json`
-5. If all pass: `git add -A && git commit -m "feat|fix|refactor: ..." && git push`
+**GitHub Issues es el sistema oficial de planificación, seguimiento e histórico.**
+
+El archivo local `roadmap/improvements.md` es una lista de ideas que la IA convierte
+automáticamente en Issues. `docs/IMPROVEMENTS.md` y `docs/IMPROVEMENTS_COMPLETED.md`
+se mantienen como referencia local pero GitHub Issues es la fuente de verdad.
+
+### Sincronización
+
+```bash
+scripts/sync-roadmap.sh sync          # Sincroniza todo: labels + milestones + issues
+scripts/sync-roadmap.sh labels        # Solo labels
+scripts/sync-roadmap.sh milestones    # Solo milestones
+scripts/sync-roadmap.sh issues        # Solo issues
+scripts/sync-roadmap.sh changelog     # Genera changelog desde milestones/issues
+scripts/sync-roadmap.sh check         # Verifica conexión y archivos
+```
+
+Completamente idempotente. Ejecutable múltiples veces sin crear duplicados.
+
+### Flujo de desarrollo
+
+1. Nueva idea → añadir a `roadmap/improvements.md` → `sync-roadmap.sh sync`.
+2. La IA o el comando crean la Issue en GitHub.
+3. Trabajar en feature branch: `feat/NOMBRE-DE-LA-ISSUE`.
+4. Commits: `git commit -m "feat: descripción (#123)"` con referencia a la Issue.
+5. PR → `develop` → merge. El PR cierra la Issue automáticamente.
+6. Al completar: `sync-roadmap.sh sync` actualiza `improvements.md`.
+
+### Releases
+
+Cada versión es una Milestone. Cuando todas sus Issues están cerradas, la versión
+está terminada. El changelog se genera con `sync-roadmap.sh changelog`.
+
+### Ramas
+
+1. `develop` — integración (default).
+2. `feat/*`, `fix/*`, `refactor/*` — ramas de trabajo referenciando Issues.
+3. `release/vX.Y.Z` — rama de release desde `develop` → PR → `master`.
+4. `master` — releases estables.
+
+### Git Workflow (commits)
+
+1. `cargo build` in `neodos-kernel/` (or `neodev build --quick`)
+2. `neodev test`
+3. `npx markdownlint '**/*.md' --config .markdownlint.json`
+4. `scripts/sync-roadmap.sh check`
+5. If all pass: `git add -A && git commit -m "feat|fix|refactor: descripción (#123)" && git push`
 6. Open PR → `develop`, get approval, merge (squash).
-7. On completion: update `CHANGELOG.md`, move item in `docs/IMPROVEMENTS.md` → completed, update relevant `docs/*.md`.
-8. Releases: branch `release/vX.Y.Z` from `develop` → PR → `master`, tag, GitHub Release.
+7. On completion: update `CHANGELOG.md`, run `sync-roadmap.sh sync`, update relevant `docs/*.md`.
 
 ## Architecture
 
@@ -70,8 +113,10 @@ For every subsystem, consult its doc — not this file:
 | HAL | `docs/hal.md` | Hardware abstraction layer, primitives |
 | Interrupts | `docs/interrupts.md` | IRQL, IOAPIC, MSI-X, DPC, IPI |
 | Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
-| Tasks | `docs/IMPROVEMENTS.md` | Detailed task breakdown by milestone |
-| Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items |
+| GitHub Sync | `scripts/sync-roadmap.sh` | Sincroniza roadmap local → GitHub Issues (idempotente) |
+| Roadmap Data | `roadmap/` | Labels, milestones, improvements.md, issue templates |
+| Tasks | `docs/IMPROVEMENTS.md` | Detailed task breakdown by milestone (local copy) |
+| Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items (local copy) |
 | Debug | `docs/DEBUG.md` | GDB setup, debug tips |
 | Vision | `docs/ARCHITECTURAL_VISION.md` | Long-term strategy v0.40→v1.0 |
 | NXE Ecosystem | `docs/nxe-ecosystem-design.md` | NXE/NXP format, resources, i18n, tools |
