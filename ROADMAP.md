@@ -743,6 +743,55 @@ M0.1 (v0.50): Sin dependencias externas (es el milestone actual)
 
 ---
 
+---
+
+## Apéndice B: Sincronización con GitHub
+
+> **A partir de la reorganización del flujo de trabajo, GitHub Issues es el sistema
+> oficial de planificación, seguimiento e histórico del proyecto.**
+
+### Estructura
+
+```
+roadmap/
+├── improvements.md        # Ideas locales → convertidas a Issues por la IA
+├── labels.yaml            # Definición de labels de GitHub
+├── milestones.yaml        # Definición de milestones (versiones)
+├── issue_templates/       # Templates para crear Issues
+│   ├── feature.md
+│   ├── bug.md
+│   ├── task.md
+│   └── completed-feature.md
+scripts/
+└── sync-roadmap.sh        # Sincronización idempotente con GitHub
+    └── lib/
+        ├── github.sh      # Wrapper de gh + gh api
+        ├── labels.sh      # Gestión de labels
+        ├── milestones.sh  # Gestión de milestones
+        └── issues.sh      # Gestión de issues
+```
+
+### Comandos
+
+```bash
+scripts/sync-roadmap.sh sync       # Sincroniza todo (idempotente)
+scripts/sync-roadmap.sh labels     # Crea/actualiza labels
+scripts/sync-roadmap.sh milestones # Crea/actualiza milestones
+scripts/sync-roadmap.sh issues     # Crea/actualiza issues
+scripts/sync-roadmap.sh changelog  # Genera changelog desde milestones
+scripts/sync-roadmap.sh check      # Verifica configuración
+```
+
+### Flujo
+
+1. Las nuevas ideas se añaden a `roadmap/improvements.md`.
+2. La IA o `sync-roadmap.sh` convierten cada idea en una GitHub Issue.
+3. El desarrollo diario referencia Issues en commits y PRs.
+4. Las releases son Milestones; cuando todas sus Issues están cerradas,
+   la versión está terminada.
+5. El changelog se genera automáticamente desde Issues cerradas por Milestone.
+
 *Este documento es la hoja de ruta oficial del proyecto NeoDOS. Reemplaza
-`docs/roadmap.md` (obsoleto) como fuente de verdad para la planificación.
-El detalle granular de cada tarea se mantiene en `docs/IMPROVEMENTS.md`.*
+`docs/roadmap.md` (obsoleto) como referencia de planificación.
+El detalle granular de cada tarea se mantiene en `roadmap/improvements.md`
+(que se sincroniza con GitHub Issues).*
