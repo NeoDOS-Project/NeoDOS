@@ -54,11 +54,13 @@ _label_upsert() {
   local repo="$1" name="$2" color="$3" desc="$4" existing="$5"
   local -n _created="$6" _updated="$7"
 
+  info "  Label: $name ..."
+
   if echo "$existing" | grep -qF "\"$name\"" 2>/dev/null; then
     $GH api "/repos/$repo/labels/$name" --method PATCH \
-      -f color="$color" -f description="$desc" &>/dev/null && ((_updated++))
+      -f color="$color" -f description="$desc" &>/dev/null && { ((_updated++)); info "    updated"; } || info "    skip (no change)"
   else
     $GH api "/repos/$repo/labels" -f name="$name" \
-      -f color="$color" -f description="$desc" &>/dev/null && ((_created++))
+      -f color="$color" -f description="$desc" &>/dev/null && { ((_created++)); info "    created"; } || info "    failed"
   fi
 }
