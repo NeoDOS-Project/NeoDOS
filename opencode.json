@@ -86,16 +86,6 @@
       "type": "local",
       "command": ["/home/amartinper/rust-os/neodos-dev-server/target/release/neodos-mcp"],
       "enabled": true
-    },
-    "memory": {
-      "type": "local",
-      "command": ["npx", "-y", "@modelcontextprotocol/server-memory"],
-      "enabled": false
-    },
-    "sequential-thinking": {
-      "type": "local",
-      "command": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
-      "enabled": false
     }
   }
 }
