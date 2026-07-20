@@ -323,6 +323,13 @@ def build_nem_v3(driver_name, elf, flags=0, abi_min=1, abi_target=1, abi_max=2,
     for elf_idx, sym in enumerate(symbols):
         is_undef = sym['shndx'] == 0
         has_mappable_section = sym.get('nem_section', 0xFFFF) != 0xFFFF
+
+        # Skip Rust-internal undefined symbols (mangled names starting with _R)
+        # These are compiler-generated and can't be resolved via KERNEL_EXPORTS.
+        # Relocations targeting them will fall back to sym_idx=0xFF (anonymous).
+        if is_undef and sym['name'].startswith('_R'):
+            continue
+
         if not is_undef and not has_mappable_section:
             continue
 

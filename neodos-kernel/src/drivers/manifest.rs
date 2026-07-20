@@ -93,15 +93,10 @@ pub static DRIVER_MANIFEST: &[DriverDescriptor] = &[
         PciDeviceId { vendor: INTEL, device: 0x100F },
         PciDeviceId { vendor: INTEL, device: 0x10D3 },
     ]),
-    DriverDescriptor::new_storage("AHCI", &[
-        PciDeviceId { vendor: INTEL, device: 0x2922 },
-        PciDeviceId { vendor: INTEL, device: 0x2829 },
-    ]),
     DriverDescriptor::new_network("VIRTIO-BLK", &[
         PciDeviceId { vendor: VIRTIO, device: 0x1001 },
         PciDeviceId { vendor: VIRTIO, device: 0x1042 },
     ]),
-    DriverDescriptor::new_bridge("PCI"),
     DriverDescriptor::new_bridge("ACPI"),
     DriverDescriptor::new_input("PS2KBD"),
     DriverDescriptor::new_input("PS2MOUSE"),
