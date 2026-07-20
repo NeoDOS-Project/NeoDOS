@@ -6,6 +6,9 @@ pub mod boot_loader;
 
 pub mod caps;
 pub mod dependency;
+pub mod device;
+pub mod driver_manager;
+pub mod manifest;
 pub mod fsck_neodos;
 pub mod driver_runtime;
 pub mod fat32;

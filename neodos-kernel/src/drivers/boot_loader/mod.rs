@@ -1,16 +1,12 @@
 use alloc::vec::Vec;
 use alloc::string::String;
-use alloc::collections::BTreeMap;
 use crate::nem::{self, DriverCategory, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
-use crate::drivers::nem::v3loader;
-use crate::drivers::driver_runtime::{self, DriverState};
-use crate::eventbus::EVENT_KEYBOARD_INPUT;
-use crate::eventbus::EVENT_KEYB_LAYOUT;
-use crate::eventbus::EVENT_RTC_READ;
-use crate::eventbus::EVENT_SHUTDOWN;
 use crate::fs::vfs::MODE_FILE;
 use crate::fs::vfs::MODE_DIR;
+#[allow(unused_imports)]
+use crate::drivers::driver_runtime::{self, DriverState};
 
+#[allow(dead_code)]
 fn collect_driver_data(files: &[String], category: DriverCategory) -> Vec<(String, Vec<u8>)> {
     let mut collected = Vec::new();
     for f in files {
@@ -34,6 +30,7 @@ fn collect_driver_data(files: &[String], category: DriverCategory) -> Vec<(Strin
     collected
 }
 
+#[allow(dead_code)]
 fn build_dependency_graph(drivers: &[(String, Vec<u8>)]) -> crate::drivers::dependency::DependencyGraph {
     let mut graph = crate::drivers::dependency::DependencyGraph::new();
     for (name, _) in drivers {
@@ -53,216 +50,8 @@ fn build_dependency_graph(drivers: &[(String, Vec<u8>)]) -> crate::drivers::depe
 }
 
 pub fn boot_load_all() {
-    crate::serial_println!("[BOOT] === Boot Driver Loader v2 (with dep resolver) ===");
-    let mut total_loaded = 0u32;
-    let mut total_active = 0u32;
-    let mut total_faulted = 0u32;
-
-    for (phase_name, root, cat) in &[
-        ("BOOT", "C:\\System\\Drivers", DriverCategory::Boot),
-        ("SYSTEM", "C:\\System\\Drivers", DriverCategory::System),
-    ] {
-        crate::serial_println!("[BOOT] Scanning {} drivers...", phase_name);
-        let files = driver_scan(root);
-        if files.is_empty() {
-            continue;
-        }
-
-        let collected = collect_driver_data(&files, *cat);
-
-        let graph = build_dependency_graph(&collected);
-        let sorted = match graph.resolve_order() {
-            Ok(order) => order,
-            Err(e) => {
-                crate::serial_println!("[BOOT]   Dependency resolution failed: {:?}", e);
-                crate::serial_println!("[BOOT]   Falling back to filesystem order");
-                collected.iter().map(|(n, _)| n.clone()).collect()
-            }
-        };
-
-        let name_to_data: BTreeMap<String, &(String, Vec<u8>)> =
-            collected.iter().map(|entry| (entry.0.clone(), entry)).collect();
-
-        for name in &sorted {
-            let entry = match name_to_data.get(name) {
-                Some(e) => e,
-                None => continue,
-            };
-            let data = &entry.1;
-            let parsed_v3 = match nem::parse_nem_v3(data) {
-                Some(p) => p,
-                None => continue,
-            };
-
-            if name == "AHCI"
-                && crate::boot_benchmark::AHCI_COMMANDS.load(core::sync::atomic::Ordering::Relaxed) == 0 {
-                    crate::serial_println!("[BOOT]   Skipping {} ... (AHCI controller not active)", name);
-                    continue;
-            }
-
-            let abi_result = crate::drivers::abi::negotiate_default(
-                parsed_v3.header.abi_min,
-                parsed_v3.header.abi_target,
-                parsed_v3.header.abi_max,
-            );
-            if !abi_result.is_compatible() {
-                crate::serial_println!("SKIP (v3 ABI: {})", abi_result.to_str());
-                continue;
-            }
-
-            crate::serial_print!("[BOOT]   Loading {} ... ", name);
-            let load_result = match v3loader::load_nem_v3(data) {
-                Ok(r) => r,
-                Err(e) => {
-                    crate::serial_println!("FAIL (v3 load: {})", e);
-                    continue;
-                }
-            };
-
-            let name_str = String::from_utf8_lossy(&load_result.name);
-            let name_upper = name_str.to_ascii_uppercase();
-
-            let rt_id = driver_runtime::register_driver_ext(
-                &name_upper,
-                nem::NemDriverType::Lifecycle,
-                nem::NEM_API_VERSION,
-                0,
-                parsed_v3.header.abi_min,
-                parsed_v3.header.abi_target,
-                parsed_v3.header.abi_max,
-                load_result.category,
-            );
-
-            match rt_id {
-                Ok(id) => {
-                    crate::serial_print!("REG OK (id={})", id);
-                    total_loaded += 1;
-
-                    // X4: Bind the isolated region slot to this driver
-                    v3loader::bind_isolated_driver(id, &load_result);
-
-                    // Track load result for hot reload
-                    crate::drivers::hotreload::register_load_result(id, &load_result);
-
-                    // Set current driver context for capability checks
-                    unsafe { crate::drivers::nem::driver::set_current_driver(id); }
-
-                    let init_ok = match load_result.entry_init {
-                        Some(init_fn) => unsafe { init_fn() == 0 },
-                        None => true,
-                    };
-
-                    if init_ok {
-                        let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                            .try_transition(id, DriverState::Initialized);
-                        crate::serial_print!(" [INIT]");
-
-                        let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                            .try_transition(id, DriverState::Registered);
-                        crate::serial_print!(" [REG]");
-
-                        let bind_ok = match name_upper.as_str() {
-                            "PS2KBD" => {
-                                let a = v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_KEYBOARD_INPUT, id
-                                ).is_ok();
-                                let b = v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_KEYB_LAYOUT, id
-                                ).is_ok();
-                                a && b
-                            }
-                            "PS2MOUSE" => {
-                                v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, crate::eventbus::EVENT_MOUSE_INPUT, id
-                                ).is_ok()
-                            }
-                            "SERIAL" => {
-                                v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, crate::eventbus::EVENT_SERIAL_DATA, id
-                                ).is_ok()
-                            }
-                            "RTC" => {
-                                v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_RTC_READ, id
-                                ).is_ok()
-                            }
-                            "ACPI" => {
-                                v3loader::register_v3_event_bus_handler(
-                                    load_result.entry_event, EVENT_SHUTDOWN, id
-                                ).is_ok()
-                            }
-                            _ => {
-                                // Unknown driver type – bind successfully without
-                                // registering any event bus handler.
-                                // DO NOT register for KEYBOARD_INPUT here: that would
-                                // create a duplicate handler that calls ps2kbd, causing
-                                // every keyboard event to be dispatched twice.
-                                true
-                            }
-                        };
-                        if !bind_ok {
-                            crate::serial_print!(" [BIND FAIL]");
-                            total_faulted += 1;
-                            driver_runtime::DRIVER_RUNTIME.lock()
-                                .set_error(id, driver_runtime::ERR_BIND_FAILED, true);
-                        } else {
-                            let _ = driver_runtime::DRIVER_RUNTIME.lock()
-                                .try_transition(id, DriverState::Bound);
-                            crate::serial_print!(" [BOUND]");
-
-                            let activate_ok = match load_result.entry_activate {
-                                Some(activate_fn) => unsafe { activate_fn() == 0 },
-                                None => true,
-                            };
-
-                            if !activate_ok {
-                                crate::serial_print!(" [ACT FAIL]");
-                                total_faulted += 1;
-                                driver_runtime::DRIVER_RUNTIME.lock()
-                                    .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
-                                // Clear driver context before continuing
-                                unsafe { crate::drivers::nem::driver::clear_current_driver(); }
-                                crate::serial_println!();
-                                continue;
-                            }
-
-                            if driver_runtime::DRIVER_RUNTIME.lock()
-                                .certify_and_activate(id).is_ok()
-                            {
-                                crate::serial_print!(" [ACTIVE]");
-                                total_active += 1;
-                            } else {
-                                crate::serial_print!(" [CERT FAIL]");
-                                total_faulted += 1;
-                                driver_runtime::DRIVER_RUNTIME.lock()
-                                    .set_error(id, driver_runtime::ERR_CERTIFICATION_FAILED, true);
-                            }
-                        }
-                    } else {
-                        crate::serial_print!(" [INIT FAIL]");
-                        total_faulted += 1;
-                        driver_runtime::DRIVER_RUNTIME.lock()
-                            .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
-                    }
-
-                    // Clear current driver context after entry point returns
-                    unsafe { crate::drivers::nem::driver::clear_current_driver(); }
-
-                    crate::serial_println!();
-                }
-                Err(e) => {
-                    crate::serial_println!("REG FAIL ({})", e);
-                }
-            }
-        }
-    }
-
-    let rt = driver_runtime::DRIVER_RUNTIME.lock();
-    let total = rt.count();
-    drop(rt);
-
-    crate::serial_println!("[BOOT] === Summary: {} total, {} loaded, {} active, {} faulted ===",
-        total, total_loaded, total_active, total_faulted);
+    let mut mgr = crate::drivers::driver_manager::DriverManager::new();
+    mgr.init();
 }
 
 pub fn driver_scan(path: &str) -> Vec<String> {
@@ -291,7 +80,7 @@ pub fn driver_scan(path: &str) -> Vec<String> {
     results
 }
 
-fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
+pub fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
     crate::globals::with_vfs(|vfs| {
         let (drive_idx, node) = vfs.resolve_path(path).map_err(|_| "VFS resolve failed")?;
         if node.mode & MODE_FILE == 0 {
