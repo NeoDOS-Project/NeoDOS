@@ -47,7 +47,7 @@ impl DriverDescriptor {
             name,
             version_major: 1, version_minor: 0, version_patch: 0,
             device_class: DeviceClass::Bridge,
-            bus_type: BusType::Pci,
+            bus_type: BusType::Platform,
             pci_devices: &[],
             priority: 10,
         }
@@ -95,6 +95,7 @@ pub static DRIVER_MANIFEST: &[DriverDescriptor] = &[
     ]),
     DriverDescriptor::new_storage("AHCI", &[
         PciDeviceId { vendor: INTEL, device: 0x2922 },
+        PciDeviceId { vendor: INTEL, device: 0x2829 },
     ]),
     DriverDescriptor::new_network("VIRTIO-BLK", &[
         PciDeviceId { vendor: VIRTIO, device: 0x1001 },

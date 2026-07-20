@@ -43,6 +43,7 @@ impl DriverManager {
         self.discover_devices();
         self.scan_available_drivers();
         self.match_devices_to_drivers();
+        self.collect_platform_drivers();
         self.print_discovery_summary();
         self.load_matched_drivers();
         self.print_loading_summary();
@@ -136,6 +137,35 @@ impl DriverManager {
 
         crate::serial_println!("[DRVMGR]   {} device(s) matched, {} unmatched",
             matched_count, self.unmatched_devices.len());
+    }
+
+    fn collect_platform_drivers(&mut self) {
+        for desc in manifest::all_descriptors() {
+            if desc.bus_type != super::device::BusType::Platform {
+                continue;
+            }
+            let name_upper = desc.name.to_ascii_uppercase();
+            if self.matched_drivers.iter().any(|(d, _)| d.name.to_ascii_uppercase() == name_upper) {
+                continue;
+            }
+            crate::serial_println!(
+                "[DRVMGR]   PLATFORM: driver '{}' (class={:?})",
+                desc.name, desc.device_class,
+            );
+            self.matched_drivers.push((
+                DriverDescriptor {
+                    name: desc.name,
+                    version_major: desc.version_major,
+                    version_minor: desc.version_minor,
+                    version_patch: desc.version_patch,
+                    device_class: desc.device_class,
+                    bus_type: desc.bus_type,
+                    pci_devices: desc.pci_devices,
+                    priority: desc.priority,
+                },
+                Vec::new(),
+            ));
+        }
     }
 
     fn print_discovery_summary(&self) {
