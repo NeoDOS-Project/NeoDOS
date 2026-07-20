@@ -45,7 +45,8 @@ NeoDOS Kernel (x86_64-unknown-none)
   - Input Manager init (VT subsystem, A4.4)
   - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
   - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
-  - Boot driver loader (PHASE 3.85): carga NEM drivers (BOOT → SYSTEM, dependency-sorted)
+  - Driver Manager (PHASE 3.85): escaneo PCI → matching declarativo (manifest.rs) →
+    carga selectiva solo de drivers con hardware detectado (device/ + driver_manager.rs)
   - NEM bridges + DLL loader (PHASE 3.87): RTC bridge, hot reload, NXL loading
   - Networking init (PHASE 3.88): ARP cache, \Device\Tcp/\Device\Udp. NICs via NEM drivers
   - Cm Registry init (PHASE 3.881): mount SYSTEM hive, ensure defaults

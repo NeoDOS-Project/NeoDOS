@@ -15,7 +15,7 @@
 | Document | Contents |
 | ---------- | ---------- |
 | [`ARCHITECTURE_PACKAGE_MANAGER.md`](ARCHITECTURE_PACKAGE_MANAGER.md) | Complete architecture: format, components, Ob integration, security, transactions, CLI, API, comparison with APT/Pacman/Cargo/Nix |
-| [`IMPROVEMENTS.md`](../IMPROVEMENTS.md) sec PKG-1 | Implementation tracking, phases, tasks |
+| [`IMPROVEMENTS.md`](IMPROVEMENTS.md) sec PKG-1 | Implementation tracking, phases, tasks |
 | `userbin/neoget/` | CLI source (future) |
 | `libneopkg/` | Engine library source (future) |
 

@@ -4,6 +4,32 @@
 
 ## v0.50.0-dev — Unreleased
 
+### Added (Driver Manager — carga selectiva de drivers)
+
+- **Driver Manager (`src/drivers/driver_manager.rs`)** — Sistema centralizado de carga de drivers basado en hardware detectado.
+  - **Device Discovery** (`src/drivers/device/`): escaneo PCI completo con trait `BusScanner` extensible a futuros buses (USB, ISA).
+  - **Driver Manifest** (`src/drivers/manifest.rs`): registro central declarativo con vendor/device IDs, clase, prioridad.
+  - **Matching**: solo se cargan drivers cuyo hardware está presente (ej: e1000 solo si NIC Intel detectada). Dispositivos sin driver listados como `UNMATCHED`.
+  - **Platform drivers**: ACPI, PS2KBD, PS2MOUSE, SERIAL, RTC cargados incondicionalmente (sin PCI matching).
+  - **Resultado**: 7/7 drivers activos en AHCI mode, 7/7 en ATA mode. Eliminada la carga indiscriminada de todos los `.NEM`.
+- **Driver de red detectado**: ATA (PIIX4 IDE controller 0x8086:0x7111), AHCI (ICH9 0x8086:0x2829).
+- **`tools/nem-pack.py` restaurado**: recuperado de git history (borrado por error en 9f9c67a). Compila `.o` → `.nem` via ELF parsing.
+
+### Added (GitHub SSOT — roadmap sync)
+
+- **GitHub Issues como Source of Truth**: `scripts/sync-roadmap.sh` sincroniza el roadmap local (`roadmap/improvements.md`) con GitHub Issues. Crea labels, milestones e issues automáticamente. Idempotente.
+
+### Added (B-tree persistente COW)
+
+- **B-tree COW (Copy-on-Write)**: nuevo `src/fs/btree.rs` con B-tree persistente para NeoFS. Operaciones atómicas con journaling de metadatos.
+
+### Changed
+
+- **NeoInit duplicate spawn fix**: corregido race condition donde NeoInit podía spawnear el shell dos veces.
+- **Progress bar/spinner API unificada**: `console.nxl` refactorizado con API común para barras de progreso y spinners.
+- **`scripts/` → `data/`**: directorio renombrado; todas las referencias actualizadas.
+- **Port de scripts a Rust**: `gen-hiv`, `crashdump`, `check-deps` migrados de Python a Rust en `tools/`.
+
 ### Changed (NeoDev extraído a repositorio independiente)
 
 - **NeoDev separado de NeoDOS**: La herramienta de desarrollo se ha extraído a un repositorio independiente en `github.com/NeoDOS-Project/NeoDev`.
