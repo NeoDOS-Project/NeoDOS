@@ -14,6 +14,9 @@ pub trait NetworkInterface: Send + Sync {
     fn gateway(&self) -> Ipv4Addr { Ipv4Addr::new([10, 0, 1, 1]) }
     fn is_link_up(&self) -> bool { true }
     fn mtu(&self) -> usize { 1500 }
+    fn vendor_id(&self) -> u16 { 0 }
+    fn device_id(&self) -> u16 { 0 }
+    fn description(&self) -> &str { self.name() }
 }
 
 struct NicSlot {
@@ -21,6 +24,8 @@ struct NicSlot {
     ip: Ipv4Addr,
     mask: Ipv4Addr,
     mac: MacAddr,
+    vendor_id: u16,
+    device_id: u16,
 }
 
 pub struct NicRegistry {
@@ -36,6 +41,8 @@ impl NicRegistry {
             ip: Ipv4Addr::new([0; 4]),
             mask: Ipv4Addr::new([0; 4]),
             mac: MacAddr::new([0; 6]),
+            vendor_id: 0,
+            device_id: 0,
         };
         NicRegistry {
             nics: [EMPTY; MAX_NICS],
@@ -48,11 +55,15 @@ impl NicRegistry {
         for i in 0..MAX_NICS {
             if self.nics[i].interface.is_none() {
                 let mac = interface.mac_address();
+                let vendor = interface.vendor_id();
+                let device = interface.device_id();
                 self.nics[i] = NicSlot {
                     interface: Some(interface),
                     ip: Ipv4Addr::unspecified(),
                     mask: Ipv4Addr::unspecified(),
                     mac,
+                    vendor_id: vendor,
+                    device_id: device,
                 };
                 self.active_count += 1;
                 return Some(i as u32);
@@ -169,6 +180,46 @@ pub fn nic_send_packet(nic_id: u32, packet: &[u8]) -> Result<(), ()> {
 
 pub fn nic_count() -> usize {
     NIC_REGISTRY.lock().count()
+}
+
+pub fn nic_get_vendor_id(nic_id: u32) -> Option<u16> {
+    let reg = NIC_REGISTRY.lock();
+    if (nic_id as usize) < MAX_NICS && reg.nics[nic_id as usize].interface.is_some() {
+        Some(reg.nics[nic_id as usize].vendor_id)
+    } else {
+        None
+    }
+}
+
+pub fn nic_get_device_id(nic_id: u32) -> Option<u16> {
+    let reg = NIC_REGISTRY.lock();
+    if (nic_id as usize) < MAX_NICS && reg.nics[nic_id as usize].interface.is_some() {
+        Some(reg.nics[nic_id as usize].device_id)
+    } else {
+        None
+    }
+}
+
+pub fn nic_get_name(nic_id: u32) -> Option<[u8; 16]> {
+    let mut reg = NIC_REGISTRY.lock();
+    let nic = reg.get(nic_id)?;
+    let s = nic.name();
+    let mut buf = [0u8; 16];
+    let bytes = s.as_bytes();
+    let len = bytes.len().min(16);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    Some(buf)
+}
+
+pub fn nic_get_description(nic_id: u32) -> Option<[u8; 48]> {
+    let mut reg = NIC_REGISTRY.lock();
+    let nic = reg.get(nic_id)?;
+    let s = nic.description();
+    let mut buf = [0u8; 48];
+    let bytes = s.as_bytes();
+    let len = bytes.len().min(48);
+    buf[..len].copy_from_slice(&bytes[..len]);
+    Some(buf)
 }
 
 pub fn nic_get_ip(nic_id: u32) -> Option<Ipv4Addr> {

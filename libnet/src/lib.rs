@@ -15,6 +15,10 @@ pub struct NetIfaceInfo {
     pub mac: [u8; 6],
     pub ip: [u8; 4],
     pub link_up: u8,
+    pub vendor_id: u16,
+    pub device_id: u16,
+    pub name: [u8; 16],
+    pub description: [u8; 48],
 }
 
 #[repr(C)]

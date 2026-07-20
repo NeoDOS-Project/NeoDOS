@@ -37,7 +37,13 @@ struct NetIfaceInfo {
     mac: [u8; 6],
     ip: [u8; 4],
     link_up: u8,
+    vendor_id: u16,
+    device_id: u16,
+    name: [u8; 16],
+    description: [u8; 48],
 }
+
+const NIC_INFO_SIZE: usize = 84;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
@@ -85,6 +91,15 @@ fn write_val_label(id: u32, val: u32, suffix: &[u8]) {
     write_str(b"\r\n");
 }
 
+fn fmt_hex16(v: u16, buf: &mut [u8]) -> usize {
+    fn hex(b: u8) -> u8 { b"0123456789ABCDEF"[b as usize] }
+    buf[0] = hex((v >> 12) as u8 & 0xF);
+    buf[1] = hex((v >> 8) as u8 & 0xF);
+    buf[2] = hex((v >> 4) as u8 & 0xF);
+    buf[3] = hex(v as u8 & 0xF);
+    4
+}
+
 fn write_mac(mac: &[u8; 6]) {
     for (i, &b) in mac.iter().enumerate() {
         let h = b"0123456789ABCDEF"[((b >> 4) & 0xF) as usize];
@@ -110,17 +125,9 @@ fn read_reg_dword(fd: u8, name: &str) -> u32 {
     0
 }
 
-fn read_reg_str(fd: u8, name: &str, buf: &mut [u8]) -> usize {
-    let mut reg_buf = [0u8; 64];
-    match syscall::sys_cm_query_value(fd, name, &mut reg_buf) {
-        Ok(n) if n >= 8 => {
-            let dlen = u32::from_le_bytes([reg_buf[4], reg_buf[5], reg_buf[6], reg_buf[7]]) as usize;
-            let len = dlen.min(buf.len());
-            if len > 0 { buf[..len].copy_from_slice(&reg_buf[8..8+len]); }
-            len
-        }
-        _ => 0,
-    }
+fn write_padded_str(buf: &[u8]) {
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    if end > 0 { write_str(&buf[..end]); }
 }
 
 fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
@@ -134,13 +141,21 @@ fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
     write_str(b":\r\n\r\n");
 
     write_label(IDS_DESCRIPTION);
-    write_str(b"Intel 82540EM Gigabit Ethernet\r\n");
+    write_padded_str(&info.description);
+    write_str(b"\r\n");
 
     write_label(IDS_DRIVER);
-    write_str(b"e1000.nem\r\n");
+    write_padded_str(&info.name);
+    write_str(b"\r\n");
 
     write_label(IDS_PCI_DEVICE);
-    write_str(b"8086:100E\r\n");
+    let mut hb = [0u8; 10];
+    let hl = fmt_hex16(info.vendor_id, &mut hb);
+    write_str(&hb[..hl]);
+    write_str(b":");
+    let hl = fmt_hex16(info.device_id, &mut hb);
+    write_str(&hb[..hl]);
+    write_str(b"\r\n");
 
     write_label(IDS_LINK_STATUS);
     if info.link_up != 0 { write_label(IDS_UP); } else { write_label(IDS_DOWN); }
@@ -216,7 +231,6 @@ pub extern "C" fn _start() -> ! {
         }
     };
 
-    // Read NIC info via ObInfoClass (doesn't need NXL)
     let obj_fd = match syscall::sys_ob_open("\\Global\\Info\\Network", 1) {
         Ok(fd) => fd,
         Err(_) => {
@@ -233,7 +247,7 @@ pub extern "C" fn _start() -> ! {
 
     if r.is_err() { write_label(IDS_NO_IFACES); write_str(b"\r\n"); let _ = syscall::sys_close(reg_fd); syscall::sys_exit(0); }
     let total = r.unwrap() as usize;
-    let entry_size = 15;
+    let entry_size = NIC_INFO_SIZE;
     let count = total / entry_size;
     if count == 0 {
         write_label(IDS_NO_IFACES);
@@ -251,6 +265,18 @@ pub extern "C" fn _start() -> ! {
             mac: [raw[4], raw[5], raw[6], raw[7], raw[8], raw[9]],
             ip: [raw[10], raw[11], raw[12], raw[13]],
             link_up: raw[14],
+            vendor_id: u16::from_le_bytes([raw[16], raw[17]]),
+            device_id: u16::from_le_bytes([raw[18], raw[19]]),
+            name: {
+                let mut n = [0u8; 16];
+                n.copy_from_slice(&raw[20..36]);
+                n
+            },
+            description: {
+                let mut d = [0u8; 48];
+                d.copy_from_slice(&raw[36..84]);
+                d
+            },
         };
         print_iface(i as u32, &info, reg_fd);
     }

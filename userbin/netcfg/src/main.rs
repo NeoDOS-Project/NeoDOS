@@ -94,6 +94,10 @@ struct NetIfaceInfo {
     mac: [u8; 6],
     ip: [u8; 4],
     link_up: u8,
+    vendor_id: u16,
+    device_id: u16,
+    name: [u8; 16],
+    description: [u8; 48],
 }
 
 #[repr(C)]

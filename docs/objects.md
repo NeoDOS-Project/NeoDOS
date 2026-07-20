@@ -185,7 +185,7 @@ Supports 30 info classes:
 | 17 | SocketInfo | Socket type + state |
 | 18 | SocketAddr | Bound/peer address |
 | 19 | TcpStatus | TCP connection state |
-| 20 | NicInfo | NIC MAC, IP, link status |
+| 20 | NicInfo | NIC hardware info (MAC, IP, link, vendor/device IDs, name, description) |
 | 21 | RegistryKey | Key metadata |
 | 22 | RegistryValue | Value data |
 | 23 | SocketRecv | Receive from socket |

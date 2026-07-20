@@ -16,7 +16,7 @@ Directory: `src/net/` (12 files, ~2500 lines). Modular protocol stack with socke
 | `udp.rs` | ~150 | UDP header (8 bytes), pseudo-header checksum, `build_udp_datagram()` |
 | `tcp.rs` | ~800 | TCP state machine (11 states), connection lifecycle, send/recv buffers (16 KB sliding window), segment building |
 | `socket.rs` | ~700 | `SocketManager`, bind/connect/listen/send/recv/close, KWait wake, `udp_dispatch()`, `tcp_dispatch()` |
-| `nic.rs` | ~150 | `NetworkInterface` trait, `NicRegistry` (4 slots), IP/next-hop/gateway management. NICs registered via NEM bridge |
+| `nic.rs` | ~210 | `NetworkInterface` trait (9 methods), `NicRegistry` (4 slots), IP/next-hop/gateway, vendor/device/description per NIC. NICs registered via NEM bridge |
 | `net_bridge.rs` | ~100 | NEM network bridge: `hst_register_network_device`, wraps NEM callbacks as `NetworkInterface` |
 | `counters.rs` | ~45 | Per-protocol packet/byte counters (RX/TX, ARP, ICMP), periodic dump every 1000 ticks |
 | `tests.rs` | ~300 | 18+ integration tests |
@@ -54,7 +54,7 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 | 17 | `SocketInfo` | Socket state, type, local/remote addresses |
 | 18 | `SocketAddr` | Bound address and port |
 | 19 | `TcpStatus` | TCP connection state |
-| 20 | `NicInfo` | NIC configuration (IP, gateway, MAC) |
+| 20 | `NicInfo` | NIC metadata: MAC, IP, link status, vendor/device PCI IDs, driver name, description |
 | 23 | `SocketRecv` | Received data (non-blocking read) |
 
 ### ObSetInfoClass (mutate)

@@ -1637,6 +1637,10 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 mac: [u8; 6],
                 ip: [u8; 4],
                 link_up: u8,
+                vendor_id: u16,
+                device_id: u16,
+                name: [u8; 16],
+                description: [u8; 48],
             }
             let entry_size = core::mem::size_of::<NicInfoRaw>();
             let max_entries = buf_size / entry_size;
@@ -1646,11 +1650,19 @@ pub(super) fn handler_ob_query_info(regs: super::Registers) -> u64 {
                 let nic_id = i as u32;
                 let mac = crate::net::nic::NIC_REGISTRY.lock().get(nic_id).map(|n| n.mac_address().0).unwrap_or([0; 6]);
                 let ip = crate::net::nic::nic_get_ip(nic_id).unwrap_or(crate::net::types::Ipv4Addr::unspecified());
+                let vendor_id = crate::net::nic::nic_get_vendor_id(nic_id).unwrap_or(0);
+                let device_id = crate::net::nic::nic_get_device_id(nic_id).unwrap_or(0);
+                let name = crate::net::nic::nic_get_name(nic_id).unwrap_or([0u8; 16]);
+                let description = crate::net::nic::nic_get_description(nic_id).unwrap_or([0u8; 48]);
                 let raw = NicInfoRaw {
                     nic_id,
                     mac,
                     ip: ip.0,
                     link_up: 1,
+                    vendor_id,
+                    device_id,
+                    name,
+                    description,
                 };
                 unsafe {
                     core::ptr::copy_nonoverlapping(
