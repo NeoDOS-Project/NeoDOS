@@ -38,10 +38,13 @@ pub fn dump_counters() {
     let icmp_rx = COUNTERS.icmp_requests_rx.load(Ordering::Relaxed);
     let icmp_tx = COUNTERS.icmp_replies_tx.load(Ordering::Relaxed);
 
-    crate::serial_println!("╔══════════════════ NET COUNTERS ══════════════════╗");
-    crate::serial_println!("║ RX packets:  {:>8}   RX bytes: {:>10}   ║", rx_pkts, rx_bytes);
-    crate::serial_println!("║ TX packets:  {:>8}   TX bytes: {:>10}   ║", tx_pkts, tx_bytes);
-    crate::serial_println!("║ ARP Req RX:  {:>8}   ARP Rep TX: {:>8}    ║", arp_rx, arp_tx);
-    crate::serial_println!("║ ICMP Req RX: {:>8}   ICMP Rep TX: {:>8}    ║", icmp_rx, icmp_tx);
-    crate::serial_println!("╚══════════════════════════════════════════════════╝");
+    #[cfg(debug_assertions)]
+    {
+        crate::serial_println!("╔══════════════════ NET COUNTERS ══════════════════╗");
+        crate::serial_println!("║ RX packets:  {:>8}   RX bytes: {:>10}   ║", rx_pkts, rx_bytes);
+        crate::serial_println!("║ TX packets:  {:>8}   TX bytes: {:>10}   ║", tx_pkts, tx_bytes);
+        crate::serial_println!("║ ARP Req RX:  {:>8}   ARP Rep TX: {:>8}    ║", arp_rx, arp_tx);
+        crate::serial_println!("║ ICMP Req RX: {:>8}   ICMP Rep TX: {:>8}    ║", icmp_rx, icmp_tx);
+        crate::serial_println!("╚══════════════════════════════════════════════════╝");
+    }
 }

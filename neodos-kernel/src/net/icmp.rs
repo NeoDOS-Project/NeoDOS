@@ -167,6 +167,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     let arp_target = if (dest_ip.to_u32() & subnet_mask.to_u32()) == (src_ip.to_u32() & subnet_mask.to_u32()) {
         dest_ip
     } else {
+        #[cfg(debug_assertions)]
         crate::serial_println!("[ICMP] {} is off-subnet, routing via gateway {}", dest_ip, gateway);
         gateway
     };
@@ -195,6 +196,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         arp_pkt.extend_from_slice(arp_bytes);
         let _ = nic_send_packet(nic_id, &arp_pkt);
 
+        #[cfg(debug_assertions)]
         crate::serial_println!("[ARP] Request sent for {}", arp_target);
 
         // Poll for ARP reply with RDTSC-based timeout (500ms)
@@ -205,11 +207,13 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         loop {
             crate::net::network_poll_all();
             if let Some(mac) = crate::net::arp::arp_lookup(arp_target) {
+                #[cfg(debug_assertions)]
                 crate::serial_println!("[ARP] Resolved {} -> {}", arp_target, mac);
                 return Some(mac);
             }
             let now = crate::boot_benchmark::rdtsc();
             if now.wrapping_sub(arp_start) > arp_timeout_ticks {
+                #[cfg(debug_assertions)]
                 crate::serial_println!("[ARP] Timeout resolving {}", arp_target);
                 return None;
             }
@@ -256,6 +260,7 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
     packet.extend_from_slice(eth_bytes);
     packet.extend_from_slice(ip_bytes);
     packet.extend_from_slice(&icmp_pkt);
+    #[cfg(debug_assertions)]
     crate::serial_println!("[ICMP] Echo Request id={} seq={} {} -> {} (dst_mac={})",
         id, seq, src_ip, dest_ip, dest_mac);
     nic_send_packet(nic_id, &packet).ok()?;
@@ -270,11 +275,13 @@ pub fn icmp_ping(dest_ip: crate::net::types::Ipv4Addr, timeout_us: u64) -> Optio
         crate::net::network_poll_all();
         if LAST_PING_REPLY.load(Ordering::Acquire) == id as u64 {
             let elapsed = crate::boot_benchmark::rdtsc().wrapping_sub(start);
+            #[cfg(debug_assertions)]
             crate::serial_println!("[ICMP] Echo Reply id={} rtt={}us", id, elapsed / tsc_per_us.max(1));
             return Some(elapsed / tsc_per_us.max(1));
         }
         let now = crate::boot_benchmark::rdtsc();
         if now.wrapping_sub(start) > max_ticks {
+            #[cfg(debug_assertions)]
             crate::serial_println!("[ICMP] Timeout waiting for Echo Reply id={}", id);
             return None;
         }
@@ -304,6 +311,7 @@ pub fn build_echo_reply(request: &IcmpHeader, data: &[u8]) -> alloc::vec::Vec<u8
     let cs_bytes = checksum.to_be_bytes();
     reply[2] = cs_bytes[0];
     reply[3] = cs_bytes[1];
+    #[cfg(debug_assertions)]
     crate::serial_println!("[ICMP] build_echo_reply: id={} seq={} checksum=0x{:04X} data_len={} reply_len={}",
         request.echo_identifier(), request.echo_sequence(), checksum, data.len(), reply.len());
     reply

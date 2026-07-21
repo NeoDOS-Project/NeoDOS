@@ -469,6 +469,7 @@ pub fn dns_resolve(name: &str) -> Option<Ipv4Addr> {
     {
         let cache = DNS_CACHE.lock();
         if let Some(ip) = cache.lookup(name) {
+            #[cfg(debug_assertions)]
             crate::serial_println!("[DNS] Cache hit: {} -> {}", name, ip);
             return Some(ip);
         }
@@ -551,10 +552,13 @@ pub fn dns_resolve_with_server(name: &str, server: Ipv4Addr) -> Option<Ipv4Addr>
 
     crate::net::socket::socket_free(sock_id);
 
-    if result.is_some() {
-        crate::serial_println!("[DNS] Resolved {} -> {}", name, result.unwrap());
-    } else {
-        crate::serial_println!("[DNS] Failed to resolve {}", name);
+    #[cfg(debug_assertions)]
+    {
+        if let Some(ref ip) = result {
+            crate::serial_println!("[DNS] Resolved {} -> {}", name, ip);
+        } else {
+            crate::serial_println!("[DNS] Failed to resolve {}", name);
+        }
     }
 
     result
