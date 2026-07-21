@@ -41,6 +41,15 @@ pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
+static mut NET_THREAD_STACK: [u8; KERNEL_STACK_SIZE] = [0; KERNEL_STACK_SIZE];
+
+pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
+    let stack_top = unsafe { NET_THREAD_STACK.as_ptr().add(KERNEL_STACK_SIZE) as u64 } & !0xF;
+    current_scheduler()
+        .lock()
+        .spawn_kthread(entry, stack_top, PRIORITY_NORMAL)
+}
+
 // ── MmapRegion (unchanged) ──
 
 #[repr(C)]
@@ -274,6 +283,28 @@ impl Kthread {
 
 impl Eprocess {
     pub fn new_idle(pid: u32) -> Self {
+        Eprocess {
+            pid,
+            parent_pid: 0,
+            handle_table: crate::handle::HandleTable::new(),
+            cwd_drive: 2,
+            cwd_path: String::from("\\"),
+            heap_base: 0,
+            heap_break: 0,
+            user_slot: None,
+            mmap_regions: Vec::new(),
+            mmap_next: 0,
+            thread_count: 0,
+            exit_code: 0,
+            obj_id: None,
+            ob_id: None,
+            address_space: address_space::AddressSpace::new(),
+            token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
+            vt_num: 0,
+        }
+    }
+
+    pub fn new_kernel(pid: u32) -> Self {
         Eprocess {
             pid,
             parent_pid: 0,
@@ -574,6 +605,46 @@ impl Scheduler {
             Self::enqueue_to_cpu_run_queue(k);
         }
 
+        Some(tid)
+    }
+
+    pub fn spawn_kthread(&mut self, entry: u64, stack_top: u64, priority: u8) -> Option<u32> {
+        let th_slot = self.alloc_kthread_slot()?;
+        let tid = self.next_tid;
+        self.next_tid += 1;
+
+        let kthread = Kthread {
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, r8: 0, r9: 0,
+            r10: 0, r11: 0, r12: 0, r13: 0,
+            r14: 0, r15: 0, rbp: 0,
+            rsp: init_ring0_frame(stack_top, entry),
+            rip: entry, rflags: 0x202,
+            tid,
+            pid: self.next_pid,
+            state: ThreadState::Ready,
+            cpu_ticks: 0,
+            waiting_for: None,
+            priority,
+            time_slice_remaining: TIME_SLICES[priority as usize],
+            ticks_since_scheduled: 0,
+            kernel_stack_top: stack_top,
+            kernel_stack: None,
+            teb_base: 0, cpu: 0,
+            obj_id: None,
+            kernel_apc_queue: VecDeque::new(),
+            user_apc_queue: VecDeque::new(),
+            apc_pending: false,
+        };
+
+        let ep_slot = self.alloc_eprocess_slot()?;
+        self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
+        self.next_pid += 1;
+        self.kthreads[th_slot] = Some(kthread);
+
+        if let Some(k) = &self.kthreads[th_slot] {
+            Self::enqueue_to_cpu_run_queue(k);
+        }
         Some(tid)
     }
 
@@ -933,7 +1004,7 @@ impl Scheduler {
         // higher-priority threads are always Ready.  Prevents
         // starvation of net_tick(), work queues, and other idle work.
         self.schedule_count += 1;
-        if self.schedule_count % 200 == 0 {
+        if self.schedule_count % 20 == 0 {
             if let Some(idle) = &mut self.kthreads[0] {
                 if idle.tid == 0 && idle.state == ThreadState::Ready {
                     let prev = self.current_tid;

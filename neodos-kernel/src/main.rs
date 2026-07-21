@@ -610,10 +610,12 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("ALL_TESTS_COMPLETE");
     }
 
-    // Network stack progresses via the idle task's net_tick() call,
-    // which is guaranteed to run periodically by the scheduler's idle
-    // boost mechanism (every 200 schedule() calls).
-    // No dedicated netd kernel thread needed — idle task handles it.
+    // Spawn network kernel thread — drives net_tick() independently
+    // of Ring 3 process activity.  Uses the scheduler's idle boost
+    // to guarantee the boot code gets CPU even with netd running.
+    if let Some(tid) = net::spawn_net_kthread(net::net_kthread_entry as *const () as u64) {
+        println!("[+] netd kernel thread spawned (TID {})", tid);
+    }
 
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);

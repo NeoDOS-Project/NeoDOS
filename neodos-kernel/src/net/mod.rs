@@ -67,6 +67,19 @@ pub fn net_is_initialized() -> bool {
     NET_INITIALIZED.load(core::sync::atomic::Ordering::Acquire)
 }
 
+pub fn net_kthread_entry() -> ! {
+    loop {
+        net_tick();
+        for _ in 0..64 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
+    crate::scheduler::spawn_net_kthread(entry)
+}
+
 pub fn net_tick() {
     if !net_is_initialized() { return; }
     network_poll_all();
