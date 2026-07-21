@@ -61,12 +61,6 @@ pub fn init_networking() {
     NET_INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
     crate::serial_println!("[NET] Networking initialized ({} NIC(s), {} template sockets)",
         nic_count, 0);
-
-    // TODO(#136): Spawn dedicated kernel network thread (netd) to make
-    // network processing independent of user process activity.
-    // Currently blocked by scheduler_mutex deadlock during boot.
-    // See also #135 (idle task starvation).
-    // spawn_net_kthread();
 }
 
 pub fn net_is_initialized() -> bool {

@@ -20,6 +20,7 @@ use crate::security::token::Token;
 
 pub const KERNEL_STACK_SIZE: usize = 16384;
 const IDLE_STACK_SIZE: usize = 4096;
+pub const IDLE_TIME_SLICE: u16 = 10;   // 10ms — idle runs briefly then yields to Ring 3
 
 pub const PRIORITY_HIGH: u8 = 0;
 pub const PRIORITY_ABOVE_NORMAL: u8 = 1;
@@ -226,7 +227,7 @@ impl Kthread {
             cpu_ticks: 0,
             waiting_for: None,
             priority: PRIORITY_NORMAL,
-            time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
+            time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
             kernel_stack: None,
@@ -326,6 +327,9 @@ pub struct Scheduler {
     pub next_pid: u32,
     pub next_tid: u32,
     timer_ticks: u64,
+    /// Every schedule_count calls, boost the idle thread so it gets CPU
+    /// even when higher-priority threads are always Ready.
+    schedule_count: u64,
 }
 
 #[allow(unused_macros)]
@@ -448,6 +452,7 @@ impl Scheduler {
             next_pid: 1,
             next_tid: 1,
             timer_ticks: 0,
+            schedule_count: 0,
         }
     }
 
@@ -924,6 +929,23 @@ impl Scheduler {
             }
         }
 
+        // Boost idle thread periodically so it gets CPU even when
+        // higher-priority threads are always Ready.  Prevents
+        // starvation of net_tick(), work queues, and other idle work.
+        self.schedule_count += 1;
+        if self.schedule_count % 200 == 0 {
+            if let Some(idle) = &mut self.kthreads[0] {
+                if idle.tid == 0 && idle.state == ThreadState::Ready {
+                    let prev = self.current_tid;
+                    self.current_tid = 0;
+                    idle.state = ThreadState::Running;
+                    idle.time_slice_remaining = IDLE_TIME_SLICE;
+                    crate::trace_cswitch!(prev as u64, 0);
+                    return idle as *mut Kthread;
+                }
+            }
+        }
+
         // Fallback to idle thread (TID 0)
         if let Some(idle) = &mut self.kthreads[0] {
             if idle.tid == 0 && idle.state != ThreadState::Terminated {
@@ -947,7 +969,6 @@ impl Scheduler {
         }
 
         let tid = self.current_tid;
-        if tid == 0 { return; }
 
         let mut needs_resched = false;
         if let Some(k) = self.current_kthread_mut() {
@@ -1162,7 +1183,7 @@ pub fn register_tests() {
         test_eq!(k.cpu_ticks, 0);
         test_eq!(k.pid, 0);
         test_eq!(k.priority, PRIORITY_NORMAL);
-        test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        test_eq!(k.time_slice_remaining, IDLE_TIME_SLICE);
     });
 
     test_case!("kthread_state_debug", {

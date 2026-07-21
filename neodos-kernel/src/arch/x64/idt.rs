@@ -544,8 +544,6 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         }
     }
 
-    let from_user = unsafe { is_user_mode_interrupt(current_rsp) };
-
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
@@ -553,8 +551,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let tid = scheduler.current_tid;
 
-    // ── Preemptive context switch ──────────────────────────────
-    if tid > 0 && from_user {
+    // ── Preemptive context switch (Ring 3 + Ring 0 kernel threads) ─
+    if tid > 0 {
         let should_preempt = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state == ThreadState::Ready && k.tid == tid);
 
@@ -571,7 +569,11 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 let nt = &mut *next;
                 let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
-                nt.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                nt.time_slice_remaining = if nt.tid == 0 {
+                    crate::scheduler::IDLE_TIME_SLICE
+                } else {
+                    crate::scheduler::TIME_SLICES[idx]
+                };
                 nt.ticks_since_scheduled = 0;
             }
 
@@ -622,6 +624,46 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 0,
             );
             return current_rsp;
+        }
+    }
+
+    // ── Idle thread (TID 0) preemption ──────────────────────────
+    if tid == 0 {
+        let should_preempt = scheduler.current_kthread_mut()
+            .is_some_and(|k| k.state == ThreadState::Ready);
+        if should_preempt && scheduler.has_non_idle_threads() {
+            // Save idle thread's RSP
+            if let Some(k) = scheduler.current_kthread_mut() {
+                k.rsp = current_rsp;
+            }
+            let next = scheduler.schedule();
+            unsafe {
+                let nt = &mut *next;
+                let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
+                nt.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                nt.ticks_since_scheduled = 0;
+            }
+            let next_ks_top = unsafe { (*next).kernel_stack_top };
+            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+            unsafe {
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
+                crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+            }
+            let next_rsp = unsafe { (*next).rsp };
+            crate::hal::ack_irq(32);
+            crate::invariants::timer_irq_exit();
+            crate::invariants::irq_exit_clear();
+            let _ = crate::eventbus::EVENT_BUS.push_event(
+                crate::eventbus::EVENT_TIMER_TICK,
+                crate::eventbus::SOURCE_HAL,
+                1,
+                current_tick,
+                0,
+                0,
+            );
+            crate::trace_cswitch!(0, unsafe { (*next).tid } as u64);
+            return next_rsp;
         }
     }
 

@@ -610,6 +610,11 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("ALL_TESTS_COMPLETE");
     }
 
+    // Network stack progresses via the idle task's net_tick() call,
+    // which is guaranteed to run periodically by the scheduler's idle
+    // boost mechanism (every 200 schedule() calls).
+    // No dedicated netd kernel thread needed — idle task handles it.
+
     // ── Boot Benchmark: shell ready ──
     boot_benchmark::mark(boot_benchmark::BootStage::ShellReady);
 
