@@ -611,8 +611,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     // Spawn network kernel thread — drives net_tick() independently
-    // of Ring 3 process activity.  Uses the scheduler's idle boost
-    // to guarantee the boot code gets CPU even with netd running.
+    // of Ring 3 process activity.
     if let Some(tid) = net::spawn_net_kthread(net::net_kthread_entry as *const () as u64) {
         println!("[+] netd kernel thread spawned (TID {})", tid);
     }

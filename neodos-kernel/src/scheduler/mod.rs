@@ -41,13 +41,16 @@ pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
-static mut NET_THREAD_STACK: [u8; KERNEL_STACK_SIZE] = [0; KERNEL_STACK_SIZE];
-
 pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
-    let stack_top = unsafe { NET_THREAD_STACK.as_ptr().add(KERNEL_STACK_SIZE) as u64 } & !0xF;
-    current_scheduler()
-        .lock()
-        .spawn_kthread(entry, stack_top, PRIORITY_NORMAL)
+    // Must disable interrupts when holding the scheduler lock: the timer
+    // IRQ handler (timer_handler_inner) also acquires this lock, and with
+    // interrupts enabled a timer tick would deadlock.  All other scheduler
+    // lock acquisitions in the codebase already follow this pattern.
+    crate::hal::without_interrupts(|| {
+        current_scheduler()
+            .lock()
+            .spawn_kthread(entry, PRIORITY_NORMAL)
+    })
 }
 
 // ── MmapRegion (unchanged) ──
@@ -358,8 +361,10 @@ pub struct Scheduler {
     pub next_pid: u32,
     pub next_tid: u32,
     timer_ticks: u64,
-    /// Every schedule_count calls, boost the idle thread so it gets CPU
-    /// even when higher-priority threads are always Ready.
+    /// Schedule backstop: every 20 schedule() calls the idle thread
+    /// is force-picked regardless of priority-scan outcome.  This ensures
+    /// TID 0 always gets CPU even when higher-priority threads dominate
+    /// the Ready queue.
     schedule_count: u64,
 }
 
@@ -608,17 +613,23 @@ impl Scheduler {
         Some(tid)
     }
 
-    pub fn spawn_kthread(&mut self, entry: u64, stack_top: u64, priority: u8) -> Option<u32> {
+    pub fn spawn_kthread(&mut self, entry: u64, priority: u8) -> Option<u32> {
         let th_slot = self.alloc_kthread_slot()?;
         let tid = self.next_tid;
         self.next_tid += 1;
+
+        // Heap-allocated kernel stack: avoids BSS linker aliasing that
+        // corrupted the initial iretq frame when a static array was used.
+        let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        let kernel_stack_top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
+        let rsp = init_ring0_frame(kernel_stack_top, entry);
 
         let kthread = Kthread {
             rax: 0, rbx: 0, rcx: 0, rdx: 0,
             rsi: 0, rdi: 0, r8: 0, r9: 0,
             r10: 0, r11: 0, r12: 0, r13: 0,
             r14: 0, r15: 0, rbp: 0,
-            rsp: init_ring0_frame(stack_top, entry),
+            rsp,
             rip: entry, rflags: 0x202,
             tid,
             pid: self.next_pid,
@@ -628,8 +639,8 @@ impl Scheduler {
             priority,
             time_slice_remaining: TIME_SLICES[priority as usize],
             ticks_since_scheduled: 0,
-            kernel_stack_top: stack_top,
-            kernel_stack: None,
+            kernel_stack_top,
+            kernel_stack: Some(stack),
             teb_base: 0, cpu: 0,
             obj_id: None,
             kernel_apc_queue: VecDeque::new(),
@@ -642,9 +653,8 @@ impl Scheduler {
         self.next_pid += 1;
         self.kthreads[th_slot] = Some(kthread);
 
-        if let Some(k) = &self.kthreads[th_slot] {
-            Self::enqueue_to_cpu_run_queue(k);
-        }
+        // Netd is found by the global priority scan, not the run queue.
+        // This prevents netd from starving the boot thread (TID 0).
         Some(tid)
     }
 
@@ -945,6 +955,9 @@ impl Scheduler {
     /// Schedule the next thread.  Tries per-CPU run queue first, falls back
     /// to global priority scan.  Returns a `*mut Kthread` for RSP/stack access.
     pub fn schedule(&mut self) -> *mut Kthread {
+        // Count every schedule decision, not just global-scan fallbacks.
+        self.schedule_count += 1;
+
         // 1. Try per-CPU local run queue (fast path)
         if let Some(tid) = Self::try_dequeue_local() {
             let ptr = self.find_kthread_ptr(tid);
@@ -987,7 +1000,6 @@ impl Scheduler {
         for priority in 0..PRIORITY_COUNT {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
-                if check_tid == 0 { continue; }
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
                         let prev = self.current_tid;
@@ -1001,9 +1013,8 @@ impl Scheduler {
         }
 
         // Boost idle thread periodically so it gets CPU even when
-        // higher-priority threads are always Ready.  Prevents
-        // starvation of net_tick(), work queues, and other idle work.
-        self.schedule_count += 1;
+        // higher-priority threads are always Ready.  Acts as a
+        // backstop for the priority-based round-robin scan above.
         if self.schedule_count % 20 == 0 {
             if let Some(idle) = &mut self.kthreads[0] {
                 if idle.tid == 0 && idle.state == ThreadState::Ready {
@@ -1058,10 +1069,10 @@ impl Scheduler {
         }
 
         if needs_resched {
-            // Enqueue back to its CPU's run queue (avoid borrow conflict)
-            if let Some(k) = self.find_kthread(tid) {
-                Self::enqueue_to_cpu_run_queue(k);
-            }
+            // Thread is already set to Ready above.  The global priority
+            // scan in schedule() picks it up fairly — no need to re-enqueue
+            // to the per-CPU run queue, which would bypass the scan and
+            // starve lower-priority threads (notably TID 0 / boot code).
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
         }
     }

@@ -662,7 +662,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 0,
                 0,
             );
-            crate::trace_cswitch!(0, unsafe { (*next).tid } as u64);
+
+            crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
     }
