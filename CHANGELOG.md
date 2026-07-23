@@ -160,6 +160,7 @@
 - **REG_SZ null-terminator** — `ValueCell::as_str()` now strips trailing null byte from REG_SZ registry values.
 - **Network deadlock** — `net_handle_incoming_packet()` receives `&mut dyn NetworkInterface` directly instead of re-acquiring `NIC_REGISTRY.lock()`, eliminating the reentrant spinlock deadlock in packet dispatch.
 - **IP/mask propagation** — `nic_set_ip()` and `nic_set_mask()` now propagate values to all registered NICs (multiple drivers may share the same hardware).
+- **Triple fault on Ring 3 transition (#245)** — `static mut TSS` was placed by LTO in a read-only (`r-x`) ELF segment. `set_kernel_stack()` writes to `TSS.privilege_stack_table[0]` were silently discarded, leaving RSP0=0. The CPU then triple-faulted on the first Ring-3→Ring-0 interrupt (page fault → double fault → CPU reset). Fixed by adding `#[link_section = ".data"]` to guarantee the TSS resides in writable memory.
 
 ### Added
 
