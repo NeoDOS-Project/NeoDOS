@@ -4,6 +4,76 @@
 # due_on: fecha ISO 8601 estimada (opcional, puede omitirse)
 #         Se usa para ordenar milestones en GitHub.
 
+- title: "v0.05 — First Kernel"
+  description: |
+    Bootloader UEFI, kernel x86_64, GDT/IDT/PIC, ATA PIO, FAT32,
+    NeoFS filesystem, shell Ring 0 con 18 comandos, RTC, PS/2 keyboard.
+  due_on: "2026-05-04T00:00:00Z"
+  state: "closed"
+
+- title: "v0.08 — Multitasking"
+  description: |
+    Procesos Ring 3, user slots, syscall interface (int 0x80),
+    non-blocking RUN, KILL command.
+  due_on: "2026-05-10T00:00:00Z"
+  state: "closed"
+
+- title: "v0.14 — Memory & Scheduling"
+  description: |
+    Slab allocator, linked_list_allocator fallback, priority scheduler
+    con 4 niveles, aging, time slicing.
+  due_on: "2026-05-21T00:00:00Z"
+  state: "closed"
+
+- title: "v0.16 — NEM v3 Driver Framework"
+  description: |
+    NEM v3 driver format, isolation X4, ABI negotiation, dependency
+    resolver, boot loader v2, libneodos, unified handle table, KOBJ.
+  due_on: "2026-05-26T00:00:00Z"
+  state: "closed"
+
+- title: "v0.20 — Page Cache & ACPI"
+  description: |
+    Global page cache (512 entries), ACPI poweroff NEM driver,
+    PCI NEM driver, ATA NEM standalone driver.
+  due_on: "2026-05-28T00:00:00Z"
+  state: "closed"
+
+- title: "v0.23 — SMP & Event Bus"
+  description: |
+    SMP soporte, IPI, TLB shootdown, work queues, Event Bus v2,
+    priority scheduler with aging and work stealing.
+  due_on: "2026-05-29T00:00:00Z"
+  state: "closed"
+
+- title: "v0.33 — HAL v0.4"
+  description: |
+    HAL v0.4 raw/safe split, todos los inline asm confinados a hal/raw/,
+    55 primitivas asm aisladas.
+  due_on: "2026-06-11T00:00:00Z"
+  state: "closed"
+
+- title: "v0.35 — NeoInit & APC"
+  description: |
+    NeoInit PID 1 init process, sys_spawn, sys_poweroff, APC engine
+    with kernel/user APCs, alertable wait.
+  due_on: "2026-06-13T00:00:00Z"
+  state: "closed"
+
+- title: "v0.37 — Ring 3 Shell"
+  description: |
+    neoshell Ring 3, directory reorganization (NT-style paths),
+    DIR/HELP/VER/DATETIME user binaries, syscalls for Ring 3 FS operations.
+  due_on: "2026-06-15T00:00:00Z"
+  state: "closed"
+
+- title: "v0.39 — Security & PCIe"
+  description: |
+    NT6 Security Reference Monitor (SID, Token, ACL), PCIe ECAM,
+    I/O APIC + MSI-X, ANSI terminal, URN, KDrive, NeoDOS LSP.
+  due_on: "2026-06-21T00:00:00Z"
+  state: "closed"
+
 - title: "v0.40 — Foundation"
   description: |
     Primer kernel funcional, SMP fixes, fsck para NE2, modularización.

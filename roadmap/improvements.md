@@ -359,6 +359,174 @@
   Stub resolver UDP, caché 64 entradas, nslookup.nxe, DHCP option 6.
   state: closed
 
+### v0.39 — Security & PCIe
+
+- **NT6-SRM**: NT6 Security Reference Monitor `priority/high` `area/security` `type/feature` `v0.39 — Security & PCIe`
+  SID, Access Token, ACL/ACE, SeAccessCheck, admin vs user token.
+  state: closed
+
+- **PCIe-ECAM**: PCIe ECAM config space `priority/high` `area/drivers` `type/feature` `v0.39 — Security & PCIe`
+  MMIO ECAM based on ACPI MCFG, dual path ECAM/PIO, BAR utilities.
+  state: closed
+
+- **IOAPIC-MSI**: I/O APIC + MSI-X `priority/high` `area/kernel` `type/feature` `v0.39 — Security & PCIe`
+  I/O APIC init from MADT, ISA IRQ routing, PIC disable, MSI-X per-entry config.
+  state: closed
+
+- **ANSI-TERM**: ANSI terminal emulator `priority/medium` `area/kernel` `type/feature` `v0.39 — Security & PCIe`
+  ANSI escape parser, 16-color palette, UTF-8, box-drawing glyphs.
+  state: closed
+
+- **URN-NS**: Unified Resource Namespace (URN) `priority/medium` `area/kernel` `type/feature` `v0.39 — Security & PCIe`
+  neodos:// scheme, URN open/read/write/seek, 11 tests.
+  state: closed
+
+- **KDRIVE**: Virtual K: drive `priority/medium` `area/kernel` `type/feature` `v0.39 — Security & PCIe`
+  Virtual drive exposing processes, drivers, memory stats as read-only files.
+  state: closed
+
+### v0.37 — Ring 3 Shell
+
+- **NEOSHELL-R3**: neoshell Ring 3 `priority/high` `area/shell` `type/feature` `v0.37 — Ring 3 Shell`
+  Full-featured Ring 3 shell with built-ins, TAB completion, history, PATH dispatch, env vars.
+  state: closed
+
+- **DIR-REORG**: Directory structure reorganization `priority/medium` `area/kernel` `type/feature` `v0.37 — Ring 3 Shell`
+  NT-style paths: \System, \Programs, \Packages, \Users. Flat driver dir.
+  state: closed
+
+- **CORE-BINS**: Core user binaries `priority/medium` `area/shell` `type/feature` `v0.37 — Ring 3 Shell`
+  DIR.NXE, HELP.NXE, VER.NXE, DATETIME.NXE, CD.NXE, ECHO.NXE, MEM.NXE, VOL.NXE, TREE.NXE.
+  state: closed
+
+- **R3-SYSCALLS**: Ring 3 FS syscalls `priority/high` `area/kernel` `type/feature` `v0.37 — Ring 3 Shell`
+  sys_spawn with fd redirection, sys_readdir, sys_mkdir, sys_unlink, sys_rmdir, sys_rename. HANDLE_DIR type.
+  state: closed
+
+### v0.35 — NeoInit & APC
+
+- **NEOINIT**: NeoInit PID 1 init process `priority/high` `area/kernel` `type/feature` `v0.35 — NeoInit & APC`
+  PID 1 userland supervisor, spawns neoshell, respawn on exit, save/restore mechanism.
+  state: closed
+
+- **APC-ENGINE**: APC engine `priority/high` `area/kernel` `type/feature` `v0.35 — NeoInit & APC`
+  Per-thread APC queues, kernel/user APCs, alertable wait, IRP completion via APC.
+  state: closed
+
+- **SYS-POWEROFF**: sys_poweroff `priority/medium` `area/kernel` `type/feature` `v0.35 — NeoInit & APC`
+  Cache flush, EVENT_SHUTDOWN, HAL poweroff chain (QEMU + ACPI + PS/2).
+  state: closed
+
+### v0.33 — HAL v0.4
+
+- **HAL-RAW-SAFE**: HAL v0.4 raw/safe split `priority/high` `area/kernel` `type/feature` `v0.33 — HAL v0.4`
+  55 inline asm calls confined to hal/raw/. Type-safe wrappers in hal/safe/. Zero asm outside hal/.
+  state: closed
+
+### v0.23 — SMP & Event Bus
+
+- **SMP-SUPPORT**: SMP support `priority/high` `area/kernel` `type/feature` `v0.23 — SMP & Event Bus`
+  SMP trampoline, per-CPU KPRCB, IPI (reschedule, TLB shootdown, call-function).
+  state: closed
+
+- **EVENT-BUS-V2**: Event Bus v2 `priority/high` `area/kernel` `type/feature` `v0.23 — SMP & Event Bus`
+  Dual priority queues, event filters, backpressure, dynamic payload, syscall-boundary dispatch.
+  state: closed
+
+- **WORK-QUEUE**: Deferred work queues `priority/medium` `area/kernel` `type/feature` `v0.23 — SMP & Event Bus`
+  High/low priority lock-free SPSC rings, processed in syscall return and idle loop.
+  state: closed
+
+- **PRIORITY-SCHED**: Priority scheduler with aging `priority/high` `area/kernel` `type/feature` `v0.23 — SMP & Event Bus`
+  4 priority levels, dynamic time slicing, aging, work stealing, PRI command.
+  state: closed
+
+### v0.20 — Page Cache & ACPI
+
+- **PAGE-CACHE**: Global page cache `priority/high` `area/fs` `type/feature` `v0.20 — Page Cache & ACPI`
+  512-entry × 4 KB page cache, LRU eviction, dirty write-back, timer-driven flush.
+  state: closed
+
+- **ACPI-POWEROFF**: ACPI Poweroff NEM driver `priority/medium` `area/drivers` `type/feature` `v0.20 — Page Cache & ACPI`
+  ACPI S5 via PIIX4/ICH9, EVENT_SHUTDOWN, fallback cascade (QEMU + PS/2).
+  state: closed
+
+- **PCI-NEM**: PCI NEM driver `priority/high` `area/drivers` `type/feature` `v0.20 — Page Cache & ACPI`
+  Standalone NEM v3 PCI driver with Event Bus config service.
+  state: closed
+
+- **ATA-NEM**: ATA NEM standalone driver `priority/high` `area/drivers` `type/feature` `v0.20 — Page Cache & ACPI`
+  NEM v3 ATA driver, DMA + PIO, NemBlockDevice registration.
+  state: closed
+
+### v0.16 — NEM v3 Driver Framework
+
+- **NEM-V3**: NEM v3 driver framework `priority/high` `area/drivers` `type/feature` `v0.16 — NEM v3 Driver Framework`
+  NEM v3 format, isolation X4 (16×1 MB slots), ABI version negotiation, dependency resolver.
+  state: closed
+
+- **BOOT-LOADER-V2**: Boot loader v2 `priority/high` `area/drivers` `type/feature` `v0.16 — NEM v3 Driver Framework`
+  Topological sort by category, ABI validation, dependency graph, symbolic dep resolution.
+  state: closed
+
+- **LIBNEODOS**: libneodos user library `priority/high` `area/kernel` `type/feature` `v0.16 — NEM v3 Driver Framework`
+  Standard library for Ring 3: syscall wrappers, IO, FS, mem, print macros.
+  state: closed
+
+- **HANDLE-TABLE**: Unified handle table `priority/high` `area/kernel` `type/feature` `v0.16 — NEM v3 Driver Framework`
+  Per-process handle table, typed handles (STDIN/STDOUT/PIPE/FILE/DEVICE/EVENT), per-handle offset.
+  state: closed
+
+- **KOBJ-SYS**: Kernel Object Manager (KOBJ) `priority/high` `area/kernel` `type/feature` `v0.16 — NEM v3 Driver Framework`
+  9 KObjTypes, reference counting, 64-slot registry, shell KOBJ command.
+  state: closed
+
+### v0.14 — Memory & Scheduling
+
+- **SLAB-ALLOC**: Slab allocator `priority/high` `area/memory` `type/feature` `v0.14 — Memory & Scheduling`
+  9 size classes (8-2048 bytes), O(1) alloc/free, linked_list_allocator fallback.
+  state: closed
+
+- **PRIORITY-SCHED-V1**: Priority scheduler v1 `priority/high` `area/scheduler` `type/feature` `v0.14 — Memory & Scheduling`
+  4 priority levels, round-robin, time slicing, aging, Ring 3 preemption, PRI command.
+  state: closed
+
+### v0.08 — Multitasking
+
+- **RING3-PROCS**: Ring 3 process model `priority/high` `area/kernel` `type/feature` `v0.08 — Multitasking`
+  User mode processes, per-process user slots, syscall interface (int 0x80), non-blocking RUN, KILL.
+  state: closed
+
+### v0.05 — First Kernel
+
+- **UEFI-BOOT**: UEFI bootloader + kernel boot `priority/critical` `area/kernel` `type/feature` `v0.05 — First Kernel`
+  UEFI bootloader, GPT parsing, kernel ELF loading, GDT/IDT/PIC, serial, VGA console.
+  state: closed
+
+- **ATA-PIO**: ATA PIO driver `priority/critical` `area/drivers` `type/feature` `v0.05 — First Kernel`
+  ATA PIO read/write, GPT scan, block device abstraction.
+  state: closed
+
+- **FAT32**: FAT32 filesystem `priority/high` `area/fs` `type/feature` `v0.05 — First Kernel`
+  FAT32 read/write support for ESP partition.
+  state: closed
+
+- **NEOFS-V1**: NeoFS v1 filesystem `priority/high` `area/fs` `type/feature` `v0.05 — First Kernel`
+  Custom filesystem with superblock, inodes, directories, basic file operations.
+  state: closed
+
+- **SHELL-R0**: Ring 0 shell `priority/high` `area/shell` `type/feature` `v0.05 — First Kernel`
+  Kernel-mode shell with 18 commands (DIR, TYPE, CD, MD, RD, COPY, DEL, REN, DATE, TIME, CLS, ECHO, MEM, VOL, VER, HELP, PROMPT, SET).
+  state: closed
+
+- **PS2-KEYBOARD**: PS/2 keyboard driver `priority/high` `area/drivers` `type/feature` `v0.05 — First Kernel`
+  PS/2 keyboard IRQ, scancode→ASCII translation, US and Spanish layouts.
+  state: closed
+
+- **RTC**: RTC driver `priority/medium` `area/drivers` `type/feature` `v0.05 — First Kernel`
+  RTC date/time read, DATE/TIME commands.
+  state: closed
+
 ---
 
 ## Pendientes
