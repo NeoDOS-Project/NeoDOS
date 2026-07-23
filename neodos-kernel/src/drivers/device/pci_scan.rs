@@ -1,6 +1,7 @@
 use alloc::vec::Vec;
-use super::{BusType, DeviceInfo};
+use super::DeviceInfo;
 use crate::drivers::pci;
+use crate::log::LogSubsys;
 
 pub fn scan_pci_bus() -> Vec<DeviceInfo> {
     let mut devices = Vec::new();
@@ -61,11 +62,9 @@ pub fn scan_pci_bus() -> Vec<DeviceInfo> {
 }
 
 pub fn print_pci_devices(devices: &[DeviceInfo]) {
-    crate::serial_println!("[DEVICE] === PCI Device Scan ===");
+    kinfo!(LogSubsys::Driver, "=== PCI Device Scan ===");
     for d in devices {
-        crate::serial_println!(
-            "[DEVICE]   {:02x}:{:02x}.{} vendor=0x{:04x} device=0x{:04x} class={:02x}:{:02x}",
-            d.pci_location().map(|(b, _, _)| b).unwrap_or(0),
+        kinfo!(LogSubsys::Driver, "{:02x}:{:02x}.{} vendor=0x{:04x} device=0x{:04x} class={:02x}:{:02x}", d.pci_location().map(|(b, _, _)| b).unwrap_or(0),
             d.pci_location().map(|(_, d, _)| d).unwrap_or(0),
             d.pci_location().map(|(_, _, f)| f).unwrap_or(0),
             d.vendor_id,
@@ -74,5 +73,5 @@ pub fn print_pci_devices(devices: &[DeviceInfo]) {
             d.prog_if,
         );
     }
-    crate::serial_println!("[DEVICE]   {} device(s) found", devices.len());
+    kinfo!(LogSubsys::Driver, "{} device(s) found", devices.len());
 }

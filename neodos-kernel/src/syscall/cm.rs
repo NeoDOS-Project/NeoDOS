@@ -5,6 +5,7 @@ use crate::hal;
 use crate::handle::{HandleEntry, alloc_handle};
 use crate::scheduler;
 use crate::syscall::{copy_user_string, is_user_ptr_valid, current_handle_entry};
+use crate::log::LogSubsys;
 use alloc::string::ToString;
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -71,7 +72,7 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
         drop(cm_locked);
         match found {
             Some(pair) => {
-                crate::serial_println!("[CM] mount='{}' subkey='{}'", pair.0, pair.1);
+                kdebug!(LogSubsys::Cm, "mount='{}' subkey='{}'", pair.0, pair.1);
                 pair
             }
             None => return err_to_u64(SyscallError::NoEnt),
@@ -97,7 +98,7 @@ pub(super) fn handler_cm_open_key(regs: Registers) -> u64 {
     };
 
     // Resolve the subkey path within the hive
-    crate::serial_println!("[CM] mount_native_id={} subkey='{}'", mount_native_id, subkey_path);
+    kdebug!(LogSubsys::Cm, "mount_native_id={} subkey='{}'", mount_native_id, subkey_path);
     match cm::cm_open_key(mount_native_id, &subkey_path) {
         Ok(subkey_native_id) => {
             let leaf_name = subkey_path.rsplit('\\').next().unwrap_or(&subkey_path);

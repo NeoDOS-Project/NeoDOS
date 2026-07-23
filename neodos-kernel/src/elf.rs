@@ -11,6 +11,7 @@ use core::ptr::copy_nonoverlapping;
 use core::mem::size_of;
 use alloc::vec::Vec;
 use crate::scheduler::address_space::{AddressSpace, SegmentInfo};
+use crate::log::LogSubsys;
 
 // ── ELF64 constants ──
 
@@ -231,8 +232,8 @@ fn apply_rela_relocations(data: &[u8], phdrs: &[Elf64Phdr], load_base: u64) -> R
                 // For v1, warn about unknown relocations but don't fail.
                 // R_X86_64_64 and R_X86_64_GLOB_DAT may occur in PIE binaries
                 // with external references.
-                crate::serial_println!(
-                    "[ELF] WARNING: unhandled relocation type {} at offset 0x{:x}",
+                kwarn!(LogSubsys::Elf,
+                    "unhandled relocation type {} at offset 0x{:x}",
                     other, rela.r_offset
                 );
             }
@@ -334,7 +335,7 @@ pub fn load_elf(data: &[u8], mut addr_space: Option<&mut AddressSpace>, load_off
         if addr_space.is_some() {
             return Err(ElfLoadError::EntryNotInSegment);
         }
-        crate::serial_println!("[ELF] WARNING: entry 0x{:x} not contained in any PT_LOAD segment", entry);
+        kwarn!(LogSubsys::Elf, "entry 0x{:x} not contained in any PT_LOAD segment", entry);
     }
 
     // ── Load each PT_LOAD segment ──

@@ -349,10 +349,10 @@ pub extern "C" fn ipi_call_function_handler_impl() {
 
 /// Initialize the IPI subsystem. Called during boot after APIC is configured.
 pub fn init() {
-    crate::serial_println!("[IPI] [+] Initializing IPI subsystem");
-    crate::serial_println!("[IPI] [+] Vectors: RESCHEDULE=0x{:X} TLB_SHOOTDOWN=0x{:X} CALL_FUNCTION=0x{:X}",
+    kinfo!(crate::log::LogSubsys::Interrupts, "Initializing IPI subsystem");
+    kinfo!(crate::log::LogSubsys::Interrupts, "Vectors: RESCHEDULE=0x{:X} TLB_SHOOTDOWN=0x{:X} CALL_FUNCTION=0x{:X}",
                            IPI_RESCHEDULE, IPI_TLB_SHOOTDOWN, IPI_CALL_FUNCTION);
-    crate::serial_println!("[IPI] [+] Ready");
+    kinfo!(crate::log::LogSubsys::Interrupts, "Ready");
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────

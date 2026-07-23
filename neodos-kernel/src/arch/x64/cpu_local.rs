@@ -313,7 +313,7 @@ pub fn init_kprcb_pages() {
             let kprcb = alloc::boxed::Box::new(Kprcb::new(cpu as u32, 0));
             let addr = alloc::boxed::Box::into_raw(kprcb) as u64;
             *page = addr;
-            crate::serial_println!("[SMP] KPRCB[{}] at 0x{:x}", cpu, addr);
+            kdebug!(crate::log::LogSubsys::Boot, "KPRCB[{}] at 0x{:x}", cpu, addr);
         }
     }
 }

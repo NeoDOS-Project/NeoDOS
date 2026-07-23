@@ -1,7 +1,7 @@
 use core::fmt::Write;
 use core::mem::size_of;
 use core::sync::atomic::{AtomicBool, Ordering};
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::test_case;
 use crate::test_eq;
 use crate::test_true;
@@ -165,7 +165,7 @@ pub fn init_crash_dump_area() {
     unsafe {
         core::ptr::write_bytes(base, 0, CRASH_DUMP_AREA_SIZE as usize);
     }
-    serial_println!("[+] Crash dump area @ 0x{:x} ({} KB)",
+    kinfo!(LogSubsys::Kernel, "Crash dump area @ 0x{:x} ({} KB)",
         CRASH_DUMP_AREA_BASE, CRASH_DUMP_AREA_SIZE / 1024);
 }
 

@@ -1,5 +1,5 @@
 use crate::arch::x64::paging;
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::globals;
 use crate::fs::vfs::{VfsNode, MODE_DIR, MODE_FILE};
 use spin::Mutex;
@@ -37,20 +37,20 @@ lazy_static! {
 }
 
 pub fn init_nxl_region() -> bool {
-    serial_println!("[NXL] Initializing shared library region 0x{:x}..0x{:x}",
+    kinfo!(LogSubsys::Nxl, "Initializing shared library region 0x{:x}..0x{:x}",
         NXL_REGION_BASE, NXL_REGION_BASE + NXL_REGION_SIZE);
 
     if paging::split_2mb_page(NXL_REGION_BASE).is_err() {
-        serial_println!("[NXL] FAILED to split 2MB page");
+        kerror!(LogSubsys::Nxl, "FAILED to split 2MB page");
         return false;
     }
 
     if paging::set_pd_user_accessible(NXL_REGION_BASE, true).is_err() {
-        serial_println!("[NXL] FAILED to set PD USER_ACCESSIBLE");
+        kerror!(LogSubsys::Nxl, "FAILED to set PD USER_ACCESSIBLE");
         return false;
     }
 
-    serial_println!("[NXL] Region ready: {} x {} KB slots",
+    kinfo!(LogSubsys::Nxl, "Region ready: {} x {} KB slots",
         NXL_SLOT_COUNT, NXL_SLOT_SIZE / 1024);
     true
 }
@@ -58,11 +58,11 @@ pub fn init_nxl_region() -> bool {
 pub fn load_nxl() -> bool {
     match nxl_load("C:\\System\\Libraries\\fs.nxl") {
         Some(base) => {
-            serial_println!("[NXL] libneodos NXL loaded at 0x{:x}", base);
+            kinfo!(LogSubsys::Nxl, "libneodos NXL loaded at 0x{:x}", base);
             true
         }
         None => {
-            serial_println!("[NXL] WARNING: libneodos.nxl not found");
+            kwarn!(LogSubsys::Nxl, "libneodos.nxl not found");
             false
         }
     }
@@ -78,7 +78,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
             let resolved = match vfs.resolve_path(path) {
                 Ok(result) => Some(result),
                 Err(e) => {
-                    serial_println!("[NXL] resolve '{}' failed: {:?}", path, e);
+                    kerror!(LogSubsys::Nxl, "resolve '{}' failed: {:?}", path, e);
                     None
                 }
             }.or_else(|| resolve_nxl_fallback(vfs, path));
@@ -88,7 +88,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
                     match vfs.read(drive_idx, node.inode, 0, buf) {
                         Ok(n) => { size = n; Ok(()) }
                         Err(e) => {
-                            serial_println!("[NXL] read error: {:?}", e);
+                            kerror!(LogSubsys::Nxl, "read error: {:?}", e);
                             Err(())
                         }
                     }
@@ -106,7 +106,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
     let compiled_base = match elf_compiled_base(data) {
         Some(b) => b,
         None => {
-            serial_println!("[NXL] Cannot determine compiled base");
+            kerror!(LogSubsys::Nxl, "Cannot determine compiled base");
             return None;
         }
     };
@@ -118,7 +118,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         // Check if already loaded at this base, reuse
         for slot in registry.iter() {
             if slot.loaded && slot.base == compiled_base {
-                serial_println!("[NXL] '{}' already loaded at 0x{:x}, reusing", path, slot.base);
+                kdebug!(LogSubsys::Nxl, "'{}' already loaded at 0x{:x}, reusing", path, slot.base);
                 return Some(slot.base);
             }
         }
@@ -127,7 +127,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         let idx = match registry.iter().position(|s| s.base == compiled_base && !s.loaded) {
             Some(i) => i,
             None => {
-                serial_println!("[NXL] No free slot for compiled base 0x{:x}", compiled_base);
+                kerror!(LogSubsys::Nxl, "No free slot for compiled base 0x{:x}", compiled_base);
                 return None;
             }
         };
@@ -139,19 +139,19 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         (idx, slot_base)
     };
 
-    serial_println!("[NXL] Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
+    kinfo!(LogSubsys::Nxl, "Loading '{}' @ slot {} => 0x{:x} (compiled 0x{:x})", path, slot_idx, base, compiled_base);
 
     let result = match crate::elf::load_elf(data, None, 0) {
         Ok(r) => r,
         Err(e) => {
-            serial_println!("[NXL] ELF load failed: {:?}", e);
+            kerror!(LogSubsys::Nxl, "ELF load failed: {:?}", e);
             // Release the reserved slot on failure
             let mut registry = NXL_REGISTRY.lock();
             registry[slot_idx].loaded = false;
             return None;
         }
     };
-    serial_println!("[NXL] ELF entry=0x{:x}", result.entry);
+    kdebug!(LogSubsys::Nxl, "ELF entry=0x{:x}", result.entry);
 
     // Mark each segment with appropriate page permissions based on ELF p_flags
     for seg in &result.segments {
@@ -175,7 +175,7 @@ pub fn nxl_load(path: &str) -> Option<u64> {
         };
     }
 
-    serial_println!("[NXL] '{}' => 0x{:x} ({} bytes)", path, base, image_size);
+    kinfo!(LogSubsys::Nxl, "'{}' => 0x{:x} ({} bytes)", path, base, image_size);
     Some(base)
 }
 
@@ -296,6 +296,6 @@ fn mark_segment_user_accessible(vaddr: u64, memsz: u64, p_flags: u32) {
         addr += paging::PAGE_4K;
     }
 
-    serial_println!("[NXL] Marked 0x{:x}..0x{:x} USER_ACCESSIBLE{}",
+    kdebug!(LogSubsys::Nxl, "Marked 0x{:x}..0x{:x} USER_ACCESSIBLE{}",
         start, end, if writable { " + WRITABLE" } else { "" });
 }

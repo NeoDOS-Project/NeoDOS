@@ -30,6 +30,7 @@
 
 use lazy_static::lazy_static;
 use spin::Mutex;
+use crate::log::LogSubsys;
 
 // ─── Vector allocator ────────────────────────────────────────────────────────
 
@@ -207,8 +208,8 @@ pub fn configure_msix_entry(
     let new_ctrl = msg_ctrl | (1 << 15);
     pci_config_write_word(bus, dev, func, cap + 2, new_ctrl);
 
-    crate::serial_println!(
-        "[MSI-X] Entry {} configured: vector {:#04x}, BAR{} + 0x{:x}",
+    kinfo!(LogSubsys::Msi,
+        "Entry {} configured: vector {:#04x}, BAR{} + 0x{:x}",
         entry_index, vector, bir, table_offset
     );
 
@@ -258,8 +259,8 @@ pub fn configure_msix_entries(
         vectors.push(vector);
     }
 
-    crate::serial_println!(
-        "[MSI-X] Configured {} entries for {:02x}:{:02x}.{}: vectors {:?}",
+    kinfo!(LogSubsys::Msi,
+        "Configured {} entries for {:02x}:{:02x}.{}: vectors {:?}",
         count, bus, dev, func, vectors
     );
 
@@ -275,8 +276,8 @@ fn on_msi_configured(ev: &crate::eventbus::Event) {
     let bus  = ((packed_bdf >> 16) & 0xFF) as u8;
     let dev  = ((packed_bdf >> 11) & 0x1F) as u8;
     let func = ((packed_bdf >>  8) & 0x07) as u8;
-    crate::serial_println!(
-        "[MSI] pci.nem confirmed MSI on {:02x}:{:02x}.{}",
+    kdebug!(LogSubsys::Msi,
+        "pci.nem confirmed MSI on {:02x}:{:02x}.{}",
         bus, dev, func
     );
 }
@@ -312,14 +313,14 @@ pub fn msi_request(
     if pci_nem_is_active() {
         configure_msi_via_eventbus(bus, dev, func, cap, vector);
         // pci.nem will fire back EVENT_MSI_CONFIGURED asynchronously.
-        crate::serial_println!(
-            "[MSI] Delegated {:02x}:{:02x}.{} → vector {:#04x} to pci.nem",
+        kdebug!(LogSubsys::Msi,
+            "Delegated {:02x}:{:02x}.{} → vector {:#04x} to pci.nem",
             bus, dev, func, vector
         );
     } else {
         configure_msi_direct(bus, dev, func, cap, vector);
-        crate::serial_println!(
-            "[MSI] Direct config {:02x}:{:02x}.{} → vector {:#04x}",
+        kdebug!(LogSubsys::Msi,
+            "Direct config {:02x}:{:02x}.{} → vector {:#04x}",
             bus, dev, func, vector
         );
     }
@@ -340,8 +341,8 @@ pub fn msi_release(bus: u8, dev: u8, func: u8, vector: u8) {
     }
     crate::arch::x64::idt::msi_unregister_handler(vector);
     msi_free_vector(vector);
-    crate::serial_println!(
-        "[MSI] Released {:02x}:{:02x}.{} vector {:#04x}",
+    kinfo!(LogSubsys::Msi,
+        "Released {:02x}:{:02x}.{} vector {:#04x}",
         bus, dev, func, vector
     );
 }

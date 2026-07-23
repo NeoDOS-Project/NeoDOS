@@ -17,6 +17,7 @@ use lazy_static::lazy_static;
 use crate::object::{self, ObType, ObId};
 use crate::object::namespace;
 use crate::cm::{CM_MANAGER, hive};
+use crate::log::LogSubsys;
 use crate::{test_case, test_eq, test_true};
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -573,10 +574,10 @@ pub fn sm_init() {
     let loaded = sm_reg_load_all();
     if loaded == 0 {
         // Tolerance: if registry is empty/missing, register built-in defaults
-        crate::serial_println!("[SM] Registry has no services — registering built-in defaults");
+        kwarn!(LogSubsys::Services, "Registry has no services — registering built-in defaults");
         register_default_services();
     }
-    crate::serial_println!("[SM] Service Manager initialized ({} services loaded)", loaded);
+    kinfo!(LogSubsys::Services, "Service Manager initialized ({} services loaded)", loaded);
 
     // Build dependency order
     let mut sm = SERVICE_MANAGER.lock();
@@ -584,10 +585,10 @@ pub fn sm_init() {
         Ok(order) => {
             let len = order.len();
             sm.dependency_order = order;
-            crate::serial_println!("[SM] Dependency order resolved ({} services)", len);
+            kinfo!(LogSubsys::Services, "Dependency order resolved ({} services)", len);
         }
         Err(e) => {
-            crate::serial_println!("[SM] Dependency resolution failed: {:?}", e);
+            kerror!(LogSubsys::Services, "Dependency resolution failed: {:?}", e);
         }
     }
 }
@@ -639,7 +640,7 @@ pub fn sm_start_auto_services() {
     };
 
     if !order.is_empty() {
-        crate::serial_println!("[SM] Starting auto/system services...");
+        kinfo!(LogSubsys::Services, "Starting auto/system services...");
         let mut started = 0;
         let mut failed = 0;
 
@@ -656,20 +657,20 @@ pub fn sm_start_auto_services() {
                 let mut sm = SERVICE_MANAGER.lock();
                 match sm.start_service(idx) {
                     Ok(()) => {
-                        crate::serial_println!("[SM] Started: {}", sm.services[idx].name);
+                        kinfo!(LogSubsys::Services, "Started: {}", sm.services[idx].name);
                         started += 1;
                     }
                     Err(e) => {
                         sm.services[idx].state = ServiceState::Failed;
-                        crate::serial_println!("[SM] Failed to start {}: {:?}", sm.services[idx].name, e);
+                        kerror!(LogSubsys::Services, "Failed to start {}: {:?}", sm.services[idx].name, e);
                         failed += 1;
                     }
                 }
             }
         }
-        crate::serial_println!("[SM] Auto-start complete: {} started, {} failed", started, failed);
+        kinfo!(LogSubsys::Services, "Auto-start complete: {} started, {} failed", started, failed);
     } else {
-        crate::serial_println!("[SM] No services in dependency order (dependency resolution may have failed)");
+        kwarn!(LogSubsys::Services, "No services in dependency order (dependency resolution may have failed)");
     }
 }
 
@@ -681,7 +682,7 @@ pub fn sm_mark_neoinit_running(pid: u32) {
     if let Some(idx) = sm.find_by_name("NeoInit") {
         sm.services[idx].state = ServiceState::Running;
         sm.services[idx].pid = pid;
-        crate::serial_println!("[SM] NeoInit already running (PID {}) via manual kernel spawn", pid);
+        kinfo!(LogSubsys::Services, "NeoInit already running (PID {}) via manual kernel spawn", pid);
     }
 }
 

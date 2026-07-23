@@ -7,6 +7,7 @@
 use alloc::vec::Vec;
 use crate::nem::NemDriverType;
 use crate::drivers::driver_runtime::{self, DriverId};
+use crate::log::LogSubsys;
 
 
 /// Load a .nem v3 driver from a NeoFS path.
@@ -37,7 +38,7 @@ pub fn load_nem(path: &str) -> Result<DriverId, &'static str> {
     // Register load result for hot reload
     crate::drivers::hotreload::register_load_result(id, &result);
 
-    crate::serial_println!("[NEM] v3 driver loaded: {} (path={})", driver_name, path);
+    kinfo!(LogSubsys::Nem, "v3 driver loaded: {} (path={})", driver_name, path);
     Ok(id)
 }
 

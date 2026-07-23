@@ -3,6 +3,7 @@
 use alloc::boxed::Box;
 use crate::drivers::nvme::NvmeDriver;
 use crate::irp::{self, IrpId, IrpOp, IrpStatus};
+use crate::log::LogSubsys;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub const MAX_BLOCK_DEVICES: usize = 8;
@@ -435,7 +436,7 @@ pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
     let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
     match bdevs.register(alloc::boxed::Box::new(dev)) {
         Some(idx) => {
-            crate::serial_println!("[BLK] NEM block device registered at idx={}", idx);
+            kinfo!(LogSubsys::Driver, "NEM block device registered at idx={}", idx);
             idx as i32
         }
         None => -1,
@@ -447,11 +448,11 @@ pub fn register_nem_block_device(dev: NemBlockDevice) -> i32 {
 pub fn unregister_nem_block_device(idx: usize) -> bool {
     let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
     if bdevs.refcount(idx) > 0 {
-        crate::serial_println!("[BLK] Cannot unregister device at idx={}: refcount={}", idx, bdevs.refcount(idx));
+        kinfo!(LogSubsys::Driver, "Cannot unregister device at idx={}: refcount={}", idx, bdevs.refcount(idx));
         return false;
     }
     if bdevs.remove(idx).is_some() {
-        crate::serial_println!("[BLK] NEM block device unregistered at idx={}", idx);
+        kinfo!(LogSubsys::Driver, "NEM block device unregistered at idx={}", idx);
         true
     } else {
         false
@@ -463,7 +464,7 @@ pub fn unregister_nem_block_device(idx: usize) -> bool {
 pub fn force_unregister_nem_block_device(idx: usize) -> bool {
     let mut bdevs = crate::globals::BLOCK_DEVICES.lock();
     if bdevs.force_remove(idx).is_some() {
-        crate::serial_println!("[BLK] NEM block device FORCE unregistered at idx={}", idx);
+        kinfo!(LogSubsys::Driver, "NEM block device FORCE unregistered at idx={}", idx);
         true
     } else {
         false

@@ -1,0 +1,21 @@
+# NeoDev Configuration for NeoDOS
+# Place at <neodos_root>/neodev.toml
+
+[project]
+esp_size_mb = 100
+neodos_size_mb = 100
+gpt_padding_mb = 12
+kernel_target = "x86_64-unknown-none"
+bootloader_target = "x86_64-unknown-uefi"
+
+[vm]
+backend = "virtualbox"
+memory = 512
+cpus = 1
+network = "bridged"
+
+[qemu]
+kvm = false
+bdm = false
+ovmf_code = "/usr/share/OVMF/OVMF_CODE.fd"
+ovmf_vars_template = "/usr/share/OVMF/OVMF_VARS.fd"

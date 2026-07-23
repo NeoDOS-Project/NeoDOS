@@ -5,6 +5,7 @@
 use alloc::string::ToString;
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
+use crate::log::LogSubsys;
 use super::{err_to_u64, ob_err_to_syscall, SyscallError, is_user_ptr_valid, copy_user_string,
            current_handle_entry,
            copy_handle_entry_for_child, resolve_chdir_target};
@@ -137,13 +138,13 @@ pub(super) fn handler_ob_open(regs: super::Registers) -> u64 {
     let ob_id = match crate::object::ob_open_path(&path, &token, desired_access) {
         Ok(id) => {
             if path.contains("Network") {
-                crate::serial_println!("[OB] ObOpen '{}' => ob_id={}", path, id);
+                kdebug!(LogSubsys::Object, "ObOpen '{}' => ob_id={}", path, id);
             }
             id
         }
         Err(e) => {
             if path.contains("Network") {
-                crate::serial_println!("[OB] ObOpen '{}' FAILED: {:?}", path, e);
+                kdebug!(LogSubsys::Object, "ObOpen '{}' FAILED: {:?}", path, e);
             }
             return err_to_u64(ob_err_to_syscall(e));
         }
@@ -345,10 +346,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                             if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
                             match vfs.read(drive_idx, node.inode, 0, &mut buf) {
                                 Ok(n) => { if n > MAX_BIN { 0 } else { n } }
-                                Err(e) => { crate::serial_println!("[SPAWN] read failed: {:?}", e); 0 }
+                                Err(e) => { kerror!(LogSubsys::Object, "read failed: {:?}", e); 0 }
                             }
                         }
-                        Err(e) => { crate::serial_println!("[SPAWN] resolve_path failed for '{}': {:?}", vfs_path, e); 0 }
+                        Err(e) => { kerror!(LogSubsys::Object, "resolve_path failed for '{}': {:?}", vfs_path, e); 0 }
                     }
                 });
                 if bin_size < 4 {
@@ -1929,19 +1930,19 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
     let buf_size = regs.r8 as usize;
 
     if info_class == ObSetInfoClass::SetNicIp as u32 {
-        crate::serial_println!("[OB] ObSetInfo SetNicIp: fd={} class={} buf_ptr=0x{:x} buf_size={}", fd, info_class, buf_ptr, buf_size);
+        kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: fd={} class={} buf_ptr=0x{:x} buf_size={}", fd, info_class, buf_ptr, buf_size);
     }
 
     if info_class != (ObSetInfoClass::FileDelete as u32) {
         if buf_ptr == 0 || buf_size == 0 {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
-                crate::serial_println!("[OB] ObSetInfo SetNicIp: REJECTED (null buf)");
+                kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (null buf)");
             }
             return err_to_u64(SyscallError::Inval);
         }
         if !is_user_ptr_valid(buf_ptr, buf_size as u64) {
             if info_class == ObSetInfoClass::SetNicIp as u32 {
-                crate::serial_println!("[OB] ObSetInfo SetNicIp: REJECTED (invalid user ptr)");
+                kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (invalid user ptr)");
             }
             return err_to_u64(SyscallError::Fault);
         }
@@ -1950,7 +1951,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
     let entry = current_handle_entry(fd);
     if !entry.is_open() {
         if info_class == ObSetInfoClass::SetNicIp as u32 {
-            crate::serial_println!("[OB] ObSetInfo SetNicIp: REJECTED (fd {} not open)", fd);
+            kdebug!(LogSubsys::Object, "ObSetInfo SetNicIp: REJECTED (fd {} not open)", fd);
         }
         return err_to_u64(SyscallError::BadF);
     }
@@ -2582,7 +2583,7 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             );
             crate::net::socket::socket_set_remote(socket_id, remote);
             crate::net::socket::socket_set_connected(socket_id);
-            crate::serial_println!("[SOCK] Connect OK sid={}", socket_id);
+            kdebug!(LogSubsys::Object, "Connect OK sid={}", socket_id);
             0
         }
         _ if info_class == ObSetInfoClass::SocketBind as u32 => {
@@ -2809,12 +2810,12 @@ pub(super) fn handler_ob_set_info(regs: super::Registers) -> u64 {
             let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
             let ip_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
             let ip = crate::net::types::Ipv4Addr(ip_bytes);
-            crate::serial_println!("[OB] SetNicIp: iface={} ip={}", iface_idx, ip);
+            kdebug!(LogSubsys::Object, "SetNicIp: iface={} ip={}", iface_idx, ip);
             crate::net::nic::nic_set_ip(iface_idx, ip);
             if buf_size >= 12 {
                 let mask_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 8) as *const [u8; 4]) };
                 let mask = crate::net::types::Ipv4Addr(mask_bytes);
-                crate::serial_println!("[OB] SetNicMask: iface={} mask={}", iface_idx, mask);
+                kdebug!(LogSubsys::Object, "SetNicMask: iface={} mask={}", iface_idx, mask);
                 crate::net::nic::nic_set_mask(iface_idx, mask);
             }
             0

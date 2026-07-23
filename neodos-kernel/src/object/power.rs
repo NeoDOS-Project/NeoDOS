@@ -2,6 +2,7 @@ use crate::object::{
     ObOperations, ObType, ObId, ob_create_object,
 };
 use crate::object::namespace;
+use crate::log::LogSubsys;
 
 pub struct PowerManagerOps;
 
@@ -21,17 +22,17 @@ pub fn init_power_manager() {
     ) {
         Ok(id) => id,
         Err(_) => {
-            crate::serial_println!("[POWER] Failed to create PowerManager object");
+            kerror!(LogSubsys::Power, "Failed to create PowerManager object");
             return;
         }
     };
     let _ = namespace::ob_create_directory("\\System");
     let _ = namespace::ob_insert_object("\\System\\PowerManager", ob_id);
-    crate::serial_println!("[POWER] PowerManager registered at \\System\\PowerManager (ObId={})", ob_id);
+    kinfo!(LogSubsys::Power, "PowerManager registered at \\System\\PowerManager (ObId={})", ob_id);
 }
 
 pub fn power_shutdown() -> ! {
-    crate::serial_println!("[POWER] Shutting down...");
+    kinfo!(LogSubsys::Power, "Shutting down...");
     crate::cm::cm_flush_all_hives();
     crate::globals::flush_cache_if_needed();
     let _ = crate::eventbus::EVENT_BUS.push_event(
@@ -44,7 +45,7 @@ pub fn power_shutdown() -> ! {
 }
 
 pub fn power_reboot() -> ! {
-    crate::serial_println!("[POWER] Rebooting...");
+    kinfo!(LogSubsys::Power, "Rebooting...");
     crate::cm::cm_flush_all_hives();
     crate::globals::flush_cache_if_needed();
     let _ = crate::eventbus::EVENT_BUS.push_event(

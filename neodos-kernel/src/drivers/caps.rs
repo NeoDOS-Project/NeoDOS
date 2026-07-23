@@ -7,6 +7,7 @@
 // drivers receive a restricted set.
 
 use crate::nem::DriverCategory;
+use crate::log::LogSubsys;
 
 // ── Capability flag constants ──
 //
@@ -225,9 +226,7 @@ pub fn handle_cap_escalation(driver_id: u32, requested: u64) -> Result<u64, &'st
     let new_caps = drv.caps | grantable;
     drv.caps = new_caps;
 
-    crate::serial_println!(
-        "[CAP] Escalation granted: driver {} gained {:016x}, now {:016x}",
-        drv.name_str(), grantable, new_caps,
+    kinfo!(LogSubsys::Driver, "Escalation granted: driver {} gained {:016x}, now {:016x}", drv.name_str(), grantable, new_caps,
     );
 
     Ok(new_caps)

@@ -5,7 +5,7 @@
 //! crash infrastructure and resets the machine.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::test_case;
 use crate::test_true;
 
@@ -62,7 +62,7 @@ static WATCHDOG_EXPIRIES: AtomicU64 = AtomicU64::new(0);
 pub fn init_watchdog() {
     let period = crate::timers::hpet::hpet_fs_period();
     if period == 0 {
-        serial_println!("[WDT] HPET not available, watchdog disabled");
+        kwarn!(LogSubsys::Watchdog, "HPET not available, watchdog disabled");
         return;
     }
 
@@ -77,7 +77,7 @@ pub fn init_watchdog() {
     let now = crate::timers::hpet::read_counter();
     WATCHDOG_LAST_PET_HPET.store(now, Ordering::Relaxed);
 
-    serial_println!("[WDT] Watchdog armed: {} HPET ticks ({} us timeout)",
+    kinfo!(LogSubsys::Watchdog, "Watchdog armed: {} HPET ticks ({} us timeout)",
         ticks_needed, WATCHDOG_TIMEOUT_US);
 }
 
@@ -141,10 +141,10 @@ pub fn watchdog_trigger() {
     WATCHDOG_NMI_COUNT.fetch_add(1, Ordering::Relaxed);
     let event_id = WATCHDOG_EVENT_ID.fetch_add(1, Ordering::Relaxed);
 
-    serial_println!("\n[WDT] ⚠ WATCHDOG EXPIRED (event #{}) — kernel appears hung", event_id);
-    serial_println!("[WDT] Last pet HPET counter value: {}",
+    kerror!(LogSubsys::Watchdog, "\nWATCHDOG EXPIRED (event #{}) — kernel appears hung", event_id);
+    kerror!(LogSubsys::Watchdog, "Last pet HPET counter value: {}",
         WATCHDOG_LAST_PET_HPET.load(Ordering::Relaxed));
-    serial_println!("[WDT] Current HPET counter value: {}",
+    kerror!(LogSubsys::Watchdog, "Current HPET counter value: {}",
         crate::timers::hpet::read_counter());
 
     // Capture RIP and RSP
@@ -177,12 +177,12 @@ pub fn watchdog_trigger() {
     // 5. Re-arm for next cycle if below max NMI count, otherwise reset
     let nmi_count = WATCHDOG_NMI_COUNT.load(Ordering::Relaxed);
     if nmi_count < MAX_NMI_RECOVERIES {
-        serial_println!("[WDT] Re-arming watchdog (NMI {}/{})", nmi_count, MAX_NMI_RECOVERIES);
+        kinfo!(LogSubsys::Watchdog, "Re-arming watchdog (NMI {}/{})", nmi_count, MAX_NMI_RECOVERIES);
         let now = crate::timers::hpet::read_counter();
         WATCHDOG_LAST_PET_HPET.store(now, Ordering::Relaxed);
         WATCHDOG_IN_HANDLER.store(false, Ordering::SeqCst);
     } else {
-        serial_println!("[WDT] Max NMIs reached ({}). Forcing system reset.", MAX_NMI_RECOVERIES);
+        kerror!(LogSubsys::Watchdog, "Max NMIs reached ({}). Forcing system reset.", MAX_NMI_RECOVERIES);
         watchdog_reset_system();
     }
 }
@@ -192,14 +192,14 @@ pub fn watchdog_trigger() {
 fn watchdog_write_dump_to_disk() {
     let dump_present = crate::crash::is_crash_dump_present();
     if !dump_present {
-        serial_println!("[WDT] No crash dump present, skipping disk write");
+        kerror!(LogSubsys::Watchdog, "No crash dump present, skipping disk write");
         return;
     }
 
     let header = match crate::crash::read_dump_header() {
         Some(h) => h,
         None => {
-            serial_println!("[WDT] Failed to read crash dump header, skipping disk write");
+            kerror!(LogSubsys::Watchdog, "Failed to read crash dump header, skipping disk write");
             return;
         }
     };
@@ -228,15 +228,15 @@ fn watchdog_write_dump_to_disk() {
 
     if result.is_ok() {
         WATCHDOG_DUMP_WRITES.fetch_add(1, Ordering::Relaxed);
-        serial_println!("[WDT] Crash dump written");
+        kinfo!(LogSubsys::Watchdog, "Crash dump written");
     } else {
-        serial_println!("[WDT] Failed to write crash dump to disk (I/O error)");
+        kerror!(LogSubsys::Watchdog, "Failed to write crash dump to disk (I/O error)");
     }
 }
 
 /// Force a controlled system reset via ACPI or QEMU debug port.
 fn watchdog_reset_system() -> ! {
-    serial_println!("[WDT] *** SYSTEM RESET due to watchdog timeout ***");
+    kerror!(LogSubsys::Watchdog, "*** SYSTEM RESET due to watchdog timeout ***");
     crate::object::power::power_reboot();
 }
 

@@ -146,4 +146,3 @@ pub fn scan_all_devices() -> DeviceRegistry {
 
 mod pci_scan;
 
-pub use pci_scan::scan_pci_bus;

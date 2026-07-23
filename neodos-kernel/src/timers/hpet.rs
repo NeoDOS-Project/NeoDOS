@@ -1,5 +1,6 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
+use crate::log::LogSubsys;
 
 // ── ACPI table signatures ──────────────────────────────────────────
 const RSDP_SIGNATURE: [u8; 8] = *b"RSD PTR ";
@@ -516,7 +517,7 @@ pub fn init_hpet() -> bool {
     let hpet = match find_hpet_table() {
         Some(h) => h,
         None => {
-            crate::serial_println!("[HPET] ACPI HPET table not found");
+            kerror!(LogSubsys::Hpet, "ACPI HPET table not found");
             return false;
         }
     };
@@ -529,11 +530,11 @@ pub fn init_hpet() -> bool {
     }
 
     if base_addr == 0 {
-        crate::serial_println!("[HPET] Invalid HPET base address");
+        kerror!(LogSubsys::Hpet, "Invalid HPET base address");
         return false;
     }
 
-    crate::serial_println!("[HPET] Found at MMIO 0x{:x}, period={} fs",
+    kinfo!(LogSubsys::Hpet, "Found at MMIO 0x{:x}, period={} fs",
         base_addr, fs_period);
 
     // Calculate comparator value for TICK_INTERVAL_US
@@ -543,11 +544,11 @@ pub fn init_hpet() -> bool {
     let counter_hz = 1_000_000_000_000_000u64 / fs_period;
     let ticks_needed = (counter_hz * crate::timers::TICK_INTERVAL_US) / 1_000_000;
 
-    crate::serial_println!("[HPET] Counter freq: {} Hz, ticks/interval: {}",
+    kdebug!(LogSubsys::Hpet, "Counter freq: {} Hz, ticks/interval: {}",
         counter_hz, ticks_needed);
 
     if ticks_needed == 0 || ticks_needed > 0xFFFF_FFFF {
-        crate::serial_println!("[HPET] Invalid comparator value {}", ticks_needed);
+        kerror!(LogSubsys::Hpet, "Invalid comparator value {}", ticks_needed);
         return false;
     }
 
@@ -559,7 +560,7 @@ pub fn init_hpet() -> bool {
         // Bit 4 of timer config = periodic mode capable.
         let t0_cap = hpet_read(base_addr, HPET_TIMER0_CFG);
         if t0_cap & (1u64 << 4) == 0 {
-            crate::serial_println!("[HPET] Timer 0 does not support periodic mode");
+            kerror!(LogSubsys::Hpet, "Timer 0 does not support periodic mode");
             return false;
         }
 
@@ -584,7 +585,7 @@ pub fn init_hpet() -> bool {
         HPET_FS_PERIOD = fs_period;
     }
 
-    crate::serial_println!("[HPET] Timer 0 configured: {} Hz ({} µs per tick)",
+    kinfo!(LogSubsys::Hpet, "Timer 0 configured: {} Hz ({} µs per tick)",
         counter_hz / ticks_needed, crate::timers::TICK_INTERVAL_US);
 
     true

@@ -4,6 +4,7 @@ pub mod acpi;
 
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::log::LogSubsys;
 
 use alloc::vec::Vec;
 
@@ -199,7 +200,7 @@ pub fn init_power_manager() {
     let _ = pm.load_active_plan_from_registry();
     let active = pm.active_plan();
     let _ = pm.load_plan_from_registry(active);
-    crate::serial_println!("[PM] PowerManager initialized: plan={}, state={}",
+    kinfo!(LogSubsys::Power, "PowerManager initialized: plan={}, state={}",
         pm.active_plan_name(), pm.state().to_str());
 }
 

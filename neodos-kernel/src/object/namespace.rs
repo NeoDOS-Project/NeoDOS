@@ -2,6 +2,7 @@ use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use alloc::string::{String, ToString};
 use crate::object::{ObId, ObType};
+use crate::log::LogSubsys;
 use crate::{test_case, test_eq, test_true};
 use spin::Mutex;
 use lazy_static::lazy_static;
@@ -755,7 +756,7 @@ pub fn ob_namespace_debug() {
             let mut i = 0;
             while i < 24 && key[i] != 0 { name_buf[i] = key[i]; i += 1; }
             let name = core::str::from_utf8(&name_buf[..i]).unwrap_or("<?>");
-            crate::serial_println!("[NS] {}children['{}'] = {}", prefix, name, id);
+            kdebug!(LogSubsys::Object, "{}children['{}'] = {}", prefix, name, id);
         }
         for (key, subdir) in &dir.child_dirs {
             let mut name_buf = [0u8; 25];
@@ -763,7 +764,7 @@ pub fn ob_namespace_debug() {
             while i < 24 && key[i] != 0 { name_buf[i] = key[i]; i += 1; }
             let name = core::str::from_utf8(&name_buf[..i]).unwrap_or("<?>");
             let sub_prefix = alloc::format!("{}{}/", prefix, name);
-            crate::serial_println!("[NS] {}dir (enter)", sub_prefix);
+            kdebug!(LogSubsys::Object, "{}dir (enter)", sub_prefix);
             dump(subdir, &sub_prefix);
         }
     }

@@ -1,5 +1,7 @@
+use crate::log::LogSubsys;
+
 pub fn shutdown() -> ! {
-    crate::serial_println!("[PM] Shutting down...");
+    kinfo!(LogSubsys::Power, "Shutting down...");
     crate::cm::cm_flush_all_hives();
     crate::globals::flush_cache_if_needed();
     let _ = crate::eventbus::EVENT_BUS.push_event(
@@ -12,7 +14,7 @@ pub fn shutdown() -> ! {
 }
 
 pub fn reboot() -> ! {
-    crate::serial_println!("[PM] Rebooting...");
+    kinfo!(LogSubsys::Power, "Rebooting...");
     crate::cm::cm_flush_all_hives();
     crate::globals::flush_cache_if_needed();
     let _ = crate::eventbus::EVENT_BUS.push_event(

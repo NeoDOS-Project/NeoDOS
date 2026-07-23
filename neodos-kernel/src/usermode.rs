@@ -4,6 +4,7 @@ use crate::scheduler;
 use crate::arch::x64::cpu_local::{OFFSET_EXIT_RSP, OFFSET_EXIT_RIP, OFFSET_EXIT_RBX,
     OFFSET_EXIT_R12, OFFSET_EXIT_R13, OFFSET_EXIT_R14, OFFSET_EXIT_R15, OFFSET_EXIT_RBP};
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
+use crate::log::LogSubsys;
 
 // ── Per-CPU exit trampoline ──────────────────────────────────────────────
 //
@@ -126,7 +127,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
     let heap_base = match heap_slot {
         Some(slot) => slot.base,
         None => {
-            crate::serial_println!("[USER] WARNING: no free heap slots, process will have no heap");
+            kwarn!(LogSubsys::User, "no free heap slots, process will have no heap");
             0
         }
     };
@@ -167,7 +168,7 @@ pub fn wait_for_process(pid: u32) {
     });
 
     if entry == 0 {
-        crate::serial_println!("[USER] wait_for_process: PID {} not found", pid);
+        kdebug!(LogSubsys::User, "wait_for_process: PID {} not found", pid);
         return;
     }
 

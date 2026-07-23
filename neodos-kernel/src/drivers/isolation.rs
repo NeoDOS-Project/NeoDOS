@@ -24,6 +24,7 @@ use x86_64::structures::paging::PageTableFlags;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use alloc::vec::Vec;
+use crate::log::LogSubsys;
 
 // ── Constants ──
 
@@ -220,8 +221,7 @@ pub fn validate_driver_str_ptr(ptr: *const u8, driver_id: u32) -> Result<usize, 
 /// Initialize the isolated driver region by splitting 2 MB pages for 4 KB paging.
 /// Called once during boot (PHASE 3.8x).
 pub fn init_isolated_region() {
-    crate::serial_println!("[ISO] Initializing isolated driver region: 0x{:x}..0x{:x} ({} MB)",
-        DRIVER_ISO_BASE, DRIVER_ISO_END, DRIVER_ISO_SIZE / 0x100000);
+    kinfo!(LogSubsys::Isolation, "Initializing isolated driver region: 0x{:x}..0x{:x} ({} MB)", DRIVER_ISO_BASE, DRIVER_ISO_END, DRIVER_ISO_SIZE / 0x100000);
 
     let mut count = 0u32;
     let mut addr = DRIVER_ISO_BASE;
@@ -229,12 +229,12 @@ pub fn init_isolated_region() {
         match split_2mb_page(addr) {
             Ok(_) => count += 1,
             Err(_) => {
-                crate::serial_println!("[ISO]  split @ 0x{:x} FAILED", addr);
+                kerror!(LogSubsys::Isolation, "split @ 0x{:x} FAILED", addr);
             }
         }
         addr += HUGE_PAGE_SIZE;
     }
-    crate::serial_println!("[ISO]  {} huge pages split for 4 KB isolation", count);
+    kinfo!(LogSubsys::Isolation, "{} huge pages split for 4 KB isolation", count);
 
     // Unmap the entire region initially (no pre-allocated pages)
     let mut unmapped = 0u32;
@@ -252,7 +252,7 @@ pub fn init_isolated_region() {
         }
         addr += PAGE_4K;
     }
-    crate::serial_println!("[ISO]  {} identity-mapped pages stripped for isolation", unmapped);
+    kinfo!(LogSubsys::Isolation, "{} identity-mapped pages stripped for isolation", unmapped);
 }
 
 // ── Per-driver page allocation in the isolated region ──
@@ -405,7 +405,7 @@ pub fn free_driver_slot(driver_id: u32) {
             let end = region.base + DRIVER_SLOT_SIZE;
             free_isolated_range(start, end);
             *region = EMPTY_REGION;
-            crate::serial_println!("[ISO] Freed driver slot: id={} @ 0x{:x}", driver_id, start);
+            kinfo!(LogSubsys::Isolation, "Freed driver slot: id={} @ 0x{:x}", driver_id, start);
             return;
         }
     }
@@ -466,7 +466,7 @@ pub fn handle_isolated_page_fault(virt: u64, _user: bool, _write: bool) -> bool 
     let driver_id = match driver_id_for_address(virt) {
         Some(id) => id,
         None => {
-            crate::serial_println!("[ISO] Page fault in isolated region at 0x{:x} — no owning driver", virt);
+            kinfo!(LogSubsys::Isolation, "Page fault in isolated region at 0x{:x} — no owning driver", virt);
             return false;
         }
     };
@@ -488,28 +488,24 @@ pub fn handle_isolated_page_fault(virt: u64, _user: bool, _write: bool) -> bool 
         let flags = if is_code { 0x0 } else { 0x2 }; // RX for code, RW for data
         match alloc_isolated_page(aligned, flags) {
             Some(phys) => {
-                crate::serial_println!(
-                    "[ISO] demand-alloc isolated 4K @ 0x{:x} → phys 0x{:x} (driver {}, {})",
-                    aligned, phys, driver_id, if is_code { "code" } else { "data" }
+                kinfo!(LogSubsys::Isolation, "demand-alloc isolated 4K @ 0x{:x} → phys 0x{:x} (driver {}, {})", aligned, phys, driver_id, if is_code { "code" } else { "data" }
                 );
                 true
             }
             None => {
-                crate::serial_println!("[ISO] OOM allocating isolated page @ 0x{:x}", aligned);
+                kerror!(LogSubsys::Isolation, "OOM allocating isolated page @ 0x{:x}", aligned);
                 false
             }
         }
     } else {
         // Page is present but access was denied (e.g., write to RX page)
-        crate::serial_println!(
-            "[ISO] Access violation in isolated region @ 0x{:x} (driver {})",
-            aligned, driver_id
+        kwarn!(LogSubsys::Isolation, "Access violation in isolated region @ 0x{:x} (driver {})", aligned, driver_id
         );
 
         // In sandbox mode, mark the driver as FAULTED
         let mode = isolation_mode_for_category(crate::nem::DriverCategory::Demand);
         if mode == IsolationMode::Sandbox {
-            crate::serial_println!("[ISO]  → sandbox: marking driver {} FAULTED", driver_id);
+            kinfo!(LogSubsys::Isolation, "→ sandbox: marking driver {} FAULTED", driver_id);
             crate::drivers::driver_runtime::DRIVER_RUNTIME.lock()
                 .set_error(driver_id, crate::drivers::driver_runtime::ERR_POLICY_VIOLATION, true);
         }

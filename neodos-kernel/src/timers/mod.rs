@@ -1,6 +1,8 @@
 pub mod hpet;
 pub mod apic;
 
+use crate::log::LogSubsys;
+
 /// Active timer source selected at boot.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TimerSource {
@@ -38,14 +40,14 @@ pub fn active() -> TimerSource {
 /// Initialize timer subsystem.
 /// Attempts HPET first, falls back to PIT.
 pub fn init() {
-    crate::serial_println!("[TIMERS] Initializing timer subsystem...");
+    kinfo!(LogSubsys::Timers, "Initializing timer subsystem...");
 
     if hpet::init_hpet() {
-        crate::serial_println!("[TIMERS] HPET initialized at 1 KHz");
+        kinfo!(LogSubsys::Timers, "HPET initialized at 1 KHz");
         set_active(TimerSource::Hpet);
         return;
     }
 
-    crate::serial_println!("[TIMERS] HPET not available, using PIT (18.2 Hz)");
+    kwarn!(LogSubsys::Timers, "HPET not available, using PIT (18.2 Hz)");
     set_active(TimerSource::Pit);
 }

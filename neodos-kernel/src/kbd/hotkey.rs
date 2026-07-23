@@ -1,4 +1,5 @@
 use crate::kbd::{KBD_SHIFT, KBD_CTRL, KBD_ALT};
+use crate::log::LogSubsys;
 
 pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
     let ctrl = (modifiers & KBD_CTRL) != 0;
@@ -7,7 +8,7 @@ pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
 
     // Ctrl+Alt+Del → shutdown
     if ctrl && alt && code == 0x53 {
-        crate::serial_println!("[NeoKBD] Ctrl+Alt+Del — shutting down...");
+        kinfo!(LogSubsys::Kbd, "Ctrl+Alt+Del — shutting down...");
         crate::object::power::power_shutdown();
     }
 

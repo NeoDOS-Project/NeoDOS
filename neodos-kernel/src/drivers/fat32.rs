@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 use crate::vfs::io::IoStack;
+use crate::log::LogSubsys;
 
 #[derive(Debug)]
 pub enum Fat32Error {
@@ -80,10 +81,10 @@ impl Fat32Driver {
         for &probe_lba in probe_lbas {
             let sector = io_stack.read_sector(probe_lba).map_err(|_| Fat32Error::NotFound)?;
             if let Some(bs) = BootSector::from_bytes(&sector) {
-                crate::serial_println!("[FAT32] Boot partition ready at LBA base={}", probe_lba);
-                crate::serial_println!("  Clusters: {} sectors, FAT: {} sectors",
+                kinfo!(LogSubsys::Fat32, "Boot partition ready at LBA base={}", probe_lba);
+                kdebug!(LogSubsys::Fat32, "  Clusters: {} sectors, FAT: {} sectors",
                     bs.sectors_per_cluster, bs.sectors_per_fat);
-                crate::serial_println!("  Root cluster: {}", bs.root_cluster);
+                kdebug!(LogSubsys::Fat32, "  Root cluster: {}", bs.root_cluster);
                 return Ok(Fat32Driver { boot_sector: bs, io_stack });
             }
         }

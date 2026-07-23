@@ -15,6 +15,9 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
 extern crate alloc;
 use core::panic::PanicInfo;
 
+#[macro_use]
+pub mod log;
+
 mod allocator;
 mod slab;
 mod arch;
@@ -71,6 +74,7 @@ use fs::neodos_v2::NeoDosFsV2;
 use graphics::FramebufferInfo;
 use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
 use vfs::io::{IoStack, PageCacheLevel};
+use crate::log::LogSubsys;
 
 pub const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
 
@@ -117,6 +121,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     // 2. Setup Serial for output
     arch::x64::init_serial();
+    log::init();
 
     // ── Boot Benchmark: calibrate TSC and mark kernel entry ──
     boot_benchmark::init();
@@ -126,13 +131,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Check bootloader version compatibility
     let bootloader_version = boot_info.version;
     if bootloader_version != KERNEL_VERSION_CODE {
-        serial_println!("[!] Version mismatch: bootloader v{:x}, kernel v{:x}",
+        kwarn!(LogSubsys::Kernel, "Version mismatch: bootloader v{:x}, kernel v{:x}",
             bootloader_version, KERNEL_VERSION_CODE);
     } else {
-        serial_println!("[+] Bootloader version: v0.10.1 (compatible)");
+        kinfo!(LogSubsys::Kernel, "Bootloader version: v0.10.1 (compatible)");
     }
 
-    serial_println!("[+] Graphics initialized: {}x{}", boot_info.fb_info.width, boot_info.fb_info.height);
+    kinfo!(LogSubsys::Kernel, "Graphics initialized: {}x{}", boot_info.fb_info.width, boot_info.fb_info.height);
 
     // 4. Initialize legacy VGA as backup (might not work, but keeps code compatible)
     console::init();
@@ -336,7 +341,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     boot_benchmark::mark(boot_benchmark::BootStage::StorageInit);
     boot_benchmark::watchdog_enter_stage(boot_benchmark::BootStage::StorageInit);
     if boot_benchmark::watchdog_check() {
-        serial_println!("[WATCHDOG] Timeout before storage init!");
+        kerror!(LogSubsys::Watchdog, "Timeout before storage init!");
     }
     drivers::storage_manager::init_storage();
     boot_benchmark::mark(boot_benchmark::BootStage::StorageReady);
@@ -354,8 +359,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         let dev = match bdevs.get(primary_idx) {
             Some(dev) => dev,
             None => {
-                serial_println!("[FATAL] Primary block device not found at index {}", primary_idx);
-                serial_println!("[FATAL] Cannot continue without storage. Halting.");
+                kerror!(LogSubsys::Kernel, "Primary block device not found at index {}", primary_idx);
+                kerror!(LogSubsys::Kernel, "Cannot continue without storage. Halting.");
                 crate::hal::halt();
             }
         };
@@ -404,7 +409,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ── NeoDOS FS via IoStack ──
     println!("[+] Reading Superblock...");
     if boot_benchmark::watchdog_check() {
-        serial_println!("[WATCHDOG] Timeout before first read!");
+        kerror!(LogSubsys::Watchdog, "Timeout before first read!");
     }
     let sb_data = match neodos_io.read_sector(0) {
         Ok(data) => {
@@ -413,16 +418,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             data
         },
         Err(e) => {
-            serial_println!("[FATAL] Failed to read superblock: {:?}", e);
-            serial_println!("[FATAL] Storage device may be unresponsive or corrupt.");
-            serial_println!("[FATAL] Cannot continue without filesystem. Halting.");
+            kerror!(LogSubsys::Kernel, "Failed to read superblock: {:?}", e);
+            kerror!(LogSubsys::Kernel, "Storage device may be unresponsive or corrupt.");
+            kerror!(LogSubsys::Kernel, "Cannot continue without filesystem. Halting.");
             crate::hal::halt();
         }
     };
 
     println!("[+] Mounting NeoDOS FS...");
     if boot_benchmark::watchdog_check() {
-        serial_println!("[WATCHDOG] Timeout before FS mount!");
+        kerror!(LogSubsys::Watchdog, "Timeout before FS mount!");
     }
 
     // Detectar formato: NE2 (NeoFS v2) o desconocido
@@ -442,16 +447,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                 ).map(|_| ())
             }
             Err(e) => {
-                serial_println!("[!] NE2 mount failed: {:?}", e);
+                kwarn!(LogSubsys::Kernel, "NE2 mount failed: {:?}", e);
                 Err("NE2 mount failed")
             }
         }
     } else if magic == 0x4F444F4E {
         // NEOD — NeoFS v1 (obsolete)
-        serial_println!("[!] NeoFS v1 (NEOD) is obsolete and no longer supported");
+        kwarn!(LogSubsys::Kernel, "NeoFS v1 (NEOD) is obsolete and no longer supported");
         Err("NeoFS v1 is obsolete")
     } else {
-        serial_println!("[!] Unknown filesystem magic: 0x{:08X}", magic);
+        kwarn!(LogSubsys::Kernel, "Unknown filesystem magic: 0x{:08X}", magic);
         Err("unsupported filesystem format")
     };
 
@@ -462,9 +467,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             println!("[+] {} filesystem mounted on C:", fs_type_label);
         }
         Err(e) => {
-            serial_println!("[FATAL] Failed to mount filesystem: {}", e);
-            serial_println!("[FATAL] Filesystem may be corrupt or in an unsupported format.");
-            serial_println!("[FATAL] Cannot continue. Halting.");
+            kerror!(LogSubsys::Kernel, "Failed to mount filesystem: {}", e);
+            kerror!(LogSubsys::Kernel, "Filesystem may be corrupt or in an unsupported format.");
+            kerror!(LogSubsys::Kernel, "Cannot continue. Halting.");
             crate::hal::halt();
         }
     }
@@ -650,13 +655,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let slot = match arch::x64::paging::alloc_user_slot() {
         Some(s) => s,
         None => {
-            serial_println!("[FATAL] No free user slots for NeoInit.");
-            serial_println!("[FATAL] All {} user slots are exhausted.", arch::x64::paging::USER_SLOT_COUNT);
-            serial_println!("[FATAL] Cannot continue without Ring 3 process space. Halting.");
+            kerror!(LogSubsys::Kernel, "No free user slots for NeoInit.");
+            kerror!(LogSubsys::Kernel, "All {} user slots are exhausted.", arch::x64::paging::USER_SLOT_COUNT);
+            kerror!(LogSubsys::Kernel, "Cannot continue without Ring 3 process space. Halting.");
             crate::hal::halt();
         }
     };
-    crate::serial_println!("[NEOINIT] allocated slot {} at code_base=0x{:x}",
+    kinfo!(LogSubsys::Init, "allocated slot {} at code_base=0x{:x}",
         slot.slot_idx, slot.code_base);
 
     let mut addr_space = scheduler::address_space::AddressSpace::new();
@@ -668,18 +673,18 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                 if let Ok((drive_idx, node)) = vfs.resolve_path(path) {
                     if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
                     let size = vfs.read(drive_idx, node.inode, 0, &mut bin_buf).unwrap_or_default();
-                    crate::serial_println!(
-                        "[INIT] resolved '{}': inode={} size={} mode=0x{:04x} read={} bytes",
+                    kinfo!(
+                        LogSubsys::Init, "resolved '{}': inode={} size={} mode=0x{:04x} read={} bytes",
                         path, node.inode, node.size, node.mode, size
                     );
                     if size < 4 { return; }
                     let data = &bin_buf[..size];
                     if let Ok(r) = elf::load_elf(data, Some(addr), slot.code_base) {
-                        crate::serial_println!("[INIT] ELF load OK: entry=0x{:x}", r.entry);
+                        kinfo!(LogSubsys::Init, "ELF load OK: entry=0x{:x}", r.entry);
                         result = Some(r.entry);
                     }
                 } else {
-                    crate::serial_println!("[INIT] path not found: {}", path);
+                    kinfo!(LogSubsys::Init, "path not found: {}", path);
                 }
             });
             result
@@ -689,7 +694,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         let mut addr = scheduler::address_space::AddressSpace::new();
         let entry = try_load("C:\\Programs\\neoinit.nxe", &mut addr)
             .or_else(|| {
-                crate::serial_println!("[INIT] NeoInit not found, trying NEOSHELL.NXE as fallback...");
+                kinfo!(LogSubsys::Init, "NeoInit not found, trying NEOSHELL.NXE as fallback...");
                 try_load("C:\\Programs\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
@@ -699,8 +704,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     };
 
     if !loaded {
-        serial_println!("[FATAL] Neither NEOINIT.NXE nor NEOSHELL.NXE found or valid.");
-        serial_println!("[FATAL] Ring 3 shell required to boot. Halting.");
+        kerror!(LogSubsys::Kernel, "Neither NEOINIT.NXE nor NEOSHELL.NXE found or valid.");
+        kerror!(LogSubsys::Kernel, "Ring 3 shell required to boot. Halting.");
         crate::hal::halt();
     }
 
@@ -709,8 +714,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     ) {
         Ok(pid) => pid,
         Err(e) => {
-            serial_println!("[FATAL] Failed to spawn NeoInit: {:?}", e);
-            serial_println!("[FATAL] Ring 3 init process required. Halting.");
+            kerror!(LogSubsys::Kernel, "Failed to spawn NeoInit: {:?}", e);
+            kerror!(LogSubsys::Kernel, "Ring 3 init process required. Halting.");
             crate::hal::halt();
         }
     };
@@ -735,8 +740,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     usermode::wait_for_process(pid);
 
     // If we get here, NeoInit exited (shouldn't happen)
-    serial_println!("[FATAL] NeoInit PID {} exited unexpectedly!", pid);
-    serial_println!("[FATAL] Ring 3 init process must not exit. Halting.");
+    kerror!(LogSubsys::Kernel, "NeoInit PID {} exited unexpectedly!", pid);
+    kerror!(LogSubsys::Kernel, "Ring 3 init process must not exit. Halting.");
     crate::hal::halt();
 }
 

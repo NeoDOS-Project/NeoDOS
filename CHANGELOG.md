@@ -4,6 +4,18 @@
 
 ## v0.50.0-dev — Unreleased
 
+### Added (Sistema de Logging Configurable)
+
+- **Módulo `log`** (`src/log/mod.rs`) — Sistema centralizado de registro de eventos con 5 niveles (ERROR, WARN, INFO, DEBUG, TRACE) y 46 subsistemas con filtrado independiente.
+  - **Macros:** `kerror!`, `kwarn!`, `kinfo!`, `kdebug!`, `ktrace!`, `klog_raw!` — disponibles en toda la crate via `#[macro_use] pub mod log;`.
+  - **Compile-time filtering:** `build.rs` lee variables de entorno (`LOG_DEFAULT`, `LOG_NET`, `LOG_DRIVER`, etc.) y genera constantes `BUILD_*_LEVEL`. El compilador elimina como dead code las ramas por debajo del umbral (zero-cost en release).
+  - **Runtime filtering:** `log::set_level(subsys, level)` / `log::reset_level(subsys)` via `AtomicU8` lock-free.
+  - **Formato:** `[TAG] mensaje\r\n` para INFO, `[TAG] NIVEL: mensaje\r\n` para el resto.
+- **`ktrace!` implementado** en rutas calientes: `schedule()`, `net_tick()`, NVMe SQ doorbell, ARP cache, ICMP echo, DNS cache, hot reload, demand paging, page splitting.
+- **~400 `serial_println!` migrados** a las nuevas macros en todos los subsistemas (net, scheduler, drivers, power, services, syscall, object, cm, kbd, virtio, timers, interrupts, exception, security, slab, elf, nxl, memory, usermode, watchdog, boot_benchmark, crash, arch/x64).
+- **`neodev.toml`** — Config file para NeoDev (VM: VirtualBox, 1 CPU, 512 MB, red bridge).
+- **`docs/logging.md`** — Especificacion completa del sistema de logging (arquitectura, niveles, subsistemas, API, buenas practicas, ejemplos, estado actual).
+
 ### Added (Driver Manager — carga selectiva de drivers)
 
 - **Driver Manager (`src/drivers/driver_manager.rs`)** — Sistema centralizado de carga de drivers basado en hardware detectado.
@@ -40,7 +52,7 @@
 
 ### Changed (Boot/init hardening — AUDIT-33)
 
-- **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `serial_println!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.
+- **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `kerror!()` / `kwarn!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.
 - **Registry tolerance**: New `cm::init::ensure_boot_defaults()` creates critical boot defaults (Language, DefaultShell, EnableVT, WaitForNetwork) if missing from empty/corrupted hive. `ensure_language_default()` now sets `en-US` if absent.
 - **Service fallback**: New `register_default_services()` registers built-in NeoInit service when registry is empty. `sm_init()` calls it when `sm_reg_load_all()` returns 0. `spawn_process()` returns `Result` instead of panicking.
 - **Tests added**: `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`, `boot_register_default_services` (665 total, up from 625).

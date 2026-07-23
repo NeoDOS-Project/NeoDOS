@@ -1,7 +1,6 @@
 #![allow(dead_code)]
-
-use crate::serial_println;
 use core::sync::atomic::{fence, Ordering};
+use crate::log::LogSubsys;
 
 struct NvmeInfo {
     bus: u8,
@@ -164,6 +163,7 @@ impl NvmeDriver {
     }
 
     fn ring_sq_db(&self, qid: u16, tail: u16) {
+        ktrace!(LogSubsys::Nvme, "SQ doorbell: qid={} tail={}", qid, tail);
         fence(Ordering::SeqCst);
         unsafe { self.sq_db(qid).write_volatile(tail as u32) };
     }
@@ -286,8 +286,7 @@ impl NvmeDriver {
                     let status_field = (w3 >> 16) as u16;
                     let phase = (status_field & 0x1) != 0;
                     let status = status_field >> 1;
-                    serial_println!("[NVMe] CQE[{}]: {:08x} {:08x} {:08x} {:08x} cid={} phase={} status={}",
-                        acq_head, w0, w1, w2, w3, cq_cid, phase, status);
+                    kdebug!(LogSubsys::Nvme, "CQE[{}]: {:08x} {:08x} {:08x} {:08x} cid={} phase={} status={}", acq_head, w0, w1, w2, w3, cq_cid, phase, status);
                     let new_head = (acq_head + 1) % ACQ_ENTRIES;
                     return Ok((w0, status, new_head, phase));
                 }
@@ -303,13 +302,11 @@ impl NvmeDriver {
             let dump_w1 = cqe32.add(1).read_volatile();
             let dump_w2 = cqe32.add(2).read_volatile();
             let dump_w3 = cqe32.add(3).read_volatile();
-            serial_println!("[NVMe] ACQ[0]: {:08x} {:08x} {:08x} {:08x}",
-                dump_w0, dump_w1, dump_w2, dump_w3);
+            kdebug!(LogSubsys::Nvme, "ACQ[0]: {:08x} {:08x} {:08x} {:08x}", dump_w0, dump_w1, dump_w2, dump_w3);
             for acq_i in 0..4 {
                 let acq_pos = acq as *mut u32;
                 let off = acq_i * 4;
-                serial_println!("[NVMe] ACQ[{}]: {:08x} {:08x} {:08x} {:08x}",
-                    acq_i,
+                kdebug!(LogSubsys::Nvme, "ACQ[{}]: {:08x} {:08x} {:08x} {:08x}", acq_i,
                     acq_pos.add(off).read_volatile(),
                     acq_pos.add(off + 1).read_volatile(),
                     acq_pos.add(off + 2).read_volatile() ,
@@ -317,8 +314,7 @@ impl NvmeDriver {
             }
             // Dump ASQ entry 0 and 1
             let sqe = asq as *mut u32;
-            serial_println!("[NVMe] ASQ[0]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                sqe.add(0).read_volatile(), sqe.add(1).read_volatile(),
+            kdebug!(LogSubsys::Nvme, "ASQ[0]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}", sqe.add(0).read_volatile(), sqe.add(1).read_volatile(),
                 sqe.add(2).read_volatile(), sqe.add(3).read_volatile(),
                 sqe.add(4).read_volatile(), sqe.add(5).read_volatile(),
                 sqe.add(6).read_volatile(), sqe.add(7).read_volatile(),
@@ -327,8 +323,7 @@ impl NvmeDriver {
                 sqe.add(12).read_volatile(), sqe.add(13).read_volatile(),
                 sqe.add(14).read_volatile(), sqe.add(15).read_volatile());
             let sqe1 = (asq + 64) as *mut u32;
-            serial_println!("[NVMe] ASQ[1]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                sqe1.add(0).read_volatile(), sqe1.add(1).read_volatile(),
+            kdebug!(LogSubsys::Nvme, "ASQ[1]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}", sqe1.add(0).read_volatile(), sqe1.add(1).read_volatile(),
                 sqe1.add(2).read_volatile(), sqe1.add(3).read_volatile(),
                 sqe1.add(4).read_volatile(), sqe1.add(5).read_volatile(),
                 sqe1.add(6).read_volatile(), sqe1.add(7).read_volatile(),
@@ -337,8 +332,7 @@ impl NvmeDriver {
                 sqe1.add(12).read_volatile(), sqe1.add(13).read_volatile(),
                 sqe1.add(14).read_volatile(), sqe1.add(15).read_volatile());
             let sqe2 = (asq + 128) as *mut u32;
-            serial_println!("[NVMe] ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                sqe2.add(0).read_volatile(), sqe2.add(1).read_volatile(),
+            kdebug!(LogSubsys::Nvme, "ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}", sqe2.add(0).read_volatile(), sqe2.add(1).read_volatile(),
                 sqe2.add(2).read_volatile(), sqe2.add(3).read_volatile(),
                 sqe2.add(4).read_volatile(), sqe2.add(5).read_volatile(),
                 sqe2.add(6).read_volatile(), sqe2.add(7).read_volatile(),
@@ -362,14 +356,13 @@ impl NvmeDriver {
                 self.acq_phase = new_phase;
                 self.ring_cq_db(0, self.acq_head);
                 if status != 0 {
-                    serial_println!("[NVMe] CMD err: op=0x{:x} st=0x{:04x}", opcode, status);
+                    kerror!(LogSubsys::Nvme, "CMD err: op=0x{:x} st=0x{:04x}", opcode, status);
                     return Err(status);
                 }
                 Ok(cdw0)
             }
             Err(e) => {
-                serial_println!("[NVMe] CMD timeout: op=0x{:x} nsid={} cdw10={} prp1=0x{:x}",
-                    opcode, nsid, cdw10, prp1);
+                kerror!(LogSubsys::Nvme, "CMD timeout: op=0x{:x} nsid={} cdw10={} prp1=0x{:x}", opcode, nsid, cdw10, prp1);
                 Err(e)
             }
         }
@@ -381,7 +374,7 @@ impl NvmeDriver {
             None => return [None,],
         };
 
-        serial_println!("[NVMe] Controller found: bar0=0x{:016X}", info.bar0_phys);
+        kinfo!(LogSubsys::Nvme, "Controller found: bar0=0x{:016X}", info.bar0_phys);
         nvme_enable(&info);
         let bar0_phys = info.bar0_phys;
 
@@ -390,7 +383,7 @@ impl NvmeDriver {
         use x86_64::structures::paging::PageTableFlags;
         let mmio_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;
         if !crate::arch::x64::paging::map_mmio_4k(NVME_MMIO_VIRT, bar0_phys, bar_size, mmio_flags) {
-            serial_println!("[NVMe] Failed to map BAR");
+            kerror!(LogSubsys::Nvme, "Failed to map BAR");
             return [None,];
         }
         let bar = NVME_MMIO_VIRT;
@@ -399,20 +392,20 @@ impl NvmeDriver {
         let dstrd = ((cap >> 32) & 0xF) as u8;
         let to = ((cap >> 24) & 0xFF) as u32;
         let timeout_ms = core::cmp::max(to * 500, 2000);
-        serial_println!("[NVMe] CAP=0x{:016X} DSTRD={} TO={}", cap, dstrd, to);
+        kinfo!(LogSubsys::Nvme, "CAP=0x{:016X} DSTRD={} TO={}", cap, dstrd, to);
 
         if (cap & (1 << 43)) == 0 {
-            serial_println!("[NVMe] NVM CSS not supported");
+            kwarn!(LogSubsys::Nvme, "NVM CSS not supported");
             return [None,];
         }
 
         // Reset
-        serial_println!("[NVMe] Resetting...");
+        kinfo!(LogSubsys::Nvme, "Resetting...");
         unsafe { (bar as *mut u32).add(0x14 / 4).write_volatile(0u32) };
         fence(Ordering::SeqCst);
         crate::hal::hlt_once();
         if !Self::wait_rdy_raw(bar, timeout_ms, 0) {
-            serial_println!("[NVMe] Reset timeout");
+            kerror!(LogSubsys::Nvme, "Reset timeout");
             return [None,];
         }
 
@@ -434,8 +427,7 @@ impl NvmeDriver {
         let test_dw0 = unsafe { test_ptr.add(0).read_volatile() };
         let test_dw2 = unsafe { test_ptr.add(2).read_volatile() };
         let test_dw3 = unsafe { test_ptr.add(3).read_volatile() };
-        serial_println!("[NVMe] ACQ[0] after zero: {:08x} {:08x} {:08x} {:08x}",
-            test_dw0, unsafe { test_ptr.add(1).read_volatile() }, test_dw2, test_dw3);
+        kdebug!(LogSubsys::Nvme, "ACQ[0] after zero: {:08x} {:08x} {:08x} {:08x}", test_dw0, unsafe { test_ptr.add(1).read_volatile() }, test_dw2, test_dw3);
 
         // Program registers
         unsafe {
@@ -456,13 +448,13 @@ impl NvmeDriver {
         fence(Ordering::SeqCst);
         crate::hal::hlt_once();
         if !Self::wait_rdy_raw(bar, timeout_ms, CSTS_RDY) {
-            serial_println!("[NVMe] Enable timeout");
+            kerror!(LogSubsys::Nvme, "Enable timeout");
             Self::free_contig(asq_phys, asq_sz); Self::free_contig(acq_phys, acq_sz); Self::free_contig(dma_phys, dma_sz);
             return [None,];
         }
         let cc_after = unsafe { (bar as *const u32).add(0x14 / 4).read_volatile() };
-        serial_println!("[NVMe] CC after enable: 0x{:08x} (expected 0x{:08x})", cc_after, cc_val);
-        serial_println!("[NVMe] Enabled ASQ=0x{:x} ACQ=0x{:x} DMA=0x{:x}", asq_phys, acq_phys, dma_phys);
+        kinfo!(LogSubsys::Nvme, "CC after enable: 0x{:08x} (expected 0x{:08x})", cc_after, cc_val);
+        kinfo!(LogSubsys::Nvme, "Enabled ASQ=0x{:x} ACQ=0x{:x} DMA=0x{:x}", asq_phys, acq_phys, dma_phys);
 
         let mut drv = NvmeDriver {
             regs_virt: bar, dstrd, timeout_ms,
@@ -477,16 +469,15 @@ impl NvmeDriver {
         };
 
         // Identify Controller
-        serial_println!("[NVMe] Identify controller...");
+        kinfo!(LogSubsys::Nvme, "Identify controller...");
         Self::zero_phys(dma_phys, 4096);
         if drv.admin_cmd(ADMIN_IDENTIFY, 0, 1, 0, dma_phys).is_err() { // CNS=1: Identify Controller
-            serial_println!("[NVMe] Identify controller failed");
+            kerror!(LogSubsys::Nvme, "Identify controller failed");
             return [None,];
         }
         // Dump ASQ after SQE write
         let asq8 = drv.asq_phys as *const u8;
-        serial_println!("[NVMe] ASQ[0..64]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}",
-            unsafe { asq8.add(0).read_volatile() }, unsafe { asq8.add(1).read_volatile() },
+        kdebug!(LogSubsys::Nvme, "ASQ[0..64]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}", unsafe { asq8.add(0).read_volatile() }, unsafe { asq8.add(1).read_volatile() },
             unsafe { asq8.add(2).read_volatile() }, unsafe { asq8.add(3).read_volatile() },
             unsafe { asq8.add(4).read_volatile() }, unsafe { asq8.add(5).read_volatile() },
             unsafe { asq8.add(6).read_volatile() }, unsafe { asq8.add(7).read_volatile() },
@@ -525,9 +516,8 @@ impl NvmeDriver {
         let mn = core::str::from_utf8(&ctrl.model()[..40]).unwrap_or("?");
         // Dump DMA[0-64] header + DMA[384-400] around NN field
         let dma8 = dma_phys as *const u8;
-        serial_println!("[NVMe] {} {} (ns={})", sn.trim_end(), mn.trim_end(), nn);
-        serial_println!("[NVMe] DMA[0..64]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}",
-            unsafe { dma8.add(0).read_volatile() }, unsafe { dma8.add(1).read_volatile() },
+        kinfo!(LogSubsys::Nvme, "{} {} (ns={})", sn.trim_end(), mn.trim_end(), nn);
+        kdebug!(LogSubsys::Nvme, "DMA[0..64]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}", unsafe { dma8.add(0).read_volatile() }, unsafe { dma8.add(1).read_volatile() },
             unsafe { dma8.add(2).read_volatile() }, unsafe { dma8.add(3).read_volatile() },
             unsafe { dma8.add(4).read_volatile() }, unsafe { dma8.add(5).read_volatile() },
             unsafe { dma8.add(6).read_volatile() }, unsafe { dma8.add(7).read_volatile() },
@@ -560,8 +550,7 @@ impl NvmeDriver {
             unsafe { dma8.add(60).read_volatile() }, unsafe { dma8.add(61).read_volatile() },
             unsafe { dma8.add(62).read_volatile() }, unsafe { dma8.add(63).read_volatile() });
         // Dump DMA[380-400] around NN field
-        serial_println!("[NVMe] DMA[380-399]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}",
-            unsafe { dma8.add(380).read_volatile() }, unsafe { dma8.add(381).read_volatile() },
+        kdebug!(LogSubsys::Nvme, "DMA[380-399]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}", unsafe { dma8.add(380).read_volatile() }, unsafe { dma8.add(381).read_volatile() },
             unsafe { dma8.add(382).read_volatile() }, unsafe { dma8.add(383).read_volatile() },
             unsafe { dma8.add(384).read_volatile() }, unsafe { dma8.add(385).read_volatile() },
             unsafe { dma8.add(386).read_volatile() }, unsafe { dma8.add(387).read_volatile() },
@@ -573,16 +562,15 @@ impl NvmeDriver {
             unsafe { dma8.add(398).read_volatile() }, unsafe { dma8.add(399).read_volatile() });
         // Try CNS=2: Active Namespace ID List
         Self::zero_phys(dma_phys, 4096);
-        serial_println!("[NVMe] Identify active NSID list (CNS=2)...");
+        kinfo!(LogSubsys::Nvme, "Identify active NSID list (CNS=2)...");
         if drv.admin_cmd(ADMIN_IDENTIFY, 0, 2, 0, dma_phys).is_ok() {
             let nsid0 = unsafe { (dma_phys as *const u32).read_volatile() };
-            serial_println!("[NVMe] Active NSID[0]={}", nsid0);
+            kinfo!(LogSubsys::Nvme, "Active NSID[0]={}", nsid0);
         } else {
-            serial_println!("[NVMe] CNS=2 failed");
+            kerror!(LogSubsys::Nvme, "CNS=2 failed");
         }
         // Dump DMA[64-128] around FR and RAB
-        serial_println!("[NVMe] DMA[64-95]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}",
-            unsafe { dma8.add(64).read_volatile() }, unsafe { dma8.add(65).read_volatile() },
+        kdebug!(LogSubsys::Nvme, "DMA[64-95]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}", unsafe { dma8.add(64).read_volatile() }, unsafe { dma8.add(65).read_volatile() },
             unsafe { dma8.add(66).read_volatile() }, unsafe { dma8.add(67).read_volatile() },
             unsafe { dma8.add(68).read_volatile() }, unsafe { dma8.add(69).read_volatile() },
             unsafe { dma8.add(70).read_volatile() }, unsafe { dma8.add(71).read_volatile() },
@@ -599,8 +587,7 @@ impl NvmeDriver {
             unsafe { dma8.add(92).read_volatile() }, unsafe { dma8.add(93).read_volatile() },
             unsafe { dma8.add(94).read_volatile() }, unsafe { dma8.add(95).read_volatile() });
         // Dump DMA[200-264] around OACS and other fields
-        serial_println!("[NVMe] DMA[200-231]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}",
-            unsafe { dma8.add(200).read_volatile() }, unsafe { dma8.add(201).read_volatile() },
+        kdebug!(LogSubsys::Nvme, "DMA[200-231]: {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X} {:02X}{:02X}{:02X}{:02X}", unsafe { dma8.add(200).read_volatile() }, unsafe { dma8.add(201).read_volatile() },
             unsafe { dma8.add(202).read_volatile() }, unsafe { dma8.add(203).read_volatile() },
             unsafe { dma8.add(204).read_volatile() }, unsafe { dma8.add(205).read_volatile() },
             unsafe { dma8.add(206).read_volatile() }, unsafe { dma8.add(207).read_volatile() },
@@ -621,12 +608,11 @@ impl NvmeDriver {
 
         // Identify Namespace
         Self::zero_phys(dma_phys, 4096);
-        serial_println!("[NVMe] Identify ns {}...", ns_to_try);
+        kerror!(LogSubsys::Nvme, "Identify ns {}...", ns_to_try);
         if drv.admin_cmd(ADMIN_IDENTIFY, ns_to_try, 0, 0, dma_phys).is_err() {
             // Dump ASQ[2] after failure
             let sq_dbg = drv.asq_phys as *mut u32;
-            serial_println!("[NVMe] ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}",
-                unsafe { sq_dbg.add(32).read_volatile() }, unsafe { sq_dbg.add(33).read_volatile() },
+            kdebug!(LogSubsys::Nvme, "ASQ[2]: {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x} | {:08x} {:08x} {:08x} {:08x}", unsafe { sq_dbg.add(32).read_volatile() }, unsafe { sq_dbg.add(33).read_volatile() },
                 unsafe { sq_dbg.add(32+2).read_volatile() }, unsafe { sq_dbg.add(32+3).read_volatile() },
                 unsafe { sq_dbg.add(32+4).read_volatile() }, unsafe { sq_dbg.add(32+5).read_volatile() },
                 unsafe { sq_dbg.add(32+6).read_volatile() }, unsafe { sq_dbg.add(32+7).read_volatile() },
@@ -634,7 +620,7 @@ impl NvmeDriver {
                 unsafe { sq_dbg.add(32+10).read_volatile() }, unsafe { sq_dbg.add(32+11).read_volatile() },
                 unsafe { sq_dbg.add(32+12).read_volatile() }, unsafe { sq_dbg.add(32+13).read_volatile() },
                 unsafe { sq_dbg.add(32+14).read_volatile() }, unsafe { sq_dbg.add(32+15).read_volatile() });
-            serial_println!("[NVMe] Identify ns {} failed", ns_to_try);
+            kerror!(LogSubsys::Nvme, "Identify ns {} failed", ns_to_try);
             return [None,];
         }
         let ns = unsafe { &*(dma_phys as *const IdentifyNs) };
@@ -642,20 +628,17 @@ impl NvmeDriver {
         let flbas = ns.flbas();
         let lbads = ns.lbads();
         // Dump LBAF entries
-        serial_println!("[NVMe] NS data: nsze={} flbas={} lbads={} ncap={} nuse={}",
-            nsze, flbas, lbads, u64::from_le_bytes(ns.data[8..16].try_into().unwrap()),
+        kinfo!(LogSubsys::Nvme, "NS data: nsze={} flbas={} lbads={} ncap={} nuse={}", nsze, flbas, lbads, u64::from_le_bytes(ns.data[8..16].try_into().unwrap()),
             u64::from_le_bytes(ns.data[16..24].try_into().unwrap()));
-        serial_println!("[NVMe] NS data: nsze={} flbas={} lbads={} ncap={} nuse={}",
-            nsze, flbas, lbads, u64::from_le_bytes(ns.data[8..16].try_into().unwrap()),
+        kinfo!(LogSubsys::Nvme, "NS data: nsze={} flbas={} lbads={} ncap={} nuse={}", nsze, flbas, lbads, u64::from_le_bytes(ns.data[8..16].try_into().unwrap()),
             u64::from_le_bytes(ns.data[16..24].try_into().unwrap()));
         for i in 0..4 {
             let off = 128 + i * 4;
-            serial_println!("[NVMe] LBAF[{}]: {:02X} {:02X} {:02X} {:02X}", i,
+            kdebug!(LogSubsys::Nvme, "LBAF[{}]: {:02X} {:02X} {:02X} {:02X}", i,
                 ns.data[off], ns.data[off+1], ns.data[off+2], ns.data[off+3]);
         }
-        serial_println!("[NVMe] RAW[27]={:02X} RAW[26]={:02X} RAW[28]={:02X} RAW[29]={:02X} RAW[30]={:02X}",
-            ns.data[27], ns.data[26], ns.data[28], ns.data[29], ns.data[30]);
-        serial_println!("[NVMe] NS {}: {} sectors, LBA data size={} bytes", ns_to_try, nsze, 1u64 << lbads);
+        kdebug!(LogSubsys::Nvme, "RAW[27]={:02X} RAW[26]={:02X} RAW[28]={:02X} RAW[29]={:02X} RAW[30]={:02X}", ns.data[27], ns.data[26], ns.data[28], ns.data[29], ns.data[30]);
+        kinfo!(LogSubsys::Nvme, "NS {}: {} sectors, LBA data size={} bytes", ns_to_try, nsze, 1u64 << lbads);
 
         // Create I/O Completion Queue
         let io_cq_id = 1;
@@ -666,9 +649,9 @@ impl NvmeDriver {
         // QEMU expects cqid in CDW10[15:0], qsize in CDW10[31:16] (swapped vs spec)
         let cq_cdw10 = (io_cq_id as u32) | ((IOCQ_ENTRIES as u32 - 1) << 16);
         let cq_cdw11 = 1u32; // PC=1
-        serial_println!("[NVMe] Create IOCQ {}...", io_cq_id);
+        kinfo!(LogSubsys::Nvme, "Create IOCQ {}...", io_cq_id);
         if drv.admin_cmd(ADMIN_CREATE_IO_CQ, 0, cq_cdw10, cq_cdw11, iocq_phys).is_err() {
-            serial_println!("[NVMe] Create IOCQ failed");
+            kerror!(LogSubsys::Nvme, "Create IOCQ failed");
             Self::free_contig(iocq_phys, iocq_sz);
             return [None,];
         }
@@ -684,9 +667,9 @@ impl NvmeDriver {
         // QEMU expects sqid in CDW10[15:0], qsize in CDW10[31:16] (swapped vs spec)
         let sq_cdw10 = (io_sq_id as u32) | ((IOSQ_ENTRIES as u32 - 1) << 16);
         let sq_cdw11 = (io_cq_id as u32) << 16 | 1; // PC=1, CQID=1
-        serial_println!("[NVMe] Create IOSQ {}...", io_sq_id);
+        kinfo!(LogSubsys::Nvme, "Create IOSQ {}...", io_sq_id);
         if drv.admin_cmd(ADMIN_CREATE_IO_SQ, 0, sq_cdw10, sq_cdw11, iosq_phys).is_err() {
-            serial_println!("[NVMe] Create IOSQ failed");
+            kerror!(LogSubsys::Nvme, "Create IOSQ failed");
             drv.admin_cmd(ADMIN_DELETE_IO_CQ, 0, io_cq_id as u32, 0, 0).ok();
             Self::free_contig(iocq_phys, iocq_sz);
             Self::free_contig(iosq_phys, iosq_sz);
@@ -698,14 +681,13 @@ impl NvmeDriver {
         drv.ns_sectors = nsze;
         drv.lbads = lbads;
 
-        serial_println!("[NVMe] Ready: {} sectors x {}B, QID {}→{}",
-            nsze, 1u64 << lbads, io_sq_id, io_cq_id);
+        kinfo!(LogSubsys::Nvme, "Ready: {} sectors x {}B, QID {}→{}", nsze, 1u64 << lbads, io_sq_id, io_cq_id);
 
         if let Ok(vec) = crate::interrupts::msi::msi_request(drv.bus, drv.dev, drv.func, nvme_irq_handler) {
             drv.msi_vector = Some(vec);
-            serial_println!("[NVMe] MSI vector {} configured", vec);
+            kinfo!(LogSubsys::Nvme, "MSI vector {} configured", vec);
         } else {
-            serial_println!("[NVMe] Warning: Failed to configure MSI");
+            kerror!(LogSubsys::Nvme, "Warning: Failed to configure MSI");
         }
 
         [Some(drv)]
@@ -800,7 +782,7 @@ impl NvmeDriver {
             }
             crate::hal::hlt_once();
         }
-        serial_println!("[NVMe] IOCQ timeout op={} head={} idx={}", opcode, self.iocq_head, idx);
+        kerror!(LogSubsys::Nvme, "IOCQ timeout op={} head={} idx={}", opcode, self.iocq_head, idx);
         Err(0xFFFF)
     }
 }
@@ -836,5 +818,5 @@ impl Drop for NvmeDriver {
 fn nvme_irq_handler(vector: u8) {
     // Basic MSI handler for NVMe.
     // Right now the driver polls synchronously, so we just acknowledge the interrupt.
-    crate::serial_println!("[NVMe] MSI interrupt fired on vector {}", vector);
+    kinfo!(LogSubsys::Nvme, "MSI interrupt fired on vector {}", vector);
 }

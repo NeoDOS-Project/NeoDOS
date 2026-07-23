@@ -4,6 +4,7 @@ pub mod layout;
 use core::mem::size_of;
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::log::LogSubsys;
 
 const PAGE_SIZE: u64 = 4096;
 
@@ -184,8 +185,8 @@ pub fn init(boot_info: &crate::BootInfo) {
             // The bitmap is essential — fallback would mean no memory tracking.
             // This virtually never happens with realistic memory maps having
             // at least a few MB of free conventional memory.
-            crate::serial_println!(
-                "[MEM] WARNING: Could not allocate {} pages for dynamic bitmap, limiting to 4 GB tracking",
+            kwarn!(LogSubsys::Memory,
+                "Could not allocate {} pages for dynamic bitmap, limiting to 4 GB tracking",
                 bitmap_pages
             );
             bitmap_words = crate::memory::buddy::LEGACY_BITMAP_WORDS;

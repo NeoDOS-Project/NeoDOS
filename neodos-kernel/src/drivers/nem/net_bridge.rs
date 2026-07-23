@@ -2,8 +2,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use alloc::boxed::Box;
 use crate::net::nic::{NetworkInterface, nic_register, nic_unregister};
 use crate::net::types::{MacAddr, Ipv4Addr};
-use crate::serial_println;
-
+use crate::log::LogSubsys;
 static NEXT_NEM_NIC_ID: AtomicU32 = AtomicU32::new(0x8000_0000);
 
 #[repr(C)]
@@ -102,7 +101,7 @@ pub unsafe extern "C" fn hst_register_network_device(
                 crate::drivers::hotreload::ResourceType::NetworkDevice,
                 nic_id,
             );
-            serial_println!("[NET-BRIDGE] Registered NEM NIC {} as id {}", inner_device_id, nic_id);
+            kinfo!(LogSubsys::Net, "Registered NEM NIC {} as id {}", inner_device_id, nic_id);
             nic_id as i32
         }
         None => -1,
@@ -121,6 +120,6 @@ pub unsafe extern "C" fn hst_unregister_network_device(nic_id: i32) -> i32 {
         );
     }
     nic_unregister(nic_id as u32);
-    serial_println!("[NET-BRIDGE] Unregistered NEM NIC id={}", nic_id);
+    kinfo!(LogSubsys::Net, "Unregistered NEM NIC id={}", nic_id);
     0
 }

@@ -24,7 +24,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use lazy_static::lazy_static;
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
 pub use table::{Registers, SyscallFn, MAX_SYSCALL};
@@ -201,7 +201,7 @@ pub fn validate_abi() {
     assert!((err_to_u64(SyscallError::NoEnt) as i64) < 0);
     assert!((err_to_u64(SyscallError::Perm) as i64) < 0);
 
-    crate::serial_println!("[SYS] SSDT validated ({} assigned syscalls)", ASSIGNED.len());
+    kinfo!(LogSubsys::Syscall, "SSDT validated ({} assigned syscalls)", ASSIGNED.len());
 }
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
@@ -240,7 +240,7 @@ pub extern "C" fn is_thread_terminated() -> u64 {
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
     if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
-        crate::serial_println!("[SYS] resched called from timer IRQ context!");
+        kdebug!(LogSubsys::Syscall, "resched called from timer IRQ context!");
     }
 
     let has_non_idle = crate::hal::without_interrupts(|| {
@@ -263,7 +263,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 if k.state == ThreadState::Running {
                     k.state = ThreadState::Ready;
                 } else if cfg!(feature = "validation") {
-                    crate::serial_println!("[SYS] Context switch from non-Running state: {:?}", k.state);
+                    kdebug!(LogSubsys::Syscall, "Context switch from non-Running state: {:?}", k.state);
                 }
             }
         }
@@ -509,18 +509,18 @@ pub(crate) fn is_current_admin() -> bool {
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u64, r9: u64) -> u64 {
     if rax == 40 || rax == 43 {
-        serial_println!("[SYS] syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
+        kdebug!(LogSubsys::Syscall, "syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
     }
     crate::trace_syscall!(rax, rbx, rcx, rdx);
 
     if rax >= 256 {
-        serial_println!("[SYS] INVALID syscall number: {}", rax);
+        kwarn!(LogSubsys::Syscall, "INVALID syscall number: {}", rax);
         return err_to_u64(SyscallError::NoSys);
     }
 
     let is_admin = is_current_admin();
     if let Err(e) = check_syscall_permission(rax, is_admin) {
-        serial_println!("[SYS] syscall {} denied (admin={})", rax, is_admin);
+        kwarn!(LogSubsys::Syscall, "syscall {} denied (admin={})", rax, is_admin);
         return e;
     }
 
@@ -530,7 +530,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
             handler(regs)
         }
         None => {
-            serial_println!("[SYS] No handler for syscall {}", rax);
+            kerror!(LogSubsys::Syscall, "No handler for syscall {}", rax);
             err_to_u64(SyscallError::NoSys)
         }
     }

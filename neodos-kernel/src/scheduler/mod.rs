@@ -15,6 +15,7 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::object::{self, ObType, ObId};
 use crate::security::token::Token;
+use crate::log::LogSubsys;
 
 // ── Constants ──
 
@@ -541,17 +542,17 @@ impl Scheduler {
                 let ns_path = alloc::format!("\\Process\\{}", pid);
                 match crate::object::namespace::ob_insert_object(&ns_path, ob_id) {
                     Ok(_) => {
-                        crate::serial_println!("[SCHED] PID {} -> \\Process\\{} OK (ob_id={})", pid, pid, ob_id);
+                        kinfo!(LogSubsys::Sched, "PID {} -> \\Process\\{} OK (ob_id={})", pid, pid, ob_id);
                         eproc.ob_id = Some(ob_id);
                     }
                     Err(e) => {
-                        crate::serial_println!("[SCHED] PID {} -> \\Process\\{} FAILED: {}", pid, pid, e);
+                        kerror!(LogSubsys::Sched, "PID {} -> \\Process\\{} FAILED: {}", pid, pid, e);
                         let _ = object::ob_close_object(ob_id);
                     }
                 }
             }
             Err(e) => {
-                crate::serial_println!("[SCHED] PID {} ob_create FAILED: {:?}", pid, e);
+                kerror!(LogSubsys::Sched, "PID {} ob_create FAILED: {:?}", pid, e);
             }
         }
 
@@ -955,6 +956,7 @@ impl Scheduler {
     /// Schedule the next thread.  Tries per-CPU run queue first, falls back
     /// to global priority scan.  Returns a `*mut Kthread` for RSP/stack access.
     pub fn schedule(&mut self) -> *mut Kthread {
+        ktrace!(LogSubsys::Sched, "schedule entry");
         // Count every schedule decision, not just global-scan fallbacks.
         self.schedule_count += 1;
 
@@ -1050,7 +1052,7 @@ impl Scheduler {
             self.apply_aging();
         }
 
-        let tid = self.current_tid;
+        let _tid = self.current_tid;
 
         let mut needs_resched = false;
         if let Some(k) = self.current_kthread_mut() {

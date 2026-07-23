@@ -5,7 +5,7 @@ use core::sync::atomic::{fence, Ordering};
 use crate::drivers::pci::pci_config_read_word;
 use crate::drivers::pci::pci_config_read_dword;
 use crate::drivers::pci::pci_config_write_word;
-use crate::serial_println;
+use crate::log::LogSubsys;
 
 
 // ── Legacy I/O register offsets ──────────────────────────────────────
@@ -94,7 +94,7 @@ impl VirtioTransport {
         if bar0 & 1 != 0 {
             let io_base = (bar0 & 0xFFFC) as u16;
             if io_base == 0 { return None; }
-            serial_println!("[VIO] Legacy I/O at 0x{:04x}", io_base);
+            kinfo!(LogSubsys::Virtio, "Legacy I/O at 0x{:04x}", io_base);
             return Some(VirtioTransport::Legacy { io_base });
         }
         // MMIO BAR not supported

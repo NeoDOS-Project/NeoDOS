@@ -4,11 +4,12 @@ use alloc::string::ToString;
 use alloc::collections::BTreeMap;
 use crate::drivers::device::{DeviceInfo, DeviceRegistry, scan_all_devices};
 use crate::drivers::manifest::{self, DriverDescriptor};
-use crate::nem::{self, DriverCategory, NEM_API_VERSION, ABI_MIN_VALID, ABI_TARGET, ABI_MAX_VALID};
+use crate::nem::{self, NEM_API_VERSION};
 use crate::drivers::nem::v3loader;
 use crate::drivers::driver_runtime::{self, DriverState};
 use crate::eventbus::{EVENT_KEYBOARD_INPUT, EVENT_KEYB_LAYOUT, EVENT_MOUSE_INPUT};
 use crate::eventbus::{EVENT_SERIAL_DATA, EVENT_RTC_READ, EVENT_SHUTDOWN};
+use crate::log::LogSubsys;
 
 #[derive(Debug, Clone)]
 pub struct LoadedDriverInfo {
@@ -38,7 +39,7 @@ impl DriverManager {
     }
 
     pub fn init(&mut self) {
-        crate::serial_println!("[DRVMGR] === Driver Manager v1.0 ===");
+        kinfo!(LogSubsys::Driver, "=== Driver Manager v1.0 ===");
 
         self.discover_devices();
         self.scan_available_drivers();
@@ -50,21 +51,20 @@ impl DriverManager {
     }
 
     fn discover_devices(&mut self) {
-        crate::serial_println!("[DRVMGR] Phase 1: Device Discovery");
+        kinfo!(LogSubsys::Driver, "Phase 1: Device Discovery");
         self.device_registry = scan_all_devices();
-        crate::serial_println!("[DRVMGR]   {} device(s) found on PCI bus",
-            self.device_registry.count());
+        kinfo!(LogSubsys::Driver, "{} device(s) found on PCI bus", self.device_registry.count());
     }
 
     fn scan_available_drivers(&mut self) {
-        crate::serial_println!("[DRVMGR] Phase 2: Scanning available NEM drivers");
+        kinfo!(LogSubsys::Driver, "Phase 2: Scanning available NEM drivers");
         let files = super::boot_loader::driver_scan("C:\\System\\Drivers");
         self.available_nem_files = files;
-        crate::serial_println!("[DRVMGR]   {} NEM driver(s) available", self.available_nem_files.len());
+        kinfo!(LogSubsys::Driver, "{} NEM driver(s) available", self.available_nem_files.len());
     }
 
     fn match_devices_to_drivers(&mut self) {
-        crate::serial_println!("[DRVMGR] Phase 3: Matching devices to drivers");
+        kinfo!(LogSubsys::Driver, "Phase 3: Matching devices to drivers");
         let mut used_descriptors: Vec<String> = Vec::new();
         let mut matched_device_indices: Vec<usize> = Vec::new();
 
@@ -84,9 +84,7 @@ impl DriverManager {
             if let Some(desc) = best {
                 let name_upper = desc.name.to_ascii_uppercase();
                 if !used_descriptors.contains(&name_upper) {
-                    crate::serial_println!(
-                        "[DRVMGR]   MATCH: {} -> driver '{}' (v{:04x}:{:04x}, class={:?})",
-                        format_pci_location(dev),
+                    kinfo!(LogSubsys::Driver, "MATCH: {} -> driver '{}' (v{:04x}:{:04x}, class={:?})", format_pci_location(dev),
                         desc.name,
                         dev.vendor_id, dev.device_id,
                         dev.class,
@@ -135,8 +133,7 @@ impl DriverManager {
             .cloned()
             .collect();
 
-        crate::serial_println!("[DRVMGR]   {} device(s) matched, {} unmatched",
-            matched_count, self.unmatched_devices.len());
+        kinfo!(LogSubsys::Driver, "{} device(s) matched, {} unmatched", matched_count, self.unmatched_devices.len());
     }
 
     fn collect_platform_drivers(&mut self) {
@@ -148,9 +145,7 @@ impl DriverManager {
             if self.matched_drivers.iter().any(|(d, _)| d.name.to_ascii_uppercase() == name_upper) {
                 continue;
             }
-            crate::serial_println!(
-                "[DRVMGR]   PLATFORM: driver '{}' (class={:?})",
-                desc.name, desc.device_class,
+            kinfo!(LogSubsys::Driver, "PLATFORM: driver '{}' (class={:?})", desc.name, desc.device_class,
             );
             self.matched_drivers.push((
                 DriverDescriptor {
@@ -169,30 +164,24 @@ impl DriverManager {
     }
 
     fn print_discovery_summary(&self) {
-        crate::serial_println!("[DRVMGR] === Discovery Summary ===");
-        crate::serial_println!("[DRVMGR]   PCI devices found: {}", self.device_registry.count());
-        crate::serial_println!("[DRVMGR]   Matched driver(s): {}", self.matched_drivers.len());
-        crate::serial_println!("[DRVMGR]   Unmatched device(s): {}", self.unmatched_devices.len());
+        kinfo!(LogSubsys::Driver, "=== Discovery Summary ===");
+        kinfo!(LogSubsys::Driver, "PCI devices found: {}", self.device_registry.count());
+        kinfo!(LogSubsys::Driver, "Matched driver(s): {}", self.matched_drivers.len());
+        kinfo!(LogSubsys::Driver, "Unmatched device(s): {}", self.unmatched_devices.len());
 
         for (desc, devs) in &self.matched_drivers {
-            crate::serial_print!("[DRVMGR]   '{}' -> ", desc.name);
-            for (i, d) in devs.iter().enumerate() {
-                if i > 0 { crate::serial_print!(", "); }
-                crate::serial_print!("{}", format_pci_location(d));
-            }
-            crate::serial_println!();
+            let dev_list: Vec<String> = devs.iter().map(|d| format_pci_location(d)).collect();
+            kinfo!(LogSubsys::Driver, "  '{}' -> {}", desc.name, dev_list.join(", "));
         }
 
         for d in &self.unmatched_devices {
-            crate::serial_println!(
-                "[DRVMGR]   UNMATCHED: {} (v{:04x}:d{:04x} class={:?})",
-                format_pci_location(d), d.vendor_id, d.device_id, d.class
+            kinfo!(LogSubsys::Driver, "UNMATCHED: {} (v{:04x}:d{:04x} class={:?})", format_pci_location(d), d.vendor_id, d.device_id, d.class
             );
         }
     }
 
     fn load_matched_drivers(&mut self) {
-        crate::serial_println!("[DRVMGR] Phase 4: Loading matched drivers");
+        kinfo!(LogSubsys::Driver, "Phase 4: Loading matched drivers");
 
         let mut all_nem_data: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         for file in &self.available_nem_files {
@@ -209,7 +198,7 @@ impl DriverManager {
             let data = match all_nem_data.get(&name_upper) {
                 Some(d) => d.clone(),
                 None => {
-                    crate::serial_println!("[DRVMGR]   SKIP '{}': NEM file not found", desc.name);
+                    kwarn!(LogSubsys::Driver, "SKIP '{}': NEM file not found", desc.name);
                     continue;
                 }
             };
@@ -217,7 +206,7 @@ impl DriverManager {
             let parsed = match nem::parse_nem_v3(&data) {
                 Some(p) => p,
                 None => {
-                    crate::serial_println!("[DRVMGR]   SKIP '{}': invalid NEM format", desc.name);
+                    kwarn!(LogSubsys::Driver, "SKIP '{}': invalid NEM format", desc.name);
                     continue;
                 }
             };
@@ -228,7 +217,7 @@ impl DriverManager {
             let load_result = match v3loader::load_nem_v3(&data) {
                 Ok(r) => r,
                 Err(e) => {
-                    crate::serial_println!("FAIL (load: {})", e);
+                    kerror!(LogSubsys::Driver, "FAIL (load: {})", e);
                     continue;
                 }
             };
@@ -317,24 +306,24 @@ impl DriverManager {
                                         driver_class: desc.device_class,
                                         bound_device,
                                     });
-                                    crate::serial_println!("ACTIVE");
+                                    kinfo!(LogSubsys::Driver, "ACTIVE");
                                 } else {
-                                    crate::serial_println!("CERT FAIL");
+                                    kerror!(LogSubsys::Driver, "CERT FAIL");
                                     driver_runtime::DRIVER_RUNTIME.lock()
                                         .set_error(id, driver_runtime::ERR_CERTIFICATION_FAILED, true);
                                 }
                             } else {
-                                crate::serial_println!("ACT FAIL");
+                                kerror!(LogSubsys::Driver, "ACT FAIL");
                                 driver_runtime::DRIVER_RUNTIME.lock()
                                     .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
                             }
                         } else {
-                            crate::serial_println!("BIND FAIL");
+                            kerror!(LogSubsys::Driver, "BIND FAIL");
                             driver_runtime::DRIVER_RUNTIME.lock()
                                 .set_error(id, driver_runtime::ERR_BIND_FAILED, true);
                         }
                     } else {
-                        crate::serial_println!("INIT FAIL");
+                        kerror!(LogSubsys::Driver, "INIT FAIL");
                         driver_runtime::DRIVER_RUNTIME.lock()
                             .set_error(id, driver_runtime::ERR_INIT_FAILED, true);
                     }
@@ -342,7 +331,7 @@ impl DriverManager {
                     unsafe { crate::drivers::nem::driver::clear_current_driver(); }
                 }
                 Err(e) => {
-                    crate::serial_println!("REG FAIL ({})", e);
+                    kerror!(LogSubsys::Driver, "REG FAIL ({})", e);
                 }
             }
         }
@@ -355,9 +344,7 @@ impl DriverManager {
         let faulted = rt.faulted_count();
         drop(rt);
 
-        crate::serial_println!(
-            "[DRVMGR] === Loading Summary: {} total, {} loaded, {} active, {} faulted ===",
-            total, self.loaded_drivers.len(), active, faulted
+        kinfo!(LogSubsys::Driver, "=== Loading Summary: {} total, {} loaded, {} active, {} faulted ===", total, self.loaded_drivers.len(), active, faulted
         );
     }
 

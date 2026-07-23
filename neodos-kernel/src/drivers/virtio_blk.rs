@@ -8,11 +8,11 @@
 use core::sync::atomic::{fence, Ordering};
 use crate::drivers::block::BlockDevice;
 use crate::irp::{self, IrpId, IrpOp};
-use crate::serial_println;
 use crate::memory;
 use crate::virtio::{self, BLK_T_IN, BLK_T_OUT, BLK_T_FLUSH, BLK_ACCEPTED_FEATURES, BLK_F_BLK_SIZE, BLK_F_FLUSH};
 use crate::virtio::transport::VirtioTransport;
 use crate::virtio::vring::{SplitVring, VRING_DESC_F_NEXT, VRING_DESC_F_WRITE};
+use crate::log::LogSubsys;
 
 const PAGE_SIZE_4K: u64 = 4096;
 const SECTOR_SIZE: u32 = 512;
@@ -68,14 +68,13 @@ impl VirtIoBlk {
     pub fn probe() -> Option<Self> {
         let (transport, bus, dev, func) = VirtioTransport::probe_block()?;
         let modern = transport.is_modern();
-        serial_println!("[VIO] Found at PCI {:02x}:{:02x}.{:01x} ({})",
-            bus, dev, func, if modern { "modern" } else { "legacy" });
+        kinfo!(LogSubsys::Virtio, "Found at PCI {:02x}:{:02x}.{:01x} ({})", bus, dev, func, if modern { "modern" } else { "legacy" });
 
         // Allocate contiguous pages for vring (QUEUE_SIZE=256 needs 3 pages, alloc 4)
         // QEMU expects the vring num to match its internal default (256).
         let queue_phys = Self::alloc_contig(2)?; // order 2 = 4 pages = 16 KB
         let dma_phys = Self::alloc_zeroed_page()?;
-        serial_println!("[VIO] queue=0x{:x} dma=0x{:x}", queue_phys, dma_phys);
+        kinfo!(LogSubsys::Virtio, "queue=0x{:x} dma=0x{:x}", queue_phys, dma_phys);
 
         let mut drv = VirtIoBlk {
             transport,
@@ -92,7 +91,7 @@ impl VirtIoBlk {
         let guest_features = match drv.transport.standard_init(BLK_ACCEPTED_FEATURES) {
             Ok(f) => f,
             Err(()) => {
-                serial_println!("[VIO] Init failed");
+                kerror!(LogSubsys::Virtio, "Init failed");
                 Self::free_contig(queue_phys, 2);
                 Self::free_page(dma_phys);
                 return None;
@@ -104,7 +103,7 @@ impl VirtIoBlk {
         // Read capacity
         drv.num_sectors = drv.transport.read_config64(0);
         if drv.num_sectors == 0 {
-            serial_println!("[VIO] Zero capacity");
+            kerror!(LogSubsys::Virtio, "Zero capacity");
             Self::free_contig(queue_phys, 2);
             Self::free_page(dma_phys);
             return None;
@@ -125,7 +124,7 @@ impl VirtIoBlk {
             QUEUE_SIZE,
         );
         if !ok {
-            serial_println!("[VIO] Queue setup failed");
+            kerror!(LogSubsys::Virtio, "Queue setup failed");
             Self::free_contig(queue_phys, 2);
             Self::free_page(dma_phys);
             return None;
@@ -134,7 +133,7 @@ impl VirtIoBlk {
         // DRIVER_OK
         drv.transport.finalize_init();
 
-        serial_println!("[VIO] Ready: {} sectors x {}B", drv.num_sectors, drv.block_size);
+        kinfo!(LogSubsys::Virtio, "Ready: {} sectors x {}B", drv.num_sectors, drv.block_size);
         Some(drv)
     }
 
@@ -222,7 +221,7 @@ impl VirtIoBlk {
             crate::hal::hlt_once();
         }
 
-        serial_println!("[VIO] I/O timeout type={} sector={}", type_, sector);
+        kerror!(LogSubsys::Virtio, "I/O timeout type={} sector={}", type_, sector);
         Err(())
     }
 }

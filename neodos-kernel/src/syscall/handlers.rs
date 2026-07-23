@@ -1,7 +1,7 @@
 //! Non-Ob syscall handlers — process, I/O, filesystem, memory, thread lifecycle.
 //! All functions are `pub(super)` for SSDT registration in `mod.rs`.
 
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 use crate::net::types::Ipv4Addr;
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
@@ -25,28 +25,29 @@ struct PollFd {
 pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
-        serial_println!("[EXIT] enter code={}", code);
+        kdebug!(LogSubsys::Syscall, "enter code={}", code);
+
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
         if tid > 0 {
-            serial_println!("[EXIT] tid={} start", tid);
+            kdebug!(LogSubsys::Syscall, "tid={} start", tid);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.state = ThreadState::Terminated;
             }
-            serial_println!("[EXIT] marked Terminated");
+            kdebug!(LogSubsys::Syscall, "marked Terminated");
             let pid = scheduler.current_pid();
-            serial_println!("[EXIT] pid={}", pid);
+            kdebug!(LogSubsys::Syscall, "pid={}", pid);
             if pid > 0 {
-                serial_println!("[EXIT] getting eproc");
+                kdebug!(LogSubsys::Syscall, "getting eproc");
                 let eproc = scheduler.current_eprocess_mut();
-                serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
+                kdebug!(LogSubsys::Syscall, "got eproc: {:?}", eproc.is_some());
                 if let Some(ep) = eproc {
                     ep.thread_count = ep.thread_count.saturating_sub(1);
                     ep.exit_code = code as i64;
-                    serial_println!("[EXIT] thread_count={}", ep.thread_count);
+                    kdebug!(LogSubsys::Syscall, "thread_count={}", ep.thread_count);
                     if ep.thread_count == 0 {
-                        serial_println!("[EXIT] freeing resources");
+                        kdebug!(LogSubsys::Syscall, "freeing resources");
                         if let Some(slot) = ep.user_slot.take() {
                             crate::arch::x64::paging::free_user_slot(slot);
                         }
@@ -80,10 +81,10 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                         }
                         scheduler.wake_waiters(pid);
                     }
-                    serial_println!("[EXIT] after resource freeing");
+                    kdebug!(LogSubsys::Syscall, "after resource freeing");
                 }
             }
-            serial_println!("[EXIT] wake_thread_joiner via KWait (OB-031)");
+            kdebug!(LogSubsys::Syscall, "wake_thread_joiner via KWait (OB-031)");
             let tj_magic = crate::kwait::WaitReason::ThreadJoin { tid }.encode_magic();
             for k in scheduler.kthreads.iter_mut().flatten() {
                 if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
@@ -93,7 +94,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                     set_need_resched();
                 }
             }
-            serial_println!("[EXIT] checking: pid={} thread_count", pid);
+            kdebug!(LogSubsys::Syscall, "checking: pid={} thread_count", pid);
             if pid > 0 {
                 let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
                 for k in scheduler.kthreads.iter_mut().flatten() {
@@ -135,9 +136,9 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                 );
             }
         }
-        serial_println!("[EXIT] done (after if tid > 0 block)");
+        kdebug!(LogSubsys::Syscall, "done (after if tid > 0 block)");
     });
-    serial_println!("[EXIT] returned from without_interrupts");
+    kdebug!(LogSubsys::Syscall, "returned from without_interrupts");
     code
 }
 
@@ -547,11 +548,11 @@ pub(super) fn handler_loadlib(regs: super::Registers) -> u64 {
 
     match crate::nxl::nxl_load(&path_str) {
         Some(base) => {
-            serial_println!("[SYS] sys_loadlib '{}' => 0x{:x}", path_str, base);
+            kinfo!(LogSubsys::Syscall, "sys_loadlib '{}' => 0x{:x}", path_str, base);
             base
         }
         None => {
-            serial_println!("[SYS] sys_loadlib FAILED '{}'", path_str);
+            kerror!(LogSubsys::Syscall, "sys_loadlib FAILED '{}'", path_str);
             err_to_u64(SyscallError::NoEnt)
         }
     }

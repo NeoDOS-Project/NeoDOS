@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+use crate::log::LogSubsys;
 const CONFIG_ADDRESS: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
 
@@ -104,9 +105,7 @@ pub fn init_ecam() {
     use crate::timers::hpet::get_ecam_info;
 
     if let Some((base, segment, start_bus, end_bus)) = get_ecam_info() {
-        crate::serial_println!(
-            "[PCI] MCFG found: ECAM base=0x{:x}, segment={}, bus {}-{}",
-            base, segment, start_bus, end_bus
+        kinfo!(LogSubsys::Pci, "MCFG found: ECAM base=0x{:x}, segment={}, bus {}-{}", base, segment, start_bus, end_bus
         );
 
         // Map ECAM region as UC- (uncacheable) for MMIO config access.
@@ -117,18 +116,16 @@ pub fn init_ecam() {
 
         unsafe {
             if !map_ecam_region(base, size_to_map) {
-                crate::serial_println!("[PCI] WARNING: Failed to map ECAM MMIO region, using legacy PIO");
+                kerror!(LogSubsys::Pci, "WARNING: Failed to map ECAM MMIO region, using legacy PIO");
                 return;
             }
         }
 
         crate::hal::pci::set_ecam_base(base);
-        crate::serial_println!(
-            "[PCI] ECAM active: 0x{:x} ({} MB mapped, UC-)",
-            base, size_to_map / 0x100000
+        kinfo!(LogSubsys::Pci, "ECAM active: 0x{:x} ({} MB mapped, UC-)", base, size_to_map / 0x100000
         );
     } else {
-        crate::serial_println!("[PCI] No MCFG table found, using legacy PIO (0xCF8/0xCFC)");
+        kinfo!(LogSubsys::Pci, "No MCFG table found, using legacy PIO (0xCF8/0xCFC)");
     }
 }
 
@@ -142,7 +139,7 @@ unsafe fn map_ecam_region(phys_base: u64, size: u64) -> bool {
 
     if phys_base + size > 0x1_0000_0000 {
         // ECAM region extends beyond 4 GiB — need to map via PML4[1]
-        crate::serial_println!("[PCI] ECAM above 4 GiB, not yet supported for mapping");
+        kwarn!(LogSubsys::Pci, "ECAM above 4 GiB, not yet supported for mapping");
         return false;
     }
 
@@ -154,7 +151,7 @@ unsafe fn map_ecam_region(phys_base: u64, size: u64) -> bool {
     let mut addr = start_aligned;
     while addr < end_aligned {
         if crate::arch::x64::paging::split_2mb_page(addr).is_err() {
-            crate::serial_println!("[PCI] Failed to split 2MB page @ 0x{:x}", addr);
+            kerror!(LogSubsys::Pci, "Failed to split 2MB page @ 0x{:x}", addr);
             return false;
         }
         addr += 0x200_000;
@@ -164,7 +161,7 @@ unsafe fn map_ecam_region(phys_base: u64, size: u64) -> bool {
     let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::NO_CACHE;
     let rc = crate::arch::x64::paging::map_mmio_4k(phys_base, phys_base, size, flags);
     if !rc {
-        crate::serial_println!("[PCI] map_mmio_4k failed for ECAM @ 0x{:x}", phys_base);
+        kerror!(LogSubsys::Pci, "map_mmio_4k failed for ECAM @ 0x{:x}", phys_base);
         return false;
     }
 

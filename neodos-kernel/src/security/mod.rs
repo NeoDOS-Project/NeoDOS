@@ -5,6 +5,7 @@ pub mod access;
 pub mod sam;
 
 use lazy_static::lazy_static;
+use crate::log::LogSubsys;
 
 lazy_static! {
     pub static ref DEFAULT_ADMIN_TOKEN: token::Token = token::Token::new_admin();
@@ -12,9 +13,9 @@ lazy_static! {
 }
 
 pub fn init_security() {
-    crate::serial_println!("[SEC] Security subsystem initialized");
-    crate::serial_println!("[SEC] Admin SID: {}", sid::sid_builtin_admin());
-    crate::serial_println!("[SEC] User SID: {}", sid::sid_builtin_user());
+    kinfo!(LogSubsys::Security, "Security subsystem initialized");
+    kinfo!(LogSubsys::Security, "Admin SID: {}", sid::sid_builtin_admin());
+    kinfo!(LogSubsys::Security, "User SID: {}", sid::sid_builtin_user());
 }
 
 pub fn register_security_tests() {

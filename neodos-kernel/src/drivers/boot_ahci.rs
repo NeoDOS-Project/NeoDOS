@@ -7,8 +7,7 @@ use alloc::alloc::alloc_zeroed;
 use crate::drivers::block::BlockDevice;
 use crate::drivers::pci::{pci_config_read_dword, pci_config_read_word, pci_config_write_word};
 use crate::irp::{self, IrpId, IrpOp, IrpTagMap, NCQ_MAX_TAGS};
-use crate::serial_println;
-
+use crate::log::LogSubsys;
 /// Saved AHCI port info so we can reclaim the port after NEM AHCI driver overrides it.
 /// Stores (abar, port, clb, fb) — the DMA buffer addresses needed to restore the port.
 static BOOT_AHCI_INFO: spin::Mutex<Option<(u64, usize, u32, u32)>> = spin::Mutex::new(None);
@@ -359,10 +358,10 @@ impl BootAhci {
         }
 
         let (abar, bus, dev, func) = found?;
-        serial_println!("[AHCI] Found AHCI controller at PCI {:02x}:{:02x}.{:01x} ABAR=0x{:x}", bus, dev, func, abar);
+        kinfo!(LogSubsys::Ahci, "Found AHCI controller at PCI {:02x}:{:02x}.{:01x} ABAR=0x{:x}", bus, dev, func, abar);
 
         let pi = mmio_read32(abar, HBA_PI);
-        serial_println!("[AHCI] Ports implemented: 0x{:08x}", pi);
+        kinfo!(LogSubsys::Ahci, "Ports implemented: 0x{:08x}", pi);
 
         let ghc = mmio_read32(abar, HBA_GHC);
         if (ghc & HBA_GHC_AE) == 0 {
@@ -391,17 +390,15 @@ impl BootAhci {
         let port = active_port?;
         let sig = port_read32(abar, port, PORT_SIG);
         let is_atapi = sig == SATA_SIG_ATAPI;
-        serial_println!("[AHCI] Using port {} sig=0x{:08x} {}", port, sig, if is_atapi { "ATAPI" } else { "ATA" });
+        kinfo!(LogSubsys::Ahci, "Using port {} sig=0x{:08x} {}", port, sig, if is_atapi { "ATAPI" } else { "ATA" });
 
         // ── Allocate heap buffers for DMA (v0.40, replaces static buffers) ──
         let (cmd_list, recv_fis, cmd_table, dma_buf) = ahci_alloc_buffers();
         if cmd_list.is_null() || recv_fis.is_null() || cmd_table.is_null() || dma_buf.is_null() {
-            serial_println!("[AHCI] Failed to allocate DMA buffers from heap");
+            kerror!(LogSubsys::Ahci, "Failed to allocate DMA buffers from heap");
             return None;
         }
-        serial_println!(
-            "[AHCI] DMA buffers allocated: cmd_list=0x{:p} recv_fis=0x{:p} cmd_table=0x{:p} dma_buf=0x{:p}",
-            cmd_list, recv_fis, cmd_table, dma_buf
+        kdebug!(LogSubsys::Ahci, "DMA buffers allocated: cmd_list=0x{:p} recv_fis=0x{:p} cmd_table=0x{:p} dma_buf=0x{:p}", cmd_list, recv_fis, cmd_table, dma_buf
         );
 
         let (clb_val, fb_val) = unsafe {
@@ -420,7 +417,7 @@ impl BootAhci {
         };
 
         if !port_reset_and_start(abar, port) {
-            serial_println!("[AHCI] Port {} failed to start", port);
+            kerror!(LogSubsys::Ahci, "Port {} failed to start", port);
             return None;
         }
 
@@ -432,7 +429,7 @@ impl BootAhci {
         let ncq_ct_ptr = unsafe { alloc_zeroed(ncq_ct_layout) } as *mut CmdTable;
         let ncq_db_ptr = unsafe { alloc_zeroed(ncq_db_layout) };
         if ncq_ct_ptr.is_null() || ncq_db_ptr.is_null() {
-            serial_println!("[AHCI] Failed to allocate NCQ buffers");
+            kerror!(LogSubsys::Ahci, "Failed to allocate NCQ buffers");
             if !ncq_ct_ptr.is_null() { unsafe { alloc::alloc::dealloc(ncq_ct_ptr as *mut u8, ncq_ct_layout); } }
             if !ncq_db_ptr.is_null() { unsafe { alloc::alloc::dealloc(ncq_db_ptr, ncq_db_layout); } }
             return None;
@@ -441,13 +438,13 @@ impl BootAhci {
         // ── Detect NCQ support via IDENTIFY DEVICE ──
         let ncq_supported = self_detect_ncq(abar, port, is_atapi, cmd_list, cmd_table, dma_buf);
         if ncq_supported {
-            serial_println!("[AHCI] Device supports NCQ (32 tags)");
+            kinfo!(LogSubsys::Ahci, "Device supports NCQ (32 tags)");
         } else {
-            serial_println!("[AHCI] Device does NOT support NCQ, using legacy path");
+            kinfo!(LogSubsys::Ahci, "Device does NOT support NCQ, using legacy path");
         }
 
         let num_sectors = 0x0012_4F00u64;
-        serial_println!("[AHCI] Boot AHCI ready on port {}", port);
+        kinfo!(LogSubsys::Ahci, "Boot AHCI ready on port {}", port);
         *BOOT_AHCI_INFO.lock() = Some((abar, port, clb_val, fb_val));
 
         Some(BootAhci {
@@ -466,7 +463,7 @@ impl BootAhci {
         let info = BOOT_AHCI_INFO.lock();
         let Some((abar, port, saved_clb, saved_fb)) = *info else { return };
 
-        serial_println!("[AHCI] Reclaiming port {} after NEM driver init", port);
+        kinfo!(LogSubsys::Ahci, "Reclaiming port {} after NEM driver init", port);
 
         // Stop the port so we can safely change CLB/FB
         let cmd = port_read32(abar, port, PORT_CMD);
@@ -495,7 +492,7 @@ impl BootAhci {
             if (c & CMD_CR) == 0 { break; }
         }
 
-        serial_println!("[AHCI] Port reclaimed successfully (BootAhci buffers restored)");
+        kinfo!(LogSubsys::Ahci, "Port reclaimed successfully (BootAhci buffers restored)");
     }
 
     fn dma_xfer(&mut self, lba: u64, count: u8, buf: *const u8, is_write: bool) -> Result<(), ()> {
@@ -585,8 +582,7 @@ impl BootAhci {
         if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
             let serr = port_read32(abar, port, PORT_SERR);
             crate::boot_benchmark::ahci_dma_failure();
-            serial_println!("[AHCI] DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}",
-                if is_write { "WR" } else { "RD" }, lba, tfd, serr);
+            kerror!(LogSubsys::Ahci, "DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}", if is_write { "WR" } else { "RD" }, lba, tfd, serr);
             return Err(());
         }
 
@@ -723,8 +719,7 @@ impl BootAhci {
 
                 if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
                     let serr = port_read32(abar, port, PORT_SERR);
-                    serial_println!("[AHCI] NCQ error slot={} tag={} lba={} tfd=0x{:02x} serr=0x{:08x}",
-                        slot, tag, abs_lba, tfd, serr);
+                    kerror!(LogSubsys::Ahci, "NCQ error slot={} tag={} lba={} tfd=0x{:02x} serr=0x{:08x}", slot, tag, abs_lba, tfd, serr);
                     continue;
                 }
 

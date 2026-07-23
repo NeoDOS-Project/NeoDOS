@@ -19,6 +19,7 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use spin::Mutex;
 use lazy_static::lazy_static;
+use crate::log::LogSubsys;
 
 // ── Constants ──
 
@@ -110,7 +111,7 @@ impl HotReloadRegistry {
         // Remove old entry for same driver_id (if reloading)
         self.entries.retain(|e| e.driver_id != driver_id);
         if self.entries.len() >= MAX_HOTRELOAD_ENTRIES {
-            crate::serial_println!("[HOTRELOAD] Warning: hot reload entry limit reached for driver {}", driver_id);
+            kwarn!(LogSubsys::Hotreload, "Warning: hot reload entry limit reached for driver {}", driver_id);
             return;
         }
         self.entries.push(HotReloadEntry {
@@ -166,7 +167,7 @@ fn handle_unload_ack(event: &Event) {
 /// Called by hst_register_block_device / similar registration functions.
 pub fn track_resource(driver_id: DriverId, resource_type: ResourceType, resource_id: u32) {
     RESOURCE_REGISTRY.lock().track(driver_id, resource_type, resource_id);
-    crate::serial_println!("[HOTRELOAD] Tracked resource type={:?} id={} for driver {}", resource_type, resource_id, driver_id);
+    ktrace!(LogSubsys::Hotreload, "Tracked resource type={:?} id={} for driver {}", resource_type, resource_id, driver_id);
 }
 
 /// Untrack a single resource.
@@ -187,7 +188,7 @@ pub fn untrack_ob_entry(driver_id: DriverId, resource_id: u32) {
 /// Register a load result for future hot reload/unload use.
 pub fn register_load_result(driver_id: DriverId, result: &NemV3LoadResult) {
     HOT_RELOAD_REGISTRY.lock().register(driver_id, result);
-    crate::serial_println!("[HOTRELOAD] Registered load result for driver {} ({})", driver_id,
+    ktrace!(LogSubsys::Hotreload, "Registered load result for driver {} ({})", driver_id,
         core::str::from_utf8(&result.name).unwrap_or("?"));
 }
 
@@ -199,7 +200,7 @@ pub fn init_hot_reload() {
         handle_unload_ack,
         "hotreload_unload_ack",
     );
-    crate::serial_println!("[HOTRELOAD] Initialized — unload ACK handler registered");
+    kinfo!(LogSubsys::Hotreload, "Initialized — unload ACK handler registered");
 }
 
 // ── Unload driver ──
@@ -232,12 +233,12 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
             return Err("Cannot transition to Unloading state");
         }
     }
-    crate::serial_println!("[HOTRELOAD] Driver {} ({}) transitioning to UNLOADING", name, id);
+    kinfo!(LogSubsys::Hotreload, "Driver {} ({}) transitioning to UNLOADING", name, id);
 
     // Step 2: Call driver_fini() if available
     if let Some(ref entry) = entry {
         if let Some(fini_fn) = entry.entry_fini {
-            crate::serial_println!("[HOTRELOAD] Calling driver_fini() for {}", name);
+            kinfo!(LogSubsys::Hotreload, "Calling driver_fini() for {}", name);
             unsafe {
                 crate::drivers::nem::driver::set_current_driver(id);
                 fini_fn();
@@ -257,7 +258,7 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
         name.len() as u64,
         0,
     );
-    crate::serial_println!("[HOTRELOAD] Sent EVENT_DRIVER_UNLOAD to {}", name);
+    kinfo!(LogSubsys::Hotreload, "Sent EVENT_DRIVER_UNLOAD to {}", name);
 
     // Step 4: Wait for ack (unless force)
     if !force {
@@ -265,11 +266,11 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
         loop {
             let tick = crate::hal::get_ticks();
             if tick.wrapping_sub(start_tick) >= UNLOAD_DRAIN_TIMEOUT_TICKS {
-                crate::serial_println!("[HOTRELOAD] Timeout waiting for DRIVER_UNLOAD_ACK from {} — forcing unload", name);
+                kerror!(LogSubsys::Hotreload, "Timeout waiting for DRIVER_UNLOAD_ACK from {} — forcing unload", name);
                 break;
             }
             if UNLOAD_ACK_FLAG.load(Ordering::SeqCst) {
-                crate::serial_println!("[HOTRELOAD] Received DRIVER_UNLOAD_ACK from {}", name);
+                kinfo!(LogSubsys::Hotreload, "Received DRIVER_UNLOAD_ACK from {}", name);
                 break;
             }
             // Yield to allow driver to process the event
@@ -283,16 +284,16 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
         match res.resource_type {
             ResourceType::BlockDevice => {
                 crate::drivers::block::unregister_nem_block_device(res.resource_id as usize);
-                crate::serial_println!("[HOTRELOAD] Unregistered block device idx={} for driver {}", res.resource_id, id);
+                kinfo!(LogSubsys::Hotreload, "Unregistered block device idx={} for driver {}", res.resource_id, id);
             }
             ResourceType::NetworkDevice => {
                 crate::net::nic::nic_unregister(res.resource_id);
-                crate::serial_println!("[HOTRELOAD] Unregistered network device id={} for driver {}", res.resource_id, id);
+                kinfo!(LogSubsys::Hotreload, "Unregistered network device id={} for driver {}", res.resource_id, id);
             }
             ResourceType::ObNamespace => {
                 // Remove the Ob object by ID
                 let _ = crate::object::namespace::ob_remove_by_id(res.resource_id as u64);
-                crate::serial_println!("[HOTRELOAD] Removed Ob namespace entry id={} for driver {}", res.resource_id, id);
+                kinfo!(LogSubsys::Hotreload, "Removed Ob namespace entry id={} for driver {}", res.resource_id, id);
             }
         }
     }
@@ -301,7 +302,7 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
     if let Some(ref entry) = entry {
         if entry.isolated {
             v3loader::free_isolated_driver(id);
-            crate::serial_println!("[HOTRELOAD] Freed isolated memory for driver {}", id);
+            kinfo!(LogSubsys::Hotreload, "Freed isolated memory for driver {}", id);
         }
     }
 
@@ -319,7 +320,7 @@ pub fn unload_driver(name: &str, force: bool) -> Result<alloc::string::String, &
 
     let msg = alloc::format!("Driver '{}' (id={}) unloaded successfully{}", name, id,
         if force { " (forced)" } else { "" });
-    crate::serial_println!("[HOTRELOAD] {}", msg);
+    kinfo!(LogSubsys::Hotreload, "{}", msg);
     Ok(msg)
 }
 
@@ -364,14 +365,13 @@ pub fn reload_driver(path: &str) -> Result<alloc::string::String, &'static str> 
             let rt = driver_runtime::DRIVER_RUNTIME.lock();
             rt.get(old_id).map(|d| alloc::string::String::from(d.name_str()))
         };
-        crate::serial_println!("[HOTRELOAD] Found existing driver '{}' (id={}), unloading...",
-            old_name.as_deref().unwrap_or("?"), old_id);
+        kinfo!(LogSubsys::Hotreload, "Found existing driver '{}' (id={}), unloading...", old_name.as_deref().unwrap_or("?"), old_id);
         // Unload with force=true to ensure clean removal
         unload_driver(&name_upper, true)?;
     }
 
     // Step 4: Load the new driver via v3loader
-    crate::serial_println!("[HOTRELOAD] Loading new driver '{}' from {}", name_upper, path);
+    kinfo!(LogSubsys::Hotreload, "Loading new driver '{}' from {}", name_upper, path);
     let load_result = v3loader::load_nem_v3(&data)?;
 
     // Step 5: Register with runtime
@@ -440,7 +440,7 @@ pub fn reload_driver(path: &str) -> Result<alloc::string::String, &'static str> 
     {
         unsafe { crate::drivers::nem::driver::clear_current_driver(); }
         let msg = alloc::format!("Driver '{}' reloaded successfully (new id={})", name_upper_str, rt_id);
-        crate::serial_println!("[HOTRELOAD] {}", msg);
+        kinfo!(LogSubsys::Hotreload, "{}", msg);
         Ok(msg)
     } else {
         driver_runtime::DRIVER_RUNTIME.lock()

@@ -266,7 +266,7 @@ extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame)
 }
 
 extern "x86-interrupt" fn debug_handler(frame: InterruptStackFrame) {
-    serial_println!("[KD] Debug exception @ {:#x}", frame.instruction_pointer.as_u64());
+    ktrace!(crate::log::LogSubsys::Exception, "Debug exception @ {:#x}", frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn nmi_handler(stack_frame: InterruptStackFrame) {
@@ -278,7 +278,7 @@ extern "x86-interrupt" fn nmi_handler(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
-    serial_println!("[IRQ] Breakpoint: rip={:#x}", stack_frame.instruction_pointer.as_u64());
+    ktrace!(crate::log::LogSubsys::Exception, "Breakpoint: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
 
 extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
@@ -373,8 +373,8 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
-    serial_println!(
-        "[IRQ] GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
+    kerror!(crate::log::LogSubsys::Exception,
+        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
         error_code, rip,
         stack_frame.code_segment,
         stack_frame.cpu_flags, rsp,
@@ -848,7 +848,7 @@ pub extern "C" fn msi_dispatch(vector: u8) {
     if let Some(f) = handler {
         f(vector);
     } else {
-        crate::serial_println!("[MSI] Spurious interrupt on vector {}", vector);
+        ktrace!(crate::log::LogSubsys::Interrupts, "Spurious interrupt on vector {}", vector);
     }
     // Send EOI via the HAL (no-op if APIC is not configured yet).
     crate::hal::ack_irq(vector);

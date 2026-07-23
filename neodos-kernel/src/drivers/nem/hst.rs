@@ -6,6 +6,7 @@ use x86_64::structures::paging::PageTableFlags;
 use crate::drivers::driver_runtime;
 use crate::drivers::nem::driver::current_driver_id;
 use crate::drivers::isolation;
+use crate::log::LogSubsys;
 
 pub type HstInb = unsafe extern "C" fn(u16) -> u8;
 pub type HstOutb = unsafe extern "C" fn(u16, u8);
@@ -95,11 +96,11 @@ pub unsafe extern "C" fn hst_log(_level: u32, msg: *const u8, len: usize) {
     if driver_id != 0
         && isolation::validate_export_ptr(msg, len, false).is_err()
     {
-        crate::serial_println!("[ISO] DENIED: hst_log with invalid pointer from driver {}", driver_id);
+        kerror!(LogSubsys::Isolation, "DENIED: hst_log with invalid pointer from driver {}", driver_id);
         return;
     }
     let s = unsafe { core::str::from_utf8_unchecked(core::slice::from_raw_parts(msg, len)) };
-    crate::serial_println!("[DRV] {}", s);
+    kdebug!(LogSubsys::Driver, "{}", s);
 }
 
 pub unsafe extern "C" fn hst_ecam_is_active() -> u64 {
@@ -151,8 +152,7 @@ pub unsafe extern "C" fn hst_register_block_device(
     if current_driver_id() != 0
         && isolation::validate_export_ptr(name, name_len as usize, false).is_err()
     {
-        crate::serial_println!("[ISO] DENIED: hst_register_block_device with invalid name from driver {}",
-            current_driver_id());
+        kerror!(LogSubsys::Isolation, "DENIED: hst_register_block_device with invalid name from driver {}", current_driver_id());
         return -1;
     }
     let dev = crate::drivers::block::NemBlockDevice::new(

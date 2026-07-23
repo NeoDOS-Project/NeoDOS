@@ -16,6 +16,7 @@
 
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use crate::log::LogSubsys;
 
 // ── I/O APIC MMIO register offsets ─────────────────────────────────
 const IOAPIC_IOREGSEL: u64 = 0x00;
@@ -114,14 +115,14 @@ pub fn init() -> bool {
     let (addr, gsi_base) = match crate::timers::hpet::find_ioapic() {
         Some(a) => a,
         None => {
-            crate::serial_println!("[IOAPIC] Not found in MADT");
+            kerror!(LogSubsys::Ioapic, "Not found in MADT");
             return false;
         }
     };
 
     let addr64 = addr as u64;
-    crate::serial_println!(
-        "[IOAPIC] Found at MMIO 0x{:x}, GSI base {}",
+    kinfo!(LogSubsys::Ioapic,
+        "Found at MMIO 0x{:x}, GSI base {}",
         addr64, gsi_base
     );
 
@@ -131,8 +132,8 @@ pub fn init() -> bool {
     let ver = ioapic_read_reg(IOAPIC_VER);
     let max_redir = (ver >> 16) as u8;
     IOAPIC_MAX_PIN.store(max_redir as u64, Ordering::SeqCst);
-    crate::serial_println!(
-        "[IOAPIC] Version 0x{:x}, {} redirection entries (pins 0-{})",
+    kinfo!(LogSubsys::Ioapic,
+        "Version 0x{:x}, {} redirection entries (pins 0-{})",
         ver & 0xFF, max_redir + 1, max_redir
     );
 
@@ -175,8 +176,8 @@ pub fn init() -> bool {
             };
 
             ioapic_write_redir(pin, entry);
-            crate::serial_println!(
-                "[IOAPIC] IRQ{} → pin{} vector{} (flags={:#x})",
+            kdebug!(LogSubsys::Ioapic,
+                "IRQ{} → pin{} vector{} (flags={:#x})",
                 irq, pin, vector, iso_flags
             );
         } else {
@@ -185,15 +186,15 @@ pub fn init() -> bool {
             if entry & IOAPIC_IRQ_MASKED == 0 {
                 ioapic_write_redir(pin, entry | IOAPIC_IRQ_MASKED);
             }
-            crate::serial_println!(
-                "[IOAPIC] IRQ{} → GSI{} pin{} (masked, no handler)",
+            kdebug!(LogSubsys::Ioapic,
+                "IRQ{} → GSI{} pin{} (masked, no handler)",
                 irq, gsi, pin
             );
         }
     }
 
     IOAPIC_ACTIVE.store(true, Ordering::SeqCst);
-    crate::serial_println!("[IOAPIC] Initialised, PIC disabled");
+    kinfo!(LogSubsys::Ioapic, "Initialised, PIC disabled");
     true
 }
 
@@ -271,7 +272,7 @@ fn disable_legacy_pic() {
     // OCW1: write mask to data ports.
     crate::hal::outb(0x21, 0xFF);  // Master PIC: mask all
     crate::hal::outb(0xA1, 0xFF);  // Slave PIC: mask all
-    crate::serial_println!("[IOAPIC] Legacy PIC masked (all IRQs disabled)");
+    kinfo!(LogSubsys::Ioapic, "Legacy PIC masked (all IRQs disabled)");
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

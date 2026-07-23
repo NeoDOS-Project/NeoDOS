@@ -13,6 +13,7 @@ use crate::nem::{
 };
 use crate::drivers::driver_runtime;
 use crate::drivers::isolation;
+use crate::log::LogSubsys;
 
 // ── Kernel Export Table ──
 
@@ -104,7 +105,7 @@ fn alloc_driver_memory(size: usize) -> Option<*mut u8> {
 /// Called from unload_nem_v3 with the driver_id stored during activation.
 pub fn free_isolated_driver(driver_id: u32) {
     isolation::free_driver_slot(driver_id);
-    crate::serial_println!("[NEM] Isolated driver {} freed", driver_id);
+    kinfo!(LogSubsys::Nem, "Isolated driver {} freed", driver_id);
 }
 
 /// Legacy fallback for non-isolated drivers (heap allocated).
@@ -176,7 +177,7 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
         Some(ptr) => (ptr, true),
         None => {
             let ptr = alloc_heap_fallback(total).ok_or("Out of memory for driver")?;
-            crate::serial_println!("[NEM] Falling back to heap allocation for driver (isolated region full)");
+            kwarn!(LogSubsys::Nem, "Falling back to heap allocation for driver (isolated region full)");
             (ptr, false)
         }
     };
@@ -204,8 +205,7 @@ pub fn load_nem_v3(data: &[u8]) -> Result<NemV3LoadResult, &'static str> {
     if isolated {
         let slot_base = base as u64;
         isolation::set_driver_layout(0xFFFF_FFFE, text_size, rodata_size, data_size, bss_size);
-        crate::serial_println!("[NEM] Loaded into isolated region @ 0x{:x} ({} KB, mode=basic)",
-            slot_base, total / 1024);
+        kinfo!(LogSubsys::Nem, "Loaded into isolated region @ 0x{:x} ({} KB, mode=basic)", slot_base, total / 1024);
     }
 
     // Apply relocations
@@ -275,7 +275,7 @@ pub fn bind_isolated_driver(driver_id: u32, result: &NemV3LoadResult) {
     let _ = driver_runtime::DRIVER_RUNTIME.lock()
         .set_isolation_region(driver_id, slot_base, size);
 
-    crate::serial_println!("[NEM] Isolation bound: driver {} → isolated region @ 0x{:x}", driver_id, slot_base);
+    kinfo!(LogSubsys::Nem, "Isolation bound: driver {} → isolated region @ 0x{:x}", driver_id, slot_base);
 }
 
 /// Unload a driver from the isolated region (or free heap memory).
