@@ -16,7 +16,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
 ## Steps
 
 1. **Read the architecture docs**
-   Open `docs/objects.md` and `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` to understand Ob design invariants.
+   Open `docs/kernel/objects.md` and `docs/architecture/source-of-truth.md` to understand Ob design invariants.
 
 2. **Add new ObType variant (if needed)**
    Edit `src/object/types.rs`:
@@ -62,7 +62,7 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
    - Error cases (invalid handles, wrong type, bad info class)
 
 9. **Update docs**
-   Update `docs/objects.md` with the new type, its ObInfoClass variants, and operation semantics.
+   Update `docs/kernel/objects.md` with the new type, its ObInfoClass variants, and operation semantics.
 
 ## Best practices
 
@@ -88,5 +88,5 @@ Extend the Object Manager correctly — the central abstraction for all kernel o
 - [ ] Namespace integration correct (if nameable)
 - [ ] Lifecycle: create → query/set → destroy works end-to-end
 - [ ] Kernel tests added and pass
-- [ ] `docs/objects.md` updated
+- [ ] `docs/kernel/objects.md` updated
 - [ ] `cargo build` succeeds, `scripts/check_deps.py` passes

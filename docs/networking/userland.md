@@ -2211,4 +2211,4 @@ fn init_cm() {
 ---
 
 *Documento actualizado a v0.3 reflejando la implementación real (NET-1.5/1.6/1.8/1.15).
-Ver `docs/IMPROVEMENTS.md` para el estado actual de cada tarea.*
+Ver `roadmap/improvements.md` para el estado actual de cada tarea.*

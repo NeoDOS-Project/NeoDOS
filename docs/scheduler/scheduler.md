@@ -14,6 +14,7 @@ The scheduler uses a **two-tier** decision mechanism:
 |------|-----------|---------|
 | 1    | **Per-CPU Run Queue** | Async notification: new threads, remote wakeups, SMP IPI |
 | 2    | **Global Priority Scan** | Fair round-robin selection across all Ready threads |
+| 3    | **Idle fallback** | Select TID 1 (PRIORITY_IDLE) when no Ready thread exists |
 
 ```
 Thread wakes / created / unblocked
@@ -34,7 +35,7 @@ Thread wakes / created / unblocked
   GLOBAL PRIORITY SCAN → fairness by priority + round-robin
         |
         v  (no Ready threads)
-  Idle boost / fallback → TID 0 (idle thread)
+   Idle fallback → TID 1 (idle thread, PRIORITY_IDLE)
 ```
 
 ### Key invariant: the run queue is NOT a scheduling cache
@@ -104,7 +105,7 @@ IPI to the target CPU on SMP systems, notifying it of new work.
 |-------|------------------------|------------|----------------------------------|
 | 0     | PRIORITY_HIGH          | 400 ticks  | Critical system processes        |
 | 1     | PRIORITY_ABOVE_NORMAL  | 200 ticks  | Important user processes         |
-| 2     | PRIORITY_NORMAL        | 100 ticks  | Default (new processes, idle)    |
+| 2     | PRIORITY_NORMAL        | 100 ticks  | Default (new processes, boot)    |
 | 3     | PRIORITY_IDLE          | 50 ticks   | Background, runs when idle       |
 
 ```rust
@@ -123,12 +124,11 @@ pub const IDLE_TIME_SLICE: u16 = 10;   // idle thread: brief CPU then yield
 2. **Run queue**: `try_dequeue_local()` → if a TID is pending notification
 3. **Work stealing**: `try_work_steal()` → steal from remote CPU queues
 4. **Global scan**: iterate priority levels HIGH → IDLE, round-robin within level
-5. **Idle boost**: every 20 schedule calls, force-pick TID 0 as a backstop
-6. **Fallback**: return TID 0 (idle) if nothing else is Ready → panic if idle is terminated
+5. **Fallback**: find TID 1 (idle, PRIORITY_IDLE) if nothing else is Ready → panic if idle terminated
 
-The global scan iterates **all** TIDs (including TID 0 / idle), checking `state == Ready`
-at each priority level. This ensures fair CPU distribution regardless of whether
-threads are kernel threads, Ring 3 processes, or the idle thread.
+The global scan iterates **all** TIDs (including boot TID 0), checking `state == Ready`
+at each priority level. The idle thread (TID 1) has PRIORITY_IDLE and is naturally
+skipped while any higher-priority thread is Ready.
 
 ### Round-robin
 

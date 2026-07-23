@@ -11,7 +11,7 @@
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
 6. **New syscalls (RAX ≥ 60) MUST be `sys_ob_*`** — operate on Ob objects, receive/return Ob handles.
 7. **Code is truth.** Documentation explains design, it does not replicate code. Update docs when architecture changes.
-8. **Before architecture decisions:** read `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — invariants are enforceable rules.
+8. **Before architecture decisions:** read `docs/architecture/source-of-truth.md` — invariants are enforceable rules.
 9. **Keep AGENTS.md minimal.** Move specialized instructions to `docs/` and procedural checklists to `skills/`.
 10. **Naming:** kebab-case for files/dirs, PascalCase for types/enums/traits, snake_case for fns/vars.
 
@@ -38,8 +38,9 @@ Install: `cargo install --git https://github.com/NeoDOS-Project/NeoDev.git`
 **GitHub Issues es el sistema oficial de planificación, seguimiento e histórico.**
 
 El archivo local `roadmap/improvements.md` es una lista de ideas que la IA convierte
-automáticamente en Issues. `docs/IMPROVEMENTS.md` y `docs/IMPROVEMENTS_COMPLETED.md`
-se mantienen como referencia local pero GitHub Issues es la fuente de verdad.
+automáticamente en Issues. GitHub Issues es la fuente de verdad de planificación.
+(Los antiguos `docs/IMPROVEMENTS.md` y `docs/IMPROVEMENTS_COMPLETED.md` fueron eliminados
+en la reestructuración de docs; consulta `docs/README.md` para la documentación actual.)
 
 ### Sincronización
 
@@ -92,40 +93,53 @@ For every subsystem, consult its doc — not this file:
 | Subsystem | Doc | Contents |
 | ----------- | ----- | ---------- |
 | NeoDev | `https://github.com/NeoDOS-Project/NeoDev` | Development tool: build, image, run, test |
-| NeoDOS Dev Server | `https://github.com/NeoDOS-Project/neodos-dev-server` | LSP server + MCP server + shared toolkit (replaces old neodos-lsp/ and scripts/mcp_server/) |
-| NeoTools | `https://github.com/NeoDOS-Project/NeoTools` | Host tools: nxeinfo, nxpkg, nxdump (replaces tools/nxeinfo, tools/nxpkg, tools/nxdump) |
-| Architecture | `docs/ARCHITECTURE.md` | Boot flow, GPT layout, subsystem map |
-| Source of Truth | `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` | Enforceable invariants, rules |
-| Syscalls | `docs/syscalls.md` | Full table, calling convention, migration status |
-| Scheduler | `docs/scheduler.md` | Priorities, aging, SMP, work stealing |
-| Memory | `docs/memory.md` | Buddy allocator, slab, demand paging, mmap |
-| Drivers | `docs/drivers.md` | NEM format, lifecycle, caps, isolation, ABI |
-| Filesystem | `docs/filesystem.md` | NeoFS, VFS, IoStack, FAT32, page cache |
-| Registry | `docs/registry.md` | Cm syscalls, cell-based hive, paths |
-| Security | `docs/security.md` | SID, Token, ACL, SAM, SeAccessCheck |
-| Shell | `docs/shell.md` | Commands, pipeline, TAB, user binaries |
-| IPC | `docs/ipc.md` | Pipes, IRP, work queue, event bus |
-| Network | `docs/network.md` | TCP/IP stack, sockets, DHCP, e1000 |
-| Testing | `docs/testing.md` | Test suites, how to add tests |
-| libneodos | `docs/libneodos.md` | User-mode library API, modules |
-| Boot | `docs/boot.md` | Bootloader, kernel boot phases |
-| Object Manager | `docs/objects.md` | Ob types, namespace, ObOperation trait |
-| HAL | `docs/hal.md` | Hardware abstraction layer, primitives |
-| Interrupts | `docs/interrupts.md` | IRQL, IOAPIC, MSI-X, DPC, IPI |
-| Roadmap | `ROADMAP.md` | Roadmap maestro: fases, milestones, prioridades, dependencias (raíz del proyecto) |
-| GitHub Sync | `scripts/sync-roadmap.sh` | Sincroniza roadmap local → GitHub Issues (idempotente) |
+| NeoDOS Dev Server | `https://github.com/NeoDOS-Project/neodos-dev-server` | LSP server + MCP server + shared toolkit |
+| NeoTools | `https://github.com/NeoDOS-Project/NeoTools` | Host tools: nxeinfo, nxpkg, nxdump |
+| Architecture | `docs/architecture/overview.md` | Boot flow, GPT layout, subsystem map |
+| Source of Truth | `docs/architecture/source-of-truth.md` | Enforceable invariants, rules |
+| Vision | `docs/architecture/vision.md` | Long-term strategy v0.40→v1.0 |
+| Repository Architecture | `docs/architecture/repository.md` | Multi-repo proposal, dependency analysis |
+| Syscalls | `docs/kernel/syscalls.md` | Full table, calling convention, migration status |
+| Object Manager | `docs/kernel/objects.md` | Ob types, namespace, operations, handles |
+| Object Manager Design | `docs/kernel/obj-arch.md` | Historical design doc, migration plan |
+| IPC | `docs/kernel/ipc.md` | Pipes, IRP, work queue, event bus |
+| Interrupts | `docs/kernel/interrupts.md` | IRQL, IOAPIC, MSI-X, DPC, IPI |
+| HAL | `docs/kernel/hal.md` | HAL architecture, ABI, GDT/IDT |
+| Logging | `docs/kernel/logging.md` | Kernel logging infrastructure |
+| Scheduler | `docs/scheduler/scheduler.md` | Priorities, aging, SMP, work stealing |
+| Memory | `docs/memory/memory.md` | Buddy allocator, slab, demand paging, mmap |
+| Drivers | `docs/drivers/overview.md` | NEM format, lifecycle, caps, isolation, ABI |
+| NEM Spec | `docs/drivers/nem-spec.md` | NEM driver format specification |
+| Driver Migration | `docs/drivers/driver-migration.md` | Driver migration guide |
+| KCR Compliance | `docs/drivers/kcr-compliance.md` | Kernel Certification Requirements |
+| Filesystem | `docs/filesystem/overview.md` | NeoFS, VFS, IoStack, FAT32, page cache |
+| NeoFS v2 | `docs/filesystem/neofs-v2.md` | NE2 design, indirect blocks, journaling |
+| VFS Patterns | `docs/filesystem/vfs-patterns.md` | VFS usage patterns and conventions |
+| Network | `docs/networking/stack.md` | TCP/IP stack, sockets, DHCP, e1000 |
+| Network Userland | `docs/networking/userland.md` | Network userland architecture |
+| Security | `docs/security/security.md` | SID, Token, ACL, SAM, SeAccessCheck |
+| Registry | `docs/registry/registry.md` | Cm syscalls, cell-based hive, paths |
+| Power Manager | `docs/services/power-manager.md` | Power plans, ACPI, shutdown coordination |
+| Shell | `docs/userland/shell.md` | Commands, pipeline, TAB, user binaries |
+| libneodos | `docs/userland/libneodos.md` | User-mode library API, modules |
+| NXE Ecosystem | `docs/userland/nxe-ecosystem.md` | NXE/NXP format, resources, i18n, tools |
+| NXE Format | `docs/userland/nxe-format.md` | ELF note metadata, TLV tags |
+| NXP Format | `docs/userland/nxp-format.md` | Package container format, manifest |
+| NLT/i18n | `docs/userland/nlt.md` | NLTv2 format, API, compiler, workflow |
+| Packages | `docs/userland/packages.md` | Package system overview |
+| Boot | `docs/boot/boot-flow.md` | Bootloader, kernel boot phases |
+| Debug | `docs/development/debugging.md` | GDB setup, debug tips |
+| QEMU Setup | `docs/development/qemu.md` | QEMU + OVMF setup |
+| VirtualBox | `docs/development/virtualbox.md` | VirtualBox setup guide |
+| Configuration | `docs/development/configuration.md` | Build configuration options |
+| Testing | `docs/development/testing.md` | Test suites, how to add tests |
+| History | `docs/reference/history.md` | Project history |
+| Audit Report | `docs/reference/audit-report.md` | Previous architecture audit |
+| Package Manager Arch | `docs/reference/package-manager-arch.md` | Package manager design |
+| Roadmap | `ROADMAP.md` | Master roadmap: phases, milestones, priorities (project root) |
+| GitHub Sync | `scripts/sync-roadmap.sh` | Sync roadmap local ↔ GitHub Issues (idempotent) |
 | Roadmap Data | `roadmap/` | Labels, milestones, improvements.md, issue templates |
-| Tasks | `docs/IMPROVEMENTS.md` | Detailed task breakdown by milestone (local copy) |
-| Completed | `docs/IMPROVEMENTS_COMPLETED.md` | Completed roadmap items (local copy) |
-| Debug | `docs/DEBUG.md` | GDB setup, debug tips |
-| Vision | `docs/ARCHITECTURAL_VISION.md` | Long-term strategy v0.40→v1.0 |
-| NXE Ecosystem | `docs/nxe-ecosystem-design.md` | NXE/NXP format, resources, i18n, tools |
-| NXE Format | `docs/nxe-format.md` | ELF note metadata, TLV tags |
-| NXP Format | `docs/nxp-format.md` | Package container format, manifest |
-| Repository Architecture | `docs/REPOSITORY_ARCHITECTURE.md` | Multi-repo proposal, dependency analysis, separation candidates |
-| NLT/i18n | `docs/nlt.md` | NLTv2 format, API, compiler, workflow |
-| Power Manager | `docs/power-manager.md` | Power plans, ACPI, shutdown coordination |
-| NeoFS v2 | `docs/neofs_v2_design.md` | NE2 filesystem design, indirect blocks, journaling |
+| Docs Index | `docs/README.md` | Master documentation index |
 
 ## Skills (specialized task checklists)
 
@@ -146,6 +160,6 @@ For every subsystem, consult its doc — not this file:
 | Release | Release process | `skills/release/SKILL.md` |
 | Boot | Bootloader, boot phases, BootInfo ABI | `skills/boot/SKILL.md` |
 | IPC | Pipes, handle table, IRP, work queue, event bus | `skills/ipc/SKILL.md` |
-| NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` (see also `https://github.com/NeoDOS-Project/NeoDev`) |
+| NeoDev | NeoDev development tool | `skills/neodev/SKILL.md` |
 | Network | TCP/IP stack, sockets, ARP, DNS, e1000 | `skills/network/SKILL.md` |
 | Security | SID, Token, ACL, SAM, SeAccessCheck | `skills/security/SKILL.md` |

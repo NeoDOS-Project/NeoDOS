@@ -3,8 +3,9 @@
 > **Versión del documento:** v2.0
 > **Fecha:** 2026-07-15
 > **Versión del proyecto:** v0.50-dev
-> **Documentos relacionados:** ARCHITECTURAL_VISION.md, ARCHITECTURE_SOURCE_OF_TRUTH.md,
->   IMPROVEMENTS.md (detalle granular de tareas), IMPROVEMENTS_COMPLETED.md
+> **Documentos relacionados:** [`docs/architecture/vision.md`](docs/architecture/vision.md),
+>   [`docs/architecture/source-of-truth.md`](docs/architecture/source-of-truth.md),
+>   [`docs/README.md`](docs/README.md) (índice completo de documentación)
 
 ---
 
@@ -34,7 +35,7 @@ Object Manager completo (16 ObTypes, 7 syscalls Ob), stack TCP/IP, drivers NEM c
 aislamiento, Registry con persistencia, VFS con NeoFS v2, planificación SMP, IRQL,
 KWait, Service Manager, y subsistema de internacionalización NLTv2.
 
-El roadmap anterior, concentrado en `docs/IMPROVEMENTS.md`, adolecía de:
+El roadmap anterior, concentrado en el antiguo `docs/IMPROVEMENTS.md` (eliminado en la reestructuración de docs), adolecía de:
 
 - Mezcla de prioridades sin criterio uniforme
 - Milestones con objetivos poco claros (ej: "v0.52 = VirtIO + Sessions + FS Security")
@@ -62,7 +63,7 @@ objetivos técnicos claros, dependencias verificadas y prioridades justificadas.
 | Sin milestone Executive | Service Manager existe pero Configuration Manager, Session Manager no tienen plan | Arquitectura NT incompleta |
 | Deuda técnica mezclada con nuevas features | CLEANUP-1..35 en medio de milestones funcionales | Confunde prioridades |
 | Roadmap post-1.0 inexistente | Solo ideas vagas en ARCHITECTURAL_VISION.md | Sin dirección a largo plazo |
-| docs/roadmap.md obsoleto | Dice v0.49, milestones desactualizados | Información contradictoria |
+| docs/roadmap.md (eliminado) | Estaba desactualizado (v0.49) | Información contradictoria |
 
 ### 2.2 Tareas Duplicadas
 
@@ -791,7 +792,7 @@ scripts/sync-roadmap.sh check      # Verifica configuración
    la versión está terminada.
 5. El changelog se genera automáticamente desde Issues cerradas por Milestone.
 
-*Este documento es la hoja de ruta oficial del proyecto NeoDOS. Reemplaza
-`docs/roadmap.md` (obsoleto) como referencia de planificación.
+*Este documento es la hoja de ruta oficial del proyecto NeoDOS. Reemplaza al
+antiguo `docs/roadmap.md` (eliminado) como referencia de planificación.
 El detalle granular de cada tarea se mantiene en `roadmap/improvements.md`
 (que se sincroniza con GitHub Issues).*

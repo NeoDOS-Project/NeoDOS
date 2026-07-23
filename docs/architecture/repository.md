@@ -332,7 +332,7 @@ No immediate migration. All proposals are for **post-v1.0** unless otherwise not
 
 ### Phase 1 (now — no action needed)
 - Document the proposed architecture
-- Add items to `docs/IMPROVEMENTS.md`
+- Add items to `roadmap/improvements.md`
 - Ensure new components are written with separation in mind
 
 ### Phase 2 (v0.60+ — completed)

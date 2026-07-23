@@ -551,12 +551,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let tid = scheduler.current_tid;
 
-    // ── Preemptive context switch (Ring 3 + Ring 0 kernel threads) ─
-    if tid > 0 {
+    // ── Preemptive context switch (all threads except idle) ──
+    if tid != crate::scheduler::IDLE_TID {
         let should_preempt = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state == ThreadState::Ready && k.tid == tid);
 
         if should_preempt {
+            kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=timeslice_expired", tid);
             // Save the current thread's RSP
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
@@ -569,7 +570,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 let nt = &mut *next;
                 let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
-                nt.time_slice_remaining = if nt.tid == 0 {
+                nt.time_slice_remaining = if nt.tid == crate::scheduler::IDLE_TID {
                     crate::scheduler::IDLE_TIME_SLICE
                 } else {
                     crate::scheduler::TIME_SLICES[idx]
@@ -625,13 +626,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             );
             return current_rsp;
         }
-    }
-
-    // ── Idle thread (TID 0) preemption ──────────────────────────
-    if tid == 0 {
+    } else {
+        // ── Idle thread (TID 1) preemption ──────────────────────
         let should_preempt = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state == ThreadState::Ready);
         if should_preempt && scheduler.has_non_idle_threads() {
+            kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=idle_preempt (has_non_idle={})",
+                tid, scheduler.has_non_idle_threads());
             // Save idle thread's RSP
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;

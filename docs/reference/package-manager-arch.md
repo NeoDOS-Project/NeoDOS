@@ -5,7 +5,7 @@
 > **Binary:** `neoget` — `userbin/neoget/`
 > **Library:** `libneopkg` — `libneopkg/` (new internal crate)
 > **Kernel ABI:** No new syscalls — uses Ob (RAX 60-66) + Cm (RAX 67-74)
-> **Tracking:** `docs/IMPROVEMENTS.md` sec PKG-1
+> **Tracking:** GitHub Issues (see `roadmap/improvements.md`)
 
 ---
 

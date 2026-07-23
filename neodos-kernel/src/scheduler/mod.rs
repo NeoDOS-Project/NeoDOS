@@ -31,6 +31,9 @@ pub const PRIORITY_COUNT: u8 = 4;
 
 pub const TIME_SLICES: [u16; PRIORITY_COUNT as usize] = [400, 200, 100, 50];
 
+pub const BOOT_TID: u32 = 0;
+pub const IDLE_TID: u32 = 1;
+
 pub const AGING_INTERVAL_TICKS: u64 = 500;
 pub const MAX_STARVATION_TICKS: u64 = 5000;
 
@@ -75,6 +78,7 @@ pub enum ThreadState {
     Ready,
     Running,
     Blocked { waiting_for: u32 },
+    Suspended,
     Terminated,
 }
 
@@ -84,7 +88,8 @@ impl ThreadState {
             ThreadState::Ready => 0,
             ThreadState::Running => 1,
             ThreadState::Blocked { .. } => 2,
-            ThreadState::Terminated => 3,
+            ThreadState::Suspended => 3,
+            ThreadState::Terminated => 4,
         }
     }
 }
@@ -217,7 +222,6 @@ fn idle_task() -> ! {
         crate::hal::without_interrupts(|| {
             crate::work_queue::WORK_QUEUE.process_high();
             crate::work_queue::WORK_QUEUE.process_low();
-            crate::net::net_tick();
         });
         crate::eventbus::EVENT_BUS.dispatch_pending();
         crate::hal::hlt_once();
@@ -239,7 +243,7 @@ impl Kthread {
             state: ThreadState::Ready,
             cpu_ticks: 0,
             waiting_for: None,
-            priority: PRIORITY_NORMAL,
+            priority: PRIORITY_IDLE,
             time_slice_remaining: IDLE_TIME_SLICE,
             ticks_since_scheduled: 0,
             kernel_stack_top: stack_top,
@@ -471,23 +475,57 @@ impl Scheduler {
         let mut eprocesses = Vec::with_capacity(32);
         let mut kthreads = Vec::with_capacity(64);
 
-        // Idle EPROCESS (PID 0) + idle KTHREAD (TID 0)
+        // Boot EPROCESS (PID 0) + boot KTHREAD (TID 0)
+        // The boot thread is the initial execution context (rust_start).
+        // It starts Running because it IS already executing on the BSP
+        // stack — it does not need a saved iretq frame for first entry.
+        // The scheduler will save its context when the first timer IRQ
+        // preempts it, and restore it when switching back.
+        let boot_eproc = Eprocess::new_kernel(0);
+        let boot_thread = Kthread {
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, r8: 0, r9: 0,
+            r10: 0, r11: 0, r12: 0, r13: 0,
+            r14: 0, r15: 0, rbp: 0,
+            rsp: 0,   // Saved on first timer IRQ — not used before that
+            rip: 0,
+            rflags: 0x202,
+            tid: BOOT_TID,
+            pid: 0,
+            state: ThreadState::Running,
+            cpu_ticks: 0,
+            waiting_for: None,
+            priority: PRIORITY_NORMAL,
+            time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
+            ticks_since_scheduled: 0,
+            kernel_stack_top: 0,
+            kernel_stack: None,
+            teb_base: 0,
+            cpu: 0,
+            obj_id: None,
+            kernel_apc_queue: VecDeque::new(),
+            user_apc_queue: VecDeque::new(),
+            apc_pending: false,
+        };
+        eprocesses.push(Some(boot_eproc));
+        kthreads.push(Some(boot_thread));
+
+        // Idle KTHREAD (TID 1) — runs the halt loop when nothing else is Ready.
+        // Shares the PID 0 EPROCESS (no separate address space needed for idle).
         let idle_stack_top = unsafe { IDLE_STACK.as_ptr().add(IDLE_STACK_SIZE) as u64 } & !0xF;
-        let idle_eproc = Eprocess::new_idle(0);
         let idle_thread = Kthread::new_idle(
-            0, 0,
+            IDLE_TID, 0,
             idle_task as *const () as u64,
             idle_stack_top,
         );
-        eprocesses.push(Some(idle_eproc));
         kthreads.push(Some(idle_thread));
 
         Scheduler {
             eprocesses,
             kthreads,
-            current_tid: 0,
+            current_tid: BOOT_TID,
             next_pid: 1,
-            next_tid: 1,
+            next_tid: 2,
             timer_ticks: 0,
             schedule_count: 0,
         }
@@ -498,8 +536,12 @@ impl Scheduler {
     }
 
     pub fn has_non_idle_threads(&self) -> bool {
-        self.kthreads.iter().skip(1).any(|t| {
-            t.as_ref().is_some_and(|k| k.state != ThreadState::Terminated)
+        self.kthreads.iter().any(|t| {
+            t.as_ref().is_some_and(|k| {
+                k.tid != IDLE_TID &&
+                k.state != ThreadState::Terminated &&
+                k.state != ThreadState::Suspended
+            })
         })
     }
 
@@ -572,12 +614,16 @@ impl Scheduler {
         }
 
         self.eprocesses[ep_slot] = Some(eproc);
+        // Ring 3 processes start Suspended — they are not enqueued to the
+        // run queue and are invisible to the global priority scan until
+        // wait_for_process() explicitly activates them (Suspended→Running).
+        // This prevents premature scheduling before the boot thread is
+        // ready to enter user mode.
+        thread.state = ThreadState::Suspended;
         self.kthreads[th_slot] = Some(thread);
 
-        // Enqueue new thread to its CPU's run queue
-        if let Some(k) = &self.kthreads[th_slot] {
-            Self::enqueue_to_cpu_run_queue(k);
-        }
+        kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Suspended (Ring 3)",
+            tid, pid, PRIORITY_NORMAL);
 
         crate::trace_sched!(1, pid, 0); // ADD_PROCESS
         Ok(pid)
@@ -604,12 +650,8 @@ impl Scheduler {
             eproc.user_slot?
         };
 
+        thread.state = ThreadState::Suspended;
         self.kthreads[th_slot] = Some(thread);
-
-        // Enqueue new thread to its CPU's run queue
-        if let Some(k) = &self.kthreads[th_slot] {
-            Self::enqueue_to_cpu_run_queue(k);
-        }
 
         Some(tid)
     }
@@ -653,6 +695,9 @@ impl Scheduler {
         self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
         self.next_pid += 1;
         self.kthreads[th_slot] = Some(kthread);
+
+        kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Ready",
+            tid, self.next_pid - 1, priority);
 
         // Netd is found by the global priority scan, not the run queue.
         // This prevents netd from starving the boot thread (TID 0).
@@ -875,7 +920,7 @@ impl Scheduler {
 
     fn apply_aging(&mut self) {
         for k in self.kthreads.iter_mut().flatten() {
-            if k.tid > 0 && k.state == ThreadState::Ready {
+            if k.tid != IDLE_TID && k.state == ThreadState::Ready {
                 k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
                     k.priority -= 1;
@@ -970,6 +1015,8 @@ impl Scheduler {
                             let prev = self.current_tid;
                             self.current_tid = tid;
                             k.state = ThreadState::Running;
+                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
+                                prev, tid);
                             crate::trace_cswitch!(prev as u64, tid as u64);
                             return k as *mut Kthread;
                         }
@@ -988,6 +1035,8 @@ impl Scheduler {
                             let prev = self.current_tid;
                             self.current_tid = tid;
                             k.state = ThreadState::Running;
+                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
+                                prev, tid);
                             crate::trace_cswitch!(prev as u64, tid as u64);
                             return k as *mut Kthread;
                         }
@@ -1007,6 +1056,8 @@ impl Scheduler {
                         let prev = self.current_tid;
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
+                            prev, check_tid, priority);
                         crate::trace_cswitch!(prev as u64, check_tid as u64);
                         return k as *mut Kthread;
                     }
@@ -1014,30 +1065,28 @@ impl Scheduler {
             }
         }
 
-        // Boost idle thread periodically so it gets CPU even when
-        // higher-priority threads are always Ready.  Acts as a
-        // backstop for the priority-based round-robin scan above.
-        if self.schedule_count % 20 == 0 {
-            if let Some(idle) = &mut self.kthreads[0] {
-                if idle.tid == 0 && idle.state == ThreadState::Ready {
-                    let prev = self.current_tid;
-                    self.current_tid = 0;
-                    idle.state = ThreadState::Running;
-                    idle.time_slice_remaining = IDLE_TIME_SLICE;
-                    crate::trace_cswitch!(prev as u64, 0);
-                    return idle as *mut Kthread;
+        // Fallback to idle thread (TID 1, PRIORITY_IDLE).
+        // The idle thread has IDLE priority, so the global scan above
+        // naturally skips it while any higher-priority thread is Ready.
+        // This fallback only fires when the scan found nothing at any
+        // priority, meaning every non-idle thread is Blocked/Terminated.
+        {
+            let ptr = self.find_kthread_ptr(IDLE_TID);
+            if !ptr.is_null() {
+                unsafe {
+                    if let Some(idle) = &mut *ptr {
+                        if idle.state != ThreadState::Terminated {
+                            let prev = self.current_tid;
+                            self.current_tid = IDLE_TID;
+                            idle.state = ThreadState::Running;
+                            idle.time_slice_remaining = IDLE_TIME_SLICE;
+                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
+                                prev, IDLE_TID);
+                            crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
+                            return idle as *mut Kthread;
+                        }
+                    }
                 }
-            }
-        }
-
-        // Fallback to idle thread (TID 0)
-        if let Some(idle) = &mut self.kthreads[0] {
-            if idle.tid == 0 && idle.state != ThreadState::Terminated {
-                let prev = self.current_tid;
-                self.current_tid = 0;
-                idle.state = ThreadState::Running;
-                crate::trace_cswitch!(prev as u64, 0);
-                return idle as *mut Kthread;
             }
         }
         panic!("No ready threads and idle is unavailable");
@@ -1055,6 +1104,7 @@ impl Scheduler {
         let _tid = self.current_tid;
 
         let mut needs_resched = false;
+        let mut expired_priority: u8 = 0;
         if let Some(k) = self.current_kthread_mut() {
             if k.state == ThreadState::Running {
                 k.cpu_ticks += 1;
@@ -1064,6 +1114,7 @@ impl Scheduler {
                 }
 
                 if k.time_slice_remaining == 0 {
+                    expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     needs_resched = true;
                 }
@@ -1071,6 +1122,8 @@ impl Scheduler {
         }
 
         if needs_resched {
+            kdebug!(LogSubsys::Sched, "[SCHED] TIMESLICE_EXPIRED tid={} priority={}",
+                _tid, expired_priority);
             // Thread is already set to Ready above.  The global priority
             // scan in schedule() picks it up fairly — no need to re-enqueue
             // to the per-CPU run queue, which would bypass the scan and

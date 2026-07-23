@@ -303,7 +303,7 @@ Options:
   --check         Validate NXE format
 ```
 
-**Location:** `tools/nxeinfo/` — Rust CLI, runs on host (not Ring 3).
+**Location:** [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — `nxeinfo`, runs on host (not Ring 3).
 
 ### 6.2 nxpkg — Package manager (host tool)
 
@@ -319,7 +319,7 @@ Commands:
   check   <nxp>                 Full validation
 ```
 
-**Location:** `tools/nxpkg/` — Rust CLI, runs on host.
+**Location:** [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — `nxpkg`, runs on host.
 
 ### 6.3 nxdump — Technical dump (host tool)
 
@@ -334,7 +334,7 @@ Options:
   --segments      Segment map with addresses
 ```
 
-**Location:** `tools/nxdump/` — Rust CLI, runs on host.
+**Location:** [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — `nxdump`, runs on host.
 
 ### 6.4 nxres — Resource explorer (Ring 3 .NXE)
 
@@ -502,7 +502,7 @@ C:\Programs\<name>\          ← Application root
 
 ## 10. Future Improvements
 
-See `docs/IMPROVEMENTS.md` section **NXE-ECOSYSTEM** for the complete future roadmap including:
+See `roadmap/improvements.md` section **NXE-ECOSYSTEM** for the complete future roadmap including:
 
 - NXP repository support
 - Digital signatures (Ed25519)

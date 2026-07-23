@@ -726,7 +726,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         }
     });
 
-    println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
+        println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
+        kinfo!(LogSubsys::Init, "[THREAD] NeoInit started (PID={})", pid);
 
     // Mark NeoInit as Running so sm_start_auto_services doesn't spawn a duplicate
     services::sm_mark_neoinit_running(pid);

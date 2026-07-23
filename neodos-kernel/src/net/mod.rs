@@ -62,6 +62,7 @@ pub fn net_is_initialized() -> bool {
 }
 
 pub fn net_kthread_entry() -> ! {
+    kinfo!(LogSubsys::Net, "[THREAD] netd started");
     loop {
         net_tick();
         for _ in 0..64 {

@@ -935,4 +935,4 @@ La Fase 1 no rompe nada existente. La Fase 2 elimina el driver NEM legacy de tra
 
 *Este documento constituye la especificación de diseño de NeoKBD v0.1.*
 *No se implementará código hasta la aprobación del ARB.*
-*Ver `docs/IMPROVEMENTS.md` para tracking del roadmap.*
+*Ver `roadmap/improvements.md` para tracking del roadmap.*

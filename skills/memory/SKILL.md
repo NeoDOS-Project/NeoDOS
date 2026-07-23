@@ -24,7 +24,7 @@ Change memory subsystem correctly without breaking allocation invariants or intr
    - **Heap**: Fixed at `0x10000000..0x12000000`
    - **Mmap**: Fixed at `0x20000000..0x22000000`
 
-2. **Read `docs/memory.md`**
+2. **Read `docs/memory/memory.md`**
    Understand the buddy allocator invariants, slab hot cache refill policy, demand paging fault handling.
 
 3. **Buddy allocator changes** (`src/memory/buddy.rs`)
@@ -80,4 +80,4 @@ Change memory subsystem correctly without breaking allocation invariants or intr
 - [ ] Heap and mmap regions non-overlapping, within valid address space
 - [ ] Demand paging path tested (mmap → page fault → map → access)
 - [ ] Kernel tests added and pass
-- [ ] `docs/memory.md` updated if bounds or algorithm changed
+- [ ] `docs/memory/memory.md` updated if bounds or algorithm changed

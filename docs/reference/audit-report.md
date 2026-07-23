@@ -804,7 +804,7 @@ NeoDOS-Project/ (GitHub Organization)
 
 ## 9. Improvements Detectados
 
-Los siguientes hallazgos deben añadirse a `docs/IMPROVEMENTS.md`:
+Los siguientes hallazgos deben trackearse como GitHub Issues:
 
 | ID | Descripción | Prioridad | Complejidad | Impacto Arquitectónico |
 |----|-------------|-----------|-------------|----------------------|
@@ -856,4 +856,4 @@ YA SEPARADO:
 
 ---
 
-*Este documento es el resultado de una auditoría arquitectónica completa. No implica cambios en la estructura del repositorio. Las migraciones aquí descritas deben planificarse como tareas en `docs/IMPROVEMENTS.md` antes de ejecutarse.*
+*Este documento es el resultado de una auditoría arquitectónica completa. No implica cambios en la estructura del repositorio. Las migraciones aquí descritas deben planificarse como tareas en GitHub Issues antes de ejecutarse.*

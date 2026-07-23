@@ -2,7 +2,7 @@
 
 > **Extension:** `.NXP` (on disk: `.nxp`)
 > **Magic:** `0x3150584E` (`"NXP1"`)
-> **Tools:** `tools/nxpkg/` (create, extract, list, info, verify)
+> **Tools:** [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — `nxpkg` (create, extract, list, info, verify)
 
 ---
 

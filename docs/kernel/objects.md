@@ -337,5 +337,29 @@ kobj_lookup(id)       ->  ob_lookup(id)
 
 For the complete design history, evolution from KOBJ v1 through Ob unification,
 namespace design rationale, and future roadmap, see:
-**`docs/OBJECT_MANAGER_ARCHITECTURE.md`** (1387 lines) — historical reference
-document.
+**`docs/kernel/obj-arch.md`** — historical design companion document.
+
+### Frozen Design Decisions
+
+The following are locked decisions for the Ob architecture (archived from
+`obj-arch.md` §15):
+
+1. **ObObject is mandatory.** Every kernel resource MUST be an `ObObject` in the
+   global object table. No parallel resource tracking outside Ob.
+2. **ObId is unique and never reused.** `next_id` increments monotonically.
+3. **ObType enum is the unique discriminator.** No second enum, no type punning
+   via native_id. Adding a new resource type means adding one variant to
+   `ObType`.
+4. **All handles are ObHandles.** HandleEntry stores only `object_id: ObId` and
+   `offset: u64`. The old per-type kind field is eliminated.
+5. **sys_close works via Ob.** Closes the handle, calls `ob_release_object`,
+   triggers `on_destroy` if refcount reaches zero.
+6. **Ob namespace is hierarchical.** Paths like `\Global\FileSystem\C:\...`.
+   No flat namespace.
+7. **Security is integrated into Ob.** `SeAccessCheck` is called on
+   `ob_open_path`. Every object has a DACL.
+8. **URN is a frontend of Ob.** All URI schemes resolve via `ob_open_path()`.
+9. **Migration is incremental.** Legacy syscalls coexist with Ob syscalls during
+   migration. No flag day.
+10. **ObOperations trait is the extension point.** Custom `on_destroy` for
+    type-specific cleanup. The trait can grow new methods as needed.

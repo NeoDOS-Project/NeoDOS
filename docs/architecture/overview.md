@@ -4,7 +4,7 @@ This document describes the *current* NeoDOS boot/runtime architecture as implem
 
 > **⚠️ NUEVA GUÍA ARQUITECTÓNICA:** Para la visión a largo plazo (v0.40 → v1.0), el plan director,
 > el diagnóstico de arquitectura, el roadmap por versiones y las decisiones de diseño estratégicas,
-> consultar [`ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md).
+> consultar [`vision.md`](vision.md).
 >
 > Este documento describe el estado actual. El documento de visión describe hacia dónde vamos.
 
@@ -674,7 +674,7 @@ The provided script `scripts/qemu-debug.sh` runs QEMU with:
 - QEMU monitor on `telnet 127.0.0.1:4444`
 - GDB server on `tcp::1234`
 
-See `docs/DEBUG.md` for a walkthrough.
+See `docs/development/debugging.md` for a walkthrough.
 
 ---
 
@@ -695,4 +695,4 @@ See `docs/DEBUG.md` for a walkthrough.
 | **Networking** | TCP/IP + UDP (e1000 NIC, ARP, IPv4, ICMP, TCP, UDP, socket ObType, KWait) | Completado | **COMPLETADO — v0.47** |
 | **IOCP** | No existe (IRP sí, pero sin completion ports) | IoCompletionPort para apps async | BAJA — v0.48 |
 
-Forward-looking architecture reference: [`ARCHITECTURAL_VISION.md`](ARCHITECTURAL_VISION.md).
+Forward-looking architecture reference: [`vision.md`](vision.md).

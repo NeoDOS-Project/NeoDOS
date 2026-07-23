@@ -9,6 +9,16 @@ rustflags = [
     "-C", "relocation-model=static",
 ]
 
+[env]
+# Log levels for kernel build (build.rs reads these)
+LOG_DEFAULT = "INFO"
+LOG_NET = "INFO"
+LOG_SCHED = "DEBUG"
+LOG_SYSCALL = "INFO"
+LOG_USER = "INFO"
+LOG_INIT = "INFO"
+LOG_KERNEL = "INFO"
+
 [profile.dev]
 panic = "abort"
 

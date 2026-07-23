@@ -15,7 +15,7 @@ Make correct scheduler changes without breaking preemption, fairness, or SMP inv
 
 ## Steps
 
-1. **Read `docs/scheduler.md`**
+1. **Read `docs/scheduler/scheduler.md`**
    Understand priorities, aging, time slices, SMP work stealing, and per-CPU run queues.
 
 2. **Locate the right source file**
@@ -84,4 +84,4 @@ Make correct scheduler changes without breaking preemption, fairness, or SMP inv
 - [ ] IPI sent after thread migration
 - [ ] No new spinlock inversions introduced
 - [ ] Kernel tests added and pass
-- [ ] `docs/scheduler.md` updated if behavior changed
+- [ ] `docs/scheduler/scheduler.md` updated if behavior changed

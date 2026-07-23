@@ -641,9 +641,9 @@ arquitectónica alrededor del Object Manager.
 | ACPI Power | Jul 12 | `src/power/acpi.rs` — ACPI S5, reset register, FADT |
 | kbdcompile | Jul 12 | `tools/kbdcompile/` — Layout .klc → .kbd compiler |
 | neokey | Jul 12 | `userbin/neokey/` — Keyboard management CLI |
-| nxeinfo | Jul 13 | `tools/nxeinfo/` — Inspector de ejecutables NXE |
-| nxpkg | Jul 13 | `tools/nxpkg/` — Creador/gestor de paquetes NXP |
-| nxdump | Jul 13 | `tools/nxdump/` — Volcado técnico ELF/NXE/NEM |
+| nxeinfo | Jul 13 | [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — Inspector de ejecutables NXE |
+| nxpkg | Jul 13 | [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — Creador/gestor de paquetes NXP |
+| nxdump | Jul 13 | [`NeoTools`](https://github.com/NeoDOS-Project/NeoTools) — Volcado técnico ELF/NXE/NEM |
 | libneodos res API | Jul 13 | `libneodos/src/res.rs` — Recurso de aplicaciones |
 | nltc | Jul 13 | `tools/nltc/` — Compilador NLT (TOML → NLTv2 binario) |
 | neolocale | Jul 13 | `userbin/neolocale/` — Locale manager CLI |

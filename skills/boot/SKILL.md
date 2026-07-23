@@ -15,7 +15,7 @@ Correctly modify the boot process without breaking phase ordering, BootInfo ABI 
 
 ## References
 
-- `docs/boot.md` — boot flow documentation
+- `docs/boot/boot-flow.md` — boot flow documentation
 - `neodos-bootloader/` — UEFI bootloader source
 - `src/main.rs` — `rust_start()` with phases 0–4
 - `drivers/gpt.rs` — GPT partition parsing
@@ -177,5 +177,5 @@ NeoInit source is in `userbin/neoinit/src/main.rs`. The kernel launches it at ph
 - [ ] RAM disk loads and mounts correctly
 - [ ] Tests pass: `neodev test`
 - [ ] Image builds: `neodev build --image`
-- [ ] `docs/boot.md` updated with new phase descriptions
+- [ ] `docs/boot/boot-flow.md` updated with new phase descriptions
 - [ ] `scripts/check_deps.py` passes

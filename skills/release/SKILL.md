@@ -38,9 +38,10 @@ Produce a consistent, tested, and documented release with proper versioning and 
 
    Keep entries concise, grouped by type (feat, fix, refactor, docs, test).
 
-4. **Update IMPROVEMENTS.md**
-   Move completed items from `docs/IMPROVEMENTS.md` to `docs/IMPROVEMENTS_COMPLETED.md`.
-   Add a note with the version that completed each item.
+4. **Sync roadmap**
+   Run `scripts/sync-roadmap.sh sync` to update GitHub Issues with any completed items.
+   (The old `docs/IMPROVEMENTS.md` files were removed in the docs reorganization;
+    GitHub Issues is the SSOT for planning.)
 
 5. **Full build and test**
 
@@ -81,14 +82,14 @@ Produce a consistent, tested, and documented release with proper versioning and 
 
 - Bump ABI version (`KERNEL_ABI_VERSION` in `src/nem/mod.rs`) on any breaking NEM change.
 - Test the full boot path (QEMU) for every release — not just unit tests.
-- Update `docs/IMPROVEMENTS.md` before, not after, cutting the release.
+- Sync roadmap (`scripts/sync-roadmap.sh sync`) before cutting the release.
 - Keep `CHANGELOG.md` entries short — one line per change, link to PRs if available.
 - Never release on a dirty working tree — commit or stash first.
 
 ## Common mistakes
 
 - Forgetting to bump ABI version when NEM driver structs or ABIs changed.
-- Releasing without updating `docs/IMPROVEMENTS.md` — items show as pending that are done.
+- Releasing without syncing `scripts/sync-roadmap.sh sync` — items show as pending that are done.
 - Releasing without running `scripts/auto_test.py` — CI catches it but it's embarrassing.
 - Including uncommitted changes in the release commit.
 - Bumping the version in only one place (AGENTS.md but not in-kernel version constant).
@@ -98,7 +99,7 @@ Produce a consistent, tested, and documented release with proper versioning and 
 - [ ] Version bumped in `AGENTS.md`
 - [ ] ABI version bumped (if NEM ABI changed)
 - [ ] `CHANGELOG.md` updated with release notes
-- [ ] `docs/IMPROVEMENTS.md` items moved to `docs/IMPROVEMENTS_COMPLETED.md`
+- [ ] Roadmap synced (`scripts/sync-roadmap.sh sync`)
 - [ ] `cargo build` + `python3 scripts/auto_test.py` pass
 - [ ] `scripts/check_deps.py` passes
 - [ ] `bash scripts/build.sh --neodos-image` succeeds

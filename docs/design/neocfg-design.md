@@ -486,10 +486,9 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 | --- | --- |
 | `scripts/build.sh` | Añadir `neocfg` al loop de build de user binaries (línea 82) |
 | `scripts/create_ne2_image.py` | Añadir `'neocfg'` a la lista de binarios (línea 226) |
-| `docs/IMPROVEMENTS.md` | Mover ADM-5 (`neocfg`) a `completed` cuando se implemente |
-| `docs/IMPROVEMENTS_COMPLETED.md` | Añadir entrada para NeoCfg |
-| `docs/shell.md` | Añadir neocfg a la tabla de binarios (sección userbin/.NXE) |
-| `docs/neocfg.md` (nuevo) | Este documento o un resumen |
+| `roadmap/improvements.md` | Mover ADM-5 (`neocfg`) a `completed` cuando se implemente |
+| `docs/userland/shell.md` | Añadir neocfg a la tabla de binarios (sección userbin/.NXE) |
+| `docs/design/neocfg-design.md` (nuevo) | Este documento o un resumen |
 
 ---
 
@@ -547,7 +546,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 | **i18n runtime** | **Dependencia futura** | El módulo Locale requiere i18n runtime. Hasta entonces, stub. |
 | **Keyboard subsystem** | Ninguno | Ya implementado. NeoCfg lo consume. |
 | **NeoShell** | Ninguno | NeoCfg es un .NXE independiente, invocable como `NEOCFG` desde NeoShell. Coexiste. |
-| **Documentación** | Bajo | Actualizar `docs/shell.md`,`docs/IMPROVEMENTS.md`. Nuevo `docs/neocfg.md` (este documento). |
+| **Documentación** | Bajo | Actualizar `docs/userland/shell.md`. Nuevo `docs/design/neocfg-design.md` (este documento). |
 
 ---
 
@@ -836,11 +835,10 @@ userbin/neocfg/
 
 ### Step 12: Documentation (0.5 day)
 
-**Archivos:** `docs/neocfg.md` (este documento), `docs/shell.md`, `docs/IMPROVEMENTS.md`
+**Archivos:** `docs/design/neocfg-design.md` (este documento), `docs/userland/shell.md`, `roadmap/improvements.md`
 
-1. Añadir entrada `neocfg` a la tabla de binarios en `docs/shell.md`
-2. Mover ADM-5 en `docs/IMPROVEMENTS.md` a completado
-3. Añadir entrada en `docs/IMPROVEMENTS_COMPLETED.md`
+1. Añadir entrada `neocfg` a la tabla de binarios en `docs/userland/shell.md`
+2. Sincronizar con `scripts/sync-roadmap.sh sync` para marcar ADM-5 completado
 
 ### Total estimated effort: ~5 days
 
@@ -927,4 +925,4 @@ about.build             = "Build date"
 
 *Este documento constituye la especificación de diseño de NeoCfg v0.1.*
 *No se implementará código hasta la aprobación del ARB.*
-*Las dependencias externas (Power Manager, i18n runtime) se trackean en `docs/IMPROVEMENTS.md` como PM-PHASE* e I18N-PHASE*respectivamente.*
+*Las dependencias externas (Power Manager, i18n runtime) se trackean en `roadmap/improvements.md`.*

@@ -202,3 +202,149 @@ The `x64/` backend implements the full extern "C" ABI surface for x86_64.
 Future backends (e.g., `aarch64/`) would provide an identical API using
 architecture-specific instructions, enabling cross-platform kernel builds
 without changing callers.
+
+---
+
+## ABI Reference
+
+> **Status**: Active. HAL ABI v0.4 with raw/safe split. ABI v0.3 binary interface is preserved
+> (26 extern "C" primitives). Internal restructuring adds `hal/raw/` (bare asm) and `hal/safe/`
+> (type-safe wrappers) to isolate all inline assembly from the rest of the kernel.
+>
+> **Source of truth**: `src/hal/`. This document is derivative — it formalises
+> what already exists; it does not define new behaviour.
+
+### ABI v0.3 — 23 extern "C" Functions
+
+#### CPU Control — `hal/x64/cpu.rs`
+```rust
+pub extern "C" fn enable_interrupts();
+pub extern "C" fn disable_interrupts();
+pub extern "C" fn halt() -> !;
+pub extern "C" fn poweroff() -> !;
+pub extern "C" fn read_cr2() -> u64;
+pub extern "C" fn read_cr3() -> u64;
+pub extern "C" fn write_cr3(val: u64);
+pub extern "C" fn flush_tlb(virt: u64);
+pub extern "C" fn interrupts_enabled() -> bool;
+pub extern "C" fn hlt_once();
+pub fn cpu_info() -> CpuInfo;                    // NOT extern "C"
+```
+
+#### Port I/O — `hal/x64/io.rs`
+```rust
+pub extern "C" fn inb(port: u16) -> u8;
+pub extern "C" fn outb(port: u16, val: u8);
+pub extern "C" fn inw(port: u16) -> u16;
+pub extern "C" fn outw(port: u16, val: u16);
+pub extern "C" fn inl(port: u16) -> u32;
+pub extern "C" fn outl(port: u16, val: u32);
+```
+
+#### Page Memory — `hal/x64/mem.rs`
+```rust
+pub extern "C" fn alloc_page() -> *mut u8;
+pub extern "C" fn free_page(ptr: *mut u8);
+pub extern "C" fn map_page(phys: u64, virt: u64, flags: u64) -> i32;
+pub extern "C" fn unmap_page(virt: u64) -> i32;
+pub extern "C" fn memory_barrier();
+pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry>;  // NOT extern "C"
+```
+
+#### Interrupt Management — `hal/x64/irq.rs`
+```rust
+pub type IrqHandler = extern "C" fn();
+pub extern "C" fn register_irq(vector: u8, handler: IrqHandler) -> i32;
+pub extern "C" fn ack_irq(vector: u8);
+```
+
+#### Timing — `hal/x64/time.rs`
+```rust
+pub extern "C" fn get_ticks() -> u64;
+pub extern "C" fn increment_ticks();
+pub extern "C" fn sleep_hint(us: u32);
+```
+
+### Calling Convention
+
+System V AMD64 ABI, `extern "C"`. Args 1-6: `rdi`, `rsi`, `rdx`, `rcx`, `r8`, `r9`.
+Return: `rax`. Stack 16-byte aligned before `call`. Scratch regs: `rax`, `rcx`,
+`rdx`, `rdi`, `rsi`, `r8`-`r11`. Preserved: `rbx`, `rbp`, `r12`-`r15`.
+
+### `map_page` Flags
+
+| Bit | Value | Name | x86_64 mapping |
+|-----|-------|------|----------------|
+| 0 | `0x01` | — | Always set (PRESENT) |
+| 1 | `0x02` | PAGE_WRITABLE | PageTableFlags::WRITABLE |
+| 2 | `0x04` | PAGE_USER | PageTableFlags::USER_ACCESSIBLE |
+| 3 | `0x08` | PAGE_WRITE_THROUGH | PageTableFlags::WRITE_THROUGH |
+| 4 | `0x10` | PAGE_NO_CACHE | PageTableFlags::NO_CACHE |
+| 5-63 | — | Reserved | Must be zero |
+
+### Validation Rules
+
+- All exported functions use `extern "C"` (System V AMD64)
+- `halt()` and `poweroff()` never return
+- `alloc_page` returns null on OOM, never faults
+- `free_page` is a no-op for null pointer
+- HAL must not call the scheduler, heap allocator, filesystem, or process code
+- HAL must not panic — failure signalled via return value
+- No `asm!()` calls outside `src/hal/raw/`
+
+### Current Extensions (since v0.39.4)
+
+#### PCI Express ECAM (`src/hal/pci.rs`)
+ECAM addressing: `ECAM_BASE + (bus<<20) + (dev<<15) + (func<<12) + offset`.
+Activated at Phase 2.3 from ACPI MCFG table.
+
+#### I/O APIC (`src/interrupts/ioapic.rs`)
+ISA IRQs routed: IRQ0 (timer) → vec32, IRQ1 (keyboard) → vec33,
+IRQ4 (serial) → vec36, IRQ12 (PS/2 mouse) → vec44.
+
+#### MSI-X (`src/interrupts/msi.rs`)
+`configure_msix_entry` and `configure_msix_entries` for per-entry MSI-X setup.
+
+### `ack_irq` Updated Contract (v0.39.4+)
+1. **APIC EOI** (always): Write 0 to Local APIC EOI register for ALL vectors
+2. **IOAPIC active**: Return immediately after APIC EOI — legacy PIC disabled
+3. **Legacy PIC fallback**: Proper EOI to master/slave PIC for vectors 32-47
+
+### Error Return Convention
+- `0` = success
+- `-1` = generic failure
+
+---
+
+## GDT & IDT Reference
+
+### Global Descriptor Table (GDT)
+
+NeoDOS implements a 64-bit GDT with Ring 0 (Kernel) and Ring 3 (User) segments.
+
+| Index | Selector | Type | DPL |
+|-------|----------|------|-----|
+| 0 | `0x00` | Null | - |
+| 1 | `0x08` | Kernel Code | 0 |
+| 2 | `0x10` | Kernel Data | 0 |
+| 3 | `0x18` | User Code | 3 |
+| 4 | `0x20` | User Data | 3 |
+| 5 | `0x28` | TSS | 0 |
+
+The TSS provides a clean stack for critical exceptions (Double Faults via IST0).
+
+### Interrupt Descriptor Table (IDT)
+
+IDT maps 256 interrupt vectors. Exception vectors (0-31):
+
+| Vector | Name | Type | Handler |
+|--------|------|------|---------|
+| 0 | Divide Error | Fault | Panic |
+| 6 | Invalid Opcode | Fault | Panic |
+| 8 | Double Fault | Abort | Panic (IST0) |
+| 13 | GPF | Fault | Panic |
+| 14 | Page Fault | Fault | Panic |
+
+Hardware IRQs (32-47, PIC remapped):
+- **32 (IRQ0)**: System Timer (Context Switch)
+- **33 (IRQ1)**: PS/2 Keyboard

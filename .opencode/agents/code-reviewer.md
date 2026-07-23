@@ -56,7 +56,7 @@ Fix: Add // Safety: ... comment explaining invariants
 [HIGH] New syscall not following sys_ob_ naming
 File: neodos-kernel/src/syscall/mod.rs:15
 Issue: RAX 61 named sys_foo instead of sys_ob_foo
-Fix: Rename to sys_ob_foo and update docs/syscalls.md
+Fix: Rename to sys_ob_foo and update docs/kernel/syscalls.md
 ```
 
 ## Approval Criteria

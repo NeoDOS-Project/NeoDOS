@@ -174,8 +174,27 @@ pub fn wait_for_process(pid: u32) {
 
     gdt::set_kernel_stack(kernel_stack_top);
 
+    kinfo!(LogSubsys::User, "[THREAD] wait_for_process: entering PID {} user mode (entry=0x{:x})", pid, entry);
+
+    // Transition the boot thread (TID 0, current) to Blocked so the
+    // scheduler never picks it again (it is not in the global scan as
+    // Ready, and the idle fallback selects IDLE_TID, not TID 0).
+    // Then activate the target process from Suspended to Running and
+    // make it current.  The boot thread's real saved execution context
+    // lives in EXIT_RSP/EXIT_RIP (set by execute_usermode_asm) — it
+    // will be restored when the Ring 3 process exits via exit_to_kernel.
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
+        let prev_tid = s.current_tid;
+        // Block the boot thread (TID 0)
+        if prev_tid == scheduler::BOOT_TID {
+            if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
+                k.state = scheduler::ThreadState::Blocked {
+                    waiting_for: pid,
+                };
+            }
+        }
+        // Activate and switch to the target process
         for k in s.kthreads.iter().flatten() {
             if k.pid == pid && k.tid > 0 {
                 s.current_tid = k.tid;
@@ -188,6 +207,17 @@ pub fn wait_for_process(pid: u32) {
     });
 
     execute_usermode(entry, user_stack_top);
+
+    // When the Ring 3 process exits, exit_to_kernel restores the boot
+    // context from EXIT_RSP/EXIT_RIP and returns here.  Restore the
+    // boot thread's Running state for consistency.
+    crate::hal::without_interrupts(|| {
+        let mut s = scheduler::current_scheduler().lock();
+        s.current_tid = scheduler::BOOT_TID;
+        if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
+            k.state = scheduler::ThreadState::Running;
+        }
+    });
 }
 
 /// Signal the current CPU to exit to kernel mode on next syscall return.

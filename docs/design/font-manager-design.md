@@ -36,7 +36,7 @@ NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary
 | `neodos-kernel/src/graphics.rs` | Framebuffer renderer, `put_pixel()` | No |
 | `neodos-kernel/src/input/vt.rs` | VT shadow buffer (char grid) | No |
 | `neodos-kernel/build_font.py` | Manual OTF to font.rs converter | Generator script |
-| `tools/neodev/` | Build tool | **No font handling at all** |
+| [`NeoDev`](https://github.com/NeoDOS-Project/NeoDev) | Build tool | **No font handling at all** |
 | Registry hives | Font configuration | **None exists** |
 
 ---
@@ -382,7 +382,7 @@ Future:
 
 ### 2.12 NeoDev Integration
 
-The following changes to `tools/neodev/`:
+The following changes to [NeoDev](https://github.com/NeoDOS-Project/NeoDev):
 
 1. **`config.rs`**: Add `fonts: Vec<String>` field to `Config` struct for font file paths.
 2. **`build.rs`**: Add a `fonts` stage invoked between library collection and image creation. For each font in `Config.fonts`:
@@ -452,7 +452,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 | **VT** (`input/vt.rs`) | No change to shadow buffer format | None |
 | **Syscall dispatch** (`syscall/`) | No new syscalls; existing `ob_query_info`/`ob_set_info` handle new classes | Low |
 | **Registry** (`cm/`, `scripts/gen_system_hiv.py`) | Add `Services\FontManager` and `Software\Fonts` keys | Low |
-| **NeoDev** (`tools/neodev/`) | Add font validation, font copy to image, `fonts.list` generation | Moderate |
+| **NeoDev** ([`NeoDev`](https://github.com/NeoDOS-Project/NeoDev)) | Add font validation, font copy to image, `fonts.list` generation | Moderate |
 | **Boot sequence** (`main.rs`) | Add `font::init()` call in appropriate phase | Low |
 | **Locking/Concurrency** | Font Manager uses `Mutex<FontRegistry>` for provider/object registry | Low |
 
@@ -649,13 +649,13 @@ No new syscall. New classes dispatched via existing handler.
 | `neodos-kernel/src/input/vt.rs` | No change (shadow buffer format unchanged) |
 | `neodos-kernel/src/input/manager.rs` | No change |
 | `neodos-kernel/build_font.py` | **Deleted** -- replaced by NeoDev-managed PSF font pipeline |
-| `tools/neodev/src/config.rs` | Add `fonts: Vec<String>` field |
-| `tools/neodev/src/build.rs` | Add font validation stage |
-| `tools/neodev/src/image.rs` | Add font collection to `collect_files()` |
+| `neodev/src/config.rs` | Add `fonts: Vec<String>` field |
+| `neodev/src/build.rs` | Add font validation stage |
+| `neodev/src/image.rs` | Add font collection to `collect_files()` |
 | `scripts/gen_system_hiv.py` | Add `Services\FontManager` and `Software\Fonts` keys |
 | `docs/objects.md` | Add Font type to ObType table, namespace, info classes |
 | `docs/syscalls.md` | No new syscalls, but document new info classes |
-| `docs/IMPROVEMENTS.md` | Add future Font Manager improvements |
+| `roadmap/improvements.md` | Add future Font Manager improvements |
 | `tools/fonts/default.psf` | New default PSF font file (e.g., Terminus 8x16) |
 
 ---
@@ -753,7 +753,7 @@ No new syscall. New classes dispatched via existing handler.
 - Update `docs/objects.md` with ObType::Font, namespace, info classes.
 - Update `docs/font-manager-design.md` if implementation diverges from design.
 - Add architecture section to `docs/font-manager-design.md`.
-- Update `docs/IMPROVEMENTS.md` with future improvements.
+- Update `roadmap/improvements.md` with future improvements.
 
 ---
 

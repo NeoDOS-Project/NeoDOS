@@ -646,7 +646,7 @@
 - **AGENTS.md** — Syscall table updated with "Estado" column. "Estado Objectification" table added. User binaries descriptions updated to Ob API.
 - **docs/ARCHITECTURE.md** — KOBJ, LOADNEM, NDREG descriptions updated to Ob API.
 - **docs/IMPROVEMENTS.md** — Items 117-121 updated. AI-5 marked completed. "Objectification Roadmap" section added (~190 lines).
-- **docs/SYSCALLS.md** — ABI v7: removed dead syscalls, documented all remaining with correct ABI.
+- **docs/syscalls.md** — ABI v7: removed dead syscalls, documented all remaining with correct ABI.
 
 ### Removed
 
