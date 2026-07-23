@@ -10,6 +10,11 @@ pub const DOUBLE_FAULT_IST_INDEX: u16 = 1;
 struct AlignedStack([u8; 4096 * 8]);
 
 static mut DOUBLE_FAULT_STACK: AlignedStack = AlignedStack([0; 4096 * 8]);
+/// TSS MUST be in a writable section.  LTO can place statics with
+/// internal linkage into the read-only r-x segment, which would
+/// silently discard set_kernel_stack() writes and leave RSP0=0
+/// (triple fault on the next Ring-3→Ring-0 interrupt).
+#[link_section = ".data"]
 static mut TSS: TaskStateSegment = TaskStateSegment::new();
 static TSS_READY: AtomicBool = AtomicBool::new(false);
 

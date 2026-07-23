@@ -338,10 +338,8 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 }
 
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
-    crate::trace_event!(TraceEvent::Panic, 2, error_code, 0, 0);
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
-    // Capture crash dump before panic (will write to serial and RAM buffer)
     crate::crash::dump_double_fault(rip, rsp, error_code);
     panic_classified!(PanicClass::DoubleFault,
         "Double fault: rip={:#x} rsp={:#x} error={:#x}",
