@@ -4,6 +4,51 @@
 # due_on: fecha ISO 8601 estimada (opcional, puede omitirse)
 #         Se usa para ordenar milestones en GitHub.
 
+- title: "v0.40 — Foundation"
+  description: |
+    Primer kernel funcional, SMP fixes, fsck para NE2, modularización.
+  due_on: "2026-06-01T00:00:00Z"
+  state: "closed"
+
+- title: "v0.43 — Shell & Input"
+  description: |
+    Shell command migration Ring 0→Ring 3, Input subsystem redesign,
+    Virtual Terminals.
+  due_on: "2026-06-23T00:00:00Z"
+  state: "closed"
+
+- title: "v0.44 — Object Manager"
+  description: |
+    Object Manager (Ob) unificado: 16 ObTypes, 7 syscalls RAX 60-66,
+    handles, namespace, seguridad. Thread/Timer/Semaphore/Section objects.
+  due_on: "2026-06-26T00:00:00Z"
+  state: "closed"
+
+- title: "v0.46 — Kernel Objects"
+  description: |
+    AHCI Native Command Queuing, Timer/Semaphore/Section Ob objects.
+  due_on: "2026-06-27T00:00:00Z"
+  state: "closed"
+
+- title: "v0.47 — Networking"
+  description: |
+    TCP/IP stack completo: Ethernet, ARP, IPv4, ICMP, UDP, TCP, e1000 NIC NEM.
+  due_on: "2026-06-28T00:00:00Z"
+  state: "closed"
+
+- title: "v0.48 — NeoFS & Registry"
+  description: |
+    NeoFS stability, DHCP client, Registry hive persistence, VFS hardening.
+  due_on: "2026-07-06T00:00:00Z"
+  state: "closed"
+
+- title: "v0.49 — Services & Tools"
+  description: |
+    Service Manager, VFS hardening, Networking userland, NeoDev, NeoKBD,
+    ACPI Power Management, PowerManager Ob.
+  due_on: "2026-07-12T00:00:00Z"
+  state: "closed"
+
 - title: "v0.50 — Consolidation"
   description: |
     Completar iniciativas en curso: Shell tokenizer, Power Phase 2,
