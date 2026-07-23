@@ -373,13 +373,17 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    // Read actual GS selector directly from the CPU register to
+    // determine if the fault is from a bad GS load.
+    let gs: u16;
+    unsafe { core::arch::asm!("mov {0:x}, gs", out(reg) gs, options(nomem, nostack)); }
     kerror!(crate::log::LogSubsys::Exception,
-        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={}",
+        "GPF: error={:#x} rip={:#x} cs={:#x} rflags={:#x} rsp={:#x} tick={} GS={:#x}",
         error_code, rip,
         stack_frame.code_segment,
         stack_frame.cpu_flags, rsp,
-crate::hal::get_ticks(),
-        );
+        crate::hal::get_ticks(), gs,
+    );
 
     // Try user-mode dispatch first
     let in_user_window = (crate::arch::x64::paging::USER_BASE..crate::arch::x64::paging::USER_LIMIT).contains(&rip);
@@ -565,6 +569,35 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
             // Pick next thread
             let next = scheduler.schedule();
+            let next_tid = unsafe { (*next).tid };
+
+            // Safety: if the next thread has rsp==0, proceeding would
+            // cause a triple fault (push at address 0).  Log and panic
+            // instead so we can identify the root cause.
+            let next_rsp = unsafe { (*next).rsp };
+            if next_rsp == 0 {
+                panic!("timer_handler: next TID={} has rsp=0 (prev={}, cpl=0, kernel_stack_top=0x{:x})",
+                    next_tid, tid, unsafe { (*next).kernel_stack_top });
+            }
+
+            // If schedule() returned the same thread (no other Ready threads),
+            // skip the full context switch: just reset the time slice and stay
+            // on the current stack.  This avoids the expensive register
+            // save/restore + serial log output when there is nothing else to run.
+            if next_tid == tid {
+                unsafe {
+                    (*next).state = ThreadState::Running;
+                    (*next).time_slice_remaining =
+                        crate::scheduler::TIME_SLICES[((*next).priority as usize).min(
+                            crate::scheduler::PRIORITY_COUNT as usize - 1,
+                        )];
+                    (*next).ticks_since_scheduled = 0;
+                }
+                crate::hal::ack_irq(32);
+                crate::invariants::timer_irq_exit();
+                crate::invariants::irq_exit_clear();
+                return current_rsp;
+            }
 
             // Reset the NEXT thread's time slice
             unsafe {

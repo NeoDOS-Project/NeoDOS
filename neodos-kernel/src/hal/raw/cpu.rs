@@ -172,6 +172,11 @@ pub unsafe fn raw_set_segment_regs(ds: u16, _es: u16, _ss: u16) {
 
 #[inline]
 pub unsafe fn raw_set_gs(sel: u16) {
+    // Detect if GS is ever set to anything other than the expected 0x10.
+    // The GPF error 0x9680 would be caught here if GS is the source.
+    if sel != 0x10 && sel != 0 {
+        crate::serial_println!("[GS] WARNING: raw_set_gs({:#x}) called!", sel);
+    }
     asm!("mov gs, {0:x}", in(reg) sel, options(nostack, nomem));
 }
 

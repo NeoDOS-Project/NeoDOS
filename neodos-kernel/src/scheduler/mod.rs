@@ -481,13 +481,22 @@ impl Scheduler {
         // stack — it does not need a saved iretq frame for first entry.
         // The scheduler will save its context when the first timer IRQ
         // preempts it, and restore it when switching back.
+        //
+        // kernel_stack_top is set to a non-zero sentinel so that the
+        // timer handler never loads RSP0=0 when switching back to boot.
+        // If RSP0=0, the very next Ring-3→Ring-0 interrupt triple-faults
+        // because the CPU cannot push the exception frame at address 0.
+        // TID 0 never actually uses this address as a kernel stack (it
+        // runs on the BSP stack), so the exact value is irrelevant as
+        // long as it is a valid, mapped address != 0.
+        let boot_ks_top = crate::hal::bootstrap_stack_top();
         let boot_eproc = Eprocess::new_kernel(0);
         let boot_thread = Kthread {
             rax: 0, rbx: 0, rcx: 0, rdx: 0,
             rsi: 0, rdi: 0, r8: 0, r9: 0,
             r10: 0, r11: 0, r12: 0, r13: 0,
             r14: 0, r15: 0, rbp: 0,
-            rsp: 0,   // Saved on first timer IRQ — not used before that
+            rsp: boot_ks_top,
             rip: 0,
             rflags: 0x202,
             tid: BOOT_TID,
@@ -498,7 +507,7 @@ impl Scheduler {
             priority: PRIORITY_NORMAL,
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
-            kernel_stack_top: 0,
+            kernel_stack_top: boot_ks_top,
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
@@ -650,7 +659,9 @@ impl Scheduler {
             eproc.user_slot?
         };
 
-        thread.state = ThreadState::Suspended;
+        // Additional threads start Ready (found by global scan, like spawn_kthread)
+        // — not Suspended, which has no exit path for non-initial threads.
+        thread.state = ThreadState::Ready;
         self.kthreads[th_slot] = Some(thread);
 
         Some(tid)
@@ -1071,6 +1082,9 @@ impl Scheduler {
         // This fallback only fires when the scan found nothing at any
         // priority, meaning every non-idle thread is Blocked/Terminated.
         {
+            if !self.has_non_idle_threads() {
+                kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
+            }
             let ptr = self.find_kthread_ptr(IDLE_TID);
             if !ptr.is_null() {
                 unsafe {
@@ -1319,7 +1333,7 @@ pub fn register_tests() {
         test_eq!(k.state, ThreadState::Ready);
         test_eq!(k.cpu_ticks, 0);
         test_eq!(k.pid, 0);
-        test_eq!(k.priority, PRIORITY_NORMAL);
+        test_eq!(k.priority, PRIORITY_IDLE);
         test_eq!(k.time_slice_remaining, IDLE_TIME_SLICE);
     });
 
@@ -1411,16 +1425,16 @@ pub fn register_tests() {
 
     test_case!("sched_on_timer_tick_decrements_slice", {
         let mut sched = Scheduler::new();
-        sched.next_tid = 2;
-        sched.current_tid = 1;
+        sched.next_tid = 4;  // skip TID 0 (boot) and TID 1 (idle)
+        sched.current_tid = 3;
         let slot = sched.alloc_kthread_slot().unwrap();
-        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);
         k.state = ThreadState::Running;
         k.time_slice_remaining = 5;
         k.priority = PRIORITY_NORMAL;
         sched.kthreads[slot] = Some(k);
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         sched.on_timer_tick();
         let remaining = sched.kthreads[slot].as_ref().unwrap().time_slice_remaining;
         test_eq!(remaining, 4);
@@ -1428,16 +1442,16 @@ pub fn register_tests() {
 
     test_case!("sched_on_timer_tick_expire_yields", {
         let mut sched = Scheduler::new();
-        sched.next_tid = 2;
-        sched.current_tid = 1;
+        sched.next_tid = 4;  // skip TID 0 (boot) and TID 1 (idle)
+        sched.current_tid = 3;
         let slot = sched.alloc_kthread_slot().unwrap();
-        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);
         k.state = ThreadState::Running;
         k.time_slice_remaining = 1;
         k.priority = PRIORITY_NORMAL;
         sched.kthreads[slot] = Some(k);
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         sched.on_timer_tick();
         let state = sched.kthreads[slot].as_ref().unwrap().state;
         test_eq!(state, ThreadState::Ready);
@@ -1445,17 +1459,16 @@ pub fn register_tests() {
 
     test_case!("sched_aging_boosts_starved", {
         let mut sched = Scheduler::new();
-        sched.next_tid = 2;
-        sched.current_tid = 1;
+        sched.next_tid = 4;  // skip TID 0 (boot) and TID 1 (idle)
         let slot = sched.alloc_kthread_slot().unwrap();
-        let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
+        let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);
         k.state = ThreadState::Ready;
         k.priority = PRIORITY_IDLE;
         k.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
         k.time_slice_remaining = 50;
         sched.kthreads[slot] = Some(k);
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
-        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
             sched.on_timer_tick();
         }

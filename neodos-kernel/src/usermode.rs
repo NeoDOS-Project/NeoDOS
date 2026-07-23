@@ -177,27 +177,26 @@ pub fn wait_for_process(pid: u32) {
     kinfo!(LogSubsys::User, "[THREAD] wait_for_process: entering PID {} user mode (entry=0x{:x})", pid, entry);
 
     // Transition the boot thread (TID 0, current) to Blocked so the
-    // scheduler never picks it again (it is not in the global scan as
-    // Ready, and the idle fallback selects IDLE_TID, not TID 0).
-    // Then activate the target process from Suspended to Running and
-    // make it current.  The boot thread's real saved execution context
-    // lives in EXIT_RSP/EXIT_RIP (set by execute_usermode_asm) — it
-    // will be restored when the Ring 3 process exits via exit_to_kernel.
+    // scheduler never picks it again, then activate the target process
+    // from Suspended to Running and make it current.  The boot thread's
+    // real saved execution context lives in EXIT_RSP/EXIT_RIP (set by
+    // execute_usermode_asm) — it will be restored when the Ring 3
+    // process exits via exit_to_kernel.
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        let prev_tid = s.current_tid;
-        // Block the boot thread (TID 0)
-        if prev_tid == scheduler::BOOT_TID {
+        // Block the boot thread (TID 0) if current
+        if s.current_tid == scheduler::BOOT_TID {
             if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
                 k.state = scheduler::ThreadState::Blocked {
                     waiting_for: pid,
                 };
             }
         }
-        // Activate and switch to the target process
+        // Activate the target process
         for k in s.kthreads.iter().flatten() {
             if k.pid == pid && k.tid > 0 {
-                s.current_tid = k.tid;
+                let target_tid = k.tid;
+                s.current_tid = target_tid;
                 break;
             }
         }
@@ -206,6 +205,14 @@ pub fn wait_for_process(pid: u32) {
         }
     });
 
+    // RSP0 must be set atomically with the Ring-3 entry.  Between the
+    // without_interrupts block above and the iretq in execute_usermode,
+    // a timer can fire, netd can be scheduled, and the context-switch
+    // back to TID 0 sets RSP0 to 0 (boot's kernel_stack_top).  The cli
+    // here prevents that window, and the subsequent iretq restores IF.
+    crate::hal::disable_interrupts();
+    gdt::set_kernel_stack(kernel_stack_top);
+    kdebug!(LogSubsys::User, "[THREAD] RSP0=0x{:x}, entering Ring3", kernel_stack_top);
     execute_usermode(entry, user_stack_top);
 
     // When the Ring 3 process exits, exit_to_kernel restores the boot

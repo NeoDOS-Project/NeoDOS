@@ -12,8 +12,7 @@ rustflags = [
 [env]
 # Log levels for kernel build (build.rs reads these)
 LOG_DEFAULT = "INFO"
-LOG_NET = "INFO"
-LOG_SCHED = "DEBUG"
+LOG_SCHED = "INFO"
 LOG_SYSCALL = "INFO"
 LOG_USER = "INFO"
 LOG_INIT = "INFO"

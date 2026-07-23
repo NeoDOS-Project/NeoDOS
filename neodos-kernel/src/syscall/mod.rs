@@ -270,8 +270,12 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
 
         let next = scheduler.schedule();
         let next_ks_top = unsafe { (*next).kernel_stack_top };
-        crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
         let next_rsp = unsafe { (*next).rsp };
+        if next_rsp == 0 {
+            panic!("syscall_try_resched: next TID={} has rsp=0 (prev={}, ks_top=0x{:x})",
+                unsafe { (*next).tid }, tid, next_ks_top);
+        }
+        crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
         crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })

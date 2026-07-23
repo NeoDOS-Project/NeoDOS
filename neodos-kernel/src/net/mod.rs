@@ -61,8 +61,22 @@ pub fn net_is_initialized() -> bool {
     NET_INITIALIZED.load(core::sync::atomic::Ordering::Acquire)
 }
 
-pub fn net_kthread_entry() -> ! {
-    kinfo!(LogSubsys::Net, "[THREAD] netd started");
+/// extern "C" wrapper to get a stable function address.
+/// The raw pointer stored in this static keeps the function alive
+/// through LTO and provides the real runtime address.
+#[no_mangle]
+pub extern "C" fn netd_entry_wrapper() {
+    netd_entry();
+}
+
+/// Store the address in a static so we can reference it from main.rs.
+/// Using as u64 on a fn item produces thunks; reading from a static
+/// that holds the real address avoids that issue.
+#[used]
+pub static NETD_PTR: unsafe extern "C" fn() = netd_entry_wrapper;
+
+pub fn netd_entry() -> ! {
+    crate::serial_println!("[NET] netd running");
     loop {
         net_tick();
         for _ in 0..64 {
@@ -83,7 +97,11 @@ pub fn net_tick() {
     dns::dns_tick();
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if t > 0 && t % 1000 == 0 {
+    // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
+    // Without this, netd could be spawned but never picked by the scheduler.
+    if t == 1 {
+        kinfo!(LogSubsys::Net, "[NET] netd alive — first tick (network_poll_all + arp_tick + dns_tick)");
+    } else if t % 1000 == 0 {
         crate::net::counters::dump_counters();
     }
 }
