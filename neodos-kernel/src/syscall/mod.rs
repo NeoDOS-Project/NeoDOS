@@ -212,6 +212,14 @@ pub fn set_need_resched() {
     unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
 }
 
+/// Diagnostic switch used to isolate syscall-return scheduling from syscall
+/// dispatch.  It is compile-time so the normal kernel has no mutable debug
+/// control path or userland ABI change.
+#[no_mangle]
+pub extern "C" fn syscall_resched_enabled() -> u64 {
+    if cfg!(feature = "no-syscall-resched") { 0 } else { 1 }
+}
+
 #[no_mangle]
 pub extern "C" fn clear_need_resched() -> bool {
     crate::globals::flush_cache_if_needed();
@@ -237,6 +245,43 @@ pub extern "C" fn is_thread_terminated() -> u64 {
     0
 }
 
+/// Trace the INT 0x80 saved-register area and CPU return frame.
+///
+/// The assembly handler has pushed 15 general-purpose registers, so the
+/// hardware frame is at `frame_rsp + 120`: RIP, CS, RFLAGS, RSP, SS.  This is
+/// deliberately kept at the syscall boundary so it also observes a frame
+/// after `syscall_try_resched` selected another thread.
+#[no_mangle]
+pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
+    const CPU_FRAME: u64 = 15 * 8;
+    let frame = frame_rsp.wrapping_add(CPU_FRAME) as *const u64;
+    let (rip, cs, rflags, user_rsp) = unsafe {
+        let rip = *frame.add(0);
+        let cs = *frame.add(1);
+        let rflags = *frame.add(2);
+        // Ring-0 frames have no user RSP/SS pair.  Avoid interpreting the
+        // following saved word as a user stack when netd or another kthread
+        // is selected by the scheduler.
+        let user_rsp = if cs & 3 == 3 { *frame.add(3) } else { 0 };
+        (rip, cs, rflags, user_rsp)
+    };
+    let need = NEED_RESCHED.load(Ordering::SeqCst);
+    let (tid, pid, state) = crate::hal::without_interrupts(|| {
+        let s = scheduler::current_scheduler();
+        let lock = s.lock();
+        let tid = lock.current_tid;
+        let pid = lock.current_pid();
+        let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
+        (tid, pid, state)
+    });
+    kdebug!(LogSubsys::Syscall,
+        "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
+        phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
+    crate::serial_println!(
+        "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} need_resched={} state={}",
+        phase, pid, tid, rip, cs, user_rsp, need, state.unwrap_or(255));
+}
+
 #[no_mangle]
 pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
     if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
@@ -257,6 +302,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let mut scheduler = s.lock();
 
         let tid = scheduler.current_tid;
+        let pid = scheduler.current_pid();
+        kdebug!(LogSubsys::Syscall,
+            "[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
+        crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
@@ -275,7 +324,52 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             panic!("syscall_try_resched: next TID={} has rsp=0 (prev={}, ks_top=0x{:x})",
                 unsafe { (*next).tid }, tid, next_ks_top);
         }
+        let next_tid = unsafe { (*next).tid };
+        let next_pid = unsafe { (*next).pid };
+        let next_frame = (next_rsp + 15 * 8) as *const u64;
+        let (next_rip, next_cs, next_rflags) = unsafe {
+            (*next_frame.add(0), *next_frame.add(1), *next_frame.add(2))
+        };
+
+        // A syscall entered from Ring 3 must return to a user frame.  The
+        // normal scheduler also contains kernel threads (notably netd), and
+        // the old path could select one here and iretq directly into its
+        // Ring-0 frame.  That left NeoInit Ready while netd ran forever in
+        // its polling loop, so the instruction after INT 0x80 was never
+        // reached.  Leave kernel-thread dispatch to timer preemption and
+        // keep this syscall return on the original user thread.
+        if next_cs & 3 != 3 {
+            let old_ks_top = scheduler.find_kthread(tid)
+                .map(|k| k.kernel_stack_top)
+                .unwrap_or(next_ks_top);
+            scheduler.current_tid = tid;
+            if let Some(current) = scheduler.find_kthread_mut(tid) {
+                current.state = ThreadState::Running;
+            }
+            unsafe { (*next).state = ThreadState::Ready; }
+            crate::arch::x64::gdt::set_kernel_stack(old_ks_top);
+            crate::serial_println!(
+                "[SYSCALL_RESCHED] skip ring0 target pid={} tid={} cs=0x{:x}; keep pid={} tid={}",
+                next_pid, next_tid, next_cs, pid, tid);
+            return current_rsp;
+        }
+
         crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+        // Keep the per-CPU view in sync with Scheduler. Timer-driven
+        // switches update KPRCB, but syscall-return switches previously
+        // updated only `current_tid` and RSP0.
+        unsafe {
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
+            crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+        }
+        kdebug!(LogSubsys::Syscall,
+            "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x} next_rflags=0x{:x}",
+            pid, tid, next_pid, next_tid, next_rsp,
+            next_rip, next_cs, next_rflags);
+        crate::serial_println!(
+            "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+            pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
         crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })
@@ -531,7 +625,8 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
     match SYSCALL_TABLE[rax as usize] {
         Some(handler) => {
             let regs = Registers::new(rax, rbx, rcx, rdx, r8, r9);
-            handler(regs)
+            let result = handler(regs);
+            result
         }
         None => {
             kerror!(LogSubsys::Syscall, "No handler for syscall {}", rax);

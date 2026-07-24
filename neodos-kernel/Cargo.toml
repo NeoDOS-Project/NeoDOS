@@ -15,6 +15,7 @@ linked_list_allocator = "0.10"
 default = []
 validation = []   # Extra runtime invariant checks + trace logging
 stress = ["validation"]  # Stress test harness active during boot
+no-syscall-resched = []  # Diagnostic: keep the current thread on syscall return
 
 [profile.release]
 opt-level = 3

@@ -25,23 +25,19 @@ struct PollFd {
 pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
-        kdebug!(LogSubsys::Syscall, "enter code={}", code);
-
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
+        let pid = scheduler.current_pid();
+        if pid == 2 {
+            crate::serial_println!("[EXIT] NeoInit (pid={} tid={}) exit code={}", pid, tid, code);
+        }
         if tid > 0 {
-            kdebug!(LogSubsys::Syscall, "tid={} start", tid);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.state = ThreadState::Terminated;
             }
-            kdebug!(LogSubsys::Syscall, "marked Terminated");
-            let pid = scheduler.current_pid();
-            kdebug!(LogSubsys::Syscall, "pid={}", pid);
             if pid > 0 {
-                kdebug!(LogSubsys::Syscall, "getting eproc");
                 let eproc = scheduler.current_eprocess_mut();
-                kdebug!(LogSubsys::Syscall, "got eproc: {:?}", eproc.is_some());
                 if let Some(ep) = eproc {
                     ep.thread_count = ep.thread_count.saturating_sub(1);
                     ep.exit_code = code as i64;

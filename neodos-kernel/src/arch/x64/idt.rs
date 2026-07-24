@@ -55,6 +55,7 @@ core::arch::global_asm!(
 core::arch::global_asm!(
     ".extern syscall_dispatch",
     ".extern syscall_try_resched",
+    ".extern syscall_resched_enabled",
     ".extern apc_dispatch_on_syscall_return",
     ".extern is_thread_terminated",
     ".global syscall_handler_asm",
@@ -75,6 +76,12 @@ core::arch::global_asm!(
     "push rbx",
     "push rax",
     "mov r15, [rsp]",
+    // The 15 saved GPRs occupy 120 bytes.  The CPU's INT 0x80 return
+    // frame starts at rsp+120 (RIP, CS, RFLAGS, RSP, SS).
+    ".extern syscall_trace_frame",
+    "mov rdi, rsp",
+    "xor rsi, rsi",                       // phase 0 = handler entry
+    "call syscall_trace_frame",
     "mov rdi, [rsp + 0]",
     "mov rsi, [rsp + 8]",
     "mov rdx, [rsp + 16]",
@@ -119,6 +126,9 @@ core::arch::global_asm!(
     "call clear_need_resched",
     "test al, al",
     "jz 2f",
+    "call syscall_resched_enabled",
+    "test rax, rax",
+    "jz 2f",
     "mov rdi, rsp",
     "call syscall_try_resched",
     "mov rsp, rax",
@@ -126,6 +136,9 @@ core::arch::global_asm!(
     // A4.5: Dispatch pending APCs before returning to Ring 3
     "call apc_dispatch_on_syscall_return",
     "3:",
+    "mov rdi, rsp",
+    "mov rsi, 1",                         // phase 1 = frame about to be iretq'd
+    "call syscall_trace_frame",
     "pop rax",
     "pop rbx",
     "pop rcx",

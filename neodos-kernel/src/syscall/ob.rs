@@ -332,6 +332,8 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
             }
         }
         crate::object::ObType::Process => {
+            crate::serial_println!("[OB] handler_ob_create Process: path='{}'", path_str);
+
             let stdin_fd = (attrs & 0xFF) as u8;
             let stdout_fd = ((attrs >> 8) & 0xFF) as u8;
             let stderr_fd = ((attrs >> 16) & 0xFF) as u8;
@@ -346,10 +348,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                             if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
                             match vfs.read(drive_idx, node.inode, 0, &mut buf) {
                                 Ok(n) => { if n > MAX_BIN { 0 } else { n } }
-                                Err(e) => { kerror!(LogSubsys::Object, "read failed: {:?}", e); 0 }
+                                Err(e) => { crate::serial_println!("[OB] Process: vfs.read failed inode={}: {:?}", node.inode, e); 0 }
                             }
                         }
-                        Err(e) => { kerror!(LogSubsys::Object, "resolve_path failed for '{}': {:?}", vfs_path, e); 0 }
+                        Err(e) => { crate::serial_println!("[OB] Process: resolve_path failed for '{}': {:?}", vfs_path, e); 0 }
                     }
                 });
                 if bin_size < 4 {
@@ -387,7 +389,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 result.entry, slot.stack_top, slot.slot_idx,
                 cwd_drive, &cwd_path, parent_pid,
             ) {
-                Ok(pid) => pid,
+                Ok(pid) => {
+                    crate::serial_println!("[OB] Process spawned: child_pid={} entry=0x{:x}", pid, result.entry);
+                    pid
+                }
                 Err(_) => {
                     crate::arch::x64::paging::free_user_slot(slot.slot_idx);
                     return err_to_u64(SyscallError::NoMem);
@@ -3232,6 +3237,22 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
                     drop(lock);
                     crate::scheduler::cleanup_terminated_process(pid);
                 } else {
+                    // ObCreate leaves new processes Suspended until their
+                    // inherited handles are installed. ObWait is the
+                    // hand-off point: activate the child before blocking
+                    // the parent, otherwise the child is never schedulable.
+                    let mut activated = false;
+                    for child in lock.kthreads.iter_mut().flatten() {
+                        if child.pid == pid && child.state == ThreadState::Suspended {
+                            child.state = ThreadState::Ready;
+                            activated = true;
+                        }
+                    }
+                    if activated {
+                        crate::serial_println!(
+                            "[OB_WAIT] activated child pid={} before blocking parent pid={}",
+                            pid, lock.current_pid());
+                    }
                     // Atomically check-and-block: we hold the lock so the child
                     // cannot exit (modify thread_count) between check and block.
                     if let Some(k) = lock.current_kthread_mut() {

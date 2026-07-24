@@ -59,11 +59,42 @@ pub fn load_nxl() -> bool {
     match nxl_load("C:\\System\\Libraries\\fs.nxl") {
         Some(base) => {
             kinfo!(LogSubsys::Nxl, "libneodos NXL loaded at 0x{:x}", base);
+            dump_abi_table(base);
             true
         }
         None => {
             kwarn!(LogSubsys::Nxl, "libneodos.nxl not found");
             false
+        }
+    }
+}
+
+/// Dump key entries from the NXL AbiTable at `base`.
+/// The table mirrors libneodos/src/export.rs AbiTable layout (v7).
+fn dump_abi_table(base: u64) {
+    let tbl = base as *const u64;
+    // Offsets map to AbiTable fields in order (each 8 bytes until version: u32)
+    let names = [
+        "sys_exit", "sys_write", "sys_read", "sys_getpid", "sys_yield",
+        "sys_close", "sys_brk", "sys_mmap", "sys_munmap",
+        "stdout_write", "stderr_write", "stdin_read", "dll_print", "dll_eprint",
+        "file_open", "file_read", "file_write",
+        "brk", "sbrk", "mmap", "munmap",
+        "err_einval", "err_enonet", "err_enomem", "err_eacces", "err_ebadf",
+        "err_efault", "err_enosys", "err_eagain", "err_epipe", "err_eenoent",
+        "err_enotdir", "err_eisdir", "err_eio", "err_enodev", "err_ebusy",
+        "sys_loadlib",
+        "sys_ob_open", "sys_ob_create", "sys_ob_query_info",
+        "sys_ob_set_info", "sys_ob_enum", "sys_ob_wait",
+    ];
+    // version is at offset 42*8
+    let version = unsafe { core::ptr::read_volatile(tbl.add(42) as *const u32) };
+    crate::serial_println!("[NXL] AbiTable at 0x{:x} version={}", base, version);
+    for (i, name) in names.iter().enumerate() {
+        let val = unsafe { core::ptr::read_volatile(tbl.add(i)) };
+        let status = if val == 0 { "NULL" } else if val < 0x4000000 || val > 0x4400000 { "OUT_OF_RANGE" } else { "ok" };
+        if status != "ok" {
+            crate::serial_println!("[NXL]   {} [{:2}] = 0x{:016x} {}", name, i, val, status);
         }
     }
 }
