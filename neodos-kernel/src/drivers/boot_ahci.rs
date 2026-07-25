@@ -279,6 +279,8 @@ pub struct BootAhci {
     ncq_dma_bufs: *mut u8,
     // NCQ tag → IRP mapping
     tag_map: IrpTagMap,
+    // Legacy path: alternating command slot (0/1) to work around QEMU AHCI stall
+    next_slot: u32,
 }
 
 impl Drop for BootAhci {
@@ -454,6 +456,7 @@ impl BootAhci {
             ncq_cmd_tables: ncq_ct_ptr,
             ncq_dma_bufs: ncq_db_ptr,
             tag_map: IrpTagMap::new(),
+            next_slot: 0,
         })
     }
 
@@ -499,101 +502,166 @@ impl BootAhci {
         let port = self.port;
         let abar = self.abar;
         let abs_lba = self.base_lba.wrapping_add(lba);
+        // Alternate slot between 0 and 1 to work around QEMU AHCI emulation
+        // that can stall when reusing the same slot on back-to-back commands.
+        let slot = self.next_slot;
+        self.next_slot = (self.next_slot + 1) % 2;
+        let ci_mask = 1u32 << slot;
 
         if self.is_atapi {
             return Err(());
         }
 
-        unsafe {
-            let ct = &mut *self.cmd_table.add(port);
-            let ct_inner = &mut ct.0;
-            ct_inner.cfis = [0; 64];
-            ct_inner.cfis[0] = 0x27;
-            ct_inner.cfis[1] = 0x80;
-            if is_write {
-                ct_inner.cfis[2] = ATA_CMD_WRITE_DMA_EXT;
-            } else {
-                ct_inner.cfis[2] = ATA_CMD_READ_DMA_EXT;
-            }
-            ct_inner.cfis[4] = (abs_lba & 0xFF) as u8;
-            ct_inner.cfis[5] = ((abs_lba >> 8) & 0xFF) as u8;
-            ct_inner.cfis[6] = ((abs_lba >> 16) & 0xFF) as u8;
-            ct_inner.cfis[7] = 0x40;
-            ct_inner.cfis[8] = ((abs_lba >> 24) & 0xFF) as u8;
-            ct_inner.cfis[9] = ((abs_lba >> 32) & 0xFF) as u8;
-            ct_inner.cfis[10] = ((abs_lba >> 40) & 0xFF) as u8;
-            ct_inner.cfis[12] = count;
-            ct_inner.cfis[13] = 0;
-
-            let dbuf = self.dma_buf.add(DMA_BUF_SIZE * port);
-            let dbuf_phys = dbuf as u32;
-            if is_write {
-                core::ptr::copy_nonoverlapping(buf, dbuf, (count as usize) * 512);
-            }
-
-            let nprd = 1;
-            for i in 0..MAX_PRD_ENTRIES {
-                ct_inner.prdt[i] = EMPTY_PRD;
-            }
-            ct_inner.prdt[0].data_base = dbuf_phys;
-            ct_inner.prdt[0].data_base_hi = 0;
-            ct_inner.prdt[0].count = ((count as u32) * 512 - 1) | (1 << 31);
-
-            let cl = &mut *self.cmd_list.add(port);
-            cl.0[0] = CmdHeader {
-                opts: 5 | (1 << 6),
-                prdtl: nprd as u16,
-                prdbc: 0,
-                ctba: ct as *mut CmdTable as u32,
-                ctba_hi: 0,
-                reserved: [0; 4],
-            };
-        }
-
-        fence(Ordering::SeqCst);
-        crate::boot_benchmark::ahci_cmd_start();
-        let cmd_start = crate::boot_benchmark::boot_time_now();
-        port_write32(abar, port, PORT_CI, 1);
-
-        let mut poll_count: u64 = 0;
-        let mut cmd_timed_out = false;
-        for _ in 0..10_000_000 {
-            let ci = port_read32(abar, port, PORT_CI);
-            poll_count += 1;
-            if (ci & 1) == 0 {
-                break;
-            }
-            if poll_count.is_multiple_of(10_000)
-                && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 1000 {
-                    cmd_timed_out = true;
-                    break;
-            }
-            core::hint::spin_loop();
-        }
-        crate::boot_benchmark::ahci_cmd_polled(poll_count);
-        let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
-        crate::boot_benchmark::ahci_cmd_done(wait);
-
-        if cmd_timed_out {
-            crate::boot_benchmark::ahci_cmd_timeout();
-        }
-
-        let tfd = port_read32(abar, port, PORT_TFD);
-        if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
-            let serr = port_read32(abar, port, PORT_SERR);
-            crate::boot_benchmark::ahci_dma_failure();
-            kerror!(LogSubsys::Ahci, "DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}", if is_write { "WR" } else { "RD" }, lba, tfd, serr);
-            return Err(());
-        }
-
-        if !is_write {
+        // Retry loop: issue command, poll for completion, reset port + retry on timeout
+        for attempt in 0..2 {
+            // Prepare command table — re-done on each retry attempt
             unsafe {
                 let dbuf = self.dma_buf.add(DMA_BUF_SIZE * port);
-                core::ptr::copy_nonoverlapping(dbuf, buf as *mut u8, (count as usize) * 512);
+                let dbuf_phys = dbuf as u32;
+
+                let ct = &mut *self.cmd_table.add(port);
+                let ct_inner = &mut ct.0;
+                ct_inner.cfis = [0; 64];
+                ct_inner.cfis[0] = 0x27;
+                ct_inner.cfis[1] = 0x80;
+                if is_write {
+                    ct_inner.cfis[2] = ATA_CMD_WRITE_DMA_EXT;
+                } else {
+                    ct_inner.cfis[2] = ATA_CMD_READ_DMA_EXT;
+                }
+                ct_inner.cfis[4] = (abs_lba & 0xFF) as u8;
+                ct_inner.cfis[5] = ((abs_lba >> 8) & 0xFF) as u8;
+                ct_inner.cfis[6] = ((abs_lba >> 16) & 0xFF) as u8;
+                ct_inner.cfis[7] = 0x40;
+                ct_inner.cfis[8] = ((abs_lba >> 24) & 0xFF) as u8;
+                ct_inner.cfis[9] = ((abs_lba >> 32) & 0xFF) as u8;
+                ct_inner.cfis[10] = ((abs_lba >> 40) & 0xFF) as u8;
+                ct_inner.cfis[12] = count;
+                ct_inner.cfis[13] = 0;
+
+                if is_write {
+                    core::ptr::copy_nonoverlapping(buf, dbuf, (count as usize) * 512);
+                }
+
+                let nprd = 1;
+                for i in 0..MAX_PRD_ENTRIES {
+                    ct_inner.prdt[i] = EMPTY_PRD;
+                }
+                ct_inner.prdt[0].data_base = dbuf_phys;
+                ct_inner.prdt[0].data_base_hi = 0;
+                ct_inner.prdt[0].count = ((count as u32) * 512 - 1) | (1 << 31);
+
+                let cl = &mut *self.cmd_list.add(port);
+                cl.0[slot as usize] = CmdHeader {
+                    opts: 5 | (1 << 6),
+                    prdtl: nprd as u16,
+                    prdbc: 0,
+                    ctba: ct as *mut CmdTable as u32,
+                    ctba_hi: 0,
+                    reserved: [0; 4],
+                };
             }
+
+            fence(Ordering::SeqCst);
+            crate::boot_benchmark::ahci_cmd_start();
+            let cmd_start = crate::boot_benchmark::boot_time_now();
+            port_write32(abar, port, PORT_CI, ci_mask);
+
+            let mut poll_count: u64 = 0;
+            let mut cmd_timed_out = false;
+            let mut ci_cleared = false;
+            for _ in 0..2_000_000 {
+                let ci = port_read32(abar, port, PORT_CI);
+                poll_count += 1;
+                if (ci & ci_mask) == 0 {
+                    ci_cleared = true;
+                    break;
+                }
+                if poll_count.is_multiple_of(10_000)
+                    && crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now()) > 5000 {
+                        cmd_timed_out = true;
+                        break;
+                }
+                core::hint::spin_loop();
+            }
+            // If we exhausted iterations without CI clearing, it's a timeout
+            if !ci_cleared {
+                cmd_timed_out = true;
+            }
+            crate::boot_benchmark::ahci_cmd_polled(poll_count);
+            let wait = crate::boot_benchmark::elapsed_ms(cmd_start, crate::boot_benchmark::boot_time_now());
+            crate::boot_benchmark::ahci_cmd_done(wait);
+
+            if !cmd_timed_out {
+                // Clear pending IS bits (write-1-to-clear) — between back-to-back commands.
+                let is_final = port_read32(abar, port, PORT_IS);
+                if is_final != 0 {
+                    port_write32(abar, port, PORT_IS, is_final);
+                }
+                // Double-read TFD to flush the IDE bus state in QEMU AHCI emulation.
+                let _tfd_sync = port_read32(abar, port, PORT_TFD);
+
+                let tfd = port_read32(abar, port, PORT_TFD);
+                if (tfd & (TFD_BSY | TFD_DRQ | 1)) != 0 {
+                    let serr = port_read32(abar, port, PORT_SERR);
+                    crate::boot_benchmark::ahci_dma_failure();
+                    kerror!(LogSubsys::Ahci,
+                        "DMA error op={} lba={} tfd=0x{:02x} serr=0x{:08x}",
+                        if is_write { "WR" } else { "RD" }, lba, tfd, serr);
+                    return Err(());
+                }
+
+                if !is_write {
+                    unsafe {
+                        let dbuf = self.dma_buf.add(DMA_BUF_SIZE * port);
+                        core::ptr::copy_nonoverlapping(dbuf, buf as *mut u8, (count as usize) * 512);
+                    }
+                }
+                return Ok(());
+            }
+
+            // ── Timeout recovery ──
+            let ci_st = port_read32(abar, port, PORT_CI);
+            let is_st = port_read32(abar, port, PORT_IS);
+            let serr_st = port_read32(abar, port, PORT_SERR);
+            let tfd_st = port_read32(abar, port, PORT_TFD);
+            crate::boot_benchmark::ahci_cmd_timeout();
+            kwarn!(LogSubsys::Ahci,
+                "[AHCI_TIMEOUT] attempt={} slot={} lba={} count={} \
+                 CI=0x{:08x} IS=0x{:08x} SERR=0x{:08x} TFD=0x{:08x}",
+                attempt, slot, lba, count, ci_st, is_st, serr_st, tfd_st);
+
+            // Clear error status registers (write-1-to-clear)
+            if serr_st != 0 {
+                port_write32(abar, port, PORT_SERR, serr_st);
+            }
+            if is_st != 0 {
+                port_write32(abar, port, PORT_IS, is_st);
+            }
+
+            // Stop command engine: clear ST and FRE, wait for CR and FR to clear
+            let cmd = port_read32(abar, port, PORT_CMD);
+            port_write32(abar, port, PORT_CMD, cmd & !(CMD_ST | CMD_FRE));
+            for _ in 0..10_000 {
+                let c = port_read32(abar, port, PORT_CMD);
+                if (c & (CMD_CR | CMD_FR)) == 0 { break; }
+            }
+
+            // Restart command engine
+            port_write32(abar, port, PORT_CMD, CMD_ST | CMD_FRE | CMD_POD | CMD_SUD);
+            for _ in 0..10_000 {
+                let c = port_read32(abar, port, PORT_CMD);
+                if (c & CMD_CR) == 0 { break; }
+            }
+
+            // Fall through to retry
         }
 
-        Ok(())
+        // Second timeout — give up
+        kerror!(LogSubsys::Ahci,
+            "[AHCI_FAIL] lba={} count={} slot={} — giving up after port reset + retry",
+            lba, count, slot);
+        Err(())
     }
 
     /// NCQ batch transfer: issue up to 32 concurrent FPDMA QUEUED commands.

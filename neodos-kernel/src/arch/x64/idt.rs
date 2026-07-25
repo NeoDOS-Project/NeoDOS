@@ -565,9 +565,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     scheduler.on_timer_tick();
 
     let tid = scheduler.current_tid;
+    let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
+    let is_user_mode = (interrupted_cs & 3) == 3;
 
-    // ── Preemptive context switch (all threads except idle) ──
-    if tid != crate::scheduler::IDLE_TID {
+    // ── Preemptive context switch (Ring 3 user mode threads only) ──
+    // Per Source of Truth §6.2 (Rule 6.2.1/6.2.2), Ring 0 (kernel mode) code runs
+    // to completion without timer preemption to avoid deadlocks while holding kernel locks.
+    if is_user_mode && tid != crate::scheduler::IDLE_TID {
         let should_preempt = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state == ThreadState::Ready && k.tid == tid);
 
@@ -587,6 +591,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // instead so we can identify the root cause.
             let next_rsp = unsafe { (*next).rsp };
             if next_rsp == 0 {
+                // The idle thread (IDLE_TID) may have an uninitialized rsp of 0.
+                // In that case, we cannot perform a context switch. Instead, keep
+                // the current thread running and defer the preemption until a
+                // non‑idle thread is ready.
+                if next_tid == crate::scheduler::IDLE_TID {
+                    // Skip preemption; stay on the current thread.
+                    crate::hal::ack_irq(32);
+                    crate::invariants::timer_irq_exit();
+                    crate::invariants::irq_exit_clear();
+                    return current_rsp;
+                }
                 panic!("timer_handler: next TID={} has rsp=0 (prev={}, cpl=0, kernel_stack_top=0x{:x})",
                     next_tid, tid, unsafe { (*next).kernel_stack_top });
             }
@@ -718,6 +733,15 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         let alive = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
+            // Per Source of Truth §6.2 (Rule 6.2.1/6.2.2): Ring 0 code runs to
+            // completion without timer preemption.  If on_timer_tick() set the
+            // thread state to Ready (timeslice expired), restore it to Running
+            // because the thread continues executing — no context switch occurred.
+            if let Some(k) = scheduler.current_kthread_mut() {
+                if k.state == ThreadState::Ready && k.tid == tid {
+                    k.state = ThreadState::Running;
+                }
+            }
             unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();

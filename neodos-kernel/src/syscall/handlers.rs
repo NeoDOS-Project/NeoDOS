@@ -223,6 +223,9 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
 
     if entry.is_stdin() {
         let vt = crate::scheduler::current_vt_num();
+        crate::serial_println!("[READB] enter pid={} tid={} vt={} buf=0x{:x} count={}",
+            crate::scheduler::current_pid(), crate::scheduler::current_tid(),
+            vt, regs.rcx, count);
         let mut bytes_read = 0usize;
         while bytes_read < count {
             match crate::input::pop_byte_from_vt(vt as usize) {
@@ -241,19 +244,25 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
                         if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
                             unsafe { buf_ptr.add(bytes_read).write(b); }
                             bytes_read += 1;
+                            crate::serial_println!("[READB] got byte=0x{:x} (imm)", b);
                             break;
                         }
                         crate::eventbus::EVENT_BUS.dispatch_pending();
                         if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
                             unsafe { buf_ptr.add(bytes_read).write(b); }
                             bytes_read += 1;
+                            crate::serial_println!("[READB] got byte=0x{:x} (after dispatch)", b);
                             break;
                         }
+                        crate::serial_println!("[READB] blocking pid={} tid={} vt={}",
+                            crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
                         unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
                     }
                 }
             }
         }
+        crate::serial_println!("[READB] exit pid={} tid={} bytes_read={}",
+            crate::scheduler::current_pid(), crate::scheduler::current_tid(), bytes_read);
         bytes_read as u64
     } else if entry.is_pipe_read() {
         let pipe_id = entry.native_id().unwrap_or(0) as u8;

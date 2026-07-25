@@ -22,7 +22,7 @@ mod tests;
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use lazy_static::lazy_static;
 use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
@@ -252,6 +252,10 @@ pub extern "C" fn is_thread_terminated() -> u64 {
 /// deliberately kept at the syscall boundary so it also observes a frame
 /// after `syscall_try_resched` selected another thread.
 #[no_mangle]
+static SAVED_USER_RSP: AtomicU64 = AtomicU64::new(0);
+static SAVED_USER_RIP: AtomicU64 = AtomicU64::new(0);
+
+#[no_mangle]
 pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
     const CPU_FRAME: u64 = 15 * 8;
     let frame = frame_rsp.wrapping_add(CPU_FRAME) as *const u64;
@@ -259,9 +263,6 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         let rip = *frame.add(0);
         let cs = *frame.add(1);
         let rflags = *frame.add(2);
-        // Ring-0 frames have no user RSP/SS pair.  Avoid interpreting the
-        // following saved word as a user stack when netd or another kthread
-        // is selected by the scheduler.
         let user_rsp = if cs & 3 == 3 { *frame.add(3) } else { 0 };
         (rip, cs, rflags, user_rsp)
     };
@@ -274,6 +275,25 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
         (tid, pid, state)
     });
+
+    if phase == 0 && cs & 3 == 3 {
+        SAVED_USER_RSP.store(user_rsp, Ordering::Relaxed);
+        SAVED_USER_RIP.store(rip, Ordering::Relaxed);
+    }
+
+    if phase == 1 && cs & 3 == 3 {
+        let saved_rsp = SAVED_USER_RSP.load(Ordering::Relaxed);
+        let saved_rip = SAVED_USER_RIP.load(Ordering::Relaxed);
+        if saved_rsp != user_rsp || saved_rip != rip {
+            crate::serial_println!(
+                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+            kerror!(LogSubsys::Syscall,
+                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+        }
+    }
+
     kdebug!(LogSubsys::Syscall,
         "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
         phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
@@ -610,6 +630,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         kdebug!(LogSubsys::Syscall, "syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
     }
     crate::trace_syscall!(rax, rbx, rcx, rdx);
+    if cfg!(feature = "validation") {
+        let pid = crate::scheduler::current_pid();
+        if pid == 2 {
+            crate::serial_println!("[SYSCALL] enter pid={} rax={} rbx=0x{:x}", pid, rax, rbx);
+        }
+    }
 
     if rax >= 256 {
         kwarn!(LogSubsys::Syscall, "INVALID syscall number: {}", rax);

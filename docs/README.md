@@ -10,6 +10,7 @@
 | [Source of Truth](architecture/source-of-truth.md) | Enforceable invariants, MUST/MUST NOT rules |
 | [Vision](architecture/vision.md) | Long-term strategy v0.40 → v1.0 |
 | [Repository Architecture](architecture/repository.md) | Multi-repo proposal, dependency analysis |
+| [AHCI Stability](architecture/ahci-stability.md) | AHCI stability improvements, multi-sector read batching |
 
 ## Boot
 

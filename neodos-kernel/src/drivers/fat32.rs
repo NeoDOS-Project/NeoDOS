@@ -96,6 +96,10 @@ impl Fat32Driver {
         self.io_stack.read_sector(lba as u64).map_err(|_| Fat32Error::NotFound)
     }
 
+    fn read_sectors(&self, lba: u32, count: u32, buf: &mut [u8]) -> Result<(), Fat32Error> {
+        self.io_stack.read_sectors(lba as u64, count as u64, buf).map_err(|_| Fat32Error::NotFound)
+    }
+
     fn read_fat_entry(&self, cluster: u32) -> Result<u32, Fat32Error> {
         let fat_start = self.boot_sector.reserved_sectors;
         let entry_offset = cluster * 4;
@@ -323,18 +327,24 @@ impl Fat32Driver {
         let sectors_per_cluster = self.boot_sector.sectors_per_cluster as u32;
         let mut cluster = start_cluster;
         let mut offset = 0;
+        // Max sectors per AHCI command bounded by DMA_BUF_SIZE (4096 bytes = 8 sectors)
+        const MAX_BATCH: u32 = 8;
 
         loop {
             let lba = data_start + (cluster - 2) * sectors_per_cluster;
 
-            for i in 0..sectors_per_cluster {
+            let mut batch_offset = 0u32;
+            while batch_offset < sectors_per_cluster {
                 if offset >= buf.len() {
                     return Ok(offset);
                 }
-                let sector = self.read_sector(lba + i)?;
-                let copy_len = 512.min(buf.len() - offset);
-                buf[offset..offset + copy_len].copy_from_slice(&sector[..copy_len]);
-                offset += copy_len;
+                let remaining = sectors_per_cluster - batch_offset;
+                let batch = remaining.min(MAX_BATCH);
+                let bytes = (batch as usize) * 512;
+                let copy_end = bytes.min(buf.len() - offset);
+                self.read_sectors(lba + batch_offset, batch, &mut buf[offset..offset + copy_end])?;
+                offset += copy_end;
+                batch_offset += batch;
             }
 
             let next = self.read_fat_entry(cluster)?;
@@ -384,9 +394,11 @@ impl From<Fat32Error> for VfsError {
 
 impl FileSystem for Fat32Driver {
     fn read(&mut self, inode: u32, offset: u64, buf: &mut [u8]) -> Result<usize, VfsError> {
+        crate::serial_println!("[FAT32_READ] alloc {} bytes", buf.len() + offset as usize);
         let mut temp_buf = alloc::vec![0u8; buf.len() + offset as usize];
-
+        crate::serial_println!("[FAT32_READ] alloc OK, read_file_by_cluster inode={}", inode);
         let read = self.read_file_by_cluster(inode, &mut temp_buf)?;
+
 
         if offset as usize >= read {
             return Ok(0);

@@ -1306,6 +1306,24 @@ pub fn current_tid() -> u32 {
     result
 }
 
+/// Yield execution of current thread cooperatively back to the scheduler.
+pub fn yield_current_thread() {
+    crate::hal::without_interrupts(|| {
+        let s = current_scheduler();
+        let mut lock = s.lock();
+        let tid = lock.current_tid;
+        if tid > 0 {
+            if let Some(k) = lock.current_kthread_mut() {
+                if k.state == ThreadState::Running {
+                    k.state = ThreadState::Ready;
+                }
+                let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+                k.time_slice_remaining = TIME_SLICES[idx];
+            }
+        }
+    });
+}
+
 /// For thread_join: block current thread until target TID terminates (via KWait, OB-031).
 pub fn block_current_for_thread(tid: u32) {
     crate::kwait::kwait_block(crate::kwait::WaitReason::ThreadJoin { tid });

@@ -141,6 +141,8 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
 pub fn wait_for_process(pid: u32) {
     WAIT_PID.store(pid, Ordering::SeqCst);
 
+    crate::serial_println!("[USERMODE] wait_for_process pid={}", pid);
+
     let (entry, user_stack_top, kernel_stack_top) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler().lock();
         for k in s.kthreads.iter().flatten() {
@@ -172,6 +174,9 @@ pub fn wait_for_process(pid: u32) {
         return;
     }
 
+    crate::serial_println!("[USERMODE] entry=0x{:x} stack=0x{:x} kernel_stack_top=0x{:x}",
+        entry, user_stack_top, kernel_stack_top);
+
     gdt::set_kernel_stack(kernel_stack_top);
 
     kinfo!(LogSubsys::User, "[THREAD] wait_for_process: entering PID {} user mode (entry=0x{:x})", pid, entry);
@@ -184,8 +189,10 @@ pub fn wait_for_process(pid: u32) {
     // process exits via exit_to_kernel.
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
+        let tid = s.current_tid;
+        crate::serial_println!("[USERMODE] blocking TID 0, current_tid={} activating pid={}", tid, pid);
         // Block the boot thread (TID 0) if current
-        if s.current_tid == scheduler::BOOT_TID {
+        if tid == scheduler::BOOT_TID {
             if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
                 k.state = scheduler::ThreadState::Blocked {
                     waiting_for: pid,
@@ -193,13 +200,15 @@ pub fn wait_for_process(pid: u32) {
             }
         }
         // Activate the target process
+        let mut target_tid = 0;
         for k in s.kthreads.iter().flatten() {
             if k.pid == pid && k.tid > 0 {
-                let target_tid = k.tid;
+                target_tid = k.tid;
                 s.current_tid = target_tid;
                 break;
             }
         }
+        crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
             k.state = scheduler::ThreadState::Running;
         }
@@ -212,12 +221,15 @@ pub fn wait_for_process(pid: u32) {
     // here prevents that window, and the subsequent iretq restores IF.
     crate::hal::disable_interrupts();
     gdt::set_kernel_stack(kernel_stack_top);
+    crate::serial_println!("[USERMODE] RSP0=0x{:x} executing execute_usermode entry=0x{:x}",
+        kernel_stack_top, entry);
     kdebug!(LogSubsys::User, "[THREAD] RSP0=0x{:x}, entering Ring3", kernel_stack_top);
     execute_usermode(entry, user_stack_top);
 
     // When the Ring 3 process exits, exit_to_kernel restores the boot
     // context from EXIT_RSP/EXIT_RIP and returns here.  Restore the
     // boot thread's Running state for consistency.
+    crate::serial_println!("[USERMODE] EXIT: Ring3 process pid={} terminated, returning to boot", pid);
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.current_tid = scheduler::BOOT_TID;

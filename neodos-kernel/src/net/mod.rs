@@ -79,6 +79,7 @@ pub fn netd_entry() -> ! {
     crate::serial_println!("[NET] netd running");
     loop {
         net_tick();
+        crate::scheduler::yield_current_thread();
         for _ in 0..64 {
             core::hint::spin_loop();
         }

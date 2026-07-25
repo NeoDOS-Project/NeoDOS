@@ -654,20 +654,24 @@ pub fn sm_start_auto_services() {
                 svc.start_type == ServiceStartType::System || svc.start_type == ServiceStartType::Auto
             };
             if should_start {
+                crate::serial_println!("[SM] start service idx={}", idx);
                 let mut sm = SERVICE_MANAGER.lock();
                 match sm.start_service(idx) {
                     Ok(()) => {
+                        crate::serial_println!("[SM] started: {}", sm.services[idx].name);
                         kinfo!(LogSubsys::Services, "Started: {}", sm.services[idx].name);
                         started += 1;
                     }
                     Err(e) => {
                         sm.services[idx].state = ServiceState::Failed;
+                        crate::serial_println!("[SM] FAILED to start {}: {:?}", sm.services[idx].name, e);
                         kerror!(LogSubsys::Services, "Failed to start {}: {:?}", sm.services[idx].name, e);
                         failed += 1;
                     }
                 }
             }
         }
+        crate::serial_println!("[SM] auto-start complete: {} started, {} failed", started, failed);
         kinfo!(LogSubsys::Services, "Auto-start complete: {} started, {} failed", started, failed);
     } else {
         kwarn!(LogSubsys::Services, "No services in dependency order (dependency resolution may have failed)");

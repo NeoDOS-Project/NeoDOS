@@ -653,7 +653,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Loads NEOINIT.NXE as the init process. NeoInit spawns NEOSHELL.NXE
     // via sys_spawn (RAX=7). When the shell exits, sys_spawn restores
     // NeoInit's code and returns, and NeoInit respawns the shell.
+    crate::globals::LOCK_DIAG.store(true, core::sync::atomic::Ordering::Relaxed);
+    crate::serial_println!("[BOOT_PROGRESS] NEOINIT_LOAD_START");
     println!("[+] Loading NeoInit (PID 1, Ring 3)...");
+
 
     // Allocate random slot first (ASLR v0.44)
     let slot = match arch::x64::paging::alloc_user_slot() {
@@ -671,23 +674,36 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     let mut addr_space = scheduler::address_space::AddressSpace::new();
     let (entry, loaded) = {
         let try_load = |path: &str, addr: &mut scheduler::address_space::AddressSpace| -> Option<u64> {
+            crate::serial_println!("[INIT_DEBUG] before resolve path: {}", path);
             let mut bin_buf = alloc::vec![0u8; 65536];
             let mut result = None;
             crate::globals::with_vfs(|vfs| {
-                if let Ok((drive_idx, node)) = vfs.resolve_path(path) {
+                crate::serial_println!("[INIT_DEBUG] before inode lookup for path: {}", path);
+                let resolve_res = vfs.resolve_path(path);
+                crate::serial_println!("[INIT_DEBUG] after inode lookup result: is_ok={}", resolve_res.is_ok());
+                if let Ok((drive_idx, node)) = resolve_res {
+                    crate::serial_println!("[INIT_DEBUG] after resolve path: drive={}, inode={}, mode=0x{:04x}, size={}", drive_idx, node.inode, node.mode, node.size);
                     if (node.mode & fs::vfs::MODE_FILE) == 0 { return; }
+                    crate::serial_println!("[INIT_DEBUG] before file read");
                     let size = vfs.read(drive_idx, node.inode, 0, &mut bin_buf).unwrap_or_default();
+                    crate::serial_println!("[INIT_DEBUG] after file read: read_bytes={}", size);
                     kinfo!(
                         LogSubsys::Init, "resolved '{}': inode={} size={} mode=0x{:04x} read={} bytes",
                         path, node.inode, node.size, node.mode, size
                     );
                     if size < 4 { return; }
                     let data = &bin_buf[..size];
+                    crate::serial_println!("[BOOT_PROGRESS] NEOINIT_ELF_OK");
+                    crate::serial_println!("[INIT_DEBUG] before ELF parse");
                     if let Ok(r) = elf::load_elf(data, Some(addr), slot.code_base) {
+                        crate::serial_println!("[INIT_DEBUG] after ELF parse: entry=0x{:x}", r.entry);
                         kinfo!(LogSubsys::Init, "ELF load OK: entry=0x{:x}", r.entry);
                         result = Some(r.entry);
+                    } else {
+                        crate::serial_println!("[INIT_DEBUG] ELF parse failed");
                     }
                 } else {
+                    crate::serial_println!("[INIT_DEBUG] path not found: {}", path);
                     kinfo!(LogSubsys::Init, "path not found: {}", path);
                 }
             });
@@ -702,7 +718,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
                 try_load("C:\\Programs\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
-        let loaded = entry != 0;
+            let loaded = entry != 0;
         if loaded { addr_space = addr; }
         (entry, loaded)
     };
@@ -713,6 +729,8 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::hal::halt();
     }
 
+    crate::serial_println!("[BOOT_PROGRESS] SPAWN_USERMODE");
+    crate::serial_println!("[INIT_DEBUG] before process create");
     let pid = match usermode::spawn_usermode(
         entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
     ) {
@@ -723,7 +741,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             crate::hal::halt();
         }
     };
+    crate::serial_println!("[INIT_DEBUG] after process create: pid={}", pid);
 
+    crate::serial_println!("[BOOT_PROGRESS] NEOINIT_RING3");
     hal::without_interrupts(|| {
         if let Some(eproc) = scheduler::current_scheduler().lock().find_eprocess_mut(pid) {
             eproc.address_space = addr_space;
@@ -737,7 +757,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     services::sm_mark_neoinit_running(pid);
 
     // Start auto-start services (System/Auto start types in dependency order)
+    crate::serial_println!("[BOOT_PROGRESS] SERVICE_MANAGER_START");
     services::sm_start_auto_services();
+    crate::serial_println!("[BOOT_PROGRESS] SERVICE_MANAGER_DONE");
 
     crate::object::namespace::ob_namespace_debug();
 
