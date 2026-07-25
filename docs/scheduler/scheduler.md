@@ -91,8 +91,8 @@ spawn_kthread()          add_ring3_process()
 ```
 
 **Kernel threads** (`spawn_kthread`) do NOT enqueue themselves. They enter the
-scheduling pool via the global priority scan, avoiding starvation of TID 0
-(the idle/boot thread) during early boot.
+scheduling pool via the global priority scan, avoiding starvation of TID 1
+(the idle thread) during early boot.
 
 **Ring 3 threads** (`add_ring3_process`) DO enqueue themselves. This sends an
 IPI to the target CPU on SMP systems, notifying it of new work.
@@ -126,7 +126,7 @@ pub const IDLE_TIME_SLICE: u16 = 10;   // idle thread: brief CPU then yield
 4. **Global scan**: iterate priority levels HIGH → IDLE, round-robin within level
 5. **Fallback**: find TID 1 (idle, PRIORITY_IDLE) if nothing else is Ready → panic if idle terminated
 
-The global scan iterates **all** TIDs (including boot TID 0), checking `state == Ready`
+The global scan iterates **all** TIDs (including boot/kernel TIDs), checking `state == Ready`
 at each priority level. The idle thread (TID 1) has PRIORITY_IDLE and is naturally
 skipped while any higher-priority thread is Ready.
 
@@ -145,7 +145,7 @@ Ready threads at the same priority.
 1. Increment `timer_ticks`
 2. If current thread is Running:
    - Decrement `time_slice_remaining`
-   - On expiry: `state = Ready`, set `needs_resched`
+   - On expiry: `state = Ready`, emit `trace_sched_state!`, set `needs_resched`
 3. Every `AGING_INTERVAL_TICKS` (500): run aging check
 
 The expired thread transitions to Ready but is **not** re-enqueued in the run
@@ -199,14 +199,16 @@ timer_handler_asm:
 ### `timer_handler_inner` (Rust)
 
 1. Acquire `SCHEDULER` lock
-2. `on_timer_tick()` → decrement time slice, check expiry
-3. Check `should_preempt`:
-   - TID > 0: preempt if current thread is Ready AND its TID matches
-   - TID == 0 (idle): preempt if idle is Ready AND non-idle threads exist
-4. If preempting: save `k.rsp = current_rsp`, call `schedule()`, update TSS.RSP0
-5. Update per-CPU current thread/PID/context switch count
-6. Return new thread's `rsp` (or `current_rsp` if no switch)
-7. Release lock
+2. `on_timer_tick()` → decrement time slice, check expiry, emit `trace_sched_state!` on expiry
+3. Three-branch `should_preempt` check:
+   - **Ring 3 (user mode)**: preempt if state == Ready (timeslice expired or yielded)
+   - **Idle thread (TID = IDLE_TID = 1)**: preempt if state == Ready AND non-idle threads exist
+   - **Ring 0 kernel thread (non-idle)**: preempt if state == Ready AND non-idle threads exist (kernel threads are not preempted on every tick — only when they have voluntarily yielded or their timeslice expired)
+4. Each branch emits `trace_timer_irq!` with the decision code
+5. If preempting: save `k.rsp = current_rsp`, call `schedule()`, update TSS.RSP0, emit `trace_cswitch!`
+6. Update per-CPU current thread/PID/context switch count
+7. Return new thread's `rsp` (or `current_rsp` if no switch)
+8. Release lock
 
 ### Ring 0 vs Ring 3 context switch
 

@@ -236,11 +236,14 @@ Each slot's memory is freed ONLY by `free_driver_slot` / `free_isolated_range`.
 
 ### 6.2 Preemption
 
-**Rule 6.2.1**: Only Ring 3 (user mode) is preempted. The kernel (Ring 0) runs to completion
-except at explicit reschedule points (syscall return, yield).
-**Rule 6.2.2**: `timer_handler_inner` reads CS from the interrupt stack frame. If CS=0x1B
-(user mode), it saves RSP, calls `schedule()`, and updates TSS.RSP0. If CS=0x08 (kernel mode),
-it returns without scheduling.
+**Rule 6.2.1**: All threads in Ready state may be preempted on the next timer tick.
+Ring 3 user threads are preempted on timeslice expiry. Ring 0 kernel threads are preempted
+only when their state is Ready (after yield or timeslice expiry), not while Running.
+The idle thread is preempted whenever any non-idle thread is Ready.
+**Rule 6.2.2**: `timer_handler_inner` uses a three-branch preemption check: (a) Ring 3 user
+thread — preempt if state==Ready; (b) Idle thread (IDLE_TID=1) — preempt if state==Ready
+and non-idle threads exist; (c) Ring 0 kernel thread — preempt if state==Ready and non-idle
+threads exist. Each branch saves RSP, calls `schedule()`, and updates TSS.RSP0 on switch.
 
 ### 6.3 Process Slot Management
 
@@ -757,8 +760,10 @@ reader blocks indefinitely.
 **AP-1**: ATA or AHCI driver calling `schedule()` or any VFS function. (Block driver
 MUST NOT depend on scheduler or filesystem.)
 
-**AP-2**: Timer IRQ handler calling `schedule()` when interrupted code is Ring 0.
-(Only Ring 3 may be preempted.)
+**AP-2**: Timer IRQ handler calling `schedule()` when the current thread is still Running
+(not Ready) and the interrupted code is Ring 0. (Ring 0 Running→Ready transition occurs only
+on timeslice expiry; preemption fires on the *next* tick after the thread has yielded or
+expired its slice.)
 
 **AP-3**: An IRQ handler allocating memory (`Box::new`, `Vec::push`, `String::push`, etc.).
 (No heap allocation in IRQ context — INV-2.)
@@ -851,7 +856,7 @@ The test suite MUST be run before every release.
 | T19 | Demand paging | Unit | Allocate page → read/write succeeds without pre-allocation |
 | T20 | mmap lazy allocation | Unit | Register VMA → page fault on access → frame allocated |
 | T21 | Pipe blocking/wake | Unit | Read empty pipe → blocked → writer writes → reader unblocked |
-| T22 | No preempt in Ring 0 | Functional | Long kernel loop → no reschedule until syscall return |
+| T22 | Preempt Ring 0 on yield | Functional | Long kernel loop with yield → rescheduled; Running Ring 0 not preempted on timer tick |
 | T23 | Syscall ABI validation at boot | Unit | `validate_abi()` panics on missing handler |
 | T24 | NeoFS permission enforcement | Unit | Read-only file → write → denied |
 | T25 | Boot phase ordering | Unit | Phase N+1 cannot execute before Phase N completes |

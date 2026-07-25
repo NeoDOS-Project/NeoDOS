@@ -568,12 +568,21 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
     let is_user_mode = (interrupted_cs & 3) == 3;
 
-    // ── Preemptive context switch (Ring 3 user mode threads only) ──
-    // Per Source of Truth §6.2 (Rule 6.2.1/6.2.2), Ring 0 (kernel mode) code runs
-    // to completion without timer preemption to avoid deadlocks while holding kernel locks.
+    // ── Preemptive context switch ──
+    // Rule: Ring 3 threads may be preempted on timeslice expiry.
+    // Ring 0 kernel threads (netd, boot) that are in Ready state (via yield
+    // or timeslice expiry) are also preempted if another non-idle thread
+    // is available — the "idle preemption" path below handles this.
+
+    let has_non_idle = scheduler.has_non_idle_threads();
+    let current_state = scheduler.current_kthread_mut().map(|k| k.state);
+
     if is_user_mode && tid != crate::scheduler::IDLE_TID {
-        let should_preempt = scheduler.current_kthread_mut()
-            .is_some_and(|k| k.state == ThreadState::Ready && k.tid == tid);
+        let should_preempt = current_state == Some(ThreadState::Ready);
+
+        crate::trace_timer_irq!(
+            if should_preempt { 1u8 } else { 3u8 },
+            tid, interrupted_cs, has_non_idle as u8);
 
         if should_preempt {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=timeslice_expired", tid);
@@ -591,12 +600,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // instead so we can identify the root cause.
             let next_rsp = unsafe { (*next).rsp };
             if next_rsp == 0 {
-                // The idle thread (IDLE_TID) may have an uninitialized rsp of 0.
-                // In that case, we cannot perform a context switch. Instead, keep
-                // the current thread running and defer the preemption until a
-                // non‑idle thread is ready.
                 if next_tid == crate::scheduler::IDLE_TID {
-                    // Skip preemption; stay on the current thread.
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
@@ -606,10 +610,6 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     next_tid, tid, unsafe { (*next).kernel_stack_top });
             }
 
-            // If schedule() returned the same thread (no other Ready threads),
-            // skip the full context switch: just reset the time slice and stay
-            // on the current stack.  This avoids the expensive register
-            // save/restore + serial log output when there is nothing else to run.
             if next_tid == tid {
                 unsafe {
                     (*next).state = ThreadState::Running;
@@ -653,7 +653,6 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
 
-            // Push TimerTick event
             let _ = crate::eventbus::EVENT_BUS.push_event(
                 crate::eventbus::EVENT_TIMER_TICK,
                 crate::eventbus::SOURCE_HAL,
@@ -685,14 +684,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             );
             return current_rsp;
         }
-    } else {
-        // ── Idle thread (TID 1) preemption ──────────────────────
-        let should_preempt = scheduler.current_kthread_mut()
-            .is_some_and(|k| k.state == ThreadState::Ready);
-        if should_preempt && scheduler.has_non_idle_threads() {
-            kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=idle_preempt (has_non_idle={})",
-                tid, scheduler.has_non_idle_threads());
-            // Save idle thread's RSP
+    } else if tid == crate::scheduler::IDLE_TID {
+        // ── Idle thread preemption ──────────────────────
+        // Preempt idle (TID 1) if any other thread is ready
+        let should_preempt = current_state == Some(ThreadState::Ready);
+
+        crate::trace_timer_irq!(if should_preempt { 2u8 } else { 3u8 },
+            tid, interrupted_cs, has_non_idle as u8);
+
+        if should_preempt && has_non_idle {
+            kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT idle tid={} has_non_idle={}",
+                tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
             }
@@ -726,17 +728,86 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
+    } else {
+        // ── Kernel thread (Ring 0, non-idle) preemption ──
+        // Kernel threads are NOT preempted on every tick even if their
+        // timeslice expired, because they may hold kernel locks.
+        // However, if the thread yielded (state=Ready), we DO preempt
+        // if another thread can run.
+        let should_preempt = current_state == Some(ThreadState::Ready);
+
+        crate::trace_timer_irq!(if should_preempt { 2u8 } else { 0u8 },
+            tid, interrupted_cs, has_non_idle as u8);
+
+        if should_preempt && has_non_idle {
+            kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT kernel tid={} reason=yield_or_expired has_non_idle={}",
+                tid, has_non_idle);
+            if let Some(k) = scheduler.current_kthread_mut() {
+                k.rsp = current_rsp;
+            }
+            let next = scheduler.schedule();
+            let next_tid = unsafe { (*next).tid };
+            let next_rsp = unsafe { (*next).rsp };
+            if next_rsp == 0 {
+                if next_tid == crate::scheduler::IDLE_TID {
+                    crate::hal::ack_irq(32);
+                    crate::invariants::timer_irq_exit();
+                    crate::invariants::irq_exit_clear();
+                    return current_rsp;
+                }
+                panic!("timer_handler: kernel preempt next TID={} has rsp=0", next_tid);
+            }
+            if next_tid == tid {
+                // Same thread: no context switch needed
+                if let Some(k) = scheduler.current_kthread_mut() {
+                    k.state = ThreadState::Running;
+                    let idx = (k.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
+                    k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                    k.ticks_since_scheduled = 0;
+                }
+                crate::hal::ack_irq(32);
+                crate::invariants::timer_irq_exit();
+                crate::invariants::irq_exit_clear();
+                return current_rsp;
+            }
+            unsafe {
+                let nt = &mut *next;
+                let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
+                nt.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                nt.ticks_since_scheduled = 0;
+            }
+            let next_ks_top = unsafe { (*next).kernel_stack_top };
+            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+            unsafe {
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
+                crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+            }
+            let next_rsp = unsafe { (*next).rsp };
+            crate::hal::ack_irq(32);
+            crate::invariants::timer_irq_exit();
+            crate::invariants::irq_exit_clear();
+            let _ = crate::eventbus::EVENT_BUS.push_event(
+                crate::eventbus::EVENT_TIMER_TICK,
+                crate::eventbus::SOURCE_HAL,
+                1,
+                current_tick,
+                0,
+                0,
+            );
+            crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
+            return next_rsp;
+        }
     }
 
-    // ── Kernel mode interrupt OR idle ──────────────────────────
+    // ── Kernel mode interrupt (no preemption) ──
+    // Per Source of Truth §6.2: Ring 0 code runs to completion.
+    // If on_timer_tick() set state to Ready (timeslice expired),
+    // restore it to Running because no context switch occurred.
     if tid > 0 {
         let alive = scheduler.current_kthread_mut()
             .is_some_and(|k| k.state != ThreadState::Terminated);
         if alive {
-            // Per Source of Truth §6.2 (Rule 6.2.1/6.2.2): Ring 0 code runs to
-            // completion without timer preemption.  If on_timer_tick() set the
-            // thread state to Ready (timeslice expired), restore it to Running
-            // because the thread continues executing — no context switch occurred.
             if let Some(k) = scheduler.current_kthread_mut() {
                 if k.state == ThreadState::Ready && k.tid == tid {
                     k.state = ThreadState::Running;
@@ -751,8 +822,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
     }
 
-    // ── Idle thread (TID 0) ─────────────────────────────────────
-    if scheduler.has_non_idle_threads() {
+    // ── Idle thread (TID 0/1) — no timeslice to manage ──
+    if has_non_idle {
         unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
     }
     crate::hal::ack_irq(32);

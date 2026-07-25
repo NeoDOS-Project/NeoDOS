@@ -104,8 +104,10 @@ pub fn kwait_block(reason: WaitReason) {
     let old_irql = unsafe { irql::raise_irql(DISPATCH_LEVEL) };
     let mut lock = scheduler::current_scheduler().lock();
     if let Some(k) = lock.current_kthread_mut() {
+        let before = k.state.to_u8();
         k.state = ThreadState::Blocked { waiting_for: magic };
         k.waiting_for = Some(magic);
+        crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8); // KWAIT_BLOCK
     }
     crate::syscall::set_need_resched();
     drop(lock);

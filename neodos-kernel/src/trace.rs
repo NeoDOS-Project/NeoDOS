@@ -19,6 +19,19 @@ pub enum TraceEvent {
     IrqExit       = 0x05,
     SchedDecision = 0x06,
     IrqTimerTick  = 0x07,
+    /// SCHED_DEBUG: full context switch with state info
+    /// arg0=old_tid, arg1=old_state, arg2=new_tid, arg3=new_state
+    SchedSwitch   = 0x08,
+    /// SCHED_DEBUG: thread state transition
+    /// arg0=tid, arg1=state_before, arg2=state_after, arg3=reason
+    SchedState    = 0x09,
+    /// SCHED_DEBUG: lock event
+    /// arg0=lock_id, arg1=owner_tid, arg2=event_type(0=lock,1=unlock,2=contend), arg3=0
+    LockEvent     = 0x0A,
+    /// SCHED_DEBUG: timer IRQ preemption decision
+    /// arg0=decision(0=skip_ring0,1=preempt_ring3,2=preempt_kernel,3=nop),
+    /// arg1=current_tid, arg2=interrupted_cs, arg3=has_non_idle
+    TimerIrqInfo  = 0x0B,
     Panic         = 0xFF,
 }
 
@@ -91,7 +104,7 @@ pub static TRACE: TraceBuffer = TraceBuffer::new();
 
 #[macro_export]
 macro_rules! trace_event {
-    ($event:expr, $a0:expr, $a1:expr, $a2:expr, $a3:expr) => {
+    ($event:expr, $a0:expr, $a1:expr, $a2:expr, $a3:expr $(,)?) => {
         $crate::trace::TRACE.write($event, $a0 as u64, $a1 as u64, $a2 as u64, $a3 as u64);
     };
 }
@@ -143,5 +156,69 @@ macro_rules! trace_irq_exit {
             $crate::trace::TraceEvent::IrqExit,
             $irq, 0, 0, 0
         );
+    };
+}
+
+/// SCHED_DEBUG: log a context switch with full state info.
+#[macro_export]
+macro_rules! trace_sched_switch {
+    ($old_tid:expr, $old_state:expr, $new_tid:expr, $new_state:expr) => {
+        if cfg!(feature = "sched_debug") {
+            $crate::trace_event!(
+                $crate::trace::TraceEvent::SchedSwitch,
+                $old_tid as u64,
+                $old_state as u64,
+                $new_tid as u64,
+                $new_state as u64,
+            );
+        }
+    };
+}
+
+/// SCHED_DEBUG: log a thread state transition.
+#[macro_export]
+macro_rules! trace_sched_state {
+    ($tid:expr, $before:expr, $after:expr, $reason:expr) => {
+        if cfg!(feature = "sched_debug") {
+            $crate::trace_event!(
+                $crate::trace::TraceEvent::SchedState,
+                $tid as u64,
+                $before as u64,
+                $after as u64,
+                $reason as u64,
+            );
+        }
+    };
+}
+
+/// SCHED_DEBUG: log a lock event.
+#[macro_export]
+macro_rules! trace_lock_event {
+    ($lock_id:expr, $owner:expr, $event_type:expr) => {
+        if cfg!(feature = "sched_debug") {
+            $crate::trace_event!(
+                $crate::trace::TraceEvent::LockEvent,
+                $lock_id as u64,
+                $owner as u64,
+                $event_type as u64,
+                0,
+            );
+        }
+    };
+}
+
+/// SCHED_DEBUG: log timer IRQ preemption decision.
+#[macro_export]
+macro_rules! trace_timer_irq {
+    ($decision:expr, $tid:expr, $cs:expr, $has_non_idle:expr) => {
+        if cfg!(feature = "sched_debug") {
+            $crate::trace_event!(
+                $crate::trace::TraceEvent::TimerIrqInfo,
+                $decision as u64,
+                $tid as u64,
+                $cs as u64,
+                $has_non_idle as u64,
+            );
+        }
     };
 }

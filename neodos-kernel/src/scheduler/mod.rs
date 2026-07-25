@@ -1024,11 +1024,13 @@ impl Scheduler {
                     if let Some(k) = &mut *ptr {
                         if k.state == ThreadState::Ready {
                             let prev = self.current_tid;
+                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                             self.current_tid = tid;
                             k.state = ThreadState::Running;
                             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
                                 prev, tid);
                             crate::trace_cswitch!(prev as u64, tid as u64);
+                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
                             return k as *mut Kthread;
                         }
                     }
@@ -1044,11 +1046,13 @@ impl Scheduler {
                     if let Some(k) = &mut *ptr {
                         if k.state == ThreadState::Ready {
                             let prev = self.current_tid;
+                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                             self.current_tid = tid;
                             k.state = ThreadState::Running;
                             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                                 prev, tid);
                             crate::trace_cswitch!(prev as u64, tid as u64);
+                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
                             return k as *mut Kthread;
                         }
                     }
@@ -1065,11 +1069,13 @@ impl Scheduler {
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
                         let prev = self.current_tid;
+                        let prev_state = k.state.to_u8(); // current thread's state before we change it
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
                             prev, check_tid, priority);
                         crate::trace_cswitch!(prev as u64, check_tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, check_tid, k.state.to_u8());
                         return k as *mut Kthread;
                     }
                 }
@@ -1077,10 +1083,6 @@ impl Scheduler {
         }
 
         // Fallback to idle thread (TID 1, PRIORITY_IDLE).
-        // The idle thread has IDLE priority, so the global scan above
-        // naturally skips it while any higher-priority thread is Ready.
-        // This fallback only fires when the scan found nothing at any
-        // priority, meaning every non-idle thread is Blocked/Terminated.
         {
             if !self.has_non_idle_threads() {
                 kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
@@ -1091,12 +1093,14 @@ impl Scheduler {
                     if let Some(idle) = &mut *ptr {
                         if idle.state != ThreadState::Terminated {
                             let prev = self.current_tid;
+                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                             self.current_tid = IDLE_TID;
                             idle.state = ThreadState::Running;
                             idle.time_slice_remaining = IDLE_TIME_SLICE;
                             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
                                 prev, IDLE_TID);
                             crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
+                            crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
                             return idle as *mut Kthread;
                         }
                     }
@@ -1120,6 +1124,7 @@ impl Scheduler {
         let mut needs_resched = false;
         let mut expired_priority: u8 = 0;
         if let Some(k) = self.current_kthread_mut() {
+            let state_before = k.state.to_u8();
             if k.state == ThreadState::Running {
                 k.cpu_ticks += 1;
 
@@ -1131,6 +1136,7 @@ impl Scheduler {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     needs_resched = true;
+                    crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
                 }
             }
         }
@@ -1138,10 +1144,6 @@ impl Scheduler {
         if needs_resched {
             kdebug!(LogSubsys::Sched, "[SCHED] TIMESLICE_EXPIRED tid={} priority={}",
                 _tid, expired_priority);
-            // Thread is already set to Ready above.  The global priority
-            // scan in schedule() picks it up fairly — no need to re-enqueue
-            // to the per-CPU run queue, which would bypass the scan and
-            // starve lower-priority threads (notably TID 0 / boot code).
             crate::syscall::NEED_RESCHED.store(true, core::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -1314,13 +1316,20 @@ pub fn yield_current_thread() {
         let tid = lock.current_tid;
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
+                let before = k.state.to_u8();
                 if k.state == ThreadState::Running {
                     k.state = ThreadState::Ready;
                 }
                 let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
                 k.time_slice_remaining = TIME_SLICES[idx];
+                crate::trace_sched_state!(tid, before, k.state.to_u8(), 1u8);
             }
         }
+        // Signal reschedule so the yield is not a no-op.
+        // Without this, kernel threads (notably netd) set state=Ready but
+        // continue running until the next timer tick catches them in
+        // Running state.  On a busy system this can starve other threads.
+        crate::syscall::set_need_resched();
     });
 }
 
