@@ -367,14 +367,51 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 current.state = ThreadState::Running;
             }
             unsafe { (*next).state = ThreadState::Ready; }
-            crate::arch::x64::gdt::set_kernel_stack(old_ks_top);
+            unsafe { crate::arch::x64::gdt::prepare_ring3_return(old_ks_top, tid, pid); }
             crate::serial_println!(
                 "[SYSCALL_RESCHED] skip ring0 target pid={} tid={} cs=0x{:x}; keep pid={} tid={}",
                 next_pid, next_tid, next_cs, pid, tid);
             return current_rsp;
         }
 
-        crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+        // ── BUGCHECK: Pre-iretq diagnostic ──
+        if next_ks_top == 0 {
+            crate::serial_println!(
+                "\n!!! BUGCHECK: kernel_stack_top=0 for next TID={} (would triple-fault) !!!\n\
+                 old_tid={} next_pid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                next_tid, tid, next_pid, next_rsp, next_rip, next_cs);
+            panic!("BUGCHECK: next TID={} has kernel_stack_top=0", next_tid);
+        }
+        if next_rsp == 0 {
+            crate::serial_println!(
+                "\n!!! BUGCHECK: rsp=0 for next TID={} (would triple-fault) !!!\n\
+                 old_tid={} next_pid={} next_ks_top=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                next_tid, tid, next_pid, next_ks_top, next_rip, next_cs);
+            panic!("BUGCHECK: next TID={} has rsp=0", next_tid);
+        }
+        if next_cs & 3 != 3 {
+            crate::serial_println!(
+                "\n!!! BUGCHECK: next TID={} has non-Ring3 CS=0x{:x} (would iretq to Ring 0) !!!",
+                next_tid, next_cs);
+            panic!("BUGCHECK: next TID={} CS is not Ring 3", next_tid);
+        }
+        // Validate that the iretq frame has correct segment selectors
+        let (rrsp, rss) = unsafe {
+            let frame = (next_rsp + 15 * 8) as *const u64;
+            let rsp = *frame.add(3);
+            let ss  = *frame.add(4);
+            (rsp, ss)
+        };
+        if rss != 0x23 {
+            crate::serial_println!(
+                "\n!!! BUGCHECK: next TID={} has SS=0x{:x} (expected 0x23) !!!",
+                next_tid, rss);
+        }
+        crate::serial_println!(
+            "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
+            tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
+
+        unsafe { crate::arch::x64::gdt::prepare_ring3_return(next_ks_top, next_tid, next_pid); }
         // Keep the per-CPU view in sync with Scheduler. Timer-driven
         // switches update KPRCB, but syscall-return switches previously
         // updated only `current_tid` and RSP0.

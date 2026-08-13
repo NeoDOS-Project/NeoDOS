@@ -618,6 +618,12 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                             crate::scheduler::PRIORITY_COUNT as usize - 1,
                         )];
                     (*next).ticks_since_scheduled = 0;
+                    // INVARIANT: TSS.RSP0 must always match the current thread.
+                    // Even when schedule() returns the same thread, we must
+                    // update RSP0 because a PREVIOUS context switch may have
+                    // left it pointing to another thread's kernel stack.
+                    let ks_top = (*next).kernel_stack_top;
+                    crate::arch::x64::gdt::prepare_ring3_return(ks_top, (*next).tid, (*next).pid);
                 }
                 crate::hal::ack_irq(32);
                 crate::invariants::timer_irq_exit();
@@ -639,7 +645,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
             // Switch TSS.RSP0 to the new thread's kernel stack
             let next_ks_top = unsafe { (*next).kernel_stack_top };
-            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+            if next_ks_top == 0 {
+                panic!("timer IRQ: next TID={} has kernel_stack_top=0 (triple fault on Ring 3 entry)",
+                    unsafe { (*next).tid });
+            }
+            unsafe {
+                crate::arch::x64::gdt::prepare_ring3_return(
+                    next_ks_top, (*next).tid, (*next).pid);
+            }
 
             // Update per-CPU current thread and PID
             unsafe {
@@ -706,8 +719,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 nt.ticks_since_scheduled = 0;
             }
             let next_ks_top = unsafe { (*next).kernel_stack_top };
-            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+            if next_ks_top == 0 {
+                panic!("timer idle-preempt: next TID={} has kernel_stack_top=0",
+                    unsafe { (*next).tid });
+            }
             unsafe {
+                crate::arch::x64::gdt::prepare_ring3_return(
+                    next_ks_top, (*next).tid, (*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
@@ -777,8 +795,13 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 nt.ticks_since_scheduled = 0;
             }
             let next_ks_top = unsafe { (*next).kernel_stack_top };
-            crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
+            if next_ks_top == 0 {
+                panic!("timer kernel-preempt: next TID={} has kernel_stack_top=0",
+                    unsafe { (*next).tid });
+            }
             unsafe {
+                crate::arch::x64::gdt::prepare_ring3_return(
+                    next_ks_top, (*next).tid, (*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();

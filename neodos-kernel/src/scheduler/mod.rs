@@ -261,9 +261,21 @@ impl Kthread {
         let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
         let kernel_stack_top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
         let rsp = init_ring3_frame(kernel_stack_top, entry, user_stack_top);
-        // TEB: allocate page on first write via demand paging
-        // The TID is used to derive a fixed address within the heap region
-        let teb_base = 0;
+        Self::new_ring3_with_stack(tid, pid, entry, rsp, kernel_stack_top, stack)
+    }
+
+    /// Create a Ring 3 Kthread with a pre-allocated kernel stack.
+    /// The caller is responsible for allocating the stack OUTSIDE the scheduler lock
+    /// and computing kernel_stack_top and rsp via init_ring3_frame().
+    /// This prevents heap allocations inside critical sections (without_interrupts +
+    /// scheduler lock), which can corrupt the kernel heap.
+    pub fn new_ring3_with_stack(
+        tid: u32, pid: u32, entry: u64,
+        rsp: u64, kernel_stack_top: u64, stack: Box<AlignedKStack>,
+    ) -> Self {
+        if kernel_stack_top == 0 {
+            panic!("Kthread::new_ring3_with_stack: kernel_stack_top is 0 for TID={}", tid);
+        }
         Kthread {
             rax: 0, rbx: 0, rcx: 0, rdx: 0,
             rsi: 0, rdi: 0, r8: 0, r9: 0,
@@ -279,7 +291,7 @@ impl Kthread {
             ticks_since_scheduled: 0,
             kernel_stack_top,
             kernel_stack: Some(stack),
-            teb_base,
+            teb_base: 0,
             cpu: unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
             obj_id: None,
             kernel_apc_queue: VecDeque::new(),
@@ -555,6 +567,9 @@ impl Scheduler {
     }
 
     /// Add a new EPROCESS + initial KTHREAD (Ring 3).
+    /// The kernel stack is allocated internally by Kthread::new_ring3.
+    /// Prefer add_ring3_process_with_stack when the caller has already
+    /// allocated the stack outside the scheduler lock.
     #[allow(clippy::too_many_arguments)]
     pub fn add_ring3_process(
         &mut self,
@@ -623,11 +638,6 @@ impl Scheduler {
         }
 
         self.eprocesses[ep_slot] = Some(eproc);
-        // Ring 3 processes start Suspended — they are not enqueued to the
-        // run queue and are invisible to the global priority scan until
-        // wait_for_process() explicitly activates them (Suspended→Running).
-        // This prevents premature scheduling before the boot thread is
-        // ready to enter user mode.
         thread.state = ThreadState::Suspended;
         self.kthreads[th_slot] = Some(thread);
 
@@ -636,6 +646,105 @@ impl Scheduler {
 
         crate::trace_sched!(1, pid, 0); // ADD_PROCESS
         Ok(pid)
+    }
+
+    /// Add a new EPROCESS + initial KTHREAD (Ring 3) with ALL resources
+    /// pre-allocated outside the scheduler lock.
+    ///
+    /// The caller MUST:
+    /// 1. Allocate kernel_stack via Box::new before entering the lock
+    /// 2. Pre-compute rsp = init_ring3_frame(kernel_stack_top, entry, user_stack_top)
+    /// 3. Ensure scheduler Vecs have capacity (call ensure_slots())
+    ///
+    /// Inside the lock we only:
+    /// - Assign PID/TID
+    /// - Move eproc + thread into the Vecs
+    /// - Update states
+    /// NO heap allocations, NO Ob operations, NO string formatting.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_ring3_process_with_stack(
+        &mut self,
+        entry: u64,
+        slot_idx: u8,
+        cwd_drive: u8,
+        cwd_path: &str,
+        heap_base: u64,
+        parent_pid: u32,
+        rsp: u64,
+        kernel_stack_top: u64,
+        kernel_stack: Box<AlignedKStack>,
+        obj_id: Option<ObId>,
+        ob_id: Option<ObId>,
+        thread_obj_id: Option<ObId>,
+        parent_token: crate::security::token::Token,
+    ) -> Result<u32, &'static str> {
+        if kernel_stack_top == 0 {
+            kerror!(LogSubsys::Sched, "[BUGCHECK] TID=NEW kernel_stack_top=0");
+            return Err("kernel_stack_top is 0");
+        }
+
+        let pid = self.next_pid;
+        self.next_pid += 1;
+
+        let tid = self.next_tid;
+        self.next_tid += 1;
+
+        let mut eproc = Eprocess {
+            pid,
+            parent_pid,
+            handle_table: crate::handle::HandleTable::with_defaults(),
+            cwd_drive,
+            cwd_path: cwd_path.to_string(),
+            heap_base,
+            heap_break: heap_base,
+            user_slot: Some(slot_idx),
+            mmap_regions: alloc::vec::Vec::new(),
+            mmap_next: crate::arch::x64::paging::MMAP_BASE,
+            thread_count: 1,
+            exit_code: 0,
+            obj_id,
+            ob_id,
+            address_space: address_space::AddressSpace::new(),
+            token: parent_token,
+            vt_num: 0,
+        };
+
+        let mut thread = Kthread::new_ring3_with_stack(tid, pid, entry, rsp, kernel_stack_top, kernel_stack);
+        thread.obj_id = thread_obj_id;
+        thread.state = ThreadState::Suspended;
+
+        // Find slots (no alloc — we pre-reserved via ensure_slots)
+        let ep_slot = self.resolve_eprocess_slot();
+        let th_slot = self.resolve_kthread_slot();
+        self.eprocesses[ep_slot] = Some(eproc);
+        self.kthreads[th_slot] = Some(thread);
+
+        kinfo!(LogSubsys::Sched, "PID {} -> \\Process\\{} OK", pid, pid);
+        crate::trace_sched!(1, pid, 0);
+        Ok(pid)
+    }
+
+    /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
+    /// growing them now (outside the lock) so no realloc happens inside.
+    pub fn ensure_slots(&mut self) {
+        if self.eprocesses.iter().position(|e| e.is_none()).is_none() {
+            self.eprocesses.push(None);
+        }
+        if self.kthreads.iter().position(|t| t.is_none()).is_none() {
+            self.kthreads.push(None);
+        }
+    }
+
+    /// Resolve a free eprocess slot (must exist — caller called ensure_slots).
+    fn resolve_eprocess_slot(&mut self) -> usize {
+        self.eprocesses.iter().position(|e| e.is_none())
+            .expect("ensure_slots guarantees a free eprocess slot")
+    }
+
+    /// Resolve a free kthread slot (must exist — caller called ensure_slots).
+    fn resolve_kthread_slot(&mut self) -> usize {
+        self.kthreads.iter().position(|t| t.is_none())
+            .expect("ensure_slots guarantees a free kthread slot")
     }
 
     /// Add an additional thread to an existing EPROCESS (Ring 3).

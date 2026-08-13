@@ -1,10 +1,15 @@
 use crate::arch::x64::gdt;
 use crate::arch::x64::gdt::get_selectors;
 use crate::scheduler;
+use crate::scheduler::AlignedKStack;
+use crate::object;
+use crate::object::ObType;
 use crate::arch::x64::cpu_local::{OFFSET_EXIT_RSP, OFFSET_EXIT_RIP, OFFSET_EXIT_RBX,
     OFFSET_EXIT_R12, OFFSET_EXIT_R13, OFFSET_EXIT_R14, OFFSET_EXIT_R15, OFFSET_EXIT_RBP};
 use core::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use crate::log::LogSubsys;
+use alloc::boxed::Box;
+use alloc::format;
 
 // ── Per-CPU exit trampoline ──────────────────────────────────────────────
 //
@@ -132,9 +137,54 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         }
     };
 
+    // ── Phase 1: ALL allocations OUTSIDE scheduler lock ──
+    // 1. Kernel stack allocation (Box::new → heap alloc)
+    let stack = alloc::boxed::Box::new(scheduler::AlignedKStack([0u8; scheduler::KERNEL_STACK_SIZE]));
+    let kernel_stack_top = stack.0.as_ptr() as u64 + scheduler::KERNEL_STACK_SIZE as u64;
+    let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
+
+    // 2. Reserve PID/TID and pre-allocate Vec slots atomically
+    let (pid, tid) = crate::hal::without_interrupts(|| {
+        let mut s = scheduler::current_scheduler().lock();
+        s.ensure_slots();
+        let p = s.next_pid; s.next_pid += 1;
+        let t = s.next_tid; s.next_tid += 1;
+        (p, t)
+    });
+
+    // 3. Create Ob objects (heap allocs, Ob manager locks — all outside scheduler lock)
+    let name = alloc::format!("eproc/{}", pid);
+    let obj_id = object::ob_create_object(object::ObType::Process, &name, pid as u64, 0, None).ok();
+
+    let ob_name = alloc::format!("proc/{}", pid);
+    let ob_id = match object::ob_create_object(object::ObType::Process, &ob_name, pid as u64, 0, None) {
+        Ok(id) => {
+            let ns_path = alloc::format!("\\Process\\{}", pid);
+            let _ = crate::object::namespace::ob_insert_object(&ns_path, id);
+            Some(id)
+        }
+        Err(_) => None,
+    };
+
+    let tname = alloc::format!("kthread/{}", tid);
+    let thread_obj_id = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None).ok();
+
+    // 4. Inherit parent token
+    let parent_token = crate::hal::without_interrupts(|| {
+        let lock = scheduler::current_scheduler().lock();
+        lock.find_eprocess(parent_pid)
+            .map(|ep| ep.token.clone())
+            .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
+    });
+
+    // ── Phase 2: Minimal critical section — only table insertion ──
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        s.add_ring3_process(entry, stack_top, slot_idx, cwd_drive, cwd_path, heap_base, parent_pid)
+        s.add_ring3_process_with_stack(
+            entry, slot_idx, cwd_drive, cwd_path,
+            heap_base, parent_pid, rsp, kernel_stack_top, stack,
+            obj_id, ob_id, thread_obj_id, parent_token,
+        )
     })
 }
 
@@ -177,7 +227,7 @@ pub fn wait_for_process(pid: u32) {
     crate::serial_println!("[USERMODE] entry=0x{:x} stack=0x{:x} kernel_stack_top=0x{:x}",
         entry, user_stack_top, kernel_stack_top);
 
-    gdt::set_kernel_stack(kernel_stack_top);
+    unsafe { gdt::prepare_ring3_return(kernel_stack_top, pid as u32, pid); }
 
     kinfo!(LogSubsys::User, "[THREAD] wait_for_process: entering PID {} user mode (entry=0x{:x})", pid, entry);
 
@@ -220,7 +270,10 @@ pub fn wait_for_process(pid: u32) {
     // back to TID 0 sets RSP0 to 0 (boot's kernel_stack_top).  The cli
     // here prevents that window, and the subsequent iretq restores IF.
     crate::hal::disable_interrupts();
-    gdt::set_kernel_stack(kernel_stack_top);
+    unsafe {
+        let current_tid = scheduler::current_tid();
+        unsafe { gdt::prepare_ring3_return(kernel_stack_top, current_tid, pid); }
+    }
     crate::serial_println!("[USERMODE] RSP0=0x{:x} executing execute_usermode entry=0x{:x}",
         kernel_stack_top, entry);
     kdebug!(LogSubsys::User, "[THREAD] RSP0=0x{:x}, entering Ring3", kernel_stack_top);
