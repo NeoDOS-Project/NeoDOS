@@ -170,6 +170,13 @@
 
 ## v0.50.2 — 2026-07-17
 
+### Fixed
+
+- **Triple Fault / NeoShell Reset (AUDIT-TF)** — Resuelto el reinicio intermitente por triple fault en NeoShell tras el arranque.
+  - **handler_read Blocked State**: Reemplazada la espera activa con `sti; hlt; cli` en Ring 0 por un bloqueo atómico a `ThreadState::Blocked { waiting_for: 0xFFFFFFFF }` en la tabla de hilos y retorno de `-EAGAIN` (`-8`) a Ring 3.
+  - **Reintento en Userland (`libconsole-nxl`)**: `read_byte()` procesa `-EAGAIN`, cede ciclo via `sys_yield` y reintenta la lectura sin bloquear ni corromper el contexto.
+  - **Stack Canary Defense**: Implementado `STACK_CANARY` (`0xDEAD_BEEF_CAFE_BABE`) en la base de `AlignedKStack` y validación estricta (`check_kernel_stack_canary`) en `syscall_try_resched` previa a cada retorno `iretq` a Ring 3.
+
 ### Added
 
 - **Hostname infrastructure** — Full system hostname implementation with Registry persistence, kernel API, user-library wrappers, and user-facing commands.

@@ -105,6 +105,7 @@
 | [VirtualBox](development/virtualbox.md) | VirtualBox setup guide |
 | [Configuration](development/configuration.md) | Build configuration options |
 | [Testing](development/testing.md) | Test suites, how to add tests |
+| [Triple Fault Audit](development/triple-fault-audit.md) | Diagnóstico técnico y auditoría del reinicio por Triple Fault |
 
 ## Design Proposals
 

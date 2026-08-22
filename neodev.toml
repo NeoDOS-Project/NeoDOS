@@ -9,10 +9,10 @@ kernel_target = "x86_64-unknown-none"
 bootloader_target = "x86_64-unknown-uefi"
 
 [vm]
-backend = "virtualbox"
+backend = "qemu"
 memory = 512
 cpus = 1
-network = "bridged"
+network = "user"
 
 [qemu]
 kvm = false

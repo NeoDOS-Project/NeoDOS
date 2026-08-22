@@ -411,6 +411,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
             tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
 
+        scheduler::check_kernel_stack_canary(next_ks_top, next_pid, next_tid, next_rsp);
         unsafe { crate::arch::x64::gdt::prepare_ring3_return(next_ks_top, next_tid, next_pid); }
         // Keep the per-CPU view in sync with Scheduler. Timer-driven
         // switches update KPRCB, but syscall-return switches previously

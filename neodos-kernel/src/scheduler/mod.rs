@@ -40,8 +40,35 @@ pub const MAX_STARVATION_TICKS: u64 = 5000;
 /// TEB (Thread Environment Block) size: 4 KB page
 pub const TEB_SIZE: u64 = 0x1000;
 
+/// Kernel stack canary value at offset 0 of each AlignedKStack
+pub const STACK_CANARY: u64 = 0xDEAD_BEEF_CAFE_BABE;
+
 #[repr(align(16))]
 pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
+
+impl AlignedKStack {
+    pub fn new_boxed() -> Box<Self> {
+        let mut stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        unsafe {
+            (stack.0.as_mut_ptr() as *mut u64).write(STACK_CANARY);
+        }
+        stack
+    }
+}
+
+pub fn check_kernel_stack_canary(ks_top: u64, pid: u32, tid: u32, current_rsp: u64) {
+    if ks_top == 0 { return; }
+    let bottom = ks_top.saturating_sub(KERNEL_STACK_SIZE as u64);
+    let canary = unsafe { *(bottom as *const u64) };
+    if canary != STACK_CANARY {
+        crate::serial_println!(
+            "\n!!! CRITICAL KERNEL STACK OVERFLOW DETECTED !!!\n\
+             PID={} TID={} ks_top=0x{:x} current_rsp=0x{:x} bottom=0x{:x} canary=0x{:x} expected=0x{:x}",
+            pid, tid, ks_top, current_rsp, bottom, canary, STACK_CANARY
+        );
+        panic!("KERNEL STACK CANARY CORRUPTED FOR TID={}", tid);
+    }
+}
 
 static mut IDLE_STACK: [u8; IDLE_STACK_SIZE] = [0; IDLE_STACK_SIZE];
 
@@ -258,7 +285,7 @@ impl Kthread {
     }
 
     pub fn new_ring3(tid: u32, pid: u32, entry: u64, user_stack_top: u64) -> Self {
-        let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        let stack = AlignedKStack::new_boxed();
         let kernel_stack_top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
         let rsp = init_ring3_frame(kernel_stack_top, entry, user_stack_top);
         Self::new_ring3_with_stack(tid, pid, entry, rsp, kernel_stack_top, stack)
@@ -783,7 +810,7 @@ impl Scheduler {
 
         // Heap-allocated kernel stack: avoids BSS linker aliasing that
         // corrupted the initial iretq frame when a static array was used.
-        let stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        let stack = AlignedKStack::new_boxed();
         let kernel_stack_top = stack.0.as_ptr() as u64 + KERNEL_STACK_SIZE as u64;
         let rsp = init_ring0_frame(kernel_stack_top, entry);
 

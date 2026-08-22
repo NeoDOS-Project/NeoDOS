@@ -240,23 +240,32 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
                     if bytes_read > 0 {
                         break;
                     }
-                    loop {
+                    // Atomic check + block to prevent race condition with keyboard IRQ
+                    let b_opt = crate::hal::without_interrupts(|| {
                         if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            unsafe { buf_ptr.add(bytes_read).write(b); }
-                            bytes_read += 1;
-                            crate::serial_println!("[READB] got byte=0x{:x} (imm)", b);
-                            break;
+                            return Some(b);
                         }
-                        crate::eventbus::EVENT_BUS.dispatch_pending();
-                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            unsafe { buf_ptr.add(bytes_read).write(b); }
-                            bytes_read += 1;
-                            crate::serial_println!("[READB] got byte=0x{:x} (after dispatch)", b);
-                            break;
+                        let s = crate::scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(k) = lock.current_kthread_mut() {
+                            let before = k.state.to_u8();
+                            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
+                            k.waiting_for = Some(0xFFFFFFFF);
+                            crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
                         }
-                        crate::serial_println!("[READB] blocking pid={} tid={} vt={}",
+                        crate::syscall::set_need_resched();
+                        None
+                    });
+
+                    if let Some(b) = b_opt {
+                        unsafe { buf_ptr.add(bytes_read).write(b); }
+                        bytes_read += 1;
+                        crate::serial_println!("[READB] got byte=0x{:x} (atomic)", b);
+                        break;
+                    } else {
+                        crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
                             crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
-                        unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
+                        return err_to_u64(SyscallError::Again);
                     }
                 }
             }

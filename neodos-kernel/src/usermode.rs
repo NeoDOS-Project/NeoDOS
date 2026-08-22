@@ -138,8 +138,8 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
     };
 
     // ── Phase 1: ALL allocations OUTSIDE scheduler lock ──
-    // 1. Kernel stack allocation (Box::new → heap alloc)
-    let stack = alloc::boxed::Box::new(scheduler::AlignedKStack([0u8; scheduler::KERNEL_STACK_SIZE]));
+    // 1. Kernel stack allocation (Box::new → heap alloc with stack canary)
+    let stack = scheduler::AlignedKStack::new_boxed();
     let kernel_stack_top = stack.0.as_ptr() as u64 + scheduler::KERNEL_STACK_SIZE as u64;
     let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
 
