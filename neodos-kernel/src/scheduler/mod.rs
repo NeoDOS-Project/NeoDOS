@@ -1271,6 +1271,12 @@ impl Scheduler {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
+                        // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
+                        // The priority scan path may find a thread that is still present
+                        // in a runqueue (e.g. from a stale entry or cross-CPU scan).
+                        // We must remove it to satisfy the invariant:
+                        //   state == Running => runqueue_count == 0
+                        Scheduler::remove_from_run_queue(k);
                         let prev = self.current_tid;
                         let prev_state = k.state.to_u8(); // current thread's state before we change it
                         self.current_tid = check_tid;
@@ -1286,6 +1292,11 @@ impl Scheduler {
         }
 
         // Fallback to idle thread (TID 1, PRIORITY_IDLE).
+        // NOTE: By design, the idle thread is created with state=Ready but is never
+        // added to any runqueue. It is a special thread that only runs when no other
+        // threads are ready. The remove_from_run_queue() call here is defensive: if
+        // the idle thread were ever accidentally enqueued, we remove it to satisfy
+        // the invariant (Running => runqueue_count == 0).
         {
             if !self.has_non_idle_threads() {
                 kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
@@ -1295,6 +1306,7 @@ impl Scheduler {
                 unsafe {
                     if let Some(idle) = &mut *ptr {
                         if idle.state != ThreadState::Terminated {
+                            Scheduler::remove_from_run_queue(idle);
                             let prev = self.current_tid;
                             let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                             self.current_tid = IDLE_TID;
@@ -2074,5 +2086,171 @@ pub fn register_tests() {
         }
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
+    });
+
+    // ── P0-3 Priority scan regression tests ──
+
+    test_case!("rq_priority_scan_removes_from_runqueue", {
+        // Test: Priority scan must remove thread from runqueue before setting to Running.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 0;
+        // Add a high-priority thread (TID 2) and a normal thread (TID 1).
+        // TID 0 is boot, TID 1 is idle, so we start from TID 2.
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+
+        // Verify initial invariants
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 2); // 2 Ready threads in runqueue
+
+        // Schedule — should pick TID 2 (high priority) via priority scan
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
+
+        // Verify invariant: Running thread must have 0 runqueue entries
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1); // Only TID 3 remains in runqueue
+    });
+
+    test_case!("rq_priority_scan_stress_100_iterations", {
+        // Stress test: Repeat priority scan 100 times, verify invariant each time.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+
+        for i in 0..100 {
+            // Make both threads Ready again
+            {
+                let k2 = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                k2.state = ThreadState::Ready;
+                Scheduler::enqueue_to_cpu_run_queue(k2);
+            }
+            {
+                let k3 = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
+                k3.state = ThreadState::Ready;
+                Scheduler::enqueue_to_cpu_run_queue(k3);
+            }
+
+            // Schedule — should pick TID 2 (high priority)
+            let next = sched.schedule();
+            let picked_tid = unsafe { (*next).tid };
+            test_eq!(picked_tid, 2);
+
+            // Verify invariant: Running thread must have 0 runqueue entries
+            let result = sched.validate_runqueue_invariants();
+            test_true!(result.is_ok());
+            let _ = i; // suppress unused warning
+        }
+    });
+
+    test_case!("rq_priority_scan_return_to_ready", {
+        // Test: After priority scan selects X, X can yield back to Ready,
+        // then be scheduled again via priority scan with invariant preserved.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+
+        // Schedule TID 2
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
+
+        // Verify invariant: Running => runqueue_count == 0
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        // Simulate yield: Running -> Ready (enqueue)
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+
+        // Verify invariant: Ready => runqueue_count == 1
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+
+        // Schedule again
+        let next = sched.schedule();
+        let picked_tid2 = unsafe { (*next).tid };
+        test_eq!(picked_tid2, 2);
+
+        // Verify invariant: Running => runqueue_count == 0
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_priority_scan_multiple_threads", {
+        // Test: Multiple threads with different priorities, verify invariant
+        // holds for all threads after each schedule.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 6;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_ABOVE_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 5, 4, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+
+        // Schedule 4 times, each time verify invariants
+        for _ in 0..4 {
+            let next = sched.schedule();
+            let picked_tid = unsafe { (*next).tid };
+
+            // Verify invariant
+            let result = sched.validate_runqueue_invariants();
+            test_true!(result.is_ok());
+
+            // Mark as Ready again for next iteration
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked_tid).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+        }
+    });
+
+    test_case!("rq_priority_scan_duplicate_protection", {
+        // Test: Fix doesn't break duplicate enqueue protection.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+
+        // Try to enqueue twice
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+
+        // Verify only 1 entry
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_priority_scan_idle_thread_no_runqueue", {
+        // Test: Idle thread is never in runqueue by design.
+        // Verify it can be scheduled via priority scan without issues.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        sched.current_tid = 0;
+
+        // The idle thread (TID 1) is created in Scheduler::new() with state=Ready
+        // but is NOT in any runqueue by design.
+        // Schedule — should fall back to idle thread
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 1); // IDLE_TID
+
+        // Verify invariant: idle thread (Running) must have 0 runqueue entries
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
     });
 }
