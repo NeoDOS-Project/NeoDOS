@@ -15,14 +15,14 @@
 
 | Location | Code | Violation |
 |----------|------|-----------|
-| `handlers.rs:192-211` (`handler_yield`) | Sets `state = Ready`, calls `set_need_resched()` | **NO `enqueue_to_cpu_run_queue()`** |
-| `handlers.rs:347-360` (`handler_waitpid` wildcard branch) | Sets `state = Ready` if Running | **NO enqueue** |
-| `handlers.rs:593-614` (`handler_sleep_ex`) | Sets `state = Ready` if Running | **NO enqueue** |
-| `scheduler/mod.rs:1544-1567` (`yield_current_thread`) | Sets `state = Ready` if Running | **NO enqueue** |
-| `syscall/mod.rs:364-371` (`syscall_try_resched`) | Sets `state = Ready` if Running | **NO enqueue** |
-| `scheduler/mod.rs:1368-1373` (`on_timer_tick`) | Sets `state = Ready` on timeslice expiry | **NO enqueue** |
+| `handlers.rs:192-211` (`handler_yield`) | Sets `state = Ready`, calls `set_need_resched()` | **FIXED** — now uses `make_thread_ready()` |
+| `handlers.rs:347-360` (`handler_waitpid` wildcard branch) | Sets `state = Ready` if Running | **FIXED** — now uses `make_thread_ready()` |
+| `handlers.rs:593-614` (`handler_sleep_ex`) | Sets `state = Ready` if Running | **FIXED** — now uses `make_thread_ready()` |
+| `scheduler/mod.rs:1544-1567` (`yield_current_thread`) | Sets `state = Ready` if Running | **FIXED** — now uses `make_thread_ready()` |
+| `syscall/mod.rs:364-371` (`syscall_try_resched`) | Sets `state = Ready` if Running | **FIXED** — now uses `make_thread_ready()` |
+| `scheduler/mod.rs:1368-1373` (`on_timer_tick`) | Sets `state = Ready` on timeslice expiry | **EXEMPT** — called mid-timer-handler before RSP save; timer handler handles context switch |
 
-**Root cause**: All `Running → Ready` transitions set state but don't enqueue to the per-CPU runqueue. The scheduler compensates with a global priority scan fallback (step 3 in `schedule()`), but this bypasses the runqueue fast path entirely, making it dead code. Any thread that yields is invisible to the runqueue and can only be found by the O(n) global scan.
+**Root cause**: 5 of 6 `Running → Ready` transitions set state but don't enqueue to the per-CPU runqueue. The scheduler compensates with a O(n) global priority scan fallback (step 3 in `schedule()`), but this bypasses the runqueue fast path entirely, making it dead code. Any thread that yields is invisible to the runqueue and can only be found by the O(n) global scan. The 6th path (`on_timer_tick`) is exempt because it runs mid-timer-handler before RSP is saved.
 
 **Impact**: Performance degradation (O(N) per schedule instead of O(1)) and a correctness gap — the thread is `state == Ready` but not in any runqueue, which violates the invariant.
 
@@ -36,7 +36,7 @@
 | `handlers.rs:85-92` (`handler_exit` ThreadJoin wake) | Sets Ready + `enqueue_to_cpu_run_queue()` | ✅ Correct |
 | `handlers.rs:96-103` (`handler_exit` ChildExit wake) | Sets Ready + `enqueue_to_cpu_run_queue()` | ✅ Correct |
 | `apc/mod.rs:110-117` (`queue_user_apc` alertable wake) | Sets Ready + `enqueue_to_cpu_run_queue()` | ✅ Correct |
-| `ob.rs:3247` (ObWait activates Suspended child) | Sets `state = Ready` | **NO enqueue** |
+| `ob.rs:3247` (ObWait activates Suspended child) | Sets `state = Ready` | **FIXED** — now uses `make_thread_ready()` (P0-2) |
 
 The Blocked→Ready paths are all correct (they enqueue). The only violation is the Suspended→Ready transition in `handler_ob_wait` which skips enqueue.
 

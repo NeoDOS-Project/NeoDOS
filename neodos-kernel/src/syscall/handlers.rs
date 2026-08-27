@@ -196,12 +196,7 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
         let tid = lock.current_tid;
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(
-                    crate::scheduler::PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                crate::scheduler::Scheduler::make_thread_ready(k);
             }
         }
     });
@@ -350,9 +345,7 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
             let tid = lock.current_tid;
             if tid > 0 {
                 if let Some(k) = lock.current_kthread_mut() {
-                    if k.state == ThreadState::Running {
-                        k.state = ThreadState::Ready;
-                    }
+                    crate::scheduler::Scheduler::make_thread_ready(k);
                 }
             }
         });
@@ -596,12 +589,7 @@ pub(super) fn handler_sleep_ex(_regs: super::Registers) -> u64 {
         let tid = lock.current_tid;
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                if k.state == crate::scheduler::ThreadState::Running {
-                    k.state = crate::scheduler::ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(
-                    crate::scheduler::PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                crate::scheduler::Scheduler::make_thread_ready(k);
             }
         }
     });

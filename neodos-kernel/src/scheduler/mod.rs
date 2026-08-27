@@ -1106,6 +1106,20 @@ impl Scheduler {
         }
     }
 
+    /// Transition a thread to Ready state and enqueue it exactly once.
+    /// Safe to call if thread is already Ready (no-op, avoids duplicate enqueue).
+    /// Must be called under scheduler lock + interrupts disabled.
+    pub fn make_thread_ready(k: &mut Kthread) {
+        if k.state == ThreadState::Ready {
+            return;
+        }
+        k.state = ThreadState::Ready;
+        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+        k.time_slice_remaining = TIME_SLICES[idx];
+        k.ticks_since_scheduled = 0;
+        Self::enqueue_to_cpu_run_queue(k);
+    }
+
     /// Try to dequeue the next thread from the current CPU's local run queue.
     /// Returns the TID if found, or None if the queue is empty.
     fn try_dequeue_local() -> Option<u32> {
@@ -1270,6 +1284,12 @@ impl Scheduler {
 
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
+                    // NOTE: We set state=Ready here WITHOUT enqueueing to the
+                    // runqueue. This is intentional: on_timer_tick is called
+                    // mid-timer-handler BEFORE the preemption logic saves RSP.
+                    // Enqueuing here would add a thread to the runqueue with a
+                    // stale RSP. The timer handler's preemption path (idt.rs)
+                    // handles the context switch and RSP save immediately after.
                     k.state = ThreadState::Ready;
                     needs_resched = true;
                     crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
@@ -1453,11 +1473,7 @@ pub fn yield_current_thread() {
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
                 let before = k.state.to_u8();
-                if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = TIME_SLICES[idx];
+                Scheduler::make_thread_ready(k);
                 crate::trace_sched_state!(tid, before, k.state.to_u8(), 1u8);
             }
         }

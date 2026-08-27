@@ -330,7 +330,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
                 if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
+                    scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {
                     kdebug!(LogSubsys::Syscall, "Context switch from non-Running state: {:?}", k.state);
                 }
