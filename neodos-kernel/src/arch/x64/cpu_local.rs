@@ -93,6 +93,21 @@ impl CpuRunQueue {
     }
 
     #[inline]
+    pub fn contains(&self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        let mut idx = self.head_idx as usize;
+        for _ in 0..self.count {
+            if self.entries[idx] == tid {
+                return true;
+            }
+            idx = (idx + 1) % self.entries.len();
+        }
+        false
+    }
+
+    #[inline]
     pub fn len(&self) -> u16 {
         self.count
     }

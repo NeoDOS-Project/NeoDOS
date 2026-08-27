@@ -1087,6 +1087,9 @@ impl Scheduler {
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
         unsafe {
             let run_queue = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+            if run_queue.contains(k.tid) {
+                return; // already in runqueue — avoid duplicate
+            }
             run_queue.push(k.tid);
         }
         // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
