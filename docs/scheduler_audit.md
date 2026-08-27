@@ -55,7 +55,7 @@ The Blocked→Ready paths are all correct (they enqueue). The only violation is 
 | `schedule()` sets `current_tid = X` and `X.state = Running` atomically (under lock) | ✅ Correct |
 | `syscall_try_resched` sets `current_tid` and `next.state = Running` | ✅ Correct |
 | Timer handler sets per-CPU pointers via `this_cpu_set_current_thread` | ✅ Correct |
-| **Gap**: `handler_yield` sets `state = Ready` but does NOT update `current_tid` | Thread is still `current_tid` but state is `Ready` — inconsistency window |
+| `handler_yield` sets `state = Ready` but does NOT update `current_tid` | **By design** — runs inside `without_interrupts`, so no timer can observe the inconsistent state. After return, `set_need_resched()` triggers `syscall_try_resched` which does the immediate context switch. Window is fully interrupt-safe. |
 
 ### P0-5: Syscall return after reschedule
 
