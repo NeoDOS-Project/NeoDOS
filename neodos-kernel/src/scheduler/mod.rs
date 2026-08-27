@@ -1018,10 +1018,9 @@ impl Scheduler {
         let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
-                k.waiting_for = None;
                 if matches!(k.state, ThreadState::Blocked { .. }) {
-                    k.state = ThreadState::Ready;
-                    Self::enqueue_to_cpu_run_queue(k);
+                    k.waiting_for = None;
+                    Self::make_thread_ready(k);
                 }
             }
         }
@@ -1031,9 +1030,7 @@ impl Scheduler {
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                 k.waiting_for = None;
-                k.state = ThreadState::Ready;
-                // Enqueue to its CPU's run queue
-                Self::enqueue_to_cpu_run_queue(k);
+                Self::make_thread_ready(k);
             }
         }
     }
@@ -1079,6 +1076,45 @@ impl Scheduler {
 
     // ── Schedule ──
 
+    /// Validate run queue invariants.
+    /// Invariant: for each thread,
+    ///   Ready    => exactly one entry in its CPU's run queue
+    ///   !Ready   => zero entries in its CPU's run queue
+    /// Returns Ok(count) on success, Err(message) on violation.
+    pub fn validate_runqueue_invariants(&self) -> Result<usize, &'static str> {
+        let mut total_entries = 0usize;
+        for k in self.kthreads.iter().flatten() {
+            if k.tid == 0 { continue; }
+            let cpu = k.cpu as usize;
+            if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { continue; }
+            let count = unsafe {
+                let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+                let mut n = 0u16;
+                let cap = rq.entries.len();
+                let mut idx = rq.head_idx as usize;
+                for _ in 0..rq.count {
+                    if rq.entries[idx] == k.tid { n += 1; }
+                    idx = (idx + 1) % cap;
+                }
+                n
+            };
+            match k.state {
+                ThreadState::Ready => {
+                    if count != 1 {
+                        return Err("Ready thread not in run queue exactly once");
+                    }
+                }
+                _ => {
+                    if count != 0 {
+                        return Err("Non-Ready thread found in run queue");
+                    }
+                }
+            }
+            total_entries += count as usize;
+        }
+        Ok(total_entries)
+    }
+
     /// Enqueue a thread to its assigned CPU's per-CPU run queue.
     /// Called when a thread transitions to Ready state.
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
@@ -1121,6 +1157,20 @@ impl Scheduler {
         k.time_slice_remaining = TIME_SLICES[idx];
         k.ticks_since_scheduled = 0;
         Self::enqueue_to_cpu_run_queue(k);
+    }
+
+    /// Remove a thread from its assigned CPU's per-CPU run queue.
+    /// Called when a thread transitions away from Ready state.
+    /// Safe to call even if the thread is not currently in the run queue.
+    /// Must be called under scheduler lock + interrupts disabled.
+    pub fn remove_from_run_queue(k: &Kthread) {
+        let cpu = k.cpu as usize;
+        if cpu >= crate::arch::x64::cpu_local::MAX_CPUS {
+            return;
+        }
+        unsafe {
+            crate::arch::x64::cpu_local::remove_from_cpu_run_queue(cpu, k.tid);
+        }
     }
 
     /// Try to dequeue the next thread from the current CPU's local run queue.
@@ -1813,5 +1863,216 @@ pub fn register_tests() {
         }
         p.state = ThreadState::Terminated;
         test_eq!(p.state, ThreadState::Terminated);
+    });
+
+    // ── Run queue invariant tests (P0-3) ──
+
+    test_case!("rq_invariant_enqueue_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_ready_to_blocked", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: 99 };
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_blocked_to_ready", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_double_wake", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            k.waiting_for = None;
+            Scheduler::make_thread_ready(k);
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_suspended_to_ready", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_running_no_entry", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_terminated_no_entry", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Terminated);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_stress_mixed_transitions", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        for _ in 0..1000 {
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                k.state = ThreadState::Running;
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                Scheduler::remove_from_run_queue(k);
+                k.state = ThreadState::Blocked { waiting_for: 99 };
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_multi_thread", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 6;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 42 });
+        add_test_thread(&mut sched, 4, 4, 0x400000, PRIORITY_IDLE, ThreadState::Running);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            k.state = ThreadState::Running;
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            k.state = ThreadState::Running;
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 4).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 3);
+    });
+
+    test_case!("rq_invariant_cpu_runqueue_remove", {
+        use crate::arch::x64::cpu_local::CpuRunQueue;
+        let mut rq = CpuRunQueue::new();
+        rq.push(10);
+        rq.push(20);
+        rq.push(30);
+        test_eq!(rq.len(), 3);
+        test_true!(rq.contains(20));
+        test_true!(rq.remove(20));
+        test_eq!(rq.len(), 2);
+        test_true!(!rq.contains(20));
+        test_true!(rq.contains(10));
+        test_true!(rq.contains(30));
+        test_true!(rq.remove(10));
+        test_eq!(rq.len(), 1);
+        test_true!(rq.contains(30));
+        test_true!(rq.remove(30));
+        test_eq!(rq.len(), 0);
+        test_true!(!rq.contains(30));
+        test_true!(!rq.remove(99));
+    });
+
+    test_case!("rq_invariant_full_regression", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: 99 };
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            k.waiting_for = None;
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
     });
 }

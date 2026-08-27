@@ -34,6 +34,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
         }
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
+                scheduler::Scheduler::remove_from_run_queue(k);
                 k.state = ThreadState::Terminated;
             }
             if pid > 0 {
@@ -85,8 +86,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
             for k in scheduler.kthreads.iter_mut().flatten() {
                 if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                     k.waiting_for = None;
-                    k.state = ThreadState::Ready;
-                    scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                    scheduler::Scheduler::make_thread_ready(k);
                     set_need_resched();
                 }
             }
@@ -96,8 +96,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                 for k in scheduler.kthreads.iter_mut().flatten() {
                     if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                         k.waiting_for = None;
-                        k.state = ThreadState::Ready;
-                        scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                        scheduler::Scheduler::make_thread_ready(k);
                         set_need_resched();
                     }
                 }

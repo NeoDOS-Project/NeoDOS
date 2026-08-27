@@ -105,6 +105,7 @@ pub fn kwait_block(reason: WaitReason) {
     let mut lock = scheduler::current_scheduler().lock();
     if let Some(k) = lock.current_kthread_mut() {
         let before = k.state.to_u8();
+        scheduler::Scheduler::remove_from_run_queue(k);
         k.state = ThreadState::Blocked { waiting_for: magic };
         k.waiting_for = Some(magic);
         crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8); // KWAIT_BLOCK
@@ -124,8 +125,7 @@ pub fn kwait_wake(reason: &WaitReason) {
     for k in scheduler.kthreads.iter_mut().flatten() {
         if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
             k.waiting_for = None;
-            k.state = ThreadState::Ready;
-            scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+            scheduler::Scheduler::make_thread_ready(k);
             crate::syscall::set_need_resched();
         }
     }

@@ -3256,6 +3256,7 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
                     // Atomically check-and-block: we hold the lock so the child
                     // cannot exit (modify thread_count) between check and block.
                     if let Some(k) = lock.current_kthread_mut() {
+                        crate::scheduler::Scheduler::remove_from_run_queue(k);
                         let magic = reason.encode_magic();
                         k.state = ThreadState::Blocked { waiting_for: magic };
                         k.waiting_for = Some(magic);
