@@ -74,7 +74,7 @@ The Blocked→Ready paths are all correct (they enqueue). The only violation is 
 | Returns `err_to_u64(SyscallError::Again)` = `-8` to Ring 3 | ✅ Ring 3 must retry |
 | `wake_blocked_readers()` calls `wake_blocked_on_magic(0xFFFFFFFF)` which enqueues | ✅ Wake + enqueue correct |
 | `kbd/mod.rs:243` calls `wake_blocked_readers()` from keyboard IRQ path | ✅ Triggered on keypress |
-| **VT matching**: `wake_blocked_on_magic(0xFFFFFFFF)` wakes ALL threads blocked on `0xFFFFFFFF`, not just the VT that received input | **Bug** — threads on other VTs wake, retry, find no input, re-block. Adds unnecessary context switches. |
+| **VT matching**: `wake_blocked_on_magic(0xFFFFFFFF)` wakes ALL threads blocked on `0xFFFFFFFF`, not just the VT that received input | **Known limitation** — performance issue only (threads re-block immediately). Fix requires per-VT input buffers — deferred to later phase. |
 
 ---
 
