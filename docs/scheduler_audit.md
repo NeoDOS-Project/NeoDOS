@@ -64,7 +64,7 @@ The Blocked→Ready paths are all correct (they enqueue). The only violation is 
 | `syscall_try_resched` saves `current_rsp`, calls `schedule()`, returns `next_rsp` | ✅ Frame swap correct |
 | Ring-0 target skip (lines 395-411) restores original thread | ✅ Correct |
 | Validation of RIP/RSP/CS/SS/RFLAGS on return path | ✅ Extensive checks present |
-| **P0-1 interaction**: Original thread `state = Ready` without enqueue means it's not findable by fast-path dequeue | **Risk** — only found by global scan fallback |
+| **P0-1 interaction**: Original thread now enqueued via `make_thread_ready()` | **Resolved** by P0-1 fix — thread is in runqueue and findable by fast-path |
 
 ### P0-6: sys_read Block/Wake/Retry + VT matching
 
