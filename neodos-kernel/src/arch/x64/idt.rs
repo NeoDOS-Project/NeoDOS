@@ -528,6 +528,15 @@ unsafe fn is_user_mode_interrupt(current_rsp: u64) -> bool {
     read_cs_from_stack(current_rsp) == 0x1B
 }
 
+unsafe fn prepare_timer_return(next: *mut crate::scheduler::Kthread) {
+    let next_rsp = (*next).rsp;
+    let next_cs = *((next_rsp + 128) as *const u64);
+    if next_cs & 3 == 3 {
+        crate::arch::x64::gdt::prepare_ring3_return(
+            (*next).kernel_stack_top, (*next).tid, (*next).pid);
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_enter();
@@ -562,7 +571,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
-    scheduler.on_timer_tick();
+    scheduler.on_timer_tick(current_rsp);
 
     let tid = scheduler.current_tid;
     let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
@@ -610,6 +619,25 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     next_tid, tid, unsafe { (*next).kernel_stack_top });
             }
 
+            // A Ring 3 interrupt may dequeue a Ready kernel thread. Its Ring
+            // 0 frame cannot be returned through this Ring 3 interrupt frame.
+            let next_cs = unsafe { *((next_rsp + 128) as *const u64) };
+            if next_cs & 3 != 3 {
+                unsafe {
+                    (*next).state = ThreadState::Ready;
+                    crate::scheduler::Scheduler::enqueue_to_cpu_run_queue(&*next);
+                }
+                if let Some(current) = scheduler.find_kthread_mut(tid) {
+                    crate::scheduler::Scheduler::remove_from_run_queue(current);
+                    current.state = ThreadState::Running;
+                }
+                scheduler.current_tid = tid;
+                crate::hal::ack_irq(32);
+                crate::invariants::timer_irq_exit();
+                crate::invariants::irq_exit_clear();
+                return current_rsp;
+            }
+
             if next_tid == tid {
                 unsafe {
                     (*next).state = ThreadState::Running;
@@ -623,7 +651,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     // update RSP0 because a PREVIOUS context switch may have
                     // left it pointing to another thread's kernel stack.
                     let ks_top = (*next).kernel_stack_top;
-                    crate::arch::x64::gdt::prepare_ring3_return(ks_top, (*next).tid, (*next).pid);
+                    prepare_timer_return(next);
                 }
                 crate::hal::ack_irq(32);
                 crate::invariants::timer_irq_exit();
@@ -650,8 +678,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     unsafe { (*next).tid });
             }
             unsafe {
-                crate::arch::x64::gdt::prepare_ring3_return(
-                    next_ks_top, (*next).tid, (*next).pid);
+                prepare_timer_return(next);
             }
 
             // Update per-CPU current thread and PID
@@ -724,8 +751,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                     unsafe { (*next).tid });
             }
             unsafe {
-                crate::arch::x64::gdt::prepare_ring3_return(
-                    next_ks_top, (*next).tid, (*next).pid);
+                prepare_timer_return(next);
                 crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
@@ -833,6 +859,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         if alive {
             if let Some(k) = scheduler.current_kthread_mut() {
                 if k.state == ThreadState::Ready && k.tid == tid {
+                    crate::scheduler::Scheduler::remove_from_run_queue(k);
                     k.state = ThreadState::Running;
                 }
             }

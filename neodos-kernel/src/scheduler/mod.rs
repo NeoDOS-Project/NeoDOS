@@ -800,10 +800,12 @@ impl Scheduler {
             eproc.user_slot?
         };
 
-        // Additional threads start Ready (found by global scan, like spawn_kthread)
-        // — not Suspended, which has no exit path for non-initial threads.
-        thread.state = ThreadState::Ready;
+        // Additional threads become runnable through the common transition.
+        thread.state = ThreadState::Suspended;
         self.kthreads[th_slot] = Some(thread);
+        if let Some(k) = self.kthreads[th_slot].as_mut() {
+            Self::make_thread_ready(k);
+        }
 
         Some(tid)
     }
@@ -828,7 +830,7 @@ impl Scheduler {
             rip: entry, rflags: 0x202,
             tid,
             pid: self.next_pid,
-            state: ThreadState::Ready,
+            state: ThreadState::Suspended,
             cpu_ticks: 0,
             waiting_for: None,
             priority,
@@ -847,6 +849,9 @@ impl Scheduler {
         self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
         self.next_pid += 1;
         self.kthreads[th_slot] = Some(kthread);
+        if let Some(k) = self.kthreads[th_slot].as_mut() {
+            Self::make_thread_ready(k);
+        }
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Ready",
             tid, self.next_pid - 1, priority);
@@ -1087,35 +1092,80 @@ impl Scheduler {
     ///   !Ready   => zero entries in its CPU's run queue
     /// Returns Ok(count) on success, Err(message) on violation.
     pub fn validate_runqueue_invariants(&self) -> Result<usize, &'static str> {
-        let mut total_entries = 0usize;
+        let current = self.find_kthread(self.current_tid)
+            .ok_or("current_tid does not identify a thread")?;
+        if current.state != ThreadState::Running {
+            return Err("current_tid does not identify a Running thread");
+        }
+        let current_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        if current.cpu != current_cpu {
+            return Err("current thread belongs to another CPU");
+        }
+
+        let mut thread_tids = Vec::new();
+        let mut running_cpus = Vec::new();
         for k in self.kthreads.iter().flatten() {
-            if k.tid == BOOT_TID || k.tid == IDLE_TID { continue; }
-            let cpu = k.cpu as usize;
-            if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { continue; }
-            let count = unsafe {
+            if thread_tids.contains(&k.tid) {
+                return Err("duplicate TID in scheduler thread table");
+            }
+            thread_tids.push(k.tid);
+            if k.state == ThreadState::Running {
+                if running_cpus.contains(&k.cpu) {
+                    return Err("more than one Running thread on a CPU");
+                }
+                running_cpus.push(k.cpu);
+            }
+        }
+
+        let mut queue_tids = Vec::new();
+        let mut total_entries = 0usize;
+        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            let queue_entries = unsafe {
                 let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
-                let mut n = 0u16;
+                let mut entries = Vec::new();
                 let cap = rq.entries.len();
                 let mut idx = rq.head_idx as usize;
                 for _ in 0..rq.count {
-                    if rq.entries[idx] == k.tid { n += 1; }
+                    entries.push(rq.entries[idx]);
                     idx = (idx + 1) % cap;
                 }
-                n
+                entries
             };
-            match k.state {
-                ThreadState::Ready => {
-                    if count != 1 {
-                        return Err("Ready thread not in run queue exactly once");
-                    }
+
+            for tid in queue_entries {
+                if queue_tids.contains(&tid) {
+                    return Err("duplicate TID in run queue");
                 }
-                _ => {
-                    if count != 0 {
-                        return Err("Non-Ready thread found in run queue");
-                    }
+                let k = self.find_kthread(tid)
+                    .ok_or("orphan TID in run queue")?;
+                if tid == BOOT_TID || tid == IDLE_TID {
+                    return Err("boot or idle thread found in run queue");
                 }
+                if k.cpu as usize != cpu {
+                    return Err("run queue entry belongs to another CPU");
+                }
+                if k.state != ThreadState::Ready {
+                    return Err("non-Ready thread found in run queue");
+                }
+                queue_tids.push(tid);
+                total_entries += 1;
             }
-            total_entries += count as usize;
+        }
+
+        for k in self.kthreads.iter().flatten() {
+            let count = queue_tids.iter().filter(|&&tid| tid == k.tid).count();
+            if k.tid == IDLE_TID || k.tid == BOOT_TID {
+                if count != 0 {
+                    return Err("special thread found in run queue");
+                }
+                continue;
+            }
+            if k.state == ThreadState::Ready && count != 1 {
+                return Err("Ready thread not in run queue exactly once");
+            }
+            if k.state != ThreadState::Ready && count != 0 {
+                return Err("Non-Ready thread found in run queue");
+            }
         }
         Ok(total_entries)
     }
@@ -1123,6 +1173,9 @@ impl Scheduler {
     /// Enqueue a thread to its assigned CPU's per-CPU run queue.
     /// Called when a thread transitions to Ready state.
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
+        if k.tid == BOOT_TID || k.tid == IDLE_TID {
+            return;
+        }
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
@@ -1332,7 +1385,7 @@ impl Scheduler {
 
     // ── Timer tick ──
 
-    pub fn on_timer_tick(&mut self) {
+    pub fn on_timer_tick(&mut self, current_rsp: u64) {
         self.timer_ticks += 1;
 
         if self.timer_ticks.is_multiple_of(AGING_INTERVAL_TICKS) {
@@ -1354,13 +1407,11 @@ impl Scheduler {
 
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
-                    // NOTE: We set state=Ready here WITHOUT enqueueing to the
-                    // runqueue. This is intentional: on_timer_tick is called
-                    // mid-timer-handler BEFORE the preemption logic saves RSP.
-                    // Enqueuing here would add a thread to the runqueue with a
-                    // stale RSP. The timer handler's preemption path (idt.rs)
-                    // handles the context switch and RSP save immediately after.
                     k.state = ThreadState::Ready;
+                    k.rsp = current_rsp;
+                    if k.tid != BOOT_TID && k.tid != IDLE_TID {
+                        Self::enqueue_to_cpu_run_queue(k);
+                    }
                     needs_resched = true;
                     crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
                 }
@@ -1637,6 +1688,29 @@ pub fn register_tests() {
         }
     }
 
+    fn set_test_current(sched: &mut Scheduler, tid: u32) {
+        let previous = sched.current_tid;
+        if previous != tid {
+            if let Some(k) = sched.find_kthread_mut(previous) {
+                if k.state == ThreadState::Running {
+                    k.state = ThreadState::Blocked { waiting_for: 0 };
+                }
+            }
+        }
+        sched.current_tid = tid;
+        let k = sched.find_kthread_mut(tid).unwrap();
+        Scheduler::remove_from_run_queue(k);
+        k.state = ThreadState::Running;
+    }
+
+    fn prepare_test_schedule(sched: &mut Scheduler) {
+        if let Some(k) = sched.find_kthread_mut(sched.current_tid) {
+            if k.state == ThreadState::Running {
+                k.state = ThreadState::Blocked { waiting_for: 0 };
+            }
+        }
+    }
+
     test_case!("sched_priority_high_picked_first", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
@@ -1689,7 +1763,7 @@ pub fn register_tests() {
         sched.kthreads[slot] = Some(k);
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
-        sched.on_timer_tick();
+        sched.on_timer_tick(0x700000);
         let remaining = sched.kthreads[slot].as_ref().unwrap().time_slice_remaining;
         test_eq!(remaining, 4);
     });
@@ -1706,7 +1780,7 @@ pub fn register_tests() {
         sched.kthreads[slot] = Some(k);
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
-        sched.on_timer_tick();
+        sched.on_timer_tick(0x700000);
         let state = sched.kthreads[slot].as_ref().unwrap().state;
         test_eq!(state, ThreadState::Ready);
     });
@@ -1724,7 +1798,7 @@ pub fn register_tests() {
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
-            sched.on_timer_tick();
+            sched.on_timer_tick(0x700000);
         }
         let boosted = sched.kthreads[slot].as_ref().unwrap();
         test_true!(boosted.priority < PRIORITY_IDLE);
@@ -1962,6 +2036,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 2);
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 0);
@@ -1999,6 +2074,7 @@ pub fn register_tests() {
                 Scheduler::make_thread_ready(k);
             }
         }
+        set_test_current(&mut sched, IDLE_TID);
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 1);
@@ -2019,7 +2095,7 @@ pub fn register_tests() {
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
             Scheduler::remove_from_run_queue(k);
-            k.state = ThreadState::Running;
+            k.state = ThreadState::Blocked { waiting_for: 43 };
         }
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 4).unwrap();
@@ -2030,9 +2106,15 @@ pub fn register_tests() {
             Scheduler::remove_from_run_queue(k);
             k.state = ThreadState::Terminated;
         }
+        set_test_current(&mut sched, 2);
         let result = sched.validate_runqueue_invariants();
-        test_true!(result.is_ok());
-        test_eq!(result.unwrap(), 1);
+        match result {
+            Ok(count) => test_eq!(count, 1),
+            Err(msg) => {
+                crate::serial_println!("rq_invariant_multi_thread: {}", msg);
+                return Err(msg);
+            }
+        }
     });
 
     test_case!("rq_invariant_cpu_runqueue_remove", {
@@ -2062,18 +2144,23 @@ pub fn register_tests() {
         sched.next_tid = 4;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
 
+        prepare_test_schedule(&mut sched);
         let next = sched.schedule();
         let picked = unsafe { (*next).tid };
         let result = sched.validate_runqueue_invariants();
-        test_true!(result.is_ok());
+        if let Err(msg) = result {
+            crate::serial_println!("rq_invariant_full_regression: {}", msg);
+            return Err(msg);
+        }
 
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
             Scheduler::make_thread_ready(k);
         }
+        set_test_current(&mut sched, IDLE_TID);
         let result = sched.validate_runqueue_invariants();
-        test_true!(result.is_ok());
 
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
@@ -2111,6 +2198,7 @@ pub fn register_tests() {
         // TID 0 is boot, TID 1 is idle, so we start from TID 2.
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
 
         // Verify initial invariants
         let result = sched.validate_runqueue_invariants();
@@ -2118,6 +2206,7 @@ pub fn register_tests() {
         test_eq!(result.unwrap(), 2); // 2 Ready threads in runqueue
 
         // Schedule — should pick TID 2 (high priority) via priority scan
+        prepare_test_schedule(&mut sched);
         let next = sched.schedule();
         let picked_tid = unsafe { (*next).tid };
         test_eq!(picked_tid, 2);
@@ -2135,6 +2224,7 @@ pub fn register_tests() {
         sched.current_tid = 0;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
 
         for i in 0..100 {
             // Make both threads Ready again
@@ -2150,6 +2240,7 @@ pub fn register_tests() {
             }
 
             // Schedule — should pick TID 2 (high priority)
+            prepare_test_schedule(&mut sched);
             let next = sched.schedule();
             let picked_tid = unsafe { (*next).tid };
             test_eq!(picked_tid, 2);
@@ -2168,8 +2259,10 @@ pub fn register_tests() {
         sched.next_tid = 3;
         sched.current_tid = 0;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
 
         // Schedule TID 2
+        prepare_test_schedule(&mut sched);
         let next = sched.schedule();
         let picked_tid = unsafe { (*next).tid };
         test_eq!(picked_tid, 2);
@@ -2183,6 +2276,7 @@ pub fn register_tests() {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
         }
+        set_test_current(&mut sched, IDLE_TID);
 
         // Verify invariant: Ready => runqueue_count == 1
         let result = sched.validate_runqueue_invariants();
@@ -2190,6 +2284,7 @@ pub fn register_tests() {
         test_eq!(result.unwrap(), 1);
 
         // Schedule again
+        prepare_test_schedule(&mut sched);
         let next = sched.schedule();
         let picked_tid2 = unsafe { (*next).tid };
         test_eq!(picked_tid2, 2);
@@ -2210,9 +2305,11 @@ pub fn register_tests() {
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
         add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_ABOVE_NORMAL, ThreadState::Ready);
         add_test_thread(&mut sched, 5, 4, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
 
         // Schedule 4 times, each time verify invariants
         for _ in 0..4 {
+            prepare_test_schedule(&mut sched);
             let next = sched.schedule();
             let picked_tid = unsafe { (*next).tid };
 
@@ -2256,6 +2353,7 @@ pub fn register_tests() {
         // The idle thread (TID 1) is created in Scheduler::new() with state=Ready
         // but is NOT in any runqueue by design.
         // Schedule — should fall back to idle thread
+        prepare_test_schedule(&mut sched);
         let next = sched.schedule();
         let picked_tid = unsafe { (*next).tid };
         test_eq!(picked_tid, 1); // IDLE_TID
@@ -2264,5 +2362,61 @@ pub fn register_tests() {
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_timer_expiration_requeues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 2);
+        sched.kthreads.iter_mut().flatten()
+            .find(|k| k.tid == 2).unwrap().time_slice_remaining = 1;
+
+        sched.on_timer_tick(0x700000);
+        let k = sched.find_kthread(2).unwrap();
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.rsp, 0x700000);
+        unsafe {
+            let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            test_eq!(rq.len(), 1);
+            test_true!(rq.contains(2));
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_spawn_kthread_enqueues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        let tid = sched.spawn_kthread(0x400000, PRIORITY_NORMAL).unwrap();
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
+        }
+    });
+
+    test_case!("rq_add_thread_enqueues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(42, 0, 2, "\\", 0x10000000, 0));
+        let tid = sched.add_thread_to_process(42, 0x400000, 0x800000).unwrap();
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
+        }
+    });
+
+    test_case!("rq_validator_rejects_invalid_current", {
+        let mut sched = Scheduler::new();
+        sched.current_tid = 999;
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_err());
     });
 }

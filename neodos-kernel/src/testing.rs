@@ -25,7 +25,7 @@ pub fn run_all() -> (usize, usize) {
     let tests = TESTS.lock();
     for test in tests.iter() {
         serial_print!("  TEST {} ... ", test.name);
-        match (test.func)() {
+        match crate::hal::without_interrupts(|| (test.func)()) {
             Ok(()) => {
                 serial_println!("PASS");
                 passed += 1;
