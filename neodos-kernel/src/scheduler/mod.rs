@@ -511,6 +511,11 @@ impl Scheduler {
     // ── Construction ──
 
     pub fn new() -> Self {
+        unsafe {
+            if crate::arch::x64::cpu_local::KPRCB_PAGES[0] != 0 {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+        }
         let mut eprocesses = Vec::with_capacity(32);
         let mut kthreads = Vec::with_capacity(64);
 
@@ -1084,7 +1089,7 @@ impl Scheduler {
     pub fn validate_runqueue_invariants(&self) -> Result<usize, &'static str> {
         let mut total_entries = 0usize;
         for k in self.kthreads.iter().flatten() {
-            if k.tid == 0 { continue; }
+            if k.tid == BOOT_TID || k.tid == IDLE_TID { continue; }
             let cpu = k.cpu as usize;
             if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { continue; }
             let count = unsafe {
@@ -1625,6 +1630,11 @@ pub fn register_tests() {
         if tid >= sched.next_tid {
             sched.next_tid = tid + 1;
         }
+        let k = sched.kthreads.iter().flatten().find(|k| k.tid == tid).unwrap();
+        Scheduler::remove_from_run_queue(k);
+        if state == ThreadState::Ready {
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
     }
 
     test_case!("sched_priority_high_picked_first", {
@@ -1882,7 +1892,7 @@ pub fn register_tests() {
     test_case!("rq_invariant_enqueue_once", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 1);
@@ -1891,9 +1901,9 @@ pub fn register_tests() {
     test_case!("rq_invariant_ready_to_blocked", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
         {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::remove_from_run_queue(k);
             k.state = ThreadState::Blocked { waiting_for: 99 };
         }
@@ -1905,10 +1915,10 @@ pub fn register_tests() {
     test_case!("rq_invariant_blocked_to_ready", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL,
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
             ThreadState::Blocked { waiting_for: 0x0005_0001 });
         {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
         }
         let result = sched.validate_runqueue_invariants();
@@ -1919,15 +1929,15 @@ pub fn register_tests() {
     test_case!("rq_invariant_double_wake", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL,
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
             ThreadState::Blocked { waiting_for: 0x0005_0001 });
         {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             k.waiting_for = None;
             Scheduler::make_thread_ready(k);
         }
         {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
         }
         let result = sched.validate_runqueue_invariants();
@@ -1938,9 +1948,9 @@ pub fn register_tests() {
     test_case!("rq_invariant_suspended_to_ready", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
         {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
         }
         let result = sched.validate_runqueue_invariants();
@@ -1951,7 +1961,7 @@ pub fn register_tests() {
     test_case!("rq_invariant_running_no_entry", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 0);
@@ -1960,7 +1970,7 @@ pub fn register_tests() {
     test_case!("rq_invariant_terminated_no_entry", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Terminated);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Terminated);
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
         test_eq!(result.unwrap(), 0);
@@ -1969,23 +1979,23 @@ pub fn register_tests() {
     test_case!("rq_invariant_stress_mixed_transitions", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
         for _ in 0..1000 {
             {
-                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
                 k.state = ThreadState::Running;
             }
             {
-                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
                 Scheduler::make_thread_ready(k);
             }
             {
-                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
                 Scheduler::remove_from_run_queue(k);
                 k.state = ThreadState::Blocked { waiting_for: 99 };
             }
             {
-                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
                 Scheduler::make_thread_ready(k);
             }
         }
@@ -1997,30 +2007,32 @@ pub fn register_tests() {
     test_case!("rq_invariant_multi_thread", {
         let mut sched = Scheduler::new();
         sched.next_tid = 6;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
-        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
-        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 42 });
-        add_test_thread(&mut sched, 4, 4, 0x400000, PRIORITY_IDLE, ThreadState::Running);
-        {
-            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 1).unwrap();
-            k.state = ThreadState::Running;
-        }
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 42 });
+        add_test_thread(&mut sched, 5, 4, 0x400000, PRIORITY_IDLE, ThreadState::Running);
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::remove_from_run_queue(k);
             k.state = ThreadState::Running;
         }
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
-            Scheduler::make_thread_ready(k);
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Running;
         }
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 4).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 5).unwrap();
             Scheduler::remove_from_run_queue(k);
             k.state = ThreadState::Terminated;
         }
         let result = sched.validate_runqueue_invariants();
         test_true!(result.is_ok());
-        test_eq!(result.unwrap(), 3);
+        test_eq!(result.unwrap(), 1);
     });
 
     test_case!("rq_invariant_cpu_runqueue_remove", {
@@ -2048,8 +2060,8 @@ pub fn register_tests() {
     test_case!("rq_invariant_full_regression", {
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
-        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
 
         let next = sched.schedule();
         let picked = unsafe { (*next).tid };

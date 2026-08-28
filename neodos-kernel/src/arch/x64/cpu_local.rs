@@ -92,6 +92,12 @@ impl CpuRunQueue {
         self.count == 0
     }
 
+    pub fn clear(&mut self) {
+        self.head_idx = 0;
+        self.tail_idx = 0;
+        self.count = 0;
+    }
+
     #[inline]
     pub fn contains(&self, tid: u32) -> bool {
         if self.count == 0 {
