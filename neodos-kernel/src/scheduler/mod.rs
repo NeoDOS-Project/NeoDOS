@@ -400,7 +400,7 @@ impl Eprocess {
 
 pub struct Scheduler {
     pub eprocesses: Vec<Option<Eprocess>>,
-    pub kthreads: Vec<Option<Kthread>>,
+    pub kthreads: Vec<Option<Box<Kthread>>>,
     pub current_tid: u32,
     pub next_pid: u32,
     pub next_tid: u32,
@@ -444,13 +444,13 @@ impl Scheduler {
     pub fn find_kthread_mut(&mut self, tid: u32) -> Option<&mut Kthread> {
         self.kthreads.iter_mut()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
-            .and_then(|t| t.as_mut())
+            .and_then(|t| t.as_mut().map(|k| &mut **k))
     }
 
     pub fn find_kthread(&self, tid: u32) -> Option<&Kthread> {
         self.kthreads.iter()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
-            .and_then(|t| t.as_ref())
+            .and_then(|t| t.as_ref().map(|k| &**k))
     }
 
     /// Collect all TIDs belonging to an EPROCESS.
@@ -561,7 +561,7 @@ impl Scheduler {
             apc_pending: false,
         };
         eprocesses.push(Some(boot_eproc));
-        kthreads.push(Some(boot_thread));
+        kthreads.push(Some(Box::new(boot_thread)));
 
         // Idle KTHREAD (TID 1) — runs the halt loop when nothing else is Ready.
         // Shares the PID 0 EPROCESS (no separate address space needed for idle).
@@ -571,7 +571,7 @@ impl Scheduler {
             idle_task as *const () as u64,
             idle_stack_top,
         );
-        kthreads.push(Some(idle_thread));
+        kthreads.push(Some(Box::new(idle_thread)));
 
         Scheduler {
             eprocesses,
@@ -671,7 +671,7 @@ impl Scheduler {
 
         self.eprocesses[ep_slot] = Some(eproc);
         thread.state = ThreadState::Suspended;
-        self.kthreads[th_slot] = Some(thread);
+        self.kthreads[th_slot] = Some(Box::new(thread));
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Suspended (Ring 3)",
             tid, pid, PRIORITY_NORMAL);
@@ -749,7 +749,7 @@ impl Scheduler {
         let ep_slot = self.resolve_eprocess_slot();
         let th_slot = self.resolve_kthread_slot();
         self.eprocesses[ep_slot] = Some(eproc);
-        self.kthreads[th_slot] = Some(thread);
+        self.kthreads[th_slot] = Some(Box::new(thread));
 
         kinfo!(LogSubsys::Sched, "PID {} -> \\Process\\{} OK", pid, pid);
         crate::trace_sched!(1, pid, 0);
@@ -802,7 +802,7 @@ impl Scheduler {
 
         // Additional threads become runnable through the common transition.
         thread.state = ThreadState::Suspended;
-        self.kthreads[th_slot] = Some(thread);
+        self.kthreads[th_slot] = Some(Box::new(thread));
         if let Some(k) = self.kthreads[th_slot].as_mut() {
             Self::make_thread_ready(k);
         }
@@ -848,10 +848,17 @@ impl Scheduler {
         let ep_slot = self.alloc_eprocess_slot()?;
         self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
         self.next_pid += 1;
-        self.kthreads[th_slot] = Some(kthread);
+        self.kthreads[th_slot] = Some(Box::new(kthread));
+        // Fase 3 P1/P5: capturar frame inicial 18 slots y canary
+        let (kptr, base, top, init_rsp, ent) = {
+            let k = self.kthreads[th_slot].as_ref().unwrap();
+            let b = k.kernel_stack_top.wrapping_sub(KERNEL_STACK_SIZE as u64);
+            (&**k as *const Kthread as u64, b, k.kernel_stack_top, k.rsp, k.rip)
+        };
         if let Some(k) = self.kthreads[th_slot].as_mut() {
             Self::make_thread_ready(k);
         }
+        crate::arch::x64::idt::netd_record_create(kptr, base, top, init_rsp, ent);
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Ready",
             tid, self.next_pid - 1, priority);
@@ -1258,12 +1265,12 @@ impl Scheduler {
         None
     }
 
-    /// Find a thread slot by TID, returning a raw pointer.
-    fn find_kthread_ptr(&self, tid: u32) -> *mut Option<Kthread> {
+    /// Find a thread slot by TID, returning a raw pointer to the Kthread Box allocation (stable).
+    fn find_kthread_ptr(&self, tid: u32) -> *mut Kthread {
         for th in self.kthreads.iter() {
             if let Some(k) = th {
                 if k.tid == tid {
-                    return th as *const Option<Kthread> as *mut Option<Kthread>;
+                    return &**k as *const Kthread as *mut Kthread;
                 }
             }
         }
@@ -1282,18 +1289,17 @@ impl Scheduler {
             let ptr = self.find_kthread_ptr(tid);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(k) = &mut *ptr {
-                        if k.state == ThreadState::Ready {
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = tid;
-                            k.state = ThreadState::Running;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
-                                prev, tid);
-                            crate::trace_cswitch!(prev as u64, tid as u64);
-                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                            return k as *mut Kthread;
-                        }
+                    let k = &mut *ptr;
+                    if k.state == ThreadState::Ready {
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = tid;
+                        k.state = ThreadState::Running;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
+                            prev, tid);
+                        crate::trace_cswitch!(prev as u64, tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        return ptr;
                     }
                 }
             }
@@ -1304,18 +1310,17 @@ impl Scheduler {
             let ptr = self.find_kthread_ptr(tid);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(k) = &mut *ptr {
-                        if k.state == ThreadState::Ready {
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = tid;
-                            k.state = ThreadState::Running;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
-                                prev, tid);
-                            crate::trace_cswitch!(prev as u64, tid as u64);
-                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                            return k as *mut Kthread;
-                        }
+                    let k = &mut *ptr;
+                    if k.state == ThreadState::Ready {
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = tid;
+                        k.state = ThreadState::Running;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
+                            prev, tid);
+                        crate::trace_cswitch!(prev as u64, tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        return ptr;
                     }
                 }
             }
@@ -1330,20 +1335,16 @@ impl Scheduler {
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
                         // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
-                        // The priority scan path may find a thread that is still present
-                        // in a runqueue (e.g. from a stale entry or cross-CPU scan).
-                        // We must remove it to satisfy the invariant:
-                        //   state == Running => runqueue_count == 0
-                        Scheduler::remove_from_run_queue(k);
+                        Scheduler::remove_from_run_queue(&**k);
                         let prev = self.current_tid;
-                        let prev_state = k.state.to_u8(); // current thread's state before we change it
+                        let prev_state = k.state.to_u8();
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
                             prev, check_tid, priority);
                         crate::trace_cswitch!(prev as u64, check_tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, check_tid, k.state.to_u8());
-                        return k as *mut Kthread;
+                        return &mut **k as *mut Kthread;
                     }
                 }
             }
@@ -1362,20 +1363,19 @@ impl Scheduler {
             let ptr = self.find_kthread_ptr(IDLE_TID);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(idle) = &mut *ptr {
-                        if idle.state != ThreadState::Terminated {
-                            Scheduler::remove_from_run_queue(idle);
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = IDLE_TID;
-                            idle.state = ThreadState::Running;
-                            idle.time_slice_remaining = IDLE_TIME_SLICE;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
-                                prev, IDLE_TID);
-                            crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
-                            crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
-                            return idle as *mut Kthread;
-                        }
+                    let idle = &mut *ptr;
+                    if idle.state != ThreadState::Terminated {
+                        Scheduler::remove_from_run_queue(idle);
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = IDLE_TID;
+                        idle.state = ThreadState::Running;
+                        idle.time_slice_remaining = IDLE_TIME_SLICE;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
+                            prev, IDLE_TID);
+                        crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
+                        crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
+                        return ptr;
                     }
                 }
             }
@@ -1673,7 +1673,7 @@ pub fn register_tests() {
         k.state = state;
         k.priority = priority;
         k.time_slice_remaining = TIME_SLICES[priority as usize];
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         if sched.find_eprocess(pid).is_none() {
             let ep_slot = sched.alloc_eprocess_slot().unwrap();
             sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000, 0));
@@ -1760,7 +1760,7 @@ pub fn register_tests() {
         k.state = ThreadState::Running;
         k.time_slice_remaining = 5;
         k.priority = PRIORITY_NORMAL;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         sched.on_timer_tick(0x700000);
@@ -1777,7 +1777,7 @@ pub fn register_tests() {
         k.state = ThreadState::Running;
         k.time_slice_remaining = 1;
         k.priority = PRIORITY_NORMAL;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         sched.on_timer_tick(0x700000);
@@ -1794,7 +1794,7 @@ pub fn register_tests() {
         k.priority = PRIORITY_IDLE;
         k.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
         k.time_slice_remaining = 50;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
@@ -1810,7 +1810,7 @@ pub fn register_tests() {
         let slot = sched.alloc_kthread_slot().unwrap();
         let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
         k.state = ThreadState::Ready;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
         test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
