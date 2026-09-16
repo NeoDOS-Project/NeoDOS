@@ -619,6 +619,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Fase 3.1: dump PRE-netd (mantener para comparar)
     crate::arch::x64::idt::timer_diag_dump();
 
+    // ── Fase 1 Forense: habilitar captura DBG_IRET justo antes de netd ──
+    crate::arch::x64::idt::dbg_enable();
+    crate::serial_println!("[DBG] enabled before netd spawn");
+
     // Spawn network kernel thread — drives net_tick() independently
     // of Ring 3 process activity.
     // Read the real function address from the static.

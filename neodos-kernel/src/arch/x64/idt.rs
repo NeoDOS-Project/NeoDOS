@@ -245,6 +245,30 @@ pub fn netd_diag_dump() {
 #[no_mangle] static FINAL_CS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 #[no_mangle] static FINAL_RFLAGS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
+// ── DBG_IRETQ forensic capture (Fase 1 obligatoria) ──
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_RIP: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_CS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_RFLAGS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_RSP: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_CR3: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_TR: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_GS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+#[link_section = ".dbg"]
+#[no_mangle] static mut DBG_GDTR: [u8; 10] = [0; 10];
+#[link_section = ".dbg"]
+#[no_mangle] static DBG_ENABLED: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
+pub fn dbg_enable() {
+    DBG_ENABLED.store(1, core::sync::atomic::Ordering::Relaxed);
+}
+
 pub fn final_iretq_dump() {
     unsafe { core::arch::asm!("cli"); }
     let rsp = FINAL_RSP.load(core::sync::atomic::Ordering::Relaxed);
@@ -351,6 +375,25 @@ core::arch::global_asm!(
     "pop r13",
     "pop r14",
     "pop r15",
+    // ── DBG_IRETQ forensic instrumentation (Fase 1 obligatoria) ──
+    "cmp byte ptr [rip + DBG_ENABLED], 0",
+    "je 1f",
+    "mov rax, [rsp + 8]",
+    "mov rcx, [rsp + 16]",
+    "mov rdx, [rsp + 24]",
+    "mov rsi, rsp",
+    "add rsi, 8",
+    "mov qword ptr [rip + DBG_RIP], rax",
+    "mov qword ptr [rip + DBG_CS], rcx",
+    "mov qword ptr [rip + DBG_RFLAGS], rdx",
+    "mov qword ptr [rip + DBG_RSP], rsi",
+    "sgdt [rip + DBG_GDTR]",
+    "str word ptr [rip + DBG_TR]",
+    "mov rax, cr3",
+    "mov qword ptr [rip + DBG_CR3], rax",
+    "mov ax, gs",
+    "mov word ptr [rip + DBG_GS], ax",
+    "1:",
     "pop rbp",
     "iretq"
 );
@@ -717,6 +760,39 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
 
     // Fase 3 P2-P6: dump diagnostico FRAME/TD/NETD/FINAL/GDT antes de panic para capturar first invalid
     crate::serial_println!("[GPF_DIAG] tick={} tid={} rip=0x{:x} rsp=0x{:x} err=0x{:x}", crate::hal::get_ticks(), crate::scheduler::current_tid(), rip, rsp, error_code);
+    // ── Fase 1 Forense: DBG_IRET capture pre-iretq (obligatorio) ──
+    unsafe {
+        let dbg_rip = DBG_RIP.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_cs = DBG_CS.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_rflags = DBG_RFLAGS.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_rsp = DBG_RSP.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_cr3 = DBG_CR3.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_tr = DBG_TR.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_gs = DBG_GS.load(core::sync::atomic::Ordering::Relaxed);
+        let dbg_gdtr: [u8; 10] = DBG_GDTR;
+        crate::serial_println!("[DBG_IRET] RSP=0x{:x} RIP=0x{:x} CS=0x{:x} RFLAGS=0x{:x} CR3=0x{:x} TR=0x{:x} GS=0x{:x}",
+            dbg_rsp, dbg_rip, dbg_cs, dbg_rflags, dbg_cr3, dbg_tr & 0xFFFF, dbg_gs & 0xFFFF);
+        let pre_limit = u16::from_le_bytes([dbg_gdtr[0], dbg_gdtr[1]]);
+        let pre_base = u64::from_le_bytes([dbg_gdtr[2], dbg_gdtr[3], dbg_gdtr[4], dbg_gdtr[5], dbg_gdtr[6], dbg_gdtr[7], dbg_gdtr[8], dbg_gdtr[9]]);
+        crate::serial_println!("[DBG_GDT] PRE base=0x{:x} limit=0x{:x} raw=[{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}]",
+            pre_base, pre_limit, dbg_gdtr[0], dbg_gdtr[1], dbg_gdtr[2], dbg_gdtr[3], dbg_gdtr[4], dbg_gdtr[5], dbg_gdtr[6], dbg_gdtr[7], dbg_gdtr[8], dbg_gdtr[9]);
+        let mut post_gdtr: [u8; 10] = [0; 10];
+        core::arch::asm!("sgdt [{}]", in(reg) post_gdtr.as_mut_ptr(), options(nostack, preserves_flags));
+        let post_limit = u16::from_le_bytes([post_gdtr[0], post_gdtr[1]]);
+        let post_base = u64::from_le_bytes([post_gdtr[2], post_gdtr[3], post_gdtr[4], post_gdtr[5], post_gdtr[6], post_gdtr[7], post_gdtr[8], post_gdtr[9]]);
+        let post_tr: u16;
+        core::arch::asm!("str {0:x}", out(reg) post_tr, options(nostack, preserves_flags));
+        crate::serial_println!("[DBG_GDT] POST base=0x{:x} limit=0x{:x} TR=0x{:x} raw_post=[{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}]",
+            post_base, post_limit, post_tr, post_gdtr[0], post_gdtr[1], post_gdtr[2], post_gdtr[3], post_gdtr[4], post_gdtr[5], post_gdtr[6], post_gdtr[7], post_gdtr[8], post_gdtr[9]);
+        if pre_base != post_base || pre_limit != post_limit {
+            crate::serial_println!("[DBG_GDT] MISMATCH PRE vs POST");
+        } else {
+            crate::serial_println!("[DBG_GDT] MATCH PRE==POST");
+        }
+        if (dbg_tr & 0xFFFF) as u16 != post_tr {
+            crate::serial_println!("[DBG_TR] MISMATCH pre=0x{:x} post=0x{:x}", dbg_tr & 0xFFFF, post_tr);
+        }
+    }
     frame_dump();
     netd_diag_dump();
     final_iretq_dump();

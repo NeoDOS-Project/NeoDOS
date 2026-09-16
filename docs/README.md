@@ -106,6 +106,7 @@
 | [Configuration](development/configuration.md) | Build configuration options |
 | [Testing](development/testing.md) | Test suites, how to add tests |
 | [Triple Fault Audit](development/triple-fault-audit.md) | Diagnóstico técnico y auditoría del reinicio por Triple Fault |
+| [Graphify](development/graphify.md) | Herramienta auxiliar: grafo de conocimiento para agentes IA (workspace, crates, syscalls, drivers) |
 
 ## Design Proposals
 

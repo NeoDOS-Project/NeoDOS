@@ -21,3 +21,7 @@ __pycache__/
 *.hiv
 *.nlt
 */Cargo.lock
+
+# Graphify - knowledge graph artifacts (regenerable, large)
+graphify-out/
+.graphify_cache/
