@@ -615,6 +615,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("ALL_TESTS_COMPLETE");
     }
 
+    // Dump timer diagnostic ring buffer (lock-free, captured across boot)
+    // Fase 3.1: dump PRE-netd (mantener para comparar)
+    crate::arch::x64::idt::timer_diag_dump();
+
     // Spawn network kernel thread — drives net_tick() independently
     // of Ring 3 process activity.
     // Read the real function address from the static.
@@ -623,6 +627,19 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         core::ptr::read(&raw const net::NETD_PTR) as u64
     }) {
         println!("[+] netd kernel thread spawned (TID {})", tid);
+    }
+
+    // Fase 3.1: POST-netd dump inmediato + dump tras 500 ticks (captura primera selección real de netd)
+    {
+        crate::serial_println!("[POST_NETD] immediate post-spawn dump");
+        crate::arch::x64::idt::timer_diag_dump();
+        let start = crate::hal::get_ticks();
+        while crate::hal::get_ticks().wrapping_sub(start) < 500 {
+            core::hint::spin_loop();
+        }
+        crate::serial_println!("[POST_NETD] delayed dump after 500 ticks (head now {})", crate::hal::get_ticks());
+        crate::arch::x64::idt::timer_diag_dump();
+        crate::serial_println!("[POST_NETD] post-spawn dumps done");
     }
 
     // ── Boot Benchmark: shell ready ──

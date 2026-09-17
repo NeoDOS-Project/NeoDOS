@@ -7,6 +7,7 @@ rustflags = [
     "-C", "link-arg=-melf_x86_64",
     "-C", "link-arg=-no-pie",
     "-C", "relocation-model=static",
+    "-C", "no-redzone=yes",
 ]
 
 [env]

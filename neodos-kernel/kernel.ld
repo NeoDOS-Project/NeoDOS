@@ -19,5 +19,11 @@ SECTIONS
         *(COMMON)
     }
 
+    .dbg : {
+        *(.dbg*)
+        *(.bss.dbg*)
+        *(.data.dbg*)
+    }
+
     __kernel_end = .;
 }

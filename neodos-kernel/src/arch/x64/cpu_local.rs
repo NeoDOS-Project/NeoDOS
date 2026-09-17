@@ -92,6 +92,62 @@ impl CpuRunQueue {
         self.count == 0
     }
 
+    pub fn clear(&mut self) {
+        self.head_idx = 0;
+        self.tail_idx = 0;
+        self.count = 0;
+    }
+
+    #[inline]
+    pub fn contains(&self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        let mut idx = self.head_idx as usize;
+        for _ in 0..self.count {
+            if self.entries[idx] == tid {
+                return true;
+            }
+            idx = (idx + 1) % self.entries.len();
+        }
+        false
+    }
+
+    /// Remove the first occurrence of `tid` from the ring buffer.
+    /// Returns true if found and removed, false if not present.
+    /// O(n) scan — acceptable for the 64-entry ring buffer.
+    #[inline]
+    pub fn remove(&mut self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        // Collect all elements in order (head → tail).
+        let cap = self.entries.len();
+        let mut buf = [0u32; 64];
+        let mut idx = self.head_idx as usize;
+        for i in 0..self.count as usize {
+            buf[i] = self.entries[idx];
+            idx = (idx + 1) % cap;
+        }
+        // Find and remove the target.
+        let pos = buf[..self.count as usize].iter().position(|&t| t == tid);
+        if let Some(p) = pos {
+            // Compact: shift [p+1 .. count) left by one.
+            for i in p..self.count as usize - 1 {
+                buf[i] = buf[i + 1];
+            }
+            self.count -= 1;
+            self.head_idx = 0;
+            self.tail_idx = self.count;
+            for i in 0..self.count as usize {
+                self.entries[i] = buf[i];
+            }
+            true
+        } else {
+            false
+        }
+    }
+
     #[inline]
     pub fn len(&self) -> u16 {
         self.count
@@ -574,6 +630,16 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
         }
     }
     stolen
+}
+
+/// Remove a specific TID from a CPU's run queue.
+/// Returns true if the TID was found and removed, false otherwise.
+pub unsafe fn remove_from_cpu_run_queue(cpu: usize, tid: u32) -> bool {
+    if cpu >= MAX_CPUS {
+        return false;
+    }
+    let rq = cpu_run_queue_mut(cpu);
+    rq.remove(tid)
 }
 
 // ── Per-CPU slab cache accessors (GS-segment) ───────────────────────────

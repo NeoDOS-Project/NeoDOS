@@ -330,7 +330,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
                 if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
+                    scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {
                     kdebug!(LogSubsys::Syscall, "Context switch from non-Running state: {:?}", k.state);
                 }
@@ -366,7 +366,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             if let Some(current) = scheduler.find_kthread_mut(tid) {
                 current.state = ThreadState::Running;
             }
-            unsafe { (*next).state = ThreadState::Ready; }
+            unsafe {
+                (*next).state = ThreadState::Ready;
+                scheduler::Scheduler::enqueue_to_cpu_run_queue(&*next);
+            }
             unsafe { crate::arch::x64::gdt::prepare_ring3_return(old_ks_top, tid, pid); }
             crate::serial_println!(
                 "[SYSCALL_RESCHED] skip ring0 target pid={} tid={} cs=0x{:x}; keep pid={} tid={}",

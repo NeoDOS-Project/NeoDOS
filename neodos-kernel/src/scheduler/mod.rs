@@ -214,13 +214,15 @@ fn init_ring0_frame(kernel_stack_top: u64, entry: u64) -> u64 {
     let mut sp = kernel_stack_top & !0xF;
     unsafe {
         let stack = sp as *mut u64;
-        stack.offset(-1).write(0x202);
-        stack.offset(-2).write(0x08);
-        stack.offset(-3).write(entry);
-        for j in 4..19 {
+        stack.offset(-1).write(0x10); // SS (kernel_data)
+        stack.offset(-2).write(kernel_stack_top); // RSP = ks_top (5-field IRETQ)
+        stack.offset(-3).write(0x202); // RFLAGS
+        stack.offset(-4).write(0x08); // CS
+        stack.offset(-5).write(entry); // RIP
+        for j in 6..21 {
             stack.offset(-(j as isize)).write(0);
         }
-        sp -= 18 * 8;
+        sp -= 20 * 8;
     }
     sp
 }
@@ -400,7 +402,7 @@ impl Eprocess {
 
 pub struct Scheduler {
     pub eprocesses: Vec<Option<Eprocess>>,
-    pub kthreads: Vec<Option<Kthread>>,
+    pub kthreads: Vec<Option<Box<Kthread>>>,
     pub current_tid: u32,
     pub next_pid: u32,
     pub next_tid: u32,
@@ -444,13 +446,13 @@ impl Scheduler {
     pub fn find_kthread_mut(&mut self, tid: u32) -> Option<&mut Kthread> {
         self.kthreads.iter_mut()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
-            .and_then(|t| t.as_mut())
+            .and_then(|t| t.as_mut().map(|k| &mut **k))
     }
 
     pub fn find_kthread(&self, tid: u32) -> Option<&Kthread> {
         self.kthreads.iter()
             .find(|t| t.as_ref().is_some_and(|k| k.tid == tid))
-            .and_then(|t| t.as_ref())
+            .and_then(|t| t.as_ref().map(|k| &**k))
     }
 
     /// Collect all TIDs belonging to an EPROCESS.
@@ -511,6 +513,11 @@ impl Scheduler {
     // ── Construction ──
 
     pub fn new() -> Self {
+        unsafe {
+            if crate::arch::x64::cpu_local::KPRCB_PAGES[0] != 0 {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+        }
         let mut eprocesses = Vec::with_capacity(32);
         let mut kthreads = Vec::with_capacity(64);
 
@@ -556,7 +563,7 @@ impl Scheduler {
             apc_pending: false,
         };
         eprocesses.push(Some(boot_eproc));
-        kthreads.push(Some(boot_thread));
+        kthreads.push(Some(Box::new(boot_thread)));
 
         // Idle KTHREAD (TID 1) — runs the halt loop when nothing else is Ready.
         // Shares the PID 0 EPROCESS (no separate address space needed for idle).
@@ -566,7 +573,7 @@ impl Scheduler {
             idle_task as *const () as u64,
             idle_stack_top,
         );
-        kthreads.push(Some(idle_thread));
+        kthreads.push(Some(Box::new(idle_thread)));
 
         Scheduler {
             eprocesses,
@@ -666,7 +673,7 @@ impl Scheduler {
 
         self.eprocesses[ep_slot] = Some(eproc);
         thread.state = ThreadState::Suspended;
-        self.kthreads[th_slot] = Some(thread);
+        self.kthreads[th_slot] = Some(Box::new(thread));
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Suspended (Ring 3)",
             tid, pid, PRIORITY_NORMAL);
@@ -744,7 +751,7 @@ impl Scheduler {
         let ep_slot = self.resolve_eprocess_slot();
         let th_slot = self.resolve_kthread_slot();
         self.eprocesses[ep_slot] = Some(eproc);
-        self.kthreads[th_slot] = Some(thread);
+        self.kthreads[th_slot] = Some(Box::new(thread));
 
         kinfo!(LogSubsys::Sched, "PID {} -> \\Process\\{} OK", pid, pid);
         crate::trace_sched!(1, pid, 0);
@@ -795,10 +802,12 @@ impl Scheduler {
             eproc.user_slot?
         };
 
-        // Additional threads start Ready (found by global scan, like spawn_kthread)
-        // — not Suspended, which has no exit path for non-initial threads.
-        thread.state = ThreadState::Ready;
-        self.kthreads[th_slot] = Some(thread);
+        // Additional threads become runnable through the common transition.
+        thread.state = ThreadState::Suspended;
+        self.kthreads[th_slot] = Some(Box::new(thread));
+        if let Some(k) = self.kthreads[th_slot].as_mut() {
+            Self::make_thread_ready(k);
+        }
 
         Some(tid)
     }
@@ -823,7 +832,7 @@ impl Scheduler {
             rip: entry, rflags: 0x202,
             tid,
             pid: self.next_pid,
-            state: ThreadState::Ready,
+            state: ThreadState::Suspended,
             cpu_ticks: 0,
             waiting_for: None,
             priority,
@@ -841,7 +850,17 @@ impl Scheduler {
         let ep_slot = self.alloc_eprocess_slot()?;
         self.eprocesses[ep_slot] = Some(Eprocess::new_kernel(self.next_pid));
         self.next_pid += 1;
-        self.kthreads[th_slot] = Some(kthread);
+        self.kthreads[th_slot] = Some(Box::new(kthread));
+        // Fase 3 P1/P5: capturar frame inicial 18 slots y canary
+        let (kptr, base, top, init_rsp, ent) = {
+            let k = self.kthreads[th_slot].as_ref().unwrap();
+            let b = k.kernel_stack_top.wrapping_sub(KERNEL_STACK_SIZE as u64);
+            (&**k as *const Kthread as u64, b, k.kernel_stack_top, k.rsp, k.rip)
+        };
+        if let Some(k) = self.kthreads[th_slot].as_mut() {
+            Self::make_thread_ready(k);
+        }
+        crate::arch::x64::idt::netd_record_create(kptr, base, top, init_rsp, ent);
 
         kdebug!(LogSubsys::Sched, "[SCHED] CREATE TID={} PID={} priority={} state=Ready",
             tid, self.next_pid - 1, priority);
@@ -1018,10 +1037,9 @@ impl Scheduler {
         let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
-                k.waiting_for = None;
                 if matches!(k.state, ThreadState::Blocked { .. }) {
-                    k.state = ThreadState::Ready;
-                    Self::enqueue_to_cpu_run_queue(k);
+                    k.waiting_for = None;
+                    Self::make_thread_ready(k);
                 }
             }
         }
@@ -1031,9 +1049,7 @@ impl Scheduler {
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                 k.waiting_for = None;
-                k.state = ThreadState::Ready;
-                // Enqueue to its CPU's run queue
-                Self::enqueue_to_cpu_run_queue(k);
+                Self::make_thread_ready(k);
             }
         }
     }
@@ -1079,14 +1095,104 @@ impl Scheduler {
 
     // ── Schedule ──
 
+    /// Validate run queue invariants.
+    /// Invariant: for each thread,
+    ///   Ready    => exactly one entry in its CPU's run queue
+    ///   !Ready   => zero entries in its CPU's run queue
+    /// Returns Ok(count) on success, Err(message) on violation.
+    pub fn validate_runqueue_invariants(&self) -> Result<usize, &'static str> {
+        let current = self.find_kthread(self.current_tid)
+            .ok_or("current_tid does not identify a thread")?;
+        if current.state != ThreadState::Running {
+            return Err("current_tid does not identify a Running thread");
+        }
+        let current_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        if current.cpu != current_cpu {
+            return Err("current thread belongs to another CPU");
+        }
+
+        let mut thread_tids = Vec::new();
+        let mut running_cpus = Vec::new();
+        for k in self.kthreads.iter().flatten() {
+            if thread_tids.contains(&k.tid) {
+                return Err("duplicate TID in scheduler thread table");
+            }
+            thread_tids.push(k.tid);
+            if k.state == ThreadState::Running {
+                if running_cpus.contains(&k.cpu) {
+                    return Err("more than one Running thread on a CPU");
+                }
+                running_cpus.push(k.cpu);
+            }
+        }
+
+        let mut queue_tids = Vec::new();
+        let mut total_entries = 0usize;
+        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            let queue_entries = unsafe {
+                let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+                let mut entries = Vec::new();
+                let cap = rq.entries.len();
+                let mut idx = rq.head_idx as usize;
+                for _ in 0..rq.count {
+                    entries.push(rq.entries[idx]);
+                    idx = (idx + 1) % cap;
+                }
+                entries
+            };
+
+            for tid in queue_entries {
+                if queue_tids.contains(&tid) {
+                    return Err("duplicate TID in run queue");
+                }
+                let k = self.find_kthread(tid)
+                    .ok_or("orphan TID in run queue")?;
+                if tid == BOOT_TID || tid == IDLE_TID {
+                    return Err("boot or idle thread found in run queue");
+                }
+                if k.cpu as usize != cpu {
+                    return Err("run queue entry belongs to another CPU");
+                }
+                if k.state != ThreadState::Ready {
+                    return Err("non-Ready thread found in run queue");
+                }
+                queue_tids.push(tid);
+                total_entries += 1;
+            }
+        }
+
+        for k in self.kthreads.iter().flatten() {
+            let count = queue_tids.iter().filter(|&&tid| tid == k.tid).count();
+            if k.tid == IDLE_TID || k.tid == BOOT_TID {
+                if count != 0 {
+                    return Err("special thread found in run queue");
+                }
+                continue;
+            }
+            if k.state == ThreadState::Ready && count != 1 {
+                return Err("Ready thread not in run queue exactly once");
+            }
+            if k.state != ThreadState::Ready && count != 0 {
+                return Err("Non-Ready thread found in run queue");
+            }
+        }
+        Ok(total_entries)
+    }
+
     /// Enqueue a thread to its assigned CPU's per-CPU run queue.
     /// Called when a thread transitions to Ready state.
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
+        if k.tid == BOOT_TID || k.tid == IDLE_TID {
+            return;
+        }
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
         unsafe {
             let run_queue = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+            if run_queue.contains(k.tid) {
+                return; // already in runqueue — avoid duplicate
+            }
             run_queue.push(k.tid);
         }
         // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
@@ -1106,6 +1212,34 @@ impl Scheduler {
         }
     }
 
+    /// Transition a thread to Ready state and enqueue it exactly once.
+    /// Safe to call if thread is already Ready (no-op, avoids duplicate enqueue).
+    /// Must be called under scheduler lock + interrupts disabled.
+    pub fn make_thread_ready(k: &mut Kthread) {
+        if k.state == ThreadState::Ready {
+            return;
+        }
+        k.state = ThreadState::Ready;
+        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+        k.time_slice_remaining = TIME_SLICES[idx];
+        k.ticks_since_scheduled = 0;
+        Self::enqueue_to_cpu_run_queue(k);
+    }
+
+    /// Remove a thread from its assigned CPU's per-CPU run queue.
+    /// Called when a thread transitions away from Ready state.
+    /// Safe to call even if the thread is not currently in the run queue.
+    /// Must be called under scheduler lock + interrupts disabled.
+    pub fn remove_from_run_queue(k: &Kthread) {
+        let cpu = k.cpu as usize;
+        if cpu >= crate::arch::x64::cpu_local::MAX_CPUS {
+            return;
+        }
+        unsafe {
+            crate::arch::x64::cpu_local::remove_from_cpu_run_queue(cpu, k.tid);
+        }
+    }
+
     /// Try to dequeue the next thread from the current CPU's local run queue.
     /// Returns the TID if found, or None if the queue is empty.
     fn try_dequeue_local() -> Option<u32> {
@@ -1117,28 +1251,72 @@ impl Scheduler {
 
     /// Try to steal a thread from another CPU's run queue.
     /// Returns the TID if found, or None if all queues are empty.
-    fn try_work_steal() -> Option<u32> {
+    /// K20 fix: migration updates Kthread.cpu atomically under scheduler lock
+    /// so physical queue owner and logical ownership stay consistent.
+    fn try_work_steal(&mut self) -> Option<u32> {
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
-        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
-            if cpu == my_cpu { continue; }
-            unsafe {
-                let stolen = crate::arch::x64::cpu_local::steal_from_cpu_run_queue(
-                    cpu, crate::arch::x64::cpu_local::this_cpu_run_queue_mut());
-                if stolen > 0 {
-                    // We stole at least one thread, pop from our queue
-                    return Self::try_dequeue_local();
-                }
+        for victim in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            if victim == my_cpu { continue; }
+            let stolen = unsafe { self.steal_and_migrate(victim, my_cpu) };
+            if stolen > 0 {
+                // We stole at least one thread, pop from our queue
+                return Self::try_dequeue_local();
             }
         }
         None
     }
 
-    /// Find a thread slot by TID, returning a raw pointer.
-    fn find_kthread_ptr(&self, tid: u32) -> *mut Option<Kthread> {
+    /// Steal TIDs from victim CPU's runqueue to thief CPU's runqueue,
+    /// updating Kthread.cpu for each migrated thread.
+    /// Must be called with scheduler lock held and interrupts disabled.
+    /// Returns number of TIDs successfully migrated.
+    /// On destination-full, restores old cpu and pushes TID back to victim.
+    unsafe fn steal_and_migrate(&mut self, victim: usize, thief: usize) -> u32 {
+        // SAFETY: KPRCB pages are initialized, queues are per-CPU and accessed
+        // only while holding scheduler lock in schedule() path.
+        let victim_rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(victim);
+        let thief_rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(thief);
+        let mut stolen: u32 = 0;
+        while victim_rq.count > 0 {
+            if (thief_rq.count as usize) >= thief_rq.entries.len() {
+                break;
+            }
+            // Peek tid at victim head
+            let tid = victim_rq.entries[(victim_rq.head_idx as usize) % victim_rq.entries.len()];
+            // Pop victim
+            let tid_popped = victim_rq.pop().unwrap();
+            debug_assert_eq!(tid, tid_popped);
+            // Update ownership optimistically
+            let old_cpu: Option<u32> = if let Some(k) = self.find_kthread_mut(tid_popped) {
+                let old = k.cpu;
+                k.cpu = thief as u32;
+                Some(old)
+            } else {
+                None
+            };
+            // Try push to thief
+            if thief_rq.push(tid_popped) {
+                stolen += 1;
+            } else {
+                // Rollback: restore cpu and push back to victim
+                if let Some(old) = old_cpu {
+                    if let Some(k) = self.find_kthread_mut(tid_popped) {
+                        k.cpu = old;
+                    }
+                }
+                let _ = victim_rq.push(tid_popped);
+                break;
+            }
+        }
+        stolen
+    }
+
+    /// Find a thread slot by TID, returning a raw pointer to the Kthread Box allocation (stable).
+    fn find_kthread_ptr(&self, tid: u32) -> *mut Kthread {
         for th in self.kthreads.iter() {
             if let Some(k) = th {
                 if k.tid == tid {
-                    return th as *const Option<Kthread> as *mut Option<Kthread>;
+                    return &**k as *const Kthread as *mut Kthread;
                 }
             }
         }
@@ -1157,40 +1335,38 @@ impl Scheduler {
             let ptr = self.find_kthread_ptr(tid);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(k) = &mut *ptr {
-                        if k.state == ThreadState::Ready {
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = tid;
-                            k.state = ThreadState::Running;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
-                                prev, tid);
-                            crate::trace_cswitch!(prev as u64, tid as u64);
-                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                            return k as *mut Kthread;
-                        }
+                    let k = &mut *ptr;
+                    if k.state == ThreadState::Ready {
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = tid;
+                        k.state = ThreadState::Running;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
+                            prev, tid);
+                        crate::trace_cswitch!(prev as u64, tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        return ptr;
                     }
                 }
             }
         }
 
         // 2. Try work stealing from another CPU
-        if let Some(tid) = Self::try_work_steal() {
+        if let Some(tid) = self.try_work_steal() {
             let ptr = self.find_kthread_ptr(tid);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(k) = &mut *ptr {
-                        if k.state == ThreadState::Ready {
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = tid;
-                            k.state = ThreadState::Running;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
-                                prev, tid);
-                            crate::trace_cswitch!(prev as u64, tid as u64);
-                            crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                            return k as *mut Kthread;
-                        }
+                    let k = &mut *ptr;
+                    if k.state == ThreadState::Ready {
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = tid;
+                        k.state = ThreadState::Running;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
+                            prev, tid);
+                        crate::trace_cswitch!(prev as u64, tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        return ptr;
                     }
                 }
             }
@@ -1204,21 +1380,28 @@ impl Scheduler {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
+                        // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
+                        Scheduler::remove_from_run_queue(&**k);
                         let prev = self.current_tid;
-                        let prev_state = k.state.to_u8(); // current thread's state before we change it
+                        let prev_state = k.state.to_u8();
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
                             prev, check_tid, priority);
                         crate::trace_cswitch!(prev as u64, check_tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, check_tid, k.state.to_u8());
-                        return k as *mut Kthread;
+                        return &mut **k as *mut Kthread;
                     }
                 }
             }
         }
 
         // Fallback to idle thread (TID 1, PRIORITY_IDLE).
+        // NOTE: By design, the idle thread is created with state=Ready but is never
+        // added to any runqueue. It is a special thread that only runs when no other
+        // threads are ready. The remove_from_run_queue() call here is defensive: if
+        // the idle thread were ever accidentally enqueued, we remove it to satisfy
+        // the invariant (Running => runqueue_count == 0).
         {
             if !self.has_non_idle_threads() {
                 kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
@@ -1226,19 +1409,19 @@ impl Scheduler {
             let ptr = self.find_kthread_ptr(IDLE_TID);
             if !ptr.is_null() {
                 unsafe {
-                    if let Some(idle) = &mut *ptr {
-                        if idle.state != ThreadState::Terminated {
-                            let prev = self.current_tid;
-                            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                            self.current_tid = IDLE_TID;
-                            idle.state = ThreadState::Running;
-                            idle.time_slice_remaining = IDLE_TIME_SLICE;
-                            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
-                                prev, IDLE_TID);
-                            crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
-                            crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
-                            return idle as *mut Kthread;
-                        }
+                    let idle = &mut *ptr;
+                    if idle.state != ThreadState::Terminated {
+                        Scheduler::remove_from_run_queue(idle);
+                        let prev = self.current_tid;
+                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+                        self.current_tid = IDLE_TID;
+                        idle.state = ThreadState::Running;
+                        idle.time_slice_remaining = IDLE_TIME_SLICE;
+                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
+                            prev, IDLE_TID);
+                        crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
+                        crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
+                        return ptr;
                     }
                 }
             }
@@ -1248,7 +1431,7 @@ impl Scheduler {
 
     // ── Timer tick ──
 
-    pub fn on_timer_tick(&mut self) {
+    pub fn on_timer_tick(&mut self, current_rsp: u64) {
         self.timer_ticks += 1;
 
         if self.timer_ticks.is_multiple_of(AGING_INTERVAL_TICKS) {
@@ -1271,6 +1454,10 @@ impl Scheduler {
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
+                    k.rsp = current_rsp;
+                    if k.tid != BOOT_TID && k.tid != IDLE_TID {
+                        Self::enqueue_to_cpu_run_queue(k);
+                    }
                     needs_resched = true;
                     crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
                 }
@@ -1453,11 +1640,7 @@ pub fn yield_current_thread() {
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
                 let before = k.state.to_u8();
-                if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = TIME_SLICES[idx];
+                Scheduler::make_thread_ready(k);
                 crate::trace_sched_state!(tid, before, k.state.to_u8(), 1u8);
             }
         }
@@ -1536,13 +1719,41 @@ pub fn register_tests() {
         k.state = state;
         k.priority = priority;
         k.time_slice_remaining = TIME_SLICES[priority as usize];
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         if sched.find_eprocess(pid).is_none() {
             let ep_slot = sched.alloc_eprocess_slot().unwrap();
             sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(pid, 0, 2, "\\", 0x10000000, 0));
         }
         if tid >= sched.next_tid {
             sched.next_tid = tid + 1;
+        }
+        let k = sched.kthreads.iter().flatten().find(|k| k.tid == tid).unwrap();
+        Scheduler::remove_from_run_queue(k);
+        if state == ThreadState::Ready {
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+    }
+
+    fn set_test_current(sched: &mut Scheduler, tid: u32) {
+        let previous = sched.current_tid;
+        if previous != tid {
+            if let Some(k) = sched.find_kthread_mut(previous) {
+                if k.state == ThreadState::Running {
+                    k.state = ThreadState::Blocked { waiting_for: 0 };
+                }
+            }
+        }
+        sched.current_tid = tid;
+        let k = sched.find_kthread_mut(tid).unwrap();
+        Scheduler::remove_from_run_queue(k);
+        k.state = ThreadState::Running;
+    }
+
+    fn prepare_test_schedule(sched: &mut Scheduler) {
+        if let Some(k) = sched.find_kthread_mut(sched.current_tid) {
+            if k.state == ThreadState::Running {
+                k.state = ThreadState::Blocked { waiting_for: 0 };
+            }
         }
     }
 
@@ -1595,10 +1806,10 @@ pub fn register_tests() {
         k.state = ThreadState::Running;
         k.time_slice_remaining = 5;
         k.priority = PRIORITY_NORMAL;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
-        sched.on_timer_tick();
+        sched.on_timer_tick(0x700000);
         let remaining = sched.kthreads[slot].as_ref().unwrap().time_slice_remaining;
         test_eq!(remaining, 4);
     });
@@ -1612,10 +1823,10 @@ pub fn register_tests() {
         k.state = ThreadState::Running;
         k.time_slice_remaining = 1;
         k.priority = PRIORITY_NORMAL;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
-        sched.on_timer_tick();
+        sched.on_timer_tick(0x700000);
         let state = sched.kthreads[slot].as_ref().unwrap().state;
         test_eq!(state, ThreadState::Ready);
     });
@@ -1629,11 +1840,11 @@ pub fn register_tests() {
         k.priority = PRIORITY_IDLE;
         k.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
         k.time_slice_remaining = 50;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
         for _ in 0..AGING_INTERVAL_TICKS + 5 {
-            sched.on_timer_tick();
+            sched.on_timer_tick(0x700000);
         }
         let boosted = sched.kthreads[slot].as_ref().unwrap();
         test_true!(boosted.priority < PRIORITY_IDLE);
@@ -1645,7 +1856,7 @@ pub fn register_tests() {
         let slot = sched.alloc_kthread_slot().unwrap();
         let mut k = Kthread::new_ring3(1, 1, 0x400000, 0x800000);
         k.state = ThreadState::Ready;
-        sched.kthreads[slot] = Some(k);
+        sched.kthreads[slot] = Some(Box::new(k));
         let ep_slot = sched.alloc_eprocess_slot().unwrap();
         sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(1, 0, 2, "\\", 0x10000000, 0));
         test_true!(sched.set_process_priority(1, PRIORITY_HIGH));
@@ -1794,5 +2005,1232 @@ pub fn register_tests() {
         }
         p.state = ThreadState::Terminated;
         test_eq!(p.state, ThreadState::Terminated);
+    });
+
+    // ── Run queue invariant tests (P0-3) ──
+
+    test_case!("rq_invariant_enqueue_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_ready_to_blocked", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: 99 };
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_blocked_to_ready", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_double_wake", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            k.waiting_for = None;
+            Scheduler::make_thread_ready(k);
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_suspended_to_ready", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_running_no_entry", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 2);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_terminated_no_entry", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Terminated);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_invariant_stress_mixed_transitions", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        for _ in 0..1000 {
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                k.state = ThreadState::Running;
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                Scheduler::remove_from_run_queue(k);
+                k.state = ThreadState::Blocked { waiting_for: 99 };
+            }
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_invariant_multi_thread", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 6;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 42 });
+        add_test_thread(&mut sched, 5, 4, 0x400000, PRIORITY_IDLE, ThreadState::Running);
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Running;
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: 43 };
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 4).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 5).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        set_test_current(&mut sched, 2);
+        let result = sched.validate_runqueue_invariants();
+        match result {
+            Ok(count) => test_eq!(count, 1),
+            Err(msg) => {
+                crate::serial_println!("rq_invariant_multi_thread: {}", msg);
+                return Err(msg);
+            }
+        }
+    });
+
+    test_case!("rq_invariant_cpu_runqueue_remove", {
+        use crate::arch::x64::cpu_local::CpuRunQueue;
+        let mut rq = CpuRunQueue::new();
+        rq.push(10);
+        rq.push(20);
+        rq.push(30);
+        test_eq!(rq.len(), 3);
+        test_true!(rq.contains(20));
+        test_true!(rq.remove(20));
+        test_eq!(rq.len(), 2);
+        test_true!(!rq.contains(20));
+        test_true!(rq.contains(10));
+        test_true!(rq.contains(30));
+        test_true!(rq.remove(10));
+        test_eq!(rq.len(), 1);
+        test_true!(rq.contains(30));
+        test_true!(rq.remove(30));
+        test_eq!(rq.len(), 0);
+        test_true!(!rq.contains(30));
+        test_true!(!rq.remove(99));
+    });
+
+    test_case!("rq_invariant_full_regression", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        let result = sched.validate_runqueue_invariants();
+        if let Err(msg) = result {
+            crate::serial_println!("rq_invariant_full_regression: {}", msg);
+            return Err(msg);
+        }
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let result = sched.validate_runqueue_invariants();
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: 99 };
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            k.waiting_for = None;
+            Scheduler::make_thread_ready(k);
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+    });
+
+    // ── P0-3 Priority scan regression tests ──
+
+    test_case!("rq_priority_scan_removes_from_runqueue", {
+        // Test: Priority scan must remove thread from runqueue before setting to Running.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 0;
+        // Add a high-priority thread (TID 2) and a normal thread (TID 1).
+        // TID 0 is boot, TID 1 is idle, so we start from TID 2.
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        // Verify initial invariants
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 2); // 2 Ready threads in runqueue
+
+        // Schedule — should pick TID 2 (high priority) via priority scan
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
+
+        // Verify invariant: Running thread must have 0 runqueue entries
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1); // Only TID 3 remains in runqueue
+    });
+
+    test_case!("rq_priority_scan_stress_100_iterations", {
+        // Stress test: Repeat priority scan 100 times, verify invariant each time.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        for i in 0..100 {
+            // Make both threads Ready again
+            {
+                let k2 = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+                k2.state = ThreadState::Ready;
+                Scheduler::enqueue_to_cpu_run_queue(k2);
+            }
+            {
+                let k3 = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 3).unwrap();
+                k3.state = ThreadState::Ready;
+                Scheduler::enqueue_to_cpu_run_queue(k3);
+            }
+
+            // Schedule — should pick TID 2 (high priority)
+            prepare_test_schedule(&mut sched);
+            let next = sched.schedule();
+            let picked_tid = unsafe { (*next).tid };
+            test_eq!(picked_tid, 2);
+
+            // Verify invariant: Running thread must have 0 runqueue entries
+            let result = sched.validate_runqueue_invariants();
+            test_true!(result.is_ok());
+            let _ = i; // suppress unused warning
+        }
+    });
+
+    test_case!("rq_priority_scan_return_to_ready", {
+        // Test: After priority scan selects X, X can yield back to Ready,
+        // then be scheduled again via priority scan with invariant preserved.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        // Schedule TID 2
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 2);
+
+        // Verify invariant: Running => runqueue_count == 0
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+
+        // Simulate yield: Running -> Ready (enqueue)
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+
+        // Verify invariant: Ready => runqueue_count == 1
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+
+        // Schedule again
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let picked_tid2 = unsafe { (*next).tid };
+        test_eq!(picked_tid2, 2);
+
+        // Verify invariant: Running => runqueue_count == 0
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_priority_scan_multiple_threads", {
+        // Test: Multiple threads with different priorities, verify invariant
+        // holds for all threads after each schedule.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 6;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_ABOVE_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 5, 4, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        // Schedule 4 times, each time verify invariants
+        for _ in 0..4 {
+            prepare_test_schedule(&mut sched);
+            let next = sched.schedule();
+            let picked_tid = unsafe { (*next).tid };
+
+            // Verify invariant
+            let result = sched.validate_runqueue_invariants();
+            test_true!(result.is_ok());
+
+            // Mark as Ready again for next iteration
+            {
+                let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == picked_tid).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+        }
+    });
+
+    test_case!("rq_priority_scan_duplicate_protection", {
+        // Test: Fix doesn't break duplicate enqueue protection.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+
+        // Try to enqueue twice
+        {
+            let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+
+        // Verify only 1 entry
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_priority_scan_idle_thread_no_runqueue", {
+        // Test: Idle thread is never in runqueue by design.
+        // Verify it can be scheduled via priority scan without issues.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        sched.current_tid = 0;
+
+        // The idle thread (TID 1) is created in Scheduler::new() with state=Ready
+        // but is NOT in any runqueue by design.
+        // Schedule — should fall back to idle thread
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let picked_tid = unsafe { (*next).tid };
+        test_eq!(picked_tid, 1); // IDLE_TID
+
+        // Verify invariant: idle thread (Running) must have 0 runqueue entries
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 0);
+    });
+
+    test_case!("rq_timer_expiration_requeues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 2);
+        sched.kthreads.iter_mut().flatten()
+            .find(|k| k.tid == 2).unwrap().time_slice_remaining = 1;
+
+        sched.on_timer_tick(0x700000);
+        let k = sched.find_kthread(2).unwrap();
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.rsp, 0x700000);
+        unsafe {
+            let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            test_eq!(rq.len(), 1);
+            test_true!(rq.contains(2));
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+    });
+
+    test_case!("rq_spawn_kthread_enqueues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        let tid = sched.spawn_kthread(0x400000, PRIORITY_NORMAL).unwrap();
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
+        }
+    });
+
+    test_case!("rq_add_thread_enqueues_once", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 2;
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(42, 0, 2, "\\", 0x10000000, 0));
+        let tid = sched.add_thread_to_process(42, 0x400000, 0x800000).unwrap();
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_ok());
+        test_eq!(result.unwrap(), 1);
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
+        }
+    });
+
+    test_case!("rq_validator_rejects_invalid_current", {
+        let mut sched = Scheduler::new();
+        sched.current_tid = 999;
+        let result = sched.validate_runqueue_invariants();
+        test_true!(result.is_err());
+    });
+
+    // ── K17 Gap A/B: kwait_block / kwait_wake real path (isolated Scheduler) ──
+
+    test_case!("k17_kwait_block_wake_single_entry", {
+        // Running/Ready thread → kwait_block (remove+Blocked) → kwait_wake (make_ready) → single entry
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        // TID 2 Ready via helper (enqueued)
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // Make TID 2 current Running (remove from queue)
+        set_test_current(&mut sched, 2);
+        // Validate Running has 0 entries
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 0);
+
+        // Simulate kwait_block: remove + Blocked
+        let magic: u32 = 0x0005_0063; // Event 99
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Blocked { waiting_for: magic };
+            k.waiting_for = Some(magic);
+        }
+        // Switch current to idle to allow validation (current must be Running)
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 0);
+        test_eq!(sched.find_kthread(2).unwrap().state, ThreadState::Blocked { waiting_for: magic });
+
+        // Simulate kwait_wake: scan + make_thread_ready
+        {
+            // replicate kwait_wake logic
+            let m = magic;
+            // collect tids to wake to avoid borrow issues
+            let to_wake: Vec<u32> = sched.kthreads.iter().flatten()
+                .filter(|k| k.waiting_for == Some(m) && matches!(k.state, ThreadState::Blocked { .. }))
+                .map(|k| k.tid)
+                .collect();
+            for tid in to_wake {
+                if let Some(k) = sched.find_kthread_mut(tid) {
+                    k.waiting_for = None;
+                    Scheduler::make_thread_ready(k);
+                }
+            }
+        }
+        // Ready must be exactly once
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        test_eq!(sched.find_kthread(2).unwrap().state, ThreadState::Ready);
+        test_eq!(sched.find_kthread(2).unwrap().waiting_for, None);
+    });
+
+    test_case!("k17_kwait_double_wake_idempotent", {
+        // Blocked → wake → wake again → still single entry
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: 0x0005_0063 });
+        // manually set waiting_for to match blocked magic
+        sched.find_kthread_mut(2).unwrap().waiting_for = Some(0x0005_0063);
+        // first wake
+        {
+            let magic = 0x0005_0063;
+            let tids: Vec<u32> = sched.kthreads.iter().flatten()
+                .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
+                .map(|k| k.tid).collect();
+            for tid in tids {
+                if let Some(k) = sched.find_kthread_mut(tid) {
+                    k.waiting_for = None;
+                    Scheduler::make_thread_ready(k);
+                }
+            }
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        // second wake — should be no-op
+        {
+            let magic = 0x0005_0063;
+            let tids: Vec<u32> = sched.kthreads.iter().flatten()
+                .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
+                .map(|k| k.tid).collect();
+            for tid in tids {
+                if let Some(k) = sched.find_kthread_mut(tid) {
+                    k.waiting_for = None;
+                    Scheduler::make_thread_ready(k);
+                }
+            }
+        }
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        // also direct make_thread_ready idempotent
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+    });
+
+    test_case!("k17_kwait_wake_multiple_threads_same_magic", {
+        // Two Blocked threads waiting on same magic → single wake wakes both
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        let magic: u32 = 0x0006_000A; // Timer 10
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: magic });
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL,
+            ThreadState::Blocked { waiting_for: magic });
+        sched.find_kthread_mut(2).unwrap().waiting_for = Some(magic);
+        sched.find_kthread_mut(3).unwrap().waiting_for = Some(magic);
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 0);
+        // wake all
+        {
+            let tids: Vec<u32> = sched.kthreads.iter().flatten()
+                .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
+                .map(|k| k.tid).collect();
+            for tid in tids {
+                if let Some(k) = sched.find_kthread_mut(tid) {
+                    k.waiting_for = None;
+                    Scheduler::make_thread_ready(k);
+                }
+            }
+        }
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 2);
+        test_eq!(sched.find_kthread(2).unwrap().state, ThreadState::Ready);
+        test_eq!(sched.find_kthread(3).unwrap().state, ThreadState::Ready);
+    });
+
+    // ── K17 Gap 2: Terminated lifecycle & stale entry ──
+
+    test_case!("k17_terminated_stale_runqueue_detected_and_recycled", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, 2);
+        // Simulate buggy exit: set Terminated WITHOUT removing from runqueue
+        // First, make it Ready again so it's in queue
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            // already Running, make Ready to re-enqueue
+            Scheduler::make_thread_ready(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let ok = sched.validate_runqueue_invariants();
+        test_true!(ok.is_ok());
+        // Now fake bug: Terminated while still in queue (skip remove)
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.state = ThreadState::Terminated;
+            // keep in queue intentionally — do NOT call remove
+        }
+        // Need a Running current for validation: idle is Running
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_err()); // stale non-Ready in queue must be detected
+        // Correct path: remove and validate passes
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+        }
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 0);
+        // recycle_thread must free slot and keep invariants
+        let freed = sched.recycle_thread(2);
+        test_true!(freed);
+        test_true!(sched.find_kthread(2).is_none());
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+    });
+
+    test_case!("k17_terminated_recycle_keeps_invariants", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, 2);
+        // Terminate current correctly (remove then Terminated)
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1); // only TID3 remains Ready
+        // recycle terminated thread
+        test_true!(sched.recycle_thread(2));
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        test_true!(sched.find_kthread(2).is_none());
+        // schedule should still pick TID3
+        prepare_test_schedule(&mut sched);
+        let next = sched.schedule();
+        let tid = unsafe { (*next).tid };
+        test_eq!(tid, 3);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+    });
+
+    // ── K17 Gap 3: Same-priority round-robin sustained ──
+
+    test_case!("k17_same_prio_round_robin_sustained_20", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+
+        let mut picks: Vec<u32> = Vec::new();
+        for _ in 0..20 {
+            prepare_test_schedule(&mut sched);
+            let next = sched.schedule();
+            let tid = unsafe { (*next).tid };
+            test_true!(tid == 2 || tid == 3);
+            picks.push(tid);
+            // validate Running not in queue
+            let r = sched.validate_runqueue_invariants();
+            test_true!(r.is_ok());
+            // yield back to Ready (re-enqueue) and set idle as current for next iteration
+            {
+                let k = sched.find_kthread_mut(tid).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+            set_test_current(&mut sched, IDLE_TID);
+            let r = sched.validate_runqueue_invariants();
+            test_true!(r.is_ok());
+            test_eq!(r.unwrap(), 2);
+        }
+        // Both threads must have been scheduled at least 8 times (no starvation)
+        let c2 = picks.iter().filter(|&&t| t == 2).count();
+        let c3 = picks.iter().filter(|&&t| t == 3).count();
+        test_true!(c2 >= 8);
+        test_true!(c3 >= 8);
+        // Must have alternated at least once (no permanent exclusion)
+        let mut alternated = false;
+        for w in picks.windows(2) {
+            if w[0] != w[1] { alternated = true; break; }
+        }
+        test_true!(alternated);
+    });
+
+    test_case!("k17_same_prio_three_threads_round_robin", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 5;
+        sched.current_tid = 0;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        set_test_current(&mut sched, IDLE_TID);
+        let mut picks = Vec::new();
+        for _ in 0..30 {
+            prepare_test_schedule(&mut sched);
+            let next = sched.schedule();
+            let tid = unsafe { (*next).tid };
+            test_true!(tid == 2 || tid == 3 || tid == 4);
+            picks.push(tid);
+            {
+                let k = sched.find_kthread_mut(tid).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+            set_test_current(&mut sched, IDLE_TID);
+        }
+        let c2 = picks.iter().filter(|&&t| t == 2).count();
+        let c3 = picks.iter().filter(|&&t| t == 3).count();
+        let c4 = picks.iter().filter(|&&t| t == 4).count();
+        // Each at least 5 times in 30 picks
+        test_true!(c2 >= 5);
+        test_true!(c3 >= 5);
+        test_true!(c4 >= 5);
+    });
+
+    // ── K18 Gap 4: Work stealing / cross-CPU runqueue ──
+    // Helpers for cross-CPU queue manipulation (avoid IPI side-effects in tests)
+    // These tests deliberately use unsafe cpu_run_queue_mut and direct state
+    // mutation to isolate the work-stealing contract without modifying production.
+
+    test_case!("k18_steal_drains_victim_to_thief_preserves_order", {
+        // Setup: victim CPU1 with 3 Ready threads, thief CPU0 empty
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 6;
+        // Create 3 threads affine to CPU1 (manual cpu override after helper)
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 4, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // Move them to CPU1: remove from CPU0, set cpu=1, push to CPU1
+        for tid in [2u32, 3, 4] {
+            if let Some(k) = sched.find_kthread_mut(tid) {
+                unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, tid); }
+                k.cpu = 1;
+                Scheduler::enqueue_to_cpu_run_queue(k);
+            }
+        }
+        // Verify victim has 3, thief empty
+        unsafe {
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 3);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 0);
+        }
+        // Steal: drain victim 1 into thief 0 via production steal_from_cpu_run_queue
+        let stolen = unsafe {
+            let dst = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            crate::arch::x64::cpu_local::steal_from_cpu_run_queue(1, dst)
+        };
+        test_eq!(stolen, 3);
+        unsafe {
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 0);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 3);
+            // Order preserved: victim pushed 2,3,4 head->tail so thief should pop 2 first
+            let rq0 = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            test_eq!(rq0.pop(), Some(2));
+            test_eq!(rq0.pop(), Some(3));
+            test_eq!(rq0.pop(), Some(4));
+        }
+        // Cleanup invariant: restore queues empty and threads Ready but not queued
+        // Need to re-enqueue for validation? Instead remove and set state
+        for tid in [2u32, 3, 4] {
+            if let Some(k) = sched.find_kthread_mut(tid) {
+                // after pop they are not in queue; ensure state still Ready
+                test_eq!(k.state, ThreadState::Ready);
+                // reset cpu to 0 for next tests
+                k.cpu = 0;
+                unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, tid); }
+                k.state = ThreadState::Blocked { waiting_for: 0 };
+            }
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+        }
+        // restore terminated for isolation
+        for tid in [2u32, 3, 4] {
+            sched.recycle_thread(tid);
+        }
+    });
+
+    test_case!("k18_steal_affinity_mismatch_stale_cpu_detected", {
+        // K20 regression: stolen thread must have k.cpu updated to thief,
+        // so validate passes. Previously this test demonstrated stale cpu bug.
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        // Move TID2 to CPU1
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+            k.cpu = 1;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+
+        // Scheduler-level steal must migrate ownership: use try_work_steal path
+        // which now updates Kthread.cpu atomically.
+        // Call steal_and_migrate directly to isolate migration without dequeue
+        let stolen = unsafe { sched.steal_and_migrate(1, 0) };
+        test_eq!(stolen, 1);
+        // Now TID2 in CPU0 queue and k.cpu==0 → validate must pass
+        test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(2));
+            test_true!(!crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
+        }
+
+        // Pop and become Running on CPU0 → validate still passes
+        let tid = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop().unwrap() };
+        test_eq!(tid, 2);
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.state = ThreadState::Running;
+        }
+        sched.current_tid = 2;
+        test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+
+        // Cleanup
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.state = ThreadState::Terminated;
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+    });
+
+    test_case!("k18_schedule_via_steal_sets_current_tid_and_removes", {
+        // Verify schedule() steal path (try_dequeue_local fails, try_work_steal succeeds)
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = IDLE_TID;
+        // Prepare idle as Blocked so schedule must pick something else
+        prepare_test_schedule(&mut sched); // idle Running -> Blocked
+        // Create victim thread on CPU1
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+            k.cpu = 1;
+            // Push directly to CPU1 to avoid IPI in test setup
+            unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(1).push(2); }
+        }
+        // Ensure local queue empty
+        unsafe { test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 0); }
+        // schedule should steal from CPU1 to CPU0 and return TID2 as Running
+        // Note: schedule's try_work_steal drains all from victim then pops from thief.
+        // After steal, thief has the entry, pop yields TID2, state becomes Running.
+        let next = sched.schedule();
+        let tid = unsafe { (*next).tid };
+        test_eq!(tid, 2);
+        test_eq!(sched.current_tid, 2);
+        test_eq!(unsafe { (*next).state }, ThreadState::Running);
+        // Victim emptied
+        unsafe {
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 0);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 0);
+        }
+        // K20 fixed: k.cpu must have been migrated to thief (0) and validate passes
+        test_eq!(unsafe { (*next).cpu }, 0);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        // Cleanup: make Running thread Ready (should stay on thief) then remove
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            // schedule already removed from queue
+            k.state = ThreadState::Ready;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        // cleanup
+        if let Some(k) = sched.find_kthread_mut(2) {
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+    });
+
+    test_case!("k18_cross_cpu_enqueue_respects_thread_cpu_and_validate", {
+        // enqueue_to_cpu_run_queue must place thread on its cpu's queue, not current cpu's
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 99 });
+        // Make it Ready with cpu=1; enqueue should go to CPU1
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.cpu = 1;
+            Scheduler::make_thread_ready(k);
+        }
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
+            test_true!(!crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(2));
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        test_eq!(r.unwrap(), 1);
+        // Now change cpu to 0 but leave entry on CPU1 → validate must detect
+        sched.find_kthread_mut(2).unwrap().cpu = 0;
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_err());
+        // fix and cleanup
+        sched.find_kthread_mut(2).unwrap().cpu = 1;
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+        }
+    });
+
+    test_case!("k18_steal_empty_victim_returns_zero_and_leaves_local_intact", {
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // TID2 is on CPU0 (default), CPU1 empty
+        unsafe {
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 0);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 1);
+        }
+        let stolen = unsafe {
+            let dst = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            crate::arch::x64::cpu_local::steal_from_cpu_run_queue(1, dst)
+        };
+        test_eq!(stolen, 0);
+        unsafe {
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len(), 1);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 0);
+        }
+        // cleanup
+        sched.find_kthread_mut(2).unwrap().state = ThreadState::Terminated;
+        unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+        sched.recycle_thread(2);
+        set_test_current(&mut sched, IDLE_TID);
+        unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear(); }
+    });
+
+    test_case!("k18_steal_then_requeue_bounces_to_victim_cpu", {
+        // K20 regression: after scheduler-level steal, requeue must stay on thief (0), not bounce to victim (1)
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // Move to CPU1
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+            k.cpu = 1;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        // Steal via scheduler (migrates ownership)
+        let stolen = unsafe { sched.steal_and_migrate(1, 0) };
+        test_eq!(stolen, 1);
+        test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+        let tid = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop().unwrap() };
+        test_eq!(tid, 2);
+        // Simulate Running on thief
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.state = ThreadState::Running;
+            sched.current_tid = 2;
+        }
+        test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+        // Yield: Running → Ready should stay on thief (0)
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::make_thread_ready(k);
+        }
+        unsafe {
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(2));
+            test_true!(!crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        // cleanup
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+    });
+
+    // ── K19: destination-full and repeated-steal evidence ──
+
+    test_case!("k19_dest_full_steal_pushback_no_loss", {
+        // Fill thief CPU0 to capacity (64), victim CPU1 has 1, steal must not lose TID
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // Move TID2 to victim CPU1
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+            k.cpu = 1;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        // Fill thief CPU0 with 64 dummy TIDs (no Kthread backing, just queue entries)
+        // Use raw queue API to avoid needing Kthreads; validate is not used for these dummies
+        // Instead fill with 64 entries that are not part of scheduler, then attempt steal
+        // To keep validation valid, we fill with fake tids that are NOT in scheduler table
+        // but we will clear afterwards. For this test we instead fill thief via direct push
+        // of valid tids? Simpler: fill thief with 64 copies of a valid TID2 duplicate check
+        // will prevent duplicates, so we directly manipulate queue without scheduler threads:
+        unsafe {
+            let rq0 = crate::arch::x64::cpu_local::cpu_run_queue_mut(0);
+            // Ensure empty then fill with distinct dummy tids 1000..1063
+            rq0.clear();
+            for i in 0..64u32 {
+                rq0.push(1000 + i);
+            }
+            test_eq!(rq0.len(), 64);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 1);
+            let stolen = crate::arch::x64::cpu_local::steal_from_cpu_run_queue(1, rq0);
+            // Destination full → stolen == 0, victim retains entry, no loss, push-back
+            test_eq!(stolen, 0);
+            test_eq!(rq0.len(), 64);
+            test_eq!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).len(), 1);
+            test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
+            // Cleanup
+            rq0.clear();
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+        }
+        // Validate scheduler still consistent (TID2 Ready on CPU1, no entry on full thief after clear)
+        // Need to re-ensure TID2 on CPU1 for validation
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(1).push(2);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        let r = sched.validate_runqueue_invariants();
+        test_true!(r.is_ok());
+        // cleanup
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.cpu = 0;
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+    });
+
+    test_case!("k19_repeated_steal_requeue_bounce_5_cycles", {
+        // 5 cycles: victim→thief→Running(cpu=1)→Ready→bounce to victim, repeat
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            }
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); }
+            k.cpu = 1;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        set_test_current(&mut sched, IDLE_TID);
+        for _ in 0..5 {
+            // steal via scheduler (migrates ownership to thief)
+            let stolen = unsafe { sched.steal_and_migrate(1, 0) };
+            test_eq!(stolen, 1);
+            test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+            // pop and run on thief
+            let tid = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop().unwrap() };
+            test_eq!(tid, 2);
+            {
+                let k = sched.find_kthread_mut(2).unwrap();
+                k.state = ThreadState::Running;
+            }
+            sched.current_tid = 2;
+            test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
+            // yield back → should stay on thief (0) after fix
+            {
+                let k = sched.find_kthread_mut(2).unwrap();
+                Scheduler::make_thread_ready(k);
+            }
+            unsafe {
+                test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(2));
+                test_true!(!crate::arch::x64::cpu_local::cpu_run_queue_mut(1).contains(2));
+            }
+            set_test_current(&mut sched, IDLE_TID);
+            let r = sched.validate_runqueue_invariants();
+            test_true!(r.is_ok());
+        }
+        // cleanup
+        {
+            let k = sched.find_kthread_mut(2).unwrap();
+            k.cpu = 0;
+            Scheduler::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        sched.recycle_thread(2);
+        unsafe {
+            crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
+            if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(1).clear();
+            }
+        }
     });
 }

@@ -244,6 +244,7 @@ pub fn wait_for_process(pid: u32) {
         // Block the boot thread (TID 0) if current
         if tid == scheduler::BOOT_TID {
             if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
+                scheduler::Scheduler::remove_from_run_queue(k);
                 k.state = scheduler::ThreadState::Blocked {
                     waiting_for: pid,
                 };

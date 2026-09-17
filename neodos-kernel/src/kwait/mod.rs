@@ -105,6 +105,7 @@ pub fn kwait_block(reason: WaitReason) {
     let mut lock = scheduler::current_scheduler().lock();
     if let Some(k) = lock.current_kthread_mut() {
         let before = k.state.to_u8();
+        scheduler::Scheduler::remove_from_run_queue(k);
         k.state = ThreadState::Blocked { waiting_for: magic };
         k.waiting_for = Some(magic);
         crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8); // KWAIT_BLOCK
@@ -124,8 +125,7 @@ pub fn kwait_wake(reason: &WaitReason) {
     for k in scheduler.kthreads.iter_mut().flatten() {
         if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
             k.waiting_for = None;
-            k.state = ThreadState::Ready;
-            scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+            scheduler::Scheduler::make_thread_ready(k);
             crate::syscall::set_need_resched();
         }
     }
@@ -242,5 +242,115 @@ pub fn register_kwait_tests() {
         test_eq!(a.encode_magic(), b.encode_magic());
         let c = WaitReason::Semaphore { sem_id: 6 };
         test_ne!(a.encode_magic(), c.encode_magic());
+    });
+
+    // ── K17 Gap 1: real kwait_block/kwait_wake functional (global scheduler, BOOT_TID) ──
+    test_case!("k17_kwait_block_wake_real_transitions", {
+        // Save original BOOT_TID state
+        let orig = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for, s.current_tid)
+        });
+        // Ensure current is BOOT_TID and Running
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            s.current_tid = crate::scheduler::BOOT_TID;
+            if let Some(k) = s.kthreads[0].as_mut() {
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                k.state = crate::scheduler::ThreadState::Running;
+                k.waiting_for = None;
+            }
+        });
+        let reason = WaitReason::Event { event_type: 77 };
+        let magic = reason.encode_magic();
+        crate::kwait::kwait_block(reason);
+        let after_block = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for)
+        });
+        test_eq!(after_block.0, crate::scheduler::ThreadState::Blocked { waiting_for: magic });
+        test_eq!(after_block.1, Some(magic));
+        // First wake → Ready
+        crate::kwait::kwait_wake(&reason);
+        let after_wake = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            s.kthreads[0].as_ref().unwrap().state
+        });
+        test_eq!(after_wake, crate::scheduler::ThreadState::Ready);
+        // Second wake → still Ready, still no waiting_for, idempotent
+        crate::kwait::kwait_wake(&reason);
+        let after_second = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for)
+        });
+        test_eq!(after_second.0, crate::scheduler::ThreadState::Ready);
+        test_eq!(after_second.1, None);
+        // Restore original state
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            if let Some(k) = s.kthreads[0].as_mut() {
+                k.state = orig.0;
+                k.waiting_for = orig.1;
+                // BOOT_TID never in queue, ensure removed
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                if orig.0 == crate::scheduler::ThreadState::Running {
+                    // keep Running
+                } else if orig.0 == crate::scheduler::ThreadState::Ready {
+                    // shouldn't happen for boot at test time, but handle
+                    k.state = crate::scheduler::ThreadState::Running;
+                }
+            }
+            s.current_tid = orig.2;
+        });
+    });
+
+    test_case!("k17_kwait_double_wake_real_idempotent_global", {
+        let reason = WaitReason::Timer { timer_id: 42 };
+        let magic = reason.encode_magic();
+        // Save
+        let orig = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            let k = s.kthreads[0].as_ref().unwrap();
+            (k.state, k.waiting_for, s.current_tid)
+        });
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            s.current_tid = crate::scheduler::BOOT_TID;
+            if let Some(k) = s.kthreads[0].as_mut() {
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                k.state = crate::scheduler::ThreadState::Running;
+                k.waiting_for = None;
+            }
+        });
+        crate::kwait::kwait_block(reason);
+        crate::kwait::kwait_wake(&reason);
+        let state1 = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            s.kthreads[0].as_ref().unwrap().state
+        });
+        test_eq!(state1, crate::scheduler::ThreadState::Ready);
+        crate::kwait::kwait_wake(&reason);
+        let state2 = crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler().lock();
+            s.kthreads[0].as_ref().unwrap().state
+        });
+        test_eq!(state2, crate::scheduler::ThreadState::Ready);
+        // restore
+        crate::hal::without_interrupts(|| {
+            let mut s = crate::scheduler::current_scheduler().lock();
+            if let Some(k) = s.kthreads[0].as_mut() {
+                k.state = orig.0;
+                k.waiting_for = orig.1;
+                crate::scheduler::Scheduler::remove_from_run_queue(k);
+                if orig.0 == crate::scheduler::ThreadState::Ready {
+                    k.state = crate::scheduler::ThreadState::Running;
+                }
+            }
+            s.current_tid = orig.2;
+        });
+        let _ = magic;
     });
 }
