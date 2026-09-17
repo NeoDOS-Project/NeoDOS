@@ -1,8 +1,8 @@
 # Auditoría Completa NeoDOS — KERNEL PANIC (CLASS: GPF) en primera selección de `netd` (TID 2)
 
-**Fecha:** 2026-08-30  
-**Versión auditada:** v0.50.x (699 tests PASS, `cargo +nightly check` OK, `lto=true`)  
-**Síntoma:** `#GP` con `RIP = iretq` , `RSP = 0x24772c8` , `err = 0x3ae0` / `0x8ae0` al retornar del timer IRQ tras `schedule()` seleccionar `netd` por primera vez.  
+**Fecha:** 2026-08-30
+**Versión auditada:** v0.50.x (699 tests PASS, `cargo +nightly check` OK, `lto=true`)
+**Síntoma:** `#GP` con `RIP = iretq` , `RSP = 0x24772c8` , `err = 0x3ae0` / `0x8ae0` al retornar del timer IRQ tras `schedule()` seleccionar `netd` por primera vez.
 **Frame PRE-IRETQ diagnosticado como correcto:** `RIP=0x4040ba0` (`netd_entry_wrapper`), `CS=0x08`, `RFLAGS=0x202`, 15 slots cero, canary OK, `returned_rsp == init_rsp == 0x2477250`.
 
 > Este documento es el informe estructurado solicitado en los puntos A–K. Todas las referencias incluyen patrón `archivo:línea`.
@@ -22,6 +22,7 @@
 - [I. Root Cause Final](#i-root-cause-final)
 - [J. Fix Mínimo](#j-fix-mínimo)
 - [K. Experimento Definitivo](#k-experimento-definitivo)
+- [L. Validación Forense 2026-09-17 — J1+J2+K (120s QEMU)](#l-validación-forense-2026-09-17--j1j2k-120s-qemu)
 - [Apéndice — Checklist Invariantes y Referencias](#apéndice--checklist-invariantes-y-referencias)
 
 ---
@@ -446,4 +447,75 @@ drivers/e1000/src/lib.rs
 
 ---
 
-*Auditoría realizada como ingeniero de kernel ante crash “imposible”. Sin asumir hipótesis previa. Si la instrumentación está equivocada, este informe lo señala (D, K). Si aparece bug más grave que el GPF, se incluye (B1-B3).*
+## L. Validación Forense 2026-09-17 — J1+J2+K (120s QEMU)
+
+**Fecha validación:** 2026-09-17
+**Rama:** `fix/p0-scheduler-runqueue-correctness` @ `2a49d8b`
+**Fixes aplicados (J1+J2):** `neodos-kernel/.cargo/config.toml:10` `no-redzone=yes`, `src/hal/raw/cpu.rs:164` `raw_set_segment_regs(ds,es,ss)`, `src/arch/x64/gdt.rs:22` `GDT_MEM .data`, `src/arch/x64/idt.rs:358` `push rax/pop rax` (elimina `r12`). `cargo +nightly check` OK (415 warnings), `neodev build --quick --image` OK (19.5 MB).
+**Ejecución:** `neodev run --headless --net user --serial /tmp/neodos_forensic.serial --neodos-path /home/amartinper/rust-os/neodos` (QEMU TCG, `neodev 0.2.0`), wall 125s (timeout 150s), serial `167K / 2092 líneas` preservado en `/tmp/neodos_forensic.serial`. Sin modificar código durante la validación.
+
+### L1. Resultado
+
+| Campo | Valor |
+|-------|-------|
+| **TEST RESULT** | Validado con QEMU prolongado |
+| **CRASH REPRODUCED** | **YES** — mismo `err=0x3ae0` que auditoría original |
+| **MAX TICK** | **3329** (`Timer ticks: 3329` scheduler dump) — target 5000 no alcanzado por panic. `TD_RING head ~7117` |
+| **GPF original** | `tick 4538/5109 rip 0x4040ba0/0x400db67 rsp 0x24772c8 err 0x3ae0` |
+| **GPF 2026-09-17** | `tick 3316 GPF_DIAG tid2 rip 0x40000b0 rsp 0x24772c8 err 0x3ae0` → `panic tick 3329 rip 0x40000b0 rsp 0x24772c8` (delta ~1222 ticks antes, misma stack `0x24772c8`) |
+
+### L2. Evidencia diagnóstica (`/tmp/neodos_forensic.serial:1620-1789`)
+
+```text
+[EXC] ERROR: GPF: error=0x3ae0 rip=0x40000b0 cs=0x8 rflags=0x10002 rsp=0x24772c8 tick=3316 GS=0x10
+[GPF_DIAG] tick=3316 tid=2 rip=0x40000b0 rsp=0x24772c8 err=0x3ae0
+[DBG_IRET] RSP=0x2477028 RIP=0x40e9551 CS=0x8 RFLAGS=0x10202 CR3=0x4235000 TR=0x28 GS=0x10
+[DBG_GDT] PRE base=0x4248450 limit=0x37 raw=[37 00 50 84 24 04 00 00 00 00]
+[DBG_GDT] POST base=0x4248450 limit=0x37 TR=0x28 raw_post=[37 00 50 84 24 04 00 00 00 00]
+[DBG_GDT] MATCH PRE==POST
+[FRAME_DUMP] FD[7] tick=3316 kptr=0x1bda2a20 init=0x2477250 ret=0x2477250 slot15=0x4119f20 slot16=0x08 slot17=0x202 [CANARY] OK
+[NETD_DIAG] kptr=0x1bda2a20 base=0x24732e0 top=0x24772e0 init=0x2477250 entry=0x4119f20
+[FINAL_IRETQ] rsp=0x0 ret+120=0x24772c8 delta=-38236872 rip=0x0 cs=0x0 exp_rip=0x4119f20 FRAME MISMATCH
+[GDT] base=0x4248450 limit=0x37 entry 0x08 raw=0x00af9b000000ffff P=1 S=1 DPL0 L=1 type=0xb INVALID
+[GPF_DECODE] err=0x3ae0 EXT0 IDT0 TI0 index=0x75c (15072) → GDT selector 0x3ae0
+```
+
+* `KERN SCHED` **sí selecciona netd:** `src/arch/x64/idt.rs:2021`
+  ```
+  [TD][229] KERN SCHED tick=3316 tid=0 cs=0x8 rsp=0x1fffd050 f=04 nxt_tid=2 nxt_rsp=0x2477250 ks=0x24772e0
+  [TD][230] KERN RET   tick=3316 ... ret=0x2477250
+  [TD][231] NOPRE IRETQ tick=3316 rsp=0x24772c8 frame=[rip=0x4119f20 cs=0x8 rflags=0x202]
+  ```
+  Coincide con audit `ks_top 0x24772e0, init 0x2477250, iret rsp 0x24772c8`. Netd corre `ticks=13` (`Scheduler state TID2 Running ticks=13`) antes de panic.
+* `DBG_IRET` **stale:** `RSP 0x2477028 / RIP 0x40e9551` corresponde a tick `3317-3318` (`NOPRE IRETQ tick=3317 rsp=0x2477028 rip=0x40e9551`), no al frame faulting `0x24772c8/0x4119f20/0x40000b0`. Prueba que `DBG_*` single-slot se sobrescribe cada `iretq` — K pedía first-write-wins (`CMPXCHG 0→val`), no implementado. Criterio K3 no aplicable aún.
+* `DBG_GDT` **estable:** `PRE==POST`, `base 0x4248450`, `limit 0x37` (56B, 6 entradas + TSS 16B), `TR 0x28`, `GS 0x10`, `CR3 0x4235000` — descarta H5 (GDT/TSS/CR3 corruption).
+* `FINAL_IRETQ` **MISMATCH** (`rsp 0x0`) — `push rax/pop rax` J2 rompe path de `FINAL_*` (no setea `FINAL_RSP`). Misma contradicción `FINAL vs GPF` que audit D, pero ahora sin dato.
+* `FRAME_DUMP[7]` **correcto:** 15 slots cero, `RIP 0x4119f20` (nuevo `netd_entry_wrapper`, antes `0x4040ba0` por ASLR/layout), `CS 0x08`, `RFLAGS 0x202`, canary OK — replica audit C pero fault `rip` es `0x40000b0` (kernel base, no `0x4119f20`), sugiere #GP no en `iretq` inmediato sino 13 ticks después, dentro de netd o idle.
+* `GDT entry 0x08` ahora `type 0xb` (vs esperado `0xA`) — `0xB = 0xA | ACCESSED`, flag `INVALID` del dump es check estricto, no corrupción.
+
+### L3. Comparativa vs firma original
+
+| Aspecto | 2026-08-30 (audit) | 2026-09-17 (validación) | Conclusión |
+|---------|-------------------|------------------------|------------|
+| `err` | `0x3ae0` / `0x8ae0` | `0x3ae0` | **Idéntico** |
+| `rsp_iret` | `0x24772c8` | `0x24772c8` | **Idéntico** |
+| `init_rsp` | `0x2477250` | `0x2477250` | **Idéntico** |
+| `rip fault` | `0x4040ba0` (`netd_entry_wrapper`) | `0x40000b0` (kernel base, 13 ticks post-iret) | Diferente `rip` pero mismo `err` — GPF diferido, no inmediato a `iretq` |
+| `tick` | `4538/5109` | `3316/3329` | Antes (~1200 ticks, HPET `1133888 KHz` vs `1063680 KHz`) |
+| `CS` diagnóstico | `0x08` | `0x08` (`DBG_CS 0x08`, `FRAME CS 0x08`) | **Contradicción 0x08 vs 0x3ae0 persiste** |
+| `GDT` | `base/limit no volcado` | `0x4248450/0x37 MATCH` | **GDT estable** |
+| `NeoInit` | `500 ticks spin` antes de carga | `Loading NeoInit PID1` intentado pero panic antes | **NeoInit no inicia** |
+
+### L4. Estado root cause
+
+**NO probado.** J1/J2 estables bajo ejecución prolongada (no early triple fault, `GS/TR/CR3/GDT` estables 13 ticks), pero **no cierran GPF**. La contradicción D persiste: frame lógico `0x08` correcto pero CPU ve `0x3ae0`. `DBG_CS==0x08 && err==0x3ae0` probaría `SS/DS` o aliasing, pero `DBG_CS` stale impide falsación. Tampoco se distingue si `0x3ae0` es `CS` vs `SS` (dump K no incluye `SS/DS`). `0x3ae0` no corresponde a `kptr low16` (`0x2a20`), pero sí a `slot05 0x2513ae0` en `FD[5]` — posible heap header `low16 0x3ae0` coincidencia.
+
+### L5. Próximo paso recomendado (sin fix especulativo)
+
+1. **Corregir K:** `DBG_*` first-write-wins + añadir `DBG_SS/DBG_DS` (audit K incluía `SS/DS`, implementación actual solo `GS`), fijar `FINAL_IRETQ` para no sobrescribir tick faulting. Un solo `neodev run` volverá a capturar `DBG_CS/SS` vs `err`.
+2. **QEMU watchpoint** `0x24772d0` + `walk_ptes_4k(0x24772d0)` + `info tlb` para distinguir H2 (off-by-8) vs H3 (DMA/corruption).
+3. No refactorizar `init_ring0_frame`/`schedule`/runqueue hasta `DBG_*` preciso.
+
+---
+
+*Auditoría realizada como ingeniero de kernel ante crash “imposible”. Sin asumir hipótesis previa. Si la instrumentación está equivocada, este informe lo señala (D, K, L). Si aparece bug más grave que el GPF, se incluye (B1-B3).*

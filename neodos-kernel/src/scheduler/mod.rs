@@ -214,13 +214,15 @@ fn init_ring0_frame(kernel_stack_top: u64, entry: u64) -> u64 {
     let mut sp = kernel_stack_top & !0xF;
     unsafe {
         let stack = sp as *mut u64;
-        stack.offset(-1).write(0x202);
-        stack.offset(-2).write(0x08);
-        stack.offset(-3).write(entry);
-        for j in 4..19 {
+        stack.offset(-1).write(0x10); // SS (kernel_data)
+        stack.offset(-2).write(kernel_stack_top); // RSP = ks_top (5-field IRETQ)
+        stack.offset(-3).write(0x202); // RFLAGS
+        stack.offset(-4).write(0x08); // CS
+        stack.offset(-5).write(entry); // RIP
+        for j in 6..21 {
             stack.offset(-(j as isize)).write(0);
         }
-        sp -= 18 * 8;
+        sp -= 20 * 8;
     }
     sp
 }

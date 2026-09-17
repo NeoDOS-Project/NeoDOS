@@ -161,12 +161,14 @@ pub unsafe fn raw_ltr(sel: u16) {
 }
 
 #[inline]
-pub unsafe fn raw_set_segment_regs(ds: u16, _es: u16, _ss: u16) {
+pub unsafe fn raw_set_segment_regs(ds: u16, es: u16, ss: u16) {
     asm!(
         "mov ds, {0:x}",
-        "mov es, {0:x}",
-        "mov ss, {0:x}",
+        "mov es, {1:x}",
+        "mov ss, {2:x}",
         in(reg) ds,
+        in(reg) es,
+        in(reg) ss,
     );
 }
 
