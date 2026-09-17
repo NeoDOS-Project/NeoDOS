@@ -144,11 +144,14 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
     let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
 
     // 2. Reserve PID/TID and pre-allocate Vec slots atomically
+    // Do NOT increment next_pid/next_tid here — add_ring3_process_with_stack
+    // will allocate them. We only peek and ensure slots, otherwise we
+    // double-allocate and Ob native_id (pid/tid) drifts from EPROCESS pid.
     let (pid, tid) = crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.ensure_slots();
-        let p = s.next_pid; s.next_pid += 1;
-        let t = s.next_tid; s.next_tid += 1;
+        let p = s.next_pid;
+        let t = s.next_tid;
         (p, t)
     });
 
@@ -166,8 +169,12 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         Err(_) => None,
     };
 
+    crate::serial_println!("[SPAWN] pid={} tid={} obj_id pid={} ob_id pid={}", pid, tid, pid, pid);
     let tname = alloc::format!("kthread/{}", tid);
     let thread_obj_id = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None).ok();
+    if let Some(id) = obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
+    if let Some(id) = ob_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] ob_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
+    if let Some(id) = thread_obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] thread_obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
 
     // 4. Inherit parent token
     let parent_token = crate::hal::without_interrupts(|| {

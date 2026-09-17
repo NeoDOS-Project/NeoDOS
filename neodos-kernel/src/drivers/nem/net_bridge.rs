@@ -5,6 +5,11 @@ use crate::net::types::{MacAddr, Ipv4Addr};
 use crate::log::LogSubsys;
 static NEXT_NEM_NIC_ID: AtomicU32 = AtomicU32::new(0x8000_0000);
 
+fn valid_callback_address(addr: usize) -> bool {
+    (0x0010_0000..0x1000_0000).contains(&addr)
+        || (0x3000_0000..0x3100_0000).contains(&addr)
+}
+
 #[repr(C)]
 pub struct NemNetworkDevice {
     device_id: u32,
@@ -34,12 +39,18 @@ impl NetworkInterface for NemNetworkDevice {
     fn device_id(&self) -> u16 { self.device_pci_id }
 
     fn send_packet(&mut self, packet: &[u8]) -> Result<(), ()> {
+        if !valid_callback_address(self.send_fn as usize) {
+            return Err(());
+        }
         let len = packet.len().min(2048) as u32;
         let rc = unsafe { (self.send_fn)(self.device_id, packet.as_ptr(), len) };
         if rc == 0 { Ok(()) } else { Err(()) }
     }
 
     fn poll_packet(&mut self, buf: &mut [u8]) -> Option<usize> {
+        if !valid_callback_address(self.poll_fn as usize) {
+            return None;
+        }
         let mut len: u32 = buf.len() as u32;
         let rc = unsafe { (self.poll_fn)(self.device_id, buf.as_mut_ptr(), &mut len as *mut u32) };
         if rc == 0 && len > 0 { Some(len as usize) } else { None }
@@ -93,6 +104,10 @@ pub unsafe extern "C" fn hst_register_network_device(
         send_fn,
         poll_fn,
     };
+
+    crate::serial_println!(
+        "[NET] NEM callbacks: send=0x{:x} poll=0x{:x}",
+        send_fn as usize, poll_fn as usize);
 
     match nic_register(Box::new(nic)) {
         Some(nic_id) => {

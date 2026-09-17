@@ -443,6 +443,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 Some(id) => id,
                 None => return err_to_u64(SyscallError::Io),
             };
+            {
+                let obj = crate::object::ob_lookup(actual_ob_id);
+                crate::serial_println!("[OB_CREATE] child_pid={} ob_id={} obj_type={:?} native_id={}", child_pid, actual_ob_id, obj.map(|o| o.obj_type), obj.map(|o| o.native_id).unwrap_or(9999));
+            }
 
             if crate::object::ob_open_object(actual_ob_id, 0).is_err() {
                 return err_to_u64(SyscallError::Io);
@@ -459,7 +463,10 @@ pub(super) fn handler_ob_create(regs: super::Registers) -> u64 {
                 }
             });
             match fd {
-                Some(fd) => fd as u64,
+                Some(fd) => {
+                    crate::serial_println!("[OB_CREATE] fd={} for child_pid={} ob_id={}", fd, child_pid, actual_ob_id);
+                    fd as u64
+                },
                 None => {
                     let _ = crate::object::ob_close_object(actual_ob_id);
                     err_to_u64(SyscallError::NoMem)
@@ -3232,8 +3239,10 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
             crate::hal::without_interrupts(|| {
                 let s = crate::scheduler::current_scheduler();
                 let mut lock = s.lock();
-                let already_dead = lock.find_eprocess(pid).is_none_or(|ep| ep.thread_count == 0);
-                if already_dead {
+                    crate::serial_println!("[OB_WAIT] entry object_type={:?} native_id={} pid_param={}", obj.obj_type, obj.native_id, pid);
+                    let already_dead = lock.find_eprocess(pid).is_none_or(|ep| ep.thread_count == 0);
+                    crate::serial_println!("[OB_WAIT] pid={} already_dead={} thread_count={} found={}", pid, already_dead, lock.find_eprocess(pid).map(|ep| ep.thread_count).unwrap_or(999), lock.find_eprocess(pid).is_some());
+                    if already_dead {
                     drop(lock);
                     crate::scheduler::cleanup_terminated_process(pid);
                 } else {
