@@ -303,9 +303,9 @@ These extend the existing class tables in `src/syscall/ob.rs`.
 | `libneodos/src/syscall.rs` | Add `sys_reboot()`, `power_get_active_plan()`, `power_set_active_plan()`, `power_shutdown()` wrappers |
 | `userbin/neoshell/` | Add built-in `REBOOT`, update `POWEROFF` to use Power Manager |
 | `src/cm/mod.rs` | Ensure `cm_ensure_default_values()` creates `\Registry\Machine\System\Power\*` keys |
-| `docs/syscalls.md` | Document new info classes |
-| `docs/objects.md` | Document new ObType and namespace entry |
-| `docs/power-manager.md` | This document |
+| `docs/kernel/syscalls.md` | Document new info classes |
+| `docs/kernel/objects.md` | Document new ObType and namespace entry |
+| `docs/services/power-manager.md` | This document |
 
 ### 3.7 Power coordination flow (shutdown example)
 
@@ -444,7 +444,7 @@ pub struct PowerSystemStatus {
 | **NeoCfg** | Low | Future: power plan management UI |
 | **Watchdog** | Low | Update `watchdog_reset_system()` to use `PowerManager::reboot()` |
 | **Crash dump** | Low | Ensure crash dump path still works before `poweroff()` |
-| **Documentation** | Medium | Update `docs/syscalls.md`, `docs/objects.md`, create `docs/power-manager.md` |
+| **Documentation** | Medium | Update `docs/kernel/syscalls.md`, `docs/kernel/objects.md`, create `docs/services/power-manager.md` |
 
 ---
 
@@ -694,11 +694,11 @@ pub extern "C" fn poweroff() -> !;  // Updated to try ACPI S5 first
 
 ### Step 11: Documentation (0.5 day)
 
-**Files:** `docs/syscalls.md`, `docs/objects.md`, `docs/eventbus.md`, `docs/power-manager.md`
+**Files:** `docs/kernel/syscalls.md`, `docs/kernel/objects.md`, `docs/kernel/ipc.md`, `docs/services/power-manager.md`
 
-1. Document new ObQueryInfoClass/ObSetInfoClass variants in `docs/syscalls.md`
-2. Document ObType::PowerManager in `docs/objects.md`
-3. Document new event types in `docs/eventbus.md`
+1. Document new ObQueryInfoClass/ObSetInfoClass variants in `docs/kernel/syscalls.md`
+2. Document ObType::PowerManager in `docs/kernel/objects.md`
+3. Document new event types in `docs/kernel/ipc.md`
 4. Document Power Manager architecture in this file
 
 ### Total estimated effort: ~12 days

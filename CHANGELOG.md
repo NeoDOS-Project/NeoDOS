@@ -57,6 +57,20 @@
 - **Service fallback**: New `register_default_services()` registers built-in NeoInit service when registry is empty. `sm_init()` calls it when `sm_reg_load_all()` returns 0. `spawn_process()` returns `Result` instead of panicking.
 - **Tests added**: `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`, `boot_register_default_services` (665 total, up from 625).
 
+### Added (Scheduler P0 — runqueue correctness, v0.50.2+ unreleased)
+
+- **Scheduler P0 audit fixes** (`docs/scheduler_audit.md`, `fix/p0-scheduler-runqueue-correctness`): 6 invariant violations addressed. See git log `fix(sched)` series:
+  - **P0-1/P0-2**: New `make_thread_ready()` centralizes Ready transition + runqueue enqueue; fixes direct `Blocked→Ready` without enqueue.
+  - **P0-3**: Deduplication + stale-entry elimination for runqueue: `runqueue_enqueue` checks `contains()` (no duplicates), `remove` before `Running` scan, `eliminate_stale_entries()` on context switch.
+  - **P0-4**: Documented as by-design (work-stealing migrates ownership without extra notification).
+  - **P0-5/6**: Resolved via P0-1 and VT matching limitation documented.
+- **Timer diagnostics** (`src/arch/x64/idt.rs`, `src/trace.rs`): lock-free timer diagnostic ring buffer (`timer_diag`) + frame state tracking for scheduler debugging; dumped at `POST_NETD` with 500-tick delay in `main.rs`.
+- **Graphify integration** (`graphify-out/`, `.opencode/skills/graphify/`): Graphify MCP skill/plugin, forensic dbg capture, knowledge-graph artifacts (`graph.json`, `graph.html`, `GRAPH_REPORT.md`) for AI agents.
+- **Scheduler preemption hardening**: `fix: validate kernel stack top` prevents triple faults on context switch; `fix: scheduler preemption for kernel threads` + `sched_debug` trace events (`b6c875e`..`5e756e1`).
+- **AHCI stability** (`fix: AHCI stability with port reset/retry, timer Ring0 preemption guard, lock diag infrastructure`): port reset/retry, Ring 0 preemption guard, `LOCK_DIAG` infrastructure.
+- **Keyboard dispatch single-path** (`fix/keyboard-investigation` → develop): prevent duplicate keyboard dispatch — IRQ now single-path via Event Bus/direct dispatch (`e0f1b73`).
+- **Kernel thread IRETQ fix**: `fix(scheduler): complete ring0 IRETQ frame to 5 fields (RIP/CS/RFLAGS/RSP/SS)` (`98439e9`).
+
 ## v0.50.0 — 2026-07-13
 
 ### Added (NXE/NXP Ecosystem)

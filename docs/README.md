@@ -105,6 +105,7 @@
 | [VirtualBox](development/virtualbox.md) | VirtualBox setup guide |
 | [Configuration](development/configuration.md) | Build configuration options |
 | [Testing](development/testing.md) | Test suites, how to add tests |
+| [Contributing](development/contributing.md) | Contribution guide, workflow, conventions |
 | [Triple Fault Audit](development/triple-fault-audit.md) | Diagnóstico técnico y auditoría del reinicio por Triple Fault |
 | [Graphify](development/graphify.md) | Herramienta auxiliar: grafo de conocimiento para agentes IA (workspace, crates, syscalls, drivers) |
 
@@ -126,7 +127,10 @@
 |----------|-------------|
 | [History](reference/history.md) | Project history |
 | [Audit Report](reference/audit-report.md) | Previous architecture audit |
+| [Glossary](reference/glossary.md) | Terminology and acronyms |
 | [Package Manager Architecture](reference/package-manager-arch.md) | Package manager design |
+| [Boot Audit — NeoShell](boot_audit_neoshell.md) | Boot/NeoShell audit |
+| [Scheduler Audit](scheduler_audit.md) | Scheduler P0 audit — runqueue invariants |
 
 ## Project Roadmap
 

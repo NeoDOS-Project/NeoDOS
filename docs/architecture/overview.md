@@ -30,31 +30,39 @@ NeoDOS Kernel (x86_64-unknown-none)
   - PS/2 controller init
   - physical memory init (UEFI mem map → buddy frame allocator)
   - watchdog init (A3.3)
-  - kernel heap allocator init (slab allocator + linked_list_allocator fallback)
-  - PHASE 2.759: Object Manager (Ob) init
-  - PHASE 2.765: Power Manager init (initial Ob object)
-  - PHASE 2.77: Security subsystem init (default tokens)
-  - SMP: INIT-SIPI-SIPI + per-CPU KPRCB + IPI infrastructure (PHASE 2.8)
-  - I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12 (PHASE 2.91)
-  - enable interrupts (STI)
-  - custom page tables (4 GiB identity map + user window + demand-paging heap split)
-  - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback)
-  - ATA boot stub (BootAta) + AHCI probe + NVMe probe
-  - GPT scan → NeoDOS partition → IoStack → block cache → mount NeoDOS FS on C:
-  - FAT32 ESP mount on A:
-  - Input Manager init (VT subsystem, A4.4)
-  - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
-  - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
-  - Driver Manager (PHASE 3.85): escaneo PCI → matching declarativo (manifest.rs) →
-    carga selectiva solo de drivers con hardware detectado (device/ + driver_manager.rs)
-  - NEM bridges + DLL loader (PHASE 3.87): RTC bridge, hot reload, NXL loading
-  - Networking init (PHASE 3.88): ARP cache, \Device\Tcp/\Device\Udp. NICs via NEM drivers
-  - Cm Registry init (PHASE 3.881): mount SYSTEM hive, ensure defaults
-  - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
-  - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
-  - ABI validation + ABI freeze check (PHASE 3.9)
-  - Auto-start services (PHASE 4): start System/Auto services in dependency order
-  - Ring 3 shell (neoshell.nxe via NeoInit, 665 kernel tests + user commands)
+   - kernel heap allocator init (slab allocator + linked_list_allocator fallback)
+   - PHASE 2.759: Object Manager (Ob) init (`object::init_object_manager`)
+   - PHASE 2.7595: Timer Manager init (64 slots, `object::timer::init_timer_manager`)
+   - PHASE 2.76: Ob namespace init — root `\` + standard dirs (`\Device`, `\Global`, `\Registry`, etc.) + `\Global\Info\*` virtual objects
+   - PHASE 2.765: Power Manager init (initial Ob object `\System\PowerManager`)
+   - PHASE 2.77: Security subsystem init (default tokens)
+   - SMP: INIT-SIPI-SIPI + per-CPU KPRCB + IPI infrastructure (PHASE 2.8 + 2.9)
+   - I/O APIC: detect from MADT, disable PIC, route ISA IRQs 0/1/4/12 (PHASE 2.91)
+   - enable interrupts (STI)
+   - custom page tables (4 GiB identity map + user window + demand-paging heap/mmap split)
+   - heap/mmap demand-paging split (PHASE 3.0): 16×2 MB huge pages → 4 KB PTEs
+   - TEB page mapping at 0x7000 USER_ACCESSIBLE for SEH (PHASE 3.1)
+   - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback) (PHASE 3.2)
+   - ATA boot stub (BootAta) + AHCI probe + NVMe probe + VirtIO probe (PHASE 3.3)
+   - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3.4)
+   - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3.4b)
+   - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3.4c)
+   - Input Manager init (VT subsystem, A4.4) (PHASE 3.5)
+   - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
+   - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
+   - Driver Manager (PHASE 3.85): escaneo PCI → matching declarativo (manifest.rs) →
+     carga selectiva solo de drivers con hardware detectado (device/ + driver_manager.rs)
+   - AHCI port reclaim — BootAhci DMA register fix after NEM AHCI init (PHASE 3.86)
+   - NEM bridges + DLL loader (PHASE 3.87): RTC bridge, hot reload, NXL region + loading
+   - Networking init (PHASE 3.88): ARP cache, \Device\Tcp/\Device\Udp. NICs via NEM drivers
+   - Cm Registry init (PHASE 3.881): mount SYSTEM hive, create \Registry tree
+   - Default registry values (PHASE 3.881b): `ensure_boot_defaults()` + `ensure_language_default()` — NeoInit/Service defaults if hive empty
+   - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
+   - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
+   - ABI validation + ABI freeze check (PHASE 3.9)
+   - Kernel self-tests (665 tests) + netd kthread spawn + benchmarks (PHASE 4)
+   - Auto-start services (PHASE 4): start System/Auto services in dependency order
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 665 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -420,7 +428,7 @@ Fine-grained resource access control for NEM drivers. Each driver inherits a 64-
 
 **Capability escalation:** A SYSTEM driver may request `CAP_ALLOC_PAGE`, `CAP_BLOCK_DEVICE`, or `CAP_MEMORY` via `EVENT_CAP_ESCALATION` (type `0x2000`). The kernel audits and may grant. DEMAND drivers cannot escalate — this is a security boundary.
 
-See `docs/drivers.md` for the complete capability flag table and `docs/hal.md` for primitives.
+See `docs/drivers/overview.md` for the complete capability flag table and `docs/kernel/hal.md` for primitives.
 
 ---
 

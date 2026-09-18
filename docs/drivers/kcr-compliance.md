@@ -2,7 +2,7 @@
 
 **Date**: 2026-05-19  
 **Validator**: Static analysis (source + binary)  
-**Reference**: `docs/HAL_ABI.md`, `src/hal/x64/`
+**Reference**: `docs/kernel/hal.md`, `src/hal/x64/`
 
 ---
 
@@ -97,4 +97,4 @@ All extern "C" functions verified via objdump: args in `%rdi`, `%rsi`, `%rdx`, `
 
 ---
 
-*This document is maintained at `docs/KCR_COMPLIANCE.md`.*
+*This document is maintained at `docs/drivers/kcr-compliance.md`.*

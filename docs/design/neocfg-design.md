@@ -13,16 +13,15 @@
 
 | Subsistema | Estado actual | APIs públicas disponibles | Documento de diseño |
 | --- | --- | --- | --- |
-| **Object Manager** | ✅ Completo (ObType 0–20, RAX 60–66) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/objects.md` |
-| **Registry (Cm)** | ✅ Completo (RAX 67–76, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry.md` |
-| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 77) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/syscalls.md` |
-| **Keyboard layout** | ✅ Completo (ObInfoClass::KeyboardLayout=14, ObSetInfoClass::KeyboardLayout=5) | `ob_query_info(KeyboardLayout)`, `ob_set_info(KeyboardLayout)` | `docs/objects.md` |
-| **System info** (Version, Memory, CPU, DateTime, Drives) | ✅ Completo via `\Global\Info\*` objects | `ob_open` + `ob_query_info` con clases 7–11 | `docs/objects.md` |
-| **Power Manager** | ❌ No implementado (diseño en `docs/power-manager.md`) | Propuesto: ObType::PowerManager=21, info classes 32–34 y 37–42 | `docs/power-manager.md` |
+| **Object Manager** | ✅ Completo (ObType 0–20, RAX 60–66) | `ob_open`, `ob_create`, `ob_query_info`, `ob_set_info`, `ob_enum`, `ob_wait`, `ob_destroy` | `docs/kernel/objects.md` |
+| **Registry (Cm)** | ✅ Completo (RAX 67–76, cell-based hive) | `cm_open_key`, `cm_create_key`, `cm_query_value`, `cm_set_value`, `cm_enum_key`, `cm_enum_value`, `cm_delete_key`, `cm_flush_key` | `docs/registry/registry.md` |
+| **Service Manager** | ✅ Completo (ObType::Service=20, RAX 77) | `sys_ob_service` con START/STOP/RESTART/QUERY_STATUS/SET_CONFIG | `docs/kernel/syscalls.md` |
+| **Keyboard layout** | ✅ Completo (ObInfoClass::KeyboardLayout=14, ObSetInfoClass::KeyboardLayout=5) | `ob_query_info(KeyboardLayout)`, `ob_set_info(KeyboardLayout)` | `docs/kernel/objects.md` |
+| **System info** (Version, Memory, CPU, DateTime, Drives) | ✅ Completo via `\Global\Info\*` objects | `ob_open` + `ob_query_info` con clases 7–11 | `docs/kernel/objects.md` |
+| **Power Manager** | ❌ No implementado (diseño en `docs/services/power-manager.md`) | Propuesto: ObType::PowerManager=21, info classes 32–34 y 37–42 | `docs/services/power-manager.md` |
 | **i18n/Locale** | ❌ No implementado (diseño en `docs/design/i18n-design.md`) | Propuesto: `i18n.rs` en libneodos, formato NLT, fallback chain | `docs/design/i18n-design.md` |
-| **Network** | ❌ Parcial (TCP/UDP sockets via ObType::Socket=18, info classes 17–20, 23) | `ob_socket_*` wrappers, `ipconfig.nxe`, `dhcpd.nxe` | — |
-| **Users/Groups/Security** | ❌ Parcial (SAM database, Token/ACL, pero sin sesiones ni grupos completos) | USR-P1a+1b+1c+1d en roadmap v0.51 | `docs/security.md` |
-| **Storage/NeoFS** | ✅ Parcial (NeoFS v2, FSCK, volume label) | `ob_query_info(VolumeLabel=16)`, `ob_set_info(SetVolumeLabel=9)`, `sys_fsck` | `docs/filesystem.md` |
+| **Users/Groups/Security** | ❌ Parcial (SAM database, Token/ACL, pero sin sesiones ni grupos completos) | USR-P1a+1b+1c+1d en roadmap v0.51 | `docs/security/security.md` |
+| **Storage/NeoFS** | ✅ Parcial (NeoFS v2, FSCK, volume label) | `ob_query_info(VolumeLabel=16)`, `ob_set_info(SetVolumeLabel=9)`, `sys_fsck` | `docs/filesystem/overview.md` |
 
 ### 1.2 Patrón de aplicaciones Ring 3 existentes
 
@@ -214,7 +213,7 @@ tr!("system.services"):       4  (2 running)
 
 ### 3.7 Módulo Power
 
-Dependencia: **Power Manager implementado** (PM-PHASE1+2 de `docs/power-manager.md`).
+Dependencia: **Power Manager implementado** (PM-PHASE1+2 de `docs/services/power-manager.md`).
 
 ```text
 ===== tr!("module.power.title") =====
@@ -525,7 +524,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 **Rechazada porque**:
 
 1. **NeoDOS no tiene subsistema gráfico**. No hay ventanas, widgets, ni event loop gráfico. Implementar GUI desde cero para NeoCfg sería desproporcionado.
-2. **La filosofía de NeoDOS prioriza interfaz de consola en la serie 0.x** (establecido en `ARCHITECTURAL_VISION.md`).
+2. **La filosofía de NeoDOS prioriza interfaz de consola en la serie 0.x** (establecido en `docs/architecture/vision.md`).
 3. **La capa de presentación es reemplazable**: la arquitectura propuesta separa UI de lógica. La GUI futura reutilizará los módulos de `modules/` y solo reemplazará `ui/`.
 4. **Time-to-market**: una versión de consola se implementa en días; una GUI requeriría meses de infraestructura previa.
 
