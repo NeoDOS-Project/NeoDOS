@@ -1304,28 +1304,20 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     };
 
     if let Some(scancode) = scancode {
-        let event = crate::eventbus::Event {
-            event_id: 0,
-            event_type: crate::eventbus::EVENT_KEYBOARD_INPUT,
-            source: crate::eventbus::SOURCE_HAL,
-            timestamp: 0,
-            device_id: 3,
-            driver_target: 0,
-            data0: scancode as u64,
-            data1: 0,
-            flags: 0,
-        };
-        crate::kbd::event::kbd_event_handler(&event);
+        // Forensic seq correlation: DIRECT seq will be used to tag the queued copy via data1
+        let seq = crate::kbd::event::kbd_event_handler_direct(scancode);
         // Lock-free: push scancode to NeoKBD via Event Bus
         // NeoKBD processes it during dispatch (safe, no lock held).
+        // data1 carries seq for correlation: DISPATCH should log same seq as DIRECT
         let _ = crate::eventbus::EVENT_BUS.push_event(
             crate::eventbus::EVENT_KEYBOARD_INPUT,
             crate::eventbus::SOURCE_HAL,
             3,
             scancode as u64,
-            0,
+            seq,
             0,
         );
+        crate::serial_println!("[KBD_IRQ] seq={} scancode=0x{:02x} queued_to_bus", seq, scancode);
     }
     crate::hal::ack_irq(33);
 }
