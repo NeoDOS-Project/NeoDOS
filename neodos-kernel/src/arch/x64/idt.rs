@@ -1304,28 +1304,15 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     };
 
     if let Some(scancode) = scancode {
-        let event = crate::eventbus::Event {
-            event_id: 0,
-            event_type: crate::eventbus::EVENT_KEYBOARD_INPUT,
-            source: crate::eventbus::SOURCE_HAL,
-            timestamp: 0,
-            device_id: 3,
-            driver_target: 0,
-            data0: scancode as u64,
-            data1: 0,
-            flags: 0,
-        };
-        crate::kbd::event::kbd_event_handler(&event);
-        // Lock-free: push scancode to NeoKBD via Event Bus
-        // NeoKBD processes it during dispatch (safe, no lock held).
-        let _ = crate::eventbus::EVENT_BUS.push_event(
-            crate::eventbus::EVENT_KEYBOARD_INPUT,
-            crate::eventbus::SOURCE_HAL,
-            3,
-            scancode as u64,
-            0,
-            0,
-        );
+        // FIX v2: single-path direct — process synchronously in IRQ.
+        // Previous dual-path (direct + queued) caused double-char.
+        // Queued-only (push_event) left keyboard dead because dispatch_pending
+        // is not guaranteed to run before the blocked READB waiter is checked
+        // (idle dispatch delayed by IDLE_TIME_SLICE / scheduler state).
+        // Direct path does push_byte+wake_blocked_readers immediately, matching
+        // pre-P0 working behavior. Keep one log for forensics.
+        let seq = crate::kbd::event::kbd_event_handler_direct(scancode);
+        crate::serial_println!("[KBD_IRQ] seq={} scancode=0x{:02x} direct-only", seq, scancode);
     }
     crate::hal::ack_irq(33);
 }
