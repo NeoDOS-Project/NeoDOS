@@ -30,13 +30,20 @@ fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
     }
 }
 
-/// Direct IRQ path — called synchronously from keyboard_handler (IRQ 33).
+/// Direct IRQ path — deprecated after fix (kept for forensics).
+/// Previously called synchronously from keyboard_handler (IRQ 33) — now unused.
 /// Increments DIRECT counter and uses shared SEQ to correlate with queued copy.
+#[allow(dead_code)]
 pub fn kbd_event_handler_direct(scancode: u8) -> u64 {
     let seq = KBD_SEQ.fetch_add(1, Ordering::Relaxed);
     KBD_DIRECT_CNT.fetch_add(1, Ordering::Relaxed);
     kbd_process_internal(scancode, "IRQ_DIRECT", seq);
     seq
+}
+
+/// Allocate next seq for IRQ without direct processing (single-path fix).
+pub fn kbd_next_seq() -> u64 {
+    KBD_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
 pub fn kbd_event_handler(event: &Event) {
