@@ -1035,13 +1035,24 @@ impl Scheduler {
         let legacy_magic = pid | 0x8000_0000;
         // KWait ChildExit magic
         let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
+        crate::serial_println!("[WAKE_WAITERS] pid={} legacy=0x{:x} kwait=0x{:x}", pid, legacy_magic, kwait_magic);
         for k in self.kthreads.iter_mut().flatten() {
+            crate::serial_println!("[WAKE_WAITERS] check tid={} pid={} state={} waiting_for={:?} cpu={}", k.tid, k.pid, k.state.to_u8(), k.waiting_for, k.cpu);
             if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
                 if matches!(k.state, ThreadState::Blocked { .. }) {
+                    crate::serial_println!("[WAKE_WAITERS] wake tid={} pid={} magic=0x{:x} cpu={}", k.tid, k.pid, k.waiting_for.unwrap_or(0), k.cpu);
                     k.waiting_for = None;
                     Self::make_thread_ready(k);
+                    unsafe {
+                        let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(k.cpu as usize);
+                        crate::serial_println!("[WAKE_WAITERS] after enqueue tid={} cpu={} rq_len={}", k.tid, k.cpu, rq.len());
+                    }
                 }
             }
+        }
+        unsafe {
+            let cur_rq = crate::arch::x64::cpu_local::this_cpu_run_queue_mut();
+            crate::serial_println!("[WAKE_WAITERS] done cur_cpu_rq_len={}", cur_rq.len());
         }
     }
 
@@ -1329,6 +1340,22 @@ impl Scheduler {
         ktrace!(LogSubsys::Sched, "schedule entry");
         // Count every schedule decision, not just global-scan fallbacks.
         self.schedule_count += 1;
+        crate::serial_println!("[SCHED] CURRENT pid={} tid={} state={}", self.current_pid(), self.current_tid, self.find_kthread(self.current_tid).map(|k| k.state.to_u8()).unwrap_or(255));
+        unsafe {
+            let rq = crate::arch::x64::cpu_local::this_cpu_run_queue_mut();
+            crate::serial_println!("[SCHED] RUNQUEUE len={} head={} tail={}", rq.len(), rq.head_idx, rq.tail_idx);
+            for i in 0..rq.len() {
+                let idx = (rq.head_idx as usize + i as usize) % rq.entries.len();
+                let tid = rq.entries[idx];
+                if let Some(k) = self.find_kthread(tid) {
+                    let cs = if k.rsp != 0 { unsafe { *((k.rsp + 15*8 + 8) as *const u64) } } else { 0 };
+                    let rip = if k.rsp != 0 { unsafe { *((k.rsp + 15*8) as *const u64) } } else { 0 };
+                    crate::serial_println!("[SCHED] CANDIDATE pid={} tid={} state={} prio={} cs=0x{:x} rip=0x{:x} rsp=0x{:x}", k.pid, k.tid, k.state.to_u8(), k.priority, cs, rip, k.rsp);
+                } else {
+                    crate::serial_println!("[SCHED] CANDIDATE tid={} not found", tid);
+                }
+            }
+        }
 
         // 1. Try per-CPU local run queue (fast path)
         if let Some(tid) = Self::try_dequeue_local() {

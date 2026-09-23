@@ -29,6 +29,13 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
         let pid = scheduler.current_pid();
+        crate::serial_println!("[EXIT] ENTER pid={} tid={} code={}", pid, tid, code);
+        if let Some(k) = scheduler.find_kthread(tid) {
+            crate::serial_println!("[EXIT] current state={} waiting_for={:?}", k.state.to_u8(), k.waiting_for);
+        }
+        if let Some(ep) = scheduler.current_eprocess() {
+            crate::serial_println!("[EXIT] eproc pid={} parent_pid={} thread_count={}", ep.pid, ep.parent_pid, ep.thread_count);
+        }
         if pid == 2 {
             crate::serial_println!("[EXIT] NeoInit (pid={} tid={}) exit code={}", pid, tid, code);
         }
@@ -91,15 +98,23 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                 }
             }
             kdebug!(LogSubsys::Syscall, "checking: pid={} thread_count", pid);
+            crate::serial_println!("[EXIT] wake_check pid={} tid={}", pid, tid);
             if pid > 0 {
                 let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
+                let mut woke = 0;
                 for k in scheduler.kthreads.iter_mut().flatten() {
+                    let is_blocked = matches!(k.state, ThreadState::Blocked { .. });
+                    let waiting = k.waiting_for;
+                    crate::serial_println!("[EXIT] scan k tid={} pid={} state={} waiting_for={:?} ce_magic=0x{:x} blocked={}", k.tid, k.pid, k.state.to_u8(), waiting, ce_magic, is_blocked);
                     if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                        crate::serial_println!("[EXIT] wake parent tid={} pid={}", k.tid, k.pid);
                         k.waiting_for = None;
                         scheduler::Scheduler::make_thread_ready(k);
                         set_need_resched();
+                        woke += 1;
                     }
                 }
+                crate::serial_println!("[EXIT] wake done pid={} woke={}", pid, woke);
             }
             if pid > 0 {
                 let eproc = scheduler.current_eprocess();
@@ -130,6 +145,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
                     pid_ptr,
                 );
             }
+            crate::serial_println!("[EXIT] TERMINATE pid={} tid={} done", pid, tid);
         }
         kdebug!(LogSubsys::Syscall, "done (after if tid > 0 block)");
     });

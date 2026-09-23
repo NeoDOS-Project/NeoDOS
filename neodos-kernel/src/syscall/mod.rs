@@ -324,6 +324,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
 
         let tid = scheduler.current_tid;
         let pid = scheduler.current_pid();
+        crate::serial_println!("[RESCHED] ENTER current_pid={} current_tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
         kdebug!(LogSubsys::Syscall,
             "[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
         crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
@@ -339,6 +340,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         }
 
         let next = scheduler.schedule();
+        if next.is_null() {
+            crate::serial_println!("[RESCHED] NEXT NONE current_pid={} current_tid={}", pid, tid);
+            return current_rsp;
+        }
         let next_ks_top = unsafe { (*next).kernel_stack_top };
         let next_rsp = unsafe { (*next).rsp };
         if next_rsp == 0 {
@@ -351,6 +356,8 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let (next_rip, next_cs, next_rflags) = unsafe {
             (*next_frame.add(0), *next_frame.add(1), *next_frame.add(2))
         };
+        let next_state = unsafe { (*next).state.to_u8() };
+        crate::serial_println!("[RESCHED] NEXT pid={} tid={} state={} cs=0x{:x} rip=0x{:x} rsp=0x{:x}", next_pid, next_tid, next_state, next_cs, next_rip, next_rsp);
 
         // A syscall entered from Ring 3 must return to a user frame.  The
         // normal scheduler also contains kernel threads (notably netd), and
@@ -363,16 +370,41 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         // current thread is Blocked, do NOT restore it to Running; instead
         // search for a Ring3 Ready thread (NeoShell) or fall back to idle.
         if next_cs & 3 != 3 {
-            let current_state_dbg = scheduler.find_kthread(tid).map(|k| k.state.to_u8()).unwrap_or(255);
+            // ── Ring0 filter forensic instrumentation (minimal) ──
+            let current_state_val = scheduler.find_kthread(tid).map(|k| k.state.to_u8()).unwrap_or(255);
             let current_is_blocked = scheduler.find_kthread(tid)
                 .map(|k| matches!(k.state, ThreadState::Blocked { .. }))
                 .unwrap_or(false);
-            crate::serial_println!("[SYSCALL_RESCHED] ring0 filter: cur tid={} state={} blocked={} next tid={} cs=0x{:x}", tid, current_state_dbg, current_is_blocked, next_tid, next_cs);
+            let current_is_terminated = scheduler.find_kthread(tid)
+                .map(|k| k.state == ThreadState::Terminated)
+                .unwrap_or(false);
+            let next_is_ring0 = (next_cs & 3) != 3;
+            let next_state_val = unsafe { (*next).state.to_u8() };
+            let current_cs_val: u64 = if current_rsp != 0 {
+                // current_rsp points to saved interrupt frame (15*8 = GPRs, +0 RIP, +8 CS)
+                unsafe { *((current_rsp + 15*8 + 8) as *const u64) }
+            } else {
+                scheduler.find_kthread(tid)
+                    .and_then(|k| if k.rsp != 0 { Some(unsafe { *((k.rsp + 15*8 + 8) as *const u64) }) } else { None })
+                    .unwrap_or(0)
+            };
+            crate::serial_println!("[SCHED_RING0] current pid={} tid={} state={} cs=0x{:x}", pid, tid, current_state_val, current_cs_val);
+            crate::serial_println!("[SCHED_RING0] next pid={} tid={} state={} cs=0x{:x}", next_pid, next_tid, next_state_val, next_cs);
+            crate::serial_println!("[SCHED_RING0] current_is_blocked={}", current_is_blocked);
+            crate::serial_println!("[SCHED_RING0] current_is_terminated={}", current_is_terminated);
+            crate::serial_println!("[SCHED_RING0] next_is_ring0={}", next_is_ring0);
+            crate::serial_println!("[SYSCALL_RESCHED] ring0 filter: cur tid={} state={} blocked={} terminated={} next tid={} cs=0x{:x}", tid, current_state_val, current_is_blocked, current_is_terminated, next_tid, next_cs);
             unsafe {
                 (*next).state = ThreadState::Ready;
                 scheduler::Scheduler::enqueue_to_cpu_run_queue(&*next);
             }
-            if !current_is_blocked {
+            crate::serial_println!("[SCHED_RING0] REJECT_RING0 next pid={} tid={} cs=0x{:x}", next_pid, next_tid, next_cs);
+            // ── Minimal fix: TERMINATED has precedence over KEEP_CURRENT ──
+            if current_is_terminated {
+                crate::serial_println!("[SCHED_RING0] ACTION=CURRENT_TERMINATED");
+                // Fall through to alternative search / idle — never KEEP_CURRENT
+            } else if !current_is_blocked {
+                crate::serial_println!("[SCHED_RING0] ACTION=KEEP_CURRENT");
                 let old_ks_top = scheduler.find_kthread(tid)
                     .map(|k| k.kernel_stack_top)
                     .unwrap_or(next_ks_top);
@@ -386,7 +418,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     next_pid, next_tid, next_cs, pid, tid);
                 return current_rsp;
             } else {
-                // Current is Blocked — keep it Blocked, select next eligible Ring3 Ready thread.
+                crate::serial_println!("[SCHED_RING0] ACTION=BLOCKED_FALLBACK");
+            }
+            // Unified fallback for BLOCKED and TERMINATED: search Ring3 Ready, else idle.
+            // This reuses the existing idle mechanism (no new idle design).
+            {
                 let mut chosen_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                 let mut chosen_rsp = 0u64;
                 let mut chosen_ks_top = 0u64;
@@ -423,18 +459,23 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                         crate::arch::x64::cpu_local::this_cpu_set_current_pid(chosen_pid);
                         crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                     }
+                    if current_is_terminated {
+                        crate::serial_println!("[SCHED_RING0] ACTION=SELECT_ALTERNATIVE (from TERMINATED) -> pid={} tid={}", chosen_pid, chosen_tid);
+                    } else {
+                        crate::serial_println!("[SCHED_RING0] ACTION=SELECT_ALTERNATIVE -> pid={} tid={}", chosen_pid, chosen_tid);
+                    }
                     crate::serial_println!(
-                        "[SYSCALL_RESCHED] Blocked keep; skip ring0 tid={} -> Ring3 target pid={} tid={} cs=0x1b",
+                        "[SYSCALL_RESCHED] Terminated/Blocked keep; skip ring0 tid={} -> Ring3 target pid={} tid={} cs=0x1b",
                         next_tid, chosen_pid, chosen_tid);
                     unsafe {
                         let frame = (chosen_rsp + 15 * 8) as *const u64;
                         let rip = *frame.add(0);
                         let cs = *frame.add(1);
                         kdebug!(LogSubsys::Syscall,
-                            "[SYSCALL_RESCHED] after (blocked) old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                            "[SYSCALL_RESCHED] after (blocked/terminated) old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
                             pid, tid, chosen_pid, chosen_tid, chosen_rsp, rip, cs);
                         crate::serial_println!(
-                            "[SYSCALL_RESCHED] after (blocked) old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                            "[SYSCALL_RESCHED] after (blocked/terminated) old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
                             pid, tid, chosen_pid, chosen_tid, chosen_rsp, rip, cs);
                         crate::serial_println!(
                             "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x}",
@@ -443,7 +484,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     crate::trace_cswitch!(tid as u64, chosen_tid as u64);
                     return chosen_rsp;
                 } else {
-                    // No Ring3 Ready — keep Blocked and switch to idle to avoid premature return 0 to usermode.
+                    // No Ring3 Ready — switch to idle (existing mechanism, reused verbatim).
                     let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                     for k_opt in scheduler.kthreads.iter_mut() {
                         if let Some(k) = k_opt {
@@ -464,14 +505,19 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                                 crate::arch::x64::cpu_local::this_cpu_set_current_thread(idle_ptr);
                                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*idle_ptr).pid);
                                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+                                crate::serial_println!("[SCHED_RING0] ACTION=IDLE");
                                 crate::serial_println!(
-                                    "[SYSCALL_RESCHED] Blocked keep no Ring3; switch to idle tid=1 (prev tid={})",
+                                    "[SYSCALL_RESCHED] Terminated/Blocked keep no Ring3; switch to idle tid=1 (prev tid={})",
                                     tid);
                                 return idle.rsp;
                             }
                         }
                     }
-                    panic!("[SYSCALL_RESCHED] Blocked tid={} has no Ring3 target and idle unavailable", tid);
+                    if current_is_terminated {
+                        panic!("[SYSCALL_RESCHED] Terminated tid={} has no Ring3 target and idle unavailable", tid);
+                    } else {
+                        panic!("[SYSCALL_RESCHED] Blocked tid={} has no Ring3 target and idle unavailable", tid);
+                    }
                 }
             }
         }
