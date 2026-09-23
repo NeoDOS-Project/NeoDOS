@@ -70,7 +70,7 @@ impl CpuRunQueue {
         if self.count as usize >= self.entries.len() {
             return false;
         }
-        self.entries[self.tail_idx as usize] = tid;
+        self.entries[(self.tail_idx as usize) % self.entries.len()] = tid;
         self.tail_idx = self.tail_idx.wrapping_add(1);
         self.count += 1;
         true
@@ -81,7 +81,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             return None;
         }
-        let tid = self.entries[self.head_idx as usize];
+        let tid = self.entries[(self.head_idx as usize) % self.entries.len()];
         self.head_idx = self.head_idx.wrapping_add(1);
         self.count -= 1;
         Some(tid)
@@ -586,7 +586,37 @@ pub unsafe fn this_cpu_inc_timer_tick_count() {
 /// (except during bootstrap when BSP initializes AP's KPRCB).
 #[inline(always)]
 pub unsafe fn this_cpu_run_queue_mut() -> &'static mut CpuRunQueue {
-    let kprcb_addr = gs_read_u64(0); // GS base points to KPRCB start
+    // FIX GS/KPRCB: GS_BASE holds KPRCB address, GS:0 holds cpu_id.
+    // Previous code used gs_read_u64(0) which reads cpu_id|apic_id, not base,
+    // causing this_cpu_run_queue to point to 0x18 and appear empty.
+    // Correct is to read the GS base MSR.
+    let kprcb_addr = crate::hal::safe::GsBase::read();
+    // Fallback for very early boot before GS is programmed (kprcb_addr==0)
+    let kprcb_addr = if kprcb_addr == 0 {
+        let cpu = unsafe { this_cpu_id() } as usize;
+        if cpu < MAX_CPUS && KPRCB_PAGES[cpu] != 0 {
+            KPRCB_PAGES[cpu]
+        } else if KPRCB_PAGES[0] != 0 {
+            KPRCB_PAGES[0]
+        } else {
+            0
+        }
+    } else {
+        kprcb_addr
+    };
+    // Forense temporal: validar coherencia entre ambas vistas
+    // (se retirará tras validación)
+    #[cfg(debug_assertions)]
+    {
+        let via_this = kprcb_addr + OFFSET_RUN_QUEUE as u64;
+        let via_table = if (unsafe { this_cpu_id() } as usize) < MAX_CPUS && KPRCB_PAGES[unsafe { this_cpu_id() } as usize] != 0 {
+            KPRCB_PAGES[unsafe { this_cpu_id() } as usize] + OFFSET_RUN_QUEUE as u64
+        } else { 0 };
+        if via_this != via_table && via_table != 0 {
+            // No panic, solo traza para auditoría
+            crate::serial_println!("[GS] cpu={} gs_base=0x{:x} gs_slot0=0x{:x} kprcb_expected=0x{:x} kprcb_via_this_cpu=0x{:x}", unsafe { this_cpu_id() }, kprcb_addr, unsafe { gs_read_u64(0) }, via_table, via_this);
+        }
+    }
     let rq_ptr = (kprcb_addr + OFFSET_RUN_QUEUE as u64) as *mut CpuRunQueue;
     &mut *rq_ptr
 }
