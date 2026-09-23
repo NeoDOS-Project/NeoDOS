@@ -103,12 +103,13 @@ impl CpuRunQueue {
         if self.count == 0 {
             return false;
         }
-        let mut idx = self.head_idx as usize;
+        let cap = self.entries.len();
+        let mut idx = (self.head_idx as usize) % cap;
         for _ in 0..self.count {
             if self.entries[idx] == tid {
                 return true;
             }
-            idx = (idx + 1) % self.entries.len();
+            idx = (idx + 1) % cap;
         }
         false
     }
@@ -124,7 +125,7 @@ impl CpuRunQueue {
         // Collect all elements in order (head → tail).
         let cap = self.entries.len();
         let mut buf = [0u32; 64];
-        let mut idx = self.head_idx as usize;
+        let mut idx = (self.head_idx as usize) % cap;
         for i in 0..self.count as usize {
             buf[i] = self.entries[idx];
             idx = (idx + 1) % cap;
