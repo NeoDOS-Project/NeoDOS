@@ -1040,6 +1040,14 @@ impl Scheduler {
                 if matches!(k.state, ThreadState::Blocked { .. }) {
                     k.waiting_for = None;
                     Self::make_thread_ready(k);
+                    #[cfg(feature = "forensic")]
+                    {
+                        let cpu_target = k.cpu;
+                        let cpu_current = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                        let rq_target_len = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu_target as usize).len() };
+                        let rq_current_len = unsafe { crate::arch::x64::cpu_local::this_cpu_run_queue_mut().len() };
+                        crate::serial_println!("[SMPSCHED] ENQUEUE pid={} tid={} cpu_target={} cpu_current={} rq_target_len={} rq_current_len={} equal={}", k.pid, k.tid, cpu_target, cpu_current, rq_target_len, rq_current_len, rq_target_len==rq_current_len);
+                    }
                 }
             }
         }
@@ -1194,8 +1202,22 @@ impl Scheduler {
                 return; // already in runqueue — avoid duplicate
             }
             run_queue.push(k.tid);
+            #[cfg(feature = "forensic")]
+            {
+                if k.pid >= 4 {
+                    let rq_len = run_queue.len();
+                    crate::serial_println!("[SMPSCHED] ENQUEUE_OK pid={} tid={} cpu_target={} rq_len={}", k.pid, k.tid, cpu, rq_len);
+                }
+            }
         }
         // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
+        #[cfg(feature = "forensic")]
+        if cpu != my_cpu && k.pid >= 4 {
+            crate::serial_println!("[SMPSCHED] WAKE_NOTIFY from_cpu={} target_cpu={} pid={} tid={} action=IPI_RESCHEDULE", my_cpu, cpu, k.pid, k.tid);
+        } else if k.pid >= 4 {
+            #[cfg(feature = "forensic")]
+            crate::serial_println!("[SMPSCHED] WAKE_NOTIFY from_cpu={} target_cpu={} pid={} tid={} action=same_cpu_no_ipi", my_cpu, cpu, k.pid, k.tid);
+        }
         if cpu != my_cpu {
             unsafe {
                 let kprcb = crate::arch::x64::cpu_local::kprcb_page(cpu);

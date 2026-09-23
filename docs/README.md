@@ -107,6 +107,8 @@
 | [Testing](development/testing.md) | Test suites, how to add tests |
 | [Contributing](development/contributing.md) | Contribution guide, workflow, conventions |
 | [Triple Fault Audit](development/triple-fault-audit.md) | Diagnóstico técnico y auditoría del reinicio por Triple Fault |
+| [GPF netd Audit — Fase 1](development/audit-gpf-netd-fase1-2026-08-30.md) | Auditoría forense Fase 1: GPF en `iretq` al seleccionar `netd` — verificada instrucción-a-instrucción |
+| [GPF netd Audit — Completa](development/audit-gpf-netd-2026-08-30.md) | Auditoría completa GPF netd A-K + validación forense 2026-09-17 |
 | [Graphify](development/graphify.md) | Herramienta auxiliar: grafo de conocimiento para agentes IA (workspace, crates, syscalls, drivers) |
 
 ## Design Proposals
