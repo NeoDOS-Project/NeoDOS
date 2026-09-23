@@ -3264,17 +3264,11 @@ pub(super) fn handler_ob_wait(regs: super::Registers) -> u64 {
                     }
                     // Atomically check-and-block: we hold the lock so the child
                     // cannot exit (modify thread_count) between check and block.
-                    let cur_pid = lock.current_pid();
-                    let cur_tid = lock.current_tid;
-                    let pre_state = lock.find_kthread(cur_tid).map(|k| k.state.to_u8()).unwrap_or(255);
-                    let pre_wait = lock.find_kthread(cur_tid).and_then(|k| k.waiting_for);
-                    crate::serial_println!("[WAIT] BEFORE BLOCK pid={} tid={} target={} pre_state={} pre_wait={:?} magic=0x{:x}", cur_pid, cur_tid, pid, pre_state, pre_wait, reason.encode_magic());
                     if let Some(k) = lock.current_kthread_mut() {
                         crate::scheduler::Scheduler::remove_from_run_queue(k);
                         let magic = reason.encode_magic();
                         k.state = ThreadState::Blocked { waiting_for: magic };
                         k.waiting_for = Some(magic);
-                        crate::serial_println!("[WAIT] AFTER SET pid={} tid={} magic=0x{:x} state={} waiting_for={:?}", cur_pid, cur_tid, magic, k.state.to_u8(), k.waiting_for);
                     }
                     crate::syscall::set_need_resched();
                 }

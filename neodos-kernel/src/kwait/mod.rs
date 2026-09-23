@@ -120,13 +120,10 @@ pub fn kwait_block(reason: WaitReason) {
 /// for those whose `waiting_for` matches the encoded magic.
 pub fn kwait_wake(reason: &WaitReason) {
     let magic = reason.encode_magic();
-    crate::serial_println!("[KWAIT_WAKE] reason={:?} magic=0x{:x}", reason, magic);
     let old_irql = unsafe { irql::raise_irql(DISPATCH_LEVEL) };
     let mut scheduler = scheduler::current_scheduler().lock();
     for k in scheduler.kthreads.iter_mut().flatten() {
-        crate::serial_println!("[KWAIT_WAKE] check tid={} pid={} state={} waiting_for={:?}", k.tid, k.pid, k.state.to_u8(), k.waiting_for);
         if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-            crate::serial_println!("[KWAIT_WAKE] wake tid={} pid={}", k.tid, k.pid);
             k.waiting_for = None;
             scheduler::Scheduler::make_thread_ready(k);
             crate::syscall::set_need_resched();

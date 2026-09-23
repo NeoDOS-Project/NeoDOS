@@ -604,17 +604,17 @@ pub unsafe fn this_cpu_run_queue_mut() -> &'static mut CpuRunQueue {
     } else {
         kprcb_addr
     };
-    // Forense temporal: validar coherencia entre ambas vistas
-    // (se retirará tras validación)
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "forensic")]
     {
         let via_this = kprcb_addr + OFFSET_RUN_QUEUE as u64;
-        let via_table = if (unsafe { this_cpu_id() } as usize) < MAX_CPUS && KPRCB_PAGES[unsafe { this_cpu_id() } as usize] != 0 {
-            KPRCB_PAGES[unsafe { this_cpu_id() } as usize] + OFFSET_RUN_QUEUE as u64
-        } else { 0 };
+        let via_table = {
+            let cpu = unsafe { this_cpu_id() } as usize;
+            if cpu < MAX_CPUS && KPRCB_PAGES[cpu] != 0 {
+                KPRCB_PAGES[cpu] + OFFSET_RUN_QUEUE as u64
+            } else { 0 }
+        };
         if via_this != via_table && via_table != 0 {
-            // No panic, solo traza para auditoría
-            crate::serial_println!("[GS] cpu={} gs_base=0x{:x} gs_slot0=0x{:x} kprcb_expected=0x{:x} kprcb_via_this_cpu=0x{:x}", unsafe { this_cpu_id() }, kprcb_addr, unsafe { gs_read_u64(0) }, via_table, via_this);
+            crate::serial_println!("[GS] cpu={} gs_base=0x{:x} gs_slot0=0x{:x} kprcb_expected=0x{:x} kprcb_via_this=0x{:x}", unsafe { this_cpu_id() }, kprcb_addr, unsafe { gs_read_u64(0) }, via_table, via_this);
         }
     }
     let rq_ptr = (kprcb_addr + OFFSET_RUN_QUEUE as u64) as *mut CpuRunQueue;
