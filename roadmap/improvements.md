@@ -6,11 +6,10 @@
 
 ## Formato
 
-```
-- **ID**: Título `prioridad` `etiqueta1` `etiqueta2` `hito`
+```text
+- ID: Título prioridad etiqueta1 etiqueta2 hito
   Descripción del ítem.
-
-  state: open|closed        (opcional, defecto open)
+  state: open|closed
 ```
 
 ---
@@ -535,35 +534,35 @@
 
 - **AUDIT-01**: Userbin crash hang and resource leak `priority/critical` `area/kernel` `type/bug` `v0.50 — Consolidation`
   When Ring 3 triggers Page Fault or GPF, terminate_user_process in idt.rs only sets thread to Terminated. Unlike handler_exit which decrements thread_count, frees slots, closes handles and wakes ChildExit waiters, the exception path leaves Eprocess intact. Parent shell blocks forever on ChildExit and resources leak. Invariant INV-SYS-CONTAIN violated. Repro: userbin null deref. Fix: centralize exit_process_current and make terminate_user_process call it.
-  state: open
+  state: closed
 
 - **AUDIT-02**: Use-after-free stack race on process exit `priority/critical` `area/kernel` `type/bug` `v0.50 — Consolidation`
   handler_exit pushes pid to WORK_QUEUE which drops Kthread and its kernel stack while CPU still executes on that stack in syscall_handler_asm. On SMP or fast queue, this is use-after-free and can triple-fault. Invariant INV-TH-LIFETIME violated. Fix: defer stack free via zombie list reaped after context switch.
-  state: open
+  state: closed
 
 - **AUDIT-03**: SMP CpuRunQueue data race without lock `priority/critical` `area/kernel` `type/bug` `v0.50 — Consolidation`
   CpuRunQueue is documented as per-CPU only, but enqueue_to_cpu_run_queue mutates foreign CPU queue without lock while victim pops. Corrupts head tail count and loses threads. Repro: spawn many threads with smp 4. Fix: per-CPU spinlock or lock-free queue or IPI-deferred enqueue.
-  state: open
+  state: closed
 
 - **AUDIT-04**: Runtime invariants disabled in production `priority/high` `area/kernel` `type/bug` `v0.50 — Consolidation`
   kern_assert uses cfg feature validation with default empty, so all invariant checks are compiled out in normal builds. Invalid states proceed silently. Fix: enable validation by default for dev or make critical asserts unconditional.
-  state: open
+  state: closed
 
 - **AUDIT-05**: Kernel over-read in copy_user_string `priority/high` `area/security` `type/bug` `v0.50 — Consolidation`
   copy_user_string validates 1 byte then reads up to 255 bytes without checking USER_LIMIT crossing. Can leak kernel memory or trigger kernel page fault. Fix: validate full range on each increment.
-  state: open
+  state: closed
 
 - **AUDIT-06**: CpuRunQueue peek out of bounds panic `priority/high` `area/kernel` `type/bug` `v0.50 — Consolidation`
   peek uses entries head_idx without modulo, panics when head_idx >=64. Fix: use modulo with len.
-  state: open
+  state: closed
 
 - **AUDIT-07**: Global EXIT_RSP RIP race in usermode trampoline `priority/high` `area/kernel` `type/bug` `v0.50 — Consolidation`
   Global static EXIT_RSP/RIP written by execute_usermode_asm plus per-CPU KPRCB, corrupts exit context on SMP concurrent execution. Fix: remove globals, use only per-CPU KPRCB.
-  state: open
+  state: closed
 
 - **AUDIT-08**: Priority inversion in syscall_try_resched `priority/medium` `area/kernel` `type/bug` `v0.50 — Consolidation`
   If schedule picks kernel thread netd, resched re-enqueues it and does linear scan for Ring3 bypassing priority. Causes starvation. Fix: keep priority scan or re-invoke schedule.
-  state: open
+  state: closed
 
 ### v0.51 — NeoFS v2 + Shell Phase 2 + SAM
 
