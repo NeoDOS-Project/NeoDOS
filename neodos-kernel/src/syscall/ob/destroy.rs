@@ -1,10 +1,7 @@
 //! Ob destroy — extracted from ob.rs
-use alloc::string::{String, ToString};
-use crate::scheduler::{self, ThreadState};
-use crate::object::types::{ObInfoClass, ObSetInfoClass};
-use crate::log::LogSubsys;
-use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
-use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
+use alloc::string::ToString;
+use crate::scheduler::{self};
+use crate::syscall::{current_handle_entry, err_to_u64, SyscallError};
 
 pub fn handler_ob_destroy(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -64,24 +61,8 @@ pub fn handler_ob_destroy(regs: crate::syscall::Registers) -> u64 {
     0
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// OB-021: ObService — RAX=47
-// ═══════════════════════════════════════════════════════════════════════
-
-const SERVICE_CONTROL_START: u32 = 0;
-const SERVICE_CONTROL_STOP: u32 = 1;
-const SERVICE_CONTROL_RESTART: u32 = 2;
-const SERVICE_CONTROL_QUERY_STATUS: u32 = 3;
-const SERVICE_CONTROL_SET_CONFIG: u32 = 4;
-
-// ═══════════════════════════════════════════════════════════════════════
-// OB-077: ObSnapshot — RAX=48
-// ═══════════════════════════════════════════════════════════════════════
-
-const SNAPSHOT_OP_CREATE: u32 = 0;
-const SNAPSHOT_OP_RESTORE: u32 = 1;
-const SNAPSHOT_OP_LIST: u32 = 2;
-const SNAPSHOT_OP_PURGE: u32 = 3;
+// Snapshot/service op constants are defined in super::ob (mod.rs) to remain
+// alongside handler_ob_snapshot/handler_ob_service as in the original ob.rs.
 
 /// Resolve drive index from a filesystem root handle.
 pub(crate) fn resolve_handle_drive(fd: u8) -> Result<usize, u64> {
