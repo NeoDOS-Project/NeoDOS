@@ -311,6 +311,9 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
         }
     }
 
+    // P0.2: per-CPU GDT/TSS for this AP (was global TSS race)
+    crate::arch::x64::gdt::init_ap(my_cpu);
+
     // Load per-CPU IDT (each AP needs its own IDT loaded via lidt)
     // For now, load the shared IDT — APs will use the same handlers
     // but each has its own IDT in memory.

@@ -300,14 +300,18 @@ impl Scheduler {
     }
 
     /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
-    /// growing them now (outside the lock) so no realloc happens inside.
-    pub fn ensure_slots(&mut self) {
+    /// growing them now so no realloc happens inside the critical section.
+    /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).
+    pub fn ensure_slots(&mut self) -> Result<(), &'static str> {
         if self.eprocesses.iter().position(|e| e.is_none()).is_none() {
+            self.eprocesses.try_reserve(1).map_err(|_| "NoMem for eprocess slot")?;
             self.eprocesses.push(None);
         }
         if self.kthreads.iter().position(|t| t.is_none()).is_none() {
+            self.kthreads.try_reserve(1).map_err(|_| "NoMem for kthread slot")?;
             self.kthreads.push(None);
         }
+        Ok(())
     }
 
     /// Resolve a free eprocess slot (must exist — caller called ensure_slots).
@@ -553,6 +557,9 @@ impl Scheduler {
     /// Must be called with scheduler lock held and interrupts disabled. Caller must set need_resched after.
     /// F-01: uses per-CPU identity (KPRCB) when available and belongs to this Scheduler, not global current_tid.
     pub fn terminate_current(&mut self, exit_code: i64) -> Option<u32> {
+        // P0.2: also take USER_MEMORY_LOCK (order SCHEDULER -> USER_MEMORY_LOCK)
+        // to make free/unmap atomic against copy_user_string validation+read.
+        let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
         // F-01: per-CPU current thread (SMP) — fallback to global for tests/early boot/local schedulers
         let (tid, pid) = if self.kprcb_thread_in_self() {
             if let Some(t) = crate::arch::x64::cpu_local::try_per_cpu_tid() {

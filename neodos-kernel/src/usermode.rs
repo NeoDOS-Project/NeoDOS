@@ -136,8 +136,16 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         Some(((heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE) / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8)
     } else { None };
 
-    // Kernel stack allocation (Box::new → heap alloc with stack canary) — pid independent
-    let stack = scheduler::AlignedKStack::new_boxed();
+    // Kernel stack allocation (Box::try_new → no panic on OOM) — pid independent
+    let stack = match scheduler::AlignedKStack::try_new_boxed() {
+        Some(s) => s,
+        None => {
+            if let Some(idx) = heap_idx {
+                crate::arch::x64::paging::free_heap_slot(idx);
+            }
+            return Err("NoMem for kernel stack");
+        }
+    };
     let kernel_stack_top = stack.0.as_ptr() as u64 + scheduler::KERNEL_STACK_SIZE as u64;
     let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
 
@@ -156,8 +164,11 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
     // heap_slot and the kernel stack is dropped (Box freed) automatically.
     let result = crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        // Ensure Vecs have capacity (pushes a None if full) — quick, no alloc failure
-        s.ensure_slots();
+        // Ensure Vecs have capacity — P0.2: try_reserve, return NoMem on OOM
+        s.ensure_slots().map_err(|e| {
+            // Ensure_slots failed, stack will be dropped by caller, heap slot freed there
+            e
+        })?;
         // Delegate to the existing helper but with Ob ids = None (created inside if needed).
         // The helper now handles its own Ob creation with the real pid/tid, so we pass None.
         s.add_ring3_process_with_stack(

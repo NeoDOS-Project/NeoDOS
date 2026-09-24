@@ -1,6 +1,12 @@
 //! Syscall utilities — extracted from mod.rs (mechanical split)
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use spin::Mutex;
+
+// P0.2: dedicated lock for user-memory address space (heap/mmap) to make
+// copy_user_string atomic against munmap/brk/terminate without deadlocking
+// on SCHEDULER. Order: SCHEDULER -> USER_MEMORY_LOCK (always).
+pub(crate) static USER_MEMORY_LOCK: Mutex<()> = Mutex::new(());
 
 pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
     if ptr >= crate::arch::x64::paging::USER_BASE && ptr.saturating_add(len) <= crate::arch::x64::paging::USER_LIMIT {
@@ -42,7 +48,12 @@ pub(crate) fn copy_user_string(ptr: u64) -> Result<String, ()> {
     let sched_guard = crate::scheduler::current_scheduler().try_lock();
 
     let result = if let Some(sched) = sched_guard {
-        // We hold the lock — is_valid and read are atomic against free/unmap.
+        // We hold SCHEDULER — now try USER_MEMORY_LOCK (order SCHEDULER -> USER_MEMORY_LOCK)
+        let _mem_guard = match USER_MEMORY_LOCK.try_lock() {
+            Some(g) => g,
+            None => return Err(()), // contended, return Fault (safe, reintentable)
+        };
+        // We hold both locks — is_valid and read are atomic against free/unmap.
         let is_valid_locked = |p: u64| -> bool {
             if p >= crate::arch::x64::paging::USER_BASE && p < crate::arch::x64::paging::USER_LIMIT {
                 return true;
@@ -78,7 +89,7 @@ pub(crate) fn copy_user_string(ptr: u64) -> Result<String, ()> {
             }
             Ok(())
         })();
-        // sched_guard dropped here
+        // sched_guard and _mem_guard dropped here
         r
     } else {
         // Lock contended or already held — fallback to lock-free check.

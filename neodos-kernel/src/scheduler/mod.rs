@@ -346,13 +346,20 @@ pub fn current_process_mmap_regions() -> Vec<MmapRegion> {
 pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
-        ep.mmap_regions.push(region);
-        ep.mmap_next = region.base + region.len;
-        Some(region.base)
+        // Use try_reserve to avoid panic on OOM (P0.2)
+        if ep.mmap_regions.try_reserve(1).is_err() {
+            None
+        } else {
+            ep.mmap_regions.push(region);
+            ep.mmap_next = region.base + region.len;
+            Some(region.base)
+        }
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result
@@ -361,12 +368,14 @@ pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
 pub fn remove_current_mmap_region(base: u64) -> Option<MmapRegion> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
         let idx = ep.mmap_regions.iter().position(|r| r.base == base);
         idx.map(|i| ep.mmap_regions.remove(i))
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result

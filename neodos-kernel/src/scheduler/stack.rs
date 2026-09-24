@@ -10,11 +10,15 @@ pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
 impl AlignedKStack {
     pub fn new_boxed() -> Box<Self> {
-        let mut stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        Self::try_new_boxed().expect("AlignedKStack::new_boxed OOM")
+    }
+
+    pub fn try_new_boxed() -> Option<Box<Self>> {
+        let mut stack = Box::try_new(AlignedKStack([0u8; KERNEL_STACK_SIZE]))?;
         unsafe {
             (stack.0.as_mut_ptr() as *mut u64).write(STACK_CANARY);
         }
-        stack
+        Some(stack)
     }
 }
 

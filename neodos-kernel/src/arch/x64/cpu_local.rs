@@ -708,18 +708,22 @@ pub unsafe fn cpu_run_queue_mut(cpu: usize) -> &'static mut CpuRunQueue {
 /// Drain all entries from a specific CPU's run queue into the caller's
 /// local run queue. Used for work stealing.
 ///
+/// Drain all entries from victim's queue into thief's queue.
+/// P0.2: now SMP-safe — takes victim's RUNQUEUE_LOCK.
 /// # Safety
-/// Requires both CPUs' KPRCBs to be initialized.
+/// Requires both CPUs' KPRCBs to be initialized. Thief's queue must be
+/// already locked by the caller (as in steal_and_migrate).
 #[inline(always)]
 pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQueue) -> u32 {
-    let mut stolen = 0u32;
-    if from_cpu >= MAX_CPUS { return stolen; }
+    if from_cpu >= MAX_CPUS { return 0; }
+    if unsafe { KPRCB_PAGES[from_cpu] == 0 } { return 0; }
+    let _guard = RUNQUEUE_LOCKS[from_cpu].lock();
     let src = cpu_run_queue_mut(from_cpu);
+    let mut stolen = 0u32;
     while let Some(tid) = src.pop() {
         if to_queue.push(tid) {
             stolen += 1;
         } else {
-            // Push back if destination is full
             src.push(tid);
             break;
         }
