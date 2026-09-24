@@ -23,15 +23,45 @@ pub fn defer_reap(pid: u32) {
     ZOMBIE_PIDS.lock().push(pid);
 }
 
-/// Try to reap one zombie pid that is not the current pid.
+/// Try to reap one zombie pid that is not running on ANY CPU.
 /// Called from schedule() with scheduler lock already held, after context switch is decided.
+///
+/// F-01 SMP fix: previous code used `p != current_pid` (new_pid of this CPU only).
+/// On SMP, CPU1 could reap PID A while CPU0 still executes on A's stack
+/// (global current_tid race). Now we check `is_pid_running_on_any_cpu(p)`
+/// across all KPRCBs. If pid is Running on any CPU, we skip it even if it
+/// differs from the newly scheduled pid on this CPU.
+///
+/// We keep single-reap-per-schedule semantics for now (F-06 will bound the
+/// queue and drain all eligible). Correctness over throughput first.
 pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
     let mut zombies = ZOMBIE_PIDS.lock();
     if zombies.is_empty() { return; }
-    // Find first zombie not equal to current_pid (so we don't free the stack we're still on)
-    if let Some(pos) = zombies.iter().position(|&p| p != current_pid) {
+    // Prefer the old heuristic as fast-path, but enforce global check.
+    // Find first zombie not running on any CPU.
+    let pos = zombies.iter().position(|&p| {
+        // Never reap the pid we just switched to (still running on this CPU)
+        if p == current_pid { return false; }
+        // F-01: also never reap a pid running on any other CPU
+        !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p)
+    });
+    // Fallback: if all zombies are currently running somewhere (rare storm),
+    // try any zombie that is at least not the current_pid's KPRCB view.
+    // This still respects per-CPU check above, so if fallback also fails we defer.
+    let pos = pos.or_else(|| {
+        // If no non-running zombie found, don't reap yet — defer to next schedule
+        None
+    });
+    if let Some(pos) = pos {
         let pid = zombies.remove(pos);
         drop(zombies);
+        // Double-check under lock that pid is still not running (avoid TOCTOU
+        // where pid just became current on another CPU between check and recycle).
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+            // Race: another CPU just scheduled this pid — re-queue and retry later
+            ZOMBIE_PIDS.lock().push(pid);
+            return;
+        }
         sched.recycle_terminated(pid);
     }
 }
@@ -466,11 +496,22 @@ impl Scheduler {
     /// Centralized termination for current thread/process (used by sys_exit and exception path).
     /// Mirrors handler_exit logic: decrement thread_count, free resources if last thread, wake waiters, defer reap.
     /// Must be called with scheduler lock held and interrupts disabled. Caller must set need_resched after.
+    /// F-01: uses per-CPU identity (KPRCB) when available, not global current_tid.
     pub fn terminate_current(&mut self, exit_code: i64) -> Option<u32> {
-        let tid = self.current_tid;
-        let pid = self.current_pid();
+        // F-01: per-CPU current thread (SMP) — fallback to global for tests/early boot
+        let (tid, pid) = if let Some(t) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+            let p = crate::arch::x64::cpu_local::try_per_cpu_pid().unwrap_or_else(|| self.current_pid());
+            (t, p)
+        } else {
+            (self.current_tid, self.current_pid())
+        };
         if tid == 0 || pid == 0 { return None; }
-        if let Some(k) = self.current_kthread_mut() {
+        // Remove from runqueue using the correct Kthread (per-CPU tid)
+        if let Some(k) = self.find_kthread_mut(tid) {
+            Self::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        } else if let Some(k) = self.current_kthread_mut() {
+            // Fallback (should not happen)
             Self::remove_from_run_queue(k);
             k.state = ThreadState::Terminated;
         }

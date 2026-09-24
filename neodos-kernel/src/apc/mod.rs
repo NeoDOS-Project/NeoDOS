@@ -134,7 +134,8 @@ pub fn has_pending_user_apcs() -> bool {
     let result = {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
-        lock.find_kthread(lock.current_tid)
+        let tid = lock.current_tid_for_this_cpu();
+        lock.find_kthread(tid)
             .map(|k| !k.user_apc_queue.is_empty())
             .unwrap_or(false)
     };
@@ -148,7 +149,8 @@ pub fn has_pending_kernel_apcs() -> bool {
     let result = {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
-        lock.find_kthread(lock.current_tid)
+        let tid = lock.current_tid_for_this_cpu();
+        lock.find_kthread(tid)
             .map(|k| !k.kernel_apc_queue.is_empty())
             .unwrap_or(false)
     };

@@ -24,7 +24,7 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
     let (tid, pid, state) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         let pid = lock.current_pid();
         let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
         (tid, pid, state)
@@ -78,7 +78,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
-        let tid = scheduler.current_tid;
+        let tid = scheduler.current_tid_for_this_cpu();
         let pid = scheduler.current_pid();
         kdebug!(LogSubsys::Syscall,
             "[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);

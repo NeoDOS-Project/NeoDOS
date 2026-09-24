@@ -241,7 +241,7 @@ pub extern "C" fn clear_need_resched() -> bool {
 pub extern "C" fn is_thread_terminated() -> u64 {
     let s = scheduler::current_scheduler();
     let mut scheduler = s.lock();
-    if scheduler.current_tid > 0 {
+    if scheduler.current_tid_for_this_cpu() > 0 {
         if let Some(k) = scheduler.current_kthread_mut() {
             if k.state == ThreadState::Terminated {
                 return 1;

@@ -250,12 +250,20 @@ pub fn wait_for_process(pid: u32) {
         }
         // Activate the target process
         let mut target_tid = 0;
+        let mut target_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
+        let mut target_pid: u32 = 0;
         for k in s.kthreads.iter().flatten() {
             if k.pid == pid && k.tid > 0 {
                 target_tid = k.tid;
+                target_pid = k.pid;
+                target_ptr = &**k as *const scheduler::Kthread as *mut scheduler::Kthread;
                 s.current_tid = target_tid;
                 break;
             }
+        }
+        // F-01: sync per-CPU KPRCB (BSP)
+        if !target_ptr.is_null() {
+            unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr, target_pid); }
         }
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
@@ -285,6 +293,9 @@ pub fn wait_for_process(pid: u32) {
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.current_tid = scheduler::BOOT_TID;
+        // F-01: sync KPRCB back to boot thread
+        let boot_ptr = s.find_kthread(scheduler::BOOT_TID).map(|k| k as *const _ as *mut scheduler::Kthread).unwrap_or(core::ptr::null_mut());
+        unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(boot_ptr, 0); }
         if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
             k.state = scheduler::ThreadState::Running;
         }

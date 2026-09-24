@@ -910,7 +910,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     scheduler.on_timer_tick(current_rsp);
 
-    let tid = scheduler.current_tid;
+    let tid = scheduler.current_tid_for_this_cpu();
     let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
     let is_user_mode = (interrupted_cs & 3) == 3;
 

@@ -44,7 +44,7 @@ pub struct Scheduler {
 #[allow(unused_macros)]
 macro_rules! with_current {
     ($sched:expr, $eproc:ident, $body:block) => {{
-        let tid = $sched.current_tid;
+        let tid = $sched.current_tid_for_this_cpu();
         let pid = $sched.find_kthread(tid).map(|t| t.pid);
         if let Some(pid) = pid {
             if let Some($eproc) = $sched.find_eprocess_mut(pid) {
@@ -91,22 +91,44 @@ impl Scheduler {
             .collect()
     }
 
+    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP),
+    /// returns the PID of the thread Running on THIS CPU via GS.
+    /// Falls back to global current_tid for early boot / tests.
     pub fn current_pid(&self) -> u32 {
+        if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+            // Validate that pid still exists in scheduler tables to avoid
+            // stale KPRCB after recycle; fallback to global if not found.
+            if self.find_eprocess(pid).is_some() || pid == 0 {
+                return pid;
+            }
+        }
         self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
     }
 
+    /// F-01: per-CPU helper to get current TID for THIS CPU.
+    pub fn current_tid_for_this_cpu(&self) -> u32 {
+        if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+            if self.find_kthread(tid).is_some() || tid == 0 {
+                return tid;
+            }
+        }
+        self.current_tid
+    }
+
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        let tid = self.current_tid;
+        let tid = self.current_tid_for_this_cpu();
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        self.find_kthread_mut(self.current_tid)
+        let tid = self.current_tid_for_this_cpu();
+        self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let pid = self.find_kthread(self.current_tid).map(|t| t.pid)?;
+        let tid = self.current_tid_for_this_cpu();
+        let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }
 
@@ -331,6 +353,15 @@ pub fn free_current_mmap_pages(base: u64, len: u64) {
 
 /// Find a thread's TEB base address.
 pub fn current_teb_base() -> u64 {
+    // F-01: try per-CPU first
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let lock = SCHEDULER.lock();
+        let result = lock.find_kthread(tid).map(|k| k.teb_base).unwrap_or(0);
+        drop(lock);
+        unsafe { crate::hal::irql::lower_irql(old_irql) };
+        if result != 0 { return result; }
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.find_kthread(lock.current_tid).map(|k| k.teb_base).unwrap_or(0);
@@ -339,9 +370,12 @@ pub fn current_teb_base() -> u64 {
     result
 }
 
-// ── Convenience: current PID (deprecated, prefer current_tid) ──
+// ── Convenience: current PID/TID (F-01: per-CPU via KPRCB, fallback to global) ──
 
 pub fn current_pid() -> u32 {
+    if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+        return pid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.current_pid();
@@ -351,6 +385,9 @@ pub fn current_pid() -> u32 {
 }
 
 pub fn current_tid() -> u32 {
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        return tid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let result = SCHEDULER.lock().current_tid;
     unsafe { crate::hal::irql::lower_irql(old_irql) };
@@ -362,7 +399,7 @@ pub fn yield_current_thread() {
     crate::hal::without_interrupts(|| {
         let s = current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
                 let before = k.state.to_u8();
