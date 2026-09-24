@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 use crate::log::LogSubsys;
 use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, IDLE_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
 use crate::scheduler::Scheduler;
+use crate::scheduler::lifecycle::{defer_reap, reap_pending_zombies};
 
 impl Scheduler {
     /// Validate run queue invariants.
@@ -39,8 +40,8 @@ impl Scheduler {
         let mut queue_tids = Vec::new();
         let mut total_entries = 0usize;
         for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
-            let queue_entries = unsafe {
-                let rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
+            // SMP-safe: lock each queue while reading
+            let queue_entries = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| {
                 let mut entries = Vec::new();
                 let cap = rq.entries.len();
                 let mut idx = rq.head_idx as usize;
@@ -49,7 +50,7 @@ impl Scheduler {
                     idx = (idx + 1) % cap;
                 }
                 entries
-            };
+            });
 
             for tid in queue_entries {
                 if queue_tids.contains(&tid) {
@@ -125,6 +126,9 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        // Safe to reap zombies now that we have switched away from previous stack
+                        let new_pid = k.pid;
+                        reap_pending_zombies(self, new_pid);
                         return ptr;
                     }
                 }
@@ -146,6 +150,8 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
+                        let new_pid = k.pid;
+                        reap_pending_zombies(self, new_pid);
                         return ptr;
                     }
                 }
@@ -155,7 +161,13 @@ impl Scheduler {
         // 3. Fallback: global priority scan (existing algorithm)
         let start = (self.current_tid + 1) % self.next_tid.max(1);
 
-        for priority in 0..PRIORITY_COUNT {
+        let mut picked_ptr: *mut Kthread = core::ptr::null_mut();
+        let mut picked_pid: u32 = 0;
+        let mut picked_tid: u32 = 0;
+        let mut picked_prio: u8 = 0;
+        let mut picked_prev: u32 = 0;
+        let mut picked_prev_state: u8 = 0;
+        'scan: for priority in 0..PRIORITY_COUNT {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
@@ -166,14 +178,26 @@ impl Scheduler {
                         let prev_state = k.state.to_u8();
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
-                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
-                            prev, check_tid, priority);
-                        crate::trace_cswitch!(prev as u64, check_tid as u64);
-                        crate::trace_sched_switch!(prev, prev_state, check_tid, k.state.to_u8());
-                        return &mut **k as *mut Kthread;
+                        picked_ptr = &mut **k as *mut Kthread;
+                        picked_pid = k.pid;
+                        picked_tid = k.tid;
+                        picked_prio = priority;
+                        picked_prev = prev;
+                        picked_prev_state = prev_state;
+                        break 'scan;
                     }
                 }
             }
+        }
+        if !picked_ptr.is_null() {
+            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
+                picked_prev, picked_tid, picked_prio);
+            crate::trace_cswitch!(picked_prev as u64, picked_tid as u64);
+            // Need to get state again for trace (already Running)
+            let new_state = unsafe { (*picked_ptr).state.to_u8() };
+            crate::trace_sched_switch!(picked_prev, picked_prev_state, picked_tid, new_state);
+            reap_pending_zombies(self, picked_pid);
+            return picked_ptr;
         }
 
         // Fallback to idle thread (TID 1, PRIORITY_IDLE).
@@ -201,6 +225,8 @@ impl Scheduler {
                             prev, IDLE_TID);
                         crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
                         crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
+                        let new_pid = (*ptr).pid;
+                        reap_pending_zombies(self, new_pid);
                         return ptr;
                     }
                 }

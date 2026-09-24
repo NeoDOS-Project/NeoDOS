@@ -22,11 +22,23 @@ impl Scheduler {
     /// Steal TIDs from victim CPU's runqueue to thief CPU's runqueue,
     /// updating Kthread.cpu for each migrated thread.
     /// Must be called with scheduler lock held and interrupts disabled.
+    /// SMP-safe: locks both queues in consistent order.
     /// Returns number of TIDs successfully migrated.
     /// On destination-full, restores old cpu and pushes TID back to victim.
     pub(crate) unsafe fn steal_and_migrate(&mut self, victim: usize, thief: usize) -> u32 {
-        // SAFETY: KPRCB pages are initialized, queues are per-CPU and accessed
-        // only while holding scheduler lock in schedule() path.
+        use crate::arch::x64::cpu_local::{KPRCB_PAGES, MAX_CPUS};
+        let need_skip = unsafe { victim >= MAX_CPUS || thief >= MAX_CPUS || KPRCB_PAGES[victim] == 0 || KPRCB_PAGES[thief] == 0 };
+        if need_skip {
+            return 0;
+        }
+        // Lock both queues in order to avoid deadlock
+        let (first, second) = if victim < thief { (victim, thief) } else { (thief, victim) };
+        let _g1 = crate::arch::x64::cpu_local::RUNQUEUE_LOCKS[first].lock();
+        let _g2 = if first != second {
+            Some(crate::arch::x64::cpu_local::RUNQUEUE_LOCKS[second].lock())
+        } else {
+            None
+        };
         let victim_rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(victim);
         let thief_rq = crate::arch::x64::cpu_local::cpu_run_queue_mut(thief);
         let mut stolen: u32 = 0;

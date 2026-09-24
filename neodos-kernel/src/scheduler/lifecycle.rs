@@ -3,12 +3,38 @@ use alloc::boxed::Box;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 use alloc::collections::VecDeque;
+use spin::Mutex;
+use lazy_static::lazy_static;
 use crate::log::LogSubsys;
 use crate::object::{self, ObType};
 use crate::object::ObId;
 use crate::scheduler::types::{Eprocess, Kthread, ThreadState, PRIORITY_NORMAL, TIME_SLICES, KERNEL_STACK_SIZE};
 use crate::scheduler::stack::{AlignedKStack, init_ring0_frame};
 use crate::scheduler::Scheduler;
+
+lazy_static! {
+    static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+}
+
+/// Defer EPROCESS slot recycling until after context switch.
+/// The pid's Kthread stacks remain valid while current thread still executes.
+pub fn defer_reap(pid: u32) {
+    if pid == 0 { return; }
+    ZOMBIE_PIDS.lock().push(pid);
+}
+
+/// Try to reap one zombie pid that is not the current pid.
+/// Called from schedule() with scheduler lock already held, after context switch is decided.
+pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
+    let mut zombies = ZOMBIE_PIDS.lock();
+    if zombies.is_empty() { return; }
+    // Find first zombie not equal to current_pid (so we don't free the stack we're still on)
+    if let Some(pos) = zombies.iter().position(|&p| p != current_pid) {
+        let pid = zombies.remove(pos);
+        drop(zombies);
+        sched.recycle_terminated(pid);
+    }
+}
 
 impl Scheduler {
     /// Find the first free slot index in eprocesses vec, growing if full.
@@ -435,6 +461,80 @@ impl Scheduler {
         } else {
             false
         }
+    }
+
+    /// Centralized termination for current thread/process (used by sys_exit and exception path).
+    /// Mirrors handler_exit logic: decrement thread_count, free resources if last thread, wake waiters, defer reap.
+    /// Must be called with scheduler lock held and interrupts disabled. Caller must set need_resched after.
+    pub fn terminate_current(&mut self, exit_code: i64) -> Option<u32> {
+        let tid = self.current_tid;
+        let pid = self.current_pid();
+        if tid == 0 || pid == 0 { return None; }
+        if let Some(k) = self.current_kthread_mut() {
+            Self::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        }
+        let mut do_reap: Option<u32> = None;
+        if let Some(ep) = self.find_eprocess_mut(pid) {
+            ep.thread_count = ep.thread_count.saturating_sub(1);
+            ep.exit_code = exit_code;
+            if ep.thread_count == 0 {
+                // Free user slot, heap, mmap, handles — same as handler_exit
+                if let Some(slot) = ep.user_slot.take() {
+                    crate::arch::x64::paging::free_user_slot(slot);
+                }
+                if ep.heap_base != 0 {
+                    crate::arch::x64::paging::heap_free_range(ep.heap_base, ep.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE);
+                    let heap_idx = ((ep.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE) / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+                    crate::arch::x64::paging::free_heap_slot(heap_idx);
+                    ep.heap_base = 0;
+                    ep.heap_break = 0;
+                }
+                for r in ep.mmap_regions.iter() {
+                    crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
+                }
+                ep.mmap_regions.clear();
+                ep.mmap_next = crate::arch::x64::paging::MMAP_BASE;
+                for i in 0..ep.handle_table.len() {
+                    let h = ep.handle_table[i];
+                    if h.is_pipe_read() {
+                        crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+                    } else if h.is_pipe_write() {
+                        crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
+                    } else if h.has_ob_object() {
+                        let _ = crate::object::ob_close_object(h.object_id);
+                    }
+                    ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
+                }
+                // Wake ChildExit waiters
+                let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
+                for k in self.kthreads.iter_mut().flatten() {
+                    if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                        k.waiting_for = None;
+                        Self::make_thread_ready(k);
+                    }
+                }
+                do_reap = Some(pid);
+            }
+        }
+        // Wake ThreadJoin waiters for this tid
+        let tj_magic = crate::kwait::WaitReason::ThreadJoin { tid }.encode_magic();
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
+                k.waiting_for = None;
+                Self::make_thread_ready(k);
+            }
+        }
+        // Check waitpid global
+        if let Some(ep) = self.find_eprocess(pid) {
+            if ep.thread_count == 0 && pid == crate::usermode::current_wait_pid() {
+                crate::usermode::request_exit_to_kernel();
+            }
+        }
+        if let Some(pid) = do_reap {
+            defer_reap(pid);
+        }
+        Some(pid)
     }
 
     /// Remove a single terminated thread.  Returns true if the thread was found.

@@ -558,17 +558,28 @@ fn is_user_exception(frame: &InterruptStackFrame) -> bool {
 }
 
 /// Helper: terminate the current user process (Ring 3 exception unhandled).
+/// Uses centralized lifecycle termination so Eprocess/thread_count, handles, and ChildExit waiters are correctly handled.
+/// Defer EPROCESS reclaim via zombie list to avoid use-after-free on current stack.
 fn terminate_user_process() {
-    use crate::scheduler::{current_scheduler, current_tid};
+    use crate::scheduler::current_scheduler;
     use crate::syscall::set_need_resched;
-    let tid = current_tid();
-    if tid > 0 {
+    let pid = crate::hal::without_interrupts(|| {
         let mut s = current_scheduler().lock();
-        if let Some(k) = s.find_kthread_mut(tid) {
-            k.state = ThreadState::Terminated;
+        s.terminate_current(-1)
+    });
+    if pid.is_some() {
+        set_need_resched();
+    } else {
+        // Fallback: at least terminate thread and resched
+        let tid = crate::scheduler::current_tid();
+        if tid > 0 {
+            let mut s = current_scheduler().lock();
+            if let Some(k) = s.find_kthread_mut(tid) {
+                k.state = ThreadState::Terminated;
+            }
         }
+        set_need_resched();
     }
-    set_need_resched();
 }
 
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
