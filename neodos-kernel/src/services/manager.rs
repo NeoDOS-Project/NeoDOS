@@ -427,11 +427,18 @@ impl ServiceManager {
             }
         };
 
-        // Spawn the process
-        let child_pid = crate::usermode::spawn_usermode(
+        // Spawn the process — F-04: free user slot on failure (transactional rollback)
+        let child_pid = match crate::usermode::spawn_usermode(
             result.entry, slot.stack_top, slot.slot_idx,
             2, "\\", 0, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
-        ).map_err(|_| SmError::OutOfMemory)?;
+        ) {
+            Ok(pid) => pid,
+            Err(e) => {
+                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+                crate::serial_println!("[SM] spawn failed, freed user_slot {} err={:?}", slot.slot_idx, e);
+                return Err(SmError::OutOfMemory);
+            }
+        };
 
         Ok(child_pid)
     }

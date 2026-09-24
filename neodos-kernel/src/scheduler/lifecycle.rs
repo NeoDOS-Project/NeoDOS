@@ -193,9 +193,9 @@ impl Scheduler {
         rsp: u64,
         kernel_stack_top: u64,
         kernel_stack: Box<AlignedKStack>,
-        obj_id: Option<ObId>,
-        ob_id: Option<ObId>,
-        thread_obj_id: Option<ObId>,
+        mut obj_id: Option<ObId>,
+        mut ob_id: Option<ObId>,
+        mut thread_obj_id: Option<ObId>,
         parent_token: crate::security::token::Token,
     ) -> Result<u32, &'static str> {
         if kernel_stack_top == 0 {
@@ -208,6 +208,32 @@ impl Scheduler {
 
         let tid = self.next_tid;
         self.next_tid += 1;
+
+        // F-04: create Ob objects inside the lock with the *real* pid/tid.
+        // Previously they were created outside with a guessed pid (peek), causing
+        // duplicate names and native_id drift under concurrent spawns.
+        // Now we create them here atomically, so no race and no leak on failure.
+        if obj_id.is_none() {
+            let name = alloc::format!("eproc/{}", pid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Process, &name, pid as u64, 0, None) {
+                obj_id = Some(id);
+            }
+        }
+        if ob_id.is_none() {
+            let ob_name = alloc::format!("proc/{}", pid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Process, &ob_name, pid as u64, 0, None) {
+                let ns_path = alloc::format!("\\Process\\{}", pid);
+                let _ = crate::object::namespace::ob_insert_object(&ns_path, id);
+                ob_id = Some(id);
+            }
+        }
+        if thread_obj_id.is_none() {
+            let tname = alloc::format!("kthread/{}", tid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None) {
+                thread_obj_id = Some(id);
+            }
+        }
+        crate::serial_println!("[SPAWN] pid={} tid={} obj_id={:?} ob_id={:?} thread_obj_id={:?}", pid, tid, obj_id, ob_id, thread_obj_id);
 
         let mut eproc = Eprocess {
             pid,

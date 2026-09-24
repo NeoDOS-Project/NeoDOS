@@ -119,6 +119,11 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 }
 
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> Result<u32, &'static str> {
+    // F-04 transactional spawn: all pid-dependent allocations now inside the lock.
+    // Resources acquired outside (heap_slot, kernel stack) are tracked for rollback
+    // if the critical section fails. No pid/tid is reserved before the lock,
+    // eliminating the race where two concurrent spawns could guess the same pid
+    // and create duplicate Ob names with mismatched native_id.
     let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
     let heap_base = match heap_slot {
         Some(slot) => slot.base,
@@ -127,47 +132,16 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
             0
         }
     };
+    let heap_idx = if heap_base != 0 {
+        Some(((heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE) / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8)
+    } else { None };
 
-    // ── Phase 1: ALL allocations OUTSIDE scheduler lock ──
-    // 1. Kernel stack allocation (Box::new → heap alloc with stack canary)
+    // Kernel stack allocation (Box::new → heap alloc with stack canary) — pid independent
     let stack = scheduler::AlignedKStack::new_boxed();
     let kernel_stack_top = stack.0.as_ptr() as u64 + scheduler::KERNEL_STACK_SIZE as u64;
     let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
 
-    // 2. Reserve PID/TID and pre-allocate Vec slots atomically
-    // Do NOT increment next_pid/next_tid here — add_ring3_process_with_stack
-    // will allocate them. We only peek and ensure slots, otherwise we
-    // double-allocate and Ob native_id (pid/tid) drifts from EPROCESS pid.
-    let (pid, tid) = crate::hal::without_interrupts(|| {
-        let mut s = scheduler::current_scheduler().lock();
-        s.ensure_slots();
-        let p = s.next_pid;
-        let t = s.next_tid;
-        (p, t)
-    });
-
-    // 3. Create Ob objects (heap allocs, Ob manager locks — all outside scheduler lock)
-    let name = alloc::format!("eproc/{}", pid);
-    let obj_id = object::ob_create_object(object::ObType::Process, &name, pid as u64, 0, None).ok();
-
-    let ob_name = alloc::format!("proc/{}", pid);
-    let ob_id = match object::ob_create_object(object::ObType::Process, &ob_name, pid as u64, 0, None) {
-        Ok(id) => {
-            let ns_path = alloc::format!("\\Process\\{}", pid);
-            let _ = crate::object::namespace::ob_insert_object(&ns_path, id);
-            Some(id)
-        }
-        Err(_) => None,
-    };
-
-    crate::serial_println!("[SPAWN] pid={} tid={} obj_id pid={} ob_id pid={}", pid, tid, pid, pid);
-    let tname = alloc::format!("kthread/{}", tid);
-    let thread_obj_id = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None).ok();
-    if let Some(id) = obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-    if let Some(id) = ob_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] ob_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-    if let Some(id) = thread_obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] thread_obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-
-    // 4. Inherit parent token
+    // Inherit parent token (quick, outside the main critical section)
     let parent_token = crate::hal::without_interrupts(|| {
         let lock = scheduler::current_scheduler().lock();
         lock.find_eprocess(parent_pid)
@@ -175,15 +149,42 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
             .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
 
-    // ── Phase 2: Minimal critical section — only table insertion ──
-    crate::hal::without_interrupts(|| {
+    // Single transactional critical section: pid/tid allocation, slot reservation,
+    // Eprocess/Kthread creation. Ob objects are now created *inside* the lock
+    // with the real pid/tid (no guess), so native_id always matches EPROCESS pid
+    // and no duplicate names can occur. If this section fails, we rollback
+    // heap_slot and the kernel stack is dropped (Box freed) automatically.
+    let result = crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
+        // Ensure Vecs have capacity (pushes a None if full) — quick, no alloc failure
+        s.ensure_slots();
+        // Delegate to the existing helper but with Ob ids = None (created inside if needed).
+        // The helper now handles its own Ob creation with the real pid/tid, so we pass None.
         s.add_ring3_process_with_stack(
             entry, slot_idx, cwd_drive, cwd_path,
             heap_base, parent_pid, rsp, kernel_stack_top, stack,
-            obj_id, ob_id, thread_obj_id, parent_token,
+            None, None, None, parent_token,
         )
-    })
+    });
+
+    match result {
+        Ok(pid) => {
+            // Success: heap slot is now owned by the new Eprocess, do not free.
+            crate::serial_println!("[SPAWN] pid={} heap_base=0x{:x} slot={} OK", pid, heap_base, slot_idx);
+            Ok(pid)
+        }
+        Err(e) => {
+            // Rollback heap slot (user slot is caller's responsibility)
+            if let Some(idx) = heap_idx {
+                crate::arch::x64::paging::free_heap_slot(idx);
+                crate::serial_println!("[SPAWN] rollback heap_slot idx={} base=0x{:x} err={}", idx, heap_base, e);
+            }
+            // Kernel stack Box was moved into add_ring3_process_with_stack and dropped on Err
+            // (its Drop frees the allocation). No Ob objects to clean because we passed None
+            // and the helper didn't create any on failure (or it would have cleaned).
+            Err(e)
+        }
+    }
 }
 
 pub fn wait_for_process(pid: u32) {
