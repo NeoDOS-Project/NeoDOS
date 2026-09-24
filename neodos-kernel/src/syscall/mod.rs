@@ -66,6 +66,7 @@ pub enum SyscallNum {
     CursorBlink = 30,
     // Driver (35-39)
     DriverUnload = 35,
+    IcmpPing = 36,
     // Object Manager (40-49)
     ObOpen = 40,
     ObCreate = 41,
@@ -112,6 +113,7 @@ impl SyscallNum {
             25 => Some(Self::LoadLib),
             30 => Some(Self::CursorBlink),
             35 => Some(Self::DriverUnload),
+            36 => Some(Self::IcmpPing),
             40 => Some(Self::ObOpen),
             41 => Some(Self::ObCreate),
             42 => Some(Self::ObQueryInfo),
@@ -120,6 +122,7 @@ impl SyscallNum {
             45 => Some(Self::ObWait),
             46 => Some(Self::ObDestroy),
             47 => Some(Self::ObService),
+            48 => Some(Self::ObSnapshot),
             50 => Some(Self::CmOpenKey),
             51 => Some(Self::CmCreateKey),
             52 => Some(Self::CmQueryValue),
@@ -129,8 +132,7 @@ impl SyscallNum {
             56 => Some(Self::CmDeleteKey),
             57 => Some(Self::CmFlushKey),
             58 => Some(Self::CmLoadHive),
-             59 => Some(Self::CmUnloadHive),
-             77 => Some(Self::ObSnapshot),
+            59 => Some(Self::CmUnloadHive),
             _ => None,
         }
     }
@@ -188,7 +190,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4,
         10, 11, 12,
         20, 21, 22, 23, 24, 25,
-        30, 35,
+        30, 35, 36,
         40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
     ];

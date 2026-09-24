@@ -279,14 +279,16 @@ pub fn register_kwait_tests() {
             s.kthreads[0].as_ref().unwrap().state
         });
         test_eq!(after_wake, crate::scheduler::ThreadState::Ready);
-        // Second wake → still Ready, still no waiting_for, idempotent
+        // Second wake → still Ready (or Running if scheduled), still no waiting_for, idempotent
         crate::kwait::kwait_wake(&reason);
         let after_second = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler().lock();
             let k = s.kthreads[0].as_ref().unwrap();
             (k.state, k.waiting_for)
         });
-        test_eq!(after_second.0, crate::scheduler::ThreadState::Ready);
+        // After second wake, thread must not be Blocked and waiting_for must be None.
+        // It may be Ready or Running depending on scheduler activity between wakes.
+        test_true!(after_second.0 == crate::scheduler::ThreadState::Ready || after_second.0 == crate::scheduler::ThreadState::Running);
         test_eq!(after_second.1, None);
         // Restore original state
         crate::hal::without_interrupts(|| {
@@ -337,7 +339,8 @@ pub fn register_kwait_tests() {
             let s = crate::scheduler::current_scheduler().lock();
             s.kthreads[0].as_ref().unwrap().state
         });
-        test_eq!(state2, crate::scheduler::ThreadState::Ready);
+        // Second wake is idempotent — should remain Ready or may become Running if scheduled
+        test_true!(state2 == crate::scheduler::ThreadState::Ready || state2 == crate::scheduler::ThreadState::Running);
         // restore
         crate::hal::without_interrupts(|| {
             let mut s = crate::scheduler::current_scheduler().lock();

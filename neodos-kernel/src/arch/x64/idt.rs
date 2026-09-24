@@ -73,6 +73,13 @@ pub extern "C" fn timer_trace_iretq_frame(frame_rsp: u64) {
 }
 
 pub fn timer_diag_dump() {
+    // Solo en modo trazas (LOG_TIMERS/SCHED/INTERRUPTS=TRACE)
+    if !crate::log::log_enabled(crate::log::LogSubsys::Timers, crate::log::LogLevel::Trace)
+        && !crate::log::log_enabled(crate::log::LogSubsys::Sched, crate::log::LogLevel::Trace)
+        && !crate::log::log_enabled(crate::log::LogSubsys::Interrupts, crate::log::LogLevel::Trace)
+    {
+        return;
+    }
     unsafe { core::arch::asm!("cli"); }
     crate::println!("[TIMER_DIAG] DUMP ENTERED");
     use core::sync::atomic::Ordering;
@@ -101,6 +108,12 @@ pub fn timer_diag_dump() {
 }
 
 pub fn timer_diag_dump_secondary() {
+    if !crate::log::log_enabled(crate::log::LogSubsys::Timers, crate::log::LogLevel::Trace)
+        && !crate::log::log_enabled(crate::log::LogSubsys::Sched, crate::log::LogLevel::Trace)
+        && !crate::log::log_enabled(crate::log::LogSubsys::Interrupts, crate::log::LogLevel::Trace)
+    {
+        return;
+    }
     unsafe { core::arch::asm!("cli"); }
     crate::println!("[TIMER_DIAG_SECONDARY] DUMP ENTERED");
     use core::sync::atomic::Ordering;

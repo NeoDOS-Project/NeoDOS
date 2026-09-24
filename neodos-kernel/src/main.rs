@@ -630,6 +630,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     // Fase 3.1: POST-netd dump inmediato + dump tras 500 ticks (captura primera selección real de netd)
+    // Solo en modo trazas — evita spam [TD] / [POST_NETD] en boot normal
+    if crate::log::log_enabled(crate::log::LogSubsys::Timers, crate::log::LogLevel::Trace)
+        || crate::log::log_enabled(crate::log::LogSubsys::Sched, crate::log::LogLevel::Trace)
+        || crate::log::log_enabled(crate::log::LogSubsys::Interrupts, crate::log::LogLevel::Trace)
     {
         crate::serial_println!("[POST_NETD] immediate post-spawn dump");
         crate::arch::x64::idt::timer_diag_dump();
