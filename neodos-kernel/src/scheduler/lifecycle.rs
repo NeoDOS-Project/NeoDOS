@@ -496,12 +496,16 @@ impl Scheduler {
     /// Centralized termination for current thread/process (used by sys_exit and exception path).
     /// Mirrors handler_exit logic: decrement thread_count, free resources if last thread, wake waiters, defer reap.
     /// Must be called with scheduler lock held and interrupts disabled. Caller must set need_resched after.
-    /// F-01: uses per-CPU identity (KPRCB) when available, not global current_tid.
+    /// F-01: uses per-CPU identity (KPRCB) when available and belongs to this Scheduler, not global current_tid.
     pub fn terminate_current(&mut self, exit_code: i64) -> Option<u32> {
-        // F-01: per-CPU current thread (SMP) — fallback to global for tests/early boot
-        let (tid, pid) = if let Some(t) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
-            let p = crate::arch::x64::cpu_local::try_per_cpu_pid().unwrap_or_else(|| self.current_pid());
-            (t, p)
+        // F-01: per-CPU current thread (SMP) — fallback to global for tests/early boot/local schedulers
+        let (tid, pid) = if self.kprcb_thread_in_self() {
+            if let Some(t) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+                let p = crate::arch::x64::cpu_local::try_per_cpu_pid().unwrap_or_else(|| self.current_pid());
+                (t, p)
+            } else {
+                (self.current_tid, self.current_pid())
+            }
         } else {
             (self.current_tid, self.current_pid())
         };

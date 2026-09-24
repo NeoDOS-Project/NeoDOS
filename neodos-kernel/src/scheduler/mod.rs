@@ -91,24 +91,36 @@ impl Scheduler {
             .collect()
     }
 
-    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP),
-    /// returns the PID of the thread Running on THIS CPU via GS.
-    /// Falls back to global current_tid for early boot / tests.
+    /// Check if KPRCB current_thread pointer belongs to this Scheduler instance.
+    /// Used to distinguish global SCHEDULER vs local test schedulers (F-01).
+    fn kprcb_thread_in_self(&self) -> bool {
+        if crate::hal::safe::GsBase::read() == 0 { return false; }
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        if ptr.is_null() { return false; }
+        self.kthreads.iter().any(|t| {
+            if let Some(k) = t {
+                &**k as *const crate::scheduler::Kthread as *const u8 == ptr as *const u8
+            } else { false }
+        })
+    }
+
+    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP) AND
+    /// the KPRCB thread belongs to this Scheduler, returns per-CPU PID.
+    /// Falls back to global current_tid for tests/local schedulers.
     pub fn current_pid(&self) -> u32 {
-        if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
-            // Validate that pid still exists in scheduler tables to avoid
-            // stale KPRCB after recycle; fallback to global if not found.
-            if self.find_eprocess(pid).is_some() || pid == 0 {
+        if self.kprcb_thread_in_self() {
+            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
                 return pid;
             }
         }
         self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
     }
 
-    /// F-01: per-CPU helper to get current TID for THIS CPU.
+    /// F-01: per-CPU helper to get current TID for THIS CPU if this is the
+    /// global scheduler (KPRCB thread in self). Otherwise fallback.
     pub fn current_tid_for_this_cpu(&self) -> u32 {
-        if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
-            if self.find_kthread(tid).is_some() || tid == 0 {
+        if self.kprcb_thread_in_self() {
+            if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
         }
@@ -116,18 +128,31 @@ impl Scheduler {
     }
 
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        let tid = self.current_tid_for_this_cpu();
+        // Use per-CPU only for global scheduler; local test schedulers use self.current_tid
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        let tid = self.current_tid_for_this_cpu();
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let tid = self.current_tid_for_this_cpu();
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }

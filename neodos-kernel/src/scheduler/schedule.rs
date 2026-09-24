@@ -12,15 +12,19 @@ impl Scheduler {
     ///   !Ready   => zero entries in its CPU's run queue
     /// Returns Ok(count) on success, Err(message) on violation.
     pub fn validate_runqueue_invariants(&self) -> Result<usize, &'static str> {
-        // F-01: prefer per-CPU tid if GS is programmed (SMP), fallback to global for tests/early boot
-        let effective_tid = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+        // F-01: prefer per-CPU tid only for global scheduler (KPRCB thread in self)
+        let effective_tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         let current = self.find_kthread(effective_tid)
             .ok_or("current_tid does not identify a thread")?;
         if current.state != ThreadState::Running {
             return Err("current_tid does not identify a Running thread");
         }
-        // Only enforce cpu match when KPRCB is initialized (skip in unit tests where GS=0)
-        if crate::hal::safe::GsBase::read() != 0 {
+        // Only enforce cpu match when KPRCB is initialized and this is global
+        if self.kprcb_thread_in_self() {
             let current_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
             if current.cpu != current_cpu {
                 return Err("current thread belongs to another CPU");
@@ -123,11 +127,15 @@ impl Scheduler {
                 unsafe {
                     let k = &mut *ptr;
                     if k.state == ThreadState::Ready {
-                        let prev = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+                        let prev = if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+                        } else { self.current_tid };
                         let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                         self.current_tid = tid;
-                        // F-01: sync per-CPU KPRCB (no-op if GS not yet set, e.g. tests)
-                        crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+                        // F-01: sync per-CPU KPRCB only for global scheduler (tests use local schedulers)
+                        if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+                        }
                         k.state = ThreadState::Running;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
                             prev, tid);
@@ -149,10 +157,14 @@ impl Scheduler {
                 unsafe {
                     let k = &mut *ptr;
                     if k.state == ThreadState::Ready {
-                        let prev = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+                        let prev = if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+                        } else { self.current_tid };
                         let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                         self.current_tid = tid;
-                        crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+                        if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+                        }
                         k.state = ThreadState::Running;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                             prev, tid);
@@ -167,7 +179,9 @@ impl Scheduler {
         }
 
         // 3. Fallback: global priority scan (existing algorithm)
-        let effective_tid = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+        let effective_tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else { self.current_tid };
         let start = (effective_tid + 1) % self.next_tid.max(1);
 
         let mut picked_ptr: *mut Kthread = core::ptr::null_mut();
@@ -176,6 +190,10 @@ impl Scheduler {
         let mut picked_prio: u8 = 0;
         let mut picked_prev: u32 = 0;
         let mut picked_prev_state: u8 = 0;
+        // F-01: compute prev outside the mutable iterator to avoid borrow conflict
+        let scan_prev = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else { self.current_tid };
         'scan: for priority in 0..PRIORITY_COUNT {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
@@ -183,7 +201,7 @@ impl Scheduler {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
                         // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
                         Scheduler::remove_from_run_queue(&**k);
-                        let prev = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+                        let prev = scan_prev;
                         let prev_state = k.state.to_u8();
                         self.current_tid = check_tid;
                         k.state = ThreadState::Running;
@@ -205,7 +223,9 @@ impl Scheduler {
             // Need to get state again for trace (already Running)
             let new_state = unsafe { (*picked_ptr).state.to_u8() };
             crate::trace_sched_switch!(picked_prev, picked_prev_state, picked_tid, new_state);
-            unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(picked_ptr, picked_pid); }
+            if self.kprcb_thread_in_self() {
+                unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(picked_ptr, picked_pid); }
+            }
             reap_pending_zombies(self, picked_pid);
             return picked_ptr;
         }
@@ -226,10 +246,14 @@ impl Scheduler {
                     let idle = &mut *ptr;
                     if idle.state != ThreadState::Terminated {
                         Scheduler::remove_from_run_queue(idle);
-                        let prev = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+                        let prev = if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+                        } else { self.current_tid };
                         let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
                         self.current_tid = IDLE_TID;
-                        crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
+                        if self.kprcb_thread_in_self() {
+                            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
+                        }
                         idle.state = ThreadState::Running;
                         idle.time_slice_remaining = IDLE_TIME_SLICE;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
@@ -256,7 +280,9 @@ impl Scheduler {
             self.apply_aging();
         }
 
-        let _tid = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid);
+        let _tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else { self.current_tid };
 
         let mut needs_resched = false;
         let mut expired_priority: u8 = 0;
