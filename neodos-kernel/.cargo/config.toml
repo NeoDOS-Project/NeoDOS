@@ -7,7 +7,17 @@ rustflags = [
     "-C", "link-arg=-melf_x86_64",
     "-C", "link-arg=-no-pie",
     "-C", "relocation-model=static",
+    "-C", "no-redzone=yes",
 ]
+
+[env]
+# Log levels for kernel build (build.rs reads these)
+LOG_DEFAULT = "INFO"
+LOG_SCHED = "INFO"
+LOG_SYSCALL = "INFO"
+LOG_USER = "INFO"
+LOG_INIT = "INFO"
+LOG_KERNEL = "INFO"
 
 [profile.dev]
 panic = "abort"

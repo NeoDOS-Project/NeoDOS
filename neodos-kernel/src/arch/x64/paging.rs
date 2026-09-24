@@ -1,6 +1,5 @@
 use x86_64::structures::paging::{PageTable, PageTableFlags};
 use x86_64::PhysAddr;
-use crate::serial_println;
 use crate::scheduler::MmapRegion;
 
 // ── TLB shootdown helpers ────────────────────────────────────────────────
@@ -216,7 +215,7 @@ pub static mut PD: [AlignedPageTable; 4] = [
 /// USER_BASE..USER_LIMIT is additionally marked USER_ACCESSIBLE so Ring 3 can
 /// read and write it.  All other pages stay kernel-only (no USER_ACCESSIBLE).
 pub unsafe fn init_custom_page_tables() {
-    serial_println!("[+] Initializing custom Page Tables...");
+    kinfo!(crate::log::LogSubsys::Kernel, "Initializing custom Page Tables...");
 
     let kernel_flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE;
     let dir_flags    = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE;
@@ -265,8 +264,8 @@ pub unsafe fn init_custom_page_tables() {
                     PD[pd_idx].0[entry_idx].set_addr(phys, flags);
                 }
             }
-            serial_println!(
-                "[PAG] FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
+            ktrace!(crate::log::LogSubsys::Memory,
+                "FB 0x{:x}..0x{:x}: {} page(s) -> UC-",
                 fb_start, fb_start + fb_size as u64,
                 end_idx - start_idx + 1
             );
@@ -279,7 +278,7 @@ pub unsafe fn init_custom_page_tables() {
         let fb_start = renderer.fb.base_address;
         let fb_size = renderer.fb.size as u64;
         if fb_size > 0 && fb_start + fb_size > 0x1_0000_0000 {
-            serial_println!("[PAG] Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
+            ktrace!(crate::log::LogSubsys::Memory, "Mapping framebuffer at 0x{:x} ({} MB, extends >4 GiB)", fb_start, fb_size / 0x100000);
             map_phys_range_above_4g(fb_start, fb_start + fb_size, kernel_flags | PageTableFlags::HUGE_PAGE);
         }
     }
@@ -290,8 +289,8 @@ pub unsafe fn init_custom_page_tables() {
         panic!("PML4 address 0x{:x} not 4 KB-aligned", pml4_addr);
     }
     crate::hal::write_cr3(pml4_addr);
-    serial_println!(
-        "[+] Custom Page Tables loaded: 4 GiB identity-mapped, \
+    kinfo!(crate::log::LogSubsys::Kernel,
+        "Custom Page Tables loaded: 4 GiB identity-mapped, \
          user window 0x{:x}..0x{:x}",
         USER_BASE, USER_LIMIT
     );
@@ -369,13 +368,13 @@ pub fn init_mmap_demand_paging() {
     let mut addr = MMAP_BASE;
     while addr < end {
         if split_2mb_page(addr).is_err() {
-            serial_println!("[PAG] mmap split @ 0x{:x} FAILED", addr);
+            kerror!(crate::log::LogSubsys::Memory, "MMAP split @ 0x{:x} FAILED", addr);
         } else {
             count += 1;
         }
         addr += HUGE_PAGE_SIZE;
     }
-    serial_println!("[PAG] mmap region: {} huge pages split for 4 KB demand paging", count);
+    kdebug!(crate::log::LogSubsys::Memory, "MMAP region: {} huge pages split for 4 KB demand paging", count);
 }
 
 /// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
@@ -461,7 +460,7 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
 
     // Check write protection
     if write && region.prot & 2 == 0 {
-        serial_println!("[MMAP] write fault on read-only page @ 0x{:x}", aligned);
+        kerror!(crate::log::LogSubsys::Memory, "Write fault on read-only page @ 0x{:x}", aligned);
         return false;
     }
 
@@ -474,7 +473,7 @@ pub fn handle_mmap_page_fault(virt: u64, user: bool, write: bool) -> bool {
         // Anonymous: allocate zero-filled page
         match mmap_alloc_page(aligned) {
             Some(phys) => {
-                serial_println!("[MMAP] demand-alloc anon 4K @ 0x{:x} → phys 0x{:x}", aligned, phys);
+                ktrace!(crate::log::LogSubsys::Memory, "Demand-alloc anon 4K @ 0x{:x} → phys 0x{:x}", aligned, phys);
                 true
             }
             None => false,
@@ -531,8 +530,8 @@ fn load_file_mmap_page(virt: u64, region: &MmapRegion) -> bool {
         return false;
     }
 
-    serial_println!(
-        "[MMAP] demand-load file 4K @ 0x{:x} (inode={}, offset={}, cache={})",
+    kdebug!(crate::log::LogSubsys::Memory,
+        "Demand-load file 4K @ 0x{:x} (inode={}, offset={}, cache={})",
         virt, region.inode, offset_in_file, from_cache
     );
     true
@@ -587,7 +586,7 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
     }
 
     crate::hal::flush_tlb(virt);
-    serial_println!("[PAG] split 2MB page @ 0x{:x}", virt);
+    ktrace!(crate::log::LogSubsys::Memory, "Split 2MB page @ 0x{:x}", virt);
     Ok(())
 }
 
@@ -632,10 +631,10 @@ pub fn init_heap_demand_paging() {
     for i in 0..MAX_HEAP_SLOTS {
         let virt = PROCESS_HEAP_BASE + i as u64 * PROCESS_HEAP_SIZE;
         if split_2mb_page(virt).is_err() {
-            serial_println!("[PAG] split heap slot {} @ 0x{:x} FAILED", i, virt);
+            kerror!(crate::log::LogSubsys::Memory, "Split heap slot {} @ 0x{:x} FAILED", i, virt);
         }
     }
-    serial_println!("[PAG] heap {} slots split for 4 KB demand paging", MAX_HEAP_SLOTS);
+    kdebug!(crate::log::LogSubsys::Memory, "Heap {} slots split for 4 KB demand paging", MAX_HEAP_SLOTS);
 }
 
 /// Allocate a physical 4 KB page and map it as USER_ACCESSIBLE at `virt`.
@@ -757,8 +756,8 @@ pub fn handle_heap_page_fault(virt: u64, user: bool, write: bool) -> bool {
     // Allocate a physical page and map it
     match heap_alloc_page(aligned) {
         Some(phys) => {
-            serial_println!(
-                "[PAG] demand-alloc 4K @ 0x{:x} → phys 0x{:x} (write={})",
+            kdebug!(crate::log::LogSubsys::Memory,
+                "Demand-alloc 4K @ 0x{:x} → phys 0x{:x} (write={})",
                 aligned, phys, write
             );
             true

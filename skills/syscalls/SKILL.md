@@ -38,8 +38,8 @@ Correctly implement a syscall with proper dispatch, argument handling, Ob integr
    - New Ob types go in `src/object/types.rs` (`ObType` enum) and need an `ObOperation` impl.
 
 5. **Update public API docs**
-   - Add entry to `docs/syscalls.md` syscall table.
-   - If a new ObInfoClass variant: update `docs/objects.md`.
+   - Add entry to `docs/kernel/syscalls.md` syscall table.
+   - If a new ObInfoClass variant: update `docs/kernel/objects.md`.
    - If ABI change: update AGENTS.md version and ABI constants.
 
 6. **Add libneodos wrapper** (if userspace-accessible)
@@ -74,7 +74,7 @@ Correctly implement a syscall with proper dispatch, argument handling, Ob integr
 - [ ] Handler implemented with argument validation
 - [ ] Ob syscalls follow `sys_ob_*` naming (RAX >= 77)
 - [ ] Handler registered in `src/syscall/mod.rs` SSDT
-- [ ] `docs/syscalls.md` updated
+- [ ] `docs/kernel/syscalls.md` updated
 - [ ] libneodos wrapper added (if applicable)
 - [ ] Kernel tests added and pass
 - [ ] `scripts/check_deps.py` passes

@@ -309,6 +309,23 @@ impl EventBus {
         self.register_handler_v2(EventFilter::by_type(event_type), callback, name)
     }
 
+    /// Count handlers registered for a given event type
+    pub fn count_handlers(&self, event_type: EventType) -> usize {
+        let dummy = Event {
+            event_id: 0,
+            event_type,
+            source: SOURCE_HAL,
+            timestamp: 0,
+            device_id: 0,
+            driver_target: 0,
+            data0: 0,
+            data1: 0,
+            flags: 0,
+        };
+        let handlers = self.handlers.lock();
+        handlers.iter().flatten().filter(|h| h.filter.matches(&dummy)).count()
+    }
+
     /// Register a handler with a subscription filter
     pub fn register_handler_v2(
         &self,

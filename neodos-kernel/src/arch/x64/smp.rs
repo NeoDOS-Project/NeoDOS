@@ -445,7 +445,7 @@ fn detect_apic_id_count() -> u32 {
 pub fn init_smp() -> usize {
     let _lock = AP_STARTUP_LOCK.lock();
 
-    crate::serial_println!("[SMP] Starting SMP initialization...");
+    kinfo!(crate::log::LogSubsys::Boot, "Starting SMP initialization...");
 
     // Step 1: Allocate per-CPU KPRCB pages
     cpu_local_mod::init_kprcb_pages();
@@ -457,7 +457,7 @@ pub fn init_smp() -> usize {
             msr::write_gs_base(bsp_kprcb);
             cpu_local_mod::mark_cpu_online(0);
         }
-        crate::serial_println!("[SMP] BSP KPRCB at 0x{:x}, GS base set", bsp_kprcb);
+        kinfo!(crate::log::LogSubsys::Boot, "BSP KPRCB at 0x{:x}, GS base set", bsp_kprcb);
     }
 
     // Step 2: Detect AP count by checking if we have any APs
@@ -466,7 +466,7 @@ pub fn init_smp() -> usize {
     let has_aps = unsafe { detect_aps() };
 
     if !has_aps {
-        crate::serial_println!("[SMP] No APs detected (single CPU mode)");
+        kwarn!(crate::log::LogSubsys::Boot, "No APs detected (single CPU mode)");
         TOTAL_CPUS.store(1, Ordering::SeqCst);
         return 1;
     }
@@ -476,7 +476,7 @@ pub fn init_smp() -> usize {
         for (cpu, slot) in AP_STACK_PTRS.iter_mut().enumerate().take(MAX_CPUS).skip(1) {
             let stack_page = crate::hal::alloc_page();
             if stack_page.is_null() {
-                crate::serial_println!("[SMP] Failed to allocate stack for AP {}", cpu);
+                kerror!(crate::log::LogSubsys::Boot, "Failed to allocate stack for AP {}", cpu);
                 break;
             }
             *slot = stack_page as u64 + AP_STACK_SIZE as u64;
@@ -490,13 +490,13 @@ pub fn init_smp() -> usize {
     let _pml4_phys = crate::hal::read_cr3();
 
     // Step 6: Send INIT IPI
-    crate::serial_println!("[SMP] Sending INIT IPI...");
+    kdebug!(crate::log::LogSubsys::Boot, "Sending INIT IPI...");
     unsafe { send_init_ipi(); }
     wait_ms(10);
 
     // Step 7: Send SIPI (vector = AP_TRAMPOLINE_ADDR >> 12 = 0x80)
     let sipi_vector = (AP_TRAMPOLINE_ADDR >> 12) as u8;
-    crate::serial_println!("[SMP] Sending SIPI (vector=0x{:x})...", sipi_vector);
+    kdebug!(crate::log::LogSubsys::Boot, "Sending SIPI (vector=0x{:x})...", sipi_vector);
     unsafe { send_sipi(sipi_vector); }
     wait_ms(10);
 
@@ -515,14 +515,14 @@ pub fn init_smp() -> usize {
     }
 
     if ap_count == 0 {
-        crate::serial_println!("[SMP] No APs found (single CPU mode)");
+        kwarn!(crate::log::LogSubsys::Boot, "No APs found (single CPU mode)");
         TOTAL_CPUS.store(1, Ordering::SeqCst);
         return 1;
     }
 
     // Step 9: Second SIPI if needed
     if ap_count == 0 {
-        crate::serial_println!("[SMP] Retrying SIPI...");
+        kinfo!(crate::log::LogSubsys::Boot, "Retrying SIPI...");
         unsafe { send_sipi(sipi_vector); }
         wait_ms(10);
         ap_count = AP_READY_COUNT.load(Ordering::SeqCst);
@@ -536,7 +536,7 @@ pub fn init_smp() -> usize {
         cpu_local_mod::mark_cpu_online(i as u32);
     }
 
-    crate::serial_println!("[SMP] {} CPU(s) online (1 BSP + {} AP(s))", total, ap_count);
+    kinfo!(crate::log::LogSubsys::Boot, "{} CPU(s) online (1 BSP + {} AP(s))", total, ap_count);
     total as usize
 }
 

@@ -15,7 +15,7 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
 
 ## Steps
 
-1. **Read `docs/filesystem.md`**
+1. **Read `docs/filesystem/overview.md`**
    Understand NeoFS layout, VFS architecture, IoStack, the page cache, and storage priority.
 
 2. **Identify the relevant subsystem**
@@ -92,4 +92,4 @@ Make correct filesystem changes without corrupting data, breaking mount/unmount,
 - [ ] Storage priority respected
 - [ ] GPT and partition table parsed correctly
 - [ ] Kernel tests added and pass
-- [ ] `docs/filesystem.md` updated if VFS or FS format changed
+- [ ] `docs/filesystem/overview.md` updated if VFS or FS format changed

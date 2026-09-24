@@ -4,6 +4,44 @@
 
 ## v0.50.0-dev — Unreleased
 
+### Added (Sistema de Logging Configurable)
+
+- **Módulo `log`** (`src/log/mod.rs`) — Sistema centralizado de registro de eventos con 5 niveles (ERROR, WARN, INFO, DEBUG, TRACE) y 46 subsistemas con filtrado independiente.
+  - **Macros:** `kerror!`, `kwarn!`, `kinfo!`, `kdebug!`, `ktrace!`, `klog_raw!` — disponibles en toda la crate via `#[macro_use] pub mod log;`.
+  - **Compile-time filtering:** `build.rs` lee variables de entorno (`LOG_DEFAULT`, `LOG_NET`, `LOG_DRIVER`, etc.) y genera constantes `BUILD_*_LEVEL`. El compilador elimina como dead code las ramas por debajo del umbral (zero-cost en release).
+  - **Runtime filtering:** `log::set_level(subsys, level)` / `log::reset_level(subsys)` via `AtomicU8` lock-free.
+  - **Formato:** `[TAG] mensaje\r\n` para INFO, `[TAG] NIVEL: mensaje\r\n` para el resto.
+- **`ktrace!` implementado** en rutas calientes: `schedule()`, `net_tick()`, NVMe SQ doorbell, ARP cache, ICMP echo, DNS cache, hot reload, demand paging, page splitting.
+- **~400 `serial_println!` migrados** a las nuevas macros en todos los subsistemas (net, scheduler, drivers, power, services, syscall, object, cm, kbd, virtio, timers, interrupts, exception, security, slab, elf, nxl, memory, usermode, watchdog, boot_benchmark, crash, arch/x64).
+- **`neodev.toml`** — Config file para NeoDev (VM: VirtualBox, 1 CPU, 512 MB, red bridge).
+- **`docs/logging.md`** — Especificacion completa del sistema de logging (arquitectura, niveles, subsistemas, API, buenas practicas, ejemplos, estado actual).
+
+### Added (Driver Manager — carga selectiva de drivers)
+
+- **Driver Manager (`src/drivers/driver_manager.rs`)** — Sistema centralizado de carga de drivers basado en hardware detectado.
+  - **Device Discovery** (`src/drivers/device/`): escaneo PCI completo con trait `BusScanner` extensible a futuros buses (USB, ISA).
+  - **Driver Manifest** (`src/drivers/manifest.rs`): registro central declarativo con vendor/device IDs, clase, prioridad.
+  - **Matching**: solo se cargan drivers cuyo hardware está presente (ej: e1000 solo si NIC Intel detectada). Dispositivos sin driver listados como `UNMATCHED`.
+  - **Platform drivers**: ACPI, PS2KBD, PS2MOUSE, SERIAL, RTC cargados incondicionalmente (sin PCI matching).
+  - **Resultado**: 7/7 drivers activos en AHCI mode, 7/7 en ATA mode. Eliminada la carga indiscriminada de todos los `.NEM`.
+- **Driver de red detectado**: ATA (PIIX4 IDE controller 0x8086:0x7111), AHCI (ICH9 0x8086:0x2829).
+- **`tools/nem-pack.py` restaurado**: recuperado de git history (borrado por error en 9f9c67a). Compila `.o` → `.nem` via ELF parsing.
+
+### Added (GitHub SSOT — roadmap sync)
+
+- **GitHub Issues como Source of Truth**: `scripts/sync-roadmap.sh` sincroniza el roadmap local (`roadmap/improvements.md`) con GitHub Issues. Crea labels, milestones e issues automáticamente. Idempotente.
+
+### Added (B-tree persistente COW)
+
+- **B-tree COW (Copy-on-Write)**: nuevo `src/fs/btree.rs` con B-tree persistente para NeoFS. Operaciones atómicas con journaling de metadatos.
+
+### Changed
+
+- **NeoInit duplicate spawn fix**: corregido race condition donde NeoInit podía spawnear el shell dos veces.
+- **Progress bar/spinner API unificada**: `console.nxl` refactorizado con API común para barras de progreso y spinners.
+- **`scripts/` → `data/`**: directorio renombrado; todas las referencias actualizadas.
+- **Port de scripts a Rust**: `gen-hiv`, `crashdump`, `check-deps` migrados de Python a Rust en `tools/`.
+
 ### Changed (NeoDev extraído a repositorio independiente)
 
 - **NeoDev separado de NeoDOS**: La herramienta de desarrollo se ha extraído a un repositorio independiente en `github.com/NeoDOS-Project/NeoDev`.
@@ -14,10 +52,24 @@
 
 ### Changed (Boot/init hardening — AUDIT-33)
 
-- **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `serial_println!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.
+- **Panic→graceful halt**: All boot-time `panic!()` calls replaced with diagnostic `kerror!()` / `kwarn!()` + `hal::halt()`. Affected paths: boot magic mismatch (LED signal), block device missing, superblock read failure, FS mount failure, user slot exhaustion, NeoInit/NeoShell not found, spawn_usermode failure, NeoInit exit.
 - **Registry tolerance**: New `cm::init::ensure_boot_defaults()` creates critical boot defaults (Language, DefaultShell, EnableVT, WaitForNetwork) if missing from empty/corrupted hive. `ensure_language_default()` now sets `en-US` if absent.
 - **Service fallback**: New `register_default_services()` registers built-in NeoInit service when registry is empty. `sm_init()` calls it when `sm_reg_load_all()` returns 0. `spawn_process()` returns `Result` instead of panicking.
 - **Tests added**: `boot_missing_registry_defaults`, `boot_missing_service_fallback`, `boot_service_startup_recovery`, `boot_register_default_services` (665 total, up from 625).
+
+### Added (Scheduler P0 — runqueue correctness, v0.50.2+ unreleased)
+
+- **Scheduler P0 audit fixes** (`docs/scheduler_audit.md`, `fix/p0-scheduler-runqueue-correctness`): 6 invariant violations addressed. See git log `fix(sched)` series:
+  - **P0-1/P0-2**: New `make_thread_ready()` centralizes Ready transition + runqueue enqueue; fixes direct `Blocked→Ready` without enqueue.
+  - **P0-3**: Deduplication + stale-entry elimination for runqueue: `runqueue_enqueue` checks `contains()` (no duplicates), `remove` before `Running` scan, `eliminate_stale_entries()` on context switch.
+  - **P0-4**: Documented as by-design (work-stealing migrates ownership without extra notification).
+  - **P0-5/6**: Resolved via P0-1 and VT matching limitation documented.
+- **Timer diagnostics** (`src/arch/x64/idt.rs`, `src/trace.rs`): lock-free timer diagnostic ring buffer (`timer_diag`) + frame state tracking for scheduler debugging; dumped at `POST_NETD` with 500-tick delay in `main.rs`.
+- **Graphify integration** (`graphify-out/`, `.opencode/skills/graphify/`): Graphify MCP skill/plugin, forensic dbg capture, knowledge-graph artifacts (`graph.json`, `graph.html`, `GRAPH_REPORT.md`) for AI agents.
+- **Scheduler preemption hardening**: `fix: validate kernel stack top` prevents triple faults on context switch; `fix: scheduler preemption for kernel threads` + `sched_debug` trace events (`b6c875e`..`5e756e1`).
+- **AHCI stability** (`fix: AHCI stability with port reset/retry, timer Ring0 preemption guard, lock diag infrastructure`): port reset/retry, Ring 0 preemption guard, `LOCK_DIAG` infrastructure.
+- **Keyboard dispatch single-path** (`fix/keyboard-investigation` → develop): prevent duplicate keyboard dispatch — IRQ now single-path via Event Bus/direct dispatch (`e0f1b73`).
+- **Kernel thread IRETQ fix**: `fix(scheduler): complete ring0 IRETQ frame to 5 fields (RIP/CS/RFLAGS/RSP/SS)` (`98439e9`).
 
 ## v0.50.0 — 2026-07-13
 
@@ -122,6 +174,7 @@
 - **REG_SZ null-terminator** — `ValueCell::as_str()` now strips trailing null byte from REG_SZ registry values.
 - **Network deadlock** — `net_handle_incoming_packet()` receives `&mut dyn NetworkInterface` directly instead of re-acquiring `NIC_REGISTRY.lock()`, eliminating the reentrant spinlock deadlock in packet dispatch.
 - **IP/mask propagation** — `nic_set_ip()` and `nic_set_mask()` now propagate values to all registered NICs (multiple drivers may share the same hardware).
+- **Triple fault on Ring 3 transition (#245)** — `static mut TSS` was placed by LTO in a read-only (`r-x`) ELF segment. `set_kernel_stack()` writes to `TSS.privilege_stack_table[0]` were silently discarded, leaving RSP0=0. The CPU then triple-faulted on the first Ring-3→Ring-0 interrupt (page fault → double fault → CPU reset). Fixed by adding `#[link_section = ".data"]` to guarantee the TSS resides in writable memory.
 
 ### Added
 
@@ -130,6 +183,13 @@
 - **Test: `net_handle_incoming_no_deadlock`** — Validates that ARP request/reply dispatch does not deadlock when NIC_REGISTRY lock is already held.
 
 ## v0.50.2 — 2026-07-17
+
+### Fixed
+
+- **Triple Fault / NeoShell Reset (AUDIT-TF)** — Resuelto el reinicio intermitente por triple fault en NeoShell tras el arranque.
+  - **handler_read Blocked State**: Reemplazada la espera activa con `sti; hlt; cli` en Ring 0 por un bloqueo atómico a `ThreadState::Blocked { waiting_for: 0xFFFFFFFF }` en la tabla de hilos y retorno de `-EAGAIN` (`-8`) a Ring 3.
+  - **Reintento en Userland (`libconsole-nxl`)**: `read_byte()` procesa `-EAGAIN`, cede ciclo via `sys_yield` y reintenta la lectura sin bloquear ni corromper el contexto.
+  - **Stack Canary Defense**: Implementado `STACK_CANARY` (`0xDEAD_BEEF_CAFE_BABE`) en la base de `AlignedKStack` y validación estricta (`check_kernel_stack_canary`) en `syscall_try_resched` previa a cada retorno `iretq` a Ring 3.
 
 ### Added
 
@@ -608,7 +668,7 @@
 - **AGENTS.md** — Syscall table updated with "Estado" column. "Estado Objectification" table added. User binaries descriptions updated to Ob API.
 - **docs/ARCHITECTURE.md** — KOBJ, LOADNEM, NDREG descriptions updated to Ob API.
 - **docs/IMPROVEMENTS.md** — Items 117-121 updated. AI-5 marked completed. "Objectification Roadmap" section added (~190 lines).
-- **docs/SYSCALLS.md** — ABI v7: removed dead syscalls, documented all remaining with correct ABI.
+- **docs/syscalls.md** — ABI v7: removed dead syscalls, documented all remaining with correct ABI.
 
 ### Removed
 

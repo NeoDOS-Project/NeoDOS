@@ -19,7 +19,7 @@ use core::ptr;
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 use crate::memory;
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::arch::x64::cpu_local;
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -314,7 +314,7 @@ impl SlabAllocator {
     }
 
     pub fn init(&self, heap_start: *mut u8, heap_size: usize) {
-        serial_println!("[SLAB] [+] Initializing per-CPU slab allocator ({} caches, batch={})",
+        kinfo!(LogSubsys::Slab, "Initializing per-CPU slab allocator ({} caches, batch={})",
                        NUM_CACHES, BATCH_SIZE);
 
         // Reserve the fallback-heap region in the physical frame allocator
@@ -326,7 +326,7 @@ impl SlabAllocator {
             self.fallback.lock().init(heap_start, heap_size);
         }
 
-        serial_println!("[SLAB] [+] Ready: {}B..{}B slab + {} KB fallback, per-CPU hot cache={} slots",
+        kinfo!(LogSubsys::Slab, "Ready: {}B..{}B slab + {} KB fallback, per-CPU hot cache={} slots",
                        CACHE_SIZES[0], CACHE_SIZES[NUM_CACHES - 1],
                        heap_size / 1024, BATCH_SIZE);
     }

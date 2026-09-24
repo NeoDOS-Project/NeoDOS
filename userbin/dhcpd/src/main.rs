@@ -678,6 +678,10 @@ pub extern "C" fn _start() -> ! {
         mac: [0u8; 6],
         ip: [0u8; 4],
         link_up: 0,
+        vendor_id: 0,
+        device_id: 0,
+        name: [0u8; 16],
+        description: [0u8; 48],
     };
     let mac = if libnet::iface_info(0, &mut iface) == 0 {
         let cur_ip = u32::from_be_bytes(iface.ip);

@@ -1,7 +1,7 @@
 //! Exception dispatcher — routes CPU exceptions to kernel panic or user-mode SEH handlers.
 
 use alloc::boxed::Box;
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::scheduler::current_teb_base;
 use crate::panic_classification::PanicClass;
 
@@ -99,10 +99,10 @@ pub fn init_teb_paging() {
             Ok(()) => {
                 // Flag the PD entry as USER_ACCESSIBLE so the 4 KB PTEs can be user-accessible
                 let _ = crate::arch::x64::paging::set_pd_user_accessible(aligned, true);
-                serial_println!("[SEH] Split 2MB page @ 0x0 for TEB at 0x{:x}", TEB_VADDR);
+                kdebug!(LogSubsys::Seh, "Split 2MB page @ 0x0 for TEB at 0x{:x}", TEB_VADDR);
             }
             Err(_) => {
-                serial_println!("[SEH] Failed to split 2MB page for TEB!");
+                kerror!(LogSubsys::Seh, "Failed to split 2MB page for TEB!");
                 return;
             }
         }
@@ -111,7 +111,7 @@ pub fn init_teb_paging() {
     // Map the TEB page as USER_ACCESSIBLE + writable
     let phys = crate::hal::alloc_page();
     if phys.is_null() {
-        serial_println!("[SEH] Failed to allocate TEB page frame!");
+        kerror!(LogSubsys::Seh, "Failed to allocate TEB page frame!");
         return;
     }
 
@@ -128,12 +128,12 @@ pub fn init_teb_paging() {
     // Map it with USER_ACCESSIBLE | WRITABLE | PRESENT
     let rc = crate::hal::map_page(phys as u64, TEB_VADDR, 0x7);
     if rc != 0 {
-        serial_println!("[SEH] Failed to map TEB page!");
+        kerror!(LogSubsys::Seh, "Failed to map TEB page!");
         crate::hal::free_page(phys);
         return;
     }
 
-    serial_println!("[SEH] TEB page mapped at 0x{:x}", TEB_VADDR);
+    kdebug!(LogSubsys::Seh, "TEB page mapped at 0x{:x}", TEB_VADDR);
 }
 
 // ── Invoke TEB exception chain ──
@@ -245,7 +245,7 @@ pub fn exception_dispatch(
 ) -> DispatchResult {
     if !is_user {
         // Ring 0: kernel exception — always crash dump + panic
-        serial_println!("[EXC] Kernel exception: type={} rip={:#x} rsp={:#x} err={:#x}",
+        kerror!(LogSubsys::Exception, "Kernel exception: type={} rip={:#x} rsp={:#x} err={:#x}",
             exception_type, rip, rsp, error_code);
 
         let panic_class = match exception_type {
@@ -269,18 +269,18 @@ pub fn exception_dispatch(
 
         match action {
             ExceptionAction::Continue => {
-                serial_println!("[EXC] User exception handled (Continue): type={} rip={:#x}",
+                kdebug!(LogSubsys::Exception, "User exception handled (Continue): type={} rip={:#x}",
                     exception_type, rip);
                 DispatchResult::Handled
             }
             ExceptionAction::Terminate => {
-                serial_println!("[EXC] User exception unhandled (Terminate): type={} rip={:#x}",
+                kerror!(LogSubsys::Exception, "User exception unhandled (Terminate): type={} rip={:#x}",
                     exception_type, rip);
                 DispatchResult::Terminated
             }
             ExceptionAction::ReevaluateFilters => {
                 // Should not reach here — terminate as fallback
-                serial_println!("[EXC] User exception filters exhausted: type={} rip={:#x}",
+                kerror!(LogSubsys::Exception, "User exception filters exhausted: type={} rip={:#x}",
                     exception_type, rip);
                 DispatchResult::Terminated
             }

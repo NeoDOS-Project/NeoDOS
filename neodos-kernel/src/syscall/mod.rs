@@ -19,12 +19,15 @@ mod handlers;
 mod ob;
 mod cm;
 mod tests;
+pub mod util;
+pub mod resched;
+pub(crate) use util::{is_user_ptr_valid, copy_user_string};
 
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use lazy_static::lazy_static;
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
 pub use table::{Registers, SyscallFn, MAX_SYSCALL};
@@ -35,6 +38,7 @@ use self::handlers::*;
 use self::ob::*;
 use self::cm::*;
 pub use self::tests::{register_syscall_table_tests, register_sync_tests};
+
 
 // ── Syscall Number Constants (frozen ABI) ──
 
@@ -62,6 +66,7 @@ pub enum SyscallNum {
     CursorBlink = 30,
     // Driver (35-39)
     DriverUnload = 35,
+    IcmpPing = 36,
     // Object Manager (40-49)
     ObOpen = 40,
     ObCreate = 41,
@@ -108,6 +113,7 @@ impl SyscallNum {
             25 => Some(Self::LoadLib),
             30 => Some(Self::CursorBlink),
             35 => Some(Self::DriverUnload),
+            36 => Some(Self::IcmpPing),
             40 => Some(Self::ObOpen),
             41 => Some(Self::ObCreate),
             42 => Some(Self::ObQueryInfo),
@@ -116,6 +122,7 @@ impl SyscallNum {
             45 => Some(Self::ObWait),
             46 => Some(Self::ObDestroy),
             47 => Some(Self::ObService),
+            48 => Some(Self::ObSnapshot),
             50 => Some(Self::CmOpenKey),
             51 => Some(Self::CmCreateKey),
             52 => Some(Self::CmQueryValue),
@@ -125,8 +132,7 @@ impl SyscallNum {
             56 => Some(Self::CmDeleteKey),
             57 => Some(Self::CmFlushKey),
             58 => Some(Self::CmLoadHive),
-             59 => Some(Self::CmUnloadHive),
-             77 => Some(Self::ObSnapshot),
+            59 => Some(Self::CmUnloadHive),
             _ => None,
         }
     }
@@ -184,7 +190,7 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4,
         10, 11, 12,
         20, 21, 22, 23, 24, 25,
-        30, 35,
+        30, 35, 36,
         40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
     ];
@@ -201,7 +207,7 @@ pub fn validate_abi() {
     assert!((err_to_u64(SyscallError::NoEnt) as i64) < 0);
     assert!((err_to_u64(SyscallError::Perm) as i64) < 0);
 
-    crate::serial_println!("[SYS] SSDT validated ({} assigned syscalls)", ASSIGNED.len());
+    kinfo!(LogSubsys::Syscall, "SSDT validated ({} assigned syscalls)", ASSIGNED.len());
 }
 
 pub static NEED_RESCHED: AtomicBool = AtomicBool::new(false);
@@ -210,6 +216,14 @@ pub static KEYBOARD_LAYOUT: AtomicU8 = AtomicU8::new(1);
 pub fn set_need_resched() {
     NEED_RESCHED.store(true, Ordering::SeqCst);
     unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
+}
+
+/// Diagnostic switch used to isolate syscall-return scheduling from syscall
+/// dispatch.  It is compile-time so the normal kernel has no mutable debug
+/// control path or userland ABI change.
+#[no_mangle]
+pub extern "C" fn syscall_resched_enabled() -> u64 {
+    if cfg!(feature = "no-syscall-resched") { 0 } else { 1 }
 }
 
 #[no_mangle]
@@ -237,47 +251,13 @@ pub extern "C" fn is_thread_terminated() -> u64 {
     0
 }
 
-#[no_mangle]
-pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
-    if cfg!(feature = "validation") && crate::invariants::is_in_timer_irq() {
-        crate::serial_println!("[SYS] resched called from timer IRQ context!");
-    }
-
-    let has_non_idle = crate::hal::without_interrupts(|| {
-        let scheduler = scheduler::current_scheduler().lock();
-        scheduler.has_non_idle_threads()
-    });
-
-    if !has_non_idle {
-        return current_rsp;
-    }
-
-    crate::hal::without_interrupts(|| {
-        let s = scheduler::current_scheduler();
-        let mut scheduler = s.lock();
-
-        let tid = scheduler.current_tid;
-        if tid > 0 {
-            if let Some(k) = scheduler.current_kthread_mut() {
-                k.rsp = current_rsp;
-                if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
-                } else if cfg!(feature = "validation") {
-                    crate::serial_println!("[SYS] Context switch from non-Running state: {:?}", k.state);
-                }
-            }
-        }
-
-        let next = scheduler.schedule();
-        let next_ks_top = unsafe { (*next).kernel_stack_top };
-        crate::arch::x64::gdt::set_kernel_stack(next_ks_top);
-        let next_rsp = unsafe { (*next).rsp };
-        crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
-        next_rsp
-    })
-}
-
-fn normalize_dos_path(path: &str) -> String {
+/// Trace the INT 0x80 saved-register area and CPU return frame.
+///
+/// The assembly handler has pushed 15 general-purpose registers, so the
+/// hardware frame is at `frame_rsp + 120`: RIP, CS, RFLAGS, RSP, SS.  This is
+/// deliberately kept at the syscall boundary so it also observes a frame
+/// after `syscall_try_resched` selected another thread.
+pub(crate) fn normalize_dos_path(path: &str) -> String {
     let mut drive_prefix = [0u8; 2];
     let rest = if path.len() >= 2 && path.as_bytes()[1] == b':' {
         drive_prefix[0] = path.as_bytes()[0].to_ascii_uppercase();
@@ -309,44 +289,7 @@ fn normalize_dos_path(path: &str) -> String {
     result
 }
 
-pub(crate) fn is_user_ptr_valid(ptr: u64, len: u64) -> bool {
-    if ptr >= crate::arch::x64::paging::USER_BASE && ptr.saturating_add(len) <= crate::arch::x64::paging::USER_LIMIT {
-        return true;
-    }
-    if ptr >= 0x1E000000 && ptr.saturating_add(len) <= 0x1E200000 {
-        return true;
-    }
-    let (heap_base, heap_break) = crate::scheduler::current_process_heap_range();
-    if heap_base != 0 && ptr >= heap_base && ptr.saturating_add(len) <= heap_break {
-        return true;
-    }
-    let regions = crate::scheduler::current_process_mmap_regions();
-    for r in &regions {
-        if ptr >= r.base && ptr.saturating_add(len) <= r.base + r.len {
-            return true;
-        }
-    }
-    false
-}
-
-fn copy_user_string(ptr: u64) -> Result<String, ()> {
-    if !is_user_ptr_valid(ptr, 1) {
-        return Err(());
-    }
-    let mut buf = [0u8; 256];
-    let mut len = 0usize;
-    unsafe {
-        while len < 255 {
-            let byte = (ptr as *const u8).add(len).read();
-            if byte == 0 { break; }
-            buf[len] = byte;
-            len += 1;
-        }
-    }
-    core::str::from_utf8(&buf[..len]).map(|s| s.to_string()).map_err(|_| ())
-}
-
-fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::handle::HandleEntry {
+pub(crate) fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::handle::HandleEntry {
     if let Some(obj) = entry.obj_type() {
         if obj == crate::object::ObType::Pipe {
             if let Some(_nid) = entry.native_id() {
@@ -356,7 +299,7 @@ fn copy_handle_entry_for_child(entry: &crate::handle::HandleEntry) -> crate::han
     *entry
 }
 
-fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
+pub(crate) fn resolve_chdir_target(path_str: String) -> Result<(u8, String), SyscallError> {
     let (cwd_drive, cwd_path) = crate::scheduler::get_current_cwd();
 
     let is_absolute = path_str.contains(':')
@@ -509,28 +452,35 @@ pub(crate) fn is_current_admin() -> bool {
 #[no_mangle]
 pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u64, r9: u64) -> u64 {
     if rax == 40 || rax == 43 {
-        serial_println!("[SYS] syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
+        kdebug!(LogSubsys::Syscall, "syscall rax={} rbx=0x{:x} rcx=0x{:x} rdx=0x{:x}", rax, rbx, rcx, rdx);
     }
     crate::trace_syscall!(rax, rbx, rcx, rdx);
+    if cfg!(feature = "validation") {
+        let pid = crate::scheduler::current_pid();
+        if pid == 2 {
+            crate::serial_println!("[SYSCALL] enter pid={} rax={} rbx=0x{:x}", pid, rax, rbx);
+        }
+    }
 
     if rax >= 256 {
-        serial_println!("[SYS] INVALID syscall number: {}", rax);
+        kwarn!(LogSubsys::Syscall, "INVALID syscall number: {}", rax);
         return err_to_u64(SyscallError::NoSys);
     }
 
     let is_admin = is_current_admin();
     if let Err(e) = check_syscall_permission(rax, is_admin) {
-        serial_println!("[SYS] syscall {} denied (admin={})", rax, is_admin);
+        kwarn!(LogSubsys::Syscall, "syscall {} denied (admin={})", rax, is_admin);
         return e;
     }
 
     match SYSCALL_TABLE[rax as usize] {
         Some(handler) => {
             let regs = Registers::new(rax, rbx, rcx, rdx, r8, r9);
-            handler(regs)
+            let result = handler(regs);
+            result
         }
         None => {
-            serial_println!("[SYS] No handler for syscall {}", rax);
+            kerror!(LogSubsys::Syscall, "No handler for syscall {}", rax);
             err_to_u64(SyscallError::NoSys)
         }
     }
@@ -538,7 +488,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
 
 // ── Handle table helpers ──
 
-fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
+pub(crate) fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
@@ -549,7 +499,7 @@ fn current_handle_entry(fd: u8) -> crate::handle::HandleEntry {
     })
 }
 
-fn set_current_handle(fd: u8, entry: crate::handle::HandleEntry) {
+pub(crate) fn set_current_handle(fd: u8, entry: crate::handle::HandleEntry) {
     crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();

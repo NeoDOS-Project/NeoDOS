@@ -1,5 +1,7 @@
 const PS2_TIMEOUT: u32 = 100_000;
 
+use crate::log::LogSubsys;
+
 fn ps2_wait_input() -> bool {
     for _ in 0..PS2_TIMEOUT {
         let s: u8 = crate::hal::inb(0x64);
@@ -115,7 +117,7 @@ fn init_mouse() {
     if !ps2_write_mouse(0xF4) { return; }
     let _ack = ps2_read_data();
 
-    crate::serial_println!("[PS2] Mouse initialized on port 2");
+    kinfo!(LogSubsys::Ps2, "Mouse initialized on port 2");
 }
 
 pub fn set_leds(leds: u8) -> bool {

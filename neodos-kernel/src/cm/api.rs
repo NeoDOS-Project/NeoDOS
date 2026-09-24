@@ -3,6 +3,7 @@ use alloc::vec::Vec;
 
 use crate::object::{self, ObType};
 use crate::object::namespace;
+use crate::log::LogSubsys;
 use self::super::hive::{Hive, ValueCell};
 use self::super::manager::{CM_MANAGER, encode_cell, decode_cell};
 use self::super::init::flush_hive_to_vfs;
@@ -201,7 +202,7 @@ pub fn cm_flush_all_hives() {
         return;
     }
 
-    crate::serial_println!("[CM] Flushing {} dirty hive(s) to disk...", snapshots.len());
+    kinfo!(LogSubsys::Cm, "Flushing {} dirty hive(s) to disk...", snapshots.len());
 
     for (hive_idx, hive) in &snapshots {
         if flush_hive_to_vfs(hive).is_ok() {
@@ -210,7 +211,7 @@ pub fn cm_flush_all_hives() {
                 cm.hives[*hive_idx as usize].hive.mark_clean();
             }
         } else {
-            crate::serial_println!("[CM] WARNING: Failed to flush hive '{}'", hive.name);
+            kwarn!(LogSubsys::Cm, "Failed to flush hive '{}'", hive.name);
         }
     }
 }

@@ -15,7 +15,9 @@ sync_milestones() {
 
   # Cachear milestones existentes
   local existing_json
-  existing_json="$($GH api "/repos/$repo/milestones" --paginate 2>/dev/null)"
+  existing_json="$($GH api "/repos/$repo/milestones?state=all&per_page=100" --paginate 2>/dev/null)" || true
+  # Merge paginated pages into a single array
+  existing_json="$(echo "$existing_json" | jq -s 'add' 2>/dev/null)"
   local existing_titles=()
   while IFS= read -r t; do
     [[ -n "$t" ]] && existing_titles+=("$t")

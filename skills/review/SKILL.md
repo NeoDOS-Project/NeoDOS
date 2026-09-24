@@ -20,7 +20,7 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
    - Rule 4: NT-like design — Ob is the central abstraction; verify new code uses Ob handles, not raw pointers.
    - Rule 5: All new interactive commands are Ring 3 .NXE in `userbin/` — reject any Ring 0 shell code.
    - Rule 6: RAX >= 77 syscalls are `sys_ob_*` — verify naming and Ob operation.
-   - Rule 8: Read `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` — check invariants aren't violated.
+   - Rule 8: Read `docs/architecture/source-of-truth.md` — check invariants aren't violated.
    - Rule 10: kebab-case files/dirs, PascalCase types, snake_case fns/vars.
 
 2. **Check subsystem dependencies**
@@ -33,11 +33,11 @@ Catch architectural violations, missed invariants, missing docs, and breaking ch
    - Run `python3 scripts/auto_test.py` to confirm.
 
 4. **Verify public API docs**
-   - Syscall added? `docs/syscalls.md` updated.
-   - ObInfoClass variant added? `docs/objects.md` updated.
-   - NEM ABI changed? `docs/drivers.md` and AGENTS.md ABI version updated.
-   - Struct in `libneodos/` changed? `docs/libneodos.md` updated.
-   - Architecture change? `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` updated.
+   - Syscall added? `docs/kernel/syscalls.md` updated.
+   - ObInfoClass variant added? `docs/kernel/objects.md` updated.
+   - NEM ABI changed? `docs/drivers/overview.md` and AGENTS.md ABI version updated.
+   - Struct in `libneodos/` changed? `docs/userland/libneodos.md` updated.
+   - Architecture change? `docs/architecture/source-of-truth.md` updated.
 
 5. **Check commit hygiene**
    - No secrets or keys committed.

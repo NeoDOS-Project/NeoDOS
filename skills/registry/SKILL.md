@@ -15,7 +15,7 @@ Correctly implement registry operations following the NT-style cell-based hive a
 
 ## References
 
-- `docs/registry.md` — subsystem documentation
+- `docs/registry/registry.md` — subsystem documentation
 - `docs/design/registry-improvements.md` — planned improvements design
 - `src/cm/hive.rs` — cell-based hive buffer, key/value CRUD
 - `src/cm/mod.rs` — CmManager, mount/unmount, persistence, default values

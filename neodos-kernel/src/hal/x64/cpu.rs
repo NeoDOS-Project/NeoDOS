@@ -12,6 +12,14 @@ pub extern "C" fn disable_interrupts() {
     unsafe { raw::raw_cli(); }
 }
 
+/// Return the current stack pointer — used to initialise TID 0's
+/// kernel_stack_top to a non-zero value so the scheduler never loads
+/// RSP0=0 (which would triple-fault the next Ring-3 interrupt).
+#[inline(never)]
+pub fn bootstrap_stack_top() -> u64 {
+    unsafe { raw::raw_read_rsp() }
+}
+
 #[no_mangle]
 #[inline(never)]
 pub extern "C" fn halt() -> ! {

@@ -44,8 +44,13 @@ pub const SLAB_BATCH_SIZE: usize = 32;
 
 // ── Per-CPU run queue ────────────────────────────────────────────────────
 
+/// Per-CPU run queue locks for SMP safety.
+/// Cross-CPU enqueue (wake/yield to foreign CPU) must be synchronized.
+use spin::Mutex;
+pub(crate) static RUNQUEUE_LOCKS: [Mutex<()>; MAX_CPUS] = [const { Mutex::new(()) }; MAX_CPUS];
+
 /// Simple per-CPU run queue: ring buffer of TIDs.
-/// No locks needed — only the owning CPU accesses this.
+/// No locks needed for single-CPU, but SMP cross-CPU access now uses RUNQUEUE_LOCKS.
 #[repr(C)]
 pub struct CpuRunQueue {
     /// Ring buffer of TIDs.
@@ -70,7 +75,7 @@ impl CpuRunQueue {
         if self.count as usize >= self.entries.len() {
             return false;
         }
-        self.entries[self.tail_idx as usize] = tid;
+        self.entries[(self.tail_idx as usize) % self.entries.len()] = tid;
         self.tail_idx = self.tail_idx.wrapping_add(1);
         self.count += 1;
         true
@@ -81,7 +86,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             return None;
         }
-        let tid = self.entries[self.head_idx as usize];
+        let tid = self.entries[(self.head_idx as usize) % self.entries.len()];
         self.head_idx = self.head_idx.wrapping_add(1);
         self.count -= 1;
         Some(tid)
@@ -90,6 +95,63 @@ impl CpuRunQueue {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.count == 0
+    }
+
+    pub fn clear(&mut self) {
+        self.head_idx = 0;
+        self.tail_idx = 0;
+        self.count = 0;
+    }
+
+    #[inline]
+    pub fn contains(&self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        let cap = self.entries.len();
+        let mut idx = (self.head_idx as usize) % cap;
+        for _ in 0..self.count {
+            if self.entries[idx] == tid {
+                return true;
+            }
+            idx = (idx + 1) % cap;
+        }
+        false
+    }
+
+    /// Remove the first occurrence of `tid` from the ring buffer.
+    /// Returns true if found and removed, false if not present.
+    /// O(n) scan — acceptable for the 64-entry ring buffer.
+    #[inline]
+    pub fn remove(&mut self, tid: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+        // Collect all elements in order (head → tail).
+        let cap = self.entries.len();
+        let mut buf = [0u32; 64];
+        let mut idx = (self.head_idx as usize) % cap;
+        for i in 0..self.count as usize {
+            buf[i] = self.entries[idx];
+            idx = (idx + 1) % cap;
+        }
+        // Find and remove the target.
+        let pos = buf[..self.count as usize].iter().position(|&t| t == tid);
+        if let Some(p) = pos {
+            // Compact: shift [p+1 .. count) left by one.
+            for i in p..self.count as usize - 1 {
+                buf[i] = buf[i + 1];
+            }
+            self.count -= 1;
+            self.head_idx = 0;
+            self.tail_idx = self.count;
+            for i in 0..self.count as usize {
+                self.entries[i] = buf[i];
+            }
+            true
+        } else {
+            false
+        }
     }
 
     #[inline]
@@ -103,7 +165,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             None
         } else {
-            Some(self.entries[self.head_idx as usize])
+            Some(self.entries[(self.head_idx as usize) % self.entries.len()])
         }
     }
 }
@@ -313,7 +375,7 @@ pub fn init_kprcb_pages() {
             let kprcb = alloc::boxed::Box::new(Kprcb::new(cpu as u32, 0));
             let addr = alloc::boxed::Box::into_raw(kprcb) as u64;
             *page = addr;
-            crate::serial_println!("[SMP] KPRCB[{}] at 0x{:x}", cpu, addr);
+            kdebug!(crate::log::LogSubsys::Boot, "KPRCB[{}] at 0x{:x}", cpu, addr);
         }
     }
 }
@@ -530,7 +592,37 @@ pub unsafe fn this_cpu_inc_timer_tick_count() {
 /// (except during bootstrap when BSP initializes AP's KPRCB).
 #[inline(always)]
 pub unsafe fn this_cpu_run_queue_mut() -> &'static mut CpuRunQueue {
-    let kprcb_addr = gs_read_u64(0); // GS base points to KPRCB start
+    // FIX GS/KPRCB: GS_BASE holds KPRCB address, GS:0 holds cpu_id.
+    // Previous code used gs_read_u64(0) which reads cpu_id|apic_id, not base,
+    // causing this_cpu_run_queue to point to 0x18 and appear empty.
+    // Correct is to read the GS base MSR.
+    let kprcb_addr = crate::hal::safe::GsBase::read();
+    // Fallback for very early boot before GS is programmed (kprcb_addr==0)
+    let kprcb_addr = if kprcb_addr == 0 {
+        let cpu = unsafe { this_cpu_id() } as usize;
+        if cpu < MAX_CPUS && KPRCB_PAGES[cpu] != 0 {
+            KPRCB_PAGES[cpu]
+        } else if KPRCB_PAGES[0] != 0 {
+            KPRCB_PAGES[0]
+        } else {
+            0
+        }
+    } else {
+        kprcb_addr
+    };
+    #[cfg(feature = "forensic")]
+    {
+        let via_this = kprcb_addr + OFFSET_RUN_QUEUE as u64;
+        let via_table = {
+            let cpu = unsafe { this_cpu_id() } as usize;
+            if cpu < MAX_CPUS && KPRCB_PAGES[cpu] != 0 {
+                KPRCB_PAGES[cpu] + OFFSET_RUN_QUEUE as u64
+            } else { 0 }
+        };
+        if via_this != via_table && via_table != 0 {
+            crate::serial_println!("[GS] cpu={} gs_base=0x{:x} gs_slot0=0x{:x} kprcb_expected=0x{:x} kprcb_via_this=0x{:x}", unsafe { this_cpu_id() }, kprcb_addr, unsafe { gs_read_u64(0) }, via_table, via_this);
+        }
+    }
     let rq_ptr = (kprcb_addr + OFFSET_RUN_QUEUE as u64) as *mut CpuRunQueue;
     &mut *rq_ptr
 }
@@ -574,6 +666,46 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
         }
     }
     stolen
+}
+
+/// Remove a specific TID from a CPU's run queue.
+/// Returns true if the TID was found and removed, false otherwise.
+/// SMP-safe: takes per-CPU runqueue lock. No-op if KPRCB not initialized.
+pub unsafe fn remove_from_cpu_run_queue(cpu: usize, tid: u32) -> bool {
+    let need_skip = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
+    if need_skip {
+        return false;
+    }
+    let _guard = RUNQUEUE_LOCKS[cpu].lock();
+    let rq = cpu_run_queue_mut(cpu);
+    rq.remove(tid)
+}
+
+/// Execute closure with target CPU's runqueue locked (SMP-safe).
+/// If KPRCB not initialized for that CPU, calls closure with a dummy empty queue.
+pub fn with_runqueue<F, R>(cpu: usize, f: F) -> R
+where
+    F: FnOnce(&mut CpuRunQueue) -> R,
+{
+    let kprcb_empty = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
+    if kprcb_empty {
+        let mut dummy = CpuRunQueue::new();
+        return f(&mut dummy);
+    }
+    let _guard = RUNQUEUE_LOCKS[cpu].lock();
+    unsafe {
+        let rq = cpu_run_queue_mut(cpu);
+        f(rq)
+    }
+}
+
+/// Execute closure with current CPU's runqueue locked (SMP-safe).
+pub fn with_this_runqueue<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut CpuRunQueue) -> R,
+{
+    let cpu = unsafe { this_cpu_id() } as usize;
+    with_runqueue(cpu, f)
 }
 
 // ── Per-CPU slab cache accessors (GS-segment) ───────────────────────────

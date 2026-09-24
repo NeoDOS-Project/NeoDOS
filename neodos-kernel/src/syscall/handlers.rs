@@ -1,7 +1,7 @@
 //! Non-Ob syscall handlers — process, I/O, filesystem, memory, thread lifecycle.
 //! All functions are `pub(super)` for SSDT registration in `mod.rs`.
 
-use crate::serial_println;
+use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 use crate::net::types::Ipv4Addr;
 use super::{err_to_u64, SyscallError, is_user_ptr_valid, copy_user_string,
@@ -25,119 +25,22 @@ struct PollFd {
 pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     let code = regs.rbx;
     crate::hal::without_interrupts(|| {
-        serial_println!("[EXIT] enter code={}", code);
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         let tid = scheduler.current_tid;
-        if tid > 0 {
-            serial_println!("[EXIT] tid={} start", tid);
-            if let Some(k) = scheduler.current_kthread_mut() {
-                k.state = ThreadState::Terminated;
-            }
-            serial_println!("[EXIT] marked Terminated");
-            let pid = scheduler.current_pid();
-            serial_println!("[EXIT] pid={}", pid);
-            if pid > 0 {
-                serial_println!("[EXIT] getting eproc");
-                let eproc = scheduler.current_eprocess_mut();
-                serial_println!("[EXIT] got eproc: {:?}", eproc.is_some());
-                if let Some(ep) = eproc {
-                    ep.thread_count = ep.thread_count.saturating_sub(1);
-                    ep.exit_code = code as i64;
-                    serial_println!("[EXIT] thread_count={}", ep.thread_count);
-                    if ep.thread_count == 0 {
-                        serial_println!("[EXIT] freeing resources");
-                        if let Some(slot) = ep.user_slot.take() {
-                            crate::arch::x64::paging::free_user_slot(slot);
-                        }
-                        if ep.heap_base != 0 {
-                            crate::arch::x64::paging::heap_free_range(
-                                ep.heap_base,
-                                ep.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
-                            );
-                            let heap_idx = ((ep.heap_base
-                                - crate::arch::x64::paging::PROCESS_HEAP_BASE)
-                                / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
-                            crate::arch::x64::paging::free_heap_slot(heap_idx);
-                            ep.heap_base = 0;
-                            ep.heap_break = 0;
-                        }
-                        for r in ep.mmap_regions.iter() {
-                            crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
-                        }
-                        ep.mmap_regions.clear();
-                        ep.mmap_next = crate::arch::x64::paging::MMAP_BASE;
-                        for i in 0..ep.handle_table.len() {
-                            let h = ep.handle_table[i];
-                            if h.is_pipe_read() {
-                                crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
-                            } else if h.is_pipe_write() {
-                                crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
-                            } else if h.has_ob_object() {
-                                let _ = crate::object::ob_close_object(h.object_id);
-                            }
-                            ep.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
-                        }
-                        scheduler.wake_waiters(pid);
-                    }
-                    serial_println!("[EXIT] after resource freeing");
-                }
-            }
-            serial_println!("[EXIT] wake_thread_joiner via KWait (OB-031)");
-            let tj_magic = crate::kwait::WaitReason::ThreadJoin { tid }.encode_magic();
-            for k in scheduler.kthreads.iter_mut().flatten() {
-                if k.waiting_for == Some(tj_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-                    k.waiting_for = None;
-                    k.state = ThreadState::Ready;
-                    scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
-                    set_need_resched();
-                }
-            }
-            serial_println!("[EXIT] checking: pid={} thread_count", pid);
-            if pid > 0 {
-                let ce_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
-                for k in scheduler.kthreads.iter_mut().flatten() {
-                    if k.waiting_for == Some(ce_magic) && matches!(k.state, ThreadState::Blocked { .. }) {
-                        k.waiting_for = None;
-                        k.state = ThreadState::Ready;
-                        scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
-                        set_need_resched();
-                    }
-                }
-            }
-            if pid > 0 {
-                let eproc = scheduler.current_eprocess();
-                if eproc.is_none_or(|ep| ep.thread_count == 0)
-                    && pid == crate::usermode::current_wait_pid() {
-                    crate::usermode::request_exit_to_kernel();
-                }
-            }
-            // OB-046 fix: defer EPROCESS slot recycling to work queue.
-            // Previously done in handler_ob_wait (which ran before child
-            // context switch, destroying child prematurely) or inline here
-            // (which removes current thread from kthreads while it's still
-            // running, causing use-after-free in syscall return path).
-            // Work queue items fire at safe points (syscall return / idle).
-            let do_cleanup = pid > 0 && {
-                let eproc_ref = scheduler.current_eprocess();
-                eproc_ref.is_some_and(|ep| ep.thread_count == 0)
-            };
-            if do_cleanup {
-                // Heap-allocate the pid so it outlives this stack frame
-                let pid_box = alloc::boxed::Box::new(pid);
-                let pid_ptr = alloc::boxed::Box::into_raw(pid_box) as *mut u8;
-                crate::work_queue::WORK_QUEUE.push_high(
-                    |data| {
-                        let pid_box = unsafe { alloc::boxed::Box::from_raw(data as *mut u32) };
-                        crate::scheduler::cleanup_terminated_process(*pid_box);
-                    },
-                    pid_ptr,
-                );
-            }
+        let pid = scheduler.current_pid();
+        if pid == 2 {
+            crate::serial_println!("[EXIT] NeoInit (pid={} tid={}) exit code={}", pid, tid, code);
         }
-        serial_println!("[EXIT] done (after if tid > 0 block)");
+        // Centralized termination (also used by exception path) — handles thread_count, resources, waiters, defer reap
+        if tid > 0 {
+            scheduler.terminate_current(code as i64);
+            // terminate_current already did defer_reap and wake, but ensure resched
+            crate::syscall::set_need_resched();
+        }
+        kdebug!(LogSubsys::Syscall, "done (after if tid > 0 block)");
     });
-    serial_println!("[EXIT] returned from without_interrupts");
+    kdebug!(LogSubsys::Syscall, "returned from without_interrupts");
     code
 }
 
@@ -199,12 +102,7 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
         let tid = lock.current_tid;
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                if k.state == ThreadState::Running {
-                    k.state = ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(
-                    crate::scheduler::PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                crate::scheduler::Scheduler::make_thread_ready(k);
             }
         }
     });
@@ -226,6 +124,9 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
 
     if entry.is_stdin() {
         let vt = crate::scheduler::current_vt_num();
+        crate::serial_println!("[READB] enter pid={} tid={} vt={} buf=0x{:x} count={}",
+            crate::scheduler::current_pid(), crate::scheduler::current_tid(),
+            vt, regs.rcx, count);
         let mut bytes_read = 0usize;
         while bytes_read < count {
             match crate::input::pop_byte_from_vt(vt as usize) {
@@ -240,23 +141,38 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
                     if bytes_read > 0 {
                         break;
                     }
-                    loop {
+                    // Atomic check + block to prevent race condition with keyboard IRQ
+                    let b_opt = crate::hal::without_interrupts(|| {
                         if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            unsafe { buf_ptr.add(bytes_read).write(b); }
-                            bytes_read += 1;
-                            break;
+                            return Some(b);
                         }
-                        crate::eventbus::EVENT_BUS.dispatch_pending();
-                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            unsafe { buf_ptr.add(bytes_read).write(b); }
-                            bytes_read += 1;
-                            break;
+                        let s = crate::scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(k) = lock.current_kthread_mut() {
+                            let before = k.state.to_u8();
+                            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
+                            k.waiting_for = Some(0xFFFFFFFF);
+                            crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
                         }
-                        unsafe { core::arch::asm!("sti; hlt; cli", options(nomem, nostack)); }
+                        crate::syscall::set_need_resched();
+                        None
+                    });
+
+                    if let Some(b) = b_opt {
+                        unsafe { buf_ptr.add(bytes_read).write(b); }
+                        bytes_read += 1;
+                        crate::serial_println!("[READB] got byte=0x{:x} (atomic)", b);
+                        break;
+                    } else {
+                        crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
+                            crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
+                        return err_to_u64(SyscallError::Again);
                     }
                 }
             }
         }
+        crate::serial_println!("[READB] exit pid={} tid={} bytes_read={}",
+            crate::scheduler::current_pid(), crate::scheduler::current_tid(), bytes_read);
         bytes_read as u64
     } else if entry.is_pipe_read() {
         let pipe_id = entry.native_id().unwrap_or(0) as u8;
@@ -335,9 +251,7 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
             let tid = lock.current_tid;
             if tid > 0 {
                 if let Some(k) = lock.current_kthread_mut() {
-                    if k.state == ThreadState::Running {
-                        k.state = ThreadState::Ready;
-                    }
+                    crate::scheduler::Scheduler::make_thread_ready(k);
                 }
             }
         });
@@ -547,11 +461,11 @@ pub(super) fn handler_loadlib(regs: super::Registers) -> u64 {
 
     match crate::nxl::nxl_load(&path_str) {
         Some(base) => {
-            serial_println!("[SYS] sys_loadlib '{}' => 0x{:x}", path_str, base);
+            kinfo!(LogSubsys::Syscall, "sys_loadlib '{}' => 0x{:x}", path_str, base);
             base
         }
         None => {
-            serial_println!("[SYS] sys_loadlib FAILED '{}'", path_str);
+            kerror!(LogSubsys::Syscall, "sys_loadlib FAILED '{}'", path_str);
             err_to_u64(SyscallError::NoEnt)
         }
     }
@@ -581,12 +495,7 @@ pub(super) fn handler_sleep_ex(_regs: super::Registers) -> u64 {
         let tid = lock.current_tid;
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                if k.state == crate::scheduler::ThreadState::Running {
-                    k.state = crate::scheduler::ThreadState::Ready;
-                }
-                let idx = (k.priority as usize).min(
-                    crate::scheduler::PRIORITY_COUNT as usize - 1);
-                k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                crate::scheduler::Scheduler::make_thread_ready(k);
             }
         }
     });

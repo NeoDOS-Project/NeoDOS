@@ -4,6 +4,8 @@
 //! time.  Collects AHCI-specific debug counters (poll loops, DMA failures,
 //! etc.) and enforces a 60 s watchdog so the kernel never hard-freezes.
 
+use crate::log::LogSubsys;
+
 use core::sync::atomic::{AtomicU64, AtomicU32, AtomicBool, Ordering};
 
 // ── TSC-based high-precision timer ──────────────────────────────────
@@ -51,7 +53,7 @@ static TSC_KHZ: AtomicU64 = AtomicU64::new(0);
 pub fn init() {
     let khz = calibrate_tsc_khz();
     TSC_KHZ.store(khz, Ordering::Relaxed);
-    crate::serial_println!("[BENCH] TSC calibrated: {} ticks/ms", khz);
+    kinfo!(LogSubsys::Bench, "TSC calibrated: {} ticks/ms", khz);
 }
 
 /// Get calibrated TSC frequency in ticks per millisecond.
@@ -286,16 +288,16 @@ pub fn watchdog_check() -> bool {
             5 => "shell_load",
             _ => "unknown",
         };
-        crate::serial_println!("[BOOT BENCHMARK TIMEOUT]");
-        crate::serial_println!("  Stage:   {}", stage_name);
-        crate::serial_println!("  Elapsed: {} ms (stage {} ms)", total, stage_elapsed);
-        crate::serial_println!("  Status:  FAILED_TIMEOUT");
-        crate::serial_println!("  Likely causes:");
-        crate::serial_println!("    - infinite polling loop");
-        crate::serial_println!("    - DMA never completes");
-        crate::serial_println!("    - invalid PRDT");
-        crate::serial_println!("    - missing IRQ / interrupt stall");
-        crate::serial_println!("    - deadlock in storage layer");
+        kerror!(LogSubsys::Bench, "BOOT BENCHMARK TIMEOUT");
+        kerror!(LogSubsys::Bench, "  Stage:   {}", stage_name);
+        kerror!(LogSubsys::Bench, "  Elapsed: {} ms (stage {} ms)", total, stage_elapsed);
+        kerror!(LogSubsys::Bench, "  Status:  FAILED_TIMEOUT");
+        kerror!(LogSubsys::Bench, "  Likely causes:");
+        kerror!(LogSubsys::Bench, "    - infinite polling loop");
+        kerror!(LogSubsys::Bench, "    - DMA never completes");
+        kerror!(LogSubsys::Bench, "    - invalid PRDT");
+        kerror!(LogSubsys::Bench, "    - missing IRQ / interrupt stall");
+        kerror!(LogSubsys::Bench, "    - deadlock in storage layer");
 
         crate::println!("[BOOT BENCHMARK TIMEOUT]");
         crate::println!("  Stage: {} | Elapsed: {} ms | FAILED_TIMEOUT", stage_name, total);
@@ -339,7 +341,7 @@ pub fn load_config() {
         }
     }
 
-    crate::serial_println!("[BENCH] Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",
+    kinfo!(LogSubsys::Bench, "Config flags: BENCHMARK_REPORT={}, AHCI_DEBUG={}",
         if ENABLE_BOOT_BENCHMARK_REPORT.load(Ordering::Relaxed) { 1 } else { 0 },
         if ENABLE_AHCI_DEBUG_OUTPUT.load(Ordering::Relaxed) { 1 } else { 0 });
 }

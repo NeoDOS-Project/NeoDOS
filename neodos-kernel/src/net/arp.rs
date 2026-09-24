@@ -175,7 +175,7 @@ pub fn arp_lookup(ip: Ipv4Addr) -> Option<MacAddr> {
 
 pub fn arp_insert(ip: Ipv4Addr, mac: MacAddr) {
     ARP_CACHE.lock().insert(ip, mac);
-    crate::serial_println!("[ARP] Cache insert: {} -> {}", ip, mac);
+    ktrace!(crate::log::LogSubsys::Arp, "Cache insert: {} -> {}", ip, mac);
 }
 
 pub fn arp_tick() {
@@ -189,7 +189,7 @@ pub fn arp_make_packet(op: u16, sender_mac: MacAddr, sender_ip: Ipv4Addr, target
         _ => ArpPacket::new_request(sender_mac, sender_ip, target_ip),
     };
     if op == ARP_OP_REPLY {
-        crate::serial_println!("[ARP] Built reply: sender_mac={} sender_ip={} target_mac={} target_ip={}",
+        ktrace!(crate::log::LogSubsys::Arp, "Built reply: sender_mac={} sender_ip={} target_mac={} target_ip={}",
             MacAddr(packet.sender_mac), Ipv4Addr(packet.sender_ip),
             MacAddr(packet.target_mac), Ipv4Addr(packet.target_ip));
     }
@@ -244,11 +244,11 @@ pub fn send_gratuitous_arp(nic_id: u32) {
     drop(registry);
 
     if src_ip.is_unspecified() {
-        crate::serial_println!("[ARP] Gratuitous ARP skipped: no IP assigned");
+        ktrace!(crate::log::LogSubsys::Arp, "Gratuitous ARP skipped: no IP assigned");
         return;
     }
 
-    crate::serial_println!("[ARP] Sending Gratuitous ARP: IP={} MAC={}", src_ip, src_mac);
+    ktrace!(crate::log::LogSubsys::Arp, "Sending Gratuitous ARP: IP={} MAC={}", src_ip, src_mac);
 
     let arp_pkt = ArpPacket::new_request(src_mac, src_ip, src_ip);
     let arp_bytes = unsafe {

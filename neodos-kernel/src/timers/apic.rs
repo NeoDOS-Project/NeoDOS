@@ -1,5 +1,6 @@
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
+use crate::log::LogSubsys;
 
 // ── MSRs ───────────────────────────────────────────────────────────
 const IA32_APIC_BASE: u32 = 0x1B;
@@ -105,7 +106,7 @@ pub fn is_apic_present() -> bool {
 /// Returns `true` if APIC timer was successfully configured.
 pub fn init_apic_timer() -> bool {
     if !is_apic_present() {
-        crate::serial_println!("[APIC] Local APIC not present");
+        kerror!(LogSubsys::Apic, "Local APIC not present");
         return false;
     }
 
@@ -114,7 +115,7 @@ pub fn init_apic_timer() -> bool {
         let base = base_msr & IA32_APIC_BASE_ADDR_MASK;
         APIC_BASE = base;
 
-        crate::serial_println!("[APIC] Local APIC at MMIO 0x{:x}", base);
+        kinfo!(LogSubsys::Apic, "Local APIC at MMIO 0x{:x}", base);
 
         // Enable the APIC by setting the Spurious Interrupt Vector Register
         // bit 8 (APIC enable). Keep vector 0xFF as spurious.
@@ -126,11 +127,11 @@ pub fn init_apic_timer() -> bool {
         APIC_BUS_KHZ = bus_khz;
 
         if bus_khz == 0 {
-            crate::serial_println!("[APIC] Failed to calibrate bus frequency");
+            kerror!(LogSubsys::Apic, "Failed to calibrate bus frequency");
             return false;
         }
 
-        crate::serial_println!("[APIC] Bus frequency: {} KHz", bus_khz);
+        kinfo!(LogSubsys::Apic, "Bus frequency: {} KHz", bus_khz);
 
         // ── Disable legacy timer sources before enabling APIC timer ──
         // Mask IRQ0 on the master PIC (set bit 0 of PIC data port 0x21)
@@ -165,7 +166,7 @@ pub fn init_apic_timer() -> bool {
         let ticks = (counter_khz * crate::timers::TICK_INTERVAL_US) / 1000;
         apic_write(APIC_TIMER_INIT_COUNT, ticks as u32);
 
-        crate::serial_println!("[APIC] Timer configured: {} ticks per interval ({} µs)",
+        kinfo!(LogSubsys::Apic, "Timer configured: {} ticks per interval ({} µs)",
             ticks, crate::timers::TICK_INTERVAL_US);
 
         // Write EOI to clear any pending interrupts
@@ -181,7 +182,7 @@ unsafe fn calibrate_apic_bus() -> u64 {
     // Check if HPET is available for calibration
     let hpet_base = crate::timers::hpet::hpet_mmio_base();
     if hpet_base == 0 {
-        crate::serial_println!("[APIC] No HPET available for calibration");
+        kwarn!(LogSubsys::Apic, "No HPET available for calibration");
         return 0;
     }
 

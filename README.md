@@ -72,18 +72,18 @@ python3 scripts/auto_test.py             # Test runner automático headless
 
 | Documento | Descripción |
 | ----------- | ------------- |
-| [Visión Arquitectónica](docs/ARCHITECTURAL_VISION.md) | Plan director, diagnóstico, roadmap v0.40→v1.0 |
-| [Arquitectura](docs/ARCHITECTURE.md) | Arquitectura actual del sistema |
-| [Source of Truth](docs/ARCHITECTURE_SOURCE_OF_TRUTH.md) | Invariantes y contratos arquitectónicos |
-| [Boot](docs/boot.md) | Boot sequence, fases, GPT layout |
-| [Syscalls](docs/SYSCALLS.md) | Referencia completa de syscalls |
-| [Object Manager](docs/objects.md) | Ob types, namespace, operaciones |
-| [Memory](docs/memory.md) | Buddy allocator, slab, demand paging |
-| [Drivers](docs/drivers.md) | NEM format, certificación, capacidades |
-| [Filesystem](docs/filesystem.md) | NeoFS, VFS, IoStack |
-| [Repository Architecture](docs/REPOSITORY_ARCHITECTURE.md) | Propuesta de organización multi-repositorio |
-| [Roadmap](docs/IMPROVEMENTS.md) | Items pendientes y completados |
-| [Debug](docs/DEBUG.md) | Guía de depuración con GDB |
+| [Visión Arquitectónica](docs/architecture/vision.md) | Plan director, diagnóstico, roadmap v0.40→v1.0 |
+| [Arquitectura](docs/architecture/overview.md) | Arquitectura actual del sistema |
+| [Source of Truth](docs/architecture/source-of-truth.md) | Invariantes y contratos arquitectónicos |
+| [Boot](docs/boot/boot-flow.md) | Boot sequence, fases, GPT layout |
+| [Syscalls](docs/kernel/syscalls.md) | Referencia completa de syscalls |
+| [Object Manager](docs/kernel/objects.md) | Ob types, namespace, operaciones |
+| [Memory](docs/memory/memory.md) | Buddy allocator, slab, demand paging |
+| [Drivers](docs/drivers/overview.md) | NEM format, certificación, capacidades |
+| [Filesystem](docs/filesystem/overview.md) | NeoFS, VFS, IoStack |
+| [Repository Architecture](docs/architecture/repository.md) | Propuesta de organización multi-repositorio |
+| [Documentation Index](docs/README.md) | Índice maestro de documentación |
+| [Debug](docs/development/debugging.md) | Guía de depuración con GDB |
 
 ---
 

@@ -1,4 +1,5 @@
 use crate::object::{ObOperations, ObId};
+use crate::log::LogSubsys;
 use crate::kwait::{self, WaitReason};
 use spin::Mutex;
 
@@ -133,7 +134,7 @@ impl ObOperations for TimerObOps {
 pub static TIMER_OPS: TimerObOps = TimerObOps;
 
 pub fn init_timer_manager() {
-    crate::serial_println!("[+] Timer Manager initialized ({} slots)", MAX_TIMERS);
+    kinfo!(LogSubsys::Kernel, "Timer Manager initialized ({} slots)", MAX_TIMERS);
 }
 
 pub fn tick() {

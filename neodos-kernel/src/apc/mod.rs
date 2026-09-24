@@ -111,8 +111,7 @@ pub fn queue_user_apc(tid: u32, function: ApcFn, context: *mut u8) -> bool {
                     && matches!(k.state, scheduler::ThreadState::Blocked { .. })
                 {
                     k.waiting_for = None;
-                    k.state = scheduler::ThreadState::Ready;
-                    scheduler::Scheduler::enqueue_to_cpu_run_queue(k);
+                    scheduler::Scheduler::make_thread_ready(k);
                     crate::syscall::set_need_resched();
                 }
                 true
@@ -327,6 +326,7 @@ pub fn block_current_alertable() -> bool {
         let s = scheduler::current_scheduler();
         let mut lock = s.lock();
         if let Some(k) = lock.current_kthread_mut() {
+            scheduler::Scheduler::remove_from_run_queue(k);
             k.state = scheduler::ThreadState::Blocked { waiting_for: APC_WAIT_MAGIC };
             k.waiting_for = Some(APC_WAIT_MAGIC);
         }

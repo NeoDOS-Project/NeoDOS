@@ -29,7 +29,7 @@
 | 65 | `ob_wait` | Wait on objects (signaled states) |
 | 66 | `ob_destroy` | Destroy object |
 
-### 1.3 Existing ObType Values (docs/objects.md)
+### 1.3 Existing ObType Values (docs/kernel/objects.md)
 
 | Value | Type | Description |
 | ------- | ------ | ------------- |
@@ -685,7 +685,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 
 ### Step 11: Update documentation
 
-**Files:** `docs/syscalls.md`, `docs/objects.md`, `docs/boot.md`, `docs/IMPROVEMENTS.md`
+**Files:** `docs/kernel/syscalls.md`, `docs/kernel/objects.md`, `docs/boot/boot-flow.md`
 
 - Add RAX 77 to syscall table
 - Add ObType::Service=20 to object types

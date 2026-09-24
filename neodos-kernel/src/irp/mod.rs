@@ -248,7 +248,7 @@ fn irp_wake_waiter(pid: u32) {
             && k.waiting_for == Some(magic)
         {
             k.waiting_for = None;
-            k.state = crate::scheduler::ThreadState::Ready;
+            crate::scheduler::Scheduler::make_thread_ready(k);
             crate::syscall::set_need_resched();
         }
     }

@@ -15,7 +15,7 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
 
 ## Steps
 
-1. **Read `docs/drivers.md`**
+1. **Read `docs/drivers/overview.md`**
    Understand NEM format, driver lifecycle, capabilities, isolation model, and ABI negotiation.
 
 2. **Choose driver category**
@@ -115,4 +115,4 @@ Create or modify a NEM driver correctly — from .nxe module through ABI negotia
 - [ ] Resources released on unload (IRQs, MMIO, DMA channels)
 - [ ] Isolation model correct if `CAP_ISOLATION` set
 - [ ] `cargo build` and `python3 scripts/auto_test.py` pass
-- [ ] `docs/drivers.md` updated if ABI or lifecycle changed
+- [ ] `docs/drivers/overview.md` updated if ABI or lifecycle changed

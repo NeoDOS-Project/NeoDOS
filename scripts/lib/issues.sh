@@ -20,11 +20,13 @@ sync_issues() {
 
   info "Sincronizando issues con $repo ..."
 
-  # Cachear todas las issues existentes
+  # Cachear todas las issues existentes (with pagination support)
   local all_issues_json
   info "  Fetching existing issues..."
-  all_issues_json="$($GH api "/repos/$repo/issues?state=all&per_page=100" --paginate 2>/dev/null)"
-  info "  Fetched $(echo "$all_issues_json" | grep -c '"number":') issues"
+  all_issues_json="$($GH api "/repos/$repo/issues?state=all&per_page=100" --paginate 2>/dev/null)" || true
+  # gh --paginate emits one JSON array per page; merge them into a single array.
+  all_issues_json="$(echo "$all_issues_json" | jq -s 'add' 2>/dev/null)"
+  info "  Fetched $(echo "$all_issues_json" | jq 'length' 2>/dev/null || echo '?') issues"
 
   local created=0 updated=0 skipped=0 closed=0
   local in_item=false in_code_block=false
@@ -128,13 +130,38 @@ _issue_upsert() {
   fi
 
   if [[ -n "$existing_num" ]]; then
-    # ── Ya existe ──
+    # ── Ya existe — verificar si necesita actualización ──
+    local needs_update=false
+
+    # Check state change
     if [[ "$state" == "closed" && "$existing_state" != "closed" ]]; then
-      $GH api "/repos/$repo/issues/$existing_num" --method PATCH \
-        -f state="closed" &>/dev/null && { ((_closed++)); ((_updated++)); }
+      needs_update=true
     elif [[ "$state" == "open" && "$existing_state" == "closed" ]]; then
+      needs_update=true
+    fi
+
+    # Check milestone (if specified and different from current)
+    local current_ms=""
+    if [[ -n "$milestone_title" ]]; then
+      current_ms="$(echo "$issues_json" | jq -r ".[] | select(.number == $existing_num) | .milestone.title // empty" 2>/dev/null)"
+      if [[ "$current_ms" != "$milestone_title" ]]; then
+        needs_update=true
+      fi
+    fi
+
+    if $needs_update; then
+      local patch_data="{}"
+      if [[ "$state" == "closed" && "$existing_state" != "closed" ]]; then
+        patch_data="$(echo "$patch_data" | jq --arg s "$state" '.state = $s')"
+      fi
+      if [[ -n "$milestone_title" && "$current_ms" != "$milestone_title" ]]; then
+        local ms_num
+        ms_num="$($GH api "/repos/$repo/milestones?per_page=100" --paginate 2>/dev/null | jq -s 'add' | jq -r ".[] | select(.title == \"$milestone_title\") | .number" 2>/dev/null | head -1)"
+        [[ -n "$ms_num" ]] && patch_data="$(echo "$patch_data" | jq --argjson ms "$ms_num" '.milestone = $ms')"
+      fi
       $GH api "/repos/$repo/issues/$existing_num" --method PATCH \
-        -f state="open" &>/dev/null && ((_updated++))
+        --input - <<<"$patch_data" &>/dev/null && ((_updated++))
+      [[ "$state" == "closed" && "$existing_state" != "closed" ]] && ((_closed++))
     else
       ((_skipped++))
     fi

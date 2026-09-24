@@ -118,6 +118,10 @@ pub struct NetIfaceInfo {
     pub mac: [u8; 6],
     pub ip: [u8; 4],
     pub link_up: u8,
+    pub vendor_id: u16,
+    pub device_id: u16,
+    pub name: [u8; 16],
+    pub description: [u8; 48],
 }
 
 #[repr(C)]
@@ -146,10 +150,10 @@ fn query_nic_info(buf: &mut [u8]) -> i64 {
 }
 
 pub extern "C" fn net_iface_count() -> u32 {
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; 84];
     let r = query_nic_info(&mut buf);
     if r < 0 { return 0; }
-    (r as usize / 12) as u32
+    (r as usize / 84) as u32
 }
 
 #[no_mangle]
@@ -158,16 +162,23 @@ pub unsafe extern "C" fn net_iface_info(idx: u32, info: *mut NetIfaceInfo) -> i3
     let mut buf = [0u8; 256];
     let r = query_nic_info(&mut buf);
     if r < 0 { return -1; }
-    let offset = (idx as usize) * 15;
-    if offset + 15 > r as usize { return -1; }
-    let raw = &buf[offset..offset + 15];
+    let entry_sz = core::mem::size_of::<NetIfaceInfo>();
+    let offset = (idx as usize) * entry_sz;
+    if offset + entry_sz > r as usize { return -1; }
+    let raw = &buf[offset..offset + entry_sz];
     let nic_id = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
     let mut mac = [0u8; 6];
     mac.copy_from_slice(&raw[4..10]);
     let mut ip = [0u8; 4];
     ip.copy_from_slice(&raw[10..14]);
     let link_up = raw[14];
-    core::ptr::write(info, NetIfaceInfo { nic_id, mac, ip, link_up });
+    let vendor_id = u16::from_le_bytes([raw[16], raw[17]]);
+    let device_id = u16::from_le_bytes([raw[18], raw[19]]);
+    let mut name = [0u8; 16];
+    name.copy_from_slice(&raw[20..36]);
+    let mut description = [0u8; 48];
+    description.copy_from_slice(&raw[36..84]);
+    core::ptr::write(info, NetIfaceInfo { nic_id, mac, ip, link_up, vendor_id, device_id, name, description });
     0
 }
 

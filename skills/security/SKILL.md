@@ -15,7 +15,7 @@ Correctly implement NT6-style security with proper SID construction, token inher
 
 ## References
 
-- `docs/security.md` — subsystem documentation
+- `docs/security/security.md` — subsystem documentation
 - `src/security/sid.rs` — SID construction, parsing, formatting
 - `src/security/token.rs` — Token creation, inheritance, privilege checks
 - `src/security/acl.rs` — ACE, ACL, SecurityDescriptor, canonical ordering
@@ -213,5 +213,5 @@ let parsed = SamDatabase::parse_sam(&bytes);
 - [ ] Syscall permission table updated for new privileged operations
 - [ ] Ob integration: access check on open/create
 - [ ] Tests registered via `register_security_tests()` and pass
-- [ ] `docs/security.md` updated
+- [ ] `docs/security/security.md` updated
 - [ ] `cargo build` succeeds, `scripts/check_deps.py` passes

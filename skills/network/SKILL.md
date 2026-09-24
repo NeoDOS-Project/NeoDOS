@@ -15,7 +15,7 @@ Correctly implement network changes with proper protocol handling, socket lifecy
 
 ## References
 
-- `docs/network.md` — subsystem documentation
+- `docs/networking/stack.md` — subsystem documentation
 - `src/net/types.rs` — MacAddr, Ipv4Addr, SocketAddrV4, TcpState, SocketType
 - `src/net/ethernet.rs` — Ethernet frame header, FCS, ETH_TYPE constants
 - `src/net/arp.rs` — ARP cache (64 entries, 300s TTL), resolve/insert/request/reply
@@ -221,7 +221,7 @@ let len = libnet::socket_recv(sock, &mut buf);
 
 1. Add variant to `ObInfoClass` or `ObSetInfoClass` in `src/object/types.rs`
 2. Implement query/set in the socket's `ObOperation` impl (in `src/net/socket.rs`)
-3. Add docs in `docs/network.md` and `docs/objects.md`
+3. Add docs in `docs/networking/stack.md` and `docs/kernel/objects.md`
 4. Add libneodos wrapper if userspace-accessible
 
 ### 8. Write network tests
@@ -261,5 +261,5 @@ Tests go in `src/net/tests.rs`, registered via `register_net_tests()` from `src/
 - [ ] ObInfoClass/ObSetInfoClass variants use correct IDs (no conflicts)
 - [ ] libneodos wrappers added for new socket operations
 - [ ] Tests registered via `register_net_tests()` and pass
-- [ ] `docs/network.md` updated (new protocol, socket ops, event types)
+- [ ] `docs/networking/stack.md` updated (new protocol, socket ops, event types)
 - [ ] `cargo build` succeeds, `scripts/check_deps.py` passes

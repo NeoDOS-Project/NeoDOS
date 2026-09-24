@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::object::{self, ObType};
-use crate::serial_println;
+use crate::log::LogSubsys;
 
 mod layout;
 mod unicode;
@@ -257,7 +257,7 @@ lazy_static! {
 }
 
 pub fn kbd_init() {
-    serial_println!("[+] Initializing Keyboard Manager (NeoKBD)...");
+    kinfo!(LogSubsys::Kbd, "Initializing Keyboard Manager (NeoKBD)...");
 
     let _ = object::namespace::ob_create_directory("\\Device");
     if let Ok(kbd_id) = object::ob_create_object(ObType::KeyboardDevice, "Keyboard", 0, 0, None) {
@@ -267,7 +267,7 @@ pub fn kbd_init() {
     }
 
     let count = layout::load_layouts();
-    serial_println!("[NeoKBD] Loaded {} keyboard layout(s)", count);
+    kinfo!(LogSubsys::Kbd, "Loaded {} keyboard layout(s)", count);
 
     let config = config::kbd_load_config();
     let mut kbd = KBD.lock();
@@ -293,5 +293,5 @@ pub fn kbd_init() {
 
     event::register_kbd_event_handler();
 
-    serial_println!("[NeoKBD] Ready (layout: {})", layout_name);
+    kinfo!(LogSubsys::Kbd, "Ready (layout: {})", layout_name);
 }

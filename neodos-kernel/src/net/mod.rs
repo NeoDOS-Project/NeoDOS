@@ -11,6 +11,7 @@ pub mod dns;
 pub mod counters;
 mod tests;
 
+use crate::log::LogSubsys;
 use types::SocketType;
 use socket::SOCKET_MANAGER;
 use nic::NIC_REGISTRY;
@@ -22,7 +23,7 @@ pub fn init_networking() {
     if NET_INITIALIZED.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
-    crate::serial_println!("[NET] Initializing networking subsystem...");
+    kinfo!(LogSubsys::Net, "Initializing networking subsystem...");
 
     crate::object::namespace::ob_create_directory("\\Device\\Tcp").unwrap_or(());
     if let Ok(tcp_id) = crate::object::ob_create_object(
@@ -52,7 +53,7 @@ pub fn init_networking() {
     }
 
     NET_INITIALIZED.store(true, core::sync::atomic::Ordering::Release);
-    crate::serial_println!("[NET] Networking initialized ({} NIC(s), {} template sockets)",
+    kinfo!(LogSubsys::Net, "Networking initialized ({} NIC(s), {} template sockets)",
         nic_count, 0);
 }
 
@@ -60,26 +61,60 @@ pub fn net_is_initialized() -> bool {
     NET_INITIALIZED.load(core::sync::atomic::Ordering::Acquire)
 }
 
+/// extern "C" wrapper to get a stable function address.
+/// The raw pointer stored in this static keeps the function alive
+/// through LTO and provides the real runtime address.
+#[no_mangle]
+pub extern "C" fn netd_entry_wrapper() {
+    netd_entry();
+}
+
+/// Store the address in a static so we can reference it from main.rs.
+/// Using as u64 on a fn item produces thunks; reading from a static
+/// that holds the real address avoids that issue.
+#[used]
+pub static NETD_PTR: unsafe extern "C" fn() = netd_entry_wrapper;
+
+pub fn netd_entry() -> ! {
+    crate::serial_println!("[NET] netd running");
+    loop {
+        net_tick();
+        crate::scheduler::yield_current_thread();
+        for _ in 0..64 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
+    crate::scheduler::spawn_net_kthread(entry)
+}
+
 pub fn net_tick() {
     if !net_is_initialized() { return; }
+    ktrace!(LogSubsys::Net, "tick");
     network_poll_all();
     arp::arp_tick();
     dns::dns_tick();
 
     let t = TICK_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    if t > 0 && t % 1000 == 0 {
+    // Heartbeat every ~100 ticks: proves netd is actually scheduled and running.
+    // Without this, netd could be spawned but never picked by the scheduler.
+    if t == 1 {
+        kinfo!(LogSubsys::Net, "[NET] netd alive — first tick (network_poll_all + arp_tick + dns_tick)");
+    } else if t % 1000 == 0 {
         crate::net::counters::dump_counters();
     }
 }
 
-pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
+pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::NetworkInterface, packet: &[u8]) {
     if packet.len() < crate::net::ethernet::ETH_HDR_LEN { return; }
 
     let eth_hdr: &crate::net::ethernet::EthernetHeader = unsafe {
         &*(packet.as_ptr() as *const crate::net::ethernet::EthernetHeader)
     };
 
-    crate::serial_println!("[ETH] RX {} bytes, src={} dst={} type=0x{:04x}",
+    ktrace!(LogSubsys::Net, "RX {} bytes, src={} dst={} type=0x{:04x}",
         packet.len(), eth_hdr.src_mac(), eth_hdr.dst_mac(), eth_hdr.ethertype());
 
     if eth_hdr.is_arp() {
@@ -94,12 +129,12 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
             crate::net::counters::COUNTERS.arp_requests_rx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             let target_ip = arp_pkt.target_ip_addr();
             let target_mac = crate::net::types::MacAddr(arp_pkt.target_mac);
-            crate::serial_println!("[ARP] Request RX: op=1 sender_mac={} sender_ip={} target_mac={} target_ip={}",
+            ktrace!(LogSubsys::Arp, "Request RX: op=1 sender_mac={} sender_ip={} target_mac={} target_ip={}",
                 arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr(), target_mac, target_ip);
-            crate::serial_println!("[ARP] Request target={} our_ip={} mac={}",
+            ktrace!(LogSubsys::Arp, "Request target={} our_ip={} mac={}",
                 target_ip, nic.ip_address(), nic.mac_address());
             if nic.ip_address() == target_ip {
-                crate::serial_println!("[ARP] Reply TX: our_mac={} our_ip={} dst_mac={} dst_ip={}",
+                ktrace!(LogSubsys::Arp, "Reply TX: our_mac={} our_ip={} dst_mac={} dst_ip={}",
                     nic.mac_address(), target_ip,
                     arp_pkt.sender_mac_addr(), arp_pkt.sender_ip_addr());
                 crate::net::counters::COUNTERS.arp_replies_tx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -130,13 +165,13 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                     )
                 };
                 reply_buf.extend_from_slice(arp_bytes);
-                crate::serial_println!("[ARP] Reply pkt: {} bytes, about to send via nic.send_packet", reply_buf.len());
+                ktrace!(LogSubsys::Arp, "Reply pkt: {} bytes, about to send via nic.send_packet", reply_buf.len());
                 let _ = nic.send_packet(&reply_buf);
             }
         } else if arp_pkt.operation() == crate::net::arp::ARP_OP_REPLY {
             let sender_ip = arp_pkt.sender_ip_addr();
             let sender_mac = arp_pkt.sender_mac_addr();
-            crate::serial_println!("[ARP] Reply RX: {} -> {}", sender_ip, sender_mac);
+            ktrace!(LogSubsys::Arp, "Reply RX: {} -> {}", sender_ip, sender_mac);
             arp::arp_insert(sender_ip, sender_mac);
         }
     } else if eth_hdr.is_ipv4() {
@@ -169,7 +204,7 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                 &*(payload.as_ptr() as *const crate::net::icmp::IcmpHeader)
             };
             if icmp_hdr.is_echo_reply() {
-                crate::serial_println!("[ICMP] EchoReply RX: src={} dst={} id={} seq={}",
+                ktrace!(LogSubsys::Icmp, "EchoReply RX: src={} dst={} id={} seq={}",
                     ip_hdr.src_ip(), ip_hdr.dst_ip(),
                     icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence());
                 crate::net::icmp::notify_ping_reply(
@@ -178,13 +213,13 @@ pub fn net_handle_incoming_packet(nic_id: u32, nic: &mut dyn crate::net::nic::Ne
                 );
             } else if icmp_hdr.is_echo_request() {
                 crate::net::counters::COUNTERS.icmp_requests_rx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                crate::serial_println!("[ICMP] EchoRequest RX: src={} dst={} id={} seq={}",
+                ktrace!(LogSubsys::Icmp, "EchoRequest RX: src={} dst={} id={} seq={}",
                     ip_hdr.src_ip(), ip_hdr.dst_ip(),
                     icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence());
                 let icmp_data = &payload[core::mem::size_of::<crate::net::icmp::IcmpHeader>()..];
                 let reply_icmp = crate::net::icmp::build_echo_reply(icmp_hdr, icmp_data);
                 crate::net::counters::COUNTERS.icmp_replies_tx.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-                crate::serial_println!("[ICMP] EchoReply TX: src={} dst={} id={} seq={} reply_len={}",
+                ktrace!(LogSubsys::Icmp, "EchoReply TX: src={} dst={} id={} seq={} reply_len={}",
                     ip_hdr.dst_ip(), ip_hdr.src_ip(),
                     icmp_hdr.echo_identifier(), icmp_hdr.echo_sequence(), reply_icmp.len());
 

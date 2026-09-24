@@ -15,7 +15,7 @@ Correctly implement IPC primitives with proper reference counting, blocking sema
 
 ## References
 
-- `docs/ipc.md` — subsystem documentation
+- `docs/kernel/ipc.md` — subsystem documentation
 - `src/object/pipe.rs` — pipe buffer, alloc/write/read/close, blocking reads
 - `src/handle.rs` — per-process HandleTable, HandleEntry, FD management
 - `src/irp/mod.rs` — IRP alloc/free, IrpQueue, BlockDevice trait, completion flow
@@ -228,5 +228,5 @@ Tests are registered via `register_tests()` in each subsystem file and called fr
 - [ ] Event bus push → dispatch → handler invocation works
 - [ ] Backpressure handled for full queues (event bus, work queue)
 - [ ] Tests registered and pass (`neodev test`)
-- [ ] `docs/ipc.md` updated for new event types, IRP ops, or handle variants
+- [ ] `docs/kernel/ipc.md` updated for new event types, IRP ops, or handle variants
 - [ ] `cargo build` succeeds, `scripts/check_deps.py` passes

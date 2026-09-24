@@ -16,10 +16,10 @@ Keep docs accurate and useful — they explain design, not replicate code.
 ## Steps
 
 1. **Determine what changed**
-   - Architecture change → `docs/ARCHITECTURE_SOURCE_OF_TRUTH.md` (invariants that are enforceable rules)
-   - Subsystem change → the relevant `docs/<subsystem>.md` (design explanation)
-   - Public API change (syscall, struct, ObInfoClass) → subsystem doc + possibly `docs/libneodos.md`
-   - Release/version change → `AGENTS.md` version field, `CHANGELOG.md`, `docs/IMPROVEMENTS.md`
+   - Architecture change → `docs/architecture/source-of-truth.md` (invariants that are enforceable rules)
+   - Subsystem change → the relevant `docs/<subsystem>/<doc>.md` (design explanation)
+   - Public API change (syscall, struct, ObInfoClass) → subsystem doc + possibly `docs/userland/libneodos.md`
+    - Release/version change → `AGENTS.md` version field, `CHANGELOG.md`, run `scripts/sync-roadmap.sh sync`
 
 2. **Read the existing doc**
    Before editing, read the doc you need to update. Understand the current framing. Don't duplicate what's already there.
@@ -37,9 +37,9 @@ Keep docs accurate and useful — they explain design, not replicate code.
 5. **Update `AGENTS.md`**
    If permanent rules change. Keep it minimal — move specialized instructions to `docs/` and procedural checklists to `skills/`.
 
-6. **Update `docs/IMPROVEMENTS.md`** (if completing an item)
-   Move the completed item from `docs/IMPROVEMENTS.md` to `docs/IMPROVEMENTS_COMPLETED.md`.
-   Mark with the commit hash or PR number that completed it.
+6. **Sync roadmap** (if completing an item)
+   Run `scripts/sync-roadmap.sh sync` to update GitHub Issues with the completed item.
+   (The old `docs/IMPROVEMENTS.md` files were removed; GitHub Issues is the SSOT.)
 
 7. **Update `CHANGELOG.md`**
    Add an entry under the current version heading. Format: `- feat/fix/refactor: brief description (#PR)`.
@@ -65,13 +65,13 @@ Keep docs accurate and useful — they explain design, not replicate code.
 - Writing tutorials instead of reference docs — tutorials belong elsewhere.
 - Leaving stale docs after refactoring — check all docs that reference changed code.
 - Adding doc comments that just restate the type name ("Process struct — represents a process").
-- Not updating `docs/IMPROVEMENTS.md` when a task is completed.
+- Not running `scripts/sync-roadmap.sh sync` when a task is completed.
 
 ## Final checklist
 
 - [ ] Doc explains *design*, not *code* — no function/struct copy-paste
 - [ ] `AGENTS.md` updated if permanent rules changed
-- [ ] `docs/IMPROVEMENTS.md` → `docs/IMPROVEMENTS_COMPLETED.md` if items completed
+- [ ] `scripts/sync-roadmap.sh sync` run if items completed
 - [ ] `CHANGELOG.md` updated
 - [ ] Cross-references valid (relative links work)
 - [ ] `scripts/check_deps.py` passes

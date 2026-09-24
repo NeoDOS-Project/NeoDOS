@@ -108,6 +108,10 @@ extern "C" {
     fn hst_register_network_device(
         name: *const u8, name_len: u32,
         mac_addr: *const u8,
+        vendor_id: u32,
+        device_id: u32,
+        desc: *const u8,
+        desc_len: u32,
         send_fn: unsafe extern "C" fn(u32, *const u8, u32) -> i32,
         poll_fn: unsafe extern "C" fn(u32, *mut u8, *mut u32) -> i32,
     ) -> i32;
@@ -463,10 +467,23 @@ fn probe_e1000() -> bool {
                 write_hex_byte(&mut name_buf, &mut np, bus);
                 write_hex_byte(&mut name_buf, &mut np, dev);
 
+                // Build description based on detected device
+                let desc_s = match device {
+                    DEV_82540EM => "Intel 82540EM Gigabit Ethernet",
+                    DEV_82543GC => "Intel 82543GC Gigabit Ethernet",
+                    DEV_82545EM => "Intel 82545EM Gigabit Ethernet",
+                    DEV_82574L => "Intel 82574L Gigabit Ethernet",
+                    _ => "Intel e1000 Gigabit Ethernet",
+                };
+
                 let nic_id = unsafe {
                     hst_register_network_device(
                         name_buf.as_ptr(), np as u32,
                         mac.as_ptr(),
+                        VENDOR_INTEL as u32,
+                        device as u32,
+                        desc_s.as_ptr(),
+                        desc_s.len() as u32,
                         e1000_send, e1000_poll,
                     )
                 };
