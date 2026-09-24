@@ -51,7 +51,10 @@ pub(crate) fn copy_user_string(ptr: u64) -> Result<String, ()> {
         // We hold SCHEDULER — now try USER_MEMORY_LOCK (order SCHEDULER -> USER_MEMORY_LOCK)
         let _mem_guard = match USER_MEMORY_LOCK.try_lock() {
             Some(g) => g,
-            None => return Err(()), // contended, return Fault (safe, reintentable)
+            None => {
+                unsafe { crate::hal::irql::lower_irql(old_irql); }
+                return Err(());
+            }
         };
         // We hold both locks — is_valid and read are atomic against free/unmap.
         let is_valid_locked = |p: u64| -> bool {
@@ -92,32 +95,12 @@ pub(crate) fn copy_user_string(ptr: u64) -> Result<String, ()> {
         // sched_guard and _mem_guard dropped here
         r
     } else {
-        // Lock contended or already held — fallback to lock-free check.
-        // Still do byte-by-byte validation, but without atomicity guarantee;
-        // the caller will get Fault and can retry. This avoids deadlock.
-        let r = (|| {
-            unsafe {
-                while len < 255 {
-                    let cur = ptr + len as u64;
-                    // Use the global is_user_ptr_valid (which takes the lock internally via current_process_* helpers)
-                    // but we are at DISPATCH, so those helpers will try to lock and may fail;
-                    // to avoid that, we just do a simple range check without lock.
-                    // For fallback, we only check the static ranges (USER_BASE, 0x1E) and
-                    // assume heap/mmap are valid if in range (best effort).
-                    let in_static = (cur >= crate::arch::x64::paging::USER_BASE && cur < crate::arch::x64::paging::USER_LIMIT)
-                        || (cur >= 0x1E000000 && cur < 0x1E200000);
-                    if !in_static && !crate::syscall::util::is_user_ptr_valid(cur, 1) {
-                        return Err(());
-                    }
-                    let byte = (cur as *const u8).read();
-                    if byte == 0 { break; }
-                    buf[len] = byte;
-                    len += 1;
-                }
-            }
-            Ok(())
-        })();
-        r
+        // Lock contended or already held — return Fault (safe, reintentable) to avoid TOCTOU.
+        // Previously we did a lock-free fallback with is_user_ptr_valid + read, but that
+        // reintroduces the TOCTOU (another CPU could free between check and read -> Ring0 #PF).
+        // Returning Fault is safe and lets the syscall be retried after the lock is free.
+        unsafe { crate::hal::irql::lower_irql(old_irql); }
+        return Err(());
     };
 
     unsafe { crate::hal::irql::lower_irql(old_irql); }

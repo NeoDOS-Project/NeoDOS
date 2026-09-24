@@ -33,22 +33,16 @@ pub fn defer_reap(pid: u32) {
     if pid == 0 { return; }
     let mut zombies = ZOMBIE_PIDS.lock();
     if zombies.len() >= MAX_ZOMBIES {
-        // Backpressure: try to make room by removing a non-running zombie
-        // that can be reaped later. We don't have &mut Scheduler here, so we
-        // just warn and keep the queue bounded by not pushing the new pid
-        // if we cannot make room. The new pid will be re-queued on next
-        // terminate path? Instead, we push and let reap drain all on next schedule.
-        // For now, allow growth to MAX*2 but warn.
-        if zombies.len() >= MAX_ZOMBIES * 2 {
-            kerror!(crate::log::LogSubsys::Sched, "zombie storm: dropping pid {} (queue {} >= {})", pid, zombies.len(), MAX_ZOMBIES*2);
-            return;
-        }
         kwarn!(crate::log::LogSubsys::Sched, "zombie backpressure: queue len {} >= MAX {}", zombies.len(), MAX_ZOMBIES);
     }
+    // P0.2 audit: never drop the new pid (would leak Eprocess/Kthread/slot forever).
+    // Always enqueue; if we exceed hard cap, drain oldest to keep it bounded but keep the new pid.
     zombies.push(pid);
-    // Hard cap to prevent Vec reallocation storm
     if zombies.len() > MAX_ZOMBIES * 4 {
-        zombies.truncate(MAX_ZOMBIES * 2);
+        let drain = zombies.len() - MAX_ZOMBIES * 2;
+        // Remove oldest, keep newest (including the just-pushed pid)
+        zombies.drain(0..drain);
+        kwarn!(crate::log::LogSubsys::Sched, "zombie storm: truncated oldest {} (queue now {} )", drain, zombies.len());
     }
 }
 
@@ -97,24 +91,26 @@ pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
 
 impl Scheduler {
     /// Find the first free slot index in eprocesses vec, growing if full.
+    /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).
     pub fn alloc_eprocess_slot(&mut self) -> Option<usize> {
-        let pos = self.eprocesses.iter().position(|e| e.is_none());
-        if pos.is_some() {
-            pos
+        if let Some(pos) = self.eprocesses.iter().position(|e| e.is_none()) {
+            Some(pos)
         } else {
             let idx = self.eprocesses.len();
+            if self.eprocesses.try_reserve(1).is_err() { return None; }
             self.eprocesses.push(None);
             Some(idx)
         }
     }
 
     /// Find the first free slot index in kthreads vec, growing if full.
+    /// P0.2: try_reserve for OOM safety.
     pub fn alloc_kthread_slot(&mut self) -> Option<usize> {
-        let pos = self.kthreads.iter().position(|t| t.is_none());
-        if pos.is_some() {
-            pos
+        if let Some(pos) = self.kthreads.iter().position(|t| t.is_none()) {
+            Some(pos)
         } else {
             let idx = self.kthreads.len();
+            if self.kthreads.try_reserve(1).is_err() { return None; }
             self.kthreads.push(None);
             Some(idx)
         }
