@@ -107,7 +107,7 @@ impl SocketManager {
     }
 
     pub fn wake_socket_readers(&mut self, socket_id: u32) {
-        let magic = 0x0009_1000 | (socket_id & 0xFFF);
+        let magic = crate::kwait::WaitReason::SocketRead { socket_id }.encode_magic();
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut scheduler = s.lock();
@@ -116,7 +116,7 @@ impl SocketManager {
     }
 
     pub fn wake_socket_connect_waiters(&mut self, socket_id: u32) {
-        let magic = 0x0009_2000 | (socket_id & 0xFFF);
+        let magic = crate::kwait::WaitReason::SocketConnect { socket_id }.encode_magic();
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut scheduler = s.lock();
@@ -125,7 +125,7 @@ impl SocketManager {
     }
 
     pub fn wake_socket_accept_waiters(&mut self, socket_id: u32) {
-        let magic = 0x0009_3000 | (socket_id & 0xFFF);
+        let magic = crate::kwait::WaitReason::SocketAccept { socket_id }.encode_magic();
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut scheduler = s.lock();

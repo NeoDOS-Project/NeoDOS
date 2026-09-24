@@ -34,8 +34,8 @@ use crate::{test_case, test_eq, test_ne, test_true};
 
 const IRP_POOL_SIZE: usize = 64;
 
-/// Magic number for IRP waiting — combined with IRP ID for `Process.waiting_for`.
-pub const IRP_WAIT_MAGIC: u32 = 0xAAAA_0000;
+/// Magic number for IRP waiting — F-03 full-width 64-bit: high 32 tag, low 32 id.
+pub const IRP_WAIT_MAGIC: u64 = 0xAAAA_0000_0000_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IrpOp {
@@ -240,7 +240,7 @@ fn irp_cb_dispatch(data: *mut u8) {
 
 /// Wake a process waiting on an IRP.
 fn irp_wake_waiter(pid: u32) {
-    let magic = IRP_WAIT_MAGIC | pid;
+    let magic = IRP_WAIT_MAGIC | pid as u64;
     let s = crate::scheduler::current_scheduler();
     let mut scheduler = s.lock();
     for k in scheduler.kthreads.iter_mut().flatten() {

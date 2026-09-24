@@ -20,7 +20,7 @@ use crate::irp::{IrpId, IrpStatus, irp_free};
 pub const APC_ALERTED: u64 = 1;
 
 /// Magic value for alertable wait blocking
-pub const APC_WAIT_MAGIC: u32 = 0xBBBB_0000;
+pub const APC_WAIT_MAGIC: u64 = 0xBBBB_0000_0000_0000;
 
 /// Max entries per queue
 pub const MAX_KERNEL_APC: usize = 64;

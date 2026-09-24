@@ -244,7 +244,7 @@ pub fn wait_for_process(pid: u32) {
             if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
                 scheduler::Scheduler::remove_from_run_queue(k);
                 k.state = scheduler::ThreadState::Blocked {
-                    waiting_for: pid,
+                    waiting_for: pid as u64,
                 };
             }
         }
