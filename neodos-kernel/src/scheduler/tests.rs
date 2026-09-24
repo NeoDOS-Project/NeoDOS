@@ -248,7 +248,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         sched.current_tid = 2;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000 });
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000u64 });
         add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_IDLE, ThreadState::Running);
         sched.kthreads.iter_mut().find(|t| t.as_ref().is_some_and(|k| k.tid == 1))
             .and_then(|t| t.as_mut()).unwrap().state = ThreadState::Ready;
@@ -383,7 +383,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0001u64 });
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
@@ -397,7 +397,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0001u64 });
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             k.waiting_for = None;
@@ -831,7 +831,7 @@ pub fn register_tests() {
         test_eq!(r.unwrap(), 0);
 
         // Simulate kwait_block: remove + Blocked
-        let magic: u32 = 0x0005_0063; // Event 99
+        let magic: u64 = 0x0005_0000_0063u64; // Event 99
         {
             let k = sched.find_kthread_mut(2).unwrap();
             Scheduler::remove_from_run_queue(k);
@@ -874,12 +874,12 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0063 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0063u64 });
         // manually set waiting_for to match blocked magic
-        sched.find_kthread_mut(2).unwrap().waiting_for = Some(0x0005_0063);
+        sched.find_kthread_mut(2).unwrap().waiting_for = Some(0x0005_0000_0063u64);
         // first wake
         {
-            let magic = 0x0005_0063;
+            let magic = 0x0005_0000_0063u64;
             let tids: Vec<u32> = sched.kthreads.iter().flatten()
                 .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
                 .map(|k| k.tid).collect();
@@ -896,7 +896,7 @@ pub fn register_tests() {
         test_eq!(r.unwrap(), 1);
         // second wake — should be no-op
         {
-            let magic = 0x0005_0063;
+            let magic = 0x0005_0000_0063u64;
             let tids: Vec<u32> = sched.kthreads.iter().flatten()
                 .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
                 .map(|k| k.tid).collect();
@@ -924,7 +924,7 @@ pub fn register_tests() {
         // Two Blocked threads waiting on same magic → single wake wakes both
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
-        let magic: u32 = 0x0006_000A; // Timer 10
+        let magic: u64 = 0x0006_000A; // Timer 10
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
             ThreadState::Blocked { waiting_for: magic });
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL,

@@ -9,17 +9,29 @@
 use crate::scheduler::{self, ThreadState};
 use crate::hal::irql::{self, DISPATCH_LEVEL};
 
-/// Magic number base for each wait reason type.
-/// Upper 16 bits encode the reason, lower 16 bits carry the instance ID.
-const MAGIC_PIPE_BASE: u32    = 0x0001_0000;
-const MAGIC_IRP_BASE: u32     = 0x0002_0000;
-const MAGIC_THREAD_BASE: u32  = 0x0003_0000;
-const MAGIC_CHILD_BASE: u32   = 0x0004_0000;
-const MAGIC_EVENT_BASE: u32   = 0x0005_0000;
-const MAGIC_TIMER_BASE: u32   = 0x0006_0000;
-const MAGIC_APC_BASE: u32     = 0x0007_0000;
-const MAGIC_SEMAPHORE_BASE: u32 = 0x0008_0000;
-const MAGIC_SOCKET_BASE: u32 = 0x0009_0000;
+/// Magic number base for each wait reason type — F-03: full-width 64-bit.
+/// High 32 bits encode the reason tag, low 32 bits carry the full instance ID
+/// (no 16-bit truncation). This eliminates ABA collisions like PID 1 vs 65537.
+const TAG_PIPE: u32      = 0x0001;
+const TAG_IRP: u32       = 0x0002;
+const TAG_THREAD: u32    = 0x0003;
+const TAG_CHILD: u32     = 0x0004;
+const TAG_EVENT: u32     = 0x0005;
+const TAG_TIMER: u32     = 0x0006;
+const TAG_APC: u32       = 0x0007;
+const TAG_SEMAPHORE: u32 = 0x0008;
+const TAG_SOCKET_READ: u32    = 0x0009;
+const TAG_SOCKET_CONNECT: u32 = 0x000A;
+const TAG_SOCKET_ACCEPT: u32  = 0x000B;
+
+#[inline(always)]
+fn make_magic(tag: u32, id: u32) -> u64 {
+    ((tag as u64) << 32) | (id as u64)
+}
+#[inline(always)]
+fn magic_tag(magic: u64) -> u32 { (magic >> 32) as u32 }
+#[inline(always)]
+fn magic_id(magic: u64) -> u32 { (magic & 0xFFFF_FFFF) as u32 }
 
 /// WaitReason encodes what a thread is waiting for.
 /// Variants MUST NOT be reordered or removed (ABI freeze v0.42).
@@ -51,46 +63,39 @@ pub enum WaitReason {
 }
 
 impl WaitReason {
-    /// Encode this wait reason into a magic u32 for the scheduler.
-    /// Upper bits: type tag. Lower bits: instance ID.
-    pub fn encode_magic(&self) -> u32 {
+    /// Encode this wait reason into a magic u64 for the scheduler — F-03 full-width.
+    /// High 32: tag, Low 32: full instance ID (no truncation).
+    pub fn encode_magic(&self) -> u64 {
         match *self {
-            WaitReason::PipeRead { pipe_id }  => MAGIC_PIPE_BASE | pipe_id as u32,
-            WaitReason::IrpComplete { irp_id } => MAGIC_IRP_BASE | (irp_id & 0xFFFF),
-            WaitReason::ThreadJoin { tid }     => MAGIC_THREAD_BASE | (tid & 0xFFFF),
-            WaitReason::ChildExit { pid }      => MAGIC_CHILD_BASE | (pid & 0xFFFF),
-            WaitReason::Event { event_type }   => MAGIC_EVENT_BASE | (event_type & 0xFFFF),
-            WaitReason::Timer { timer_id }      => MAGIC_TIMER_BASE | (timer_id & 0xFFFF),
-            WaitReason::Alertable              => MAGIC_APC_BASE,
-            WaitReason::Semaphore { sem_id }   => MAGIC_SEMAPHORE_BASE | (sem_id & 0xFFFF),
-            WaitReason::SocketRead { socket_id }   => MAGIC_SOCKET_BASE | 0x1000 | (socket_id & 0xFFF),
-            WaitReason::SocketConnect { socket_id } => MAGIC_SOCKET_BASE | 0x2000 | (socket_id & 0xFFF),
-            WaitReason::SocketAccept { socket_id }  => MAGIC_SOCKET_BASE | 0x3000 | (socket_id & 0xFFF),
+            WaitReason::PipeRead { pipe_id }  => make_magic(TAG_PIPE, pipe_id as u32),
+            WaitReason::IrpComplete { irp_id } => make_magic(TAG_IRP, irp_id),
+            WaitReason::ThreadJoin { tid }     => make_magic(TAG_THREAD, tid),
+            WaitReason::ChildExit { pid }      => make_magic(TAG_CHILD, pid),
+            WaitReason::Event { event_type }   => make_magic(TAG_EVENT, event_type),
+            WaitReason::Timer { timer_id }      => make_magic(TAG_TIMER, timer_id),
+            WaitReason::Alertable              => make_magic(TAG_APC, 0),
+            WaitReason::Semaphore { sem_id }   => make_magic(TAG_SEMAPHORE, sem_id),
+            WaitReason::SocketRead { socket_id }   => make_magic(TAG_SOCKET_READ, socket_id),
+            WaitReason::SocketConnect { socket_id } => make_magic(TAG_SOCKET_CONNECT, socket_id),
+            WaitReason::SocketAccept { socket_id }  => make_magic(TAG_SOCKET_ACCEPT, socket_id),
         }
     }
 
-    pub fn decode_magic(magic: u32) -> Option<WaitReason> {
-        let tag = magic & 0xFFFF_0000;
-        let id = magic & 0xFFFF;
+    pub fn decode_magic(magic: u64) -> Option<WaitReason> {
+        let tag = magic_tag(magic);
+        let id = magic_id(magic);
         Some(match tag {
-            MAGIC_PIPE_BASE   => WaitReason::PipeRead { pipe_id: id as u16 },
-            MAGIC_IRP_BASE    => WaitReason::IrpComplete { irp_id: id },
-            MAGIC_THREAD_BASE => WaitReason::ThreadJoin { tid: id },
-            MAGIC_CHILD_BASE  => WaitReason::ChildExit { pid: id },
-            MAGIC_EVENT_BASE  => WaitReason::Event { event_type: id },
-            MAGIC_TIMER_BASE  => WaitReason::Timer { timer_id: id },
-            MAGIC_APC_BASE    => WaitReason::Alertable,
-            MAGIC_SEMAPHORE_BASE => WaitReason::Semaphore { sem_id: id },
-            MAGIC_SOCKET_BASE => {
-                let sub_type = id & 0xF000;
-                let instance = id & 0xFFF;
-                match sub_type {
-                    0x1000 => WaitReason::SocketRead { socket_id: instance },
-                    0x2000 => WaitReason::SocketConnect { socket_id: instance },
-                    0x3000 => WaitReason::SocketAccept { socket_id: instance },
-                    _ => return None,
-                }
-            }
+            TAG_PIPE      => WaitReason::PipeRead { pipe_id: id as u16 },
+            TAG_IRP       => WaitReason::IrpComplete { irp_id: id },
+            TAG_THREAD    => WaitReason::ThreadJoin { tid: id },
+            TAG_CHILD     => WaitReason::ChildExit { pid: id },
+            TAG_TIMER     => WaitReason::Timer { timer_id: id },
+            TAG_EVENT     => WaitReason::Event { event_type: id },
+            TAG_APC       => WaitReason::Alertable,
+            TAG_SEMAPHORE => WaitReason::Semaphore { sem_id: id },
+            TAG_SOCKET_READ    => WaitReason::SocketRead { socket_id: id },
+            TAG_SOCKET_CONNECT => WaitReason::SocketConnect { socket_id: id },
+            TAG_SOCKET_ACCEPT  => WaitReason::SocketAccept { socket_id: id },
             _ => return None,
         })
     }
@@ -206,14 +211,14 @@ pub fn register_kwait_tests() {
         ];
         let mut magics = alloc::vec::Vec::new();
         for r in &reasons {
-            let m = r.encode_magic() & 0xFFFF_0000;
+            let m = r.encode_magic() & 0xFFFF_FFFF_0000_0000;
             test_true!(!magics.contains(&m));
             magics.push(m);
         }
     });
 
     test_case!("kwait_decode_nonexistent", {
-        let result = WaitReason::decode_magic(0xDEAD_0000);
+        let result = WaitReason::decode_magic(0xDEAD_0000_0000_0000);
         test_true!(result.is_none());
     });
 
@@ -233,7 +238,7 @@ pub fn register_kwait_tests() {
         let a = WaitReason::Timer { timer_id: 1 };
         let b = WaitReason::Timer { timer_id: 2 };
         test_ne!(a.encode_magic(), b.encode_magic());
-        test_eq!(a.encode_magic() & 0xFFFF0000, MAGIC_TIMER_BASE);
+        test_eq!(a.encode_magic() & 0xFFFF_FFFF_0000_0000, make_magic(TAG_TIMER, 0) & 0xFFFF_FFFF_0000_0000);
     });
 
     test_case!("kwait_semaphore_instance_magic", {
@@ -242,6 +247,22 @@ pub fn register_kwait_tests() {
         test_eq!(a.encode_magic(), b.encode_magic());
         let c = WaitReason::Semaphore { sem_id: 6 };
         test_ne!(a.encode_magic(), c.encode_magic());
+    });
+
+    // F-03: ABA collision must not happen — PID 1 vs 65537 (0x1_0001) previously collided on 16-bit
+    test_case!("kwait_aba_pid_full_width", {
+        let a = WaitReason::ChildExit { pid: 1 };
+        let b = WaitReason::ChildExit { pid: 65537 }; // 1 + 0x10000
+        test_ne!(a.encode_magic(), b.encode_magic());
+        let c = WaitReason::ThreadJoin { tid: 1 };
+        let d = WaitReason::ThreadJoin { tid: 65537 };
+        test_ne!(c.encode_magic(), d.encode_magic());
+        // Large PID near u32::MAX
+        let e = WaitReason::ChildExit { pid: 0xFFFF_FFFE };
+        let f = WaitReason::ChildExit { pid: 0xFFFF_FFFF };
+        test_ne!(e.encode_magic(), f.encode_magic());
+        test_eq!(WaitReason::decode_magic(a.encode_magic()).unwrap(), a);
+        test_eq!(WaitReason::decode_magic(b.encode_magic()).unwrap(), b);
     });
 
     // ── K17 Gap 1: real kwait_block/kwait_wake functional (global scheduler, BOOT_TID) ──

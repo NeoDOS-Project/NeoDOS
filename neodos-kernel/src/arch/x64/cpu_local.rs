@@ -559,6 +559,65 @@ pub unsafe fn this_cpu_in_dispatch_level() -> bool {
     this_cpu_irql() >= 2
 }
 
+// ── F-01: per-CPU current identity helpers (SMP UAF fix) ─────────────────
+
+/// Get current thread's TID from KPRCB (per-CPU). Returns 0 if none.
+#[inline(always)]
+pub unsafe fn this_cpu_current_tid() -> u32 {
+    let ptr = this_cpu_current_thread();
+    if ptr.is_null() { 0 } else { (*ptr).tid }
+}
+
+/// Check if a PID is currently Running on ANY CPU (reads KPRCB.current_pid).
+/// Used by reap to avoid freeing a stack still in use on another CPU.
+/// Returns true if pid !=0 and any online CPU has current_pid==pid.
+pub fn is_pid_running_on_any_cpu(pid: u32) -> bool {
+    if pid == 0 { return false; }
+    for cpu in 0..MAX_CPUS {
+        let addr = unsafe { KPRCB_PAGES[cpu] };
+        if addr == 0 { continue; }
+        let cur_pid = unsafe { core::ptr::read_volatile((addr + OFFSET_CURRENT_PID as u64) as *const u32) };
+        if cur_pid == pid { return true; }
+    }
+    false
+}
+
+/// Sync per-CPU KPRCB current_thread/current_pid/idle for this CPU.
+/// Must be called with SCHEDULER lock held and IRQL >= DISPATCH (already).
+/// No-op if GS base not yet programmed (early boot / unit tests).
+#[inline(always)]
+pub unsafe fn sync_per_cpu_current(ptr: *mut Kthread, pid: u32) {
+    if crate::hal::safe::GsBase::read() == 0 { return; }
+    this_cpu_set_current_thread(ptr);
+    this_cpu_set_current_pid(pid);
+    this_cpu_set_idle(pid == 0 || ptr.is_null() || {
+        if ptr.is_null() { true } else { (*ptr).tid == crate::scheduler::IDLE_TID }
+    });
+}
+
+/// Try to get current TID from per-CPU KPRCB if GS is initialized.
+/// Returns None if KPRCB not yet set (early boot / tests).
+pub fn try_per_cpu_tid() -> Option<u32> {
+    let gs_base = crate::hal::safe::GsBase::read();
+    if gs_base == 0 { return None; }
+    // GS is set, read current_thread ptr via GS
+    let ptr = unsafe { this_cpu_current_thread() };
+    if ptr.is_null() { return None; }
+    Some(unsafe { (*ptr).tid })
+}
+
+/// Try to get current PID from per-CPU KPRCB if GS is initialized.
+pub fn try_per_cpu_pid() -> Option<u32> {
+    let gs_base = crate::hal::safe::GsBase::read();
+    if gs_base == 0 { return None; }
+    let ptr = unsafe { this_cpu_current_thread() };
+    if !ptr.is_null() {
+        return Some(unsafe { (*ptr).pid });
+    }
+    // Fallback to current_pid field
+    Some(unsafe { this_cpu_current_pid() })
+}
+
 /// Increment the per-CPU interrupt count.
 #[inline(always)]
 pub unsafe fn this_cpu_inc_interrupt_count() {
@@ -649,18 +708,22 @@ pub unsafe fn cpu_run_queue_mut(cpu: usize) -> &'static mut CpuRunQueue {
 /// Drain all entries from a specific CPU's run queue into the caller's
 /// local run queue. Used for work stealing.
 ///
+/// Drain all entries from victim's queue into thief's queue.
+/// P0.2: now SMP-safe — takes victim's RUNQUEUE_LOCK.
 /// # Safety
-/// Requires both CPUs' KPRCBs to be initialized.
+/// Requires both CPUs' KPRCBs to be initialized. Thief's queue must be
+/// already locked by the caller (as in steal_and_migrate).
 #[inline(always)]
 pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQueue) -> u32 {
-    let mut stolen = 0u32;
-    if from_cpu >= MAX_CPUS { return stolen; }
+    if from_cpu >= MAX_CPUS { return 0; }
+    if unsafe { KPRCB_PAGES[from_cpu] == 0 } { return 0; }
+    let _guard = RUNQUEUE_LOCKS[from_cpu].lock();
     let src = cpu_run_queue_mut(from_cpu);
+    let mut stolen = 0u32;
     while let Some(tid) = src.pop() {
         if to_queue.push(tid) {
             stolen += 1;
         } else {
-            // Push back if destination is full
             src.push(tid);
             break;
         }

@@ -27,7 +27,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        let tid = scheduler.current_tid;
+        let tid = scheduler.current_tid_for_this_cpu();
         let pid = scheduler.current_pid();
         if pid == 2 {
             crate::serial_println!("[EXIT] NeoInit (pid={} tid={}) exit code={}", pid, tid, code);
@@ -99,7 +99,7 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
                 crate::scheduler::Scheduler::make_thread_ready(k);

@@ -43,12 +43,12 @@ pub struct MmapRegion {
     pub file_size: u32,
 }
 
-// ThreadState
+// ThreadState — F-03: waiting_for is now u64 full-width (no 16-bit truncation)
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ThreadState {
     Ready,
     Running,
-    Blocked { waiting_for: u32 },
+    Blocked { waiting_for: u64 },
     Suspended,
     Terminated,
 }
@@ -77,7 +77,7 @@ pub struct Kthread {
     pub pid: u32,
     pub state: ThreadState,
     pub cpu_ticks: u64,
-    pub waiting_for: Option<u32>,
+    pub waiting_for: Option<u64>,
     pub priority: u8,
     pub time_slice_remaining: u16,
     pub ticks_since_scheduled: u64,

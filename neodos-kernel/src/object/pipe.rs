@@ -457,7 +457,7 @@ pub fn register_tests() {
         PIPE_MANAGER.inc_read_ref(pid);
         PIPE_MANAGER.inc_write_ref(pid);
         crate::object::pipe::block_current_for_pipe(pid);
-        let expected_magic = 0x0001_0000u32 | pid as u32;
+        let expected_magic = crate::kwait::WaitReason::PipeRead { pipe_id: pid as u16 }.encode_magic();
         let state = crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let lock = s.lock();

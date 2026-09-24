@@ -44,7 +44,7 @@ pub struct Scheduler {
 #[allow(unused_macros)]
 macro_rules! with_current {
     ($sched:expr, $eproc:ident, $body:block) => {{
-        let tid = $sched.current_tid;
+        let tid = $sched.current_tid_for_this_cpu();
         let pid = $sched.find_kthread(tid).map(|t| t.pid);
         if let Some(pid) = pid {
             if let Some($eproc) = $sched.find_eprocess_mut(pid) {
@@ -91,22 +91,69 @@ impl Scheduler {
             .collect()
     }
 
+    /// Check if KPRCB current_thread pointer belongs to this Scheduler instance.
+    /// Used to distinguish global SCHEDULER vs local test schedulers (F-01).
+    fn kprcb_thread_in_self(&self) -> bool {
+        if crate::hal::safe::GsBase::read() == 0 { return false; }
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        if ptr.is_null() { return false; }
+        self.kthreads.iter().any(|t| {
+            if let Some(k) = t {
+                &**k as *const crate::scheduler::Kthread as *const u8 == ptr as *const u8
+            } else { false }
+        })
+    }
+
+    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP) AND
+    /// the KPRCB thread belongs to this Scheduler, returns per-CPU PID.
+    /// Falls back to global current_tid for tests/local schedulers.
     pub fn current_pid(&self) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+                return pid;
+            }
+        }
         self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
     }
 
+    /// F-01: per-CPU helper to get current TID for THIS CPU if this is the
+    /// global scheduler (KPRCB thread in self). Otherwise fallback.
+    pub fn current_tid_for_this_cpu(&self) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+                return tid;
+            }
+        }
+        self.current_tid
+    }
+
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        let tid = self.current_tid;
+        // Use per-CPU only for global scheduler; local test schedulers use self.current_tid
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        self.find_kthread_mut(self.current_tid)
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
+        self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let pid = self.find_kthread(self.current_tid).map(|t| t.pid)?;
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
+        let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }
 
@@ -299,13 +346,20 @@ pub fn current_process_mmap_regions() -> Vec<MmapRegion> {
 pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
-        ep.mmap_regions.push(region);
-        ep.mmap_next = region.base + region.len;
-        Some(region.base)
+        // Use try_reserve to avoid panic on OOM (P0.2)
+        if ep.mmap_regions.try_reserve(1).is_err() {
+            None
+        } else {
+            ep.mmap_regions.push(region);
+            ep.mmap_next = region.base + region.len;
+            Some(region.base)
+        }
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result
@@ -314,12 +368,14 @@ pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
 pub fn remove_current_mmap_region(base: u64) -> Option<MmapRegion> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
         let idx = ep.mmap_regions.iter().position(|r| r.base == base);
         idx.map(|i| ep.mmap_regions.remove(i))
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result
@@ -331,6 +387,15 @@ pub fn free_current_mmap_pages(base: u64, len: u64) {
 
 /// Find a thread's TEB base address.
 pub fn current_teb_base() -> u64 {
+    // F-01: try per-CPU first
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let lock = SCHEDULER.lock();
+        let result = lock.find_kthread(tid).map(|k| k.teb_base).unwrap_or(0);
+        drop(lock);
+        unsafe { crate::hal::irql::lower_irql(old_irql) };
+        if result != 0 { return result; }
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.find_kthread(lock.current_tid).map(|k| k.teb_base).unwrap_or(0);
@@ -339,9 +404,12 @@ pub fn current_teb_base() -> u64 {
     result
 }
 
-// ── Convenience: current PID (deprecated, prefer current_tid) ──
+// ── Convenience: current PID/TID (F-01: per-CPU via KPRCB, fallback to global) ──
 
 pub fn current_pid() -> u32 {
+    if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+        return pid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.current_pid();
@@ -351,6 +419,9 @@ pub fn current_pid() -> u32 {
 }
 
 pub fn current_tid() -> u32 {
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        return tid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let result = SCHEDULER.lock().current_tid;
     unsafe { crate::hal::irql::lower_irql(old_irql) };
@@ -362,7 +433,7 @@ pub fn yield_current_thread() {
     crate::hal::without_interrupts(|| {
         let s = current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
                 let before = k.state.to_u8();

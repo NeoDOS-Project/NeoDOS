@@ -12,50 +12,105 @@ use crate::scheduler::types::{Eprocess, Kthread, ThreadState, PRIORITY_NORMAL, T
 use crate::scheduler::stack::{AlignedKStack, init_ring0_frame};
 use crate::scheduler::Scheduler;
 
+/// F-06: bounded zombie queue to prevent unbounded growth under storm.
+/// Each zombie is an EPROCESS/KTHREAD that has been terminated but whose
+/// slots (including kernel stacks) cannot be freed until no CPU is running
+/// on that pid. Under rapid spawn/exit, defer_reap() pushes faster than
+/// schedule() could previously pop (1 per schedule), leading to Vec growth
+/// without bound and heap/user slot exhaustion.
+const MAX_ZOMBIES: usize = 64;
+
 lazy_static! {
-    static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+    static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::with_capacity(MAX_ZOMBIES));
 }
 
 /// Defer EPROCESS slot recycling until after context switch.
 /// The pid's Kthread stacks remain valid while current thread still executes.
+/// F-06: bounded — if the queue is at capacity, we log and apply backpressure
+/// by dropping the oldest zombie that is not running (if any), otherwise we
+/// keep the queue at MAX and the new pid will be retried on next schedule.
 pub fn defer_reap(pid: u32) {
     if pid == 0 { return; }
-    ZOMBIE_PIDS.lock().push(pid);
+    let mut zombies = ZOMBIE_PIDS.lock();
+    if zombies.len() >= MAX_ZOMBIES {
+        kwarn!(crate::log::LogSubsys::Sched, "zombie backpressure: queue len {} >= MAX {}", zombies.len(), MAX_ZOMBIES);
+    }
+    // P0.2 audit: never drop the new pid (would leak Eprocess/Kthread/slot forever).
+    // Always enqueue; if we exceed hard cap, drain oldest to keep it bounded but keep the new pid.
+    zombies.push(pid);
+    if zombies.len() > MAX_ZOMBIES * 4 {
+        let drain = zombies.len() - MAX_ZOMBIES * 2;
+        // Remove oldest, keep newest (including the just-pushed pid)
+        zombies.drain(0..drain);
+        kwarn!(crate::log::LogSubsys::Sched, "zombie storm: truncated oldest {} (queue now {} )", drain, zombies.len());
+    }
 }
 
-/// Try to reap one zombie pid that is not the current pid.
-/// Called from schedule() with scheduler lock already held, after context switch is decided.
+/// Try to reap *all* zombies that are not running on ANY CPU.
+/// Called from schedule() with scheduler lock already held, after context
+/// switch is decided. F-01 ensures we never free a pid still running on any
+/// CPU; F-06 ensures we drain the whole eligible set per schedule, so a
+/// burst of 1000 exits is reaped in one schedule, not 1000 schedules.
 pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
-    let mut zombies = ZOMBIE_PIDS.lock();
-    if zombies.is_empty() { return; }
-    // Find first zombie not equal to current_pid (so we don't free the stack we're still on)
-    if let Some(pos) = zombies.iter().position(|&p| p != current_pid) {
-        let pid = zombies.remove(pos);
-        drop(zombies);
-        sched.recycle_terminated(pid);
+    // Quick check without lock to avoid taking ZOMBIE_PIDS when empty
+    if ZOMBIE_PIDS.lock().is_empty() { return; }
+
+    // Drain loop: keep trying to reap while there is an eligible zombie.
+    loop {
+        let pid_to_reap = {
+            let mut zombies = ZOMBIE_PIDS.lock();
+            if zombies.is_empty() { break; }
+            // Find first zombie not running on any CPU and not the current pid
+            let pos = zombies.iter().position(|&p| {
+                if p == current_pid { return false; }
+                !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p)
+            });
+            match pos {
+                Some(pos) => Some(zombies.remove(pos)),
+                None => None,
+            }
+        };
+        match pid_to_reap {
+            Some(pid) => {
+                // Double-check after dropping ZOMBIE_PIDS lock
+                if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+                    ZOMBIE_PIDS.lock().push(pid);
+                    continue;
+                }
+                // Recycle may take other locks (Ob), but not ZOMBIE_PIDS, so safe
+                if !sched.recycle_terminated(pid) {
+                    // If recycle failed (already gone), just continue to next
+                    continue;
+                }
+                // Continue loop to reap next eligible zombie
+            }
+            None => break,
+        }
     }
 }
 
 impl Scheduler {
     /// Find the first free slot index in eprocesses vec, growing if full.
+    /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).
     pub fn alloc_eprocess_slot(&mut self) -> Option<usize> {
-        let pos = self.eprocesses.iter().position(|e| e.is_none());
-        if pos.is_some() {
-            pos
+        if let Some(pos) = self.eprocesses.iter().position(|e| e.is_none()) {
+            Some(pos)
         } else {
             let idx = self.eprocesses.len();
+            if self.eprocesses.try_reserve(1).is_err() { return None; }
             self.eprocesses.push(None);
             Some(idx)
         }
     }
 
     /// Find the first free slot index in kthreads vec, growing if full.
+    /// P0.2: try_reserve for OOM safety.
     pub fn alloc_kthread_slot(&mut self) -> Option<usize> {
-        let pos = self.kthreads.iter().position(|t| t.is_none());
-        if pos.is_some() {
-            pos
+        if let Some(pos) = self.kthreads.iter().position(|t| t.is_none()) {
+            Some(pos)
         } else {
             let idx = self.kthreads.len();
+            if self.kthreads.try_reserve(1).is_err() { return None; }
             self.kthreads.push(None);
             Some(idx)
         }
@@ -163,9 +218,9 @@ impl Scheduler {
         rsp: u64,
         kernel_stack_top: u64,
         kernel_stack: Box<AlignedKStack>,
-        obj_id: Option<ObId>,
-        ob_id: Option<ObId>,
-        thread_obj_id: Option<ObId>,
+        mut obj_id: Option<ObId>,
+        mut ob_id: Option<ObId>,
+        mut thread_obj_id: Option<ObId>,
         parent_token: crate::security::token::Token,
     ) -> Result<u32, &'static str> {
         if kernel_stack_top == 0 {
@@ -178,6 +233,32 @@ impl Scheduler {
 
         let tid = self.next_tid;
         self.next_tid += 1;
+
+        // F-04: create Ob objects inside the lock with the *real* pid/tid.
+        // Previously they were created outside with a guessed pid (peek), causing
+        // duplicate names and native_id drift under concurrent spawns.
+        // Now we create them here atomically, so no race and no leak on failure.
+        if obj_id.is_none() {
+            let name = alloc::format!("eproc/{}", pid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Process, &name, pid as u64, 0, None) {
+                obj_id = Some(id);
+            }
+        }
+        if ob_id.is_none() {
+            let ob_name = alloc::format!("proc/{}", pid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Process, &ob_name, pid as u64, 0, None) {
+                let ns_path = alloc::format!("\\Process\\{}", pid);
+                let _ = crate::object::namespace::ob_insert_object(&ns_path, id);
+                ob_id = Some(id);
+            }
+        }
+        if thread_obj_id.is_none() {
+            let tname = alloc::format!("kthread/{}", tid);
+            if let Ok(id) = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None) {
+                thread_obj_id = Some(id);
+            }
+        }
+        crate::serial_println!("[SPAWN] pid={} tid={} obj_id={:?} ob_id={:?} thread_obj_id={:?}", pid, tid, obj_id, ob_id, thread_obj_id);
 
         let mut eproc = Eprocess {
             pid,
@@ -215,14 +296,18 @@ impl Scheduler {
     }
 
     /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
-    /// growing them now (outside the lock) so no realloc happens inside.
-    pub fn ensure_slots(&mut self) {
+    /// growing them now so no realloc happens inside the critical section.
+    /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).
+    pub fn ensure_slots(&mut self) -> Result<(), &'static str> {
         if self.eprocesses.iter().position(|e| e.is_none()).is_none() {
+            self.eprocesses.try_reserve(1).map_err(|_| "NoMem for eprocess slot")?;
             self.eprocesses.push(None);
         }
         if self.kthreads.iter().position(|t| t.is_none()).is_none() {
+            self.kthreads.try_reserve(1).map_err(|_| "NoMem for kthread slot")?;
             self.kthreads.push(None);
         }
+        Ok(())
     }
 
     /// Resolve a free eprocess slot (must exist — caller called ensure_slots).
@@ -466,11 +551,29 @@ impl Scheduler {
     /// Centralized termination for current thread/process (used by sys_exit and exception path).
     /// Mirrors handler_exit logic: decrement thread_count, free resources if last thread, wake waiters, defer reap.
     /// Must be called with scheduler lock held and interrupts disabled. Caller must set need_resched after.
+    /// F-01: uses per-CPU identity (KPRCB) when available and belongs to this Scheduler, not global current_tid.
     pub fn terminate_current(&mut self, exit_code: i64) -> Option<u32> {
-        let tid = self.current_tid;
-        let pid = self.current_pid();
+        // P0.2: also take USER_MEMORY_LOCK (order SCHEDULER -> USER_MEMORY_LOCK)
+        // to make free/unmap atomic against copy_user_string validation+read.
+        let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
+        // F-01: per-CPU current thread (SMP) — fallback to global for tests/early boot/local schedulers
+        let (tid, pid) = if self.kprcb_thread_in_self() {
+            if let Some(t) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+                let p = crate::arch::x64::cpu_local::try_per_cpu_pid().unwrap_or_else(|| self.current_pid());
+                (t, p)
+            } else {
+                (self.current_tid, self.current_pid())
+            }
+        } else {
+            (self.current_tid, self.current_pid())
+        };
         if tid == 0 || pid == 0 { return None; }
-        if let Some(k) = self.current_kthread_mut() {
+        // Remove from runqueue using the correct Kthread (per-CPU tid)
+        if let Some(k) = self.find_kthread_mut(tid) {
+            Self::remove_from_run_queue(k);
+            k.state = ThreadState::Terminated;
+        } else if let Some(k) = self.current_kthread_mut() {
+            // Fallback (should not happen)
             Self::remove_from_run_queue(k);
             k.state = ThreadState::Terminated;
         }
