@@ -560,17 +560,20 @@ fn is_user_exception(frame: &InterruptStackFrame) -> bool {
 /// Helper: terminate the current user process (Ring 3 exception unhandled).
 /// Uses centralized lifecycle termination so Eprocess/thread_count, handles, and ChildExit waiters are correctly handled.
 /// Defer EPROCESS reclaim via zombie list to avoid use-after-free on current stack.
-fn terminate_user_process() {
+///
+/// F-02: This function NEVER returns via `iretq` to the faulting RIP.
+/// It terminates the current thread and immediately reschedules to the next
+/// thread's saved context (via direct RSP switch + iretq), guaranteeing:
+/// `Terminated -> never resumes at faulting RIP`. The old `return;` path
+/// that did `iretq` to the faulting RIP is removed.
+fn terminate_user_process() -> ! {
     use crate::scheduler::current_scheduler;
-    use crate::syscall::set_need_resched;
     let pid = crate::hal::without_interrupts(|| {
         let mut s = current_scheduler().lock();
         s.terminate_current(-1)
     });
-    if pid.is_some() {
-        set_need_resched();
-    } else {
-        // Fallback: at least terminate thread and resched
+    if pid.is_none() {
+        // Fallback: at least terminate thread
         let tid = crate::scheduler::current_tid();
         if tid > 0 {
             let mut s = current_scheduler().lock();
@@ -578,7 +581,60 @@ fn terminate_user_process() {
                 k.state = ThreadState::Terminated;
             }
         }
-        set_need_resched();
+    }
+    // F-02: immediate reschedule — do not return to faulting frame.
+    exception_do_resched()
+}
+
+/// F-02: immediate context switch from exception path.
+/// Picks next thread via `schedule()` and switches RSP + iretq to its
+/// saved frame. Never returns to the faulting thread's `InterruptStackFrame`.
+fn exception_do_resched() -> ! {
+    use crate::scheduler::current_scheduler;
+    let next_rsp = crate::hal::without_interrupts(|| {
+        let mut sched = current_scheduler().lock();
+        let next = sched.schedule();
+        if next.is_null() {
+            panic!("exception_do_resched: no next thread (idle unavailable)");
+        }
+        let pid = unsafe { (*next).pid };
+        let tid = unsafe { (*next).tid };
+        let ks_top = unsafe { (*next).kernel_stack_top };
+        let rsp = unsafe { (*next).rsp };
+        if rsp == 0 {
+            panic!("exception_do_resched: next TID={} has rsp=0", tid);
+        }
+        // Keep per-CPU and TSS in sync (also done in timer/syscall paths)
+        unsafe {
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
+            crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+            crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
+        }
+        rsp
+    });
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {0}",
+            "pop rax",
+            "pop rbx",
+            "pop rcx",
+            "pop rdx",
+            "pop rsi",
+            "pop rdi",
+            "pop r8",
+            "pop r9",
+            "pop r10",
+            "pop r11",
+            "pop r12",
+            "pop r13",
+            "pop r14",
+            "pop r15",
+            "pop rbp",
+            "iretq",
+            in(reg) next_rsp,
+            options(noreturn)
+        );
     }
 }
 
@@ -594,7 +650,6 @@ extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame)
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through to kernel panic
         }
@@ -628,7 +683,7 @@ extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
         let result = exception_dispatch(EXCEPTION_OVERFLOW, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -642,7 +697,7 @@ extern "x86-interrupt" fn bounds_handler(stack_frame: InterruptStackFrame) {
         let result = exception_dispatch(EXCEPTION_BOUND_RANGE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -656,7 +711,7 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
         let result = exception_dispatch(EXCEPTION_INVALID_OPCODE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -670,7 +725,7 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
         let result = exception_dispatch(EXCEPTION_DEVICE_NOT_AVAILABLE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -733,7 +788,6 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through
         }
@@ -808,7 +862,6 @@ extern "x86-interrupt" fn page_fault_handler(
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through
         }
