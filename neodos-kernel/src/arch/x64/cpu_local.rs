@@ -44,8 +44,13 @@ pub const SLAB_BATCH_SIZE: usize = 32;
 
 // ── Per-CPU run queue ────────────────────────────────────────────────────
 
+/// Per-CPU run queue locks for SMP safety.
+/// Cross-CPU enqueue (wake/yield to foreign CPU) must be synchronized.
+use spin::Mutex;
+pub(crate) static RUNQUEUE_LOCKS: [Mutex<()>; MAX_CPUS] = [const { Mutex::new(()) }; MAX_CPUS];
+
 /// Simple per-CPU run queue: ring buffer of TIDs.
-/// No locks needed — only the owning CPU accesses this.
+/// No locks needed for single-CPU, but SMP cross-CPU access now uses RUNQUEUE_LOCKS.
 #[repr(C)]
 pub struct CpuRunQueue {
     /// Ring buffer of TIDs.
@@ -160,7 +165,7 @@ impl CpuRunQueue {
         if self.count == 0 {
             None
         } else {
-            Some(self.entries[self.head_idx as usize])
+            Some(self.entries[(self.head_idx as usize) % self.entries.len()])
         }
     }
 }
@@ -665,12 +670,42 @@ pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQue
 
 /// Remove a specific TID from a CPU's run queue.
 /// Returns true if the TID was found and removed, false otherwise.
+/// SMP-safe: takes per-CPU runqueue lock. No-op if KPRCB not initialized.
 pub unsafe fn remove_from_cpu_run_queue(cpu: usize, tid: u32) -> bool {
-    if cpu >= MAX_CPUS {
+    let need_skip = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
+    if need_skip {
         return false;
     }
+    let _guard = RUNQUEUE_LOCKS[cpu].lock();
     let rq = cpu_run_queue_mut(cpu);
     rq.remove(tid)
+}
+
+/// Execute closure with target CPU's runqueue locked (SMP-safe).
+/// If KPRCB not initialized for that CPU, calls closure with a dummy empty queue.
+pub fn with_runqueue<F, R>(cpu: usize, f: F) -> R
+where
+    F: FnOnce(&mut CpuRunQueue) -> R,
+{
+    let kprcb_empty = unsafe { cpu >= MAX_CPUS || KPRCB_PAGES[cpu] == 0 };
+    if kprcb_empty {
+        let mut dummy = CpuRunQueue::new();
+        return f(&mut dummy);
+    }
+    let _guard = RUNQUEUE_LOCKS[cpu].lock();
+    unsafe {
+        let rq = cpu_run_queue_mut(cpu);
+        f(rq)
+    }
+}
+
+/// Execute closure with current CPU's runqueue locked (SMP-safe).
+pub fn with_this_runqueue<F, R>(f: F) -> R
+where
+    F: FnOnce(&mut CpuRunQueue) -> R,
+{
+    let cpu = unsafe { this_cpu_id() } as usize;
+    with_runqueue(cpu, f)
 }
 
 // ── Per-CPU slab cache accessors (GS-segment) ───────────────────────────

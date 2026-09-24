@@ -51,16 +51,7 @@ core::arch::global_asm!(
 
     // Save return address (label 1f) as EXIT_RIP
     "lea rax, [rip + 1f]",
-    // Write to global statics (legacy path)
-    "mov [rip + EXIT_RIP], rax",
-    "mov [rip + EXIT_RSP], rsp",
-    "mov [rip + EXIT_RBX], rbx",
-    "mov [rip + EXIT_R12], r12",
-    "mov [rip + EXIT_R13], r13",
-    "mov [rip + EXIT_R14], r14",
-    "mov [rip + EXIT_R15], r15",
-    "mov [rip + EXIT_RBP], rbp",
-    // Also write to per-CPU KPRCB via GS segment
+    // Write to per-CPU KPRCB via GS segment (global statics removed for SMP safety — AUDIT-07)
     "mov gs:[{}], rsp",                     // OFFSET_EXIT_RSP
     "mov gs:[{}], rax",                     // OFFSET_EXIT_RIP
     "mov gs:[{}], rbx",                     // OFFSET_EXIT_RBX

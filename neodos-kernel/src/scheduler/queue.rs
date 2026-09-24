@@ -10,19 +10,22 @@ impl Scheduler {
         let cpu = k.cpu as usize;
         if cpu >= crate::arch::x64::cpu_local::MAX_CPUS { return; }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
-        unsafe {
-            let run_queue = crate::arch::x64::cpu_local::cpu_run_queue_mut(cpu);
-            if run_queue.contains(k.tid) {
-                return; // already in runqueue — avoid duplicate
+        // SMP-safe: lock target queue for check+push
+        let already_queued = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| {
+            if rq.contains(k.tid) {
+                true
+            } else {
+                rq.push(k.tid);
+                false
             }
-            run_queue.push(k.tid);
-            #[cfg(feature = "forensic")]
-            {
-                if k.pid >= 4 {
-                    let rq_len = run_queue.len();
-                    crate::serial_println!("[SMPSCHED] ENQUEUE_OK pid={} tid={} cpu_target={} rq_len={}", k.pid, k.tid, cpu, rq_len);
-                }
-            }
+        });
+        if already_queued {
+            return; // already in runqueue — avoid duplicate
+        }
+        #[cfg(feature = "forensic")]
+        if k.pid >= 4 {
+            let rq_len = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
+            crate::serial_println!("[SMPSCHED] ENQUEUE_OK pid={} tid={} cpu_target={} rq_len={}", k.pid, k.tid, cpu, rq_len);
         }
         // Send IPI_RESCHEDULE to the target CPU if it's a different CPU
         #[cfg(feature = "forensic")]
@@ -78,11 +81,9 @@ impl Scheduler {
 
     /// Try to dequeue the next thread from the current CPU's local run queue.
     /// Returns the TID if found, or None if the queue is empty.
+    /// SMP-safe: locks current CPU's queue.
     pub(crate) fn try_dequeue_local() -> Option<u32> {
-        unsafe {
-            let run_queue = crate::arch::x64::cpu_local::this_cpu_run_queue_mut();
-            run_queue.pop()
-        }
+        crate::arch::x64::cpu_local::with_this_runqueue(|rq| rq.pop())
     }
 
 }
