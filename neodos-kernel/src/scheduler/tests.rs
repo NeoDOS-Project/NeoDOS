@@ -217,24 +217,19 @@ pub fn register_tests() {
 
     test_case!("sched_priority_preempt_higher_ready", {
         let mut sched = Scheduler::new();
-        sched.next_tid = 4;
-        sched.current_tid = 2;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
-        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
-        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
-        // Debug: dump queue and states before schedule
-        let qlen = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len() };
-        let qhead = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop() };
-        if let Some(tid) = qhead {
-            unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).push(tid); }
-            crate::serial_println!("[DEBUG] preempt_higher_ready qlen={} head={} next_tid={} current={}", qlen, tid, sched.next_tid, sched.current_tid);
-        } else {
-            crate::serial_println!("[DEBUG] preempt_higher_ready qlen=0 next_tid={} current={}", sched.next_tid, sched.current_tid);
-        }
+        // Use TIDs 5,6,7 to avoid colliding with reserved BOOT_TID=0 and IDLE_TID=1
+        // and with existing test TIDs 2,3. next_tid must be > max used.
+        sched.next_tid = 8;
+        // Create high priority Ready thread that should preempt current
+        add_test_thread(&mut sched, 5, 5, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        // Create current Running thread (normal priority)
+        add_test_thread(&mut sched, 6, 6, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 6);
+        // Create idle priority Ready thread
+        add_test_thread(&mut sched, 7, 7, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
         let next = sched.schedule();
         let picked = unsafe { (*next).tid };
-        crate::serial_println!("[DEBUG] picked={} expected=1", picked);
-        test_eq!(picked, 1);
+        test_eq!(picked, 5);
     });
 
     test_case!("sched_priority_blocked_ignored", {

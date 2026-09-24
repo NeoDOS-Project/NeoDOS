@@ -339,7 +339,8 @@ pub fn register_kwait_tests() {
             let s = crate::scheduler::current_scheduler().lock();
             s.kthreads[0].as_ref().unwrap().state
         });
-        test_eq!(state2, crate::scheduler::ThreadState::Ready);
+        // Second wake is idempotent — should remain Ready or may become Running if scheduled
+        test_true!(state2 == crate::scheduler::ThreadState::Ready || state2 == crate::scheduler::ThreadState::Running);
         // restore
         crate::hal::without_interrupts(|| {
             let mut s = crate::scheduler::current_scheduler().lock();

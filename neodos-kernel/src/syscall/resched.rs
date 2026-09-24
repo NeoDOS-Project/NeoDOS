@@ -48,12 +48,15 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         }
     }
 
-    kdebug!(LogSubsys::Syscall,
+    // Solo en modo trazas (LOG_SYSCALL=TRACE) — evita spam en boot normal
+    if crate::log::log_enabled(crate::log::LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+        crate::serial_println!(
+            "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
+            phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
+    }
+    ktrace!(LogSubsys::Syscall,
         "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
         phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
-    crate::serial_println!(
-        "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} need_resched={} state={}",
-        phase, pid, tid, rip, cs, user_rsp, need, state.unwrap_or(255));
 }
 
 #[no_mangle]
