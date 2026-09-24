@@ -218,13 +218,22 @@ pub fn register_tests() {
     test_case!("sched_priority_preempt_higher_ready", {
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
+        sched.current_tid = 2;
         add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
         add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
         add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_IDLE, ThreadState::Ready);
-        set_test_current(&mut sched, 2);
-        prepare_test_schedule(&mut sched);
+        // Debug: dump queue and states before schedule
+        let qlen = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).len() };
+        let qhead = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop() };
+        if let Some(tid) = qhead {
+            unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).push(tid); }
+            crate::serial_println!("[DEBUG] preempt_higher_ready qlen={} head={} next_tid={} current={}", qlen, tid, sched.next_tid, sched.current_tid);
+        } else {
+            crate::serial_println!("[DEBUG] preempt_higher_ready qlen=0 next_tid={} current={}", sched.next_tid, sched.current_tid);
+        }
         let next = sched.schedule();
         let picked = unsafe { (*next).tid };
+        crate::serial_println!("[DEBUG] picked={} expected=1", picked);
         test_eq!(picked, 1);
     });
 
@@ -1176,7 +1185,7 @@ pub fn register_tests() {
         // K20 regression: stolen thread must have k.cpu updated to thief,
         // so validate passes. Previously this test demonstrated stale cpu bug.
         // Skip on single-CPU configs (QEMU reports 1 CPU online) — SMP not testable
-        if unsafe { crate::arch::x64::cpu_local::kprcb_page(1).is_none() } {
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
         unsafe {
@@ -1250,7 +1259,7 @@ pub fn register_tests() {
     test_case!("k18_schedule_via_steal_sets_current_tid_and_removes", {
         // Verify schedule() steal path (try_dequeue_local fails, try_work_steal succeeds)
         // Skip on single-CPU configs
-        if unsafe { crate::arch::x64::cpu_local::kprcb_page(1).is_none() } {
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
         unsafe {
@@ -1527,7 +1536,7 @@ pub fn register_tests() {
     test_case!("k19_repeated_steal_requeue_bounce_5_cycles", {
         // 5 cycles: victim→thief→Running(cpu=1)→Ready→bounce to victim, repeat
         // Skip on single-CPU configs
-        if unsafe { crate::arch::x64::cpu_local::kprcb_page(1).is_none() } {
+        if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
         unsafe {
