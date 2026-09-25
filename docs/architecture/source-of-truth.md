@@ -233,6 +233,17 @@ Each slot's memory is freed ONLY by `free_driver_slot` / `free_isolated_range`.
 **Rule 6.1.1**: `schedule()` scans HIGH → IDLE, round-robin within the same level.
 **Rule 6.1.2**: A RUNNING process at a higher priority starves all lower levels.
 **Rule 6.1.3**: Aging MUST boost priority of any Ready process not scheduled in ≥ 1000 ticks.
+**Rule 6.1.4 (Dispatch commit point)**: `schedule()` MUST NOT commit a candidate to
+`Running`, nor update `Scheduler.current_tid` / KPRCB, until the candidate's saved
+context has been validated as dispatchable for the caller's context. Callers that
+return via `iretq` to Ring 3 (`syscall_try_resched`, timer user-preempt,
+`exception_do_resched`) MUST use `schedule_with(require_ring3 = true)` and MUST only
+commit candidates whose saved `CS` is Ring 3 (`CS & 3 == 3`). A non-dispatchable
+candidate MUST be returned to its runqueue without any state mutation (contract:
+`SELECT → VALIDATE FRAME → COMMIT → DISPATCH`).
+**Rule 6.1.5 (Per-CPU current authority)**: On SMP, the authoritative identity of the
+thread currently executing on a CPU is `KPRCB.current_thread` (per-CPU). The global
+`Scheduler.current_tid` is bookkeeping only and MUST NOT be used as per-CPU identity.
 
 ### 6.2 Preemption
 
