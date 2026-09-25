@@ -129,45 +129,50 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
             vt, regs.rcx, count);
         let mut bytes_read = 0usize;
         while bytes_read < count {
-            match crate::input::pop_byte_from_vt(vt as usize) {
-                Some(byte) => {
+            // FIX: Single atomic pop inside without_interrupts to avoid race
+            // Previous outer pop (without lock) could race with IRQ push between
+            // the outer check and the inner blocking path, causing lost wakeup.
+            // Now all pops are done with interrupts disabled.
+            let pop_res: Option<Option<u8>> = crate::hal::without_interrupts(|| {
+                if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
+                    return Some(Some(b));
+                }
+                if bytes_read > 0 {
+                    return Some(None); // partial read, return what we have
+                }
+                // Need to block
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(k) = lock.current_kthread_mut() {
+                    let before = k.state.to_u8();
+                    k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
+                    k.waiting_for = Some(0xFFFFFFFF);
+                    crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
+                }
+                crate::syscall::set_need_resched();
+                None // signal block
+            });
+
+            match pop_res {
+                Some(Some(byte)) => {
                     unsafe { buf_ptr.add(bytes_read).write(byte); }
                     bytes_read += 1;
                     if byte == b'\r' || byte == b'\n' {
                         break;
                     }
+                    // Continue to try to read more if count>1, but for count==1 we break
+                    if bytes_read >= count {
+                        break;
+                    }
+                }
+                Some(None) => {
+                    // Queue empty but we already have some bytes -> return partial
+                    break;
                 }
                 None => {
-                    if bytes_read > 0 {
-                        break;
-                    }
-                    // Atomic check + block to prevent race condition with keyboard IRQ
-                    let b_opt = crate::hal::without_interrupts(|| {
-                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            return Some(b);
-                        }
-                        let s = crate::scheduler::current_scheduler();
-                        let mut lock = s.lock();
-                        if let Some(k) = lock.current_kthread_mut() {
-                            let before = k.state.to_u8();
-                            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
-                            k.waiting_for = Some(0xFFFFFFFF);
-                            crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
-                        }
-                        crate::syscall::set_need_resched();
-                        None
-                    });
-
-                    if let Some(b) = b_opt {
-                        unsafe { buf_ptr.add(bytes_read).write(b); }
-                        bytes_read += 1;
-                        crate::serial_println!("[READB] got byte=0x{:x} (atomic)", b);
-                        break;
-                    } else {
-                        crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
-                            crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
-                        return err_to_u64(SyscallError::Again);
-                    }
+                    crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
+                        crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
+                    return err_to_u64(SyscallError::Again);
                 }
             }
         }

@@ -60,10 +60,10 @@ fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
         while let Some(pending) = PENDING_SCANCODES.pop() {
             let p_released = (pending & 0x80) != 0;
             let p_is_make = !p_released;
-            let p_code = pending & 0x7F;
-            kbd.process_scancode(p_code, p_is_make);
+            // Pass raw scancode so E0 prefix is handled inside process_scancode
+            kbd.process_scancode(pending, p_is_make);
         }
-        kbd.process_scancode(code, is_make);
+        kbd.process_scancode(scancode, is_make);
         crate::serial_println!("[KBD] EXIT seq={} source={} tid={} pid={}", seq, source, tid, pid);
     } else {
         // Lock-free queue instead of silent discard (SPSC: IRQ → consumer)
