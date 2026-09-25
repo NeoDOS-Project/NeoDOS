@@ -119,6 +119,23 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
 }
 
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> Result<u32, &'static str> {
+    // F-DEV-02: zombie queue backpressure — bounded queue without loss. If storm
+    // fills queue, try synchronous reclaim before allocating resources; if still
+    // backpressured (all zombies still running), fail spawn with NoMem instead
+    // of silently dropping PIDs (which leaked slots forever).
+    if crate::scheduler::lifecycle::zombie_queue_len() >= 64 {
+        let reclaimed = crate::hal::without_interrupts(|| {
+            if let Some(mut s) = crate::scheduler::current_scheduler().try_lock() {
+                let cur_pid = s.current_pid();
+                let before = crate::scheduler::lifecycle::zombie_queue_len();
+                crate::scheduler::lifecycle::reap_pending_zombies(&mut *s, cur_pid);
+                crate::scheduler::lifecycle::zombie_queue_len() < before
+            } else { false }
+        });
+        if !reclaimed && crate::scheduler::lifecycle::is_zombie_backpressured() {
+            return Err("NoMem: zombie backpressure");
+        }
+    }
     // F-04 transactional spawn: all pid-dependent allocations now inside the lock.
     // Resources acquired outside (heap_slot, kernel stack) are tracked for rollback
     // if the critical section fails. No pid/tid is reserved before the lock,
