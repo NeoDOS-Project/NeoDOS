@@ -238,7 +238,9 @@ impl NeoKbd {
                 let utf8 = unicode::unicode_to_utf8(final_cp);
                 for &b in utf8.iter() {
                     if b == 0 { break; }
-                    let _ = crate::input::push_byte(b);
+                    if crate::input::push_byte(b).is_err() {
+                        crate::serial_println!("[KBD] VT input queue full (4096), byte 0x{:02x} dropped", b);
+                    }
                 }
                 crate::syscall::wake_blocked_readers();
 

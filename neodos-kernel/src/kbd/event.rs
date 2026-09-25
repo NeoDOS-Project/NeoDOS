@@ -1,9 +1,42 @@
 use crate::eventbus::Event;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 static KBD_SEQ: AtomicU64 = AtomicU64::new(1);
 static KBD_DIRECT_CNT: AtomicU64 = AtomicU64::new(0);
 static KBD_DISPATCH_CNT: AtomicU64 = AtomicU64::new(0);
+
+// ── Lock-free SPSC ring buffer for scancodes (IRQ producer → consumer) ──
+// Replaces silent discard on KBD.try_lock() contention. IRQ pushes here if
+// KBD lock is busy; next successful acquisition drains the queue (FIFO).
+// Size 256 is ample for typing bursts (typematic ~30cps).
+struct ScancodeQueue {
+    buffer: [u8; 256],
+    head: AtomicUsize,
+    tail: AtomicUsize,
+}
+impl ScancodeQueue {
+    const fn new() -> Self {
+        Self { buffer: [0; 256], head: AtomicUsize::new(0), tail: AtomicUsize::new(0) }
+    }
+    fn push(&self, b: u8) -> Result<(), ()> {
+        let tail = self.tail.load(Ordering::Relaxed);
+        let head = self.head.load(Ordering::Acquire);
+        let next = (tail + 1) % 256;
+        if next == head { return Err(()); }
+        unsafe { (self.buffer.as_ptr() as *mut u8).add(tail).write(b); }
+        self.tail.store(next, Ordering::Release);
+        Ok(())
+    }
+    fn pop(&self) -> Option<u8> {
+        let head = self.head.load(Ordering::Relaxed);
+        let tail = self.tail.load(Ordering::Acquire);
+        if head == tail { return None; }
+        let b = unsafe { self.buffer.as_ptr().add(head).read() };
+        self.head.store((head + 1) % 256, Ordering::Release);
+        Some(b)
+    }
+}
+static PENDING_SCANCODES: ScancodeQueue = ScancodeQueue::new();
 
 fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
     let released = (scancode & 0x80) != 0;
@@ -23,10 +56,24 @@ fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
     crate::serial_println!("[KBD_EVENT] seq={} source={} scancode=0x{:x} make={} code=0x{:x}", seq, source, scancode, is_make, code);
 
     if let Some(mut kbd) = crate::kbd::KBD.try_lock() {
+        // Drain any previously queued scancodes first (FIFO) before current
+        while let Some(pending) = PENDING_SCANCODES.pop() {
+            let p_released = (pending & 0x80) != 0;
+            let p_is_make = !p_released;
+            let p_code = pending & 0x7F;
+            kbd.process_scancode(p_code, p_is_make);
+        }
         kbd.process_scancode(code, is_make);
         crate::serial_println!("[KBD] EXIT seq={} source={} tid={} pid={}", seq, source, tid, pid);
     } else {
-        crate::serial_println!("[KBD_EVENT] KBD lock busy! seq={} source={} Skipping", seq, source);
+        // Lock-free queue instead of silent discard (SPSC: IRQ → consumer)
+        if PENDING_SCANCODES.push(scancode).is_err() {
+            crate::serial_println!("[KBD_EVENT] PENDING overflow! seq={} source={} scancode=0x{:02x} dropped", seq, source, scancode);
+        } else {
+            crate::serial_println!("[KBD_EVENT] KBD lock busy, queued scancode=0x{:02x} seq={} source={}", scancode, seq, source);
+            // Ensure scheduler re-evaluates soon so queued scancode is drained
+            crate::syscall::set_need_resched();
+        }
     }
 }
 
