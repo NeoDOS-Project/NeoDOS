@@ -21,7 +21,6 @@ const IDS_USAGE_LINE3: u32 = 1003;
 const IDS_USAGE_LINE4: u32 = 1004;
 const IDS_ERR_ENUM: u32 = 1005;
 
-const ARGS_ADDR: u64 = 0x41F000;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 64;
 
@@ -277,11 +276,8 @@ pub extern "C" fn _start() -> ! {
     let _ = i18n::i18n_load(APP_NAME);
     let path_buf = read_args();
     let arg_slice = {
-        let mut arg_buf = [0u8; 256];
-        unsafe {
-            core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
-        }
-        let s = libneodos::args::trim_ascii(&arg_buf);
+        let raw = libneodos::args::read_args();
+        let s = libneodos::args::trim_ascii(&raw);
         let mut buf = [0u8; 260];
         let n = s.len().min(259);
         buf[..n].copy_from_slice(&s[..n]);

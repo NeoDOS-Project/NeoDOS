@@ -1,8 +1,25 @@
 const ARGS_ADDR: u64 = 0x41F000;
 
-/// Read command-line arguments from the shared buffer at 0x41F000.
-/// Returns only the bytes up to the first null terminator.
+/// Read command-line arguments using the kernel's per-process storage.
+/// Tries ProcessArgs via Ob (fix for 0x41F000 data race in pipelines);
+/// falls back to the legacy shared buffer for backward compatibility.
 pub fn read_args() -> [u8; 256] {
+    // Try kernel per-process args (introduced to fix ARGS_ADDR race)
+    // Query via \Global\Info\Process handle using ObInfoClass::ProcessArgs
+    if let Ok(fd) = crate::syscall::sys_ob_open("\\Global\\Info\\Process", crate::syscall::ob_access::READ) {
+        let mut buf = [0u8; 256];
+        let res = crate::syscall::sys_ob_query_info(fd, crate::syscall::ObInfoClass::ProcessArgs, &mut buf);
+        let _ = crate::syscall::sys_close(fd);
+        if let Ok(n) = res {
+            // Ensure null-terminated and zero-padded beyond n
+            if n < 256 {
+                buf[n as usize] = 0;
+                // zero remainder already zeroed by init, but ensure
+            }
+            return buf;
+        }
+    }
+    // Fallback: legacy shared buffer at 0x41F000 (single-threaded / old kernel)
     let mut buf = [0u8; 256];
     let mut i = 0usize;
     unsafe {

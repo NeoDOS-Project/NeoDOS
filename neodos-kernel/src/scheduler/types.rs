@@ -133,4 +133,5 @@ pub struct Eprocess {
     pub address_space: crate::scheduler::address_space::AddressSpace,
     pub token: Token,
     pub vt_num: u8,
+    pub args: [u8; 256],
 }

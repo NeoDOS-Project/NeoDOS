@@ -398,8 +398,8 @@ impl Shell {
 
     fn execute_pipeline(&mut self, line: &[u8], pp: &[usize]) {
         let nc = pp.len() + 1;
-        let mut rf = [0u8; MAX_PIPELINE];
-        let mut wf = [0u8; MAX_PIPELINE];
+        let mut rf = [0xFFu8; MAX_PIPELINE];
+        let mut wf = [0xFFu8; MAX_PIPELINE];
         for i in 0..pp.len() {
             let mut fds = [0u64;2];
             let mut pn = [0u8;16]; pn[..7].copy_from_slice(b"\\Pipe/p");
@@ -408,7 +408,13 @@ impl Shell {
             else { let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; } for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; } }
             pn[pos]=0;
             let ps = unsafe { core::str::from_utf8_unchecked(&pn[..pos]) };
-            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); return; }
+            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() {
+                for j in 0..i {
+                    if rf[j] != 0xFF { let _ = syscall::sys_close(rf[j]); rf[j]=0xFF; }
+                    if wf[j] != 0xFF { let _ = syscall::sys_close(wf[j]); wf[j]=0xFF; }
+                }
+                write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); return;
+            }
             rf[i]=fds[0] as u8; wf[i]=fds[1] as u8;
         }
         let mut err = false; let mut cs = 0;
@@ -453,10 +459,10 @@ impl Shell {
                     write_err(b"\r\nBad command or file name\r\n"); err=true; break;
                 }
             }
-            if ci>0 { let _=syscall::sys_close(rf[ci-1]); }
-            if ci<pp.len() { let _=syscall::sys_close(wf[ci]); }
+            if ci>0 && rf[ci-1] != 0xFF { let _=syscall::sys_close(rf[ci-1]); rf[ci-1]=0xFF; }
+            if ci<pp.len() && wf[ci] != 0xFF { let _=syscall::sys_close(wf[ci]); wf[ci]=0xFF; }
         }
-        if err { for i in 0..pp.len() { let _=syscall::sys_close(rf[i]); let _=syscall::sys_close(wf[i]); } }
+        if err { for i in 0..pp.len() { if rf[i] != 0xFF { let _=syscall::sys_close(rf[i]); rf[i]=0xFF; } if wf[i] != 0xFF { let _=syscall::sys_close(wf[i]); wf[i]=0xFF; } } }
     }
 
     fn cmd_cwd(&self) {

@@ -50,27 +50,6 @@ fn current_drive() -> u8 {
     }
 }
 
-fn read_args() -> [u8; 256] {
-    let ptr = 0x41F000 as *const u8;
-    let mut buf = [0u8; 256];
-    unsafe {
-        let mut i = 0;
-        while i < 255 {
-            let b = ptr.add(i).read();
-            buf[i] = b;
-            if b == 0 { break; }
-            i += 1;
-        }
-    }
-    buf
-}
-
-fn is_help_flag(buf: &[u8; 256]) -> bool {
-    let s = unsafe { core::str::from_utf8_unchecked(buf) };
-    let s = s.trim();
-    s.eq_ignore_ascii_case("/?") || s.eq_ignore_ascii_case("-h") || s.eq_ignore_ascii_case("--help")
-}
-
 fn trim_ascii(s: &[u8]) -> &[u8] {
     let mut start = 0;
     while start < s.len() && (s[start] == b' ' || s[start] == b'\t') {
@@ -102,8 +81,8 @@ fn print_help() {
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
-    let args = read_args();
-    if is_help_flag(&args) {
+    let args = libneodos::args::read_args();
+    if libneodos::args::is_help_flag(&args) {
         print_help();
         syscall::sys_exit(0);
     }

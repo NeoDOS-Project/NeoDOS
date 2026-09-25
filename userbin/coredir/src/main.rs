@@ -28,7 +28,6 @@ const PERM_X: u16 = 0x0004;
 const PERM_S: u16 = 0x0008;
 const PERM_D: u16 = 0x0010;
 const PAGE_LINES: usize = 23;
-const ARGS_ADDR: u64 = 0x41F000;
 
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
@@ -87,13 +86,10 @@ fn spaces(n: usize) {
     for _ in 0..n { write_str(b" "); }
 }
 
-/// Read args from the shared buffer at 0x41F000.
+/// Read args via kernel per-process buffer (fix 1.2: avoids 0x41F000 race).
 /// Returns (path, wide, pause).
 fn parse_args() -> ([u8; 260], bool, bool) {
-    let mut arg_buf = [0u8; 256];
-    unsafe {
-        core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
-    }
+    let arg_buf = libneodos::args::read_args();
     let arg_slice = trim_ascii(&arg_buf);
 
     let mut path = [0u8; 260];

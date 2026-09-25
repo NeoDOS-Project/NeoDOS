@@ -18,8 +18,6 @@ const IDS_VOL_IN: u32 = 1004;
 const IDS_IS: u32 = 1005;
 const IDS_HAS_NO_LABEL: u32 = 1006;
 
-const ARGS_ADDR: u64 = 0x41F000;
-
 fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     let prefix = b"\\Global\\FileSystem\\";
     let vfs_bytes = vfs.as_bytes();
@@ -44,21 +42,12 @@ fn current_drive() -> u8 {
 }
 
 fn parse_drive_from_args() -> Option<u8> {
-    let ptr = ARGS_ADDR as *const u8;
-    let mut buf = [0u8; 32];
-    let mut len = 0usize;
-    unsafe {
-        while len < 31 {
-            let b = ptr.add(len).read();
-            if b == 0 { break; }
-            buf[len] = b;
-            len += 1;
-        }
-    }
-    if len == 0 {
+    let raw = libneodos::args::read_args();
+    let trimmed = libneodos::args::trim_ascii(&raw);
+    if trimmed.is_empty() {
         return None;
     }
-    let s = core::str::from_utf8(&buf[..len]).ok()?;
+    let s = core::str::from_utf8(trimmed).ok()?;
     let s = s.trim();
     if s.len() == 2 && s.as_bytes()[1] == b':' {
         return Some(s.as_bytes()[0].to_ascii_uppercase());

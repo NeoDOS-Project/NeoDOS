@@ -228,6 +228,38 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
                 }
             };
 
+            // ── Fix 1.2: per-process args storage ──
+            // Atomically copy args from the shared 0x41F000 buffer into the child's
+            // Eprocess.args. This eliminates the data-race where concurrent pipeline
+            // spawns overwrite the shared buffer before the child has read it.
+            // The legacy buffer is still written for backward-compat, but the child
+            // now receives its args via the kernel-stored copy (ProcessArgs query).
+            {
+                const ARGS_ADDR: u64 = 0x41F000;
+                let mut args_buf = [0u8; 256];
+                let copy_ok = if ARGS_ADDR >= crate::arch::x64::paging::USER_BASE
+                    && ARGS_ADDR.saturating_add(256) <= crate::arch::x64::paging::USER_LIMIT
+                {
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(
+                            ARGS_ADDR as *const u8,
+                            args_buf.as_mut_ptr(),
+                            256,
+                        );
+                    }
+                    true
+                } else { false };
+                if copy_ok {
+                    crate::hal::without_interrupts(|| {
+                        let s = crate::scheduler::current_scheduler();
+                        let mut lock = s.lock();
+                        if let Some(ep) = lock.find_eprocess_mut(child_pid) {
+                            ep.args.copy_from_slice(&args_buf);
+                        }
+                    });
+                }
+            }
+
             if stdin_fd != 0xFF || stdout_fd != 0xFF || stderr_fd != 0xFF {
                 let (parent_stdin_entry, parent_stdout_entry, parent_stderr_entry) = crate::hal::without_interrupts(|| {
                     let s = scheduler::current_scheduler();

@@ -143,6 +143,16 @@ Constants:
 
 `sbrk` is implemented as `brk(current_break + increment)` with the current break tracked via static variable.
 
+### Args (`src/args.rs`)
+
+```rust
+pub fn read_args() -> [u8; 256];
+pub fn is_help_flag(args: &[u8]) -> bool;
+pub fn trim_ascii(s: &[u8]) -> &[u8];
+```
+
+`read_args()` returns the current process command-line args. Since v0.50.3 it first tries the kernel per-process store via `sys_ob_open("\\Global\\Info\\Process")` + `sys_ob_query_info(ProcessArgs=39)` (populated atomically by `sys_ob_create(PROCESS)` from the legacy `0x41F000` buffer, fixing the pipeline data race). If that query fails (old kernel) it falls back to the legacy shared buffer at `0x41F000`.
+
 ### Console (`src/console.rs`)
 
 ```rust

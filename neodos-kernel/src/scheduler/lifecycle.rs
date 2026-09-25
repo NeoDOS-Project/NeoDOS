@@ -330,6 +330,7 @@ impl Scheduler {
             address_space: crate::scheduler::address_space::AddressSpace::new(),
             token: parent_token,
             vt_num: 0,
+            args: [0u8; 256],
         };
 
         let mut thread = Kthread::new_ring3_with_stack(tid, pid, entry, rsp, kernel_stack_top, kernel_stack);

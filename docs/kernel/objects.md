@@ -198,6 +198,7 @@ Supports 30 info classes:
 | 36 | KeyboardCaps | KbdCaps (max_layouts, capabilities, num_layouts) — `\Device\Keyboard` |
 | 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
 | 38 | Hostname | System hostname string (null-terminated) — any Ob object, reads from Registry |
+| 39 | ProcessArgs | Per-process command-line args (256 bytes, null-terminated) — any valid handle, returns current process args copied atomically at `sys_ob_create(PROCESS)` from `0x41F000` (fixes `0x41F000` data race in pipelines) |
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager` |
 | 33 | PowerPlanInfo | Active plan index + name (planned) — `\System\PowerManager` |
 | 34 | PowerStatus | Power capabilities bitmask (planned) — `\System\PowerManager` |

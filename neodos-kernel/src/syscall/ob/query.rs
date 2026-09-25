@@ -1128,6 +1128,31 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
                 }
             }
         }
+        _ if info_class == ObInfoClass::ProcessArgs as u32 => {
+            // Per-process args buffer: return current process's args (fix 1.2)
+            // Usable via any valid handle, or via \Global\Info\Process handle.
+            // This isolates concurrent pipeline args — kernel copies from 0x41F000
+            // at spawn time into the child's Eprocess.args.
+            let args = crate::hal::without_interrupts(|| {
+                let s = crate::scheduler::current_scheduler().lock();
+                if let Some(ep) = s.current_eprocess() {
+                    ep.args
+                } else {
+                    [0u8; 256]
+                }
+            });
+            let arg_len = args.iter().position(|&b| b == 0).unwrap_or(256);
+            let copy_len = core::cmp::min(arg_len, buf_size.saturating_sub(1));
+            unsafe {
+                if copy_len > 0 {
+                    core::ptr::copy_nonoverlapping(args.as_ptr(), buf_ptr as *mut u8, copy_len);
+                }
+                if buf_size > 0 {
+                    (buf_ptr as *mut u8).add(copy_len).write(0u8);
+                }
+            }
+            return arg_len as u64;
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }

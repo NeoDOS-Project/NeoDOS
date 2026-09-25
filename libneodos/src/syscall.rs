@@ -456,6 +456,7 @@ pub enum ObInfoClass {
     KeyboardCaps = 36,
     KeyboardLayouts = 37,
     Hostname = 38,
+    ProcessArgs = 39,
 }
 
 pub mod ob_type {
