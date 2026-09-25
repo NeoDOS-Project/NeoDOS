@@ -392,6 +392,62 @@ pub fn find_ioapic() -> Option<(u32, u32)> {
     None
 }
 
+/// Dump MADT processor entries for SMP debug
+pub fn dump_madt() {
+    crate::serial_println!("[MADT] dump_madt called");
+    let madt = match find_madt_table() {
+        Some(m) => m,
+        None => { crate::serial_println!("[MADT] not found - find_madt_table returned None"); return; }
+    };
+    let madt_header_size = core::mem::size_of::<AcpiMadt>() as u32;
+    let total_len = madt.header.length;
+    crate::serial_println!("[MADT] local_apic_addr=0x{:x} flags=0x{:x} len={}", madt.local_apic_addr, madt.flags, total_len);
+    let data_ptr = madt as *const AcpiMadt as u64;
+    let mut offset = madt_header_size as u64;
+    let mut cpu_count = 0;
+    while offset + 2 <= total_len as u64 {
+        unsafe {
+            let entry = (data_ptr + offset) as *const MadtEntryHeader;
+            let entry_type = (*entry).entry_type;
+            let record_length = (*entry).record_length as u64;
+            if record_length < 2 { break; }
+            if entry_type == 0 && record_length >= 8 {
+                // Processor Local APIC
+                let lapic = (data_ptr + offset) as *const MadtProcessorLocalApic;
+                crate::serial_println!("[MADT] CPU{} apic_id={} flags=0x{:x} enabled={}", cpu_count, (*lapic).apic_id, (*lapic).flags, ((*lapic).flags & 1) != 0);
+                cpu_count += 1;
+            } else if entry_type == 9 && record_length >= 16 {
+                // Processor Local x2APIC
+                let x2apic = (data_ptr + offset) as *const MadtProcessorLocalX2Apic;
+                crate::serial_println!("[MADT] X2APIC apic_id={} flags=0x{:x}", (*x2apic).apic_id, (*x2apic).flags);
+                cpu_count += 1;
+            } else if entry_type == 1 {
+                let ioapic = (data_ptr + offset) as *const MadtIoApic;
+                crate::serial_println!("[MADT] IOAPIC id={} addr=0x{:x} gsi_base={}", (*ioapic).ioapic_id, (*ioapic).ioapic_addr, (*ioapic).gsi_base);
+            }
+            offset += record_length;
+        }
+    }
+    crate::serial_println!("[MADT] total CPUs from MADT={}", cpu_count);
+}
+
+#[repr(C, packed)]
+struct MadtProcessorLocalApic {
+    header: MadtEntryHeader,
+    acpi_processor_id: u8,
+    apic_id: u8,
+    flags: u32,
+}
+
+#[repr(C, packed)]
+struct MadtProcessorLocalX2Apic {
+    header: MadtEntryHeader,
+    _reserved: u16,
+    apic_id: u32,
+    flags: u32,
+    acpi_processor_uid: u32,
+}
+
 /// Return all ISA interrupt source overrides from the MADT.
 pub fn get_isa_overrides() -> alloc::vec::Vec<(u8, u32, u16)> {
     let mut overrides = alloc::vec::Vec::new();

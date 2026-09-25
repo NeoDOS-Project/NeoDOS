@@ -308,14 +308,18 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     }
 
     println!("[+] Enabling interrupts...");
+    crate::serial_println!("[INT] about to STI, CR3=0x{:x} GS=0x{:x}", crate::hal::read_cr3(), crate::hal::safe::GsBase::read());
     hal::enable_interrupts();
+    crate::serial_println!("[INT] STI done");
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
     // ============================================
+    crate::serial_println!("[PAGING] before init_custom_page_tables");
     unsafe {
         arch::x64::paging::init_custom_page_tables();
     }
+    crate::serial_println!("[PAGING] after init_custom_page_tables");
 
     // Split heap region huge pages into 4 KB PTs for demand paging
     arch::x64::paging::init_heap_demand_paging();

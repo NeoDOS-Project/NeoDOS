@@ -21,7 +21,8 @@ use crate::arch::x64::cpu_local as cpu_local_mod;
 // ── Constants ────────────────────────────────────────────────────────────
 
 /// Physical address for the AP trampoline code (must be < 1 MB for real mode).
-const AP_TRAMPOLINE_ADDR: u64 = 0x80_0000;
+/// FIX: was 0x80_0000 (8 MB) but SIPI vector 0x80 → 0x80000 (512 KB) mismatch → AP never started with -smp 2.
+const AP_TRAMPOLINE_ADDR: u64 = 0x8000;
 
 /// Stack size per AP (16 KB).
 const AP_STACK_SIZE: usize = 16384;
@@ -78,7 +79,7 @@ static TRAMPOLINE_READY: AtomicBool = AtomicBool::new(false);
 // 3. Loads a 64-bit code segment selector
 // 4. Jumps to the 64-bit AP entry point
 //
-// This is copied to physical address 0x800000 (below 1 MB).
+// This is copied to physical address 0x8000 (below 1 MB).
 //
 // We use `.set` directives to pre-compute all runtime addresses as
 // single symbols, avoiding Rust's `global_asm!` limitation of one
@@ -88,6 +89,10 @@ core::arch::global_asm!(
     ".code16",
     ".global ap_trampoline_start",
     "ap_trampoline_start:",
+    // Early marker: 'T' to serial 0x3F8
+    "mov dx, 0x3F8",
+    "mov al, 0x54", // 'T'
+    "out dx, al",
     // Disable interrupts
     "cli",
     // Load GDT (flat 4 GB descriptors)
@@ -103,6 +108,10 @@ core::arch::global_asm!(
 
     ".code32",
     "ap_pm32_entry:",
+    // Marker 'P' for PM32
+    "mov dx, 0x3F8",
+    "mov al, 0x50",
+    "out dx, al",
     // Set up data segments
     "mov ax, 0x10",
     "mov ds, ax",
@@ -151,6 +160,10 @@ core::arch::global_asm!(
 
     ".code64",
     "ap_lm64_entry:",
+    // Marker 'L' for LM64
+    "mov dx, 0x3F8",
+    "mov al, 0x4C",
+    "out dx, al",
     // Set up 64-bit data segments
     "mov ax, 0x20",
     "mov ds, ax",
@@ -168,13 +181,13 @@ core::arch::global_asm!(
     "cli",
     "hlt",
 
-    // ── Pre-computed runtime addresses (offset from 0x800000) ──
-    ".set ap_gdt_desc_rt, ap_gdt_desc - ap_trampoline_start + 0x800000",
-    ".set ap_pm32_entry_rt, ap_pm32_entry - ap_trampoline_start + 0x800000",
-    ".set ap_lm64_entry_rt, ap_lm64_entry - ap_trampoline_start + 0x800000",
-    ".set ap_stack_ptr_rt, ap_stack_ptr - ap_trampoline_start + 0x800000",
-    ".set ap_pml4_ptr_rt, ap_pml4_ptr - ap_trampoline_start + 0x800000",
-    ".set ap_entry_ptr_rt, ap_entry_ptr - ap_trampoline_start + 0x800000",
+    // ── Pre-computed runtime addresses (offset from 0x8000) ──
+    ".set ap_gdt_desc_rt, ap_gdt_desc - ap_trampoline_start + 0x8000",
+    ".set ap_pm32_entry_rt, ap_pm32_entry - ap_trampoline_start + 0x8000",
+    ".set ap_lm64_entry_rt, ap_lm64_entry - ap_trampoline_start + 0x8000",
+    ".set ap_stack_ptr_rt, ap_stack_ptr - ap_trampoline_start + 0x8000",
+    ".set ap_pml4_ptr_rt, ap_pml4_ptr - ap_trampoline_start + 0x8000",
+    ".set ap_entry_ptr_rt, ap_entry_ptr - ap_trampoline_start + 0x8000",
 
     // ── Temporary GDT ──
     ".align 4",
@@ -197,7 +210,7 @@ core::arch::global_asm!(
 
     "ap_gdt_desc:",
     ".2byte ap_gdt_end - ap_gdt - 1",     // GDT limit
-    ".4byte ap_gdt - ap_trampoline_start + 0x800000", // GDT base
+    ".4byte ap_gdt - ap_trampoline_start + 0x8000", // GDT base
 
     // ── Shared data (filled by BSP before sending SIPI) ──
     ".align 8",
@@ -277,6 +290,15 @@ unsafe fn send_sipi(vector: u8) {
 /// 4. Enters idle loop (HLT-based)
 #[no_mangle]
 pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
+    // Early marker: 'A' to serial
+    unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x41; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); }
+    crate::serial_println!("[AP_ENTRY] stack_top=0x{:x} entered", _stack_top);
+    unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x42; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'B'
+    // Use direct out for C to avoid serial_println! issues
+    unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x43; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'C'
+    // More markers without serial_println
+    unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x44; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'D'
+    unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x45; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'E'
     // Determine our CPU index by matching our APIC ID
     let my_apic = unsafe {
         let apic_base = msr::read_apic_base_msr();
@@ -394,28 +416,32 @@ unsafe fn patch_trampoline(stack_ptr: u64, pml4_ptr: u64, entry_ptr: u64) {
 /// if the APIC version register suggests only 1 CPU.
 unsafe fn detect_aps() -> bool {
     let apic_base = msr::read_apic_base_msr();
-    if apic_base == 0 { return false; }
+    crate::serial_println!("[SMP_DETECT] apic_base=0x{:x}", apic_base);
+    if apic_base == 0 { crate::serial_println!("[SMP_DETECT] no apic_base → false"); return false; }
     // Check APIC version register
     let version_reg = (apic_base + 0x030) as *const u32;
     let version = core::ptr::read_volatile(version_reg);
-    if version == 0xFFFFFFFF || version == 0 { return false; }
+    crate::serial_println!("[SMP_DETECT] version=0x{:x} max_lvt={}", version, ((version>>16)&0xFF)+1);
+    if version == 0xFFFFFFFF || version == 0 { crate::serial_println!("[SMP_DETECT] version 0/FFFF → false"); return false; }
     // Max LVT entries is a rough proxy; 0 or 1 means single CPU
     let max_lvt = ((version >> 16) & 0xFF) + 1;
-    if max_lvt <= 1 { return false; }
+    if max_lvt <= 1 { crate::serial_println!("[SMP_DETECT] max_lvt<=1 → false"); return false; }
     // Also check: if ICR delivery status never clears, there are no APs
     let start: u64;
     core::arch::asm!("rdtsc", out("eax") start, out("edx") _);
     let icr_low = (apic_base + 0x308) as *const u32;
     loop {
         let status = core::ptr::read_volatile(icr_low);
-        if (status & 0x1000) == 0 { break; } // ICR_DELIVERY_STATUS clear
+        if (status & 0x1000) == 0 { crate::serial_println!("[SMP_DETECT] ICR clear → true"); break; } // ICR_DELIVERY_STATUS clear
         let now: u64;
         core::arch::asm!("rdtsc", out("eax") now, out("edx") _);
         if now.wrapping_sub(start) > 500_000 { // ~500 µs timeout
+            crate::serial_println!("[SMP_DETECT] ICR timeout → false");
             return false;
         }
         core::hint::spin_loop();
     }
+    crate::serial_println!("[SMP_DETECT] final true");
     true
 }
 
@@ -463,10 +489,15 @@ pub fn init_smp() -> usize {
         kinfo!(crate::log::LogSubsys::Boot, "BSP KPRCB at 0x{:x}, GS base set", bsp_kprcb);
     }
 
+    crate::serial_println!("[SMP] calling dump_madt");
+    crate::timers::hpet::dump_madt();
+    crate::serial_println!("[SMP] dump_madt done");
+
     // Step 2: Detect AP count by checking if we have any APs
     // Send INIT IPI briefly and check ICR — in VirtualBox IPIs to non-existent APs
     // can hang, so we detect this early and skip AP startup.
     let has_aps = unsafe { detect_aps() };
+    crate::serial_println!("[SMP] has_aps={}", has_aps);
 
     if !has_aps {
         kwarn!(crate::log::LogSubsys::Boot, "No APs detected (single CPU mode)");
@@ -609,7 +640,7 @@ pub unsafe fn send_ipi_all_excl_self(vector: u8) {
 
 pub fn register_smp_tests() {
     crate::testing::register("smp_constants", || {
-        crate::test_eq!(AP_TRAMPOLINE_ADDR, 0x80_0000u64);
+        crate::test_eq!(AP_TRAMPOLINE_ADDR, 0x8000u64);
         crate::test_eq!(AP_STACK_SIZE, 16384usize);
         Ok(())
     });
