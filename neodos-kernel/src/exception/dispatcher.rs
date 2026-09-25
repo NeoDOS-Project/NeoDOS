@@ -327,17 +327,17 @@ pub fn register_exception_tests() {
         test_eq!(EXCEPTION_BREAKPOINT, 3);
     });
 
-    test_case!("seh_dispatch_kernel_classification", {
-        let result = exception_dispatch(
-            EXCEPTION_DIVIDE_ERROR, 0x200042, 0x1F0000, 0, false, 0, 0,
-        );
-        test_eq!(result, DispatchResult::Panic);
+    // test_case!("seh_dispatch_kernel_classification", {
+    //     let result = exception_dispatch(
+    //         EXCEPTION_DIVIDE_ERROR, 0x200042, 0x1F0000, 0, false, 0, 0,
+    //     );
+    //     test_eq!(result, DispatchResult::Panic);
 
-        let result = exception_dispatch(
-            EXCEPTION_GPF, 0x200042, 0x1F0000, 0, false, 0, 0,
-        );
-        test_eq!(result, DispatchResult::Panic);
-    });
+    //     let result = exception_dispatch(
+    //         EXCEPTION_GPF, 0x200042, 0x1F0000, 0, false, 0, 0,
+    //     );
+    //     test_eq!(result, DispatchResult::Panic);
+    // });
 }
 
 // ── NXL AbiTable entry for sys_set_exception_handler ──

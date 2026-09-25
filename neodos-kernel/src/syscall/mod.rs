@@ -514,5 +514,6 @@ pub fn wake_blocked_readers() {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         scheduler.wake_blocked_on_magic(0xFFFFFFFF);
+        set_need_resched();
     });
 }
