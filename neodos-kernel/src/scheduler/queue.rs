@@ -1,10 +1,10 @@
 //! Scheduler run queue — extracted from mod.rs
-use crate::scheduler::types::{Kthread, BOOT_TID, IDLE_TID, PRIORITY_COUNT, TIME_SLICES, ThreadState};
+use crate::scheduler::types::{Kthread, BOOT_TID, PRIORITY_COUNT, TIME_SLICES, ThreadState};
 use crate::scheduler::Scheduler;
 
 impl Scheduler {
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
-        if k.tid == BOOT_TID || k.tid == IDLE_TID {
+        if k.tid == BOOT_TID || k.is_idle {
             return;
         }
         let cpu = k.cpu as usize;

@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use crate::log::LogSubsys;
 use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, IDLE_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
 use crate::scheduler::Scheduler;
-use crate::scheduler::lifecycle::{defer_reap, reap_pending_zombies};
+use crate::scheduler::lifecycle::reap_pending_zombies;
 
 pub(crate) static SCHEDULE_CALLS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
@@ -180,7 +180,7 @@ impl Scheduler {
                 }
                 let k = self.find_kthread(tid)
                     .ok_or("orphan TID in run queue")?;
-                if tid == BOOT_TID || tid == IDLE_TID {
+                if tid == BOOT_TID || k.is_idle {
                     return Err("boot or idle thread found in run queue");
                 }
                 if k.cpu as usize != cpu {
@@ -196,7 +196,7 @@ impl Scheduler {
 
         for k in self.kthreads.iter().flatten() {
             let count = queue_tids.iter().filter(|&&tid| tid == k.tid).count();
-            if k.tid == IDLE_TID || k.tid == BOOT_TID {
+            if k.is_idle || k.tid == BOOT_TID {
                 if count != 0 {
                     return Err("special thread found in run queue");
                 }
@@ -270,9 +270,11 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                        // Safe to reap zombies now that we have switched away from previous stack
-                        let new_pid = k.pid;
-                        reap_pending_zombies(self, new_pid);
+                        // F-02-A: reap must exclude the context we are switching AWAY
+                        // from (its kernel stack is still under us), not the new one.
+                        // The new pid is Running, so it can never be in the zombie queue.
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     } else if k.state == ThreadState::Ready {
                         // Phase 9: valid Ready candidate but frame not dispatchable
@@ -304,8 +306,9 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                        let new_pid = k.pid;
-                        reap_pending_zombies(self, new_pid);
+                        // F-02-A: exclude the previous context's pid (stack in use).
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     } else if k.state == ThreadState::Ready {
                         // Phase 9: not dispatchable here; return to its CPU queue.
@@ -370,7 +373,9 @@ impl Scheduler {
             if self.kprcb_thread_in_self() {
                 unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(picked_ptr, picked_pid); }
             }
-            reap_pending_zombies(self, picked_pid);
+            // F-02-A: exclude the pid being switched away from (stack still in use).
+            let prev_pid = self.find_kthread(picked_prev).map(|t| t.pid).unwrap_or(0);
+            reap_pending_zombies(self, prev_pid);
             return picked_ptr;
         }
 
@@ -404,8 +409,9 @@ impl Scheduler {
                             prev, IDLE_TID);
                         crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
                         crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
-                        let new_pid = (*ptr).pid;
-                        reap_pending_zombies(self, new_pid);
+                        // F-02-A: exclude the pid being switched away from.
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     }
                 }
@@ -446,7 +452,7 @@ impl Scheduler {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     k.rsp = current_rsp;
-                    if k.tid != BOOT_TID && k.tid != IDLE_TID {
+                    if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);
                     }
                     needs_resched = true;

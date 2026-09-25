@@ -234,7 +234,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                     for k_opt in scheduler.kthreads.iter_mut() {
                         if let Some(k) = k_opt {
-                            if k.tid == scheduler::IDLE_TID {
+                            if k.is_idle {
                                 idle_ptr = &mut **k as *mut scheduler::Kthread;
                                 break;
                             }

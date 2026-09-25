@@ -208,6 +208,7 @@ impl Scheduler {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: false,
         };
         eprocesses.push(Some(boot_eproc));
         kthreads.push(Some(Box::new(boot_thread)));
@@ -239,7 +240,7 @@ impl Scheduler {
     pub fn has_non_idle_threads(&self) -> bool {
         self.kthreads.iter().any(|t| {
             t.as_ref().is_some_and(|k| {
-                k.tid != IDLE_TID &&
+                !k.is_idle &&
                 k.state != ThreadState::Terminated &&
                 k.state != ThreadState::Suspended
             })
@@ -313,10 +314,20 @@ pub fn sched_dump() {
 
 
 
-/// Recycle a terminated EPROCESS. External resources should already be freed.
+/// Recycle a terminated EPROCESS. External resources are released here
+/// (idempotently) if the caller has not already done so.
 pub fn cleanup_terminated_process(pid: u32) {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    current_scheduler().lock().recycle_terminated(pid);
+    {
+        let mut sched = current_scheduler().lock();
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+            // F-02-B: the pid still has a thread executing on some CPU (SMP).
+            // Do not drop its kernel stack now; defer reclaim to the reaper.
+            crate::scheduler::lifecycle::defer_reap(pid);
+        } else {
+            sched.recycle_terminated(pid);
+        }
+    }
     unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 

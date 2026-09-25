@@ -605,9 +605,8 @@ pub unsafe fn sync_per_cpu_current(ptr: *mut Kthread, pid: u32) {
     if crate::hal::safe::GsBase::read() == 0 { return; }
     this_cpu_set_current_thread(ptr);
     this_cpu_set_current_pid(pid);
-    this_cpu_set_idle(pid == 0 || ptr.is_null() || {
-        if ptr.is_null() { true } else { (*ptr).tid == crate::scheduler::IDLE_TID }
-    });
+    let is_idle = ptr.is_null() || pid == 0 || unsafe { (*ptr).is_idle };
+    this_cpu_set_idle(is_idle);
 }
 
 /// Try to get current TID from per-CPU KPRCB if GS is initialized.
