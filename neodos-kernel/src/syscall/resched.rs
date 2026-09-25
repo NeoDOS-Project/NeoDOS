@@ -5,9 +5,27 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
-#[no_mangle]
-static SAVED_USER_RSP: AtomicU64 = AtomicU64::new(0);
-static SAVED_USER_RIP: AtomicU64 = AtomicU64::new(0);
+// Task C: per-CPU saved user frame. Previously a single global pair, which
+// produced false `[SYSCALL_CORRUPT]` reports when two CPUs (BSP + AP) entered
+// the syscall path concurrently: CPU1 phase-1 compared its frame against the
+// value written by CPU0 phase-0. Indexing by the local APIC/CPU id isolates
+// each CPU's in-flight syscall frame. GS is programmed on every CPU by the
+// time Ring-3 syscalls run, so `this_cpu_id()` is valid here.
+static SAVED_USER_RSP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+static SAVED_USER_RIP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+
+/// Index of the CPU currently executing the syscall path. Falls back to 0
+/// before GS is programmed (early boot / unit tests).
+#[inline]
+fn syscall_frame_cpu() -> usize {
+    if crate::hal::safe::GsBase::read() == 0 {
+        return 0;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() as usize };
+    if cpu < crate::arch::x64::cpu_local::MAX_CPUS { cpu } else { 0 }
+}
 
 #[no_mangle]
 pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
@@ -30,21 +48,23 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         (tid, pid, state)
     });
 
+    let cpu = syscall_frame_cpu();
+
     if phase == 0 && cs & 3 == 3 {
-        SAVED_USER_RSP.store(user_rsp, Ordering::Relaxed);
-        SAVED_USER_RIP.store(rip, Ordering::Relaxed);
+        SAVED_USER_RSP[cpu].store(user_rsp, Ordering::Relaxed);
+        SAVED_USER_RIP[cpu].store(rip, Ordering::Relaxed);
     }
 
     if phase == 1 && cs & 3 == 3 {
-        let saved_rsp = SAVED_USER_RSP.load(Ordering::Relaxed);
-        let saved_rip = SAVED_USER_RIP.load(Ordering::Relaxed);
+        let saved_rsp = SAVED_USER_RSP[cpu].load(Ordering::Relaxed);
+        let saved_rip = SAVED_USER_RIP[cpu].load(Ordering::Relaxed);
         if saved_rsp != user_rsp || saved_rip != rip {
             crate::serial_println!(
-                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
             kerror!(LogSubsys::Syscall,
-                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
         }
     }
 

@@ -443,6 +443,18 @@ pub unsafe fn gs_write_u64(offset: u32, val: u64) {
     crate::hal::raw::raw_gs_write_u64(offset, val);
 }
 
+/// Write a u32 to the current CPU's KPRCB at the given byte offset.
+///
+/// # Safety
+/// Same requirements as `gs_read_u64`. Only the owning CPU should call this.
+/// MUST be used for 32-bit fields: writing a u64 at `OFFSET_CURRENT_PID`
+/// would spill into `idle` (0x014), `need_resched` (0x015) and `current_irql`
+/// (0x016), silently clearing them.
+#[inline(always)]
+pub unsafe fn gs_write_u32(offset: u32, val: u32) {
+    crate::hal::raw::raw_gs_write_u32(offset, val);
+}
+
 /// Write a u8 to the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_write_u8(offset: u32, val: u8) {
@@ -514,7 +526,10 @@ pub unsafe fn this_cpu_current_pid() -> u32 {
 /// Set the current CPU's PID.
 #[inline(always)]
 pub unsafe fn this_cpu_set_current_pid(pid: u32) {
-    gs_write_u64(OFFSET_CURRENT_PID, pid as u64);
+    // F-01 audit fix: current_pid is a u32 at 0x010, immediately followed by
+    // `idle` (0x014), `need_resched` (0x015) and `current_irql` (0x016).
+    // Writing u64 here zeroed those three fields on every context switch.
+    gs_write_u32(OFFSET_CURRENT_PID, pid);
 }
 
 /// Check if the current CPU is idle.
@@ -911,6 +926,28 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_CURRENT_IRQL, 0x016u32);
         crate::test_eq!(OFFSET_EXIT_RSP, 0xB58u32);
         crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
+        // F-01 audit regression: `this_cpu_set_current_pid` must write exactly
+        // 4 bytes at OFFSET_CURRENT_PID. A u64 store spilled into
+        // idle/need_resched/current_irql (0x014..0x017), clearing them on every
+        // context switch.
+        let flags_preserved = crate::hal::without_interrupts(|| unsafe {
+            let saved_pid = this_cpu_current_pid();
+            let saved_idle = this_cpu_is_idle();
+            let saved_need = this_cpu_need_resched();
+            let saved_irql = this_cpu_irql();
+            this_cpu_set_idle(true);
+            this_cpu_set_need_resched(true);
+            this_cpu_set_current_pid(0xABCD_1234);
+            let mut ok = this_cpu_current_pid() == 0xABCD_1234;
+            ok &= this_cpu_is_idle();
+            ok &= this_cpu_need_resched();
+            this_cpu_set_current_pid(saved_pid);
+            this_cpu_set_idle(saved_idle);
+            this_cpu_set_need_resched(saved_need);
+            this_cpu_set_irql(saved_irql);
+            ok
+        });
+        crate::test_true!(flags_preserved);
         Ok(())
     });
     // Per-CPU slab allocator tests (A1.3)
