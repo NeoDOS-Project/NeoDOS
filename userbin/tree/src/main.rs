@@ -9,10 +9,32 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+extern crate alloc;
+
+use core::alloc::{GlobalAlloc, Layout};
 use libneodos::i18n;
+use libneodos::mem;
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
 use libneodos::tr_id;
+
+struct SbrkAlloc;
+
+unsafe impl GlobalAlloc for SbrkAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(8) as i64;
+        let ptr = mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
+        if ptr.is_null() {
+            core::ptr::null_mut()
+        } else {
+            ptr
+        }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[global_allocator]
+static ALLOC: SbrkAlloc = SbrkAlloc;
 
 const APP_NAME: &str = "tree";
 const IDS_USAGE: u32 = 1001;
@@ -110,7 +132,7 @@ struct Entry {
     is_directory: bool,
 }
 
-fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize {
+fn collect_entries(dir_path: &str, entries: &mut [Entry]) -> usize {
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(dir_path, &mut ob_buf);
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
@@ -211,11 +233,13 @@ const PIPE: &[u8] = &[0xE2, 0x94, 0x82, 0x20, 0x20, 0x20];
 const EMPTY: &[u8] = b"    ";
 
 fn print_tree(dir_path: &str, prefix: &[u8], depth: usize) {
-    let mut entries = [Entry { name: [0u8; 260], is_directory: false }; MAX_ENTRIES];
-    let count = collect_entries(dir_path, &mut entries);
+    // Fix 3.4: allocate entries on heap instead of stack (~16.7 KB per frame).
+    // Recursive depth 6 would consume >100 KB and overflow the 64 KB user stack.
+    let mut entries = alloc::boxed::Box::new([Entry { name: [0u8; 260], is_directory: false }; MAX_ENTRIES]);
+    let count = collect_entries(dir_path, &mut *entries);
     if count == 0 { return; }
 
-    sort_entries(&mut entries, count);
+    sort_entries(&mut *entries, count);
 
     for i in 0..count {
         let is_last = i == count - 1;
