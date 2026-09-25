@@ -89,11 +89,13 @@ pub enum SyscallNum {
     CmFlushKey = 57,
     CmLoadHive = 58,
     CmUnloadHive = 59,
+    // Debug (90-99)
+    DebugDump = 99,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 59;
-    pub const HIGHEST_ASSIGNED: u64 = 59;
+    pub const MAX_VALID: u64 = 99;
+    pub const HIGHEST_ASSIGNED: u64 = 99;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -133,6 +135,7 @@ impl SyscallNum {
             57 => Some(Self::CmFlushKey),
             58 => Some(Self::CmLoadHive),
             59 => Some(Self::CmUnloadHive),
+            99 => Some(Self::DebugDump),
             _ => None,
         }
     }
@@ -193,6 +196,7 @@ pub fn validate_abi() {
         30, 35, 36,
         40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+        99,
     ];
 
     for &n in ASSIGNED {
@@ -381,6 +385,7 @@ lazy_static! {
         t[57] = Some(handler_cm_flush_key as SyscallFn);
         t[58] = Some(handler_cm_load_hive as SyscallFn);
         t[59] = Some(handler_cm_unload_hive as SyscallFn);
+        t[99] = Some(handler_debug_dump as SyscallFn);
         t
     };
 
@@ -422,6 +427,7 @@ lazy_static! {
         t[57] = SyscallPermission::user();
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::admin();
+        t[99] = SyscallPermission::user();
         t
     };
 }

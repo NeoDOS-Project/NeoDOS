@@ -660,3 +660,9 @@ pub(super) fn handler_icmp_ping(regs: super::Registers) -> u64 {
         None => 0,
     }
 }
+
+/// RAX 99: debug_dump — Fase 1: volcar contadores VT y ring
+pub(super) fn handler_debug_dump(_regs: super::Registers) -> u64 {
+    crate::input::vt::vt_diag_dump();
+    0
+}
