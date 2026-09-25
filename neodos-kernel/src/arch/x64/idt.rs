@@ -932,8 +932,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_enter();
     crate::invariants::irq_enter_check(32);
 
-    crate::hal::increment_ticks();
-    crate::console::cursor_timer_tick();
+    // Phase 13: global tick/time side effects stay on the BSP. APs run the
+    // scheduler tick only (per-CPU), otherwise the global tick counter would
+    // advance once per CPU and break all timing assumptions.
+    let is_bsp = unsafe { crate::arch::x64::cpu_local::this_cpu_id() == 0 };
+    if is_bsp {
+        crate::hal::increment_ticks();
+        crate::console::cursor_timer_tick();
+    }
     let current_tick = crate::hal::get_ticks();
 
     // Increment per-CPU timer tick count
@@ -941,21 +947,33 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
 
-    // A3.3: Watchdog pet + check on every timer tick
-    crate::watchdog::watchdog_pet();
+    if is_bsp {
+        // A3.3: Watchdog pet + check on every timer tick
+        crate::watchdog::watchdog_pet();
 
-    // v0.46: Timer Object tick — decrement running timers
-    crate::object::timer::tick();
-    if crate::watchdog::watchdog_check() {
-        crate::watchdog::watchdog_trigger();
+        // v0.46: Timer Object tick — decrement running timers
+        crate::object::timer::tick();
+        if crate::watchdog::watchdog_check() {
+            crate::watchdog::watchdog_trigger();
+        }
+
+        {
+            use core::sync::atomic::Ordering;
+            let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
+            if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
+                crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
-    {
-        use core::sync::atomic::Ordering;
-        let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
-        if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
-            crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
-        }
+    // Phase 13: APs stay out of the scheduler until the BSP enables AP
+    // scheduling after the boot test suite. Check BEFORE taking the scheduler
+    // lock so parked/idle APs never contend on it during the tests.
+    if !is_bsp && !crate::scheduler::ap_sched_active() {
+        crate::hal::ack_irq(32);
+        crate::invariants::timer_irq_exit();
+        crate::invariants::irq_exit_clear();
+        return current_rsp;
     }
 
     let scheduler_mutex = current_scheduler();
@@ -976,6 +994,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let has_non_idle = scheduler.has_non_idle_threads();
     let current_state = scheduler.current_kthread_mut().map(|k| k.state);
+    let current_is_idle = scheduler.current_kthread_mut().map(|k| k.is_idle).unwrap_or(false);
 
     // Diagnostic entry: capture state before preemption decision
     td_push(TimerDiagEntry {
@@ -988,7 +1007,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         frame_rip: 0, frame_cs: 0, frame_rflags: 0, phase: 0,
     });
 
-    if is_user_mode && tid != crate::scheduler::IDLE_TID {
+    if is_user_mode && !current_is_idle {
         let should_preempt = current_state == Some(ThreadState::Ready);
 
         crate::trace_timer_irq!(
@@ -1026,7 +1045,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             });
             netd_record_select(next as *const _ as u64, next_rsp, next_ks);
             if next_rsp == 0 {
-                if next_tid == crate::scheduler::IDLE_TID {
+                if unsafe { (*next).is_idle } {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
@@ -1084,7 +1103,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 let nt = &mut *next;
                 let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
-                nt.time_slice_remaining = if nt.tid == crate::scheduler::IDLE_TID {
+                nt.time_slice_remaining = if nt.is_idle {
                     crate::scheduler::IDLE_TIME_SLICE
                 } else {
                     crate::scheduler::TIME_SLICES[idx]
@@ -1123,14 +1142,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
 
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
 
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
@@ -1144,19 +1165,21 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
             return current_rsp;
         }
-    } else if tid == crate::scheduler::IDLE_TID {
+    } else if current_is_idle {
         // ── Idle thread preemption ──────────────────────
-        // Preempt idle (TID 1) if any other thread is ready
+        // Preempt idle if any other thread is ready
         let should_preempt = current_state == Some(ThreadState::Ready);
 
         crate::trace_timer_irq!(if should_preempt { 2u8 } else { 3u8 },
@@ -1207,14 +1230,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
 
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
@@ -1248,7 +1273,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             });
             netd_record_select(next as *const _ as u64, next_rsp, next_ks);
             if next_rsp == 0 {
-                if next_tid == crate::scheduler::IDLE_TID {
+                if unsafe { (*next).is_idle } {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
@@ -1298,14 +1323,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -1346,19 +1373,22 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_exit();
     crate::invariants::irq_exit_clear();
 
-    // Push TimerTick event (lock‑free, IRQ‑safe)
-    let _ = crate::eventbus::EVENT_BUS.push_event(
-        crate::eventbus::EVENT_TIMER_TICK,
-        crate::eventbus::SOURCE_HAL,
-        1,
-        current_tick,
-        0,
-        0,
-    );
+    // Push TimerTick event (lock‑free, IRQ‑safe). BSP only: the event bus and
+    // DPC queue are global and must have a single driver (Phase 13 SMP).
+    if is_bsp {
+        let _ = crate::eventbus::EVENT_BUS.push_event(
+            crate::eventbus::EVENT_TIMER_TICK,
+            crate::eventbus::SOURCE_HAL,
+            1,
+            current_tick,
+            0,
+            0,
+        );
 
-    // A2.5: DPC dispatch — process deferred procedures at DISPATCH_LEVEL
-    // after device IRQ handling. This is the DIRQL→DISPATCH transition point.
-    crate::dpc::dpc_dispatch_pending();
+        // A2.5: DPC dispatch — process deferred procedures at DISPATCH_LEVEL
+        // after device IRQ handling. This is the DIRQL→DISPATCH transition point.
+        crate::dpc::dpc_dispatch_pending();
+    }
 
     current_rsp
 }
@@ -1530,6 +1560,20 @@ extern "x86-interrupt" fn mouse_handler(_: InterruptStackFrame) {
 
 pub fn init() {
     IDT.load();
+    // Publish the shared IDT base so APs can `lidt` a valid table. The previous
+    // AP path loaded a freshly zeroed page, so the first interrupt on an AP
+    // would triple fault.
+    KERNEL_IDT_BASE.store(&*IDT as *const _ as u64, core::sync::atomic::Ordering::Release);
+}
+
+/// Base address of the shared kernel IDT, published after `IDT.load()`.
+static KERNEL_IDT_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// IDTR descriptor pointing at the shared kernel IDT. Before `init()` runs the
+/// base is 0 (unusable); every AP calls this only after the BSP loaded the IDT.
+pub fn kernel_idt_descriptor() -> crate::hal::raw::IdtDescriptor {
+    let base = KERNEL_IDT_BASE.load(core::sync::atomic::Ordering::Acquire);
+    crate::hal::raw::IdtDescriptor::from_raw((256 * 16 - 1) as u16, base)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

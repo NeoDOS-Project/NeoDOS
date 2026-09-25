@@ -50,6 +50,30 @@ pub struct AlignedPageTable(PageTable);
 static mut PML4: AlignedPageTable = AlignedPageTable(PageTable::new());
 static mut PDPT: AlignedPageTable = AlignedPageTable(PageTable::new());
 
+/// Final kernel PML4 physical address, published once `init_custom_page_tables`
+/// has loaded it. APs adopt this before enabling scheduling so they share the
+/// kernel address space (identity map + user window) instead of the
+/// bootloader's boot-time tables.
+pub static KERNEL_PML4: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// Return the final kernel PML4 physical address (0 until published).
+pub fn kernel_pml4() -> u64 {
+    KERNEL_PML4.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Set once all boot-time page-table setup is complete: custom tables, heap and
+/// mmap demand-paging splits, TEB mapping and ECAM. APs wait for this before
+/// adopting `KERNEL_PML4`, so they never observe a half-initialized table.
+static PAGING_FINAL: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn publish_paging_final() {
+    PAGING_FINAL.store(true, core::sync::atomic::Ordering::Release);
+}
+
+pub fn paging_final() -> bool {
+    PAGING_FINAL.load(core::sync::atomic::Ordering::Acquire)
+}
+
 // Extra PDPT + PDs for physical memory above 4 GiB (framebuffer, etc.)
 static mut PDPT_HIGH: AlignedPageTable = AlignedPageTable(PageTable::new());
 static mut PD_HIGH: [AlignedPageTable; 4] = [
@@ -289,6 +313,7 @@ pub unsafe fn init_custom_page_tables() {
         panic!("PML4 address 0x{:x} not 4 KB-aligned", pml4_addr);
     }
     crate::hal::write_cr3(pml4_addr);
+    KERNEL_PML4.store(pml4_addr, core::sync::atomic::Ordering::Release);
     kinfo!(crate::log::LogSubsys::Kernel,
         "Custom Page Tables loaded: 4 GiB identity-mapped, \
          user window 0x{:x}..0x{:x}",
