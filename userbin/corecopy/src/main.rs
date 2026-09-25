@@ -56,7 +56,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
                 let mut pos = 0;
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos < 259 { buf[pos] = 0; }
@@ -78,7 +78,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
         let mut pos = 0;
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos > 0 && buf[pos - 1] != b'\\' {
@@ -196,6 +196,7 @@ pub extern "C" fn _start() -> ! {
     };
 
     let mut buf = [0u8; 4096];
+    let mut failed = false;
     loop {
         match syscall::sys_ob_query_info(src_fd, libneodos::syscall::ObInfoClass::ReadContent, &mut buf) {
             Ok(0) => break,
@@ -204,6 +205,7 @@ pub extern "C" fn _start() -> ! {
                     write_err(b"\r\n");
                     write_err(tr_id!(IDS_WRITE_FAILED).as_bytes());
                     write_err(b"\r\n");
+                    failed = true;
                     break;
                 }
             }
@@ -226,6 +228,7 @@ pub extern "C" fn _start() -> ! {
                 };
                 write_err(err_str);
                 write_err(b"\r\n");
+                failed = true;
                 break;
             }
         }
@@ -233,5 +236,9 @@ pub extern "C" fn _start() -> ! {
 
     let _ = syscall::sys_close(src_fd);
     let _ = syscall::sys_close(dst_fd);
-    syscall::sys_exit(0)
+    if failed {
+        syscall::sys_exit(1)
+    } else {
+        syscall::sys_exit(0)
+    }
 }

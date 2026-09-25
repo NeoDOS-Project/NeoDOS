@@ -59,7 +59,7 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
         let mut pos = 0;
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos > 0 && buf[pos - 1] != b'\\' {
