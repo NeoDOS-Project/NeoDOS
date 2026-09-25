@@ -661,8 +661,10 @@ pub(super) fn handler_icmp_ping(regs: super::Registers) -> u64 {
     }
 }
 
-/// RAX 99: debug_dump — Fase 1: volcar contadores VT y ring
+/// RAX 99: debug_dump — Fase 1: volcar contadores VT y ring (+ Phase 6 IRQ33 ownership)
 pub(super) fn handler_debug_dump(_regs: super::Registers) -> u64 {
     crate::input::vt::vt_diag_dump();
+    crate::arch::x64::idt::kbd_irq_dump();
+    crate::interrupts::ioapic::dump_irq_routing(1);
     0
 }

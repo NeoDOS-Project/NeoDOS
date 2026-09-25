@@ -1,12 +1,25 @@
 //! Scheduler SMP / work stealing — extracted from mod.rs
 use crate::scheduler::Scheduler;
 
+pub(crate) static STEAL_ATTEMPTS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+pub(crate) static STEAL_SUCCESS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
 impl Scheduler {
     /// Try to steal a thread from another CPU's run queue.
     /// Returns the TID if found, or None if all queues are empty.
     /// K20 fix: migration updates Kthread.cpu atomically under scheduler lock
     /// so physical queue owner and logical ownership stay consistent.
     pub(crate) fn try_work_steal(&mut self) -> Option<u32> {
+        STEAL_ATTEMPTS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        // Phase 4: during k18/k19 tests, AP stealing via the *global*
+        // scheduler is paused to avoid racing with the test's manipulation
+        // of global runqueues. The test's *local* Scheduler (kprcb_thread_in_self()==false)
+        // must still be able to steal, so we only block the global path.
+        if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed)
+            && self.kprcb_thread_in_self()
+        {
+            return None;
+        }
         let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
         for victim in 0..crate::arch::x64::cpu_local::MAX_CPUS {
             if victim == my_cpu { continue; }
@@ -62,6 +75,7 @@ impl Scheduler {
             // Try push to thief
             if thief_rq.push(tid_popped) {
                 stolen += 1;
+                STEAL_SUCCESS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             } else {
                 // Rollback: restore cpu and push back to victim
                 if let Some(old) = old_cpu {

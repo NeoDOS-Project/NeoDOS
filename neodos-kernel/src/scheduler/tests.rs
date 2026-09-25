@@ -1183,6 +1183,10 @@ pub fn register_tests() {
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        // Phase 4: isolate from AP's concurrent runqueue activity
+        struct _TestModeGuard; impl Drop for _TestModeGuard { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard };
+        // Also log validate errors verbosely
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
                 crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
@@ -1214,6 +1218,7 @@ pub fn register_tests() {
         // Now TID2 in CPU0 queue and k.cpu==0 → validate must pass
         test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_a after steal validate err: {}", e); }
         test_true!(r.is_ok());
         test_eq!(r.unwrap(), 1);
         unsafe {
@@ -1224,13 +1229,10 @@ pub fn register_tests() {
         // Pop and become Running on CPU0 → validate still passes
         let tid = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop().unwrap() };
         test_eq!(tid, 2);
-        {
-            let k = sched.find_kthread_mut(2).unwrap();
-            k.state = ThreadState::Running;
-        }
-        sched.current_tid = 2;
+        set_test_current(&mut sched, 2);
         test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_a after pop Running validate err: {}", e); }
         test_true!(r.is_ok());
 
         // Cleanup
@@ -1257,6 +1259,8 @@ pub fn register_tests() {
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        struct _TestModeGuard2; impl Drop for _TestModeGuard2 { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard2 };
         unsafe {
             crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
             if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
@@ -1266,6 +1270,10 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
         sched.current_tid = IDLE_TID;
+        // Phase 4: ensure BOOT is not Running (would cause 2 Running on CPU0)
+        if let Some(k) = sched.find_kthread_mut(BOOT_TID) {
+            k.state = ThreadState::Blocked { waiting_for: 0 };
+        }
         // Prepare idle as Blocked so schedule must pick something else
         prepare_test_schedule(&mut sched); // idle Running -> Blocked
         // Create victim thread on CPU1
@@ -1295,6 +1303,7 @@ pub fn register_tests() {
         // K20 fixed: k.cpu must have been migrated to thief (0) and validate passes
         test_eq!(unsafe { (*next).cpu }, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_schedule after steal validate err: {}", e); }
         test_true!(r.is_ok());
         // Cleanup: make Running thread Ready (should stay on thief) then remove
         {
@@ -1305,6 +1314,7 @@ pub fn register_tests() {
         }
         set_test_current(&mut sched, IDLE_TID);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_schedule after requeue validate err: {}", e); }
         test_true!(r.is_ok());
         // cleanup
         if let Some(k) = sched.find_kthread_mut(2) {
@@ -1529,11 +1539,15 @@ pub fn register_tests() {
     });
 
     test_case!("k19_repeated_steal_requeue_bounce_5_cycles", {
-        // 5 cycles: victim→thief→Running(cpu=1)→Ready→bounce to victim, repeat
+        // 5 cycles: victim→thief→Running→Ready (stay on thief) → next cycle needs requeue to victim
+        // Phase 4: after fix, make_thread_ready stays on thief, so we must explicitly
+        // requeue to victim at the end of each cycle to allow the next steal to succeed.
         // Skip on single-CPU configs
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        struct _TestModeGuard3; impl Drop for _TestModeGuard3 { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard3 };
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
                 crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
@@ -1552,7 +1566,7 @@ pub fn register_tests() {
             Scheduler::enqueue_to_cpu_run_queue(k);
         }
         set_test_current(&mut sched, IDLE_TID);
-        for _ in 0..5 {
+        for iter in 0..5 {
             // steal via scheduler (migrates ownership to thief)
             let stolen = unsafe { sched.steal_and_migrate(1, 0) };
             test_eq!(stolen, 1);
@@ -1577,7 +1591,21 @@ pub fn register_tests() {
             }
             set_test_current(&mut sched, IDLE_TID);
             let r = sched.validate_runqueue_invariants();
+            if let Err(e) = r { crate::serial_println!("k19 iter {} validate failed: {}", iter, e); return Err(e); }
             test_true!(r.is_ok());
+            // Requeue to victim for next iteration (except after last)
+            if iter < 4 {
+                let k = sched.find_kthread_mut(2).unwrap();
+                // k is currently Blocked after set_test_current, make Ready on victim
+                k.state = ThreadState::Ready;
+                k.cpu = 1;
+                unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); crate::arch::x64::cpu_local::remove_from_cpu_run_queue(1, 2); }
+                Scheduler::enqueue_to_cpu_run_queue(k);
+                // Keep current as idle
+                set_test_current(&mut sched, IDLE_TID);
+                let r2 = sched.validate_runqueue_invariants();
+                if let Err(e) = r2 { crate::serial_println!("k19 iter {} requeue validate failed: {}", iter, e); return Err(e); }
+            }
         }
         // cleanup
         {

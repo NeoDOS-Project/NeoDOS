@@ -463,7 +463,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
     crate::trace_syscall!(rax, rbx, rcx, rdx);
     if cfg!(feature = "validation") {
         let pid = crate::scheduler::current_pid();
-        if pid == 2 {
+        if pid == 2 && crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
             crate::serial_println!("[SYSCALL] enter pid={} rax={} rbx=0x{:x}", pid, rax, rbx);
         }
     }

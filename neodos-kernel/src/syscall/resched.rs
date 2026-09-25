@@ -82,7 +82,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let pid = scheduler.current_pid();
         kdebug!(LogSubsys::Syscall,
             "[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
-        crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
+        // Phase 7: high-frequency; only emit to serial when trace logging is on.
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
+        }
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
@@ -94,7 +97,18 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             }
         }
 
-        let next = scheduler.schedule();
+        let next = scheduler.schedule_with(true);
+        scheduler.consistency_check("resched");
+        {
+            let n = unsafe { &*next };
+            if (tid == 5 || n.tid == 5) && n.rsp != 0 && crate::scheduler::sched_forensic_verbose() {
+                let cs = unsafe { *((n.rsp + 128) as *const u64) };
+                crate::serial_println!(
+                    "[T5_RS] entry={} next={} next_rsp=0x{:x} next_cs=0x{:x} current={} kprcb={:?}",
+                    tid, n.tid, n.rsp, cs, scheduler.current_tid,
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+            }
+        }
         if next.is_null() {
             return current_rsp;
         }
@@ -263,9 +277,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 "\n!!! BUGCHECK: next TID={} has SS=0x{:x} (expected 0x23) !!!",
                 next_tid, rss);
         }
-        crate::serial_println!(
-            "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
-            tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!(
+                "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
+                tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
+        }
 
         scheduler::check_kernel_stack_canary(next_ks_top, next_pid, next_tid, next_rsp);
         unsafe { crate::arch::x64::gdt::prepare_ring3_return(next_ks_top, next_tid, next_pid); }
@@ -281,9 +297,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x} next_rflags=0x{:x}",
             pid, tid, next_pid, next_tid, next_rsp,
             next_rip, next_cs, next_rflags);
-        crate::serial_println!(
-            "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
-            pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!(
+                "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
+        }
         crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })

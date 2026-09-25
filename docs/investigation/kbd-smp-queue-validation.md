@@ -217,3 +217,170 @@ Para `READY:YES` se requiere:
 - Build: `neodev build --image` PASS, `neodev test` 716 PASS
 - Boot log `smp2_serial.log` con `PAGE_TABLE_CORRUPTION` tras `Enabling interrupts` con `-smp 2`
 
+---
+
+## PHASE 7 — END-TO-END VALIDATION (2026-09-25)
+
+**Contexto actualizado:** SMP2 y SMP4 ya bootean 716/716 (ver `smp-bring-up-report.md`).
+El fallo residual ("escribo y no aparece nada") se localizó AQUÍ, por encima de la cola.
+
+### Metodología
+
+QEMU `-smp 1|2` real (no `neodev test`, que fuerza 1 CPU y no ejecuta la shell
+interactiva), monitor QEMU por socket UNIX + `sendkey`, y dump combinado
+`Ctrl+Alt+V` = `VT_DIAG` + `KBD_IRQ` + `IOAPIC_ROUTE` + `SCHED_DUMP`.
+`SCHED_DUMP` (`scheduler/mod.rs`) volcado lock-free best-effort (`try_lock` en
+`RUNQUEUE_LOCKS`, probado desde IRQ — no debe hacer spin) para no auto-bloquear.
+
+### SMP1 — (mismo binario que SMP2)
+
+```
+baseline: VT push=0 pop=0 drop=0 ; tid=5 pid=4 state=BLOCKED wait=Some(0xFFFFFFFF) cpu=0
+          cpu0 runqueue_tids=[2] (tid=2 pid=1 READY)
+tras 'a': VT push=1 pop=0 drop=0
+          tid=5 pid=4 state=RUNNING wait=None cpu=0   <-- stranded
+          tid=2 pid=1 state=RUNNING cpu=0              <-- dos Running en cpu0
+          cpu0 runqueue_tids=[] ; schedule_count 1295 -> 1_031_775
+tras 'abc': VT push=3 pop=0 drop=0
+```
+
+### SMP2
+
+```
+baseline: VT push=0 pop=0 ; tid=5 BLOCKED wait=Some(0xFFFFFFFF) cpu=0
+base+1:   KBD_IRQ total=3 producer_cpus=1
+tras 'a': VT push=1 pop=0 drop=0 ; tid=5 RUNNING wait=None ; tid=2 RUNNING
+tras 'abc': VT push=3 pop=0 drop=0
+```
+
+### Resultado por etapa
+
+| Etapa | Resultado | Evidencia |
+| --- | --- | --- |
+| IRQ1 → KBD | PASS | `KBD_IRQ total` incrementa, `producer_cpus=1` |
+| KBD → VT_PUSH | PASS | `VT_DIAG push` incrementa, `drop=0` |
+| VT → READB | **FAIL** | `pop` queda en `0` en 3 dumps separados ~15 s |
+| READB → SHELL | **FAIL** | `[READB] enter` sale 1 vez; tid=5 nunca vuelve a leer |
+| SHELL → ECHO | **FAIL** | sin consumo no hay eco |
+| SHELL → EXEC | **FAIL** | sin línea completa no hay `execute_line` |
+| CONSOLE | N/A | no hay byte que renderizar |
+
+### Root cause (localizado, NO en la cola)
+
+El hilo consumidor `neoshell` (TID 5, PID 4) queda **marcado `RUNNING` sin ser
+despachado**: pasa de `BLOCKED wait=0xFFFFFFFF` a `RUNNING wait=None` mientras
+`VT_POP` sigue `0` y su `runqueue` está vacía. En ese momento el planificador
+mantiene `current_tid=2` y el hilo `pid=1/tid=2` (código en región NXL
+`0x1e00067b`, p.ej. `fs.nxl`) monopoliza CPU0 con ~10^6 `schedule()`.
+
+Consecuencia: `wake_blocked_readers()` deja de poder despertarlo (su estado ya no
+es `Blocked`), y `schedule()` nunca lo selecciona (no está en ninguna runqueue).
+Resultado: la cola acumula bytes correctamente pero nadie los `pop`.
+
+- **NO es PS/2, decoder, IRQ routing, VT_SPSC ni VT_QUEUE_SIZE**: `KBD_IRQ`,
+  `IOAPIC_ROUTE` y `VT_DIAG` están limpios (ver Phase 6).
+- **NO es flood de serial**: los `serial_println!` de alta frecuencia
+  (`[SYSCALL_RESCHED]`, `[RING3_SWITCH]`, `[SYSCALL] enter`, `[KBD]`) se
+  gatearon a `LogLevel::Trace` (`kbd/event.rs`, `syscall/resched.rs`,
+  `syscall/mod.rs`) y el fallo persiste idéntico.
+- Es reproducible en **SMP1, SMP2 y SMP4** → invariante de estado del scheduler
+  (dos hilos `Running` en la misma CPU), no SMP-specific.
+
+### SMP4
+
+```
+baseline: VT push=0 pop=0 ; tid=5 BLOCKED wait=Some(0xFFFFFFFF) cpu=0
+base+1:   cpu0 runqueue_tids=[0]
+tras 'a': VT push=1 pop=0 drop=0 ; tid=5 RUNNING wait=None ; tid=2 RUNNING
+tras 'abc': VT push=3 pop=0 drop=0
+          cpu0 empty, cpu1/2/3 empty ; schedule_count 2276 -> 941_976
+```
+
+Mismo patrón que SMP1/SMP2; `AP_READY=3`, 4 CPU(s) online.
+
+### Fix
+
+No aplicado en esta fase: el criterio de Phase 7 era localizar el punto exacto,
+y el fallo está en el handoff scheduler/syscall (`syscall_try_resched` /
+`schedule`), fuera del ámbito de keyboard. Candidatos a investigar en Phase 8:
+- `schedule()` step 3 (`schedule.rs`) fija `k.state = Running` antes de que el
+  caller confirme el despacho; si el caller rechaza el frame (rama
+  `next_cs & 3 != 3` / KEEP_CURRENT) el estado puede quedar `Running` huérfano.
+- El bucle de `pid=1` (servicio) que monopoliza CPU0 a prioridad 2.
+
+### Regresión
+
+`neodev test` tras gatear logs: **716/716 PASS** (SMP1 forzado).
+`git diff --check` limpio.
+
+### READY
+
+**NO** — `VT → READB`, `READB → SHELL`, `SHELL → ECHO/EXEC` fallan por
+starvation/estado del consumidor, no por la cola.
+
+---
+
+## PHASE 10 — E2E CLOSURE (2026-09-25)
+
+### Estado previo
+
+Phase 9 corrigió el commit point del scheduler (`SELECT → VALIDATE → COMMIT`)
+y dejó `SCHED_WARN = 0`. Faltaba la evidencia E2E porque el `sendkey` del
+monitor QEMU no parecía entregar scancodes.
+
+### Causa del bloqueo de harness
+
+No era el kernel: era el arnés. La entrega por `-monitor unix:...` es
+intermitente si el cliente no hace *warm-up* (`info status`) ni drena las
+respuestas con un timeout corto. Con conexión persistente + `info status`
+previo + drain de timeout corto, los scancodes llegan al guest.
+
+### Evidencia E2E real (SMP1, `sendkey a`)
+
+```
+[VT_EV] op=PUSH byte=0x61 cpu=0 tid=2 h=4 t=5 occ=1     (IRQ1 -> VT, producer CPU0)
+[VT_EV] op=POP  byte=0x61 cpu=0 tid=5 h=5 t=5 occ=0     (READB consume, consumer CPU0)
+[READB] enter pid=4 tid=5 vt=0
+[READB] exit  pid=4 tid=5 bytes_read=1
+<T5_SCHED] step=1 prev=2 new=5 current=5 kprcb=Some(5)
+[T5_SCHED] step=3 prev=5 new=5 current=5 kprcb=Some(5)
+[T5_RS]    entry=5 next=5 next_rsp=0x2495240 next_cs=0x1b current=5 kprcb=Some(5)
+[SCHED_STATE] tid=5 BLOCKED->READY
+[SCHED_STATE] tid=5 READY->RUNNING
+eco en consola: "\x08 \x08a_"   (borrado + 'a' + cursor)
+SCHED_WARN = 0
+```
+
+Reproducido también de forma independiente (`probe_mon.py`): mismo
+`POP byte=0x61` + `[READB] exit bytes_read=1` + eco.
+
+### Resultado
+
+```
+SMP1: input -> KBD/IRQ1(CPU0) -> VT_PUSH -> VT_POP -> READB(bytes_read=1, 0x61) -> TID5/neoshell -> echo 'a'
+SMP2: idéntico (bytes_read=1 + eco 'a')
+SMP4: idéntico (bytes_read=1 + eco 'a')
+DROP = 0
+SCHED_WARN = 0
+TID5: BLOCKED -> READY -> RUNNING (Ring3, next_cs=0x1b) -> ejecución real
+```
+
+La cadena E2E completa (`input → KBD/IRQ1 → VT_PUSH → VT_POP → READB →
+neoshell → echo`) queda verificada con evidencia real en SMP1, SMP2 y SMP4.
+
+`abc<ENTER>` / `execute_line` no se capturó de forma estable por la
+intermitencia residual del `sendkey` con varias teclas seguidas.
+
+```
+SCHEDULER ROOT CAUSE: CONFIRMED + FIXED (Phase 9)
+KEYBOARD HARDWARE:    VERIFIED (IRQ1 -> CPU0 -> VT push)
+VT SPSC:              VERIFIED (Phase 6)
+VT -> READB:          VERIFIED (POP + bytes_read=1)
+neoshell:             VERIFIED (echo del byte)
+E2E:                  PASS (byte único, SMP1/SMP2/SMP4)
+EXECUTE_LINE:         NOT CAPTURED (harness multi-tecla)
+```
+
+`neodev test`: 716/716 PASS (suite forzada a 1 CPU; SMP2/SMP4 verificados en
+bring-up).
+

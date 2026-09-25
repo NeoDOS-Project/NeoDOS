@@ -26,9 +26,11 @@ pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
         return true;
     }
 
-    // Ctrl+Alt+V → VT queue diagnostic dump (Fase 1)
+    // Ctrl+Alt+V → VT queue diagnostic dump (Fase 1) + Phase 6 IRQ33 ownership
     if ctrl && alt && code == 0x2F {
         crate::input::vt::vt_diag_dump();
+        crate::arch::x64::idt::kbd_irq_dump();
+        crate::interrupts::ioapic::dump_irq_routing(1);
         return true;
     }
 

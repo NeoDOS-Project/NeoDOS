@@ -200,3 +200,78 @@ python3 burst_matrix.py  # 6 inputs × 8 gaps × 3 smp = 144 casos, check produc
 # Si PASS, merge a develop con `fix(kbd): vt visible overflow + shell yield`
 ```
 
+---
+
+## PHASE 7 — END-TO-END VALIDATION (2026-09-25)
+
+Ver `kbd-smp-queue-validation.md` (sección PHASE 7) para la evidencia completa.
+Resumen:
+
+```
+KBD → VT       PASS  (push incrementa, drop=0, producer_cpus=1 CPU0)
+VT → READB     FAIL  (pop=0 en SMP1 y SMP2; la cola no se vacía)
+READB → SHELL  FAIL  (tid=5 pasa a RUNNING sin ser despachado)
+SHELL → ECHO   FAIL
+SHELL → EXEC   FAIL
+CONSOLE         N/A
+```
+
+Root cause: el hilo consumidor `neoshell` (TID 5) queda `RUNNING wait=None`
+sin despachar (dos hilos `Running` en CPU0, `runqueue` vacía, `pop=0`), mientras
+`pid=1/tid=2` (NXL `fs.nxl`) monopoliza CPU0. No es PS/2, decoder, IRQ routing
+ni VT_SPSC (todo limpio en Phase 6). Se descartó flood de serial gateando
+`[SYSCALL_RESCHED]`/`[RING3_SWITCH]`/`[KBD]` a `LogLevel::Trace`.
+
+Instrumentación añadida y conservada (diagnóstico, sin cambiar la cola):
+`SCHED_DUMP` en `scheduler/mod.rs` (lock-free best-effort, invocado por
+`Ctrl+Alt+V` y syscall 99 junto a `VT_DIAG`/`KBD_IRQ`/`IOAPIC_ROUTE`).
+
+Regresión: `neodev test` 716/716 PASS. `git diff --check` limpio.
+
+READY: **NO** — el fallo residual está por encima de la cola, en el
+handoff scheduler/syscall (candidato Phase 8).
+
+---
+
+## PHASE 10 — E2E CLOSURE (2026-09-25)
+
+Phase 8 localizó la causa (commit point), Phase 9 la corrigió, Phase 10 obtiene
+la evidencia E2E real.
+
+### Bloqueo era del harness, no del kernel
+
+La entrega de scancodes por `-monitor unix:...` es intermitente; con conexión
+persistente + `info status` de warm-up + drain de timeout corto, los scancodes
+llegan al guest. No se tocó el kernel para lograrlo.
+
+### Evidencia E2E (SMP1, `sendkey a`)
+
+```
+[VT_EV] op=PUSH byte=0x61 cpu=0 tid=2 h=4 t=5 occ=1   IRQ1 -> VT (producer CPU0)
+[VT_EV] op=POP  byte=0x61 cpu=0 tid=5 h=5 t=5 occ=0   READB consume
+[READB] exit pid=4 tid=5 bytes_read=1
+[T5_RS] entry=5 next=5 next_rsp=0x2495240 next_cs=0x1b current=5 kprcb=Some(5)
+[SCHED_STATE] tid=5 BLOCKED->READY ; READY->RUNNING
+eco consola: "\x08 \x08a_"
+SCHED_WARN = 0   DROP = 0
+```
+
+Reproducido de forma independiente con `probe_mon.py` (mismo POP + bytes_read=1
++ eco).
+
+### Clasificación
+
+```
+SCHEDULER ROOT CAUSE: CONFIRMED + FIXED
+KEYBOARD HARDWARE:    VERIFIED (IRQ1 -> CPU0)
+VT SPSC:              VERIFIED
+VT -> READB:          VERIFIED (POP + bytes_read=1)
+neoshell:             VERIFIED (echo del byte)
+E2E:                  PARTIAL — byte único PASS; abc<ENTER> flaky por harness
+```
+
+La ruta crítica completa `input → KBD/IRQ1 → VT_PUSH → VT_POP → READB →
+neoshell → echo` quedó demostrada con evidencia real. `execute_line` no se
+capturó de forma estable por la intermitencia residual del `sendkey` con varias
+teclas seguidas.
+
