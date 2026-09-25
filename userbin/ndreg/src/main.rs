@@ -80,8 +80,15 @@ pub extern "C" fn _start() -> ! {
     }
 
     let args = libneodos::args::trim_ascii(&raw);
-    if args.is_empty() || is_cmd(args, b"list") || is_cmd(args, b"help") {
-        if is_cmd(args, b"help") {
+    let (cmd, cmd_rest) = {
+        if let Some(pos) = args.iter().position(|&b| b == b' ' || b == b'\t') {
+            (&args[..pos], libneodos::args::trim_ascii(&args[pos + 1..]))
+        } else {
+            (args, &[][..] as &[u8])
+        }
+    };
+    if args.is_empty() || is_cmd(cmd, b"list") || is_cmd(cmd, b"help") {
+        if is_cmd(cmd, b"help") {
             print_help();
             syscall::sys_exit(0);
         }
@@ -140,8 +147,8 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
 
-    if is_cmd(args, b"info") || is_cmd(args, b"state") {
-        let rest = &args[4..];
+    if is_cmd(cmd, b"info") || is_cmd(cmd, b"state") {
+        let rest = cmd_rest;
         let rest = libneodos::args::trim_ascii(rest);
         let idx = match parse_u32(rest) {
             Some(i) => i,
@@ -161,25 +168,39 @@ pub extern "C" fn _start() -> ! {
             }
         };
 
-        let mut entry: DriverEntry = DriverEntry {
-            name: [0u8; 64],
-            state: 0,
-            version: 0,
-        };
         let entry_size = core::mem::size_of::<DriverEntry>();
-        let offset = idx as usize * entry_size;
-        let buf = unsafe {
-            core::slice::from_raw_parts_mut(&mut entry as *mut DriverEntry as *mut u8, entry_size)
-        };
-        match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Drivers, &mut buf[..]) {
-            Ok(n) if n >= entry_size => {}
-            _ => {
+        let mut buf = [0u8; 64 * 72];
+        let n = match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Drivers, &mut buf) {
+            Ok(n) => n,
+            Err(_) => {
                 let _ = syscall::sys_close(fd);
                 write_err(b"\r\nDriver not found\r\n");
                 syscall::sys_exit(1);
             }
         };
         let _ = syscall::sys_close(fd);
+        if n < entry_size {
+            write_err(b"\r\nDriver not found\r\n");
+            syscall::sys_exit(1);
+        }
+        let count = n / entry_size;
+        if (idx as usize) >= count {
+            write_err(b"\r\nDriver not found\r\n");
+            syscall::sys_exit(1);
+        }
+        let offset = idx as usize * entry_size;
+        let mut entry: DriverEntry = DriverEntry {
+            name: [0u8; 64],
+            state: 0,
+            version: 0,
+        };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                buf.as_ptr().add(offset),
+                &mut entry as *mut DriverEntry as *mut u8,
+                entry_size,
+            );
+        }
 
         let name_end = entry.name.iter().position(|&b| b == 0).unwrap_or(64);
         write_str(b"\r\nDriver: ");

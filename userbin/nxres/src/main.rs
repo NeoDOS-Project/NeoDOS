@@ -75,14 +75,20 @@ pub extern "C" fn _start() -> ! {
 
     let mut path_buf = [0u8; 512];
     let prefix = b"\\Global\\FileSystem\\C:\\Programs\\";
+    let total = prefix.len() + app_name.len() + 10;
+    if total > 512 {
+        write_err(b"\r\n");
+        write_err(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
+        write_err(b"\r\n");
+        syscall::sys_exit(1);
+    }
     {
-        let total = prefix.len() + app_name.len() + 10;
         path_buf[..prefix.len()].copy_from_slice(prefix);
         path_buf[prefix.len()..prefix.len() + app_name.len()].copy_from_slice(app_name);
         let off = prefix.len() + app_name.len();
         path_buf[off..off + 10].copy_from_slice(b"\\resources");
     }
-    let resources_dir = unsafe { core::str::from_utf8_unchecked(&path_buf[..prefix.len() + app_name.len() + 10]) };
+    let resources_dir = core::str::from_utf8(&path_buf[..total]).unwrap_or("\\Global\\FileSystem\\C:\\Programs\\");
 
     let fd = match syscall::sys_ob_open(resources_dir, libneodos::syscall::ob_access::READ) {
         Ok(f) => f,
@@ -121,14 +127,21 @@ pub extern "C" fn _start() -> ! {
     } else if rest == b"--locales" || rest == b"-l" {
         let mut locale_buf = [0u8; 512];
         let lprefix = b"\\Global\\FileSystem\\C:\\Programs\\";
+        let total_l = lprefix.len() + app_name.len() + 16;
+        if total_l > 512 {
+            write_err(b"\r\n");
+            write_err(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
+            write_err(b"\r\n");
+            let _ = syscall::sys_close(fd);
+            syscall::sys_exit(1);
+        }
         {
-            let total = lprefix.len() + app_name.len() + 16;
             locale_buf[..lprefix.len()].copy_from_slice(lprefix);
             locale_buf[lprefix.len()..lprefix.len() + app_name.len()].copy_from_slice(app_name);
             let off = lprefix.len() + app_name.len();
             locale_buf[off..off + 16].copy_from_slice(b"\\resources\\locale");
         }
-        let locale_dir = unsafe { core::str::from_utf8_unchecked(&locale_buf[..lprefix.len() + app_name.len() + 16]) };
+        let locale_dir = core::str::from_utf8(&locale_buf[..total_l]).unwrap_or("\\Global\\FileSystem\\C:\\Programs\\");
 
         let locale_fd = match syscall::sys_ob_open(locale_dir, libneodos::syscall::ob_access::READ) {
             Ok(f) => f,

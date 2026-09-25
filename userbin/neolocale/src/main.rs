@@ -44,11 +44,20 @@ fn print_usage() {
 fn read_nlt_header(path: &str) -> Result<[u8; 32], ()> {
     let mut ob_buf = [0u8; 512];
     let prefix = b"\\Global\\FileSystem\\";
-    let total = prefix.len() + path.len();
-    if total > 511 { return Err(()); }
-    ob_buf[..prefix.len()].copy_from_slice(prefix);
-    ob_buf[prefix.len()..total].copy_from_slice(path.as_bytes());
-    let ob_path = unsafe { core::str::from_utf8_unchecked(&ob_buf[..total]) };
+    let (total, is_prefixed) = if path.as_bytes().starts_with(prefix) {
+        let total = path.len();
+        if total > 511 { return Err(()); }
+        ob_buf[..total].copy_from_slice(path.as_bytes());
+        (total, true)
+    } else {
+        let total = prefix.len() + path.len();
+        if total > 511 { return Err(()); }
+        ob_buf[..prefix.len()].copy_from_slice(prefix);
+        ob_buf[prefix.len()..total].copy_from_slice(path.as_bytes());
+        (total, false)
+    };
+    let _ = is_prefixed;
+    let ob_path = core::str::from_utf8(&ob_buf[..total]).map_err(|_| ())?;
 
     let fd = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ).map_err(|_| ())?;
     let mut header = [0u8; 32];
@@ -158,8 +167,7 @@ fn cmd_create(args: &[u8]) {
 }
 
 fn is_cmd(a: &[u8], b: &[u8]) -> bool {
-    if a.len() < b.len() { return false; }
-    a[..b.len()].eq_ignore_ascii_case(b)
+    a.len() == b.len() && a.eq_ignore_ascii_case(b)
 }
 
 #[no_mangle]

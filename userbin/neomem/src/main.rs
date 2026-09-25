@@ -82,7 +82,7 @@ fn print_field(label: &[u8], total: u64, used: u64) {
     write_size(used);
     write_str(b", ");
     write_str(tr_id!(IDS_FREE).as_bytes());
-    write_size(total - used);
+    write_size(total.saturating_sub(used));
     write_str(b"\r\n");
 }
 
@@ -147,7 +147,7 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(1);
     }
 
-    let info: &MemInfo = unsafe { &*(buf.as_ptr() as *const MemInfo) };
+    let info: MemInfo = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const MemInfo) };
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_PHYSICAL).as_bytes());

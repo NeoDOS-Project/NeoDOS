@@ -98,7 +98,7 @@ fn parse_pid_from_name(name: &str) -> Option<u32> {
     let mut n: u32 = 0;
     for &b in num_part.as_bytes() {
         if b < b'0' || b > b'9' { return None; }
-        n = n * 10 + (b - b'0') as u32;
+        n = n.saturating_mul(10).saturating_add((b - b'0') as u32);
     }
     Some(n)
 }
@@ -106,9 +106,8 @@ fn parse_pid_from_name(name: &str) -> Option<u32> {
 fn print_help() {
     write_str(b"\r\n");
     write_str(b"NEOTOP\r\n");
-    write_str(b"  Display system monitor with process list.\r\n");
-    write_str(b"  Shows processes sorted by CPU usage.\r\n");
-    write_str(b"  Press Q to quit.\r\n\r\n");
+    write_str(b"  Display process list (single snapshot, non-interactive).\r\n");
+    write_str(b"  Shows PID, name, state, priority and thread count.\r\n\r\n");
 }
 
 #[no_mangle]
@@ -194,7 +193,7 @@ pub extern "C" fn _start() -> ! {
 
         if written < 20 { continue; }
 
-        let info: ObProcessInfo = unsafe { core::ptr::read(info_buf.as_ptr() as *const ObProcessInfo) };
+        let info: ObProcessInfo = unsafe { core::ptr::read_unaligned(info_buf.as_ptr() as *const ObProcessInfo) };
 
         write_u32_right(info.pid, 3);
         write_str(b"  ");

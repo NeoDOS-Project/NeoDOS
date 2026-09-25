@@ -30,7 +30,7 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     buf[..prefix.len()].copy_from_slice(prefix);
     buf[prefix.len()..total].copy_from_slice(vfs_bytes);
     buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+    core::str::from_utf8(&buf[..total]).unwrap_or(vfs)
 }
 
 fn write_str(s: &[u8]) {
@@ -88,8 +88,8 @@ fn print_help() {
 fn cmd_load(path: &[u8]) {
     let full_path = resolve_path(path);
     let full_path_str = {
-        let end = full_path.iter().position(|&b| b == 0).unwrap_or(0);
-        unsafe { core::str::from_utf8_unchecked(&full_path[..end]) }
+        let end = full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len());
+        core::str::from_utf8(&full_path[..end]).unwrap_or("")
     };
 
     write_str(b"\r\n");
@@ -117,7 +117,7 @@ fn cmd_load(path: &[u8]) {
 }
 
 fn cmd_unload(name: &[u8]) {
-    let name_str = unsafe { core::str::from_utf8_unchecked(name) };
+    let name_str = core::str::from_utf8(name).unwrap_or("");
     let name_str = name_str.trim();
 
     write_str(b"\r\n");
@@ -151,7 +151,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     let arg_str = {
-        let end = args.iter().position(|&b| b == 0).unwrap_or(0);
+        let end = args.iter().position(|&b| b == 0).unwrap_or(args.len());
         trim_ascii(&args[..end])
     };
 

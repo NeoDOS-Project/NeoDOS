@@ -46,7 +46,7 @@ fn parse_u32(s: &[u8]) -> Option<u32> {
 }
 
 fn build_proc_path(pid: u32, buf: &mut [u8; 128]) -> &str {
-    let prefix = b"\\Ob\\Process\\eproc/";
+    let prefix = b"\\Process\\";
     let plen = prefix.len();
     buf[..plen].copy_from_slice(prefix);
     let mut i = plen;
@@ -138,16 +138,17 @@ pub extern "C" fn _start() -> ! {
             write_u32(pid);
             write_str(tr_id!(IDS_MSG_TERMINATED).as_bytes());
             write_str(b"\r\n");
+            let _ = syscall::sys_close(proc_fd);
+            syscall::sys_exit(0)
         }
         Err(_) => {
             write_err(b"\r\n");
             write_err(tr_id!(IDS_ERR_FAILED).as_bytes());
             write_err(b"\r\n");
+            let _ = syscall::sys_close(proc_fd);
+            syscall::sys_exit(1)
         }
     }
-
-    let _ = syscall::sys_close(proc_fd);
-    syscall::sys_exit(0)
 }
 
 fn write_u32(mut v: u32) {
