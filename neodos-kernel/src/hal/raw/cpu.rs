@@ -374,6 +374,16 @@ pub unsafe fn raw_gs_write_u64(offset: u32, val: u64) {
 }
 
 #[inline]
+pub unsafe fn raw_gs_write_u32(offset: u32, val: u32) {
+    asm!(
+        "mov gs:[{0}], {1:e}",
+        in(reg) offset as u64,
+        in(reg) val,
+        options(nostack, nomem)
+    );
+}
+
+#[inline]
 pub unsafe fn raw_gs_write_u16(offset: u32, val: u16) {
     asm!(
         "mov gs:[{0}], {1:e}",

@@ -244,6 +244,12 @@ candidate MUST be returned to its runqueue without any state mutation (contract:
 **Rule 6.1.5 (Per-CPU current authority)**: On SMP, the authoritative identity of the
 thread currently executing on a CPU is `KPRCB.current_thread` (per-CPU). The global
 `Scheduler.current_tid` is bookkeeping only and MUST NOT be used as per-CPU identity.
+**Rule 6.1.6 (KPRCB field width)**: Every write to a KPRCB field MUST use the exact
+field width (`gs_write_u32` for `current_pid`, `gs_write_u8` for `idle` /
+`need_resched` / `current_irql`, `gs_write_u64` for pointers/counters). A wider
+store spills into the following byte fields and silently clears per-CPU state;
+`this_cpu_set_current_pid` previously used a u64 store and cleared
+`idle`/`need_resched`/`current_irql` on every context switch (F-01-A audit).
 
 ### 6.2 Preemption
 
