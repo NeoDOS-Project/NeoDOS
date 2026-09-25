@@ -153,7 +153,8 @@ pub extern "C" fn _start() -> ! {
     write_str(b" sent, ");
     write_dec_u64((count - lost) as u64);
     write_str(b" received, ");
-    write_dec_u64((lost * 100 / count) as u64);
+    let loss_pct = if count == 0 { 0 } else { lost * 100 / count };
+    write_dec_u64(loss_pct as u64);
     write_str(b"% loss\r\n\r\n");
     syscall::sys_exit(0)
 }

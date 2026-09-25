@@ -103,7 +103,7 @@ pub extern "C" fn _start() -> ! {
             }
         };
 
-        let mut buf = [0u8; 64 * 32];
+        let mut buf = [0u8; 64 * 72];
         let n = match syscall::sys_ob_query_info(fd, libneodos::syscall::ObInfoClass::Drivers, &mut buf) {
             Ok(n) => n,
             Err(_) => {
@@ -116,22 +116,28 @@ pub extern "C" fn _start() -> ! {
         };
         let _ = syscall::sys_close(fd);
 
-        if n < core::mem::size_of::<DriverEntry>() {
+        let entry_size = core::mem::size_of::<DriverEntry>();
+        if n < entry_size {
             write_str(b"\r\n");
             write_str(tr_id!(IDS_NO_DRIVERS).as_bytes());
             write_str(b"\r\n\r\n");
             syscall::sys_exit(0);
         }
 
-        let count = n / core::mem::size_of::<DriverEntry>();
-        let entries: &[DriverEntry] = unsafe {
-            core::slice::from_raw_parts(buf.as_ptr() as *const DriverEntry, count)
-        };
+        let count = n / entry_size;
 
         write_str(b"\r\n");
         write_str(tr_id!(IDS_HEADER_LOADED).as_bytes());
         write_str(b"\r\n");
-        for (i, entry) in entries.iter().enumerate() {
+        for i in 0..count {
+            let mut entry = DriverEntry { name: [0u8; 64], state: 0, version: 0 };
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    buf.as_ptr().add(i * entry_size),
+                    &mut entry as *mut DriverEntry as *mut u8,
+                    entry_size,
+                );
+            }
             if entry.name[0] == 0 { continue; }
             let name_end = entry.name.iter().position(|&b| b == 0).unwrap_or(64);
             write_str(b"  [");

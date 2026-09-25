@@ -404,8 +404,16 @@ impl Shell {
             let mut fds = [0u64;2];
             let mut pn = [0u8;16]; pn[..7].copy_from_slice(b"\\Pipe/p");
             let mut pos = 7; let mut v = i as u64;
-            if v==0 { pn[pos]=b'0'; pos+=1; }
-            else { let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; } for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; } }
+            if v==0 {
+                if pos >= 15 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
+                pn[pos]=b'0'; pos+=1;
+            }
+            else {
+                let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; }
+                if pos + nd >= 15 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
+                for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; }
+            }
+            if pos >= 16 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
             pn[pos]=0;
             let ps = unsafe { core::str::from_utf8_unchecked(&pn[..pos]) };
             if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() {
@@ -500,7 +508,7 @@ impl Shell {
         if r[0]!=b'\\'&&r[0]!=b'/' {
             let mut cb = [0u8; 256];
             if let Ok(n) = syscall::sys_getcwd(&mut cb) {
-                if n>0 { let cwd=&cb[..n-1]; if cwd.len()>2 { for &b in cwd.iter().skip(2) { if pos<255 { fp[pos]=b; pos+=1; } } } if pos>2&&fp[pos-1]!=b'\\'&&pos<255 { fp[pos]=b'\\'; pos+=1; } }
+                if n>0 { let cwd=&cb[..n]; if cwd.len()>2 { for &b in cwd.iter().skip(2) { if pos<255 { fp[pos]=b; pos+=1; } } } if pos>2&&fp[pos-1]!=b'\\'&&pos<255 { fp[pos]=b'\\'; pos+=1; } }
             }
         }
         for &b in r { if pos<255 { fp[pos]=b; pos+=1; } }
