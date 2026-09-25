@@ -271,6 +271,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(proc_id) = object::ob_create_object(ObType::Key, "Process", 12, 0, None) {
             let _ = object::namespace::ob_insert_object("\\Global\\Info\\Process", proc_id);
         }
+        if let Ok(thr_id) = object::ob_create_object(ObType::Key, "Threads", 13, 0, None) {
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Threads", thr_id);
+        }
     }
 
     // ============================================

@@ -3,9 +3,221 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, DriveInfoRaw, DriverInfoRaw, ObPipeFds};
+use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, DriveInfoRaw, DriverInfoRaw, ObPipeFds, StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION};
 use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
 use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
+
+// ═══════════════════════════════════════════════════════════════════════
+// SMP observability — CpuStats (24) / ThreadStats (25)
+//
+// Design notes:
+//  * CpuStats reads each CPU's KPRCB by kernel virtual address (KPRCB_PAGES),
+//    the same mechanism `is_pid_running_on_any_cpu` already uses. The reads are
+//    lock-free and each field is an aligned scalar, so no torn word is
+//    observable, but the *set* of fields is NOT a single atomic instant: a
+//    timer/interrupt on that CPU may update one counter between two of our
+//    reads. This is documented best-effort snapshot semantics.
+//  * ThreadStats takes the global scheduler lock only to copy a bounded batch
+//    of Kthread fields into a static staging buffer, then releases it before
+//    touching user memory. No Kthread pointer escapes to user space.
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Maximum threads captured in a single ThreadStats snapshot. If the live
+/// count exceeds this, the header reports `total > returned` (no silent loss).
+const THREAD_STATS_MAX: usize = 128;
+
+/// Serialises the shared staging buffer across CPUs. `try_lock` only: a
+/// contended query returns `-Again` and the caller may retry; we never sleep
+/// while holding the scheduler lock.
+static THREAD_STATS_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
+/// Staging area for one ThreadStats snapshot (never exposed to user space).
+static mut THREAD_STATS_STAGING: [ThreadStatsEntry; THREAD_STATS_MAX] = [
+    ThreadStatsEntry {
+        tid: 0, pid: 0, cpu_id: 0, priority: 0, state: 0, _pad: [0; 2], cpu_ticks: 0,
+    };
+    THREAD_STATS_MAX
+];
+
+/// Read one CPU's KPRCB counters by kernel virtual address.
+///
+/// `online` is supplied by the caller (derived from `cpu_local::cpu_count()`),
+/// so this function never invents an online state.
+fn read_cpu_stats(cpu: u32, online: bool, total: u32) -> CpuStatsEntry {
+    use crate::arch::x64::cpu_local::{
+        KPRCB_PAGES, OFFSET_CPU_ID, OFFSET_APIC_ID, OFFSET_INTERRUPT_COUNT,
+        OFFSET_CONTEXT_SWITCH_COUNT, OFFSET_TIMER_TICK_COUNT,
+    };
+
+    let addr = unsafe {
+        if (cpu as usize) < KPRCB_PAGES.len() {
+            core::ptr::read_volatile(core::ptr::addr_of!(KPRCB_PAGES[cpu as usize]))
+        } else {
+            0
+        }
+    };
+
+    // A zero KPRCB means the slot was never allocated (should not happen after
+    // boot); report identity but zero counters rather than dereferencing null.
+    if addr == 0 {
+        return CpuStatsEntry {
+            interrupt_count: 0,
+            context_switch_count: 0,
+            timer_tick_count: 0,
+            cpu_id: cpu,
+            apic_id: 0,
+            online: (online && cpu < total) as u8,
+            _pad: [0; 7],
+        };
+    }
+
+    unsafe {
+        CpuStatsEntry {
+            interrupt_count: core::ptr::read_volatile(
+                (addr + OFFSET_INTERRUPT_COUNT as u64) as *const u64,
+            ),
+            context_switch_count: core::ptr::read_volatile(
+                (addr + OFFSET_CONTEXT_SWITCH_COUNT as u64) as *const u64,
+            ),
+            timer_tick_count: core::ptr::read_volatile(
+                (addr + OFFSET_TIMER_TICK_COUNT as u64) as *const u64,
+            ),
+            // Identity comes from the KPRCB itself; we never assume
+            // index == cpu_id or cpu_id == apic_id.
+            cpu_id: core::ptr::read_volatile((addr + OFFSET_CPU_ID as u64) as *const u32),
+            apic_id: core::ptr::read_volatile((addr + OFFSET_APIC_ID as u64) as *const u32),
+            online: (online && cpu < total) as u8,
+            _pad: [0; 7],
+        }
+    }
+}
+
+/// Build a `[StatsHeader][CpuStatsEntry; returned]` snapshot into `buf_ptr`.
+fn snapshot_cpu_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    let hdr_sz = core::mem::size_of::<StatsHeader>();
+    let entry_sz = core::mem::size_of::<CpuStatsEntry>();
+    if buf_size < hdr_sz {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    // NeoDOS brings CPUs online sequentially and `cpu_count()` returns the
+    // highest online CPU id + 1, so `0..total` is exactly the online set.
+    let total = crate::arch::x64::cpu_local::cpu_count()
+        .clamp(1, crate::arch::x64::cpu_local::MAX_CPUS as u32);
+    let cap = (buf_size - hdr_sz) / entry_sz;
+    let returned = core::cmp::min(cap, total as usize);
+
+    let hdr = StatsHeader {
+        version: STATS_VERSION,
+        total,
+        returned: returned as u32,
+        entry_size: entry_sz as u32,
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &hdr as *const StatsHeader as *const u8,
+            buf_ptr as *mut u8,
+            hdr_sz,
+        );
+        let mut out = (buf_ptr as *mut u8).add(hdr_sz) as *mut CpuStatsEntry;
+        for cpu in 0..returned {
+            let entry = read_cpu_stats(cpu as u32, true, total);
+            out.write(entry);
+            out = out.add(1);
+        }
+    }
+    (hdr_sz + returned * entry_sz) as u64
+}
+
+/// Build a `[StatsHeader][ThreadStatsEntry; returned]` snapshot into `buf_ptr`.
+///
+/// The scheduler lock is held only while copying Kthread fields into the
+/// staging buffer; user memory is written after it is released. Callers see a
+/// best-effort snapshot: threads created/terminated concurrently may or may
+/// not appear, and `Kthread.cpu` reflects the CPU the thread is enqueued or
+/// running on at copy time.
+fn snapshot_thread_stats(buf_ptr: u64, buf_size: usize) -> u64 {
+    let hdr_sz = core::mem::size_of::<StatsHeader>();
+    let entry_sz = core::mem::size_of::<ThreadStatsEntry>();
+    if buf_size < hdr_sz {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    // One snapshot in flight; contended calls are retryable, never blocking.
+    let _guard = match THREAD_STATS_LOCK.try_lock() {
+        Some(g) => g,
+        None => return err_to_u64(SyscallError::Again),
+    };
+
+    let mut total = 0usize;
+    let mut staged = 0usize;
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        for k in lock.kthreads.iter().flatten() {
+            total += 1;
+            if staged < THREAD_STATS_MAX {
+                let entry = ThreadStatsEntry {
+                    tid: k.tid,
+                    pid: k.pid,
+                    cpu_id: k.cpu,
+                    priority: k.priority,
+                    state: k.state.to_u8(),
+                    _pad: [0; 2],
+                    cpu_ticks: k.cpu_ticks,
+                };
+                unsafe {
+                    (core::ptr::addr_of_mut!(THREAD_STATS_STAGING) as *mut ThreadStatsEntry)
+                        .add(staged)
+                        .write(entry);
+                }
+                staged += 1;
+            }
+        }
+    });
+
+    let cap = (buf_size - hdr_sz) / entry_sz;
+    let copied = core::cmp::min(staged, cap);
+    let hdr = StatsHeader {
+        version: STATS_VERSION,
+        total: total as u32,
+        returned: copied as u32,
+        entry_size: entry_sz as u32,
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &hdr as *const StatsHeader as *const u8,
+            buf_ptr as *mut u8,
+            hdr_sz,
+        );
+        if copied > 0 {
+            core::ptr::copy_nonoverlapping(
+                core::ptr::addr_of!(THREAD_STATS_STAGING) as *const u8,
+                (buf_ptr as *mut u8).add(hdr_sz),
+                copied * entry_sz,
+            );
+        }
+    }
+    (hdr_sz + copied * entry_sz) as u64
+}
+
+/// Aggregate a process's thread states into the documented `ObProcessInfo`
+/// state encoding (0 Ready, 1 Running, 2 Blocked, 3 Terminated):
+///   1 Running    — at least one thread Running on some CPU
+///   0 Ready      — no Running thread, at least one Ready
+///   2 Blocked    — live threads exist, all Blocked/Suspended/Terminated
+///   3 Terminated — no live thread exists
+fn process_state_aggregate(any_live: bool, any_running: bool, any_ready: bool) -> u8 {
+    if !any_live {
+        3
+    } else if any_running {
+        1
+    } else if any_ready {
+        0
+    } else {
+        2
+    }
+}
 
 pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
     let fd = regs.rbx as u8;
@@ -138,21 +350,39 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
                 let s = crate::scheduler::current_scheduler();
                 let lock = s.lock();
                 if let Some(ep) = lock.find_eprocess(pid) {
+                    // Aggregate the process's threads into one documented state
+                    // (layout/semantics compatible with ObProcessInfo::state):
+                    //   1 Running  — at least one thread Running on some CPU
+                    //   0 Ready    — no Running thread, at least one Ready
+                    //   2 Blocked  — all live threads Blocked/Suspended
+                    //   3 Terminated — no live thread exists
+                    // This replaces the old `if thread_count == 0 { 1 } else { 0 }`
+                    // which reported every live process as "Ready".
+                    let mut prio = 2u8;
+                    let mut found_thread = false;
+                    let mut any_running = false;
+                    let mut any_ready = false;
+                    for k in lock.kthreads.iter().flatten() {
+                        if k.pid != pid {
+                            continue;
+                        }
+                        if !found_thread {
+                            prio = k.priority;
+                            found_thread = true;
+                        }
+                        match k.state {
+                            ThreadState::Running => any_running = true,
+                            ThreadState::Ready => any_ready = true,
+                            _ => {}
+                        }
+                    }
+                    let state = process_state_aggregate(found_thread, any_running, any_ready);
                     ObProcessInfo {
                         pid,
                         parent_pid: ep.parent_pid,
-                        priority: {
-                    let mut prio = 2u8;
-                    for k in lock.kthreads.iter().flatten() {
-                        if k.pid == pid {
-                            prio = k.priority;
-                            break;
-                        }
-                    }
-                    prio
-                },
-                thread_count: ep.thread_count,
-                        state: if ep.thread_count == 0 { 1u8 } else { 0u8 },
+                        priority: prio,
+                        thread_count: ep.thread_count,
+                        state,
                         padding: [0u8; 2],
                     }
                 } else {
@@ -1153,8 +1383,104 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
             }
             return arg_len as u64;
         }
+        _ if info_class == ObInfoClass::CpuStats as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Global CPU stats hang off \Global\Info\CpuInfo (native_id 3).
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 3 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            snapshot_cpu_stats(buf_ptr, buf_size)
+        }
+        _ if info_class == ObInfoClass::ThreadStats as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Global thread stats hang off \Global\Info\Threads (native_id 13).
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 13 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            snapshot_thread_stats(buf_ptr, buf_size)
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SMP observability tests
+// ═══════════════════════════════════════════════════════════════════════
+
+pub fn register_ob_stats_tests() {
+    use crate::{test_case, test_eq, test_true};
+
+    test_case!("ob_info_class_smp_ids", {
+        test_eq!(crate::object::types::ObInfoClass::CpuStats as u32, 24);
+        test_eq!(crate::object::types::ObInfoClass::ThreadStats as u32, 25);
+        // Existing IDs must not shift (ABI v8 frozen).
+        test_eq!(crate::object::types::ObInfoClass::Process as u32, 3);
+        test_eq!(crate::object::types::ObInfoClass::Thread as u32, 4);
+        test_eq!(crate::object::types::ObInfoClass::CpuInfo as u32, 7);
+        test_eq!(crate::object::types::ObInfoClass::ProcessArgs as u32, 39);
+    });
+
+    test_case!("smp_stats_struct_layout", {
+        test_eq!(core::mem::size_of::<StatsHeader>(), 16);
+        test_eq!(core::mem::size_of::<CpuStatsEntry>(), 40);
+        test_eq!(core::mem::size_of::<ThreadStatsEntry>(), 24);
+        test_eq!(STATS_VERSION, 1);
+    });
+
+    test_case!("process_state_aggregate_semantics", {
+        test_eq!(process_state_aggregate(false, false, false), 3);
+        test_eq!(process_state_aggregate(true, true, false), 1);
+        test_eq!(process_state_aggregate(true, false, true), 0);
+        test_eq!(process_state_aggregate(true, false, false), 2);
+        // Running wins over Ready.
+        test_eq!(process_state_aggregate(true, true, true), 1);
+    });
+
+    test_case!("cpu_stats_snapshot_header", {
+        let mut buf = [0u8; 16 + 40 * 2];
+        let n = snapshot_cpu_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
+        test_true!(n >= core::mem::size_of::<StatsHeader>());
+        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        test_eq!(hdr.version, STATS_VERSION);
+        test_eq!(hdr.entry_size as usize, core::mem::size_of::<CpuStatsEntry>());
+        test_true!(hdr.total >= 1);
+        test_true!(hdr.returned <= hdr.total);
+        test_true!(hdr.returned as usize <= 2);
+    });
+
+    test_case!("thread_stats_snapshot_header", {
+        let mut buf = [0u8; 16 + 24 * 4];
+        let n = snapshot_thread_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
+        test_true!(n >= core::mem::size_of::<StatsHeader>());
+        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        test_eq!(hdr.version, STATS_VERSION);
+        test_eq!(hdr.entry_size as usize, core::mem::size_of::<ThreadStatsEntry>());
+        test_true!(hdr.returned <= hdr.total);
+        test_true!(hdr.returned as usize <= 4);
+    });
+
+    test_case!("thread_stats_truncation_is_reported", {
+        // Room for exactly one entry: header.total must still be the true
+        // count so callers can detect truncation (never silent).
+        let mut buf = [0u8; 16 + 24];
+        let n = snapshot_thread_stats(buf.as_mut_ptr() as u64, buf.len()) as usize;
+        test_eq!(n, 16 + 24);
+        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+        test_eq!(hdr.returned, 1);
+        test_true!(hdr.total >= hdr.returned);
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════

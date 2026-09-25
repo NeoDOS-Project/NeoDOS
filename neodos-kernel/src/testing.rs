@@ -222,6 +222,7 @@ pub fn register_tests() {
     crate::scheduler::register_tests();
     crate::syscall::register_syscall_table_tests();
     crate::syscall::register_sync_tests();
+    crate::syscall::register_ob_stats_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();
