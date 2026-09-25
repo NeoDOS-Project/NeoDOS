@@ -89,6 +89,10 @@ pub struct Kthread {
     pub kernel_apc_queue: VecDeque<crate::apc::ApcEntry>,
     pub user_apc_queue: VecDeque<crate::apc::ApcEntry>,
     pub apc_pending: bool,
+    /// True for the per-CPU idle thread. Idle threads are never enqueued and
+    /// are only selected when no other thread is Ready. Replaces the old
+    /// `tid == IDLE_TID` checks so AP idle threads (distinct TIDs) are handled.
+    pub is_idle: bool,
 }
 
 impl fmt::Debug for Kthread {

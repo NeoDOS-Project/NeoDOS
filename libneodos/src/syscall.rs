@@ -447,6 +447,8 @@ pub enum ObInfoClass {
     RegistryKey = 21,
     RegistryValue = 22,
     SocketRecv = 23,
+    CpuStats = 24,
+    ThreadStats = 25,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
@@ -629,6 +631,115 @@ impl ObProcessInfo {
             _ => "?",
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// SMP observability — additive ABI (ObInfoClass::CpuStats / ThreadStats)
+//
+// Mirrors `neodos-kernel/src/syscall/ob/types.rs`. These are new structs;
+// no existing layout changes. Snapshot protocol:
+//   buffer = [StatsHeader][Entry; returned]
+//   total    = objects available this snapshot
+//   returned = objects copied (returned < total ⇒ truncated)
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Version of the stats snapshot layout.
+pub const STATS_VERSION: u32 = 1;
+
+/// Common header for `CpuStats` / `ThreadStats` snapshots (16 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StatsHeader {
+    pub version: u32,
+    pub total: u32,
+    pub returned: u32,
+    pub entry_size: u32,
+}
+
+impl StatsHeader {
+    /// True when the kernel had more objects than fit in the caller's buffer.
+    pub fn truncated(&self) -> bool {
+        self.returned < self.total
+    }
+}
+
+/// Per-CPU counters snapshot (40 bytes). `timer_tick_count` counts timer
+/// interrupts, NOT CPU busy time. `interrupt_count` is currently not
+/// incremented by the kernel and reads 0.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CpuStatsEntry {
+    pub interrupt_count: u64,
+    pub context_switch_count: u64,
+    pub timer_tick_count: u64,
+    pub cpu_id: u32,
+    pub apic_id: u32,
+    pub online: u8,
+    pub _pad: [u8; 7],
+}
+
+impl CpuStatsEntry {
+    pub fn is_online(&self) -> bool {
+        self.online != 0
+    }
+}
+
+/// Per-thread snapshot (24 bytes). `cpu_id` is the CPU the thread is currently
+/// enqueued/running on (`Kthread.cpu`).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ThreadStatsEntry {
+    pub tid: u32,
+    pub pid: u32,
+    pub cpu_id: u32,
+    pub priority: u8,
+    pub state: u8,
+    pub _pad: [u8; 2],
+    pub cpu_ticks: u64,
+}
+
+impl ThreadStatsEntry {
+    /// Kernel `ThreadState::to_u8` encoding.
+    pub fn state_str(&self) -> &'static str {
+        match self.state {
+            0 => "Ready",
+            1 => "Running",
+            2 => "Blocked",
+            3 => "Suspended",
+            4 => "Terminated",
+            _ => "?",
+        }
+    }
+
+    pub fn priority_str(&self) -> &'static str {
+        match self.priority {
+            0 => "HIGH",
+            1 => "ABOVE_NORMAL",
+            2 => "NORMAL",
+            3 => "IDLE",
+            _ => "?",
+        }
+    }
+}
+
+/// Query per-CPU stats via an fd opened on `\Global\Info\CpuInfo`.
+pub fn sys_ob_query_cpu_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    sys_ob_query_info(fd, ObInfoClass::CpuStats, buf)
+}
+
+/// Query the global thread snapshot via an fd opened on `\Global\Info\Threads`.
+pub fn sys_ob_query_thread_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    sys_ob_query_info(fd, ObInfoClass::ThreadStats, buf)
+}
+
+/// Open `\Global\Info\CpuInfo` ready for a `CpuStats` query.
+pub fn ob_open_cpu_info() -> Result<u8, i64> {
+    sys_ob_open("\\Global\\Info\\CpuInfo", ob_access::READ)
+}
+
+/// Open `\Global\Info\Threads` ready for a `ThreadStats` query.
+pub fn ob_open_threads() -> Result<u8, i64> {
+    sys_ob_open("\\Global\\Info\\Threads", ob_access::READ)
 }
 
 // ── Inline asm helpers for Ob syscalls ──

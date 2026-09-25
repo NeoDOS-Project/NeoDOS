@@ -61,6 +61,22 @@ impl Scheduler {
             }
             // Peek tid at victim head
             let tid = victim_rq.entries[(victim_rq.head_idx as usize) % victim_rq.entries.len()];
+            // Only Ready threads are stealable. A non-Ready tid in a runqueue is
+            // invalid (e.g. a stray entry left behind by a race); drop it instead
+            // of migrating it, otherwise a Running thread could be dispatched on
+            // two CPUs at once (Phase 13 SMP).
+            let is_ready = tid != crate::scheduler::types::BOOT_TID
+                && self
+                    .find_kthread(tid)
+                    .map(|k| k.state == crate::scheduler::types::ThreadState::Ready)
+                    .unwrap_or(false);
+            if !is_ready {
+                let _ = victim_rq.pop();
+                if crate::scheduler::sched_forensic_verbose() {
+                    crate::serial_println!("[KCPU] steal-drop victim={} tid={} (not Ready)", victim, tid);
+                }
+                continue;
+            }
             // Pop victim
             let tid_popped = victim_rq.pop().unwrap();
             debug_assert_eq!(tid, tid_popped);
@@ -76,6 +92,12 @@ impl Scheduler {
             if thief_rq.push(tid_popped) {
                 stolen += 1;
                 STEAL_SUCCESS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+                if thief != 0 && crate::scheduler::sched_forensic_verbose() {
+                    crate::serial_println!(
+                        "[KCPU] steal thief={} victim={} tid={} old_cpu={:?} state={:?}",
+                        thief, victim, tid_popped, old_cpu,
+                        self.find_kthread(tid_popped).map(|k| k.state));
+                }
             } else {
                 // Rollback: restore cpu and push back to victim
                 if let Some(old) = old_cpu {

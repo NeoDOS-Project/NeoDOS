@@ -208,6 +208,7 @@ impl Scheduler {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: false,
         };
         eprocesses.push(Some(boot_eproc));
         kthreads.push(Some(Box::new(boot_thread)));
@@ -239,7 +240,7 @@ impl Scheduler {
     pub fn has_non_idle_threads(&self) -> bool {
         self.kthreads.iter().any(|t| {
             t.as_ref().is_some_and(|k| {
-                k.tid != IDLE_TID &&
+                !k.is_idle &&
                 k.state != ThreadState::Terminated &&
                 k.state != ThreadState::Suspended
             })
@@ -262,6 +263,41 @@ pub fn current_scheduler() -> &'static Mutex<Scheduler> {
 // concurrent AP interference. Set by the test harness.
 pub(crate) static SCHED_TEST_MODE: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+
+/// Phase 13: APs enter the scheduler only after the BSP has finished the boot
+/// test suite (set by `main.rs`), keeping the suite deterministic. This is a
+/// bring-up gate, not a scheduling workaround: no thread is forced, no runqueue
+/// is drained, no extra yield is injected.
+static AP_SCHED_ACTIVE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Whether APs are allowed to run the scheduler.
+pub fn ap_sched_active() -> bool {
+    AP_SCHED_ACTIVE.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Enable/disable AP scheduling. Must only be toggled by the BSP.
+pub fn set_ap_sched_active(v: bool) {
+    AP_SCHED_ACTIVE.store(v, core::sync::atomic::Ordering::Release);
+}
+
+/// Establish the BSP's per-CPU identity (KPRCB.current_thread = boot thread)
+/// once GS is programmed. Without this, CPU0's KPRCB thread stays null and
+/// `current_tid_for_this_cpu()` falls back to the global `current_tid`, which
+/// APs also write — breaking Rule 6.1.5. No-op before GS is set.
+pub fn sync_bsp_identity() {
+    if crate::hal::safe::GsBase::read() == 0 {
+        return;
+    }
+    let s = current_scheduler();
+    let lock = s.lock();
+    if let Some(k) = lock.find_kthread(BOOT_TID) {
+        let ptr = k as *const Kthread as *mut Kthread;
+        unsafe {
+            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+        }
+    }
+}
 
 /// Phase 7 diagnostic: dump every KTHREAD (tid/pid/state/cpu/rsp) plus each
 /// per-CPU runqueue's TIDs. Read-only, used by Ctrl+Alt+V / syscall 99 to
@@ -313,10 +349,52 @@ pub fn sched_dump() {
 
 
 
-/// Recycle a terminated EPROCESS. External resources should already be freed.
+/// Phase 13 evidence: dump each online CPU's KPRCB current identity and its
+/// run queue length. One-shot diagnostic (not a hot path).
+pub fn dump_per_cpu_current() {
+    let count = crate::arch::x64::cpu_local::cpu_count();
+    for cpu in 0..count as usize {
+        let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+        if kprcb == 0 { continue; }
+        let cur_ptr = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64
+            )
+        };
+        let cur_pid = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_PID as u64) as *const u32
+            )
+        };
+        let idle = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_IDLE as u64) as *const u8
+            )
+        };
+        let tid = if cur_ptr == 0 { 0 } else {
+            unsafe { (*(cur_ptr as *const Kthread)).tid }
+        };
+        let qlen = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
+        crate::serial_println!(
+            "[AP_EVIDENCE] cpu={} kprcb=0x{:x} current_tid={} current_pid={} idle={} qlen={}",
+            cpu, kprcb, tid, cur_pid, idle, qlen);
+    }
+}
+
+/// Recycle a terminated EPROCESS. External resources are released here
+/// (idempotently) if the caller has not already done so.
 pub fn cleanup_terminated_process(pid: u32) {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    current_scheduler().lock().recycle_terminated(pid);
+    {
+        let mut sched = current_scheduler().lock();
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+            // F-02-B: the pid still has a thread executing on some CPU (SMP).
+            // Do not drop its kernel stack now; defer reclaim to the reaper.
+            crate::scheduler::lifecycle::defer_reap(pid);
+        } else {
+            sched.recycle_terminated(pid);
+        }
+    }
     unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 

@@ -82,11 +82,19 @@ pub fn init_ring3_frame(kernel_stack_top: u64, entry: u64, user_stack_top: u64) 
 
 pub(crate) fn idle_task() -> ! {
     loop {
-        crate::hal::without_interrupts(|| {
-            crate::work_queue::WORK_QUEUE.process_high();
-            crate::work_queue::WORK_QUEUE.process_low();
-        });
-        crate::eventbus::EVENT_BUS.dispatch_pending();
+        // The work queue and event bus are global and single-driver: only the
+        // BSP idle thread may drain them. AP idle threads just halt (their
+        // timer drives preemption). Running these on both CPUs corrupts the
+        // shared queues (Phase 13 SMP).
+        let is_bsp = crate::hal::safe::GsBase::read() == 0
+            || unsafe { crate::arch::x64::cpu_local::this_cpu_id() == 0 };
+        if is_bsp {
+            crate::hal::without_interrupts(|| {
+                crate::work_queue::WORK_QUEUE.process_high();
+                crate::work_queue::WORK_QUEUE.process_low();
+            });
+            crate::eventbus::EVENT_BUS.dispatch_pending();
+        }
         crate::hal::hlt_once();
     }
 }

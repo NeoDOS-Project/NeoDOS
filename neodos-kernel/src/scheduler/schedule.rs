@@ -1,9 +1,10 @@
 //! Scheduler core schedule — extracted from mod.rs
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::log::LogSubsys;
 use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, IDLE_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
 use crate::scheduler::Scheduler;
-use crate::scheduler::lifecycle::{defer_reap, reap_pending_zombies};
+use crate::scheduler::lifecycle::reap_pending_zombies;
 
 pub(crate) static SCHEDULE_CALLS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
@@ -180,7 +181,7 @@ impl Scheduler {
                 }
                 let k = self.find_kthread(tid)
                     .ok_or("orphan TID in run queue")?;
-                if tid == BOOT_TID || tid == IDLE_TID {
+                if tid == BOOT_TID || k.is_idle {
                     return Err("boot or idle thread found in run queue");
                 }
                 if k.cpu as usize != cpu {
@@ -196,7 +197,7 @@ impl Scheduler {
 
         for k in self.kthreads.iter().flatten() {
             let count = queue_tids.iter().filter(|&&tid| tid == k.tid).count();
-            if k.tid == IDLE_TID || k.tid == BOOT_TID {
+            if k.is_idle || k.tid == BOOT_TID {
                 if count != 0 {
                     return Err("special thread found in run queue");
                 }
@@ -223,6 +224,49 @@ impl Scheduler {
             }
         }
         core::ptr::null_mut()
+    }
+
+    /// Find the idle Kthread for a specific CPU (0 = BSP idle / IDLE_TID).
+    /// Falls back to the BSP idle when the CPU has no registered idle yet.
+    pub fn find_idle_ptr(&self, cpu: u32) -> *mut Kthread {
+        for th in self.kthreads.iter() {
+            if let Some(k) = th {
+                if k.is_idle && k.cpu == cpu {
+                    return &**k as *const Kthread as *mut Kthread;
+                }
+            }
+        }
+        self.find_kthread_ptr(IDLE_TID)
+    }
+
+    /// Register the per-CPU idle thread for an AP. Called by the AP itself once
+    /// it has adopted the final address space. Returns `(idle_tid, idle_ptr)`.
+    ///
+    /// The idle Kthread owns no Box stack: `kernel_stack_top` is the
+    /// pre-allocated AP stack and `rsp` is captured by the first timer tick.
+    /// Must be called with interrupts disabled.
+    pub fn register_ap_idle(&mut self, cpu: u32, stack_top: u64) -> Option<(u32, *mut Kthread)> {
+        // Need room for the fabricated frame 4 KB below the top.
+        if stack_top < 4096 {
+            return None;
+        }
+        if let Some(k) = self.kthreads.iter().flatten().find(|k| k.is_idle && k.cpu == cpu) {
+            return Some((k.tid, &**k as *const Kthread as *mut Kthread));
+        }
+        let th_slot = self.alloc_kthread_slot()?;
+        let tid = self.next_tid;
+        self.next_tid += 1;
+        // Fabricate a Ring0 frame 4 KB below the AP stack top (ap_entry's live
+        // frame sits near the top). The AP iretqs into `idle_task` exactly like
+        // CPU0's idle, so every later timer switch has a valid saved frame.
+        let frame_top = stack_top.saturating_sub(4096);
+        let entry = crate::scheduler::stack::idle_task as *const () as u64;
+        let mut idle = Kthread::new_idle(tid, 0, entry, frame_top);
+        idle.cpu = cpu;
+        idle.state = ThreadState::Running;
+        self.kthreads[th_slot] = Some(Box::new(idle));
+        let ptr = &**self.kthreads[th_slot].as_ref()? as *const Kthread as *mut Kthread;
+        Some((tid, ptr))
     }
 
 
@@ -270,9 +314,11 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                        // Safe to reap zombies now that we have switched away from previous stack
-                        let new_pid = k.pid;
-                        reap_pending_zombies(self, new_pid);
+                        // F-02-A: reap must exclude the context we are switching AWAY
+                        // from (its kernel stack is still under us), not the new one.
+                        // The new pid is Running, so it can never be in the zombie queue.
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     } else if k.state == ThreadState::Ready {
                         // Phase 9: valid Ready candidate but frame not dispatchable
@@ -304,8 +350,9 @@ impl Scheduler {
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
                         crate::trace_sched_switch!(prev, prev_state, tid, k.state.to_u8());
-                        let new_pid = k.pid;
-                        reap_pending_zombies(self, new_pid);
+                        // F-02-A: exclude the previous context's pid (stack in use).
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     } else if k.state == ThreadState::Ready {
                         // Phase 9: not dispatchable here; return to its CPU queue.
@@ -331,19 +378,43 @@ impl Scheduler {
         let scan_prev = if self.kprcb_thread_in_self() {
             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
         } else { self.current_tid };
+        // Cached outside the mutable kthread scan (borrow checker) and used to
+        // re-home a global-scan candidate onto this CPU.
+        let is_global_sched = self.kprcb_thread_in_self();
+        let scan_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         'scan: for priority in 0..PRIORITY_COUNT {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
                     if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority
                         && (!require_ring3 || frame_is_ring3(k))
+                        // Never pick an idle thread here: idles are CPU-bound and
+                        // selected by the per-CPU idle fallback.
+                        && !k.is_idle
+                        // Keep the boot thread pinned to CPU0; migrating it would
+                        // strand the BSP boot flow on an AP.
+                        && !(k.tid == BOOT_TID && scan_cpu != 0)
                     {
                         // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
                         Scheduler::remove_from_run_queue(&**k);
                         let prev = scan_prev;
                         let prev_state = k.state.to_u8();
                         self.current_tid = check_tid;
-                        k.state = ThreadState::Running;
+                        // Phase 13: a global-scan candidate may have been migrated
+                        // to another CPU's queue (Kthread.cpu) before it became
+                        // Ready here. It now runs on THIS CPU, so its affinity
+                        // must follow, otherwise two threads can appear Running
+                        // on the old CPU. Only for the global scheduler so local
+                        // test schedulers keep their synthetic cpu values.
+                        if is_global_sched {
+                            let old_cpu = k.cpu;
+                            k.cpu = scan_cpu;
+                            if old_cpu != scan_cpu && sched_forensic_verbose() {
+                                crate::serial_println!(
+                                    "[KCPU] scan tid={} old_cpu={} new_cpu={} prev={}",
+                                    check_tid, old_cpu, scan_cpu, scan_prev);
+                            }
+                        }                        k.state = ThreadState::Running;
                         picked_ptr = &mut **k as *mut Kthread;
                         picked_pid = k.pid;
                         picked_tid = k.tid;
@@ -370,7 +441,9 @@ impl Scheduler {
             if self.kprcb_thread_in_self() {
                 unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(picked_ptr, picked_pid); }
             }
-            reap_pending_zombies(self, picked_pid);
+            // F-02-A: exclude the pid being switched away from (stack still in use).
+            let prev_pid = self.find_kthread(picked_prev).map(|t| t.pid).unwrap_or(0);
+            reap_pending_zombies(self, prev_pid);
             return picked_ptr;
         }
 
@@ -384,28 +457,31 @@ impl Scheduler {
             if !self.has_non_idle_threads() {
                 kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
             }
-            let ptr = self.find_kthread_ptr(IDLE_TID);
+            let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+            let ptr = self.find_idle_ptr(this_cpu);
             if !ptr.is_null() {
                 unsafe {
                     let idle = &mut *ptr;
                     if idle.state != ThreadState::Terminated {
+                        let idle_tid = idle.tid;
                         Scheduler::remove_from_run_queue(idle);
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
                         } else { self.current_tid };
                         let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                        self.current_tid = IDLE_TID;
+                        self.current_tid = idle_tid;
                         if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
                         }
                         idle.state = ThreadState::Running;
                         idle.time_slice_remaining = IDLE_TIME_SLICE;
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
-                            prev, IDLE_TID);
-                        crate::trace_cswitch!(prev as u64, IDLE_TID as u64);
-                        crate::trace_sched_switch!(prev, prev_state, IDLE_TID, idle.state.to_u8());
-                        let new_pid = (*ptr).pid;
-                        reap_pending_zombies(self, new_pid);
+                            prev, idle_tid);
+                        crate::trace_cswitch!(prev as u64, idle_tid as u64);
+                        crate::trace_sched_switch!(prev, prev_state, idle_tid, idle.state.to_u8());
+                        // F-02-A: exclude the pid being switched away from.
+                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+                        reap_pending_zombies(self, prev_pid);
                         return ptr;
                     }
                 }
@@ -446,7 +522,7 @@ impl Scheduler {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     k.rsp = current_rsp;
-                    if k.tid != BOOT_TID && k.tid != IDLE_TID {
+                    if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);
                     }
                     needs_resched = true;

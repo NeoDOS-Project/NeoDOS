@@ -140,8 +140,10 @@ core::arch::global_asm!(
     "and eax, 0xFF",
     // EAX = APIC ID
 
-    // Load stack pointer from pre-computed address
-    "mov ebx, [ap_stack_ptr_rt]",
+    // Load stack pointer for THIS AP from the per-APIC-ID stack table.
+    // All APs share the trampoline, so a single stack pointer would make them
+    // clobber each other. Table is indexed by APIC ID (QEMU: linear 0..N-1).
+    "mov ebx, [ap_stack_table_rt + eax*4]",
 
     // Set RSP to the per-CPU stack
     "mov esp, ebx",
@@ -219,7 +221,7 @@ core::arch::global_asm!(
     ".set ap_gdt_desc_rt, ap_gdt_desc - ap_trampoline_start + 0x8000",
     ".set ap_pm32_entry_rt, ap_pm32_entry - ap_trampoline_start + 0x8000",
     ".set ap_lm64_entry_rt, ap_lm64_entry - ap_trampoline_start + 0x8000",
-    ".set ap_stack_ptr_rt, ap_stack_ptr - ap_trampoline_start + 0x8000",
+    ".set ap_stack_table_rt, ap_stack_table - ap_trampoline_start + 0x8000",
     ".set ap_pml4_ptr_rt, ap_pml4_ptr - ap_trampoline_start + 0x8000",
     ".set ap_entry_ptr_rt, ap_entry_ptr - ap_trampoline_start + 0x8000",
 
@@ -248,8 +250,8 @@ core::arch::global_asm!(
 
     // ── Shared data (filled by BSP before sending SIPI) ──
     ".align 8",
-    "ap_stack_ptr:",
-    ".8byte 0",
+    "ap_stack_table:",
+    ".zero 16 * 4",                        // 32-bit stack pointers, indexed by APIC ID
     "ap_pml4_ptr:",
     ".8byte 0",
     "ap_entry_ptr:",
@@ -262,7 +264,7 @@ core::arch::global_asm!(
 extern "C" {
     fn ap_trampoline_start();
     fn ap_trampoline_end();
-    fn ap_stack_ptr();
+    fn ap_stack_table();
     fn ap_pml4_ptr();
     fn ap_entry_ptr();
 }
@@ -347,7 +349,7 @@ unsafe fn send_init_to(apic_id: u32) {
 /// 3. Signals readiness to BSP
 /// 4. Enters idle loop (HLT-based)
 #[no_mangle]
-pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
+pub extern "sysv64" fn ap_entry(stack_top: u64) -> ! {
     // ── Early raw markers: must appear even if serial_println deadlocks ──
     unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x41; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'A'
     // Minimal serial println without allocation lock? Try but ignore failure
@@ -431,48 +433,94 @@ pub extern "sysv64" fn ap_entry(_stack_top: u64) -> ! {
     // Hacerlo después de AP_READY_COUNT para no bloquear el handshake
     crate::arch::x64::gdt::init_ap(my_cpu);
 
-    // Load per-CPU IDT (each AP needs its own IDT loaded via lidt)
-    // For now, load the shared IDT — APs will use the same handlers
-    // but each has its own IDT in memory.
-    unsafe {
-        // Create a per-CPU IDT from the static one
-        // The x86_64 crate's IDT is not Send, so we build one inline
-        let idt_ptr = alloc_idt_page();
-        if !idt_ptr.is_null() {
-            let desc = crate::hal::raw::IdtDescriptor::from_raw(
-                (256 * 16 - 1) as u16, idt_ptr as u64
-            );
-            crate::hal::raw::raw_lidt(&desc);
-        }
+    // Load the shared kernel IDT (captured by the BSP after `idt::init`).
+    // The previous code loaded a freshly zeroed per-CPU page, so the first
+    // interrupt on an AP would triple fault.
+    {
+        let desc = crate::arch::x64::idt::kernel_idt_descriptor();
+        unsafe { crate::hal::raw::raw_lidt(&desc); }
     }
 
     // Also emit 'H' after GDT/IDT
     unsafe { core::arch::asm!("mov dx, 0x3F8; mov al, 0x48; out dx, al", out("dx") _, out("al") _, options(nomem, nostack)); } // 'H'
 
-    // Enter idle loop
-    loop {
-        // Check per-CPU need_resched
-        unsafe {
-            let need = cpu_local_mod::this_cpu_need_resched();
-            if need {
-                cpu_local_mod::this_cpu_set_need_resched(false);
-                // TODO(smp): wire up local scheduler schedule() — APs spin with HLT but never yield
+    // ── Phase 13: AP activation ──────────────────────────────────────────
+    // The BSP finalizes paging after APs have been started
+    // (init_custom_page_tables, demand paging, TEB, ECAM). Wait for that to
+    // complete, then adopt the final kernel PML4 so this CPU shares the kernel
+    // address space and the user window.
+    while !crate::arch::x64::paging::paging_final() {
+        unsafe { crate::hal::raw::raw_pause(); }
+    }
+    let pml4 = crate::arch::x64::paging::kernel_pml4();
+    if pml4 != 0 {
+        crate::hal::write_cr3(pml4);
+    }
+
+    // Register this CPU's idle Kthread and install it as the KPRCB current
+    // context BEFORE enabling interrupts. `stack_top` is this AP's own
+    // pre-allocated stack.
+    let (_idle_tid, idle_ptr) = {
+        let mut sched = crate::scheduler::current_scheduler().lock();
+        match sched.register_ap_idle(my_cpu as u32, stack_top) {
+            Some(v) => v,
+            None => {
+                drop(sched);
+                loop { unsafe { crate::hal::raw::raw_hlt_once(); } }
             }
         }
-        unsafe { crate::hal::raw::raw_hlt_once(); }
+    };
+
+    // Enable this CPU's local APIC and start its periodic timer, then enable
+    // interrupts. Until `AP_SCHED_ACTIVE` the timer handler early-returns, so
+    // the AP idles without touching the scheduler (deterministic test suite).
+    crate::timers::apic::init_apic_enable();
+    if !crate::timers::apic::init_apic_timer_ap() {
+        loop { unsafe { crate::hal::raw::raw_hlt_once(); } }
     }
+    crate::hal::enable_interrupts();
+
+    // Enter the idle Kthread via its fabricated Ring0 frame (idle_task). From
+    // here every timer switch has a valid saved frame, exactly like CPU0.
+    unsafe { ap_enter_idle(idle_ptr) }
 }
 
-/// Allocate a page for per-CPU IDT and copy the static IDT.
-/// Returns pointer to the IDT memory (for lidt).
-fn alloc_idt_page() -> *mut u8 {
-    let layout = core::alloc::Layout::from_size_align(4096, 4096).unwrap();
-    let page = unsafe { alloc::alloc::alloc(layout) };
-    if page.is_null() {
-        return core::ptr::null_mut();
-    }
-    unsafe { core::ptr::write_bytes(page, 0, 4096); }
-    page
+/// Switch the AP into its idle Kthread's saved Ring0 frame and `iretq` into
+/// `idle_task`. Mirrors the `exception_do_resched` tail. Never returns.
+///
+/// # Safety
+/// `idle` must be a registered per-CPU idle Kthread with a valid fabricated
+/// frame; interrupts may be enabled.
+unsafe fn ap_enter_idle(idle: *mut crate::scheduler::Kthread) -> ! {
+    let rsp = (*idle).rsp;
+    let ks_top = (*idle).kernel_stack_top;
+    let tid = (*idle).tid;
+    let pid = (*idle).pid;
+    crate::arch::x64::cpu_local::this_cpu_set_current_thread(idle);
+    crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
+    crate::arch::x64::cpu_local::this_cpu_set_idle(true);
+    crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
+    core::arch::asm!(
+        "mov rsp, {0}",
+        "pop rax",
+        "pop rbx",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "pop r8",
+        "pop r9",
+        "pop r10",
+        "pop r11",
+        "pop r12",
+        "pop r13",
+        "pop r14",
+        "pop r15",
+        "pop rbp",
+        "iretq",
+        in(reg) rsp,
+        options(noreturn)
+    );
 }
 
 // ── BSP: copy trampoline ────────────────────────────────────────────────
@@ -521,19 +569,29 @@ unsafe fn restore_trampoline() {
     crate::serial_println!("[TRAMPOLINE] restored {} bytes at 0x{:x}", size, AP_TRAMPOLINE_ADDR);
 }
 
-/// Patch the trampoline with shared data (stack pointer, PML4, entry).
+/// Patch the trampoline with shared data (PM L4, entry) and the per-APIC-ID
+/// stack table.
 ///
 /// # Safety
-/// Must be called after copy_trampoline().
-unsafe fn patch_trampoline(stack_ptr: u64, pml4_ptr: u64, entry_ptr: u64) {
+/// Must be called after copy_trampoline(). Stacks must be below 4 GiB (the
+/// trampoline loads 32-bit stack pointers in protected mode).
+unsafe fn patch_trampoline(pml4_ptr: u64, entry_ptr: u64) {
     let base = AP_TRAMPOLINE_ADDR;
 
-    // ap_stack_ptr is at offset from ap_trampoline_start
-    let stack_offset = (ap_stack_ptr as *const () as usize) - (ap_trampoline_start as *const () as usize);
+    // Per-AP stack table, indexed by APIC ID (32-bit entries; stacks < 4 GiB).
+    let table_offset = (ap_stack_table as *const () as usize) - (ap_trampoline_start as *const () as usize);
     let pml4_offset = (ap_pml4_ptr as *const () as usize) - (ap_trampoline_start as *const () as usize);
     let entry_offset = (ap_entry_ptr as *const () as usize) - (ap_trampoline_start as *const () as usize);
 
-    *((base + stack_offset as u64) as *mut u64) = stack_ptr;
+    for cpu in 0..MAX_CPUS {
+        let stack = AP_STACK_PTRS[cpu];
+        if stack == 0 { continue; }
+        let apic = AP_APIC_IDS[cpu];
+        let idx = (apic as usize) & (MAX_CPUS - 1);
+        let slot = (base + table_offset as u64 + (idx * core::mem::size_of::<u32>()) as u64) as *mut u32;
+        core::ptr::write_volatile(slot, stack as u32);
+    }
+
     *((base + pml4_offset as u64) as *mut u64) = pml4_ptr;
     *((base + entry_offset as u64) as *mut u64) = entry_ptr;
 }
@@ -649,14 +707,21 @@ pub fn init_smp() -> usize {
     let mut ap_stack_count = 0usize;
     unsafe {
         for (cpu, slot) in AP_STACK_PTRS.iter_mut().enumerate().take(MAX_CPUS).skip(1) {
-            let stack_page = crate::hal::alloc_page();
-            if stack_page.is_null() {
-                kerror!(crate::log::LogSubsys::Boot, "Failed to allocate stack for AP {}", cpu);
-                break;
+            // AP_STACK_SIZE (16 KB) needs an order-2 contiguous buddy allocation.
+            // The previous code used a single 4 KB `alloc_page()`, so `top` was
+            // 12 KB past the allocated frame and the AP clobbered foreign memory
+            // (KPRCBs/heap) — fatal once APs actually use the stack to schedule.
+            match crate::memory::alloc_frames(2) {
+                Some(base) => {
+                    *slot = base + AP_STACK_SIZE as u64;
+                    ap_stack_count += 1;
+                    crate::serial_println!("[SMP] AP{} stack 0x{:x}..0x{:x}", cpu, base, *slot);
+                }
+                None => {
+                    kerror!(crate::log::LogSubsys::Boot, "Failed to allocate stack for AP {}", cpu);
+                    break;
+                }
             }
-            *slot = stack_page as u64 + AP_STACK_SIZE as u64;
-            ap_stack_count += 1;
-            crate::serial_println!("[SMP] AP{} stack 0x{:x}..0x{:x}", cpu, *slot - AP_STACK_SIZE as u64, *slot);
         }
     }
     crate::serial_println!("[SMP] allocated {} AP stacks", ap_stack_count);
@@ -669,13 +734,12 @@ pub fn init_smp() -> usize {
     let ap_entry_ptr = ap_entry as *const () as u64;
     crate::serial_println!("[SMP] PML4=0x{:x} ap_entry=0x{:x} vec=0x{:x} addr=0x{:x}", pml4_phys, ap_entry_ptr, AP_TRAMPOLINE_VECTOR, AP_TRAMPOLINE_ADDR);
 
-    // Step 5b: Patch trampoline with first AP's stack (for -smp 2 single AP bring-up)
-    // Sequential bring-up would re-patch per CPU; for now patch for CPU 1
+    // Step 5b: Patch trampoline with PML4 + entry + per-APIC-ID stack table.
     unsafe {
         let stack_for_ap1 = AP_STACK_PTRS[1];
         if stack_for_ap1 != 0 {
-            patch_trampoline(stack_for_ap1, pml4_phys, ap_entry_ptr);
-            crate::serial_println!("[SMP] patch_trampoline stack=0x{:x} pml4=0x{:x} entry=0x{:x}", stack_for_ap1, pml4_phys, ap_entry_ptr);
+            patch_trampoline(pml4_phys, ap_entry_ptr);
+            crate::serial_println!("[SMP] patch_trampoline pml4=0x{:x} entry=0x{:x} (per-AP stacks)", pml4_phys, ap_entry_ptr);
         } else {
             crate::serial_println!("[SMP] ERROR no stack for AP1");
         }

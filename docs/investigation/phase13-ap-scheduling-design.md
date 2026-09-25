@@ -1,10 +1,32 @@
 # Phase 13 — SMP Scheduling Real: design for AP dispatch
 
-**Status:** design (not implemented)
-**Branch context:** `feat/phase13-ap-scheduling` (Task C + F-01/F-02 audit landed)
+**Status:** implemented behind the non-default `smp-ap-sched` feature (WIP).
+AP bring-up infrastructure is in place and the non-feature boot is
+regression-clean (716/716 on SMP1/SMP2/SMP4). Enabling AP scheduling currently
+reproduces a post-`netd` hang/GPF on the AP context-switch path; see
+[Blockers](#9-blockers-wip) below.
+**Branch context:** `feat/phase13-ap-scheduling-real`
 **Related:** `docs/investigation/smp-bring-up-report.md`,
 `docs/investigation/f01-f02-adversarial-audit.md`,
-`docs/architecture/source-of-truth.md` (Rules 6.1.4, 6.1.5).
+`docs/architecture/source-of-truth.md` (Rules 6.1.4, 6.1.5, 6.1.6).
+
+---
+
+## 0. Implemented pieces (this session)
+
+| Area | Change |
+|------|--------|
+| AP stacks | `init_smp` now allocates AP stacks with `alloc_frames(2)` (16 KB contiguous). The old single `alloc_page()` made `top` point 12 KB past the frame, so APs clobbered foreign memory. |
+| Per-AP stack table | Trampoline loads its stack from `ap_stack_table[apic_id]` (per-AP) instead of one shared `ap_stack_ptr` (all APs shared CPU1's stack). |
+| Shared IDT | `idt::kernel_idt_descriptor()` publishes the BSP IDT; APs `lidt` it instead of a zeroed per-CPU page (which would triple fault on the first interrupt). |
+| Final PML4 | `paging::publish_paging_final()`/`kernel_pml4()`; APs wait for paging finalization then `write_cr3` the final kernel PML4. |
+| Per-CPU idle | `Kthread.is_idle`; `register_ap_idle(cpu, stack_top)` fabricates a Ring0 frame 4 KB below the AP stack top and the AP `iretq`s into `idle_task` (see `ap_enter_idle`). |
+| Per-AP LAPIC timer | `timers::apic::init_apic_enable()` + `init_apic_timer_ap()` (vector 32, no HPET calibration / PIC mutation). |
+| BSP-only side effects | Timer global tick/cursor/watchdog/DPC/event-bus and idle work-queue draining are BSP-only. |
+| Per-CPU invariants | `invariants::IRQ_NESTING` / `IN_TIMER_IRQ` are per-CPU (`IRQ_REENTRANCY` false positive fixed). |
+| Identity | `sync_bsp_identity()` pins CPU0's KPRCB to the boot thread; global scan re-homes `Kthread.cpu` to the executing CPU; boot pinned to CPU0; idle excluded from the global scan. |
+| Steal safety | `steal_and_migrate` only migrates `Ready` threads (drops invalid/stray entries). |
+| Enable gate | `AP_SCHED_ACTIVE` gated by the `smp-ap-sched` cargo feature; AP timer handler early-returns before taking the scheduler lock until enabled. |
 
 ---
 
@@ -171,25 +193,22 @@ evidence is captured in the post-suite window.
 ap_entry(stack_top):
   GS = KPRCB                       (existing)
   AP_READY_COUNT++                 (existing, early)
-  gdt::init_ap(cpu); load IDT      (existing)
+  gdt::init_ap(cpu); load shared IDT (existing + idt::kernel_idt_descriptor)
   # NEW:
-  tid = scheduler.register_ap_idle(cpu, stack_top)   # Kthread with is_idle=true,
-                                                     # state=Running, entry=idle_task
-  KPRCB.current_thread = idle_kthread
-  KPRCB.current_pid    = 0
-  KPRCB.idle           = 1
-  init_apic_timer_ap()             # periodic vector 32 on this CPU
-  prepare_ring3_return(idle.kernel_stack_top, tid, 0)  # TSS.RSP0 for this CPU
-  AP_SCHED_ACTIVE = true           # global, after run_all()
+  wait paging_final; write_cr3(kernel_pml4)
+  tid = register_ap_idle(cpu, stack_top)  # is_idle=true, Ring0 frame -> idle_task
+  init_apic_enable(); init_apic_timer_ap()  # periodic vector 32 on this CPU
   sti
   iretq into idle.rsp              # idle_task loop; timer now preempts it
 ```
 
 Timer tick on AP (existing `timer_handler_inner`, idle branch):
-`on_timer_tick` expires the idle slice → state Ready → idle branch calls
-`scheduler.schedule()` → step 2 `try_work_steal()` pulls a Ready TID from the
-BSP runqueue (or step 3 global scan) → commit + `sync_per_cpu_current` →
-`timer_handler_asm` switches RSP and `iretq`s into the thread.
+until `AP_SCHED_ACTIVE` (feature `smp-ap-sched`) the handler early-returns
+before taking the scheduler lock. Once enabled: `on_timer_tick` expires the
+idle slice → state Ready → idle branch calls `scheduler.schedule()` → step 2
+`try_work_steal()` pulls a Ready TID (or step 3 global scan) → commit +
+`sync_per_cpu_current` → `timer_handler_asm` switches RSP and `iretq`s into the
+thread.
 
 Notes:
 
@@ -248,3 +267,43 @@ Notes:
 4. **Steal policy:** current `try_work_steal` scans victims 0..MAX_CPUS and
    migrates entire queues. Fine for bring-up; revisit (steal half, work
    conserving) after correctness is proven.
+
+---
+
+## 9. Blockers (WIP)
+
+With `--features smp-ap-sched`, the AP does dispatch work (evidence below) but
+the system then reproduces a hang/GPF in the AP context-switch path.
+
+Evidence captured (QEMU q35 TCG, `-smp 2`):
+
+- 716/716 boot tests pass (AP idle during the suite).
+- `[KCPU] steal thief=1 victim=0 tid=0 old_cpu=Some(0) state=Some(Running)` —
+  a Running thread was present in a runqueue; the Ready-only steal guard now
+  drops such stray entries.
+- `[KCPU] scan tid=3 old_cpu=0 new_cpu=1 prev=2` — the AP dispatches netd.
+- `[AP_EVIDENCE] cpu=0 current_tid=0 ...; cpu=1 current_tid=3 current_pid=1`
+  (earlier run) — a real thread running on CPU1.
+- After `[NET] netd alive — first tick`, a GPF is raised at the timer `iretq`
+  (`rip=0x4010ed7`, the `iretq` in `timer_handler_asm`) and serial output stops
+  mid-line, indicating the faulting CPU holds the serial/scheduler lock and the
+  BSP GPF handler deadlocks.
+
+Fixes already applied that did **not** resolve it: per-AP 16 KB stacks, shared
+IDT, final PML4, fabricated idle frame, per-CPU IRQ nesting, BSP-only
+timer/idle side effects, boot/idle pinning, Ready-only steal, `k.cpu`
+re-home.
+
+Root cause still open. Candidate leads:
+
+1. AP switching to a kernel thread whose saved Ring0 frame is stale (netd is
+   found by the global scan, not enqueued; its `rsp` is the synthetic spawn
+   frame until the first preemption).
+2. Lock-order inversion: the timer handler holds the SCHEDULER lock while the
+   faulting CPU also holds the serial spinlock, so the GPF handler deadlocks
+   before printing diagnostics.
+
+Until resolved, `smp-ap-sched` is **off by default**; the default kernel keeps
+APs idle (`idle_task` + timer early-return) and is regression-clean
+(716/716 on SMP1/SMP2/SMP4). The infrastructure above is landed so the next
+session can focus purely on the AP switch-path GPF.

@@ -140,6 +140,8 @@ pub enum ObInfoClass {
     RegistryKey = 21,
     RegistryValue = 22,
     SocketRecv = 23,
+    CpuStats = 24,
+    ThreadStats = 25,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,

@@ -106,7 +106,8 @@ offset for SeAccessCheck re-verification.
 \ (root)
 ├── \Global\
 │   ├── \Global\Info\              — virtual read-only objects
-│   │   ├── CpuInfo                — ob_query_info(class=7)
+│   │   ├── CpuInfo                — ob_query_info(class=7); CpuStats (class=24)
+│   │   ├── Threads                — ob_query_info(class=25) all-thread snapshot
 │   │   ├── DateTime               — RTC date/time (class=9)
 │   │   ├── Memory                 — physical + kernel heap stats (class=10)
 │   │   ├── Version                — kernel version string (class=8)
@@ -161,18 +162,18 @@ offset for SeAccessCheck re-verification.
 
 ### ob_query_info (RAX=62)
 
-Supports 30 info classes:
+Supports the following info classes:
 
 | Class | Name | Description |
 | ------- | ------ | ------------- |
 | 0 | Basic | Object type + refcount |
 | 1 | Name | Object name string |
 | 2 | File | File size + attributes (VFS) |
-| 3 | Process | PID + parent PID + state |
-| 4 | Thread | TID + state + CPU time |
+| 3 | Process | PID + parent PID + priority + thread count + aggregated state |
+| 4 | Thread | TID + PID + state + priority of the first matching KTHREAD (see 25 for all threads) |
 | 5 | Pipe | Pipe buffer size + available |
 | 6 | Device | Device type + status |
-| 7 | CpuInfo | CPUID leaf values per core |
+| 7 | CpuInfo | `CpuInfoFull` for the *calling* CPU (identity, features, address widths) + total `cpu_count` |
 | 8 | Version | Kernel version string |
 | 9 | DateTime | RTC date/time |
 | 10 | Memory | Phys total/usable/free + heap stats |
@@ -189,6 +190,8 @@ Supports 30 info classes:
 | 21 | RegistryKey | Key metadata |
 | 22 | RegistryValue | Value data |
 | 23 | SocketRecv | Receive from socket |
+| 24 | CpuStats | Per-CPU snapshot `[StatsHeader][CpuStatsEntry]` — `\Global\Info\CpuInfo` |
+| 25 | ThreadStats | All-thread snapshot `[StatsHeader][ThreadStatsEntry]` — `\Global\Info\Threads` |
 | 29 | ServiceState | Service state (state+pid+uptime) |
 | 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
@@ -202,6 +205,113 @@ Supports 30 info classes:
 | 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager` |
 | 33 | PowerPlanInfo | Active plan index + name (planned) — `\System\PowerManager` |
 | 34 | PowerStatus | Power capabilities bitmask (planned) — `\System\PowerManager` |
+
+### SMP observability (CpuStats = 24, ThreadStats = 25)
+
+Additive ABI v8 extension: no existing class, struct, or syscall number changed.
+Both classes return a size-negotiated snapshot:
+
+```text
+buffer = [StatsHeader][Entry; returned]
+```
+
+`StatsHeader` (16 bytes, `repr(C)`):
+
+| Field | Type | Meaning |
+| ------- | ---- | --------- |
+| `version` | u32 | Layout version (currently 1) |
+| `total` | u32 | Objects available in this snapshot |
+| `returned` | u32 | Objects actually written |
+| `entry_size` | u32 | `sizeof(Entry)` for forward-compatible parsing |
+
+The syscall returns the number of bytes written. If `returned < total` the
+buffer was too small; retry with a larger buffer. There is no silent truncation.
+
+#### CpuStats (24) — `\Global\Info\CpuInfo`
+
+`CpuStatsEntry` (40 bytes):
+
+| Field | Type | Source |
+| ------- | ---- | ------ |
+| `interrupt_count` | u64 | `KPRCB.interrupt_count` |
+| `context_switch_count` | u64 | `KPRCB.context_switch_count` |
+| `timer_tick_count` | u64 | `KPRCB.timer_tick_count` |
+| `cpu_id` | u32 | `KPRCB.cpu_id` |
+| `apic_id` | u32 | `KPRCB.apic_id` |
+| `online` | u8 | 1 if the CPU is in the online set |
+
+Semantics:
+
+- One entry per online CPU (`cpu_local::cpu_count()`).
+- Reads are lock-free per-CPU reads of `KPRCB_PAGES[cpu]` (the same mechanism
+  `is_pid_running_on_any_cpu` uses). Each field is an aligned scalar (no torn
+  word), but the *set* of fields is not one atomic instant: that CPU may update
+  a counter between two of our reads. Treat it as a best-effort point-in-time
+  sample, not a transactionally consistent snapshot.
+- `timer_tick_count` counts timer interrupts. It is **not** CPU busy time and
+  there is currently no busy/idle accounting, so **CPU% cannot be computed** and
+  is deliberately not exposed.
+- `interrupt_count` is exposed for ABI completeness, but the kernel currently
+  has **no increment site** for it, so it reads 0. `timer_tick_count` and
+  `context_switch_count` are maintained.
+- `cpu_id` is a scheduler CPU index; `apic_id` identifies hardware. They are not
+  assumed equal.
+- Online CPUs are currently `0..cpu_count()`: NeoDOS brings APs online
+  sequentially and does not support CPU hot-remove.
+
+#### ThreadStats (25) — `\Global\Info\Threads`
+
+`ThreadStatsEntry` (24 bytes):
+
+| Field | Type | Source |
+| ------- | ---- | ------ |
+| `tid` | u32 | `Kthread.tid` |
+| `pid` | u32 | `Kthread.pid` |
+| `cpu_id` | u32 | `Kthread.cpu` — CPU the thread is enqueued/running on; follows migration |
+| `priority` | u8 | `Kthread.priority` (0 HIGH … 3 IDLE) |
+| `state` | u8 | `ThreadState::to_u8` (0 Ready, 1 Running, 2 Blocked, 3 Suspended, 4 Terminated) |
+| `cpu_ticks` | u64 | `Kthread.cpu_ticks` — timer ticks charged to this thread |
+
+Semantics:
+
+- Enumerates **all** live KTHREADs, including kernel and per-CPU idle threads
+  (idle threads have `pid = 0`). It does not use the Ob namespace, so it is not
+  limited to user threads and needs no per-thread Ob object.
+- The global scheduler lock is held only while copying thread fields into a
+  staging buffer; user memory is written after the lock is released. No
+  `Kthread` pointer ever reaches user space (no UAF window).
+- Best-effort snapshot: a thread created/terminated concurrently may or may not
+  appear, and `Kthread.cpu` can change immediately after the copy (migration).
+  At most one snapshot is in flight; a concurrent query returns `-Again` and
+  may be retried.
+- A snapshot is capped at 128 entries; `total > returned` signals truncation.
+- `cpu_ticks` is a **tick counter**, not calibrated time and not a percentage.
+  It increments once per timer tick while the thread is the running thread.
+
+#### Process state semantics (`ObProcessInfo.state`)
+
+Class 3 (`Process`) now aggregates its threads' states under the scheduler lock
+instead of `thread_count == 0 ? Running : Ready`:
+
+| Value | Meaning |
+| ------- | --------- |
+| 0 | Ready — no Running thread, at least one Ready |
+| 1 | Running — at least one thread Running on some CPU |
+| 2 | Blocked — live threads exist, all Blocked/Suspended |
+| 3 | Terminated — no live thread |
+
+The struct layout is unchanged.
+
+#### Known limitations (no compatible ABI workaround)
+
+- **Process names**: `Eprocess` has no name field; the Ob namespace leaf is the
+  PID. `ProcessArgs` returns the *calling* process's args, not the queried
+  process's, so it is not a name source.
+- **CPU% / busy time**: only tick counters exist; no idle/busy accounting.
+- **CPU hotplug**: `online` is derived from the contiguous online range.
+- **`sys_ob_enum` truncation**: directory enumeration still has no pagination.
+  The new stats classes avoid silent loss via `total`/`returned`; `sys_ob_enum`
+  itself is unchanged to preserve ABI v8.
 
 ### ob_set_info (RAX=63)
 

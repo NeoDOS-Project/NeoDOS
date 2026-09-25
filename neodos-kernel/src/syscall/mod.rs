@@ -38,6 +38,7 @@ use self::handlers::*;
 use self::ob::*;
 use self::cm::*;
 pub use self::tests::{register_syscall_table_tests, register_sync_tests};
+pub use self::ob::register_ob_stats_tests;
 
 
 // ── Syscall Number Constants (frozen ABI) ──

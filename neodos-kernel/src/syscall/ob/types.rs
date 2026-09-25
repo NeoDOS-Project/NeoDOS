@@ -52,6 +52,68 @@ pub struct ObThreadInfo {
     pub padding: [u8; 2],
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// SMP observability — additive ObInfoClass payloads (ABI v8 compatible)
+//
+// These structs are NEW. They do not alter any existing struct layout.
+// They are returned by the new `ObInfoClass::CpuStats` (24) and
+// `ObInfoClass::ThreadStats` (25) classes.
+//
+// Snapshot protocol (both classes):
+//   buffer = [StatsHeader][Entry; returned]
+//   - `total`    : objects available in this snapshot
+//   - `returned` : objects actually copied (may be < total if buffer small)
+//   - `entry_size` : sizeof(Entry) for forward-compatible parsing
+//   The syscall returns the number of bytes written. A caller detecting
+//   `returned < total` knows the snapshot was truncated (no silent loss).
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Version of the stats snapshot layout (bump on incompatible change).
+pub const STATS_VERSION: u32 = 1;
+
+/// Common header for `CpuStats` / `ThreadStats` snapshots. 16 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct StatsHeader {
+    pub version: u32,
+    pub total: u32,
+    pub returned: u32,
+    pub entry_size: u32,
+}
+
+/// Per-CPU counters snapshot. `online` is 0/1. Counters are monotonic per
+/// CPU (`timer_tick_count` is NOT CPU busy time — it counts timer interrupts).
+///
+/// NOTE: `interrupt_count` is exposed for ABI completeness but the kernel
+/// currently has no increment site for it, so it reads 0. `timer_tick_count`
+/// and `context_switch_count` are maintained. 40 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct CpuStatsEntry {
+    pub interrupt_count: u64,
+    pub context_switch_count: u64,
+    pub timer_tick_count: u64,
+    pub cpu_id: u32,
+    pub apic_id: u32,
+    pub online: u8,
+    pub _pad: [u8; 7],
+}
+
+/// Per-thread snapshot. `cpu_id` is `Kthread.cpu` (the CPU the thread is
+/// currently enqueued/running on), NOT derived from any other field.
+/// 24 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ThreadStatsEntry {
+    pub tid: u32,
+    pub pid: u32,
+    pub cpu_id: u32,
+    pub priority: u8,
+    pub state: u8,
+    pub _pad: [u8; 2],
+    pub cpu_ticks: u64,
+}
+
 
 #[repr(C)]
 pub struct ObDeviceInfo {

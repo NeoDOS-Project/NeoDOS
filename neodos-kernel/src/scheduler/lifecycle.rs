@@ -99,11 +99,16 @@ pub fn is_zombie_backpressured() -> bool {
 }
 
 /// Try to reap *all* zombies that are not running on ANY CPU.
-/// Called from schedule() with scheduler lock already held, after context
-/// switch is decided. F-01 ensures we never free a pid still running on any
-/// CPU; F-06 ensures we drain the whole eligible set per schedule, so a
-/// burst of 1000 exits is reaped in one schedule, not 1000 schedules.
-pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
+/// Called from schedule() with scheduler lock already held, after the next
+/// thread has been committed but BEFORE the caller switches RSP to it.
+/// `exclude_pid` is the pid currently executing on this CPU (the context being
+/// switched away from): its kernel stack is still under us until the caller's
+/// `mov rsp`/`iretq`, so it MUST NOT be reclaimed here (F-02-A). Any other
+/// pid is safe to reclaim.
+/// F-01 ensures we never free a pid still running on any CPU; F-06 ensures we
+/// drain the whole eligible set per schedule, so a burst of 1000 exits is reaped
+/// in one schedule, not 1000 schedules.
+pub fn reap_pending_zombies(sched: &mut Scheduler, exclude_pid: u32) {
     // Quick check without lock to avoid taking ZOMBIE_PIDS when empty
     if ZOMBIE_PIDS.lock().is_empty() { return; }
 
@@ -112,9 +117,9 @@ pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
         let pid_to_reap = {
             let mut zombies = ZOMBIE_PIDS.lock();
             if zombies.is_empty() { break; }
-            // Find first zombie not running on any CPU and not the current pid
+            // Find first zombie not running on any CPU and not the stacked pid
             let pos = zombies.iter().position(|&p| {
-                if p == current_pid { return false; }
+                if p == exclude_pid { return false; }
                 !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p)
             });
             match pos {
@@ -138,6 +143,46 @@ pub fn reap_pending_zombies(sched: &mut Scheduler, current_pid: u32) {
             }
             None => break,
         }
+    }
+}
+
+/// Free all external resources owned by an EPROCESS: user memory slot, demand
+/// paging heap, mmap regions and handle-table entries.
+///
+/// F-02-B: idempotent — safe to call after `terminate_current` already released
+/// them (guards on `user_slot.take()`, `heap_base != 0`, empty mmap, closed
+/// handles). Used by `recycle_terminated` and `kill_pid` so resources are freed
+/// exactly once regardless of which path reclaims the process.
+fn free_eprocess_resources(eproc: &mut Eprocess) {
+    if let Some(slot) = eproc.user_slot.take() {
+        crate::arch::x64::paging::free_user_slot(slot);
+    }
+    if eproc.heap_base != 0 {
+        crate::arch::x64::paging::heap_free_range(
+            eproc.heap_base,
+            eproc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
+        );
+        let heap_idx = ((eproc.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE)
+            / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+        crate::arch::x64::paging::free_heap_slot(heap_idx);
+        eproc.heap_base = 0;
+        eproc.heap_break = 0;
+    }
+    for r in eproc.mmap_regions.iter() {
+        crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
+    }
+    eproc.mmap_regions.clear();
+    eproc.mmap_next = crate::arch::x64::paging::MMAP_BASE;
+    for i in 0..eproc.handle_table.len() {
+        let h = eproc.handle_table[i];
+        if h.is_pipe_read() {
+            crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
+        } else if h.is_pipe_write() {
+            crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
+        } else if h.has_ob_object() {
+            let _ = crate::object::ob_close_object(h.object_id);
+        }
+        eproc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
     }
 }
 
@@ -439,6 +484,7 @@ impl Scheduler {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: false,
         };
 
         let ep_slot = self.alloc_eprocess_slot()?;
@@ -494,40 +540,20 @@ impl Scheduler {
             e.as_ref().is_some_and(|ep| ep.pid == pid)
         });
 
+        // F-02-B: if any thread of this pid is still executing on a CPU, we must
+        // not drop its Kthread/kernel stack here. Free the eprocess resources
+        // (idempotent) but keep the slot so `recycle_terminated` can drop the
+        // threads/stacks once no CPU is executing on them.
+        let running = crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid);
+
         // Free resources from eprocess
         if let Some(ep_idx) = ep_idx {
-            if let Some(mut eproc) = self.eprocesses[ep_idx].take() {
-                // Free user slot
-                if let Some(slot) = eproc.user_slot.take() {
-                    crate::arch::x64::paging::free_user_slot(slot);
+            if running {
+                if let Some(ep) = self.eprocesses[ep_idx].as_mut() {
+                    free_eprocess_resources(ep);
                 }
-                // Free heap pages + heap slot
-                if eproc.heap_base != 0 {
-                    crate::arch::x64::paging::heap_free_range(
-                        eproc.heap_base,
-                        eproc.heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE,
-                    );
-                    let heap_idx = ((eproc.heap_base
-                        - crate::arch::x64::paging::PROCESS_HEAP_BASE)
-                        / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
-                    crate::arch::x64::paging::free_heap_slot(heap_idx);
-                }
-                // Free mmap regions
-                for r in eproc.mmap_regions.iter() {
-                    crate::arch::x64::paging::mmap_free_range(r.base, r.base + r.len);
-                }
-                // Close all handles
-                for i in 0..eproc.handle_table.len() {
-                    let h = eproc.handle_table[i];
-                    if h.is_pipe_read() {
-                        crate::object::pipe::PIPE_MANAGER.dec_read_ref(h.native_id().unwrap_or(0) as u8);
-                    } else if h.is_pipe_write() {
-                        crate::object::pipe::PIPE_MANAGER.dec_write_ref(h.native_id().unwrap_or(0) as u8);
-                    } else if h.has_ob_object() {
-                        let _ = crate::object::ob_close_object(h.object_id);
-                    }
-                    eproc.handle_table.set(i as u8, crate::handle::HandleEntry::closed());
-                }
+            } else if let Some(mut eproc) = self.eprocesses[ep_idx].take() {
+                free_eprocess_resources(&mut eproc);
             }
         }
 
@@ -537,7 +563,16 @@ impl Scheduler {
                 if let Some(kid) = th.obj_id {
                     let _ = object::ob_destroy_object(kid);
                 }
-                // Kernel stack freed on drop
+                if running {
+                    // Do not drop the Kthread (and its kernel stack) while it may
+                    // still be executing; leave it Terminated for the reaper.
+                    Self::remove_from_run_queue(th);
+                    th.state = ThreadState::Terminated;
+                }
+                // Kernel stack freed on drop (non-running path below).
+            }
+            if running {
+                continue;
             }
             let th_idx = self.kthreads.iter().position(|t| {
                 t.as_ref().is_some_and(|k| k.tid == *tid)
@@ -547,12 +582,17 @@ impl Scheduler {
             }
         }
 
+        if running {
+            defer_reap(pid);
+        }
+
         crate::trace_sched!(2, pid, 0); // KILL_PROCESS
         true
     }
 
     /// Recycle a terminated EPROCESS (only when last thread exits).
-    /// Caller must free EPROCESS resources first (user slot, heap, mmap, pipes).
+    /// F-02-B: releases EPROCESS resources itself (idempotent), so it is safe
+    /// even when the caller did not free them first.
     pub fn recycle_terminated(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
 
@@ -576,6 +616,11 @@ impl Scheduler {
             e.as_ref().is_some_and(|ep| ep.pid == pid)
         });
         if let Some(ep_idx) = ep_idx {
+            // F-02-B: release external resources exactly once (idempotent; may
+            // already be done by terminate_current).
+            if let Some(ep) = self.eprocesses[ep_idx].as_mut() {
+                free_eprocess_resources(ep);
+            }
             // Remove all remaining threads (should be 0 at this point)
             let tids: Vec<u32> = self.thread_tids_for_pid(pid);
             for tid in &tids {

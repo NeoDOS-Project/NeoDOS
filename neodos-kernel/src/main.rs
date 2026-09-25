@@ -271,6 +271,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(proc_id) = object::ob_create_object(ObType::Key, "Process", 12, 0, None) {
             let _ = object::namespace::ob_insert_object("\\Global\\Info\\Process", proc_id);
         }
+        if let Ok(thr_id) = object::ob_create_object(ObType::Key, "Threads", 13, 0, None) {
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Threads", thr_id);
+        }
     }
 
     // ============================================
@@ -291,7 +294,14 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.8: SMP — Start Application Processors
     // ============================================
     println!("[+] Initializing SMP (per-CPU data structures)...");
+    // Force scheduler initialization on the BSP *before* APs can lazily build
+    // it. `Scheduler::new()` captures the bootstrap stack, so it must run on
+    // the BSP, not on an AP.
+    drop(crate::scheduler::current_scheduler().lock());
     let cpu_count = arch::x64::smp::init_smp();
+    // GS is programmed per-CPU now: pin CPU0's KPRCB to the boot thread so the
+    // per-CPU identity (Rule 6.1.5) is valid before APs start scheduling.
+    crate::scheduler::sync_bsp_identity();
     println!("[+] {} CPU(s) online", cpu_count);
     crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -344,6 +354,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Read MCFG from ACPI, map ECAM MMIO region as UC-.
     // ============================================
     drivers::pci::init_ecam();
+
+    // Phase 13: all boot-time page-table setup is complete. Let parked APs adopt
+    // the final kernel address space.
+    arch::x64::paging::publish_paging_final();
 
     // ============================================
     // PHASE 3 (after custom page tables): Storage stack
@@ -647,6 +661,20 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
         // Phase 8: enable scheduler consistency forensics for the interactive phase.
         crate::scheduler::sched_forensic_enable(true);
+        // Phase 13: hand APs over to the scheduler now that the boot test suite
+        // is complete. Each AP picks this up on its next timer tick.
+        // Phase 13: hand APs over to the scheduler after the boot test suite.
+        // WIP behind a feature flag: with AP scheduling enabled there is a
+        // reproducible post-netd hang/GPF on the AP context-switch path
+        // (docs/investigation/phase13-ap-scheduling-design.md §Blockers), so
+        // the default build keeps APs idle (deterministic, 716/716).
+        #[cfg(feature = "smp-ap-sched")]
+        {
+            crate::scheduler::set_ap_sched_active(true);
+            crate::serial_println!("[SMP] AP scheduling enabled (smp-ap-sched)");
+        }
+        #[cfg(not(feature = "smp-ap-sched"))]
+        crate::serial_println!("[SMP] AP scheduling disabled (build without smp-ap-sched)");
     }
 
     // Dump timer diagnostic ring buffer (lock-free, captured across boot)
@@ -678,6 +706,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[POST_NETD] delayed dump after 500 ticks (head now {})", crate::hal::get_ticks());
         crate::arch::x64::idt::timer_diag_dump();
         crate::serial_println!("[POST_NETD] post-spawn dumps done");
+    }
+
+    // Phase 13 evidence: let the APs run for ~300 ms, then sample per-CPU
+    // KPRCB identity + steal counters to prove APs dispatched real threads.
+    if cpu_count > 1 {
+        crate::hal::sleep_hint(300_000);
+        crate::scheduler::dump_per_cpu_current();
+        crate::serial_println!(
+            "[STEAL] post-netd attempts={} success={}",
+            crate::scheduler::smp::STEAL_ATTEMPTS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::smp::STEAL_SUCCESS.load(core::sync::atomic::Ordering::Relaxed));
     }
 
     // ── Boot Benchmark: shell ready ──

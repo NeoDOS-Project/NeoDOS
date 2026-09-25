@@ -118,7 +118,7 @@ frees a pid only when `!is_pid_running_on_any_cpu(pid)`.
 for every CPU. Reclaiming an eligible pid drops the `Kthread`, which drops
 `kernel_stack: Option<Box<AlignedKStack>>` (16 KB).
 
-### F-02-A — Reap excludes the *new* pid, not the stack we are running on **(PROPOSED)**
+### F-02-A — Reap excludes the *new* pid, not the stack we are running on **(FIXED)**
 
 **Severity: High (latent under UP, exploitable under SMP).**
 
@@ -150,11 +150,11 @@ switch, so the bug is masked. On SMP another CPU can allocate a `Box`/stack in
 that window and observe/write stack memory of a "dead" thread — the classic UAF
 the handoff warns about.
 
-**Proposed fix (minimal, no new state):** reap must exclude the pid of the
-context being switched *away from*, not the one being switched *to*. At reap
-time the new pid is always `Running` (`thread_count > 0`), so it can never be in
-the zombie queue; the only meaningful exclusion is the old pid. Change the four
-call sites in `scheduler/schedule.rs` to pass `prev`'s pid:
+**Fix applied:** reap now excludes the pid of the context being switched
+*away from*, not the one being switched *to* (the new pid is `Running`, so it
+can never be in the zombie queue). The four call sites in
+`scheduler/schedule.rs` pass `prev`'s pid and `reap_pending_zombies`' parameter
+is named `exclude_pid`:
 
 ```rust
 // after commit + sync_per_cpu_current:
@@ -162,12 +162,11 @@ let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
 reap_pending_zombies(self, prev_pid);
 ```
 
-`reap_pending_zombies`' parameter should be renamed `exclude_pid`. The
-terminating pid is then reclaimed on a *later* schedule (guaranteed by the timer)
-when no CPU is executing on its stack. Bounded-queue behavior is unchanged; no
-leak (the pid stays queued and stays eligible).
+The terminating pid is reclaimed on a *later* schedule (guaranteed by the
+timer) when no CPU is executing on its stack. Bounded-queue behavior is
+unchanged; no leak.
 
-### F-02-B — `cleanup_terminated_process` / `kill_pid` bypass the liveness guard **(PROPOSED)**
+### F-02-B — `cleanup_terminated_process` / `kill_pid` bypass the liveness guard **(FIXED)**
 
 **Severity: High under SMP.**
 
@@ -182,10 +181,12 @@ If the target pid still has a thread executing on another CPU (or is between
 the current single-user boot model the child has fully exited before
 `waitpid` reaps, so this is masked; with APs dispatching it becomes reachable.
 
-**Proposed fix:** route both through the zombie path (or add the
-`is_pid_running_on_any_cpu` + defer guard) so reclaim only happens when no CPU
-holds the pid. Alternative: assert `thread_count == 0 &&
-!is_pid_running_on_any_cpu(pid)` and defer otherwise.
+**Fix applied:** `free_eprocess_resources()` is factored out (idempotent) and
+`recycle_terminated` releases resources itself. `cleanup_terminated_process`
+defers via `defer_reap` when `is_pid_running_on_any_cpu(pid)`. `kill_pid`
+marks a still-running pid's threads `Terminated`, frees resources without
+dropping the `Kthread`/stack, and defers stack reclaim to the reaper; the
+non-running path is unchanged.
 
 ### F-02-C — Liveness check covers `Running` only (assessment: OK)
 
@@ -212,12 +213,13 @@ now.
 | F-01-A | High | **FIXED** | 4-byte pid store + regression test |
 | F-01-B | Medium | Design | KPRCB-only identity in dispatch paths (Phase 13-A) |
 | F-01-C | Low | Open | `try_per_cpu_pid` should return `None` un-synced |
-| F-02-A | High | **PROPOSED** | reap excludes previous pid |
-| F-02-B | High | **PROPOSED** | guard `cleanup_terminated_process`/`kill_pid` |
+| F-02-A | High | **FIXED** | reap excludes previous pid |
+| F-02-B | High | **FIXED** | guard `cleanup_terminated_process`/`kill_pid` |
 | F-02-C | — | OK | invariant to record |
 | F-02-D | Low | Open | pid_gen if reuse ever added |
 
 **Validation of the fixes applied here:** `neodev test` SMP2 → 716/716 PASS
-(including the widened `cpu_local_offset_sanity`). The PROPOSED items are
-deferred to the AP-scheduling work so they can be validated with real AP
-dispatch (evidence: `thief=cpu>0`), per the Phase 13 plan.
+(including the widened `cpu_local_offset_sanity`). F-02-A/F-02-B are validated
+for boot/user-mode regression by the same suite; their concurrency effect is
+exercised by the Phase 13 AP-scheduling work
+(`phase13-ap-scheduling-design.md`).
