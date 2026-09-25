@@ -76,3 +76,18 @@ pub fn pop_byte_from_vt(vt: usize) -> Option<u8> { unsafe { INPUT_MANAGER.pop_by
 pub fn input_manager_mut() -> Option<&'static mut InputManager> {
     unsafe { Some(&mut INPUT_MANAGER) }
 }
+pub fn vt_active_occupancy() -> usize {
+    unsafe {
+        let vt = INPUT_MANAGER.active_vt();
+        let h = INPUT_MANAGER.vt_queues[vt].head.load(Ordering::Relaxed);
+        let t = INPUT_MANAGER.vt_queues[vt].tail.load(Ordering::Relaxed);
+        if t >= h { t - h } else { crate::input::vt::VT_QUEUE_SIZE - h + t }
+    }
+}
+pub fn vt_active_head_tail() -> (usize, usize) {
+    unsafe {
+        let vt = INPUT_MANAGER.active_vt();
+        (INPUT_MANAGER.vt_queues[vt].head.load(Ordering::Relaxed),
+         INPUT_MANAGER.vt_queues[vt].tail.load(Ordering::Relaxed))
+    }
+}

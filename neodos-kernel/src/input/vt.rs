@@ -1,16 +1,144 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, AtomicU64, Ordering};
 
 pub const VT_COUNT: usize = 4;
 pub const VT_QUEUE_SIZE: usize = 4096;
 pub const VT_CONSOLE_COLS: usize = 160;
 pub const VT_CONSOLE_ROWS: usize = 50;
+pub const VT_DIAG_RING_SIZE: usize = 64;
 
 pub use crate::console::ConsoleState;
 
+// ── Fase 1: Ring buffer diagnóstico sin serial por push ──
+#[derive(Clone, Copy)]
+pub struct VtDiagEntry {
+    pub seq: u64,
+    pub op: u8, // 0=push ok, 1=push full/drop, 2=pop ok, 3=pop empty
+    pub byte: u8,
+    pub head: usize,
+    pub tail: usize,
+    pub occ: usize,
+    pub cpu: u32,
+    pub tid: u32,
+}
+static VT_DIAG_SEQ: AtomicU64 = AtomicU64::new(0);
+static VT_DIAG_HEAD: AtomicUsize = AtomicUsize::new(0);
+static mut VT_DIAG_RING: [VtDiagEntry; VT_DIAG_RING_SIZE] = [VtDiagEntry { seq: 0, op: 0xFF, byte: 0, head: 0, tail: 0, occ: 0, cpu: 0, tid: 0 }; VT_DIAG_RING_SIZE];
+static VT_PUSH_CNT: AtomicU64 = AtomicU64::new(0);
+static VT_POP_CNT: AtomicU64 = AtomicU64::new(0);
+static VT_DROP_CNT: AtomicU64 = AtomicU64::new(0);
+static VT_MAX_OCC: AtomicUsize = AtomicUsize::new(0);
+/// Phase 9: first-N event trace budget (reset post-boot).
+static VT_EVENT_LOG: AtomicU64 = AtomicU64::new(0);
+/// Phase 9: enable the per-event serial trace (post-boot only; off during boot).
+static VT_EVENT_TRACE: AtomicBool = AtomicBool::new(false);
+
+pub fn vt_event_trace_enable(v: bool) {
+    VT_EVENT_TRACE.store(v, Ordering::Relaxed);
+}
+
+fn vt_diag_record(op: u8, byte: u8, head: usize, tail: usize) {
+    let occ = if tail >= head { tail - head } else { VT_QUEUE_SIZE - head + tail };
+    let max = VT_MAX_OCC.load(Ordering::Relaxed);
+    if occ > max { VT_MAX_OCC.store(occ, Ordering::Relaxed); }
+    let seq = VT_DIAG_SEQ.fetch_add(1, Ordering::Relaxed);
+    let idx = VT_DIAG_HEAD.fetch_add(1, Ordering::Relaxed) % VT_DIAG_RING_SIZE;
+    let cpu = if crate::hal::safe::GsBase::read() == 0 { 0 } else { unsafe { crate::arch::x64::cpu_local::this_cpu_id() } };
+    let tid = crate::scheduler::current_tid();
+    let e = VtDiagEntry { seq, op, byte, head, tail, occ, cpu, tid };
+    unsafe { VT_DIAG_RING[idx] = e; }
+    // Phase 9: first-N event trace directly to serial (bypasses the hotkey dump
+    // so E2E push/pop is observable even if the monitor hotkey is unavailable).
+    if (op == 0 || op == 2)
+        && VT_EVENT_TRACE.load(Ordering::Relaxed)
+        && VT_EVENT_LOG.load(Ordering::Relaxed) < 200
+    {
+        VT_EVENT_LOG.fetch_add(1, Ordering::Relaxed);
+        crate::serial_println!("[VT_EV] op={} byte=0x{:02x} cpu={} tid={} h={} t={} occ={}",
+            if op == 0 { "PUSH" } else { "POP" }, byte, cpu, tid, head, tail, occ);
+    }
+    match op {
+        0 => { VT_PUSH_CNT.fetch_add(1, Ordering::Relaxed); },
+        1 => { VT_DROP_CNT.fetch_add(1, Ordering::Relaxed); },
+        2 => { VT_POP_CNT.fetch_add(1, Ordering::Relaxed); },
+        _ => {}
+    }
+}
+
+pub fn vt_diag_dump() {
+    unsafe { core::arch::asm!("cli"); }
+    crate::println!("[VT_DIAG] push={} pop={} drop={} max_occ={} capacity={} (usable={})",
+        VT_PUSH_CNT.load(Ordering::Relaxed),
+        VT_POP_CNT.load(Ordering::Relaxed),
+        VT_DROP_CNT.load(Ordering::Relaxed),
+        VT_MAX_OCC.load(Ordering::Relaxed),
+        VT_QUEUE_SIZE, VT_QUEUE_SIZE-1);
+    let head = VT_DIAG_HEAD.load(Ordering::Relaxed);
+    let n = head.min(VT_DIAG_RING_SIZE);
+    let start = if head < VT_DIAG_RING_SIZE { 0 } else { head % VT_DIAG_RING_SIZE };
+    for i in 0..n {
+        let idx = (start + i) % VT_DIAG_RING_SIZE;
+        let e = unsafe { VT_DIAG_RING[idx] };
+        if e.op == 0xFF { continue; }
+        let op_s = match e.op { 0 => "PUSH", 1 => "DROP", 2 => "POP ", 3 => "EMPTY", _ => "?" };
+        crate::println!("[VT_DIAG][{}] seq={} {} byte=0x{:02x} '{}' h={} t={} occ={} cpu={} tid={}",
+            i, e.seq, op_s, e.byte, if e.byte>=0x20 && e.byte<0x7f {e.byte as char} else {'.'}, e.head, e.tail, e.occ, e.cpu, e.tid);
+    }
+    let (h, t) = crate::input::manager::vt_active_head_tail();
+    let occ = crate::input::manager::vt_active_occupancy();
+    crate::println!("[VT_DIAG] head={} tail={} occ={} (live)", h, t, occ);
+    // Phase 6: serial mirror (framebuffer println is not captured in serial log).
+    // Accounting + distinct push/pop CPUs prove single-producer correlation.
+    {
+        let mut push_cpus = [0xFFFFFFFFu32; 16];
+        let mut npush = 0usize;
+        let mut pop_cpus = [0xFFFFFFFFu32; 16];
+        let mut npop = 0usize;
+        for i in 0..n {
+            let idx = (start + i) % VT_DIAG_RING_SIZE;
+            let e = unsafe { VT_DIAG_RING[idx] };
+            if e.op == 0xFF { continue; }
+            if e.op == 0 {
+                let mut found = false;
+                for j in 0..npush { if push_cpus[j] == e.cpu { found = true; break; } }
+                if !found && npush < 16 { push_cpus[npush] = e.cpu; npush += 1; }
+            } else if e.op == 2 {
+                let mut found = false;
+                for j in 0..npop { if pop_cpus[j] == e.cpu { found = true; break; } }
+                if !found && npop < 16 { pop_cpus[npop] = e.cpu; npop += 1; }
+            }
+        }
+        crate::serial_println!("[VT_DIAG] push={} pop={} drop={} max_occ={} push_cpus={} pop_cpus={} h={} t={} occ={}",
+            VT_PUSH_CNT.load(Ordering::Relaxed), VT_POP_CNT.load(Ordering::Relaxed),
+            VT_DROP_CNT.load(Ordering::Relaxed), VT_MAX_OCC.load(Ordering::Relaxed),
+            npush, npop, h, t, occ);
+        for j in 0..npush { crate::serial_println!("[VT_DIAG] push_cpu={}", push_cpus[j]); }
+        for j in 0..npop { crate::serial_println!("[VT_DIAG] pop_cpu={}", pop_cpus[j]); }
+    }
+    unsafe { core::arch::asm!("sti"); }
+}
+
+/// Phase 9: lightweight counters for the periodic auto-dump.
+pub fn vt_counts() -> (u64, u64, u64) {
+    (VT_PUSH_CNT.load(Ordering::Relaxed),
+     VT_POP_CNT.load(Ordering::Relaxed),
+     VT_DROP_CNT.load(Ordering::Relaxed))
+}
+
+pub fn vt_diag_reset() {
+    VT_PUSH_CNT.store(0, Ordering::Relaxed);
+    VT_POP_CNT.store(0, Ordering::Relaxed);
+    VT_DROP_CNT.store(0, Ordering::Relaxed);
+    VT_MAX_OCC.store(0, Ordering::Relaxed);
+    VT_DIAG_SEQ.store(0, Ordering::Relaxed);
+    VT_DIAG_HEAD.store(0, Ordering::Relaxed);
+    VT_EVENT_LOG.store(0, Ordering::Relaxed);
+    unsafe { for i in 0..VT_DIAG_RING_SIZE { VT_DIAG_RING[i].op = 0xFF; } }
+}
+
 pub struct VtInputQueue {
     buffer: [u8; VT_QUEUE_SIZE],
-    head: AtomicUsize,
-    tail: AtomicUsize,
+    pub(crate) head: AtomicUsize,
+    pub(crate) tail: AtomicUsize,
 }
 
 impl VtInputQueue {
@@ -27,12 +155,14 @@ impl VtInputQueue {
         let tail = self.tail.load(Ordering::Relaxed);
         let next = (tail + 1) % VT_QUEUE_SIZE;
         if next == head {
+            vt_diag_record(1, byte, head, tail);
             return Err(());
         }
         unsafe {
             (self.buffer.as_ptr() as *mut u8).add(tail).write(byte);
         }
         self.tail.store(next, Ordering::Release);
+        vt_diag_record(0, byte, head, next);
         Ok(())
     }
 
@@ -40,11 +170,13 @@ impl VtInputQueue {
         let tail = self.tail.load(Ordering::Acquire);
         let head = self.head.load(Ordering::Relaxed);
         if head == tail {
+            vt_diag_record(3, 0, head, tail);
             return None;
         }
         let byte = unsafe { self.buffer.as_ptr().add(head).read() };
         let next = (head + 1) % VT_QUEUE_SIZE;
         self.head.store(next, Ordering::Release);
+        vt_diag_record(2, byte, next, tail);
         Some(byte)
     }
 

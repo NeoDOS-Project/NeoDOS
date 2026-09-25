@@ -18,6 +18,7 @@ pub mod schedule;
 
 pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
+pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -253,6 +254,61 @@ lazy_static! {
 
 pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
+}
+
+// ── SMP test isolation ──
+// When true, AP work-stealing and timer preemption are paused
+// so that k18/k19 tests can manipulate global runqueues without
+// concurrent AP interference. Set by the test harness.
+pub(crate) static SCHED_TEST_MODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Phase 7 diagnostic: dump every KTHREAD (tid/pid/state/cpu/rsp) plus each
+/// per-CPU runqueue's TIDs. Read-only, used by Ctrl+Alt+V / syscall 99 to
+/// localize a consumer that never wakes. No scheduler behavior change.
+pub fn sched_dump() {
+    let s = SCHEDULER.lock();
+    crate::serial_println!("[SCHED_DUMP] current_tid={} next_tid={} schedule_count={}",
+        s.current_tid, s.next_tid, s.schedule_count);
+    for k_opt in s.kthreads.iter() {
+        if let Some(k) = k_opt {
+            let st = match k.state {
+                ThreadState::Ready => "READY",
+                ThreadState::Running => "RUNNING",
+                ThreadState::Blocked { .. } => "BLOCKED",
+                ThreadState::Suspended => "SUSPENDED",
+                ThreadState::Terminated => "TERMINATED",
+            };
+            crate::serial_println!("[SCHED_DUMP] tid={} pid={} state={} cpu={} prio={} rsp=0x{:x} wait={:?}",
+                k.tid, k.pid, st, k.cpu, k.priority, k.rsp, k.waiting_for);
+        }
+    }
+    drop(s);
+    // Best-effort lock-free read: this diagnostic is called from IRQ context
+    // (Ctrl+Alt+V) and MUST NOT spin on RUNQUEUE_LOCKS held by the interrupted
+    // context (self-deadlock). try_lock and skip if busy.
+    for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+        let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+        if kprcb == 0 { continue; }
+        let guard = crate::arch::x64::cpu_local::RUNQUEUE_LOCKS[cpu].try_lock();
+        if guard.is_none() {
+            crate::serial_println!("[SCHED_DUMP] cpu={} runqueue=BUSY (lock held by interrupted ctx)", cpu);
+            continue;
+        }
+        let rq = unsafe {
+            &*((kprcb + crate::arch::x64::cpu_local::OFFSET_RUN_QUEUE as u64)
+                as *const crate::arch::x64::cpu_local::CpuRunQueue)
+        };
+        let cap = rq.entries.len();
+        let mut v = alloc::vec::Vec::new();
+        let mut idx = rq.head_idx as usize;
+        for _ in 0..rq.count {
+            v.push(rq.entries[idx % cap]);
+            idx += 1;
+        }
+        crate::serial_println!("[SCHED_DUMP] cpu={} runqueue_tids={:?} count={}", cpu, v, rq.count);
+        drop(guard);
+    }
 }
 
 

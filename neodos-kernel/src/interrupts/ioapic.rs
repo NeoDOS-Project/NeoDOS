@@ -230,6 +230,35 @@ pub fn route_pci_vector(vector: u8, pin: u8, apic_id: u8) {
     ioapic_write_redir(pin, entry);
 }
 
+/// Read back the raw 64-bit redirection entry for an ISA IRQ pin.
+/// Phase 6 (IRQ33 ownership): read-only audit, never modifies routing.
+pub fn read_redir_entry(pin: u8) -> u64 {
+    ioapic_read_redir(pin)
+}
+
+/// Decode and log the routing of an ISA IRQ pin: vector, delivery mode,
+/// destination mode, destination APIC ID, mask, trigger, polarity.
+/// Phase 6: proves whether IRQ33 can reach >1 CPU.
+pub fn dump_irq_routing(irq: u8) {
+    let max_pin = IOAPIC_MAX_PIN.load(Ordering::Relaxed) as u8;
+    if irq > max_pin {
+        crate::serial_println!("[IOAPIC_ROUTE] irq={} pin out of range (max={})", irq, max_pin);
+        return;
+    }
+    let entry = ioapic_read_redir(irq);
+    let vector = (entry & 0xFF) as u8;
+    let deliv = ((entry >> 8) & 0x7) as u8;
+    let dest_mode = ((entry >> 11) & 0x1) as u8; // 0=physical, 1=logical
+    let masked = ((entry >> 16) & 0x1) as u8;
+    let trig = ((entry >> 15) & 0x1) as u8; // 0=edge, 1=level
+    let polar = ((entry >> 13) & 0x1) as u8; // 0=high, 1=low
+    let dest = ((entry >> 56) & 0xFF) as u8;
+    crate::serial_println!(
+        "[IOAPIC_ROUTE] irq={} pin={} vector={} deliv={} destmode={} dest_apic={} masked={} trig={} polar={} raw=0x{:016x}",
+        irq, irq, vector, deliv, dest_mode, dest, masked, trig, polar, entry
+    );
+}
+
 /// Send an EOI to the I/O APIC.
 /// For edge-triggered interrupts, this is a no-op (the Local APIC EOI
 /// handled by ack_irq is sufficient). For level-triggered, the I/O APIC

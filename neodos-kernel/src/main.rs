@@ -3,6 +3,9 @@
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
 #![feature(allocator_api)]
+#![feature(strict_provenance)]
+#![feature(ptr_fn_addr_eq)]
+#![feature(unsigned_is_multiple_of)]
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(noop_test_runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
@@ -39,7 +42,6 @@ mod handle;
 mod eventbus;
 mod work_queue;
 mod dpc;
-
 mod memory;
 mod globals;
 pub mod usermode;
@@ -291,6 +293,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     println!("[+] Initializing SMP (per-CPU data structures)...");
     let cpu_count = arch::x64::smp::init_smp();
     println!("[+] {} CPU(s) online", cpu_count);
+    crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 
     // ============================================
     // PHASE 2.9: IPI infrastructure
@@ -303,19 +306,25 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     if interrupts::ioapic::init() {
         println!("[+] I/O APIC active, legacy PIC disabled");
+        // Phase 6: audit programmed IRQ33 (IRQ1) routing — read-only
+        interrupts::ioapic::dump_irq_routing(1);
     } else {
         println!("[!] I/O APIC not found, using legacy PIC");
     }
 
     println!("[+] Enabling interrupts...");
+    crate::serial_println!("[INT] about to STI, CR3=0x{:x} GS=0x{:x}", crate::hal::read_cr3(), crate::hal::safe::GsBase::read());
     hal::enable_interrupts();
+    crate::serial_println!("[INT] STI done");
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
     // ============================================
+    crate::serial_println!("[PAGING] before init_custom_page_tables");
     unsafe {
         arch::x64::paging::init_custom_page_tables();
     }
+    crate::serial_println!("[PAGING] after init_custom_page_tables");
 
     // Split heap region huge pages into 4 KB PTs for demand paging
     arch::x64::paging::init_heap_demand_paging();
@@ -495,10 +504,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[+] FAT32 ESP mounted on A:");
     }
 
-    // ============================================
-    // NT5.6: Mount K:\ virtual kernel object drive
-    // ============================================
-
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // A4.4: Initialize Input Manager (VT subsystem)
@@ -614,6 +619,34 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             println!("{} kernel tests passed, {} failed.", passed, failed);
         }
         println!("ALL_TESTS_COMPLETE");
+        // Phase 5.3/11: verify SCHED_TEST_MODE never leaks after suite
+        let leak = crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::SeqCst);
+        crate::serial_println!("[SCHED_TEST_MODE] after suite = {} (expected false)", leak);
+        debug_assert!(!leak, "SCHED_TEST_MODE leaked");
+        // Phase 4/5: steal/schedule counters (normal runtime should have non-zero schedule, zero steal before normal load)
+        crate::serial_println!(
+            "[STEAL] attempts={} success={} schedule_calls={} SCHED_TEST_MODE={}",
+            crate::scheduler::smp::STEAL_ATTEMPTS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::smp::STEAL_SUCCESS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::schedule::SCHEDULE_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+            leak
+        );
+        // Per-CPU diagnostics
+        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+            if kprcb != 0 {
+                let len = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
+                crate::serial_println!("[CPU{}] KPRCB=0x{:x} qlen={}", cpu, kprcb, len);
+            }
+        }
+        // Phase 6: reset input diagnostics AFTER boot tests so burst accounting
+        // starts from zero (vt_push_to_all_queues test + any boot keys excluded).
+        // No queue algorithm change — counters only.
+        crate::input::vt::vt_diag_reset();
+        crate::arch::x64::idt::kbd_irq_reset();
+        crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
+        // Phase 8: enable scheduler consistency forensics for the interactive phase.
+        crate::scheduler::sched_forensic_enable(true);
     }
 
     // Dump timer diagnostic ring buffer (lock-free, captured across boot)

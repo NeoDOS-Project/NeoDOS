@@ -5,7 +5,120 @@ use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, IDLE_TID, PRIORITY
 use crate::scheduler::Scheduler;
 use crate::scheduler::lifecycle::{defer_reap, reap_pending_zombies};
 
+pub(crate) static SCHEDULE_CALLS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+// ── Phase 8 forensic: centralized consistency check (WARN + dump, no panic) ──
+// Disabled by default so normal boot timing is unaffected; enabled after the
+// boot test-suite via `sched_forensic_enable(true)`. Allocation-free.
+static CHECK_LAST_TICK: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static CHECK_LAST_STATE: [core::sync::atomic::AtomicU8; 64] =
+    [const { core::sync::atomic::AtomicU8::new(0xFF) }; 64];
+static CHECK_WARN_COUNT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static SCHED_FORENSIC: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static SCHED_FORENSIC_VERBOSE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Enable/disable the Phase 8 forensic consistency checker.
+pub fn sched_forensic_enable(v: bool) {
+    SCHED_FORENSIC.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Enable/disable verbose scheduler state-transition traces (TID2/TID5).
+pub fn sched_forensic_verbose_enable(v: bool) {
+    SCHED_FORENSIC_VERBOSE.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
+#[inline]
+pub fn sched_forensic_verbose() -> bool {
+    SCHED_FORENSIC_VERBOSE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+fn state_name(s: u8) -> &'static str {
+    match s { 0 => "READY", 1 => "RUNNING", 2 => "BLOCKED", 3 => "SUSP", 4 => "TERM", _ => "?" }
+}
+
+/// Phase 9: is `k`'s saved context dispatchable back to Ring 3?
+/// Used so `schedule_with(require_ring3=true)` never commits a candidate whose
+/// frame cannot be returned through a Ring-3 interrupt/syscall frame.
+#[inline]
+fn frame_is_ring3(k: &Kthread) -> bool {
+    if k.rsp < 0x1000 { return false; }
+    let cs = unsafe { *((k.rsp + 128) as *const u64) };
+    (cs & 3) == 3
+}
+
+fn rq_len(cpu: usize) -> usize {
+    let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+    if kprcb == 0 { return 0; }
+    match crate::arch::x64::cpu_local::RUNQUEUE_LOCKS[cpu].try_lock() {
+        Some(_g) => {
+            let rq = unsafe {
+                &*((kprcb + crate::arch::x64::cpu_local::OFFSET_RUN_QUEUE as u64)
+                    as *const crate::arch::x64::cpu_local::CpuRunQueue)
+            };
+            rq.count as usize
+        }
+        None => usize::MAX,
+    }
+}
+
 impl Scheduler {
+    /// Phase 8: detect the first invariant violation that leaves a thread
+    /// `Running` without being the dispatched context. WARN + dump (never panic,
+    /// never mutate). Must be called with the scheduler lock held.
+    pub fn consistency_check(&self, tag: &str) {
+        if !SCHED_FORENSIC.load(core::sync::atomic::Ordering::Relaxed) { return; }
+        let now = crate::hal::get_ticks();
+        let last = CHECK_LAST_TICK.load(core::sync::atomic::Ordering::Relaxed);
+        if now == last { return; }
+        CHECK_LAST_TICK.store(now, core::sync::atomic::Ordering::Relaxed);
+
+        let mut running_tids = [0u32; 8];
+        let mut running_cpus = [0u32; 8];
+        let mut nrunning = 0usize;
+        for k in self.kthreads.iter().flatten() {
+            let idx = k.tid as usize;
+            if idx < 64 {
+                let cur = k.state.to_u8();
+                let prev = CHECK_LAST_STATE[idx].swap(cur, core::sync::atomic::Ordering::Relaxed);
+                if prev != 0xFF && prev != cur && (k.tid == 2 || k.tid == 5)
+                    && sched_forensic_verbose()
+                {
+                    crate::serial_println!(
+                        "[SCHED_STATE] tid={} cpu={} {}->{} tag={} sched.current={} rq0={} rq1={} kprcb_tid={:?}",
+                        k.tid, k.cpu, state_name(prev), state_name(cur), tag, self.current_tid,
+                        rq_len(0), rq_len(1),
+                        crate::arch::x64::cpu_local::try_per_cpu_tid());
+                }
+            }
+            if k.state == ThreadState::Running && nrunning < 8 {
+                running_tids[nrunning] = k.tid;
+                running_cpus[nrunning] = k.cpu;
+                nrunning += 1;
+            }
+        }
+
+        let mut dup_cpu: Option<u32> = None;
+        for i in 0..nrunning {
+            for j in (i + 1)..nrunning {
+                if running_cpus[i] == running_cpus[j] { dup_cpu = Some(running_cpus[i]); }
+            }
+        }
+        if let Some(cpu) = dup_cpu {
+            let c = CHECK_WARN_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            if c < 12 {
+                crate::serial_println!(
+                    "[SCHED_WARN] tag={} TWO+ Running on cpu={} tids={:?}/{:?} sched.current={} kprcb_tid={:?}",
+                    tag, cpu, running_tids, running_cpus, self.current_tid,
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+                for k in self.kthreads.iter().flatten() {
+                    crate::serial_println!(
+                        "[SCHED_WARN]   tid={} pid={} state={} cpu={} wait={:?}",
+                        k.tid, k.pid, state_name(k.state.to_u8()), k.cpu, k.waiting_for);
+                }
+            }
+        }
+    }
+
     /// Validate run queue invariants.
     /// Invariant: for each thread,
     ///   Ready    => exactly one entry in its CPU's run queue
@@ -115,8 +228,19 @@ impl Scheduler {
 
     /// Schedule the next thread.  Tries per-CPU run queue first, falls back
     /// to global priority scan.  Returns a `*mut Kthread` for RSP/stack access.
+    /// Phase 9: select+commit with an explicit dispatchability contract.
+    /// `require_ring3=true` means the caller will iretq to the returned thread's
+    /// saved frame from a Ring-3 context, so only candidates whose frame is
+    /// Ring-3 may be committed. Invalid candidates are returned to the runqueue
+    /// WITHOUT touching current_tid/KPRCB/state (SELECT -> VALIDATE -> COMMIT).
+    /// `schedule()` keeps the historical behavior (require_ring3=false).
     pub fn schedule(&mut self) -> *mut Kthread {
+        self.schedule_with(false)
+    }
+
+    pub fn schedule_with(&mut self, require_ring3: bool) -> *mut Kthread {
         ktrace!(LogSubsys::Sched, "schedule entry");
+        SCHEDULE_CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // Count every schedule decision, not just global-scan fallbacks.
         self.schedule_count += 1;
 
@@ -126,7 +250,7 @@ impl Scheduler {
             if !ptr.is_null() {
                 unsafe {
                     let k = &mut *ptr;
-                    if k.state == ThreadState::Ready {
+                    if k.state == ThreadState::Ready && (!require_ring3 || frame_is_ring3(k)) {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
                         } else { self.current_tid };
@@ -137,6 +261,11 @@ impl Scheduler {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
                         k.state = ThreadState::Running;
+                        if (tid == 5 || prev == 5) && sched_forensic_verbose() {
+                            crate::serial_println!("[T5_SCHED] step=1 prev={} new={} current={} rq0={} kprcb={:?}",
+                                prev, tid, self.current_tid, rq_len(0),
+                                crate::arch::x64::cpu_local::try_per_cpu_tid());
+                        }
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=runqueue",
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
@@ -145,6 +274,11 @@ impl Scheduler {
                         let new_pid = k.pid;
                         reap_pending_zombies(self, new_pid);
                         return ptr;
+                    } else if k.state == ThreadState::Ready {
+                        // Phase 9: valid Ready candidate but frame not dispatchable
+                        // from this context. Return it to the runqueue and do NOT
+                        // commit any state (no current_tid/KPRCB/state change).
+                        Scheduler::enqueue_to_cpu_run_queue(k);
                     }
                 }
             }
@@ -156,7 +290,7 @@ impl Scheduler {
             if !ptr.is_null() {
                 unsafe {
                     let k = &mut *ptr;
-                    if k.state == ThreadState::Ready {
+                    if k.state == ThreadState::Ready && (!require_ring3 || frame_is_ring3(k)) {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
                         } else { self.current_tid };
@@ -173,6 +307,9 @@ impl Scheduler {
                         let new_pid = k.pid;
                         reap_pending_zombies(self, new_pid);
                         return ptr;
+                    } else if k.state == ThreadState::Ready {
+                        // Phase 9: not dispatchable here; return to its CPU queue.
+                        Scheduler::enqueue_to_cpu_run_queue(k);
                     }
                 }
             }
@@ -198,7 +335,9 @@ impl Scheduler {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
                 for k in self.kthreads.iter_mut().flatten() {
-                    if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority {
+                    if k.tid == check_tid && k.state == ThreadState::Ready && k.priority == priority
+                        && (!require_ring3 || frame_is_ring3(k))
+                    {
                         // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
                         Scheduler::remove_from_run_queue(&**k);
                         let prev = scan_prev;
@@ -217,6 +356,11 @@ impl Scheduler {
             }
         }
         if !picked_ptr.is_null() {
+            if (picked_tid == 5 || picked_prev == 5) && sched_forensic_verbose() {
+                crate::serial_println!("[T5_SCHED] step=3 prev={} new={} current={} rq0={} kprcb={:?}",
+                    picked_prev, picked_tid, self.current_tid, rq_len(0),
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+            }
             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=priority_scan prio={}",
                 picked_prev, picked_tid, picked_prio);
             crate::trace_cswitch!(picked_prev as u64, picked_tid as u64);
@@ -274,6 +418,9 @@ impl Scheduler {
 
 
     pub fn on_timer_tick(&mut self, current_rsp: u64) {
+        if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
         self.timer_ticks += 1;
 
         if self.timer_ticks.is_multiple_of(AGING_INTERVAL_TICKS) {

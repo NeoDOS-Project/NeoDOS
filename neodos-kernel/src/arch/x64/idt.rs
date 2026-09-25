@@ -593,7 +593,7 @@ fn exception_do_resched() -> ! {
     use crate::scheduler::current_scheduler;
     let next_rsp = crate::hal::without_interrupts(|| {
         let mut sched = current_scheduler().lock();
-        let next = sched.schedule();
+        let next = sched.schedule_with(true);
         if next.is_null() {
             panic!("exception_do_resched: no next thread (idle unavailable)");
         }
@@ -962,6 +962,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let mut scheduler = scheduler_mutex.lock();
 
     scheduler.on_timer_tick(current_rsp);
+    scheduler.consistency_check("timer");
 
     let tid = scheduler.current_tid_for_this_cpu();
     let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
@@ -1002,7 +1003,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             }
 
             // Pick next thread
-            let next = scheduler.schedule();
+            let next = scheduler.schedule_with(true);
             let next_tid = unsafe { (*next).tid };
 
             // Safety: if the next thread has rsp==0, proceeding would
@@ -1010,6 +1011,12 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // instead so we can identify the root cause.
             let next_rsp = unsafe { (*next).rsp };
             let next_ks = unsafe { (*next).kernel_stack_top };
+            if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
+                let __cs = if next_rsp != 0 { unsafe { *((next_rsp + 128) as *const u64) } } else { 0 };
+                crate::serial_println!("[T5_TM] userpreempt cur={} next={} rsp=0x{:x} cs=0x{:x} sched.current={} kprcb={:?}",
+                    tid, next_tid, next_rsp, __cs, scheduler.current_tid,
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+            }
             td_push(TimerDiagEntry {
                 tick: current_tick, cur_tid: tid, cur_rsp: current_rsp,
                 cur_cs: interrupted_cs,
@@ -1033,6 +1040,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // 0 frame cannot be returned through this Ring 3 interrupt frame.
             let next_cs = unsafe { *((next_rsp + 128) as *const u64) };
             if next_cs & 3 != 3 {
+                if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
+                    crate::serial_println!("[T5_TM] userpreempt REVERT next={} cs=0x{:x} (non-Ring3) keep cur={}",
+                        next_tid, next_cs, tid);
+                }
                 unsafe {
                     (*next).state = ThreadState::Ready;
                     crate::scheduler::Scheduler::enqueue_to_cpu_run_queue(&*next);
@@ -1312,6 +1323,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 if k.state == ThreadState::Ready && k.tid == tid {
                     crate::scheduler::Scheduler::remove_from_run_queue(k);
                     k.state = ThreadState::Running;
+                    if k.tid == 5 && crate::scheduler::sched_forensic_verbose() {
+                        crate::serial_println!("[T5_TM] KERNEL-MODE restore Running tid=5 sched.current={} kprcb={:?}",
+                            scheduler.current_tid, crate::arch::x64::cpu_local::try_per_cpu_tid());
+                    }
                 }
             }
             unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
@@ -1371,6 +1386,85 @@ extern "x86-interrupt" fn ipi_call_function_handler(_: InterruptStackFrame) {
     crate::hal::ack_irq(crate::arch::x64::ipi::IPI_CALL_FUNCTION);
 }
 
+// ── Phase 6: IRQ33 CPU-ownership diagnostics (counters + ring, no serial per IRQ) ──
+// Records which CPU/APIC received each keyboard IRQ. Decoder path unchanged.
+const KBD_IRQ_RING_SIZE: usize = 64;
+#[derive(Clone, Copy)]
+struct KbdIrqEntry {
+    seq: u64,
+    cpu: u32,
+    apic: u32,
+    tid: u32,
+    scancode: u8,
+}
+static KBD_IRQ_SEQ: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static KBD_IRQ_HEAD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static mut KBD_IRQ_RING: [KbdIrqEntry; KBD_IRQ_RING_SIZE] = [KbdIrqEntry { seq: 0, cpu: 0xFFFFFFFF, apic: 0xFFFFFFFF, tid: 0, scancode: 0 }; KBD_IRQ_RING_SIZE];
+static KBD_IRQ_CNT: [core::sync::atomic::AtomicU64; 16] = [const { core::sync::atomic::AtomicU64::new(0) }; 16];
+
+/// Total keyboard IRQs observed across all CPUs (Phase 9 auto-dump).
+pub fn kbd_irq_total() -> u64 {
+    let mut t = 0u64;
+    for c in &KBD_IRQ_CNT { t += c.load(core::sync::atomic::Ordering::Relaxed); }
+    t
+}
+
+/// Reset IRQ33 ownership counters (Phase 6: clean baseline before shell).
+pub fn kbd_irq_reset() {
+    KBD_IRQ_SEQ.store(0, core::sync::atomic::Ordering::Relaxed);
+    KBD_IRQ_HEAD.store(0, core::sync::atomic::Ordering::Relaxed);
+    for c in &KBD_IRQ_CNT {
+        c.store(0, core::sync::atomic::Ordering::Relaxed);
+    }
+    unsafe {
+        for i in 0..KBD_IRQ_RING_SIZE {
+            KBD_IRQ_RING[i].cpu = 0xFFFFFFFF;
+        }
+    }
+}
+
+/// Dump IRQ33 per-CPU ownership: counters + ring (cpu/apic/tid/scancode).
+/// Called from Ctrl+Alt+V / syscall 99 alongside vt_diag_dump. No routing change.
+pub fn kbd_irq_dump() {
+    unsafe { core::arch::asm!("cli"); }
+    crate::println!("[KBD_IRQ] per-CPU counts (max 16 CPUs):");
+    let mut total = 0u64;
+    for cpu in 0..16 {
+        let n = KBD_IRQ_CNT[cpu].load(core::sync::atomic::Ordering::Relaxed);
+        if n > 0 {
+            crate::println!("[KBD_IRQ] cpu={} count={}", cpu, n);
+        }
+        total += n;
+    }
+    crate::println!("[KBD_IRQ] total={}", total);
+    let head = KBD_IRQ_HEAD.load(core::sync::atomic::Ordering::Relaxed);
+    let n = head.min(KBD_IRQ_RING_SIZE);
+    let start = if head < KBD_IRQ_RING_SIZE { 0 } else { head % KBD_IRQ_RING_SIZE };
+    for i in 0..n {
+        let idx = (start + i) % KBD_IRQ_RING_SIZE;
+        let e = unsafe { KBD_IRQ_RING[idx] };
+        if e.cpu == 0xFFFFFFFF { continue; }
+        crate::println!("[KBD_IRQ][{}] seq={} cpu={} apic={} tid={} sc=0x{:02x}",
+            i, e.seq, e.cpu, e.apic, e.tid, e.scancode);
+    }
+    // Distinct producer CPUs (|producer_cpus| must be 1 for SPSC VALID)
+    let mut seen = [0xFFFFFFFFu32; 16];
+    let mut nseen = 0usize;
+    for i in 0..n {
+        let idx = (start + i) % KBD_IRQ_RING_SIZE;
+        let e = unsafe { KBD_IRQ_RING[idx] };
+        if e.cpu == 0xFFFFFFFF { continue; }
+        let mut found = false;
+        for j in 0..nseen { if seen[j] == e.cpu { found = true; break; } }
+        if !found && nseen < 16 { seen[nseen] = e.cpu; nseen += 1; }
+    }
+    crate::serial_println!("[KBD_IRQ] producer_cpus={} (SPSC VALID iff 1)", nseen);
+    for j in 0..nseen {
+        crate::serial_println!("[KBD_IRQ] producer_cpu={}", seen[j]);
+    }
+    unsafe { core::arch::asm!("sti"); }
+}
+
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     // Read scancode directly from PS/2 controller
     let status: u8 = crate::hal::inb(0x64);
@@ -1381,15 +1475,24 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     };
 
     if let Some(scancode) = scancode {
+        // Phase 6: record ownership BEFORE decoder (lock-free, no serial).
+        let cpu = if crate::hal::safe::GsBase::read() == 0 { 0 } else { unsafe { crate::arch::x64::cpu_local::this_cpu_id() } };
+        let apic = if crate::hal::safe::GsBase::read() == 0 { 0 } else { unsafe { crate::arch::x64::cpu_local::this_cpu_apic_id() } };
+        let tid = crate::scheduler::current_tid();
+        let seq = KBD_IRQ_SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if (cpu as usize) < 16 {
+            KBD_IRQ_CNT[cpu as usize].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        let idx = KBD_IRQ_HEAD.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % KBD_IRQ_RING_SIZE;
+        unsafe { KBD_IRQ_RING[idx] = KbdIrqEntry { seq, cpu, apic, tid, scancode }; }
         // FIX v2: single-path direct — process synchronously in IRQ.
         // Previous dual-path (direct + queued) caused double-char.
         // Queued-only (push_event) left keyboard dead because dispatch_pending
         // is not guaranteed to run before the blocked READB waiter is checked
         // (idle dispatch delayed by IDLE_TIME_SLICE / scheduler state).
         // Direct path does push_byte+wake_blocked_readers immediately, matching
-        // pre-P0 working behavior. Keep one log for forensics.
-        let seq = crate::kbd::event::kbd_event_handler_direct(scancode);
-        crate::serial_println!("[KBD_IRQ] seq={} scancode=0x{:02x} direct-only", seq, scancode);
+        // pre-P0 working behavior.
+        let _seq = crate::kbd::event::kbd_event_handler_direct(scancode);
     }
     crate::hal::ack_irq(33);
 }

@@ -11,7 +11,7 @@ pub fn register_syscall_table_tests() {
 
     test_case!("syscall_table_sparse_dispatch", {
         test_true!(SYSCALL_TABLE[0].is_some());
-        test_true!(SYSCALL_TABLE[99].is_none());
+        test_true!(SYSCALL_TABLE[99].is_some());
         test_true!(SYSCALL_TABLE[255].is_none());
     });
 
@@ -35,17 +35,18 @@ pub fn register_syscall_table_tests() {
             30, 35,
             40, 41, 42, 43, 44, 45, 46, 47, 48,
             50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+            99,
         ];
         for &n in ASSIGNED {
             test_true!(SYSCALL_TABLE[n as usize].is_some());
         }
         test_true!(SYSCALL_TABLE[5].is_none());
-        test_true!(SYSCALL_TABLE[99].is_none());
+        test_true!(SYSCALL_TABLE[100].is_none());
         test_true!(SYSCALL_TABLE[255].is_none());
     });
 
     test_case!("syscall_enosys_unknown", {
-        let result = syscall_dispatch(99, 0, 0, 0, 0, 0);
+        let result = syscall_dispatch(100, 0, 0, 0, 0, 0);
         test_eq!(result, err_to_u64(SyscallError::NoSys));
 
         let result = syscall_dispatch(255, 0, 0, 0, 0, 0);

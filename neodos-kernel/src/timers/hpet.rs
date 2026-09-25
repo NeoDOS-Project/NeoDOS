@@ -241,9 +241,10 @@ fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
         let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
         unsafe {
-            let xsdt = &*xsdt_ptr;
-            if xsdt.signature != XSDT_SIGNATURE { return None; }
-            let entry_count = (xsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 8;
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).signature));
+            if sig != XSDT_SIGNATURE { return None; }
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 8;
             let entries = core::slice::from_raw_parts(
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
@@ -253,9 +254,10 @@ fn find_mcfg_table() -> Option<&'static AcpiMcfg> {
     } else {
         let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
         unsafe {
-            let rsdt = &*rsdt_ptr;
-            if rsdt.signature != RSDT_SIGNATURE { return None; }
-            let entry_count = (rsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 4;
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).signature));
+            if sig != RSDT_SIGNATURE { return None; }
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 4;
             let entries = core::slice::from_raw_parts(
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,
@@ -277,7 +279,8 @@ pub fn get_ecam_info() -> Option<(u64, u16, u8, u8)> {
     let header_size = core::mem::size_of::<AcpiSdtHeader>() as u32;
     let mcfg_fixed = core::mem::size_of::<AcpiMcfg>() as u32;
     let entry_size = core::mem::size_of::<McfgEntry>() as u32;
-    let data_avail = mcfg.header.length.saturating_sub(header_size);
+    let hdr_len = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(mcfg.header.length)) };
+    let data_avail = hdr_len.saturating_sub(header_size);
     let entries_bytes = data_avail.saturating_sub(mcfg_fixed - header_size);
     if entries_bytes < entry_size {
         return None;
@@ -334,9 +337,10 @@ fn find_madt_table() -> Option<&'static AcpiMadt> {
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {
         let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
         unsafe {
-            let xsdt = &*xsdt_ptr;
-            if xsdt.signature != XSDT_SIGNATURE { return None; }
-            let entry_count = (xsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 8;
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).signature));
+            if sig != XSDT_SIGNATURE { return None; }
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 8;
             let entries = core::slice::from_raw_parts(
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
@@ -346,9 +350,10 @@ fn find_madt_table() -> Option<&'static AcpiMadt> {
     } else {
         let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
         unsafe {
-            let rsdt = &*rsdt_ptr;
-            if rsdt.signature != RSDT_SIGNATURE { return None; }
-            let entry_count = (rsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 4;
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).signature));
+            if sig != RSDT_SIGNATURE { return None; }
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 4;
             let entries = core::slice::from_raw_parts(
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,
@@ -368,7 +373,7 @@ fn find_madt_table() -> Option<&'static AcpiMadt> {
 pub fn find_ioapic() -> Option<(u32, u32)> {
     let madt = find_madt_table()?;
     let madt_header_size = core::mem::size_of::<AcpiMadt>() as u32;
-    let total_len = madt.header.length;
+    let total_len = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(madt.header.length)) };
     if total_len <= madt_header_size {
         return None;
     }
@@ -382,14 +387,81 @@ pub fn find_ioapic() -> Option<(u32, u32)> {
             if record_length < 2 { break; }
             if entry_type == 1 && record_length >= 12 {
                 let ioapic = (data_ptr + offset) as *const MadtIoApic;
-                if (*ioapic).ioapic_addr != 0 {
-                    return Some(((*ioapic).ioapic_addr, (*ioapic).gsi_base));
+                let addr = core::ptr::read_unaligned(core::ptr::addr_of!((*ioapic).ioapic_addr));
+                let gsi = core::ptr::read_unaligned(core::ptr::addr_of!((*ioapic).gsi_base));
+                if addr != 0 {
+                    return Some((addr, gsi));
                 }
             }
             offset += record_length;
         }
     }
     None
+}
+
+/// Dump MADT processor entries for SMP debug
+pub fn dump_madt() {
+    crate::serial_println!("[MADT] dump_madt called");
+    let madt = match find_madt_table() {
+        Some(m) => m,
+        None => { crate::serial_println!("[MADT] not found - find_madt_table returned None"); return; }
+    };
+    let madt_header_size = core::mem::size_of::<AcpiMadt>() as u32;
+    let total_len = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(madt.header.length)) };
+    let local_apic = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(madt.local_apic_addr)) };
+    let flags = unsafe { core::ptr::read_unaligned(core::ptr::addr_of!(madt.flags)) };
+    crate::serial_println!("[MADT] local_apic_addr=0x{:x} flags=0x{:x} len={}", local_apic, flags, total_len);
+    let data_ptr = madt as *const AcpiMadt as u64;
+    let mut offset = madt_header_size as u64;
+    let mut cpu_count = 0;
+    while offset + 2 <= total_len as u64 {
+        unsafe {
+            let entry = (data_ptr + offset) as *const MadtEntryHeader;
+            let entry_type = (*entry).entry_type;
+            let record_length = (*entry).record_length as u64;
+            if record_length < 2 { break; }
+            if entry_type == 0 && record_length >= 8 {
+                // Processor Local APIC
+                let lapic = (data_ptr + offset) as *const MadtProcessorLocalApic;
+                let apic_id = core::ptr::read_unaligned(core::ptr::addr_of!((*lapic).apic_id));
+                let flags = core::ptr::read_unaligned(core::ptr::addr_of!((*lapic).flags));
+                crate::serial_println!("[MADT] CPU{} apic_id={} flags=0x{:x} enabled={}", cpu_count, apic_id, flags, (flags & 1) != 0);
+                cpu_count += 1;
+            } else if entry_type == 9 && record_length >= 16 {
+                // Processor Local x2APIC
+                let x2apic = (data_ptr + offset) as *const MadtProcessorLocalX2Apic;
+                let apic_id = core::ptr::read_unaligned(core::ptr::addr_of!((*x2apic).apic_id));
+                let flags = core::ptr::read_unaligned(core::ptr::addr_of!((*x2apic).flags));
+                crate::serial_println!("[MADT] X2APIC apic_id={} flags=0x{:x}", apic_id, flags);
+                cpu_count += 1;
+            } else if entry_type == 1 {
+                let ioapic = (data_ptr + offset) as *const MadtIoApic;
+                let ioapic_id = core::ptr::read_unaligned(core::ptr::addr_of!((*ioapic).ioapic_id));
+                let ioapic_addr = core::ptr::read_unaligned(core::ptr::addr_of!((*ioapic).ioapic_addr));
+                let gsi_base = core::ptr::read_unaligned(core::ptr::addr_of!((*ioapic).gsi_base));
+                crate::serial_println!("[MADT] IOAPIC id={} addr=0x{:x} gsi_base={}", ioapic_id, ioapic_addr, gsi_base);
+            }
+            offset += record_length;
+        }
+    }
+    crate::serial_println!("[MADT] total CPUs from MADT={}", cpu_count);
+}
+
+#[repr(C, packed)]
+struct MadtProcessorLocalApic {
+    header: MadtEntryHeader,
+    acpi_processor_id: u8,
+    apic_id: u8,
+    flags: u32,
+}
+
+#[repr(C, packed)]
+struct MadtProcessorLocalX2Apic {
+    header: MadtEntryHeader,
+    _reserved: u16,
+    apic_id: u32,
+    flags: u32,
+    acpi_processor_uid: u32,
 }
 
 /// Return all ISA interrupt source overrides from the MADT.
@@ -431,11 +503,12 @@ fn find_hpet_table() -> Option<&'static AcpiHpet> {
         // Use XSDT (64-bit table pointers)
         let xsdt_ptr = rsdp.xsdt_addr as *const AcpiSdtHeader;
         unsafe {
-            let xsdt = &*xsdt_ptr;
-            if xsdt.signature != XSDT_SIGNATURE {
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).signature));
+            if sig != XSDT_SIGNATURE {
                 return None;
             }
-            let entry_count = (xsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 8;
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*xsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 8;
             let entries = core::slice::from_raw_parts(
                 (rsdp.xsdt_addr + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u64,
                 entry_count,
@@ -446,11 +519,12 @@ fn find_hpet_table() -> Option<&'static AcpiHpet> {
         // Use RSDT (32-bit table pointers)
         let rsdt_ptr = rsdp.rsdt_addr as u64 as *const AcpiSdtHeader;
         unsafe {
-            let rsdt = &*rsdt_ptr;
-            if rsdt.signature != RSDT_SIGNATURE {
+            let sig = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).signature));
+            if sig != RSDT_SIGNATURE {
                 return None;
             }
-            let entry_count = (rsdt.length as usize - core::mem::size_of::<AcpiSdtHeader>()) / 4;
+            let len = core::ptr::read_unaligned(core::ptr::addr_of!((*rsdt_ptr).length)) as usize;
+            let entry_count = (len - core::mem::size_of::<AcpiSdtHeader>()) / 4;
             let entries = core::slice::from_raw_parts(
                 (rsdp.rsdt_addr as u64 + core::mem::size_of::<AcpiSdtHeader>() as u64) as *const u32,
                 entry_count,

@@ -154,9 +154,30 @@ impl Shell {
         self.pos = 0;
         let _ = syscall::sys_cursor_blink(true);
         write_str(b"\x5F");
+        let mut empty_loops: u64 = 0;
+        let mut max_empty: u64 = 0;
         loop {
             let b = console::read_byte();
-            if b < 0 { continue; }
+            if b < 0 {
+                empty_loops += 1;
+                if empty_loops > max_empty { max_empty = empty_loops; }
+                // Fase 5: yield to avoid starvation (minimal fix)
+                let _ = syscall::sys_yield();
+                // Fase 4: log only on thresholds to avoid flood
+                if empty_loops == 100_000 || empty_loops == 1_000_000 || empty_loops == 10_000_000 {
+                    write_str(b"\r\n[SHELL_BUSY] empty_loops=");
+                    let mut tmp=[0u8;20]; let mut v=empty_loops; let mut i=19;
+                    if v==0 { tmp[i]=b'0'; } else { while v>0 { tmp[i]=b'0'+(v%10) as u8; v/=10; if i==0 {break;} i-=1; } }
+                    write_str(&tmp[i..]);
+                    write_str(b" max=");
+                    let mut tmp2=[0u8;20]; let mut v2=max_empty; let mut j=19;
+                    if v2==0 { tmp2[j]=b'0'; } else { while v2>0 { tmp2[j]=b'0'+(v2%10) as u8; v2/=10; if j==0 {break;} j-=1; } }
+                    write_str(&tmp2[j..]);
+                    write_str(b"\r\n");
+                }
+                continue;
+            }
+            empty_loops = 0;
             write_str(b"\x08 \x08");
             match b as u8 {
                 b'\r' | b'\n' => {
@@ -261,6 +282,14 @@ impl Shell {
             }
             if self.pos > 0 { write_str(b"\x5F"); }
         }
+        // Fase 4: report max busy loops for this line
+        if max_empty > 1000 {
+            write_str(b"\r\n[SHELL_BUSY] line done max_empty=");
+            let mut tmp=[0u8;20]; let mut v=max_empty; let mut i=19;
+            if v==0 { tmp[i]=b'0'; } else { while v>0 { tmp[i]=b'0'+(v%10) as u8; v/=10; if i==0 {break;} i-=1; } }
+            write_str(&tmp[i..]);
+            write_str(b"\r\n");
+        }
         let _ = syscall::sys_cursor_blink(false);
     }
 
@@ -338,6 +367,11 @@ impl Shell {
             b"SET" => { fds.close_all(); self.cmd_set(trimmed); }
             b"EXIT" => { fds.close_all(); self.cmd_exit(); }
             b"CALL" => { fds.close_all(); self.cmd_call(trimmed); }
+            b"VTDIAG" => {
+                fds.close_all();
+                unsafe { core::arch::asm!("mov rax, 99", "int 0x80", options(nostack)); }
+                write_str(b"\r\n[VTDIAG] dumped\r\n");
+            }
             _ => {
                 write_str(b"\r\n");
                 unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=args_slice.len().min(255); core::ptr::copy_nonoverlapping(args_slice.as_ptr(),d,n); d.add(n).write(0); }

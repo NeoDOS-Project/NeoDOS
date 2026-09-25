@@ -46,25 +46,30 @@ fn kbd_process_internal(scancode: u8, source: &'static str, seq: u64) {
     let pid = crate::scheduler::current_pid();
     // Heuristic for interrupt context: IRQL check or invariant flag if available
     let in_irq = crate::invariants::is_in_timer_irq();
-    crate::serial_println!(
-        "[KBD] seq={} source={} scancode=0x{:02x} make={} code=0x{:02x} tid={} pid={} in_irq={} direct_cnt={} dispatch_cnt={}",
-        seq, source, scancode, is_make, code, tid, pid, in_irq,
-        KBD_DIRECT_CNT.load(Ordering::Relaxed),
-        KBD_DISPATCH_CNT.load(Ordering::Relaxed)
-    );
-    // Legacy trace for backwards compat
-    crate::serial_println!("[KBD_EVENT] seq={} source={} scancode=0x{:x} make={} code=0x{:x}", seq, source, scancode, is_make, code);
+    // Phase 7: per-scancode logging must not flood serial in the hot path.
+    // Gate behind LogSubsys::Kbd trace (default level is INFO → silent).
+    if crate::log::log_enabled(crate::log::LogSubsys::Kbd, crate::log::LogLevel::Trace) {
+        crate::serial_println!(
+            "[KBD] seq={} source={} scancode=0x{:02x} make={} code=0x{:02x} tid={} pid={} in_irq={} direct_cnt={} dispatch_cnt={}",
+            seq, source, scancode, is_make, code, tid, pid, in_irq,
+            KBD_DIRECT_CNT.load(Ordering::Relaxed),
+            KBD_DISPATCH_CNT.load(Ordering::Relaxed)
+        );
+        crate::serial_println!("[KBD_EVENT] seq={} source={} scancode=0x{:x} make={} code=0x{:x}", seq, source, scancode, is_make, code);
+    }
 
     if let Some(mut kbd) = crate::kbd::KBD.try_lock() {
         // Drain any previously queued scancodes first (FIFO) before current
         while let Some(pending) = PENDING_SCANCODES.pop() {
             let p_released = (pending & 0x80) != 0;
             let p_is_make = !p_released;
-            let p_code = pending & 0x7F;
-            kbd.process_scancode(p_code, p_is_make);
+            // Pass raw scancode so E0 prefix is handled inside process_scancode
+            kbd.process_scancode(pending, p_is_make);
         }
-        kbd.process_scancode(code, is_make);
-        crate::serial_println!("[KBD] EXIT seq={} source={} tid={} pid={}", seq, source, tid, pid);
+        kbd.process_scancode(scancode, is_make);
+        if crate::log::log_enabled(crate::log::LogSubsys::Kbd, crate::log::LogLevel::Trace) {
+            crate::serial_println!("[KBD] EXIT seq={} source={} tid={} pid={}", seq, source, tid, pid);
+        }
     } else {
         // Lock-free queue instead of silent discard (SPSC: IRQ → consumer)
         if PENDING_SCANCODES.push(scancode).is_err() {
