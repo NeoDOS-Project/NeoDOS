@@ -2,6 +2,7 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
+#![feature(allocator_api)]
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(noop_test_runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]

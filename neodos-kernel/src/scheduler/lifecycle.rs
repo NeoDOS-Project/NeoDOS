@@ -26,24 +26,76 @@ lazy_static! {
 
 /// Defer EPROCESS slot recycling until after context switch.
 /// The pid's Kthread stacks remain valid while current thread still executes.
-/// F-06: bounded — if the queue is at capacity, we log and apply backpressure
-/// by dropping the oldest zombie that is not running (if any), otherwise we
-/// keep the queue at MAX and the new pid will be retried on next schedule.
+/// F-DEV-02: fixed bounded queue without loss — previous drain discarded PIDs
+/// without recycle_terminated, leaking eprocesses/kthreads/Ob objects.
+/// Correctness requires queue with no silent loss: we never drain without
+/// recycling. If hard cap exceeded we keep the queue oversized and warn;
+/// reap_pending_zombies will drain all eligible on next schedule (F-06 loop).
+/// Sync reclaim or spawn backpressure (see defer_reap_with_scheduler) bounds it.
 pub fn defer_reap(pid: u32) {
     if pid == 0 { return; }
     let mut zombies = ZOMBIE_PIDS.lock();
     if zombies.len() >= MAX_ZOMBIES {
         kwarn!(crate::log::LogSubsys::Sched, "zombie backpressure: queue len {} >= MAX {}", zombies.len(), MAX_ZOMBIES);
     }
-    // P0.2 audit: never drop the new pid (would leak Eprocess/Kthread/slot forever).
-    // Always enqueue; if we exceed hard cap, drain oldest to keep it bounded but keep the new pid.
     zombies.push(pid);
     if zombies.len() > MAX_ZOMBIES * 4 {
-        let drain = zombies.len() - MAX_ZOMBIES * 2;
-        // Remove oldest, keep newest (including the just-pushed pid)
-        zombies.drain(0..drain);
-        kwarn!(crate::log::LogSubsys::Sched, "zombie storm: truncated oldest {} (queue now {} )", drain, zombies.len());
+        kwarn!(crate::log::LogSubsys::Sched, "zombie storm: queue len {} exceeds hard cap {} (awaiting reap, no loss)", zombies.len(), MAX_ZOMBIES * 4);
+        // F-DEV-02: do NOT drain without recycle — that leaked PID slots forever.
+        // Queue stays oversized until reap_pending_zombies drains eligible entries.
     }
+}
+
+/// F-DEV-02: sync reclaim variant called with scheduler lock held (terminate_current).
+/// Enqueues pid via defer_reap, then synchronously reclaims oldest eligible zombies
+/// while holding &mut Scheduler to keep the queue bounded without loss.
+pub fn defer_reap_with_scheduler(sched: &mut Scheduler, pid: u32) {
+    defer_reap(pid);
+    // Bound the queue synchronously by recycling oldest not-running zombies.
+    // This is called with SCHEDULER already locked, so recycle_terminated is safe.
+    loop {
+        let over = { ZOMBIE_PIDS.lock().len() > MAX_ZOMBIES * 2 };
+        if !over { break; }
+        let pos_opt = {
+            let zombies = ZOMBIE_PIDS.lock();
+            // Find first zombie that is not running on any CPU and not the newly queued pid
+            // (new pid is still running on current CPU until context switch, so skip it)
+            zombies.iter().position(|&p| p != pid && !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p))
+        };
+        let pos = match pos_opt {
+            Some(p) => p,
+            None => break, // all remaining zombies still running — cannot reclaim
+        };
+        let pid_to_reclaim = { ZOMBIE_PIDS.lock().remove(pos) };
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid_to_reclaim) {
+            ZOMBIE_PIDS.lock().push(pid_to_reclaim);
+            break;
+        }
+        if !sched.recycle_terminated(pid_to_reclaim) {
+            // Already gone or not found — continue to next
+            continue;
+        }
+    }
+}
+
+/// Expose queue length for spawn backpressure checks.
+pub fn zombie_queue_len() -> usize {
+    ZOMBIE_PIDS.lock().len()
+}
+
+/// Check if spawn should be backpressured: queue at MAX and oldest still running.
+/// Caller should attempt sync reclaim first; if still full, return NoMem.
+pub fn is_zombie_backpressured() -> bool {
+    let zombies = ZOMBIE_PIDS.lock();
+    if zombies.len() < MAX_ZOMBIES { return false; }
+    // If oldest eligible zombie is not running, we could reclaim, so not truly backpressured
+    // Check if any zombie is reclaimable
+    for &p in zombies.iter() {
+        if !crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(p) {
+            return false; // reclaimable, not backpressured
+        }
+    }
+    true
 }
 
 /// Try to reap *all* zombies that are not running on ANY CPU.
@@ -635,7 +687,7 @@ impl Scheduler {
             }
         }
         if let Some(pid) = do_reap {
-            defer_reap(pid);
+            defer_reap_with_scheduler(self, pid);
         }
         Some(pid)
     }

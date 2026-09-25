@@ -4,10 +4,10 @@ use x86_64::structures::tss::TaskStateSegment;
 use x86_64::VirtAddr;
 use core::sync::atomic::{AtomicBool, Ordering};
 use crate::arch::x64::cpu_local::MAX_CPUS;
-
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 1;
 
 #[repr(align(16))]
+#[derive(Copy, Clone)]
 struct AlignedStack([u8; 4096 * 8]);
 
 static mut DOUBLE_FAULT_STACK: AlignedStack = AlignedStack([0; 4096 * 8]);
@@ -20,7 +20,6 @@ static mut TSS: TaskStateSegment = TaskStateSegment::new();
 static TSS_READY: AtomicBool = AtomicBool::new(false);
 
 // ── F-01 P0.2: TSS per-CPU for SMP (global TSS is RSP0 race) ──────────
-use crate::arch::x64::cpu_local::MAX_CPUS;
 #[link_section = ".data"]
 static mut PER_CPU_TSS: [TaskStateSegment; MAX_CPUS] = {
     // const fn to init array (TaskStateSegment::new is const)

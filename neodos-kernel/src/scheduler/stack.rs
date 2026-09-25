@@ -14,7 +14,7 @@ impl AlignedKStack {
     }
 
     pub fn try_new_boxed() -> Option<Box<Self>> {
-        let mut stack = Box::try_new(AlignedKStack([0u8; KERNEL_STACK_SIZE]))?;
+        let mut stack = Box::try_new(AlignedKStack([0u8; KERNEL_STACK_SIZE])).ok()?;
         unsafe {
             (stack.0.as_mut_ptr() as *mut u64).write(STACK_CANARY);
         }
