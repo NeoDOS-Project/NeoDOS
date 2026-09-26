@@ -47,6 +47,72 @@ fn frame_is_ring3(k: &Kthread) -> bool {
     (cs & 3) == 3
 }
 
+// ── Phase 13-A.3: Ready publication ownership guard ──────────────────────
+// I-RUNREADY: a `Ready` KTHREAD must not be the live `KPRCB.current_thread` of
+// any *other* CPU. A wake landing in the `Blocked → switch-out` window publishes
+// a still-executing thread `Ready` with a stale `rsp`; without this guard a
+// different CPU could dispatch it and run the same KTHREAD on two CPUs sharing
+// one kernel stack (the Phase 13 `iretq` #GP class). The selecting CPU may still
+// re-select its own current thread (the legitimate switch-out path).
+pub(crate) static SCHED_CANDIDATE_REJECTED: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+pub(crate) static READY_WHILE_RUNNING: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+pub(crate) static STALE_RSP_DISPATCH: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+pub(crate) static STACK_OWNERSHIP_CONFLICT: core::sync::atomic::AtomicU64 =
+    core::sync::atomic::AtomicU64::new(0);
+
+/// True when `kptr` is `KPRCB.current_thread` of a CPU other than `self_cpu`.
+/// The rejection is counted; the serial note is forensic-verbose only.
+#[inline]
+pub(crate) fn candidate_owned_elsewhere(kptr: *const Kthread, self_cpu: u32) -> bool {
+    match crate::arch::x64::cpu_local::kthread_current_cpu(kptr) {
+        Some(owner) if owner != self_cpu => {
+            SCHED_CANDIDATE_REJECTED.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            if sched_forensic_verbose() {
+                crate::serial_println!(
+                    "[READY_GUARD] tid={} state=Ready current_cpu={} self_cpu={} action=defer",
+                    unsafe { (*kptr).tid }, owner, self_cpu);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Post-commit detector: increment the violation counters if, immediately after
+/// a candidate was committed `Running`, it is still owned by another CPU. The
+/// guard should make this unreachable; a non-zero count is direct evidence of a
+/// check→commit race (I-RUNREADY escaped).
+#[inline]
+fn note_dispatch_owner_check(kptr: *const Kthread, self_cpu: u32) {
+    if let Some(owner) = crate::arch::x64::cpu_local::kthread_current_cpu(kptr) {
+        if owner != self_cpu {
+            READY_WHILE_RUNNING.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            STALE_RSP_DISPATCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            STACK_OWNERSHIP_CONFLICT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            if sched_forensic_verbose() {
+                crate::serial_println!(
+                    "[READY_GUARD] tid={} current_cpu={} self_cpu={} action=dispatch_conflict",
+                    unsafe { (*kptr).tid }, owner, self_cpu);
+            }
+        }
+    }
+}
+
+/// Phase 13-A.3 forensic counters (rejected, ready_while_running,
+/// stale_rsp_dispatch, stack_ownership_conflict).
+pub fn sched_ready_guard_stats() -> (u64, u64, u64, u64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    (
+        SCHED_CANDIDATE_REJECTED.load(Relaxed),
+        READY_WHILE_RUNNING.load(Relaxed),
+        STALE_RSP_DISPATCH.load(Relaxed),
+        STACK_OWNERSHIP_CONFLICT.load(Relaxed),
+    )
+}
+
 fn rq_len(cpu: usize) -> usize {
     let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
     if kprcb == 0 { return 0; }
@@ -288,13 +354,21 @@ impl Scheduler {
         // Count every schedule decision, not just global-scan fallbacks.
         self.schedule_count += 1;
 
+        // Phase 13-A.3: CPU performing this selection. A `Ready` candidate that
+        // is still the live `KPRCB.current_thread` of a *different* CPU is
+        // deferred (I-RUNREADY); see `candidate_owned_elsewhere`.
+        let self_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+
         // 1. Try per-CPU local run queue (fast path)
         if let Some(tid) = Self::try_dequeue_local() {
             let ptr = self.find_kthread_ptr(tid);
             if !ptr.is_null() {
                 unsafe {
                     let k = &mut *ptr;
-                    if k.state == ThreadState::Ready && (!require_ring3 || frame_is_ring3(k)) {
+                    if k.state == ThreadState::Ready
+                        && (!require_ring3 || frame_is_ring3(k))
+                        && !candidate_owned_elsewhere(ptr, self_cpu)
+                    {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
                         } else { self.current_tid };
@@ -305,6 +379,7 @@ impl Scheduler {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
                         k.state = ThreadState::Running;
+                        note_dispatch_owner_check(ptr, self_cpu);
                         if (tid == 5 || prev == 5) && sched_forensic_verbose() {
                             crate::serial_println!("[T5_SCHED] step=1 prev={} new={} current={} rq0={} kprcb={:?}",
                                 prev, tid, self.current_tid, rq_len(0),
@@ -336,7 +411,10 @@ impl Scheduler {
             if !ptr.is_null() {
                 unsafe {
                     let k = &mut *ptr;
-                    if k.state == ThreadState::Ready && (!require_ring3 || frame_is_ring3(k)) {
+                    if k.state == ThreadState::Ready
+                        && (!require_ring3 || frame_is_ring3(k))
+                        && !candidate_owned_elsewhere(ptr, self_cpu)
+                    {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
                         } else { self.current_tid };
@@ -346,6 +424,7 @@ impl Scheduler {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
                         k.state = ThreadState::Running;
+                        note_dispatch_owner_check(ptr, self_cpu);
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
@@ -381,7 +460,7 @@ impl Scheduler {
         // Cached outside the mutable kthread scan (borrow checker) and used to
         // re-home a global-scan candidate onto this CPU.
         let is_global_sched = self.kprcb_thread_in_self();
-        let scan_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        let scan_cpu = self_cpu;
         'scan: for priority in 0..PRIORITY_COUNT {
             for offset in 0..self.next_tid {
                 let check_tid = (start + offset) % self.next_tid.max(1);
@@ -394,6 +473,9 @@ impl Scheduler {
                         // Keep the boot thread pinned to CPU0; migrating it would
                         // strand the BSP boot flow on an AP.
                         && !(k.tid == BOOT_TID && scan_cpu != 0)
+                        // Phase 13-A.3 (I-RUNREADY): do not commit a candidate a
+                        // different CPU still owns as its live current thread.
+                        && !candidate_owned_elsewhere(&**k as *const Kthread, scan_cpu)
                     {
                         // P0-3 FIX: Remove from runqueue BEFORE setting state to Running.
                         Scheduler::remove_from_run_queue(&**k);
@@ -414,7 +496,9 @@ impl Scheduler {
                                     "[KCPU] scan tid={} old_cpu={} new_cpu={} prev={}",
                                     check_tid, old_cpu, scan_cpu, scan_prev);
                             }
-                        }                        k.state = ThreadState::Running;
+                        }
+                        k.state = ThreadState::Running;
+                        note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
                         picked_ptr = &mut **k as *mut Kthread;
                         picked_pid = k.pid;
                         picked_tid = k.tid;

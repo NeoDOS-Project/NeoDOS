@@ -597,6 +597,29 @@ pub fn is_pid_running_on_any_cpu(pid: u32) -> bool {
     false
 }
 
+/// Phase 13-A.3 (I-RUNREADY): return the CPU whose `KPRCB.current_thread`
+/// still points at `kptr`, if any.
+///
+/// This is the authoritative check for "is this KTHREAD still the live
+/// execution context of some CPU". It compares pointers and never dereferences
+/// them, so a concurrent `current_thread` update by the owning CPU simply
+/// yields a non-match (no use-after-free). The scheduler uses it to refuse
+/// dispatching/migrating a `Ready` KTHREAD that a CPU still owns; without it a
+/// wake landing in the `Blocked → switch-out` window could run one KTHREAD on
+/// two CPUs sharing one kernel stack (the Phase 13 `iretq` #GP class).
+pub fn kthread_current_cpu(kptr: *const Kthread) -> Option<u32> {
+    if kptr.is_null() { return None; }
+    for cpu in 0..MAX_CPUS {
+        let addr = unsafe { KPRCB_PAGES[cpu] };
+        if addr == 0 { continue; }
+        let cur = unsafe {
+            core::ptr::read_volatile((addr + OFFSET_CURRENT_THREAD as u64) as *const *const Kthread)
+        };
+        if cur == kptr { return Some(cpu as u32); }
+    }
+    None
+}
+
 /// Sync per-CPU KPRCB current_thread/current_pid/idle for this CPU.
 /// Must be called with SCHEDULER lock held and IRQL >= DISPATCH (already).
 /// No-op if GS base not yet programmed (early boot / unit tests).
@@ -947,6 +970,46 @@ pub fn register_cpu_local_tests() {
             ok
         });
         crate::test_true!(flags_preserved);
+        // Phase 13-A.3 (I-RUNREADY): `kthread_current_cpu` must resolve the CPU
+        // whose KPRCB.current_thread points at the KTHREAD (and only that one).
+        // Temporarily repoint this CPU's current_thread at a stack-local probe,
+        // then restore it — all with local interrupts disabled.
+        let owner_lookup_ok = crate::hal::without_interrupts(|| unsafe {
+            let saved_thread = this_cpu_current_thread();
+            let this_cpu = this_cpu_id();
+            let mut probe =
+                crate::scheduler::Kthread::new_idle(0xFFF0, 0, 0x2000, 0x3000);
+            this_cpu_set_current_thread(&mut probe as *mut crate::scheduler::Kthread);
+            let found = kthread_current_cpu(&probe as *const crate::scheduler::Kthread);
+            let other =
+                crate::scheduler::Kthread::new_idle(0xFFF1, 0, 0x4000, 0x5000);
+            let other_found = kthread_current_cpu(&other as *const crate::scheduler::Kthread);
+            // Phase 13-A.3 guard predicate: reject a candidate owned by another
+            // CPU, allow the selecting CPU to re-select its own current thread,
+            // and count exactly one deferral.
+            let other_cpu = if this_cpu == 0 { 1 } else { 0 };
+            let before = crate::scheduler::schedule::sched_ready_guard_stats().0;
+            let reject_other = crate::scheduler::schedule::candidate_owned_elsewhere(
+                &probe as *const crate::scheduler::Kthread,
+                other_cpu,
+            );
+            let allow_self = crate::scheduler::schedule::candidate_owned_elsewhere(
+                &probe as *const crate::scheduler::Kthread,
+                this_cpu,
+            );
+            let after = crate::scheduler::schedule::sched_ready_guard_stats().0;
+            // Restore the forensic counter: this synthetic probe is not a real
+            // runtime deferral, so post-suite stats must not include it.
+            crate::scheduler::schedule::SCHED_CANDIDATE_REJECTED
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            this_cpu_set_current_thread(saved_thread);
+            found == Some(this_cpu)
+                && other_found.is_none()
+                && reject_other
+                && !allow_self
+                && after == before + 1
+        });
+        crate::test_true!(owner_lookup_ok);
         Ok(())
     });
     // Per-CPU slab allocator tests (A1.3)

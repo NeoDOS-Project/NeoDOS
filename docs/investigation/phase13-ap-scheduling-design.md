@@ -349,6 +349,47 @@ prev. INT=0x20 on CPU1 GS base = 0x2408000  RSP = 0x24791d8
 pushes because both CPUs were using netd's single kernel stack. After the fix
 the same `-d int` capture reports **zero** `v=0d` and the shell is reached.
 
+### 9.4 Post-fix state-publication audit
+
+Every `Ready` producer was enumerated (see
+`phase13-ap-timer-iretq-gpf-forensics.md` §10–§16). The `yield_requested`
+contract is honoured by all yield callers, all creation/suspend paths publish
+only never-executed threads, and the switch-out paths (`on_timer_tick`,
+timer preempt, `syscall_try_resched`) save the live `rsp`, re-home `k.cpu` and
+publish under the `SCHEDULER` mutex.
+
+One residual window remained in the post-fix audit: a waker calling
+`make_thread_ready` on a `Blocked` thread that is still executing its
+`state = Blocked → syscall_try_resched` path. The block sites
+(`kwait_block`, `ObWait`, alertable APC wait, `handler_read`,
+`wait_for_process`) set `Blocked` without saving `k.rsp`, and the selection
+paths (`schedule_with` steps 1–3, `steal_and_migrate`) test only
+`state == Ready`. Another CPU could therefore dispatch the woken thread to its
+stale frame — the same G2/G4 class as §9.1, triggered by a wake instead of a
+yield; it was narrower and not observed in validation, and invisible to
+`consistency_check` (a KTHREAD has a single `state`/`cpu`).
+
+**Phase 13-A.3 (implemented):** candidate ownership guard. The authoritative
+check is `cpu_local::kthread_current_cpu(kptr)` (pointer comparison against
+`KPRCB.current_thread` per CPU, never a dereference of a possibly-stale
+pointer). `schedule::candidate_owned_elsewhere(kptr, self_cpu)` defers a
+`Ready` candidate owned by *another* CPU (the selecting CPU may still re-select
+its own current thread, preserving the switch-out protocol). It is applied to
+`schedule_with` step 1 (local queue), step 2 (steal commit), step 3 (global
+scan) and to `steal_and_migrate`. A post-commit detector
+(`note_dispatch_owner_check`) counts any escaped I-RUNREADY event. Because all
+`KPRCB.current_thread` writes already occur under the `SCHEDULER` mutex (and
+selection runs under the same mutex), the check cannot go stale before commit.
+`yield_requested`, F-02, work stealing and scheduling policy are unchanged; a
+guarded candidate is deferred, not dropped, and no pending-wake protocol was
+introduced. **Current suite: 723/723**; SMP1/SMP2/SMP4 clean with
+`GPF/PF/PANIC/SCHED_WARN/IRQ_REENTRANCY = 0` and `READY_WHILE_RUNNING /
+STALE_RSP_DISPATCH / STACK_OWNERSHIP_CONFLICT = 0` (forensic report Part III §22).
+A pre-existing `[SCHED_WARN] tag=timer TWO+ Running` bookkeeping warning can
+appear during extended interactive shell-read stress; it reproduces on HEAD
+without the guard (2/4 path-guaranteed SMP4 runs vs 0/4 guarded) and the guard
+defers nothing in those runs, so it is not a Phase 13-A.3 regression.
+
 ---
 
 ## 10. Phase 13-A.1 validation matrix

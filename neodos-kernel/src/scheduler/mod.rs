@@ -380,6 +380,12 @@ pub fn dump_per_cpu_current() {
             "[AP_EVIDENCE] cpu={} kprcb=0x{:x} current_tid={} current_pid={} idle={} qlen={}",
             cpu, kprcb, tid, cur_pid, idle, qlen);
     }
+    // Phase 13-A.3 forensics: candidate deferrals vs escaped I-RUNREADY events.
+    let (rejected, ready_while_running, stale_rsp_dispatch, stack_conflict) =
+        schedule::sched_ready_guard_stats();
+    crate::serial_println!(
+        "[READY_GUARD_STATS] rejected={} ready_while_running={} stale_rsp_dispatch={} stack_ownership_conflict={}",
+        rejected, ready_while_running, stale_rsp_dispatch, stack_conflict);
 }
 
 /// Recycle a terminated EPROCESS. External resources are released here

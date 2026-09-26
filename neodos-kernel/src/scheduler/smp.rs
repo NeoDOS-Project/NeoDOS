@@ -77,6 +77,17 @@ impl Scheduler {
                 }
                 continue;
             }
+            // Phase 13-A.3 (I-RUNREADY): never migrate a KTHREAD that a CPU
+            // still owns as its live current thread. Leave it at the victim
+            // head (do not pop) so no queue entry is lost; it becomes stealable
+            // once the owner commits its next context.
+            let kptr = self
+                .find_kthread(tid)
+                .map(|k| k as *const crate::scheduler::Kthread)
+                .unwrap_or(core::ptr::null());
+            if crate::scheduler::schedule::candidate_owned_elsewhere(kptr, thief as u32) {
+                break;
+            }
             // Pop victim
             let tid_popped = victim_rq.pop().unwrap();
             debug_assert_eq!(tid, tid_popped);
