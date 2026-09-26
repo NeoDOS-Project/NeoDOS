@@ -349,6 +349,37 @@ metadata only**:
   thread `boot`; `spawn_kthread` `kthread`; spawned user processes take the
   executable basename (e.g. `neoshell`); the network thread is `netd`.
 
+### Inspection Snapshot (Phase 14-B)
+
+`Scheduler::snapshot_into(&mut ProcSnapshot)` (and the global
+`kernel_snapshot_into`) produces a read-only, **scheduler-consistent** view of
+the logical process/thread registry (`Scheduler.eprocesses` /
+`Scheduler.kthreads`) — not the run queues.
+
+- Data source: the live `Eprocess`/`Kthread` registries. A thread appears while
+  it is a live registry object (`Ready`/`Running`/`Blocked`/`Suspended`/
+  `Terminated`); a reaped object has already been removed from the registry and
+  does not appear. `Terminated`-but-not-yet-reaped threads remain visible with
+  `state == Terminated`.
+- Snapshot model: bounded, owned copies — `ProcessSnapshot { pid, name,
+  thread_count }` and `ThreadSnapshot { tid, pid, name, state, cpu, idle,
+  is_current }`. Names reuse `KernelName` (`NAME_MAX = 32`); no references into
+  live objects and no heap allocation proportional to string length. The
+  container is fixed-capacity (`MAX_SNAPSHOT_PROCESSES` /
+  `MAX_SNAPSHOT_THREADS`) and sets `truncated` when the registry is larger.
+- Consistency: all fields are copied while the global `SCHEDULER` mutex is held;
+  the lock is released before the snapshot is formatted or printed (no console
+  I/O under a lock). `KPRCB.current_thread` is written under the same mutex, so
+  the CPU/ownership view is coherent with process/thread state. This is a
+  *scheduler-consistent snapshot*, not a lock-free atomic read of every field.
+- CPU semantics: for a `Running` thread, `cpu` is the `KPRCB.current_thread`
+  owner (`is_current == true`); otherwise it is the scheduler's `Kthread.cpu`
+  assignment.
+- Ordering: processes by `pid`, threads by `tid` (deterministic).
+- Lifecycle visibility: `created`/`ready`/`running`/`blocked`/`suspended`/
+  `terminated` are exposed using the existing `ThreadState`; `zombie`/`reaped`
+  objects do not appear. The snapshot never mutates scheduler state.
+
 ---
 
 ## SMP Integration

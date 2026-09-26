@@ -826,6 +826,15 @@ pub fn register_tests() {
 
     test_case!("rq_spawn_kthread_enqueues_once", {
         let mut sched = Scheduler::new();
+        // Phase 14-B: minimal/empty-state snapshot (boot + idle only).
+        {
+            let fresh = Scheduler::new();
+            let mut s0 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+            fresh.snapshot_into(&mut s0);
+            test_true!(s0.process_count >= 1);
+            test_true!(s0.thread_count >= 2);
+            test_eq!(s0.truncated, false);
+        }
         sched.next_tid = 2;
         let tid = sched.spawn_kthread(0x400000, PRIORITY_NORMAL).unwrap();
         let result = sched.validate_runqueue_invariants();
@@ -841,6 +850,42 @@ pub fn register_tests() {
         let named = sched.spawn_kthread_named(0x400100, PRIORITY_NORMAL, "worker").unwrap();
         test_ne!(named, tid);
         test_eq!(sched.find_kthread(named).unwrap().name(), "worker");
+
+        // Phase 14-B: scheduler-consistent snapshot over the logical registry.
+        let mut snap = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap);
+        // Process enumeration: boot (pid 0) + two spawned kernel processes.
+        test_true!(snap.process_count >= 3);
+        test_true!(snap.process(0).is_some());
+        // Thread enumeration + Phase 14-A names.
+        let t_main = snap.thread(tid).unwrap();
+        test_eq!(t_main.name.as_str(), "kthread");
+        test_eq!(t_main.tid, tid);
+        let t_named = snap.thread(named).unwrap();
+        test_eq!(t_named.name.as_str(), "worker");
+        // Ownership: every thread maps to an enumerated process.
+        for t in snap.threads[..snap.thread_count].iter() {
+            test_true!(snap.process(t.pid).is_some());
+        }
+        // Idle remains a distinct, flagged thread (not collapsed).
+        test_true!(snap.threads[..snap.thread_count].iter().any(|t| t.idle));
+        // Deterministic ordering: processes by pid, threads by tid.
+        let mut ordered = true;
+        for w in snap.processes[..snap.process_count].windows(2) {
+            if w[0].pid > w[1].pid { ordered = false; }
+        }
+        for w in snap.threads[..snap.thread_count].windows(2) {
+            if w[0].tid > w[1].tid { ordered = false; }
+        }
+        test_true!(ordered);
+        // Snapshot lifetime: detached from live state, repeatable for stable state.
+        let mut snap2 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap2);
+        test_eq!(snap.thread_count, snap2.thread_count);
+        test_true!(snap.threads[..snap.thread_count] == snap2.threads[..snap2.thread_count]);
+        let mut snap3 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap3);
+        test_true!(snap.threads[..snap.thread_count] == snap3.threads[..snap3.thread_count]);
     });
 
     test_case!("rq_add_thread_enqueues_once", {

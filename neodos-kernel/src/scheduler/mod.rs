@@ -15,10 +15,15 @@ pub mod aging;
 pub mod lifecycle;
 pub mod wake;
 pub mod schedule;
+pub mod snapshot;
 
 pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
 pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
+pub use snapshot::{
+    kernel_snapshot_dump, kernel_snapshot_into, ProcSnapshot, ProcessSnapshot, ThreadSnapshot,
+    MAX_SNAPSHOT_PROCESSES, MAX_SNAPSHOT_THREADS,
+};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -397,6 +402,8 @@ pub fn dump_per_cpu_current() {
     crate::serial_println!(
         "[READY_GUARD_STATS] rejected={} ready_while_running={} stale_rsp_dispatch={} stack_ownership_conflict={}",
         rejected, ready_while_running, stale_rsp_dispatch, stack_conflict);
+    // Phase 14-B: explicit process/thread snapshot for this SMP evidence dump.
+    snapshot::kernel_snapshot_dump();
 }
 
 /// Recycle a terminated EPROCESS. External resources are released here
