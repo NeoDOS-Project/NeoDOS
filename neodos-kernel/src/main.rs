@@ -766,7 +766,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         slot.slot_idx, slot.code_base);
 
     let mut addr_space = scheduler::address_space::AddressSpace::new();
-    let (entry, loaded) = {
+    let (entry, loaded, boot_name) = {
         let try_load = |path: &str, addr: &mut scheduler::address_space::AddressSpace| -> Option<u64> {
             crate::serial_println!("[INIT_DEBUG] before resolve path: {}", path);
             let mut bin_buf = alloc::vec![0u8; 65536];
@@ -806,15 +806,19 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
         // Primary: NeoInit.nxe. Fallback: try Neoshell.nxe directly.
         let mut addr = scheduler::address_space::AddressSpace::new();
+        // Phase 14-A: track the human-readable name of the init binary actually
+        // loaded (primary NeoInit, fallback NeoShell).
+        let mut boot_name: &str = "neoinit";
         let entry = try_load("C:\\Programs\\neoinit.nxe", &mut addr)
             .or_else(|| {
                 kinfo!(LogSubsys::Init, "NeoInit not found, trying NEOSHELL.NXE as fallback...");
+                boot_name = "neoshell";
                 try_load("C:\\Programs\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
             let loaded = entry != 0;
         if loaded { addr_space = addr; }
-        (entry, loaded)
+        (entry, loaded, boot_name)
     };
 
     if !loaded {
@@ -826,7 +830,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     crate::serial_println!("[BOOT_PROGRESS] SPAWN_USERMODE");
     crate::serial_println!("[INIT_DEBUG] before process create");
     let pid = match usermode::spawn_usermode(
-        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0, boot_name,
     ) {
         Ok(pid) => pid,
         Err(e) => {

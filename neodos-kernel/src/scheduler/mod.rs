@@ -16,7 +16,7 @@ pub mod lifecycle;
 pub mod wake;
 pub mod schedule;
 
-pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
+pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
 pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
 
@@ -210,6 +210,7 @@ impl Scheduler {
             apc_pending: false,
             is_idle: false,
             yield_requested: false,
+            name: KernelName::from_str("boot"),
         };
         eprocesses.push(Some(boot_eproc));
         kthreads.push(Some(Box::new(boot_thread)));
@@ -222,7 +223,14 @@ impl Scheduler {
             crate::scheduler::stack::idle_task as *const () as u64,
             idle_stack_top,
         );
-        kthreads.push(Some(Box::new(idle_thread)));
+        {
+            // Phase 14-A: per-CPU idle names ("idle/0"), bounded.
+            let mut mut_idle = idle_thread;
+            let mut n = KernelName::from_str("idle/");
+            n.push_u32(0);
+            mut_idle.name = n;
+            kthreads.push(Some(Box::new(mut_idle)));
+        }
 
         Scheduler {
             eprocesses,
@@ -375,10 +383,13 @@ pub fn dump_per_cpu_current() {
         let tid = if cur_ptr == 0 { 0 } else {
             unsafe { (*(cur_ptr as *const Kthread)).tid }
         };
+        let name: &str = if cur_ptr == 0 { "" } else {
+            unsafe { (*(cur_ptr as *const Kthread)).name() }
+        };
         let qlen = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
         crate::serial_println!(
-            "[AP_EVIDENCE] cpu={} kprcb=0x{:x} current_tid={} current_pid={} idle={} qlen={}",
-            cpu, kprcb, tid, cur_pid, idle, qlen);
+            "[AP_EVIDENCE] cpu={} kprcb=0x{:x} current_tid={} current_pid={} name={} idle={} qlen={}",
+            cpu, kprcb, tid, cur_pid, name, idle, qlen);
     }
     // Phase 13-A.3 forensics: candidate deferrals vs escaped I-RUNREADY events.
     let (rejected, ready_while_running, stale_rsp_dispatch, stack_conflict) =

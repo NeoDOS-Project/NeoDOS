@@ -312,6 +312,7 @@ impl Scheduler {
         cwd_path: &str,
         heap_base: u64,
         parent_pid: u32,
+        name: &str,
         rsp: u64,
         kernel_stack_top: u64,
         kernel_stack: Box<AlignedKStack>,
@@ -355,10 +356,11 @@ impl Scheduler {
                 thread_obj_id = Some(id);
             }
         }
-        crate::serial_println!("[SPAWN] pid={} tid={} obj_id={:?} ob_id={:?} thread_obj_id={:?}", pid, tid, obj_id, ob_id, thread_obj_id);
+        crate::serial_println!("[SPAWN] pid={} tid={} name={} obj_id={:?} ob_id={:?} thread_obj_id={:?}", pid, tid, name, obj_id, ob_id, thread_obj_id);
 
         let mut eproc = Eprocess {
             pid,
+            name: crate::scheduler::types::KernelName::from_path(name),
             parent_pid,
             handle_table: crate::handle::HandleTable::with_defaults(),
             cwd_drive,
@@ -380,6 +382,8 @@ impl Scheduler {
 
         let mut thread = Kthread::new_ring3_with_stack(tid, pid, entry, rsp, kernel_stack_top, kernel_stack);
         thread.obj_id = thread_obj_id;
+        // Phase 14-A: the process's initial thread inherits the process name.
+        thread.name = crate::scheduler::types::KernelName::from_path(name);
         thread.state = ThreadState::Suspended;
 
         // Find slots (no alloc — we pre-reserved via ensure_slots)
@@ -452,6 +456,11 @@ impl Scheduler {
     }
 
     pub fn spawn_kthread(&mut self, entry: u64, priority: u8) -> Option<u32> {
+        self.spawn_kthread_named(entry, priority, "kthread")
+    }
+
+    /// Phase 14-A: kernel-thread spawn with an explicit bounded name.
+    pub fn spawn_kthread_named(&mut self, entry: u64, priority: u8, name: &str) -> Option<u32> {
         let th_slot = self.alloc_kthread_slot()?;
         let tid = self.next_tid;
         self.next_tid += 1;
@@ -486,6 +495,7 @@ impl Scheduler {
             apc_pending: false,
             is_idle: false,
             yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_path(name),
         };
 
         let ep_slot = self.alloc_eprocess_slot()?;

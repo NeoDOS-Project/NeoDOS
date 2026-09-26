@@ -378,7 +378,7 @@ impl ServiceManager {
     }
 
     /// Actually spawn a process for a service via process creation.
-    fn spawn_process(&mut self, _name: &str, binary_path: &str) -> Result<u32, SmError> {
+    fn spawn_process(&mut self, name: &str, binary_path: &str) -> Result<u32, SmError> {
         // Build Ob path: \Global\FileSystem\<path>
         let ob_path = if binary_path.starts_with("\\Global\\FileSystem\\") {
             binary_path.to_string()
@@ -430,7 +430,7 @@ impl ServiceManager {
         // Spawn the process — F-04: free user slot on failure (transactional rollback)
         let child_pid = match crate::usermode::spawn_usermode(
             result.entry, slot.stack_top, slot.slot_idx,
-            2, "\\", 0, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
+            2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
         ) {
             Ok(pid) => pid,
             Err(e) => {

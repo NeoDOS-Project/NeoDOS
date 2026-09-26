@@ -30,6 +30,110 @@ pub const TEB_SIZE: u64 = 0x1000;
 
 pub const STACK_CANARY: u64 = 0xDEAD_BEEF_CAFE_BABE;
 
+/// Phase 14-A: hard maximum byte length of a kernel process/thread name.
+///
+/// Names are bounded fixed-size metadata; they never cause heap allocation and
+/// are immutable after the owning object is published. Over-long input is
+/// truncated at `NAME_MAX` bytes; non-ASCII bytes are replaced with `?` so the
+/// stored value is always valid ASCII/UTF-8.
+pub const NAME_MAX: usize = 32;
+
+/// Bounded, allocation-free kernel object name (process/thread).
+///
+/// This is *metadata*: PID/TID remain the authoritative numeric identity and
+/// the name never participates in lookups, scheduling or security decisions.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct KernelName {
+    bytes: [u8; NAME_MAX],
+    len: u8,
+}
+
+impl KernelName {
+    pub const fn empty() -> Self {
+        KernelName { bytes: [0u8; NAME_MAX], len: 0 }
+    }
+
+    /// Bounded copy of `s` (ASCII; non-ASCII bytes become `?`), truncated.
+    pub fn from_str(s: &str) -> Self {
+        let mut n = Self::empty();
+        n.push_str(s);
+        n
+    }
+
+    /// Derive a short name from a filesystem/object path: take the substring
+    /// after the last `\` or `/` and strip a trailing `.nxe` (any case).
+    /// A plain name with no separators/suffix is returned unchanged.
+    pub fn from_path(path: &str) -> Self {
+        let base = path.rsplit(|c| c == '\\' || c == '/').next().unwrap_or(path);
+        let base = base
+            .strip_suffix(".nxe")
+            .or_else(|| base.strip_suffix(".NXE"))
+            .unwrap_or(base);
+        Self::from_str(base)
+    }
+
+    /// Bounded append; stops at `NAME_MAX` (deterministic truncation).
+    pub fn push_str(&mut self, s: &str) {
+        for &b in s.as_bytes() {
+            if (self.len as usize) >= NAME_MAX {
+                break;
+            }
+            self.bytes[self.len as usize] = if b.is_ascii() { b } else { b'?' };
+            self.len += 1;
+        }
+    }
+
+    /// Bounded append of a decimal `u32` (used for `idle/<cpu>`).
+    pub fn push_u32(&mut self, mut v: u32) {
+        if v == 0 {
+            if (self.len as usize) < NAME_MAX {
+                self.bytes[self.len as usize] = b'0';
+                self.len += 1;
+            }
+            return;
+        }
+        let mut tmp = [0u8; 10];
+        let mut i = 0usize;
+        while v > 0 && i < tmp.len() {
+            tmp[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+            i += 1;
+        }
+        while i > 0 {
+            i -= 1;
+            if (self.len as usize) >= NAME_MAX {
+                break;
+            }
+            self.bytes[self.len as usize] = tmp[i];
+            self.len += 1;
+        }
+    }
+
+    /// Borrow the stored name. Always valid UTF-8 (ASCII by construction).
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("")
+    }
+
+    pub fn len(&self) -> usize { self.len as usize }
+    pub fn is_empty(&self) -> bool { self.len == 0 }
+}
+
+impl Default for KernelName {
+    fn default() -> Self { Self::empty() }
+}
+
+impl fmt::Debug for KernelName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl fmt::Display for KernelName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 // MmapRegion
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -101,6 +205,9 @@ pub struct Kthread {
     /// timer/syscall switch-out path, which saves `rsp` first and only then
     /// publishes the thread as Ready.
     pub yield_requested: bool,
+    /// Phase 14-A: human-readable thread name (bounded, immutable after
+    /// publication). Metadata only — never used for scheduling/identity.
+    pub name: KernelName,
 }
 
 impl fmt::Debug for Kthread {
@@ -108,6 +215,7 @@ impl fmt::Debug for Kthread {
         f.debug_struct("Kthread")
             .field("tid", &self.tid)
             .field("pid", &self.pid)
+            .field("name", &self.name)
             .field("rip", &self.rip)
             .field("rsp", &self.rsp)
             .field("state", &self.state)
@@ -124,11 +232,19 @@ impl Kthread {
     pub fn take_kernel_stack(&mut self) -> Option<Box<crate::scheduler::stack::AlignedKStack>> {
         self.kernel_stack.take()
     }
+
+    /// Phase 14-A: read-only accessor. Allocation-free, no locks, no mutation.
+    pub fn name(&self) -> &str {
+        self.name.as_str()
+    }
 }
 
 // Eprocess
 pub struct Eprocess {
     pub pid: u32,
+    /// Phase 14-A: human-readable process name (bounded, immutable after
+    /// publication). Metadata only.
+    pub name: KernelName,
     pub parent_pid: u32,
     pub handle_table: crate::handle::HandleTable,
     pub cwd_drive: u8,

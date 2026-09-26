@@ -30,6 +30,7 @@ impl Kthread {
             apc_pending: false,
             is_idle: true,
             yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("idle"),
         }
     }
 
@@ -65,6 +66,7 @@ impl Kthread {
             apc_pending: false,
             is_idle: true,
             yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("idle"),
         }
     }
 
@@ -106,6 +108,7 @@ impl Kthread {
             apc_pending: false,
             is_idle: false,
             yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("thread"),
         }
     }
 }

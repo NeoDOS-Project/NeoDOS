@@ -41,7 +41,7 @@ pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
     crate::hal::without_interrupts(|| {
         crate::scheduler::current_scheduler()
             .lock()
-            .spawn_kthread(entry, crate::scheduler::types::PRIORITY_NORMAL)
+            .spawn_kthread_named(entry, crate::scheduler::types::PRIORITY_NORMAL, "netd")
     })
 }
 

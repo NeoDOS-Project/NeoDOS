@@ -327,6 +327,28 @@ Shared per-process resources: address space, handle table, heap, mmap, token.
 pub enum ThreadState { Ready, Running, Blocked { waiting_for: u32 }, Terminated }
 ```
 
+### Names (Phase 14-A)
+
+`KTHREAD` and `EPROCESS` each carry a bounded, human-readable `KernelName`
+(`[u8; NAME_MAX]` + length, `NAME_MAX = 32`). Names are **observability
+metadata only**:
+
+- PID/TID remain the authoritative numeric identity. Names never participate in
+  scheduling, lookup, security decisions, or the user ABI; an absent/empty name
+  leaves all existing behaviour unchanged.
+- Ownership: the process name lives in `EPROCESS.name`; each thread's name lives
+  in `KTHREAD.name`. The initial thread of a user process inherits the process
+  name. For kernel threads the process is named `kernel`.
+- Mutation: a name is written once during creation, before the object is
+  published, and is immutable afterwards. Reading a name takes no lock
+  (`Kthread::name()` / `Eprocess::name()`); no name-specific global lock exists.
+- Bounded: storage is fixed-size. Over-long input is truncated at `NAME_MAX`
+  bytes and non-ASCII bytes become `?`, so the stored value is always valid
+  ASCII. No heap allocation is performed for names.
+- Defaults: BSP idle `idle/0`; AP idle `idle/<cpu>` (`register_ap_idle`); boot
+  thread `boot`; `spawn_kthread` `kthread`; spawned user processes take the
+  executable basename (e.g. `neoshell`); the network thread is `netd`.
+
 ---
 
 ## SMP Integration

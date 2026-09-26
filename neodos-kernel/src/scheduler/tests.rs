@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE};
+use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE};
 use crate::scheduler::Scheduler;
 use crate::log::LogSubsys;
 
@@ -23,6 +23,29 @@ pub fn register_tests() {
         test_eq!(k.pid, 0);
         test_eq!(k.priority, PRIORITY_IDLE);
         test_eq!(k.time_slice_remaining, IDLE_TIME_SLICE);
+        // Phase 14-A: deterministic default name + read-only accessor.
+        test_eq!(k.name(), "idle");
+        test_eq!(k.name.len(), 4);
+        test_true!(!k.name.is_empty());
+        // Phase 14-A: bounded KernelName semantics (basic, custom, boundary,
+        // oversized, path derivation). Metadata only; never panics.
+        test_eq!(KernelName::from_str("netd").as_str(), "netd");
+        let exact = "abcdefghijklmnopqrstuvwxyz012345"; // 32 bytes == NAME_MAX
+        test_eq!(exact.len(), NAME_MAX);
+        let ne = KernelName::from_str(exact);
+        test_eq!(ne.len(), NAME_MAX);
+        test_eq!(ne.as_str(), exact);
+        let oversized = "abcdefghijklmnopqrstuvwxyz0123456789"; // 36 bytes
+        let no = KernelName::from_str(oversized);
+        test_eq!(no.len(), NAME_MAX);
+        test_eq!(no.as_str(), "abcdefghijklmnopqrstuvwxyz012345");
+        test_eq!(
+            KernelName::from_path("\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe").as_str(),
+            "neoshell"
+        );
+        test_eq!(KernelName::from_path("netd").as_str(), "netd");
+        test_eq!(KernelName::from_str("né").as_str(), "n??");
+        test_true!(KernelName::empty().is_empty());
     });
 
     test_case!("kthread_state_debug", {
@@ -68,6 +91,8 @@ pub fn register_tests() {
         test_eq!(ep.heap_break, 0x10000000);
         test_eq!(ep.thread_count, 1);
         test_eq!(ep.cwd_drive, 2);
+        // Phase 14-A: deterministic default process name.
+        test_eq!(ep.name(), "process");
     });
 
     // ── Scheduler priority tests ──
@@ -809,6 +834,13 @@ pub fn register_tests() {
         unsafe {
             test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
         }
+        // Phase 14-A: default kernel-thread name is preserved; PID/TID unchanged.
+        test_eq!(sched.find_kthread(tid).unwrap().name(), "kthread");
+        test_eq!(sched.find_kthread(tid).unwrap().tid, tid);
+        // Named variant applies the supplied bounded name and keeps TIDs distinct.
+        let named = sched.spawn_kthread_named(0x400100, PRIORITY_NORMAL, "worker").unwrap();
+        test_ne!(named, tid);
+        test_eq!(sched.find_kthread(named).unwrap().name(), "worker");
     });
 
     test_case!("rq_add_thread_enqueues_once", {
@@ -823,6 +855,8 @@ pub fn register_tests() {
         unsafe {
             test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
         }
+        // Phase 14-A: additional threads get the documented default name.
+        test_eq!(sched.find_kthread(tid).unwrap().name(), "thread");
     });
 
     test_case!("rq_validator_rejects_invalid_current", {

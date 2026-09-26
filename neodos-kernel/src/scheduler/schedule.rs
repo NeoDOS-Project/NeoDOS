@@ -179,8 +179,8 @@ impl Scheduler {
                     crate::arch::x64::cpu_local::try_per_cpu_tid());
                 for k in self.kthreads.iter().flatten() {
                     crate::serial_println!(
-                        "[SCHED_WARN]   tid={} pid={} state={} cpu={} wait={:?}",
-                        k.tid, k.pid, state_name(k.state.to_u8()), k.cpu, k.waiting_for);
+                        "[SCHED_WARN]   tid={} pid={} name={} state={} cpu={} wait={:?}",
+                        k.tid, k.pid, k.name(), state_name(k.state.to_u8()), k.cpu, k.waiting_for);
                 }
             }
         }
@@ -330,6 +330,12 @@ impl Scheduler {
         let mut idle = Kthread::new_idle(tid, 0, entry, frame_top);
         idle.cpu = cpu;
         idle.state = ThreadState::Running;
+        {
+            // Phase 14-A: per-CPU idle name ("idle/<cpu>"), bounded.
+            let mut n = crate::scheduler::types::KernelName::from_str("idle/");
+            n.push_u32(cpu);
+            idle.name = n;
+        }
         self.kthreads[th_slot] = Some(Box::new(idle));
         let ptr = &**self.kthreads[th_slot].as_ref()? as *const Kthread as *mut Kthread;
         Some((tid, ptr))

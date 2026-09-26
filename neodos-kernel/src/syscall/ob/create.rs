@@ -216,7 +216,7 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
 
             let child_pid = match crate::usermode::spawn_usermode(
                 result.entry, slot.stack_top, slot.slot_idx,
-                cwd_drive, &cwd_path, parent_pid,
+                cwd_drive, &cwd_path, parent_pid, &path_str,
             ) {
                 Ok(pid) => {
                     crate::serial_println!("[OB] Process spawned: child_pid={} entry=0x{:x}", pid, result.entry);

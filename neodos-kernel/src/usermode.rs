@@ -118,7 +118,7 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
-pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> Result<u32, &'static str> {
+pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32, name: &str) -> Result<u32, &'static str> {
     // F-DEV-02: zombie queue backpressure — bounded queue without loss. If storm
     // fills queue, try synchronous reclaim before allocating resources; if still
     // backpressured (all zombies still running), fail spawn with NoMem instead
@@ -190,7 +190,7 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
         // The helper now handles its own Ob creation with the real pid/tid, so we pass None.
         s.add_ring3_process_with_stack(
             entry, slot_idx, cwd_drive, cwd_path,
-            heap_base, parent_pid, rsp, kernel_stack_top, stack,
+            heap_base, parent_pid, name, rsp, kernel_stack_top, stack,
             None, None, None, parent_token,
         )
     });
