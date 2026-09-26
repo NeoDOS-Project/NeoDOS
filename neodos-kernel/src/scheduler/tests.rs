@@ -44,6 +44,23 @@ pub fn register_tests() {
         test_ne!(ThreadState::Blocked { waiting_for: 1 }, ThreadState::Blocked { waiting_for: 2 });
     });
 
+    test_case!("sched_yield_intent_not_published_until_ready", {
+        // Phase 13-A regression contract: a running thread that asks to yield
+        // stays Running with `yield_requested` set; it is only published as
+        // Ready (enqueued) by the switch-out/wake path, which also consumes
+        // the flag. Publishing a still-running thread with a stale `rsp` is
+        // what let two CPUs run the same KTHREAD on one kernel stack.
+        // BOOT_TID/idle is used so the transition does not touch any runqueue.
+        let mut k = Kthread::new_idle(BOOT_TID, 0, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.yield_requested = true;
+        test_eq!(k.state, ThreadState::Running);
+        test_true!(k.yield_requested);
+        Scheduler::make_thread_ready(&mut k);
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.yield_requested, false);
+    });
+
     test_case!("eprocess_new_ring3", {
         let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000, 0);
         test_eq!(ep.pid, 42);

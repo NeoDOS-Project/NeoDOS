@@ -109,6 +109,12 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                // Phase 13-A: consume a pending cooperative yield now that the
+                // live `rsp` has been saved; only now is it safe to publish the
+                // thread as Ready/enqueued for another CPU.
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                 if k.state == ThreadState::Running {
                     scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {

@@ -1,10 +1,10 @@
 # Phase 13 — SMP Scheduling Real: design for AP dispatch
 
-**Status:** implemented behind the non-default `smp-ap-sched` feature (WIP).
-AP bring-up infrastructure is in place and the non-feature boot is
-regression-clean (716/716 on SMP1/SMP2/SMP4). Enabling AP scheduling currently
-reproduces a post-`netd` hang/GPF on the AP context-switch path; see
-[Blockers](#9-blockers-wip) below.
+**Status:** implemented behind the non-default `smp-ap-sched` feature. The
+post-`netd` AP context-switch GPF was root-caused and fixed in Phase 13-A.1
+(§9); APs now dispatch, preempt, context-switch and return through `iretq`
+cleanly on SMP2/SMP4. The default build keeps APs idle for deterministic twin
+boots and is regression-clean.
 **Branch context:** `feat/phase13-ap-scheduling-real`
 **Related:** `docs/investigation/smp-bring-up-report.md`,
 `docs/investigation/f01-f02-adversarial-audit.md`,
@@ -270,40 +270,95 @@ Notes:
 
 ---
 
-## 9. Blockers (WIP)
+## 9. Resolution (Phase 13-A.1)
 
-With `--features smp-ap-sched`, the AP does dispatch work (evidence below) but
-the system then reproduces a hang/GPF in the AP context-switch path.
+**Status:** root cause found and fixed. With `--features smp-ap-sched` the AP
+now dispatches, is preempted, context-switches and returns through `iretq`
+without #GP on SMP2 and SMP4 (see §10 for the validation matrix).
 
-Evidence captured (QEMU q35 TCG, `-smp 2`):
+### 9.1 Root cause
 
-- 716/716 boot tests pass (AP idle during the suite).
-- `[KCPU] steal thief=1 victim=0 tid=0 old_cpu=Some(0) state=Some(Running)` —
-  a Running thread was present in a runqueue; the Ready-only steal guard now
-  drops such stray entries.
-- `[KCPU] scan tid=3 old_cpu=0 new_cpu=1 prev=2` — the AP dispatches netd.
-- `[AP_EVIDENCE] cpu=0 current_tid=0 ...; cpu=1 current_tid=3 current_pid=1`
-  (earlier run) — a real thread running on CPU1.
-- After `[NET] netd alive — first tick`, a GPF is raised at the timer `iretq`
-  (`rip=0x4010ed7`, the `iretq` in `timer_handler_asm`) and serial output stops
-  mid-line, indicating the faulting CPU holds the serial/scheduler lock and the
-  BSP GPF handler deadlocks.
+The GPF was **not** a corrupt `iretq` frame built by one context switch. It was
+the symptom of **the same KTHREAD executing concurrently on two CPUs sharing one
+kernel stack**. When both CPUs took their timer interrupt on the shared stack,
+the AP's 15-GPR save area overlapped the BSP's pending `iretq` frame; the BSP
+then executed `iretq` with a clobbered `CS` (`0x7800`, a garbage selector) and
+raised `#GP error=0x7800 at rip=<timer_handler_asm iretq>`.
 
-Fixes already applied that did **not** resolve it: per-AP 16 KB stacks, shared
-IDT, final PML4, fabricated idle frame, per-CPU IRQ nesting, BSP-only
-timer/idle side effects, boot/idle pinning, Ready-only steal, `k.cpu`
-re-home.
+The route that exposed a *live* thread to another CPU was the cooperative-yield
+path:
 
-Root cause still open. Candidate leads:
+```text
+netd (TID 3, Ring 0)                 BSP
+  net_tick()
+  yield_current_thread()
+      make_thread_ready()  ← state = Ready, rsp STILL STALE, enqueued on cpu0
+      (netd keeps executing)          ... next timer tick ...
+                                      (AP) schedule() global scan sees
+                                      TID 3 Ready on cpu0 and commits it
+                                      (k.cpu=1, state=Running)
+                                      iretq into TID 3's STALE saved frame
+  ─────────────────────────────────────────────────────────────────────
+  both CPUs now run netd_entry() on the same 16 KiB stack
+```
 
-1. AP switching to a kernel thread whose saved Ring0 frame is stale (netd is
-   found by the global scan, not enqueued; its `rsp` is the synthetic spawn
-   frame until the first preemption).
-2. Lock-order inversion: the timer handler holds the SCHEDULER lock while the
-   faulting CPU also holds the serial spinlock, so the GPF handler deadlocks
-   before printing diagnostics.
+`yield_current_thread()` (and `handler_yield`/`sleep_ex`/`waitpid`, which called
+`make_thread_ready` directly) published a **running** thread as `Ready` before
+its `rsp` had been saved at the switch-out point. On a uniprocessor the thread
+was simply re-selected and the stale `rsp` was fixed on the next tick; on SMP
+the global priority scan / work-stealing could dispatch it on another CPU
+first, producing two execution contexts on one stack.
 
-Until resolved, `smp-ap-sched` is **off by default**; the default kernel keeps
-APs idle (`idle_task` + timer early-return) and is regression-clean
-(716/716 on SMP1/SMP2/SMP4). The infrastructure above is landed so the next
-session can focus purely on the AP switch-path GPF.
+A second, smaller SMP defect was found while validating: `usermode.rs::
+wait_for_process` decided whether to block the boot thread using the global
+`Scheduler::current_tid`, which an AP had already advanced to its own last
+committed thread. The BSP therefore failed to block TID 0, leaving two threads
+`Running` on CPU0 (`[SCHED_WARN] TWO+ Running`) and a stale dispatchable boot
+context.
+
+### 9.2 Fix
+
+Enforce the SMP dispatch invariant *“a `Ready` thread has a saved context and is
+not executing on any CPU”* by decoupling *yield intent* from *Ready*:
+
+| File | Change |
+|------|--------|
+| `scheduler/types.rs` | new `Kthread.yield_requested: bool`. |
+| `scheduler/mod.rs`, `syscall/handlers.rs` | `yield_current_thread`, `sys_yield`, `sleep_ex`, `waitpid` record `yield_requested = true`; they no longer mark the running thread Ready/enqueued. |
+| `arch/x64/idt.rs` | timer preemption treats `yield_requested` as a preemption request; on switch-out it saves `rsp`, re-homes `k.cpu` to the executing CPU, clears the flag and only then `make_thread_ready()` (enqueue). |
+| `syscall/resched.rs` | `syscall_try_resched` saves `rsp` and consumes `yield_requested` before publishing. |
+| `scheduler/schedule.rs`, `scheduler/queue.rs` | timeslice expiry and `make_thread_ready` clear `yield_requested`; timeslice expiry re-homes `k.cpu` before enqueue. |
+| `usermode.rs` | use `current_tid_for_this_cpu()` instead of the global `current_tid` when blocking the boot thread. |
+
+No scheduling policy was disabled: migration, work-stealing, AP timers and
+context switches are unchanged. A `Ready` thread is still fully migratable — it
+just becomes `Ready` only once its context has actually been saved.
+
+### 9.3 Forensic evidence
+
+QEMU `-d int` on the pre-fix build:
+
+```text
+GPF v=0d e=7800 cpl=0 IP=0008:0000000004010ea7 (timer_handler_asm iretq)
+     GS base = 0x2407000 (CPU0 KPRCB)   RSP = 0x24791a8
+prev. INT=0x20 on CPU1 GS base = 0x2408000  RSP = 0x24791d8
+     (both stacks within 0x30 bytes → same netd kernel stack)
+```
+
+`0x4010ea7` is the `iretq`; the `CS` slot had been overwritten by CPU1's GPR
+pushes because both CPUs were using netd's single kernel stack. After the fix
+the same `-d int` capture reports **zero** `v=0d` and the shell is reached.
+
+---
+
+## 10. Phase 13-A.1 validation matrix
+
+| Scenario | Result |
+|----------|--------|
+| SMP2, `smp-ap-sched` | 722/722 tests; AP online; `[AP_EVIDENCE] cpu=1 current_tid=3 idle=0`; `[STEAL] success>0`; no GPF/panic; zero `[SCHED_WARN]`. |
+| SMP4, `smp-ap-sched` | 722/722 tests; APs online and dispatching; no GPF; zero `[SCHED_WARN]`. |
+| SMP1 (default) | regression-clean. |
+| `neodev test` | 722/722 (default build). |
+
+The `smp-ap-sched` feature remains opt-in so twin boots stay deterministic; the
+default kernel is regression-clean and APs idle.
