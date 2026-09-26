@@ -613,7 +613,11 @@ pub(super) fn handler_poll(regs: super::Registers) -> u64 {
 
         let mut rev: i16 = 0;
         if entry.is_stdin() {
-            if fd_entry.events & POLLIN != 0 {
+            // Report readable only when a byte is actually queued, so callers
+            // can poll without being parked by a blocking read (Phase 15-A.1).
+            let vt = crate::scheduler::current_vt_num() as usize;
+            let has_data = crate::input::vt_active_occupancy_for(vt) > 0;
+            if has_data && fd_entry.events & POLLIN != 0 {
                 rev |= POLLIN;
             }
         } else if entry.is_stdout() || entry.is_stderr() {

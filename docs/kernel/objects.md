@@ -249,9 +249,9 @@ Semantics:
   word), but the *set* of fields is not one atomic instant: that CPU may update
   a counter between two of our reads. Treat it as a best-effort point-in-time
   sample, not a transactionally consistent snapshot.
-- `timer_tick_count` counts timer interrupts. It is **not** CPU busy time and
-  there is currently no busy/idle accounting, so **CPU% cannot be computed** and
-  is deliberately not exposed.
+- `timer_tick_count` counts timer interrupts. It is **not** CPU busy time. For
+  per-process/thread busy time use `ProcessSnapshot` v2 (`cpu_time`); `neotop
+  v0.2` computes CPU% from it. This class deliberately exposes no CPU%.
 - `interrupt_count` is exposed for ABI completeness, but the kernel currently
   has **no increment site** for it, so it reads 0. `timer_tick_count` and
   `context_switch_count` are maintained.
@@ -301,15 +301,16 @@ buffer = [ProcSnapshotHeader]
          [ThreadInfoRaw;  thread_returned]
 ```
 
-`ProcSnapshotHeader` (32 bytes): `version` (1), `process_total`,
+`ProcSnapshotHeader` (32 bytes): `version` (2), `process_total`,
 `process_returned`, `thread_total`, `thread_returned`, `process_entry_size`
-(40), `thread_entry_size` (48), `flags` (bit0 = truncated).
+(48), `thread_entry_size` (56), `flags` (bit0 = truncated).
 
-`ProcessInfoRaw` (40 bytes): `pid: u32`, `name: [u8; 32]`, `thread_count: u32`.
+`ProcessInfoRaw` (48 bytes): `pid: u32`, `name: [u8; 32]`, `thread_count: u32`,
+`cpu_time: u64`.
 
-`ThreadInfoRaw` (48 bytes): `tid: u32`, `pid: u32`, `name: [u8; 32]`,
+`ThreadInfoRaw` (56 bytes): `tid: u32`, `pid: u32`, `name: [u8; 32]`,
 `state: u8` (0 Ready, 1 Running, 2 Blocked, 3 Suspended, 4 Terminated),
-`idle: u8`, `is_current: u8`, `cpu: u32`.
+`idle: u8`, `is_current: u8`, `_pad: u8`, `cpu: u32`, `cpu_time: u64`.
 
 Semantics:
 
@@ -322,10 +323,26 @@ Semantics:
   scheduler's `Kthread.cpu` assignment. `is_current` marks the authoritative
   owner (never inferred from `state`).
 - `idle` marks per-CPU idle threads (distinct names `idle/0..n`).
+- `cpu_time` is the Phase 15-A.1 authoritative **monotonic CPU execution
+  counter** (timer intervals): per-thread on `ThreadInfoRaw`, summed over the
+  process's threads on `ProcessInfoRaw` (idle threads contribute 0). Two
+  snapshots over a measured interval yield a real CPU percentage; the first
+  sample has no delta. See `docs/scheduler/scheduler.md`.
 - Deterministic ordering: processes by `pid`, threads by `tid`.
 - Truncation is explicit (`flags` bit0 and/or `*_returned < *_total`); there is
   no silent loss. At most one snapshot is in flight (`-Again` on contention).
 - Names are the bounded Phase 14-A `KernelName` (ASCII, `NAME_MAX = 32`).
+
+##### Version history
+
+| Version | Change |
+| ------- | ------ |
+| 1 (Phase 15-A) | Initial process+thread snapshot (records 40/48 bytes) |
+| 2 (Phase 15-A.1) | Append `cpu_time: u64` to both records (48/56 bytes) |
+
+v2 is **not** byte-compatible with v1 (record and header sizes changed), so
+consumers validate `version` *and* `*_entry_size` before parsing; both sides
+reject the other's layout rather than misparse it.
 
 #### Process state semantics (`ObProcessInfo.state`)
 
@@ -346,7 +363,9 @@ The struct layout is unchanged.
 - **Process names**: `Eprocess.name` (Phase 14-A) is the name source; use
   `ProcessSnapshot` (class 26). `ProcessArgs` still returns the *calling*
   process's args, not the queried process's.
-- **CPU% / busy time**: only tick counters exist; no idle/busy accounting.
+- **CPU% / busy time**: `ProcessSnapshot` v2 exposes `cpu_time` (Phase 15-A.1
+  monotonic execution accounting); `neotop v0.2` derives CPU% from two samples.
+  `CpuStats`/`ThreadStats` still carry only tick counters (not busy time).
 - **CPU hotplug**: `online` is derived from the contiguous online range.
 - **`sys_ob_enum` truncation**: directory enumeration still has no pagination.
   The new stats classes avoid silent loss via `total`/`returned`; `sys_ob_enum`

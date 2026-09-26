@@ -264,6 +264,7 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
             pid: p.pid,
             name: name_to_array(p.name.as_str()),
             thread_count: p.thread_count,
+            cpu_time: p.cpu_time,
         };
         unsafe {
             core::ptr::copy_nonoverlapping(
@@ -288,6 +289,7 @@ fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
             is_current: t.is_current as u8,
             _pad: 0,
             cpu: t.cpu,
+            cpu_time: t.cpu_time,
         };
         unsafe {
             core::ptr::copy_nonoverlapping(
@@ -1626,11 +1628,11 @@ pub fn register_ob_stats_tests() {
 
     test_case!("proc_snapshot_abi_layout", {
         test_eq!(ObInfoClass::ProcessSnapshot as u32, 26);
-        test_eq!(PROC_SNAPSHOT_VERSION, 1);
+        test_eq!(PROC_SNAPSHOT_VERSION, 2);
         test_eq!(PROC_NAME_MAX, 32);
         test_eq!(core::mem::size_of::<ProcSnapshotHeader>(), 32);
-        test_eq!(core::mem::size_of::<ProcessInfoRaw>(), 40);
-        test_eq!(core::mem::size_of::<ThreadInfoRaw>(), 48);
+        test_eq!(core::mem::size_of::<ProcessInfoRaw>(), 48);
+        test_eq!(core::mem::size_of::<ThreadInfoRaw>(), 56);
         test_eq!(PROC_SNAPSHOT_FLAG_TRUNCATED, 1);
     });
 

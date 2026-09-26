@@ -2,6 +2,31 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
+
+### Added
+
+- **Kernel CPU execution accounting** — every schedulable `Kthread` now carries
+  an authoritative monotonic `cpu_time` counter (timer intervals), refreshed at
+  the timer tick and dispatch boundaries (`src/scheduler/accounting.rs`).
+  Migration sums per-CPU execution; idle threads are excluded; the hot path is
+  O(1) with no new lock. See `docs/scheduler/scheduler.md`.
+- **`ProcessSnapshot` ABI v2** — `ProcessInfoRaw`/`ThreadInfoRaw` gain a
+  `cpu_time` field (48/56 bytes): per-thread on `ThreadInfoRaw`, summed per
+  process on `ProcessInfoRaw` (idle contributes 0). `version` and entry sizes
+  are validated by consumers, so v1/v2 never misparse each other.
+- **`neotop v0.2`** — dynamic process/thread monitor. CPU% is the delta of the
+  monotonic CPU counter over the *measured* wall interval
+  (`Δcpu / Δwall × 100`), so it is real execution time-based, may exceed 100%
+  per process on SMP, and is never clamped. First sample shows N/A; controls
+  `q` (quit) and `r` (refresh); ~1 s approximate refresh; ANSI clear; clean exit.
+
+### Notes
+
+- CPU% is interval-based and approximate in cadence (scheduling jitter), never
+  in definition. New host-side tests cover the required 100/50/200%/first-sample/
+  lifecycle/monotonicity/multi-thread cases.
+
 ## v0.51.0 — 2026-09-26
 
 ### Added

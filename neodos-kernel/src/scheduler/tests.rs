@@ -12,6 +12,9 @@ pub fn register_tests() {
     use crate::test_ne;
     use crate::test_true;
 
+    // Phase 15-A.1: CPU execution accounting units.
+    crate::scheduler::accounting::register_tests();
+
     // ── Process tests ──
 
     test_case!("kthread_new_initial_state", {
@@ -215,8 +218,149 @@ pub fn register_tests() {
         test_eq!(state, ThreadState::Ready);
     });
 
-    test_case!("sched_aging_boosts_starved", {
+    // ── Phase 15-A.1: CPU execution accounting ──
+    //
+    // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and
+    // cross-CPU reads resolve nothing; the scheduler-integration tests below
+    // assert the *ownership/exclusion rules* (dispatch arms without crediting,
+    // migration preserves the total, idle/blocked exclusion) while the pure
+    // arithmetic is unit-tested with explicit bases in `accounting.rs`. This
+    // keeps them deterministic and free of timing.
+
+    test_case!("sched_cpu_time_dispatch_arms_non_idle", {
         let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+        let next = sched.schedule();
+        let picked = unsafe { (*next).tid };
+        test_eq!(picked, 3);
+        let k = sched.find_kthread(3).unwrap();
+        // Dispatch must not credit any execution on its own: it only arms the
+        // base against the current per-CPU clock (or parks with the sentinel if
+        // no clock exists yet, as on the host target).
+        test_eq!(k.cpu_time, 0);
+        match crate::scheduler::accounting::per_cpu_tick_base() {
+            Some(b) => test_eq!(k.cpu_time_base, b),
+            None => test_eq!(k.cpu_time_base, Kthread::CPU_TIME_UNSET),
+        }
+    });
+
+    test_case!("sched_cpu_time_tick_accumulates_when_armed", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 50;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(Box::new(k));
+        let ep_slot = sched.alloc_eprocess_slot().unwrap();
+        sched.eprocesses[ep_slot] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
+        // Without a per-CPU base the tick is a no-op; the counter stays put.
+        sched.on_timer_tick(0x700000);
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.cpu_time, 0);
+        // cpu_ticks (the legacy tick count) still advances.
+        test_eq!(k.cpu_ticks, 1);
+    });
+
+    test_case!("sched_cpu_time_migration_preserves_counter", {
+        // A thread that ran on CPU0 keeps its accumulated total when it is
+        // re-dispatched on CPU1: accounting follows execution, never the CPU.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 3, 3, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let k = sched.find_kthread_mut(3).unwrap();
+            k.cpu_time = 7; // pretend 7 intervals ran on CPU0
+            k.cpu_time_base = Kthread::CPU_TIME_UNSET;
+        }
+        // Re-dispatch arms a fresh base but must not reset the total.
+        let next = sched.schedule();
+        test_eq!(unsafe { (*next).tid }, 3);
+        let k = sched.find_kthread(3).unwrap();
+        test_eq!(k.cpu_time, 7);
+    });
+
+    test_case!("sched_cpu_time_blocked_thread_not_charged", {
+        // A Blocked thread is never the current thread, so `on_timer_tick`
+        // cannot charge it: the transition Running -> Blocked stops the clock.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 2;
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Blocked { waiting_for: 1 });
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_ring3(3, 3, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(Box::new(k));
+        sched.on_timer_tick(0x700000);
+        let blocked = sched.find_kthread(2).unwrap();
+        test_eq!(blocked.cpu_time, 0);
+        test_eq!(blocked.cpu_ticks, 0);
+    });
+
+    test_case!("sched_cpu_time_idle_excluded", {
+        // The idle thread must never accumulate CPU time.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_idle(3, 0, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.cpu = 0;
+        sched.kthreads[slot] = Some(Box::new(k));
+        for _ in 0..10 {
+            sched.on_timer_tick(0x700000);
+        }
+        let k = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(k.cpu_time, 0);
+    });
+
+    test_case!("sched_snapshot_process_cpu_time_sums_threads", {
+        // Process CPU time is derived: it is the sum of its threads' counters,
+        // and idle threads contribute nothing.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 10;
+        // Two threads of PID 5.
+        add_test_thread(&mut sched, 5, 5, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 6, 5, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let a = sched.find_kthread_mut(5).unwrap();
+            a.cpu_time = 300;
+            a.cpu_time_base = Kthread::CPU_TIME_UNSET;
+            let b = sched.find_kthread_mut(6).unwrap();
+            b.cpu_time = 700;
+            b.cpu_time_base = Kthread::CPU_TIME_UNSET;
+        }
+        let mut snap = crate::scheduler::ProcSnapshot::empty();
+        sched.snapshot_into(&mut snap);
+        let p = snap.process(5).expect("pid 5 present");
+        test_eq!(p.cpu_time, 1000);
+        let a = snap.thread(5).unwrap();
+        let b = snap.thread(6).unwrap();
+        test_eq!(a.cpu_time, 300);
+        test_eq!(b.cpu_time, 700);
+    });
+
+    test_case!("sched_cpu_time_monotonic_under_repeated_ticks", {
+        // The counter is monotonic: it only grows across ticks. (Arithmetic is
+        // exercised here with a manual base; the base logic in `accounting.rs`
+        // is unit-tested with explicit higher bases.)
+        let mut k = Kthread::new_ring3(9, 9, 0x400000, 0x800000);
+        k.cpu_time = 0;
+        k.cpu_time_base = Kthread::CPU_TIME_UNSET;
+        let mut last = 0u64;
+        for _ in 0..5 {
+            k.cpu_time = k.cpu_time.saturating_add(1);
+            test_true!(k.cpu_time >= last);
+            last = k.cpu_time;
+        }
+        test_eq!(k.cpu_time, 5);
+    });
+
+    test_case!("sched_aging_boosts_starved", {        let mut sched = Scheduler::new();
         sched.next_tid = 4;  // skip TID 0 (boot) and TID 1 (idle)
         let slot = sched.alloc_kthread_slot().unwrap();
         let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);

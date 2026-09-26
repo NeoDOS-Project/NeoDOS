@@ -16,6 +16,7 @@ pub mod lifecycle;
 pub mod wake;
 pub mod schedule;
 pub mod snapshot;
+pub mod accounting;
 
 pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
@@ -201,6 +202,8 @@ impl Scheduler {
             pid: 0,
             state: ThreadState::Running,
             cpu_ticks: 0,
+            cpu_time: 0,
+            cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority: PRIORITY_NORMAL,
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],

@@ -77,8 +77,16 @@ pub fn input_manager_mut() -> Option<&'static mut InputManager> {
     unsafe { Some(&mut INPUT_MANAGER) }
 }
 pub fn vt_active_occupancy() -> usize {
+    vt_active_occupancy_for(active_vt())
+}
+
+/// Number of bytes queued for a specific VT. Used by `sys_poll` to report a
+/// readable stdin only when a byte is actually available.
+pub fn vt_active_occupancy_for(vt: usize) -> usize {
+    if vt >= VT_COUNT {
+        return 0;
+    }
     unsafe {
-        let vt = INPUT_MANAGER.active_vt();
         let h = INPUT_MANAGER.vt_queues[vt].head.load(Ordering::Relaxed);
         let t = INPUT_MANAGER.vt_queues[vt].tail.load(Ordering::Relaxed);
         if t >= h { t - h } else { crate::input::vt::VT_QUEUE_SIZE - h + t }
