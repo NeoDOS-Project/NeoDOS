@@ -101,6 +101,7 @@ def parse_elf(data):
             'size': read_u64(data, off+32),
             'link': read_u32(data, off+40),
             'info': read_u32(data, off+44),
+            'addralign': read_u64(data, off+48),
             'data': data[read_u64(data, off+24):read_u64(data, off+24)+read_u64(data, off+32)]
         })
 
@@ -136,11 +137,16 @@ def parse_elf(data):
         elif s['type'] == SHT_STRTAB and s['name'] == '.strtab':
             result['strtab'] = s
 
-    # Build concatenated section data + offset map
+    # Build concatenated section data + offset map.
+    # Honor each section's sh_addralign so aligned statics (e.g. DMA descriptor
+    # rings declared with #[repr(align(4096))]) keep their alignment once the
+    # concatenated section is placed contiguously by the NEM loader.
     def concat_sections(sec_list):
         data = b''
         offsets = {}
         for s in sec_list:
+            align = max(1, int(s.get('addralign', 1) or 1))
+            data += b'\x00' * ((-len(data)) % align)
             offsets[s['name']] = len(data)
             data += s['data']
         return data, offsets
@@ -155,6 +161,8 @@ def parse_elf(data):
     bss_size = 0
     bss_offsets = {}
     for s in bss_sections:
+        align = max(1, int(s.get('addralign', 1) or 1))
+        bss_size += (-bss_size) % align
         bss_offsets[s['name']] = bss_size
         bss_size += s['size']
     result['bss'] = {'size': bss_size}
@@ -298,6 +306,14 @@ def build_nem_v3(driver_name, elf, flags=0, abi_min=1, abi_target=1, abi_max=2,
     rd = rodata['data'] if rodata else b''
     dd = data['data'] if data else b''
     bs = bss['size'] if bss else 0
+
+    # Page-align each section so the loader's contiguous placement keeps the
+    # base of .text/.rodata/.data/.bss aligned.  Aligned statics (e.g. the
+    # e1000 DMA descriptor rings) then retain their declared alignment.
+    def _align4k(buf):
+        return buf + b'\x00' * ((-len(buf)) % 4096)
+    td = _align4k(td); rd = _align4k(rd); dd = _align4k(dd)
+    bs = (bs + 4095) & ~4095
 
     ts = len(td); rs = len(rd); ds = len(dd)
 
