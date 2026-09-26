@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased — Phase 13-A.1 (AP scheduling `iretq` GPF)
+## v0.50.5 — 2026-09-26
 
 ### Fixed
 

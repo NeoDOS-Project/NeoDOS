@@ -1,7 +1,7 @@
 # NeoDOS — Un Sistema Operativo Moderno en Rust para x86-64
 
-[![Version](https://img.shields.io/badge/version-v0.50.4-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-716-green.svg)](neodos-kernel/src/testing.rs)
+[![Version](https://img.shields.io/badge/version-v0.50.5-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-723-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
 [![Organization](https://img.shields.io/badge/org-NeoDOS--Project-blueviolet.svg)](https://github.com/NeoDOS-Project)
 
@@ -33,7 +33,7 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 | --------- | -------- |
-| **Kernel** | v0.50.4 — 716 tests, SSDT RAX 0-59, 24 fases de boot |
+| **Kernel** | v0.50.5 — 723 tests, SSDT RAX 0-59, 24 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
 | **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |
@@ -66,12 +66,12 @@ cargo install --git https://github.com/NeoDOS-Project/NeoDev.git
 
 neodev build --image     # bootloader + kernel + user binaries + GPT disk image
 neodev run               # QEMU + OVMF, serial, GDB :1234
-neodev test              # suite de tests automática (716/716)
+neodev test              # suite de tests automática (723/723)
 neodev list              # descubre los proyectos del workspace
 neodev clean             # limpia artefactos de build
 ```
 
-> Si `neodev test` reporta fallos de filesystem (p. ej. `709/716`) tras un arranque
+> Si `neodev test` reporta fallos de filesystem (p. ej. `709/723`) tras un arranque
 > interactivo, el `disk_image.img` quedó sucio: reconstruye con `neodev build --image`
 > y repite. Ver `docs/development/testing.md`.
 
