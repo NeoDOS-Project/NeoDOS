@@ -114,6 +114,57 @@ pub struct ThreadStatsEntry {
     pub cpu_ticks: u64,
 }
 
+// ── Phase 15-A: coherent process/thread snapshot ABI ────────────────────
+// One syscall returns both sections from a SINGLE scheduler-consistent
+// snapshot (never two independent traversals). Bounded, explicit-width,
+// no pointers.
+
+/// Version of the combined process/thread snapshot ABI.
+pub const PROC_SNAPSHOT_VERSION: u32 = 1;
+/// Maximum name bytes exposed (matches the kernel `KernelName` bound).
+pub const PROC_NAME_MAX: usize = 32;
+/// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
+pub const PROC_SNAPSHOT_FLAG_TRUNCATED: u32 = 1;
+
+/// Header for `ObInfoClass::ProcessSnapshot`. 32 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProcSnapshotHeader {
+    pub version: u32,
+    pub process_total: u32,
+    pub process_returned: u32,
+    pub thread_total: u32,
+    pub thread_returned: u32,
+    pub process_entry_size: u32,
+    pub thread_entry_size: u32,
+    /// See `PROC_SNAPSHOT_FLAG_*`.
+    pub flags: u32,
+}
+
+/// One process record. 40 bytes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProcessInfoRaw {
+    pub pid: u32,
+    pub name: [u8; PROC_NAME_MAX],
+    pub thread_count: u32,
+}
+
+/// One thread record. 48 bytes. `state` uses `ThreadState::to_u8`:
+/// 0=Ready, 1=Running, 2=Blocked, 3=Suspended, 4=Terminated.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ThreadInfoRaw {
+    pub tid: u32,
+    pub pid: u32,
+    pub name: [u8; PROC_NAME_MAX],
+    pub state: u8,
+    pub idle: u8,
+    pub is_current: u8,
+    pub _pad: u8,
+    pub cpu: u32,
+}
+
 
 #[repr(C)]
 pub struct ObDeviceInfo {

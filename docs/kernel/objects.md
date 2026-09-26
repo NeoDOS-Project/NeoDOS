@@ -192,6 +192,7 @@ Supports the following info classes:
 | 23 | SocketRecv | Receive from socket |
 | 24 | CpuStats | Per-CPU snapshot `[StatsHeader][CpuStatsEntry]` — `\Global\Info\CpuInfo` |
 | 25 | ThreadStats | All-thread snapshot `[StatsHeader][ThreadStatsEntry]` — `\Global\Info\Threads` |
+| 26 | ProcessSnapshot | Coherent process+thread snapshot `[ProcSnapshotHeader][ProcessInfoRaw][ThreadInfoRaw]` — `\Global\Info\Processes` |
 | 29 | ServiceState | Service state (state+pid+uptime) |
 | 30 | ServiceConfig | Service configuration (start type, restart policy, max failures) |
 | 31 | ServiceStatus | Comprehensive status (state+pid+exit count+exit code+failures+uptime) |
@@ -288,6 +289,44 @@ Semantics:
 - `cpu_ticks` is a **tick counter**, not calibrated time and not a percentage.
   It increments once per timer tick while the thread is the running thread.
 
+#### ProcessSnapshot (26) — `\Global\Info\Processes`
+
+Phase 15-A. A single coherent process+thread inspection snapshot built from
+`Scheduler::snapshot_into` (Phase 14-B). Unlike `ThreadStats`, processes and
+threads come from **one** scheduler-consistent capture and names are included.
+
+```text
+buffer = [ProcSnapshotHeader]
+         [ProcessInfoRaw; process_returned]
+         [ThreadInfoRaw;  thread_returned]
+```
+
+`ProcSnapshotHeader` (32 bytes): `version` (1), `process_total`,
+`process_returned`, `thread_total`, `thread_returned`, `process_entry_size`
+(40), `thread_entry_size` (48), `flags` (bit0 = truncated).
+
+`ProcessInfoRaw` (40 bytes): `pid: u32`, `name: [u8; 32]`, `thread_count: u32`.
+
+`ThreadInfoRaw` (48 bytes): `tid: u32`, `pid: u32`, `name: [u8; 32]`,
+`state: u8` (0 Ready, 1 Running, 2 Blocked, 3 Suspended, 4 Terminated),
+`idle: u8`, `is_current: u8`, `cpu: u32`.
+
+Semantics:
+
+- Sourced from the logical registries (`Scheduler.eprocesses` /
+  `Scheduler.kthreads`), not the run queues. A reaped object does not appear; a
+  `Terminated`-but-not-yet-reaped thread does.
+- Copied under the global `SCHEDULER` mutex; the lock is released before any
+  user-memory write. Read-only, no kernel pointer escapes.
+- `cpu` for a Running thread is the `KPRCB.current_thread` owner; otherwise the
+  scheduler's `Kthread.cpu` assignment. `is_current` marks the authoritative
+  owner (never inferred from `state`).
+- `idle` marks per-CPU idle threads (distinct names `idle/0..n`).
+- Deterministic ordering: processes by `pid`, threads by `tid`.
+- Truncation is explicit (`flags` bit0 and/or `*_returned < *_total`); there is
+  no silent loss. At most one snapshot is in flight (`-Again` on contention).
+- Names are the bounded Phase 14-A `KernelName` (ASCII, `NAME_MAX = 32`).
+
 #### Process state semantics (`ObProcessInfo.state`)
 
 Class 3 (`Process`) now aggregates its threads' states under the scheduler lock
@@ -304,9 +343,9 @@ The struct layout is unchanged.
 
 #### Known limitations (no compatible ABI workaround)
 
-- **Process names**: `Eprocess` has no name field; the Ob namespace leaf is the
-  PID. `ProcessArgs` returns the *calling* process's args, not the queried
-  process's, so it is not a name source.
+- **Process names**: `Eprocess.name` (Phase 14-A) is the name source; use
+  `ProcessSnapshot` (class 26). `ProcessArgs` still returns the *calling*
+  process's args, not the queried process's.
 - **CPU% / busy time**: only tick counters exist; no idle/busy accounting.
 - **CPU hotplug**: `online` is derived from the contiguous online range.
 - **`sys_ob_enum` truncation**: directory enumeration still has no pagination.

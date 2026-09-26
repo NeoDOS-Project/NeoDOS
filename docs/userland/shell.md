@@ -115,7 +115,7 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | neoshell | core | Interactive command shell |
 | neoinit | core | PID 1 — system initialization |
 | neomem | monitor | Memory usage display |
-| neotop | monitor | Process list (top-like) |
+| neotop | monitor | Static process/thread snapshot: PID/TID, names, state, CPU, idle/current (read-only, single shot; `ObInfoClass::ProcessSnapshot`) |
 | neotrace | monitor | System call trace viewer |
 | cmdtest | test | Command dispatch test utility |
 | ipconfig | network | Network interface configuration |

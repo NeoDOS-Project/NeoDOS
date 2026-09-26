@@ -34,6 +34,33 @@ pub fn is_truncated(returned: u32, total: u32) -> bool {
     returned < total
 }
 
+/// Validate a `ProcSnapshotHeader` against the ABI this tool was built with.
+/// Guards against kernel/libneodos layout drift instead of misparsing records.
+pub fn proc_header_matches(
+    version: u32,
+    process_entry_size: u32,
+    thread_entry_size: u32,
+    expected_version: u32,
+    expected_process_entry_size: u32,
+    expected_thread_entry_size: u32,
+) -> bool {
+    version == expected_version
+        && process_entry_size == expected_process_entry_size
+        && thread_entry_size == expected_thread_entry_size
+}
+
+/// True when the Phase 15-A process/thread snapshot is truncated: the explicit
+/// flag is set, or either section returned fewer records than were available.
+pub fn proc_truncated(
+    flags: u32,
+    process_returned: u32,
+    process_total: u32,
+    thread_returned: u32,
+    thread_total: u32,
+) -> bool {
+    flags & 1 != 0 || process_returned < process_total || thread_returned < thread_total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +92,21 @@ mod tests {
         assert!(is_truncated(0, 5));
         assert!(!is_truncated(5, 5));
         assert!(!is_truncated(6, 5));
+    }
+
+    #[test]
+    fn proc_header_validation() {
+        assert!(proc_header_matches(1, 40, 48, 1, 40, 48));
+        assert!(!proc_header_matches(2, 40, 48, 1, 40, 48));
+        assert!(!proc_header_matches(1, 41, 48, 1, 40, 48));
+        assert!(!proc_header_matches(1, 40, 47, 1, 40, 48));
+    }
+
+    #[test]
+    fn proc_truncation_detection() {
+        assert!(!proc_truncated(0, 2, 2, 6, 6));
+        assert!(proc_truncated(1, 2, 2, 6, 6));
+        assert!(proc_truncated(0, 1, 2, 6, 6));
+        assert!(proc_truncated(0, 2, 2, 5, 6));
     }
 }

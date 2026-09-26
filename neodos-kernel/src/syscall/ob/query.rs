@@ -3,7 +3,7 @@ use alloc::string::{String, ToString};
 use crate::scheduler::{self, ThreadState};
 use crate::object::types::{ObInfoClass, ObSetInfoClass};
 use crate::log::LogSubsys;
-use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, DriveInfoRaw, DriverInfoRaw, ObPipeFds, StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION};
+use crate::syscall::ob::types::{ObBasicInfo, ObFileInfo, ObProcessInfo, ObPipeInfo, ObThreadInfo, ObDeviceInfo, SysDateTime, DriveInfoRaw, DriverInfoRaw, ObPipeFds, StatsHeader, CpuStatsEntry, ThreadStatsEntry, STATS_VERSION, ProcSnapshotHeader, ProcessInfoRaw, ThreadInfoRaw, PROC_SNAPSHOT_VERSION, PROC_NAME_MAX, PROC_SNAPSHOT_FLAG_TRUNCATED};
 use crate::syscall::{current_handle_entry, copy_handle_entry_for_child, resolve_chdir_target, err_to_u64, ob_err_to_syscall, SyscallError};
 use crate::syscall::util::{is_user_ptr_valid, copy_user_string};
 
@@ -30,6 +30,16 @@ const THREAD_STATS_MAX: usize = 128;
 /// contended query returns `-Again` and the caller may retry; we never sleep
 /// while holding the scheduler lock.
 static THREAD_STATS_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
+/// Phase 15-A: one in-flight coherent process/thread snapshot. `try_lock`
+/// only, mirroring `THREAD_STATS_LOCK`.
+static PROC_SNAPSHOT_LOCK: spin::Mutex<()> = spin::Mutex::new(());
+
+/// Staging area for one process/thread snapshot. Built under the scheduler
+/// lock via `Scheduler::snapshot_into`, then copied to user space after the
+/// lock is released. Never exposed to user space.
+static mut PROC_SNAPSHOT_STAGING: crate::scheduler::ProcSnapshot =
+    crate::scheduler::ProcSnapshot::empty();
 
 /// Staging area for one ThreadStats snapshot (never exposed to user space).
 static mut THREAD_STATS_STAGING: [ThreadStatsEntry; THREAD_STATS_MAX] = [
@@ -199,6 +209,117 @@ fn snapshot_thread_stats(buf_ptr: u64, buf_size: usize) -> u64 {
         }
     }
     (hdr_sz + copied * entry_sz) as u64
+}
+
+/// Copy a kernel name into the fixed `PROC_NAME_MAX` user-visible field,
+/// zero-padded. Kernel names are already ASCII and bounded, so this never
+/// truncates in practice.
+fn name_to_array(name: &str) -> [u8; PROC_NAME_MAX] {
+    let mut out = [0u8; PROC_NAME_MAX];
+    let bytes = name.as_bytes();
+    let len = bytes.len().min(PROC_NAME_MAX);
+    out[..len].copy_from_slice(&bytes[..len]);
+    out
+}
+
+/// Phase 15-A: coherent process/thread snapshot for
+/// `ObInfoClass::ProcessSnapshot`.
+///
+/// Uses `Scheduler::snapshot_into` (Phase 14-B) so processes and threads come
+/// from ONE scheduler-consistent capture, never two independent traversals.
+/// The snapshot is built under the scheduler lock, the lock is released, and
+/// only then are records copied to user space (no kernel pointers escape).
+/// Returns bytes written; `-Again` if a snapshot is already in flight;
+/// `-Inval` if the buffer cannot hold the header.
+fn snapshot_process_snapshot(buf_ptr: u64, buf_size: usize) -> u64 {
+    let hdr_sz = core::mem::size_of::<ProcSnapshotHeader>();
+    let proc_sz = core::mem::size_of::<ProcessInfoRaw>();
+    let thr_sz = core::mem::size_of::<ThreadInfoRaw>();
+    if buf_size < hdr_sz {
+        return err_to_u64(SyscallError::Inval);
+    }
+
+    let _guard = match PROC_SNAPSHOT_LOCK.try_lock() {
+        Some(g) => g,
+        None => return err_to_u64(SyscallError::Again),
+    };
+
+    // Capture under the scheduler lock; released before any user-memory write.
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let lock = s.lock();
+        let staging = unsafe { &mut *core::ptr::addr_of_mut!(PROC_SNAPSHOT_STAGING) };
+        lock.snapshot_into(staging);
+    });
+
+    let staging = unsafe { &*core::ptr::addr_of!(PROC_SNAPSHOT_STAGING) };
+    let p_total = staging.process_count.min(crate::scheduler::MAX_SNAPSHOT_PROCESSES);
+    let t_total = staging.thread_count.min(crate::scheduler::MAX_SNAPSHOT_THREADS);
+
+    let mut off = hdr_sz;
+    let mut p_ret = 0usize;
+    while p_ret < p_total && off + proc_sz <= buf_size {
+        let p = &staging.processes[p_ret];
+        let raw = ProcessInfoRaw {
+            pid: p.pid,
+            name: name_to_array(p.name.as_str()),
+            thread_count: p.thread_count,
+        };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                &raw as *const ProcessInfoRaw as *const u8,
+                (buf_ptr as *mut u8).add(off),
+                proc_sz,
+            );
+        }
+        off += proc_sz;
+        p_ret += 1;
+    }
+
+    let mut t_ret = 0usize;
+    while t_ret < t_total && off + thr_sz <= buf_size {
+        let t = &staging.threads[t_ret];
+        let raw = ThreadInfoRaw {
+            tid: t.tid,
+            pid: t.pid,
+            name: name_to_array(t.name.as_str()),
+            state: t.state.to_u8(),
+            idle: t.idle as u8,
+            is_current: t.is_current as u8,
+            _pad: 0,
+            cpu: t.cpu,
+        };
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                &raw as *const ThreadInfoRaw as *const u8,
+                (buf_ptr as *mut u8).add(off),
+                thr_sz,
+            );
+        }
+        off += thr_sz;
+        t_ret += 1;
+    }
+
+    let truncated =
+        (p_ret < p_total) || (t_ret < t_total) || staging.truncated;
+    let hdr = ProcSnapshotHeader {
+        version: PROC_SNAPSHOT_VERSION,
+        process_total: p_total as u32,
+        process_returned: p_ret as u32,
+        thread_total: t_total as u32,
+        thread_returned: t_ret as u32,
+        process_entry_size: proc_sz as u32,
+        thread_entry_size: thr_sz as u32,
+        flags: if truncated { PROC_SNAPSHOT_FLAG_TRUNCATED } else { 0 },
+    };
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            &hdr as *const ProcSnapshotHeader as *const u8,
+            buf_ptr as *mut u8,
+            hdr_sz,
+        );
+    }
+    off as u64
 }
 
 /// Aggregate a process's thread states into the documented `ObProcessInfo`
@@ -1411,6 +1532,21 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
             }
             snapshot_thread_stats(buf_ptr, buf_size)
         }
+        _ if info_class == ObInfoClass::ProcessSnapshot as u32 => {
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Global process snapshot hangs off \Global\Info\Processes
+            // (native_id 14). Read-only; no process control.
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 14 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            snapshot_process_snapshot(buf_ptr, buf_size)
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
 }
@@ -1480,6 +1616,112 @@ pub fn register_ob_stats_tests() {
         let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
         test_eq!(hdr.returned, 1);
         test_true!(hdr.total >= hdr.returned);
+    });
+
+    // ── Phase 15-A: ProcessSnapshot ABI ──
+    fn ps_name(n: &[u8; PROC_NAME_MAX]) -> &str {
+        let end = n.iter().position(|&b| b == 0).unwrap_or(PROC_NAME_MAX);
+        core::str::from_utf8(&n[..end]).unwrap_or("")
+    }
+
+    test_case!("proc_snapshot_abi_layout", {
+        test_eq!(ObInfoClass::ProcessSnapshot as u32, 26);
+        test_eq!(PROC_SNAPSHOT_VERSION, 1);
+        test_eq!(PROC_NAME_MAX, 32);
+        test_eq!(core::mem::size_of::<ProcSnapshotHeader>(), 32);
+        test_eq!(core::mem::size_of::<ProcessInfoRaw>(), 40);
+        test_eq!(core::mem::size_of::<ThreadInfoRaw>(), 48);
+        test_eq!(PROC_SNAPSHOT_FLAG_TRUNCATED, 1);
+    });
+
+    test_case!("proc_snapshot_capture", {
+        let cap = core::mem::size_of::<ProcSnapshotHeader>()
+            + core::mem::size_of::<ProcessInfoRaw>() * crate::scheduler::MAX_SNAPSHOT_PROCESSES
+            + core::mem::size_of::<ThreadInfoRaw>() * crate::scheduler::MAX_SNAPSHOT_THREADS;
+        let mut buf = alloc::vec![0u8; cap];
+        let n = snapshot_process_snapshot(buf.as_mut_ptr() as u64, buf.len()) as usize;
+        test_true!(n >= core::mem::size_of::<ProcSnapshotHeader>());
+        let hdr = unsafe {
+            core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader)
+        };
+        test_eq!(hdr.version, PROC_SNAPSHOT_VERSION);
+        test_eq!(hdr.process_entry_size as usize, core::mem::size_of::<ProcessInfoRaw>());
+        test_eq!(hdr.thread_entry_size as usize, core::mem::size_of::<ThreadInfoRaw>());
+        test_true!(hdr.process_total >= 1);
+        test_true!(hdr.process_returned <= hdr.process_total);
+        // Boot + idle always exist.
+        test_true!(hdr.thread_total >= 2);
+        test_true!(hdr.thread_returned == hdr.thread_total);
+        test_eq!(hdr.flags & PROC_SNAPSHOT_FLAG_TRUNCATED, 0);
+
+        let pbase = core::mem::size_of::<ProcSnapshotHeader>();
+        let tbase = pbase + hdr.process_returned as usize * core::mem::size_of::<ProcessInfoRaw>();
+
+        // Deterministic ordering: processes by pid, threads by tid.
+        let mut ordered = true;
+        let mut prev_pid = 0u32;
+        for i in 0..hdr.process_returned as usize {
+            let p = unsafe {
+                core::ptr::read_unaligned(
+                    buf.as_ptr().add(pbase + i * core::mem::size_of::<ProcessInfoRaw>())
+                        as *const ProcessInfoRaw,
+                )
+            };
+            if i > 0 && p.pid < prev_pid { ordered = false; }
+            prev_pid = p.pid;
+        }
+        let mut prev_tid = 0u32;
+        let mut saw_boot = false;
+        let mut saw_idle = false;
+        for i in 0..hdr.thread_returned as usize {
+            let t = unsafe {
+                core::ptr::read_unaligned(
+                    buf.as_ptr().add(tbase + i * core::mem::size_of::<ThreadInfoRaw>())
+                        as *const ThreadInfoRaw,
+                )
+            };
+            if i > 0 && t.tid < prev_tid { ordered = false; }
+            prev_tid = t.tid;
+            // Ownership: the thread's pid is an enumerated process.
+            test_true!(hdr.process_returned >= 1);
+            let nm = ps_name(&t.name);
+            if nm == "boot" {
+                saw_boot = true;
+                test_eq!(t.tid, 0);
+                test_eq!(t.pid, 0);
+                test_eq!(t.state, 1); // Running
+            }
+            if nm.starts_with("idle/") {
+                saw_idle = true;
+                test_eq!(t.idle, 1);
+            }
+        }
+        test_true!(ordered);
+        test_true!(saw_boot);
+        test_true!(saw_idle);
+    });
+
+    test_case!("proc_snapshot_truncation_and_zero_capacity", {
+        // Zero capacity is rejected deterministically.
+        let mut small = [0u8; 32];
+        let r = snapshot_process_snapshot(small.as_mut_ptr() as u64, 0);
+        test_true!((r as i64) < 0);
+
+        // Room for the header + exactly one process: processes capped at 1 and
+        // the truncated flag is set (never a silent partial snapshot).
+        let one = core::mem::size_of::<ProcSnapshotHeader>()
+            + core::mem::size_of::<ProcessInfoRaw>();
+        let mut buf = alloc::vec![0u8; one];
+        let _ = snapshot_process_snapshot(buf.as_mut_ptr() as u64, buf.len());
+        let hdr = unsafe {
+            core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader)
+        };
+        test_true!(hdr.process_returned <= 1);
+        test_true!(hdr.process_returned <= hdr.process_total);
+        if hdr.thread_total > 0 {
+            test_eq!(hdr.thread_returned, 0);
+            test_true!((hdr.flags & PROC_SNAPSHOT_FLAG_TRUNCATED) != 0);
+        }
     });
 }
 
