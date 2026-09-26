@@ -93,6 +93,14 @@ pub struct Kthread {
     /// are only selected when no other thread is Ready. Replaces the old
     /// `tid == IDLE_TID` checks so AP idle threads (distinct TIDs) are handled.
     pub is_idle: bool,
+    /// Set when a *running* thread asks to yield (`yield_current_thread` /
+    /// `sys_yield`). The thread is NOT marked Ready nor enqueued at that point:
+    /// doing so would expose a live context with a stale `rsp` to other CPUs,
+    /// which could dispatch the same KTHREAD concurrently on two CPUs sharing
+    /// one kernel stack (Phase 13-A: AP iretq GPF). The flag is consumed by the
+    /// timer/syscall switch-out path, which saves `rsp` first and only then
+    /// publishes the thread as Ready.
+    pub yield_requested: bool,
 }
 
 impl fmt::Debug for Kthread {

@@ -521,7 +521,10 @@ impl Scheduler {
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
+                    k.yield_requested = false;
                     k.rsp = current_rsp;
+                    // Re-home to the CPU that actually ran it before enqueueing.
+                    k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                     if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);
                     }

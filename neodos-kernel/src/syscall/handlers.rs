@@ -102,7 +102,10 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
         let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                crate::scheduler::Scheduler::make_thread_ready(k);
+                // Phase 13-A: record intent only. Marking the still-running
+                // thread Ready/enqueued here exposed a stale `rsp` to other
+                // CPUs. `syscall_try_resched` saves `rsp` and publishes it.
+                k.yield_requested = true;
             }
         }
     });
@@ -253,10 +256,12 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut lock = s.lock();
-            let tid = lock.current_tid;
+            let tid = lock.current_tid_for_this_cpu();
             if tid > 0 {
                 if let Some(k) = lock.current_kthread_mut() {
-                    crate::scheduler::Scheduler::make_thread_ready(k);
+                    // Phase 13-A: record yield intent; `syscall_try_resched`
+                    // saves `rsp` and publishes the thread.
+                    k.yield_requested = true;
                 }
             }
         });
@@ -497,10 +502,12 @@ pub(super) fn handler_sleep_ex(_regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                crate::scheduler::Scheduler::make_thread_ready(k);
+                // Phase 13-A: record yield intent; `syscall_try_resched`
+                // saves `rsp` and publishes the thread.
+                k.yield_requested = true;
             }
         }
     });

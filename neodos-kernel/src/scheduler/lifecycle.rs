@@ -485,6 +485,7 @@ impl Scheduler {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            yield_requested: false,
         };
 
         let ep_slot = self.alloc_eprocess_slot()?;

@@ -209,6 +209,7 @@ impl Scheduler {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            yield_requested: false,
         };
         eprocesses.push(Some(boot_eproc));
         kthreads.push(Some(Box::new(boot_thread)));
@@ -563,6 +564,12 @@ pub fn current_tid() -> u32 {
 }
 
 /// Yield execution of current thread cooperatively back to the scheduler.
+///
+/// Phase 13-A: This does **not** mark the thread Ready nor enqueue it. A
+/// running thread's `rsp` still points at a stale/initial frame, so exposing it
+/// as dispatchable would let another CPU run it concurrently on the same kernel
+/// stack (the AP `iretq` GPF). Instead we record the yield intent; the next
+/// timer/syscall switch-out saves `rsp` and only then publishes it as Ready.
 pub fn yield_current_thread() {
     crate::hal::without_interrupts(|| {
         let s = current_scheduler();
@@ -570,9 +577,7 @@ pub fn yield_current_thread() {
         let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                let before = k.state.to_u8();
-                Scheduler::make_thread_ready(k);
-                crate::trace_sched_state!(tid, before, k.state.to_u8(), 1u8);
+                k.yield_requested = true;
             }
         }
         // Signal reschedule so the yield is not a no-op.

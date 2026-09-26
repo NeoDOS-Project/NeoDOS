@@ -29,6 +29,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: true,
+            yield_requested: false,
         }
     }
 
@@ -63,6 +64,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: true,
+            yield_requested: false,
         }
     }
 
@@ -103,6 +105,7 @@ impl Kthread {
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
             is_idle: false,
+            yield_requested: false,
         }
     }
 }

@@ -2,6 +2,29 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased — Phase 13-A.1 (AP scheduling `iretq` GPF)
+
+### Fixed
+
+- **AP timer `iretq` #GP (Phase 13-A.1)** — root cause: the cooperative-yield
+  path (`yield_current_thread`, `sys_yield`, `sleep_ex`, `waitpid`) published a
+  *still-running* thread as `Ready`/enqueued with a stale `rsp`. On SMP another
+  CPU's global scan / work-stealing could dispatch the same KTHREAD, so two CPUs
+  executed it on one 16 KB kernel stack; their timer frames overlapped and the
+  pending `iretq` frame's `CS` was clobbered (`#GP error=0x7800` at
+  `timer_handler_asm`). New `Kthread.yield_requested` records the intent instead
+  of publishing; the timer/syscall switch-out saves `rsp`, re-homes `k.cpu` and
+  only then enqueues. A `Ready` thread is still fully migratable.
+- **Boot-thread block on SMP** — `usermode::wait_for_process` used the global
+  `Scheduler::current_tid` (advanced by APs) to decide whether to block TID 0,
+  leaving two threads `Running` on CPU0 (`SCHED_WARN`). Now uses
+  `current_tid_for_this_cpu()`.
+
+### Added
+
+- Regression contract test `sched_yield_intent_not_published_until_ready`
+  (kernel suite now 723).
+
 ## v0.50.4 — 2026-09-25
 
 ### Fixed

@@ -266,7 +266,12 @@ pub fn wait_for_process(pid: u32) {
     // process exits via exit_to_kernel.
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        let tid = s.current_tid;
+        // Phase 13-A: use THIS CPU's current thread, not the global
+        // `current_tid` which an AP may have advanced while running its own
+        // schedule(). Using the global value here skipped blocking the boot
+        // thread (TID 0) on the BSP, leaving two threads marked Running on
+        // CPU0 (SCHED_WARN) and a stale dispatchable boot context.
+        let tid = s.current_tid_for_this_cpu();
         crate::serial_println!("[USERMODE] blocking TID 0, current_tid={} activating pid={}", tid, pid);
         // Block the boot thread (TID 0) if current
         if tid == scheduler::BOOT_TID {

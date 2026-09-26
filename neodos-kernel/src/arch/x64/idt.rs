@@ -995,6 +995,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let has_non_idle = scheduler.has_non_idle_threads();
     let current_state = scheduler.current_kthread_mut().map(|k| k.state);
     let current_is_idle = scheduler.current_kthread_mut().map(|k| k.is_idle).unwrap_or(false);
+    // Phase 13-A: a cooperative yield from a still-running kernel thread sets
+    // this flag instead of making it Ready. Treat it as a preemption request so
+    // the switch-out path below saves `rsp` before publishing the thread.
+    let current_yield = scheduler.current_kthread_mut().map(|k| k.yield_requested).unwrap_or(false);
 
     // Diagnostic entry: capture state before preemption decision
     td_push(TimerDiagEntry {
@@ -1008,7 +1012,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     });
 
     if is_user_mode && !current_is_idle {
-        let should_preempt = current_state == Some(ThreadState::Ready);
+        let should_preempt = current_state == Some(ThreadState::Ready) || current_yield;
 
         crate::trace_timer_irq!(
             if should_preempt { 1u8 } else { 3u8 },
@@ -1016,9 +1020,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
         if should_preempt {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=timeslice_expired", tid);
-            // Save the current thread's RSP
+            // Save the current thread's RSP, then publish it. `make_thread_ready`
+            // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                if k.state == ThreadState::Running {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
             }
 
             // Pick next thread
@@ -1248,9 +1259,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         // ── Kernel thread (Ring 0, non-idle) preemption ──
         // Kernel threads are NOT preempted on every tick even if their
         // timeslice expired, because they may hold kernel locks.
-        // However, if the thread yielded (state=Ready), we DO preempt
-        // if another thread can run.
-        let should_preempt = current_state == Some(ThreadState::Ready);
+        // However, if the thread yielded (state=Ready or yield_requested),
+        // we DO preempt if another thread can run.
+        let should_preempt = current_state == Some(ThreadState::Ready) || current_yield;
 
         crate::trace_timer_irq!(if should_preempt { 2u8 } else { 0u8 },
             tid, interrupted_cs, has_non_idle as u8);
@@ -1260,6 +1271,15 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                // Phase 13-A: publish only after the live context is saved.
+                // For a timeslice expiry `on_timer_tick` already enqueued it;
+                // `make_thread_ready` is then a no-op.
+                if k.state == ThreadState::Running {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
             }
             let next = scheduler.schedule();
             let next_tid = unsafe { (*next).tid };
