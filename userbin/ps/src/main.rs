@@ -100,7 +100,7 @@ fn parse_pid_from_name(name: &str) -> Option<u32> {
     let mut n: u32 = 0;
     for &b in num_part.as_bytes() {
         if b < b'0' || b > b'9' { return None; }
-        n = n * 10 + (b - b'0') as u32;
+        n = n.saturating_mul(10).saturating_add((b - b'0') as u32);
     }
     Some(n)
 }
@@ -189,7 +189,7 @@ pub extern "C" fn _start() -> ! {
             continue;
         }
 
-        let info: ObProcessInfo = unsafe { core::ptr::read(info_buf.as_ptr() as *const ObProcessInfo) };
+        let info: ObProcessInfo = unsafe { core::ptr::read_unaligned(info_buf.as_ptr() as *const ObProcessInfo) };
 
         write_str(b" ");
         write_u32_right(info.pid, 3);

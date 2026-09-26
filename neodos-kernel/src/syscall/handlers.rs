@@ -27,7 +27,7 @@ pub(super) fn handler_exit(regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
-        let tid = scheduler.current_tid;
+        let tid = scheduler.current_tid_for_this_cpu();
         let pid = scheduler.current_pid();
         if pid == 2 {
             crate::serial_println!("[EXIT] NeoInit (pid={} tid={}) exit code={}", pid, tid, code);
@@ -99,10 +99,13 @@ pub(super) fn handler_yield(_regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                crate::scheduler::Scheduler::make_thread_ready(k);
+                // Phase 13-A: record intent only. Marking the still-running
+                // thread Ready/enqueued here exposed a stale `rsp` to other
+                // CPUs. `syscall_try_resched` saves `rsp` and publishes it.
+                k.yield_requested = true;
             }
         }
     });
@@ -129,45 +132,50 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
             vt, regs.rcx, count);
         let mut bytes_read = 0usize;
         while bytes_read < count {
-            match crate::input::pop_byte_from_vt(vt as usize) {
-                Some(byte) => {
+            // FIX: Single atomic pop inside without_interrupts to avoid race
+            // Previous outer pop (without lock) could race with IRQ push between
+            // the outer check and the inner blocking path, causing lost wakeup.
+            // Now all pops are done with interrupts disabled.
+            let pop_res: Option<Option<u8>> = crate::hal::without_interrupts(|| {
+                if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
+                    return Some(Some(b));
+                }
+                if bytes_read > 0 {
+                    return Some(None); // partial read, return what we have
+                }
+                // Need to block
+                let s = crate::scheduler::current_scheduler();
+                let mut lock = s.lock();
+                if let Some(k) = lock.current_kthread_mut() {
+                    let before = k.state.to_u8();
+                    k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
+                    k.waiting_for = Some(0xFFFFFFFF);
+                    crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
+                }
+                crate::syscall::set_need_resched();
+                None // signal block
+            });
+
+            match pop_res {
+                Some(Some(byte)) => {
                     unsafe { buf_ptr.add(bytes_read).write(byte); }
                     bytes_read += 1;
                     if byte == b'\r' || byte == b'\n' {
                         break;
                     }
+                    // Continue to try to read more if count>1, but for count==1 we break
+                    if bytes_read >= count {
+                        break;
+                    }
+                }
+                Some(None) => {
+                    // Queue empty but we already have some bytes -> return partial
+                    break;
                 }
                 None => {
-                    if bytes_read > 0 {
-                        break;
-                    }
-                    // Atomic check + block to prevent race condition with keyboard IRQ
-                    let b_opt = crate::hal::without_interrupts(|| {
-                        if let Some(b) = crate::input::pop_byte_from_vt(vt as usize) {
-                            return Some(b);
-                        }
-                        let s = crate::scheduler::current_scheduler();
-                        let mut lock = s.lock();
-                        if let Some(k) = lock.current_kthread_mut() {
-                            let before = k.state.to_u8();
-                            k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
-                            k.waiting_for = Some(0xFFFFFFFF);
-                            crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
-                        }
-                        crate::syscall::set_need_resched();
-                        None
-                    });
-
-                    if let Some(b) = b_opt {
-                        unsafe { buf_ptr.add(bytes_read).write(b); }
-                        bytes_read += 1;
-                        crate::serial_println!("[READB] got byte=0x{:x} (atomic)", b);
-                        break;
-                    } else {
-                        crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
-                            crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
-                        return err_to_u64(SyscallError::Again);
-                    }
+                    crate::serial_println!("[READB] blocking pid={} tid={} vt={} (Blocked state set)",
+                        crate::scheduler::current_pid(), crate::scheduler::current_tid(), vt);
+                    return err_to_u64(SyscallError::Again);
                 }
             }
         }
@@ -248,10 +256,12 @@ pub(super) fn handler_waitpid(regs: super::Registers) -> u64 {
         crate::hal::without_interrupts(|| {
             let s = crate::scheduler::current_scheduler();
             let mut lock = s.lock();
-            let tid = lock.current_tid;
+            let tid = lock.current_tid_for_this_cpu();
             if tid > 0 {
                 if let Some(k) = lock.current_kthread_mut() {
-                    crate::scheduler::Scheduler::make_thread_ready(k);
+                    // Phase 13-A: record yield intent; `syscall_try_resched`
+                    // saves `rsp` and publishes the thread.
+                    k.yield_requested = true;
                 }
             }
         });
@@ -492,10 +502,12 @@ pub(super) fn handler_sleep_ex(_regs: super::Registers) -> u64 {
     crate::hal::without_interrupts(|| {
         let s = crate::scheduler::current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                crate::scheduler::Scheduler::make_thread_ready(k);
+                // Phase 13-A: record yield intent; `syscall_try_resched`
+                // saves `rsp` and publishes the thread.
+                k.yield_requested = true;
             }
         }
     });
@@ -654,4 +666,12 @@ pub(super) fn handler_icmp_ping(regs: super::Registers) -> u64 {
         Some(rtt_us) => rtt_us,
         None => 0,
     }
+}
+
+/// RAX 99: debug_dump — Fase 1: volcar contadores VT y ring (+ Phase 6 IRQ33 ownership)
+pub(super) fn handler_debug_dump(_regs: super::Registers) -> u64 {
+    crate::input::vt::vt_diag_dump();
+    crate::arch::x64::idt::kbd_irq_dump();
+    crate::interrupts::ioapic::dump_irq_routing(1);
+    0
 }

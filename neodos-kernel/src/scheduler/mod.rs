@@ -15,9 +15,15 @@ pub mod aging;
 pub mod lifecycle;
 pub mod wake;
 pub mod schedule;
+pub mod snapshot;
 
-pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
+pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
+pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
+pub use snapshot::{
+    kernel_snapshot_dump, kernel_snapshot_into, ProcSnapshot, ProcessSnapshot, ThreadSnapshot,
+    MAX_SNAPSHOT_PROCESSES, MAX_SNAPSHOT_THREADS,
+};
 
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
@@ -44,7 +50,7 @@ pub struct Scheduler {
 #[allow(unused_macros)]
 macro_rules! with_current {
     ($sched:expr, $eproc:ident, $body:block) => {{
-        let tid = $sched.current_tid;
+        let tid = $sched.current_tid_for_this_cpu();
         let pid = $sched.find_kthread(tid).map(|t| t.pid);
         if let Some(pid) = pid {
             if let Some($eproc) = $sched.find_eprocess_mut(pid) {
@@ -91,22 +97,69 @@ impl Scheduler {
             .collect()
     }
 
+    /// Check if KPRCB current_thread pointer belongs to this Scheduler instance.
+    /// Used to distinguish global SCHEDULER vs local test schedulers (F-01).
+    fn kprcb_thread_in_self(&self) -> bool {
+        if crate::hal::safe::GsBase::read() == 0 { return false; }
+        let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+        if ptr.is_null() { return false; }
+        self.kthreads.iter().any(|t| {
+            if let Some(k) = t {
+                &**k as *const crate::scheduler::Kthread as *const u8 == ptr as *const u8
+            } else { false }
+        })
+    }
+
+    /// F-01: per-CPU view of current PID. If KPRCB is initialized (SMP) AND
+    /// the KPRCB thread belongs to this Scheduler, returns per-CPU PID.
+    /// Falls back to global current_tid for tests/local schedulers.
     pub fn current_pid(&self) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+                return pid;
+            }
+        }
         self.find_kthread(self.current_tid).map(|t| t.pid).unwrap_or(0)
     }
 
+    /// F-01: per-CPU helper to get current TID for THIS CPU if this is the
+    /// global scheduler (KPRCB thread in self). Otherwise fallback.
+    pub fn current_tid_for_this_cpu(&self) -> u32 {
+        if self.kprcb_thread_in_self() {
+            if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+                return tid;
+            }
+        }
+        self.current_tid
+    }
+
     pub fn current_eprocess_mut(&mut self) -> Option<&mut Eprocess> {
-        let tid = self.current_tid;
+        // Use per-CPU only for global scheduler; local test schedulers use self.current_tid
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
         let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess_mut(pid)
     }
 
     pub fn current_kthread_mut(&mut self) -> Option<&mut Kthread> {
-        self.find_kthread_mut(self.current_tid)
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
+        self.find_kthread_mut(tid)
     }
 
     pub fn current_eprocess(&self) -> Option<&Eprocess> {
-        let pid = self.find_kthread(self.current_tid).map(|t| t.pid)?;
+        let tid = if self.kprcb_thread_in_self() {
+            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+        } else {
+            self.current_tid
+        };
+        let pid = self.find_kthread(tid).map(|t| t.pid)?;
         self.find_eprocess(pid)
     }
 
@@ -160,6 +213,9 @@ impl Scheduler {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: false,
+            yield_requested: false,
+            name: KernelName::from_str("boot"),
         };
         eprocesses.push(Some(boot_eproc));
         kthreads.push(Some(Box::new(boot_thread)));
@@ -172,7 +228,14 @@ impl Scheduler {
             crate::scheduler::stack::idle_task as *const () as u64,
             idle_stack_top,
         );
-        kthreads.push(Some(Box::new(idle_thread)));
+        {
+            // Phase 14-A: per-CPU idle names ("idle/0"), bounded.
+            let mut mut_idle = idle_thread;
+            let mut n = KernelName::from_str("idle/");
+            n.push_u32(0);
+            mut_idle.name = n;
+            kthreads.push(Some(Box::new(mut_idle)));
+        }
 
         Scheduler {
             eprocesses,
@@ -191,7 +254,7 @@ impl Scheduler {
     pub fn has_non_idle_threads(&self) -> bool {
         self.kthreads.iter().any(|t| {
             t.as_ref().is_some_and(|k| {
-                k.tid != IDLE_TID &&
+                !k.is_idle &&
                 k.state != ThreadState::Terminated &&
                 k.state != ThreadState::Suspended
             })
@@ -208,12 +271,155 @@ pub fn current_scheduler() -> &'static Mutex<Scheduler> {
     &SCHEDULER
 }
 
+// ── SMP test isolation ──
+// When true, AP work-stealing and timer preemption are paused
+// so that k18/k19 tests can manipulate global runqueues without
+// concurrent AP interference. Set by the test harness.
+pub(crate) static SCHED_TEST_MODE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Phase 13: APs enter the scheduler only after the BSP has finished the boot
+/// test suite (set by `main.rs`), keeping the suite deterministic. This is a
+/// bring-up gate, not a scheduling workaround: no thread is forced, no runqueue
+/// is drained, no extra yield is injected.
+static AP_SCHED_ACTIVE: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Whether APs are allowed to run the scheduler.
+pub fn ap_sched_active() -> bool {
+    AP_SCHED_ACTIVE.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Enable/disable AP scheduling. Must only be toggled by the BSP.
+pub fn set_ap_sched_active(v: bool) {
+    AP_SCHED_ACTIVE.store(v, core::sync::atomic::Ordering::Release);
+}
+
+/// Establish the BSP's per-CPU identity (KPRCB.current_thread = boot thread)
+/// once GS is programmed. Without this, CPU0's KPRCB thread stays null and
+/// `current_tid_for_this_cpu()` falls back to the global `current_tid`, which
+/// APs also write — breaking Rule 6.1.5. No-op before GS is set.
+pub fn sync_bsp_identity() {
+    if crate::hal::safe::GsBase::read() == 0 {
+        return;
+    }
+    let s = current_scheduler();
+    let lock = s.lock();
+    if let Some(k) = lock.find_kthread(BOOT_TID) {
+        let ptr = k as *const Kthread as *mut Kthread;
+        unsafe {
+            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
+        }
+    }
+}
+
+/// Phase 7 diagnostic: dump every KTHREAD (tid/pid/state/cpu/rsp) plus each
+/// per-CPU runqueue's TIDs. Read-only, used by Ctrl+Alt+V / syscall 99 to
+/// localize a consumer that never wakes. No scheduler behavior change.
+pub fn sched_dump() {
+    let s = SCHEDULER.lock();
+    crate::serial_println!("[SCHED_DUMP] current_tid={} next_tid={} schedule_count={}",
+        s.current_tid, s.next_tid, s.schedule_count);
+    for k_opt in s.kthreads.iter() {
+        if let Some(k) = k_opt {
+            let st = match k.state {
+                ThreadState::Ready => "READY",
+                ThreadState::Running => "RUNNING",
+                ThreadState::Blocked { .. } => "BLOCKED",
+                ThreadState::Suspended => "SUSPENDED",
+                ThreadState::Terminated => "TERMINATED",
+            };
+            crate::serial_println!("[SCHED_DUMP] tid={} pid={} state={} cpu={} prio={} rsp=0x{:x} wait={:?}",
+                k.tid, k.pid, st, k.cpu, k.priority, k.rsp, k.waiting_for);
+        }
+    }
+    drop(s);
+    // Best-effort lock-free read: this diagnostic is called from IRQ context
+    // (Ctrl+Alt+V) and MUST NOT spin on RUNQUEUE_LOCKS held by the interrupted
+    // context (self-deadlock). try_lock and skip if busy.
+    for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+        let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+        if kprcb == 0 { continue; }
+        let guard = crate::arch::x64::cpu_local::RUNQUEUE_LOCKS[cpu].try_lock();
+        if guard.is_none() {
+            crate::serial_println!("[SCHED_DUMP] cpu={} runqueue=BUSY (lock held by interrupted ctx)", cpu);
+            continue;
+        }
+        let rq = unsafe {
+            &*((kprcb + crate::arch::x64::cpu_local::OFFSET_RUN_QUEUE as u64)
+                as *const crate::arch::x64::cpu_local::CpuRunQueue)
+        };
+        let cap = rq.entries.len();
+        let mut v = alloc::vec::Vec::new();
+        let mut idx = rq.head_idx as usize;
+        for _ in 0..rq.count {
+            v.push(rq.entries[idx % cap]);
+            idx += 1;
+        }
+        crate::serial_println!("[SCHED_DUMP] cpu={} runqueue_tids={:?} count={}", cpu, v, rq.count);
+        drop(guard);
+    }
+}
 
 
-/// Recycle a terminated EPROCESS. External resources should already be freed.
+
+/// Phase 13 evidence: dump each online CPU's KPRCB current identity and its
+/// run queue length. One-shot diagnostic (not a hot path).
+pub fn dump_per_cpu_current() {
+    let count = crate::arch::x64::cpu_local::cpu_count();
+    for cpu in 0..count as usize {
+        let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+        if kprcb == 0 { continue; }
+        let cur_ptr = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64
+            )
+        };
+        let cur_pid = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_CURRENT_PID as u64) as *const u32
+            )
+        };
+        let idle = unsafe {
+            core::ptr::read_volatile(
+                (kprcb + crate::arch::x64::cpu_local::OFFSET_IDLE as u64) as *const u8
+            )
+        };
+        let tid = if cur_ptr == 0 { 0 } else {
+            unsafe { (*(cur_ptr as *const Kthread)).tid }
+        };
+        let name: &str = if cur_ptr == 0 { "" } else {
+            unsafe { (*(cur_ptr as *const Kthread)).name() }
+        };
+        let qlen = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
+        crate::serial_println!(
+            "[AP_EVIDENCE] cpu={} kprcb=0x{:x} current_tid={} current_pid={} name={} idle={} qlen={}",
+            cpu, kprcb, tid, cur_pid, name, idle, qlen);
+    }
+    // Phase 13-A.3 forensics: candidate deferrals vs escaped I-RUNREADY events.
+    let (rejected, ready_while_running, stale_rsp_dispatch, stack_conflict) =
+        schedule::sched_ready_guard_stats();
+    crate::serial_println!(
+        "[READY_GUARD_STATS] rejected={} ready_while_running={} stale_rsp_dispatch={} stack_ownership_conflict={}",
+        rejected, ready_while_running, stale_rsp_dispatch, stack_conflict);
+    // Phase 14-B: explicit process/thread snapshot for this SMP evidence dump.
+    snapshot::kernel_snapshot_dump();
+}
+
+/// Recycle a terminated EPROCESS. External resources are released here
+/// (idempotently) if the caller has not already done so.
 pub fn cleanup_terminated_process(pid: u32) {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
-    current_scheduler().lock().recycle_terminated(pid);
+    {
+        let mut sched = current_scheduler().lock();
+        if crate::arch::x64::cpu_local::is_pid_running_on_any_cpu(pid) {
+            // F-02-B: the pid still has a thread executing on some CPU (SMP).
+            // Do not drop its kernel stack now; defer reclaim to the reaper.
+            crate::scheduler::lifecycle::defer_reap(pid);
+        } else {
+            sched.recycle_terminated(pid);
+        }
+    }
     unsafe { crate::hal::irql::lower_irql(old_irql) };
 }
 
@@ -299,13 +505,20 @@ pub fn current_process_mmap_regions() -> Vec<MmapRegion> {
 pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
-        ep.mmap_regions.push(region);
-        ep.mmap_next = region.base + region.len;
-        Some(region.base)
+        // Use try_reserve to avoid panic on OOM (P0.2)
+        if ep.mmap_regions.try_reserve(1).is_err() {
+            None
+        } else {
+            ep.mmap_regions.push(region);
+            ep.mmap_next = region.base + region.len;
+            Some(region.base)
+        }
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result
@@ -314,12 +527,14 @@ pub fn add_current_mmap_region(region: MmapRegion) -> Option<u64> {
 pub fn remove_current_mmap_region(base: u64) -> Option<MmapRegion> {
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let mut lock = SCHEDULER.lock();
+    let _mem_guard = crate::syscall::util::USER_MEMORY_LOCK.lock();
     let result = if let Some(ep) = lock.current_eprocess_mut() {
         let idx = ep.mmap_regions.iter().position(|r| r.base == base);
         idx.map(|i| ep.mmap_regions.remove(i))
     } else {
         None
     };
+    drop(_mem_guard);
     drop(lock);
     unsafe { crate::hal::irql::lower_irql(old_irql) };
     result
@@ -331,6 +546,15 @@ pub fn free_current_mmap_pages(base: u64, len: u64) {
 
 /// Find a thread's TEB base address.
 pub fn current_teb_base() -> u64 {
+    // F-01: try per-CPU first
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
+        let lock = SCHEDULER.lock();
+        let result = lock.find_kthread(tid).map(|k| k.teb_base).unwrap_or(0);
+        drop(lock);
+        unsafe { crate::hal::irql::lower_irql(old_irql) };
+        if result != 0 { return result; }
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.find_kthread(lock.current_tid).map(|k| k.teb_base).unwrap_or(0);
@@ -339,9 +563,12 @@ pub fn current_teb_base() -> u64 {
     result
 }
 
-// ── Convenience: current PID (deprecated, prefer current_tid) ──
+// ── Convenience: current PID/TID (F-01: per-CPU via KPRCB, fallback to global) ──
 
 pub fn current_pid() -> u32 {
+    if let Some(pid) = crate::arch::x64::cpu_local::try_per_cpu_pid() {
+        return pid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let lock = SCHEDULER.lock();
     let result = lock.current_pid();
@@ -351,6 +578,9 @@ pub fn current_pid() -> u32 {
 }
 
 pub fn current_tid() -> u32 {
+    if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
+        return tid;
+    }
     let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let result = SCHEDULER.lock().current_tid;
     unsafe { crate::hal::irql::lower_irql(old_irql) };
@@ -358,16 +588,20 @@ pub fn current_tid() -> u32 {
 }
 
 /// Yield execution of current thread cooperatively back to the scheduler.
+///
+/// Phase 13-A: This does **not** mark the thread Ready nor enqueue it. A
+/// running thread's `rsp` still points at a stale/initial frame, so exposing it
+/// as dispatchable would let another CPU run it concurrently on the same kernel
+/// stack (the AP `iretq` GPF). Instead we record the yield intent; the next
+/// timer/syscall switch-out saves `rsp` and only then publishes it as Ready.
 pub fn yield_current_thread() {
     crate::hal::without_interrupts(|| {
         let s = current_scheduler();
         let mut lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         if tid > 0 {
             if let Some(k) = lock.current_kthread_mut() {
-                let before = k.state.to_u8();
-                Scheduler::make_thread_ready(k);
-                crate::trace_sched_state!(tid, before, k.state.to_u8(), 1u8);
+                k.yield_requested = true;
             }
         }
         // Signal reschedule so the yield is not a no-op.

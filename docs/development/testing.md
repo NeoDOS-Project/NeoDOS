@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 656 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 716 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -36,6 +36,28 @@ test_case!("my_test", {
 `testing::run_all()` iterates the global test array, runs each test in sequence, captures panics (tests run with `catch_unwind`), prints `PASS: <name>` or `FAIL: <name> [reason]` to serial. Returns `(total, passed, failed)`. The `test` built-in shell command prints a summary line: `TESTS: X total, Y passed, Z failed`.
 
 `auto_test.py` waits for a regex match on the final summary line, then exits with code 0 if 0 failures, code 1 otherwise.
+
+## Harness caveats
+
+- **Disk image freshness.** Some kernel tests mutate the NeoFS volume (mkdir/rmdir,
+  unlink, rename, copy-on-write). After interactive boots (`neodev run`) the
+  `disk_image.img` may be left dirty, which produces false FS-test failures
+  (e.g. `709/716`) even though no code regressed. Rebuild the image before
+  measuring:
+
+  ```bash
+  neodev build --quick --image
+  neodev test
+  ```
+
+  Expected result is `716/716 PASS`.
+- **Serial log growth.** `neodev test` writes `qemu_output.log` (gitignored). Very
+  large logs (hundreds of MB) can destabilise the run; rotate/delete it if a run
+  exits early.
+- **Interactive input in automation.** QEMU `-monitor sendkey` delivery is
+  intermittent; for keyboard E2E, use a persistent monitor connection with an
+  `info status` warm-up and a short read timeout. See
+  `docs/investigation/kbd-smp-queue-validation.md` (Phase 10).
 
 ## Full Suite Table
 

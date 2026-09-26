@@ -57,12 +57,16 @@ The `|` operator chains commands. Up to 16 commands in a single pipeline.
 
 Pipeline flow:
 
-1. For each `|`, neoshell calls `sys_pipe` (RAX 5) which allocates a 4 KB kernel pipe buffer and returns `[read_fd, write_fd]`.
-2. Left command spawned via `sys_spawn` with `stdout_fd` redirected to pipe write end.
+1. For each `|`, neoshell calls `sys_ob_create("\Pipe/pN", PIPE)` which allocates a pipe and returns `[read_fd, write_fd]` via the `fds_out` parameter.
+2. Left command spawned via `sys_ob_create(PROCESS)` with `stdout_fd` redirected to pipe write end (`attrs` encodes stdin/stdout/stderr as `si | so<<8 | se<<16`, `0xFF` = inherit).
 3. Right command spawned with `stdin_fd` redirected to pipe read end.
-4. Shell waits for all processes in the pipeline via `sys_waitpid` per process.
+4. Shell waits for all processes in the pipeline via `sys_ob_wait`.
 
-Built-in commands (CWD, SET, CD, etc.) are not pipeable and produce an error if used in a pipeline.
+Handle management: `rf`/`wf` arrays are initialized to `0xFF` (invalid). If pipe creation fails, previously created pipes are closed before returning. After each spawn the used pipe ends are closed and marked `0xFF` to avoid double-close; on pipeline error the remaining open ends are closed.
+
+Argument passing: arguments are no longer passed solely via the shared `0x41F000` buffer. The shell still writes to `0x41F000` for backward compatibility, but the kernel copies the buffer atomically into `Eprocess.args` at `sys_ob_create(PROCESS)` time; children retrieve their args via `sys_ob_query_info(fd, ProcessArgs=39)` (`libneodos::args::read_args()`), eliminating the data race when pipeline stages are spawned concurrently.
+
+Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error if used in a pipeline.
 
 ## File Management Commands
 
@@ -111,7 +115,7 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | neoshell | core | Interactive command shell |
 | neoinit | core | PID 1 — system initialization |
 | neomem | monitor | Memory usage display |
-| neotop | monitor | Process list (top-like) |
+| neotop | monitor | Static process/thread snapshot: PID/TID, names, state, CPU, idle/current (read-only, single shot; `ObInfoClass::ProcessSnapshot`) |
 | neotrace | monitor | System call trace viewer |
 | cmdtest | test | Command dispatch test utility |
 | ipconfig | network | Network interface configuration |

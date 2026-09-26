@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE};
+use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE};
 use crate::scheduler::Scheduler;
 use crate::log::LogSubsys;
 
@@ -23,6 +23,29 @@ pub fn register_tests() {
         test_eq!(k.pid, 0);
         test_eq!(k.priority, PRIORITY_IDLE);
         test_eq!(k.time_slice_remaining, IDLE_TIME_SLICE);
+        // Phase 14-A: deterministic default name + read-only accessor.
+        test_eq!(k.name(), "idle");
+        test_eq!(k.name.len(), 4);
+        test_true!(!k.name.is_empty());
+        // Phase 14-A: bounded KernelName semantics (basic, custom, boundary,
+        // oversized, path derivation). Metadata only; never panics.
+        test_eq!(KernelName::from_str("netd").as_str(), "netd");
+        let exact = "abcdefghijklmnopqrstuvwxyz012345"; // 32 bytes == NAME_MAX
+        test_eq!(exact.len(), NAME_MAX);
+        let ne = KernelName::from_str(exact);
+        test_eq!(ne.len(), NAME_MAX);
+        test_eq!(ne.as_str(), exact);
+        let oversized = "abcdefghijklmnopqrstuvwxyz0123456789"; // 36 bytes
+        let no = KernelName::from_str(oversized);
+        test_eq!(no.len(), NAME_MAX);
+        test_eq!(no.as_str(), "abcdefghijklmnopqrstuvwxyz012345");
+        test_eq!(
+            KernelName::from_path("\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe").as_str(),
+            "neoshell"
+        );
+        test_eq!(KernelName::from_path("netd").as_str(), "netd");
+        test_eq!(KernelName::from_str("né").as_str(), "n??");
+        test_true!(KernelName::empty().is_empty());
     });
 
     test_case!("kthread_state_debug", {
@@ -44,6 +67,23 @@ pub fn register_tests() {
         test_ne!(ThreadState::Blocked { waiting_for: 1 }, ThreadState::Blocked { waiting_for: 2 });
     });
 
+    test_case!("sched_yield_intent_not_published_until_ready", {
+        // Phase 13-A regression contract: a running thread that asks to yield
+        // stays Running with `yield_requested` set; it is only published as
+        // Ready (enqueued) by the switch-out/wake path, which also consumes
+        // the flag. Publishing a still-running thread with a stale `rsp` is
+        // what let two CPUs run the same KTHREAD on one kernel stack.
+        // BOOT_TID/idle is used so the transition does not touch any runqueue.
+        let mut k = Kthread::new_idle(BOOT_TID, 0, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.yield_requested = true;
+        test_eq!(k.state, ThreadState::Running);
+        test_true!(k.yield_requested);
+        Scheduler::make_thread_ready(&mut k);
+        test_eq!(k.state, ThreadState::Ready);
+        test_eq!(k.yield_requested, false);
+    });
+
     test_case!("eprocess_new_ring3", {
         let ep = Eprocess::new_ring3(42, 1, 2, "\\", 0x10000000, 0);
         test_eq!(ep.pid, 42);
@@ -51,6 +91,8 @@ pub fn register_tests() {
         test_eq!(ep.heap_break, 0x10000000);
         test_eq!(ep.thread_count, 1);
         test_eq!(ep.cwd_drive, 2);
+        // Phase 14-A: deterministic default process name.
+        test_eq!(ep.name(), "process");
     });
 
     // ── Scheduler priority tests ──
@@ -248,7 +290,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         sched.current_tid = 2;
-        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000 });
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_HIGH, ThreadState::Blocked { waiting_for: 0xFFFF_0000u64 });
         add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_IDLE, ThreadState::Running);
         sched.kthreads.iter_mut().find(|t| t.as_ref().is_some_and(|k| k.tid == 1))
             .and_then(|t| t.as_mut()).unwrap().state = ThreadState::Ready;
@@ -383,7 +425,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0001u64 });
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             Scheduler::make_thread_ready(k);
@@ -397,7 +439,7 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0001 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0001u64 });
         {
             let k = sched.kthreads.iter_mut().flatten().find(|k| k.tid == 2).unwrap();
             k.waiting_for = None;
@@ -784,6 +826,15 @@ pub fn register_tests() {
 
     test_case!("rq_spawn_kthread_enqueues_once", {
         let mut sched = Scheduler::new();
+        // Phase 14-B: minimal/empty-state snapshot (boot + idle only).
+        {
+            let fresh = Scheduler::new();
+            let mut s0 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+            fresh.snapshot_into(&mut s0);
+            test_true!(s0.process_count >= 1);
+            test_true!(s0.thread_count >= 2);
+            test_eq!(s0.truncated, false);
+        }
         sched.next_tid = 2;
         let tid = sched.spawn_kthread(0x400000, PRIORITY_NORMAL).unwrap();
         let result = sched.validate_runqueue_invariants();
@@ -792,6 +843,49 @@ pub fn register_tests() {
         unsafe {
             test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
         }
+        // Phase 14-A: default kernel-thread name is preserved; PID/TID unchanged.
+        test_eq!(sched.find_kthread(tid).unwrap().name(), "kthread");
+        test_eq!(sched.find_kthread(tid).unwrap().tid, tid);
+        // Named variant applies the supplied bounded name and keeps TIDs distinct.
+        let named = sched.spawn_kthread_named(0x400100, PRIORITY_NORMAL, "worker").unwrap();
+        test_ne!(named, tid);
+        test_eq!(sched.find_kthread(named).unwrap().name(), "worker");
+
+        // Phase 14-B: scheduler-consistent snapshot over the logical registry.
+        let mut snap = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap);
+        // Process enumeration: boot (pid 0) + two spawned kernel processes.
+        test_true!(snap.process_count >= 3);
+        test_true!(snap.process(0).is_some());
+        // Thread enumeration + Phase 14-A names.
+        let t_main = snap.thread(tid).unwrap();
+        test_eq!(t_main.name.as_str(), "kthread");
+        test_eq!(t_main.tid, tid);
+        let t_named = snap.thread(named).unwrap();
+        test_eq!(t_named.name.as_str(), "worker");
+        // Ownership: every thread maps to an enumerated process.
+        for t in snap.threads[..snap.thread_count].iter() {
+            test_true!(snap.process(t.pid).is_some());
+        }
+        // Idle remains a distinct, flagged thread (not collapsed).
+        test_true!(snap.threads[..snap.thread_count].iter().any(|t| t.idle));
+        // Deterministic ordering: processes by pid, threads by tid.
+        let mut ordered = true;
+        for w in snap.processes[..snap.process_count].windows(2) {
+            if w[0].pid > w[1].pid { ordered = false; }
+        }
+        for w in snap.threads[..snap.thread_count].windows(2) {
+            if w[0].tid > w[1].tid { ordered = false; }
+        }
+        test_true!(ordered);
+        // Snapshot lifetime: detached from live state, repeatable for stable state.
+        let mut snap2 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap2);
+        test_eq!(snap.thread_count, snap2.thread_count);
+        test_true!(snap.threads[..snap.thread_count] == snap2.threads[..snap2.thread_count]);
+        let mut snap3 = alloc::boxed::Box::new(crate::scheduler::ProcSnapshot::empty());
+        sched.snapshot_into(&mut snap3);
+        test_true!(snap.threads[..snap.thread_count] == snap3.threads[..snap3.thread_count]);
     });
 
     test_case!("rq_add_thread_enqueues_once", {
@@ -806,6 +900,8 @@ pub fn register_tests() {
         unsafe {
             test_true!(crate::arch::x64::cpu_local::cpu_run_queue_mut(0).contains(tid));
         }
+        // Phase 14-A: additional threads get the documented default name.
+        test_eq!(sched.find_kthread(tid).unwrap().name(), "thread");
     });
 
     test_case!("rq_validator_rejects_invalid_current", {
@@ -831,7 +927,7 @@ pub fn register_tests() {
         test_eq!(r.unwrap(), 0);
 
         // Simulate kwait_block: remove + Blocked
-        let magic: u32 = 0x0005_0063; // Event 99
+        let magic: u64 = 0x0005_0000_0063u64; // Event 99
         {
             let k = sched.find_kthread_mut(2).unwrap();
             Scheduler::remove_from_run_queue(k);
@@ -874,12 +970,12 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
-            ThreadState::Blocked { waiting_for: 0x0005_0063 });
+            ThreadState::Blocked { waiting_for: 0x0005_0000_0063u64 });
         // manually set waiting_for to match blocked magic
-        sched.find_kthread_mut(2).unwrap().waiting_for = Some(0x0005_0063);
+        sched.find_kthread_mut(2).unwrap().waiting_for = Some(0x0005_0000_0063u64);
         // first wake
         {
-            let magic = 0x0005_0063;
+            let magic = 0x0005_0000_0063u64;
             let tids: Vec<u32> = sched.kthreads.iter().flatten()
                 .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
                 .map(|k| k.tid).collect();
@@ -896,7 +992,7 @@ pub fn register_tests() {
         test_eq!(r.unwrap(), 1);
         // second wake — should be no-op
         {
-            let magic = 0x0005_0063;
+            let magic = 0x0005_0000_0063u64;
             let tids: Vec<u32> = sched.kthreads.iter().flatten()
                 .filter(|k| k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }))
                 .map(|k| k.tid).collect();
@@ -924,7 +1020,7 @@ pub fn register_tests() {
         // Two Blocked threads waiting on same magic → single wake wakes both
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
-        let magic: u32 = 0x0006_000A; // Timer 10
+        let magic: u64 = 0x0006_000A; // Timer 10
         add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL,
             ThreadState::Blocked { waiting_for: magic });
         add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL,
@@ -1183,6 +1279,10 @@ pub fn register_tests() {
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        // Phase 4: isolate from AP's concurrent runqueue activity
+        struct _TestModeGuard; impl Drop for _TestModeGuard { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard };
+        // Also log validate errors verbosely
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
                 crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
@@ -1214,6 +1314,7 @@ pub fn register_tests() {
         // Now TID2 in CPU0 queue and k.cpu==0 → validate must pass
         test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_a after steal validate err: {}", e); }
         test_true!(r.is_ok());
         test_eq!(r.unwrap(), 1);
         unsafe {
@@ -1224,13 +1325,10 @@ pub fn register_tests() {
         // Pop and become Running on CPU0 → validate still passes
         let tid = unsafe { crate::arch::x64::cpu_local::cpu_run_queue_mut(0).pop().unwrap() };
         test_eq!(tid, 2);
-        {
-            let k = sched.find_kthread_mut(2).unwrap();
-            k.state = ThreadState::Running;
-        }
-        sched.current_tid = 2;
+        set_test_current(&mut sched, 2);
         test_eq!(sched.find_kthread(2).unwrap().cpu, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_a after pop Running validate err: {}", e); }
         test_true!(r.is_ok());
 
         // Cleanup
@@ -1257,6 +1355,8 @@ pub fn register_tests() {
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        struct _TestModeGuard2; impl Drop for _TestModeGuard2 { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard2 };
         unsafe {
             crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
             if crate::arch::x64::cpu_local::kprcb_page(1).is_some() {
@@ -1266,6 +1366,10 @@ pub fn register_tests() {
         let mut sched = Scheduler::new();
         sched.next_tid = 4;
         sched.current_tid = IDLE_TID;
+        // Phase 4: ensure BOOT is not Running (would cause 2 Running on CPU0)
+        if let Some(k) = sched.find_kthread_mut(BOOT_TID) {
+            k.state = ThreadState::Blocked { waiting_for: 0 };
+        }
         // Prepare idle as Blocked so schedule must pick something else
         prepare_test_schedule(&mut sched); // idle Running -> Blocked
         // Create victim thread on CPU1
@@ -1295,6 +1399,7 @@ pub fn register_tests() {
         // K20 fixed: k.cpu must have been migrated to thief (0) and validate passes
         test_eq!(unsafe { (*next).cpu }, 0);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_schedule after steal validate err: {}", e); }
         test_true!(r.is_ok());
         // Cleanup: make Running thread Ready (should stay on thief) then remove
         {
@@ -1305,6 +1410,7 @@ pub fn register_tests() {
         }
         set_test_current(&mut sched, IDLE_TID);
         let r = sched.validate_runqueue_invariants();
+        if let Err(e) = &r { crate::serial_println!("k18_schedule after requeue validate err: {}", e); }
         test_true!(r.is_ok());
         // cleanup
         if let Some(k) = sched.find_kthread_mut(2) {
@@ -1529,11 +1635,15 @@ pub fn register_tests() {
     });
 
     test_case!("k19_repeated_steal_requeue_bounce_5_cycles", {
-        // 5 cycles: victim→thief→Running(cpu=1)→Ready→bounce to victim, repeat
+        // 5 cycles: victim→thief→Running→Ready (stay on thief) → next cycle needs requeue to victim
+        // Phase 4: after fix, make_thread_ready stays on thief, so we must explicitly
+        // requeue to victim at the end of each cycle to allow the next steal to succeed.
         // Skip on single-CPU configs
         if crate::arch::x64::cpu_local::cpu_count() < 2 {
             return Ok(());
         }
+        struct _TestModeGuard3; impl Drop for _TestModeGuard3 { fn drop(&mut self) { crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::Relaxed); } }
+        let _test_mode_guard = { crate::scheduler::SCHED_TEST_MODE.store(true, core::sync::atomic::Ordering::Relaxed); _TestModeGuard3 };
         unsafe {
             if crate::arch::x64::cpu_local::kprcb_page(0).is_some() {
                 crate::arch::x64::cpu_local::cpu_run_queue_mut(0).clear();
@@ -1552,7 +1662,7 @@ pub fn register_tests() {
             Scheduler::enqueue_to_cpu_run_queue(k);
         }
         set_test_current(&mut sched, IDLE_TID);
-        for _ in 0..5 {
+        for iter in 0..5 {
             // steal via scheduler (migrates ownership to thief)
             let stolen = unsafe { sched.steal_and_migrate(1, 0) };
             test_eq!(stolen, 1);
@@ -1577,7 +1687,21 @@ pub fn register_tests() {
             }
             set_test_current(&mut sched, IDLE_TID);
             let r = sched.validate_runqueue_invariants();
+            if let Err(e) = r { crate::serial_println!("k19 iter {} validate failed: {}", iter, e); return Err(e); }
             test_true!(r.is_ok());
+            // Requeue to victim for next iteration (except after last)
+            if iter < 4 {
+                let k = sched.find_kthread_mut(2).unwrap();
+                // k is currently Blocked after set_test_current, make Ready on victim
+                k.state = ThreadState::Ready;
+                k.cpu = 1;
+                unsafe { crate::arch::x64::cpu_local::remove_from_cpu_run_queue(0, 2); crate::arch::x64::cpu_local::remove_from_cpu_run_queue(1, 2); }
+                Scheduler::enqueue_to_cpu_run_queue(k);
+                // Keep current as idle
+                set_test_current(&mut sched, IDLE_TID);
+                let r2 = sched.validate_runqueue_invariants();
+                if let Err(e) = r2 { crate::serial_println!("k19 iter {} requeue validate failed: {}", iter, e); return Err(e); }
+            }
         }
         // cleanup
         {

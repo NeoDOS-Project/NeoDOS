@@ -56,7 +56,15 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
 
-    if is_cmd(args, b"list") || is_cmd(args, b"-l") || is_cmd(args, b"--list") {
+    let (cmd, rest) = {
+        if let Some(pos) = args.iter().position(|&b| b == b' ' || b == b'\t') {
+            (&args[..pos], libneodos::args::trim_ascii(&args[pos + 1..]))
+        } else {
+            (args, &[][..] as &[u8])
+        }
+    };
+
+    if is_cmd(cmd, b"list") || is_cmd(cmd, b"-l") || is_cmd(cmd, b"--list") {
         let locales = i18n::i18n_available_locales();
         write_str(b"\r\n");
         write_str(tr_id!(IDS_AVAILABLE).as_bytes());
@@ -79,8 +87,8 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
 
-    if is_cmd(args, b"set") || is_cmd(args, b"-s") || is_cmd(args, b"--set") {
-        let rest = &args[3..];
+    if is_cmd(cmd, b"set") || is_cmd(cmd, b"-s") || is_cmd(cmd, b"--set") {
+        let rest = rest;
         let rest = libneodos::args::trim_ascii(rest);
 
         if rest.is_empty() {

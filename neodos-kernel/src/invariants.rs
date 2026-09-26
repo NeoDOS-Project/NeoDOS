@@ -1,21 +1,35 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 use crate::log::LogSubsys;
 
-// ── Interrupt nesting counter ───────────────────────────────────────
-// Tracks IRQ entry depth.  On a single-core system this should never
-// exceed 1 (hardware clears IF on interrupt gate entry).
-// A value > 1 indicates illegal nested IRQ reentrancy.
+// ── Interrupt nesting counter (per-CPU) ─────────────────────────────
+// Tracks IRQ entry depth for the current CPU. On a single core this should
+// never exceed 1 (hardware clears IF on interrupt gate entry). A value > 1
+// indicates illegal nested IRQ reentrancy on that CPU. This MUST be per-CPU:
+// a global counter made two CPUs handling their own timer IRQ look like a
+// nested reentrancy (Phase 13 SMP).
 
-static IRQ_NESTING: AtomicU8 = AtomicU8::new(0);
+const MAX_CPUS: usize = crate::arch::x64::cpu_local::MAX_CPUS;
+static IRQ_NESTING: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
 const IRQ_NESTING_MAX: u8 = 1;
 
+/// Index of the CPU executing this code (0 before GS is programmed).
+#[inline]
+fn invariants_cpu() -> usize {
+    if crate::hal::safe::GsBase::read() == 0 {
+        return 0;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() as usize };
+    if cpu < MAX_CPUS { cpu } else { 0 }
+}
+
 #[inline]
 pub fn irq_enter_check(vector: u8) -> bool {
-    let prev = IRQ_NESTING.fetch_add(1, Ordering::SeqCst);
+    let cpu = invariants_cpu();
+    let prev = IRQ_NESTING[cpu].fetch_add(1, Ordering::SeqCst);
     if prev >= IRQ_NESTING_MAX {
         // Nested IRQ detected!  Log and return false.
-        kwarn!(LogSubsys::Kernel, "IRQ_REENTRANCY: vector={}, nesting={}", vector, prev);
+        kwarn!(LogSubsys::Kernel, "IRQ_REENTRANCY: cpu={} vector={}, nesting={}", cpu, vector, prev);
         false
     } else {
         true
@@ -24,32 +38,33 @@ pub fn irq_enter_check(vector: u8) -> bool {
 
 #[inline]
 pub fn irq_exit_clear() {
-    let prev = IRQ_NESTING.fetch_sub(1, Ordering::SeqCst);
+    let cpu = invariants_cpu();
+    let prev = IRQ_NESTING[cpu].fetch_sub(1, Ordering::SeqCst);
     if prev == 0 {
-        kerror!(LogSubsys::Kernel, "IRQ nesting underflow!");
+        kerror!(LogSubsys::Kernel, "IRQ nesting underflow! cpu={}", cpu);
     }
 }
 
-// ── Context switch guard ────────────────────────────────────────────
+// ── Context switch guard (per-CPU) ──────────────────────────────────
 // Prevents illegal context switches (e.g. from inside timer IRQ handler).
 
-static IN_TIMER_IRQ: AtomicU8 = AtomicU8::new(0);
+static IN_TIMER_IRQ: [AtomicU8; MAX_CPUS] = [const { AtomicU8::new(0) }; MAX_CPUS];
 
 #[inline]
 pub fn timer_irq_enter() {
-    IN_TIMER_IRQ.store(1, Ordering::SeqCst);
+    IN_TIMER_IRQ[invariants_cpu()].store(1, Ordering::SeqCst);
 }
 
 #[inline]
 pub fn timer_irq_exit() {
-    IN_TIMER_IRQ.store(0, Ordering::SeqCst);
+    IN_TIMER_IRQ[invariants_cpu()].store(0, Ordering::SeqCst);
 }
 
-/// Returns true if currently inside timer IRQ handler.
+/// Returns true if the current CPU is inside the timer IRQ handler.
 /// schedule() / resched should NOT be called in this context.
 #[inline]
 pub fn is_in_timer_irq() -> bool {
-    IN_TIMER_IRQ.load(Ordering::Relaxed) != 0
+    IN_TIMER_IRQ[invariants_cpu()].load(Ordering::Relaxed) != 0
 }
 
 // ── Stack alignment check ───────────────────────────────────────────

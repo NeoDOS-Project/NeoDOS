@@ -10,11 +10,15 @@ pub struct AlignedKStack(pub [u8; KERNEL_STACK_SIZE]);
 
 impl AlignedKStack {
     pub fn new_boxed() -> Box<Self> {
-        let mut stack = Box::new(AlignedKStack([0u8; KERNEL_STACK_SIZE]));
+        Self::try_new_boxed().expect("AlignedKStack::new_boxed OOM")
+    }
+
+    pub fn try_new_boxed() -> Option<Box<Self>> {
+        let mut stack = Box::try_new(AlignedKStack([0u8; KERNEL_STACK_SIZE])).ok()?;
         unsafe {
             (stack.0.as_mut_ptr() as *mut u64).write(STACK_CANARY);
         }
-        stack
+        Some(stack)
     }
 }
 
@@ -37,7 +41,7 @@ pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
     crate::hal::without_interrupts(|| {
         crate::scheduler::current_scheduler()
             .lock()
-            .spawn_kthread(entry, crate::scheduler::types::PRIORITY_NORMAL)
+            .spawn_kthread_named(entry, crate::scheduler::types::PRIORITY_NORMAL, "netd")
     })
 }
 
@@ -78,11 +82,19 @@ pub fn init_ring3_frame(kernel_stack_top: u64, entry: u64, user_stack_top: u64) 
 
 pub(crate) fn idle_task() -> ! {
     loop {
-        crate::hal::without_interrupts(|| {
-            crate::work_queue::WORK_QUEUE.process_high();
-            crate::work_queue::WORK_QUEUE.process_low();
-        });
-        crate::eventbus::EVENT_BUS.dispatch_pending();
+        // The work queue and event bus are global and single-driver: only the
+        // BSP idle thread may drain them. AP idle threads just halt (their
+        // timer drives preemption). Running these on both CPUs corrupts the
+        // shared queues (Phase 13 SMP).
+        let is_bsp = crate::hal::safe::GsBase::read() == 0
+            || unsafe { crate::arch::x64::cpu_local::this_cpu_id() == 0 };
+        if is_bsp {
+            crate::hal::without_interrupts(|| {
+                crate::work_queue::WORK_QUEUE.process_high();
+                crate::work_queue::WORK_QUEUE.process_low();
+            });
+            crate::eventbus::EVENT_BUS.dispatch_pending();
+        }
         crate::hal::hlt_once();
     }
 }

@@ -9,10 +9,32 @@ fn noop_test_runner(_tests: &[&dyn Fn()]) {
     loop {}
 }
 
+extern crate alloc;
+
+use core::alloc::{GlobalAlloc, Layout};
 use libneodos::i18n;
+use libneodos::mem;
 use libneodos::syscall;
 use libneodos::syscall::ObEnumEntry;
 use libneodos::tr_id;
+
+struct SbrkAlloc;
+
+unsafe impl GlobalAlloc for SbrkAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(8) as i64;
+        let ptr = mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
+        if ptr.is_null() {
+            core::ptr::null_mut()
+        } else {
+            ptr
+        }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[global_allocator]
+static ALLOC: SbrkAlloc = SbrkAlloc;
 
 const APP_NAME: &str = "tree";
 const IDS_USAGE: u32 = 1001;
@@ -21,7 +43,6 @@ const IDS_USAGE_LINE3: u32 = 1003;
 const IDS_USAGE_LINE4: u32 = 1004;
 const IDS_ERR_ENUM: u32 = 1005;
 
-const ARGS_ADDR: u64 = 0x41F000;
 const MAX_DEPTH: usize = 6;
 const MAX_ENTRIES: usize = 64;
 
@@ -65,7 +86,7 @@ fn resolve_path(path_buf: &[u8; 260]) -> [u8; 260] {
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
                 let mut pos = 0;
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos < 259 { buf[pos] = 0; }
@@ -86,7 +107,7 @@ fn resolve_path(path_buf: &[u8; 260]) -> [u8; 260] {
         let mut pos = 0;
         match syscall::sys_getcwd(&mut cwd_buf) {
             Ok(n) if n > 0 => {
-                for &b in &cwd_buf[..n - 1] {
+                for &b in &cwd_buf[..n] {
                     if pos < 259 { buf[pos] = b; pos += 1; }
                 }
                 if pos > 0 && buf[pos - 1] != b'\\' {
@@ -111,7 +132,7 @@ struct Entry {
     is_directory: bool,
 }
 
-fn collect_entries(dir_path: &str, entries: &mut [Entry; MAX_ENTRIES]) -> usize {
+fn collect_entries(dir_path: &str, entries: &mut [Entry]) -> usize {
     let mut ob_buf = [0u8; 512];
     let ob_path = to_ob_path(dir_path, &mut ob_buf);
     match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
@@ -212,11 +233,13 @@ const PIPE: &[u8] = &[0xE2, 0x94, 0x82, 0x20, 0x20, 0x20];
 const EMPTY: &[u8] = b"    ";
 
 fn print_tree(dir_path: &str, prefix: &[u8], depth: usize) {
-    let mut entries = [Entry { name: [0u8; 260], is_directory: false }; MAX_ENTRIES];
-    let count = collect_entries(dir_path, &mut entries);
+    // Fix 3.4: allocate entries on heap instead of stack (~16.7 KB per frame).
+    // Recursive depth 6 would consume >100 KB and overflow the 64 KB user stack.
+    let mut entries = alloc::boxed::Box::new([Entry { name: [0u8; 260], is_directory: false }; MAX_ENTRIES]);
+    let count = collect_entries(dir_path, &mut *entries);
     if count == 0 { return; }
 
-    sort_entries(&mut entries, count);
+    sort_entries(&mut *entries, count);
 
     for i in 0..count {
         let is_last = i == count - 1;
@@ -277,11 +300,8 @@ pub extern "C" fn _start() -> ! {
     let _ = i18n::i18n_load(APP_NAME);
     let path_buf = read_args();
     let arg_slice = {
-        let mut arg_buf = [0u8; 256];
-        unsafe {
-            core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, arg_buf.as_mut_ptr(), 256);
-        }
-        let s = libneodos::args::trim_ascii(&arg_buf);
+        let raw = libneodos::args::read_args();
+        let s = libneodos::args::trim_ascii(&raw);
         let mut buf = [0u8; 260];
         let n = s.len().min(259);
         buf[..n].copy_from_slice(&s[..n]);

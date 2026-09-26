@@ -5,9 +5,27 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use crate::log::LogSubsys;
 use crate::scheduler::{self, ThreadState};
 
-#[no_mangle]
-static SAVED_USER_RSP: AtomicU64 = AtomicU64::new(0);
-static SAVED_USER_RIP: AtomicU64 = AtomicU64::new(0);
+// Task C: per-CPU saved user frame. Previously a single global pair, which
+// produced false `[SYSCALL_CORRUPT]` reports when two CPUs (BSP + AP) entered
+// the syscall path concurrently: CPU1 phase-1 compared its frame against the
+// value written by CPU0 phase-0. Indexing by the local APIC/CPU id isolates
+// each CPU's in-flight syscall frame. GS is programmed on every CPU by the
+// time Ring-3 syscalls run, so `this_cpu_id()` is valid here.
+static SAVED_USER_RSP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+static SAVED_USER_RIP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU64::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+
+/// Index of the CPU currently executing the syscall path. Falls back to 0
+/// before GS is programmed (early boot / unit tests).
+#[inline]
+fn syscall_frame_cpu() -> usize {
+    if crate::hal::safe::GsBase::read() == 0 {
+        return 0;
+    }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() as usize };
+    if cpu < crate::arch::x64::cpu_local::MAX_CPUS { cpu } else { 0 }
+}
 
 #[no_mangle]
 pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
@@ -24,27 +42,29 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
     let (tid, pid, state) = crate::hal::without_interrupts(|| {
         let s = scheduler::current_scheduler();
         let lock = s.lock();
-        let tid = lock.current_tid;
+        let tid = lock.current_tid_for_this_cpu();
         let pid = lock.current_pid();
         let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
         (tid, pid, state)
     });
 
+    let cpu = syscall_frame_cpu();
+
     if phase == 0 && cs & 3 == 3 {
-        SAVED_USER_RSP.store(user_rsp, Ordering::Relaxed);
-        SAVED_USER_RIP.store(rip, Ordering::Relaxed);
+        SAVED_USER_RSP[cpu].store(user_rsp, Ordering::Relaxed);
+        SAVED_USER_RIP[cpu].store(rip, Ordering::Relaxed);
     }
 
     if phase == 1 && cs & 3 == 3 {
-        let saved_rsp = SAVED_USER_RSP.load(Ordering::Relaxed);
-        let saved_rip = SAVED_USER_RIP.load(Ordering::Relaxed);
+        let saved_rsp = SAVED_USER_RSP[cpu].load(Ordering::Relaxed);
+        let saved_rip = SAVED_USER_RIP[cpu].load(Ordering::Relaxed);
         if saved_rsp != user_rsp || saved_rip != rip {
             crate::serial_println!(
-                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
             kerror!(LogSubsys::Syscall,
-                "[SYSCALL_CORRUPT] pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
         }
     }
 
@@ -78,14 +98,23 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         let s = scheduler::current_scheduler();
         let mut scheduler = s.lock();
 
-        let tid = scheduler.current_tid;
+        let tid = scheduler.current_tid_for_this_cpu();
         let pid = scheduler.current_pid();
         kdebug!(LogSubsys::Syscall,
             "[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
-        crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
+        // Phase 7: high-frequency; only emit to serial when trace logging is on.
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!("[SYSCALL_RESCHED] before pid={} tid={} current_rsp=0x{:x}", pid, tid, current_rsp);
+        }
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                // Phase 13-A: consume a pending cooperative yield now that the
+                // live `rsp` has been saved; only now is it safe to publish the
+                // thread as Ready/enqueued for another CPU.
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                 if k.state == ThreadState::Running {
                     scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {
@@ -94,7 +123,18 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             }
         }
 
-        let next = scheduler.schedule();
+        let next = scheduler.schedule_with(true);
+        scheduler.consistency_check("resched");
+        {
+            let n = unsafe { &*next };
+            if (tid == 5 || n.tid == 5) && n.rsp != 0 && crate::scheduler::sched_forensic_verbose() {
+                let cs = unsafe { *((n.rsp + 128) as *const u64) };
+                crate::serial_println!(
+                    "[T5_RS] entry={} next={} next_rsp=0x{:x} next_cs=0x{:x} current={} kprcb={:?}",
+                    tid, n.tid, n.rsp, cs, scheduler.current_tid,
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+            }
+        }
         if next.is_null() {
             return current_rsp;
         }
@@ -200,7 +240,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                     for k_opt in scheduler.kthreads.iter_mut() {
                         if let Some(k) = k_opt {
-                            if k.tid == scheduler::IDLE_TID {
+                            if k.is_idle {
                                 idle_ptr = &mut **k as *mut scheduler::Kthread;
                                 break;
                             }
@@ -263,9 +303,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 "\n!!! BUGCHECK: next TID={} has SS=0x{:x} (expected 0x23) !!!",
                 next_tid, rss);
         }
-        crate::serial_println!(
-            "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
-            tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!(
+                "[RING3_SWITCH] tid={}→{} pid={} ks_top=0x{:x} rsp=0x{:x} rip=0x{:x} cs=0x{:x} ss=0x{:x} user_rsp=0x{:x}",
+                tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
+        }
 
         scheduler::check_kernel_stack_canary(next_ks_top, next_pid, next_tid, next_rsp);
         unsafe { crate::arch::x64::gdt::prepare_ring3_return(next_ks_top, next_tid, next_pid); }
@@ -281,9 +323,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x} next_rflags=0x{:x}",
             pid, tid, next_pid, next_tid, next_rsp,
             next_rip, next_cs, next_rflags);
-        crate::serial_println!(
-            "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
-            pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
+        if crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+            crate::serial_println!(
+                "[SYSCALL_RESCHED] after old_pid={} old_tid={} next_pid={} next_tid={} next_rsp=0x{:x} next_rip=0x{:x} next_cs=0x{:x}",
+                pid, tid, next_pid, next_tid, next_rsp, next_rip, next_cs);
+        }
         crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
         next_rsp
     })

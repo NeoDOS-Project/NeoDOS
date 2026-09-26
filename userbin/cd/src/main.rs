@@ -119,11 +119,15 @@ fn normalize_path(input: &[u8]) -> [u8; 260] {
             let comp = &rest[comp_start..end];
             if comp == b"." {
             } else if comp == b".." {
-                while pos > drive_len && out[pos - 1] == b'\\' {
-                    pos -= 1;
-                }
-                while pos > drive_len && out[pos - 1] != b'\\' {
-                    pos -= 1;
+                if count > 0 {
+                    count -= 1;
+                } else {
+                    while pos > drive_len && out[pos - 1] == b'\\' {
+                        pos -= 1;
+                    }
+                    while pos > drive_len && out[pos - 1] != b'\\' {
+                        pos -= 1;
+                    }
                 }
             } else if count < parts.len() {
                 parts[count] = comp;

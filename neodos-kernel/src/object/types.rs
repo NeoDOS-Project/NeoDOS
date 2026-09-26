@@ -140,6 +140,10 @@ pub enum ObInfoClass {
     RegistryKey = 21,
     RegistryValue = 22,
     SocketRecv = 23,
+    CpuStats = 24,
+    ThreadStats = 25,
+    /// Phase 15-A: coherent process+thread inspection snapshot (read-only).
+    ProcessSnapshot = 26,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
@@ -150,6 +154,7 @@ pub enum ObInfoClass {
     KeyboardCaps = 36,
     KeyboardLayouts = 37,
     Hostname = 38,
+    ProcessArgs = 39,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).

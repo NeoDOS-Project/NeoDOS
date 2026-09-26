@@ -326,7 +326,11 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                         options[i + 2], options[i + 3], options[i + 4], options[i + 5],
                     ]);
                 }
-                i += options[i + 1] as usize + 2;
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                if opt_len == 0 && options.get(i + 1).is_none() {
+                    break;
+                }
+                i += opt_len + 2;
             }
             DHCP_OPTION_DNS => {
                 if i + 5 < options.len() {
@@ -334,7 +338,11 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                         options[i + 2], options[i + 3], options[i + 4], options[i + 5],
                     ]);
                 }
-                i += options[i + 1] as usize + 2;
+                let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
+                if opt_len == 0 && options.get(i + 1).is_none() {
+                    break;
+                }
+                i += opt_len + 2;
             }
             DHCP_OPTION_LEASE_TIME => {
                 if i + 5 < options.len() {

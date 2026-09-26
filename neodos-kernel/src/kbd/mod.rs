@@ -81,6 +81,7 @@ pub struct NeoKbd {
     pub layouts: Vec<KbdLayout>,
     pub dead_key: Option<u16>,
     pub ob_id: u64,
+    pub e0_pending: bool,
 }
 
 impl NeoKbd {
@@ -95,6 +96,7 @@ impl NeoKbd {
             layouts: Vec::new(),
             dead_key: None,
             ob_id: 0,
+            e0_pending: false,
         }
     }
 
@@ -162,10 +164,25 @@ impl NeoKbd {
     }
 
     pub fn process_scancode(&mut self, scancode: u8, is_make: bool) {
-        let code = scancode & 0x7F;
-        let is_extended = scancode == 0xE0;
-        if is_extended {
+        // Handle E0 extended prefix (one byte lookahead)
+        if scancode == 0xE0 {
+            self.e0_pending = true;
             return;
+        }
+        let is_extended = self.e0_pending;
+        self.e0_pending = false;
+        let code = scancode & 0x7F;
+        // For extended keys, map to same code but mark extended for hotkey handling
+        // (arrows, etc. currently share scancode with numpad; we keep them distinct
+        // to avoid misinterpreting extended break as numpad make)
+        if is_extended {
+            // Extended arrows: 0x48/0x50/0x4B/0x4D — translate to distinct handling
+            // For now, only handle hotkeys (Alt+F1-F4 already uses extended? No)
+            // To avoid corrupting state, ignore extended keys except for hotkey path
+            // (they will still generate KEYDOWN/KEYUP events below)
+            // We skip normal character insertion for extended keys unless explicitly mapped
+            // This prevents extended 'a' ghost when E0 is lost
+            let _ = is_extended;
         }
 
         // Update modifiers
@@ -220,6 +237,11 @@ impl NeoKbd {
             return;
         }
 
+        // Extended keys (arrows, etc.) should not generate printable chars via normal table
+        if is_extended {
+            return;
+        }
+
         let mods = self.state.modifiers;
         if let Some(layout) = self.active_layout() {
             if let Some(codepoint) = layout::lookup_codepoint(layout, code, mods) {
@@ -238,7 +260,9 @@ impl NeoKbd {
                 let utf8 = unicode::unicode_to_utf8(final_cp);
                 for &b in utf8.iter() {
                     if b == 0 { break; }
-                    let _ = crate::input::push_byte(b);
+                    if crate::input::push_byte(b).is_err() {
+                        crate::serial_println!("[KBD] VT input queue full (4096), byte 0x{:02x} dropped", b);
+                    }
                 }
                 crate::syscall::wake_blocked_readers();
 

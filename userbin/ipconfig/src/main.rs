@@ -55,10 +55,24 @@ fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
     let mut pos = 0;
     let o = ip.to_be_bytes();
     for (idx, &b) in o.iter().enumerate() {
-        if idx > 0 { if pos < buf.len() { buf[pos] = b'.'; pos += 1; } }
-        if b >= 100 { buf[pos] = b'0' + b / 100; pos += 1; }
-        if b >= 10  { buf[pos] = b'0' + (b / 10) % 10; pos += 1; }
-        buf[pos] = b'0' + (b % 10); pos += 1;
+        if idx > 0 {
+            if pos >= buf.len() { break; }
+            buf[pos] = b'.';
+            pos += 1;
+        }
+        if b >= 100 {
+            if pos >= buf.len() { break; }
+            buf[pos] = b'0' + b / 100;
+            pos += 1;
+        }
+        if b >= 10 {
+            if pos >= buf.len() { break; }
+            buf[pos] = b'0' + (b / 10) % 10;
+            pos += 1;
+        }
+        if pos >= buf.len() { break; }
+        buf[pos] = b'0' + (b % 10);
+        pos += 1;
     }
     pos
 }

@@ -30,7 +30,7 @@ impl Scheduler {
 
     pub(crate) fn apply_aging(&mut self) {
         for k in self.kthreads.iter_mut().flatten() {
-            if k.tid != IDLE_TID && k.state == ThreadState::Ready {
+            if !k.is_idle && k.state == ThreadState::Ready {
                 k.ticks_since_scheduled = k.ticks_since_scheduled.saturating_add(AGING_INTERVAL_TICKS);
                 if k.ticks_since_scheduled >= MAX_STARVATION_TICKS && k.priority > PRIORITY_HIGH {
                     k.priority -= 1;

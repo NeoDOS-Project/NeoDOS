@@ -154,9 +154,30 @@ impl Shell {
         self.pos = 0;
         let _ = syscall::sys_cursor_blink(true);
         write_str(b"\x5F");
+        let mut empty_loops: u64 = 0;
+        let mut max_empty: u64 = 0;
         loop {
             let b = console::read_byte();
-            if b < 0 { continue; }
+            if b < 0 {
+                empty_loops += 1;
+                if empty_loops > max_empty { max_empty = empty_loops; }
+                // Fase 5: yield to avoid starvation (minimal fix)
+                let _ = syscall::sys_yield();
+                // Fase 4: log only on thresholds to avoid flood
+                if empty_loops == 100_000 || empty_loops == 1_000_000 || empty_loops == 10_000_000 {
+                    write_str(b"\r\n[SHELL_BUSY] empty_loops=");
+                    let mut tmp=[0u8;20]; let mut v=empty_loops; let mut i=19;
+                    if v==0 { tmp[i]=b'0'; } else { while v>0 { tmp[i]=b'0'+(v%10) as u8; v/=10; if i==0 {break;} i-=1; } }
+                    write_str(&tmp[i..]);
+                    write_str(b" max=");
+                    let mut tmp2=[0u8;20]; let mut v2=max_empty; let mut j=19;
+                    if v2==0 { tmp2[j]=b'0'; } else { while v2>0 { tmp2[j]=b'0'+(v2%10) as u8; v2/=10; if j==0 {break;} j-=1; } }
+                    write_str(&tmp2[j..]);
+                    write_str(b"\r\n");
+                }
+                continue;
+            }
+            empty_loops = 0;
             write_str(b"\x08 \x08");
             match b as u8 {
                 b'\r' | b'\n' => {
@@ -261,6 +282,14 @@ impl Shell {
             }
             if self.pos > 0 { write_str(b"\x5F"); }
         }
+        // Fase 4: report max busy loops for this line
+        if max_empty > 1000 {
+            write_str(b"\r\n[SHELL_BUSY] line done max_empty=");
+            let mut tmp=[0u8;20]; let mut v=max_empty; let mut i=19;
+            if v==0 { tmp[i]=b'0'; } else { while v>0 { tmp[i]=b'0'+(v%10) as u8; v/=10; if i==0 {break;} i-=1; } }
+            write_str(&tmp[i..]);
+            write_str(b"\r\n");
+        }
         let _ = syscall::sys_cursor_blink(false);
     }
 
@@ -338,6 +367,11 @@ impl Shell {
             b"SET" => { fds.close_all(); self.cmd_set(trimmed); }
             b"EXIT" => { fds.close_all(); self.cmd_exit(); }
             b"CALL" => { fds.close_all(); self.cmd_call(trimmed); }
+            b"VTDIAG" => {
+                fds.close_all();
+                unsafe { core::arch::asm!("mov rax, 99", "int 0x80", options(nostack)); }
+                write_str(b"\r\n[VTDIAG] dumped\r\n");
+            }
             _ => {
                 write_str(b"\r\n");
                 unsafe { let d = ARGS_ADDR as *mut u8; d.write_bytes(0,256); let n=args_slice.len().min(255); core::ptr::copy_nonoverlapping(args_slice.as_ptr(),d,n); d.add(n).write(0); }
@@ -398,17 +432,31 @@ impl Shell {
 
     fn execute_pipeline(&mut self, line: &[u8], pp: &[usize]) {
         let nc = pp.len() + 1;
-        let mut rf = [0u8; MAX_PIPELINE];
-        let mut wf = [0u8; MAX_PIPELINE];
+        let mut rf = [0xFFu8; MAX_PIPELINE];
+        let mut wf = [0xFFu8; MAX_PIPELINE];
         for i in 0..pp.len() {
             let mut fds = [0u64;2];
             let mut pn = [0u8;16]; pn[..7].copy_from_slice(b"\\Pipe/p");
             let mut pos = 7; let mut v = i as u64;
-            if v==0 { pn[pos]=b'0'; pos+=1; }
-            else { let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; } for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; } }
+            if v==0 {
+                if pos >= 15 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
+                pn[pos]=b'0'; pos+=1;
+            }
+            else {
+                let mut d=[0u8;4]; let mut nd=0; while v>0&&nd<4 { d[nd]=b'0'+(v%10)as u8; v/=10; nd+=1; }
+                if pos + nd >= 15 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
+                for di in(0..nd).rev(){ pn[pos]=d[di]; pos+=1; }
+            }
+            if pos >= 16 { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); for j in 0..i { if rf[j]!=0xFF{let _=syscall::sys_close(rf[j]);} if wf[j]!=0xFF{let _=syscall::sys_close(wf[j]);} } return; }
             pn[pos]=0;
             let ps = unsafe { core::str::from_utf8_unchecked(&pn[..pos]) };
-            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() { write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); return; }
+            if syscall::sys_ob_create(ps,4,Some(&mut fds),0).is_err() {
+                for j in 0..i {
+                    if rf[j] != 0xFF { let _ = syscall::sys_close(rf[j]); rf[j]=0xFF; }
+                    if wf[j] != 0xFF { let _ = syscall::sys_close(wf[j]); wf[j]=0xFF; }
+                }
+                write_err(b"\r\n"); write_err(tr_id!(IDS_PIPE_ERROR).as_bytes()); write_err(b"\r\n"); return;
+            }
             rf[i]=fds[0] as u8; wf[i]=fds[1] as u8;
         }
         let mut err = false; let mut cs = 0;
@@ -453,10 +501,10 @@ impl Shell {
                     write_err(b"\r\nBad command or file name\r\n"); err=true; break;
                 }
             }
-            if ci>0 { let _=syscall::sys_close(rf[ci-1]); }
-            if ci<pp.len() { let _=syscall::sys_close(wf[ci]); }
+            if ci>0 && rf[ci-1] != 0xFF { let _=syscall::sys_close(rf[ci-1]); rf[ci-1]=0xFF; }
+            if ci<pp.len() && wf[ci] != 0xFF { let _=syscall::sys_close(wf[ci]); wf[ci]=0xFF; }
         }
-        if err { for i in 0..pp.len() { let _=syscall::sys_close(rf[i]); let _=syscall::sys_close(wf[i]); } }
+        if err { for i in 0..pp.len() { if rf[i] != 0xFF { let _=syscall::sys_close(rf[i]); rf[i]=0xFF; } if wf[i] != 0xFF { let _=syscall::sys_close(wf[i]); wf[i]=0xFF; } } }
     }
 
     fn cmd_cwd(&self) {
@@ -494,7 +542,7 @@ impl Shell {
         if r[0]!=b'\\'&&r[0]!=b'/' {
             let mut cb = [0u8; 256];
             if let Ok(n) = syscall::sys_getcwd(&mut cb) {
-                if n>0 { let cwd=&cb[..n-1]; if cwd.len()>2 { for &b in cwd.iter().skip(2) { if pos<255 { fp[pos]=b; pos+=1; } } } if pos>2&&fp[pos-1]!=b'\\'&&pos<255 { fp[pos]=b'\\'; pos+=1; } }
+                if n>0 { let cwd=&cb[..n]; if cwd.len()>2 { for &b in cwd.iter().skip(2) { if pos<255 { fp[pos]=b; pos+=1; } } } if pos>2&&fp[pos-1]!=b'\\'&&pos<255 { fp[pos]=b'\\'; pos+=1; } }
             }
         }
         for &b in r { if pos<255 { fp[pos]=b; pos+=1; } }

@@ -28,6 +28,45 @@ impl Kthread {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: true,
+            yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("idle"),
+        }
+    }
+
+    /// Idle thread whose `rsp` is captured by the first timer interrupt.
+    ///
+    /// Unlike [`new_idle`], this writes **no** synthetic iretq frame: the target
+    /// CPU is already running on `stack_top`, so fabricating a frame would
+    /// corrupt its live stack. `on_timer_tick` stores the real interrupt frame
+    /// into `rsp` at the first timeslice expiry, before any switch to it.
+    /// `kernel_stack` stays `None` so the pre-allocated AP stack is never freed
+    /// by the scheduler.
+    pub fn new_idle_bare(tid: u32, pid: u32, stack_top: u64) -> Self {
+        Kthread {
+            rax: 0, rbx: 0, rcx: 0, rdx: 0,
+            rsi: 0, rdi: 0, r8: 0, r9: 0,
+            r10: 0, r11: 0, r12: 0, r13: 0,
+            r14: 0, r15: 0, rbp: 0,
+            rsp: 0, rip: 0, rflags: 0x202,
+            tid, pid,
+            state: ThreadState::Running,
+            cpu_ticks: 0,
+            waiting_for: None,
+            priority: PRIORITY_IDLE,
+            time_slice_remaining: IDLE_TIME_SLICE,
+            ticks_since_scheduled: 0,
+            kernel_stack_top: stack_top,
+            kernel_stack: None,
+            teb_base: 0,
+            cpu: 0,
+            obj_id: None,
+            kernel_apc_queue: VecDeque::new(),
+            user_apc_queue: VecDeque::new(),
+            apc_pending: false,
+            is_idle: true,
+            yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("idle"),
         }
     }
 
@@ -67,6 +106,9 @@ impl Kthread {
             kernel_apc_queue: VecDeque::new(),
             user_apc_queue: VecDeque::new(),
             apc_pending: false,
+            is_idle: false,
+            yield_requested: false,
+            name: crate::scheduler::types::KernelName::from_str("thread"),
         }
     }
 }

@@ -25,7 +25,23 @@ pub fn run_all() -> (usize, usize) {
     let tests = TESTS.lock();
     for test in tests.iter() {
         serial_print!("  TEST {} ... ", test.name);
-        match crate::hal::without_interrupts(|| (test.func)()) {
+        let result = crate::hal::without_interrupts(|| (test.func)());
+        // Phase 5.3: assert SCHED_TEST_MODE is never left enabled after a test
+        // (RAII guard must have reset it, even on early return / Err)
+        debug_assert!(
+            !crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::SeqCst),
+            "SCHED_TEST_MODE still true after test {}",
+            test.name
+        );
+        // Also visible check for release builds
+        if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed) {
+            serial_println!("FAIL: SCHED_TEST_MODE leaked after {}", test.name);
+            failed += 1;
+            // force reset for next tests
+            crate::scheduler::SCHED_TEST_MODE.store(false, core::sync::atomic::Ordering::SeqCst);
+            continue;
+        }
+        match result {
             Ok(()) => {
                 serial_println!("PASS");
                 passed += 1;
@@ -206,6 +222,7 @@ pub fn register_tests() {
     crate::scheduler::register_tests();
     crate::syscall::register_syscall_table_tests();
     crate::syscall::register_sync_tests();
+    crate::syscall::register_ob_stats_tests();
     crate::nem::register_nem_tests();
     crate::elf::register_elf_tests();
     crate::eventbus::register_tests();

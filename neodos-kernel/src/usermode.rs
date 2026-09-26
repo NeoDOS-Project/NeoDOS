@@ -118,7 +118,29 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
-pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32) -> Result<u32, &'static str> {
+pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32, name: &str) -> Result<u32, &'static str> {
+    // F-DEV-02: zombie queue backpressure — bounded queue without loss. If storm
+    // fills queue, try synchronous reclaim before allocating resources; if still
+    // backpressured (all zombies still running), fail spawn with NoMem instead
+    // of silently dropping PIDs (which leaked slots forever).
+    if crate::scheduler::lifecycle::zombie_queue_len() >= 64 {
+        let reclaimed = crate::hal::without_interrupts(|| {
+            if let Some(mut s) = crate::scheduler::current_scheduler().try_lock() {
+                let cur_pid = s.current_pid();
+                let before = crate::scheduler::lifecycle::zombie_queue_len();
+                crate::scheduler::lifecycle::reap_pending_zombies(&mut *s, cur_pid);
+                crate::scheduler::lifecycle::zombie_queue_len() < before
+            } else { false }
+        });
+        if !reclaimed && crate::scheduler::lifecycle::is_zombie_backpressured() {
+            return Err("NoMem: zombie backpressure");
+        }
+    }
+    // F-04 transactional spawn: all pid-dependent allocations now inside the lock.
+    // Resources acquired outside (heap_slot, kernel stack) are tracked for rollback
+    // if the critical section fails. No pid/tid is reserved before the lock,
+    // eliminating the race where two concurrent spawns could guess the same pid
+    // and create duplicate Ob names with mismatched native_id.
     let heap_slot = crate::arch::x64::paging::alloc_heap_slot();
     let heap_base = match heap_slot {
         Some(slot) => slot.base,
@@ -127,47 +149,24 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
             0
         }
     };
+    let heap_idx = if heap_base != 0 {
+        Some(((heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE) / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8)
+    } else { None };
 
-    // ── Phase 1: ALL allocations OUTSIDE scheduler lock ──
-    // 1. Kernel stack allocation (Box::new → heap alloc with stack canary)
-    let stack = scheduler::AlignedKStack::new_boxed();
+    // Kernel stack allocation (Box::try_new → no panic on OOM) — pid independent
+    let stack = match scheduler::AlignedKStack::try_new_boxed() {
+        Some(s) => s,
+        None => {
+            if let Some(idx) = heap_idx {
+                crate::arch::x64::paging::free_heap_slot(idx);
+            }
+            return Err("NoMem for kernel stack");
+        }
+    };
     let kernel_stack_top = stack.0.as_ptr() as u64 + scheduler::KERNEL_STACK_SIZE as u64;
     let rsp = scheduler::init_ring3_frame(kernel_stack_top, entry, stack_top);
 
-    // 2. Reserve PID/TID and pre-allocate Vec slots atomically
-    // Do NOT increment next_pid/next_tid here — add_ring3_process_with_stack
-    // will allocate them. We only peek and ensure slots, otherwise we
-    // double-allocate and Ob native_id (pid/tid) drifts from EPROCESS pid.
-    let (pid, tid) = crate::hal::without_interrupts(|| {
-        let mut s = scheduler::current_scheduler().lock();
-        s.ensure_slots();
-        let p = s.next_pid;
-        let t = s.next_tid;
-        (p, t)
-    });
-
-    // 3. Create Ob objects (heap allocs, Ob manager locks — all outside scheduler lock)
-    let name = alloc::format!("eproc/{}", pid);
-    let obj_id = object::ob_create_object(object::ObType::Process, &name, pid as u64, 0, None).ok();
-
-    let ob_name = alloc::format!("proc/{}", pid);
-    let ob_id = match object::ob_create_object(object::ObType::Process, &ob_name, pid as u64, 0, None) {
-        Ok(id) => {
-            let ns_path = alloc::format!("\\Process\\{}", pid);
-            let _ = crate::object::namespace::ob_insert_object(&ns_path, id);
-            Some(id)
-        }
-        Err(_) => None,
-    };
-
-    crate::serial_println!("[SPAWN] pid={} tid={} obj_id pid={} ob_id pid={}", pid, tid, pid, pid);
-    let tname = alloc::format!("kthread/{}", tid);
-    let thread_obj_id = object::ob_create_object(object::ObType::Thread, &tname, tid as u64, 0, None).ok();
-    if let Some(id) = obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-    if let Some(id) = ob_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] ob_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-    if let Some(id) = thread_obj_id { if let Some(o) = object::ob_lookup(id) { crate::serial_println!("[SPAWN] thread_obj_id {} type={:?} native_id={}", id, o.obj_type, o.native_id); } }
-
-    // 4. Inherit parent token
+    // Inherit parent token (quick, outside the main critical section)
     let parent_token = crate::hal::without_interrupts(|| {
         let lock = scheduler::current_scheduler().lock();
         lock.find_eprocess(parent_pid)
@@ -175,15 +174,45 @@ pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, c
             .unwrap_or(crate::security::DEFAULT_ADMIN_TOKEN.clone())
     });
 
-    // ── Phase 2: Minimal critical section — only table insertion ──
-    crate::hal::without_interrupts(|| {
+    // Single transactional critical section: pid/tid allocation, slot reservation,
+    // Eprocess/Kthread creation. Ob objects are now created *inside* the lock
+    // with the real pid/tid (no guess), so native_id always matches EPROCESS pid
+    // and no duplicate names can occur. If this section fails, we rollback
+    // heap_slot and the kernel stack is dropped (Box freed) automatically.
+    let result = crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
+        // Ensure Vecs have capacity — P0.2: try_reserve, return NoMem on OOM
+        s.ensure_slots().map_err(|e| {
+            // Ensure_slots failed, stack will be dropped by caller, heap slot freed there
+            e
+        })?;
+        // Delegate to the existing helper but with Ob ids = None (created inside if needed).
+        // The helper now handles its own Ob creation with the real pid/tid, so we pass None.
         s.add_ring3_process_with_stack(
             entry, slot_idx, cwd_drive, cwd_path,
-            heap_base, parent_pid, rsp, kernel_stack_top, stack,
-            obj_id, ob_id, thread_obj_id, parent_token,
+            heap_base, parent_pid, name, rsp, kernel_stack_top, stack,
+            None, None, None, parent_token,
         )
-    })
+    });
+
+    match result {
+        Ok(pid) => {
+            // Success: heap slot is now owned by the new Eprocess, do not free.
+            crate::serial_println!("[SPAWN] pid={} heap_base=0x{:x} slot={} OK", pid, heap_base, slot_idx);
+            Ok(pid)
+        }
+        Err(e) => {
+            // Rollback heap slot (user slot is caller's responsibility)
+            if let Some(idx) = heap_idx {
+                crate::arch::x64::paging::free_heap_slot(idx);
+                crate::serial_println!("[SPAWN] rollback heap_slot idx={} base=0x{:x} err={}", idx, heap_base, e);
+            }
+            // Kernel stack Box was moved into add_ring3_process_with_stack and dropped on Err
+            // (its Drop frees the allocation). No Ob objects to clean because we passed None
+            // and the helper didn't create any on failure (or it would have cleaned).
+            Err(e)
+        }
+    }
 }
 
 pub fn wait_for_process(pid: u32) {
@@ -237,25 +266,38 @@ pub fn wait_for_process(pid: u32) {
     // process exits via exit_to_kernel.
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
-        let tid = s.current_tid;
+        // Phase 13-A: use THIS CPU's current thread, not the global
+        // `current_tid` which an AP may have advanced while running its own
+        // schedule(). Using the global value here skipped blocking the boot
+        // thread (TID 0) on the BSP, leaving two threads marked Running on
+        // CPU0 (SCHED_WARN) and a stale dispatchable boot context.
+        let tid = s.current_tid_for_this_cpu();
         crate::serial_println!("[USERMODE] blocking TID 0, current_tid={} activating pid={}", tid, pid);
         // Block the boot thread (TID 0) if current
         if tid == scheduler::BOOT_TID {
             if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
                 scheduler::Scheduler::remove_from_run_queue(k);
                 k.state = scheduler::ThreadState::Blocked {
-                    waiting_for: pid,
+                    waiting_for: pid as u64,
                 };
             }
         }
         // Activate the target process
         let mut target_tid = 0;
+        let mut target_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
+        let mut target_pid: u32 = 0;
         for k in s.kthreads.iter().flatten() {
             if k.pid == pid && k.tid > 0 {
                 target_tid = k.tid;
+                target_pid = k.pid;
+                target_ptr = &**k as *const scheduler::Kthread as *mut scheduler::Kthread;
                 s.current_tid = target_tid;
                 break;
             }
+        }
+        // F-01: sync per-CPU KPRCB (BSP)
+        if !target_ptr.is_null() {
+            unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(target_ptr, target_pid); }
         }
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
@@ -285,6 +327,9 @@ pub fn wait_for_process(pid: u32) {
     crate::hal::without_interrupts(|| {
         let mut s = scheduler::current_scheduler().lock();
         s.current_tid = scheduler::BOOT_TID;
+        // F-01: sync KPRCB back to boot thread
+        let boot_ptr = s.find_kthread(scheduler::BOOT_TID).map(|k| k as *const _ as *mut scheduler::Kthread).unwrap_or(core::ptr::null_mut());
+        unsafe { crate::arch::x64::cpu_local::sync_per_cpu_current(boot_ptr, 0); }
         if let Some(k) = s.find_kthread_mut(scheduler::BOOT_TID) {
             k.state = scheduler::ThreadState::Running;
         }

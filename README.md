@@ -1,7 +1,7 @@
 # NeoDOS — Un Sistema Operativo Moderno en Rust para x86-64
 
-[![Version](https://img.shields.io/badge/version-v0.49.0-blue.svg)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-656-green.svg)](neodos-kernel/src/testing.rs)
+[![Version](https://img.shields.io/badge/version-v0.50.5-blue.svg)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-723-green.svg)](neodos-kernel/src/testing.rs)
 [![Rust](https://img.shields.io/badge/rust-nightly-orange.svg)](rust-toolchain.toml)
 [![Organization](https://img.shields.io/badge/org-NeoDOS--Project-blueviolet.svg)](https://github.com/NeoDOS-Project)
 
@@ -16,7 +16,7 @@ NeoDOS es un sistema operativo de 64 bits escrito en Rust con arquitectura híbr
 ## Arquitectura en 30 segundos
 
 ```text
-Boot UEFI → Bootloader → Kernel (11 fases de boot) → NeoInit (PID 1) → NeoShell (Ring 3)
+Boot UEFI → Bootloader → Kernel (fases de boot) → NeoInit (PID 1) → NeoShell (Ring 3)
 ```
 
 El kernel se organiza en 5 capas verticales:
@@ -25,7 +25,7 @@ El kernel se organiza en 5 capas verticales:
 2. **HAL v0.4** — raw/safe split, 26 primitivas extern "C", asm confinado
 3. **System Services** — scheduler (4 prioridades, aging, work stealing), memory (buddy+slab, demand paging), KOBJ, VFS, IPC/pipes, IRP async I/O, Event Bus, seguridad NT6
 4. **NEM Driver Runtime** — pipeline de certificación (8 estados), capacidades (12 flags), aislamiento X4 (16 slots × 1 MB), ABI versionado
-5. **Syscall SSDT** — 32 syscalls activos, tabla de 256 slots, O(1) dispatch, tabla de permisos separada
+5. **Syscall SSDT** — SSDT RAX 0-59, tabla de 256 slots, O(1) dispatch, tabla de permisos separada
 
 ---
 
@@ -33,13 +33,14 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 | --------- | -------- |
-| **Kernel** | v0.49.0 — 656 tests, 32 syscalls SSDT activos, 24 fases de boot |
+| **Kernel** | v0.50.5 — 723 tests, SSDT RAX 0-59, 24 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
 | **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |
 | **Input** | 4 Virtual Terminals (Alt+F1-F4), per-VT input queues, shadow buffers |
 | **Virtual Terminals** | Console state save/restore per VT, framebuffer shadow redraw |
-| **SMP** | 16 CPUs, per-CPU KPRCB, IPI (reschedule, TLB shootdown, call-function) |
+| **SMP** | 16 CPUs, per-CPU KPRCB, INIT-SIPI-SIPI AP bring-up, IPI (reschedule, TLB shootdown, call-function) |
+| **Scheduler** | Dispatch commit point (`SELECT → VALIDATE FRAME → COMMIT → DISPATCH`), work stealing, per-CPU runqueues |
 | **Seguridad** | NT6 SRM: SID, Token, ACL, ACE, SeAccessCheck |
 | **Rendimiento** | HPET → APIC timer 1 KHz, slab con per-CPU hot cache, work stealing |
 
@@ -58,13 +59,21 @@ NeoDOS is now developed under the [NeoDOS-Project](https://github.com/NeoDOS-Pro
 
 ## Quick Start
 
+NeoDev es una herramienta de desarrollo externa; instálala primero:
+
 ```bash
-bash scripts/build.sh                    # bootloader + kernel + GPT disk image
-bash scripts/build.sh --neodos-image     # + NeoDOS FS image + user binaries
-bash scripts/qemu-debug.sh               # QEMU + OVMF, serial a stdout, GDB :1234
-gdb -x .gdbinit                          # desde neodos/, conecta a QEMU
-python3 scripts/auto_test.py             # Test runner automático headless
+cargo install --git https://github.com/NeoDOS-Project/NeoDev.git
+
+neodev build --image     # bootloader + kernel + user binaries + GPT disk image
+neodev run               # QEMU + OVMF, serial, GDB :1234
+neodev test              # suite de tests automática (723/723)
+neodev list              # descubre los proyectos del workspace
+neodev clean             # limpia artefactos de build
 ```
+
+> Si `neodev test` reporta fallos de filesystem (p. ej. `709/723`) tras un arranque
+> interactivo, el `disk_image.img` quedó sucio: reconstruye con `neodev build --image`
+> y repite. Ver `docs/development/testing.md`.
 
 ---
 
@@ -83,6 +92,7 @@ python3 scripts/auto_test.py             # Test runner automático headless
 | [Filesystem](docs/filesystem/overview.md) | NeoFS, VFS, IoStack |
 | [Repository Architecture](docs/architecture/repository.md) | Propuesta de organización multi-repositorio |
 | [Documentation Index](docs/README.md) | Índice maestro de documentación |
+| [Testing](docs/development/testing.md) | Test suite, harness y caveats |
 | [Debug](docs/development/debugging.md) | Guía de depuración con GDB |
 
 ---

@@ -30,7 +30,7 @@ fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
     buf[..prefix.len()].copy_from_slice(prefix);
     buf[prefix.len()..total].copy_from_slice(vfs_bytes);
     buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
+    core::str::from_utf8(&buf[..total]).unwrap_or(vfs)
 }
 
 fn write_str(s: &[u8]) {
@@ -51,27 +51,6 @@ fn write_u32(mut v: u32) {
         i -= 1;
     }
     write_str(&buf[i + 1..]);
-}
-
-fn read_args() -> [u8; 256] {
-    let ptr = 0x41F000 as *const u8;
-    let mut buf = [0u8; 256];
-    unsafe {
-        let mut i = 0;
-        while i < 255 {
-            let b = ptr.add(i).read();
-            buf[i] = b;
-            if b == 0 { break; }
-            i += 1;
-        }
-    }
-    buf
-}
-
-fn is_help_flag(buf: &[u8; 256]) -> bool {
-    let s = unsafe { core::str::from_utf8_unchecked(buf) };
-    let s = s.trim();
-    s.eq_ignore_ascii_case("/?") || s.eq_ignore_ascii_case("-h") || s.eq_ignore_ascii_case("--help")
 }
 
 fn trim_ascii(s: &[u8]) -> &[u8] {
@@ -109,8 +88,8 @@ fn print_help() {
 fn cmd_load(path: &[u8]) {
     let full_path = resolve_path(path);
     let full_path_str = {
-        let end = full_path.iter().position(|&b| b == 0).unwrap_or(0);
-        unsafe { core::str::from_utf8_unchecked(&full_path[..end]) }
+        let end = full_path.iter().position(|&b| b == 0).unwrap_or(full_path.len());
+        core::str::from_utf8(&full_path[..end]).unwrap_or("")
     };
 
     write_str(b"\r\n");
@@ -138,7 +117,7 @@ fn cmd_load(path: &[u8]) {
 }
 
 fn cmd_unload(name: &[u8]) {
-    let name_str = unsafe { core::str::from_utf8_unchecked(name) };
+    let name_str = core::str::from_utf8(name).unwrap_or("");
     let name_str = name_str.trim();
 
     write_str(b"\r\n");
@@ -165,14 +144,14 @@ fn cmd_unload(name: &[u8]) {
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
-    let args = read_args();
-    if is_help_flag(&args) {
+    let args = libneodos::args::read_args();
+    if libneodos::args::is_help_flag(&args) {
         print_help();
         syscall::sys_exit(0);
     }
 
     let arg_str = {
-        let end = args.iter().position(|&b| b == 0).unwrap_or(0);
+        let end = args.iter().position(|&b| b == 0).unwrap_or(args.len());
         trim_ascii(&args[..end])
     };
 

@@ -1,10 +1,10 @@
 //! Scheduler run queue — extracted from mod.rs
-use crate::scheduler::types::{Kthread, BOOT_TID, IDLE_TID, PRIORITY_COUNT, TIME_SLICES, ThreadState};
+use crate::scheduler::types::{Kthread, BOOT_TID, PRIORITY_COUNT, TIME_SLICES, ThreadState};
 use crate::scheduler::Scheduler;
 
 impl Scheduler {
     pub fn enqueue_to_cpu_run_queue(k: &Kthread) {
-        if k.tid == BOOT_TID || k.tid == IDLE_TID {
+        if k.tid == BOOT_TID || k.is_idle {
             return;
         }
         let cpu = k.cpu as usize;
@@ -59,6 +59,11 @@ impl Scheduler {
             return;
         }
         k.state = ThreadState::Ready;
+        // Phase 13-A: a thread published as Ready has had any pending yield
+        // intent consumed (by the switch-out that saved its `rsp`, or by this
+        // wake from Blocked). Leaving it set would trigger a spurious
+        // preemption on its next timeslice.
+        k.yield_requested = false;
         let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
         k.time_slice_remaining = TIME_SLICES[idx];
         k.ticks_since_scheduled = 0;

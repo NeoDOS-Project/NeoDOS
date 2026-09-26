@@ -38,6 +38,7 @@ use self::handlers::*;
 use self::ob::*;
 use self::cm::*;
 pub use self::tests::{register_syscall_table_tests, register_sync_tests};
+pub use self::ob::register_ob_stats_tests;
 
 
 // ── Syscall Number Constants (frozen ABI) ──
@@ -89,11 +90,13 @@ pub enum SyscallNum {
     CmFlushKey = 57,
     CmLoadHive = 58,
     CmUnloadHive = 59,
+    // Debug (90-99)
+    DebugDump = 99,
 }
 
 impl SyscallNum {
-    pub const MAX_VALID: u64 = 59;
-    pub const HIGHEST_ASSIGNED: u64 = 59;
+    pub const MAX_VALID: u64 = 99;
+    pub const HIGHEST_ASSIGNED: u64 = 99;
 
     pub fn from_u64(n: u64) -> Option<Self> {
         match n {
@@ -133,6 +136,7 @@ impl SyscallNum {
             57 => Some(Self::CmFlushKey),
             58 => Some(Self::CmLoadHive),
             59 => Some(Self::CmUnloadHive),
+            99 => Some(Self::DebugDump),
             _ => None,
         }
     }
@@ -193,6 +197,7 @@ pub fn validate_abi() {
         30, 35, 36,
         40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+        99,
     ];
 
     for &n in ASSIGNED {
@@ -241,7 +246,7 @@ pub extern "C" fn clear_need_resched() -> bool {
 pub extern "C" fn is_thread_terminated() -> u64 {
     let s = scheduler::current_scheduler();
     let mut scheduler = s.lock();
-    if scheduler.current_tid > 0 {
+    if scheduler.current_tid_for_this_cpu() > 0 {
         if let Some(k) = scheduler.current_kthread_mut() {
             if k.state == ThreadState::Terminated {
                 return 1;
@@ -381,6 +386,7 @@ lazy_static! {
         t[57] = Some(handler_cm_flush_key as SyscallFn);
         t[58] = Some(handler_cm_load_hive as SyscallFn);
         t[59] = Some(handler_cm_unload_hive as SyscallFn);
+        t[99] = Some(handler_debug_dump as SyscallFn);
         t
     };
 
@@ -422,6 +428,7 @@ lazy_static! {
         t[57] = SyscallPermission::user();
         t[58] = SyscallPermission::admin();
         t[59] = SyscallPermission::admin();
+        t[99] = SyscallPermission::user();
         t
     };
 }
@@ -457,7 +464,7 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
     crate::trace_syscall!(rax, rbx, rcx, rdx);
     if cfg!(feature = "validation") {
         let pid = crate::scheduler::current_pid();
-        if pid == 2 {
+        if pid == 2 && crate::log::log_enabled(LogSubsys::Syscall, crate::log::LogLevel::Trace) {
             crate::serial_println!("[SYSCALL] enter pid={} rax={} rbx=0x{:x}", pid, rax, rbx);
         }
     }
@@ -514,5 +521,6 @@ pub fn wake_blocked_readers() {
         let s = crate::scheduler::current_scheduler();
         let mut scheduler = s.lock();
         scheduler.wake_blocked_on_magic(0xFFFFFFFF);
+        set_need_resched();
     });
 }

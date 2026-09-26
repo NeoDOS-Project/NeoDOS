@@ -443,6 +443,18 @@ pub unsafe fn gs_write_u64(offset: u32, val: u64) {
     crate::hal::raw::raw_gs_write_u64(offset, val);
 }
 
+/// Write a u32 to the current CPU's KPRCB at the given byte offset.
+///
+/// # Safety
+/// Same requirements as `gs_read_u64`. Only the owning CPU should call this.
+/// MUST be used for 32-bit fields: writing a u64 at `OFFSET_CURRENT_PID`
+/// would spill into `idle` (0x014), `need_resched` (0x015) and `current_irql`
+/// (0x016), silently clearing them.
+#[inline(always)]
+pub unsafe fn gs_write_u32(offset: u32, val: u32) {
+    crate::hal::raw::raw_gs_write_u32(offset, val);
+}
+
 /// Write a u8 to the current CPU's KPRCB at the given byte offset.
 #[inline(always)]
 pub unsafe fn gs_write_u8(offset: u32, val: u8) {
@@ -514,7 +526,10 @@ pub unsafe fn this_cpu_current_pid() -> u32 {
 /// Set the current CPU's PID.
 #[inline(always)]
 pub unsafe fn this_cpu_set_current_pid(pid: u32) {
-    gs_write_u64(OFFSET_CURRENT_PID, pid as u64);
+    // F-01 audit fix: current_pid is a u32 at 0x010, immediately followed by
+    // `idle` (0x014), `need_resched` (0x015) and `current_irql` (0x016).
+    // Writing u64 here zeroed those three fields on every context switch.
+    gs_write_u32(OFFSET_CURRENT_PID, pid);
 }
 
 /// Check if the current CPU is idle.
@@ -557,6 +572,87 @@ pub unsafe fn this_cpu_set_irql(level: u8) {
 #[inline(always)]
 pub unsafe fn this_cpu_in_dispatch_level() -> bool {
     this_cpu_irql() >= 2
+}
+
+// ── F-01: per-CPU current identity helpers (SMP UAF fix) ─────────────────
+
+/// Get current thread's TID from KPRCB (per-CPU). Returns 0 if none.
+#[inline(always)]
+pub unsafe fn this_cpu_current_tid() -> u32 {
+    let ptr = this_cpu_current_thread();
+    if ptr.is_null() { 0 } else { (*ptr).tid }
+}
+
+/// Check if a PID is currently Running on ANY CPU (reads KPRCB.current_pid).
+/// Used by reap to avoid freeing a stack still in use on another CPU.
+/// Returns true if pid !=0 and any online CPU has current_pid==pid.
+pub fn is_pid_running_on_any_cpu(pid: u32) -> bool {
+    if pid == 0 { return false; }
+    for cpu in 0..MAX_CPUS {
+        let addr = unsafe { KPRCB_PAGES[cpu] };
+        if addr == 0 { continue; }
+        let cur_pid = unsafe { core::ptr::read_volatile((addr + OFFSET_CURRENT_PID as u64) as *const u32) };
+        if cur_pid == pid { return true; }
+    }
+    false
+}
+
+/// Phase 13-A.3 (I-RUNREADY): return the CPU whose `KPRCB.current_thread`
+/// still points at `kptr`, if any.
+///
+/// This is the authoritative check for "is this KTHREAD still the live
+/// execution context of some CPU". It compares pointers and never dereferences
+/// them, so a concurrent `current_thread` update by the owning CPU simply
+/// yields a non-match (no use-after-free). The scheduler uses it to refuse
+/// dispatching/migrating a `Ready` KTHREAD that a CPU still owns; without it a
+/// wake landing in the `Blocked → switch-out` window could run one KTHREAD on
+/// two CPUs sharing one kernel stack (the Phase 13 `iretq` #GP class).
+pub fn kthread_current_cpu(kptr: *const Kthread) -> Option<u32> {
+    if kptr.is_null() { return None; }
+    for cpu in 0..MAX_CPUS {
+        let addr = unsafe { KPRCB_PAGES[cpu] };
+        if addr == 0 { continue; }
+        let cur = unsafe {
+            core::ptr::read_volatile((addr + OFFSET_CURRENT_THREAD as u64) as *const *const Kthread)
+        };
+        if cur == kptr { return Some(cpu as u32); }
+    }
+    None
+}
+
+/// Sync per-CPU KPRCB current_thread/current_pid/idle for this CPU.
+/// Must be called with SCHEDULER lock held and IRQL >= DISPATCH (already).
+/// No-op if GS base not yet programmed (early boot / unit tests).
+#[inline(always)]
+pub unsafe fn sync_per_cpu_current(ptr: *mut Kthread, pid: u32) {
+    if crate::hal::safe::GsBase::read() == 0 { return; }
+    this_cpu_set_current_thread(ptr);
+    this_cpu_set_current_pid(pid);
+    let is_idle = ptr.is_null() || pid == 0 || unsafe { (*ptr).is_idle };
+    this_cpu_set_idle(is_idle);
+}
+
+/// Try to get current TID from per-CPU KPRCB if GS is initialized.
+/// Returns None if KPRCB not yet set (early boot / tests).
+pub fn try_per_cpu_tid() -> Option<u32> {
+    let gs_base = crate::hal::safe::GsBase::read();
+    if gs_base == 0 { return None; }
+    // GS is set, read current_thread ptr via GS
+    let ptr = unsafe { this_cpu_current_thread() };
+    if ptr.is_null() { return None; }
+    Some(unsafe { (*ptr).tid })
+}
+
+/// Try to get current PID from per-CPU KPRCB if GS is initialized.
+pub fn try_per_cpu_pid() -> Option<u32> {
+    let gs_base = crate::hal::safe::GsBase::read();
+    if gs_base == 0 { return None; }
+    let ptr = unsafe { this_cpu_current_thread() };
+    if !ptr.is_null() {
+        return Some(unsafe { (*ptr).pid });
+    }
+    // Fallback to current_pid field
+    Some(unsafe { this_cpu_current_pid() })
 }
 
 /// Increment the per-CPU interrupt count.
@@ -649,18 +745,22 @@ pub unsafe fn cpu_run_queue_mut(cpu: usize) -> &'static mut CpuRunQueue {
 /// Drain all entries from a specific CPU's run queue into the caller's
 /// local run queue. Used for work stealing.
 ///
+/// Drain all entries from victim's queue into thief's queue.
+/// P0.2: now SMP-safe — takes victim's RUNQUEUE_LOCK.
 /// # Safety
-/// Requires both CPUs' KPRCBs to be initialized.
+/// Requires both CPUs' KPRCBs to be initialized. Thief's queue must be
+/// already locked by the caller (as in steal_and_migrate).
 #[inline(always)]
 pub unsafe fn steal_from_cpu_run_queue(from_cpu: usize, to_queue: &mut CpuRunQueue) -> u32 {
-    let mut stolen = 0u32;
-    if from_cpu >= MAX_CPUS { return stolen; }
+    if from_cpu >= MAX_CPUS { return 0; }
+    if unsafe { KPRCB_PAGES[from_cpu] == 0 } { return 0; }
+    let _guard = RUNQUEUE_LOCKS[from_cpu].lock();
     let src = cpu_run_queue_mut(from_cpu);
+    let mut stolen = 0u32;
     while let Some(tid) = src.pop() {
         if to_queue.push(tid) {
             stolen += 1;
         } else {
-            // Push back if destination is full
             src.push(tid);
             break;
         }
@@ -848,6 +948,68 @@ pub fn register_cpu_local_tests() {
         crate::test_eq!(OFFSET_CURRENT_IRQL, 0x016u32);
         crate::test_eq!(OFFSET_EXIT_RSP, 0xB58u32);
         crate::test_eq!(OFFSET_EXIT_NOW, 0xB98u32);
+        // F-01 audit regression: `this_cpu_set_current_pid` must write exactly
+        // 4 bytes at OFFSET_CURRENT_PID. A u64 store spilled into
+        // idle/need_resched/current_irql (0x014..0x017), clearing them on every
+        // context switch.
+        let flags_preserved = crate::hal::without_interrupts(|| unsafe {
+            let saved_pid = this_cpu_current_pid();
+            let saved_idle = this_cpu_is_idle();
+            let saved_need = this_cpu_need_resched();
+            let saved_irql = this_cpu_irql();
+            this_cpu_set_idle(true);
+            this_cpu_set_need_resched(true);
+            this_cpu_set_current_pid(0xABCD_1234);
+            let mut ok = this_cpu_current_pid() == 0xABCD_1234;
+            ok &= this_cpu_is_idle();
+            ok &= this_cpu_need_resched();
+            this_cpu_set_current_pid(saved_pid);
+            this_cpu_set_idle(saved_idle);
+            this_cpu_set_need_resched(saved_need);
+            this_cpu_set_irql(saved_irql);
+            ok
+        });
+        crate::test_true!(flags_preserved);
+        // Phase 13-A.3 (I-RUNREADY): `kthread_current_cpu` must resolve the CPU
+        // whose KPRCB.current_thread points at the KTHREAD (and only that one).
+        // Temporarily repoint this CPU's current_thread at a stack-local probe,
+        // then restore it — all with local interrupts disabled.
+        let owner_lookup_ok = crate::hal::without_interrupts(|| unsafe {
+            let saved_thread = this_cpu_current_thread();
+            let this_cpu = this_cpu_id();
+            let mut probe =
+                crate::scheduler::Kthread::new_idle(0xFFF0, 0, 0x2000, 0x3000);
+            this_cpu_set_current_thread(&mut probe as *mut crate::scheduler::Kthread);
+            let found = kthread_current_cpu(&probe as *const crate::scheduler::Kthread);
+            let other =
+                crate::scheduler::Kthread::new_idle(0xFFF1, 0, 0x4000, 0x5000);
+            let other_found = kthread_current_cpu(&other as *const crate::scheduler::Kthread);
+            // Phase 13-A.3 guard predicate: reject a candidate owned by another
+            // CPU, allow the selecting CPU to re-select its own current thread,
+            // and count exactly one deferral.
+            let other_cpu = if this_cpu == 0 { 1 } else { 0 };
+            let before = crate::scheduler::schedule::sched_ready_guard_stats().0;
+            let reject_other = crate::scheduler::schedule::candidate_owned_elsewhere(
+                &probe as *const crate::scheduler::Kthread,
+                other_cpu,
+            );
+            let allow_self = crate::scheduler::schedule::candidate_owned_elsewhere(
+                &probe as *const crate::scheduler::Kthread,
+                this_cpu,
+            );
+            let after = crate::scheduler::schedule::sched_ready_guard_stats().0;
+            // Restore the forensic counter: this synthetic probe is not a real
+            // runtime deferral, so post-suite stats must not include it.
+            crate::scheduler::schedule::SCHED_CANDIDATE_REJECTED
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+            this_cpu_set_current_thread(saved_thread);
+            found == Some(this_cpu)
+                && other_found.is_none()
+                && reject_other
+                && !allow_self
+                && after == before + 1
+        });
+        crate::test_true!(owner_lookup_ok);
         Ok(())
     });
     // Per-CPU slab allocator tests (A1.3)

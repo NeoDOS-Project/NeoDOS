@@ -560,17 +560,20 @@ fn is_user_exception(frame: &InterruptStackFrame) -> bool {
 /// Helper: terminate the current user process (Ring 3 exception unhandled).
 /// Uses centralized lifecycle termination so Eprocess/thread_count, handles, and ChildExit waiters are correctly handled.
 /// Defer EPROCESS reclaim via zombie list to avoid use-after-free on current stack.
-fn terminate_user_process() {
+///
+/// F-02: This function NEVER returns via `iretq` to the faulting RIP.
+/// It terminates the current thread and immediately reschedules to the next
+/// thread's saved context (via direct RSP switch + iretq), guaranteeing:
+/// `Terminated -> never resumes at faulting RIP`. The old `return;` path
+/// that did `iretq` to the faulting RIP is removed.
+fn terminate_user_process() -> ! {
     use crate::scheduler::current_scheduler;
-    use crate::syscall::set_need_resched;
     let pid = crate::hal::without_interrupts(|| {
         let mut s = current_scheduler().lock();
         s.terminate_current(-1)
     });
-    if pid.is_some() {
-        set_need_resched();
-    } else {
-        // Fallback: at least terminate thread and resched
+    if pid.is_none() {
+        // Fallback: at least terminate thread
         let tid = crate::scheduler::current_tid();
         if tid > 0 {
             let mut s = current_scheduler().lock();
@@ -578,7 +581,60 @@ fn terminate_user_process() {
                 k.state = ThreadState::Terminated;
             }
         }
-        set_need_resched();
+    }
+    // F-02: immediate reschedule — do not return to faulting frame.
+    exception_do_resched()
+}
+
+/// F-02: immediate context switch from exception path.
+/// Picks next thread via `schedule()` and switches RSP + iretq to its
+/// saved frame. Never returns to the faulting thread's `InterruptStackFrame`.
+fn exception_do_resched() -> ! {
+    use crate::scheduler::current_scheduler;
+    let next_rsp = crate::hal::without_interrupts(|| {
+        let mut sched = current_scheduler().lock();
+        let next = sched.schedule_with(true);
+        if next.is_null() {
+            panic!("exception_do_resched: no next thread (idle unavailable)");
+        }
+        let pid = unsafe { (*next).pid };
+        let tid = unsafe { (*next).tid };
+        let ks_top = unsafe { (*next).kernel_stack_top };
+        let rsp = unsafe { (*next).rsp };
+        if rsp == 0 {
+            panic!("exception_do_resched: next TID={} has rsp=0", tid);
+        }
+        // Keep per-CPU and TSS in sync (also done in timer/syscall paths)
+        unsafe {
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
+            crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+            crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
+        }
+        rsp
+    });
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {0}",
+            "pop rax",
+            "pop rbx",
+            "pop rcx",
+            "pop rdx",
+            "pop rsi",
+            "pop rdi",
+            "pop r8",
+            "pop r9",
+            "pop r10",
+            "pop r11",
+            "pop r12",
+            "pop r13",
+            "pop r14",
+            "pop r15",
+            "pop rbp",
+            "iretq",
+            in(reg) next_rsp,
+            options(noreturn)
+        );
     }
 }
 
@@ -594,7 +650,6 @@ extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame)
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through to kernel panic
         }
@@ -628,7 +683,7 @@ extern "x86-interrupt" fn overflow_handler(stack_frame: InterruptStackFrame) {
         let result = exception_dispatch(EXCEPTION_OVERFLOW, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -642,7 +697,7 @@ extern "x86-interrupt" fn bounds_handler(stack_frame: InterruptStackFrame) {
         let result = exception_dispatch(EXCEPTION_BOUND_RANGE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -656,7 +711,7 @@ extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFram
         let result = exception_dispatch(EXCEPTION_INVALID_OPCODE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -670,7 +725,7 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
         let result = exception_dispatch(EXCEPTION_DEVICE_NOT_AVAILABLE, rip, rsp, 0, true, 0, 0);
         match result {
             DispatchResult::Handled => return,
-            DispatchResult::Terminated => { terminate_user_process(); return; }
+            DispatchResult::Terminated => { terminate_user_process(); }
             DispatchResult::Panic => {}
         }
     }
@@ -733,7 +788,6 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through
         }
@@ -808,7 +862,6 @@ extern "x86-interrupt" fn page_fault_handler(
             DispatchResult::Handled => return,
             DispatchResult::Terminated => {
                 terminate_user_process();
-                return;
             }
             DispatchResult::Panic => {} // fall through
         }
@@ -879,8 +932,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_enter();
     crate::invariants::irq_enter_check(32);
 
-    crate::hal::increment_ticks();
-    crate::console::cursor_timer_tick();
+    // Phase 13: global tick/time side effects stay on the BSP. APs run the
+    // scheduler tick only (per-CPU), otherwise the global tick counter would
+    // advance once per CPU and break all timing assumptions.
+    let is_bsp = unsafe { crate::arch::x64::cpu_local::this_cpu_id() == 0 };
+    if is_bsp {
+        crate::hal::increment_ticks();
+        crate::console::cursor_timer_tick();
+    }
     let current_tick = crate::hal::get_ticks();
 
     // Increment per-CPU timer tick count
@@ -888,29 +947,42 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     crate::trace_event!(TraceEvent::IrqTimerTick, current_tick, current_rsp, 0, 0);
 
-    // A3.3: Watchdog pet + check on every timer tick
-    crate::watchdog::watchdog_pet();
+    if is_bsp {
+        // A3.3: Watchdog pet + check on every timer tick
+        crate::watchdog::watchdog_pet();
 
-    // v0.46: Timer Object tick — decrement running timers
-    crate::object::timer::tick();
-    if crate::watchdog::watchdog_check() {
-        crate::watchdog::watchdog_trigger();
+        // v0.46: Timer Object tick — decrement running timers
+        crate::object::timer::tick();
+        if crate::watchdog::watchdog_check() {
+            crate::watchdog::watchdog_trigger();
+        }
+
+        {
+            use core::sync::atomic::Ordering;
+            let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
+            if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
+                crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
+            }
+        }
     }
 
-    {
-        use core::sync::atomic::Ordering;
-        let last_flush = crate::globals::LAST_FLUSH_TICK.load(Ordering::Relaxed);
-        if current_tick.saturating_sub(last_flush) >= crate::globals::FLUSH_INTERVAL_TICKS {
-            crate::globals::NEED_CACHE_FLUSH.store(true, Ordering::Relaxed);
-        }
+    // Phase 13: APs stay out of the scheduler until the BSP enables AP
+    // scheduling after the boot test suite. Check BEFORE taking the scheduler
+    // lock so parked/idle APs never contend on it during the tests.
+    if !is_bsp && !crate::scheduler::ap_sched_active() {
+        crate::hal::ack_irq(32);
+        crate::invariants::timer_irq_exit();
+        crate::invariants::irq_exit_clear();
+        return current_rsp;
     }
 
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
     scheduler.on_timer_tick(current_rsp);
+    scheduler.consistency_check("timer");
 
-    let tid = scheduler.current_tid;
+    let tid = scheduler.current_tid_for_this_cpu();
     let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
     let is_user_mode = (interrupted_cs & 3) == 3;
 
@@ -922,6 +994,11 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
     let has_non_idle = scheduler.has_non_idle_threads();
     let current_state = scheduler.current_kthread_mut().map(|k| k.state);
+    let current_is_idle = scheduler.current_kthread_mut().map(|k| k.is_idle).unwrap_or(false);
+    // Phase 13-A: a cooperative yield from a still-running kernel thread sets
+    // this flag instead of making it Ready. Treat it as a preemption request so
+    // the switch-out path below saves `rsp` before publishing the thread.
+    let current_yield = scheduler.current_kthread_mut().map(|k| k.yield_requested).unwrap_or(false);
 
     // Diagnostic entry: capture state before preemption decision
     td_push(TimerDiagEntry {
@@ -934,8 +1011,8 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         frame_rip: 0, frame_cs: 0, frame_rflags: 0, phase: 0,
     });
 
-    if is_user_mode && tid != crate::scheduler::IDLE_TID {
-        let should_preempt = current_state == Some(ThreadState::Ready);
+    if is_user_mode && !current_is_idle {
+        let should_preempt = current_state == Some(ThreadState::Ready) || current_yield;
 
         crate::trace_timer_irq!(
             if should_preempt { 1u8 } else { 3u8 },
@@ -943,13 +1020,20 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
         if should_preempt {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT tid={} reason=timeslice_expired", tid);
-            // Save the current thread's RSP
+            // Save the current thread's RSP, then publish it. `make_thread_ready`
+            // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                if k.state == ThreadState::Running {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
             }
 
             // Pick next thread
-            let next = scheduler.schedule();
+            let next = scheduler.schedule_with(true);
             let next_tid = unsafe { (*next).tid };
 
             // Safety: if the next thread has rsp==0, proceeding would
@@ -957,6 +1041,12 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // instead so we can identify the root cause.
             let next_rsp = unsafe { (*next).rsp };
             let next_ks = unsafe { (*next).kernel_stack_top };
+            if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
+                let __cs = if next_rsp != 0 { unsafe { *((next_rsp + 128) as *const u64) } } else { 0 };
+                crate::serial_println!("[T5_TM] userpreempt cur={} next={} rsp=0x{:x} cs=0x{:x} sched.current={} kprcb={:?}",
+                    tid, next_tid, next_rsp, __cs, scheduler.current_tid,
+                    crate::arch::x64::cpu_local::try_per_cpu_tid());
+            }
             td_push(TimerDiagEntry {
                 tick: current_tick, cur_tid: tid, cur_rsp: current_rsp,
                 cur_cs: interrupted_cs,
@@ -966,7 +1056,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             });
             netd_record_select(next as *const _ as u64, next_rsp, next_ks);
             if next_rsp == 0 {
-                if next_tid == crate::scheduler::IDLE_TID {
+                if unsafe { (*next).is_idle } {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
@@ -980,6 +1070,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // 0 frame cannot be returned through this Ring 3 interrupt frame.
             let next_cs = unsafe { *((next_rsp + 128) as *const u64) };
             if next_cs & 3 != 3 {
+                if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
+                    crate::serial_println!("[T5_TM] userpreempt REVERT next={} cs=0x{:x} (non-Ring3) keep cur={}",
+                        next_tid, next_cs, tid);
+                }
                 unsafe {
                     (*next).state = ThreadState::Ready;
                     crate::scheduler::Scheduler::enqueue_to_cpu_run_queue(&*next);
@@ -1020,7 +1114,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 let nt = &mut *next;
                 let idx = (nt.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
-                nt.time_slice_remaining = if nt.tid == crate::scheduler::IDLE_TID {
+                nt.time_slice_remaining = if nt.is_idle {
                     crate::scheduler::IDLE_TIME_SLICE
                 } else {
                     crate::scheduler::TIME_SLICES[idx]
@@ -1059,14 +1153,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
 
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
 
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
@@ -1080,19 +1176,21 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
             return current_rsp;
         }
-    } else if tid == crate::scheduler::IDLE_TID {
+    } else if current_is_idle {
         // ── Idle thread preemption ──────────────────────
-        // Preempt idle (TID 1) if any other thread is ready
+        // Preempt idle if any other thread is ready
         let should_preempt = current_state == Some(ThreadState::Ready);
 
         crate::trace_timer_irq!(if should_preempt { 2u8 } else { 3u8 },
@@ -1143,14 +1241,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
 
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
@@ -1159,9 +1259,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
         // ── Kernel thread (Ring 0, non-idle) preemption ──
         // Kernel threads are NOT preempted on every tick even if their
         // timeslice expired, because they may hold kernel locks.
-        // However, if the thread yielded (state=Ready), we DO preempt
-        // if another thread can run.
-        let should_preempt = current_state == Some(ThreadState::Ready);
+        // However, if the thread yielded (state=Ready or yield_requested),
+        // we DO preempt if another thread can run.
+        let should_preempt = current_state == Some(ThreadState::Ready) || current_yield;
 
         crate::trace_timer_irq!(if should_preempt { 2u8 } else { 0u8 },
             tid, interrupted_cs, has_non_idle as u8);
@@ -1171,6 +1271,15 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
                 k.rsp = current_rsp;
+                k.yield_requested = false;
+                // The CPU actually executing the thread owns its re-enqueue.
+                k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                // Phase 13-A: publish only after the live context is saved.
+                // For a timeslice expiry `on_timer_tick` already enqueued it;
+                // `make_thread_ready` is then a no-op.
+                if k.state == ThreadState::Running {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
             }
             let next = scheduler.schedule();
             let next_tid = unsafe { (*next).tid };
@@ -1184,7 +1293,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             });
             netd_record_select(next as *const _ as u64, next_rsp, next_ks);
             if next_rsp == 0 {
-                if next_tid == crate::scheduler::IDLE_TID {
+                if unsafe { (*next).is_idle } {
                     crate::hal::ack_irq(32);
                     crate::invariants::timer_irq_exit();
                     crate::invariants::irq_exit_clear();
@@ -1234,14 +1343,16 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             crate::hal::ack_irq(32);
             crate::invariants::timer_irq_exit();
             crate::invariants::irq_exit_clear();
-            let _ = crate::eventbus::EVENT_BUS.push_event(
-                crate::eventbus::EVENT_TIMER_TICK,
-                crate::eventbus::SOURCE_HAL,
-                1,
-                current_tick,
-                0,
-                0,
-            );
+            if is_bsp {
+                let _ = crate::eventbus::EVENT_BUS.push_event(
+                    crate::eventbus::EVENT_TIMER_TICK,
+                    crate::eventbus::SOURCE_HAL,
+                    1,
+                    current_tick,
+                    0,
+                    0,
+                );
+            }
             crate::trace_cswitch!(tid as u64, unsafe { (*next).tid } as u64);
             return next_rsp;
         }
@@ -1259,6 +1370,10 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 if k.state == ThreadState::Ready && k.tid == tid {
                     crate::scheduler::Scheduler::remove_from_run_queue(k);
                     k.state = ThreadState::Running;
+                    if k.tid == 5 && crate::scheduler::sched_forensic_verbose() {
+                        crate::serial_println!("[T5_TM] KERNEL-MODE restore Running tid=5 sched.current={} kprcb={:?}",
+                            scheduler.current_tid, crate::arch::x64::cpu_local::try_per_cpu_tid());
+                    }
                 }
             }
             unsafe { crate::arch::x64::cpu_local::this_cpu_set_need_resched(true); }
@@ -1278,19 +1393,22 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     crate::invariants::timer_irq_exit();
     crate::invariants::irq_exit_clear();
 
-    // Push TimerTick event (lock‑free, IRQ‑safe)
-    let _ = crate::eventbus::EVENT_BUS.push_event(
-        crate::eventbus::EVENT_TIMER_TICK,
-        crate::eventbus::SOURCE_HAL,
-        1,
-        current_tick,
-        0,
-        0,
-    );
+    // Push TimerTick event (lock‑free, IRQ‑safe). BSP only: the event bus and
+    // DPC queue are global and must have a single driver (Phase 13 SMP).
+    if is_bsp {
+        let _ = crate::eventbus::EVENT_BUS.push_event(
+            crate::eventbus::EVENT_TIMER_TICK,
+            crate::eventbus::SOURCE_HAL,
+            1,
+            current_tick,
+            0,
+            0,
+        );
 
-    // A2.5: DPC dispatch — process deferred procedures at DISPATCH_LEVEL
-    // after device IRQ handling. This is the DIRQL→DISPATCH transition point.
-    crate::dpc::dpc_dispatch_pending();
+        // A2.5: DPC dispatch — process deferred procedures at DISPATCH_LEVEL
+        // after device IRQ handling. This is the DIRQL→DISPATCH transition point.
+        crate::dpc::dpc_dispatch_pending();
+    }
 
     current_rsp
 }
@@ -1318,6 +1436,85 @@ extern "x86-interrupt" fn ipi_call_function_handler(_: InterruptStackFrame) {
     crate::hal::ack_irq(crate::arch::x64::ipi::IPI_CALL_FUNCTION);
 }
 
+// ── Phase 6: IRQ33 CPU-ownership diagnostics (counters + ring, no serial per IRQ) ──
+// Records which CPU/APIC received each keyboard IRQ. Decoder path unchanged.
+const KBD_IRQ_RING_SIZE: usize = 64;
+#[derive(Clone, Copy)]
+struct KbdIrqEntry {
+    seq: u64,
+    cpu: u32,
+    apic: u32,
+    tid: u32,
+    scancode: u8,
+}
+static KBD_IRQ_SEQ: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static KBD_IRQ_HEAD: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static mut KBD_IRQ_RING: [KbdIrqEntry; KBD_IRQ_RING_SIZE] = [KbdIrqEntry { seq: 0, cpu: 0xFFFFFFFF, apic: 0xFFFFFFFF, tid: 0, scancode: 0 }; KBD_IRQ_RING_SIZE];
+static KBD_IRQ_CNT: [core::sync::atomic::AtomicU64; 16] = [const { core::sync::atomic::AtomicU64::new(0) }; 16];
+
+/// Total keyboard IRQs observed across all CPUs (Phase 9 auto-dump).
+pub fn kbd_irq_total() -> u64 {
+    let mut t = 0u64;
+    for c in &KBD_IRQ_CNT { t += c.load(core::sync::atomic::Ordering::Relaxed); }
+    t
+}
+
+/// Reset IRQ33 ownership counters (Phase 6: clean baseline before shell).
+pub fn kbd_irq_reset() {
+    KBD_IRQ_SEQ.store(0, core::sync::atomic::Ordering::Relaxed);
+    KBD_IRQ_HEAD.store(0, core::sync::atomic::Ordering::Relaxed);
+    for c in &KBD_IRQ_CNT {
+        c.store(0, core::sync::atomic::Ordering::Relaxed);
+    }
+    unsafe {
+        for i in 0..KBD_IRQ_RING_SIZE {
+            KBD_IRQ_RING[i].cpu = 0xFFFFFFFF;
+        }
+    }
+}
+
+/// Dump IRQ33 per-CPU ownership: counters + ring (cpu/apic/tid/scancode).
+/// Called from Ctrl+Alt+V / syscall 99 alongside vt_diag_dump. No routing change.
+pub fn kbd_irq_dump() {
+    unsafe { core::arch::asm!("cli"); }
+    crate::println!("[KBD_IRQ] per-CPU counts (max 16 CPUs):");
+    let mut total = 0u64;
+    for cpu in 0..16 {
+        let n = KBD_IRQ_CNT[cpu].load(core::sync::atomic::Ordering::Relaxed);
+        if n > 0 {
+            crate::println!("[KBD_IRQ] cpu={} count={}", cpu, n);
+        }
+        total += n;
+    }
+    crate::println!("[KBD_IRQ] total={}", total);
+    let head = KBD_IRQ_HEAD.load(core::sync::atomic::Ordering::Relaxed);
+    let n = head.min(KBD_IRQ_RING_SIZE);
+    let start = if head < KBD_IRQ_RING_SIZE { 0 } else { head % KBD_IRQ_RING_SIZE };
+    for i in 0..n {
+        let idx = (start + i) % KBD_IRQ_RING_SIZE;
+        let e = unsafe { KBD_IRQ_RING[idx] };
+        if e.cpu == 0xFFFFFFFF { continue; }
+        crate::println!("[KBD_IRQ][{}] seq={} cpu={} apic={} tid={} sc=0x{:02x}",
+            i, e.seq, e.cpu, e.apic, e.tid, e.scancode);
+    }
+    // Distinct producer CPUs (|producer_cpus| must be 1 for SPSC VALID)
+    let mut seen = [0xFFFFFFFFu32; 16];
+    let mut nseen = 0usize;
+    for i in 0..n {
+        let idx = (start + i) % KBD_IRQ_RING_SIZE;
+        let e = unsafe { KBD_IRQ_RING[idx] };
+        if e.cpu == 0xFFFFFFFF { continue; }
+        let mut found = false;
+        for j in 0..nseen { if seen[j] == e.cpu { found = true; break; } }
+        if !found && nseen < 16 { seen[nseen] = e.cpu; nseen += 1; }
+    }
+    crate::serial_println!("[KBD_IRQ] producer_cpus={} (SPSC VALID iff 1)", nseen);
+    for j in 0..nseen {
+        crate::serial_println!("[KBD_IRQ] producer_cpu={}", seen[j]);
+    }
+    unsafe { core::arch::asm!("sti"); }
+}
+
 extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     // Read scancode directly from PS/2 controller
     let status: u8 = crate::hal::inb(0x64);
@@ -1328,15 +1525,24 @@ extern "x86-interrupt" fn keyboard_handler(_: InterruptStackFrame) {
     };
 
     if let Some(scancode) = scancode {
+        // Phase 6: record ownership BEFORE decoder (lock-free, no serial).
+        let cpu = if crate::hal::safe::GsBase::read() == 0 { 0 } else { unsafe { crate::arch::x64::cpu_local::this_cpu_id() } };
+        let apic = if crate::hal::safe::GsBase::read() == 0 { 0 } else { unsafe { crate::arch::x64::cpu_local::this_cpu_apic_id() } };
+        let tid = crate::scheduler::current_tid();
+        let seq = KBD_IRQ_SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if (cpu as usize) < 16 {
+            KBD_IRQ_CNT[cpu as usize].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        }
+        let idx = KBD_IRQ_HEAD.fetch_add(1, core::sync::atomic::Ordering::Relaxed) % KBD_IRQ_RING_SIZE;
+        unsafe { KBD_IRQ_RING[idx] = KbdIrqEntry { seq, cpu, apic, tid, scancode }; }
         // FIX v2: single-path direct — process synchronously in IRQ.
         // Previous dual-path (direct + queued) caused double-char.
         // Queued-only (push_event) left keyboard dead because dispatch_pending
         // is not guaranteed to run before the blocked READB waiter is checked
         // (idle dispatch delayed by IDLE_TIME_SLICE / scheduler state).
         // Direct path does push_byte+wake_blocked_readers immediately, matching
-        // pre-P0 working behavior. Keep one log for forensics.
-        let seq = crate::kbd::event::kbd_event_handler_direct(scancode);
-        crate::serial_println!("[KBD_IRQ] seq={} scancode=0x{:02x} direct-only", seq, scancode);
+        // pre-P0 working behavior.
+        let _seq = crate::kbd::event::kbd_event_handler_direct(scancode);
     }
     crate::hal::ack_irq(33);
 }
@@ -1374,6 +1580,20 @@ extern "x86-interrupt" fn mouse_handler(_: InterruptStackFrame) {
 
 pub fn init() {
     IDT.load();
+    // Publish the shared IDT base so APs can `lidt` a valid table. The previous
+    // AP path loaded a freshly zeroed page, so the first interrupt on an AP
+    // would triple fault.
+    KERNEL_IDT_BASE.store(&*IDT as *const _ as u64, core::sync::atomic::Ordering::Release);
+}
+
+/// Base address of the shared kernel IDT, published after `IDT.load()`.
+static KERNEL_IDT_BASE: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+/// IDTR descriptor pointing at the shared kernel IDT. Before `init()` runs the
+/// base is 0 (unusable); every AP calls this only after the BSP loaded the IDT.
+pub fn kernel_idt_descriptor() -> crate::hal::raw::IdtDescriptor {
+    let base = KERNEL_IDT_BASE.load(core::sync::atomic::Ordering::Acquire);
+    crate::hal::raw::IdtDescriptor::from_raw((256 * 16 - 1) as u16, base)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

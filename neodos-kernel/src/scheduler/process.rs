@@ -7,6 +7,7 @@ impl Eprocess {
     pub fn new_idle(pid: u32) -> Self {
         Eprocess {
             pid,
+            name: crate::scheduler::types::KernelName::from_str("idle"),
             parent_pid: 0,
             handle_table: crate::handle::HandleTable::new(),
             cwd_drive: 2,
@@ -23,12 +24,14 @@ impl Eprocess {
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
             vt_num: 0,
+            args: [0u8; 256],
         }
     }
 
     pub fn new_kernel(pid: u32) -> Self {
         Eprocess {
             pid,
+            name: crate::scheduler::types::KernelName::from_str("kernel"),
             parent_pid: 0,
             handle_table: crate::handle::HandleTable::new(),
             cwd_drive: 2,
@@ -45,12 +48,14 @@ impl Eprocess {
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
             vt_num: 0,
+            args: [0u8; 256],
         }
     }
 
     pub fn new_ring3(pid: u32, slot_idx: u8, cwd_drive: u8, cwd_path: &str, heap_base: u64, parent_pid: u32) -> Self {
         Eprocess {
             pid,
+            name: crate::scheduler::types::KernelName::from_str("process"),
             parent_pid,
             handle_table: crate::handle::HandleTable::with_defaults(),
             cwd_drive,
@@ -67,6 +72,12 @@ impl Eprocess {
             address_space: address_space::AddressSpace::new(),
             token: crate::security::DEFAULT_ADMIN_TOKEN.clone(),
             vt_num: 0,
+            args: [0u8; 256],
         }
+    }
+
+    /// Phase 14-A: read-only accessor. Allocation-free, no locks, no mutation.
+    pub fn name(&self) -> &str {
+        self.name.as_str()
     }
 }

@@ -2,6 +2,10 @@
 #![no_main]
 #![feature(abi_x86_interrupt)]
 #![feature(alloc_error_handler)]
+#![feature(allocator_api)]
+#![feature(strict_provenance)]
+#![feature(ptr_fn_addr_eq)]
+#![feature(unsigned_is_multiple_of)]
 #![cfg_attr(test, feature(custom_test_frameworks))]
 #![cfg_attr(test, test_runner(noop_test_runner))]
 #![cfg_attr(test, reexport_test_harness_main = "test_main")]
@@ -38,7 +42,6 @@ mod handle;
 mod eventbus;
 mod work_queue;
 mod dpc;
-
 mod memory;
 mod globals;
 pub mod usermode;
@@ -268,6 +271,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         if let Ok(proc_id) = object::ob_create_object(ObType::Key, "Process", 12, 0, None) {
             let _ = object::namespace::ob_insert_object("\\Global\\Info\\Process", proc_id);
         }
+        if let Ok(thr_id) = object::ob_create_object(ObType::Key, "Threads", 13, 0, None) {
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Threads", thr_id);
+        }
+        // Phase 15-A: global process/thread snapshot object (read-only).
+        if let Ok(ps_id) = object::ob_create_object(ObType::Key, "Processes", 14, 0, None) {
+            let _ = object::namespace::ob_insert_object("\\Global\\Info\\Processes", ps_id);
+        }
     }
 
     // ============================================
@@ -288,8 +298,16 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // PHASE 2.8: SMP — Start Application Processors
     // ============================================
     println!("[+] Initializing SMP (per-CPU data structures)...");
+    // Force scheduler initialization on the BSP *before* APs can lazily build
+    // it. `Scheduler::new()` captures the bootstrap stack, so it must run on
+    // the BSP, not on an AP.
+    drop(crate::scheduler::current_scheduler().lock());
     let cpu_count = arch::x64::smp::init_smp();
+    // GS is programmed per-CPU now: pin CPU0's KPRCB to the boot thread so the
+    // per-CPU identity (Rule 6.1.5) is valid before APs start scheduling.
+    crate::scheduler::sync_bsp_identity();
     println!("[+] {} CPU(s) online", cpu_count);
+    crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 
     // ============================================
     // PHASE 2.9: IPI infrastructure
@@ -302,19 +320,25 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // ============================================
     if interrupts::ioapic::init() {
         println!("[+] I/O APIC active, legacy PIC disabled");
+        // Phase 6: audit programmed IRQ33 (IRQ1) routing — read-only
+        interrupts::ioapic::dump_irq_routing(1);
     } else {
         println!("[!] I/O APIC not found, using legacy PIC");
     }
 
     println!("[+] Enabling interrupts...");
+    crate::serial_println!("[INT] about to STI, CR3=0x{:x} GS=0x{:x}", crate::hal::read_cr3(), crate::hal::safe::GsBase::read());
     hal::enable_interrupts();
+    crate::serial_println!("[INT] STI done");
 
     // ============================================
     // PHASE 6 / PHASE 3: Custom Page Tables & User Memory
     // ============================================
+    crate::serial_println!("[PAGING] before init_custom_page_tables");
     unsafe {
         arch::x64::paging::init_custom_page_tables();
     }
+    crate::serial_println!("[PAGING] after init_custom_page_tables");
 
     // Split heap region huge pages into 4 KB PTs for demand paging
     arch::x64::paging::init_heap_demand_paging();
@@ -334,6 +358,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Read MCFG from ACPI, map ECAM MMIO region as UC-.
     // ============================================
     drivers::pci::init_ecam();
+
+    // Phase 13: all boot-time page-table setup is complete. Let parked APs adopt
+    // the final kernel address space.
+    arch::x64::paging::publish_paging_final();
 
     // ============================================
     // PHASE 3 (after custom page tables): Storage stack
@@ -494,10 +522,6 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         println!("[+] FAT32 ESP mounted on A:");
     }
 
-    // ============================================
-    // NT5.6: Mount K:\ virtual kernel object drive
-    // ============================================
-
     drivers::ps2::set_leds(0b111); // All ON = storage ready
 
     // A4.4: Initialize Input Manager (VT subsystem)
@@ -613,6 +637,48 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
             println!("{} kernel tests passed, {} failed.", passed, failed);
         }
         println!("ALL_TESTS_COMPLETE");
+        // Phase 5.3/11: verify SCHED_TEST_MODE never leaks after suite
+        let leak = crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::SeqCst);
+        crate::serial_println!("[SCHED_TEST_MODE] after suite = {} (expected false)", leak);
+        debug_assert!(!leak, "SCHED_TEST_MODE leaked");
+        // Phase 4/5: steal/schedule counters (normal runtime should have non-zero schedule, zero steal before normal load)
+        crate::serial_println!(
+            "[STEAL] attempts={} success={} schedule_calls={} SCHED_TEST_MODE={}",
+            crate::scheduler::smp::STEAL_ATTEMPTS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::smp::STEAL_SUCCESS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::schedule::SCHEDULE_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+            leak
+        );
+        // Per-CPU diagnostics
+        for cpu in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            let kprcb = unsafe { crate::arch::x64::cpu_local::KPRCB_PAGES[cpu] };
+            if kprcb != 0 {
+                let len = crate::arch::x64::cpu_local::with_runqueue(cpu, |rq| rq.len());
+                crate::serial_println!("[CPU{}] KPRCB=0x{:x} qlen={}", cpu, kprcb, len);
+            }
+        }
+        // Phase 6: reset input diagnostics AFTER boot tests so burst accounting
+        // starts from zero (vt_push_to_all_queues test + any boot keys excluded).
+        // No queue algorithm change — counters only.
+        crate::input::vt::vt_diag_reset();
+        crate::arch::x64::idt::kbd_irq_reset();
+        crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
+        // Phase 8: enable scheduler consistency forensics for the interactive phase.
+        crate::scheduler::sched_forensic_enable(true);
+        // Phase 13: hand APs over to the scheduler now that the boot test suite
+        // is complete. Each AP picks this up on its next timer tick.
+        // Phase 13: hand APs over to the scheduler after the boot test suite.
+        // WIP behind a feature flag: with AP scheduling enabled there is a
+        // reproducible post-netd hang/GPF on the AP context-switch path
+        // (docs/investigation/phase13-ap-scheduling-design.md §Blockers), so
+        // the default build keeps APs idle (deterministic, 716/716).
+        #[cfg(feature = "smp-ap-sched")]
+        {
+            crate::scheduler::set_ap_sched_active(true);
+            crate::serial_println!("[SMP] AP scheduling enabled (smp-ap-sched)");
+        }
+        #[cfg(not(feature = "smp-ap-sched"))]
+        crate::serial_println!("[SMP] AP scheduling disabled (build without smp-ap-sched)");
     }
 
     // Dump timer diagnostic ring buffer (lock-free, captured across boot)
@@ -644,6 +710,17 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[POST_NETD] delayed dump after 500 ticks (head now {})", crate::hal::get_ticks());
         crate::arch::x64::idt::timer_diag_dump();
         crate::serial_println!("[POST_NETD] post-spawn dumps done");
+    }
+
+    // Phase 13 evidence: let the APs run for ~300 ms, then sample per-CPU
+    // KPRCB identity + steal counters to prove APs dispatched real threads.
+    if cpu_count > 1 {
+        crate::hal::sleep_hint(300_000);
+        crate::scheduler::dump_per_cpu_current();
+        crate::serial_println!(
+            "[STEAL] post-netd attempts={} success={}",
+            crate::scheduler::smp::STEAL_ATTEMPTS.load(core::sync::atomic::Ordering::Relaxed),
+            crate::scheduler::smp::STEAL_SUCCESS.load(core::sync::atomic::Ordering::Relaxed));
     }
 
     // ── Boot Benchmark: shell ready ──
@@ -693,7 +770,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         slot.slot_idx, slot.code_base);
 
     let mut addr_space = scheduler::address_space::AddressSpace::new();
-    let (entry, loaded) = {
+    let (entry, loaded, boot_name) = {
         let try_load = |path: &str, addr: &mut scheduler::address_space::AddressSpace| -> Option<u64> {
             crate::serial_println!("[INIT_DEBUG] before resolve path: {}", path);
             let mut bin_buf = alloc::vec![0u8; 65536];
@@ -733,15 +810,19 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
         // Primary: NeoInit.nxe. Fallback: try Neoshell.nxe directly.
         let mut addr = scheduler::address_space::AddressSpace::new();
+        // Phase 14-A: track the human-readable name of the init binary actually
+        // loaded (primary NeoInit, fallback NeoShell).
+        let mut boot_name: &str = "neoinit";
         let entry = try_load("C:\\Programs\\neoinit.nxe", &mut addr)
             .or_else(|| {
                 kinfo!(LogSubsys::Init, "NeoInit not found, trying NEOSHELL.NXE as fallback...");
+                boot_name = "neoshell";
                 try_load("C:\\Programs\\neoshell.nxe", &mut addr)
             })
             .unwrap_or(0);
             let loaded = entry != 0;
         if loaded { addr_space = addr; }
-        (entry, loaded)
+        (entry, loaded, boot_name)
     };
 
     if !loaded {
@@ -753,7 +834,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     crate::serial_println!("[BOOT_PROGRESS] SPAWN_USERMODE");
     crate::serial_println!("[INIT_DEBUG] before process create");
     let pid = match usermode::spawn_usermode(
-        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0,
+        entry, slot.stack_top, slot.slot_idx, 2, "\\", 0, boot_name,
     ) {
         Ok(pid) => pid,
         Err(e) => {

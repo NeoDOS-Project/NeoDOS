@@ -378,7 +378,7 @@ impl ServiceManager {
     }
 
     /// Actually spawn a process for a service via process creation.
-    fn spawn_process(&mut self, _name: &str, binary_path: &str) -> Result<u32, SmError> {
+    fn spawn_process(&mut self, name: &str, binary_path: &str) -> Result<u32, SmError> {
         // Build Ob path: \Global\FileSystem\<path>
         let ob_path = if binary_path.starts_with("\\Global\\FileSystem\\") {
             binary_path.to_string()
@@ -427,11 +427,32 @@ impl ServiceManager {
             }
         };
 
-        // Spawn the process
-        let child_pid = crate::usermode::spawn_usermode(
+        // Spawn the process — F-04: free user slot on failure (transactional rollback)
+        let child_pid = match crate::usermode::spawn_usermode(
             result.entry, slot.stack_top, slot.slot_idx,
-            2, "\\", 0, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
-        ).map_err(|_| SmError::OutOfMemory)?;
+            2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
+        ) {
+            Ok(pid) => pid,
+            Err(e) => {
+                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+                crate::serial_println!("[SM] spawn failed, freed user_slot {} err={:?}", slot.slot_idx, e);
+                return Err(SmError::OutOfMemory);
+            }
+        };
+
+        // spawn_usermode leaves the initial thread Suspended (the ObCreate/ObWait
+        // path activates it on hand-off).  Services are not spawned through ObWait,
+        // so nothing would ever publish their thread Ready and they would never run.
+        // Perform the same activation the ObWait hand-off does.
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut lock = s.lock();
+            for k in lock.kthreads.iter_mut().flatten() {
+                if k.pid == child_pid && k.state == crate::scheduler::ThreadState::Suspended {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
+            }
+        });
 
         Ok(child_pid)
     }

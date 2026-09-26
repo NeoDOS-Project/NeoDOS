@@ -2,6 +2,57 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.50.5 — 2026-09-26
+
+### Fixed
+
+- **AP timer `iretq` #GP (Phase 13-A.1)** — root cause: the cooperative-yield
+  path (`yield_current_thread`, `sys_yield`, `sleep_ex`, `waitpid`) published a
+  *still-running* thread as `Ready`/enqueued with a stale `rsp`. On SMP another
+  CPU's global scan / work-stealing could dispatch the same KTHREAD, so two CPUs
+  executed it on one 16 KB kernel stack; their timer frames overlapped and the
+  pending `iretq` frame's `CS` was clobbered (`#GP error=0x7800` at
+  `timer_handler_asm`). New `Kthread.yield_requested` records the intent instead
+  of publishing; the timer/syscall switch-out saves `rsp`, re-homes `k.cpu` and
+  only then enqueues. A `Ready` thread is still fully migratable.
+- **Boot-thread block on SMP** — `usermode::wait_for_process` used the global
+  `Scheduler::current_tid` (advanced by APs) to decide whether to block TID 0,
+  leaving two threads `Running` on CPU0 (`SCHED_WARN`). Now uses
+  `current_tid_for_this_cpu()`.
+
+### Added
+
+- Regression contract test `sched_yield_intent_not_published_until_ready`
+  (kernel suite now 723).
+
+## v0.50.4 — 2026-09-25
+
+### Fixed
+
+- **Scheduler dispatch commit point** — `schedule()` no longer commits a thread to
+  `Running` (nor updates `Scheduler.current_tid` / KPRCB) before validating that the
+  candidate's saved context is dispatchable. New `schedule_with(require_ring3: bool)`
+  + `frame_is_ring3()`; Ring-3 return callers (`syscall_try_resched`, timer user-preempt,
+  `exception_do_resched`) only commit candidates whose saved `CS` is Ring 3, returning
+  invalid candidates to the runqueue without state mutation. Fixes interactive keyboard
+  input being dropped because the consumer (`neoshell`) was left `Running` without ever
+  being dispatched.
+- **SMP AP bring-up** — ICR offset `0x300`, `patch_trampoline` invocation, per-CPU
+  KPRCB/stack/APIC-ID fill, `ap_entry` ordering with early `AP_READY_COUNT`, 32→64
+  far-jump fix, low-memory trampoline backup, MADT/MCFG/HPET packed `read_unaligned`
+  (undefined-behaviour fix).
+
+### Added
+
+- **`SCHED_TEST_MODE`** — test isolation for the k18/k19 work-stealing suite (RAII guard)
+  plus a no-leak assertion in the test harness, keeping 716/716 green with APs online.
+
+### Changed
+
+- High-frequency scheduler/syscall/keyboard logs gated to `LogLevel::Trace`.
+- Diagnostics (gated): scheduler `consistency_check`/`SCHED_WARN`, `KBD_IRQ` ring,
+  `VT_DIAG`/`VT_EV`, `IOAPIC_ROUTE`, `SCHED_DUMP`.
+
 ## v0.50.0-dev — Unreleased
 
 ### Added (Sistema de Logging Configurable)

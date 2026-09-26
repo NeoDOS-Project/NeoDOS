@@ -176,6 +176,57 @@ pub fn init_apic_timer() -> bool {
     true
 }
 
+/// Enable the Local APIC (SVR) of the current CPU without touching the
+/// calibrated bus frequency, the legacy PIC or HPET. Used by APs after the BSP
+/// has already run `init_apic_timer`.
+pub fn init_apic_enable() -> bool {
+    if !is_apic_present() {
+        return false;
+    }
+    unsafe {
+        if APIC_BASE == 0 {
+            APIC_BASE = rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK;
+        }
+        // Set APIC enable (bit 8) and spurious vector 0xFF.
+        let svr = apic_read(APIC_SVR);
+        apic_write(APIC_SVR, svr | (1 << 8) | 0xFF);
+    }
+    true
+}
+
+/// Program this CPU's LAPIC timer using the BSP-calibrated bus frequency.
+///
+/// Per-AP variant of [`init_apic_timer`]: it does **not** calibrate against the
+/// HPET and does **not** mask the legacy PIC or HPET legacy replacement. It only
+/// enables the local APIC and starts a periodic timer on vector 32, matching the
+/// BSP so both CPUs run the same `timer_handler_asm` path.
+pub fn init_apic_timer_ap() -> bool {
+    if !is_apic_present() {
+        return false;
+    }
+    let bus_khz = apic_bus_khz();
+    if bus_khz == 0 {
+        return false;
+    }
+    unsafe {
+        if APIC_BASE == 0 {
+            APIC_BASE = rdmsr(IA32_APIC_BASE) & IA32_APIC_BASE_ADDR_MASK;
+        }
+        let svr = apic_read(APIC_SVR);
+        apic_write(APIC_SVR, svr | (1 << 8) | 0xFF);
+
+        let vector: u32 = 32;
+        apic_write(APIC_LVT_TIMER, vector | APIC_LVT_TIMER_PERIODIC);
+        apic_write(APIC_TIMER_DIVIDER, APIC_DIVIDE_16);
+
+        let counter_khz = bus_khz / divider_value(APIC_DIVIDE_16);
+        let ticks = (counter_khz * crate::timers::TICK_INTERVAL_US) / 1000;
+        apic_write(APIC_TIMER_INIT_COUNT, ticks as u32);
+        apic_write(APIC_EOI, 0);
+    }
+    true
+}
+
 /// Calibrate the APIC bus frequency using HPET as reference.
 /// Returns bus frequency in KHz, or 0 on failure.
 unsafe fn calibrate_apic_bus() -> u64 {

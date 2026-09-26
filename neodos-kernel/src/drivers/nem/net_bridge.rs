@@ -43,6 +43,8 @@ impl NetworkInterface for NemNetworkDevice {
             return Err(());
         }
         let len = packet.len().min(2048) as u32;
+        crate::net::counters::COUNTERS.tx_packets.fetch_add(1, Ordering::Relaxed);
+        crate::net::counters::COUNTERS.tx_bytes.fetch_add(len as u64, Ordering::Relaxed);
         let rc = unsafe { (self.send_fn)(self.device_id, packet.as_ptr(), len) };
         if rc == 0 { Ok(()) } else { Err(()) }
     }

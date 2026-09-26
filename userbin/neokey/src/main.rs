@@ -123,7 +123,9 @@ pub extern "C" fn _start() -> ! {
             write_str(&layout[..end]);
             write_str(b"\r\n");
         }
-        Err(_) => {}
+        Err(_) => {
+            write_err(b"\r\nError: cannot retrieve keyboard layout\r\n");
+        }
     }
 
     write_str(b"\r\n");

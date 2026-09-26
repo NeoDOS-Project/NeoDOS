@@ -4,9 +4,9 @@ use crate::scheduler::Scheduler;
 
 impl Scheduler {
     pub fn wake_waiters(&mut self, pid: u32) {
-        // Legacy magic waitpid (0x8000_0000 | pid)
-        let legacy_magic = pid | 0x8000_0000;
-        // KWait ChildExit magic
+        // Legacy magic waitpid (0x8000_0000 | pid) — kept for compat, now u64
+        let legacy_magic: u64 = (pid as u64) | 0x8000_0000;
+        // KWait ChildExit magic — F-03 full-width
         let kwait_magic = crate::kwait::WaitReason::ChildExit { pid }.encode_magic();
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(legacy_magic) || k.waiting_for == Some(kwait_magic) {
@@ -26,7 +26,7 @@ impl Scheduler {
         }
     }
 
-    pub fn wake_blocked_on_magic(&mut self, magic: u32) {
+    pub fn wake_blocked_on_magic(&mut self, magic: u64) {
         for k in self.kthreads.iter_mut().flatten() {
             if k.waiting_for == Some(magic) && matches!(k.state, ThreadState::Blocked { .. }) {
                 k.waiting_for = None;
