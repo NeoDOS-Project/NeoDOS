@@ -77,9 +77,36 @@ pub static NETD_PTR: unsafe extern "C" fn() = netd_entry_wrapper;
 
 pub fn netd_entry() -> ! {
     crate::serial_println!("[NET] netd running");
+    let mut iters: u64 = 0;
+    let mut last_cpu: u32 = u32::MAX;
     loop {
         net_tick();
         crate::scheduler::yield_current_thread();
+        iters += 1;
+
+        let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        if cpu != last_cpu {
+            if last_cpu != u32::MAX {
+                crate::serial_println!("[NET] netd migrated cpu={} -> {}", last_cpu, cpu);
+            }
+            last_cpu = cpu;
+        }
+
+        // Low-frequency snapshot: netd CPU + protocol counters.  Kept off the
+        // hot path so it never floods serial during normal operation.
+        if iters <= 5 || iters % 1_000_000 == 0 {
+            use core::sync::atomic::Ordering::Relaxed;
+            crate::serial_println!(
+                "[NET] netd cpu={} rx={} tx={} arp_rx={} arp_tx={} icmp_rx={} icmp_tx={}",
+                cpu,
+                crate::net::counters::COUNTERS.rx_packets.load(Relaxed),
+                crate::net::counters::COUNTERS.tx_packets.load(Relaxed),
+                crate::net::counters::COUNTERS.arp_requests_rx.load(Relaxed),
+                crate::net::counters::COUNTERS.arp_replies_tx.load(Relaxed),
+                crate::net::counters::COUNTERS.icmp_requests_rx.load(Relaxed),
+                crate::net::counters::COUNTERS.icmp_replies_tx.load(Relaxed),
+            );
+        }
         for _ in 0..64 {
             core::hint::spin_loop();
         }
@@ -113,6 +140,9 @@ pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::N
     let eth_hdr: &crate::net::ethernet::EthernetHeader = unsafe {
         &*(packet.as_ptr() as *const crate::net::ethernet::EthernetHeader)
     };
+
+    crate::net::counters::COUNTERS.rx_packets.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    crate::net::counters::COUNTERS.rx_bytes.fetch_add(packet.len() as u64, core::sync::atomic::Ordering::Relaxed);
 
     ktrace!(LogSubsys::Net, "RX {} bytes, src={} dst={} type=0x{:04x}",
         packet.len(), eth_hdr.src_mac(), eth_hdr.dst_mac(), eth_hdr.ethertype());

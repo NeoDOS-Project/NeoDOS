@@ -440,6 +440,20 @@ impl ServiceManager {
             }
         };
 
+        // spawn_usermode leaves the initial thread Suspended (the ObCreate/ObWait
+        // path activates it on hand-off).  Services are not spawned through ObWait,
+        // so nothing would ever publish their thread Ready and they would never run.
+        // Perform the same activation the ObWait hand-off does.
+        crate::hal::without_interrupts(|| {
+            let s = crate::scheduler::current_scheduler();
+            let mut lock = s.lock();
+            for k in lock.kthreads.iter_mut().flatten() {
+                if k.pid == child_pid && k.state == crate::scheduler::ThreadState::Suspended {
+                    crate::scheduler::Scheduler::make_thread_ready(k);
+                }
+            }
+        });
+
         Ok(child_pid)
     }
 
