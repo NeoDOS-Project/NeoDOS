@@ -1,6 +1,6 @@
 # NeoDOS — AI Agent Context
 
-**Version:** v0.50.5 | **Tests:** 723 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
+**Version:** v0.51.0 | **Tests:** 726 (kernel) | **ABI:** v8 | **SSDT:** RAX 0-59 (34 syscalls) | **Dev Server:** [neodos-dev-server](https://github.com/NeoDOS-Project/neodos-dev-server) | **NeoTools:** [NeoTools](https://github.com/NeoDOS-Project/NeoTools)
 
 ## Permanent Rules (MUST always follow)
 

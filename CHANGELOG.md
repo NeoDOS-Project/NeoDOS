@@ -2,6 +2,31 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.51.0 — 2026-09-26
+
+### Added
+
+- **Kernel process/thread identity (Phase 14-A)** — bounded `KernelName` on
+  `Eprocess`/`Kthread` (`NAME_MAX = 32`) with deterministic defaults
+  (`idle/<cpu>`, `boot`, `kthread`, executable basename, `netd`); write-once
+  metadata, no heap allocation. PID/TID remain the authoritative identity.
+- **Process/thread inspection snapshot (Phase 14-B)** — read-only
+  `Scheduler::snapshot_into` producing a bounded, scheduler-consistent
+  `ProcSnapshot` (processes + threads, names, state, CPU, idle/current,
+  deterministic pid/tid ordering, explicit truncation).
+- **`neotop` (Phase 15-A)** — static process/thread inspector built on the
+  snapshot through an additive `ObInfoClass::ProcessSnapshot = 26`
+  (`\Global\Info\Processes`); fixed-width, pointer-free ABI records; prints
+  PID/PROCESS/TID/THREAD/STATE/CPU with current/idle markers.
+
+### Notes
+
+- Regression suite: 723 → 726 (additive ABI tests). SMP1/SMP2/SMP4 validated;
+  AP scheduling and work stealing remain functional.
+- ABI: no syscall-number changes; `ObInfoClass::ProcessSnapshot = 26` added;
+  the `ProcessSnapshot` ABI version remains 1.
+- Not included: `neotop` v0.2 dynamic refresh (#27).
+
 ## v0.50.5 — 2026-09-26
 
 ### Fixed
