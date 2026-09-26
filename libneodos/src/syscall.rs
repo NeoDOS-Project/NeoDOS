@@ -449,6 +449,8 @@ pub enum ObInfoClass {
     SocketRecv = 23,
     CpuStats = 24,
     ThreadStats = 25,
+    /// Phase 15-A: coherent process+thread inspection snapshot (read-only).
+    ProcessSnapshot = 26,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
@@ -730,6 +732,105 @@ pub fn sys_ob_query_cpu_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
 /// Query the global thread snapshot via an fd opened on `\Global\Info\Threads`.
 pub fn sys_ob_query_thread_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
     sys_ob_query_info(fd, ObInfoClass::ThreadStats, buf)
+}
+
+// ── Phase 15-A: coherent process/thread snapshot ABI ──
+// Mirrors `neodos-kernel/src/syscall/ob/types.rs`. One query returns both
+// sections from a single scheduler-consistent snapshot:
+//   buffer = [ProcSnapshotHeader][ProcessInfoRaw; process_returned]
+//                              [ThreadInfoRaw; thread_returned]
+/// Version of the process/thread snapshot ABI.
+pub const PROC_SNAPSHOT_VERSION: u32 = 1;
+/// Maximum name bytes exposed (matches the kernel `KernelName` bound).
+pub const PROC_NAME_MAX: usize = 32;
+/// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
+pub const PROC_SNAPSHOT_FLAG_TRUNCATED: u32 = 1;
+
+/// Header for `ObInfoClass::ProcessSnapshot` (32 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProcSnapshotHeader {
+    pub version: u32,
+    pub process_total: u32,
+    pub process_returned: u32,
+    pub thread_total: u32,
+    pub thread_returned: u32,
+    pub process_entry_size: u32,
+    pub thread_entry_size: u32,
+    pub flags: u32,
+}
+
+impl ProcSnapshotHeader {
+    /// True when either section was truncated.
+    pub fn truncated(&self) -> bool {
+        self.flags & PROC_SNAPSHOT_FLAG_TRUNCATED != 0
+            || self.process_returned < self.process_total
+            || self.thread_returned < self.thread_total
+    }
+}
+
+/// One process record (40 bytes).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ProcessInfoRaw {
+    pub pid: u32,
+    pub name: [u8; PROC_NAME_MAX],
+    pub thread_count: u32,
+}
+
+impl ProcessInfoRaw {
+    pub fn name_str(&self) -> &str {
+        bytes_to_str(&self.name)
+    }
+}
+
+/// One thread record (48 bytes). `state` uses the kernel `ThreadState::to_u8`
+/// encoding (0 Ready, 1 Running, 2 Blocked, 3 Suspended, 4 Terminated).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ThreadInfoRaw {
+    pub tid: u32,
+    pub pid: u32,
+    pub name: [u8; PROC_NAME_MAX],
+    pub state: u8,
+    pub idle: u8,
+    pub is_current: u8,
+    pub _pad: u8,
+    pub cpu: u32,
+}
+
+impl ThreadInfoRaw {
+    pub fn name_str(&self) -> &str {
+        bytes_to_str(&self.name)
+    }
+    pub fn state_str(&self) -> &'static str {
+        match self.state {
+            0 => "Ready",
+            1 => "Running",
+            2 => "Blocked",
+            3 => "Suspended",
+            4 => "Terminated",
+            _ => "?",
+        }
+    }
+    pub fn is_idle(&self) -> bool { self.idle != 0 }
+    pub fn is_current_thread(&self) -> bool { self.is_current != 0 }
+}
+
+fn bytes_to_str(n: &[u8; PROC_NAME_MAX]) -> &str {
+    let end = n.iter().position(|&b| b == 0).unwrap_or(PROC_NAME_MAX);
+    core::str::from_utf8(&n[..end]).unwrap_or("")
+}
+
+/// Query the coherent process/thread snapshot via an fd opened on
+/// `\Global\Info\Processes`.
+pub fn sys_ob_query_process_snapshot(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
+    sys_ob_query_info(fd, ObInfoClass::ProcessSnapshot, buf)
+}
+
+/// Open `\Global\Info\Processes` ready for a `ProcessSnapshot` query.
+pub fn ob_open_processes() -> Result<u8, i64> {
+    sys_ob_open("\\Global\\Info\\Processes", ob_access::READ)
 }
 
 /// Open `\Global\Info\CpuInfo` ready for a `CpuStats` query.

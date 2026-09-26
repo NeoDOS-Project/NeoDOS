@@ -142,6 +142,8 @@ pub enum ObInfoClass {
     SocketRecv = 23,
     CpuStats = 24,
     ThreadStats = 25,
+    /// Phase 15-A: coherent process+thread inspection snapshot (read-only).
+    ProcessSnapshot = 26,
     ServiceState = 29,
     ServiceConfig = 30,
     ServiceStatus = 31,
