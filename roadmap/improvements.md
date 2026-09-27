@@ -651,17 +651,39 @@
   so neotop can render per-process memory. Parent/related: #27.
   state: open
 
+- **KWAIT-TIMEOUT**: timed waits (timeouts for ob_wait/poll/sleep) `priority/medium` `area/kernel` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  KWait blocks indefinitely; sys_ob_wait (RAX 45), sys_poll (RAX 24) and sys_sleep_ex (RAX 41) ignore their timeout arguments and there is no kernel sleep for user threads. Add per-thread deadline/timeout support to KWait driven by the timer tick, wire the ob_wait/poll timeouts, and provide a sleep/delay path without adding a new syscall. Prerequisite for ADM-1.4. Related: #27.
+  state: open
+
 - **ADM-1**: neotop v0.2 `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   Epic: dynamic process/thread monitor (top-like).
   - [x] Kernel CPU execution accounting + ProcessSnapshot v2 (Phase 15-A.1, #269).
   - [x] neotop: dynamic %CPU from Δ(cpu_time)/Δ(wall), N/A first sample, q/r, ANSI, SMP-correct.
   - [ ] Kernel per-process memory (working set / committed) — MEM-PROC.
-  - [ ] neotop: memory columns.
-  - [ ] neotop: sort by CPU/memory/PID/name + filter.
-  - [ ] neotop: color thresholds (define green/yellow/red).
-  - [ ] neotop: configurable refresh interval (requires timed wait; no kernel sleep today).
+  - [ ] neotop: memory columns — ADM-1.1.
+  - [ ] neotop: sort by CPU/memory/PID/name + filter — ADM-1.2.
+  - [ ] neotop: color thresholds (define green/yellow/red) — ADM-1.3.
+  - [ ] neotop: configurable refresh interval — ADM-1.4 (depends KWAIT-TIMEOUT).
   Acceptance: ~1 s refresh; SMP-correct (a process may exceed 100%); N/A on the
   first sample; ABI version validated; locales en-US/es-ES/ca-ES; tests + docs.
+  state: open
+
+- **ADM-1.1**: neotop memory columns `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  Consume ProcessSnapshot v3 (working set / committed from MEM-PROC) and render memory columns in neotop, with strict version + entry-size validation, human-readable units and idle excluded; locales + tests + docs. Parent: ADM-1 (#27).
+  Dependencies: MEM-PROC
+  state: open
+
+- **ADM-1.2**: neotop sorting and filtering `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  Sort by CPU%/memory/PID/name (asc/desc), filter by name substring and/or PID, deterministic tie-break by PID; locales + tests + docs. Parent: ADM-1 (#27).
+  state: open
+
+- **ADM-1.3**: neotop color thresholds `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  Define green/yellow/red thresholds for CPU% and memory; ANSI colors disabled when not a TTY or when NO_COLOR is set. Parent: ADM-1 (#27).
+  state: open
+
+- **ADM-1.4**: neotop configurable refresh interval `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  Configurable refresh interval from the UI (0.5/1/2/5 s) using a real timed wait instead of busy-yield; optional Registry persistence; locales + tests + docs. Parent: ADM-1 (#27).
+  Dependencies: KWAIT-TIMEOUT
   state: open
 
 - **ADM-2**: neostat `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
