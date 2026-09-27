@@ -164,6 +164,7 @@ fn free_eprocess_resources(eproc: &mut Eprocess) {
         );
         let heap_idx = ((eproc.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE)
             / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as u8;
+        crate::arch::x64::paging::heap_slot_reset(heap_idx as usize);
         crate::arch::x64::paging::free_heap_slot(heap_idx);
         eproc.heap_base = 0;
         eproc.heap_break = 0;

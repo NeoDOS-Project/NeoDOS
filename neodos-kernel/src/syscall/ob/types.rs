@@ -122,10 +122,12 @@ pub struct ThreadStatsEntry {
 /// Version of the combined process/thread snapshot ABI.
 ///
 /// v2 (Phase 15-A.1) appends one authoritative CPU execution counter to each
-/// process and thread record. The change is additive *in serialized size* — the
-/// new field is appended and the header grows — but it is not byte-compatible
-/// with v1, so the version is bumped and both sides reject the other's layout.
-pub const PROC_SNAPSHOT_VERSION: u32 = 2;
+/// process and thread record. v3 (MEM-PROC #274) appends `committed_bytes` and
+/// `working_set_bytes` to the process record. Both changes are additive *in
+/// serialized size* — fields are appended — but not byte-compatible with prior
+/// versions, so the version is bumped and both sides reject the other's layout
+/// via `version` + `process_entry_size` / `thread_entry_size`.
+pub const PROC_SNAPSHOT_VERSION: u32 = 3;
 /// Maximum name bytes exposed (matches the kernel `KernelName` bound).
 pub const PROC_NAME_MAX: usize = 32;
 /// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
@@ -146,8 +148,9 @@ pub struct ProcSnapshotHeader {
     pub flags: u32,
 }
 
-/// One process record. 48 bytes:
-/// `pid:u32 | name:[u8;32] | thread_count:u32 | cpu_time:u64`.
+/// One process record. 64 bytes:
+/// `pid:u32 | name:[u8;32] | thread_count:u32 | cpu_time:u64 |
+///  committed_bytes:u64 | working_set_bytes:u64`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ProcessInfoRaw {
@@ -157,6 +160,11 @@ pub struct ProcessInfoRaw {
     /// Phase 15-A.1: sum of the process's thread CPU execution counters, in
     /// timer intervals. Monotonic; Δ between two snapshots yields CPU%.
     pub cpu_time: u64,
+    /// MEM-PROC (#274): reserved/allocated bytes (heap span + mmap regions).
+    pub committed_bytes: u64,
+    /// MEM-PROC (#274): resident bytes (mapped 4 KB heap pages × 4096). Idle
+    /// processes report 0.
+    pub working_set_bytes: u64,
 }
 
 /// One thread record. 56 bytes:

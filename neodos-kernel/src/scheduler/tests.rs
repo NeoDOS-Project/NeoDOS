@@ -137,6 +137,58 @@ pub fn register_tests() {
         test_eq!(cross, Some(false));
     });
 
+    test_case!("memproc_committed_and_working_set", {
+        // MEM-PROC (#274): committed = heap span + mmap; WS = resident heap
+        // pages of the process's slot. Driven through the real snapshot path.
+        let mut sched = Scheduler::new();
+        let heap_base = crate::arch::x64::paging::PROCESS_HEAP_BASE;
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 2, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        {
+            let ep = sched.find_eprocess_mut(1).unwrap();
+            ep.heap_base = heap_base;
+            ep.heap_break = heap_base + 0x3000; // 3 pages committed
+            ep.mmap_regions.push(MmapRegion {
+                base: 0x4000_0000, len: 0x2000, prot: 3, flags: 0,
+                drive: 0, inode: 0, file_size: 0,
+            });
+        }
+        // Simulate 2 resident heap pages for this process's slot (slot 0).
+        let slot = 0usize;
+        crate::arch::x64::paging::heap_slot_reset(slot);
+        // No public inc API; recompute via snapshot with a known resident count.
+        // We assert committed exactly and WS from the (currently 0) counter.
+        let mut snap = crate::scheduler::ProcSnapshot::empty();
+        sched.snapshot_into(&mut snap);
+        let p = snap.process(1).unwrap();
+        // committed = 0x3000 heap + 0x2000 mmap = 0x5000
+        test_eq!(p.committed_bytes, 0x5000);
+        // WS reflects the slot's resident pages (0 in this synthetic case).
+        test_eq!(p.working_set_bytes, 0);
+
+        // Now simulate 3 resident pages in the process's slot and re-snapshot.
+        crate::arch::x64::paging::heap_slot_add_resident(slot, 3);
+        let mut snap2 = crate::scheduler::ProcSnapshot::empty();
+        sched.snapshot_into(&mut snap2);
+        let p2 = snap2.process(1).unwrap();
+        test_eq!(p2.working_set_bytes, 3 * crate::arch::x64::paging::PAGE_4K);
+        test_eq!(p2.committed_bytes, 0x5000);
+        crate::arch::x64::paging::heap_slot_reset(slot);
+
+        // Now the counter moves: exercise the real accounting helper by
+        // allocating/freeing through the choke points is not safe in a unit
+        // test (needs real mappings), so validate the arithmetic helper.
+        crate::arch::x64::paging::heap_slot_reset(slot);
+        test_eq!(crate::arch::x64::paging::heap_slot_resident_pages(slot), 0);
+        // heap_slot_of maps addresses to slots deterministically.
+        test_eq!(crate::arch::x64::paging::heap_slot_of(heap_base), Some(0));
+        test_eq!(
+            crate::arch::x64::paging::heap_slot_of(
+                heap_base + crate::arch::x64::paging::PROCESS_HEAP_SIZE * 2),
+            Some(2));
+        test_eq!(crate::arch::x64::paging::heap_slot_of(0), None);
+    });
+
     fn add_test_thread(sched: &mut Scheduler, tid: u32, pid: u32, entry: u64, priority: u8, state: ThreadState) {
         let slot = sched.alloc_kthread_slot().unwrap();
         let mut k = Kthread::new_ring3(tid, pid, entry, 0x800000);

@@ -110,6 +110,47 @@ pub const MAX_HEAP_SLOTS: usize = 16;
 
 static mut HEAP_SLOT_USED: [bool; MAX_HEAP_SLOTS] = [false; MAX_HEAP_SLOTS];
 
+/// MEM-PROC (#274): resident 4 KB heap pages per heap slot (working-set proxy).
+/// Updated only in `heap_alloc_page` / `heap_free_page` / `heap_free_range`, the
+/// single choke points for heap residency, so it also covers demand-faulted
+/// pages. Read by the scheduler snapshot under the SCHEDULER lock. Relaxed
+/// atomics: a torn read across CPUs is harmless for a diagnostic counter.
+static HEAP_SLOT_RESIDENT: [core::sync::atomic::AtomicU32; MAX_HEAP_SLOTS] =
+    [const { core::sync::atomic::AtomicU32::new(0) }; MAX_HEAP_SLOTS];
+
+/// Heap slot index for a heap virtual address, or `None` if outside the region.
+#[inline]
+pub fn heap_slot_of(virt: u64) -> Option<usize> {
+    if !is_heap_virtual_addr(virt) { return None; }
+    let idx = ((virt - PROCESS_HEAP_BASE) / PROCESS_HEAP_SIZE) as usize;
+    if idx < MAX_HEAP_SLOTS { Some(idx) } else { None }
+}
+
+/// Resident (mapped) 4 KB heap pages for a heap slot.
+#[inline]
+pub fn heap_slot_resident_pages(slot: usize) -> u32 {
+    if slot >= MAX_HEAP_SLOTS { return 0; }
+    HEAP_SLOT_RESIDENT[slot].load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Reset a heap slot's resident counter (called when the slot is freed).
+#[inline]
+pub fn heap_slot_reset(slot: usize) {
+    if slot < MAX_HEAP_SLOTS {
+        HEAP_SLOT_RESIDENT[slot].store(0, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Test/accounting hook: add `n` resident pages to a heap slot. The production
+/// path updates this implicitly via `heap_alloc_page`; this exists so the
+/// counter arithmetic can be unit-tested without real mappings.
+#[inline]
+pub fn heap_slot_add_resident(slot: usize, n: u32) {
+    if slot < MAX_HEAP_SLOTS {
+        HEAP_SLOT_RESIDENT[slot].fetch_add(n, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 pub struct HeapSlot {
     pub base: u64,
 }
@@ -673,6 +714,10 @@ pub fn heap_alloc_page(virt: u64) -> Option<u64> {
     if phys.is_null() { return None; }
     let rc = crate::hal::map_page(phys as u64, virt, 0x6); // PRESENT | WRITABLE | USER_ACCESSIBLE
     if rc != 0 { return None; }
+    // MEM-PROC (#274): count this resident page against its heap slot.
+    if let Some(slot) = heap_slot_of(virt) {
+        HEAP_SLOT_RESIDENT[slot].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
     Some(phys as u64)
 }
 
@@ -687,6 +732,13 @@ pub fn heap_free_page(virt: u64) {
     let _ = crate::hal::unmap_page(virt);
     shootdown_single_page(virt);
     crate::hal::free_page(phys as *mut u8);
+    // MEM-PROC (#274): drop this page from its heap slot's resident count.
+    if let Some(slot) = heap_slot_of(virt) {
+        let _ = HEAP_SLOT_RESIDENT[slot].fetch_update(
+            core::sync::atomic::Ordering::Relaxed,
+            core::sync::atomic::Ordering::Relaxed,
+            |v| Some(v.saturating_sub(1)));
+    }
 }
 
 /// Free all heap pages in the range `[start, end)`.
@@ -696,6 +748,7 @@ pub fn heap_free_range(start: u64, end: u64) {
     let mut addr = s & !(PAGE_4K - 1);
     let mut freed_first = 0u64;
     let mut freed_last = 0u64;
+    let mut freed_pages = 0u32;
 
     while addr < e {
         if let Some(entry) = crate::hal::walk_ptes_4k(addr) {
@@ -704,12 +757,22 @@ pub fn heap_free_range(start: u64, end: u64) {
                 if phys != addr {
                     let _ = crate::hal::unmap_page(addr);
                     crate::hal::free_page(phys as *mut u8);
+                    freed_pages += 1;
                     if freed_first == 0 { freed_first = addr; }
                     freed_last = addr + PAGE_4K;
                 }
             }
         }
         addr += PAGE_4K;
+    }
+    // MEM-PROC (#274): subtract the freed pages from the owning heap slot(s).
+    if freed_pages > 0 {
+        if let Some(slot) = heap_slot_of(s) {
+            let _ = HEAP_SLOT_RESIDENT[slot].fetch_update(
+                core::sync::atomic::Ordering::Relaxed,
+                core::sync::atomic::Ordering::Relaxed,
+                |v| Some(v.saturating_sub(freed_pages)));
+        }
     }
     if freed_first < freed_last {
         shootdown_range(freed_first, freed_last);

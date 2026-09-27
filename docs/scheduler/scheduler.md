@@ -419,13 +419,20 @@ the logical process/thread registry (`Scheduler.eprocesses` /
   does not appear. `Terminated`-but-not-yet-reaped threads remain visible with
   `state == Terminated`.
 - Snapshot model: bounded, owned copies — `ProcessSnapshot { pid, name,
-  thread_count, cpu_time }` and `ThreadSnapshot { tid, pid, name, state, cpu,
-  idle, is_current, cpu_time }`. Names reuse `KernelName` (`NAME_MAX = 32`); no
-  references into live objects and no heap allocation proportional to string
-  length. The container is fixed-capacity (`MAX_SNAPSHOT_PROCESSES` /
-  `MAX_SNAPSHOT_THREADS`) and sets `truncated` when the registry is larger.
-  `cpu_time` is the Phase 15-A.1 monotonic execution counter (see "CPU Execution
-  Accounting" above); process `cpu_time` is the sum over its threads.
+  thread_count, cpu_time, committed_bytes, working_set_bytes }` and
+  `ThreadSnapshot { tid, pid, name, state, cpu, idle, is_current, cpu_time }`.
+  Names reuse `KernelName` (`NAME_MAX = 32`); no references into live objects and
+  no heap allocation proportional to string length. The container is
+  fixed-capacity (`MAX_SNAPSHOT_PROCESSES` / `MAX_SNAPSHOT_THREADS`) and sets
+  `truncated` when the registry is larger. `cpu_time` is the Phase 15-A.1
+  monotonic execution counter (see "CPU Execution Accounting" above); process
+  `cpu_time` is the sum over its threads.
+- Memory (MEM-PROC #274): `committed_bytes` = heap span
+  (`heap_break - heap_base`) plus the sum of `mmap_regions.len`;
+  `working_set_bytes` = mapped 4 KB heap pages × 4096, maintained per heap slot
+  in `arch::x64::paging` at the single choke points `heap_alloc_page` /
+  `heap_free_page` / `heap_free_range` (so demand-faulted pages are counted
+  too). Idle processes report 0.
 - Consistency: all fields are copied while the global `SCHEDULER` mutex is held;
   the lock is released before the snapshot is formatted or printed (no console
   I/O under a lock). `KPRCB.current_thread` is written under the same mutex, so
