@@ -314,16 +314,15 @@ Details:
 
 ### Validating the synchronization
 
-NeoDev ships a reusable harness. This repository carries an adapted copy at
-`scripts/vbox-vdi-sync-check.sh` that defaults the project root to this
-repository:
+The validation harness ships with NeoDev at `scripts/vbox-vdi-sync-check.sh`.
+Run it from the NeoDev checkout, pointing it at this repository:
 
 ```bash
 # Force IMG newer than VDI, then run the VirtualBox test suite and verify.
-scripts/vbox-vdi-sync-check.sh
+/path/to/NeoDev/scripts/vbox-vdi-sync-check.sh --neodos-root /path/to/neodos
 
 # Rebuild the image first instead of touching it.
-scripts/vbox-vdi-sync-check.sh --build --timeout 240
+/path/to/NeoDev/scripts/vbox-vdi-sync-check.sh --neodos-root /path/to/neodos --build --timeout 240
 ```
 
 The script records the `IMG`/`VDI` mtimes before and after, runs
