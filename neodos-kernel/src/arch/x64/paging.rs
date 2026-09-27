@@ -634,11 +634,19 @@ pub fn split_2mb_page(virt: u64) -> Result<(), ()> {
         let pt = &mut *(pt_phys as *mut PageTable);
         *pt = PageTable::new();
 
-        // Fill PT with identity-mapped 4 KB entries
+        // Fill PT with identity-mapped 4 KB entries. Heap/mmap pages must be
+        // reachable from Ring 3, so mark their PTEs USER_ACCESSIBLE too — only
+        // setting it on the PDE leaves the leaves kernel-only and any Ring-3
+        // access faults with a *protection* #PF (not handled by the demand
+        // pager, which only recovers not-present faults). This is #300.
+        let leaf_is_user = is_heap_virtual_addr(virt) || is_mmap_virtual_addr(virt);
         for i in 0..512u64 {
             let entry_phys = huge_base + i * PAGE_4K;
             let mut entry_flags = huge_flags;
             entry_flags.remove(PageTableFlags::HUGE_PAGE);
+            if leaf_is_user {
+                entry_flags |= PageTableFlags::USER_ACCESSIBLE;
+            }
             pt[i as usize].set_addr(PhysAddr::new(entry_phys), entry_flags);
         }
 
