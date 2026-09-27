@@ -735,6 +735,11 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    crate::raw_serial_println!(
+        "[FAULT] v=8 DOUBLE-FAULT err={:#x} rip={:#x} cs={:#x} rsp={:#x} cr2={:#x} cpu={}",
+        error_code, rip, stack_frame.code_segment, rsp,
+        crate::hal::read_cr2(), unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
     crate::crash::dump_double_fault(rip, rsp, error_code);
     panic_classified!(PanicClass::DoubleFault,
         "Double fault: rip={:#x} rsp={:#x} error={:#x}",
@@ -766,6 +771,13 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    // Lock-free first report: guarantees the fault is captured even if the
+    // regular logger deadlocks on the SERIAL1 spinlock.
+    crate::raw_serial_println!(
+        "[FAULT] v=13 GPF err={:#x} rip={:#x} cs={:#x} rsp={:#x} rflags={:#x} cr2={:#x} cpu={}",
+        error_code, rip, stack_frame.code_segment, rsp, stack_frame.cpu_flags,
+        crate::hal::read_cr2(), unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
     // Read actual GS selector directly from the CPU register to
     // determine if the fault is from a bad GS load.
     let gs: u16;
@@ -872,6 +884,11 @@ extern "x86-interrupt" fn page_fault_handler(
     } else {
         PanicClass::PageFault
     };
+    crate::raw_serial_println!(
+        "[FAULT] v=14 PAGE-FAULT user={} write={} np={} virt={:#x} rip={:#x} cs={:#x} rsp={:#x} cpu={}",
+        is_user, is_write, is_not_present, virt, rip, stack_frame.code_segment, rsp,
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
     crate::trace_event!(TraceEvent::Panic, 4, virt, rip, is_write as u64);
     panic_classified!(class,
         "Page fault @ {:#x} (user={}, write={}, np={}) rip={:#x}",

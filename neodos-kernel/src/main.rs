@@ -888,6 +888,14 @@ fn panic(info: &PanicInfo) -> ! {
     hal::disable_interrupts();
 
     let class = crate::panic_classification::current_panic_class();
+    // Lock-free first report: capture the panic even if the regular logger
+    // deadlocks on the SERIAL1 spinlock.
+    crate::raw_serial_println!(
+        "[PANIC] class={} rsp={:#x} msg={}",
+        class.to_str(),
+        unsafe { crate::hal::raw::raw_read_rsp() },
+        info.message(),
+    );
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP
