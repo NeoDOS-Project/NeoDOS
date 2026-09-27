@@ -116,7 +116,7 @@
 - **Scheduler dispatch commit point** — `schedule()` no longer commits a thread to
   `Running` (nor updates `Scheduler.current_tid` / KPRCB) before validating that the
   candidate's saved context is dispatchable. New `schedule_with(require_ring3: bool)`
-  + `frame_is_ring3()`; Ring-3 return callers (`syscall_try_resched`, timer user-preempt,
+  and `frame_is_ring3()`; Ring-3 return callers (`syscall_try_resched`, timer user-preempt,
   `exception_do_resched`) only commit candidates whose saved `CS` is Ring 3, returning
   invalid candidates to the runqueue without state mutation. Fixes interactive keyboard
   input being dropped because the consumer (`neoshell`) was left `Running` without ever
