@@ -2,6 +2,29 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## v0.51.2 — 2026-09-27
+
+### Fixed
+
+- **SMP4 shell GPF — idle-fallback cross-CPU ownership (#293).** The idle
+  fallback in `syscall_try_resched` scanned the global KTHREAD table and took
+  the first `is_idle` without checking CPU ownership. On SMP, several CPUs could
+  adopt the same idle KTHREAD and execute on one kernel stack
+  (`STACK_OWNER_MISMATCH`), leading to an invalid frame and a `#GP`/`#PF` on the
+  shell/SMP path. The fallback now requires `k.is_idle && k.cpu == this_cpu`,
+  and uses the selected idle's TID instead of the constant `IDLE_TID`
+  (per-CPU idle TIDs 1..N). No scheduling policy change. See
+  `docs/investigation/smp4-shell-gpf-2026-09-27.md` (Phases 293-A..293-D).
+- Regression test `scheduler::tests::idle_fallback_requires_cpu_ownership`
+  (kernel suite 737 → 738).
+
+### Validation
+
+- 738/738 kernel tests PASS.
+- VirtualBox SMP4 real-shell smoke test PASS; 46
+  `read → syscall_try_resched → idle fallback` cycles exercised;
+  `CTX_DOUBLE_OWNER=0`, `STACK_OWNER_MISMATCH=0`, `GPF/PF/PANIC=0`.
+
 ## v0.51.1 — 2026-09-27
 
 ### Added — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
