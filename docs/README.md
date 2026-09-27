@@ -1,6 +1,6 @@
 # NeoDOS Documentation
 
-> **Version:** v0.51.0 | **Tests:** 737 (kernel) | **ABI:** v8
+> **Version:** v0.51.1 | **Tests:** 737 (kernel) | **ABI:** v8
 
 ## Architecture
 
