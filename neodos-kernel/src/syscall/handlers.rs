@@ -150,6 +150,8 @@ pub(super) fn handler_read(regs: super::Registers) -> u64 {
                     let before = k.state.to_u8();
                     k.state = crate::scheduler::ThreadState::Blocked { waiting_for: 0xFFFFFFFF };
                     k.waiting_for = Some(0xFFFFFFFF);
+                    crate::scheduler::diag::ev(
+                        crate::scheduler::diag::EV_BLOCK, k.cpu, k.tid, k.rsp, before as u64);
                     crate::trace_sched_state!(k.tid, before, k.state.to_u8(), 3u8);
                 }
                 crate::syscall::set_need_resched();

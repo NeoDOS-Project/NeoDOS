@@ -58,6 +58,8 @@ impl Scheduler {
         if k.state == ThreadState::Ready {
             return;
         }
+        crate::scheduler::diag::ev(
+            crate::scheduler::diag::EV_WAKE_READY, k.cpu, k.tid, k.rsp, k.state.to_u8() as u64);
         k.state = ThreadState::Ready;
         // Phase 13-A: a thread published as Ready has had any pending yield
         // intent consumed (by the switch-out that saved its `rsp`, or by this

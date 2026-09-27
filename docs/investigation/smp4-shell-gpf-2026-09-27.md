@@ -95,6 +95,11 @@ Para que el fault real no se pierda:
      `double_fault_handler` (`[FAULT] v=8 ...`).
 3. `neodos-kernel/src/main.rs`
    - Cabecera raw en `panic()` (`[PANIC] class=... rsp=... msg=...`).
+4. `neodos-kernel/src/scheduler/diag.rs` (nuevo)
+   - Anillo lock-free `SCHED_EV` (128 entradas) con eventos de dispatch (runqueue/
+     steal/scan), wake, block y context-save (`rsp`). Se vuelca con `dump_raw()`
+     (serial raw) desde `gpf_handler` y `panic`, para reconstruir el último tramo
+     de scheduling antes del fallo.
 
 Estos cambios son de diagnóstico: hacen el *crash reporting* a prueba de deadlock.
 No alteran scheduler, memoria ni serialización normal (el path `_print` no cambia).
@@ -142,6 +147,28 @@ Señales de corrupción de frame (valores de 64 bits mezclados/desplazados):
 La CPU3 en `prepare_ring3_return` es coherente: es el path de retorno a Ring 3 que
 prepara `TSS.RSP0` justo antes del `iretq`.
 
+### 5.1 Segundo modo de fallo: SCHEDULER spinlock atascado
+
+En una corrida posterior (mismo binario), el fallo apareció como **deadlock** en
+lugar de GPF. Sin fault en el serial. Registros de las 4 CPUs colgadas:
+
+| CPU | RIP | Localización |
+|-----|-----|--------------|
+| 0 | `0x40bee82` | `without_interrupts::<syscall::is_current_admin>` — spin de `SCHEDULER` |
+| 1 | `0x4127282` | `timer_handler_inner` — spin de `SCHEDULER` |
+| 2 | `0x4127282` | `timer_handler_inner` — spin de `SCHEDULER` |
+| 3 | `0x4127282` | `timer_handler_inner` — spin de `SCHEDULER` |
+
+Las cuatro CPUs giran en el `lock cmpxchg` del `SCHEDULER` estático
+(`0x42c49f8`) y **ninguna CPU está dentro de la sección crítica**, es decir, no
+hay dueño vivo que libere el lock. Esto no encaja con una inversión de orden de
+locks clásica (habría una CPU fuera de los spins, en el otro lock); encaja con
+**corrupción del byte del lock** (escritura salvaje) o con una CPU que murió
+dentro de la sección crítica, coherente con la corrupción de contexto del §5.
+
+Independientemente del disparador, el efecto es que el fallo SMP4 se manifiesta
+como GPF (frame desgarrado) o como deadlock del lock global del scheduler.
+
 ---
 
 ## 6. Clasificación
@@ -188,14 +215,18 @@ aparece justo tras el bloqueo/desbloqueo del shell.
 ## 8. Archivos modificados (sin commit)
 
 - `neodos-kernel/src/arch/x64/serial.rs` — `RawSerial`, `_raw_print`, macros raw.
-- `neodos-kernel/src/arch/x64/idt.rs` — cabeceras `[FAULT]` en GPF/PF/DF.
-- `neodos-kernel/src/main.rs` — cabecera `[PANIC]`.
+- `neodos-kernel/src/arch/x64/idt.rs` — cabeceras `[FAULT]` en GPF/PF/DF + dump del anillo.
+- `neodos-kernel/src/main.rs` — cabecera `[PANIC]` + dump del anillo.
+- `neodos-kernel/src/scheduler/diag.rs` — anillo `SCHED_EV` (nuevo).
+- `neodos-kernel/src/scheduler/queue.rs`, `schedule.rs`, `mod.rs` — hooks del anillo.
+- `neodos-kernel/src/syscall/handlers.rs`, `resched.rs` — hooks del anillo.
 - `docs/investigation/smp4-shell-gpf-2026-09-27.md` — este informe.
 
 Artefactos regenerados (gitignored): `disk_image.img`, `kernel.elf`, `disk_image.vdi`.
 
 Evidencia serial: `/tmp/opencode/smp4_serial.log` (pre-instrumentación),
-`/tmp/opencode/smp4_diag.serial`, `/tmp/opencode/smp4_diag2.serial`.
+`/tmp/opencode/smp4_diag.serial`, `/tmp/opencode/smp4_diag2.serial`,
+`/tmp/opencode/smp4_ev.serial` / `smp4_ev_deadlock.serial` (modo deadlock).
 
 ---
 

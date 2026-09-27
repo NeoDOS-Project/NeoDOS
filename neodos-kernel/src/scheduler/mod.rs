@@ -17,6 +17,7 @@ pub mod wake;
 pub mod schedule;
 pub mod snapshot;
 pub mod accounting;
+pub mod diag;
 
 pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
 pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};

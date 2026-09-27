@@ -896,6 +896,7 @@ fn panic(info: &PanicInfo) -> ! {
         unsafe { crate::hal::raw::raw_read_rsp() },
         info.message(),
     );
+    crate::scheduler::diag::dump_raw();
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP

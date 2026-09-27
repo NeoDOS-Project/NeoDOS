@@ -387,6 +387,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_RQ, self_cpu, tid, k.rsp,
+                            prev as u64);
                         if (tid == 5 || prev == 5) && sched_forensic_verbose() {
                             crate::serial_println!("[T5_SCHED] step=1 prev={} new={} current={} rq0={} kprcb={:?}",
                                 prev, tid, self.current_tid, rq_len(0),
@@ -433,6 +436,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_STEAL, self_cpu, tid, k.rsp,
+                            prev as u64);
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
@@ -508,6 +514,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_SCAN, scan_cpu, check_tid, k.rsp,
+                            prev as u64);
                         picked_ptr = &mut **k as *mut Kthread;
                         picked_pid = k.pid;
                         picked_tid = k.tid;

@@ -132,6 +132,9 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_RESCHED_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 if k.state == ThreadState::Running {
                     scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {

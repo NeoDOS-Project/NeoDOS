@@ -778,6 +778,7 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
         error_code, rip, stack_frame.code_segment, rsp, stack_frame.cpu_flags,
         crate::hal::read_cr2(), unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
     );
+    crate::scheduler::diag::dump_raw();
     // Read actual GS selector directly from the CPU register to
     // determine if the fault is from a bad GS load.
     let gs: u16;
@@ -1044,6 +1045,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_TIMER_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 if k.state == ThreadState::Running {
                     crate::scheduler::Scheduler::make_thread_ready(k);
                 }
@@ -1291,6 +1295,9 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_TIMER_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 // Phase 13-A: publish only after the live context is saved.
                 // For a timeslice expiry `on_timer_tick` already enqueued it;
                 // `make_thread_ready` is then a no-op.
