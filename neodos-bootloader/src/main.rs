@@ -43,7 +43,7 @@ fn efi_main() -> Status {
     uefi::helpers::init().expect("Failed to initialize UEFI services");
 
     log::info!("========================================");
-    log::info!("NeoDOS Bootloader v{}", env!("CARGO_PKG_VERSION"));
+    log::info!("NeoDOS Bootloader v{} (git {})", env!("CARGO_PKG_VERSION"), env!("NEODOS_GIT_REV"));
     log::info!("========================================");
 
     // 1. Get GOP Framebuffer

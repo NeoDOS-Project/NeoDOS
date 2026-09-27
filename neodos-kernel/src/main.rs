@@ -79,7 +79,13 @@ use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
 use vfs::io::{IoStack, PageCacheLevel};
 use crate::log::LogSubsys;
 
-pub const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
+pub const KERNEL_VERSION: &str = concat!(
+    "NeoDOS Kernel v",
+    env!("CARGO_PKG_VERSION"),
+    " (git ",
+    env!("NEODOS_GIT_REV"),
+    ") - The Rusty DOS Revival"
+);
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
 const KERNEL_VERSION_CODE: u32 = (10) << 8 | 5; // v0.10.5

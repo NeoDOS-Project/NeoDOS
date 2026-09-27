@@ -32,6 +32,15 @@
   index uses a cheap atomic guard instead of an MSR read. This removes a global
   contention point that dominated command latency. Related: #119.
 
+### Build
+
+- **Git revision embedded in version strings** — the kernel banner and
+  `ver.nxe` (via `\Global\Info\Version`) now print
+  `NeoDOS Kernel v<version> (git <short-sha>[-dirty])`, and the bootloader
+  banner includes the same revision. Falls back to `unknown` when git is
+  unavailable (CI, tarball). See `neodos-kernel/build.rs` and
+  `neodos-bootloader/build.rs`.
+
 ### Notes
 
 - CPU% is interval-based and approximate in cadence (scheduling jitter), never
@@ -54,6 +63,20 @@
   snapshot through an additive `ObInfoClass::ProcessSnapshot = 26`
   (`\Global\Info\Processes`); fixed-width, pointer-free ABI records; prints
   PID/PROCESS/TID/THREAD/STATE/CPU with current/idle markers.
+
+### Changed
+
+- **AP scheduling enabled by default (`smp-ap-sched`)** — APs now run the
+  scheduler (default `Cargo` features: `validation`, `smp-ap-sched`, since
+  2026-09-26). A cooperative yield records intent (`Kthread.yield_requested`),
+  and the timer/syscall switch-out saves `rsp` before publishing, so a `Ready`
+  thread stays migratable. See `docs/development/net-recovery-2026-09-26.md`.
+- **Network recovery (e1000 NEM)** — fixed the `hst_register_network_device`
+  ABI mismatch (5 vs 9 args), descriptor-ring DMA alignment, and DHCP service
+  activation; `netd` now runs on an AP. Validated in QEMU (SLiRP: DHCP DORA,
+  `10.0.1.80/24`) and VirtualBox (bridged 82540EM). See
+  `docs/development/net-recovery-2026-09-26.md` and
+  `docs/development/net-recovery-vbox-validation-2026-09-26.md`.
 
 ### Notes
 
