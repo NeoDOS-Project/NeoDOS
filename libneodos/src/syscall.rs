@@ -740,7 +740,11 @@ pub fn sys_ob_query_thread_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
 //   buffer = [ProcSnapshotHeader][ProcessInfoRaw; process_returned]
 //                              [ThreadInfoRaw; thread_returned]
 /// Version of the process/thread snapshot ABI.
-pub const PROC_SNAPSHOT_VERSION: u32 = 1;
+///
+/// v2 (Phase 15-A.1) appends the authoritative per-process/thread CPU execution
+/// counter. Not byte-compatible with v1 (header + record sizes differ), so both
+/// sides validate the version and entry sizes before parsing.
+pub const PROC_SNAPSHOT_VERSION: u32 = 2;
 /// Maximum name bytes exposed (matches the kernel `KernelName` bound).
 pub const PROC_NAME_MAX: usize = 32;
 /// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
@@ -769,13 +773,15 @@ impl ProcSnapshotHeader {
     }
 }
 
-/// One process record (40 bytes).
+/// One process record (48 bytes).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ProcessInfoRaw {
     pub pid: u32,
     pub name: [u8; PROC_NAME_MAX],
     pub thread_count: u32,
+    /// CPU execution counter (timer intervals); Δ between snapshots → CPU%.
+    pub cpu_time: u64,
 }
 
 impl ProcessInfoRaw {
@@ -784,7 +790,7 @@ impl ProcessInfoRaw {
     }
 }
 
-/// One thread record (48 bytes). `state` uses the kernel `ThreadState::to_u8`
+/// One thread record (56 bytes). `state` uses the kernel `ThreadState::to_u8`
 /// encoding (0 Ready, 1 Running, 2 Blocked, 3 Suspended, 4 Terminated).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -797,6 +803,8 @@ pub struct ThreadInfoRaw {
     pub is_current: u8,
     pub _pad: u8,
     pub cpu: u32,
+    /// CPU execution counter (timer intervals). Idle threads report 0.
+    pub cpu_time: u64,
 }
 
 impl ThreadInfoRaw {

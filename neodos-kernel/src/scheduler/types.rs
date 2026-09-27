@@ -180,7 +180,17 @@ pub struct Kthread {
     pub tid: u32,
     pub pid: u32,
     pub state: ThreadState,
+    /// Phase 14-A legacy counter: number of timer ticks observed while this
+    /// thread was `Running`. This is a *tick count*, not execution time
+    /// (see `cpu_time`); kept for ABI/`ThreadStatsEntry` compatibility.
     pub cpu_ticks: u64,
+    /// Phase 15-A.1: authoritative monotonic CPU execution counter, in timer
+    /// intervals. Only advances while this thread is `Running` (never for
+    /// idle threads). `u64::MAX`/`CPU_TIME_UNSET` means "not accumulating".
+    pub cpu_time: u64,
+    /// Per-CPU tick value captured when `cpu_time` was last refreshed
+    /// (dispatch/tick). `u64::MAX` when the thread is not accumulating.
+    pub cpu_time_base: u64,
     pub waiting_for: Option<u64>,
     pub priority: u8,
     pub time_slice_remaining: u16,
@@ -220,6 +230,7 @@ impl fmt::Debug for Kthread {
             .field("rsp", &self.rsp)
             .field("state", &self.state)
             .field("cpu_ticks", &self.cpu_ticks)
+            .field("cpu_time", &self.cpu_time)
             .field("priority", &self.priority)
             .field("time_slice_remaining", &self.time_slice_remaining)
             .field("kernel_stack_top", &self.kernel_stack_top)
@@ -229,6 +240,9 @@ impl fmt::Debug for Kthread {
 }
 
 impl Kthread {
+    /// Sentinel for `cpu_time`/`cpu_time_base`: the thread is not accumulating.
+    pub const CPU_TIME_UNSET: u64 = u64::MAX;
+
     pub fn take_kernel_stack(&mut self) -> Option<Box<crate::scheduler::stack::AlignedKStack>> {
         self.kernel_stack.take()
     }

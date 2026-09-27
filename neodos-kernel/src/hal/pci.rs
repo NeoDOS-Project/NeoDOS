@@ -119,8 +119,22 @@ pub fn register_tests() {
         let r1 = ecam_address(0, 0x1F, 0, 0);
         let r2 = ecam_address(1, 0, 0, 0);
         let r3 = ecam_address(0, 0, 7, 0xFF);
-        ECAM_ACTIVE.store(false, Ordering::SeqCst);
-        ECAM_BASE.store(0, Ordering::SeqCst);
+        // Restore the real ECAM state captured at boot. `ecam_address_calc`
+        // hijacked ECAM_BASE for address arithmetic; failing to restore it left
+        // config-space accesses reading unmapped MMIO (0xFFFF) for any test that
+        // runs before `ecam_read_match_legacy_pio`.
+        let boot_active = ECAM_ACTIVE.load(Ordering::SeqCst);
+        if let Some((base, _seg, _start, _end)) = crate::timers::hpet::get_ecam_info() {
+            if boot_active {
+                set_ecam_base(base);
+            } else {
+                ECAM_BASE.store(0, Ordering::SeqCst);
+                ecam_deactivate();
+            }
+        } else {
+            ECAM_BASE.store(0, Ordering::SeqCst);
+            ecam_deactivate();
+        }
         test_eq!(r0, 0xE000_0000);
         test_eq!(r1, 0xE000_0000 | ((0x1F_u64) << 15));
         test_eq!(r2, 0xE000_0000 | (1u64 << 20));
@@ -136,10 +150,20 @@ pub fn register_tests() {
         }
     });
 
-    test_case!("ecam_fallback_to_pio_if_no_mcfg", {
-        let vendor = crate::drivers::pci::pci_config_read_word(0, 0, 0, 0);
-        test_ne!(vendor, 0xFFFF);
-        test_ne!(vendor, 0);
+    test_case!("pci_config_access_returns_vendor", {
+        // Invariant: config space for host bridge 00:00.0 is reachable through
+        // whichever path is active. QEMU/q35 exposes a host bridge there; in
+        // VirtualBox (ICH9) 00:00.0 is absent, so probe for any populated device
+        // on bus 0 instead.
+        let mut found = false;
+        for dev in 0..32 {
+            let v = crate::drivers::pci::pci_config_read_word(0, dev, 0, 0);
+            if v != 0xFFFF && v != 0 {
+                found = true;
+                break;
+            }
+        }
+        test_true!(found);
     });
 
     test_case!("ecam_read_match_legacy_pio", {

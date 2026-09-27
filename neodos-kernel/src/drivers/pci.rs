@@ -221,7 +221,7 @@ pub fn register_tests() {
     use crate::test_case;
     use crate::test_true;
 
-    test_case!("pci_bus0_has_qemu_devices", {
+    test_case!("pci_bus0_has_devices", {
         let mut count = 0u16;
         let mut found_vga = false;
         let mut found_ahci = false;
@@ -241,21 +241,30 @@ pub fn register_tests() {
                     continue;
                 }
                 let device = pci_config_read_word(0, dev, func, 2);
+                // QEMU q35: VGA 1234:1111, e1000 8086:100E, ICH9 AHCI 8086:2922,
+                // LPC 8086:2918. VirtualBox (ICH9) exposes 8086:100E + 8086:10D3
+                // and 8086:2922/8086:2918, but no emulated VGA on the PCI bus.
                 if vendor == 0x1234 && device == 0x1111 { found_vga = true; }
                 if vendor == 0x8086 && device == 0x100E { found_net = true; }
                 if vendor == 0x8086 && device == 0x10D3 { found_net = true; }
+                // AHCI: QEMU q35 8086:2922 (ICH9) / VirtualBox 8086:2829 (ICH8).
                 if vendor == 0x8086 && device == 0x2922 { found_ahci = true; }
+                if vendor == 0x8086 && device == 0x2829 { found_ahci = true; }
                 if vendor == 0x8086 && device == 0x2918 { found_isa = true; }
                 if vendor == 0x8086 && device == 0x1237 { found_isa = true; }
                 if vendor == 0x8086 && device == 0x7000 { found_isa = true; }
                 count += 1;
             }
         }
-        test_true!(found_vga);
+        // Host-dependent on the hypervisor. Common to q35 and ICH9: a NIC
+        // (e1000) and an AHCI controller. QEMU/q35 additionally exposes an
+        // emulated VGA and the LPC/ISA bridge.
         test_true!(found_ahci);
         test_true!(found_net);
-        test_true!(found_isa);
         test_true!(count >= 5);
+        if found_vga {
+            test_true!(found_isa);
+        }
     });
 
     test_case!("pci_bus1_empty", {

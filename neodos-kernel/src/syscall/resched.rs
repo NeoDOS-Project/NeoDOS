@@ -16,16 +16,31 @@ static SAVED_USER_RSP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
 static SAVED_USER_RIP: [AtomicU64; crate::arch::x64::cpu_local::MAX_CPUS] =
     [const { AtomicU64::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
 
-/// Index of the CPU currently executing the syscall path. Falls back to 0
-/// before GS is programmed (early boot / unit tests).
+/// Index of the CPU currently executing the syscall path.
+///
+/// Syscalls only execute from Ring 3, which is reachable only after per-CPU
+/// data is online, so `%gs:0` is a valid, cheap CPU id here. The former
+/// `GsBase::read()` guard was an MSR read on *every* syscall; a single atomic
+/// load replaces it.
 #[inline]
 fn syscall_frame_cpu() -> usize {
-    if crate::hal::safe::GsBase::read() == 0 {
+    if crate::arch::x64::cpu_local::cpu_count() == 0 {
         return 0;
     }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() as usize };
     if cpu < crate::arch::x64::cpu_local::MAX_CPUS { cpu } else { 0 }
 }
+
+/// Maximum number of `[SYSCALL_CORRUPT]` reports emitted.
+///
+/// The check is a best-effort heuristic: the saved frame is per-CPU, so a
+/// blocking syscall that is preempted and has another thread run a syscall on
+/// the same CPU before it resumes legitimately differs. The syscall's real
+/// return frame lives on the kernel stack, so this is diagnostics, not a
+/// functional error. Uncapped, the report floods the serial port on every such
+/// switch and dominates command latency.
+const MAX_CORRUPT_REPORTS: u64 = 16;
+static CORRUPT_REPORTS: AtomicU64 = AtomicU64::new(0);
 
 #[no_mangle]
 pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
@@ -38,15 +53,6 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         let user_rsp = if cs & 3 == 3 { *frame.add(3) } else { 0 };
         (rip, cs, rflags, user_rsp)
     };
-    let need = crate::syscall::NEED_RESCHED.load(Ordering::SeqCst);
-    let (tid, pid, state) = crate::hal::without_interrupts(|| {
-        let s = scheduler::current_scheduler();
-        let lock = s.lock();
-        let tid = lock.current_tid_for_this_cpu();
-        let pid = lock.current_pid();
-        let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
-        (tid, pid, state)
-    });
 
     let cpu = syscall_frame_cpu();
 
@@ -59,24 +65,35 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
         let saved_rsp = SAVED_USER_RSP[cpu].load(Ordering::Relaxed);
         let saved_rip = SAVED_USER_RIP[cpu].load(Ordering::Relaxed);
         if saved_rsp != user_rsp || saved_rip != rip {
-            crate::serial_println!(
-                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
-            kerror!(LogSubsys::Syscall,
-                "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
-                cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+            // Take the scheduler lock only for a report that will actually be
+            // printed; doing it on the common path made every syscall a global
+            // contention point.
+            if CORRUPT_REPORTS.fetch_add(1, Ordering::Relaxed) < MAX_CORRUPT_REPORTS {
+                let (tid, pid) = crate::hal::without_interrupts(|| {
+                    let lock = scheduler::current_scheduler().lock();
+                    (lock.current_tid_for_this_cpu(), lock.current_pid())
+                });
+                crate::serial_println!(
+                    "[SYSCALL_CORRUPT] cpu={} pid={} tid={} RIP saved=0x{:x} now=0x{:x} RSP saved=0x{:x} now=0x{:x}",
+                    cpu, pid, tid, saved_rip, rip, saved_rsp, user_rsp);
+            }
         }
     }
 
-    // Solo en modo trazas (LOG_SYSCALL=TRACE) — evita spam en boot normal
+    // High-frequency frame dump: only under LOG_SYSCALL=TRACE.
     if crate::log::log_enabled(crate::log::LogSubsys::Syscall, crate::log::LogLevel::Trace) {
+        let need = crate::syscall::NEED_RESCHED.load(Ordering::SeqCst);
+        let (tid, pid, state) = crate::hal::without_interrupts(|| {
+            let lock = scheduler::current_scheduler().lock();
+            let tid = lock.current_tid_for_this_cpu();
+            let pid = lock.current_pid();
+            let state = lock.find_kthread(tid).map(|k| k.state.to_u8());
+            (tid, pid, state)
+        });
         crate::serial_println!(
             "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
             phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
     }
-    ktrace!(LogSubsys::Syscall,
-        "[SYSCALL_FRAME] phase={} pid={} tid={} rip=0x{:x} cs=0x{:x} rsp=0x{:x} rflags=0x{:x} need_resched={} state={}",
-        phase, pid, tid, rip, cs, user_rsp, rflags, need, state.unwrap_or(255));
 }
 
 #[no_mangle]

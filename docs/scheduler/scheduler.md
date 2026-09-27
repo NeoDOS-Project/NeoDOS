@@ -153,6 +153,63 @@ queue. The next `schedule()` call finds it via the global priority scan.
 
 ---
 
+## CPU Execution Accounting (Phase 15-A.1)
+
+Every schedulable thread carries an **authoritative monotonic CPU execution
+counter**, `Kthread.cpu_time`, maintained by `src/scheduler/accounting.rs`.
+`neotop v0.2` divides the delta of that counter by the *actual* elapsed wall
+time to obtain a real CPU percentage.
+
+### Time unit and base
+
+One accounting unit == one timer tick interval. Each CPU runs its own periodic
+local-APIC timer at the same BSP-calibrated rate, so one interval of execution
+on any CPU adds exactly one unit. The free-running base for the current CPU is
+`KPRCB.timer_tick_count`, read via `this_cpu_timer_tick_count()`. The counter is
+maintained **per thread**, so:
+
+- Migration is free: a thread dispatched on CPU1 is re-armed against CPU1's
+  counter and keeps the total accumulated on CPU0.
+- There is no global accounting lock and no O(n) scan: the hot path is one
+  addition on the current thread, under the scheduler lock the caller already
+  holds.
+
+### Accounting boundaries
+
+| Boundary | Where | Effect |
+|----------|-------|--------|
+| Dispatch (switch-in) | `schedule_with` success (run queue, steal, global scan) | `mark_dispatch`: arm `cpu_time_base` |
+| Timer tick (while Running) | `on_timer_tick` | `account_tick`: fold elapsed interval into `cpu_time` |
+| Voluntary yield / block | next `account_tick` after re-dispatch | the in-flight interval is **not** charged (see below) |
+
+A thread is only ever refreshed while it is the current thread of a CPU, so
+`Running → Ready` and `Running → Blocked` cannot double-count: the switch-out
+path stops the clock, and re-dispatch re-arms it. Idle threads
+(`Kthread.is_idle`) are excluded at both boundaries, so idle CPU is never
+attributed to the PID-0 process.
+
+### Reading the counter
+
+`accounting::cpu_time_now(k, owner)` resolves the counter as of "now" by folding
+the in-flight interval without mutating the thread. The fold is taken against
+the **owning CPU's** counter (each CPU's `KPRCB.timer_tick_count` has its own
+origin), so a thread running on another CPU is accounted correctly and a
+switched-out thread returns its stored value. This is what
+`Scheduler::snapshot_into` uses; **process** CPU time is the sum of its threads'
+resolved counters (there is no independent process counter to drift).
+
+### Semantics
+
+- The counter is **monotonic**: it never decreases.
+- Process CPU% may exceed 100% on SMP: a process with threads on N CPUs can
+  approach N×100%. It is never clamped.
+- CPU% is an **interval-based** measurement; the first sample of a new interval
+  (or a process that just appeared) has no meaningful delta and is reported N/A.
+- `cpu_ticks` (the older per-thread field) is a *tick count*, not execution time,
+  and is kept only for the `ThreadStatsEntry` ABI.
+
+---
+
 ## Per-CPU Run Queues
 
 ```rust
@@ -362,11 +419,13 @@ the logical process/thread registry (`Scheduler.eprocesses` /
   does not appear. `Terminated`-but-not-yet-reaped threads remain visible with
   `state == Terminated`.
 - Snapshot model: bounded, owned copies — `ProcessSnapshot { pid, name,
-  thread_count }` and `ThreadSnapshot { tid, pid, name, state, cpu, idle,
-  is_current }`. Names reuse `KernelName` (`NAME_MAX = 32`); no references into
-  live objects and no heap allocation proportional to string length. The
-  container is fixed-capacity (`MAX_SNAPSHOT_PROCESSES` /
+  thread_count, cpu_time }` and `ThreadSnapshot { tid, pid, name, state, cpu,
+  idle, is_current, cpu_time }`. Names reuse `KernelName` (`NAME_MAX = 32`); no
+  references into live objects and no heap allocation proportional to string
+  length. The container is fixed-capacity (`MAX_SNAPSHOT_PROCESSES` /
   `MAX_SNAPSHOT_THREADS`) and sets `truncated` when the registry is larger.
+  `cpu_time` is the Phase 15-A.1 monotonic execution counter (see "CPU Execution
+  Accounting" above); process `cpu_time` is the sum over its threads.
 - Consistency: all fields are copied while the global `SCHEDULER` mutex is held;
   the lock is released before the snapshot is formatted or printed (no console
   I/O under a lock). `KPRCB.current_thread` is written under the same mutex, so

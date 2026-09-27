@@ -386,6 +386,7 @@ impl Scheduler {
                         }
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
+                        Self::account_dispatch(k);
                         if (tid == 5 || prev == 5) && sched_forensic_verbose() {
                             crate::serial_println!("[T5_SCHED] step=1 prev={} new={} current={} rq0={} kprcb={:?}",
                                 prev, tid, self.current_tid, rq_len(0),
@@ -431,6 +432,7 @@ impl Scheduler {
                         }
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
+                        Self::account_dispatch(k);
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
@@ -505,6 +507,7 @@ impl Scheduler {
                         }
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
+                        Self::account_dispatch(k);
                         picked_ptr = &mut **k as *mut Kthread;
                         picked_pid = k.pid;
                         picked_tid = k.tid;
@@ -582,6 +585,22 @@ impl Scheduler {
 
     // ── Timer tick ──
 
+    /// Phase 15-A.1: account a thread that is about to be committed `Running`.
+    ///
+    /// Called at every successful dispatch (run-queue fast path, work steal and
+    /// global scan). Terminated threads are skipped — a dead thread cannot
+    /// execute. Idle threads are not armed here (they are dispatched by the
+    /// idle-fallback path); their execution is never attributed to a process.
+    /// Must be called with the scheduler lock held. No `&self` so it can be used
+    /// while a mutable borrow of a Kthread from `self.kthreads` is live.
+    #[inline]
+    fn account_dispatch(k: &mut Kthread) {
+        if k.is_idle || k.state == ThreadState::Terminated {
+            k.cpu_time_base = Kthread::CPU_TIME_UNSET;
+            return;
+        }
+        crate::scheduler::accounting::mark_dispatch(k);
+    }
 
     pub fn on_timer_tick(&mut self, current_rsp: u64) {
         if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed) {
@@ -599,10 +618,17 @@ impl Scheduler {
 
         let mut needs_resched = false;
         let mut expired_priority: u8 = 0;
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
         if let Some(k) = self.current_kthread_mut() {
             let state_before = k.state.to_u8();
             if k.state == ThreadState::Running {
                 k.cpu_ticks += 1;
+                // Phase 15-A.1: charge the elapsed interval to the thread that
+                // actually executed it. Idle threads are excluded so idle CPU
+                // is never attributed to a process.
+                if !k.is_idle {
+                    crate::scheduler::accounting::account_tick(k);
+                }
 
                 if k.time_slice_remaining > 0 {
                     k.time_slice_remaining -= 1;
@@ -614,7 +640,7 @@ impl Scheduler {
                     k.yield_requested = false;
                     k.rsp = current_rsp;
                     // Re-home to the CPU that actually ran it before enqueueing.
-                    k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                    k.cpu = this_cpu;
                     if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);
                     }

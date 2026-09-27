@@ -13,7 +13,10 @@ mod logic;
 
 use core::mem::size_of;
 use libneodos::i18n;
-use libneodos::syscall::{self, CpuStatsEntry, ProcessInfoRaw, ProcSnapshotHeader, StatsHeader, ThreadInfoRaw, PROC_SNAPSHOT_VERSION};
+use libneodos::syscall::{
+    self, CpuStatsEntry, ProcessInfoRaw, ProcSnapshotHeader, StatsHeader, ThreadInfoRaw,
+    PROC_SNAPSHOT_VERSION,
+};
 use libneodos::tr_id;
 
 const APP_NAME: &str = "neotop";
@@ -25,44 +28,44 @@ const IDS_USAGE_LINE3: u32 = 1003;
 const IDS_USAGE_LINE4: u32 = 1004;
 const IDS_TITLE: u32 = 1005;
 const IDS_COL_PID: u32 = 1006;
-const IDS_COL_STATE: u32 = 1008;
-const IDS_COL_PRI: u32 = 1009;
-const IDS_CPUS: u32 = 1012;
 const IDS_THREADS: u32 = 1013;
-const IDS_COL_CPU: u32 = 1014;
-const IDS_COL_APIC: u32 = 1015;
-const IDS_COL_ONLINE: u32 = 1016;
-const IDS_COL_TICKS: u32 = 1017;
-const IDS_COL_CTXSW: u32 = 1018;
-const IDS_COL_IRQ: u32 = 1019;
-const IDS_COL_TID: u32 = 1020;
-const IDS_YES: u32 = 1021;
-const IDS_NO: u32 = 1022;
 const IDS_NA: u32 = 1023;
 const IDS_TRUNCATED: u32 = 1024;
 const IDS_ERR_STATS: u32 = 1025;
+const IDS_COL_PROCESS: u32 = 1026;
+const IDS_COL_THREAD: u32 = 1027;
+const IDS_COL_STATE: u32 = 1028;
+const IDS_COL_CPU: u32 = 1029;
+const IDS_COL_CPUPCT: u32 = 1030;
+const IDS_COL_CUR: u32 = 1031;
+const IDS_COL_IDLE: u32 = 1032;
+const IDS_HELP_QUIT: u32 = 1033;
+const IDS_HELP_REFRESH: u32 = 1034;
 
-/// Must be >= the kernel's `cpu_local::MAX_CPUS`.
-const CPU_MAX: usize = 16;
 /// Must be >= the kernel's `MAX_SNAPSHOT_PROCESSES`.
 const PROC_SNAP_MAX: usize = 64;
 /// Must be >= the kernel's `MAX_SNAPSHOT_THREADS`.
 const THREAD_SNAP_MAX: usize = 128;
 
-const CPU_BUF_LEN: usize = size_of::<StatsHeader>() + size_of::<CpuStatsEntry>() * CPU_MAX;
 const PROC_BUF_LEN: usize = size_of::<ProcSnapshotHeader>()
     + size_of::<ProcessInfoRaw>() * PROC_SNAP_MAX
     + size_of::<ThreadInfoRaw>() * THREAD_SNAP_MAX;
 
-/// Output accumulator: sized for help + CPU section + full process/thread
-/// table (~128 rows).
+/// Room for the stats header plus one CPU entry. Entries are emitted in CPU
+/// order, so a single-entry buffer yields CPU0 (the BSP) — the wall clock.
+const CPU_BUF_LEN: usize = size_of::<StatsHeader>() + size_of::<CpuStatsEntry>();
+
+/// Output accumulator: sized for title + process/thread table (~128 rows).
 const OUT_CAP: usize = 16384;
 static mut OUT: [u8; OUT_CAP] = [0u8; OUT_CAP];
 static mut OUT_LEN: usize = 0;
 
+/// Approximate refresh interval, in timer ticks (1 tick = 1 ms). This only
+/// paces the refresh; the CPU percentage uses the *measured* wall interval (see
+/// `read_wall_tick`), never this constant.
+const REFRESH_TICKS: u64 = 1000;
+
 fn write_str(s: &[u8]) {
-    // Buffer all output and flush in one sys_write so concurrent processes
-    // cannot tear the table between fields (each write is a separate syscall).
     unsafe {
         let len = OUT_LEN;
         let space = OUT_CAP - len;
@@ -127,31 +130,21 @@ fn write_u32_field(v: u32, width: usize) {
     write_field_right(bytes, width);
 }
 
-fn write_u64_field(v: u64, width: usize) {
-    let mut buf = [0u8; 20];
-    let bytes = u64_bytes(v, &mut buf);
-    write_field_right(bytes, width);
-}
-
-fn read_header(buf: &[u8]) -> Option<StatsHeader> {
-    if buf.len() < size_of::<StatsHeader>() {
-        return None;
-    }
-    Some(unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) })
-}
-
-/// Validate the snapshot header against the struct this binary was built with.
-/// Guards against a kernel/libneodos layout drift instead of misparsing.
-fn header_matches<T>(hdr: &StatsHeader) -> bool {
-    hdr.version == syscall::STATS_VERSION && hdr.entry_size as usize == size_of::<T>()
-}
-
-fn read_entry<T: Copy>(buf: &[u8], index: usize) -> Option<T> {
-    let off = size_of::<StatsHeader>() + index * size_of::<T>();
-    if off + size_of::<T>() <= buf.len() {
-        Some(unsafe { core::ptr::read_unaligned(buf.as_ptr().add(off) as *const T) })
-    } else {
-        None
+/// Write a `×10` percentage (e.g. `1374` → `"137.4"`), or the localized N/A.
+fn write_percent_x10(pct: Option<u64>) {
+    match pct {
+        None => write_field_right(tr_id!(IDS_NA).as_bytes(), 8),
+        Some(v) => {
+            let whole = v / 10;
+            let frac = v % 10;
+            let mut buf = [0u8; 20];
+            let wb = u64_bytes(whole, &mut buf);
+            write_pad(logic::pad_width(wb.len() + 2, 8));
+            write_str(wb);
+            write_str(b".");
+            let d = [b'0' + frac as u8];
+            write_str(&d);
+        }
     }
 }
 
@@ -165,68 +158,15 @@ fn print_help() {
     write_str(b"\r\n");
     write_str(tr_id!(IDS_USAGE_LINE4).as_bytes());
     write_str(b"\r\n\r\n");
+    write_str(tr_id!(IDS_HELP_QUIT).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_HELP_REFRESH).as_bytes());
+    write_str(b"\r\n\r\n");
 }
 
 fn print_unavailable() {
     write_str(tr_id!(IDS_ERR_STATS).as_bytes());
     write_str(b"\r\n");
-}
-
-/// Render the `CpuStats` section. Only fields the kernel actually exposes are
-/// printed; no CPU% is computed (see docs/kernel/objects.md).
-fn render_cpus(buf: &[u8]) {
-    let hdr = match read_header(buf) {
-        Some(h) if header_matches::<CpuStatsEntry>(&h) => h,
-        _ => return print_unavailable(),
-    };
-
-    write_str(tr_id!(IDS_CPUS).as_bytes());
-    write_str(b": ");
-    write_u32_field(hdr.total, 1);
-    write_str(b"\r\n");
-
-    write_field_right(tr_id!(IDS_COL_CPU).as_bytes(), 3);
-    write_str(b"  ");
-    write_field_right(tr_id!(IDS_COL_APIC).as_bytes(), 4);
-    write_str(b"  ");
-    write_field_left(tr_id!(IDS_COL_ONLINE).as_bytes(), 6);
-    write_str(b"  ");
-    write_field_right(tr_id!(IDS_COL_TICKS).as_bytes(), 12);
-    write_str(b"  ");
-    write_field_right(tr_id!(IDS_COL_CTXSW).as_bytes(), 11);
-    write_str(b"  ");
-    write_field_right(tr_id!(IDS_COL_IRQ).as_bytes(), 11);
-    write_str(b"\r\n");
-    write_str(b"---  ----  ------  ------------  -----------  -----------\r\n");
-
-    for i in 0..hdr.returned as usize {
-        if let Some(e) = read_entry::<CpuStatsEntry>(buf, i) {
-            write_u32_field(e.cpu_id, 3);
-            write_str(b"  ");
-            write_u32_field(e.apic_id, 4);
-            write_str(b"  ");
-            write_field_left(
-                if e.is_online() {
-                    tr_id!(IDS_YES).as_bytes()
-                } else {
-                    tr_id!(IDS_NO).as_bytes()
-                },
-                6,
-            );
-            write_str(b"  ");
-            write_u64_field(e.timer_tick_count, 12);
-            write_str(b"  ");
-            write_u64_field(e.context_switch_count, 11);
-            write_str(b"  ");
-            write_u64_field(e.interrupt_count, 11);
-            write_str(b"\r\n");
-        }
-    }
-
-    if logic::is_truncated(hdr.returned, hdr.total) {
-        write_str(tr_id!(IDS_TRUNCATED).as_bytes());
-        write_str(b"\r\n");
-    }
 }
 
 /// Copy a fixed 32-byte kernel name field into a `&str` (stops at NUL).
@@ -235,89 +175,146 @@ fn bytes_to_str(n: &[u8]) -> &str {
     core::str::from_utf8(&n[..end]).unwrap_or("")
 }
 
-/// Look up a process record's name by PID (returns the raw bounded field).
-fn find_process_name(
-    buf: &[u8],
-    hdr: &ProcSnapshotHeader,
+struct SnapshotView<'a> {
+    hdr: ProcSnapshotHeader,
+    buf: &'a [u8],
     pbase: usize,
-    pid: u32,
-) -> [u8; syscall::PROC_NAME_MAX] {
-    for i in 0..hdr.process_returned as usize {
-        let off = pbase + i * size_of::<ProcessInfoRaw>();
-        if off + size_of::<ProcessInfoRaw>() > buf.len() {
-            break;
-        }
-        let p = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr().add(off) as *const ProcessInfoRaw)
-        };
-        if p.pid == pid {
-            return p.name;
-        }
-    }
-    [0u8; syscall::PROC_NAME_MAX]
+    tbase: usize,
 }
 
-/// Render the coherent process/thread snapshot (Phase 15-A). Threads carry
-/// their owning process name; idle/current come from the kernel-provided
-/// `is_idle` / `is_current` flags, never inferred from `state`.
-fn render_snapshot(buf: &[u8]) {
-    if buf.len() < size_of::<ProcSnapshotHeader>() {
-        return print_unavailable();
-    }
-    let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader) };
-    // Reject a layout this binary was not built against instead of misparsing.
-    if !logic::proc_header_matches(
-        hdr.version,
-        hdr.process_entry_size,
-        hdr.thread_entry_size,
-        PROC_SNAPSHOT_VERSION,
-        size_of::<ProcessInfoRaw>() as u32,
-        size_of::<ThreadInfoRaw>() as u32,
-    ) {
-        return print_unavailable();
+impl<'a> SnapshotView<'a> {
+    fn parse(buf: &'a [u8]) -> Option<Self> {
+        if buf.len() < size_of::<ProcSnapshotHeader>() {
+            return None;
+        }
+        let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const ProcSnapshotHeader) };
+        if !logic::proc_header_matches(
+            hdr.version,
+            hdr.process_entry_size,
+            hdr.thread_entry_size,
+            PROC_SNAPSHOT_VERSION,
+            size_of::<ProcessInfoRaw>() as u32,
+            size_of::<ThreadInfoRaw>() as u32,
+        ) {
+            return None;
+        }
+        let pbase = size_of::<ProcSnapshotHeader>();
+        let tbase = pbase + hdr.process_returned as usize * size_of::<ProcessInfoRaw>();
+        Some(SnapshotView { hdr, buf, pbase, tbase })
     }
 
-    let pbase = size_of::<ProcSnapshotHeader>();
-    let tbase = pbase + hdr.process_returned as usize * size_of::<ProcessInfoRaw>();
+    fn process(&self, index: usize) -> Option<ProcessInfoRaw> {
+        if index >= self.hdr.process_returned as usize {
+            return None;
+        }
+        let off = self.pbase + index * size_of::<ProcessInfoRaw>();
+        if off + size_of::<ProcessInfoRaw>() > self.buf.len() {
+            return None;
+        }
+        Some(unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(off) as *const ProcessInfoRaw)
+        })
+    }
+
+    fn thread(&self, index: usize) -> Option<ThreadInfoRaw> {
+        if index >= self.hdr.thread_returned as usize {
+            return None;
+        }
+        let off = self.tbase + index * size_of::<ThreadInfoRaw>();
+        if off + size_of::<ThreadInfoRaw>() > self.buf.len() {
+            return None;
+        }
+        Some(unsafe {
+            core::ptr::read_unaligned(self.buf.as_ptr().add(off) as *const ThreadInfoRaw)
+        })
+    }
+
+    fn find_process_name(&self, pid: u32) -> [u8; syscall::PROC_NAME_MAX] {
+        for i in 0..self.hdr.process_returned as usize {
+            if let Some(p) = self.process(i) {
+                if p.pid == pid {
+                    return p.name;
+                }
+            }
+        }
+        [0u8; syscall::PROC_NAME_MAX]
+    }
+
+    fn find_process_cpu_time(&self, pid: u32) -> u64 {
+        for i in 0..self.hdr.process_returned as usize {
+            if let Some(p) = self.process(i) {
+                if p.pid == pid {
+                    return p.cpu_time;
+                }
+            }
+        }
+        0
+    }
+}
+
+/// Render one frame. `history` holds the previous snapshot's per-process CPU
+/// counters (empty on the first frame), and `wall_delta` is the measured
+/// elapsed interval in timer units (0 on the first frame).
+fn render_frame(view: &SnapshotView, history: &logic::CpuHistory, wall_delta: u64, clear: bool) {
+    if clear {
+        // ANSI home + clear, mirroring `corecls` (no new console subsystem).
+        write_str(b"\x1b[2J\x1b[H");
+    }
+
+    write_str(tr_id!(IDS_TITLE).as_bytes());
+    write_str(b"\r\n\r\n");
 
     write_str(b"processes=");
-    write_u32_field(hdr.process_total, 1);
-    write_str(b"  threads=");
-    write_u32_field(hdr.thread_total, 1);
+    write_u32_field(view.hdr.process_total, 1);
+    write_str(b"  ");
+    write_str(tr_id!(IDS_THREADS).as_bytes());
+    write_str(b"=");
+    write_u32_field(view.hdr.thread_total, 1);
     if logic::proc_truncated(
-        hdr.flags,
-        hdr.process_returned,
-        hdr.process_total,
-        hdr.thread_returned,
-        hdr.thread_total,
+        view.hdr.flags,
+        view.hdr.process_returned,
+        view.hdr.process_total,
+        view.hdr.thread_returned,
+        view.hdr.thread_total,
     ) {
-        write_str(b"  [truncated]");
+        write_str(b"  ");
+        write_str(tr_id!(IDS_TRUNCATED).as_bytes());
     }
     write_str(b"\r\n\r\n");
 
-    write_field_right(b"PID", 5);
+    write_field_right(tr_id!(IDS_COL_PID).as_bytes(), 5);
     write_str(b"  ");
-    write_field_left(b"PROCESS", 14);
+    write_field_left(tr_id!(IDS_COL_PROCESS).as_bytes(), 14);
     write_str(b"  ");
     write_field_right(b"TID", 5);
     write_str(b"  ");
-    write_field_left(b"THREAD", 14);
+    write_field_left(tr_id!(IDS_COL_THREAD).as_bytes(), 14);
     write_str(b"  ");
-    write_field_left(b"STATE", 10);
+    write_field_left(tr_id!(IDS_COL_STATE).as_bytes(), 10);
     write_str(b"  ");
-    write_field_right(b"CPU", 3);
-    write_str(b"  C I\r\n");
-    write_str(b"-----  --------------  -----  --------------  ----------  ---  - -\r\n");
+    write_field_right(tr_id!(IDS_COL_CPUPCT).as_bytes(), 8);
+    write_str(b"  ");
+    write_field_right(tr_id!(IDS_COL_CPU).as_bytes(), 3);
+    write_str(b"  ");
+    write_field_left(tr_id!(IDS_COL_CUR).as_bytes(), 1);
+    write_str(b" ");
+    write_field_left(tr_id!(IDS_COL_IDLE).as_bytes(), 1);
+    write_str(b"\r\n");
+    write_str(b"-----  --------------  -----  --------------  ----------  --------  ---  - -\r\n");
 
-    for i in 0..hdr.thread_returned as usize {
-        let off = tbase + i * size_of::<ThreadInfoRaw>();
-        if off + size_of::<ThreadInfoRaw>() > buf.len() {
-            break;
-        }
-        let t = unsafe {
-            core::ptr::read_unaligned(buf.as_ptr().add(off) as *const ThreadInfoRaw)
+    for i in 0..view.hdr.thread_returned as usize {
+        let t = match view.thread(i) {
+            Some(t) => t,
+            None => break,
         };
-        let pname = find_process_name(buf, &hdr, pbase, t.pid);
+        let pname = view.find_process_name(t.pid);
+        // Process CPU% (not per-thread): derived from the owning process's
+        // aggregated monotonic CPU time over the measured wall interval.
+        let pct = logic::cpu_percent_x10(
+            history.prev(t.pid),
+            view.find_process_cpu_time(t.pid),
+            wall_delta,
+        );
         write_u32_field(t.pid, 5);
         write_str(b"  ");
         write_field_left(bytes_to_str(&pname).as_bytes(), 14);
@@ -326,7 +323,9 @@ fn render_snapshot(buf: &[u8]) {
         write_str(b"  ");
         write_field_left(t.name_str().as_bytes(), 14);
         write_str(b"  ");
-        write_field_left(t.state_str().as_bytes(), 10);
+        write_field_left(logic::thread_state_str(t.state).as_bytes(), 10);
+        write_str(b"  ");
+        write_percent_x10(pct);
         write_str(b"  ");
         write_u32_field(t.cpu, 3);
         write_str(b"  ");
@@ -336,15 +335,96 @@ fn render_snapshot(buf: &[u8]) {
         write_str(b"\r\n");
     }
 
-    if logic::proc_truncated(
-        hdr.flags,
-        hdr.process_returned,
-        hdr.process_total,
-        hdr.thread_returned,
-        hdr.thread_total,
-    ) {
-        write_str(tr_id!(IDS_TRUNCATED).as_bytes());
-        write_str(b"\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_HELP_QUIT).as_bytes());
+    write_str(b"   ");
+    write_str(tr_id!(IDS_HELP_REFRESH).as_bytes());
+    write_str(b"\r\n");
+
+    flush_output();
+}
+
+/// Read the BSP's monotonic timer-tick counter, the wall-clock reference for
+/// CPU%. It advances once per timer interval on CPU0 — the same unit as every
+/// thread's `cpu_time` — so `Δcpu / Δwall` needs no unit conversion. Returns
+/// `None` when the stats class is unavailable or reports an unexpected layout.
+fn read_wall_tick(cpu_fd: u8, buf: &mut [u8]) -> Option<u64> {
+    let n = syscall::sys_ob_query_cpu_stats(cpu_fd, buf).ok()?;
+    if n < CPU_BUF_LEN {
+        return None;
+    }
+    let hdr = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const StatsHeader) };
+    if hdr.version != syscall::STATS_VERSION
+        || hdr.entry_size as usize != size_of::<CpuStatsEntry>()
+        || hdr.returned == 0
+    {
+        return None;
+    }
+    let e = unsafe {
+        core::ptr::read_unaligned(
+            buf.as_ptr().add(size_of::<StatsHeader>()) as *const CpuStatsEntry,
+        )
+    };
+    Some(e.timer_tick_count)
+}
+
+/// Cooperative refresh wait. Polls stdin (non-blocking: the kernel reports it
+/// readable only when a byte is queued) and yields the CPU between polls, so a
+/// waiting neotop never busy-spins. Returns early on a key, or once the real
+/// wall clock has advanced by `REFRESH_TICKS` since `frame_wall`. If no clock is
+/// available it falls back to a bounded yield count rather than spinning forever.
+fn wait_for_input_or_refresh(
+    cpu_fd: Option<u8>,
+    cpu_buf: &mut [u8],
+    frame_wall: Option<u64>,
+) -> WaitResult {
+    let mut spins: u64 = 0;
+    loop {
+        if let Some(k) = poll_key() {
+            return match k {
+                b'q' | b'Q' => WaitResult::Quit,
+                _ => WaitResult::Refresh,
+            };
+        }
+        // Give other threads the CPU. The timer preempts us, so yield is a real
+        // wait, not a busy loop.
+        syscall::sys_yield();
+        spins = spins.wrapping_add(1);
+        // Probe the clock every few yields to keep syscall overhead low.
+        if spins % 8 != 0 {
+            continue;
+        }
+        match (frame_wall, cpu_fd.and_then(|fd| read_wall_tick(fd, cpu_buf))) {
+            (Some(start), Some(now)) => {
+                if now.saturating_sub(start) >= REFRESH_TICKS {
+                    return WaitResult::Refresh;
+                }
+            }
+            // No usable clock: bounded fallback.
+            _ if spins >= REFRESH_TICKS.saturating_mul(8) => return WaitResult::Refresh,
+            _ => {}
+        }
+    }
+}
+
+enum WaitResult {
+    Quit,
+    Refresh,
+}
+
+/// Non-blocking key probe: only reads when `sys_poll` reports a queued byte, so
+/// the thread is never parked by an empty read.
+fn poll_key() -> Option<u8> {
+    let mut fds = [syscall::PollFd { fd: 0, events: syscall::POLLIN, revents: 0 }];
+    match syscall::sys_poll(&mut fds, 0) {
+        Ok(1) if fds[0].revents & syscall::POLLIN != 0 => {
+            let mut key = [0u8; 1];
+            match syscall::sys_read(0, &mut key) {
+                Ok(1) => Some(key[0]),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
@@ -359,38 +439,81 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(0);
     }
 
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TITLE).as_bytes());
-    write_str(b"\r\n\r\n");
+    let Some(fd) = syscall::ob_open_processes().ok() else {
+        print_unavailable();
+        flush_output();
+        syscall::sys_exit(1);
+    };
+    let cpu_fd = syscall::ob_open_cpu_info().ok();
 
     let mut cpu_buf = [0u8; CPU_BUF_LEN];
     let mut proc_buf = [0u8; PROC_BUF_LEN];
+    let mut history = logic::CpuHistory::new();
 
-    match syscall::ob_open_cpu_info() {
-        Ok(fd) => {
-            match syscall::sys_ob_query_cpu_stats(fd, &mut cpu_buf) {
-                Ok(n) if n >= size_of::<StatsHeader>() => render_cpus(&cpu_buf[..n]),
-                _ => print_unavailable(),
+    // First sample: no predecessor, so CPU% is shown as N/A.
+    let mut prev_wall: Option<u64> = None;
+    let mut frames: u64 = 0;
+
+    loop {
+        // Wall-clock reference for this frame, in timer intervals.
+        let frame_wall = cpu_fd.and_then(|cfd| read_wall_tick(cfd, &mut cpu_buf));
+        let wall_delta = match (prev_wall, frame_wall) {
+            (Some(p), Some(c)) if c >= p => c - p,
+            _ => 0,
+        };
+
+        let mut cpu_times = [(0u32, 0u64); logic::MAX_HISTORY];
+        let mut n_cpu = 0usize;
+
+        match syscall::sys_ob_query_process_snapshot(fd, &mut proc_buf) {
+            Ok(n) if n >= size_of::<ProcSnapshotHeader>() => {
+                if let Some(view) = SnapshotView::parse(&proc_buf[..n]) {
+                    for i in 0..view.hdr.process_returned as usize {
+                        if n_cpu >= logic::MAX_HISTORY {
+                            break;
+                        }
+                        if let Some(p) = view.process(i) {
+                            cpu_times[n_cpu] = (p.pid, p.cpu_time);
+                            n_cpu += 1;
+                        }
+                    }
+                    render_frame(&view, &history, wall_delta, frames > 0);
+                } else {
+                    clear_and_unavailable(frames > 0);
+                }
             }
-            let _ = syscall::sys_close(fd);
-        }
-        Err(_) => print_unavailable(),
-    }
-    write_str(b"\r\n");
-
-    match syscall::ob_open_processes() {
-        Ok(fd) => {
-            match syscall::sys_ob_query_process_snapshot(fd, &mut proc_buf) {
-                Ok(n) if n >= size_of::<ProcSnapshotHeader>() => render_snapshot(&proc_buf[..n]),
-                // Unsupported version / unusable layout / syscall error.
-                _ => print_unavailable(),
+            _ => {
+                clear_and_unavailable(frames > 0);
             }
-            let _ = syscall::sys_close(fd);
         }
-        Err(_) => print_unavailable(),
+
+        // Store this sample for the next frame, then arm the predecessor.
+        history.store(&cpu_times[..n_cpu]);
+        prev_wall = frame_wall;
+        frames += 1;
+
+        // Wait for a key or the measured refresh interval, yielding the CPU.
+        match wait_for_input_or_refresh(cpu_fd, &mut cpu_buf, frame_wall) {
+            WaitResult::Quit => break,
+            WaitResult::Refresh => {}
+        }
     }
 
-    write_str(b"\r\n");
+    let _ = syscall::sys_close(fd);
+    if let Some(cfd) = cpu_fd {
+        let _ = syscall::sys_close(cfd);
+    }
+
+    // Clean exit: leave the screen ready for the shell prompt.
+    write_str(b"\x1b[2J\x1b[H");
     flush_output();
     syscall::sys_exit(0)
+}
+
+fn clear_and_unavailable(clear: bool) {
+    if clear {
+        write_str(b"\x1b[2J\x1b[H");
+    }
+    print_unavailable();
+    flush_output();
 }
