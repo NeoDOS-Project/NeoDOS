@@ -432,7 +432,10 @@ the logical process/thread registry (`Scheduler.eprocesses` /
   `working_set_bytes` = mapped 4 KB heap pages × 4096, maintained per heap slot
   in `arch::x64::paging` at the single choke points `heap_alloc_page` /
   `heap_free_page` / `heap_free_range` (so demand-faulted pages are counted
-  too). Idle processes report 0.
+  too). Idle processes report 0. Note: processes that do not grow their heap or
+  map regions legitimately report `0` for both (many `.nxe` use static buffers);
+  a process is only expected to show non-zero memory while it holds allocated
+  heap/mmap.
 - Consistency: all fields are copied while the global `SCHEDULER` mutex is held;
   the lock is released before the snapshot is formatted or printed (no console
   I/O under a lock). `KPRCB.current_thread` is written under the same mutex, so
