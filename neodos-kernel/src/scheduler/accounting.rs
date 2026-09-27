@@ -34,14 +34,17 @@ pub const CPU_TIME_UNSET: u64 = u64::MAX;
 
 /// This CPU's execution counter value, or `None` before per-CPU data exists
 /// (early boot / host-side unit tests).
+///
+/// The former `GsBase::read()` guard performed an MSR read on every timer tick
+/// and every dispatch; a single atomic load is enough to know that per-CPU data
+/// is online (the BSP marks CPU 0 online immediately after programming GS, and
+/// APs set GS before they register their idle thread).
 #[inline]
 pub(crate) fn per_cpu_tick_base() -> Option<u64> {
-    unsafe {
-        if crate::hal::safe::GsBase::read() == 0 {
-            return None;
-        }
-        Some(crate::arch::x64::cpu_local::this_cpu_timer_tick_count())
+    if crate::arch::x64::cpu_local::cpu_count() == 0 {
+        return None;
     }
+    Some(unsafe { crate::arch::x64::cpu_local::this_cpu_timer_tick_count() })
 }
 
 /// Another CPU's execution counter, read through its `KPRCB` page.
