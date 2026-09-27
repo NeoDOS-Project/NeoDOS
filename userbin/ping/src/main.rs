@@ -10,6 +10,9 @@ use alloc::vec::Vec;
 use libneodos::{i18n, mem, syscall, tr_id};
 
 const APP_NAME: &str = "ping";
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_USAGE_LINE3: u32 = 1003;
 const IDS_ERR_INVALID_IP: u32 = 1004;
 const IDS_PINGING: u32 = 1005;
 const IDS_REPLY: u32 = 1006;
@@ -87,7 +90,41 @@ fn parse_ip_address(s: &str) -> Option<u32> {
 }
 
 fn print_help() {
-    write_str(b"\r\nping <ip> [count]\r\n  Ping a network address.\r\n\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE3).as_bytes());
+    write_str(b"\r\n\r\n");
+}
+
+/// Parse `[host] [/n count] [/t]`. Accepts `/` (NT style) and `-` prefixes,
+/// plus the legacy positional `ping <host> <count>`. Returns (host, count, on).
+fn parse_args(arg_str: &str) -> (&str, u32, bool) {
+    let mut host: &str = "";
+    let mut count: u32 = 4;
+    let mut continuous = false;
+    let mut tokens = arg_str.split_ascii_whitespace();
+    let mut positional_count_seen = false;
+    while let Some(tok) = tokens.next() {
+        if tok.eq_ignore_ascii_case("/n") || tok.eq_ignore_ascii_case("/c")
+            || tok.eq_ignore_ascii_case("-n") || tok.eq_ignore_ascii_case("-c")
+        {
+            if let Some(v) = tokens.next() {
+                count = v.parse().unwrap_or(count);
+            }
+        } else if tok.eq_ignore_ascii_case("/t") || tok.eq_ignore_ascii_case("-t") {
+            continuous = true;
+        } else if host.is_empty() {
+            host = tok;
+        } else if !positional_count_seen {
+            // Legacy: second positional token is the count.
+            count = tok.parse().unwrap_or(count);
+            positional_count_seen = true;
+        }
+    }
+    (host, count, continuous)
 }
 
 #[no_mangle]
@@ -107,19 +144,19 @@ pub extern "C" fn _start() -> ! {
     }
 
     let arg_str = core::str::from_utf8(args).unwrap_or("");
-    let (ip_str, count) = if let Some(space) = arg_str.find(' ') {
-        let c: u32 = arg_str[space + 1..].trim().parse().unwrap_or(4);
-        (&arg_str[..space], c)
-    } else {
-        (arg_str, 4)
-    };
+    let (host, count, continuous) = parse_args(arg_str);
+    if host.is_empty() {
+        print_help();
+        syscall::sys_exit(1);
+    }
 
-    let dest_ip = match parse_ip_address(ip_str) {
+    let dest_ip = match parse_ip_address(host) {
         Some(ip) => ip,
         None => {
+            // Numeric IP only for now; a hostname would need libnet DNS.
             write_err(b"\r\n");
             write_err(tr_id!(IDS_ERR_INVALID_IP).as_bytes());
-            write_err(ip_str.as_bytes());
+            write_err(host.as_bytes());
             write_err(b"\r\n");
             syscall::sys_exit(1);
         }
@@ -130,10 +167,22 @@ pub extern "C" fn _start() -> ! {
     write_ip(dest_ip);
     write_str(b" with 32 bytes of data:\r\n\r\n");
 
-    let mut lost = 0u32;
-    for _ in 0..count {
+    let mut sent: u32 = 0;
+    let mut received: u32 = 0;
+    let mut rtt_min: u64 = u64::MAX;
+    let mut rtt_max: u64 = 0;
+    let mut rtt_sum: u64 = 0;
+    loop {
+        if !continuous && sent >= count {
+            break;
+        }
+        sent += 1;
         let rtt = syscall::sys_icmp_ping(dest_ip);
         if rtt > 0 {
+            received += 1;
+            rtt_sum = rtt_sum.saturating_add(rtt);
+            if rtt < rtt_min { rtt_min = rtt; }
+            if rtt > rtt_max { rtt_max = rtt; }
             write_str(tr_id!(IDS_REPLY).as_bytes());
             write_ip(dest_ip);
             write_str(b": bytes=32 time=");
@@ -142,19 +191,29 @@ pub extern "C" fn _start() -> ! {
         } else {
             write_str(tr_id!(IDS_TIMEOUT).as_bytes());
             write_str(b"\r\n");
-            lost += 1;
         }
     }
 
     write_str(b"\r\n");
     write_str(tr_id!(IDS_COMPLETE).as_bytes());
     write_str(b" ");
-    write_dec_u64(count as u64);
+    write_dec_u64(sent as u64);
     write_str(b" sent, ");
-    write_dec_u64((count - lost) as u64);
+    write_dec_u64(received as u64);
     write_str(b" received, ");
-    let loss_pct = if count == 0 { 0 } else { lost * 100 / count };
+    let lost = sent.saturating_sub(received);
+    let loss_pct = if sent == 0 { 0 } else { lost * 100 / sent };
     write_dec_u64(loss_pct as u64);
-    write_str(b"% loss\r\n\r\n");
+    write_str(b"% loss");
+    if received > 0 {
+        write_str(b" (min/avg/max ms=");
+        write_dec_u64(rtt_min / 1000);
+        write_str(b"/");
+        write_dec_u64(rtt_sum / received as u64 / 1000);
+        write_str(b"/");
+        write_dec_u64(rtt_max / 1000);
+        write_str(b")");
+    }
+    write_str(b"\r\n\r\n");
     syscall::sys_exit(0)
 }

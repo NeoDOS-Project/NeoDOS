@@ -13,9 +13,9 @@ IDS_TIMEOUT = 1007
 IDS_COMPLETE = 1008
 
 [strings]
-IDS_USAGE = "ping <ip>"
+IDS_USAGE = "ping <host> [/n count] [/t]"
 IDS_USAGE_LINE2 = "  Ping a network address."
-IDS_USAGE_LINE3 = "  Sends ICMP echo requests to the specified IP."
+IDS_USAGE_LINE3 = "  /n count requests (default 4); /t pings until interrupted."
 IDS_ERR_INVALID_IP = "Ping: invalid IP address: "
 IDS_PINGING = "Pinging "
 IDS_REPLY = "Reply from "
