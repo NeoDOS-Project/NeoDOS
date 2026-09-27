@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (737 tests) + netd kthread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (738 tests) + netd kthread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 737 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 738 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -563,7 +563,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **737 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **738 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -595,7 +595,7 @@ The kernel testing framework includes **737 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 737 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+Tests run automatically at boot. The kernel runs 738 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 

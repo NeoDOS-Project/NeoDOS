@@ -56,6 +56,31 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
 
     let cpu = syscall_frame_cpu();
 
+    // Phase 1 (#293 forensics): record the syscall identity for the filtered
+    // TID. Lock-free, no allocation, uses the already-saved GPR/return frame.
+    //   [frame_rsp + 0]  = saved RAX = syscall number
+    //   [frame_rsp + 120]= RIP, +128 CS, +136 RFLAGS, +144 RSP(user), +152 SS
+    if crate::scheduler::diag::sys_trace_enabled() {
+        let nr = unsafe { *(frame_rsp as *const u64) } as u32;
+        // `current_tid_for_this_cpu` would take the scheduler lock; read the
+        // per-CPU KPRCB pointer/tid instead (GS-based, no lock).
+        let (tid, pid) = unsafe {
+            let ptr = crate::arch::x64::cpu_local::this_cpu_current_thread();
+            if ptr.is_null() { (0, 0) } else { ((*ptr).tid, (*ptr).pid) }
+        };
+        // Capture the *complete* return frame, including SS, so a corrupted
+        // frame (bad CS/SS/RIP) is reconstructable from the ring. Validated
+        // against the canonical layout documented in the syscall ABI.
+        let (f_rip, f_cs, f_rflags, f_rsp, f_ss) = unsafe {
+            (*frame.add(0), *frame.add(1), *frame.add(2), *frame.add(3), *frame.add(4))
+        };
+        crate::scheduler::diag::sys_ev(
+            phase as u8, nr, tid, pid, rip, user_rsp, frame_rsp);
+        // Out-of-band capture of the raw frame slots (no filter beyond trace).
+        crate::scheduler::diag::frame_ev(
+            phase as u8, tid, pid, f_rip, f_cs, f_rflags, f_rsp, f_ss);
+    }
+
     if phase == 0 && cs & 3 == 3 {
         SAVED_USER_RSP[cpu].store(user_rsp, Ordering::Relaxed);
         SAVED_USER_RIP[cpu].store(rip, Ordering::Relaxed);
@@ -125,6 +150,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         }
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_RESCHED, k, current_rsp);
                 k.rsp = current_rsp;
                 // Phase 13-A: consume a pending cooperative yield now that the
                 // live `rsp` has been saved; only now is it safe to publish the
@@ -132,6 +158,9 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_RESCHED_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 if k.state == ThreadState::Running {
                     scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {
@@ -238,7 +267,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     scheduler::check_kernel_stack_canary(chosen_ks_top, chosen_pid, chosen_tid, chosen_rsp);
                     unsafe { crate::arch::x64::gdt::prepare_ring3_return(chosen_ks_top, chosen_tid, chosen_pid); }
                     unsafe {
-                        crate::arch::x64::cpu_local::this_cpu_set_current_thread(chosen_ptr);
+                        crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(chosen_ptr, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
                         crate::arch::x64::cpu_local::this_cpu_set_current_pid(chosen_pid);
                         crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                     }
@@ -253,11 +282,19 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     crate::trace_cswitch!(tid as u64, chosen_tid as u64);
                     return chosen_rsp;
                 } else {
-                    // No Ring3 Ready — switch to idle (existing mechanism, reused verbatim).
+                    // No Ring3 Ready — switch to *this CPU's* idle thread.
+                    //
+                    // #293 root-cause fix: only an idle Kthread that belongs to
+                    // the current CPU may be selected. The previous code took
+                    // the first `is_idle` in the global table, so two CPUs could
+                    // adopt the same idle/0 and run on one kernel stack
+                    // (STACK_OWNER_MISMATCH -> SMP4 fault). The invariant is
+                    // `idle.k.cpu == this_cpu`; no cross-CPU idle is ever used.
+                    let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                     let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                     for k_opt in scheduler.kthreads.iter_mut() {
                         if let Some(k) = k_opt {
-                            if k.is_idle {
+                            if k.is_idle && k.cpu == this_cpu {
                                 idle_ptr = &mut **k as *mut scheduler::Kthread;
                                 break;
                             }
@@ -268,10 +305,11 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                             let idle = &mut *idle_ptr;
                             scheduler::Scheduler::remove_from_run_queue(idle);
                             if idle.state != ThreadState::Terminated {
-                                scheduler.current_tid = scheduler::IDLE_TID;
+                                scheduler.current_tid = idle.tid;
                                 idle.state = ThreadState::Running;
                                 idle.time_slice_remaining = scheduler::IDLE_TIME_SLICE;
-                                crate::arch::x64::cpu_local::this_cpu_set_current_thread(idle_ptr);
+                                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
+                                    idle_ptr, crate::scheduler::diag::SITE_SET_RESCHED_IDLE_FALLBACK);
                                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*idle_ptr).pid);
                                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                                 return idle.rsp;
@@ -332,7 +370,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         // switches update KPRCB, but syscall-return switches previously
         // updated only `current_tid` and RSP0.
         unsafe {
-            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_RESCHED_NEXT);
             crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
         }

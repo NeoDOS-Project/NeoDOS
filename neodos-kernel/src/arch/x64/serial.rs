@@ -73,6 +73,47 @@ pub fn _print(args: fmt::Arguments) {
     let _ = SERIAL1.lock().write_fmt(args);
 }
 
+/// Lock-free raw serial writer for fault/panic paths.
+///
+/// `SERIAL1` is a non-reentrant `spin::Mutex`: if a CPU faults while it still
+/// holds the port (for example inside the exception logger itself), the fault
+/// handler would spin forever on the same lock and hide the original fault.
+/// This writer never touches `SERIAL1`; it writes straight to the UART, so a
+/// fault can always be reported.
+struct RawSerial;
+
+impl fmt::Write for RawSerial {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let port = SerialPort::new(0x3F8);
+        for byte in s.bytes() {
+            port.send(byte);
+        }
+        Ok(())
+    }
+}
+
+#[doc(hidden)]
+pub fn _raw_print(args: fmt::Arguments) {
+    use core::fmt::Write;
+    use core::sync::atomic::{AtomicBool, Ordering};
+    // Best-effort serialization: keeps concurrent fault reports from tearing
+    // each other, but never blocks forever if a CPU dies holding the flag.
+    static RAW_BUSY: AtomicBool = AtomicBool::new(false);
+    let mut spins = 0u32;
+    while RAW_BUSY
+        .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        spins += 1;
+        if spins > 2_000_000 {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    let _ = RawSerial.write_fmt(args);
+    RAW_BUSY.store(false, Ordering::Release);
+}
+
 #[macro_export]
 macro_rules! serial_print {
     ($($arg:tt)*) => ($crate::arch::x64::serial::_print(format_args!($($arg)*)));
@@ -82,4 +123,17 @@ macro_rules! serial_print {
 macro_rules! serial_println {
     () => ($crate::serial_print!("\n"));
     ($($arg:tt)*) => ($crate::serial_print!("{}\n", format_args!($($arg)*)));
+}
+
+/// Lock-free serial print. Safe to call from exception/panic handlers even if
+/// `SERIAL1` is already held by this or another CPU.
+#[macro_export]
+macro_rules! raw_serial_print {
+    ($($arg:tt)*) => ($crate::arch::x64::serial::_raw_print(format_args!($($arg)*)));
+}
+
+#[macro_export]
+macro_rules! raw_serial_println {
+    () => ($crate::raw_serial_print!("\n"));
+    ($($arg:tt)*) => ($crate::raw_serial_print!("{}\n", format_args!($($arg)*)));
 }

@@ -172,6 +172,20 @@ impl Scheduler {
         }
         if let Some(cpu) = dup_cpu {
             let c = CHECK_WARN_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            // Phase 293-B: record the DOUBLE_RUNNING with the two offenders.
+            {
+                let mut a: Option<&crate::scheduler::Kthread> = None;
+                let mut b: Option<&crate::scheduler::Kthread> = None;
+                for k in self.kthreads.iter().flatten() {
+                    if k.state == ThreadState::Running && k.cpu == cpu {
+                        if a.is_none() { a = Some(k); } else if b.is_none() { b = Some(k); }
+                    }
+                }
+                if let (Some(a), Some(b)) = (a, b) {
+                    let kprcb_tid = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(0);
+                    crate::scheduler::diag::dr_ev(cpu, a, b, self.current_tid, kprcb_tid);
+                }
+            }
             if c < 12 {
                 crate::serial_println!(
                     "[SCHED_WARN] tag={} TWO+ Running on cpu={} tids={:?}/{:?} sched.current={} kprcb_tid={:?}",
@@ -184,6 +198,10 @@ impl Scheduler {
                 }
             }
         }
+
+        // Phase 293-B: detect the same Kthread being KPRCB.current_thread of
+        // more than one CPU (two CPUs on one kernel stack). Observe only.
+        crate::scheduler::diag::stack_owner_scan();
     }
 
     /// Validate run queue invariants.
@@ -387,6 +405,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_RQ, self_cpu, tid, k.rsp,
+                            prev as u64);
                         if (tid == 5 || prev == 5) && sched_forensic_verbose() {
                             crate::serial_println!("[T5_SCHED] step=1 prev={} new={} current={} rq0={} kprcb={:?}",
                                 prev, tid, self.current_tid, rq_len(0),
@@ -433,6 +454,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_STEAL, self_cpu, tid, k.rsp,
+                            prev as u64);
                         kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=steal",
                             prev, tid);
                         crate::trace_cswitch!(prev as u64, tid as u64);
@@ -498,6 +522,8 @@ impl Scheduler {
                         // test schedulers keep their synthetic cpu values.
                         if is_global_sched {
                             let old_cpu = k.cpu;
+                            crate::scheduler::diag::kcpu_ev(
+                                crate::scheduler::diag::SITE_KCPU_SCAN, k, scan_cpu);
                             k.cpu = scan_cpu;
                             if old_cpu != scan_cpu && sched_forensic_verbose() {
                                 crate::serial_println!(
@@ -508,6 +534,9 @@ impl Scheduler {
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
                         Self::account_dispatch(k);
+                        crate::scheduler::diag::ev(
+                            crate::scheduler::diag::EV_DISPATCH_SCAN, scan_cpu, check_tid, k.rsp,
+                            prev as u64);
                         picked_ptr = &mut **k as *mut Kthread;
                         picked_pid = k.pid;
                         picked_tid = k.tid;
@@ -638,8 +667,11 @@ impl Scheduler {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     k.yield_requested = false;
+                    crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_TIMESLICE, k, current_rsp);
                     k.rsp = current_rsp;
                     // Re-home to the CPU that actually ran it before enqueueing.
+                    crate::scheduler::diag::kcpu_ev(
+                        crate::scheduler::diag::SITE_KCPU_TIMESLICE, k, this_cpu);
                     k.cpu = this_cpu;
                     if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);

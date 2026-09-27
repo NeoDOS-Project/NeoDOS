@@ -606,7 +606,7 @@ fn exception_do_resched() -> ! {
         }
         // Keep per-CPU and TSS in sync (also done in timer/syscall paths)
         unsafe {
-            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
             crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
@@ -641,6 +641,9 @@ fn exception_do_resched() -> ! {
 extern "x86-interrupt" fn divide_error_handler(stack_frame: InterruptStackFrame) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    crate::raw_serial_println!("[FAULT] v=0 DIVIDE rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        rip, stack_frame.code_segment, rsp,
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
 
     if is_user_exception(&stack_frame) {
         let result = exception_dispatch(
@@ -668,6 +671,9 @@ extern "x86-interrupt" fn nmi_handler(stack_frame: InterruptStackFrame) {
     crate::trace_event!(TraceEvent::Panic, 1, 0, 0, 0);
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    crate::raw_serial_println!("[FAULT] v=2 NMI rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        rip, stack_frame.code_segment, rsp,
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     crate::crash::dump_nmi(rip, rsp);
     panic_classified!(PanicClass::UnknownCpuException, "Non-maskable interrupt");
 }
@@ -707,6 +713,9 @@ extern "x86-interrupt" fn bounds_handler(stack_frame: InterruptStackFrame) {
 extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    crate::raw_serial_println!("[FAULT] v=6 INVALID_OPCODE rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        rip, stack_frame.code_segment, rsp,
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     if is_user_exception(&stack_frame) {
         let result = exception_dispatch(EXCEPTION_INVALID_OPCODE, rip, rsp, 0, true, 0, 0);
         match result {
@@ -735,6 +744,11 @@ extern "x86-interrupt" fn device_not_available_handler(stack_frame: InterruptSta
 extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) -> ! {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    crate::raw_serial_println!(
+        "[FAULT] v=8 DOUBLE-FAULT err={:#x} rip={:#x} cs={:#x} rsp={:#x} cr2={:#x} cpu={}",
+        error_code, rip, stack_frame.code_segment, rsp,
+        crate::hal::read_cr2(), unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
     crate::crash::dump_double_fault(rip, rsp, error_code);
     panic_classified!(PanicClass::DoubleFault,
         "Double fault: rip={:#x} rsp={:#x} error={:#x}",
@@ -742,6 +756,10 @@ extern "x86-interrupt" fn double_fault_handler(stack_frame: InterruptStackFrame,
 }
 
 extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    crate::raw_serial_println!("[FAULT] v=10 INVALID_TSS err=0x{:x} rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        error_code, stack_frame.instruction_pointer.as_u64(), stack_frame.code_segment,
+        stack_frame.stack_pointer.as_u64(),
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     panic_classified!(PanicClass::InvalidContextSwitch,
         "Invalid TSS: rip={:#x} rsp={:#x} error={:#x}",
         stack_frame.instruction_pointer.as_u64(),
@@ -750,12 +768,20 @@ extern "x86-interrupt" fn invalid_tss_handler(stack_frame: InterruptStackFrame, 
 }
 
 extern "x86-interrupt" fn segment_not_present_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    crate::raw_serial_println!("[FAULT] v=11 SEGMENT_NOT_PRESENT err=0x{:x} rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        error_code, stack_frame.instruction_pointer.as_u64(), stack_frame.code_segment,
+        stack_frame.stack_pointer.as_u64(),
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     panic_classified!(PanicClass::MemoryCorruption,
         "Segment not present: rip={:#x} error={:#x}",
         stack_frame.instruction_pointer.as_u64(), error_code);
 }
 
 extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    crate::raw_serial_println!("[FAULT] v=12 STACK_SEGMENT err=0x{:x} rip=0x{:x} cs=0x{:x} rsp=0x{:x} cpu={}",
+        error_code, stack_frame.instruction_pointer.as_u64(), stack_frame.code_segment,
+        stack_frame.stack_pointer.as_u64(),
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     panic_classified!(PanicClass::StackCorruption,
         "Stack segment fault: rip={:#x} rsp={:#x} error={:#x}",
         stack_frame.instruction_pointer.as_u64(),
@@ -766,6 +792,21 @@ extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStac
 extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
     let rip = stack_frame.instruction_pointer.as_u64();
     let rsp = stack_frame.stack_pointer.as_u64();
+    // Lock-free first report: guarantees the fault is captured even if the
+    // regular logger deadlocks on the SERIAL1 spinlock.
+    crate::raw_serial_println!(
+        "[FAULT] v=13 GPF err={:#x} rip={:#x} cs={:#x} rsp={:#x} rflags={:#x} cr2={:#x} cpu={}",
+        error_code, rip, stack_frame.code_segment, rsp, stack_frame.cpu_flags,
+        crate::hal::read_cr2(), unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
+    crate::scheduler::diag::dump_raw();
+    crate::scheduler::diag::sys_dump_raw();
+    crate::scheduler::diag::frame_dump_raw();
+    crate::scheduler::diag::ctx_dump_raw();
+    crate::scheduler::diag::rsp_dump_raw();
+    crate::scheduler::diag::dr_dump_raw();
+    crate::scheduler::diag::kcpu_dump_raw();
+    crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     // Read actual GS selector directly from the CPU register to
     // determine if the fault is from a bad GS load.
     let gs: u16;
@@ -872,6 +913,11 @@ extern "x86-interrupt" fn page_fault_handler(
     } else {
         PanicClass::PageFault
     };
+    crate::raw_serial_println!(
+        "[FAULT] v=14 PAGE-FAULT user={} write={} np={} virt={:#x} rip={:#x} cs={:#x} rsp={:#x} cpu={}",
+        is_user, is_write, is_not_present, virt, rip, stack_frame.code_segment, rsp,
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() },
+    );
     crate::trace_event!(TraceEvent::Panic, 4, virt, rip, is_write as u64);
     panic_classified!(class,
         "Page fault @ {:#x} (user={}, write={}, np={}) rip={:#x}",
@@ -884,12 +930,18 @@ extern "x86-interrupt" fn x87_handler(stack_frame: InterruptStackFrame) {
 }
 
 extern "x86-interrupt" fn alignment_check_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    crate::raw_serial_println!("[FAULT] v=17 ALIGNMENT err=0x{:x} rip=0x{:x} cpu={}",
+        error_code, stack_frame.instruction_pointer.as_u64(),
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     panic_classified!(PanicClass::MemoryCorruption,
         "Alignment check: rip={:#x} error={:#x}",
         stack_frame.instruction_pointer.as_u64(), error_code);
 }
 
 extern "x86-interrupt" fn machine_check_handler(stack_frame: InterruptStackFrame) -> ! {
+    crate::raw_serial_println!("[FAULT] v=18 MACHINE_CHECK rip=0x{:x} cpu={}",
+        stack_frame.instruction_pointer.as_u64(),
+        unsafe { crate::arch::x64::cpu_local::this_cpu_id() });
     panic_classified!(PanicClass::UnknownCpuException,
         "Machine check: rip={:#x}", stack_frame.instruction_pointer.as_u64());
 }
@@ -1023,10 +1075,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // Save the current thread's RSP, then publish it. `make_thread_ready`
             // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_USER, k, current_rsp);
                 k.rsp = current_rsp;
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_TIMER_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 if k.state == ThreadState::Running {
                     crate::scheduler::Scheduler::make_thread_ready(k);
                 }
@@ -1134,7 +1190,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
             // Update per-CPU current thread and PID
             unsafe {
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }
@@ -1200,6 +1256,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT idle tid={} has_non_idle={}",
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_IDLE, k, current_rsp);
                 k.rsp = current_rsp;
             }
             let next = scheduler.schedule();
@@ -1226,7 +1283,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             }
             unsafe {
                 prepare_timer_return(next);
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }
@@ -1270,10 +1327,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT kernel tid={} reason=yield_or_expired has_non_idle={}",
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_KERNEL, k, current_rsp);
                 k.rsp = current_rsp;
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
                 k.cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                crate::scheduler::diag::ev(
+                    crate::scheduler::diag::EV_TIMER_SAVE, k.cpu, k.tid, k.rsp,
+                    k.state.to_u8() as u64);
                 // Phase 13-A: publish only after the live context is saved.
                 // For a timeslice expiry `on_timer_tick` already enqueued it;
                 // `make_thread_ready` is then a no-op.
@@ -1328,7 +1389,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 crate::arch::x64::gdt::prepare_ring3_return(
                     next_ks_top, (*next).tid, (*next).pid);
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }

@@ -671,6 +671,13 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
         // Phase 8: enable scheduler consistency forensics for the interactive phase.
         crate::scheduler::sched_forensic_enable(true);
+        // #293 Phase 1: trace syscall identity (all TIDs) for the interactive phase
+        // so the pre-fault syscall sequence is available in the raw dump.
+        crate::scheduler::diag::sys_trace_set_tid(u32::MAX);
+        // #293 Phase 293-B: trace current_thread writes and rsp writes.
+        crate::scheduler::diag::ctx_trace_enable(true);
+        crate::scheduler::diag::rsp_trace_enable(true);
+        crate::scheduler::diag::kcpu_trace_enable(true);
         // Phase 13: hand APs over to the scheduler now that the boot test suite
         // is complete. Each AP picks this up on its next timer tick.
         // Phase 13: hand APs over to the scheduler after the boot test suite.
@@ -888,6 +895,22 @@ fn panic(info: &PanicInfo) -> ! {
     hal::disable_interrupts();
 
     let class = crate::panic_classification::current_panic_class();
+    // Lock-free first report: capture the panic even if the regular logger
+    // deadlocks on the SERIAL1 spinlock.
+    crate::raw_serial_println!(
+        "[PANIC] class={} rsp={:#x} msg={}",
+        class.to_str(),
+        unsafe { crate::hal::raw::raw_read_rsp() },
+        info.message(),
+    );
+    crate::scheduler::diag::dump_raw();
+    crate::scheduler::diag::sys_dump_raw();
+    crate::scheduler::diag::frame_dump_raw();
+    crate::scheduler::diag::ctx_dump_raw();
+    crate::scheduler::diag::rsp_dump_raw();
+    crate::scheduler::diag::dr_dump_raw();
+    crate::scheduler::diag::kcpu_dump_raw();
+    crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP
