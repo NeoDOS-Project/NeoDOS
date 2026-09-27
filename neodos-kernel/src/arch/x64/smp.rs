@@ -496,7 +496,7 @@ unsafe fn ap_enter_idle(idle: *mut crate::scheduler::Kthread) -> ! {
     let ks_top = (*idle).kernel_stack_top;
     let tid = (*idle).tid;
     let pid = (*idle).pid;
-    crate::arch::x64::cpu_local::this_cpu_set_current_thread(idle);
+    crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(idle, crate::scheduler::diag::SITE_SET_AP_IDLE);
     crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
     crate::arch::x64::cpu_local::this_cpu_set_idle(true);
     crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);

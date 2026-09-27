@@ -677,6 +677,7 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         // #293 Phase 293-B: trace current_thread writes and rsp writes.
         crate::scheduler::diag::ctx_trace_enable(true);
         crate::scheduler::diag::rsp_trace_enable(true);
+        crate::scheduler::diag::kcpu_trace_enable(true);
         // Phase 13: hand APs over to the scheduler now that the boot test suite
         // is complete. Each AP picks this up on its next timer tick.
         // Phase 13: hand APs over to the scheduler after the boot test suite.
@@ -908,6 +909,7 @@ fn panic(info: &PanicInfo) -> ! {
     crate::scheduler::diag::ctx_dump_raw();
     crate::scheduler::diag::rsp_dump_raw();
     crate::scheduler::diag::dr_dump_raw();
+    crate::scheduler::diag::kcpu_dump_raw();
     crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 

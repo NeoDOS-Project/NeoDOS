@@ -522,6 +522,8 @@ impl Scheduler {
                         // test schedulers keep their synthetic cpu values.
                         if is_global_sched {
                             let old_cpu = k.cpu;
+                            crate::scheduler::diag::kcpu_ev(
+                                crate::scheduler::diag::SITE_KCPU_SCAN, k, scan_cpu);
                             k.cpu = scan_cpu;
                             if old_cpu != scan_cpu && sched_forensic_verbose() {
                                 crate::serial_println!(
@@ -668,6 +670,8 @@ impl Scheduler {
                     crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_TIMESLICE, k, current_rsp);
                     k.rsp = current_rsp;
                     // Re-home to the CPU that actually ran it before enqueueing.
+                    crate::scheduler::diag::kcpu_ev(
+                        crate::scheduler::diag::SITE_KCPU_TIMESLICE, k, this_cpu);
                     k.cpu = this_cpu;
                     if k.tid != BOOT_TID && !k.is_idle {
                         Self::enqueue_to_cpu_run_queue(k);

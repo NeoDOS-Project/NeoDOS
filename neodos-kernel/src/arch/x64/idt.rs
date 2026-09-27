@@ -606,7 +606,7 @@ fn exception_do_resched() -> ! {
         }
         // Keep per-CPU and TSS in sync (also done in timer/syscall paths)
         unsafe {
-            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
             crate::arch::x64::cpu_local::this_cpu_set_current_pid(pid);
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             crate::arch::x64::gdt::prepare_ring3_return(ks_top, tid, pid);
@@ -805,6 +805,7 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
     crate::scheduler::diag::ctx_dump_raw();
     crate::scheduler::diag::rsp_dump_raw();
     crate::scheduler::diag::dr_dump_raw();
+    crate::scheduler::diag::kcpu_dump_raw();
     crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     // Read actual GS selector directly from the CPU register to
     // determine if the fault is from a bad GS load.
@@ -1189,7 +1190,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
             // Update per-CPU current thread and PID
             unsafe {
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }
@@ -1282,7 +1283,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             }
             unsafe {
                 prepare_timer_return(next);
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }
@@ -1388,7 +1389,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             unsafe {
                 crate::arch::x64::gdt::prepare_ring3_return(
                     next_ks_top, (*next).tid, (*next).pid);
-                crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_IDT);
                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
             }

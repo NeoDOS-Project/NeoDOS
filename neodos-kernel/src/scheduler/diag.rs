@@ -237,6 +237,9 @@ pub const SITE_SET_IDT: u8 = 6;         // idt.rs timer/exception paths
 pub const SITE_SET_RESCHED: u8 = 7;     // syscall/resched.rs
 pub const SITE_SET_AP_IDLE: u8 = 8;     // smp.rs ap_enter_idle
 pub const SITE_SET_RAW: u8 = 9;         // direct call without tag
+pub const SITE_SET_RESCHED_IDLE_FALLBACK: u8 = 10; // resched.rs blocked/terminated idle fallback
+pub const SITE_SET_RESCHED_CHOSEN: u8 = 11;       // resched.rs Ring3 candidate
+pub const SITE_SET_RESCHED_NEXT: u8 = 12;         // resched.rs main next thread
 
 #[derive(Clone, Copy)]
 struct CtxEv {
@@ -269,6 +272,11 @@ pub fn ctx_trace_enabled() -> bool { CTX_TRACE_ON.load(Ordering::Relaxed) }
 
 /// Record a `current_thread` write. Lock-free; callers must be able to tolerate
 /// a few relaxed stores (only enabled during the interactive phase).
+///
+/// Phase 293-C: also detects, at the instant of the write, whether the target
+/// pointer is already the `KPRCB.current_thread` of another CPU. The FIRST such
+/// occurrence freezes the ring (no further overwrite) and records the full
+/// before/after state, so the exact first invalid publication is preserved.
 #[inline]
 pub fn ctx_ev(site: u8, old_ptr: u64, new_ptr: *const crate::scheduler::Kthread) {
     if !CTX_TRACE_ON.load(Ordering::Relaxed) { return; }
@@ -278,20 +286,113 @@ pub fn ctx_ev(site: u8, old_ptr: u64, new_ptr: *const crate::scheduler::Kthread)
     } else {
         unsafe { ((*new_ptr).tid, (*new_ptr).pid, (*new_ptr).state.to_u8(), (*new_ptr).cpu, (*new_ptr).rsp) }
     };
-    let old_tid = 0u32; // old pointer is not dereferenced (may be freed)
+    // BEFORE: the previous current_thread on this CPU (deref only if non-null;
+    // best-effort — a stale pointer is not dereferenced for classification).
+    let (old_k_cpu, old_rsp) = if old_ptr == 0 {
+        (0u32, 0u64)
+    } else {
+        // Safe: old_ptr is the previous current of this CPU and is therefore a
+        // live Kthread in the scheduler table.
+        unsafe {
+            let p = old_ptr as *const crate::scheduler::Kthread;
+            ((*p).cpu, (*p).rsp)
+        }
+    };
+    // Diagnostic-only cross-CPU ownership check at the moment of the write.
+    let mut other_owner: i32 = -1;
+    if !new_ptr.is_null() {
+        for c in 0..crate::arch::x64::cpu_local::MAX_CPUS {
+            if c as u8 == cpu { continue; }
+            let cur = unsafe {
+                match crate::arch::x64::cpu_local::kprcb_page(c) {
+                    Some(p) => core::ptr::read_volatile(
+                        (p + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64),
+                    None => 0,
+                }
+            };
+            if cur == new_ptr as u64 { other_owner = c as i32; }
+        }
+    }
     let seq = CTX_HEAD.fetch_add(1, Ordering::Relaxed);
     let idx = (seq as usize) % CTX_RING_SIZE;
     let e = CtxEv {
         seq, cpu, site, old_ptr, new_ptr: new_ptr as u64,
-        old_tid, new_tid, new_pid, new_state, new_cpu, new_rsp,
+        old_tid: 0, new_tid, new_pid, new_state, new_cpu, new_rsp,
     };
-    unsafe { core::ptr::write_volatile(&mut CTX_RING[idx] as *mut CtxEv, e); }
+    // Frozen ring: once frozen only the retained window is dumped; do not
+    // overwrite it so the pre-divergence sequence survives.
+    if !CTX_FROZEN.load(Ordering::Relaxed) {
+        unsafe { core::ptr::write_volatile(&mut CTX_RING[idx] as *mut CtxEv, e); }
+        unsafe {
+            CTX_OLD_KCPU[seq as usize % CTX_RING_SIZE] = old_k_cpu;
+            CTX_OLD_RSP[seq as usize % CTX_RING_SIZE] = old_rsp;
+        }
+    }
+    if other_owner >= 0 && !CTX_FROZEN.swap(true, Ordering::Relaxed) {
+        // First invalid cross-CPU ownership: retain detail and stop overwriting.
+        unsafe {
+            CTX_FIRST.site = site;
+            CTX_FIRST.cpu = cpu;
+            CTX_FIRST.other_owner = other_owner as u8;
+            CTX_FIRST.new_ptr = new_ptr as u64;
+            CTX_FIRST.new_tid = new_tid;
+            CTX_FIRST.new_pid = new_pid;
+            CTX_FIRST.new_k_cpu = new_cpu;
+            CTX_FIRST.new_rsp = new_rsp;
+            CTX_FIRST.old_ptr = old_ptr;
+            CTX_FIRST.old_k_cpu = old_k_cpu;
+            CTX_FIRST.old_rsp = old_rsp;
+            CTX_FIRST.seq = seq;
+        }
+        crate::raw_serial_println!(
+            "[CTX_DOUBLE_OWNER] FIRST cpu={} other_owner={} site={} seq={} ptr=0x{:x} tid={} pid={} k.cpu={} k.rsp=0x{:x} old_ptr=0x{:x} old_k.cpu={} old_rsp=0x{:x}",
+            cpu, other_owner, site, seq, new_ptr as u64, new_tid, new_pid, new_cpu, new_rsp,
+            old_ptr, old_k_cpu, old_rsp);
+    }
 }
+
+/// Frozen-state detail for the first invalid ownership publication.
+#[derive(Clone, Copy)]
+pub struct FirstOwner {
+    pub seq: u64,
+    pub cpu: u8,
+    pub other_owner: u8,
+    pub site: u8,
+    pub new_ptr: u64,
+    pub new_tid: u32,
+    pub new_pid: u32,
+    pub new_k_cpu: u32,
+    pub new_rsp: u64,
+    pub old_ptr: u64,
+    pub old_k_cpu: u32,
+    pub old_rsp: u64,
+}
+
+static mut CTX_FIRST: FirstOwner = FirstOwner {
+    seq: 0, cpu: 0, other_owner: 0, site: 0, new_ptr: 0, new_tid: 0,
+    new_pid: 0, new_k_cpu: 0, new_rsp: 0, old_ptr: 0, old_k_cpu: 0, old_rsp: 0,
+};
+static CTX_FROZEN: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+/// Per-slot BEFORE state (k.cpu / rsp of the previous current_thread).
+static mut CTX_OLD_KCPU: [u32; CTX_RING_SIZE] = [0; CTX_RING_SIZE];
+static mut CTX_OLD_RSP: [u64; CTX_RING_SIZE] = [0; CTX_RING_SIZE];
+
+#[inline]
+pub fn ctx_frozen() -> bool { CTX_FROZEN.load(Ordering::Relaxed) }
 
 pub fn ctx_dump_raw() {
     let head = CTX_HEAD.load(Ordering::Relaxed);
-    crate::raw_serial_println!("[CTX_TRACE] on={} head={} dump={}",
-        CTX_TRACE_ON.load(Ordering::Relaxed), head, head.min(CTX_RING_SIZE as u64));
+    crate::raw_serial_println!("[CTX_TRACE] on={} frozen={} head={} dump={}",
+        CTX_TRACE_ON.load(Ordering::Relaxed), CTX_FROZEN.load(Ordering::Relaxed),
+        head, head.min(CTX_RING_SIZE as u64));
+    if CTX_FROZEN.load(Ordering::Relaxed) {
+        let f = unsafe { CTX_FIRST };
+        crate::raw_serial_println!(
+            "[CTX_FIRST_INVALID] seq={} cpu={} other_owner={} site={} new=0x{:x} tid={} pid={} k.cpu={} rsp=0x{:x} old=0x{:x} old_k.cpu={} old_rsp=0x{:x}",
+            f.seq, f.cpu, f.other_owner, f.site, f.new_ptr, f.new_tid, f.new_pid,
+            f.new_k_cpu, f.new_rsp, f.old_ptr, f.old_k_cpu, f.old_rsp);
+    }
     if head == 0 { return; }
     let count = head.min(CTX_RING_SIZE as u64) as usize;
     let start = if head > CTX_RING_SIZE as u64 {
@@ -300,9 +401,11 @@ pub fn ctx_dump_raw() {
     for i in 0..count {
         let idx = (start + i) % CTX_RING_SIZE;
         let e = unsafe { core::ptr::read_volatile(&CTX_RING[idx] as *const CtxEv) };
+        let ok = unsafe { CTX_OLD_KCPU[idx] };
+        let orsp = unsafe { CTX_OLD_RSP[idx] };
         crate::raw_serial_println!(
-            "[CTX_TRACE] #{} cpu={} site={} old=0x{:x} new=0x{:x} new_tid={} new_pid={} state={} k.cpu={} k.rsp=0x{:x}",
-            e.seq, e.cpu, e.site, e.old_ptr, e.new_ptr, e.new_tid, e.new_pid,
+            "[CTX_TRACE] #{} cpu={} site={} old=0x{:x}(k.cpu={} rsp=0x{:x}) new=0x{:x}(tid={} pid={} state={} k.cpu={} rsp=0x{:x})",
+            e.seq, e.cpu, e.site, e.old_ptr, ok, orsp, e.new_ptr, e.new_tid, e.new_pid,
             e.new_state, e.new_cpu, e.new_rsp
         );
     }
@@ -497,5 +600,74 @@ pub fn stack_owner_scan() {
                     ptr, cpu, owners);
             }
         }
+    }
+}
+
+// ── Phase 293-C: Kthread.cpu write ring ────────────────────────────────────
+pub const KCPU_RING_SIZE: usize = 128;
+pub const SITE_KCPU_SCAN: u8 = 1;      // schedule_with global scan
+pub const SITE_KCPU_TIMESLICE: u8 = 2; // on_timer_tick expiry re-home
+pub const SITE_KCPU_STEAL: u8 = 3;     // smp steal_and_migrate
+pub const SITE_KCPU_STEAL_REVERT: u8 = 4;
+pub const SITE_KCPU_IDLE_INIT: u8 = 5;
+
+#[derive(Clone, Copy)]
+struct KcpuEv {
+    seq: u64,
+    cpu: u8,
+    site: u8,
+    tid: u32,
+    pid: u32,
+    old_kcpu: u32,
+    new_kcpu: u32,
+    rsp: u64,
+    is_current_here: u8,
+}
+
+const KCPU_ZERO: KcpuEv = KcpuEv {
+    seq: 0, cpu: 0, site: 0, tid: 0, pid: 0,
+    old_kcpu: 0, new_kcpu: 0, rsp: 0, is_current_here: 0,
+};
+
+static mut KCPU_RING: [KcpuEv; KCPU_RING_SIZE] = [KCPU_ZERO; KCPU_RING_SIZE];
+static KCPU_HEAD: AtomicU64 = AtomicU64::new(0);
+static KCPU_TRACE_ON: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn kcpu_trace_enable(v: bool) { KCPU_TRACE_ON.store(v, Ordering::Relaxed); }
+#[inline]
+pub fn kcpu_trace_enabled() -> bool { KCPU_TRACE_ON.load(Ordering::Relaxed) }
+
+#[inline]
+pub fn kcpu_ev(site: u8, k: &crate::scheduler::Kthread, new_kcpu: u32) {
+    if !KCPU_TRACE_ON.load(Ordering::Relaxed) { return; }
+    if CTX_FROZEN.load(Ordering::Relaxed) { return; }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as u8;
+    let cur = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+    let is_current_here = (cur as *const u8 == k as *const crate::scheduler::Kthread as *const u8) as u8;
+    let seq = KCPU_HEAD.fetch_add(1, Ordering::Relaxed);
+    let idx = (seq as usize) % KCPU_RING_SIZE;
+    let e = KcpuEv {
+        seq, cpu, site, tid: k.tid, pid: k.pid,
+        old_kcpu: k.cpu, new_kcpu, rsp: k.rsp, is_current_here,
+    };
+    unsafe { core::ptr::write_volatile(&mut KCPU_RING[idx] as *mut KcpuEv, e); }
+}
+
+pub fn kcpu_dump_raw() {
+    let head = KCPU_HEAD.load(Ordering::Relaxed);
+    crate::raw_serial_println!("[KCPU_TRACE] head={} dump={}", head, head.min(KCPU_RING_SIZE as u64));
+    if head == 0 { return; }
+    let count = head.min(KCPU_RING_SIZE as u64) as usize;
+    let start = if head > KCPU_RING_SIZE as u64 {
+        (head - KCPU_RING_SIZE as u64) as usize
+    } else { 0 };
+    for i in 0..count {
+        let idx = (start + i) % KCPU_RING_SIZE;
+        let e = unsafe { core::ptr::read_volatile(&KCPU_RING[idx] as *const KcpuEv) };
+        crate::raw_serial_println!(
+            "[KCPU_TRACE] #{} cpu={} site={} tid={} pid={} old_k.cpu={} new_k.cpu={} rsp=0x{:x} is_current_here={}",
+            e.seq, e.cpu, e.site, e.tid, e.pid, e.old_kcpu, e.new_kcpu, e.rsp, e.is_current_here
+        );
     }
 }

@@ -36,6 +36,7 @@ pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
         crate::scheduler::diag::ctx_dump_raw();
         crate::scheduler::diag::rsp_dump_raw();
         crate::scheduler::diag::dr_dump_raw();
+        crate::scheduler::diag::kcpu_dump_raw();
         crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={} stack_owner_mismatch={}",
             crate::scheduler::diag::dr_last_seq(),
             crate::scheduler::diag::stack_owner_mismatch_count());

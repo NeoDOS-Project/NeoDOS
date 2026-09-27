@@ -267,7 +267,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     scheduler::check_kernel_stack_canary(chosen_ks_top, chosen_pid, chosen_tid, chosen_rsp);
                     unsafe { crate::arch::x64::gdt::prepare_ring3_return(chosen_ks_top, chosen_tid, chosen_pid); }
                     unsafe {
-                        crate::arch::x64::cpu_local::this_cpu_set_current_thread(chosen_ptr);
+                        crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(chosen_ptr, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
                         crate::arch::x64::cpu_local::this_cpu_set_current_pid(chosen_pid);
                         crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                     }
@@ -300,7 +300,8 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                                 scheduler.current_tid = scheduler::IDLE_TID;
                                 idle.state = ThreadState::Running;
                                 idle.time_slice_remaining = scheduler::IDLE_TIME_SLICE;
-                                crate::arch::x64::cpu_local::this_cpu_set_current_thread(idle_ptr);
+                                crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
+                                    idle_ptr, crate::scheduler::diag::SITE_SET_RESCHED_IDLE_FALLBACK);
                                 crate::arch::x64::cpu_local::this_cpu_set_current_pid((*idle_ptr).pid);
                                 crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                                 return idle.rsp;
@@ -361,7 +362,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         // switches update KPRCB, but syscall-return switches previously
         // updated only `current_tid` and RSP0.
         unsafe {
-            crate::arch::x64::cpu_local::this_cpu_set_current_thread(next);
+            crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(next, crate::scheduler::diag::SITE_SET_RESCHED_NEXT);
             crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
             crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
         }

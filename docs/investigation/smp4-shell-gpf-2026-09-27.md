@@ -811,3 +811,155 @@ Evidencia: `/tmp/opencode/b_val_smp1.serial`, `b_val_smp2.serial`,
 `b_val_smp4.serial`, `b_smp4.serial`, `b_smp4b.serial`.
 
 Documento generado 2026-09-27. Solo instrumentación; sin fix de scheduler.
+
+---
+
+## PHASE 293-C — FIRST STACK_OWNER_MISMATCH WRITER CAPTURE
+
+### C.1 Baseline
+
+```text
+HEAD:         5d8d6c1 (base de la fase)
+branch:       fix/293-smp4-shell-gpf
+tests:        737/737 PASS
+working tree: limpio al inicio
+```
+
+### C.2 Instrumentación añadida (solo observación)
+
+- `scheduler/diag.rs`:
+  - `ctx_ev` extendido: captura BEFORE (`old` k.cpu/rsp) y AFTER, y **detecta en
+    el instante de la escritura** si el puntero destino ya es
+    `KPRCB.current_thread` de otra CPU. La **primera** ocurrencia **congela** el
+    anillo (`CTX_FROZEN`) y conserva el detalle en `CTX_FIRST` (no se sobrescribe).
+    Emite `[CTX_DOUBLE_OWNER] FIRST ...` y, en el dump,
+    `[CTX_FIRST_INVALID] ...`.
+  - `KCPU_RING`: escrituras de `Kthread.cpu` con sitio y `old/new`.
+- `arch/x64/cpu_local.rs`: `this_cpu_set_current_thread_site` /
+  `sync_per_cpu_current_site` (tags de sitio).
+- Sitios etiquetados: `schedule_with` (rq/steal/scan/idle), `idt`, `resched`
+  (`chosen`, `next`, **`idle_fallback`**), `smp` (steal/revert/AP idle),
+  `usermode`.
+- `kbd/hotkey.rs` (`Ctrl+Alt+V`) y dumps de fault/panic incluyen `KCPU_TRACE`.
+
+Sin cambios de política de scheduler. Sin sleeps/delays/yields.
+
+### C.3 FIRST INVALID WRITE (source-level, reproducido 2×)
+
+```text
+[CTX_DOUBLE_OWNER] FIRST cpu=1 other_owner=3 site=10 seq=50918300 \
+  ptr=0x1e4a3820 tid=1 pid=0 k.cpu=3 k.rsp=0x42eeed0 \
+  old_ptr=0x1de83020 old_k.cpu=1 old_rsp=0x1e472eb0
+
+[CTX_FIRST_INVALID] seq=50918300 cpu=1 other_owner=3 site=10 \
+  new=0x1e4a3820 tid=1 pid=0 k.cpu=3 rsp=0x42eeed0 \
+  old=0x1de83020 old_k.cpu=1 old_rsp=0x1e472eb0
+```
+
+| Campo | Valor |
+|-------|-------|
+| file:line | `syscall/resched.rs:287-292` (asignación en 302-303) |
+| site | `site=10` = `SITE_SET_RESCHED_IDLE_FALLBACK` |
+| cpu | **1** (`other_owner=3`) — también observado cpu=2/other=3 en otra corrida |
+| old_current | `0x1de83020` (`idle/1` legítimo de cpu=1, k.cpu=1, rsp=0x1e472eb0) |
+| new_current | `0x1e4a3820` (`idle/0`, tid=1 pid=0, **k.cpu=3**, rsp=0x42eeed0) |
+| target.k_cpu | **3 ≠ cpu(1)** |
+| target.rsp | `0x42eeed0` |
+| lock_held | sí (el path corre con el `SCHEDULER` mutex tomado) |
+
+### C.4 Código defectuoso (no modificado)
+
+`syscall/resched.rs`, rama "Blocked/Terminated sin candidato Ring3":
+
+```rust
+// No Ring3 Ready — switch to idle (existing mechanism, reused verbatim).
+let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
+for k_opt in scheduler.kthreads.iter_mut() {
+    if let Some(k) = k_opt {
+        if k.is_idle {
+            idle_ptr = &mut **k as *mut scheduler::Kthread;
+            break;   // <-- toma el PRIMER idle GLOBAL, sin k.cpu == this_cpu
+        }
+    }
+}
+```
+
+Toma el **primer `is_idle` de la tabla global** (siempre `idle/0`, el primero
+creado) **sin comprobar que sea el idle de la CPU actual**. En SMP, varias CPUs
+que entran a este fallback adoptan el **mismo** `Kthread` de idle → varias CPUs
+sobre una única pila de kernel.
+
+### C.5 Ordenamiento de eventos (evidencia)
+
+```text
+secuencia (misma ventana, sin artefactos):
+  ... [READB] blocking (shell, read bloqueante)
+  1287 [CTX_DOUBLE_OWNER] FIRST cpu=1 site=10 new=idle/0 (k.cpu=3)
+  1288 [FAULT] v=6 INVALID_OPCODE ...
+  1289 [STACK_OWNER_MISMATCH] ptr=0x1e4a3820 cpu=1
+  1290 [STACK_OWNER_MISMATCH] ptr=0x1e4a3820 cpu=3
+  1298 [FAULT] v=6 INVALID_OPCODE rip=0x42eecd2 rsp=0x42eebf0 cpu=3
+```
+
+- `SCHED_WARN` (100) aparece **también** en la fase interactiva, pero es un
+  síntoma **distinto** (`k.cpu` duplicado); el `CTX_DOUBLE_OWNER` y el fault
+  siguen en la misma ventana.
+- El fault terminal ocurre en **cpu=3**, sobre la pila del idle compartido
+  (`rip/rsp` en la región `0x42ee...`, `rsp` del idle = `0x42eeed0`).
+
+### C.6 Cadena causal (probada)
+
+```text
+shell bloqueado en read
+  -> syscall_try_resched: sin candidato Ring3 -> fallback idle
+  -> toma el PRIMER is_idle global (idle/0), sin comprobar k.cpu == this_cpu
+  -> KPRCB.current_thread[cpu] = idle/0  (ya current de otra CPU)
+  -> STACK_OWNER_MISMATCH: 2 CPUs sobre la pila de idle/0
+  -> ejecución sobre pila compartida -> INVALID_OPCODE en la CPU ajena
+  -> fault (#UD / #PF) en la pila de idle/0
+```
+
+### C.7 SMP comparison
+
+| Config | shell | CTX_DOUBLE_OWNER | STACK_OWNER_MISMATCH | SCHED_WARN | GPF | PF | PANIC |
+|--------|-------|------------------|----------------------|-----------|-----|----|-------|
+| SMP1 | yes | 0 | 0 | 0 | 0 | 0 | 0 |
+| SMP2 | yes | 0 | 0 | 0 | 0 | 0 | 0 |
+| SMP4 | yes | 1 | 4 | 0 | 0 | 0 | 0 |
+
+(En la corrida de captura del writer, SMP4 mostró además el fault
+`INVALID_OPCODE` en cpu=3 sobre la pila de `idle/0`.)
+
+La divergencia es **estrictamente SMP4**: en SMP1/SMP2 el fallback coincide con
+el idle de la propia CPU (una sola CPU nunca comparte), y en SMP4 varias CPUs
+adoptan el mismo `idle/0`. En esta matriz SMP4 manifestó el doble-owner **sin**
+fault, confirmando que la divergencia no requiere el fault para aparecer.
+
+Evidencia: `/tmp/opencode/c_smp4.serial` (site=9), `/tmp/opencode/c_smp4b.serial`
+(site=10 + fault), `c_val_smp{1,1b,2,4}.serial`.
+
+Documento generado 2026-09-27. Solo instrumentación; sin fix de scheduler.
+
+### C.8 Conclusión
+
+```text
+ROOT CAUSE: PROVEN
+  trigger:      shell read bloqueante -> syscall_try_resched sin candidato Ring3
+  mechanism:    fallback idle elige el primer is_idle GLOBAL (resched.rs:287-292)
+  corrupted state: KPRCB.current_thread[cpuN] = idle/0 (k.cpu != cpuN)
+  fault:        #UD/#PF en la pila de idle/0 compartida por 2 CPUs
+FIRST INVALID WRITE:
+  file:   neodos-kernel/src/syscall/resched.rs
+  line:   287-292 (la asignación de idle_ptr), publicada en 302-303
+  site:   SITE_SET_RESCHED_IDLE_FALLBACK (10)
+  cpu:    1 (other_owner=3)
+FIX: NONE  (fase forense; no se modifica el scheduler)
+```
+
+**Nota de causalidad:** el enlace está probado con evidencia source-level (sitio
+único, correspondencia pointer/tid/k.cpu, y fault inmediato en la pila
+compartida). El fix propuesto (fuera de alcance de esta fase) sería seleccionar
+el idle con `k.cpu == this_cpu` / `find_idle_ptr(this_cpu)` en ese fallback.
+
+Evidencia: `/tmp/opencode/c_smp4.serial` (site=9), `/tmp/opencode/c_smp4b.serial`
+(site=10 + fault), `c_val_smp{1,2,4}.serial`.
