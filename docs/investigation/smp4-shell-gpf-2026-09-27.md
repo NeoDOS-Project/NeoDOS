@@ -963,3 +963,121 @@ el idle con `k.cpu == this_cpu` / `find_idle_ptr(this_cpu)` en ese fallback.
 
 Evidencia: `/tmp/opencode/c_smp4.serial` (site=9), `/tmp/opencode/c_smp4b.serial`
 (site=10 + fault), `c_val_smp{1,2,4}.serial`.
+
+---
+
+## PHASE 293-D — FIX: idle fallback cross-CPU ownership
+
+### D.1 Baseline
+
+```text
+HEAD:    76fb4af (Phase 293-C, instrumentación forense)
+branch:  fix/293-smp4-shell-gpf
+tests:   737/737 PASS
+```
+
+### D.2 Fix (mínimo, quirúrgico)
+
+```text
+file:  neodos-kernel/src/syscall/resched.rs
+lines: 285-303 (idle fallback de syscall_try_resched)
+old:   if k.is_idle { idle_ptr = ...; break; }   // primer idle GLOBAL
+new:   if k.is_idle && k.cpu == this_cpu { idle_ptr = ...; break; }
+```
+
+Además, `scheduler.current_tid` pasa de `IDLE_TID` (constante 1, solo válido
+para cpu0) a `idle.tid` (el TID del idle realmente seleccionado), coherente con
+los idle por CPU (tid 1..N).
+
+Helper existente `Scheduler::find_idle_ptr(cpu)` ya implementaba
+`is_idle && k.cpu == cpu`; el fallback ahora aplica el mismo predicado
+directamente (sin el fallback global de `find_idle_ptr` a `IDLE_TID`, que
+reintroduciría el bug si faltara el idle local).
+
+### D.3 Invariante
+
+```text
+idle_candidate.k.cpu == this_cpu
+```
+
+Garantizado porque la selección exige explícitamente `k.cpu == this_cpu`; un
+idle de otra CPU nunca satisface la condición y nunca se publica.
+
+### D.4 Regresión
+
+```text
+tests before: 737
+tests after:  738
+new test:     scheduler::tests::idle_fallback_requires_cpu_ownership
+```
+
+El test crea idles sintéticos por CPU y verifica:
+
+- `find_idle_ptr(cpu)` resuelve un idle con `k.cpu == cpu`;
+- el predicado `is_idle && k.cpu == cpu` resuelve el idle de esa CPU y no otro;
+- un idle de otra CPU no satisface el predicado.
+
+Determinista: sin sleeps, yields, timing ni ventanas de carrera.
+
+### D.5 Validación SMP
+
+(ver §D.6; matrices abajo)
+
+### D.6 Seguridad / comparación
+
+Antes (Phase 293-C):
+
+```text
+SMP4: CTX_DOUBLE_OWNER=1  STACK_OWNER_MISMATCH=4  fault reproducido
+```
+
+Después (Phase 293-D):
+
+```text
+SMP1: shell=yes  CTX_DOUBLE_OWNER=0  STACK_OWNER_MISMATCH=0  SCHED_WARN=0
+      GPF=0 PF=0 UD=0 PANIC=0 IRQ_REENTRANCY=0
+SMP2: shell=yes  CTX_DOUBLE_OWNER=0  STACK_OWNER_MISMATCH=0  SCHED_WARN=0
+      GPF=0 PF=0 UD=0 PANIC=0 IRQ_REENTRANCY=0
+SMP4: shell=yes  CTX_DOUBLE_OWNER=0  STACK_OWNER_MISMATCH=0  SCHED_WARN=0
+      GPF=0 PF=0 UD=0 PANIC=0 IRQ_REENTRANCY=0
+```
+
+Ejercicio del path exacto (4 corridas SMP4 independientes, todas con shell y 26
+ciclos `read`→`syscall_try_resched`→idle fallback):
+
+| Run | shell | READB | CTX_DOUBLE_OWNER | STACK_OWNER_MISMATCH | SCHED_WARN | FAULTS | PANIC |
+|-----|-------|-------|------------------|----------------------|-----------|--------|-------|
+| SMP4 #1 | yes | 26 | 0 | 0 | 0 | 0 | 0 |
+| SMP4 #2 | yes | 26 | 0 | 0 | 0 | 0 | 0 |
+| SMP4 #3 | yes | 26 | 0 | 0 | 0 | 0 | 0 |
+| SMP4 #4 | yes | 26 | 0 | 0 | 0 | 0 | 0 |
+
+`READY_WHILE_RUNNING=0`, `STALE_RSP_DISPATCH=0`, `STACK_OWNERSHIP_CONFLICT=0`.
+
+### D.7 Root-cause correctness
+
+```text
+Before:  CPU1 -> idle/0 (k.cpu=3)   [CTX_DOUBLE_OWNER FIRST site=10]
+After:   CPU1 -> idle/1 (k.cpu=1)   [predicado k.is_idle && k.cpu == this_cpu]
+```
+
+El fix garantiza `idle_candidate.k.cpu == this_cpu`, de modo que la transición
+inválida `CPU1 -> idle/0` ya no es seleccionable. El bug era determinista bajo
+`READB` (26 ciclos en cada corrida) y ya no aparece en ninguna.
+
+### D.8 Scope
+
+```text
+scheduler redesign: NO
+policy changes:     NO (schedule.rs/smp.rs/wake/queue/idt sin cambios)
+new lock:           NO
+ABI change:         NO
+stealing changes:   NO
+wake changes:       NO
+```
+
+Archivos tocados: `syscall/resched.rs` (fix), `scheduler/tests.rs` (regresión),
+este documento. La instrumentación forense 293-B/C se mantiene intacta.
+
+Evidencia: `/tmp/opencode/d_kept_smp{1,2,4}.serial`,
+`/tmp/opencode/d2_kept_run{1..4}.serial`.

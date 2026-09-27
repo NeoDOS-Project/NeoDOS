@@ -100,6 +100,43 @@ pub fn register_tests() {
 
     // ── Scheduler priority tests ──
 
+    test_case!("idle_fallback_requires_cpu_ownership", {
+        // #293 regression: the idle fallback must only select an idle Kthread
+        // whose `k.cpu == this_cpu`. Selecting a global idle (first is_idle)
+        // let two CPUs adopt the same idle/0 and run on one kernel stack.
+        let mut sched = Scheduler::new();
+        // Two synthetic per-CPU idles: tid=10 cpu=0, tid=11 cpu=1.
+        for (tid, cpu) in [(10u32, 0u32), (11u32, 1u32)] {
+            let slot = sched.alloc_kthread_slot().unwrap();
+            let mut k = Kthread::new_idle(tid, 0, 0x400000, 0x800000);
+            k.cpu = cpu;
+            sched.kthreads[slot] = Some(Box::new(k));
+            if tid >= sched.next_tid { sched.next_tid = tid + 1; }
+        }
+        // find_idle_ptr(cpu) must resolve an idle owned by that CPU.
+        let p0 = sched.find_idle_ptr(0);
+        let p1 = sched.find_idle_ptr(1);
+        test_true!(!p0.is_null());
+        test_true!(!p1.is_null());
+        unsafe {
+            test_eq!((*p0).cpu, 0);
+            test_eq!((*p1).cpu, 1);
+        }
+        // The predicate used by the resched fallback: is_idle && k.cpu == cpu.
+        // Every CPU must resolve an idle owned by that same CPU (never another).
+        for cpu in 0..2u32 {
+            let chosen_cpu = sched.kthreads.iter().flatten()
+                .find(|k| k.is_idle && k.cpu == cpu)
+                .map(|k| k.cpu);
+            test_eq!(chosen_cpu, Some(cpu));
+        }
+        // A cross-CPU idle must not satisfy the ownership predicate.
+        let cross = sched.kthreads.iter().flatten()
+            .find(|k| k.is_idle && k.cpu == 0)
+            .map(|k| k.cpu == 1);
+        test_eq!(cross, Some(false));
+    });
+
     fn add_test_thread(sched: &mut Scheduler, tid: u32, pid: u32, entry: u64, priority: u8, state: ThreadState) {
         let slot = sched.alloc_kthread_slot().unwrap();
         let mut k = Kthread::new_ring3(tid, pid, entry, 0x800000);

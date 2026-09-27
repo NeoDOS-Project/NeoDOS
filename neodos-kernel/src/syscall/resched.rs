@@ -282,11 +282,19 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     crate::trace_cswitch!(tid as u64, chosen_tid as u64);
                     return chosen_rsp;
                 } else {
-                    // No Ring3 Ready — switch to idle (existing mechanism, reused verbatim).
+                    // No Ring3 Ready — switch to *this CPU's* idle thread.
+                    //
+                    // #293 root-cause fix: only an idle Kthread that belongs to
+                    // the current CPU may be selected. The previous code took
+                    // the first `is_idle` in the global table, so two CPUs could
+                    // adopt the same idle/0 and run on one kernel stack
+                    // (STACK_OWNER_MISMATCH -> SMP4 fault). The invariant is
+                    // `idle.k.cpu == this_cpu`; no cross-CPU idle is ever used.
+                    let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
                     let mut idle_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                     for k_opt in scheduler.kthreads.iter_mut() {
                         if let Some(k) = k_opt {
-                            if k.is_idle {
+                            if k.is_idle && k.cpu == this_cpu {
                                 idle_ptr = &mut **k as *mut scheduler::Kthread;
                                 break;
                             }
@@ -297,7 +305,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                             let idle = &mut *idle_ptr;
                             scheduler::Scheduler::remove_from_run_queue(idle);
                             if idle.state != ThreadState::Terminated {
-                                scheduler.current_tid = scheduler::IDLE_TID;
+                                scheduler.current_tid = idle.tid;
                                 idle.state = ThreadState::Running;
                                 idle.time_slice_remaining = scheduler::IDLE_TIME_SLICE;
                                 crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
