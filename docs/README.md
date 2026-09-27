@@ -1,6 +1,6 @@
 # NeoDOS Documentation
 
-> **Version:** v0.50.2 | **Tests:** 665 (kernel) | **ABI:** v8
+> **Version:** v0.51.0 | **Tests:** 737 (kernel) | **ABI:** v8
 
 ## Architecture
 
@@ -110,6 +110,21 @@
 | [GPF netd Audit — Fase 1](development/audit-gpf-netd-fase1-2026-08-30.md) | Auditoría forense Fase 1: GPF en `iretq` al seleccionar `netd` — verificada instrucción-a-instrucción |
 | [GPF netd Audit — Completa](development/audit-gpf-netd-2026-08-30.md) | Auditoría completa GPF netd A-K + validación forense 2026-09-17 |
 | [Graphify](development/graphify.md) | Herramienta auxiliar: grafo de conocimiento para agentes IA (workspace, crates, syscalls, drivers) |
+| [Network Recovery — Forensic Report](development/net-recovery-2026-09-26.md) | e1000 NEM ABI / DMA ring alignment / DHCP service recovery (netd, SMP) |
+| [Network Recovery — VirtualBox Validation](development/net-recovery-vbox-validation-2026-09-26.md) | Bridged e1000 validation of the network stack in VirtualBox |
+
+## Investigation
+
+| Document | Description |
+|----------|-------------|
+| [SMP Bring-Up](investigation/smp-bring-up-report.md) | SMP bring-up investigation |
+| [Phase 13 — AP Scheduling Design](investigation/phase13-ap-scheduling-design.md) | Design for AP dispatch (real SMP scheduling) |
+| [Phase 13 — AP timer `iretq` #GP Forensics](investigation/phase13-ap-timer-iretq-gpf-forensics.md) | Forensic investigation of the AP timer `iretq` #GP |
+| [F-01/F-02 Adversarial Audit](investigation/f01-f02-adversarial-audit.md) | SMP current identity, zombie reap, stack UAF |
+| [KBD Input Queue Investigation](investigation/kbd-input-queue-investigation.md) | Keyboard input queue investigation |
+| [KBD Investigation Report](investigation/kbd-investigation-report.md) | Keyboard subsystem investigation report |
+| [KBD Pipeline — Fase 0](investigation/kbd-pipeline-fase0.md) | Black-box + white-box keyboard pipeline |
+| [KBD SMP Queue Validation](investigation/kbd-smp-queue-validation.md) | Keyboard SMP queue validation report |
 
 ## Design Proposals
 
@@ -120,6 +135,7 @@
 | [NeoCfg](design/neocfg-design.md) | Configuration system design |
 | [NeoKBD](design/neokbd-design.md) | Keyboard system design |
 | [Registry Improvements](design/registry-improvements.md) | Registry improvements proposal |
+| [Service Manager](design/service-manager-design.md) | Service Manager (Sm) design proposal |
 | [Shell Improvements](design/shell-improvements.md) | Shell improvements proposal |
 | [Users & Security](design/users-security-design.md) | Users and security design |
 
