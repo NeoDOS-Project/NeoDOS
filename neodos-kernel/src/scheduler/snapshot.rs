@@ -41,6 +41,10 @@ pub struct ProcessSnapshot {
     /// threads, in timer intervals (Δ vs. a later snapshot yields CPU%).
     /// Idle threads are excluded, so idle CPU is never attributed here.
     pub cpu_time: u64,
+    /// MEM-PROC (#274): reserved/allocated bytes (heap span + mmap regions).
+    pub committed_bytes: u64,
+    /// MEM-PROC (#274): resident bytes (mapped 4 KB heap pages × 4096).
+    pub working_set_bytes: u64,
 }
 
 impl ProcessSnapshot {
@@ -49,6 +53,8 @@ impl ProcessSnapshot {
         name: KernelName::empty(),
         thread_count: 0,
         cpu_time: 0,
+        committed_bytes: 0,
+        working_set_bytes: 0,
     };
 }
 
@@ -150,11 +156,26 @@ impl Scheduler {
                     }
                 }
             }
+            // MEM-PROC (#274): committed = heap span + mmap regions;
+            // working set = resident 4 KB heap pages of this process's slot.
+            let heap_span = ep.heap_break.saturating_sub(ep.heap_base);
+            let mmap_bytes: u64 = ep.mmap_regions.iter().map(|m| m.len).sum();
+            let committed_bytes = heap_span.saturating_add(mmap_bytes);
+            let working_set_bytes = if ep.heap_base == 0 {
+                0
+            } else {
+                let slot = ((ep.heap_base - crate::arch::x64::paging::PROCESS_HEAP_BASE)
+                    / crate::arch::x64::paging::PROCESS_HEAP_SIZE) as usize;
+                (crate::arch::x64::paging::heap_slot_resident_pages(slot) as u64)
+                    .saturating_mul(crate::arch::x64::paging::PAGE_4K)
+            };
             out.processes[out.process_count] = ProcessSnapshot {
                 pid: ep.pid,
                 name: ep.name,
                 thread_count: tc,
                 cpu_time,
+                committed_bytes,
+                working_set_bytes,
             };
             out.process_count += 1;
         }

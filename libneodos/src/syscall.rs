@@ -744,7 +744,7 @@ pub fn sys_ob_query_thread_stats(fd: u8, buf: &mut [u8]) -> Result<usize, i64> {
 /// v2 (Phase 15-A.1) appends the authoritative per-process/thread CPU execution
 /// counter. Not byte-compatible with v1 (header + record sizes differ), so both
 /// sides validate the version and entry sizes before parsing.
-pub const PROC_SNAPSHOT_VERSION: u32 = 2;
+pub const PROC_SNAPSHOT_VERSION: u32 = 3;
 /// Maximum name bytes exposed (matches the kernel `KernelName` bound).
 pub const PROC_NAME_MAX: usize = 32;
 /// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
@@ -773,7 +773,7 @@ impl ProcSnapshotHeader {
     }
 }
 
-/// One process record (48 bytes).
+/// One process record (64 bytes).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ProcessInfoRaw {
@@ -782,6 +782,10 @@ pub struct ProcessInfoRaw {
     pub thread_count: u32,
     /// CPU execution counter (timer intervals); Δ between snapshots → CPU%.
     pub cpu_time: u64,
+    /// MEM-PROC (#274): reserved/allocated bytes (heap span + mmap regions).
+    pub committed_bytes: u64,
+    /// MEM-PROC (#274): resident bytes (mapped 4 KB heap pages × 4096).
+    pub working_set_bytes: u64,
 }
 
 impl ProcessInfoRaw {

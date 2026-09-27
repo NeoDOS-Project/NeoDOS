@@ -649,7 +649,7 @@
   Working-set (resident pages) and committed (reserved/allocated) per process,
   exposed as ProcessSnapshot v3 (appended fields, version + entry-size validation)
   so neotop can render per-process memory. Parent/related: #27.
-  state: open
+  state: closed
 
 - **KWAIT-TIMEOUT**: timed waits (timeouts for ob_wait/poll/sleep) `priority/medium` `area/kernel` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   KWait blocks indefinitely; sys_ob_wait (RAX 45), sys_poll (RAX 24) and sys_sleep_ex (RAX 41) ignore their timeout arguments and there is no kernel sleep for user threads. Add per-thread deadline/timeout support to KWait driven by the timer tick, wire the ob_wait/poll timeouts, and provide a sleep/delay path without adding a new syscall. Prerequisite for ADM-1.4. Related: #27.
@@ -659,8 +659,8 @@
   Epic: dynamic process/thread monitor (top-like).
   - [x] Kernel CPU execution accounting + ProcessSnapshot v2 (Phase 15-A.1, #269).
   - [x] neotop: dynamic %CPU from Δ(cpu_time)/Δ(wall), N/A first sample, q/r, ANSI, SMP-correct.
-  - [ ] Kernel per-process memory (working set / committed) — MEM-PROC.
-  - [ ] neotop: memory columns — ADM-1.1.
+  - [x] Kernel per-process memory (working set / committed) — MEM-PROC.
+  - [x] neotop: memory columns — ADM-1.1.
   - [ ] neotop: sort by CPU/memory/PID/name + filter — ADM-1.2.
   - [ ] neotop: color thresholds (define green/yellow/red) — ADM-1.3.
   - [ ] neotop: configurable refresh interval — ADM-1.4 (depends KWAIT-TIMEOUT).
@@ -671,7 +671,7 @@
 - **ADM-1.1**: neotop memory columns `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   Consume ProcessSnapshot v3 (working set / committed from MEM-PROC) and render memory columns in neotop, with strict version + entry-size validation, human-readable units and idle excluded; locales + tests + docs. Parent: ADM-1 (#27).
   Dependencies: MEM-PROC
-  state: open
+  state: closed
 
 - **ADM-1.2**: neotop sorting and filtering `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
   Sort by CPU%/memory/PID/name (asc/desc), filter by name substring and/or PID, deterministic tie-break by PID; locales + tests + docs. Parent: ADM-1 (#27).
