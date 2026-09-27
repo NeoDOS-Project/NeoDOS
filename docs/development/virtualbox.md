@@ -9,6 +9,7 @@ VirtualBox is a fully supported backend alongside QEMU.
 
 - [VirtualBox](https://www.virtualbox.org/) installed
 - `VBoxManage` in PATH (included with VirtualBox)
+- NeoDev >= 0.3.0 for automatic raw image → VDI synchronization (see below)
 
 ### Installation
 
@@ -132,6 +133,11 @@ neodev test --backend virtualbox
 The test runner starts the VM headless, monitors the serial log for
 completion markers (`ALL_TESTS_COMPLETE`, `CMDTEST_COMPLETE`, etc.),
 and stops the VM when tests finish or timeout.
+
+Before the VM starts, the backend synchronizes `disk_image.vdi` with
+`disk_image.img` (same path used by `run`), so `neodev test` can never boot a
+VDI that is older than the freshly built raw image. See
+[VDI synchronization](#vdi-synchronization) for the exact rule.
 
 ## Serial Output
 
@@ -270,7 +276,59 @@ neodev vm create --backend virtualbox
 
 ### Disk image updated
 When `disk_image.img` is rebuilt, NeoDev automatically re-converts it to
-VDI on the next run if the raw image is newer.
+`disk_image.vdi` on the next `run` **or** `test` if the raw image is newer.
+See [VDI synchronization](#vdi-synchronization).
+
+## VDI synchronization
+
+The VirtualBox backend keeps a single authoritative check,
+`vbox::ensure_vdi_current()`, which runs before the VM starts for both
+`neodev run --backend virtualbox` and `neodev test --backend virtualbox`.
+
+```text
+if disk_image.img exists
+and disk_image.vdi exists
+and mtime(img) > mtime(vdi):
+    regenerate VDI from IMG
+```
+
+| Raw image | VDI | Action |
+|-----------|-----|--------|
+| missing | — | fail with `Raw disk image not found` (never boot a stale VDI) |
+| present | missing | `VBoxManage convertfromraw disk_image.img disk_image.vdi --format VDI` |
+| present | `mtime(vdi) >= mtime(img)` | no conversion |
+| present | `mtime(vdi) < mtime(img)` | reconvert |
+
+Details:
+
+- The filesystem timestamps are compared directly; equal timestamps mean the
+  VDI is current. There is no fixed sleep or fudge factor.
+- If the VDI is already attached, it is detached (`storageattach … --medium
+  none`, `closemedium`) before conversion and re-attached afterwards, so an
+  attached medium is never blindly deleted or overwritten. VM name, firmware,
+  chipset, AHCI controller, port/device, MAC and network settings are preserved.
+- If the VM is running or paused, the disk is not touched; NeoDev returns a
+  clear error asking you to stop the VM first.
+- After conversion NeoDev verifies that the VDI exists and is at least as new as
+  the raw image, and that `convertfromraw` exited successfully.
+
+### Validating the synchronization
+
+NeoDev ships a reusable harness. This repository carries an adapted copy at
+`scripts/vbox-vdi-sync-check.sh` that defaults the project root to this
+repository:
+
+```bash
+# Force IMG newer than VDI, then run the VirtualBox test suite and verify.
+scripts/vbox-vdi-sync-check.sh
+
+# Rebuild the image first instead of touching it.
+scripts/vbox-vdi-sync-check.sh --build --timeout 240
+```
+
+The script records the `IMG`/`VDI` mtimes before and after, runs
+`neodev test --backend virtualbox`, and asserts the VDI is at least as new as the
+raw image. Exit status is non-zero on failure.
 
 ### Permission denied
 Ensure your user has permission to run VirtualBox VMs:
