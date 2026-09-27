@@ -2,7 +2,7 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased
+## v0.51.1 — 2026-09-27
 
 ### Added — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
 
