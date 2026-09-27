@@ -671,6 +671,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
         crate::serial_println!("[VT_DIAG] counters reset post-boot (baseline for SMP bursts)");
         // Phase 8: enable scheduler consistency forensics for the interactive phase.
         crate::scheduler::sched_forensic_enable(true);
+        // #293 Phase 1: trace syscall identity (all TIDs) for the interactive phase
+        // so the pre-fault syscall sequence is available in the raw dump.
+        crate::scheduler::diag::sys_trace_set_tid(u32::MAX);
         // Phase 13: hand APs over to the scheduler now that the boot test suite
         // is complete. Each AP picks this up on its next timer tick.
         // Phase 13: hand APs over to the scheduler after the boot test suite.
@@ -897,6 +900,8 @@ fn panic(info: &PanicInfo) -> ! {
         info.message(),
     );
     crate::scheduler::diag::dump_raw();
+    crate::scheduler::diag::sys_dump_raw();
+    crate::scheduler::diag::frame_dump_raw();
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 
     // Capture approximate RIP from return address on stack, and RSP

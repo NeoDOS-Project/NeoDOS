@@ -56,6 +56,31 @@ pub extern "C" fn syscall_trace_frame(frame_rsp: u64, phase: u64) {
 
     let cpu = syscall_frame_cpu();
 
+    // Phase 1 (#293 forensics): record the syscall identity for the filtered
+    // TID. Lock-free, no allocation, uses the already-saved GPR/return frame.
+    //   [frame_rsp + 0]  = saved RAX = syscall number
+    //   [frame_rsp + 120]= RIP, +128 CS, +136 RFLAGS, +144 RSP(user), +152 SS
+    if crate::scheduler::diag::sys_trace_enabled() {
+        let nr = unsafe { *(frame_rsp as *const u64) } as u32;
+        // `current_tid_for_this_cpu` would take the scheduler lock; read the
+        // per-CPU KPRCB pointer/tid instead (GS-based, no lock).
+        let (tid, pid) = unsafe {
+            let ptr = crate::arch::x64::cpu_local::this_cpu_current_thread();
+            if ptr.is_null() { (0, 0) } else { ((*ptr).tid, (*ptr).pid) }
+        };
+        // Capture the *complete* return frame, including SS, so a corrupted
+        // frame (bad CS/SS/RIP) is reconstructable from the ring. Validated
+        // against the canonical layout documented in the syscall ABI.
+        let (f_rip, f_cs, f_rflags, f_rsp, f_ss) = unsafe {
+            (*frame.add(0), *frame.add(1), *frame.add(2), *frame.add(3), *frame.add(4))
+        };
+        crate::scheduler::diag::sys_ev(
+            phase as u8, nr, tid, pid, rip, user_rsp, frame_rsp);
+        // Out-of-band capture of the raw frame slots (no filter beyond trace).
+        crate::scheduler::diag::frame_ev(
+            phase as u8, tid, pid, f_rip, f_cs, f_rflags, f_rsp, f_ss);
+    }
+
     if phase == 0 && cs & 3 == 3 {
         SAVED_USER_RSP[cpu].store(user_rsp, Ordering::Relaxed);
         SAVED_USER_RIP[cpu].store(rip, Ordering::Relaxed);
