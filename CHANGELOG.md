@@ -2,9 +2,9 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
-## Unreleased — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
+## Unreleased
 
-### Added
+### Added — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
 
 - **Kernel CPU execution accounting** — every schedulable `Kthread` now carries
   an authoritative monotonic `cpu_time` counter (timer intervals), refreshed at
@@ -20,6 +20,17 @@
   (`Δcpu / Δwall × 100`), so it is real execution time-based, may exceed 100%
   per process on SMP, and is never clamped. First sample shows N/A; controls
   `q` (quit) and `r` (refresh); ~1 s approximate refresh; ANSI clear; clean exit.
+
+### Fixed — syscall hot path
+
+- **The syscall frame diagnostic no longer takes the global scheduler lock on
+  every syscall.** `syscall_trace_frame` locked the scheduler twice per syscall
+  (entry and return) only to format a message; for blocking syscalls preempted
+  by another thread on the same CPU the comparison is a false positive, so the
+  report flooded the serial port. Identity/state are now resolved lazily only
+  when a report is actually emitted, reports are capped at 16, and the per-CPU
+  index uses a cheap atomic guard instead of an MSR read. This removes a global
+  contention point that dominated command latency. Related: #119.
 
 ### Notes
 
