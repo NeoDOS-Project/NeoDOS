@@ -92,11 +92,13 @@ _ms_upsert() {
     encoded="$(jq -rn --arg t "$title" '$t|@uri')"
     if $GH api "/repos/$repo/milestones/$encoded" --method PATCH \
       --input - <<<"$data" &>/dev/null; then
-      ((_updated++))
+      _updated=$((_updated + 1))
     fi
   else
     if $GH api "/repos/$repo/milestones" --input - <<<"$data" &>/dev/null; then
-      ((_created++))
+      _created=$((_created + 1))
     fi
   fi
+
+  return 0
 }

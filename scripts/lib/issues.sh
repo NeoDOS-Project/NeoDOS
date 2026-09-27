@@ -160,10 +160,10 @@ _issue_upsert() {
         [[ -n "$ms_num" ]] && patch_data="$(echo "$patch_data" | jq --argjson ms "$ms_num" '.milestone = $ms')"
       fi
       $GH api "/repos/$repo/issues/$existing_num" --method PATCH \
-        --input - <<<"$patch_data" &>/dev/null && ((_updated++))
-      [[ "$state" == "closed" && "$existing_state" != "closed" ]] && ((_closed++))
+        --input - <<<"$patch_data" &>/dev/null && _updated=$((_updated + 1))
+      [[ "$state" == "closed" && "$existing_state" != "closed" ]] && _closed=$((_closed + 1))
     else
-      ((_skipped++))
+      _skipped=$((_skipped + 1))
     fi
   else
     # ── Crear ──
@@ -199,14 +199,16 @@ _issue_upsert() {
       warn "Error creando issue: $title"
       return
     }
-    ((_created++))
+    _created=$((_created + 1))
 
     # Cerrar si state=closed
     if [[ "$state" == "closed" ]]; then
       local new_num
       new_num="$(echo "$result" | jq -r '.number // ""')"
       [[ -n "$new_num" ]] && $GH api "/repos/$repo/issues/$new_num" --method PATCH \
-        -f state="closed" &>/dev/null && ((_closed++))
+        -f state="closed" &>/dev/null && _closed=$((_closed + 1))
     fi
   fi
+
+  return 0
 }

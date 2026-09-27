@@ -69,12 +69,12 @@ while IFS= read -r line; do
           if [[ -n "$ms_num" ]]; then
             echo "#$num $key → milestone $MS (ms#$ms_num)"
             gh api "/repos/$REPO/issues/$num" --method PATCH \
-              -f milestone="$ms_num" &>/dev/null && ((UPDATED++))
+              -f milestone="$ms_num" &>/dev/null && UPDATED=$((UPDATED + 1))
           else
             echo "WARN: Milestone not found: $MS"
           fi
         else
-          ((SKIPPED++))
+          SKIPPED=$((SKIPPED + 1))
         fi
         found=true
         break
