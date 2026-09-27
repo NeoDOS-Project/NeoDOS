@@ -802,6 +802,10 @@ extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_co
     crate::scheduler::diag::dump_raw();
     crate::scheduler::diag::sys_dump_raw();
     crate::scheduler::diag::frame_dump_raw();
+    crate::scheduler::diag::ctx_dump_raw();
+    crate::scheduler::diag::rsp_dump_raw();
+    crate::scheduler::diag::dr_dump_raw();
+    crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     // Read actual GS selector directly from the CPU register to
     // determine if the fault is from a bad GS load.
     let gs: u16;
@@ -1070,6 +1074,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // Save the current thread's RSP, then publish it. `make_thread_ready`
             // is a no-op when the timeslice path already enqueued it.
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_USER, k, current_rsp);
                 k.rsp = current_rsp;
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.
@@ -1250,6 +1255,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT idle tid={} has_non_idle={}",
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_IDLE, k, current_rsp);
                 k.rsp = current_rsp;
             }
             let next = scheduler.schedule();
@@ -1320,6 +1326,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             kdebug!(crate::log::LogSubsys::Sched, "[SCHED] PREEMPT kernel tid={} reason=yield_or_expired has_non_idle={}",
                 tid, has_non_idle);
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_IDT_KERNEL, k, current_rsp);
                 k.rsp = current_rsp;
                 k.yield_requested = false;
                 // The CPU actually executing the thread owns its re-enqueue.

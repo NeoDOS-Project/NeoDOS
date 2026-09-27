@@ -514,6 +514,16 @@ pub unsafe fn this_cpu_current_thread() -> *mut Kthread {
 /// Set the current CPU's Kthread pointer.
 #[inline(always)]
 pub unsafe fn this_cpu_set_current_thread(ptr: *mut Kthread) {
+    this_cpu_set_current_thread_site(ptr, crate::scheduler::diag::SITE_SET_RAW);
+}
+
+/// Set the current CPU's Kthread pointer, tagging the writing site (293-B).
+#[inline(always)]
+pub unsafe fn this_cpu_set_current_thread_site(ptr: *mut Kthread, site: u8) {
+    if crate::scheduler::diag::ctx_trace_enabled() {
+        let old = gs_read_u64(OFFSET_CURRENT_THREAD);
+        crate::scheduler::diag::ctx_ev(site, old, ptr as *const Kthread);
+    }
     gs_write_u64(OFFSET_CURRENT_THREAD, ptr as u64);
 }
 
@@ -625,8 +635,14 @@ pub fn kthread_current_cpu(kptr: *const Kthread) -> Option<u32> {
 /// No-op if GS base not yet programmed (early boot / unit tests).
 #[inline(always)]
 pub unsafe fn sync_per_cpu_current(ptr: *mut Kthread, pid: u32) {
+    sync_per_cpu_current_site(ptr, pid, crate::scheduler::diag::SITE_SYNC_SCHEDULE);
+}
+
+/// Tagged variant of [`sync_per_cpu_current`] (293-B forensics).
+#[inline(always)]
+pub unsafe fn sync_per_cpu_current_site(ptr: *mut Kthread, pid: u32, site: u8) {
     if crate::hal::safe::GsBase::read() == 0 { return; }
-    this_cpu_set_current_thread(ptr);
+    this_cpu_set_current_thread_site(ptr, site);
     this_cpu_set_current_pid(pid);
     let is_idle = ptr.is_null() || pid == 0 || unsafe { (*ptr).is_idle };
     this_cpu_set_idle(is_idle);

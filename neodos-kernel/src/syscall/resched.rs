@@ -150,6 +150,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         }
         if tid > 0 {
             if let Some(k) = scheduler.current_kthread_mut() {
+                crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_RESCHED, k, current_rsp);
                 k.rsp = current_rsp;
                 // Phase 13-A: consume a pending cooperative yield now that the
                 // live `rsp` has been saved; only now is it safe to publish the

@@ -172,6 +172,20 @@ impl Scheduler {
         }
         if let Some(cpu) = dup_cpu {
             let c = CHECK_WARN_COUNT.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+            // Phase 293-B: record the DOUBLE_RUNNING with the two offenders.
+            {
+                let mut a: Option<&crate::scheduler::Kthread> = None;
+                let mut b: Option<&crate::scheduler::Kthread> = None;
+                for k in self.kthreads.iter().flatten() {
+                    if k.state == ThreadState::Running && k.cpu == cpu {
+                        if a.is_none() { a = Some(k); } else if b.is_none() { b = Some(k); }
+                    }
+                }
+                if let (Some(a), Some(b)) = (a, b) {
+                    let kprcb_tid = crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(0);
+                    crate::scheduler::diag::dr_ev(cpu, a, b, self.current_tid, kprcb_tid);
+                }
+            }
             if c < 12 {
                 crate::serial_println!(
                     "[SCHED_WARN] tag={} TWO+ Running on cpu={} tids={:?}/{:?} sched.current={} kprcb_tid={:?}",
@@ -184,6 +198,10 @@ impl Scheduler {
                 }
             }
         }
+
+        // Phase 293-B: detect the same Kthread being KPRCB.current_thread of
+        // more than one CPU (two CPUs on one kernel stack). Observe only.
+        crate::scheduler::diag::stack_owner_scan();
     }
 
     /// Validate run queue invariants.
@@ -647,6 +665,7 @@ impl Scheduler {
                     expired_priority = k.priority;
                     k.state = ThreadState::Ready;
                     k.yield_requested = false;
+                    crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_TIMESLICE, k, current_rsp);
                     k.rsp = current_rsp;
                     // Re-home to the CPU that actually ran it before enqueueing.
                     k.cpu = this_cpu;

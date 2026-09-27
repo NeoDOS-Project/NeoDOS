@@ -220,3 +220,282 @@ pub fn frame_dump_raw() {
         );
     }
 }
+
+// ── Phase 293-B: current_thread write ring ────────────────────────────────
+//
+// Every write to `KPRCB.current_thread` is recorded with the old/new pointer
+// and TIDs, plus a *static* site tag (no backtrace, no locks, no allocation).
+pub const CTX_RING_SIZE: usize = 128;
+
+/// Static site tags for `current_thread` / `rsp` writes.
+pub const SITE_SYNC_SCHEDULE: u8 = 1;   // sync_per_cpu_current from schedule_with
+pub const SITE_SYNC_STEAL: u8 = 2;      // schedule_with step 2
+pub const SITE_SYNC_SCAN: u8 = 3;       // schedule_with step 3
+pub const SITE_SYNC_IDLE: u8 = 4;       // schedule_with idle fallback
+pub const SITE_SYNC_HANDOFF: u8 = 5;    // usermode handoff
+pub const SITE_SET_IDT: u8 = 6;         // idt.rs timer/exception paths
+pub const SITE_SET_RESCHED: u8 = 7;     // syscall/resched.rs
+pub const SITE_SET_AP_IDLE: u8 = 8;     // smp.rs ap_enter_idle
+pub const SITE_SET_RAW: u8 = 9;         // direct call without tag
+
+#[derive(Clone, Copy)]
+struct CtxEv {
+    seq: u64,
+    cpu: u8,
+    site: u8,
+    old_ptr: u64,
+    new_ptr: u64,
+    old_tid: u32,
+    new_tid: u32,
+    new_pid: u32,
+    new_state: u8,
+    new_cpu: u32,
+    new_rsp: u64,
+}
+
+const CTX_ZERO: CtxEv = CtxEv {
+    seq: 0, cpu: 0, site: 0, old_ptr: 0, new_ptr: 0,
+    old_tid: 0, new_tid: 0, new_pid: 0, new_state: 0, new_cpu: 0, new_rsp: 0,
+};
+
+static mut CTX_RING: [CtxEv; CTX_RING_SIZE] = [CTX_ZERO; CTX_RING_SIZE];
+static CTX_HEAD: AtomicU64 = AtomicU64::new(0);
+static CTX_TRACE_ON: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn ctx_trace_enable(v: bool) { CTX_TRACE_ON.store(v, Ordering::Relaxed); }
+#[inline]
+pub fn ctx_trace_enabled() -> bool { CTX_TRACE_ON.load(Ordering::Relaxed) }
+
+/// Record a `current_thread` write. Lock-free; callers must be able to tolerate
+/// a few relaxed stores (only enabled during the interactive phase).
+#[inline]
+pub fn ctx_ev(site: u8, old_ptr: u64, new_ptr: *const crate::scheduler::Kthread) {
+    if !CTX_TRACE_ON.load(Ordering::Relaxed) { return; }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as u8;
+    let (new_tid, new_pid, new_state, new_cpu, new_rsp) = if new_ptr.is_null() {
+        (0, 0, 0u8, 0u32, 0u64)
+    } else {
+        unsafe { ((*new_ptr).tid, (*new_ptr).pid, (*new_ptr).state.to_u8(), (*new_ptr).cpu, (*new_ptr).rsp) }
+    };
+    let old_tid = 0u32; // old pointer is not dereferenced (may be freed)
+    let seq = CTX_HEAD.fetch_add(1, Ordering::Relaxed);
+    let idx = (seq as usize) % CTX_RING_SIZE;
+    let e = CtxEv {
+        seq, cpu, site, old_ptr, new_ptr: new_ptr as u64,
+        old_tid, new_tid, new_pid, new_state, new_cpu, new_rsp,
+    };
+    unsafe { core::ptr::write_volatile(&mut CTX_RING[idx] as *mut CtxEv, e); }
+}
+
+pub fn ctx_dump_raw() {
+    let head = CTX_HEAD.load(Ordering::Relaxed);
+    crate::raw_serial_println!("[CTX_TRACE] on={} head={} dump={}",
+        CTX_TRACE_ON.load(Ordering::Relaxed), head, head.min(CTX_RING_SIZE as u64));
+    if head == 0 { return; }
+    let count = head.min(CTX_RING_SIZE as u64) as usize;
+    let start = if head > CTX_RING_SIZE as u64 {
+        (head - CTX_RING_SIZE as u64) as usize
+    } else { 0 };
+    for i in 0..count {
+        let idx = (start + i) % CTX_RING_SIZE;
+        let e = unsafe { core::ptr::read_volatile(&CTX_RING[idx] as *const CtxEv) };
+        crate::raw_serial_println!(
+            "[CTX_TRACE] #{} cpu={} site={} old=0x{:x} new=0x{:x} new_tid={} new_pid={} state={} k.cpu={} k.rsp=0x{:x}",
+            e.seq, e.cpu, e.site, e.old_ptr, e.new_ptr, e.new_tid, e.new_pid,
+            e.new_state, e.new_cpu, e.new_rsp
+        );
+    }
+}
+
+// ── Phase 293-B: Kthread.rsp write ring ───────────────────────────────────
+pub const RSP_RING_SIZE: usize = 96;
+
+pub const SITE_RSP_IDT_USER: u8 = 1;
+pub const SITE_RSP_IDT_IDLE: u8 = 2;
+pub const SITE_RSP_IDT_KERNEL: u8 = 3;
+pub const SITE_RSP_RESCHED: u8 = 4;
+pub const SITE_RSP_TIMESLICE: u8 = 5;
+
+#[derive(Clone, Copy)]
+struct RspEv {
+    seq: u64,
+    cpu: u8,
+    site: u8,
+    tid: u32,
+    pid: u32,
+    old_rsp: u64,
+    new_rsp: u64,
+    k_cpu: u32,
+    k_state: u8,
+    is_current: u8,
+}
+
+const RSP_ZERO: RspEv = RspEv {
+    seq: 0, cpu: 0, site: 0, tid: 0, pid: 0,
+    old_rsp: 0, new_rsp: 0, k_cpu: 0, k_state: 0, is_current: 0,
+};
+
+static mut RSP_RING: [RspEv; RSP_RING_SIZE] = [RSP_ZERO; RSP_RING_SIZE];
+static RSP_HEAD: AtomicU64 = AtomicU64::new(0);
+static RSP_TRACE_ON: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+pub fn rsp_trace_enable(v: bool) { RSP_TRACE_ON.store(v, Ordering::Relaxed); }
+#[inline]
+pub fn rsp_trace_enabled() -> bool { RSP_TRACE_ON.load(Ordering::Relaxed) }
+
+/// Record a `k.rsp = new` write (called just before the store).
+#[inline]
+pub fn rsp_ev(site: u8, k: &crate::scheduler::Kthread, new_rsp: u64) {
+    if !RSP_TRACE_ON.load(Ordering::Relaxed) { return; }
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as u8;
+    let cur = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+    let ptr = k as *const crate::scheduler::Kthread as *const u8;
+    let is_current = (cur as *const u8 == ptr) as u8;
+    let seq = RSP_HEAD.fetch_add(1, Ordering::Relaxed);
+    let idx = (seq as usize) % RSP_RING_SIZE;
+    let e = RspEv {
+        seq, cpu, site, tid: k.tid, pid: k.pid,
+        old_rsp: k.rsp, new_rsp, k_cpu: k.cpu, k_state: k.state.to_u8(), is_current,
+    };
+    unsafe { core::ptr::write_volatile(&mut RSP_RING[idx] as *mut RspEv, e); }
+}
+
+pub fn rsp_dump_raw() {
+    let head = RSP_HEAD.load(Ordering::Relaxed);
+    crate::raw_serial_println!("[RSP_TRACE] on={} head={} dump={}",
+        RSP_TRACE_ON.load(Ordering::Relaxed), head, head.min(RSP_RING_SIZE as u64));
+    if head == 0 { return; }
+    let count = head.min(RSP_RING_SIZE as u64) as usize;
+    let start = if head > RSP_RING_SIZE as u64 {
+        (head - RSP_RING_SIZE as u64) as usize
+    } else { 0 };
+    for i in 0..count {
+        let idx = (start + i) % RSP_RING_SIZE;
+        let e = unsafe { core::ptr::read_volatile(&RSP_RING[idx] as *const RspEv) };
+        crate::raw_serial_println!(
+            "[RSP_TRACE] #{} cpu={} site={} tid={} pid={} old=0x{:x} new=0x{:x} k.cpu={} state={} is_current={}",
+            e.seq, e.cpu, e.site, e.tid, e.pid, e.old_rsp, e.new_rsp,
+            e.k_cpu, e.k_state, e.is_current
+        );
+    }
+}
+
+// ── Phase 293-B: DOUBLE_RUNNING / STACK_OWNER_MISMATCH rings ──────────────
+pub const DR_RING_SIZE: usize = 32;
+
+#[derive(Clone, Copy)]
+struct DrEv {
+    seq: u64,
+    cpu: u32,
+    a_tid: u32,
+    a_pid: u32,
+    a_rsp: u64,
+    a_kcpu: u32,
+    b_tid: u32,
+    b_pid: u32,
+    b_rsp: u64,
+    b_kcpu: u32,
+    sched_current: u32,
+    kprcb_tid: u32,
+}
+
+const DR_ZERO: DrEv = DrEv {
+    seq: 0, cpu: 0, a_tid: 0, a_pid: 0, a_rsp: 0, a_kcpu: 0,
+    b_tid: 0, b_pid: 0, b_rsp: 0, b_kcpu: 0, sched_current: 0, kprcb_tid: 0,
+};
+
+static mut DR_RING: [DrEv; DR_RING_SIZE] = [DR_ZERO; DR_RING_SIZE];
+static DR_HEAD: AtomicU64 = AtomicU64::new(0);
+static DR_LAST_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Record a DOUBLE_RUNNING occurrence and return its sequence number.
+#[inline]
+pub fn dr_ev(
+    cpu: u32,
+    a: &crate::scheduler::Kthread, b: &crate::scheduler::Kthread,
+    sched_current: u32, kprcb_tid: u32,
+) -> u64 {
+    let seq = DR_HEAD.fetch_add(1, Ordering::Relaxed);
+    let idx = (seq as usize) % DR_RING_SIZE;
+    let e = DrEv {
+        seq, cpu,
+        a_tid: a.tid, a_pid: a.pid, a_rsp: a.rsp, a_kcpu: a.cpu,
+        b_tid: b.tid, b_pid: b.pid, b_rsp: b.rsp, b_kcpu: b.cpu,
+        sched_current, kprcb_tid,
+    };
+    unsafe { core::ptr::write_volatile(&mut DR_RING[idx] as *mut DrEv, e); }
+    DR_LAST_SEQ.store(seq, Ordering::Relaxed);
+    seq
+}
+
+#[inline]
+pub fn dr_last_seq() -> u64 { DR_LAST_SEQ.load(Ordering::Relaxed) }
+
+pub fn dr_dump_raw() {
+    let head = DR_HEAD.load(Ordering::Relaxed);
+    crate::raw_serial_println!("[DOUBLE_RUNNING] head={} dump={}",
+        head, head.min(DR_RING_SIZE as u64));
+    if head == 0 { return; }
+    let count = head.min(DR_RING_SIZE as u64) as usize;
+    let start = if head > DR_RING_SIZE as u64 {
+        (head - DR_RING_SIZE as u64) as usize
+    } else { 0 };
+    for i in 0..count {
+        let idx = (start + i) % DR_RING_SIZE;
+        let e = unsafe { core::ptr::read_volatile(&DR_RING[idx] as *const DrEv) };
+        crate::raw_serial_println!(
+            "[DOUBLE_RUNNING] #{} cpu={} A(tid={} pid={} rsp=0x{:x} k.cpu={}) B(tid={} pid={} rsp=0x{:x} k.cpu={}) sched.current={} kprcb_tid={}",
+            e.seq, e.cpu, e.a_tid, e.a_pid, e.a_rsp, e.a_kcpu,
+            e.b_tid, e.b_pid, e.b_rsp, e.b_kcpu, e.sched_current, e.kprcb_tid
+        );
+    }
+}
+
+/// STACK_OWNER_MISMATCH: the same `Kthread` is the `KPRCB.current_thread` of
+/// more than one CPU (two CPUs on one kernel stack). Recorded, never fixed.
+static STACK_OWNER_MISMATCH: AtomicU64 = AtomicU64::new(0);
+
+pub fn stack_owner_mismatch_count() -> u64 {
+    STACK_OWNER_MISMATCH.load(Ordering::Relaxed)
+}
+
+/// Scan all CPU KPRCBs and count Kthreads owned by >1 CPU. Called under the
+/// scheduler lock from the consistency check; lock-free reads of KPRCB.
+pub fn stack_owner_scan() {
+    let max = crate::arch::x64::cpu_local::MAX_CPUS;
+    for cpu in 0..max {
+        let ptr = unsafe {
+            let page = crate::arch::x64::cpu_local::kprcb_page(cpu);
+            match page {
+                Some(p) => core::ptr::read_volatile(
+                    (p + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64),
+                None => 0,
+            }
+        };
+        if ptr == 0 { continue; }
+        // Count how many CPUs hold this same pointer.
+        let mut owners = 0u32;
+        for other in 0..max {
+            if other == cpu { continue; }
+            let p2 = unsafe {
+                let page = crate::arch::x64::cpu_local::kprcb_page(other);
+                match page {
+                    Some(p) => core::ptr::read_volatile(
+                        (p + crate::arch::x64::cpu_local::OFFSET_CURRENT_THREAD as u64) as *const u64),
+                    None => 0,
+                }
+            };
+            if p2 == ptr { owners += 1; }
+        }
+        if owners > 0 {
+            let n = STACK_OWNER_MISMATCH.fetch_add(1, Ordering::Relaxed);
+            if n < 16 {
+                crate::raw_serial_println!(
+                    "[STACK_OWNER_MISMATCH] ptr=0x{:x} held by cpu={} and {} other cpu(s)",
+                    ptr, cpu, owners);
+            }
+        }
+    }
+}

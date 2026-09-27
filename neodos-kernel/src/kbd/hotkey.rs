@@ -31,6 +31,14 @@ pub fn dispatch_hotkey(code: u8, modifiers: u8) -> bool {
         crate::input::vt::vt_diag_dump();
         crate::arch::x64::idt::kbd_irq_dump();
         crate::interrupts::ioapic::dump_irq_routing(1);
+        // Phase 293-B: dump current_thread / rsp / double-running rings on demand.
+        crate::serial_println!("[293B_DUMP] on-demand forensic dump");
+        crate::scheduler::diag::ctx_dump_raw();
+        crate::scheduler::diag::rsp_dump_raw();
+        crate::scheduler::diag::dr_dump_raw();
+        crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={} stack_owner_mismatch={}",
+            crate::scheduler::diag::dr_last_seq(),
+            crate::scheduler::diag::stack_owner_mismatch_count());
         return true;
     }
 

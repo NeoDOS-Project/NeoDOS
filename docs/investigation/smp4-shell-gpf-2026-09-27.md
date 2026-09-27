@@ -628,3 +628,186 @@ fault), `/tmp/opencode/f293_p2.serial`, `/tmp/opencode/f293_p4.serial`,
 `/tmp/opencode/val_smp2.serial`.
 
 *Documento generado 2026-09-27. Sin commits; cambios sólo en working tree.*
+
+---
+
+## Phase 293-B — current_thread / saved-rsp ownership forensics
+
+> Nota: la validación final y la tabla de marcadores están en §B.11, al final de
+> esta sección.
+
+### B.1 Baseline
+
+| Item | Valor |
+|------|-------|
+| Branch | `fix/293-smp4-shell-gpf` |
+| Commit base | `c2d9637` |
+| `neodev test` | **737/737 PASS** (con toda la instrumentación 293-B) |
+| SMP1 / SMP2 | PASS (shell) |
+| SMP4 | reproduce; primera divergencia aislada |
+
+### B.2 Comandos exactos
+
+```bash
+RUSTUP_TOOLCHAIN=nightly neodev build --quick --image
+neodev test
+# VirtualBox SMP4 (NeoDev no expone --smp; se usa VBoxManage, doc. virtualbox.md):
+VBoxManage modifyvm NeoDOS --cpus 4
+VBoxManage modifyvm NeoDOS --uart1 0x03f8 4 --uartmode1 file /tmp/opencode/b_smp4b.serial
+VBoxManage startvm NeoDOS --type headless
+# al llegar a C:\> :
+VBoxManage controlvm NeoDOS keyboardputstring "a"
+VBoxManage controlvm NeoDOS keyboardputscancode 1c 9c
+```
+
+`Ctrl+Alt+V` (scancode `1d 38 2f 9f b8 9d`) vuelca los anillos 293-B en caliente.
+
+### B.3 Instrumentación añadida (solo observación)
+
+- `scheduler/diag.rs`:
+  - `CTX_RING` (128): cada escritura de `KPRCB.current_thread` con
+    `cpu/site/old_ptr/new_ptr/new_tid/new_pid/state/k.cpu/k.rsp`.
+  - `RSP_RING` (96): cada escritura de `k.rsp` con
+    `cpu/site/tid/pid/old_rsp/new_rsp/k.cpu/state/is_current`.
+  - `DR_RING` (32): `DOUBLE_RUNNING` (dos `Running` con el mismo `k.cpu`).
+  - `stack_owner_scan()`: cuenta `Kthread` que es `KPRCB.current_thread` de >1 CPU.
+- `arch/x64/cpu_local.rs`: `this_cpu_set_current_thread_site` /
+  `sync_per_cpu_current_site` con tag de sitio; el resto de callers pasan tags.
+- Sitios instrumentados: `schedule_with` (rq/steal/scan/idle), `idt.rs`
+  (user/idle/kernel preempt), `resched.rs`, `smp.rs`, `usermode.rs`.
+- `kbd/hotkey.rs`: `Ctrl+Alt+V` volca `CTX/RSP/DR` + correlación.
+
+### B.4 Primera divergencia (evidencia fuerte)
+
+`[STACK_OWNER_MISMATCH]` en SMP4, **antes de cualquier fault**:
+
+```text
+[STACK_OWNER_MISMATCH] ptr=0x1e4a2820 held by cpu=0 and 1 other cpu(s)
+[STACK_OWNER_MISMATCH] ptr=0x1e4a2820 held by cpu=1 and 1 other cpu(s)
+... (persistente: stack_owner_mismatch=201262 en la correlación) ...
+```
+
+`ptr=0x1e4a2820` es el `Kthread` de **`idle/0` (tid=1, pid=0, k.cpu=0)**. Es el
+`KPRCB.current_thread` de **cpu=0 Y cpu=1 simultáneamente** durante toda la fase
+interactiva. **Dos CPUs sobre una misma pila de kernel** (clase G2/C).
+
+Contexto de arranque que lo hace anómalo:
+
+```text
+[AP_EVIDENCE] cpu=1 kprcb=0x2409000 current_tid=4 name=idle/1   (boot)
+[AP_EVIDENCE] cpu=3 kprcb=0x240b000 current_tid=3 name=idle/3   (boot)
+...
+fault: cpu=1 ejecuta sobre 0x4257... (pila de idle/0, rsp idle=0x4257d30)
+```
+
+cpu=1 **abandonó su propio `idle/1` (tid=4)** y pasó a apuntar a `idle/0`.
+
+### B.5 `CTX_TRACE` (KPRCB.current_thread)
+
+```text
+[CTX_TRACE] cpu=0 site=1 old=0x1e4a2820 new=0x1e4a2820 new_tid=1 state=0 k.cpu=0 k.rsp=0x4257d30
+[CTX_TRACE] cpu=0 site=9 old=0x1e4a2820 new=0x1e4a2820 new_tid=1 state=1 k.cpu=0 k.rsp=0x4257d30
+... alterna site=1 (schedule) / site=9 (raw) escribiendo el MISMO puntero ...
+[CTX_TRACE] cpu=2 site=1 ...
+[CTX_TRACE] cpu=3 site=1 / site=9 ...
+```
+
+Nota: el anillo (128) se recicla y no retuvo la entrada de cpu=1; la detección
+persistente por `stack_owner_scan` (201.262) es la evidencia robusta.
+
+### B.6 `RSP_TRACE` (Kthread.rsp)
+
+```text
+[RSP_TRACE] cpu=0 site=2 tid=1 pid=0 old=0x4257d30 new=0x4257d30 k.cpu=0 state=0 is_current=1   (steal)
+[RSP_TRACE] cpu=0 site=5 tid=1 pid=0 old=0x4257d30 new=0x4257d30 k.cpu=0 state=0 is_current=1   (timeslice)
+[RSP_TRACE] cpu=3 site=4 tid=7 pid=3 old=... new=...                                            (resched Dhcpc)
+```
+
+`site=2` (steal) escribe el `rsp` del idle de cpu=0 — llamativo, pero
+`old == new` (no cambia el valor).
+
+### B.7 Frame inmediatamente antes del `iretq` y fault
+
+Fault terminal de la corrida con mismatch:
+
+```text
+[FAULT] v=13 GPF err=0x0 rip=... cpu=1
+[FAULT] v=14 PAGE-FAULT user=false write=true np=true virt=0xff... cpu=1
+[FAULT] v=6 INVALID_OPCODE rip=0x4257bba cs=0x8 rsp=0x42577b0 cpu=1
+[PANIC] class=UNKNOWN_CPU_EXCEPTION rsp=0x42575f0 msg=Invalid opcode: rip=0x4257bba
+[CORRELATION] stack_owner_mismatch=201262
+```
+
+`rip=0x4257bba` y `rsp=0x42577b0` están en la región `0x4257....` = **pila del
+`idle/0` de cpu=0** (`rsp` del idle = `0x4257d30`). cpu=1 ejecuta y falla **sobre
+la pila de otra CPU**.
+
+### B.8 Correlación DOUBLE_RUNNING ↔ frame
+
+- `DOUBLE_RUNNING = 0` (ningún par `Running` con el mismo `k.cpu`).
+- `STACK_OWNER_MISMATCH` sí: `idle/0` en cpu=0 y cpu=1.
+- El frame corrupto/fault ocurre en **cpu=1**, sobre la pila de **cpu=0**.
+- Correlación registrada en el fault: `stack_owner_mismatch=201262`.
+
+### B.9 Análisis obligatorio (Fase 9)
+
+| # | Pregunta | Respuesta |
+|---|----------|-----------|
+| A | ¿Existe doble `Running`? | **NO** por `k.cpu` (`DOUBLE_RUNNING=0`), pero **SÍ** doble ownership de `KPRCB.current_thread` (`STACK_OWNER_MISMATCH`) |
+| B | ¿Quién crea el doble ownership? | `sync_per_cpu_current` desde `schedule_with` (sitios `site=1`, `site=9`); cpu=1 adopta el `Kthread` de `idle/0` (k.cpu=0). Writer de **primera** instancia no retenido por el anillo |
+| C | ¿Se produce antes del GPF? | **YES** — `STACK_OWNER_MISMATCH` aparece desde la fase interactiva, antes del fault |
+| D | ¿Produce corrupción de RSP? | **UNKNOWN** — el `rsp` del idle no cambia (`old==new`); el efecto observable es ejecución cruzada de pila |
+| E | ¿El stack corrupto pertenece a dos CPUs? | **YES** — cpu=1 ejecuta sobre la pila de `idle/0` (cpu=0) |
+| F | ¿El frame corrupto puede explicarse por scheduler state? | **UNKNOWN/PARCIAL** — el fault ocurre en la pila compartida, pero el writer del frame desalineado no está probado |
+| G | ¿Otra primera divergencia anterior? | **SÍ**: `STACK_OWNER_MISMATCH` (doble `current_thread`) es anterior y tiene prioridad sobre `SCHED_WARN` |
+
+### B.10 Conclusión 293-B
+
+```text
+ROOT CAUSE: NOT PROVEN
+FIRST DIVERGENCE: STACK_OWNER_MISMATCH — idle/0 (Kthread 0x1e4a2820, k.cpu=0)
+                  es KPRCB.current_thread de cpu=0 y cpu=1 (persistente, >200k)
+DOUBLE_RUNNING: NO (por k.cpu); SÍ doble current_thread
+STACK_OWNER_MISMATCH: YES
+FRAME_WRITER: UNKNOWN
+FIX: NONE
+```
+
+Cadena probada:
+
+```text
+cpu=1 adopta el Kthread del idle/0 (cpu=0)  [sync_per_cpu_current, sitio schedule]
+  → KPRCB.current_thread[cpu0] == KPRCB.current_thread[cpu1] == 0x1e4a2820
+  → cpu=1 ejecuta sobre la pila de idle/0 (rsp≈0x4257d30)
+  → fault en cpu=1 sobre esa pila (#PF/#UD, rip/rsp en 0x4257...)
+```
+
+Eslabón no probado: la **primera** escritura concreta que hizo que cpu=1
+adoptara el idle de cpu=0 (el anillo se recicló). Por el criterio de causalidad,
+**ROOT CAUSE: NOT PROVEN** y **FIX: NONE**.
+
+### B.11 Validación final
+
+```text
+neodev test : 737/737 PASS
+```
+
+| Config | shell | GPF | PF | PANIC | SCHED_WARN | STACK_OWNER_MISMATCH |
+|--------|-------|-----|----|-------|-----------|----------------------|
+| SMP1 | yes | 0 | 0 | 0 | 0 | 0 |
+| SMP2 | yes | 0 | 0 | 0 | 0 | 0 |
+| SMP4 | yes | 0 | 0 | 0 | 90 | 8 |
+
+Otros marcadores (todas las configs): `DOUBLE_RUNNING=0`,
+`READY_WHILE_RUNNING=0`, `STALE_RSP_DISPATCH=0`,
+`STACK_OWNERSHIP_CONFLICT=0`, `IRQ_REENTRANCY=0`.
+
+La **primera divergencia es SMP4-específica**: `STACK_OWNER_MISMATCH` (y
+`SCHED_WARN`) aparecen **solo** en SMP4; SMP1/SMP2 están limpios. En esta corrida
+SMP4 no llegó al fault, confirmando que la divergencia **precede** y es
+independiente de que ocurra el `#GP`.
+
+Evidencia: `/tmp/opencode/b_val_smp1.serial`, `b_val_smp2.serial`,
+`b_val_smp4.serial`, `b_smp4.serial`, `b_smp4b.serial`.
+
+Documento generado 2026-09-27. Solo instrumentación; sin fix de scheduler.
