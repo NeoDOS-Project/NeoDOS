@@ -645,8 +645,23 @@
   SNTP simplificado (RFC 5905), sincronización RTC.
   state: open
 
+- **MEM-PROC**: Kernel per-process memory accounting `priority/medium` `area/kernel` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
+  Working-set (resident pages) and committed (reserved/allocated) per process,
+  exposed as ProcessSnapshot v3 (appended fields, version + entry-size validation)
+  so neotop can render per-process memory. Parent/related: #27.
+  state: open
+
 - **ADM-1**: neotop v0.2 `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
-  Per-thread CPU, I/O stats, network bar.
+  Epic: dynamic process/thread monitor (top-like).
+  - [x] Kernel CPU execution accounting + ProcessSnapshot v2 (Phase 15-A.1, #269).
+  - [x] neotop: dynamic %CPU from Δ(cpu_time)/Δ(wall), N/A first sample, q/r, ANSI, SMP-correct.
+  - [ ] Kernel per-process memory (working set / committed) — MEM-PROC.
+  - [ ] neotop: memory columns.
+  - [ ] neotop: sort by CPU/memory/PID/name + filter.
+  - [ ] neotop: color thresholds (define green/yellow/red).
+  - [ ] neotop: configurable refresh interval (requires timed wait; no kernel sleep today).
+  Acceptance: ~1 s refresh; SMP-correct (a process may exceed 100%); N/A on the
+  first sample; ABI version validated; locales en-US/es-ES/ca-ES; tests + docs.
   state: open
 
 - **ADM-2**: neostat `priority/medium` `area/tools` `type/feature` `v0.51 — NeoFS v2 + Shell Phase 2 + SAM`
