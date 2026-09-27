@@ -482,6 +482,8 @@ impl Scheduler {
             pid: self.next_pid,
             state: ThreadState::Suspended,
             cpu_ticks: 0,
+            cpu_time: 0,
+            cpu_time_base: Kthread::CPU_TIME_UNSET,
             waiting_for: None,
             priority,
             time_slice_remaining: TIME_SLICES[priority as usize],

@@ -58,9 +58,11 @@ _label_upsert() {
 
   if echo "$existing" | grep -qF "\"$name\"" 2>/dev/null; then
     $GH api "/repos/$repo/labels/$name" --method PATCH \
-      -f color="$color" -f description="$desc" &>/dev/null && { ((_updated++)); info "    updated"; } || info "    skip (no change)"
+      -f color="$color" -f description="$desc" &>/dev/null && { _updated=$((_updated + 1)); info "    updated"; } || info "    skip (no change)"
   else
     $GH api "/repos/$repo/labels" -f name="$name" \
-      -f color="$color" -f description="$desc" &>/dev/null && { ((_created++)); info "    created"; } || info "    failed"
+      -f color="$color" -f description="$desc" &>/dev/null && { _created=$((_created + 1)); info "    created"; } || info "    failed"
   fi
+
+  return 0
 }

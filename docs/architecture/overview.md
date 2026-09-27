@@ -41,13 +41,13 @@ NeoDOS Kernel (x86_64-unknown-none)
    - enable interrupts (STI)
    - custom page tables (4 GiB identity map + user window + demand-paging heap/mmap split)
    - heap/mmap demand-paging split (PHASE 3.0): 16×2 MB huge pages → 4 KB PTEs
-   - TEB page mapping at 0x7000 USER_ACCESSIBLE for SEH (PHASE 3.1)
-   - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback) (PHASE 3.2)
-   - ATA boot stub (BootAta) + AHCI probe + NVMe probe + VirtIO probe (PHASE 3.3)
+   - TEB page mapping at 0x7000 USER_ACCESSIBLE for SEH (PHASE 6.1)
+   - PCIe ECAM init: read MCFG → map MMIO as UC- → activate ECAM (PIO fallback) (PHASE 2.3)
+   - ATA boot stub (BootAta) + AHCI probe + NVMe probe + VirtIO probe (PHASE 3)
    - Page Cache init (128×4 KB = 512 KB, hash + LRU) + GPT scan → IoStacks for NeoDOS + ESP (PHASE 3.4)
    - NeoDOS FS mount on `\Device\NeoDosVolume0` → C: (PHASE 3.4b)
    - FAT32 ESP mount on `\Device\EspVolume0` → A: (PHASE 3.4c)
-   - Input Manager init (VT subsystem, A4.4) (PHASE 3.5)
+   - Input Manager init (VT subsystem, A4.4)
    - Keyboard Manager init (PHASE 3.875): NeoKBD loads layouts, creates \Device\Keyboard
    - Driver Isolation Layer (PHASE 3.80, X4): 16×1 MB slots @ 0x30000000
    - Driver Manager (PHASE 3.85): escaneo PCI → matching declarativo (manifest.rs) →
@@ -60,9 +60,9 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (665 tests) + netd kthread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (737 tests) + netd kthread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
-   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 665 kernel tests + user commands)
+   - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 737 kernel tests + user commands)
 ```
 
 ## Disco único GPT
@@ -563,7 +563,7 @@ Beyond the NEM driver framework, the kernel includes integrated hardware drivers
 
 ### 11. Test Coverage
 
-The kernel testing framework includes **665 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
+The kernel testing framework includes **737 tests** (200+ test_case! macros) with suites dedicated to the driver architecture:
 
 | Suite | Tests | Description |
 | ------- | ------- | ------------- |
@@ -595,7 +595,7 @@ The kernel testing framework includes **665 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 665 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+Tests run automatically at boot. The kernel runs 737 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
 
 ---
 

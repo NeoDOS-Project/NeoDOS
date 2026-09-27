@@ -79,7 +79,13 @@ use vfs::partition::{PartitionInfo, PART_TYPE_NEODOS, PART_TYPE_ESP};
 use vfs::io::{IoStack, PageCacheLevel};
 use crate::log::LogSubsys;
 
-pub const KERNEL_VERSION: &str = concat!("NeoDOS Kernel v", env!("CARGO_PKG_VERSION"), " - The Rusty DOS Revival");
+pub const KERNEL_VERSION: &str = concat!(
+    "NeoDOS Kernel v",
+    env!("CARGO_PKG_VERSION"),
+    " (git ",
+    env!("NEODOS_GIT_REV"),
+    ") - The Rusty DOS Revival"
+);
 
 const BOOTINFO_MAGIC: u32 = 0x4E444F53; // "NDOS" in ASCII
 const KERNEL_VERSION_CODE: u32 = (10) << 8 | 5; // v0.10.5
@@ -854,6 +860,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
         println!("[+] NeoInit PID {} entered at entry=0x{:x}", pid, entry);
         kinfo!(LogSubsys::Init, "[THREAD] NeoInit started (PID={})", pid);
+
+    // Mark NeoInit as Running so sm_start_auto_services doesn't spawn a duplicate
+    services::sm_mark_neoinit_running(pid);
 
     // Mark NeoInit as Running so sm_start_auto_services doesn't spawn a duplicate
     services::sm_mark_neoinit_running(pid);

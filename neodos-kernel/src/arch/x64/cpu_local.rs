@@ -679,6 +679,16 @@ pub unsafe fn this_cpu_inc_timer_tick_count() {
     gs_write_u64(offset, val + 1);
 }
 
+/// Read the per-CPU timer tick count.
+///
+/// This is the free-running time base for Phase 15-A.1 CPU accounting: it is
+/// maintained by the owning CPU only, so it is a valid monotonic reference
+/// without any locking.
+#[inline(always)]
+pub unsafe fn this_cpu_timer_tick_count() -> u64 {
+    gs_read_u64(OFFSET_TIMER_TICK_COUNT)
+}
+
 // ── Run queue accessors ──────────────────────────────────────────────────
 
 /// Get a mutable reference to the current CPU's run queue.

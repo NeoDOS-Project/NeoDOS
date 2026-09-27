@@ -2,6 +2,90 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Added — Phase 15-A.1 (CPU accounting + `neotop v0.2`)
+
+- **Kernel CPU execution accounting** — every schedulable `Kthread` now carries
+  an authoritative monotonic `cpu_time` counter (timer intervals), refreshed at
+  the timer tick and dispatch boundaries (`src/scheduler/accounting.rs`).
+  Migration sums per-CPU execution; idle threads are excluded; the hot path is
+  O(1) with no new lock. See `docs/scheduler/scheduler.md`.
+- **`ProcessSnapshot` ABI v2** — `ProcessInfoRaw`/`ThreadInfoRaw` gain a
+  `cpu_time` field (48/56 bytes): per-thread on `ThreadInfoRaw`, summed per
+  process on `ProcessInfoRaw` (idle contributes 0). `version` and entry sizes
+  are validated by consumers, so v1/v2 never misparse each other.
+- **`neotop v0.2`** — dynamic process/thread monitor. CPU% is the delta of the
+  monotonic CPU counter over the *measured* wall interval
+  (`Δcpu / Δwall × 100`), so it is real execution time-based, may exceed 100%
+  per process on SMP, and is never clamped. First sample shows N/A; controls
+  `q` (quit) and `r` (refresh); ~1 s approximate refresh; ANSI clear; clean exit.
+
+### Fixed — syscall hot path
+
+- **The syscall frame diagnostic no longer takes the global scheduler lock on
+  every syscall.** `syscall_trace_frame` locked the scheduler twice per syscall
+  (entry and return) only to format a message; for blocking syscalls preempted
+  by another thread on the same CPU the comparison is a false positive, so the
+  report flooded the serial port. Identity/state are now resolved lazily only
+  when a report is actually emitted, reports are capped at 16, and the per-CPU
+  index uses a cheap atomic guard instead of an MSR read. This removes a global
+  contention point that dominated command latency. Related: #119.
+
+### Build
+
+- **Git revision embedded in version strings** — the kernel banner and
+  `ver.nxe` (via `\Global\Info\Version`) now print
+  `NeoDOS Kernel v<version> (git <short-sha>[-dirty])`, and the bootloader
+  banner includes the same revision. Falls back to `unknown` when git is
+  unavailable (CI, tarball). See `neodos-kernel/build.rs` and
+  `neodos-bootloader/build.rs`.
+
+### Notes
+
+- CPU% is interval-based and approximate in cadence (scheduling jitter), never
+  in definition. New host-side tests cover the required 100/50/200%/first-sample/
+  lifecycle/monotonicity/multi-thread cases.
+
+## v0.51.0 — 2026-09-26
+
+### Added
+
+- **Kernel process/thread identity (Phase 14-A)** — bounded `KernelName` on
+  `Eprocess`/`Kthread` (`NAME_MAX = 32`) with deterministic defaults
+  (`idle/<cpu>`, `boot`, `kthread`, executable basename, `netd`); write-once
+  metadata, no heap allocation. PID/TID remain the authoritative identity.
+- **Process/thread inspection snapshot (Phase 14-B)** — read-only
+  `Scheduler::snapshot_into` producing a bounded, scheduler-consistent
+  `ProcSnapshot` (processes + threads, names, state, CPU, idle/current,
+  deterministic pid/tid ordering, explicit truncation).
+- **`neotop` (Phase 15-A)** — static process/thread inspector built on the
+  snapshot through an additive `ObInfoClass::ProcessSnapshot = 26`
+  (`\Global\Info\Processes`); fixed-width, pointer-free ABI records; prints
+  PID/PROCESS/TID/THREAD/STATE/CPU with current/idle markers.
+
+### Changed
+
+- **AP scheduling enabled by default (`smp-ap-sched`)** — APs now run the
+  scheduler (default `Cargo` features: `validation`, `smp-ap-sched`, since
+  2026-09-26). A cooperative yield records intent (`Kthread.yield_requested`),
+  and the timer/syscall switch-out saves `rsp` before publishing, so a `Ready`
+  thread stays migratable. See `docs/development/net-recovery-2026-09-26.md`.
+- **Network recovery (e1000 NEM)** — fixed the `hst_register_network_device`
+  ABI mismatch (5 vs 9 args), descriptor-ring DMA alignment, and DHCP service
+  activation; `netd` now runs on an AP. Validated in QEMU (SLiRP: DHCP DORA,
+  `10.0.1.80/24`) and VirtualBox (bridged 82540EM). See
+  `docs/development/net-recovery-2026-09-26.md` and
+  `docs/development/net-recovery-vbox-validation-2026-09-26.md`.
+
+### Notes
+
+- Regression suite: 723 → 726 (additive ABI tests). SMP1/SMP2/SMP4 validated;
+  AP scheduling and work stealing remain functional.
+- ABI: no syscall-number changes; `ObInfoClass::ProcessSnapshot = 26` added;
+  the `ProcessSnapshot` ABI version remains 1.
+- Not included: `neotop` v0.2 dynamic refresh (#27).
+
 ## v0.50.5 — 2026-09-26
 
 ### Fixed
@@ -32,7 +116,7 @@
 - **Scheduler dispatch commit point** — `schedule()` no longer commits a thread to
   `Running` (nor updates `Scheduler.current_tid` / KPRCB) before validating that the
   candidate's saved context is dispatchable. New `schedule_with(require_ring3: bool)`
-  + `frame_is_ring3()`; Ring-3 return callers (`syscall_try_resched`, timer user-preempt,
+  and `frame_is_ring3()`; Ring-3 return callers (`syscall_try_resched`, timer user-preempt,
   `exception_do_resched`) only commit candidates whose saved `CS` is Ring 3, returning
   invalid candidates to the runqueue without state mutation. Fixes interactive keyboard
   input being dropped because the consumer (`neoshell`) was left `Running` without ever

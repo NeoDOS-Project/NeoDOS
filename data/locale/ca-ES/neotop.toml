@@ -28,13 +28,22 @@ IDS_NO = 1022
 IDS_NA = 1023
 IDS_TRUNCATED = 1024
 IDS_ERR_STATS = 1025
+IDS_COL_PROCESS = 1026
+IDS_COL_THREAD = 1027
+IDS_COL_STATE_FULL = 1028
+IDS_COL_CPU_ID = 1029
+IDS_COL_CPUPCT = 1030
+IDS_COL_CUR = 1031
+IDS_COL_IDLE = 1032
+IDS_HELP_QUIT = 1033
+IDS_HELP_REFRESH = 1034
 
 [strings]
 IDS_USAGE = "NEOTOP"
-IDS_USAGE_LINE2 = "  Mostra el monitor del sistema amb llista de processos."
-IDS_USAGE_LINE3 = "  Mostra estadístiques de CPU i el mapatge fil->CPU."
-IDS_USAGE_LINE4 = "  No es mostra %CPU (el nucli no defineix temps ocupat)."
-IDS_TITLE = "NeoTOP - Monitor del Sistema"
+IDS_USAGE_LINE2 = "  Monitor del sistema en viu: processos/fils amb %CPU."
+IDS_USAGE_LINE3 = "  El %CPU es mesura entre dues instantànies sobre el temps real."
+IDS_USAGE_LINE4 = "  Un procés pot superar el 100% en SMP (suma dels seus fils)."
+IDS_TITLE = "NeoTOP 0.2 - Monitor del Sistema"
 IDS_COL_PID = "PID"
 IDS_COL_NAME = "NOM"
 IDS_COL_STATE = "ESTAT"
@@ -55,3 +64,12 @@ IDS_NO = "no"
 IDS_NA = "N/D"
 IDS_TRUNCATED = "(instantània truncada)"
 IDS_ERR_STATS = "Estadístiques no disponibles"
+IDS_COL_PROCESS = "PROCÉS"
+IDS_COL_THREAD = "FIL"
+IDS_COL_STATE_FULL = "ESTAT"
+IDS_COL_CPU_ID = "CPU"
+IDS_COL_CPUPCT = "%CPU"
+IDS_COL_CUR = "A"
+IDS_COL_IDLE = "I"
+IDS_HELP_QUIT = "q = sortir"
+IDS_HELP_REFRESH = "r = refrescar"

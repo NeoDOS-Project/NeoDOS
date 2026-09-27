@@ -120,7 +120,12 @@ pub struct ThreadStatsEntry {
 // no pointers.
 
 /// Version of the combined process/thread snapshot ABI.
-pub const PROC_SNAPSHOT_VERSION: u32 = 1;
+///
+/// v2 (Phase 15-A.1) appends one authoritative CPU execution counter to each
+/// process and thread record. The change is additive *in serialized size* — the
+/// new field is appended and the header grows — but it is not byte-compatible
+/// with v1, so the version is bumped and both sides reject the other's layout.
+pub const PROC_SNAPSHOT_VERSION: u32 = 2;
 /// Maximum name bytes exposed (matches the kernel `KernelName` bound).
 pub const PROC_NAME_MAX: usize = 32;
 /// `ProcSnapshotHeader.flags` bit0: at least one section was truncated.
@@ -141,16 +146,22 @@ pub struct ProcSnapshotHeader {
     pub flags: u32,
 }
 
-/// One process record. 40 bytes.
+/// One process record. 48 bytes:
+/// `pid:u32 | name:[u8;32] | thread_count:u32 | cpu_time:u64`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ProcessInfoRaw {
     pub pid: u32,
     pub name: [u8; PROC_NAME_MAX],
     pub thread_count: u32,
+    /// Phase 15-A.1: sum of the process's thread CPU execution counters, in
+    /// timer intervals. Monotonic; Δ between two snapshots yields CPU%.
+    pub cpu_time: u64,
 }
 
-/// One thread record. 48 bytes. `state` uses `ThreadState::to_u8`:
+/// One thread record. 56 bytes:
+/// `tid:u32 | pid:u32 | name:[u8;32] | state:u8 | idle:u8 | is_current:u8 |
+///  _pad:u8 | cpu:u32 | cpu_time:u64`. `state` uses `ThreadState::to_u8`:
 /// 0=Ready, 1=Running, 2=Blocked, 3=Suspended, 4=Terminated.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -163,6 +174,9 @@ pub struct ThreadInfoRaw {
     pub is_current: u8,
     pub _pad: u8,
     pub cpu: u32,
+    /// Phase 15-A.1: authoritative monotonic CPU execution counter (timer
+    /// intervals). Idle threads report 0.
+    pub cpu_time: u64,
 }
 
 

@@ -28,13 +28,22 @@ IDS_NO = 1022
 IDS_NA = 1023
 IDS_TRUNCATED = 1024
 IDS_ERR_STATS = 1025
+IDS_COL_PROCESS = 1026
+IDS_COL_THREAD = 1027
+IDS_COL_STATE_FULL = 1028
+IDS_COL_CPU_ID = 1029
+IDS_COL_CPUPCT = 1030
+IDS_COL_CUR = 1031
+IDS_COL_IDLE = 1032
+IDS_HELP_QUIT = 1033
+IDS_HELP_REFRESH = 1034
 
 [strings]
 IDS_USAGE = "NEOTOP"
-IDS_USAGE_LINE2 = "  Display system monitor with process list."
-IDS_USAGE_LINE3 = "  Shows CPU stats and thread-to-CPU mapping."
-IDS_USAGE_LINE4 = "  CPU% is not shown (no kernel busy-time semantics)."
-IDS_TITLE = "NeoTOP - System Monitor"
+IDS_USAGE_LINE2 = "  Live system monitor: process/thread table with CPU%."
+IDS_USAGE_LINE3 = "  CPU% is measured from two snapshots over real elapsed time."
+IDS_USAGE_LINE4 = "  A process may exceed 100% on SMP (sum of its threads)."
+IDS_TITLE = "NeoTOP 0.2 - System Monitor"
 IDS_COL_PID = "PID"
 IDS_COL_NAME = "NAME"
 IDS_COL_STATE = "STATE"
@@ -55,3 +64,12 @@ IDS_NO = "no"
 IDS_NA = "N/A"
 IDS_TRUNCATED = "(snapshot truncated)"
 IDS_ERR_STATS = "Statistics unavailable"
+IDS_COL_PROCESS = "PROCESS"
+IDS_COL_THREAD = "THREAD"
+IDS_COL_STATE_FULL = "STATE"
+IDS_COL_CPU_ID = "CPU"
+IDS_COL_CPUPCT = "CPU%"
+IDS_COL_CUR = "C"
+IDS_COL_IDLE = "I"
+IDS_HELP_QUIT = "q = quit"
+IDS_HELP_REFRESH = "r = refresh"

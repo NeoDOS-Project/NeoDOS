@@ -37,6 +37,10 @@ pub struct ProcessSnapshot {
     pub name: KernelName,
     /// Number of live threads currently mapped to this pid in the snapshot.
     pub thread_count: u32,
+    /// Phase 15-A.1: sum of the CPU execution counters of this process's
+    /// threads, in timer intervals (Δ vs. a later snapshot yields CPU%).
+    /// Idle threads are excluded, so idle CPU is never attributed here.
+    pub cpu_time: u64,
 }
 
 impl ProcessSnapshot {
@@ -44,6 +48,7 @@ impl ProcessSnapshot {
         pid: 0,
         name: KernelName::empty(),
         thread_count: 0,
+        cpu_time: 0,
     };
 }
 
@@ -61,6 +66,9 @@ pub struct ThreadSnapshot {
     pub idle: bool,
     /// True when some CPU's `KPRCB.current_thread` is this thread.
     pub is_current: bool,
+    /// Phase 15-A.1: authoritative monotonic CPU execution counter (timer
+    /// intervals). Idle threads report 0.
+    pub cpu_time: u64,
 }
 
 impl ThreadSnapshot {
@@ -72,6 +80,7 @@ impl ThreadSnapshot {
         cpu: 0,
         idle: false,
         is_current: false,
+        cpu_time: 0,
     };
 }
 
@@ -119,27 +128,38 @@ impl Scheduler {
         out.thread_count = 0;
         out.truncated = false;
 
-        // Processes: PID + name + live thread count.
+        // Processes: PID + name + live thread count + aggregated CPU time.
+        // CPU time is derived from the authoritative per-thread counters
+        // (sum over threads), so there is no independent process counter to
+        // drift. Idle threads contribute nothing.
         for ep in self.eprocesses.iter().flatten() {
             if out.process_count >= MAX_SNAPSHOT_PROCESSES {
                 out.truncated = true;
                 break;
             }
             let mut tc: u32 = 0;
+            let mut cpu_time: u64 = 0;
             for k in self.kthreads.iter().flatten() {
                 if k.pid == ep.pid {
                     tc += 1;
+                    if !k.is_idle {
+                        let ptr = &**k as *const crate::scheduler::Kthread;
+                        let owner = crate::arch::x64::cpu_local::kthread_current_cpu(ptr);
+                        cpu_time = cpu_time.saturating_add(
+                            crate::scheduler::accounting::cpu_time_now(k, owner));
+                    }
                 }
             }
             out.processes[out.process_count] = ProcessSnapshot {
                 pid: ep.pid,
                 name: ep.name,
                 thread_count: tc,
+                cpu_time,
             };
             out.process_count += 1;
         }
 
-        // Threads: identity + state + CPU + idle flag.
+        // Threads: identity + state + CPU + idle flag + CPU time.
         for k in self.kthreads.iter().flatten() {
             if out.thread_count >= MAX_SNAPSHOT_THREADS {
                 out.truncated = true;
@@ -155,6 +175,9 @@ impl Scheduler {
                 cpu: owner.unwrap_or(k.cpu),
                 idle: k.is_idle,
                 is_current: owner.is_some(),
+                cpu_time: if k.is_idle { 0 } else {
+                    crate::scheduler::accounting::cpu_time_now(k, owner)
+                },
             };
             out.thread_count += 1;
         }
