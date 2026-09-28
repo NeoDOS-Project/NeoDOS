@@ -31,6 +31,11 @@ IDS_STATS_RX = 1025
 IDS_STATS_TX = 1026
 IDS_STATS_RX_BYTES = 1027
 IDS_STATS_TX_BYTES = 1028
+IDS_SET_DNS_USAGE = 1030
+IDS_SET_DNS_ERR = 1031
+IDS_SET_DNS_OK = 1032
+IDS_SET_DNS_FLUSH = 1033
+IDS_SET_DNS_NOFLUSH = 1034
 
 [strings]
 IDS_HEADER = "Configuració IP de NeoDOS"
@@ -61,3 +66,8 @@ IDS_STATS_RX = "    Paquets rebuts . . . . .: "
 IDS_STATS_TX = "    Paquets enviats . . . . : "
 IDS_STATS_RX_BYTES = "    Bytes rebuts . . . . . .: "
 IDS_STATS_TX_BYTES = "    Bytes enviats . . . . . : "
+IDS_SET_DNS_USAGE = "Ús: ipconfig /setdns <servidor> [servidor2] [servidor3]"
+IDS_SET_DNS_ERR = "ipconfig: adreça de servidor DNS no vàlida: "
+IDS_SET_DNS_OK = "Servidors DNS desats al Registre: "
+IDS_SET_DNS_FLUSH = "Desat a disc."
+IDS_SET_DNS_NOFLUSH = "AVÍS: no s'ha pogut desar a disc."

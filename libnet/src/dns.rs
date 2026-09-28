@@ -41,6 +41,8 @@ const REG_NET_PATH: &str =
     "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
 /// Registry value names holding DNS servers, in preference order.
+/// DNS servers read from the Registry, in preference order. Written by the DHCP
+/// client (option 6) and/or by `ipconfig /setdns`. `0.0.0.0` = unset.
 const DNS_VALUE_NAMES: [&str; DNS_MAX_SERVERS] = ["DnsServer", "DnsServer2", "DnsServer3"];
 
 // ── Result ──

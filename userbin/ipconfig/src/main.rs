@@ -30,6 +30,11 @@ const IDS_YES: u32 = 1021;
 const IDS_NO: u32 = 1022;
 const IDS_ERR_NXL: u32 = 1023;
 const IDS_NO_IFACES: u32 = 1024;
+const IDS_SET_DNS_USAGE: u32 = 1030;
+const IDS_SET_DNS_ERR: u32 = 1031;
+const IDS_SET_DNS_OK: u32 = 1032;
+const IDS_SET_DNS_FLUSH: u32 = 1033;
+const IDS_SET_DNS_NOFLUSH: u32 = 1034;
 
 #[repr(C)]
 struct NetIfaceInfo {
@@ -144,6 +149,89 @@ fn write_padded_str(buf: &[u8]) {
     if end > 0 { write_str(&buf[..end]); }
 }
 
+/// Parse a dotted-decimal IPv4 address into a big-endian `u32`.
+fn parse_ip(s: &str) -> Option<u32> {
+    let mut ip: u32 = 0;
+    let mut count = 0usize;
+    for part in s.split('.') {
+        if count == 4 { return None; }
+        let octet: u32 = part.parse().ok()?;
+        if octet > 255 { return None; }
+        ip = (ip << 8) | octet;
+        count += 1;
+    }
+    if count == 4 { Some(ip) } else { None }
+}
+
+/// Write an IPv4 address as REG_DWORD (big-endian value in little-endian bytes,
+/// matching the DHCP client and the DNS resolver).
+fn write_reg_dword(fd: u8, name: &str, ip_be: u32) {
+    let _ = syscall::sys_cm_set_value(fd, name, syscall::REG_DWORD, &ip_be.to_le_bytes());
+}
+
+/// `ipconfig /setdns <server> [server2] [server3]`
+///
+/// Stores the DNS servers in the interface Registry key
+/// (`DnsServer`, `DnsServer2`, `DnsServer3`) and persists the hive to disk so
+/// the configuration survives a reboot. The shared resolver reads these values.
+fn run_setdns(rest: &str) -> ! {
+    let names = ["DnsServer", "DnsServer2", "DnsServer3"];
+    let mut servers = [0u32; 3];
+    let mut count = 0usize;
+
+    for tok in rest.split_ascii_whitespace() {
+        if count >= 3 { break; }
+        match parse_ip(tok) {
+            Some(ip) => {
+                servers[count] = ip;
+                count += 1;
+            }
+            None => {
+                write_str(tr_id!(IDS_SET_DNS_ERR).as_bytes());
+                write_str(tok.as_bytes());
+                write_str(b"\r\n");
+                syscall::sys_exit(1);
+            }
+        }
+    }
+
+    if count == 0 {
+        write_str(tr_id!(IDS_SET_DNS_USAGE).as_bytes());
+        write_str(b"\r\n");
+        syscall::sys_exit(1);
+    }
+
+    let reg_fd = match syscall::sys_cm_open_key(REG_NET_PATH) {
+        Ok(fd) => fd,
+        Err(_) => {
+            write_str(tr_id!(IDS_NO_IFACES).as_bytes());
+            write_str(b"\r\n");
+            syscall::sys_exit(1);
+        }
+    };
+
+    // Clear all slots first so a shorter list removes stale servers.
+    for (i, name) in names.iter().enumerate() {
+        write_reg_dword(reg_fd, name, if i < count { servers[i] } else { 0 });
+    }
+
+    let flush_ok = syscall::sys_cm_flush_key(reg_fd).is_ok();
+    let _ = syscall::sys_close(reg_fd);
+
+    write_str(tr_id!(IDS_SET_DNS_OK).as_bytes());
+    for i in 0..count {
+        if i > 0 { write_str(b", "); }
+        let mut b = [0u8; 16];
+        let n = format_ip(servers[i], &mut b);
+        write_str(&b[..n]);
+    }
+    write_str(b"\r\n");
+    let msg = if flush_ok { IDS_SET_DNS_FLUSH } else { IDS_SET_DNS_NOFLUSH };
+    write_str(tr_id!(msg).as_bytes());
+    write_str(b"\r\n");
+    syscall::sys_exit(if flush_ok { 0 } else { 1 })
+}
+
 fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
     let _ = iface_idx;
     write_str(b"\r\n");
@@ -178,7 +266,9 @@ fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
     let ip_u32 = u32::from_be_bytes(info.ip);
     let mask = read_reg_dword(reg_fd, "SubnetMask");
     let gw = read_reg_dword(reg_fd, "Gateway");
-    let dns = read_reg_dword(reg_fd, "DnsServer");
+    let dns1 = read_reg_dword(reg_fd, "DnsServer");
+    let dns2 = read_reg_dword(reg_fd, "DnsServer2");
+    let dns3 = read_reg_dword(reg_fd, "DnsServer3");
 
     write_label(IDS_MAC);
     write_mac(&info.mac);
@@ -186,9 +276,9 @@ fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
     write_ip_label(IDS_IPV4, ip_u32);
     write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { 0x00FFFFFF });
     write_ip_label(IDS_GATEWAY, gw);
-    if dns != 0 {
-        write_ip_label(IDS_DNS, dns);
-    }
+    if dns1 != 0 { write_ip_label(IDS_DNS, dns1); }
+    if dns2 != 0 { write_ip_label(IDS_DNS, dns2); }
+    if dns3 != 0 { write_ip_label(IDS_DNS, dns3); }
     write_str(b"\r\n");
 
     let dhcp_enabled = read_reg_dword(reg_fd, "DHCPEnabled") != 0;
@@ -218,6 +308,17 @@ fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
+
+    // `ipconfig /setdns <server> [server2] [server3]`
+    let raw = libneodos::args::read_args();
+    let args = libneodos::args::trim_ascii(&raw);
+    let arg_str = core::str::from_utf8(args).unwrap_or("");
+    if let Some(cmd) = arg_str.split_ascii_whitespace().next() {
+        if cmd.eq_ignore_ascii_case("/setdns") || cmd.eq_ignore_ascii_case("-setdns") {
+            let rest = arg_str[cmd.len()..].trim();
+            run_setdns(rest);
+        }
+    }
 
     write_str(b"\r\n");
     write_label(IDS_HEADER);

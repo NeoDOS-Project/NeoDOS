@@ -1284,6 +1284,14 @@ pub fn sys_cm_set_value(fd: u8, name: &str, value_type: u32, data: &[u8]) -> Res
     if r < 0 { Err(r) } else { Ok(()) }
 }
 
+/// sys_cm_flush_key (RAX=57): persist a registry key's hive to disk.
+/// Serializes the hive containing `fd` to `C:\System\Registry\<name>.hiv` if it
+/// has pending changes, so values set via `sys_cm_set_value` survive a reboot.
+pub fn sys_cm_flush_key(fd: u8) -> Result<(), i64> {
+    let r = unsafe { ob_syscall_2!(57, fd as u64, 0u64) };
+    ret(r).map(|_| ())
+}
+
 // Service Manager syscall (RAX=77)
 pub const SERVICE_CONTROL_START: u32 = 0;
 pub const SERVICE_CONTROL_STOP: u32 = 1;
