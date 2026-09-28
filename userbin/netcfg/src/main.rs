@@ -127,8 +127,14 @@ pub extern "C" fn _start() -> ! {
     let dhcp_enabled = read_reg_dword(reg_fd, "DHCPEnabled").unwrap_or(1) != 0;
 
     if !dhcp_enabled {
-        let ip = read_reg_dword(reg_fd, "IP").unwrap_or(0);
-        let mask = read_reg_dword(reg_fd, "Mask").unwrap_or(0);
+        // Canonical interface values shared with dhcpd/ipconfig/libnet. A missing
+        // or zero mask means "unset"; fall back to /24 so the interface is not
+        // treated as on-link for every destination (see #314, #306).
+        let ip = read_reg_dword(reg_fd, "IPAddress").unwrap_or(0);
+        let mut mask = read_reg_dword(reg_fd, "SubnetMask").unwrap_or(0);
+        if mask == 0 {
+            mask = 0x00FF_FFFF;
+        }
         let gw = read_reg_dword(reg_fd, "Gateway").unwrap_or(0);
 
         let base = match syscall::sys_loadlib("C:\\System\\Libraries\\net.nxl\0") {
@@ -174,7 +180,7 @@ pub extern "C" fn _start() -> ! {
     for _ in 0..100 {
         let ip = (net.get_ip)(0);
         if ip != 0 {
-            write_reg_dword(reg_fd, "IP", ip);
+            write_reg_dword(reg_fd, "IPAddress", ip);
             let mut ip_buf = [0u8; 16];
             let ip_len = format_ip(ip, &mut ip_buf);
             write_str(tr_id!(IDS_OK).as_bytes());

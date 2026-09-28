@@ -286,6 +286,47 @@ pub fn register_net_tests() {
         nic_unregister(nic_id);
     });
 
+    test_case!("net_static_config_registry_roundtrip", {
+        use super::nic::{nic_register, nic_unregister, NIC_REGISTRY};
+
+        let nic_id = nic_register(alloc::boxed::Box::new(CaptureNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0, 3]),
+            ip: Ipv4Addr::unspecified(),
+            sent: alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new())),
+        }))
+        .expect("register mock NIC");
+
+        // Values as they come from the interface Registry in static mode:
+        // DHCPEnabled = 0 with IPAddress / SubnetMask / Gateway populated.
+        let ip = Ipv4Addr::new([10, 0, 30, 20]);
+        let mask = Ipv4Addr::new([255, 255, 255, 0]);
+        let gw = Ipv4Addr::new([10, 0, 30, 1]);
+
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            reg.set_ip(nic_id, ip);
+            reg.set_mask(nic_id, mask);
+            reg.set_gateway(nic_id, gw);
+        }
+
+        test_eq!(NIC_REGISTRY.lock().get_ip(nic_id), Some(ip));
+        test_eq!(NIC_REGISTRY.lock().get_mask(nic_id), Some(mask));
+        test_eq!(NIC_REGISTRY.lock().get_gateway(nic_id), Some(gw));
+
+        // On-link destinations resolve directly; off-link uses the configured
+        // gateway (static configuration must not imply a /0 mask).
+        test_eq!(
+            NIC_REGISTRY.lock().next_hop_ip(Ipv4Addr::new([10, 0, 30, 99])),
+            Some(Ipv4Addr::new([10, 0, 30, 99]))
+        );
+        test_eq!(
+            NIC_REGISTRY.lock().next_hop_ip(Ipv4Addr::new([8, 8, 8, 8])),
+            Some(gw)
+        );
+
+        nic_unregister(nic_id);
+    });
+
     test_case!("net_obsetinfo_nic_gateway_abi", {
         use crate::object::types::ObSetInfoClass;
         // Additive class: existing IDs unchanged.
