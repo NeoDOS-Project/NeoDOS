@@ -199,9 +199,9 @@ pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
 
-    // `netcfg /setdns <server> [server2] [server3]` — one-shot configuration
-    // command (writes Registry + exits). With no arguments netcfg runs as the
-    // boot-time configurator daemon.
+    // netcfg is a one-shot configuration CLI, not a service. `/setdns` writes
+    // the DNS servers; the bare invocation applies the interface Registry
+    // configuration to the NIC. Both paths exit.
     let raw = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw);
     let arg_str = core::str::from_utf8(args).unwrap_or("");
@@ -220,7 +220,7 @@ pub extern "C" fn _start() -> ! {
         Err(_) => {
             write_str(tr_id!(IDS_ERR_KEY).as_bytes());
             write_str(b"\r\n");
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(1);
         }
     };
 
@@ -236,7 +236,7 @@ pub extern "C" fn _start() -> ! {
             Err(_) => {
                 write_str(tr_id!(IDS_ERR_KEY).as_bytes());
                 write_str(b"\r\n");
-                loop { syscall::sys_yield(); }
+                syscall::sys_exit(1);
             }
         };
         let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
@@ -254,10 +254,11 @@ pub extern "C" fn _start() -> ! {
         write_str(&buf[..len]);
         write_str(b"\r\n");
         let _ = syscall::sys_close(reg_fd);
-        loop { syscall::sys_yield(); }
+        syscall::sys_exit(0);
     }
 
-    // DHCP mode — wait for it
+    // DHCP mode: the address is provided by the `dhcpd` service. This one-shot
+    // invocation reports/persists the current lease and exits.
     write_str(tr_id!(IDS_DHCP_WAIT).as_bytes());
     write_str(b"\r\n");
 
@@ -266,7 +267,7 @@ pub extern "C" fn _start() -> ! {
         Err(_) => {
             write_str(tr_id!(IDS_ERR_KEY).as_bytes());
             write_str(b"\r\n");
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(1);
         }
     };
     let net: &NetAbiTable = unsafe { &*(base as *const NetAbiTable) };
@@ -282,7 +283,7 @@ pub extern "C" fn _start() -> ! {
             write_str(&ip_buf[..ip_len]);
             write_str(b"\r\n");
             let _ = syscall::sys_close(reg_fd);
-            loop { syscall::sys_yield(); }
+            syscall::sys_exit(0);
         }
         for _ in 0..1000000 { core::hint::spin_loop(); }
     }
@@ -290,5 +291,5 @@ pub extern "C" fn _start() -> ! {
     write_str(tr_id!(IDS_DHCP_TIMEOUT).as_bytes());
     write_str(b"\r\n");
     let _ = syscall::sys_close(reg_fd);
-    loop { syscall::sys_yield(); }
+    syscall::sys_exit(1);
 }
