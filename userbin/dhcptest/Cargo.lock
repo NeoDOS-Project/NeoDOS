@@ -11,6 +11,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "libdns"
+version = "0.1.0"
+
+[[package]]
 name = "libneodos"
 version = "0.2.1"
 
@@ -18,5 +22,6 @@ version = "0.2.1"
 name = "libnet"
 version = "0.1.0"
 dependencies = [
+ "libdns",
  "libneodos",
 ]

@@ -26,10 +26,14 @@ Correctly implement network changes with proper protocol handling, socket lifecy
 - `src/net/socket.rs` — SocketManager, bind/connect/listen/send/recv/close, KWait wake
 - `src/net/nic.rs` — NetworkInterface trait, NicRegistry (4 slots)
 - `src/net/e1000.rs` — Intel e1000 NIC driver, ring buffers, MMIO
-- `src/net/dns.rs` — DNS resolver, cache (64 entries), UDP transport
+- `src/net/dns.rs` — Kernel-internal DNS resolver, cache (64 entries), UDP transport (not exposed to userland)
+- `libdns/src/lib.rs` — Shared DNS wire format + resolver core (`DnsError`, parse/build, host-testable)
+- `libnet/src/dns.rs` — Userland DNS resolver: `NetTransport`, Registry servers, cache, `resolve()`
 - `src/net/mod.rs` — init_networking(), net_tick(), packet dispatch
 - `src/object/types.rs` — ObInfoClass (17-20, 23), ObSetInfoClass (18-22, 27), ObType::Socket (18)
 - `userbin/dhcpd/src/main.rs` — Userspace DHCP client (DORA sequence)
+- `userbin/nslookup/src/main.rs` — `nslookup` tool (shared resolver consumer)
+- `userbin/ping/src/main.rs` — `ping` (IPv4 literal or hostname via resolver)
 
 ## Architecture
 

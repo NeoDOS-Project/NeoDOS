@@ -4,9 +4,29 @@
 extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
-use libneodos::{i18n, mem, syscall};
+use libneodos::{i18n, mem, syscall, tr_id};
 
 const APP_NAME: &str = "nslookup";
+
+// NLT string IDs (must match data/locale/*/nslookup.toml).
+const IDS_USAGE: u32 = 1001;
+const IDS_USAGE_LINE2: u32 = 1002;
+const IDS_SERVER: u32 = 1003;
+const IDS_ADDRESS: u32 = 1004;
+const IDS_NAME: u32 = 1005;
+const IDS_ADDRESSES: u32 = 1006;
+const IDS_LOCAL: u32 = 1007;
+const IDS_ERR_NOCONFIG: u32 = 1010;
+const IDS_ERR_NOSERVER: u32 = 1011;
+const IDS_ERR_INVALID_HOST: u32 = 1012;
+const IDS_ERR_TIMEOUT: u32 = 1013;
+const IDS_ERR_UNREACHABLE: u32 = 1014;
+const IDS_ERR_NXDOMAIN: u32 = 1015;
+const IDS_ERR_MALFORMED: u32 = 1016;
+const IDS_ERR_TRUNCATED: u32 = 1017;
+const IDS_ERR_SERVER_FAILURE: u32 = 1018;
+const IDS_ERR_NO_A: u32 = 1019;
+const IDS_ERR_NETWORK: u32 = 1020;
 
 struct SbrkAlloc;
 
@@ -27,6 +47,10 @@ fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
 }
 
+fn write_err(s: &[u8]) {
+    let _ = syscall::sys_write(2, s);
+}
+
 fn write_ip(ip: [u8; 4]) {
     for (i, &o) in ip.iter().enumerate() {
         if i > 0 { write_str(b"."); }
@@ -45,35 +69,47 @@ fn write_ip(ip: [u8; 4]) {
     }
 }
 
-fn read_reg_dword(fd: u8, name: &str) -> u32 {
-    let mut buf = [0u8; 16];
-    let r = syscall::sys_cm_query_value(fd, name, &mut buf);
-    match r {
-        Ok(n) if n >= 12 => {
-            let t = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            if t == syscall::REG_DWORD {
-                return u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-            }
-        }
-        _ => {}
+/// Localized message for each distinct resolver failure.
+fn error_message(err: libnet::dns::DnsError) -> &'static str {
+    match err {
+        libnet::dns::DnsError::NoConfig => tr_id!(IDS_ERR_NOCONFIG),
+        libnet::dns::DnsError::NoServer => tr_id!(IDS_ERR_NOSERVER),
+        libnet::dns::DnsError::InvalidHostname => tr_id!(IDS_ERR_INVALID_HOST),
+        libnet::dns::DnsError::Timeout => tr_id!(IDS_ERR_TIMEOUT),
+        libnet::dns::DnsError::ServerUnreachable => tr_id!(IDS_ERR_UNREACHABLE),
+        libnet::dns::DnsError::NxDomain => tr_id!(IDS_ERR_NXDOMAIN),
+        libnet::dns::DnsError::MalformedResponse => tr_id!(IDS_ERR_MALFORMED),
+        libnet::dns::DnsError::Truncated => tr_id!(IDS_ERR_TRUNCATED),
+        libnet::dns::DnsError::ServerFailure => tr_id!(IDS_ERR_SERVER_FAILURE),
+        libnet::dns::DnsError::NoARecord => tr_id!(IDS_ERR_NO_A),
+        libnet::dns::DnsError::Network => tr_id!(IDS_ERR_NETWORK),
     }
-    0
-}
-
-fn ip_to_str(ip: u32, buf: &mut [u8; 16]) -> usize {
-    let o = ip.to_be_bytes();
-    let mut pos = 0;
-    for (idx, &b) in o.iter().enumerate() {
-        if idx > 0 { buf[pos] = b'.'; pos += 1; }
-        if b >= 100 { buf[pos] = b'0' + b / 100; pos += 1; }
-        if b >= 10  { buf[pos] = b'0' + (b / 10) % 10; pos += 1; }
-        buf[pos] = b'0' + (b % 10); pos += 1;
-    }
-    pos
 }
 
 fn print_help() {
-    write_str(b"\r\nnslookup <hostname>\r\n  Resolve a hostname to an IP address.\r\n\r\n");
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE).as_bytes());
+    write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE2).as_bytes());
+    write_str(b"\r\n\r\n");
+}
+
+/// Split whitespace-delimited arguments. Returns (hostname, optional server).
+fn parse_args(arg_str: &str) -> (&str, Option<&str>) {
+    let mut tokens = arg_str.split_ascii_whitespace();
+    let hostname = tokens.next().unwrap_or("");
+    let server = tokens.next();
+    (hostname, server)
+}
+
+fn print_server(server: [u8; 4]) {
+    write_str(tr_id!(IDS_SERVER).as_bytes());
+    if server == [0, 0, 0, 0] {
+        write_str(tr_id!(IDS_LOCAL).as_bytes());
+    } else {
+        write_ip(server);
+    }
+    write_str(b"\r\n");
 }
 
 #[no_mangle]
@@ -92,46 +128,62 @@ pub extern "C" fn _start() -> ! {
         syscall::sys_exit(1);
     }
 
-    let hostname = core::str::from_utf8(args).unwrap_or("").trim();
+    let arg_str = core::str::from_utf8(args).unwrap_or("");
+    let (hostname, server_arg) = parse_args(arg_str);
     if hostname.is_empty() {
         print_help();
         syscall::sys_exit(1);
     }
 
-    // Read DNS server from registry for display
-    let reg_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
-    let dns_ip = match syscall::sys_cm_open_key(reg_path) {
-        Ok(fd) => {
-            let dns = read_reg_dword(fd, "DnsServer");
-            let _ = syscall::sys_close(fd);
-            dns
-        }
-        Err(_) => 0,
+    // Optional explicit DNS server: `nslookup <hostname> <dns-server>`.
+    let explicit_server = match server_arg {
+        Some(s) => match libnet::dns::parse_dotted_ip(s) {
+            Some(ip) => Some(ip),
+            None => {
+                print_help();
+                syscall::sys_exit(1);
+            }
+        },
+        None => None,
     };
 
-    write_str(b"\r\n");
-    if dns_ip != 0 {
-        write_str(b"Server: ");
-        let mut ip_buf = [0u8; 16];
-        let n = ip_to_str(dns_ip, &mut ip_buf);
-        write_str(&ip_buf[..n]);
-        write_str(b"\r\n\r\n");
-    }
+    let result = match explicit_server {
+        Some(server) => libnet::dns::resolve_with_server(hostname, server),
+        None => libnet::dns::resolve(hostname),
+    };
 
-    write_str(b"Name:\r\n    ");
-    write_str(hostname.as_bytes());
-    write_str(b"\r\n\r\n");
-
-    match libnet::dns_resolve(hostname) {
-        Some(addr) => {
-            write_str(b"Address:\r\n    ");
-            write_ip(addr);
+    match result {
+        Ok(result) => {
+            write_str(b"\r\n");
+            print_server(result.server);
+            write_str(tr_id!(IDS_ADDRESS).as_bytes());
+            if result.server == [0, 0, 0, 0] {
+                write_str(b"127.0.0.1");
+            } else {
+                write_ip(result.server);
+            }
             write_str(b"\r\n\r\n");
+
+            write_str(tr_id!(IDS_NAME).as_bytes());
+            write_str(hostname.as_bytes());
+            write_str(b"\r\n");
+            for (i, addr) in result.addresses.iter().enumerate() {
+                if i == 0 {
+                    write_str(tr_id!(IDS_ADDRESSES).as_bytes());
+                } else {
+                    // Align continuation lines under the first address.
+                    write_str(b"           ");
+                }
+                write_ip(*addr);
+                write_str(b"\r\n");
+            }
+            write_str(b"\r\n");
             syscall::sys_exit(0);
         }
-        None => {
-            write_str(b"Address:\r\n    ");
-            write_str(b"*** unresolved\r\n\r\n");
+        Err(err) => {
+            write_err(b"\r\n");
+            write_err(error_message(err).as_bytes());
+            write_err(b"\r\n\r\n");
             syscall::sys_exit(1);
         }
     }

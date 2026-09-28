@@ -1,0 +1,43 @@
+[meta]
+app = "nslookup"
+language = "ca-ES"
+
+[ids]
+IDS_USAGE = 1001
+IDS_USAGE_LINE2 = 1002
+IDS_SERVER = 1003
+IDS_ADDRESS = 1004
+IDS_NAME = 1005
+IDS_ADDRESSES = 1006
+IDS_LOCAL = 1007
+IDS_ERR_NOCONFIG = 1010
+IDS_ERR_NOSERVER = 1011
+IDS_ERR_INVALID_HOST = 1012
+IDS_ERR_TIMEOUT = 1013
+IDS_ERR_UNREACHABLE = 1014
+IDS_ERR_NXDOMAIN = 1015
+IDS_ERR_MALFORMED = 1016
+IDS_ERR_TRUNCATED = 1017
+IDS_ERR_SERVER_FAILURE = 1018
+IDS_ERR_NO_A = 1019
+IDS_ERR_NETWORK = 1020
+
+[strings]
+IDS_USAGE = "nslookup <nom> [servidor-dns]"
+IDS_USAGE_LINE2 = "  Resol un nom a adreces IPv4 mitjançant DNS."
+IDS_SERVER = "Servidor:  "
+IDS_ADDRESS = "Adreça:    "
+IDS_NAME = "Nom:       "
+IDS_ADDRESSES = "Adreces:   "
+IDS_LOCAL = "local"
+IDS_ERR_NOCONFIG = "nslookup: configuració DNS no disponible."
+IDS_ERR_NOSERVER = "nslookup: no hi ha cap servidor DNS configurat."
+IDS_ERR_INVALID_HOST = "nslookup: nom d'amfitrió no vàlid."
+IDS_ERR_TIMEOUT = "nslookup: s'ha esgotat el temps d'espera de DNS."
+IDS_ERR_UNREACHABLE = "nslookup: servidor DNS inaccessible."
+IDS_ERR_NXDOMAIN = "nslookup: el nom no existeix (NXDOMAIN)."
+IDS_ERR_MALFORMED = "nslookup: resposta DNS mal formada."
+IDS_ERR_TRUNCATED = "nslookup: resposta DNS truncada."
+IDS_ERR_SERVER_FAILURE = "nslookup: el servidor DNS ha retornat un error."
+IDS_ERR_NO_A = "nslookup: no s'ha trobat cap registre A."
+IDS_ERR_NETWORK = "nslookup: xarxa no disponible."

@@ -18,6 +18,18 @@ const IDS_PINGING: u32 = 1005;
 const IDS_REPLY: u32 = 1006;
 const IDS_TIMEOUT: u32 = 1007;
 const IDS_COMPLETE: u32 = 1008;
+const IDS_ERR_DNS_NOCONFIG: u32 = 1009;
+const IDS_ERR_DNS_NOSERVER: u32 = 1010;
+const IDS_ERR_DNS_INVALID_HOST: u32 = 1011;
+const IDS_ERR_DNS_TIMEOUT: u32 = 1012;
+const IDS_ERR_DNS_UNREACHABLE: u32 = 1013;
+const IDS_ERR_DNS_NXDOMAIN: u32 = 1014;
+const IDS_ERR_DNS_MALFORMED: u32 = 1015;
+const IDS_ERR_DNS_TRUNCATED: u32 = 1016;
+const IDS_ERR_DNS_SERVER_FAILURE: u32 = 1017;
+const IDS_ERR_DNS_NO_A: u32 = 1018;
+const IDS_ERR_DNS_NETWORK: u32 = 1019;
+const IDS_RESOLVED: u32 = 1020;
 
 struct SbrkAlloc;
 
@@ -89,6 +101,29 @@ fn parse_ip_address(s: &str) -> Option<u32> {
     Some(ip)
 }
 
+/// Heuristic: a token made only of digits and dots is a (possibly invalid)
+/// numeric address, not a hostname.
+fn looks_like_ip(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+}
+
+/// Localized message for each distinct DNS resolver failure.
+fn dns_error_message(err: libnet::dns::DnsError) -> &'static str {
+    match err {
+        libnet::dns::DnsError::NoConfig => tr_id!(IDS_ERR_DNS_NOCONFIG),
+        libnet::dns::DnsError::NoServer => tr_id!(IDS_ERR_DNS_NOSERVER),
+        libnet::dns::DnsError::InvalidHostname => tr_id!(IDS_ERR_DNS_INVALID_HOST),
+        libnet::dns::DnsError::Timeout => tr_id!(IDS_ERR_DNS_TIMEOUT),
+        libnet::dns::DnsError::ServerUnreachable => tr_id!(IDS_ERR_DNS_UNREACHABLE),
+        libnet::dns::DnsError::NxDomain => tr_id!(IDS_ERR_DNS_NXDOMAIN),
+        libnet::dns::DnsError::MalformedResponse => tr_id!(IDS_ERR_DNS_MALFORMED),
+        libnet::dns::DnsError::Truncated => tr_id!(IDS_ERR_DNS_TRUNCATED),
+        libnet::dns::DnsError::ServerFailure => tr_id!(IDS_ERR_DNS_SERVER_FAILURE),
+        libnet::dns::DnsError::NoARecord => tr_id!(IDS_ERR_DNS_NO_A),
+        libnet::dns::DnsError::Network => tr_id!(IDS_ERR_DNS_NETWORK),
+    }
+}
+
 fn print_help() {
     write_str(b"\r\n");
     write_str(tr_id!(IDS_USAGE).as_bytes());
@@ -153,12 +188,40 @@ pub extern "C" fn _start() -> ! {
     let dest_ip = match parse_ip_address(host) {
         Some(ip) => ip,
         None => {
-            // Numeric IP only for now; a hostname would need libnet DNS.
-            write_err(b"\r\n");
-            write_err(tr_id!(IDS_ERR_INVALID_IP).as_bytes());
-            write_err(host.as_bytes());
-            write_err(b"\r\n");
-            syscall::sys_exit(1);
+            // Not a numeric IPv4 address. Reject malformed numeric input, then
+            // resolve a hostname through the shared DNS resolver.
+            if looks_like_ip(host) {
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_ERR_INVALID_IP).as_bytes());
+                write_err(host.as_bytes());
+                write_err(b"\r\n");
+                syscall::sys_exit(1);
+            }
+
+            match libnet::dns::resolve(host) {
+                Ok(result) => match result.first() {
+                    Some(addr) => {
+                        let ip = u32::from_be_bytes(addr);
+                        write_str(b"\r\n");
+                        write_str(tr_id!(IDS_RESOLVED).as_bytes());
+                        write_ip(ip);
+                        write_str(b"\r\n");
+                        ip
+                    }
+                    None => {
+                        write_err(b"\r\n");
+                        write_err(tr_id!(IDS_ERR_DNS_NO_A).as_bytes());
+                        write_err(b"\r\n");
+                        syscall::sys_exit(1);
+                    }
+                },
+                Err(err) => {
+                    write_err(b"\r\n");
+                    write_err(dns_error_message(err).as_bytes());
+                    write_err(b"\r\n");
+                    syscall::sys_exit(1);
+                }
+            }
         }
     };
 
