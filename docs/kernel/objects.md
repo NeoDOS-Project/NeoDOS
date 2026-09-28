@@ -405,6 +405,7 @@ Supports 38 set classes:
 | 25 | RegistrySetValue | Set registry value |
 | 26 | RegistryDeleteValue | Delete registry value |
 | 27 | SetNicIp | Set NIC IP address and subnet mask |
+| 28 | SetNicGateway | Set NIC default gateway (`0.0.0.0` = unset) |
 | 33 | ServiceStart | Start a service (Stopped/Failed → Starting → Running) |
 | 34 | ServiceStop | Stop a running service (Running → Stopping → Stopped) |
 | 35 | ServiceRestart | Restart a service (stop + start atomically) |

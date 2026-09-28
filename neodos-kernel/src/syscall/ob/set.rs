@@ -903,6 +903,16 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
             }
             0
         }
+        // ── SetNicGateway (28): set NIC default gateway (0.0.0.0 = unset) ──
+        _ if info_class == ObSetInfoClass::SetNicGateway as u32 => {
+            if buf_size < 8 { return err_to_u64(SyscallError::Inval); }
+            let iface_idx = unsafe { core::ptr::read_volatile(buf_ptr as *const u32) };
+            let gw_bytes = unsafe { core::ptr::read_volatile((buf_ptr + 4) as *const [u8; 4]) };
+            let gw = crate::net::types::Ipv4Addr(gw_bytes);
+            kdebug!(LogSubsys::Object, "SetNicGateway: iface={} gw={}", iface_idx, gw);
+            crate::net::nic::nic_set_gateway(iface_idx, gw);
+            0
+        }
         _ if info_class == ObSetInfoClass::ServiceStart as u32 => {
             if entry.object_id == 0 {
                 return err_to_u64(SyscallError::Inval);

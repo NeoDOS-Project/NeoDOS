@@ -189,6 +189,7 @@ pub enum ObSetInfoClass {
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
     SetNicIp = 27,
+    SetNicGateway = 28,
     ServiceStart = 33,
     ServiceStop = 34,
     ServiceRestart = 35,

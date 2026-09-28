@@ -507,6 +507,7 @@ pub enum ObSetInfoClass {
     RegistrySetValue = 25,
     RegistryDeleteValue = 26,
     SetNicIp = 27,
+    SetNicGateway = 28,
     ServiceStart = 33,
     ServiceStop = 34,
     ServiceRestart = 35,
@@ -553,6 +554,7 @@ pub mod ob_set_info_class {
     pub const REGISTRY_SET_VALUE: ObSetInfoClass = ObSetInfoClass::RegistrySetValue;
     pub const REGISTRY_DELETE_VALUE: ObSetInfoClass = ObSetInfoClass::RegistryDeleteValue;
     pub const SET_NIC_IP: ObSetInfoClass = ObSetInfoClass::SetNicIp;
+    pub const SET_NIC_GATEWAY: ObSetInfoClass = ObSetInfoClass::SetNicGateway;
     pub const SERVICE_START: ObSetInfoClass = ObSetInfoClass::ServiceStart;
     pub const SERVICE_STOP: ObSetInfoClass = ObSetInfoClass::ServiceStop;
     pub const SERVICE_RESTART: ObSetInfoClass = ObSetInfoClass::ServiceRestart;
