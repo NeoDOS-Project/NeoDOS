@@ -587,7 +587,7 @@ fn dhcp_discover(net: &NetAbiTable) -> Result<DhcpOffer, NetError> {
 
 fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
     // Guardar en Registry
-    // cm_open_key + cm_set_value para IP, Gateway, DNS, SubnetMask
+    // cm_open_key + cm_set_value para IPAddress, Gateway, DNS, SubnetMask
 
     // Aplicar IP
     (net.net_set_ip)(0, &config.ip)?;
@@ -1040,11 +1040,12 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │   └── Network
 │   │       └── Interfaces
 │   │           └── 0
-│   │               ├── IP            REG_SZ  "10.0.2.15"
-│   │               ├── SubnetMask    REG_SZ  "255.255.255.0"
-│   │               ├── Gateway       REG_SZ  "10.0.2.1"
-│   │               ├── DNS1          REG_SZ  "10.0.2.3"
-│   │               ├── DNS2          REG_SZ  ""
+│   │               ├── IPAddress     REG_DWORD  10.0.30.20
+│   │               ├── SubnetMask    REG_DWORD  255.255.255.0
+│   │               ├── Gateway       REG_DWORD  10.0.30.1
+│   │               ├── DnsServer     REG_DWORD  10.0.30.10
+│   │               ├── DnsServer2    REG_DWORD  0
+│   │               ├── DnsServer3    REG_DWORD  0
 │   │               ├── DHCPEnabled   REG_DWORD  1
 │   │               ├── MACAddress    REG_SZ  "52:54:00:12:34:56"
 │   │               └── DriverBinding REG_SZ  "\\Device\\Nic\\0"
@@ -1162,10 +1163,10 @@ pub fn create_default_registry_values() {
     let network = cm_create_key(root_native, "Network").unwrap_or(root_native);
     let ifaces = cm_create_key(network, "Interfaces").unwrap_or(network);
     let if0 = cm_create_key(ifaces, "0").unwrap_or(ifaces);
-    cm_set_value(if0, "IP", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "SubnetMask", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "Gateway", REG_SZ, b"0.0.0.0").ok();
-    cm_set_value(if0, "DNS1", REG_SZ, b"0.0.0.0").ok();
+    cm_set_value(if0, "IPAddress", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "SubnetMask", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "Gateway", REG_DWORD, &0u32.to_le_bytes()).ok();
+    cm_set_value(if0, "DnsServer", REG_DWORD, &0u32.to_le_bytes()).ok();
     cm_set_value(if0, "DHCPEnabled", REG_DWORD, &1u32.to_le_bytes()).ok();
 }
 ```
@@ -2154,9 +2155,10 @@ netcfg.nxe
   ├── Abrir Registry:
   │   fd = cm_open_key("\\Registry\\Machine\\System\\Network\\Interfaces\\0")
   │   dhcp = cm_query_dword(fd, "DHCPEnabled")
-  │   ip    = cm_query_str(fd, "IP")
-  │   gw    = cm_query_str(fd, "Gateway")
-  │   dns   = cm_query_str(fd, "DNS1")
+  │   ip    = cm_query_dword(fd, "IPAddress")
+  │   mask  = cm_query_dword(fd, "SubnetMask")
+  │   gw    = cm_query_dword(fd, "Gateway")
+  │   dns   = cm_query_dword(fd, "DnsServer")
   │
   ├── if dhcp == 1:
   │   ✓ Ejecutar dhcp como subproceso
@@ -2167,9 +2169,9 @@ netcfg.nxe
   │   dns = dhcp_result.dns
   │   ✓ Guardar en Registry
   │
-  ├── if ip != "0.0.0.0":
-  │   ✓ net_set_ip(0, parse_ip(ip))
-  │   ✓ net_set_gateway(0, parse_ip(gw))
+  ├── if ip != 0:
+  │   ✓ net_set_ip(0, ip, mask)
+  │   ✓ net_set_gateway(0, gw)
   │
   └── exit(0)
 ```

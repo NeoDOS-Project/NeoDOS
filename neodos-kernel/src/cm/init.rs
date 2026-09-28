@@ -163,6 +163,14 @@ pub fn ensure_boot_defaults() {
                     &0u32.to_le_bytes());
             }
         }
+        // Canonical static-config values (0 = unset). Only consulted when
+        // DHCPEnabled = 0. Shared by dhcpd, ipconfig and netcfg. See #314.
+        for name in ["IPAddress", "SubnetMask", "Gateway"] {
+            if crate::cm::cm_query_value(if0, name).is_err() {
+                let _ = crate::cm::cm_set_value(if0, name, hive::REG_DWORD,
+                    &0u32.to_le_bytes());
+            }
+        }
     }
 }
 
