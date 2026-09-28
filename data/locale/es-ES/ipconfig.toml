@@ -31,11 +31,6 @@ IDS_STATS_RX = 1025
 IDS_STATS_TX = 1026
 IDS_STATS_RX_BYTES = 1027
 IDS_STATS_TX_BYTES = 1028
-IDS_SET_DNS_USAGE = 1030
-IDS_SET_DNS_ERR = 1031
-IDS_SET_DNS_OK = 1032
-IDS_SET_DNS_FLUSH = 1033
-IDS_SET_DNS_NOFLUSH = 1034
 
 [strings]
 IDS_HEADER = "Configuración IP de NeoDOS"
@@ -66,8 +61,3 @@ IDS_STATS_RX = "    Paquetes recibidos . . .: "
 IDS_STATS_TX = "    Paquetes enviados . . . : "
 IDS_STATS_RX_BYTES = "    Bytes recibidos . . . . : "
 IDS_STATS_TX_BYTES = "    Bytes enviados . . . . .: "
-IDS_SET_DNS_USAGE = "Uso: ipconfig /setdns <servidor> [servidor2] [servidor3]"
-IDS_SET_DNS_ERR = "ipconfig: dirección de servidor DNS no válida: "
-IDS_SET_DNS_OK = "Servidores DNS guardados en el Registro: "
-IDS_SET_DNS_FLUSH = "Guardado en disco."
-IDS_SET_DNS_NOFLUSH = "AVISO: no se pudo guardar en disco."
