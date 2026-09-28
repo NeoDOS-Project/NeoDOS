@@ -646,4 +646,47 @@ pub fn register_cm_tests() {
         let ccs = hive.find_key(root, "CurrentControlSet").unwrap();
         test_eq!(hive.key_count(ccs), 2);
     });
+
+    // ── #314: interface static-config key contract ──
+
+    test_case!("cm_net_iface_static_config_contract", {
+        use crate::cm::init::ensure_key_path;
+        use crate::cm::hive;
+
+        // The interface key is the single source of truth for static IPv4
+        // configuration. netcfg, dhcpd, ipconfig and libnet all read the
+        // canonical names below; no producer writes the legacy "IP"/"Mask"
+        // aliases (see #314).
+        let mut hive = Hive::new("TestNetIface");
+        let root = hive.root_cell();
+        let if0 = ensure_key_path(
+            &mut hive,
+            root,
+            "CurrentControlSet\\Services\\Network\\Interfaces\\0",
+        )
+        .unwrap();
+
+        let ip = 0x0A00_1E14u32; // 10.0.30.20
+        let mask = 0x00FF_FFFFu32; // 255.255.255.0
+        let gw = 0x0A00_1E01u32; // 10.0.30.1
+        let dns = 0x0A00_1E0Au32; // 10.0.30.10
+
+        hive.set_value(if0, "DHCPEnabled", hive::REG_DWORD, &0u32.to_le_bytes()).unwrap();
+        hive.set_value(if0, "IPAddress", hive::REG_DWORD, &ip.to_le_bytes()).unwrap();
+        hive.set_value(if0, "SubnetMask", hive::REG_DWORD, &mask.to_le_bytes()).unwrap();
+        hive.set_value(if0, "Gateway", hive::REG_DWORD, &gw.to_le_bytes()).unwrap();
+        hive.set_value(if0, "DnsServer", hive::REG_DWORD, &dns.to_le_bytes()).unwrap();
+        hive.set_value(if0, "DnsServer2", hive::REG_DWORD, &0u32.to_le_bytes()).unwrap();
+        hive.set_value(if0, "DnsServer3", hive::REG_DWORD, &0u32.to_le_bytes()).unwrap();
+
+        test_eq!(hive.query_value(if0, "DHCPEnabled").unwrap().as_dword().unwrap(), 0);
+        test_eq!(hive.query_value(if0, "IPAddress").unwrap().as_dword().unwrap(), ip);
+        test_eq!(hive.query_value(if0, "SubnetMask").unwrap().as_dword().unwrap(), mask);
+        test_eq!(hive.query_value(if0, "Gateway").unwrap().as_dword().unwrap(), gw);
+        test_eq!(hive.query_value(if0, "DnsServer").unwrap().as_dword().unwrap(), dns);
+
+        // Legacy aliases are not part of the contract.
+        test_true!(hive.query_value(if0, "IP").is_none());
+        test_true!(hive.query_value(if0, "Mask").is_none());
+    });
 }
