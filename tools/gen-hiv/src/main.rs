@@ -221,8 +221,15 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     const _V_DNS1: u32 = 57;
     const _V_DNS2: u32 = 58;
     const _V_DNS3: u32 = 59;
+    // Cell ids 60-62 are reserved for the static IPv4 keys added by #314
+    // (IPAddress/SubnetMask/Gateway). Keeping them reserved here lets #314 and
+    // this change merge without renumbering.
+    const _NETCFG: u32 = 63;
+    const _V_NC_BPATH: u32 = 64;
+    const _V_NC_STYPE: u32 = 65;
+    const _V_NC_DNAME: u32 = 66;
 
-    b.next_idx = 60;
+    b.next_idx = 67;
 
     let tests_val: u32 = if enable_tests { 1 } else { 0 };
     let net_test_val: u32 = if enable_network_test { 1 } else { 0 };
@@ -243,6 +250,13 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     b.add_value(_V_IPATH, "ImagePath", REG_SZ, b"C:\\System\\Tools\\dhcpd.nxe\0", _V_STYPE, _DHCPC);
     b.add_value(_V_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\dhcpd.nxe\0", _V_IPATH, _DHCPC);
     b.add_value(_V_DNAME, "DisplayName", REG_SZ, b"DHCP Client\0", _V_BPATH, _DHCPC);
+
+    // Netcfg values: BinaryPath → StartType → DisplayName. Resident configurator
+    // daemon that applies the interface Registry config to the NIC (the single
+    // applier; dhcpd only publishes leases). See #314/#320.
+    b.add_value(_V_NC_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netcfg.nxe\0", NULL_CELL, _NETCFG);
+    b.add_value(_V_NC_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NC_BPATH, _NETCFG);
+    b.add_value(_V_NC_DNAME, "DisplayName", REG_SZ, b"netcfg\0", _V_NC_STYPE, _NETCFG);
 
     // Interfaces\0: DHCPEnabled + DNS servers (default 0.0.0.0 = unset/automatic;
     // the DHCP client overwrites DnsServer with the leased value).
@@ -290,7 +304,8 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
 
     // Keys
     b.add_key(_NEO, "NeoInit", _SVC, NULL_CELL, _DHCPC, _V_NETTEST, NULL_CELL, 0);
-    b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NET, _V_DNAME, NULL_CELL, 0);
+    b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NETCFG, _V_DNAME, NULL_CELL, 0);
+    b.add_key(_NETCFG, "Netcfg", _SVC, NULL_CELL, _NET, _V_NC_DNAME, NULL_CELL, 0);
     b.add_key(_IF0, "0", _IFC, NULL_CELL, NULL_CELL, _V_DNS3, NULL_CELL, 0);
     b.add_key(_IFC, "Interfaces", _NET, _IF0, NULL_CELL, NULL_CELL, NULL_CELL, 0);
     b.add_key(_NET, "Network", _SVC, _IFC, NULL_CELL, NULL_CELL, NULL_CELL, 0);

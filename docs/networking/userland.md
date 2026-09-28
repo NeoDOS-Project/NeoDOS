@@ -707,29 +707,34 @@ NeoInit debe leer su configuración de `\Registry\Machine\System\CurrentControlS
 
 ```text
 \Registry\Machine\System\CurrentControlSet\Services\NeoInit
-├── DefaultShell        REG_SZ   "C:\Programs\NeoShell.nxe"
-├── AutoStartServices   REG_MULTI_SZ   "netcfg"
+├── DefaultShell        REG_SZ   "C:\Programs\neoshell.nxe"
 ├── EnableVT            REG_DWORD  1
-├── VTCount             REG_DWORD  4
-└── ShellArgs           REG_SZ   ""
+├── AutoStartServices   REG_SZ   ""       (obsoleto; ver Service Manager)
+├── EnableTests         REG_DWORD  0
+└── EnableNetworkTest   REG_DWORD  0
 ```
 
-**Claves de soporte para servicios:**
+**Claves de soporte para servicios (Service Manager):**
 
 ```text
 \Registry\Machine\System\CurrentControlSet\Services
-├── netcfg
-│   ├── Path            REG_SZ   "C:\Programs\netcfg.nxe"
-│   ├── AutoStart       REG_DWORD  1
-│   └── Description     REG_SZ   "Network configuration service"
+├── Dhcpc
+│   ├── ImagePath       REG_SZ   "C:\System\Tools\dhcpd.nxe"
+│   ├── BinaryPath      REG_SZ   "C:\System\Tools\dhcpd.nxe"
+│   └── StartType       REG_DWORD  2   (Auto)   — DHCP; publica el lease
 │
-├── logger
-│   ├── Path            REG_SZ   "C:\Programs\logger.nxe"
-│   ├── AutoStart       REG_DWORD  1
+├── Netcfg
+│   ├── BinaryPath      REG_SZ   "C:\System\Tools\netcfg.nxe"
+│   └── StartType       REG_DWORD  2   (Auto)   — aplica la config a la NIC
+│
+├── NeoInit
 │   └── ...
 │
 └── <future_services>
 ```
+
+> `netcfg` es el **configurador residente** (servicio `Netcfg`) y `dhcpd` el
+> cliente DHCP; ver §4.4.
 
 ### 4.3 Nueva implementación de NeoInit
 
@@ -832,7 +837,7 @@ pub extern "C" fn _start() -> ! {
 
     // 4. Leer auto-start services
     let services_str = if reg_fd != 0xFF {
-        cm_query_str(reg_fd, "AutoStartServices", "")
+        cm_query_str(reg_fd, "AutoStartServices", "")   // obsoleto (ver Service Manager)
     } else {
         [0u8; 260]
     };
@@ -925,43 +930,54 @@ pub extern "C" fn _start() -> ! {
 }
 ```
 
-### 4.4 Servicio netcfg.nxe (implementado)
+### 4.4 netcfg.nxe — configurador residente (implementado)
 
-`netcfg.nxe` es un servicio auto-iniciado que configura la red al boot.
+`netcfg.nxe` tiene dos roles:
 
-**Implementación real (`userbin/netcfg/src/main.rs`):**
+- **sin argumentos**: servicio residente `Netcfg` (`StartType = Auto`). Es el
+  **único aplicador** de la configuración de red: mantiene la NIC sincronizada
+  con `Network\Interfaces\0`, re-aplicando ante cambios de configuración y en el
+  flanco de subida del enlace.
+- **con argumentos**: CLI de configuración one-shot: escribe el Registry y sale
+  (aplicando de inmediato por el mismo camino).
+
+`dhcpd` (`Dhcpc`) deja de aplicar: hace el DORA y **publica** el lease en el
+Registry; `netcfg` es quien lo aplica. Así no hay dos programas aplicando lo
+mismo (ver #320).
+
+**Comandos (`userbin/netcfg/src/main.rs`):**
 
 ```text
-netcfg.nxe
-  │
-  ├── Cargar net.nxl vía libnet (lazy load)
-  ├── Abrir Registry:
-  │   \Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
-  │     ├── DHCPEnabled     REG_DWORD  1
-  │     └── IPAddress       REG_DWORD  0 (persistido)
-  │
-  ├── Si DHCPEnabled == 1:
-  │   ├── Esperar hasta 20000 yields a que kernel DHCP asigne IP
-  │   │   (kernel DHCP avanza vía dhcp_tick() en idle loop)
-  │   ├── Leer IP via libnet::get_ip(0) → NicInfo del kernel
-  │   └── Si timeout → APIPA 169.254.1.1 con net_set_ip(0, ip, mask)
-  │
-  ├── Si DHCPEnabled == 0:
-  │   ├── Leer IPAddress/SubnetMask del Registry
-  │   └── net_set_ip(0, ip, mask) vía ObSetInfoClass::SetNicIp(27)
-  │
-  └── Corre como DAEMMON (loop { yield })
+netcfg                          (sin args) daemon configurador (servicio Netcfg)
+netcfg /apply                   aplica la config del Registry a la NIC y sale
+netcfg /setip <ip> <mask> [gw]  IPv4 estática (DHCP off) + aplicar
+netcfg /setmask <mask>          máscara + aplicar
+netcfg /setgateway <gw>         gateway + aplicar
+netcfg /setdns <s1> [s2] [s3]   DNS (escribe el Registry + flush)
+netcfg /dhcp on|off             activa/desactiva DHCP
+netcfg /reset                   limpia IP/mask/gw/DNS; DHCP on
+netcfg /resetdns                limpia DNS
+netcfg /status                  Registry vs NIC (NicInfo del kernel)
+netcfg /test                    valida la config (dry-run)
+netcfg /? | help                ayuda
 ```
 
-**Diferencias con el diseño original:**
+**Daemon (sin args):**
 
-- No ejecuta `dhcp.nxe` — espera al kernel DHCP (vía `dhcp_tick()` en idle loop)
-- Path Registry: `CurrentControlSet\Services\Network\Interfaces\0` (no `\System\Network\...`)
-- netcfg corre como daemon (no termina tras configurar)
-- `set_gateway` aplica el gateway a la NIC (SetNicGateway=28); la persistencia en Registry la hace `dhcpd`/`netcfg`
-- IP se guarda como REG_DWORD (no REG_SZ) para simplicidad
-- Usa APIPA (169.254.1.1) si DHCP falla
-- No hay flag "red disponible" — netcfg simplemente existe
+- Cada iteración (~decenas de ms) lee `DHCPEnabled`/`IPAddress`/`SubnetMask`/
+  `Gateway` y el estado de enlace (`NicInfo`).
+- Si los valores cambian o el enlace sube (fl. 0→1), aplica
+  `SetNicIp = 27` / `SetNicGateway = 28`.
+- El Registry es la **única fuente de verdad** (canal entre `dhcpd`, el CLI,
+  `neocfg` y el daemon); no hay IPC propio todavía.
+- Máscara ausente o 0 → `/24` (#306/#314).
+- `DHCPEnabled = 1` → aplica el lease que publicó `dhcpd`.
+
+**Diseño histórico:** el diseño original describía `netcfg` como servicio que
+hacía el DHCP y salía; después pasó a daemon y luego a one-shot (ver #320). El
+modelo actual vuelve a ser residente, pero el **DHCP (DORA/renovación) es de
+`dhcpd`**.
+
 
 ### 4.5 Integración con la shell: servicios en background
 
@@ -1024,7 +1040,7 @@ NeoFS para datos, logs, binarios, configuraciones editables.
 │   │   ├── CurrentControlSet
 │   │   │   ├── Services
 │   │   │   │   ├── NeoInit      (ver sección 4.2)
-│   │   │   │   ├── netcfg       (Path, AutoStart, Description)
+│   │   │   │   ├── Netcfg       (BinaryPath, StartType, DisplayName)
 │   │   │   │   └── ...
 │   │   │   │
 │   │   │   ├── Control
@@ -1753,7 +1769,7 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 | 14 | F7 | Registry: crear valores por defecto en boot | `main.rs`, `cm/mod.rs` | Pequeño |
 | 15 | F7 | NeoInit: leer Registry para DefaultShell | `userbin/neoinit/` | Pequeño |
 | 16 | F7 | NeoInit: auto-start de servicios | `userbin/neoinit/` | Medio |
-| 17 | F7 | netcfg.nxe: servicio de configuración de red | `userbin/netcfg/` | Medio |
+| 17 | F7 | netcfg.nxe: configurador de red (servicio Netcfg) | `userbin/netcfg/` | Medio |
 | 18 | F7 | Registry: persistencia a disco (cm_flush_key) | `cm/mod.rs`, `cm/hive.rs` | Medio |
 | 19 | F8 | pkg.nxe: sistema de paquetes v1 | `userbin/pkg/` | Grande |
 
@@ -1777,6 +1793,11 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 
 ### 9.1 Boot completo con red
 
+> Nota: el arranque de red lo realizan dos servicios del Service Manager:
+> `Dhcpc` (`dhcpd.nxe`) hace DHCP y publica el lease en el Registry, y `Netcfg`
+> (`netcfg.nxe`) es el configurador residente que aplica la configuración a la
+> NIC. Ver §4.4.
+
 ```text
 Bootloader (UEFI)
   ↓
@@ -1794,70 +1815,39 @@ Kernel
   │   ├── create \Registry\Machine, \Registry\User
   │   ├── mount SYSTEM hive
   │   └── create_default_registry_values()
-  │       ├── CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\NeoShell.nxe"
-  │       ├── CurrentControlSet\Services\NeoInit\AutoStartServices = "netcfg"
-  │       ├── CurrentControlSet\Services\netcfg\Path = "C:\Programs\netcfg.nxe"
-  │       ├── Network\Interfaces\0\DHCPEnabled = 1
-  │       └── CurrentControlSet\Control\WaitForNetwork = 0
-  │
-  ├── Phase 3.9: ABI freeze, validate syscalls
-  │
-  └── Phase 4: Spawn NeoInit (PID 1)
-       │
-       ▼
-  NeoInit (PID 1)
-       │
-       ├── [kernel API: cm_open_key, cm_query_value]
-       │
-       ├── Abrir \Registry\Machine\System\CurrentControlSet\Services\NeoInit
-       │
-       ├── Leer DefaultShell → "C:\Programs\NeoShell.nxe"
-       │
-       ├── Leer AutoStartServices → "netcfg"
-       │
-       ├── Para cada servicio en AutoStartServices:
-       │   │
-       │   ├── Abrir \Registry\...\Services\netcfg
-       │   ├── Leer Path → "C:\Programs\netcfg.nxe"
-       │   │
-       │   └── spawn_detached("C:\Programs\netcfg.nxe")
-       │        │
-       │        ▼
-       │   netcfg.nxe (PID 2)
-       │       │
-       │       ├── load_net() = sys_loadlib("C:\System\Libraries\net.nxl")
-       │       │   └── kernel carga net.nxl en slot 3 (0x1e0c0000)
-       │       │
-       │       ├── net_interface_count() → 1
-       │       │
-       │       ├── Leer Registry: DHCPEnabled=1
-       │       │
-       │       ├── dhcp_discover():
-       │       │   ├── net_socket_create(UDP, port 68)
-       │       │   ├── net_socket_bind(0.0.0.0:68)
-       │       │   ├── net_socket_connect(255.255.255.255:67)
-       │       │   ├── Construir DHCP Discover
-       │       │   ├── net_socket_send() → kernel: build UDP+IP+Ethernet → e1000 TX
-       │       │   ├── (espera DHCP Offer)
-       │       │   ├── kernel: e1000 RX → parse UDP → find socket(port 68) → recv_buf
-       │       │   ├── net_socket_recv() → DHCP Offer
-       │       │   ├── Construir DHCP Request
-       │       │   ├── net_socket_send() → e1000 TX
-       │       │   ├── net_socket_recv() → DHCP ACK
-       │       │   └── Config: IP=10.0.2.15, Gateway=10.0.2.1, DNS=10.0.2.3
-       │       │
-       │       ├── Guardar en Registry:
-       │       │   \Registry\Machine\System\Network\Interfaces\0\IP = "10.0.2.15"
-       │       │   \Registry\Machine\System\Network\Interfaces\0\Gateway = "10.0.2.1"
-       │       │   \Registry\Machine\System\Network\Interfaces\0\DNS = "10.0.2.3"
-       │       │
-       │       ├── net_set_ip(0, 10.0.2.15) → kernel actualiza NIC IP
-       │       ├── net_set_gateway(0, 10.0.2.1)
-       │       └── exit (netcfg termina)
-       │
-       ├── Leer WaitForNetwork=0 → no esperar
-       │
-       └── Loop: spawn NeoShell.nxe → wait → respawn
+   │       ├── CurrentControlSet\Services\NeoInit\DefaultShell = "C:\Programs\neoshell.nxe"
+   │       ├── CurrentControlSet\Services\Dhcpc\ImagePath = "C:\System\Tools\dhcpd.nxe"
+   │       ├── CurrentControlSet\Services\Network\Interfaces\0\DHCPEnabled = 1
+   │       └── CurrentControlSet\Control\WaitForNetwork = 0
+   │
+   ├── Phase 3.9: ABI freeze, validate syscalls
+   │
+   └── Phase 4: Spawn NeoInit (PID 1)
+        │
+        ▼
+   NeoInit (PID 1)
+        │
+        ├── [kernel API: cm_open_key, cm_query_value]
+        │
+        ├── Abrir \Registry\Machine\System\CurrentControlSet\Services\NeoInit
+        │
+        ├── Leer DefaultShell → "C:\Programs\neoshell.nxe"
+        │
+        ├── El Service Manager (kernel) arranca los servicios System/Auto:
+        │   │
+        │   ├── Dhcpc (dhcpd.nxe) — DORA; publica el lease en el Registry
+        │   └── Netcfg (netcfg.nxe) — aplica la config a la NIC (servicio)
+        │       ├── load_net() / sockets UDP 68 → 67
+        │       ├── dhcp_discover() → Offer → Request → ACK
+        │       ├── Guarda en Registry: IPAddress/SubnetMask/Gateway/DnsServer
+        │       └── loop { yield } (servicio)
+        │
+        ├── Netcfg aplica el Registry a la NIC (estático o el lease de Dhcpc)
+        │     (configurador residente; ver §4.4)
+        │
+        ├── Leer WaitForNetwork=0 → no esperar
+        │
+        └── Loop: spawn NeoShell.nxe → wait → respawn
 ```
 
 ### 9.2 Flujo detallado: net_socket_send (UDP)
@@ -2152,26 +2142,24 @@ netcfg.nxe
   ├── net_interface_count()  → si 0, exit
   │
   ├── Abrir Registry:
-  │   fd = cm_open_key("\\Registry\\Machine\\System\\Network\\Interfaces\\0")
+  │   fd = cm_open_key("\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0")
   │   dhcp = cm_query_dword(fd, "DHCPEnabled")
-  │   ip    = cm_query_str(fd, "IP")
-  │   gw    = cm_query_str(fd, "Gateway")
-  │   dns   = cm_query_str(fd, "DNS1")
+  │   ip    = cm_query_dword(fd, "IPAddress")
+  │   mask  = cm_query_dword(fd, "SubnetMask")
+  │   gw    = cm_query_dword(fd, "Gateway")
+  │   dns   = cm_query_dword(fd, "DnsServer")
   │
-  ├── if dhcp == 1:
-  │   ✓ Ejecutar dhcp como subproceso
-  │     (o llamar funciones DHCP de net.nxl si existen)
-  │   dhcp_result = dhcp_discover_and_configure()
-  │   ip = dhcp_result.ip
-  │   gw = dhcp_result.gateway
-  │   dns = dhcp_result.dns
-  │   ✓ Guardar en Registry
+  ├── Daemon (sin args): cada ~decenas de ms
+  │   ├── lee ip/mask/gw y el link (NicInfo)
+  │   ├── el DHCP lo publica Dhcpc en el Registry (DORA/renovación)
+  │   └── si cambian o el link sube (0→1):
+  │       ✓ net_set_ip(0, ip, mask)
+  │       ✓ net_set_gateway(0, gw)
   │
-  ├── if ip != "0.0.0.0":
-  │   ✓ net_set_ip(0, parse_ip(ip))
-  │   ✓ net_set_gateway(0, parse_ip(gw))
+  ├── CLI (con args): /setip, /setdns, /dhcp, /reset, /status, ...
+  │   ✓ escribe el Registry + flush y aplica; luego exit(0)
   │
-  └── exit(0)
+  └── (el daemon nunca termina — es el servicio Netcfg)
 ```
 
 ### 10.7 Persistencia del Registry
@@ -2225,7 +2213,7 @@ fn init_cm() {
 | `src/object/types.rs` | `ObInfoClass::SocketRecv = 23`, `ObSetInfoClass::SetNicIp = 27` | ✅ |
 | `src/syscall/ob.rs` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
 | `src/syscall/ob.rs` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
-| `src/main.rs` | `AutoStartServices` default incluye `C:\Programs\netcfg.nxe` | ✅ |
+| `tools/gen-hiv` | Crea el servicio `Netcfg` (`netcfg.nxe`, StartType=Auto) y `Dhcpc` | ✅ |
 | `src/scheduler/mod.rs` | `dhcp_tick()` llamado desde idle loop para que DHCP progrese | ✅ |
 
 ### 11.2 libneodos
@@ -2243,7 +2231,7 @@ fn init_cm() {
 | ---------- | ------ | --------- | -------- |
 | libnet-nxl | `libnet-nxl/` | `net.nxl` → `C:\System\Libraries\net.nxl` (slot 3, `0x1e0c0000`) | ✅ |
 | libnet | `libnet/` | Static library wrapper con lazy loading | ✅ |
-| netcfg | `userbin/netcfg/` | `netcfg.nxe` → servicio de red (daemon) | ✅ |
+| netcfg | `userbin/netcfg/` | `netcfg.nxe` → configurador residente (servicio `Netcfg`) | ✅ |
 | ipconfig | `userbin/ipconfig/` | `ipconfig.nxe` → muestra info de interfaces | ✅ |
 | ping | `userbin/ping/` | *(pendiente)* | ❌ |
 | dhcp | `userbin/dhcp/` | *(pendiente — DHCP se hace en kernel vía idle loop)* | ❌ |

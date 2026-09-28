@@ -611,24 +611,11 @@ pub extern "C" fn _start() -> ! {
     let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
 
     if dhcp_enabled == 0 {
-        // Static IP mode
+        // Static mode: netcfg (the `Netcfg` service) applies the Registry
+        // values. dhcpd only publishes DHCP leases, so there is nothing to do.
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Static IP config\r\n");
-        let ip = read_reg_dword(key_fd, "IPAddress").unwrap_or(0);
-        if ip != 0 {
-            let mask = read_reg_dword(key_fd, "SubnetMask").unwrap_or(0x00FFFFFF);
-            let _ = libnet::set_ip(0, ip, mask);
-            write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"Static IP=");
-            write_ip(ip);
-            write_str(b"\r\n");
-            write_reg_dword(key_fd, "IPAddress", ip);
-        }
-        write_str(b"");
-                    write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"OK\r\n");
+                    write_str(b"DHCP disabled; static config handled by netcfg\r\n");
         loop { syscall::sys_yield(); }
     }
 
@@ -647,12 +634,12 @@ pub extern "C" fn _start() -> ! {
             write_hex(e as u32);
             write_str(b"\r\n");
             let apipa = 0xA9FE0101;
-            let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        let _ = libnet::set_gateway(0, 0);
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (socket create failed)\r\n");
             write_reg_dword(key_fd, "IPAddress", apipa);
+            write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
+            write_reg_dword(key_fd, "Gateway", 0);
             write_reg_dword(key_fd, "DHCPBound", 1);
             loop { syscall::sys_yield(); }
         }
@@ -666,12 +653,12 @@ pub extern "C" fn _start() -> ! {
         write_hex(e as u32);
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (bind failed)\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
+        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
+        write_reg_dword(key_fd, "Gateway", 0);
         write_reg_dword(key_fd, "DHCPBound", 1);
         loop { syscall::sys_yield(); }
     }
@@ -684,12 +671,12 @@ pub extern "C" fn _start() -> ! {
         write_hex(e as u32);
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (connect failed)\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
+        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
+        write_reg_dword(key_fd, "Gateway", 0);
         write_reg_dword(key_fd, "DHCPBound", 1);
         loop { syscall::sys_yield(); }
     }
@@ -737,12 +724,8 @@ pub extern "C" fn _start() -> ! {
         write_dec_u32(client.lease_time);
         write_str(b"s\r\n");
 
-        // Configure NIC via libnet (IP, mask and gateway at runtime; the
-        // Registry writes below persist them). `client.gateway` is 0 when DHCP
-        // did not provide Option 3, which leaves the gateway unset (0.0.0.0).
-        let _ = libnet::set_ip(0, ip, client.subnet_mask);
-        let _ = libnet::set_gateway(0, client.gateway);
-
+        // Publish the lease to the Registry. The `Netcfg` service is the one
+        // that applies it to the NIC (single applier; see #320/#314).
         write_reg_dword(key_fd, "IPAddress", ip);
         write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
         write_reg_dword(key_fd, "Gateway", client.gateway);
@@ -763,12 +746,12 @@ pub extern "C" fn _start() -> ! {
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"DORA failed, using APIPA fallback\r\n");
         let apipa = 0xA9FE0101;
-        let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
-        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1\r\n");
         write_reg_dword(key_fd, "IPAddress", apipa);
+        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
+        write_reg_dword(key_fd, "Gateway", 0);
         write_reg_dword(key_fd, "DHCPBound", 1);
     }
 
