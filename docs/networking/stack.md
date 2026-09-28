@@ -206,6 +206,50 @@ Moving DHCP to userspace resolves all these issues:
   DHCPServer  = <server IP> (DWORD)
 ```
 
+## DNS Resolver (Userland)
+
+DNS resolution is **not** a kernel subsystem: like DHCP, it runs in user mode on
+top of the kernel's UDP sockets. The protocol is implemented once in the
+`libdns` crate and used by `libnet` (and therefore by `nslookup` and `ping`).
+
+| Layer | Path | Responsibility |
+| ------- | ------ | -------------- |
+| Wire format + resolver core | `libdns/src/lib.rs` | Query/response encoding, A/CNAME parsing, hostname validation, `DnsError`, retries/server selection |
+| Userland transport + config | `libnet/src/dns.rs` | UDP via `net.nxl`, Registry servers (`DnsServer`, `DnsServer2/3`), bounded cache, `resolve()` / `resolve_with_server()` |
+| Tools | `userbin/nslookup`, `userbin/ping` | Consume the shared resolver API |
+
+The kernel `src/net/dns.rs` module remains as an internal kernel-side parser and
+cache used by tests/`dns_tick`; it is not exposed to userland and does not
+duplicate the userland resolver path. Unifying it with `libdns` is tracked in
+issue #68.
+
+See `docs/networking/userland.md` §3.4–3.5 for the API, configuration and error
+taxonomy.
+
+## UDP Send Path (next-hop routing)
+
+Making DNS work on a real network required three fixes in the kernel/userland
+send path (both were latent because DHCP only uses broadcast):
+
+- **Source address.** A UDP socket bound to `0.0.0.0` (the DNS resolver binds
+  port 0) had an unspecified source address in the IP header. `socket_send_udp_raw`
+  now fills it from the NIC, except for broadcast datagrams (DHCP DISCOVER keeps
+  `0.0.0.0`).
+- **Next-hop routing.** For an off-subnet destination the frame must be sent to
+  the gateway's MAC, not ARP'd directly (the kernel has no per-destination ARP
+  for remote hosts). `socket_send_udp_raw` now mirrors `icmp_ping()`: compute the
+  next hop from the NIC subnet mask/gateway and ARP that. Without it, a DNS
+  server outside the local subnet is unreachable.
+- **Datagram dispatch.** `udp_dispatch` matched connected sockets only by
+  `remote.port`; it now matches the socket's **local port** (`dst_port`) and,
+  when set, the remote port, so a previous socket cannot capture replies
+  addressed to a different local port.
+
+Because `netd` (not the syscall) drives RX polling and there is no blocking
+socket wait syscall, the userland resolver waits for the reply with an RDTSC time
+budget rather than a bare `sys_yield` loop (which returns immediately when no
+other thread is runnable).
+
 ## QEMU Networking
 
 NeoDOS uses QEMU's user-mode networking (SLiRP) by default, which requires **no root/sudo privileges**.

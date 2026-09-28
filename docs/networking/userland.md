@@ -602,30 +602,77 @@ fn dhcp_apply(net: &NetAbiTable, config: &DhcpConfig) {
 3. El kernel construya header UDP+IP+Ethernet desde `socket_send`
 4. Receive path: UDP paquetes entrantes dispatch al socket bind al puerto 68
 
-### 3.4 dnsresv.nxe (futuro)
+### 3.4 nslookup.nxe — resolución DNS (implementado)
 
 ```text
-DNSRESV <hostname> [/s dns_server]
+NSLOOKUP <hostname> [dns-server]
 
-  Resuelve hostname a IPv4 via DNS server configurado o especificado.
+  Resuelve un hostname a una o más direcciones IPv4.
+  Sin segundo argumento usa los servidores DNS configurados.
 ```
 
-Usa `net_dns_resolve()` de net.nxl, que implementa consulta DNS sobre UDP
-(puerto 53). Formato DNS: header de 12 bytes + query section.
+La resolución DNS **no** vive en `net.nxl` ni dentro de cada herramienta. El
+protocolo se implementa una sola vez en una librería compartida y `nslookup`
+y `ping` la consumen:
 
-```rust
-pub fn net_dns_resolve(hostname: &str, result_ip: &mut [u8; 4]) -> Result<(), NetError> {
-    // 1. Obtener DNS server de Registry o argumento
-    // 2. Construir consulta DNS:
-    //    Header: ID(2), flags(0x0100), QDCOUNT=1, resto=0
-    //    Question: nombre encoded + type(1=AAAA→IPv4) + class(1=IN)
-    // 3. net_socket_create(UDP) → bind to any → connect to DNS:53
-    // 4. net_socket_send(query)
-    // 5. net_socket_recv(response)
-    // 6. Parsear respuesta: extract IP de answer section
-    // 7. (futuro) cachear resultado
-}
+```text
+libdns   (crate no_std, sin dependencias)
+  ├─ encode_name / decode_name
+  ├─ build_query / parse_response   (A, CNAME, RCODE, truncation)
+  ├─ validate_hostname / parse_dotted_ip
+  └─ DnsError, DnsAnswer, DnsTransport, resolve_with_servers()
+
+libnet   (librería de red userland)
+  ├─ NetTransport     → sockets UDP vía net.nxl (puerto 53)
+  ├─ configured_servers() → Registry: DnsServer, DnsServer2, DnsServer3
+  ├─ resolve(hostname)            → DnsResult { server, addresses, ttl }
+  ├─ resolve_with_server(host, s)
+  └─ caché acotada (16 entradas, por host + servidor)
+
+nslookup.nxe   ─┐
+ping.nxe        ├─ usan libnet::dns
+(ntpd, ...)    ─┘
 ```
+
+**Configuración (Registry):**
+
+```text
+\Registry\Machine\System\CurrentControlSet\Services\Network\Interfaces\0
+  DnsServer   REG_DWORD/REG_SZ   (servidor 1, preferente)
+  DnsServer2  REG_DWORD/REG_SZ   (servidor 2, opcional)
+  DnsServer3  REG_DWORD/REG_SZ   (servidor 3, opcional)
+```
+
+Se distingue entre *configured DNS* (lo que hay en el Registry) y *effective
+DNS* (el servidor que realmente respondió, devuelto en `DnsResult.server`).
+`0.0.0.0` se trata siempre como "no configurado": nunca se envía una consulta
+a esa dirección.
+
+**Errores distintos** (`libdns::DnsError`):
+`NoConfig`, `NoServer`, `InvalidHostname`, `Timeout`, `ServerUnreachable`,
+`NxDomain`, `MalformedResponse`, `Truncated`, `ServerFailure`, `NoARecord`,
+`Network`. Cada uno se muestra con su propio mensaje localizado.
+
+**Consultas a los servidores:** se prueban en orden. `NXDOMAIN` corta la
+búsqueda de inmediato; un timeout o servidor inalcanzable pasa al siguiente.
+Solo se implementa resolución A/IPv4 (y seguimiento de CNAME); no hay fallback
+TCP (una respuesta con el bit TC se reporta como `Truncated`). La espera de
+respuesta usa un presupuesto de tiempo RDTSC (no hay `ob_wait` para sockets ni
+sleep con duración en userland).
+
+### 3.5 ping.nxe — integración con DNS (implementado)
+
+`ping <host>` acepta tanto una IPv4 literal como un hostname:
+
+```text
+hostname → libnet::dns::resolve() → IPv4 → sys_icmp_ping() (sin cambios)
+```
+
+`ping 10.0.1.1` conserva exactamente el comportamiento anterior y los flags
+`/n` y `/t`. Si el argumento parece una IP numérica pero es inválida se
+mantiene el error de IP; en caso contrario se intenta resolver por DNS y se
+muestra el error DNS específico.
+
 
 ---
 

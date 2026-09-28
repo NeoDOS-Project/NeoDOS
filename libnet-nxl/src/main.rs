@@ -189,26 +189,49 @@ pub extern "C" fn net_iface_stats(_idx: u32, _stats: *mut NetIfaceStats) -> i32 
 
 #[no_mangle]
 pub extern "C" fn net_socket_create(sock_type: u32) -> i32 {
-    let mut id_buf = [0u8; 16];
-    // TODO(net): Use Ob API for getpid (RAX=3 removed, use ob_open + ob_query_info(ProcessId))
-    let id = 0u64;
-    let path_len = {
-        let s = b"\\NetSock-";
-        id_buf[..s.len()].copy_from_slice(s);
-        let mut tmp = id;
-        let mut i = 15;
-        while tmp > 0 {
-            let d = (tmp % 16) as u8;
-            id_buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            tmp /= 16;
-            i -= 1;
-        }
-        s.len() + (15 - i)
-    };
-    let path = unsafe { core::str::from_utf8_unchecked(&id_buf[..path_len]) };
+    // Socket objects live in the global Ob namespace, so the path must be
+    // unique across all processes. Previously this was always `\NetSock-0`,
+    // which collided with sockets already created by other processes (e.g. the
+    // long-lived DHCP client socket). Try successive names until one is free.
     let attrs = (sock_type & 0xFF) as u64;
-    let r = unsafe { ob_create(path, OB_TYPE_SOCKET, attrs) };
-    if r < 0 { r as i32 } else { r as i32 }
+    for n in 0..MAX_SOCKET_PATH_ATTEMPTS {
+        let mut buf = [0u8; 16];
+        let len = write_socket_path(&mut buf, n);
+        let path = unsafe { core::str::from_utf8_unchecked(&buf[..len]) };
+        let r = unsafe { ob_create(path, OB_TYPE_SOCKET, attrs) };
+        if r >= 0 {
+            return r as i32;
+        }
+    }
+    -1
+}
+
+/// Maximum distinct `\NetSock-<n>` names tried before giving up.
+const MAX_SOCKET_PATH_ATTEMPTS: u32 = 64;
+
+/// Write `\NetSock-<n>` into `buf` and return its length.
+fn write_socket_path(buf: &mut [u8; 16], n: u32) -> usize {
+    const PREFIX: &[u8] = b"\\NetSock-";
+    buf[..PREFIX.len()].copy_from_slice(PREFIX);
+    let mut pos = PREFIX.len();
+
+    let mut digits = [0u8; 10];
+    let mut d = 0usize;
+    let mut v = n;
+    if v == 0 {
+        digits[0] = b'0';
+        d = 1;
+    }
+    while v > 0 {
+        digits[d] = b'0' + (v % 10) as u8;
+        d += 1;
+        v /= 10;
+    }
+    for i in (0..d).rev() {
+        buf[pos] = digits[i];
+        pos += 1;
+    }
+    pos
 }
 
 #[no_mangle]

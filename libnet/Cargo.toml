@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 libneodos = { path = "../libneodos" }
+libdns = { path = "../libdns" }
 
 [profile.release]
 panic = "abort"
