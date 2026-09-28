@@ -41,10 +41,25 @@ fn state_name(s: u8) -> &'static str {
 /// Used so `schedule_with(require_ring3=true)` never commits a candidate whose
 /// frame cannot be returned through a Ring-3 interrupt/syscall frame.
 #[inline]
-fn frame_is_ring3(k: &Kthread) -> bool {
+pub(crate) fn frame_is_ring3(k: &Kthread) -> bool {
     if k.rsp < 0x1000 { return false; }
     let cs = unsafe { *((k.rsp + 128) as *const u64) };
     (cs & 3) == 3
+}
+
+/// #338 invariant guard: a user thread's saved dispatch frame must be Ring 3.
+///
+/// A user thread interrupted inside a syscall runs on its Ring-0 kernel stack;
+/// the timer would otherwise save that Ring-0 frame (`cs == 0x08`) as the
+/// thread's authoritative dispatch frame and mark it `Ready`. It would then be
+/// permanently undispatchable, because `schedule_with(require_ring3=true)`
+/// rejects every non-Ring-3 frame. Callers use this predicate to distinguish
+/// "the live map/rsp was updated for accounting" from "the context published
+/// for Ring-3 dispatch is valid". Kernel threads (pid 0, no user image) are
+/// exempt: they are dispatched through their Ring-0 frame by design.
+#[inline]
+pub(crate) fn thread_dispatch_frame_is_ring3(k: &Kthread) -> bool {
+    k.pid == 0 || frame_is_ring3(k)
 }
 
 // ── Phase 13-A.3: Ready publication ownership guard ──────────────────────
@@ -682,7 +697,15 @@ impl Scheduler {
         crate::scheduler::accounting::mark_dispatch(k);
     }
 
-    pub fn on_timer_tick(&mut self, current_rsp: u64) {
+    /// Timer tick accounting and timeslice expiry.
+    ///
+    /// `interrupted_cs` is the CS of the frame the timer interrupted (the timer
+    /// handler decodes it from `current_rsp + 128`: `cs & 3 == 3` means Ring 3).
+    /// It decides whether an expired thread may be published `Ready`: a user
+    /// thread whose timeslice expires while it is inside a syscall (Ring 0,
+    /// `cs == 0x08`) must not be re-enqueued with a non-Ring-3 dispatch frame
+    /// (#338). Unit tests pass the CS of the context they simulate.
+    pub fn on_timer_tick(&mut self, current_rsp: u64, interrupted_cs: u64) {
         if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed) {
             return;
         }
@@ -716,7 +739,6 @@ impl Scheduler {
 
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
-                    k.state = ThreadState::Ready;
                     k.yield_requested = false;
                     crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_TIMESLICE, k, current_rsp);
                     k.rsp = current_rsp;
@@ -724,11 +746,29 @@ impl Scheduler {
                     crate::scheduler::diag::kcpu_ev(
                         crate::scheduler::diag::SITE_KCPU_TIMESLICE, k, this_cpu);
                     k.cpu = this_cpu;
-                    if k.tid != BOOT_TID && !k.is_idle {
-                        Self::enqueue_to_cpu_run_queue(k);
+                    // #338: only publish `Ready`/enqueue when the interrupted
+                    // context was Ring 3. A user thread whose timeslice expires
+                    // inside a syscall was interrupted in Ring 0 (`cs == 0x08`);
+                    // enqueueing it would strand it, because
+                    // `schedule_with(true)` rejects every non-Ring-3 frame. The
+                    // thread is left `Running`; its syscall return path saves the
+                    // real Ring-3 frame and re-enqueues it. The switch-out sites
+                    // (idt.rs user/kernel branches) also refuse to publish a
+                    // Ring-0 frame, so nothing resurrects it.
+                    if (interrupted_cs & 3) == 3 {
+                        k.state = ThreadState::Ready;
+                        if k.tid != BOOT_TID && !k.is_idle {
+                            Self::enqueue_to_cpu_run_queue(k);
+                        }
+                        needs_resched = true;
+                        crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
+                    } else {
+                        // Keep Running and grant a fresh slice; do not set
+                        // NEED_RESCHED. The syscall return path will consume
+                        // `yield_requested`(false)/save the Ring-3 frame.
+                        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+                        k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
                     }
-                    needs_resched = true;
-                    crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
                 }
             }
         }
