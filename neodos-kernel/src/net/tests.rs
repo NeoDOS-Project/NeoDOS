@@ -314,6 +314,102 @@ pub fn register_net_tests() {
         SOCKET_MANAGER.lock().free_socket(id2);
     });
 
+    test_case!("net_udp_first_datagram_survives_arp_miss", {
+        use super::arp::{arp_insert, arp_lookup, ArpPacket, ARP_OP_REQUEST};
+        use super::ethernet::{EthernetHeader, ETH_HDR_LEN, ETH_TYPE_ARP, ETH_TYPE_IPV4};
+        use super::nic::{nic_register, nic_unregister, NetworkInterface, NIC_REGISTRY};
+
+        /// NIC test double: records every transmitted frame and answers ARP
+        /// requests synchronously (simulating the network), so the blocking ARP
+        /// wait can complete without real hardware.
+        struct MockArpNic {
+            mac: MacAddr,
+            ip: Ipv4Addr,
+            reply_mac: MacAddr,
+            sent: alloc::sync::Arc<spin::Mutex<alloc::vec::Vec<alloc::vec::Vec<u8>>>>,
+        }
+
+        impl NetworkInterface for MockArpNic {
+            fn mac_address(&self) -> MacAddr { self.mac }
+            fn name(&self) -> &str { "mock-arp" }
+            fn send_packet(&mut self, packet: &[u8]) -> Result<(), ()> {
+                self.sent.lock().push(packet.to_vec());
+                if packet.len() >= ETH_HDR_LEN + core::mem::size_of::<ArpPacket>() {
+                    let eth: &EthernetHeader =
+                        unsafe { &*(packet.as_ptr() as *const EthernetHeader) };
+                    if eth.ethertype() == ETH_TYPE_ARP {
+                        let arp: &ArpPacket = unsafe {
+                            &*(packet.as_ptr().add(ETH_HDR_LEN) as *const ArpPacket)
+                        };
+                        if arp.operation() == ARP_OP_REQUEST {
+                            arp_insert(arp.target_ip_addr(), self.reply_mac);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            fn poll_packet(&mut self, _buf: &mut [u8]) -> Option<usize> { None }
+            fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
+            fn ip_address(&self) -> Ipv4Addr { self.ip }
+        }
+
+        let local_ip = Ipv4Addr::new([10, 231, 55, 2]);
+        let target_ip = Ipv4Addr::new([10, 231, 55, 99]);
+        let reply_mac = MacAddr::new([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x01]);
+        let sent = alloc::sync::Arc::new(spin::Mutex::new(alloc::vec::Vec::new()));
+
+        let nic_id = nic_register(alloc::boxed::Box::new(MockArpNic {
+            mac: MacAddr::new([0x02, 0xaa, 0xbb, 0xcc, 0xdd, 0x02]),
+            ip: Ipv4Addr::unspecified(),
+            reply_mac,
+            sent: sent.clone(),
+        }))
+        .expect("register mock NIC");
+        // Set the interface IP directly (not `nic_set_ip`, which would propagate
+        // to the real NIC and emit a gratuitous ARP we don't want to count).
+        {
+            let mut reg = NIC_REGISTRY.lock();
+            if let Some(nic) = reg.get_mut(nic_id) {
+                nic.set_ip_address(local_ip);
+            }
+        }
+
+        // Guarantee an ARP cache miss for this destination.
+        test_true!(arp_lookup(target_ip).is_none());
+
+        let local = SocketAddrV4::new(local_ip, 49152);
+        let remote = SocketAddrV4::new(target_ip, 53);
+
+        // First datagram: ARP miss -> request -> reply -> datagram transmitted.
+        test_true!(super::socket::socket_send_udp_raw(local, remote, b"first").is_ok());
+        test_eq!(arp_lookup(target_ip), Some(reply_mac));
+
+        // Following datagrams: ARP already cached, still delivered.
+        test_true!(super::socket::socket_send_udp_raw(local, remote, b"second").is_ok());
+
+        let frames = sent.lock().clone();
+        let mut arp_requests = 0usize;
+        let mut udp_frames = 0usize;
+        let mut arp_then_udp = false;
+        for (i, f) in frames.iter().enumerate() {
+            if f.len() < ETH_HDR_LEN { continue; }
+            let eth: &EthernetHeader = unsafe { &*(f.as_ptr() as *const EthernetHeader) };
+            if eth.ethertype() == ETH_TYPE_ARP {
+                arp_requests += 1;
+                if i == 0 && udp_frames == 0 { arp_then_udp = true; }
+            } else if eth.ethertype() == ETH_TYPE_IPV4 {
+                udp_frames += 1;
+            }
+        }
+        // The first UDP datagram is preserved: exactly one ARP request (the miss)
+        // is followed by both datagrams.
+        test_eq!(arp_requests, 1);
+        test_eq!(udp_frames, 2);
+        test_true!(arp_then_udp);
+
+        nic_unregister(nic_id);
+    });
+
     // ── DNS tests ──
     test_case!("dns_parse_a_response", {
         let ip = Ipv4Addr::new([8, 8, 8, 8]);

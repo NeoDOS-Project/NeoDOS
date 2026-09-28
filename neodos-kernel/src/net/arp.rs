@@ -201,23 +201,16 @@ pub fn arp_cache_entries() -> alloc::vec::Vec<(Ipv4Addr, MacAddr)> {
     cache.entries.iter().map(|e| (e.ip, e.mac)).collect()
 }
 
-/// Resolve an IP to a MAC address. First checks the cache; if not found,
-/// sends an ARP request over the default NIC and returns None immediately.
-/// The caller should retry later after the reply arrives.
-pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
-    // Broadcast IP maps to broadcast MAC directly (no ARP needed)
-    if target_ip.is_broadcast() {
-        return Some(MacAddr::broadcast());
-    }
-    if let Some(mac) = arp_lookup(target_ip) {
-        return Some(mac);
-    }
+/// Build and transmit an ARP request for `target_ip` over the default NIC.
+/// Returns `Some(())` if the request was sent, `None` if there is no NIC.
+/// Must not be called while holding `NIC_REGISTRY`.
+fn send_arp_request(target_ip: Ipv4Addr) -> Option<()> {
     let nic_id = crate::net::nic::nic_default_id()?;
-    let mut registry = crate::net::nic::NIC_REGISTRY.lock();
-    let nic = registry.get_mut(nic_id)?;
-    let src_mac = nic.mac_address();
-    let src_ip = nic.ip_address();
-    drop(registry);
+    let (src_mac, src_ip) = {
+        let mut registry = crate::net::nic::NIC_REGISTRY.lock();
+        let nic = registry.get_mut(nic_id)?;
+        (nic.mac_address(), nic.ip_address())
+    };
 
     let arp_pkt = arp_make_packet(ARP_OP_REQUEST, src_mac, src_ip, MacAddr::zero(), target_ip);
     let arp_bytes = unsafe {
@@ -230,7 +223,67 @@ pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
         MacAddr::broadcast(), src_mac, crate::net::ethernet::ETH_TYPE_ARP, arp_bytes,
     );
     let _ = crate::net::nic::nic_send_packet(nic_id, &frame);
+    Some(())
+}
+
+/// Resolve an IP to a MAC address. First checks the cache; if not found,
+/// sends an ARP request over the default NIC and returns None immediately.
+/// The caller should retry later after the reply arrives.
+pub fn arp_resolve(target_ip: Ipv4Addr) -> Option<MacAddr> {
+    // Broadcast IP maps to broadcast MAC directly (no ARP needed)
+    if target_ip.is_broadcast() {
+        return Some(MacAddr::broadcast());
+    }
+    if let Some(mac) = arp_lookup(target_ip) {
+        return Some(mac);
+    }
+    send_arp_request(target_ip);
     None
+}
+
+/// Resolve an IP to a MAC address, blocking (bounded) until the ARP reply
+/// arrives.
+///
+/// `arp_resolve` is fire-and-forget and returns `None` on a cache miss; callers
+/// that must not lose the packet (e.g. the UDP send path, #311) use this
+/// instead: it sends the request and then polls the RX path until the cache is
+/// populated or `timeout_us` elapses.
+///
+/// Must not be called while holding `NIC_REGISTRY` (it calls
+/// `network_poll_all()`).
+pub fn arp_resolve_blocking(target_ip: Ipv4Addr, timeout_us: u64) -> Option<MacAddr> {
+    if target_ip.is_broadcast() {
+        return Some(MacAddr::broadcast());
+    }
+    if let Some(mac) = arp_lookup(target_ip) {
+        return Some(mac);
+    }
+
+    send_arp_request(target_ip);
+
+    // A synchronous/virtual NIC may have populated the cache already.
+    if let Some(mac) = arp_lookup(target_ip) {
+        return Some(mac);
+    }
+
+    let start = crate::boot_benchmark::rdtsc();
+    let tsc_per_us = crate::boot_benchmark::get_tsc_khz() / 1000;
+    let timeout_ticks = tsc_per_us.saturating_mul(timeout_us);
+
+    loop {
+        crate::net::network_poll_all();
+        if let Some(mac) = arp_lookup(target_ip) {
+            ktrace!(crate::log::LogSubsys::Arp, "Resolved {} -> {}", target_ip, mac);
+            return Some(mac);
+        }
+        if timeout_ticks == 0
+            || crate::boot_benchmark::rdtsc().wrapping_sub(start) > timeout_ticks
+        {
+            kdebug!(crate::log::LogSubsys::Arp, "Timeout resolving {}", target_ip);
+            return None;
+        }
+        core::hint::spin_loop();
+    }
 }
 
 pub fn send_gratuitous_arp(nic_id: u32) {

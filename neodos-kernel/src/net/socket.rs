@@ -5,7 +5,12 @@ use lazy_static::lazy_static;
 use crate::net::ethernet::{ETH_TYPE_IPV4, build_ethernet_frame};
 use crate::net::ipv4::{IPV4_HDR_MIN_LEN, IPV4_PROTO_UDP, build_ipv4_header, Ipv4Header};
 use crate::net::nic::{nic_default_id, nic_get_ip, nic_send_packet, NIC_REGISTRY};
-use crate::net::arp::arp_resolve;
+use crate::net::arp::arp_resolve_blocking;
+
+/// Bounded wait for ARP resolution before sending a UDP datagram, so the first
+/// datagram is not dropped on a cache miss (#311). Mirrors `icmp_ping`'s 500 ms
+/// ARP wait.
+const ARP_RESOLVE_TIMEOUT_US: u64 = 500_000;
 
 pub struct Socket {
     pub id: u32,
@@ -353,7 +358,9 @@ pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8
     let dst_mac = if dst_ip.is_broadcast() {
         MacAddr::broadcast()
     } else {
-        arp_resolve(arp_target).ok_or(())?
+        // Wait (bounded) for ARP so the first datagram is not dropped on a cache
+        // miss (#311). No SOCKET_MANAGER/NIC_REGISTRY lock is held here.
+        arp_resolve_blocking(arp_target, ARP_RESOLVE_TIMEOUT_US).ok_or(())?
     };
 
     let udp_data = crate::net::udp::build_udp_datagram(
