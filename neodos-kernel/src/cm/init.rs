@@ -156,7 +156,7 @@ pub fn ensure_boot_defaults() {
                 &1u32.to_le_bytes());
         }
         // 0.0.0.0 = unset/automatic. The DHCP client overwrites DnsServer with
-        // the leased value; a static setup uses `ipconfig /setdns`.
+        // the leased value; a static setup uses `netcfg /setdns`.
         for name in ["DnsServer", "DnsServer2", "DnsServer3"] {
             if crate::cm::cm_query_value(if0, name).is_err() {
                 let _ = crate::cm::cm_set_value(if0, name, hive::REG_DWORD,

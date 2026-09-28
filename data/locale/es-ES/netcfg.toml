@@ -8,6 +8,11 @@ IDS_STATIC = 1002
 IDS_DHCP_WAIT = 1003
 IDS_DHCP_TIMEOUT = 1004
 IDS_OK = 1005
+IDS_SET_DNS_USAGE = 1006
+IDS_SET_DNS_ERR = 1007
+IDS_SET_DNS_OK = 1008
+IDS_SET_DNS_FLUSH = 1009
+IDS_SET_DNS_NOFLUSH = 1010
 
 [strings]
 IDS_ERR_KEY = "netcfg: clave de registro no encontrada"
@@ -15,3 +20,8 @@ IDS_STATIC = "estática: IP "
 IDS_DHCP_WAIT = "DHCP: esperando a dhcpd..."
 IDS_DHCP_TIMEOUT = "DHCP: tiempo de espera agotado"
 IDS_OK = "netcfg: OK"
+IDS_SET_DNS_USAGE = "Uso: netcfg /setdns <servidor> [servidor2] [servidor3]"
+IDS_SET_DNS_ERR = "netcfg: dirección de servidor DNS no válida: "
+IDS_SET_DNS_OK = "netcfg: servidores DNS guardados en el Registro: "
+IDS_SET_DNS_FLUSH = "netcfg: guardado en disco."
+IDS_SET_DNS_NOFLUSH = "netcfg: AVISO: no se pudo guardar en disco."

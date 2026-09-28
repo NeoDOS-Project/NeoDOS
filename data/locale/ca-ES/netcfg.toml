@@ -8,6 +8,11 @@ IDS_STATIC = 1002
 IDS_DHCP_WAIT = 1003
 IDS_DHCP_TIMEOUT = 1004
 IDS_OK = 1005
+IDS_SET_DNS_USAGE = 1006
+IDS_SET_DNS_ERR = 1007
+IDS_SET_DNS_OK = 1008
+IDS_SET_DNS_FLUSH = 1009
+IDS_SET_DNS_NOFLUSH = 1010
 
 [strings]
 IDS_ERR_KEY = "netcfg: clau de registre no trobada"
@@ -15,3 +20,8 @@ IDS_STATIC = "estàtica: IP "
 IDS_DHCP_WAIT = "DHCP: esperant dhcpd..."
 IDS_DHCP_TIMEOUT = "DHCP: temps d'espera esgotat"
 IDS_OK = "netcfg: OK"
+IDS_SET_DNS_USAGE = "Ús: netcfg /setdns <servidor> [servidor2] [servidor3]"
+IDS_SET_DNS_ERR = "netcfg: adreça de servidor DNS no vàlida: "
+IDS_SET_DNS_OK = "netcfg: servidors DNS desats al Registre: "
+IDS_SET_DNS_FLUSH = "netcfg: desat a disc."
+IDS_SET_DNS_NOFLUSH = "netcfg: AVÍS: no s'ha pogut desar a disc."

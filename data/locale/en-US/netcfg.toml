@@ -8,6 +8,11 @@ IDS_STATIC = 1002
 IDS_DHCP_WAIT = 1003
 IDS_DHCP_TIMEOUT = 1004
 IDS_OK = 1005
+IDS_SET_DNS_USAGE = 1006
+IDS_SET_DNS_ERR = 1007
+IDS_SET_DNS_OK = 1008
+IDS_SET_DNS_FLUSH = 1009
+IDS_SET_DNS_NOFLUSH = 1010
 
 [strings]
 IDS_ERR_KEY = "netcfg: registry key not found"
@@ -15,3 +20,8 @@ IDS_STATIC = "static: IP "
 IDS_DHCP_WAIT = "DHCP: waiting for dhcpd..."
 IDS_DHCP_TIMEOUT = "DHCP: timeout"
 IDS_OK = "netcfg: OK"
+IDS_SET_DNS_USAGE = "Usage: netcfg /setdns <server> [server2] [server3]"
+IDS_SET_DNS_ERR = "netcfg: invalid DNS server address: "
+IDS_SET_DNS_OK = "netcfg: DNS servers saved to Registry: "
+IDS_SET_DNS_FLUSH = "netcfg: saved to disk."
+IDS_SET_DNS_NOFLUSH = "netcfg: WARNING: could not save to disk."
