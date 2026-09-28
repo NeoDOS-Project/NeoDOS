@@ -12,12 +12,14 @@ const INFO_CLASS_NIC_INFO: u32 = 20;
 const INFO_CLASS_HOSTNAME: u32 = 38;
 
 // ── ObSetInfoClass constants ──
+// ── ObSetInfoClass constants ──
 const SET_SOCKET_CONNECT: u32 = 18;
 const SET_SOCKET_BIND: u32 = 19;
 const SET_SOCKET_LISTEN: u32 = 20;
 const SET_SOCKET_SEND: u32 = 21;
 const SET_SOCKET_CLOSE: u32 = 22;
 const SET_NIC_IP: u32 = 27;
+const SET_NIC_GATEWAY: u32 = 28;
 
 // ── ObAccess ──
 const OB_READ: u32 = 1;
@@ -296,18 +298,23 @@ pub extern "C" fn net_set_ip(iface: u32, ip: u32, mask: u32) -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn net_set_gateway(_iface: u32, gw: u32) -> i32 {
-    let key_path = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0\0";
+pub extern "C" fn net_set_gateway(iface: u32, gw: u32) -> i32 {
+    // Apply the gateway to the running NIC so off-subnet routing uses it
+    // immediately (0.0.0.0 = unset). Persistence to the Registry is the caller's
+    // responsibility (dhcpd/netcfg write the `Gateway` value), consistent with
+    // `net_set_ip`, which only applies the IP/mask at runtime.
+    let mut buf = [0u8; 8];
+    buf[..4].copy_from_slice(&iface.to_le_bytes());
+    buf[4..8].copy_from_slice(&gw.to_be_bytes());
     let fd = unsafe {
-        match ob_open(key_path, 3) {
+        match ob_open("\\Global\\Info\\Network\0", 3) { // OB_READ|OB_WRITE
             r if r >= 0 => r as u8,
             _ => return -1,
         }
     };
-    let gw_bytes = gw.to_be_bytes();
-    let r = unsafe { syscall_4(53, fd as u64, 1u64, gw_bytes.as_ptr() as u64, 4u64) };
-    let _ = unsafe { ob_close(fd) };
-    if r < 0 { r as i32 } else { 0 }
+    let r = unsafe { ob_set_info(fd, SET_NIC_GATEWAY, buf.as_ptr(), 8) };
+    unsafe { ob_close(fd) };
+    if r < 0 { -1 } else { 0 }
 }
 
 #[no_mangle]

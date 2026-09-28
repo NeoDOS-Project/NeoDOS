@@ -67,6 +67,7 @@ Connection lifecycle: `build_tcp_segment()`, `send_tcp_segment()`, `tcp_send_syn
 | 21 | `SocketSend` | Send data on connected socket |
 | 22 | `SocketClose` | Close socket (FIN or RST) |
 | 27 | `SetNicIp` | Set NIC IP address from userspace |
+| 28 | `SetNicGateway` | Set NIC default gateway (`0.0.0.0` = unset) |
 
 Socket creation via `ob_create` with `attrs` encoding: bits 0-7 = socket type (1=TCP, 2=UDP, 3=Raw), bits 8-23 = port for well-known bindings.
 
@@ -235,11 +236,14 @@ send path (both were latent because DHCP only uses broadcast):
   port 0) had an unspecified source address in the IP header. `socket_send_udp_raw`
   now fills it from the NIC, except for broadcast datagrams (DHCP DISCOVER keeps
   `0.0.0.0`).
-- **Next-hop routing.** For an off-subnet destination the frame must be sent to
-  the gateway's MAC, not ARP'd directly (the kernel has no per-destination ARP
-  for remote hosts). `socket_send_udp_raw` now mirrors `icmp_ping()`: compute the
-  next hop from the NIC subnet mask/gateway and ARP that. Without it, a DNS
-  server outside the local subnet is unreachable.
+- **Next-hop routing.** IPv4 next-hop is centralized in `nic_next_hop(dest)`
+  (`NicRegistry::next_hop_ip`): on-link → the destination; off-link → the NIC's
+  configured gateway; off-link **without** a gateway (`0.0.0.0`, unset) → no valid
+  next hop and the send fails cleanly (it never ARPs the remote destination). The
+  gateway is a real per-NIC property (`NicSlot::gateway`), set by
+  `ObSetInfoClass::SetNicGateway` (28) from DHCP Option 3 / static config, and
+  persisted in `Network\Interfaces\0\Gateway`. `socket_send_udp_raw` and
+  `icmp_ping` both use `nic_next_hop`. There is no implicit `10.0.1.1` fallback.
 - **Datagram dispatch.** `udp_dispatch` matched connected sockets only by
   `remote.port`; it now matches the socket's **local port** (`dst_port`) and,
   when set, the remote port, so a previous socket cannot capture replies

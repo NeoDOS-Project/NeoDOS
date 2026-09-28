@@ -311,7 +311,7 @@ pub struct NetAbiTable {
 
     // === Configuración ===
     pub set_ip: extern "C" fn(u32, u32, u32) -> i32,
-    pub set_gateway: extern "C" fn(u32, u32) -> i32,  // stub (escribe Registry)
+    pub set_gateway: extern "C" fn(u32, u32) -> i32,  // aplica el gateway a la NIC (SetNicGateway=28)
 
     // === Estado ===
     pub get_ip: extern "C" fn(u32) -> u32,
@@ -328,7 +328,7 @@ pub struct NetAbiTable {
 - `ip` pasado como `u32` (big-endian) en vez de `*const u8` array
 - Se añadieron `get_ip`, `get_gateway`, `get_mask`, `get_dhcp_bound`
 - `get_tcp_status` y `get_socket_addr` no tienen wrapper (accesibles vía ObInfoClass directamente)
-- `set_gateway` es stub — el kernel no expone `SetNicGateway`
+- `set_gateway` aplica el gateway a la NIC vía `ObSetInfoClass::SetNicGateway` (28); la persistencia en Registry la hace el caller (p. ej. `dhcpd` escribe `Gateway`)
 
 ### 2.4 net.nxl acceso a libneodos
 
@@ -958,7 +958,7 @@ netcfg.nxe
 - No ejecuta `dhcp.nxe` — espera al kernel DHCP (vía `dhcp_tick()` en idle loop)
 - Path Registry: `CurrentControlSet\Services\Network\Interfaces\0` (no `\System\Network\...`)
 - netcfg corre como daemon (no termina tras configurar)
-- `set_gateway` es stub (el kernel no tiene SetNicGateway)
+- `set_gateway` aplica el gateway a la NIC (SetNicGateway=28); la persistencia en Registry la hace `dhcpd`/`netcfg`
 - IP se guarda como REG_DWORD (no REG_SZ) para simplicidad
 - Usa APIPA (169.254.1.1) si DHCP falla
 - No hay flag "red disponible" — netcfg simplemente existe

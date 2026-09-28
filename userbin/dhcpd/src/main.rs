@@ -648,6 +648,7 @@ pub extern "C" fn _start() -> ! {
             write_str(b"\r\n");
             let apipa = 0xA9FE0101;
             let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
+        let _ = libnet::set_gateway(0, 0);
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (socket create failed)\r\n");
@@ -666,6 +667,7 @@ pub extern "C" fn _start() -> ! {
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
+        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (bind failed)\r\n");
@@ -683,6 +685,7 @@ pub extern "C" fn _start() -> ! {
         write_str(b"\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
+        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (connect failed)\r\n");
@@ -734,8 +737,11 @@ pub extern "C" fn _start() -> ! {
         write_dec_u32(client.lease_time);
         write_str(b"s\r\n");
 
-        // Configure NIC via libnet
+        // Configure NIC via libnet (IP, mask and gateway at runtime; the
+        // Registry writes below persist them). `client.gateway` is 0 when DHCP
+        // did not provide Option 3, which leaves the gateway unset (0.0.0.0).
         let _ = libnet::set_ip(0, ip, client.subnet_mask);
+        let _ = libnet::set_gateway(0, client.gateway);
 
         write_reg_dword(key_fd, "IPAddress", ip);
         write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
@@ -758,6 +764,7 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"DORA failed, using APIPA fallback\r\n");
         let apipa = 0xA9FE0101;
         let _ = libnet::set_ip(0, apipa, 0x0000FFFF);
+        let _ = libnet::set_gateway(0, 0);
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1\r\n");

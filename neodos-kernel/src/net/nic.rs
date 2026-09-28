@@ -11,7 +11,10 @@ pub trait NetworkInterface: Send + Sync {
     fn set_ip_address(&mut self, ip: Ipv4Addr);
     fn ip_address(&self) -> Ipv4Addr;
     fn subnet_mask(&self) -> Ipv4Addr { Ipv4Addr::new([255, 255, 255, 0]) }
-    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::new([10, 0, 1, 1]) }
+    /// Driver-level gateway getter. The runtime source of truth is
+    /// `NicSlot::gateway` (used by [`NicRegistry::next_hop_ip`]); the default is
+    /// unset and must not be a hidden `10.0.1.1`.
+    fn gateway(&self) -> Ipv4Addr { Ipv4Addr::unspecified() }
     fn is_link_up(&self) -> bool { true }
     fn mtu(&self) -> usize { 1500 }
     fn vendor_id(&self) -> u16 { 0 }
@@ -23,6 +26,7 @@ struct NicSlot {
     interface: Option<Box<dyn NetworkInterface>>,
     ip: Ipv4Addr,
     mask: Ipv4Addr,
+    gateway: Ipv4Addr,
     mac: MacAddr,
     vendor_id: u16,
     device_id: u16,
@@ -40,6 +44,7 @@ impl NicRegistry {
             interface: None,
             ip: Ipv4Addr::new([0; 4]),
             mask: Ipv4Addr::new([0; 4]),
+            gateway: Ipv4Addr::new([0; 4]),
             mac: MacAddr::new([0; 6]),
             vendor_id: 0,
             device_id: 0,
@@ -60,7 +65,8 @@ impl NicRegistry {
                 self.nics[i] = NicSlot {
                     interface: Some(interface),
                     ip: Ipv4Addr::unspecified(),
-                    mask: Ipv4Addr::unspecified(),
+                    mask: Ipv4Addr::new([255, 255, 255, 0]),
+                    gateway: Ipv4Addr::unspecified(),
                     mac,
                     vendor_id: vendor,
                     device_id: device,
@@ -134,18 +140,47 @@ impl NicRegistry {
         }
     }
 
-    pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
-        let nic = self.nics[0].interface.as_ref()?;
-        let my_ip = nic.ip_address();
-        let mask = nic.subnet_mask();
-        let gateway = nic.gateway();
+    pub fn get_gateway(&self, id: u32) -> Option<Ipv4Addr> {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            return Some(self.nics[id as usize].gateway);
+        }
+        None
+    }
 
-        let target = if (dest_ip.to_u32() & mask.to_u32()) == (my_ip.to_u32() & mask.to_u32()) {
-            dest_ip
+    pub fn set_gateway(&mut self, id: u32, gateway: Ipv4Addr) {
+        if (id as usize) < MAX_NICS && self.nics[id as usize].interface.is_some() {
+            self.nics[id as usize].gateway = gateway;
+        }
+    }
+
+    /// IPv4 next hop for `dest_ip` on the default NIC:
+    /// - on-link                     -> `dest_ip`
+    /// - off-link with a gateway     -> configured gateway
+    /// - off-link with gateway unset -> `None` (no valid next hop)
+    /// - broadcast                   -> `dest_ip`
+    pub fn next_hop_ip(&self, dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+        let id = self.default_nic_id()?;
+        let slot = &self.nics[id as usize];
+        if slot.interface.is_none() {
+            return None;
+        }
+        if dest_ip.is_broadcast() {
+            return Some(dest_ip);
+        }
+        let same_subnet = (dest_ip.to_u32() & slot.mask.to_u32())
+            == (slot.ip.to_u32() & slot.mask.to_u32());
+        if same_subnet {
+            Some(dest_ip)
+        } else if slot.gateway.is_unspecified() {
+            None
         } else {
-            gateway
-        };
+            Some(slot.gateway)
+        }
+    }
 
+    /// MAC of the next hop for `dest_ip` if it is already in the ARP cache.
+    pub fn next_hop_mac(&mut self, dest_ip: Ipv4Addr) -> Option<MacAddr> {
+        let target = self.next_hop_ip(dest_ip)?;
         crate::net::arp::arp_lookup(target)
     }
 
@@ -256,6 +291,28 @@ pub fn nic_set_mask(nic_id: u32, mask: Ipv4Addr) {
             reg.set_mask(i as u32, mask);
         }
     }
+}
+
+pub fn nic_get_gateway(nic_id: u32) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().get_gateway(nic_id)
+}
+
+pub fn nic_set_gateway(nic_id: u32, gateway: Ipv4Addr) {
+    let mut reg = NIC_REGISTRY.lock();
+    reg.set_gateway(nic_id, gateway);
+    // Propagate to all NICs (multiple drivers may share the same hardware).
+    for i in 0..MAX_NICS {
+        if i != nic_id as usize && reg.get(i as u32).is_some() {
+            reg.set_gateway(i as u32, gateway);
+        }
+    }
+}
+
+/// Resolve the IPv4 next hop for `dest_ip` on the default NIC (see
+/// [`NicRegistry::next_hop_ip`]). `None` means "no valid next hop" (off-link
+/// without a configured gateway).
+pub fn nic_next_hop(dest_ip: Ipv4Addr) -> Option<Ipv4Addr> {
+    NIC_REGISTRY.lock().next_hop_ip(dest_ip)
 }
 
 pub fn nic_default_id() -> Option<u32> {

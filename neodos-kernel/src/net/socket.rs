@@ -4,7 +4,7 @@ use spin::Mutex;
 use lazy_static::lazy_static;
 use crate::net::ethernet::{ETH_TYPE_IPV4, build_ethernet_frame};
 use crate::net::ipv4::{IPV4_HDR_MIN_LEN, IPV4_PROTO_UDP, build_ipv4_header, Ipv4Header};
-use crate::net::nic::{nic_default_id, nic_get_ip, nic_send_packet, NIC_REGISTRY};
+use crate::net::nic::{nic_default_id, nic_get_ip, nic_next_hop, nic_send_packet, NIC_REGISTRY};
 use crate::net::arp::arp_resolve;
 
 pub struct Socket {
@@ -317,12 +317,9 @@ pub fn socket_set_local(id: u32, local: SocketAddrV4) {
 pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8]) -> Result<usize, ()> {
     let nic_id = nic_default_id().ok_or(())?;
 
-    // Gather NIC addressing info once. The subnet mask and gateway are needed to
-    // pick the ARP next hop for off-subnet destinations.
-    let (src_mac, subnet_mask, gateway) = {
+    let src_mac = {
         let mut registry = NIC_REGISTRY.lock();
-        let nic = registry.get_mut(nic_id).ok_or(())?;
-        (nic.mac_address(), nic.subnet_mask(), nic.gateway())
+        registry.get_mut(nic_id).ok_or(())?.mac_address()
     };
 
     let dst_ip = remote.ip;
@@ -339,16 +336,10 @@ pub fn socket_send_udp_raw(local: SocketAddrV4, remote: SocketAddrV4, data: &[u8
         }
     }
 
-    // Next-hop resolution: ARP the gateway when the destination is off-subnet,
-    // mirroring `icmp_ping()`. Without this, unicast UDP to an off-link DNS
-    // server fails even though the gateway is known.
-    let arp_target = if dst_ip.is_broadcast()
-        || (dst_ip.to_u32() & subnet_mask.to_u32()) == (src_ip.to_u32() & subnet_mask.to_u32())
-    {
-        dst_ip
-    } else {
-        gateway
-    };
+    // Next hop (single source of truth, see `nic_next_hop`): on-link -> the
+    // destination; off-link -> the configured gateway; off-link without a
+    // gateway -> clean failure (never ARP the remote destination).
+    let arp_target = nic_next_hop(dst_ip).ok_or(())?;
 
     let dst_mac = if dst_ip.is_broadcast() {
         MacAddr::broadcast()

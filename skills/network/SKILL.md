@@ -88,6 +88,7 @@ e1000 poll_packet() → 2048 byte buffer
 | SocketSend | 21 | Send data on connected socket |
 | SocketClose | 22 | Close socket (FIN or RST) |
 | SetNicIp | 27 | Set NIC IP address from userspace |
+| SetNicGateway | 28 | Set NIC default gateway (`0.0.0.0` = unset) |
 
 ### TCP State Machine
 
