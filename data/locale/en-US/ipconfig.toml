@@ -31,6 +31,11 @@ IDS_STATS_RX = 1025
 IDS_STATS_TX = 1026
 IDS_STATS_RX_BYTES = 1027
 IDS_STATS_TX_BYTES = 1028
+IDS_SET_DNS_USAGE = 1030
+IDS_SET_DNS_ERR = 1031
+IDS_SET_DNS_OK = 1032
+IDS_SET_DNS_FLUSH = 1033
+IDS_SET_DNS_NOFLUSH = 1034
 
 [strings]
 IDS_HEADER = "NeoDOS IP Configuration"
@@ -61,3 +66,8 @@ IDS_STATS_RX = "    Packets Received . . . .: "
 IDS_STATS_TX = "    Packets Sent . . . . . .: "
 IDS_STATS_RX_BYTES = "    Bytes Received . . . . .: "
 IDS_STATS_TX_BYTES = "    Bytes Sent . . . . . . .: "
+IDS_SET_DNS_USAGE = "Usage: ipconfig /setdns <server> [server2] [server3]"
+IDS_SET_DNS_ERR = "ipconfig: invalid DNS server address: "
+IDS_SET_DNS_OK = "DNS servers saved to Registry: "
+IDS_SET_DNS_FLUSH = "Saved to disk."
+IDS_SET_DNS_NOFLUSH = "WARNING: could not save to disk."

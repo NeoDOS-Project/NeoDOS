@@ -70,9 +70,17 @@ pub fn flush_hive_to_vfs(hive: &Hive) -> Result<(), ()> {
     let data = hive.serialize();
     let file_path = alloc::format!("C:\\System\\Registry\\{}.hiv", hive.name);
     crate::globals::with_vfs(|vfs| {
-        let _ = vfs.remove_file(&file_path);
-        let node = vfs.create(&file_path).map_err(|_| ())?;
-        let (drive_idx, _) = vfs.resolve_path(&file_path).map_err(|_| ())?;
+        // Write in place. Never delete the existing hive first: if create/write
+        // failed, the system would be left with no hive and the next boot would
+        // lose all registry configuration (observed with an early flush path).
+        let (drive_idx, node) = match vfs.resolve_path(&file_path) {
+            Ok((d, n)) => (d, n),
+            Err(_) => {
+                let created = vfs.create(&file_path).map_err(|_| ())?;
+                let (d, _) = vfs.resolve_path(&file_path).map_err(|_| ())?;
+                (d, created)
+            }
+        };
         vfs.write(drive_idx, node.inode, 0, &data).map_err(|_| ())?;
         Ok(())
     })
@@ -137,6 +145,24 @@ pub fn ensure_boot_defaults() {
     if crate::cm::cm_query_value(svc, "WaitForNetwork").is_err() {
         let _ = crate::cm::cm_set_value(svc, "WaitForNetwork", hive::REG_DWORD,
             &0u32.to_le_bytes());
+    }
+
+    // ── CurrentControlSet\Services\Network\Interfaces\0 — network defaults ──
+    let if0 = crate::cm::cm_open_key(0, "CurrentControlSet\\Services\\Network\\Interfaces\\0")
+        .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Services\\Network\\Interfaces\\0"));
+    if let Ok(if0) = if0 {
+        if crate::cm::cm_query_value(if0, "DHCPEnabled").is_err() {
+            let _ = crate::cm::cm_set_value(if0, "DHCPEnabled", hive::REG_DWORD,
+                &1u32.to_le_bytes());
+        }
+        // 0.0.0.0 = unset/automatic. The DHCP client overwrites DnsServer with
+        // the leased value; a static setup uses `ipconfig /setdns`.
+        for name in ["DnsServer", "DnsServer2", "DnsServer3"] {
+            if crate::cm::cm_query_value(if0, name).is_err() {
+                let _ = crate::cm::cm_set_value(if0, name, hive::REG_DWORD,
+                    &0u32.to_le_bytes());
+            }
+        }
     }
 }
 

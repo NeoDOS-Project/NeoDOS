@@ -53,6 +53,8 @@ const MAX_RETRIES: u8 = 3;
 const TIMEOUT_ITERATIONS: u32 = 200;
 const LEASE_RENEW_DIVISOR: u64 = 2;
 const YIELD_BATCH: u32 = 100;
+/// Maximum DNS servers taken from DHCP option 6 (it is a list of IPv4 addrs).
+const MAX_DHCP_DNS: usize = 3;
 
 const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
@@ -96,7 +98,8 @@ struct DhcpClient {
     offered_ip: u32,
     subnet_mask: u32,
     gateway: u32,
-    dns: u32,
+    dns: [u32; MAX_DHCP_DNS],
+    dns_count: usize,
     lease_time: u32,
     renew_interval: u64,
     ticks_in_state: u64,
@@ -277,7 +280,8 @@ struct DhcpOptions {
     server_id: u32,
     subnet_mask: u32,
     gateway: u32,
-    dns: u32,
+    dns: [u32; MAX_DHCP_DNS],
+    dns_count: usize,
     lease_time: u32,
 }
 
@@ -293,7 +297,8 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let mut server_id = 0u32;
     let mut subnet_mask = 0x00FFFFFFu32;
     let mut gateway = 0u32;
-    let mut dns = 0u32;
+    let mut dns = [0u32; MAX_DHCP_DNS];
+    let mut dns_count = 0usize;
     let mut lease_time = 86400u32;
 
     let mut i = 0;
@@ -333,15 +338,19 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
                 i += opt_len + 2;
             }
             DHCP_OPTION_DNS => {
-                if i + 5 < options.len() {
-                    dns = u32::from_be_bytes([
-                        options[i + 2], options[i + 3], options[i + 4], options[i + 5],
-                    ]);
-                }
+                // Option 6 is a list of 4-byte IPv4 addresses; take up to
+                // MAX_DHCP_DNS of them.
                 let opt_len = options.get(i + 1).copied().unwrap_or(0) as usize;
-                if opt_len == 0 && options.get(i + 1).is_none() {
-                    break;
+                let mut n = 0usize;
+                let mut j = i + 2;
+                while n < MAX_DHCP_DNS && j + 4 <= i + 2 + opt_len && j + 4 <= options.len() {
+                    dns[n] = u32::from_be_bytes([
+                        options[j], options[j + 1], options[j + 2], options[j + 3],
+                    ]);
+                    n += 1;
+                    j += 4;
                 }
+                dns_count = n;
                 i += opt_len + 2;
             }
             DHCP_OPTION_LEASE_TIME => {
@@ -367,6 +376,7 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
         subnet_mask,
         gateway,
         dns,
+        dns_count,
         lease_time,
     })
 }
@@ -384,7 +394,8 @@ impl DhcpClient {
             offered_ip: 0,
             subnet_mask: 0x00FFFFFF,
             gateway: 0,
-            dns: 0,
+            dns: [0; MAX_DHCP_DNS],
+            dns_count: 0,
             lease_time: 86400,
             renew_interval: 43200,
             ticks_in_state: 0,
@@ -521,7 +532,7 @@ impl DhcpClient {
                         self.offered_ip = u32::from_be_bytes(hdr.yiaddr);
                         self.subnet_mask = opts.subnet_mask;
                         if opts.gateway != 0 { self.gateway = opts.gateway; }
-                        if opts.dns != 0 { self.dns = opts.dns; }
+                        if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                         self.lease_time = opts.lease_time;
                         self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                         return Some(self.offered_ip);
@@ -534,7 +545,7 @@ impl DhcpClient {
                     self.server_ip = opts.server_id;
                     if opts.subnet_mask != 0 { self.subnet_mask = opts.subnet_mask; }
                     if opts.gateway != 0 { self.gateway = opts.gateway; }
-                    if opts.dns != 0 { self.dns = opts.dns; }
+                    if opts.dns_count > 0 { self.dns = opts.dns; self.dns_count = opts.dns_count; }
                     self.lease_time = opts.lease_time;
                     self.renew_interval = (opts.lease_time as u64 / LEASE_RENEW_DIVISOR).max(60);
                     return Some(ip);
@@ -729,7 +740,12 @@ pub extern "C" fn _start() -> ! {
         write_reg_dword(key_fd, "IPAddress", ip);
         write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
         write_reg_dword(key_fd, "Gateway", client.gateway);
-        if client.dns != 0 { write_reg_dword(key_fd, "DnsServer", client.dns); }
+        // DHCP-provided DNS (option 6) is written to the interface DNS values.
+        // With DHCP enabled these are authoritative and overwrite any manual
+        // value; the default (no lease yet) is 0.0.0.0 = unset.
+        write_reg_dword(key_fd, "DnsServer", client.dns[0]);
+        write_reg_dword(key_fd, "DnsServer2", if client.dns_count > 1 { client.dns[1] } else { 0 });
+        write_reg_dword(key_fd, "DnsServer3", if client.dns_count > 2 { client.dns[2] } else { 0 });
         write_reg_dword(key_fd, "LeaseTime", client.lease_time);
         write_reg_dword(key_fd, "DHCPBound", 1);
 
