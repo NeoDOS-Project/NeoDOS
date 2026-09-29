@@ -19,8 +19,8 @@ pub mod snapshot;
 pub mod accounting;
 pub mod diag;
 
-pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
-pub use stack::{AlignedKStack, check_kernel_stack_canary, spawn_net_kthread, init_ring3_frame};
+pub use types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, KERNEL_STACK_SIZE, IDLE_STACK_SIZE, IDLE_TIME_SLICE, PRIORITY_HIGH, PRIORITY_ABOVE_NORMAL, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_COUNT, TIME_SLICES, BOOT_TID, IDLE_TID, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS, TEB_SIZE, STACK_CANARY};
+pub use stack::{AlignedKStack, check_kernel_stack_canary, check_kernel_stack_canary_sized, kernel_stack_canary_addr, spawn_net_kthread, init_ring3_frame};
 pub use schedule::{sched_forensic_enable, sched_forensic_verbose_enable, sched_forensic_verbose};
 pub use snapshot::{
     kernel_snapshot_dump, kernel_snapshot_into, ProcSnapshot, ProcessSnapshot, ThreadSnapshot,
@@ -210,6 +210,10 @@ impl Scheduler {
             time_slice_remaining: TIME_SLICES[PRIORITY_NORMAL as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top: boot_ks_top,
+            // Boot runs on the bootstrap stack, not a scheduler-managed one.
+            // The canary is never checked for TID 0 (`check_kernel_stack_canary`
+            // returns early for ks_top==0, and boot is excluded from dispatch).
+            kernel_stack_size: KERNEL_STACK_SIZE,
             kernel_stack: None,
             teb_base: 0,
             cpu: 0,
@@ -226,7 +230,16 @@ impl Scheduler {
 
         // Idle KTHREAD (TID 1) — runs the halt loop when nothing else is Ready.
         // Shares the PID 0 EPROCESS (no separate address space needed for idle).
-        let idle_stack_top = unsafe { crate::scheduler::stack::IDLE_STACK.as_ptr().add(crate::scheduler::stack::IDLE_STACK_SIZE) as u64 } & !0xF;
+        //
+        // #348: the idle stack is only `IDLE_STACK_SIZE` (4 KiB), and its real
+        // owned span starts at the `IDLE_STACK` symbol. Initialize its canary
+        // here and give the Kthread the *exact* owned size so the canary checker
+        // inspects the idle stack bottom (not `ks_top - KERNEL_STACK_SIZE`).
+        unsafe { crate::scheduler::stack::init_idle_stack_canary(); }
+        let idle_stack_top = unsafe {
+            crate::scheduler::stack::IDLE_STACK.as_ptr() as u64
+                + crate::scheduler::stack::IDLE_STACK_SIZE as u64
+        };
         let idle_thread = Kthread::new_idle(
             IDLE_TID, 0,
             crate::scheduler::stack::idle_task as *const () as u64,
@@ -235,6 +248,7 @@ impl Scheduler {
         {
             // Phase 14-A: per-CPU idle names ("idle/0"), bounded.
             let mut mut_idle = idle_thread;
+            mut_idle.kernel_stack_size = crate::scheduler::stack::IDLE_STACK_SIZE;
             let mut n = KernelName::from_str("idle/");
             n.push_u32(0);
             mut_idle.name = n;

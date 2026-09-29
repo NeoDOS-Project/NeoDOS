@@ -382,6 +382,21 @@ impl Scheduler {
         let frame_top = stack_top.saturating_sub(4096);
         let entry = crate::scheduler::stack::idle_task as *const () as u64;
         let mut idle = Kthread::new_idle(tid, 0, entry, frame_top);
+        // #348: the AP idle owns the region below its fabricated frame. Its
+        // canary belongs at the bottom of that region, so record the exact span
+        // and initialize the canary there (previously the canary was never
+        // written for AP idle stacks).
+        let ap_stack_base = stack_top.saturating_sub(
+            crate::arch::x64::smp::AP_STACK_SIZE as u64,
+        );
+        let ap_idle_span = frame_top.saturating_sub(ap_stack_base).max(1) as usize;
+        idle.kernel_stack_size = ap_idle_span;
+        unsafe {
+            crate::scheduler::stack::init_raw_stack_canary(
+                ap_stack_base as *mut u8,
+                ap_idle_span,
+            );
+        }
         idle.cpu = cpu;
         idle.state = ThreadState::Running;
         {

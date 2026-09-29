@@ -490,6 +490,7 @@ impl Scheduler {
             time_slice_remaining: TIME_SLICES[priority as usize],
             ticks_since_scheduled: 0,
             kernel_stack_top,
+            kernel_stack_size: KERNEL_STACK_SIZE,
             kernel_stack: Some(stack),
             teb_base: 0, cpu: 0,
             obj_id: None,
@@ -508,7 +509,8 @@ impl Scheduler {
         // Fase 3 P1/P5: capturar frame inicial 18 slots y canary
         let (kptr, base, top, init_rsp, ent) = {
             let k = self.kthreads[th_slot].as_ref().unwrap();
-            let b = k.kernel_stack_top.wrapping_sub(KERNEL_STACK_SIZE as u64);
+            // #348: derive the canary base from the thread's actual stack size.
+            let b = k.kernel_stack_top.wrapping_sub(k.kernel_stack_size as u64);
             (&**k as *const Kthread as u64, b, k.kernel_stack_top, k.rsp, k.rip)
         };
         if let Some(k) = self.kthreads[th_slot].as_mut() {

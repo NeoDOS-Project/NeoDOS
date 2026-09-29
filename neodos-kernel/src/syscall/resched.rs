@@ -230,10 +230,10 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 // that stale lets the next timer tick treat TID=1 (the BSP idle,
                 // whose stack is the 4 KiB `IDLE_STACK`) as the running context
                 // and store a Ring-3 frame pointer into its `rsp`; the idle then
-                // reads as a bogus Ring-3 dispatch candidate and
-                // `check_kernel_stack_canary` compares `ks_top - 16 KiB`, well
-                // outside the idle stack. Restore the scheduler and per-CPU
-                // identity to the thread we are actually resuming.
+                // reads as a bogus Ring-3 dispatch candidate (the canary check
+                // itself now uses the idle's real size, #348). Restore the
+                // scheduler and per-CPU identity to the thread we are actually
+                // resuming.
                 let (cur_ptr, cur_pid, old_ks_top) = scheduler
                     .resume_current_after_rejected_dispatch(tid)
                     .map(|(p, p_pid, ks)| (p, p_pid, ks))
@@ -252,6 +252,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 let mut chosen_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
                 let mut chosen_rsp = 0u64;
                 let mut chosen_ks_top = 0u64;
+                let mut chosen_ks_size = scheduler::KERNEL_STACK_SIZE;
                 let mut chosen_tid = 0u32;
                 let mut chosen_pid = 0u32;
                 for prio in 0..scheduler::PRIORITY_COUNT {
@@ -263,6 +264,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                                     chosen_ptr = &mut **k as *mut scheduler::Kthread;
                                     chosen_rsp = k.rsp;
                                     chosen_ks_top = k.kernel_stack_top;
+                                    chosen_ks_size = k.kernel_stack_size;
                                     chosen_tid = k.tid;
                                     chosen_pid = k.pid;
                                     break;
@@ -278,7 +280,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                         (*chosen_ptr).state = ThreadState::Running;
                     }
                     scheduler.current_tid = chosen_tid;
-                    scheduler::check_kernel_stack_canary(chosen_ks_top, chosen_pid, chosen_tid, chosen_rsp);
+                    scheduler::check_kernel_stack_canary_sized(chosen_ks_top, chosen_ks_size, chosen_pid, chosen_tid, chosen_rsp);
                     unsafe { crate::arch::x64::gdt::prepare_ring3_return(chosen_ks_top, chosen_tid, chosen_pid); }
                     unsafe {
                         crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(chosen_ptr, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
@@ -378,7 +380,8 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 tid, next_tid, next_pid, next_ks_top, next_rsp, next_rip, next_cs, rss, rrsp);
         }
 
-        scheduler::check_kernel_stack_canary(next_ks_top, next_pid, next_tid, next_rsp);
+        scheduler::check_kernel_stack_canary_sized(
+            next_ks_top, unsafe { (*next).kernel_stack_size }, next_pid, next_tid, next_rsp);
         unsafe { crate::arch::x64::gdt::prepare_ring3_return(next_ks_top, next_tid, next_pid); }
         // Keep the per-CPU view in sync with Scheduler. Timer-driven
         // switches update KPRCB, but syscall-return switches previously
