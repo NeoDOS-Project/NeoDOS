@@ -44,7 +44,7 @@ pub struct Token {
 | -------- | ----------- | ------------- |
 | `new_admin()` | `SE_ADMIN_PRIVILEGES` (0xFFFF) | Full-privilege token for SYSTEM |
 | `new_user()` | `SE_CHANGE_NOTIFY` only | Restricted user token |
-| `new_full(sid, is_admin, groups, privs, sid)` | Custom | Complete construction |
+| `new_full(sid, is_admin, groups, privs, session_id)` | Custom | Complete construction |
 | `inherit_from(parent)` | Inherited | Copies sid, is_admin, groups, privileges, session_id |
 
 `is_admin_token()` returns true when `is_admin` is set or SID equals `sid_builtin_admin()`.

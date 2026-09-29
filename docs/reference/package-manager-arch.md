@@ -4,7 +4,7 @@
 > **Status:** Draft v1 — design complete, pending implementation
 > **Binary:** `neoget` — `userbin/neoget/`
 > **Library:** `libneopkg` — `libneopkg/` (new internal crate)
-> **Kernel ABI:** No new syscalls — uses Ob (RAX 60-66) + Cm (RAX 67-74)
+> **Kernel ABI:** No new syscalls — uses Ob (RAX 40-48) + Cm (RAX 50-59)
 > **Tracking:** GitHub Issues (see `roadmap/improvements.md`)
 
 ---
@@ -255,7 +255,7 @@ The local database lives in `\Registry\Machine\Packages\`. Rationale:
 | ----------- | ---------- | ------------ | ----------- | -------- |
 | Already exists | ✅ | No | No | No |
 | Atomic transactions | ✅ (cells) | ❌ | ❌ | ✅ |
-| Accessible via syscalls | ✅ (RAX 67-74) | ✅ (Ob) | ❌ | ❌ |
+| Accessible via syscalls | ✅ (RAX 50-59) | ✅ (Ob) | ❌ | ❌ |
 | Hierarchical | ✅ | ❌ | Partial | ❌ |
 | ACL support | ✅ | ❌ | ❌ | ❌ |
 | Remote queryable | ❌ (no network) | ❌ | ❌ | ❌ |
@@ -391,7 +391,7 @@ Every installed package appears in the Ob namespace:
 1. **Uniform tooling.** `ls` on `\Package\` lists all installed packages with zero custom code.
 2. **Standard ACLs.** Package visibility can be restricted per-user via SecurityDescriptors on the objects.
 3. **Enumeration.** `sys_ob_enum(\Package\, buf)` replaces listing the Registry — same API as files, processes, drivers.
-4. **No new syscalls.** Everything uses existing RAX 60-66. The kernel only needs new `ObType` constants.
+4. **No new syscalls.** Everything uses existing RAX 40-48. The kernel only needs new `ObType` constants.
 5. **Event bus integration.** Changes to `\Package\` objects emit EventBus events, enabling GUI updates and auto-refresh.
 
 ### 5.5 New ObTypes required
@@ -1171,7 +1171,7 @@ neoget verify --all --json
 | `libneopkg/src/crypt.rs` | Ed25519 + CRC32 primitives |
 | `libneopkg/src/config.rs` | Default paths, keys |
 | `src/fs/neodos_dir.rs` | `MODE_DIR = 0x40`, `MODE_FILE = 0x80` kernel consts |
-| `src/syscall/ob.rs` | CORE guard in `ob_destroy` |
+| `src/syscall/ob/` | CORE guard in `ob_destroy` |
 | `src/syscall/cm.rs` | CORE guard in `cm_delete_key` |
 
 ## Appendix B: Registry keys summary

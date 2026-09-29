@@ -223,7 +223,7 @@ net.nxl.
 #### Opción A: Nuevo ObInfoClass::SocketRecv = 23
 
 Añadir en el kernel `ObInfoClass::SocketRecv = 23`. El handler en
-`src/syscall/ob.rs`:
+`src/syscall/ob/`:
 
 ```rust
 _ if info_class == ObInfoClass::SocketRecv as u32 => {
@@ -1125,7 +1125,7 @@ pub fn cm_flush_key(key_native_id: u64) -> Result<(), ()> {
    `cm_flush_key` se llama desde el shell (`FLUSHREG` command), o desde
    NeoInit antes de spawn shell, o en shutdown.
 2. **Periódico:** Un demonio de kernel (work queue) cada N segundos si dirty.
-3. **A petición:** Solo cuando se llama `cm_flush_key` (syscall RAX=74).
+3. **A petición:** Solo cuando se llama `cm_flush_key` (syscall RAX=57).
 
 **Decisión:** Opción 1 + 3. `cm_set_value` marca el hive como dirty.
 Antes de spawn NeoShell, NeoInit llama `cm_flush_key` para guardar.
@@ -1338,7 +1338,7 @@ Core no se pueda eliminar via `cm_delete_key`. Si un proceso userland intenta
 borrar un paquete Core:
 
 ```rust
-// En syscall cm_delete_key handler (RAX=73):
+// En syscall cm_delete_key handler (RAX=56):
 let (hive_idx, cell_idx) = decode_cell(key_native_id);
 let cm = CM_MANAGER.lock();
 let hm = &cm.hives[hive_idx as usize];
@@ -1413,12 +1413,12 @@ C:\Logs\pkg.log            ← log de operaciones pkg
 | UDP | `src/net/udp.rs` | ⚠️ | Header 8B, checksum, **sin dispatch de paquetes** |
 | TCP | `src/net/tcp.rs` | ⚠️ | State machine (11 estados), buffers, **sin handshake real** |
 | TCP send/recv | `src/net/tcp.rs` | ⚠️ | `tcp_send()` escribe en send_buf local, no transmite |
-| e1000 | `src/net/e1000.rs` | ✅ | Probe, MMIO, RX/TX rings, poll_packet, send_packet |
+| e1000 | `drivers/e1000/ (NEM)` | ✅ | Probe, MMIO, RX/TX rings, poll_packet, send_packet |
 | Socket manager | `src/net/socket.rs` | ✅ | Alloc/bind/connect/listen/send/recv/close/wake |
 | Socket→NIC TX | `src/net/socket.rs` | ❌ | `socket_send()` no llama a NIC, solo escribe en send_buf local |
 | NIC→Socket RX | `src/net/mod.rs` | ❌ | `net_handle_incoming_packet` no rutea TCP/UDP a sockets |
 | ObType::Socket | `src/object/types.rs` | ✅ | type=18, ObInfoClass 17-20, ObSetInfoClass 18-22 |
-| ObSocket handler | `src/syscall/ob.rs` | ✅ | handlers para create/set/query de sockets |
+| ObSocket handler | `src/syscall/ob/` | ✅ | handlers para create/set/query de sockets |
 
 ### 7.2 Gaps críticos para red userland
 
@@ -1771,7 +1771,7 @@ Fase 8 (pkg.nxe): Sistema de paquetes v1
 | 15 | F7 | NeoInit: leer Registry para DefaultShell | `userbin/neoinit/` | Pequeño |
 | 16 | F7 | NeoInit: auto-start de servicios | `userbin/neoinit/` | Medio |
 | 17 | F7 | netcfg.nxe: configurador de red (servicio Netcfg) | `userbin/netcfg/` | Medio |
-| 18 | F7 | Registry: persistencia a disco (cm_flush_key) | `cm/mod.rs`, `cm/hive.rs` | Medio |
+| 18 | F7 | Registry: persistencia a disco (cm_flush_key) | `cm/mod.rs`, `cm/hive/` | Medio |
 | 19 | F8 | pkg.nxe: sistema de paquetes v1 | `userbin/pkg/` | Grande |
 
 ### 8.2 Después de v1.0
@@ -1861,7 +1861,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 
        ↓ INT 0x80
 
-  2. Kernel: handler_ob_set_info (src/syscall/ob.rs)
+  2. Kernel: handler_ob_set_info (src/syscall/ob/)
      → info_class == SocketSend(21)
      → buscar ObObject por fd → native_id = socket_id
      → llamar socket_send(socket_id, data)
@@ -1910,7 +1910,7 @@ user: net_socket_send(fd=3, data=DHCP_Discover)
 
        ↓
 
-  4. Kernel: e1000 send_packet (src/net/e1000.rs)
+  4. Kernel: e1000 send_packet (drivers/e1000/ (NEM))
      → Wait for available TX descriptor
      → Copy packet data to DMA buffer
      → Update TX descriptor (addr, len, cmd)
@@ -2076,7 +2076,7 @@ Este nuevo info class no existe actualmente en el kernel.
 **Implementación en el kernel:**
 
 ```rust
-// En src/syscall/ob.rs, handler_ob_query_info:
+// En src/syscall/ob/, handler_ob_query_info:
 _ if info_class == 23 /* SocketRecv */ => {
     let ob = ob_table.lock().get(fd).ok_or(SyscallError::BadF)?;
     if ob.obj_type != ObType::Socket {
@@ -2212,8 +2212,8 @@ fn init_cm() {
 | Archivo | Cambio | Estado |
 | --------- | -------- | -------- |
 | `src/object/types.rs` | `ObInfoClass::SocketRecv = 23`, `ObSetInfoClass::SetNicIp = 27` | ✅ |
-| `src/syscall/ob.rs` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
-| `src/syscall/ob.rs` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
+| `src/syscall/ob/` | Handler SocketRecv (class 23) en query_info — copia `recv_buf`, `-EAGAIN` | ✅ |
+| `src/syscall/ob/` | Handler SetNicIp (class 27) en set_info — llama `nic_set_ip()` | ✅ |
 | `tools/gen-hiv` | Crea el servicio `Netcfg` (`netcfg.nxe`, StartType=Auto) y `Dhcpc` | ✅ |
 | `src/scheduler/mod.rs` | `dhcp_tick()` llamado desde idle loop para que DHCP progrese | ✅ |
 
@@ -2223,7 +2223,7 @@ fn init_cm() {
 | --------- | -------- | -------- |
 | `src/syscall.rs` | `ob_type::SOCKET = 18`, `ObInfoClass::SocketRecv=23` | ✅ |
 | `src/syscall.rs` | Wrappers: `ob_socket_create/connect/bind/listen/send/recv/close` | ✅ |
-| `src/syscall.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=70) + `ob_syscall_5!` macro | ✅ |
+| `src/syscall/mod.rs` | `SocketAddrV4` struct, `sys_cm_set_value` (RAX=53) + `ob_syscall_5!` macro | ✅ |
 | `src/syscall.rs` | `ObSetInfoClass::SetNicIp = 27` | ✅ |
 
 ### 11.3 Nuevos proyectos

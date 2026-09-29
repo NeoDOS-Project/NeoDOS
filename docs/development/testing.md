@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 716 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 754 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -33,7 +33,7 @@ test_case!("my_test", {
 
 ## Execution
 
-`testing::run_all()` iterates the global test array, runs each test in sequence, captures panics (tests run with `catch_unwind`), prints `PASS: <name>` or `FAIL: <name> [reason]` to serial. Returns `(total, passed, failed)`. The `test` built-in shell command prints a summary line: `TESTS: X total, Y passed, Z failed`.
+`testing::run_all()` iterates the global test array and runs each test in sequence with interrupts disabled (`hal::without_interrupts`), printing `TEST <name> ... PASS` or `FAIL: <reason>` to serial. It returns `(passed, failed)`. Tests signal failure by returning `Err(msg)` — there is no `catch_unwind`. The `test` built-in shell command prints a summary line: `TESTS: X total, Y passed, Z failed`.
 
 `auto_test.py` waits for a regex match on the final summary line, then exits with code 0 if 0 failures, code 1 otherwise.
 
@@ -42,7 +42,7 @@ test_case!("my_test", {
 - **Disk image freshness.** Some kernel tests mutate the NeoFS volume (mkdir/rmdir,
   unlink, rename, copy-on-write). After interactive boots (`neodev run`) the
   `disk_image.img` may be left dirty, which produces false FS-test failures
-  (e.g. `709/716`) even though no code regressed. Rebuild the image before
+  (e.g. `752/754`) even though no code regressed. Rebuild the image before
   measuring:
 
   ```bash
@@ -50,7 +50,7 @@ test_case!("my_test", {
   neodev test
   ```
 
-  Expected result is `716/716 PASS`.
+  Expected result is `754/754 PASS`.
 - **Serial log growth.** `neodev test` writes `qemu_output.log` (gitignored). Very
   large logs (hundreds of MB) can destabilise the run; rotate/delete it if a run
   exits early.
@@ -67,7 +67,7 @@ test_case!("my_test", {
 | NEM | 23 | v1/v2/v3 parsing, header validation, type decoding, ABI field extraction, category parsing, v3 relocations/symbols/sections |
 | ELF | 20 | Header validation, segment loading, edge cases (empty, truncated, corrupted), PIE offset/relocation, address space validation |
 | Event Bus | 17 | v2 queue ops, subscription filters, dynamic payload lifecycle, backpressure, priority dispatch, handler registration/unregistration |
-| Driver State | 21 | 7-state lifecycle (Unloaded→Loaded→Started→Ready→Running→Stopped→Unloaded), transition matrix validation, certification, error tracking |
+| Driver State | 21 | 8-state lifecycle (`Loaded, Initialized, Registered, Bound, Active, Faulted, Unloaded, Unloading`), transition matrix validation, certification, error tracking |
 | Object | 14 | ObObjectTable create/lookup/destroy, refcount management, close-auto-destroy, namespace path resolution |
 | Page Cache | 13 | Hash map O(1) lookups, LRU doubly-linked list, create/peek/dirty/invalidate, capacity enforcement, stats, hit_rate, pending_writes |
 | Syscall | 13 | SSDT dispatch routing, permission table enforcement, handler_close for file+pipe resources, A4.6 spawn/readdir integration |

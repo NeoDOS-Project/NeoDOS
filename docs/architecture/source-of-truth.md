@@ -471,7 +471,7 @@ pointing to the kernel console.
 
 **Rule 10.2.1**: NeoInit MAY:
 
-- Create pipes (`sys_pipe`)
+- Create pipes (`ob_create(Pipe)`)
 - Spawn child processes via `cmd_run` or equivalent
 - Redirect child fds via `sys_dup2` before spawn
 - Wait for any process (`sys_waitpid`)
@@ -689,36 +689,42 @@ pub static SYSCALL_PERMISSIONS: [SyscallPermission; 256]  // parallel permission
 
 ### 12.2 Syscall Table
 
+Authoritative table: `docs/kernel/syscalls.md`. Current ABI: **v8**, 37 assigned
+syscalls, highest assigned RAX = 99.
+
 | RAX | Name | Signature | Stability |
 | ----- | ------ | ----------- | ----------- |
 | 0 | `exit` | `(code)` | STABLE |
-| 1 | `write` | `(fd, buf, len)` | STABLE |
-| 2 | `yield` | `()` | STABLE |
-| 3 | `getpid` | `()` | MIGRATED — use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
-| 4 | `read` | `(fd, buf, count)` | STABLE |
-| 5 | `pipe` | `(fds)` | STABLE |
-| 6 | `dup2` | `(old, new)` | STABLE |
-| 7 | | (reserved) | |
-| 8 | | (reserved) | |
-| 9 | `waitpid` | `(pid)` | STABLE |
-| 10 | `open` | `(path, flags)` | STABLE |
-| 11 | `readfile` | `(fd, buf, count)` | STABLE |
-| 12 | `writefile` | `(fd, buf, count)` | STABLE |
-| 13 | `close` | `(fd)` | STABLE |
-| 14 | | (reserved) | |
-| 15 | | (reserved) | |
-| 16 | `chdir` | `(path)` | STABLE |
-| 17 | `getcwd` | `(buf, len)` | STABLE |
-| 18 | `brk` | `(new_break)` | STABLE |
-| 19 | `mmap` | `(hint, len, prot, flags, fd)` | STABLE |
-| 20 | `munmap` | `(addr, len)` | STABLE |
-| 21 | `loadlib` | `(path)` | STABLE |
-| 22 | `thread_create` | `(entry, stack)` | STABLE |
-| 23 | `thread_join` | `(tid)` | STABLE |
-| 50 | `ndreg` | `()` | ADMIN-ONLY |
+| 1 | `yield` | `()` | STABLE |
+| 2 | `wait_alertable` | `()` | STABLE |
+| 3 | `sleep_ex` | `()` | STABLE |
+| 4 | `set_exception_handler` | `(handler_fn)` | STABLE |
+| 10 | `brk` | `(new_break)` | STABLE |
+| 11 | `mmap` | `(hint, len, prot, flags, fd)` | STABLE |
+| 12 | `munmap` | `(addr, len)` | STABLE |
+| 20 | `write` | `(fd, buf, len)` | STABLE |
+| 21 | `read` | `(fd, buf, count)` | STABLE |
+| 22 | `dup2` | `(old, new)` | STABLE |
+| 23 | `close` | `(fd)` | STABLE |
+| 24 | `poll` | `(pfds, nfds, timeout)` | STABLE |
+| 25 | `loadlib` | `(path)` | STABLE |
+| 30 | `cursor_blink` | `(enable)` | STABLE |
+| 35 | `driver_unload` | `(name, force)` | ADMIN-ONLY |
+| 36 | `icmp_ping` | `(ip_be)` | STABLE |
+| 40 | `ob_open` | `(path, access)` | STABLE |
+| 41 | `ob_create` | `(path, type, fds, attrs)` | STABLE |
+| 42 | `ob_query_info` | `(fd, class, buf, size)` | STABLE |
+| 43 | `ob_set_info` | `(fd, class, buf, size)` | STABLE |
+| 44 | `ob_enum` | `(dir_fd, buf, max)` | STABLE |
+| 45 | `ob_wait` | `(count, handles, type, timeout)` | STABLE |
+| 46 | `ob_destroy` | `(fd)` | STABLE |
+| 47 | `ob_service` | `(fd, control, buf, size)` | ADMIN-ONLY |
+| 48 | `ob_snapshot` | `(fd, op, buf, size)` | ADMIN-ONLY |
+| 50-59 | `cm_*` | registry keys/values | STABLE |
+| 99 | `debug_dump` | `()` | STABLE |
 
-**Rule 13.2.1**: Reserved slots (7, 8) MUST NOT be assigned without a breaking
-change version bump.
+**Rule 13.2.1**: Unassigned slots MUST NOT be reassigned to an incompatible
+purpose without a breaking-change version bump.
 **Rule 13.2.2**: Adding a new syscall at the next available RAX is NOT a breaking change.
 **Rule 13.2.3**: Changing the signature, return convention, or semantics of a STABLE syscall
 IS a breaking change.
@@ -804,7 +810,7 @@ happens only on syscall return or timer tick while in Ring 3.)
 syscall; use `KILL` command or `kill_pid` internal.)
 
 **AP-10**: Registering a new `BlockDevice` implementor that depends on filesystem types.
-(`BlockDevice` trait must not pull in `NeoDosFs`, `Fat32`, or any filesystem.)
+(`BlockDevice` trait must not pull in `NeoDosFsV2`, `Fat32`, or any filesystem.)
 
 ---
 

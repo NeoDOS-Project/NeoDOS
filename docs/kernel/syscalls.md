@@ -44,16 +44,21 @@ pub enum SyscallNum {
     // Console (30-34)
     CursorBlink = 30,
     // Driver (35-39)
-    DriverUnload = 35,
+    DriverUnload = 35, IcmpPing = 36,
     // Object Manager (40-49)
     ObOpen = 40, ObCreate = 41, ObQueryInfo = 42, ObSetInfo = 43,
     ObEnum = 44, ObWait = 45, ObDestroy = 46, ObService = 47,
+    ObSnapshot = 48,
     // Registry Cm (50-59)
     CmOpenKey = 50, CmCreateKey = 51, CmQueryValue = 52,
     CmSetValue = 53, CmEnumKey = 54, CmEnumValue = 55,
     CmDeleteKey = 56, CmFlushKey = 57, CmLoadHive = 58, CmUnloadHive = 59,
+    // Debug (90-99)
+    DebugDump = 99,
 }
 ```
+
+`MAX_VALID` / `HIGHEST_ASSIGNED` are both `99`.
 
 ### SyscallError Enum
 
@@ -93,9 +98,10 @@ pub fn validate_abi() {
         0, 1, 2, 3, 4,
         10, 11, 12,
         20, 21, 22, 23, 24, 25,
-        30, 35,
-        40, 41, 42, 43, 44, 45, 46, 47,
+        30, 35, 36,
+        40, 41, 42, 43, 44, 45, 46, 47, 48,
         50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
+        99,
     ];
     for &n in ASSIGNED {
         assert!(SYSCALL_TABLE[n as usize].is_some(),
@@ -228,7 +234,7 @@ Enable/disable automatic cursor blinking.
 - **Args**: `RBX`=0 (disable), 1 (enable).
 - **Returns**: `0` on success, or error code.
 
-### Driver (RAX 35)
+### Driver (RAX 35-36)
 
 #### 35 — `sys_driver_unload` (admin)
 
@@ -236,6 +242,13 @@ Unload a NEM driver by name.
 
 - **Args**: `RBX`=name_ptr, `RCX`=force_flag.
 - **Returns**: `0` on success, or error code.
+
+#### 36 — `sys_icmp_ping`
+
+Send a single ICMP echo request (diagnostic, `handler_icmp_ping`).
+
+- **Args**: `RBX` = destination IPv4 address (`u32`, big-endian).
+- **Returns**: round-trip time in microseconds, or `0` on failure.
 
 ### Object Manager (RAX 40-48)
 
@@ -321,6 +334,15 @@ Filesystem snapshot operations: CREATE(0), RESTORE(1), LIST(2), PURGE(3).
 | 58 | `sys_cm_load_hive` (admin) | Load a hive file |
 | 59 | `sys_cm_unload_hive` (admin) | Unload a hive |
 
+### Debug (RAX 99)
+
+#### 99 — `sys_debug_dump`
+
+Dump VT counters, keyboard IRQ state and IOAPIC routing (`handler_debug_dump`).
+
+- **Args**: None.
+- **Returns**: `0`.
+
 ---
 
 ## SSDT Reorganization History
@@ -356,11 +378,12 @@ Complete SSDT audit, cleanup, and reorganization:
 | Memory | 10-12 | 3 | — |
 | I/O | 20-25 | 6 | — |
 | Console | 30 | 1 | — |
-| Driver | 35 | 1 | ✓ |
-| Object Manager | 40-47 | 8 | 47 |
+| Driver | 35-36 | 2 | 35 |
+| Object Manager | 40-48 | 9 | 47, 48 |
 | Registry | 50-59 | 10 | 58-59 |
+| Debug | 99 | 1 | — |
 
-Total active: 34 syscalls | Reserved slots: 25 | Highest: 59
+Total active (assigned): 37 syscalls | Valid RAX range: 0-99 | Highest assigned: 99
 
 ### Architecture Rule
 
@@ -374,15 +397,14 @@ Power management is handled entirely via the Object Manager — no dedicated sys
 
 | Path | Operation | Class |
 | ------ | ----------- | ------- |
-| `\System\PowerManager` | Query power system state | `ObQueryInfoClass::PowerState = 32` |
-| `\System\PowerManager` | Query active plan info | `ObQueryInfoClass::PowerPlanInfo = 33` (planned) |
-| `\System\PowerManager` | Query power capabilities | `ObQueryInfoClass::PowerStatus = 34` (planned) |
+| `\System\PowerManager` | Query power system state | `ObInfoClass::PowerState = 32` (class declared; handler pending) |
 | `\System\PowerManager` | Shutdown (power off) | `ObSetInfoClass::PowerShutdown = 37` |
 | `\System\PowerManager` | Reboot | `ObSetInfoClass::PowerReboot = 38` |
-| `\System\PowerManager` | Suspend to RAM | `ObSetInfoClass::PowerSuspend = 39` (planned) |
-| `\System\PowerManager` | Hibernate to disk | `ObSetInfoClass::PowerHibernate = 40` (planned) |
-| `\System\PowerManager` | Set active power plan | `ObSetInfoClass::PowerSetPlan = 41` (planned) |
-| `\System\PowerManager` | Set power policy value | `ObSetInfoClass::PowerSetPolicy = 42` (planned) |
+
+> Plan/suspend/hibernate classes (`PowerPlanInfo`, `PowerStatus`, `PowerSuspend`,
+> `PowerHibernate`, `PowerSetPlan`, `PowerSetPolicy`) are **not** present in the
+> current ABI. Query classes live in `ObInfoClass` (the `ObSetInfoClass` enum has
+> no `PowerState` variant).
 
 **Usage:**
 

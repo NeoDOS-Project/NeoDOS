@@ -314,7 +314,7 @@ Useful when the guest needs direct network access (e.g., DHCP from a real LAN se
 | tcp.rs | `src/net/tcp.rs` |
 | socket.rs | `src/net/socket.rs` |
 | nic.rs | `src/net/nic.rs` |
-| e1000.rs | `src/net/e1000.rs` |
+| e1000 | `drivers/e1000/` (NEM) |
 | tests.rs | `src/net/tests.rs` |
 
 User-mode DHCP service: `userbin/dhcpd/src/main.rs`

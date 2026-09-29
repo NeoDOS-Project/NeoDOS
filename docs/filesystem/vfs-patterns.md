@@ -19,7 +19,7 @@ let result = crate::globals::with_vfs(|vfs| {
 });
 ```
 
-**Location**: [`neodos-kernel/src/globals.rs`](neodos-kernel/src/globals.rs)
+**Location**: [`neodos-kernel/src/globals.rs`](../../neodos-kernel/src/globals.rs)
 
 **Definition**:
 
@@ -44,7 +44,7 @@ match crate::globals::VFS.lock().read_file(inode_num, 0, &mut buf) {
 
 ## Core Vfs Struct Definition
 
-**File**: [`neodos-kernel/src/fs/vfs.rs`](neodos-kernel/src/fs/vfs.rs)
+**File**: [`neodos-kernel/src/fs/vfs.rs`](../../neodos-kernel/src/fs/vfs.rs)
 
 ```rust
 pub struct Vfs {
@@ -162,7 +162,7 @@ crate::globals::with_vfs(|vfs| {
 })
 ```
 
-**Real example from codebase** ([`neodos-kernel/src/drivers/boot_loader/mod.rs`](neodos-kernel/src/drivers/boot_loader/mod.rs)):
+**Real example from codebase** ([`neodos-kernel/src/drivers/boot_loader/mod.rs`](../../neodos-kernel/src/drivers/boot_loader/mod.rs)):
 
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
@@ -336,9 +336,9 @@ pub trait FileSystem: Send {
 
 **Current implementations**:
 
-- [`NeoDosFsV2`](neodos-kernel/src/fs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
-- [`Fat32Driver`](neodos-kernel/src/drivers/fat32.rs) - FAT32 (ESP boot partition)
-- [`Iso9660Driver`](neodos-kernel/src/drivers/iso9660.rs) - ISO 9660 (CD-ROM)
+- [`NeoDosFsV2`](../../neodos-kernel/src/fs/neodos_v2.rs) - NeoDOS native filesystem (NE2, NeoFS v2)
+- [`Fat32Driver`](../../neodos-kernel/src/drivers/fat32.rs) - FAT32 (ESP boot partition)
+- `Iso9660Driver` - ISO 9660 (CD-ROM) — planned; no implementation yet
 
 ---
 
@@ -432,7 +432,7 @@ pub static VFS: Mutex<crate::fs::vfs::Vfs> = Mutex::new(crate::fs::vfs::Vfs::new
 
 ### 1. Syscall Handler - `sys_readfile`
 
-[`neodos-kernel/src/syscall.rs` line ~737](neodos-kernel/src/syscall.rs#L737)
+[`neodos-kernel/src/syscall/mod.rs` line ~737](../../neodos-kernel/src/syscall/mod.rs)
 
 ```rust
 let result = crate::globals::with_vfs(|vfs| {
@@ -442,7 +442,7 @@ let result = crate::globals::with_vfs(|vfs| {
 
 ### 2. Driver Loader - Reading .nem Files
 
-[`neodos-kernel/src/drivers/boot_loader/mod.rs` line ~274](neodos-kernel/src/drivers/boot_loader/mod.rs#L274)
+[`neodos-kernel/src/drivers/boot_loader/mod.rs` line ~274](../../neodos-kernel/src/drivers/boot_loader/mod.rs#L274)
 
 ```rust
 fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
@@ -460,7 +460,7 @@ fn read_nem_file(path: &str) -> Result<Vec<u8>, &'static str> {
 
 ### 3. Shell Command - `TYPE` (Display File)
 
-[`userbin/coretype/src/main.rs`](userbin/coretype/src/main.rs)
+[`userbin/coretype/src/main.rs`](../../userbin/coretype/src/main.rs)
 
 ```rust
 crate::globals::with_vfs(|vfs| {
@@ -471,7 +471,7 @@ crate::globals::with_vfs(|vfs| {
 
 ### 4. Boot Benchmark - Reading BOOT.CFG
 
-[`neodos-kernel/src/boot_benchmark.rs` line ~364](neodos-kernel/src/boot_benchmark.rs#L364)
+[`neodos-kernel/src/boot_benchmark.rs` line ~364](../../neodos-kernel/src/boot_benchmark.rs#L364)
 
 ```rust
 match crate::globals::VFS.lock().open_file(path) {

@@ -381,7 +381,7 @@ Shared per-process resources: address space, handle table, heap, mmap, token.
 ### ThreadState
 
 ```rust
-pub enum ThreadState { Ready, Running, Blocked { waiting_for: u32 }, Terminated }
+pub enum ThreadState { Ready, Running, Blocked { waiting_for: u64 }, Suspended, Terminated }
 ```
 
 ### Names (Phase 14-A)
@@ -481,7 +481,7 @@ Each CPU has a KPRCB at a fixed address, accessed via GS segment:
 | Function                          | Purpose                        |
 |-----------------------------------|--------------------------------|
 | `sched_set_process_priority(pid, priority)` | Change priority at runtime   |
-| `sys_yield(RAX=2)`                | Voluntary yield                 |
+| `sys_yield(RAX=1)`                | Voluntary yield                 |
 | `spawn_kthread(entry, priority)`  | Create kernel thread (Ring 0)   |
 | `add_ring3_process(...)`          | Create user thread (Ring 3)     |
 

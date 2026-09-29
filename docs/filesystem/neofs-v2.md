@@ -275,7 +275,7 @@ trait FileSystem: Send {
 ### 4.2 Nuevos métodos en NeoDosFs
 
 ```rust
-impl NeoDosFs {
+impl NeoDosFsV2 {
     fn create_snapshot(&mut self) -> Result<u64, FsError>;
     fn list_snapshots(&self) -> Result<Vec<SnapshotInfo>, FsError>;
     fn restore_snapshot(&mut self, id: u64) -> Result<(), FsError>;
@@ -385,7 +385,7 @@ neodos-kernel/src/
 3. `src/fs/snapshot.rs` — Snapshot table: create, list, restore, purge
 4. `src/fs/neodos_v2.rs` — FileSystem trait impl con B-tree + extents + COW
 5. `src/fs/fsck.rs` — Scrub de B-tree + checksums
-6. `src/syscall/ob.rs` — handler_ob_snapshot (RAX 48)
+6. `src/syscall/ob/` — handler_ob_snapshot (RAX 48)
 7. Tests
 
 ---

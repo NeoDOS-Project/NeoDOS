@@ -141,15 +141,15 @@ offset for SeAccessCheck re-verification.
 
 ## Syscall Details
 
-### ob_open (RAX=60)
+### ob_open (RAX=40)
 
-1. Resolve path via `ob_resolve_path()` (symlink traversal, case-insensitive)
+1. Resolve path via `ob_lookup_path()` (symlink traversal, case-insensitive)
 2. Perform `SeAccessCheck` against the object's DACL using the caller's token
 3. Allocate a `HandleEntry` in the process handle table with `ob_object(ob_id,
    desired_access)`
 4. Return fd (>=3) or error
 
-### ob_create (RAX=61)
+### ob_create (RAX=41)
 
 1. Validate ObType — only user-creatable types: Process(1), Driver(2), Pipe(4),
    Directory(11), Event(13), Semaphore(14), Timer(15), Thread(16), Section(17),
@@ -160,7 +160,7 @@ offset for SeAccessCheck re-verification.
 4. Allocate handle entries for any returned fds (pipe creates bidirectional pair)
 5. Return fd(s)
 
-### ob_query_info (RAX=62)
+### ob_query_info (RAX=42)
 
 Supports the following info classes:
 
@@ -203,9 +203,7 @@ Supports the following info classes:
 | 37 | KeyboardLayouts | [KbdLayoutInfo] — list of loaded layouts on `\Device\Keyboard` |
 | 38 | Hostname | System hostname string (null-terminated) — any Ob object, reads from Registry |
 | 39 | ProcessArgs | Per-process command-line args (256 bytes, null-terminated) — any valid handle, returns current process args copied atomically at `sys_ob_create(PROCESS)` from `0x41F000` (fixes `0x41F000` data race in pipelines) |
-| 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager` |
-| 33 | PowerPlanInfo | Active plan index + name (planned) — `\System\PowerManager` |
-| 34 | PowerStatus | Power capabilities bitmask (planned) — `\System\PowerManager` |
+| 32 | PowerState | PowerSystemState u32 (Active/ShuttingDown/Rebooting/Suspending/Hibernating/Off) — `\System\PowerManager`. Class declared; handler not yet implemented. |
 
 ### SMP observability (CpuStats = 24, ThreadStats = 25)
 
@@ -371,9 +369,9 @@ The struct layout is unchanged.
   The new stats classes avoid silent loss via `total`/`returned`; `sys_ob_enum`
   itself is unchanged to preserve ABI v8.
 
-### ob_set_info (RAX=63)
+### ob_set_info (RAX=43)
 
-Supports 38 set classes:
+Supports 42 set classes:
 
 | Class | Name | Description |
 | ------- | ------ | ------------- |
@@ -390,8 +388,8 @@ Supports 38 set classes:
 | 10 | TimerStart | Start timer (oneshot/periodic) |
 | 11 | TimerCancel | Cancel running timer |
 | 12 | SemaphoreRelease | Increment semaphore count |
-| 13 | MapView | Map Section into process address space |
-| 14 | UnmapView | Unmap Section view |
+| 13 | SectionMapView | Map Section into process address space |
+| 14 | SectionUnmapView | Unmap Section view |
 | 15 | FileCreate | Create VFS file |
 | 16 | FileDelete | Delete VFS file |
 | 17 | SetProcessVt | Switch virtual terminal |
@@ -412,10 +410,6 @@ Supports 38 set classes:
 | 36 | ServiceSetConfig | Modify service configuration (start type, restart policy, max failures) |
 | 37 | PowerShutdown | Initiate coordinated system shutdown |
 | 38 | PowerReboot | Initiate coordinated system reboot |
-| 39 | PowerSuspend | Suspend to RAM (planned) — `\System\PowerManager` |
-| 40 | PowerHibernate | Hibernate to disk (planned) — `\System\PowerManager` |
-| 41 | PowerSetPlan | Set active power plan by index (planned) — `\System\PowerManager` |
-| 42 | PowerSetPolicy | Set individual power policy value (planned) — `\System\PowerManager` |
 | 39 | FsckRepair | Run fsck with repair flag (buf[0] != 0 = repair) |
 | 43 | KeyboardSetLayout | Set layout by name (string) — `\Device\Keyboard` |
 | 44 | KeyboardSetRepeatDelay | Set repeat delay in ms (u32 LE) — `\Device\Keyboard` |
@@ -424,7 +418,7 @@ Supports 38 set classes:
 | 47 | KeyboardSetModifier | Set modifier byte (admin) — `\Device\Keyboard` |
 | 49 | SetHostname | Set system hostname (REG_SZ) — any Ob object, admin only |
 
-### ob_enum (RAX=64)
+### ob_enum (RAX=44)
 
 Enumerate a directory fd. Writes `ObEnumEntry` structs (52 bytes each) into the
 user buffer. Returns entry count.
@@ -441,7 +435,7 @@ pub struct ObEnumEntry {
 }
 ```
 
-### ob_wait (RAX=65)
+### ob_wait (RAX=45)
 
 Wait on up to N handles, with wait type (0=ANY, 1=ALL) and timeout in ms.
 
@@ -456,7 +450,7 @@ Non-blocking check: Pipe, Semaphore, and Timer perform an immediate check
 before entering the KWait block path. This prevents unnecessary context
 switches.
 
-### ob_destroy (RAX=66)
+### ob_destroy (RAX=46)
 
 Delete an object from the namespace and object table. Calls `on_destroy()` if
 the object has a custom `ObOperations` impl. Fails with `-RefCountHeld` if the

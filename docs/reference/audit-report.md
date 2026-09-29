@@ -81,7 +81,7 @@ NeoDOS ha alcanzado una madurez estructural que permite evaluar la separación d
 - **Reutilizable por otros proyectos:** No — específico de NeoDOS.
 - **Dependencias del kernel:** Absolutas — cada función es una llamada a syscall del kernel.
 
-**Veredicto: MANTENER EN NEODOS.** La ABI de syscalls (SSDT, RAX 0-59) debe estar en lockstep con el kernel. Separarlo crearía riesgos de versiones incompatibles. **Reevaluar post-v1.0 cuando la ABI esté congelada.**
+**Veredicto: MANTENER EN NEODOS.** La ABI de syscalls (SSDT, RAX 0-99) debe estar en lockstep con el kernel. Separarlo crearía riesgos de versiones incompatibles. **Reevaluar post-v1.0 cuando la ABI esté congelada.**
 
 ---
 
@@ -294,7 +294,7 @@ Wrapper de red que depende de `libneodos` y `libnet-nxl`. Misma justificación q
 
 | Componente | Ubicación | Naturaleza |
 |------------|-----------|------------|
-| Tests unitarios kernel | `neodos-kernel/src/testing.rs` (656+ tests) | En el kernel |
+| Tests unitarios kernel | `neodos-kernel/src/testing.rs` (754+ tests) | En el kernel |
 | Tests de integración | `neodev test` (vía neodev, ya separado) | Herramienta externa |
 | Tests de validación | `scripts/check_deps.py` | Script Python |
 
@@ -455,7 +455,7 @@ Configuración del entorno de desarrollo AI.
 **Propuesta:** Repositorio independiente para framework de pruebas.
 
 **Evaluación:**
-- Tests unitarios: deben vivir con el código (656 tests en kernel)
+- Tests unitarios: deben vivir con el código (754 tests en kernel)
 - Tests de integración: ya están en NeoDev (separado)
 - check_deps.py: validación arquitectónica, debe vivir con el código
 - Benchmarks: no existen aún (planeados en M3.2, v0.63)
@@ -639,7 +639,7 @@ NeoDocs (EVALUAR POST-V1.0)
 
 | API | Estado | Uso |
 |-----|--------|-----|
-| Syscall ABI (SSDT, RAX 0-59) | Versionada (v8), no congelada | libneodos → kernel |
+| Syscall ABI (SSDT, RAX 0-99) | Versionada (v8), no congelada | libneodos → kernel |
 | NEM ABI (host services table) | Versionada (v8), no congelada | drivers → kernel |
 | NXE format | Documentado, estable | userbin, tools |
 | NXP format | Documentado, estable | tools/nxpkg |

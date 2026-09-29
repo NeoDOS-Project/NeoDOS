@@ -72,24 +72,24 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 
 | Command | Implementation | ABI |
 | --------- | --------------- | ----- |
-| DEL `<path>` | `ob_destroy` (RAX 66) on file ObObject | `sys_ob_destroy(path)` |
+| DEL `<path>` | `ob_destroy` (RAX 46) on file ObObject | `sys_ob_destroy(path)` |
 | REN `<src> <dst>` | `ob_set_info` with `VfsRename` info class | `sys_ob_set_info(src, VfsRename, &dst)` |
-| RD `<dir>` | `ob_destroy` (RAX 66) on directory ObObject | `sys_ob_destroy(path)` |
+| RD `<dir>` | `ob_destroy` (RAX 46) on directory ObObject | `sys_ob_destroy(path)` |
 | COPY `<src> <dst>` | `ob_query_info(ReadContent)` → buffer → `ob_set_info(WriteContent)` | read content, create/overwrite dst, write content |
 | TYPE `<path>` | `ob_query_info(ReadContent)` → `sys_write` stdout | read file content to buffer, print to stdout |
-| DIR `<path>` | `ob_enum` (RAX 64) on directory | `sys_ob_enum(dir, &entries)` → tabular output |
+| DIR `<path>` | `ob_enum` (RAX 44) on directory | `sys_ob_enum(dir, &entries)` → tabular output |
 | TREE `<path>` | `ob_enum` recursive (depth-first) | `sys_ob_enum` called per subdirectory |
 | CD `<path>` | `ob_set_info(SetCwd)` via `ARGS_ADDR` field | `sys_ob_set_info(cwd_handle, SetCwd, &path)` |
 | CLS | ANSI escape: `\x1B[2J\x1B[H` | `sys_write(1, escape, 7)` |
-| ECHO `<text>` | `sys_write` (RAX 1) to stdout | direct write |
-| MD `<dir>` | `ob_create(Directory)` (RAX 61) | `sys_ob_create(path, Directory)` |
+| ECHO `<text>` | `sys_write` (RAX 20) to stdout | direct write |
+| MD `<dir>` | `ob_create(Directory)` (RAX 41) | `sys_ob_create(path, Directory)` |
 
 ## System Commands
 
 | Command | Implementation |
 | --------- | --------------- |
-| FSCK `<drive>` | `sys_fsck` (RAX 55) — invokes kernel fsck on specified drive |
-| LOADLIB `<nxl>` | `sys_loadlib` (RAX 21) — loads NXL into slot region |
+| FSCK `<drive>` | `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on the Filesystem handle |
+| LOADLIB `<nxl>` | `sys_loadlib` (RAX 25) — loads NXL into slot region |
 | NDREG | Opens `\Global\Info\Drivers` — reads driver registration info |
 | PS | `ob_enum(\Ob\Process)` then `ob_query_info` per process for name/pid/state |
 | KILL `<pid>` | `ob_set_info(Process, ProcessTerminate)` on target process object |
@@ -104,7 +104,7 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | NEOMEM | `ob_open(\Global\Info\Memory)` → `ob_query_info` → print memory stats |
 | DRIVES | `ob_open(\Global\Info\Drives)` → `ob_query_info` → list mounted drives |
 | LABEL `<drive> <label>` | `ob_query_info(VolumeLabel)` to read, `ob_set_info(VolumeLabel)` to write |
-| FSCHECK | `fsck.nxe` — user-mode wrapper invoking `sys_fsck` |
+| FSCHECK | `fsck.nxe` — user-mode wrapper invoking the Ob FsckStatus/FsckRepair classes |
 
 ## userbin/.NXE Binaries
 
@@ -176,7 +176,7 @@ Heap managed by user-mode brk/sbrk:
 
 - `brk(addr)`: set program break
 - `sbrk(increment)`: increment program break
-- Backed by `sys_brk` (RAX 18) or `sys_mmap` (RAX 19)
+- Backed by `sys_brk` (RAX 10) or `sys_mmap` (RAX 11)
 
 ## Adding a New Command
 

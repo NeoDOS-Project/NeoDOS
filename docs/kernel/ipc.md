@@ -1,18 +1,18 @@
 # IPC Subsystem
 
-## Pipes (src/pipe.rs)
+## Pipes (src/object/pipe.rs)
 
 ### Architecture
 
-Dynamic pipe storage using `Vec<Option<Mutex<PipeInner>>>` (since v0.41). Each `PipeInner` contains a boxed ring buffer (`Box<[u8; 4096]>`), read/write cursors, and reference counts.
+Dynamic pipe storage using `PipeManager { pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>, kobj_ids: Mutex<Vec<Option<ObId>>> }` (since v0.41). Each `PipeInner` contains a boxed ring buffer (`Box<[u8; 4096]>`), read/write cursors, and reference counts.
 
 Reference-counted: auto-freed when all reader/writer file descriptors are closed. `pipe_close()` decrements refcount; the buffer is freed when it reaches 0.
 
 ### System Calls
 
-- **sys_pipe** (RAX 5, **REMOVED**): Was pipe creation. Replaced by `ob_create` + pipe fd.
-- **sys_close** (RAX 13) on a pipe fd: Removes the handle entry, decrements refcount. Calls `pipe_free()` if refcount reaches 0.
-- **sys_dup2** (RAX 6): Copies an fd with refcount increment. Both old and new fd share the same pipe buffer.
+- **sys_pipe** (was RAX 5, **REMOVED**): Was pipe creation. Replaced by `ob_create(Pipe)` (RAX 41) + pipe fd.
+- **sys_close** (RAX 23) on a pipe fd: Removes the handle entry, decrements refcount. Frees the pipe when the refcount reaches 0.
+- **sys_dup2** (RAX 22): Copies an fd with refcount increment. Both old and new fd share the same pipe buffer.
 
 ### Blocking Reads
 
@@ -23,33 +23,45 @@ After a writer writes data, it calls `wake_pipe_readers(pipe_id)` which scans th
 ### Pipe Manager API
 
 ```rust
-pub fn pipe_alloc() -> Option<PipeId>;
-pub fn pipe_write(pipe_id: PipeId, buf: &[u8]) -> Result<usize, i64>;
-pub fn pipe_read(pipe_id: PipeId, buf: &mut [u8]) -> Result<usize, i64>;
-pub fn pipe_close(pipe_id: PipeId, is_writer: bool);
+pub struct PipeManager {
+    pipes: Mutex<Vec<Option<Mutex<PipeInner>>>>,
+    kobj_ids: Mutex<Vec<Option<ObId>>>,
+}
+impl PipeManager {
+    pub fn alloc(&self) -> Option<u8>;
+    pub fn inc_read_ref(&self, pipe_id: u8);
+    pub fn inc_write_ref(&self, pipe_id: u8);
+    pub fn dec_read_ref(&self, pipe_id: u8);
+    pub fn dec_write_ref(&self, pipe_id: u8);
+    pub fn read(&self, pipe_id: u8, buf: &mut [u8]) -> Result<usize, ()>;
+    pub fn write(&self, pipe_id: u8, buf: &[u8]) -> Result<usize, ()>;
+}
+pub fn pipe_peek_read_ready(pipe_id: u8) -> Option<bool>;
+pub fn block_current_for_pipe(pipe_id: u8);
 ```
 
-- `pipe_write` returns `-EPIPE` (-32) if no readers remain.
-- `pipe_read` returns `0` (EOF) if no writers remain and buffer empty.
-- Both return number of bytes transferred on success.
+- `write` returns `Err(())` if the read end is closed or the buffer is full.
+- `read` returns `Ok(0)` (EOF) when the write end is closed and the buffer is empty, or `Err(())` when no data is available.
+- Both return the number of bytes transferred on success. `MAX_PIPES = 16`; pipe IDs are `u8`.
 
 ## Handle Table (src/handle.rs)
 
 ### Structure
 
-Per-EPROCESS `HandleTable` stores a `Vec<HandleEntry>`. Grows dynamically; no maximum fd limit beyond memory.
+Per-EPROCESS `HandleTable` stores a `Vec<HandleEntry>`. Grows dynamically; `alloc_handle()` returns `None` past 255 entries (fd indices are `u8`).
 
-### HandleEntry Variants
+`HandleEntry` is a plain struct (not an enum):
 
-| Variant | Payload |
-| --------- | --------- |
-| `Closed` | None |
-| `Stdin` | None |
-| `Stdout` | None |
-| `Stderr` | None |
-| `PipeReader(id)` | PipeId |
-| `PipeWriter(id)` | PipeId |
-| `ObObject(ob_id, access_mask, offset)` | ObId, AccessMask for security, u64 file offset |
+```rust
+pub struct HandleEntry {
+    pub object_id: ObId,   // 0 = closed; stdin/stdout/stderr sentinels; else ObObject id
+    pub offset: u64,       // per-handle file offset
+}
+```
+
+Sentinel IDs: `HANDLE_CLOSED=0`, `HANDLE_STDIN=ObId::MAX`,
+`HANDLE_STDOUT=ObId::MAX-1`, `HANDLE_STDERR=ObId::MAX-2`. Pipes are referenced
+through their ObObject id, not a dedicated variant.
 
 ### FD Layout
 

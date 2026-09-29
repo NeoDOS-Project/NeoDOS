@@ -18,78 +18,76 @@ Each has independent dependencies and build configuration.
 
 ## Full Module Table
 
-### Syscall (`src/syscall/mod.rs`)
+### Syscall (`src/syscall.rs`)
 
-SSDT (System Service Dispatch Table): 256-slot `lazy_static` array mapping RAX number to handler function pointer. Permission table maps each syscall number to allowed privilege level. 32+ handlers for RAX 0-76.
+SSDT (System Service Dispatch Table): a 256-slot array mapping the RAX number to a handler function pointer. A permission table maps each syscall number to its required privilege level. There are **37 assigned syscalls** (RAX 0-99); the authoritative table is [`docs/kernel/syscalls.md`](../kernel/syscalls.md).
 
 All wrappers return `Result<T, i64>` where `T` is the return type and `i64` is the negative errno on failure.
 
-**Foundation syscalls** (RAX 0-29):
+**Assigned syscalls** (libneodos wrappers map 1:1):
 
-| Name | RAX | Signature | Description |
-| ------ | ----- | ----------- | ------------- |
-| `exit` | 0 | `(code: i32) -> !` | Terminate process |
-| `write` | 1 | `(fd: u64, buf: &[u8]) -> usize` | Write to file/pipe |
-| `yield` | 2 | `() -> ()` | Yield CPU |
-| `getpid` | _(removed)_ | Ob API | Use `ob_open(\Global\Info\Process)` + `ob_query_info(ProcessId=34)` |
-| `read` | 4 | `(fd: u64, buf: &mut [u8]) -> usize` | Read from file/pipe |
-| `pipe` | 5 | `() -> [u64; 2]` | Create pipe → [read_fd, write_fd] |
-| `dup2` | 6 | `(old_fd: u64, new_fd: u64) -> u64` | Duplicate file descriptor |
-| `spawn` | 7 | `(path: &str, args: &[&str]) -> u64` | Spawn process, returns PID |
-| `readdir` | 8 | `(fd: u64, buf: &mut [u8]) -> usize` | Read directory entries |
-| `waitpid` | 9 | `(pid: u64) -> i32` | Wait for child to exit |
-| `open` | 10 | `(path: &str) -> u64` | Open file → fd |
-| `close` | 13 | `(fd: u64) -> ()` | Close file descriptor |
-| `chdir` | 16 | `(path: &str) -> ()` | Change working directory |
-| `brk` | 18 | `(addr: u64) -> u64` | Set program break |
-| `mmap` | 19 | `(addr: u64, size: u64, prot: i32, flags: i32) -> u64` | Memory map |
-| `munmap` | 20 | `(addr: u64, size: u64) -> ()` | Unmap memory |
-| `loadlib` | 21 | `(path: &str, slot: u32) -> ()` | Load NXL library |
-| `thread_create` | 22 | `(entry: usize, arg: u64) -> u64` | Create thread |
-| `thread_join` | 23 | `(tid: u64) -> u64` | Join thread |
-| `set_exception_handler` | 29 | `(handler: usize) -> ()` | Set exception handler |
+| RAX | Name | Description |
+| ----- | ------ | ------------- |
+| 0 | `exit` | Terminate process |
+| 1 | `yield` | Yield CPU |
+| 2 | `wait_alertable` | Alertable wait (dispatch pending APC) |
+| 3 | `sleep_ex` | Alertable sleep |
+| 4 | `set_exception_handler` | Set SEH handler |
+| 10 | `brk` | Set program break |
+| 11 | `mmap` | Map memory (lazy) |
+| 12 | `munmap` | Unmap memory |
+| 20 | `write` | Write to file/pipe |
+| 21 | `read` | Read from file/pipe |
+| 22 | `dup2` | Duplicate file descriptor |
+| 23 | `close` | Close file descriptor |
+| 24 | `poll` | Poll multiple fds |
+| 25 | `loadlib` | Load NXL library |
+| 30 | `cursor_blink` | Toggle cursor blink |
+| 35 | `driver_unload` (admin) | Unload a NEM driver |
+| 36 | `icmp_ping` | ICMP echo request → RTT (µs) |
+| 40-48 | `ob_*` | Object Manager (see below) |
+| 50-59 | `cm_*` | Registry (Cm) (see below) |
+| 99 | `debug_dump` | Diagnostic dump |
 
-**Extended syscalls** (RAX 40-76):
+Legacy wrappers `getpid`, `pipe`, `spawn`, `readdir`, `waitpid`, `open`, `chdir`,
+`thread_create` and `thread_join` were removed and migrated to the Ob API
+(e.g. `getpid` → `ob_query_info(ProcessId = 34)`; file/dir operations →
+`ob_open`/`ob_create`/`ob_query_info`/`ob_set_info`). Power control is exposed as
+`ob_power_shutdown()` / `ob_power_reboot()`:
 
-| Name | RAX | Description |
-| ------ | ----- | ------------- |
-| `wait_alertable` | 40 | Wait with alertable flag |
-| `sleep_ex` | 41 | Sleep with microsecond resolution |
-| `poweroff` | _(removed)_ | Use `ob_power_shutdown()` via Ob API |
-| `ob_power_shutdown` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerShutdown)` |
-| `ob_power_reboot` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerReboot)` |
-| `chdir_parent` | 47 | Change to parent directory |
-| `cursor_blink` | 53 | Toggle cursor blink |
-| `fsck` | _(removed — Ob API)_ | Use `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on a Filesystem handle |
-| `driver_unload` | 58 | Unload a NEM driver |
-| `poll` | 59 | Poll multiple fds for readiness |
+| Name | Mechanism | Description |
+| ------ | ----------- | ------------- |
+| `ob_power_shutdown` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerShutdown=37)` |
+| `ob_power_reboot` | Ob API | Open `\System\PowerManager` + `ob_set_info(PowerReboot=38)` |
 
-**Object Manager syscalls** (RAX 60-66, the Ob API):
+**Object Manager syscalls** (RAX 40-48, the Ob API):
 
 | Name | RAX | Description |
 | ------ | ----- | ------------- |
-| `ob_open` | 60 | Open Ob object by path → handle |
-| `ob_create` | 61 | Create Ob object (File, Directory, Pipe, etc.) |
-| `ob_query_info` | 62 | Query object info (ReadContent, VfsDirEnum, etc.) |
-| `ob_set_info` | 63 | Set object info (WriteContent, VfsRename, etc.) |
-| `ob_enum` | 64 | Enumerate objects (directory listing) |
-| `ob_wait` | 65 | Wait on object for signal/event |
-| `ob_destroy` | 66 | Destroy Ob object |
+| `ob_open` | 40 | Open Ob object by path → handle |
+| `ob_create` | 41 | Create Ob object (File, Directory, Pipe, etc.) |
+| `ob_query_info` | 42 | Query object info (ReadContent, FsckStatus, etc.) |
+| `ob_set_info` | 43 | Set object info (WriteContent, VfsRename, etc.) |
+| `ob_enum` | 44 | Enumerate objects (directory listing) |
+| `ob_wait` | 45 | Wait on object for signal/event |
+| `ob_destroy` | 46 | Destroy Ob object |
+| `ob_service` | 47 | Service control (admin) |
+| `ob_snapshot` | 48 | Filesystem snapshot operations (admin) |
 
-**Registry syscalls** (RAX 67-76, the Cm API):
+**Registry syscalls** (RAX 50-59, the Cm API):
 
 | Name | RAX | Description |
 | ------ | ----- | ------------- |
-| `cm_open_key` | 67 | Open registry key |
-| `cm_create_key` | 68 | Create registry key |
-| `cm_query_value` | 69 | Read registry value |
-| `cm_set_value` | 70 | Write registry value |
-| `cm_enum_key` | 71 | Enumerate subkeys |
-| `cm_enum_value` | 72 | Enumerate values |
-| `cm_delete_key` | 73 | Delete registry key |
-| `cm_flush_key` | 74 | Flush key to disk |
-| `cm_load_hive` | 75 | Load registry hive |
-| `cm_unload_hive` | 76 | Unload registry hive |
+| `cm_open_key` | 50 | Open registry key |
+| `cm_create_key` | 51 | Create registry key |
+| `cm_query_value` | 52 | Read registry value |
+| `cm_set_value` | 53 | Write registry value |
+| `cm_enum_key` | 54 | Enumerate subkeys |
+| `cm_enum_value` | 55 | Enumerate values |
+| `cm_delete_key` | 56 | Delete registry key |
+| `cm_flush_key` | 57 | Flush key to disk |
+| `cm_load_hive` | 58 | Load registry hive (admin) |
+| `cm_unload_hive` | 59 | Unload registry hive (admin) |
 
 All use `int 0x80` via inline assembly.
 
@@ -269,13 +267,16 @@ NXL (NeoDOS eXecutable Library) files are loaded via `sys_loadlib` (RAX 21) into
 
 Slot allocation is static; each NXL has a fixed slot that cannot be changed at runtime.
 
-## ABI Table (Version 7)
+## ABI Table (Version 8)
 
-Version 7 cleaned up legacy dead entries from the struct definitions. Key ABI structs:
+Current ABI is **v8**. Key ABI structs (all `#[repr(C)]`, defined in `libneodos/src/syscall.rs`):
 
-- `ObBasicInfo` — base info for any Ob object (type, flags, access mask)
-- `ObEnumEntry` — directory listing entry (name, type, size)
-- `ObProcessInfo` — process query result (pid, name, state, priority)
-- `ObPipeInfo` — pipe query result (pipe_id, refcount, bytes_available)
+- `ObBasicInfo` — base info for any Ob object (type, refcount, name)
+- `ObEnumEntry` — directory listing entry (id, type, name, mode, size)
+- `ObProcessInfo` — process query result (pid, parent pid, priority, thread count, state)
+- `CpuStatsEntry` / `ThreadStatsEntry` — SMP observability snapshots (classes 24/25)
+- `ProcSnapshotHeader` / `ProcessInfoRaw` / `ThreadInfoRaw` — coherent process+thread snapshot (class 26)
 
-Struct layout is `#[repr(C)]` with explicit padding where needed. All structs defined in `src/abi.rs` and re-exported from `libneodos`. NEM drivers and NXL libraries that interact with these structs must match v7 layout exactly.
+NEM drivers and NXL libraries that interact with these structs must match the v8
+layout exactly. The kernel-side definitions live in
+`neodos-kernel/src/syscall/ob/types.rs`.
