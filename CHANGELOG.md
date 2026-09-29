@@ -6,6 +6,16 @@
 
 ### Fixed
 
+- **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**
+  `init_e1000_hw()` previously set `RCTL.EN` **before** programming
+  `RDBAL/RDBAH/RDLEN/RDH/RDT` and the per-descriptor `addr`/`status`, enabling
+  the receive engine against a partially built ring. That produced descriptors
+  with `DD` set and `length == 0` (320–1248 per boot) and caused frames present
+  on the wire — notably a DHCP `OFFER` — to be dropped, forcing a `DISCOVER`
+  retry. The ring is now fully programmed first and `RCTL.EN` is set last
+  (matches the Intel 8254x init flow and the Linux `e1000` driver). No change to
+  descriptor consumption, RX polling, the socket path, the scheduler or DHCP
+  timing.
 - **e1000 link state is now real, not assumed (#339).** The NEM e1000 driver
   exposed the `NetworkInterface::is_link_up` default (`true`), so the kernel
   always reported the NIC as up even before the controller/link settled.
@@ -20,13 +30,15 @@
 
 ### Notes
 
+- #341 evidence (see `docs/investigation/netd-dhcp-first-discover-2026-09-27.md`):
+  a controlled A/B changing only the RX init order moved `DD+len=0` from
+  320–1248/boot to **0** and the guest-side OFFER-loss class (`GUEST_MISS`)
+  from 6/25 to **0/25**, while the independent external server miss
+  (`EXTERNAL_MISS`) stayed unchanged (6/25 vs 7/25).
 - The #339 investigation determined that the first DHCP `DISCOVER` is not lost
-  during an RX/link bring-up window: RX is demonstrably delivering frames at the
-  moment the first `DISCOVER` is sent, and the link is up seconds earlier. The
-  intermittent first-`DISCOVER` loss is server/vNIC-side and is recovered by the
-  retry (retry window ~50 ms in the current build, not ~35 s). The link-state
-  work above is the correct driver/NIC readiness fix; the residual retry is
-  tracked separately (scheduler-driven RX polling, #338/#331).
+  during an RX/link bring-up window. The intermittent first-`DISCOVER` loss has
+  two independent remainders: an external server miss and a `dhcpd` timeout that
+  is counted in `sys_yield` iterations; both are tracked separately.
 
 ## v0.51.2 — 2026-09-27
 

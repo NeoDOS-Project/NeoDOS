@@ -296,10 +296,19 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     let ctrl = read_reg(REG_CTRL);
     write_reg(REG_CTRL, ctrl | CTRL_SLU);
 
-    // Initialize RX
-    write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
+    // Initialize RX.
+    //
+    // Order matters: the receive engine must not be enabled while the
+    // descriptor ring is only partially built. If `RCTL.EN` is set first, the
+    // controller can run against a ring whose base/length and per-descriptor
+    // buffer addresses are not yet programmed, which produces descriptors with
+    // `DD` set and `length == 0` and causes received frames (e.g. a DHCP OFFER)
+    // to be dropped. Program the whole ring, then enable RX last.
+    // (Investigation: docs/investigation/netd-dhcp-first-discover-2026-09-27.md,
+    //  issue #341. Matches the Intel 8254x init flow and the Linux e1000 driver,
+    //  which enables RX only after the ring is initialized.)
 
-    // Set up RX descriptor ring (translate virtual → physical for DMA)
+    // 1. RX descriptor ring base/length/head/tail.
     let rx_virt = &raw const RX_DESCS as u64;
     let rx_phys = hst_virt_to_phys(rx_virt);
     if rx_phys == 0 { return false; }
@@ -309,7 +318,7 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     write_reg(REG_RDH, 0);
     write_reg(REG_RDT, (NUM_RX_DESC - 1) as u32);
 
-    // Initialize RX descriptor buffers
+    // 2. RX descriptor buffers (must be valid before hardware can fetch them).
     let rx_descs = core::slice::from_raw_parts_mut(
         &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
@@ -320,6 +329,9 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
         desc.addr = buf_phys;
         desc.status = 0;
     }
+
+    // 3. Enable RX only now that the whole ring is programmed.
+    write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
 
     // Initialize TX
     write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
