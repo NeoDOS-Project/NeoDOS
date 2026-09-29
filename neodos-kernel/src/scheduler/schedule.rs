@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::log::LogSubsys;
-use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, IDLE_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
+use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
 use crate::scheduler::Scheduler;
 use crate::scheduler::lifecycle::reap_pending_zombies;
 
@@ -310,8 +310,44 @@ impl Scheduler {
         core::ptr::null_mut()
     }
 
+    /// #346: undo a committed non-dispatchable candidate and keep `tid` Running.
+    ///
+    /// `schedule_with(require_ring3=true)` is allowed to fall back to the idle
+    /// Kthread (a Ring-0 frame). The syscall-return path then rejects that
+    /// candidate and resumes the original Ring-3 thread. This helper restores
+    /// the scheduler-visible identity of that thread: it removes `tid` from its
+    /// run queue, makes it the scheduler's current thread and marks it
+    /// `Running`. Returns `(ptr, pid, kernel_stack_top)` so the caller can also
+    /// restore the per-CPU `KPRCB.current_thread/current_pid/idle` and
+    /// `TSS.RSP0`. Omitting the `KPRCB` restore is what let the timer later
+    /// treat the idle Kthread as the running context and store a Ring-3 frame
+    /// into its `rsp` (#346).
+    pub fn resume_current_after_rejected_dispatch(
+        &mut self,
+        tid: u32,
+    ) -> Option<(*mut Kthread, u32, u64)> {
+        let (pid, ks_top) = {
+            let k = self.find_kthread(tid)?;
+            (k.pid, k.kernel_stack_top)
+        };
+        let ptr = self.find_kthread_ptr(tid);
+        self.current_tid = tid;
+        if let Some(current) = self.find_kthread_mut(tid) {
+            Self::remove_from_run_queue(current);
+            current.state = ThreadState::Running;
+        }
+        Some((ptr, pid, ks_top))
+    }
+
     /// Find the idle Kthread for a specific CPU (0 = BSP idle / IDLE_TID).
-    /// Falls back to the BSP idle when the CPU has no registered idle yet.
+    ///
+    /// #346 / #293 stack-ownership invariant: an idle Kthread may only be
+    /// returned for the CPU that owns it (`k.cpu == cpu`). The former global
+    /// fallback to `IDLE_TID` returned the BSP idle for any CPU that had not
+    /// registered its own idle yet; on SMP that let two CPUs adopt one
+    /// `Kthread` and execute on a single kernel stack (STACK_OWNER_MISMATCH ->
+    /// frame/canary corruption). Returning null here lets the caller fail
+    /// closed instead of silently crossing CPUs.
     pub fn find_idle_ptr(&self, cpu: u32) -> *mut Kthread {
         for th in self.kthreads.iter() {
             if let Some(k) = th {
@@ -320,7 +356,7 @@ impl Scheduler {
                 }
             }
         }
-        self.find_kthread_ptr(IDLE_TID)
+        core::ptr::null_mut()
     }
 
     /// Register the per-CPU idle thread for an AP. Called by the AP itself once

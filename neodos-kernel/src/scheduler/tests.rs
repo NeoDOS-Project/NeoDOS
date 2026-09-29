@@ -137,6 +137,73 @@ pub fn register_tests() {
         test_eq!(cross, Some(false));
     });
 
+    test_case!("find_idle_ptr_no_cross_cpu_fallback", {
+        // #346/#293: an idle Kthread may only be returned for the CPU that
+        // owns it. The old global fallback to IDLE_TID returned the BSP idle
+        // for any CPU without a registered idle yet, letting two CPUs adopt
+        // one Kthread and execute on a single kernel stack.
+        let mut sched = Scheduler::new(); // registers idle TID=1 on cpu=0
+        let p0 = sched.find_idle_ptr(0);
+        test_true!(!p0.is_null());
+        unsafe { test_eq!((*p0).cpu, 0); }
+        // No idle registered for cpu 1 yet: must be null, never the BSP idle.
+        test_true!(sched.find_idle_ptr(1).is_null());
+        test_true!(sched.find_idle_ptr(7).is_null());
+        // Register an AP idle and verify exact ownership.
+        let slot = sched.alloc_kthread_slot().unwrap();
+        let mut k = Kthread::new_idle(11, 0, 0x400000, 0x800000);
+        k.cpu = 1;
+        sched.kthreads[slot] = Some(Box::new(k));
+        let p1 = sched.find_idle_ptr(1);
+        test_true!(!p1.is_null());
+        unsafe {
+            test_eq!((*p1).cpu, 1);
+            test_eq!((*p1).tid, 11);
+        }
+        test_true!(p1 != p0);
+    });
+
+    test_case!("sched_keep_current_recovery_identity", {
+        // #346 regression: a user thread whose timeslice expires inside a
+        // syscall is published `Ready` with a Ring-0 frame (cs=0x08). On the
+        // syscall return, `schedule_with(require_ring3=true)` rejects it and
+        // falls through to the idle Kthread. The recovery must keep the current
+        // thread Running, out of the run queue, and restore the scheduler/CPU
+        // identity to it. The missing restore left the CPU's KPRCB pointing at
+        // the idle Kthread - the writer that corrupted TID=1's frame.
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        set_test_current(&mut sched, 3);
+        // Make the saved dispatch frame Ring 0 (interrupted inside a syscall).
+        {
+            let k = sched.find_kthread_mut(3).unwrap();
+            let cs_slot = (k.rsp + 15 * 8 + 8) as *mut u64;
+            unsafe { core::ptr::write_volatile(cs_slot, 0x08); }
+        }
+        // Publish Ready as `on_timer_tick` does on timeslice expiry.
+        {
+            let k = sched.find_kthread_mut(3).unwrap();
+            k.state = ThreadState::Ready;
+            Scheduler::enqueue_to_cpu_run_queue(k);
+        }
+        // require_ring3 must not commit the non-Ring3 candidate.
+        let next = sched.schedule_with(true);
+        test_ne!(unsafe { (*next).tid }, 3);
+        // The caller rejects `next` and resumes thread 3.
+        let info = sched.resume_current_after_rejected_dispatch(3);
+        test_true!(info.is_some());
+        let (ptr, pid, ks_top) = info.unwrap();
+        test_true!(!ptr.is_null());
+        test_eq!(pid, 2);
+        test_true!(ks_top != 0);
+        let k = sched.find_kthread(3).unwrap();
+        test_eq!(k.state, ThreadState::Running);
+        test_eq!(sched.current_tid, 3);
+        let queued = crate::arch::x64::cpu_local::with_runqueue(k.cpu as usize, |rq| rq.contains(3));
+        test_eq!(queued, false);
+    });
+
     test_case!("memproc_committed_and_working_set", {
         // MEM-PROC (#274): committed = heap span + mmap; WS = resident heap
         // pages of the process's slot. Driven through the real snapshot path.

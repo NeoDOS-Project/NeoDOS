@@ -222,12 +222,26 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             if current_is_terminated {
                 // Fall through to alternative search / idle — never KEEP_CURRENT
             } else if !current_is_blocked {
-                let old_ks_top = scheduler.find_kthread(tid)
-                    .map(|k| k.kernel_stack_top)
-                    .unwrap_or(next_ks_top);
-                scheduler.current_tid = tid;
-                if let Some(current) = scheduler.find_kthread_mut(tid) {
-                    current.state = ThreadState::Running;
+                // #346: `schedule_with(require_ring3=true)` can commit the idle
+                // Kthread (a Ring-0 frame) as `next` before this recovery runs.
+                // We are not switching to it after all, so undo the side effects
+                // it applied beyond `state`: its idle fallback updated this CPU's
+                // `KPRCB.current_thread/current_pid/idle` (schedule.rs). Leaving
+                // that stale lets the next timer tick treat TID=1 (the BSP idle,
+                // whose stack is the 4 KiB `IDLE_STACK`) as the running context
+                // and store a Ring-3 frame pointer into its `rsp`; the idle then
+                // reads as a bogus Ring-3 dispatch candidate and
+                // `check_kernel_stack_canary` compares `ks_top - 16 KiB`, well
+                // outside the idle stack. Restore the scheduler and per-CPU
+                // identity to the thread we are actually resuming.
+                let (cur_ptr, cur_pid, old_ks_top) = scheduler
+                    .resume_current_after_rejected_dispatch(tid)
+                    .map(|(p, p_pid, ks)| (p, p_pid, ks))
+                    .unwrap_or((core::ptr::null_mut(), pid, next_ks_top));
+                if !cur_ptr.is_null() {
+                    unsafe {
+                        crate::arch::x64::cpu_local::sync_per_cpu_current(cur_ptr, cur_pid);
+                    }
                 }
                 unsafe { crate::arch::x64::gdt::prepare_ring3_return(old_ks_top, tid, pid); }
                 return current_rsp;
