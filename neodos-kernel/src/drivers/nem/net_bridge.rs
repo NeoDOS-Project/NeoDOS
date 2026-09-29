@@ -4,6 +4,11 @@ use crate::net::nic::{NetworkInterface, nic_register, nic_unregister};
 use crate::net::types::{MacAddr, Ipv4Addr};
 use crate::log::LogSubsys;
 static NEXT_NEM_NIC_ID: AtomicU32 = AtomicU32::new(0x8000_0000);
+/// Cached link state reported by the driver for the currently active NEM NIC.
+/// Set through `hst_set_network_link_state` (see `driver_link_up`), which only
+/// reads a register and an atomic, so it is safe from both the netd poll path
+/// and the `SetNicIp` syscall path.
+static NEM_NIC_LINK_UP: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 fn valid_callback_address(addr: usize) -> bool {
     (0x0010_0000..0x1000_0000).contains(&addr)
@@ -37,6 +42,7 @@ impl NetworkInterface for NemNetworkDevice {
     fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
     fn vendor_id(&self) -> u16 { self.vendor_id }
     fn device_id(&self) -> u16 { self.device_pci_id }
+    fn is_link_up(&self) -> bool { NEM_NIC_LINK_UP.load(Ordering::Acquire) }
 
     fn send_packet(&mut self, packet: &[u8]) -> Result<(), ()> {
         if !valid_callback_address(self.send_fn as usize) {
@@ -128,6 +134,7 @@ pub unsafe extern "C" fn hst_register_network_device(
 #[no_mangle]
 pub unsafe extern "C" fn hst_unregister_network_device(nic_id: i32) -> i32 {
     if nic_id < 0 { return -1; }
+    NEM_NIC_LINK_UP.store(false, Ordering::Release);
     let driver_id = crate::drivers::nem::driver::current_driver_id();
     if driver_id != 0 {
         crate::drivers::hotreload::untrack_resource(
@@ -139,4 +146,16 @@ pub unsafe extern "C" fn hst_unregister_network_device(nic_id: i32) -> i32 {
     nic_unregister(nic_id as u32);
     kinfo!(LogSubsys::Net, "Unregistered NEM NIC id={}", nic_id);
     0
+}
+
+/// Store the driver-reported link state for NEM NICs.
+///
+/// The e1000 driver calls this from `driver_link_up`, which is reachable both
+/// from `network_poll_all` (netd, no locks held) and from the `SetNicIp`
+/// syscall path (which calls `arp::send_gratuitous_arp` while holding
+/// `NIC_REGISTRY`). Only an atomic store happens here, so it never takes a lock
+/// and cannot deadlock with `NIC_REGISTRY`.
+#[no_mangle]
+pub extern "C" fn hst_set_network_link_state(link_up: u32) {
+    NEM_NIC_LINK_UP.store(link_up != 0, Ordering::Release);
 }

@@ -32,6 +32,25 @@ impl super::nic::NetworkInterface for CaptureNic {
     fn ip_address(&self) -> Ipv4Addr { self.ip }
 }
 
+/// Test NIC with a controllable link state, used by the #339 regression tests.
+struct LinkNic {
+    mac: MacAddr,
+    ip: Ipv4Addr,
+    up: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
+}
+
+impl super::nic::NetworkInterface for LinkNic {
+    fn mac_address(&self) -> MacAddr { self.mac }
+    fn name(&self) -> &str { "link-nic" }
+    fn send_packet(&mut self, _packet: &[u8]) -> Result<(), ()> { Ok(()) }
+    fn poll_packet(&mut self, _buf: &mut [u8]) -> Option<usize> { None }
+    fn set_ip_address(&mut self, ip: Ipv4Addr) { self.ip = ip; }
+    fn ip_address(&self) -> Ipv4Addr { self.ip }
+    fn is_link_up(&self) -> bool {
+        self.up.load(core::sync::atomic::Ordering::Acquire)
+    }
+}
+
 fn capture_nic(mac_last: u8) -> CaptureNic {
     CaptureNic {
         mac: MacAddr::new([0x02, 0, 0, 0, 0, mac_last]),
@@ -204,6 +223,40 @@ pub fn register_net_tests() {
         let reg = NicRegistry::new();
         test_eq!(reg.count(), 0);
         test_true!(reg.default_nic_id().is_none());
+    });
+
+    // #339: a freshly registered NIC must not be advertised as link-up until
+    // its driver reports a real link, and the registry must follow the driver
+    // once polled (netd's `network_poll_all` path).
+    test_case!("net_nic_link_state_follows_driver_poll", {
+        use core::sync::atomic::Ordering;
+        let up = alloc::sync::Arc::new(core::sync::atomic::AtomicBool::new(false));
+        let nic = LinkNic {
+            mac: MacAddr::new([0x02, 0, 0, 0, 0, 0x39]),
+            ip: Ipv4Addr::unspecified(),
+            up: up.clone(),
+        };
+        let mut reg = NicRegistry::new();
+        let id = reg.register(alloc::boxed::Box::new(nic)).expect("register");
+
+        // Before the first poll: not advertised as usable.
+        test_true!(!reg.link_up(id));
+        test_true!(!reg.default_link_up());
+
+        // Driver reports link-down: the registry must not flip it up.
+        reg.poll_link_state();
+        test_true!(!reg.link_up(id));
+
+        // Driver reports link-up: the next poll propagates it.
+        up.store(true, Ordering::Release);
+        reg.poll_link_state();
+        test_true!(reg.link_up(id));
+        test_true!(reg.default_link_up());
+
+        // Driver reports link-down again: the registry follows.
+        up.store(false, Ordering::Release);
+        reg.poll_link_state();
+        test_true!(!reg.link_up(id));
     });
 
     test_case!("net_nic_gateway_default_and_next_hop", {

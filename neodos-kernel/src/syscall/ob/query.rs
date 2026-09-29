@@ -1223,11 +1223,12 @@ pub fn handler_ob_query_info(regs: crate::syscall::Registers) -> u64 {
                 let device_id = crate::net::nic::nic_get_device_id(nic_id).unwrap_or(0);
                 let name = crate::net::nic::nic_get_name(nic_id).unwrap_or([0u8; 16]);
                 let description = crate::net::nic::nic_get_description(nic_id).unwrap_or([0u8; 48]);
+                let link_up = crate::net::nic::nic_is_link_up(nic_id);
                 let raw = NicInfoRaw {
                     nic_id,
                     mac,
                     ip: ip.0,
-                    link_up: 1,
+                    link_up: link_up as u8,
                     vendor_id,
                     device_id,
                     name,

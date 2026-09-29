@@ -2,6 +2,32 @@
 
 <!-- markdownlint-disable MD013 MD024 MD056 -->
 
+## Unreleased
+
+### Fixed
+
+- **e1000 link state is now real, not assumed (#339).** The NEM e1000 driver
+  exposed the `NetworkInterface::is_link_up` default (`true`), so the kernel
+  always reported the NIC as up even before the controller/link settled.
+  `init_e1000_hw()` now performs a bounded wait for `STATUS.LU` and caches
+  readiness; the driver exports `driver_link_up()`, which publishes live link
+  state via `hst_set_network_link_state`, and `netd` stores it in
+  `NicSlot::link_up` through `nic_poll_link_state()`. The `NicInfo` query and
+  `netcfg`'s link-up edge detection now read the cached real state instead of a
+  hardcoded `1`. A freshly registered NIC defaults to link-down and is never
+  advertised as usable before its driver reports a real link.
+- Regression test `net_nic_link_state_follows_driver_poll` (kernel 744 → 745).
+
+### Notes
+
+- The #339 investigation determined that the first DHCP `DISCOVER` is not lost
+  during an RX/link bring-up window: RX is demonstrably delivering frames at the
+  moment the first `DISCOVER` is sent, and the link is up seconds earlier. The
+  intermittent first-`DISCOVER` loss is server/vNIC-side and is recovered by the
+  retry (retry window ~50 ms in the current build, not ~35 s). The link-state
+  work above is the correct driver/NIC readiness fix; the residual retry is
+  tracked separately (scheduler-driven RX polling, #338/#331).
+
 ## v0.51.2 — 2026-09-27
 
 ### Fixed

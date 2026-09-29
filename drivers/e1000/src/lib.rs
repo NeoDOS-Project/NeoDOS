@@ -117,6 +117,7 @@ extern "C" {
     ) -> i32;
     fn hst_unregister_network_device(nic_id: i32) -> i32;
     fn hst_virt_to_phys(virt: u64) -> u64;
+    fn hst_set_network_link_state(link_up: u32);
 }
 
 fn log_bytes(buf: &[u8]) {
@@ -180,6 +181,10 @@ const EECD_EE_PRES: u32 = 0x00000010;
 const NUM_RX_DESC: usize = 32;
 const NUM_TX_DESC: usize = 16;
 const RX_BUF_SIZE: usize = 2048;
+/// Upper bound (ms) on the link-up wait during `init_e1000_hw`. The wait
+/// normally ends as soon as the link is up; this only bounds the cost when the
+/// link never comes up (no cable / no peer).
+const LINK_READY_TIMEOUT_MS: u64 = 4_000;
 
 // ── Descriptor structures ──
 
@@ -223,6 +228,8 @@ static MMIO_BASE: AtomicU32 = AtomicU32::new(0);
 static NIC_ID: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
 static RX_CUR: AtomicU32 = AtomicU32::new(0);
 static TX_CUR: AtomicU32 = AtomicU32::new(0);
+/// Set once the controller/link is actually ready to carry traffic.
+static LINK_READY: AtomicU8 = AtomicU8::new(0);
 
 // Static DMA buffers (4K-aligned for descriptor rings)
 #[repr(align(4096))]
@@ -329,6 +336,22 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     // Enable interrupts
     write_reg(REG_IMS, 0x1F6DC);
     write_reg(REG_ICR, 0xFFFFFFFF);
+
+    // Bounded wait for the link to come up (`STATUS.LU`). The controller is
+    // brought up long before network services start, so this is a no-op in the
+    // common case; it only guards against exposing a NIC whose link has not
+    // settled. The timeout bounds the cost when no cable/peer is present.
+    let link_start = hst_get_ticks();
+    while read_reg(REG_STATUS) & STATUS_LINK_UP == 0 {
+        if hst_get_ticks().wrapping_sub(link_start) > LINK_READY_TIMEOUT_MS {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    LINK_READY.store(
+        (read_reg(REG_STATUS) & STATUS_LINK_UP != 0) as u8,
+        Ordering::Release,
+    );
 
     true
 }
@@ -534,9 +557,28 @@ pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     0
 }
 
+/// Query real link state for the kernel NIC registry.
+///
+/// Called by the kernel through the NEM link-state vtable. It must not block or
+/// take locks: it reports the cached readiness from `init_e1000_hw` plus a
+/// live `STATUS.LU` read, and drives the kernel's link-state store from here.
+#[no_mangle]
+pub extern "C" fn driver_link_up() -> i32 {
+    if INITIALIZED.load(Ordering::Acquire) == 0 {
+        return 0;
+    }
+    let hw = read_reg(REG_STATUS) & STATUS_LINK_UP != 0;
+    let ready = LINK_READY.load(Ordering::Acquire) != 0;
+    let up = (hw || ready) as i32;
+    unsafe { hst_set_network_link_state(up as u32); }
+    up
+}
+
 #[no_mangle]
 pub extern "C" fn driver_fini() {
     let nic_id = NIC_ID.load(Ordering::Relaxed);
+    LINK_READY.store(0, Ordering::Release);
+    unsafe { hst_set_network_link_state(0); }
     if nic_id != 0xFFFFFFFF {
         unsafe { hst_unregister_network_device(nic_id as i32); }
     }
