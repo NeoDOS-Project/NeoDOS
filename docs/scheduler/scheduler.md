@@ -168,10 +168,14 @@ Invariant:
 Ready + saved dispatch frame  =>  cs & 3 == 3   (for user threads)
 ```
 
-The same gate is applied to the timer switch-out save blocks in `arch/x64/idt.rs`
-(user-preempt and kernel-preempt branches): a non-Ring-3 frame is never published
-as a Ready dispatch frame. Kernel threads (`pid == 0`) are exempt — they are
-dispatched through their Ring-0 frame by design.
+The same gate is applied to the timer switch-out save block in `arch/x64/idt.rs`
+(user-preempt branch): a non-Ring-3 frame is never published as a Ready dispatch
+frame for a user thread. Kernel threads and idle threads (threads without a user
+image: `Eprocess::user_slot == None`, or `is_idle`) are exempt — they run in
+Ring 0 by design and are dispatched through their Ring-0 frame by
+`schedule_with(require_ring3 = false)`. Exempting them by `pid == 0` would be
+wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netd`), so
+keying on the pid starves them.
 
 ---
 

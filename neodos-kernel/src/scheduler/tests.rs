@@ -2105,41 +2105,43 @@ pub fn register_tests() {
     // depending on IRQ timing.
     // ═══════════════════════════════════════════════════════════════════
 
-    // ── Test A: a Ring-3 frame is dispatchable; a Ring-0 frame is not ──
+    // ── Test A: a Ring-3 frame is dispatchable; a Ring-0 frame is not, unless
+    //            the thread is a genuine kernel thread (netd regression) ──
     test_case!("n338_ready_frame_must_be_ring3", {
         use crate::scheduler::schedule::{frame_is_ring3, thread_dispatch_frame_is_ring3};
-        use crate::scheduler::stack::{init_ring3_frame, init_ring0_frame};
 
-        // A user (Ring 3) thread: its saved entry frame must be dispatchable.
+        // A user (Ring 3) thread whose saved frame is Ring 3 → dispatchable.
         let user_stack = crate::scheduler::AlignedKStack::new_boxed();
         let user_ktop = user_stack.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
-        let user_rsp = init_ring3_frame(user_ktop, 0x400000, 0x800000);
+        let user_rsp = crate::scheduler::init_ring3_frame(user_ktop, 0x400000, 0x800000);
         let mut uk = Kthread::new_ring3_with_stack(7, 42, 0x400000, user_rsp, user_ktop, user_stack);
         uk.state = ThreadState::Ready;
         test_eq!(unsafe { *((uk.rsp + 128) as *const u64) & 3 }, 3);
         test_true!(frame_is_ring3(&uk));
-        test_true!(thread_dispatch_frame_is_ring3(&uk));
+        test_true!(thread_dispatch_frame_is_ring3(&uk, false));
 
-        // Simulate being preempted inside a syscall: the timer saved a Ring-0
-        // kernel frame (cs == 0x08) as the authoritative `rsp`.
+        // A user thread preempted inside a syscall: saved frame is Ring 0
+        // (cs == 0x08) and may NOT be published as a Ready dispatch frame.
         let kstack = crate::scheduler::AlignedKStack::new_boxed();
         let ktop = kstack.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
-        let ring0_rsp = init_ring0_frame(ktop, 0x400000);
+        let ring0_rsp = crate::scheduler::stack::init_ring0_frame(ktop, 0x400000);
         let mut kk = Kthread::new_ring3_with_stack(8, 43, 0x400000, ring0_rsp, ktop, kstack);
         kk.state = ThreadState::Ready;
         test_eq!(unsafe { *((kk.rsp + 128) as *const u64) & 3 }, 0);
         test_true!(!frame_is_ring3(&kk));
-        // A user thread may NOT be published Ready with a Ring-0 frame.
-        test_true!(!thread_dispatch_frame_is_ring3(&kk));
+        test_true!(!thread_dispatch_frame_is_ring3(&kk, false));
 
-        // Kernel threads (pid 0) are exempt: they are dispatched Ring 0 by design.
-        let kthread_stack = crate::scheduler::AlignedKStack::new_boxed();
-        let kt_ktop = kthread_stack.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
-        let kt_rsp = init_ring0_frame(kt_ktop, 0x500000);
-        let mut kt = Kthread::new_ring3_with_stack(9, 0, 0x500000, kt_rsp, kt_ktop, kthread_stack);
+        // Regression guard for the netd starvation bug: a *kernel* thread runs
+        // in Ring 0 by design and its Ring-0 frame IS a valid dispatch frame.
+        // `is_kernel_thread == true` exempts it even though its frame is Ring 0.
+        // (netd has pid != 0, so the old `pid == 0` exemption stranded it.)
+        let kt_stack = crate::scheduler::AlignedKStack::new_boxed();
+        let kt_ktop = kt_stack.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let kt_rsp = crate::scheduler::stack::init_ring0_frame(kt_ktop, 0x500000);
+        let mut kt = Kthread::new_ring3_with_stack(9, 1, 0x500000, kt_rsp, kt_ktop, kt_stack);
         kt.state = ThreadState::Running;
         test_true!(!frame_is_ring3(&kt));
-        test_true!(thread_dispatch_frame_is_ring3(&kt));
+        test_true!(thread_dispatch_frame_is_ring3(&kt, true));
     });
 
     // ── Test A2: a Ring-0-framed Ready user thread is never SELECTED ──
@@ -2189,7 +2191,7 @@ pub fn register_tests() {
         k.priority = PRIORITY_NORMAL;
         sched.kthreads[slot] = Some(Box::new(k));
         // First iteration: running on the entry (Ring-3) frame.
-        test_true!(thread_dispatch_frame_is_ring3(sched.find_kthread(3).unwrap()));
+        test_true!(thread_dispatch_frame_is_ring3(sched.find_kthread(3).unwrap(), false));
 
         // A timer fires inside a blocking syscall: the saved frame is Ring 0.
         // Use a separate stack so the Ring-0 frame does not clobber the Ring-3
@@ -2202,7 +2204,7 @@ pub fn register_tests() {
             k.rsp = ring0_rsp;
         }
         // Invariant: this frame may NOT be published as a Ready dispatch frame.
-        test_true!(!thread_dispatch_frame_is_ring3(sched.find_kthread(3).unwrap()));
+        test_true!(!thread_dispatch_frame_is_ring3(sched.find_kthread(3).unwrap(), false));
         // The syscall return path restores the Ring-3 frame before publishing.
         {
             let k = sched.find_kthread_mut(3).unwrap();
@@ -2254,14 +2256,14 @@ pub fn register_tests() {
                 let k = sched.find_kthread_mut(3).unwrap();
                 k.rsp = ring0_rsp;
                 test_true!(!frame_is_ring3(k));
-                test_true!(!thread_dispatch_frame_is_ring3(k));
+                test_true!(!thread_dispatch_frame_is_ring3(k, false));
             }
             // ...the syscall return captures the Ring-3 frame, which IS valid.
             {
                 let k = sched.find_kthread_mut(3).unwrap();
                 k.rsp = ring3_rsp;
                 test_true!(frame_is_ring3(k));
-                test_true!(thread_dispatch_frame_is_ring3(k));
+                test_true!(thread_dispatch_frame_is_ring3(k, false));
                 // Publish and verify the thread is reachable via the run queue.
                 k.state = ThreadState::Running;
                 Scheduler::make_thread_ready(k);
@@ -2320,6 +2322,44 @@ pub fn register_tests() {
             test_eq!(k.state, ThreadState::Running);
             // A fresh slice is granted so the thread keeps running in-kernel.
             test_eq!(k.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        }
+        // ── Regression guard: a kernel thread (netd, non-zero pid, no user
+        //    image) interrupted in Ring 0 MUST still be published Ready. The
+        //    earlier `pid == 0` exemption stranded netd (pid != 0). ──
+        {
+            let mut sched = Scheduler::new();
+            sched.next_tid = 4;
+            sched.current_tid = 3;
+            let slot = sched.alloc_kthread_slot().unwrap();
+            // Kthread with a real (non-zero) pid and a Ring-0 dispatch frame.
+            let mut k = Kthread::new_ring3(3, 1, 0x400000, 0x800000);
+            k.state = ThreadState::Running;
+            k.time_slice_remaining = 1;
+            k.priority = PRIORITY_NORMAL;
+            // Emulate `spawn_kthread_named`: a kernel Eprocess (no user_slot).
+            sched.kthreads[slot] = Some(Box::new(k));
+            let ep = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep] = Some(Eprocess::new_kernel(1));
+            test_true!(sched.is_kernel_thread(sched.find_kthread(3).unwrap()));
+            sched.on_timer_tick(0x700000, 0x08); // netd always interrupts Ring 0
+            test_eq!(sched.kthreads[slot].as_ref().unwrap().state, ThreadState::Ready);
+        }
+        // ── Same thread class with a *user* Eprocess must NOT be published. ──
+        {
+            let mut sched = Scheduler::new();
+            sched.next_tid = 4;
+            sched.current_tid = 3;
+            let slot = sched.alloc_kthread_slot().unwrap();
+            let mut k = Kthread::new_ring3(3, 2, 0x400000, 0x800000);
+            k.state = ThreadState::Running;
+            k.time_slice_remaining = 1;
+            k.priority = PRIORITY_NORMAL;
+            sched.kthreads[slot] = Some(Box::new(k));
+            let ep = sched.alloc_eprocess_slot().unwrap();
+            sched.eprocesses[ep] = Some(Eprocess::new_ring3(2, 0, 2, "\\", 0x10000000, 0));
+            test_true!(!sched.is_kernel_thread(sched.find_kthread(3).unwrap()));
+            sched.on_timer_tick(0x700000, 0x08);
+            test_eq!(sched.kthreads[slot].as_ref().unwrap().state, ThreadState::Running);
         }
     });
 }
