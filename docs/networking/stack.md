@@ -123,6 +123,26 @@ NIC (e1000)
 5. Userspace DHCP service (`dhcpd.nxe`) configures IP asynchronously
 6. ARP cache begins accepting entries
 
+### Link state (`is_link_up`)
+
+NIC drivers run as NEM modules (`drivers/e1000`). The kernel NEM bridge
+(`src/drivers/nem/net_bridge.rs`) registers a bootstrap `NetworkInterface` at
+driver-load time, so it cannot call back into a driver that is still loading.
+Instead:
+
+- The e1000 driver exports `driver_link_up()`, which reads `STATUS.LU`
+  (with a link-ready flag cached during `init_e1000_hw`) and publishes the
+  state through `hst_set_network_link_state`.
+- `netd` calls `nic::nic_poll_link_state()` once per `network_poll_all()` and
+  stores the result in `NicSlot::link_up`; the `NicInfo` query and `netcfg`'s
+  link-up edge detection read that cached value.
+- A NIC is never advertised as link-up before its driver reports a real link.
+
+The e1000 is polled, not interrupt-driven: RX is drained by `network_poll_all()`
+from `netd` and from the `sys_yield` syscall path. #339 established that this
+polling (not driver link/ring bring-up) is the relevant variable for the first
+DHCP `DISCOVER`.
+
 ### NicRegistry
 
 Manages up to 4 NIC slots. Each slot holds a `Box<dyn NetworkInterface>`.

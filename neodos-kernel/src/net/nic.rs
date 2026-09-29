@@ -30,6 +30,10 @@ struct NicSlot {
     mac: MacAddr,
     vendor_id: u16,
     device_id: u16,
+    /// Last link state polled by [`NicRegistry::poll_link_state`]. The
+    /// `NicInfo` query and `netcfg` edge detection read this, so a missing NIC
+    /// (interface `None`) can still report the last known state.
+    link_up: bool,
 }
 
 pub struct NicRegistry {
@@ -48,6 +52,7 @@ impl NicRegistry {
             mac: MacAddr::new([0; 6]),
             vendor_id: 0,
             device_id: 0,
+            link_up: false,
         };
         NicRegistry {
             nics: [EMPTY; MAX_NICS],
@@ -62,6 +67,12 @@ impl NicRegistry {
                 let mac = interface.mac_address();
                 let vendor = interface.vendor_id();
                 let device = interface.device_id();
+                // Report the driver's real link state at registration, but do not
+                // call back into a driver that is still loading. NEM drivers are
+                // registered before their link query is available; the netd poll
+                // (`poll_link_state`) refreshes this. Default to link-down so a
+                // not-yet-ready NIC is never advertised as usable.
+                let link_up = false;
                 self.nics[i] = NicSlot {
                     interface: Some(interface),
                     ip: Ipv4Addr::unspecified(),
@@ -70,12 +81,37 @@ impl NicRegistry {
                     mac,
                     vendor_id: vendor,
                     device_id: device,
+                    link_up,
                 };
                 self.active_count += 1;
                 return Some(i as u32);
             }
         }
         None
+    }
+
+    /// Refresh `link_up` for every slot from its interface.
+    pub fn poll_link_state(&mut self) {
+        for i in 0..MAX_NICS {
+            if let Some(ref nic) = self.nics[i].interface {
+                self.nics[i].link_up = nic.is_link_up();
+            }
+        }
+    }
+
+    pub fn link_up(&self, id: u32) -> bool {
+        if (id as usize) < MAX_NICS {
+            self.nics[id as usize].link_up
+        } else {
+            false
+        }
+    }
+
+    pub fn default_link_up(&self) -> bool {
+        match self.default_nic_id() {
+            Some(id) => self.link_up(id),
+            None => false,
+        }
     }
 
     pub fn unregister(&mut self, id: u32) {
@@ -205,6 +241,35 @@ pub fn nic_register(interface: Box<dyn NetworkInterface>) -> Option<u32> {
 
 pub fn nic_unregister(id: u32) {
     NIC_REGISTRY.lock().unregister(id);
+}
+
+/// Poll the driver-reported link state of every registered NIC and store it in
+/// the registry.
+///
+/// Called from `network_poll_all` (netd) — the one place allowed to invoke the
+/// driver's `is_link_up` without holding `NIC_REGISTRY`. Lock order is
+/// `NIC_REGISTRY → driver (no locks)`; the driver must not take the registry
+/// lock from `is_link_up`. This is what keeps the `NicInfo` link state and
+/// `netcfg`'s link-up edge detection live even though the NEM bridge bootstrap
+/// object has no pollable vtable at registration time.
+pub fn nic_poll_link_state() {
+    let mut reg = NIC_REGISTRY.lock();
+    for i in 0..MAX_NICS {
+        if let Some(ref nic) = reg.nics[i].interface {
+            let up = nic.is_link_up();
+            reg.nics[i].link_up = up;
+        }
+    }
+}
+
+/// Cached link state of a NIC as last polled by [`nic_poll_link_state`].
+pub fn nic_is_link_up(id: u32) -> bool {
+    NIC_REGISTRY.lock().link_up(id)
+}
+
+/// Link state of the default NIC as last polled by [`nic_poll_link_state`].
+pub fn nic_default_link_up() -> bool {
+    NIC_REGISTRY.lock().default_link_up()
 }
 
 pub fn nic_send_packet(nic_id: u32, packet: &[u8]) -> Result<(), ()> {

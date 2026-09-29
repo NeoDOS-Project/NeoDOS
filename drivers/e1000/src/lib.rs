@@ -117,6 +117,7 @@ extern "C" {
     ) -> i32;
     fn hst_unregister_network_device(nic_id: i32) -> i32;
     fn hst_virt_to_phys(virt: u64) -> u64;
+    fn hst_set_network_link_state(link_up: u32);
 }
 
 fn log_bytes(buf: &[u8]) {
@@ -180,6 +181,10 @@ const EECD_EE_PRES: u32 = 0x00000010;
 const NUM_RX_DESC: usize = 32;
 const NUM_TX_DESC: usize = 16;
 const RX_BUF_SIZE: usize = 2048;
+/// Upper bound (ms) on the link-up wait during `init_e1000_hw`. The wait
+/// normally ends as soon as the link is up; this only bounds the cost when the
+/// link never comes up (no cable / no peer).
+const LINK_READY_TIMEOUT_MS: u64 = 4_000;
 
 // ── Descriptor structures ──
 
@@ -223,6 +228,8 @@ static MMIO_BASE: AtomicU32 = AtomicU32::new(0);
 static NIC_ID: AtomicU32 = AtomicU32::new(0xFFFFFFFF);
 static RX_CUR: AtomicU32 = AtomicU32::new(0);
 static TX_CUR: AtomicU32 = AtomicU32::new(0);
+/// Set once the controller/link is actually ready to carry traffic.
+static LINK_READY: AtomicU8 = AtomicU8::new(0);
 
 // Static DMA buffers (4K-aligned for descriptor rings)
 #[repr(align(4096))]
@@ -289,10 +296,19 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     let ctrl = read_reg(REG_CTRL);
     write_reg(REG_CTRL, ctrl | CTRL_SLU);
 
-    // Initialize RX
-    write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
+    // Initialize RX.
+    //
+    // Order matters: the receive engine must not be enabled while the
+    // descriptor ring is only partially built. If `RCTL.EN` is set first, the
+    // controller can run against a ring whose base/length and per-descriptor
+    // buffer addresses are not yet programmed, which produces descriptors with
+    // `DD` set and `length == 0` and causes received frames (e.g. a DHCP OFFER)
+    // to be dropped. Program the whole ring, then enable RX last.
+    // (Investigation: docs/investigation/netd-dhcp-first-discover-2026-09-27.md,
+    //  issue #341. Matches the Intel 8254x init flow and the Linux e1000 driver,
+    //  which enables RX only after the ring is initialized.)
 
-    // Set up RX descriptor ring (translate virtual → physical for DMA)
+    // 1. RX descriptor ring base/length/head/tail.
     let rx_virt = &raw const RX_DESCS as u64;
     let rx_phys = hst_virt_to_phys(rx_virt);
     if rx_phys == 0 { return false; }
@@ -302,7 +318,7 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     write_reg(REG_RDH, 0);
     write_reg(REG_RDT, (NUM_RX_DESC - 1) as u32);
 
-    // Initialize RX descriptor buffers
+    // 2. RX descriptor buffers (must be valid before hardware can fetch them).
     let rx_descs = core::slice::from_raw_parts_mut(
         &raw mut RX_DESCS.0 as *mut u8 as *mut RxDesc, NUM_RX_DESC
     );
@@ -313,6 +329,9 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
         desc.addr = buf_phys;
         desc.status = 0;
     }
+
+    // 3. Enable RX only now that the whole ring is programmed.
+    write_reg(REG_RCTRL, RCTL_EN | RCTL_UPE | RCTL_MPE | RCTL_BAM | RCTL_SZ_2048 | RCTL_SECRC);
 
     // Initialize TX
     write_reg(REG_TCTRL, TCTL_EN | TCTL_PSP | TCTL_CT | TCTL_COLD);
@@ -329,6 +348,22 @@ unsafe fn init_e1000_hw(mmio: u32) -> bool {
     // Enable interrupts
     write_reg(REG_IMS, 0x1F6DC);
     write_reg(REG_ICR, 0xFFFFFFFF);
+
+    // Bounded wait for the link to come up (`STATUS.LU`). The controller is
+    // brought up long before network services start, so this is a no-op in the
+    // common case; it only guards against exposing a NIC whose link has not
+    // settled. The timeout bounds the cost when no cable/peer is present.
+    let link_start = hst_get_ticks();
+    while read_reg(REG_STATUS) & STATUS_LINK_UP == 0 {
+        if hst_get_ticks().wrapping_sub(link_start) > LINK_READY_TIMEOUT_MS {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    LINK_READY.store(
+        (read_reg(REG_STATUS) & STATUS_LINK_UP != 0) as u8,
+        Ordering::Release,
+    );
 
     true
 }
@@ -534,9 +569,28 @@ pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
     0
 }
 
+/// Query real link state for the kernel NIC registry.
+///
+/// Called by the kernel through the NEM link-state vtable. It must not block or
+/// take locks: it reports the cached readiness from `init_e1000_hw` plus a
+/// live `STATUS.LU` read, and drives the kernel's link-state store from here.
+#[no_mangle]
+pub extern "C" fn driver_link_up() -> i32 {
+    if INITIALIZED.load(Ordering::Acquire) == 0 {
+        return 0;
+    }
+    let hw = read_reg(REG_STATUS) & STATUS_LINK_UP != 0;
+    let ready = LINK_READY.load(Ordering::Acquire) != 0;
+    let up = (hw || ready) as i32;
+    unsafe { hst_set_network_link_state(up as u32); }
+    up
+}
+
 #[no_mangle]
 pub extern "C" fn driver_fini() {
     let nic_id = NIC_ID.load(Ordering::Relaxed);
+    LINK_READY.store(0, Ordering::Release);
+    unsafe { hst_set_network_link_state(0); }
     if nic_id != 0xFFFFFFFF {
         unsafe { hst_unregister_network_device(nic_id as i32); }
     }
