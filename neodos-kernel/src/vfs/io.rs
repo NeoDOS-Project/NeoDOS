@@ -89,7 +89,9 @@ impl IoStack {
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level != PageCacheLevel::None && count == 1 && buf.len() >= 512 {
+            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
             let mut cache_lock = crate::globals::PAGE_CACHE.lock();
+            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
             if let Some(dev) = bdevs_lock.get(self.device_id) {
                 if let Ok(sector) = cache_lock.get_sector(abs_lba as u32, dev) {
@@ -114,7 +116,9 @@ impl IoStack {
         let abs_lba = self.translate_lba(lba);
 
         if self.cache_level == PageCacheLevel::L2 && count == 1 && buf.len() >= 512 {
+            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
             let mut cache_lock = crate::globals::PAGE_CACHE.lock();
+            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdevs_lock = crate::globals::BLOCK_DEVICES.lock();
             if let Some(dev) = bdevs_lock.get(self.device_id) {
                 if let Ok(sector) = cache_lock.get_sector_mut(abs_lba as u32, dev) {

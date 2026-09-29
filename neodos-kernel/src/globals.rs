@@ -49,6 +49,8 @@ pub fn with_vfs<F, R>(f: F) -> R
 where
     F: FnOnce(&mut crate::fs::vfs::Vfs) -> R
 {
+    // Canonical order VFS -> PAGE_CACHE -> BLOCK_DEVICES (#343).
+    let _order = crate::lock_order::Guard::new(crate::lock_order::VFS);
     if diag_enabled() {
         let tid = crate::scheduler::current_tid();
         if let Some(mut lock) = VFS.try_lock() {
@@ -72,6 +74,7 @@ pub fn with_page_cache<F, R>(f: F) -> R
 where
     F: FnOnce(&mut PageCache) -> R
 {
+    let _order = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
     if diag_enabled() {
         let tid = crate::scheduler::current_tid();
         if let Some(mut lock) = PAGE_CACHE.try_lock() {
@@ -95,6 +98,7 @@ pub fn with_block_devices<F, R>(f: F) -> R
 where
     F: FnOnce(&mut crate::drivers::block::BlockDeviceManager) -> R
 {
+    let _order = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
     if diag_enabled() {
         let tid = crate::scheduler::current_tid();
         if let Some(mut lock) = BLOCK_DEVICES.try_lock() {
@@ -117,6 +121,8 @@ where
 pub fn flush_cache_if_needed() {
     if NEED_CACHE_FLUSH.swap(false, Ordering::Relaxed) {
         if let Some(mut pc_lock) = PAGE_CACHE.try_lock() {
+            let _ord_pc = crate::lock_order::Guard::new(crate::lock_order::PAGE_CACHE);
+            let _ord_bd = crate::lock_order::Guard::new(crate::lock_order::BLOCK_DEVICES);
             let mut bdev_lock = BLOCK_DEVICES.lock();
             if let Some(dev) = bdev_lock.get(0) {
                 let batch_size = core::cmp::min(pc_lock.dirty_count(), 8);

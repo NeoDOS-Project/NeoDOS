@@ -44,6 +44,7 @@ mod work_queue;
 mod dpc;
 mod memory;
 mod globals;
+pub mod lock_order;
 pub mod usermode;
 pub mod syscall;
 mod nxl;
