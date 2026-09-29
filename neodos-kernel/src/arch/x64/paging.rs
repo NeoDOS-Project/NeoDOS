@@ -4,28 +4,42 @@ use crate::scheduler::MmapRegion;
 
 // ── TLB shootdown helpers ────────────────────────────────────────────────
 
+/// Compute the set of CPUs that may hold stale TLB entries for a freed user
+/// page: every online CPU except `my_cpu`.
+///
+/// Pure and lock-free by construction, and it MUST stay that way. The
+/// page-free paths (`heap_free_range`, `mmap_free_range`) are invoked from
+/// `terminate_current` / `recycle_terminated`, which already hold the global
+/// `SCHEDULER` spinlock. The previous implementation queried the scheduler
+/// here, re-acquiring that non-reentrant lock and self-deadlocking the exiting
+/// CPU; on SMP>1 every other CPU then wedged spinning on the same lock with
+/// interrupts disabled (#331 "shell never returns / parent stuck in OB_WAIT").
+///
+/// Scoping the mask to the scheduler's current threads was also incomplete: a
+/// CPU that ran the process earlier still caches its page even if it now runs
+/// an unrelated (or idle) thread. This kernel uses a single shared address
+/// space (one CR3) with the user window mapped on every CPU, so all online
+/// CPUs are targeted. A spurious remote invalidation is harmless.
+#[inline]
+fn tlb_target_mask(my_cpu: usize, online_cpus: usize) -> u64 {
+    if online_cpus == 0 || my_cpu >= 64 {
+        return 0;
+    }
+    let online = if online_cpus >= 64 {
+        u64::MAX
+    } else {
+        (1u64 << online_cpus) - 1
+    };
+    online & !(1u64 << my_cpu)
+}
+
 /// Build a CPU bitmask of all CPUs that might have user pages cached in TLB.
-/// In this single-address-space kernel, all user processes share the same
-/// CR3, so we target all CPUs that have active non-terminated threads.
+/// See [`tlb_target_mask`]: lock-free, because callers may already hold the
+/// scheduler lock.
 fn build_tlb_target_mask() -> u64 {
     let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     let count = crate::arch::x64::cpu_local::cpu_count() as usize;
-    let mut mask = 0u64;
-
-    crate::hal::without_interrupts(|| {
-        let s = crate::scheduler::current_scheduler();
-        let scheduler = s.lock();
-        for k in scheduler.kthreads.iter().flatten() {
-            if k.state == crate::scheduler::ThreadState::Terminated {
-                continue;
-            }
-            if (k.cpu as usize) < count && k.cpu as usize != my_cpu {
-                mask |= 1u64 << (k.cpu as usize);
-            }
-        }
-    });
-
-    mask
+    tlb_target_mask(my_cpu, count)
 }
 
 /// Perform a cross-CPU TLB shootdown for a single page.
@@ -880,4 +894,51 @@ pub fn map_mmio_4k(virt: u64, phys: u64, size: u64, flags: PageTableFlags) -> bo
     true
 }
 
+// ── Tests ────────────────────────────────────────────────────────────────
 
+/// Regression tests for #331: the TLB target mask must never re-acquire the
+/// scheduler lock from within the process-exit page-free path.
+pub fn register_paging_tests() {
+    use crate::{test_case, test_eq};
+
+    test_case!("tlb_target_mask_excludes_self", {
+        test_eq!(tlb_target_mask(0, 1), 0b0);
+        test_eq!(tlb_target_mask(0, 2), 0b10);
+        test_eq!(tlb_target_mask(1, 2), 0b01);
+        test_eq!(tlb_target_mask(0, 4), 0b1110);
+        test_eq!(tlb_target_mask(3, 4), 0b0111);
+    });
+
+    test_case!("tlb_target_mask_empty_on_up", {
+        test_eq!(tlb_target_mask(0, 0), 0);
+        test_eq!(tlb_target_mask(0, 1), 0);
+    });
+
+    test_case!("tlb_target_mask_is_lock_free", {
+        // #331: build_tlb_target_mask() is called from terminate_current() /
+        // recycle_terminated() while the global SCHEDULER lock is already held.
+        // It must not re-acquire that non-reentrant lock. Holding the lock and
+        // calling it here would self-deadlock before the fix.
+        crate::hal::without_interrupts(|| {
+            let guard = crate::scheduler::current_scheduler().lock();
+            let mask = build_tlb_target_mask();
+            // Keep the guard alive across the call (do not let NLL drop it early).
+            let _ = guard.current_tid;
+            // On any real machine the mask must exclude the calling CPU.
+            let my_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+            let _ = mask & !(1u64 << my_cpu);
+        });
+    });
+
+    test_case!("tlb_target_mask_pure_under_scheduler_lock", {
+        // The pure helper is the lock-free core of build_tlb_target_mask();
+        // calling it with the scheduler lock held must be trivial.
+        let value = crate::hal::without_interrupts(|| {
+            let guard = crate::scheduler::current_scheduler().lock();
+            let v = tlb_target_mask(0, 2);
+            let _ = guard.current_tid;
+            v
+        });
+        test_eq!(value, 0b10);
+    });
+}

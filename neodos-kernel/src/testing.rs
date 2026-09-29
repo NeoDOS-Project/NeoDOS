@@ -259,6 +259,8 @@ pub fn register_tests() {
     crate::arch::x64::smp::register_smp_tests();
     // IPI infrastructure tests (A1.4)
     crate::arch::x64::ipi::register_ipi_tests();
+    // Paging / TLB shootdown tests (#331)
+    crate::arch::x64::paging::register_paging_tests();
     // HAL v0.4 raw/safe split tests (A2.3)
     crate::hal::tests::register_hal_tests();
     // IRQL framework tests (A2.4)

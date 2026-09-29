@@ -125,6 +125,7 @@
 | [KBD Investigation Report](investigation/kbd-investigation-report.md) | Keyboard subsystem investigation report |
 | [KBD Pipeline — Fase 0](investigation/kbd-pipeline-fase0.md) | Black-box + white-box keyboard pipeline |
 | [KBD SMP Queue Validation](investigation/kbd-smp-queue-validation.md) | Keyboard SMP queue validation report |
+| [#331 SMP>1 exit TLB-shootdown self-deadlock](investigation/smp331-exit-tlb-shootdown-self-deadlock.md) | Recursive `SCHEDULER` lock in process-exit page free |
 
 ## Design Proposals
 
