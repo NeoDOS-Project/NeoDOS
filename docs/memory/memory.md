@@ -218,4 +218,11 @@ pub struct MmapRegion {
 and all registered mmap regions. Process exit frees every mmap region.
 
 Cross-CPU TLB shootdown: `shootdown_single_page()` / `shootdown_range()` builds a
-CPU bitmask of all active CPUs and sends IPI vector 0xF1.
+CPU bitmask of **all online CPUs except the caller** and sends IPI vector 0xF1.
+The mask builder (`build_tlb_target_mask()`) is deliberately **lock-free**: it
+is reached from `terminate_current()` / `recycle_terminated()` with the global
+`SCHEDULER` mutex already held, so querying the scheduler there would
+self-deadlock the CPU (see
+`docs/investigation/smp331-exit-tlb-shootdown-self-deadlock.md`). Because the
+kernel uses one shared address space (one CR3), every online CPU can cache a
+freed user page; spurious remote invalidations are harmless.
