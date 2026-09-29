@@ -161,7 +161,19 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                 crate::scheduler::diag::ev(
                     crate::scheduler::diag::EV_RESCHED_SAVE, k.cpu, k.tid, k.rsp,
                     k.state.to_u8() as u64);
+                // #338: this is the syscall return path, so `current_rsp` is the
+                // saved Ring-3 return frame; publishing `Ready` here is exactly
+                // how a thread preempted inside a syscall is restored to a valid
+                // dispatchable state. Assert the invariant rather than silently
+                // enqueueing a frame `schedule_with(true)` will never accept.
+                // Kernel threads (netd) do not enter this path (Ring-0 threads
+                // have no Ring-3 syscall return); the check is exact here.
                 if k.state == ThreadState::Running {
+                    debug_assert!(
+                        scheduler::schedule::frame_is_ring3(k),
+                        "#338: syscall resched published a non-Ring3 dispatch frame (tid={} pid={})",
+                        k.tid, k.pid
+                    );
                     scheduler::Scheduler::make_thread_ready(k);
                 } else if cfg!(feature = "validation") {
                     kdebug!(LogSubsys::Syscall, "Context switch from non-Running state: {:?}", k.state);

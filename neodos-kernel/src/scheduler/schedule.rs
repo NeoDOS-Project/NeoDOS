@@ -41,10 +41,32 @@ fn state_name(s: u8) -> &'static str {
 /// Used so `schedule_with(require_ring3=true)` never commits a candidate whose
 /// frame cannot be returned through a Ring-3 interrupt/syscall frame.
 #[inline]
-fn frame_is_ring3(k: &Kthread) -> bool {
+pub(crate) fn frame_is_ring3(k: &Kthread) -> bool {
     if k.rsp < 0x1000 { return false; }
     let cs = unsafe { *((k.rsp + 128) as *const u64) };
     (cs & 3) == 3
+}
+
+/// #338 invariant guard: a user thread's saved dispatch frame must be Ring 3.
+///
+/// A user thread interrupted inside a syscall runs on its Ring-0 kernel stack;
+/// the timer would otherwise save that Ring-0 frame (`cs == 0x08`) as the
+/// thread's authoritative dispatch frame and mark it `Ready`. It would then be
+/// permanently undispatchable, because `schedule_with(require_ring3=true)`
+/// rejects every non-Ring-3 frame. Callers use this predicate to distinguish
+/// "the live map/rsp was updated for accounting" from "the context published
+/// for Ring-3 dispatch is valid".
+///
+/// `is_kernel_thread` must be `true` for idle threads and for kernel threads
+/// created without a user image (e.g. `netd` via `spawn_kthread_named`). Those
+/// run in Ring 0 **by design** and are only ever dispatched through
+/// `schedule_with(require_ring3=false)` (Ring-0/idle timer preemption), so
+/// their Ring-0 frame is legitimate and must not be rejected. Using `pid == 0`
+/// as the exemption was wrong: `spawn_kthread_named` assigns kernel threads a
+/// real pid, so `netd` (pid != 0) would have been stranded.
+#[inline]
+pub(crate) fn thread_dispatch_frame_is_ring3(k: &Kthread, is_kernel_thread: bool) -> bool {
+    is_kernel_thread || frame_is_ring3(k)
 }
 
 // ── Phase 13-A.3: Ready publication ownership guard ──────────────────────
@@ -682,7 +704,36 @@ impl Scheduler {
         crate::scheduler::accounting::mark_dispatch(k);
     }
 
-    pub fn on_timer_tick(&mut self, current_rsp: u64) {
+    /// Is `pid` a thread without a user (Ring-3) image?
+    ///
+    /// Idle threads and kernel threads created by `spawn_kthread_named` (e.g.
+    /// `netd`) run in Ring 0 by design. Their dispatch frame is legitimately
+    /// Ring 0, so the #338 Ring-3 publication gate must not apply to them.
+    /// A thread is a user thread iff its `Eprocess` owns a user address-space
+    /// slot (`user_slot.is_some()`, set only by `Eprocess::new_ring3`).
+    #[inline]
+    pub(crate) fn is_kernel_thread(&self, k: &Kthread) -> bool {
+        if k.pid == 0 || k.is_idle {
+            return true;
+        }
+        match self.find_eprocess(k.pid) {
+            Some(ep) => ep.user_slot.is_none(),
+            // Threads with no Eprocess (bootstrap/boot) are kernel threads.
+            None => true,
+        }
+    }
+
+    /// Timer tick accounting and timeslice expiry.
+    ///
+    /// `interrupted_cs` is the CS of the frame the timer interrupted (the timer
+    /// handler decodes it from `current_rsp + 128`: `cs & 3 == 3` means Ring 3).
+    /// It decides whether an expired **user** thread may be published `Ready`:
+    /// a user thread whose timeslice expires while it is inside a syscall
+    /// (Ring 0, `cs == 0x08`) must not be re-enqueued with a non-Ring-3 dispatch
+    /// frame (#338). Kernel/idle threads run in Ring 0 by design and are exempt
+    /// (`is_kernel_thread`); they keep the historical behaviour. Unit tests pass
+    /// the CS of the context they simulate.
+    pub fn on_timer_tick(&mut self, current_rsp: u64, interrupted_cs: u64) {
         if crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed) {
             return;
         }
@@ -699,6 +750,14 @@ impl Scheduler {
         let mut needs_resched = false;
         let mut expired_priority: u8 = 0;
         let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        // #338: compute the exemption *before* the mutable borrow below (the
+        // helper reads the eprocess table, so it needs an immutable borrow).
+        // Kernel/idle threads run in Ring 0 by design; the Ring-3 publication
+        // gate must not apply to them (netd has a non-zero pid).
+        let current_is_kernel_thread = self
+            .find_kthread(_tid)
+            .map(|k| self.is_kernel_thread(k))
+            .unwrap_or(true);
         if let Some(k) = self.current_kthread_mut() {
             let state_before = k.state.to_u8();
             if k.state == ThreadState::Running {
@@ -716,7 +775,6 @@ impl Scheduler {
 
                 if k.time_slice_remaining == 0 {
                     expired_priority = k.priority;
-                    k.state = ThreadState::Ready;
                     k.yield_requested = false;
                     crate::scheduler::diag::rsp_ev(crate::scheduler::diag::SITE_RSP_TIMESLICE, k, current_rsp);
                     k.rsp = current_rsp;
@@ -724,11 +782,38 @@ impl Scheduler {
                     crate::scheduler::diag::kcpu_ev(
                         crate::scheduler::diag::SITE_KCPU_TIMESLICE, k, this_cpu);
                     k.cpu = this_cpu;
-                    if k.tid != BOOT_TID && !k.is_idle {
-                        Self::enqueue_to_cpu_run_queue(k);
+                    // #338: only publish `Ready`/enqueue when the interrupted
+                    // context was Ring 3. A user thread whose timeslice expires
+                    // inside a syscall was interrupted in Ring 0 (`cs == 0x08`);
+                    // enqueueing it would strand it, because
+                    // `schedule_with(true)` rejects every non-Ring-3 frame. The
+                    // thread is left `Running`; its syscall return path saves the
+                    // real Ring-3 frame and re-enqueues it. The switch-out sites
+                    // (idt.rs user/kernel branches) also refuse to publish a
+                    // Ring-0 frame, so nothing resurrects it.
+                    //
+                    // Kernel/idle threads (netd, boot) run in Ring 0 by design
+                    // and are dispatched through `schedule_with(require_ring3=
+                    // false)`; the gate must not apply to them or netd would be
+                    // starved (it always interrupts in Ring 0).
+                    let expose_to_ring3 =
+                        (interrupted_cs & 3) == 3 || current_is_kernel_thread;
+                    if expose_to_ring3 {
+                        k.state = ThreadState::Ready;
+                        if k.tid != BOOT_TID && !k.is_idle {
+                            Self::enqueue_to_cpu_run_queue(k);
+                        }
+                        needs_resched = true;
+                        crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
+                    } else {
+                        // User thread preempted inside a syscall: keep Running
+                        // and grant a fresh slice; do not set NEED_RESCHED. Its
+                        // syscall return path saves the real Ring-3 frame and
+                        // re-enqueues it. (Kernel/idle threads never reach this
+                        // branch — `current_is_kernel_thread` is true for them.)
+                        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+                        k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
                     }
-                    needs_resched = true;
-                    crate::trace_sched_state!(k.tid, state_before, k.state.to_u8(), 2u8); // TIMESLICE_EXPIRED
                 }
             }
         }

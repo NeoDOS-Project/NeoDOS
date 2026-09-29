@@ -140,16 +140,42 @@ Ready threads at the same priority.
 
 ## Timer Tick
 
-`on_timer_tick()` at each timer interrupt:
+`on_timer_tick(current_rsp, interrupted_cs)` at each timer interrupt:
 
 1. Increment `timer_ticks`
 2. If current thread is Running:
    - Decrement `time_slice_remaining`
-   - On expiry: `state = Ready`, emit `trace_sched_state!`, set `needs_resched`
+   - On expiry: emit `trace_sched_state!`, set `needs_resched`
 3. Every `AGING_INTERVAL_TICKS` (500): run aging check
 
 The expired thread transitions to Ready but is **not** re-enqueued in the run
 queue. The next `schedule()` call finds it via the global priority scan.
+
+### #338: Ring-0 interruption must not publish a Ready dispatch frame
+
+`interrupted_cs` is the CS of the frame the timer interrupted (`cs & 3 == 3`
+means Ring 3). Timeslice expiry only transitions the thread to `Ready` when the
+interrupted context was **Ring 3**. A user thread whose slice expires while it
+is inside a syscall runs on its Ring-0 kernel stack (`cs == 0x08`); publishing
+it `Ready` with that frame would make it permanently undispatchable, because
+`schedule_with(require_ring3 = true)` rejects every non-Ring-3 frame. In that
+case the thread keeps a fresh slice and stays `Running`; its syscall return path
+captures the real Ring-3 frame and re-enqueues it.
+
+Invariant:
+
+```text
+Ready + saved dispatch frame  =>  cs & 3 == 3   (for user threads)
+```
+
+The same gate is applied to the timer switch-out save block in `arch/x64/idt.rs`
+(user-preempt branch): a non-Ring-3 frame is never published as a Ready dispatch
+frame for a user thread. Kernel threads and idle threads (threads without a user
+image: `Eprocess::user_slot == None`, or `is_idle`) are exempt — they run in
+Ring 0 by design and are dispatched through their Ring-0 frame by
+`schedule_with(require_ring3 = false)`. Exempting them by `pid == 0` would be
+wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netd`), so
+keying on the pid starves them.
 
 ---
 

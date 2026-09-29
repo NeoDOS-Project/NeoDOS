@@ -1031,12 +1031,17 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
     let scheduler_mutex = current_scheduler();
     let mut scheduler = scheduler_mutex.lock();
 
-    scheduler.on_timer_tick(current_rsp);
+    // Decode the interrupted CS before the tick: `on_timer_tick` needs it to
+    // decide whether an expired thread may be published `Ready` (#338). A user
+    // thread interrupted inside a syscall is in Ring 0 (`cs == 0x08`) and must
+    // not be enqueued with that non-dispatchable frame.
+    let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
+    let is_user_mode = (interrupted_cs & 3) == 3;
+
+    scheduler.on_timer_tick(current_rsp, interrupted_cs);
     scheduler.consistency_check("timer");
 
     let tid = scheduler.current_tid_for_this_cpu();
-    let interrupted_cs = unsafe { *((current_rsp + 128) as *const u64) };
-    let is_user_mode = (interrupted_cs & 3) == 3;
 
     // ── Preemptive context switch ──
     // Rule: Ring 3 threads may be preempted on timeslice expiry.
@@ -1083,7 +1088,18 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 crate::scheduler::diag::ev(
                     crate::scheduler::diag::EV_TIMER_SAVE, k.cpu, k.tid, k.rsp,
                     k.state.to_u8() as u64);
-                if k.state == ThreadState::Running {
+                // #338: publish the thread `Ready` only when the saved frame is
+                // actually dispatchable back to Ring 3. This branch runs only
+                // for user-mode interruptions (`is_user_mode && !current_is_idle`),
+                // so a Ring-0 frame here means the user thread was preempted
+                // inside a syscall. Marking it `Ready` would strand it forever:
+                // `schedule_with(true)` rejects every non-Ring-3 frame. The
+                // interrupted Ring-0 frame is still preserved in `rsp` for
+                // accounting, and the in-flight syscall return captures the real
+                // Ring-3 frame before this thread is re-enqueued.
+                if k.state == ThreadState::Running
+                    && crate::scheduler::schedule::frame_is_ring3(k)
+                {
                     crate::scheduler::Scheduler::make_thread_ready(k);
                 }
             }
@@ -1338,6 +1354,14 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 // Phase 13-A: publish only after the live context is saved.
                 // For a timeslice expiry `on_timer_tick` already enqueued it;
                 // `make_thread_ready` is then a no-op.
+                //
+                // #338: this branch serves non-user, non-idle threads — kernel
+                // threads like netd, which run in Ring 0 **by design**. Their
+                // Ring-0 dispatch frame is legitimate (they are dispatched via
+                // `schedule()`, `require_ring3=false`), so the Ring-3 publication
+                // gate must NOT be applied here: doing so starves netd, which
+                // always interrupts in Ring 0. The gate is applied only to the
+                // user-preempt branch above and to `on_timer_tick`.
                 if k.state == ThreadState::Running {
                     crate::scheduler::Scheduler::make_thread_ready(k);
                 }
