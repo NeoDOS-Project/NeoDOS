@@ -2,7 +2,7 @@
 use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
-use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE};
+use crate::scheduler::types::{Kthread, Eprocess, ThreadState, MmapRegion, KernelName, NAME_MAX, PRIORITY_HIGH, PRIORITY_NORMAL, PRIORITY_IDLE, PRIORITY_ABOVE_NORMAL, TIME_SLICES, IDLE_TID, BOOT_TID, MAX_STARVATION_TICKS, AGING_INTERVAL_TICKS, IDLE_TIME_SLICE, KERNEL_STACK_SIZE};
 use crate::scheduler::Scheduler;
 use crate::log::LogSubsys;
 
@@ -135,6 +135,78 @@ pub fn register_tests() {
             .find(|k| k.is_idle && k.cpu == 0)
             .map(|k| k.cpu == 1);
         test_eq!(cross, Some(false));
+    });
+
+    test_case!("stack_canary_bounds_model", {
+        // #348: the canary lives at `stack_bottom = ks_top - actual_size`.
+        // The checker must use the stack's owned size, not the global
+        // KERNEL_STACK_SIZE, so the 4 KiB idle stack is inspected at its own
+        // bottom rather than 12 KiB below it.
+        use crate::scheduler::stack::kernel_stack_canary_addr;
+
+        // Normal 16 KiB kernel stack.
+        let top16 = 0x1_0000u64;
+        test_eq!(kernel_stack_canary_addr(top16, KERNEL_STACK_SIZE), Some(top16 - 16384));
+        // BSP idle 4 KiB stack: bottom is exactly the idle stack base.
+        let idle_base = 0x2_0000u64;
+        let idle_top = idle_base + crate::scheduler::IDLE_STACK_SIZE as u64;
+        test_eq!(
+            kernel_stack_canary_addr(idle_top, crate::scheduler::IDLE_STACK_SIZE),
+            Some(idle_base)
+        );
+        // The old (unsound) computation for the idle stack would have read
+        // 12 KiB below the owned region; assert the correct address is not that.
+        test_ne!(kernel_stack_canary_addr(idle_top, crate::scheduler::IDLE_STACK_SIZE), Some(idle_top - 16384));
+        // Guard rails: no address for a zero top or a zero size.
+        test_eq!(kernel_stack_canary_addr(0, KERNEL_STACK_SIZE), None);
+        test_eq!(kernel_stack_canary_addr(top16, 0), None);
+    });
+
+    test_case!("stack_canary_initialized_for_both_sizes", {
+        // #348: both stack kinds must actually receive a canary at the address
+        // the (sized) checker inspects, otherwise a correct checker would still
+        // report corruption.
+        use crate::scheduler::stack::{
+            kernel_stack_canary_addr, init_raw_stack_canary, IDLE_STACK_SIZE,
+        };
+        use crate::scheduler::types::STACK_CANARY;
+
+        // 16 KiB heap stack: AlignedKStack writes the canary at its bottom.
+        let stack = crate::scheduler::AlignedKStack::new_boxed();
+        let base = stack.0.as_ptr() as u64;
+        let top = base + KERNEL_STACK_SIZE as u64;
+        test_eq!(kernel_stack_canary_addr(top, KERNEL_STACK_SIZE), Some(base));
+        let canary = unsafe { *(base as *const u64) };
+        test_eq!(canary, STACK_CANARY);
+
+        // 4 KiB idle stack: initialize a stand-in buffer and verify the canary
+        // lands at the buffer bottom (the checker's address for the idle size).
+        let mut buf = [0u8; IDLE_STACK_SIZE];
+        init_raw_stack_canary(buf.as_mut_ptr(), IDLE_STACK_SIZE);
+        let btop = buf.as_ptr() as u64 + IDLE_STACK_SIZE as u64;
+        test_eq!(kernel_stack_canary_addr(btop, IDLE_STACK_SIZE), Some(buf.as_ptr() as u64));
+        test_eq!(unsafe { *(buf.as_ptr() as *const u64) }, STACK_CANARY);
+    });
+
+    test_case!("stack_canary_detects_real_corruption", {
+        // #348: the sized checker must still detect a genuinely corrupted
+        // canary at the correct bottom address.
+        use crate::scheduler::stack::{
+            check_kernel_stack_canary_sized, kernel_stack_canary_addr, IDLE_STACK_SIZE,
+        };
+        use crate::scheduler::types::STACK_CANARY;
+
+        let mut buf = [0u8; IDLE_STACK_SIZE];
+        let base = buf.as_mut_ptr() as u64;
+        let top = base + IDLE_STACK_SIZE as u64;
+        // Intact canary -> must not panic (function returns normally).
+        crate::scheduler::stack::init_raw_stack_canary(buf.as_mut_ptr(), IDLE_STACK_SIZE);
+        test_eq!(kernel_stack_canary_addr(top, IDLE_STACK_SIZE), Some(base));
+        check_kernel_stack_canary_sized(top, IDLE_STACK_SIZE, 0, 11, top);
+
+        // Corrupt the canary word; the address the checker reads must change.
+        unsafe { (base as *mut u64).write(STACK_CANARY ^ 0x1); }
+        test_ne!(unsafe { *(base as *const u64) }, STACK_CANARY);
     });
 
     test_case!("find_idle_ptr_no_cross_cpu_fallback", {

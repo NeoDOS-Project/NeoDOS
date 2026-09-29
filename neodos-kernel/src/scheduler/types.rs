@@ -9,7 +9,11 @@ use crate::security::token::Token;
 
 // Constants (moved verbatim)
 pub const KERNEL_STACK_SIZE: usize = 16384;
-const IDLE_STACK_SIZE: usize = 4096;
+/// #348: size of the BSP idle thread's static stack (`stack::IDLE_STACK`). It is
+/// shorter than `KERNEL_STACK_SIZE`, so the canary checker must not derive its
+/// bottom from the global constant. Public so allocation sites and the canary
+/// checker share one source of truth.
+pub const IDLE_STACK_SIZE: usize = 4096;
 pub const IDLE_TIME_SLICE: u16 = 10;
 
 pub const PRIORITY_HIGH: u8 = 0;
@@ -196,6 +200,12 @@ pub struct Kthread {
     pub time_slice_remaining: u16,
     pub ticks_since_scheduled: u64,
     pub kernel_stack_top: u64,
+    /// #348: byte size of the kernel stack owned at `kernel_stack_top`. The
+    /// canary lives at `kernel_stack_top - kernel_stack_size` and the checker
+    /// must use this value, not the global `KERNEL_STACK_SIZE`: the per-CPU idle
+    /// threads own shorter stacks (BSP idle: `IDLE_STACK_SIZE`; AP idle: the
+    /// unused remainder of the AP's 16 KiB region below the fabricated frame).
+    pub kernel_stack_size: usize,
     pub kernel_stack: Option<Box<crate::scheduler::stack::AlignedKStack>>,
     pub teb_base: u64,
     pub cpu: u32,

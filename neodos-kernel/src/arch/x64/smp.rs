@@ -31,7 +31,7 @@ const AP_TRAMPOLINE_VECTOR: u8 = (AP_TRAMPOLINE_ADDR >> 12) as u8; // 0x08
 const _: () = assert!(AP_TRAMPOLINE_VECTOR == 0x08);
 
 /// Stack size per AP (16 KB).
-const AP_STACK_SIZE: usize = 16384;
+pub const AP_STACK_SIZE: usize = 16384;
 
 /// Max number of CPUs.
 const MAX_CPUS: usize = cpu_local_mod::MAX_CPUS;
