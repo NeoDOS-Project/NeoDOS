@@ -178,6 +178,25 @@ Aggravating factor: `Netcfg` re-arms its own time slice on every `sys_yield`
 between yields (`netcfg/src/main.rs:412`), so the current context on cpu0 is
 essentially always Ring-3, denying the kernel-preempt path its chance.
 
+### The design contradiction (kernel-resident worker vs Ring-3-only selection)
+
+`netd` **resides in the kernel** (pid 1 kernel Eprocess, Ring-0 frame) and its
+job is kernel work (RX/ARP/DNS ticking). Yet its dispatch depends on
+`schedule_with(require_ring3 = false)`, which is only reached when the *current*
+context is kernel/idle. On SMP1 the current context is always Ring-3, so the
+kernel's own worker is structurally ineligible on the kernel's own CPU.
+
+This is not a race and not a corrupted frame: it is an **eligibility hole**.
+The `require_ring3 = true` restriction on the Ring-3-context paths is correct
+for the syscall return (it preserves the Ring-3 return frame — see the #338
+comment at `idt.rs:1091-1099`), but as the *only* set of paths on SMP1 it
+excludes Ring-0 kernel threads by construction.
+
+`yield_current_thread()` (called by netd) only sets `yield_requested` +
+`set_need_resched()`; the flag is consumed by the *timer kernel-preempt* branch
+(`idt.rs:1337`), which requires netd to already be on a CPU. That is circular on
+SMP1: netd must already be running to yield, and it can never run.
+
 **However, this is NOT the cause of the initial-DHCP symptom of #340:** DHCP
 completes on SMP1 with netd never running (5/5), because the DORA wait loop
 yields intensively and `handler_yield` drains RX synchronously. The DHCP defect
