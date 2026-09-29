@@ -2,7 +2,7 @@
 
 > **Versión:** v0.1
 > **Estado:** Diseño completo
-> **Versión de NeoDOS:** v0.49+ (depende de PM-PHASE1+2 para Power, i18n runtime para Locale)
+> **Versión de NeoDOS:** v0.51.2+ (depende de PM-PHASE1+2 para Power, i18n runtime para Locale)
 > **Precedencia:** Este documento es la especificación. No se implementa código hasta aprobación.
 
 ---
@@ -25,7 +25,7 @@
 
 ### 1.2 Patrón de aplicaciones Ring 3 existentes
 
-Todas las 38 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
+Las 48 aplicaciones .NXE en `userbin/` siguen el mismo patrón:
 
 ```rust
 #![no_std]
@@ -184,7 +184,7 @@ Implementación: usar `console::read_byte()` para captura de teclas individuales
 ```text
 ===== tr!("module.system.title") =====
 
-tr!("system.kernel_version"):  NeoDOS v0.49.0
+tr!("system.kernel_version"):  NeoDOS v0.51.2
 tr!("system.build_date"):      2026-07-11
 tr!("system.uptime"):          1d 3h 42m
 tr!("system.cpu"):             Intel QEMU (fam 6, model 2)
@@ -327,12 +327,12 @@ Sin dependencias externas. Implementable inmediatamente.
 ```text
 ===== tr!("module.about.title") =====
 
-tr!("about.neodos"):          NeoDOS v0.49.0
-tr!("about.kernel"):          neodos-kernel v0.49.0
-tr!("about.abi"):             v7
+tr!("about.neodos"):          NeoDOS v0.51.2
+tr!("about.kernel"):          neodos-kernel v0.51.2
+tr!("about.abi"):             v8 (syscall ABI)
 tr!("about.arch"):            x86_64
 tr!("about.neofs"):           NE2 v2
-tr!("about.libneodos"):       v7 (ABI table)
+tr!("about.libneodos"):       v7 (NXL ABI table)
 tr!("about.build"):           2026-07-11
 
 [Esc] tr!("neocfg.back")
@@ -341,8 +341,8 @@ tr!("about.build"):           2026-07-11
 **Implementación**:
 
 - Version → `ob_open("\Global\Info\Version")` + `ob_query_info(Version=8)` → string del kernel
-- Valores fijos compilados: ABI, arch, NeoFS version
-- `libneodos::export::ABI_VERSION` para la versión de libneodos
+- Valores fijos compilados: Syscall ABI (v8), arch, NeoFS version
+- `libneodos::export::ABI_VERSION` (v7) para la NXL ABI table de libneodos
 
 ### 3.11 Nuevos tipos/structs
 
@@ -765,7 +765,7 @@ userbin/neocfg/
 **Archivos:** `src/modules/about.rs`
 
 1. `ob_open("\Global\Info\Version")` → `ob_query_info(Version)` → print version string
-2. Valores fijos compilados: `env!("CARGO_PKG_VERSION")` para libneodos, constantes para ABI v7, arch x86_64, NE2 v2
+2. Valores fijos compilados: `env!("CARGO_PKG_VERSION")` para libneodos, constantes para Syscall ABI v8, arch x86_64, NE2 v2
 3. Esperar tecla vía `console::read_byte()`, retornar
 
 ### Step 5: Module System (0.5 day)
