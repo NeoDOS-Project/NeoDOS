@@ -261,41 +261,34 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             // Unified fallback for BLOCKED and TERMINATED: search Ring3 Ready, else idle.
             // This reuses the existing idle mechanism (no new idle design).
             {
-                let mut chosen_ptr: *mut scheduler::Kthread = core::ptr::null_mut();
-                let mut chosen_rsp = 0u64;
-                let mut chosen_ks_top = 0u64;
-                let mut chosen_ks_size = scheduler::KERNEL_STACK_SIZE;
-                let mut chosen_tid = 0u32;
-                let mut chosen_pid = 0u32;
-                for prio in 0..scheduler::PRIORITY_COUNT {
-                    for k_opt in scheduler.kthreads.iter_mut() {
-                        if let Some(k) = k_opt {
-                            if k.state == ThreadState::Ready && k.priority == prio && k.rsp != 0 {
-                                let cs_val = unsafe { *((k.rsp + 15 * 8 + 8) as *const u64) };
-                                if (cs_val & 3) == 3 {
-                                    chosen_ptr = &mut **k as *mut scheduler::Kthread;
-                                    chosen_rsp = k.rsp;
-                                    chosen_ks_top = k.kernel_stack_top;
-                                    chosen_ks_size = k.kernel_stack_size;
-                                    chosen_tid = k.tid;
-                                    chosen_pid = k.pid;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if !chosen_ptr.is_null() { break; }
-                }
-                if !chosen_ptr.is_null() {
+                let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                // #354: use the shared fallback selector, which enforces the
+                // I-RUNREADY cross-CPU guard (`candidate_owned_elsewhere`) like
+                // every other dispatch site. This path previously did its own
+                // unguarded linear scan.
+                if let Some(chosen_idx) = scheduler.select_fallback_ring3(this_cpu) {
+                    // Dequeue from its current CPU's run queue *before* re-homing,
+                    // so the removal targets the queue it is actually on.
                     unsafe {
-                        scheduler::Scheduler::remove_from_run_queue(&*chosen_ptr);
-                        (*chosen_ptr).state = ThreadState::Running;
+                        scheduler::Scheduler::remove_from_run_queue(scheduler.kthreads[chosen_idx].as_ref().unwrap());
                     }
+                    let (chosen_tid, chosen_pid, chosen_rsp, chosen_ks_top, chosen_ks_size) = {
+                        let k = scheduler.kthreads[chosen_idx].as_mut().unwrap();
+                        k.cpu = this_cpu; // re-home: parity with the global scan
+                        k.state = ThreadState::Running;
+                        (k.tid, k.pid, k.rsp, k.kernel_stack_top, k.kernel_stack_size)
+                    };
                     scheduler.current_tid = chosen_tid;
                     scheduler::check_kernel_stack_canary_sized(chosen_ks_top, chosen_ks_size, chosen_pid, chosen_tid, chosen_rsp);
+                    // Post-commit ownership detector (parity with schedule.rs).
+                    unsafe {
+                        let kptr = &**scheduler.kthreads[chosen_idx].as_ref().unwrap() as *const scheduler::Kthread;
+                        scheduler::schedule::note_dispatch_owner_check(kptr, this_cpu);
+                    }
                     unsafe { crate::arch::x64::gdt::prepare_ring3_return(chosen_ks_top, chosen_tid, chosen_pid); }
                     unsafe {
-                        crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(chosen_ptr, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
+                        let kptr = &mut **scheduler.kthreads[chosen_idx].as_mut().unwrap() as *mut scheduler::Kthread;
+                        crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(kptr, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
                         crate::arch::x64::cpu_local::this_cpu_set_current_pid(chosen_pid);
                         crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
                     }

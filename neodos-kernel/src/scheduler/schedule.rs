@@ -103,12 +103,41 @@ pub(crate) fn candidate_owned_elsewhere(kptr: *const Kthread, self_cpu: u32) -> 
     }
 }
 
+/// Fallback Ring-3 selection used by the syscall-return path when the current
+/// thread is `Blocked`/`Terminated` (i.e. the normal scheduler picked a
+/// non-Ring-3 candidate). Returns the index into `self.kthreads` of the
+/// highest-priority `Ready` Ring-3 thread **not owned by another CPU**, or
+/// `None`. It deliberately enforces the same I-RUNREADY guard
+/// ([`candidate_owned_elsewhere`], #293/#346) as every other dispatch site
+/// (#354); the caller commits the state.
+impl Scheduler {
+    pub fn select_fallback_ring3(&self, self_cpu: u32) -> Option<usize> {
+        for prio in 0..PRIORITY_COUNT {
+            for (idx, k_opt) in self.kthreads.iter().enumerate() {
+                if let Some(k) = k_opt {
+                    if k.state == ThreadState::Ready
+                        && k.priority == prio
+                        && k.rsp != 0
+                        && !candidate_owned_elsewhere(&**k as *const Kthread, self_cpu)
+                    {
+                        let cs_val = unsafe { *((k.rsp + 15 * 8 + 8) as *const u64) };
+                        if (cs_val & 3) == 3 {
+                            return Some(idx);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 /// Post-commit detector: increment the violation counters if, immediately after
 /// a candidate was committed `Running`, it is still owned by another CPU. The
 /// guard should make this unreachable; a non-zero count is direct evidence of a
 /// check→commit race (I-RUNREADY escaped).
 #[inline]
-fn note_dispatch_owner_check(kptr: *const Kthread, self_cpu: u32) {
+pub(crate) fn note_dispatch_owner_check(kptr: *const Kthread, self_cpu: u32) {
     if let Some(owner) = crate::arch::x64::cpu_local::kthread_current_cpu(kptr) {
         if owner != self_cpu {
             READY_WHILE_RUNNING.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
