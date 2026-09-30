@@ -719,7 +719,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 | `i18n_cold_cache_hit` | Primera búsqueda va a tabla |
 | `i18n_lru_cache_repeat` | Segunda búsqueda misma clave es O(1) |
 
-### 15.2 Tests de integración (en `auto_test.py`)
+### 15.2 Tests de integración (en `neodev test`)
 
 | Test | Descripción |
 | ------ | ------------- |
@@ -755,8 +755,8 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 
 | Paso | Archivos | Descripción |
 | ------ | ---------- | ------------- |
-| 2.1 | `scripts/create_ne2_image.py` | Añadir `C:\System\Locale\en-US\*.nlt` al disco |
-| 2.2 | `scripts/build.sh` | Generar .nlt desde plantillas (o crearlos manualmente) |
+| 2.1 | `neodev/src/image.rs` | Añadir `C:\System\Locale\en-US\*.nlt` al disco |
+| 2.2 | `neodev build` | Generar .nlt desde plantillas (o crearlos manualmente) |
 | 2.3 | `userbin/neoshell/src/main.rs` | `i18n_init()`, `i18n_load("neoshell")`, reemplazar strings por `tr!(...)` |
 | 2.4 | `tools/neolocale/` (nuevo) | Binario de validación y creación de .nlt |
 
@@ -802,7 +802,7 @@ Cada aplicación llevaría sus traducciones compiladas dentro del .NXE:
 | `userbin/corehelp/` | ~14 strings reemplazados | S |
 | Otras 5+ apps core | ~30 strings total | M |
 | `neodos-kernel/src/cm/mod.rs` | + valor `Locale` por defecto | S |
-| `scripts/create_ne2_image.py` | + archivos .nlt en disco | S |
+| `neodev/src/image.rs` | + archivos .nlt en disco | S |
 | `tools/neolocale/` (nuevo) | Binario de validación (~200 líneas) | M |
 | `docs/i18n.md` (nuevo) | Documentación para desarrolladores | M |
 

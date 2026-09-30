@@ -81,10 +81,14 @@ Todo el sistema cabe en una sola imagen de disco con tabla de particiones GUID (
 └──────────────────────────────┘
 ```
 
-La imagen se genera con `scripts/create_gpt_image.py`, que utiliza `sfdisk` (util-linux)
-para crear la tabla GPT y luego copia los datos de cada partición en su offset correcto.
+La imagen se genera con NeoDev (`neodev build --image`, implementado en `neodev/src/image.rs`),
+que utiliza `sfdisk` (util-linux) para crear la tabla GPT y luego copia los datos de cada
+partición en su offset correcto.
 El kernel incluye `drivers/gpt.rs` que parsea la tabla y encuentra la partición NeoDOS
 por su GUID de tipo (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`).
+
+> **Propuesta de rediseño:** el layout interno de `C:` y su migración a una
+> arquitectura estilo NT se describen en [Disk Layout](disk-layout.md).
 
 ## ATA, PCI DMA y AHCI
 
@@ -589,7 +593,7 @@ The kernel testing framework includes **754 tests** (200+ test_case! macros) wit
 | Security | 23 | NT6 Security: SID format, Token (groups/privileges/session_id), ACL allow/deny, SeAccessCheck, admin bypass, SAM database (parse/serialize, 64 entries) |
 | URN | 15 | NT5.5 Unified Resource Namespace: parse schemes, resolve file/device, Ob frontend (OB-025) |
 
-Tests run automatically at boot. The kernel runs 754 tests (200+ test_case! registrations), then executes user-mode binaries (`C:\Programs\cpuinfo.nxe`, `C:\Programs\dir.nxe`, `C:\Programs\datetime.nxe`, `C:\Programs\ver.nxe`). Additional stress testing via `scripts/stress_300.py` (300 shell commands).
+Tests run automatically at boot. The kernel runs 754 tests (200+ test_case! registrations). After boot, NeoInit spawns its user-mode test binaries when enabled via the registry (`userbin/neoinit/src/main.rs`), including the network test `C:\System\Tools\dhcptest.nxe`. Additional boot stress testing via `scripts/stress_boot.sh`.
 
 ---
 
@@ -665,7 +669,7 @@ Calling convention: RAX = syscall number, RBX = arg0, RCX = arg1, RDX = arg2, R8
 
 ## Debug Interfaces
 
-The provided script `scripts/qemu-debug.sh` runs QEMU with:
+The provided tooling (`neodev run`) launches QEMU with:
 
 - Serial output to stdout (saved to `neodos/qemu_output.log`)
 - QEMU monitor on `telnet 127.0.0.1:4444`

@@ -148,7 +148,7 @@ pub struct CompletionCtx {
 | `libneodos/src/args.rs` | Add `write_args_to_addr()` for backward compat with old binaries. |
 | `libneodos/src/syscall.rs` | Add `sys_ob_create_with_fds()` helper for spawn+redirection in one call (see API contract). |
 | `docs/shell.md` | Update to reflect new features. |
-| `scripts/build.sh` | No changes needed (same build pattern). |
+| `neodev build` | No changes needed (same build pattern). |
 
 ### 2.4 No New Syscalls or Ob Types
 

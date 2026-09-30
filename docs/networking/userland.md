@@ -436,7 +436,7 @@ fn main() {
 }
 ```
 
-**Ubicación:** `userbin/ipconfig/` → `C:\Programs\ipconfig.nxe`
+**Ubicación:** `userbin/ipconfig/` → `C:\System\Tools\ipconfig.nxe`
 
 **Dependencias:**
 
@@ -717,7 +717,6 @@ daemon solo aporta transporte, configuración y estado. La documentación
 completa (configuración, ciclo de vida, estado y limitaciones) está en
 [`docs/services/ntpd.md`](../services/ntpd.md).
 
-
 ---
 
 ## 4. NeoInit System Configuration
@@ -728,7 +727,7 @@ NeoInit (`userbin/neoinit/src/main.rs`, 79 líneas) es un supervisor minimalista
 
 ```rust
 fn spawn() -> Result<u32, i64> {
-    let path_str = "\\Global\\FileSystem\\C:\\Programs\\NeoShell.nxe";
+    let path_str = "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe";
     let attrs = 0xFFu64 | (0xFFu64 << 8) | (0xFFu64 << 16);
     let fd = syscall::sys_ob_create(path_str, 1, None, attrs)?;
     let _ = syscall::sys_ob_wait(fd);
@@ -738,7 +737,7 @@ fn spawn() -> Result<u32, i64> {
 
 **Problemas:**
 
-- Path `C:\Programs\NeoShell.nxe` hardcoded
+- Path `C:\Programs\neoshell.nxe` hardcoded
 - No usa Registry
 - No inicia servicios (net, logger, etc.)
 - No se puede configurar sin recompilar
@@ -874,9 +873,9 @@ pub extern "C" fn _start() -> ! {
 
     // 3. Leer DefaultShell
     let shell_path = if reg_fd != 0xFF {
-        cm_query_str(reg_fd, "DefaultShell", "C:\\Programs\\NeoShell.nxe")
+        cm_query_str(reg_fd, "DefaultShell", "C:\\Programs\\neoshell.nxe")
     } else {
-        *b"C:\\Programs\\NeoShell.nxe\0"
+        *b"C:\\Programs\\neoshell.nxe\0"
     };
 
     // 4. Leer auto-start services
@@ -950,7 +949,7 @@ pub extern "C" fn _start() -> ! {
     }
 
     // 9. Spawn shell (loop supervisor)
-    let shell_path_cstr = core::str::from_utf8(&shell_path).unwrap_or("C:\\Programs\\NeoShell.nxe");
+    let shell_path_cstr = core::str::from_utf8(&shell_path).unwrap_or("C:\\Programs\\neoshell.nxe");
     write_str(b"[neoinit] DefaultShell: ");
     write_str(shell_path_cstr.as_bytes());
     write_str(b"\r\n");
@@ -1039,7 +1038,6 @@ netcfg ─► Registry / apply explícito
 
 > La notificación de cambios de configuración (en lugar del polling del
 > aplicador) y la capa de servicios `netd` se trackean por separado (#364/#362).
-
 
 ### 4.5 Integración con la shell: servicios en background
 
@@ -1216,7 +1214,7 @@ pub fn create_default_registry_values() {
     // Services\NeoInit
     let services = cm_create_key(ccs, "Services").unwrap_or(ccs);
     let neoinit = cm_create_key(services, "NeoInit").unwrap_or(services);
-    cm_set_value(neoinit, "DefaultShell", REG_SZ, b"C:\\Programs\\NeoShell.nxe").ok();
+    cm_set_value(neoinit, "DefaultShell", REG_SZ, b"C:\\Programs\\neoshell.nxe").ok();
     cm_set_value(neoinit, "AutoStartServices", REG_MULTI_SZ, b"").ok();
     cm_set_value(neoinit, "EnableVT", REG_DWORD, &1u32.to_le_bytes()).ok();
     cm_set_value(neoinit, "VTCount", REG_DWORD, &4u32.to_le_bytes()).ok();
@@ -1911,7 +1909,7 @@ Kernel
         │
         ├── Leer WaitForNetwork=0 → no esperar
         │
-        └── Loop: spawn NeoShell.nxe → wait → respawn
+        └── Loop: spawn neoshell.nxe → wait → respawn
 ```
 
 ### 9.2 Flujo detallado: net_socket_send (UDP)
@@ -2259,11 +2257,11 @@ fn init_cm() {
 | Socket UDP dispatch | Crear socket UDP, enviar paquete sintético, verificar recv_buf | kernel test framework |
 | libneodos wrappers | Tests de compilación (no ejecución) | cargo test (host) |
 | net.nxl | Tests unitarios de parsing (no requieren NIC) | cargo test (host) con mock de syscall |
-| ipconfig.nxe | Test de integración: ejecutar ipconfig y verificar salida | auto_test.py |
-| ping.nxe | Enviar ping a 127.0.0.1 (loopback futura) o QEMU host | auto_test.py |
-| dhcp.nxe | Simular servidor DHCP, verificar client | auto_test.py |
+| ipconfig.nxe | Test de integración: ejecutar ipconfig y verificar salida | `neodev test` |
+| ping.nxe | Enviar ping a 127.0.0.1 (loopback futura) o QEMU host | `neodev test` |
+| dhcp.nxe | Simular servidor DHCP, verificar client | `neodev test` |
 | NeoInit Registry | Test unitario de cm_open_key + cm_query_value | kernel test framework |
-| pkg.nxe | Test de instalación/remoción con paquete de prueba | auto_test.py |
+| pkg.nxe | Test de instalación/remoción con paquete de prueba | `neodev test` |
 
 ---
 
@@ -2302,10 +2300,10 @@ fn init_cm() {
 
 ### 11.4 Scripts
 
-| Script | Cambio | Estado |
+| Componente | Cambio | Estado |
 |--------|--------|--------|
-| `scripts/build.sh` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
-| `scripts/create_ne2_image.py` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (Programs) | ✅ |
+| `neodev build` | Build loop incluye `netcfg`, añadido build de `libnet-nxl` | ✅ |
+| `neodev/src/image.rs` | Incluye `net.nxl` (System\Libraries) y `netcfg.nxe` (System\Tools) | ✅ |
 
 ---
 

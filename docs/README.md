@@ -11,6 +11,7 @@
 | [Vision](architecture/vision.md) | Long-term strategy v0.40 → v1.0 |
 | [Repository Architecture](architecture/repository.md) | Multi-repo proposal, dependency analysis |
 | [AHCI Stability](architecture/ahci-stability.md) | AHCI stability improvements, multi-sector read batching |
+| [Disk Layout](architecture/disk-layout.md) | NT-style disk layout proposal (WIP, not implemented) |
 
 ## Boot
 

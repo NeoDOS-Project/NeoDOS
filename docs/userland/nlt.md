@@ -203,7 +203,6 @@ Los IDs 0x8000+ se generan por hash.
 |----------------|------------------------------------|
 | `nltc`         | Compilador TOML → NLTv2            |
 | `neolocale`    | Validación, diff, stats, check     |
-| `gen_nlt_toml.py` | Generar TOML desde datos Python |
 
 ### flujo de trabajo
 

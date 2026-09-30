@@ -311,7 +311,7 @@ All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClas
 | `userbin/regedit/` | **New binary**: registry editor |
 | `userbin/ndreg/` | No change (driver inspector, unrelated) |
 | `docs/registry.md` | Update to reflect new capabilities |
-| `scripts/build.sh` | Add `regedit` build rule |
+| `neodev/src/image.rs` | Add `regedit` to the image binary list |
 
 ---
 
@@ -553,7 +553,7 @@ RAX 63 (ob_set_info), info_class = ObSetInfoClass::RegistryDeleteValue (26)
 | ------ | ------- | ------------- |
 | 6.1 | `libneodos/src/syscall.rs` | Add `sys_cm_create_key`, `sys_cm_delete_key`, `sys_cm_enum_key`, `sys_cm_enum_value`, `sys_cm_flush_key`, `sys_cm_load_hive`, `sys_cm_unload_hive` wrappers. |
 | 6.2 | `userbin/regedit/src/main.rs` | Create registry editor binary with browse, create, delete, set, query, flush commands. |
-| 6.3 | `scripts/build.sh` | Add `regedit` to build list. |
+| 6.3 | `neodev/src/image.rs` | Add `regedit` to the image binary list. |
 | 6.4 | `docs/registry.md` | Update documentation: security, WAL, multi-hive, new wrappers, regedit. |
 
 **Test gate:** Phase 6 tests 1-6 pass. All integration tests pass.

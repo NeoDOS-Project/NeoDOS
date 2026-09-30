@@ -32,7 +32,7 @@ neodev run
    ```bash
    cargo build
    neodev test
-   scripts/check_deps.py
+   neodev check-deps
    npx markdownlint '**/*.md' --config .markdownlint.json
    ```
 3. Reference issues: `feat: description (#123)`

@@ -297,7 +297,7 @@ The host is accessible at 10.0.1.1 and provides NAT to the outside world.
 ### TAP Mode (requires privileges)
 
 ```bash
-bash scripts/qemu-debug.sh --tap
+neodev run --net tap
 ```
 
 TAP networking requires:

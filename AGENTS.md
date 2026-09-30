@@ -5,7 +5,7 @@
 ## Permanent Rules (MUST always follow)
 
 1. **No automatic builds.** Only build/test when explicitly asked.
-2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `scripts/check_deps.py` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
+2. **Test before commit:** `cargo build` in `neodos-kernel/` → `neodev test` → `neodev check-deps` → `npx markdownlint '**/*.md' --config .markdownlint.json`.
 3. **Never modify public API without updating docs.** Syscalls, ObInfoClass, NEM ABI, structs in `libneodos/`.
 4. **NT-like design philosophy:** Object Manager (`Ob`) is the central abstraction for syscalls, handles, security, and namespace.
 5. **No new Ring 0 shell commands.** All interactive commands go to `userbin/` as `.NXE` Ring 3 binaries.
