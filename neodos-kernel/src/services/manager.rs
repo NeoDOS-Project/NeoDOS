@@ -377,7 +377,8 @@ impl ServiceManager {
         }
     }
 
-    /// Actually spawn a process for a service via process creation.
+    /// Spawn a process for a service via the shared kernel process-creation
+    /// path (the same one used by `ObCreate(Process)`).
     fn spawn_process(&mut self, name: &str, binary_path: &str) -> Result<u32, SmError> {
         // Build Ob path: \Global\FileSystem\<path>
         let ob_path = if binary_path.starts_with("\\Global\\FileSystem\\") {
@@ -387,74 +388,22 @@ impl ServiceManager {
         } else {
             return Err(SmError::NotFound);
         };
-        let vfs_path = ob_path.strip_prefix("\\Global\\FileSystem\\").unwrap_or(&binary_path);
 
-        // Read the binary from VFS
-        const MAX_BIN: usize = 65536;
-        let bin_data = {
-            let mut buf = alloc::vec![0u8; MAX_BIN];
-            let bin_size = crate::globals::with_vfs(|vfs| {
-                match vfs.resolve_path(vfs_path) {
-                    Ok((drive_idx, node)) => {
-                        if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
-                        match vfs.read(drive_idx, node.inode, 0, &mut buf) {
-                            Ok(n) => { if n > MAX_BIN { 0 } else { n } }
-                            Err(_) => 0,
-                        }
-                    }
-                    Err(_) => 0,
-                }
-            });
-            if bin_size < 4 {
-                return Err(SmError::NotFound);
-            }
-            buf.truncate(bin_size);
-            buf
-        };
+        let created = crate::usermode::create_process_from_ob_path(
+            &ob_path, 2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
+        )
+        .map_err(|e| match e {
+            crate::usermode::CreateProcessError::NotFound => SmError::NotFound,
+            crate::usermode::CreateProcessError::InvalidElf => SmError::InvalidTransition,
+            crate::usermode::CreateProcessError::NoMemory => SmError::OutOfMemory,
+        })?;
 
-        // Allocate user slot
-        let slot = match crate::arch::x64::paging::alloc_user_slot() {
-            Some(s) => s,
-            None => return Err(SmError::OutOfMemory),
-        };
+        // The ObWait hand-off activates a Suspended child; services are not
+        // spawned through ObWait, so publish the initial thread Ready now via
+        // the shared activation path (single implementation).
+        crate::usermode::activate_process(created.pid);
 
-        // Load ELF
-        let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
-            Ok(r) => r,
-            Err(_) => {
-                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                return Err(SmError::InvalidTransition);
-            }
-        };
-
-        // Spawn the process — F-04: free user slot on failure (transactional rollback)
-        let child_pid = match crate::usermode::spawn_usermode(
-            result.entry, slot.stack_top, slot.slot_idx,
-            2, "\\", 0, name, // cwd_drive=C, cwd_path=\, parent_pid=0 (kernel)
-        ) {
-            Ok(pid) => pid,
-            Err(e) => {
-                crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                crate::serial_println!("[SM] spawn failed, freed user_slot {} err={:?}", slot.slot_idx, e);
-                return Err(SmError::OutOfMemory);
-            }
-        };
-
-        // spawn_usermode leaves the initial thread Suspended (the ObCreate/ObWait
-        // path activates it on hand-off).  Services are not spawned through ObWait,
-        // so nothing would ever publish their thread Ready and they would never run.
-        // Perform the same activation the ObWait hand-off does.
-        crate::hal::without_interrupts(|| {
-            let s = crate::scheduler::current_scheduler();
-            let mut lock = s.lock();
-            for k in lock.kthreads.iter_mut().flatten() {
-                if k.pid == child_pid && k.state == crate::scheduler::ThreadState::Suspended {
-                    crate::scheduler::Scheduler::make_thread_ready(k);
-                }
-            }
-        });
-
-        Ok(child_pid)
+        Ok(created.pid)
     }
 
     /// Stop a service by index.

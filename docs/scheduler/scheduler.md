@@ -175,7 +175,7 @@ frame for a user thread. Kernel threads and idle threads (threads without a user
 image: `Eprocess::user_slot == None`, or `is_idle`) are exempt — they run in
 Ring 0 by design and are dispatched through their Ring-0 frame by
 `schedule_with(require_ring3 = false)`. Exempting them by `pid == 0` would be
-wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netd`), so
+wrong: `spawn_kthread_named` gives kernel threads a real pid (e.g. `netpump`), so
 keying on the pid starves them.
 
 ---
@@ -315,27 +315,32 @@ Kernel threads are created with:
 The kernel stack is freed when the Kthread is dropped (via `kill_pid` or
 `recycle_thread`), which drops the `Box<AlignedKStack>`.
 
-### `netd` — network kernel thread
+### `netpump` — network kernel thread (RX pump)
 
 ```rust
 pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
     crate::hal::without_interrupts(|| {
-        current_scheduler().lock().spawn_kthread(entry, PRIORITY_NORMAL)
+        current_scheduler().lock()
+            .spawn_kthread_named(entry, PRIORITY_NORMAL, "netpump")
     })
 }
 ```
 
-`netd` is created during boot (in `main.rs`) after all kernel tests complete.
-It runs `net_kthread_entry()` which loops:
+`netpump` is created during boot (in `main.rs`) after all kernel tests complete.
+It runs `netpump_entry()` which loops:
 
 ```rust
-pub fn net_kthread_entry() -> ! {
+pub fn netpump_entry() -> ! {
     loop {
         net_tick();                       // network_poll_all + arp_tick + dns_tick
+        yield_current_thread();
         for _ in 0..64 { core::hint::spin_loop(); }
     }
 }
 ```
+
+This is the Ring-0 data-plane worker. It is **not** the Ring 3 `netd` network
+service (#362/#372), which the kernel Service Manager launches separately.
 
 **Scheduler lock protection**: `spawn_net_kthread` wraps the lock acquisition in
 `without_interrupts`. This prevents a deadlock where the timer IRQ handler
@@ -365,7 +370,7 @@ is empty and another has Ready threads.
 
 ### Symptom
 
-When `netd` was first introduced, the static `NET_THREAD_STACK` ([u8; 16384])
+When the network kernel thread was first introduced, the static `NET_THREAD_STACK` ([u8; 16384])
 caused a GPF at the `iretq` instruction (`0x400c811`) with error code `0xb17c`
 (segment selector referencing the LDT). The CS value at `[sp-16]` of the initial
 frame (written by `init_ring0_frame()`) was corrupted.
@@ -433,7 +438,7 @@ metadata only**:
   ASCII. No heap allocation is performed for names.
 - Defaults: BSP idle `idle/0`; AP idle `idle/<cpu>` (`register_ap_idle`); boot
   thread `boot`; `spawn_kthread` `kthread`; spawned user processes take the
-  executable basename (e.g. `neoshell`); the network thread is `netd`.
+  executable basename (e.g. `neoshell`); the network kernel thread is `netpump`.
 
 ### Inspection Snapshot (Phase 14-B)
 

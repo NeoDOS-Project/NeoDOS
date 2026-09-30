@@ -160,6 +160,16 @@ offset for SeAccessCheck re-verification.
 4. Allocate handle entries for any returned fds (pipe creates bidirectional pair)
 5. Return fd(s)
 
+> **Process creation is shared (#375).** `ObCreate(Process)` and the kernel
+> Service Manager both call the same internal helper
+> `usermode::create_process_from_ob_path` (VFS read → user slot → ELF load →
+> `spawn_usermode`); there is no second ELF-load/spawn implementation in
+> `services/manager.rs`. The new thread is left `Suspended` and is published
+> `Ready` by the single activation path
+> `Scheduler::activate_suspended_process`, called from the `ObWait` hand-off
+> (`syscall/ob/wait.rs`) and, for services, via
+> `usermode::activate_process`.
+
 ### ob_query_info (RAX=42)
 
 Supports the following info classes:

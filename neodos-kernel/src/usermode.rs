@@ -118,6 +118,119 @@ pub fn execute_usermode(entry_point: u64, stack_pointer: u64) {
     }
 }
 
+/// Maximum size of a Ring 3 image read from the VFS for process creation.
+pub const MAX_PROCESS_BIN: usize = 65536;
+
+/// Result of the shared Ring 3 process-creation path.
+pub struct CreatedProcess {
+    pub pid: u32,
+    pub entry: u64,
+    pub slot_idx: u8,
+    pub code_base: u64,
+    pub stack_top: u64,
+}
+
+/// Errors from the shared process-creation path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CreateProcessError {
+    /// The image path could not be resolved/read, or the image was too short.
+    NotFound,
+    /// A user slot, kernel stack or scheduler slot could not be allocated.
+    NoMemory,
+    /// The image could not be loaded as an ELF.
+    InvalidElf,
+}
+
+/// Shared kernel process-creation path, used by both `ObCreate(Process)` and
+/// the kernel Service Manager. It reads the image at `ob_path`
+/// (`\Global\FileSystem\...`), allocates a user slot, loads the ELF and creates
+/// the process + initial thread via [`spawn_usermode`].
+///
+/// The initial thread is left `Suspended`. Callers that need it schedulable
+/// call [`activate_process`] (the `ObWait` hand-off does the same while holding
+/// the scheduler lock). On any failure the reserved user slot is released, so
+/// no slot leaks.
+pub fn create_process_from_ob_path(
+    ob_path: &str,
+    cwd_drive: u8,
+    cwd_path: &str,
+    parent_pid: u32,
+    name: &str,
+) -> Result<CreatedProcess, CreateProcessError> {
+    let vfs_path = ob_path
+        .strip_prefix("\\Global\\FileSystem\\")
+        .unwrap_or(ob_path);
+
+    let bin_data = {
+        let mut buf = alloc::vec![0u8; MAX_PROCESS_BIN];
+        let bin_size = crate::globals::with_vfs(|vfs| match vfs.resolve_path(vfs_path) {
+            Ok((drive_idx, node)) => {
+                if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
+                    return 0;
+                }
+                match vfs.read(drive_idx, node.inode, 0, &mut buf) {
+                    Ok(n) => {
+                        if n > MAX_PROCESS_BIN { 0 } else { n }
+                    }
+                    Err(_) => 0,
+                }
+            }
+            Err(_) => 0,
+        });
+        if bin_size < 4 {
+            return Err(CreateProcessError::NotFound);
+        }
+        buf.truncate(bin_size);
+        buf
+    };
+
+    let slot = match crate::arch::x64::paging::alloc_user_slot() {
+        Some(s) => s,
+        None => return Err(CreateProcessError::NoMemory),
+    };
+
+    let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
+        Ok(r) => r,
+        Err(_) => {
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+            return Err(CreateProcessError::InvalidElf);
+        }
+    };
+
+    match spawn_usermode(
+        result.entry,
+        slot.stack_top,
+        slot.slot_idx,
+        cwd_drive,
+        cwd_path,
+        parent_pid,
+        name,
+    ) {
+        Ok(pid) => Ok(CreatedProcess {
+            pid,
+            entry: result.entry,
+            slot_idx: slot.slot_idx,
+            code_base: slot.code_base,
+            stack_top: slot.stack_top,
+        }),
+        Err(_) => {
+            crate::arch::x64::paging::free_user_slot(slot.slot_idx);
+            Err(CreateProcessError::NoMemory)
+        }
+    }
+}
+
+/// Activate a process's initial thread (`Suspended -> Ready`). Idempotent.
+/// Returns `true` when a `Suspended` thread was published. This is the single
+/// activation entry point for callers that do not hold the scheduler lock.
+pub fn activate_process(pid: u32) -> bool {
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut lock = s.lock();
+        lock.activate_suspended_process(pid)
+    })
+}
+
 pub fn spawn_usermode(entry: u64, stack_top: u64, slot_idx: u8, cwd_drive: u8, cwd_path: &str, parent_pid: u32, name: &str) -> Result<u32, &'static str> {
     // F-DEV-02: zombie queue backpressure — bounded queue without loss. If storm
     // fills queue, try synchronous reclaim before allocating resources; if still

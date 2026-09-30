@@ -699,14 +699,15 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // Fase 3.1: dump PRE-netd (mantener para comparar)
     crate::arch::x64::idt::timer_diag_dump();
 
-    // Spawn network kernel thread — drives net_tick() independently
-    // of Ring 3 process activity.
+    // Spawn the network RX pump kernel thread ("netpump") — drives net_tick()
+    // independently of Ring 3 process activity. This is the Ring-0 data-plane
+    // worker, not the Ring 3 `netd` network service (see #362/#372).
     // Read the real function address from the static.
     // Direct fn→pointer→integer casts produce thunk addresses.
     if let Some(tid) = net::spawn_net_kthread(unsafe {
-        core::ptr::read(&raw const net::NETD_PTR) as u64
+        core::ptr::read(&raw const net::NETPUMP_PTR) as u64
     }) {
-        println!("[+] netd kernel thread spawned (TID {})", tid);
+        println!("[+] netpump kernel thread spawned (TID {})", tid);
     }
 
     // Fase 3.1: POST-netd dump inmediato + dump tras 500 ticks (captura primera selección real de netd)

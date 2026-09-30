@@ -239,8 +239,12 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     const _V_NTP_SRV: u32 = 75;
     const _V_NTP_INT: u32 = 76;
     const _V_NTP_TO: u32 = 77;
+    const _NETD: u32 = 78;
+    const _V_NETD_BPATH: u32 = 79;
+    const _V_NETD_STYPE: u32 = 80;
+    const _V_NETD_DNAME: u32 = 81;
 
-    b.next_idx = 78;
+    b.next_idx = 82;
 
     let tests_val: u32 = if enable_tests { 1 } else { 0 };
     let net_test_val: u32 = if enable_network_test { 1 } else { 0 };
@@ -269,6 +273,19 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     b.add_value(_V_NA_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netapplier.nxe\0", NULL_CELL, _NETAPPLIER);
     b.add_value(_V_NA_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NA_BPATH, _NETAPPLIER);
     b.add_value(_V_NA_DNAME, "DisplayName", REG_SZ, b"Network Configuration Applier\0", _V_NA_STYPE, _NETAPPLIER);
+
+    // netd service: Ring 3 network service layer (identity + state monitoring).
+    // The Ring-0 RX pump stays a separate kernel worker ("netpump"); `netd`
+    // must never apply NIC configuration (that is NetApplier). See #362/#372.
+    //
+    // TEMPORARY: StartType = Demand (3), not Auto, while #376 (bootstrap
+    // dispatch starvation, root cause not proven) is open. `sm_start_auto_services`
+    // only starts System/Auto services, so netd no longer participates in the
+    // boot auto-start window; `Demand` (unlike `Disabled`) keeps the service
+    // manually startable. This is an integration workaround, NOT a #376 fix.
+    b.add_value(_V_NETD_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netd.nxe\0", NULL_CELL, _NETD);
+    b.add_value(_V_NETD_STYPE, "StartType", REG_DWORD, &3u32.to_le_bytes(), _V_NETD_BPATH, _NETD);
+    b.add_value(_V_NETD_DNAME, "DisplayName", REG_SZ, b"Network Service\0", _V_NETD_STYPE, _NETD);
 
     // Ntpd service values: DisplayName → BinaryPath → StartType → RestartPolicy → MaxFailures.
     // Persistent NTP/SNTP synchronization daemon. StartType=Auto, restart on crash.
@@ -337,7 +354,8 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     // Keys
     b.add_key(_NEO, "NeoInit", _SVC, NULL_CELL, _DHCPC, _V_NETTEST, NULL_CELL, 0);
     b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NETAPPLIER, _V_DNAME, NULL_CELL, 0);
-    b.add_key(_NETAPPLIER, "NetApplier", _SVC, NULL_CELL, _NTPD, _V_NA_DNAME, NULL_CELL, 0);
+    b.add_key(_NETAPPLIER, "NetApplier", _SVC, NULL_CELL, _NETD, _V_NA_DNAME, NULL_CELL, 0);
+    b.add_key(_NETD, "Netd", _SVC, NULL_CELL, _NTPD, _V_NETD_DNAME, NULL_CELL, 0);
     b.add_key(_NTPD, "Ntpd", _SVC, _NTPPARAM, _NET, _V_NTP_DNAME, NULL_CELL, 0);
     b.add_key(_NTPPARAM, "Parameters", _NTPD, NULL_CELL, NULL_CELL, _V_NTP_EN, NULL_CELL, 0);
     b.add_key(_IF0, "0", _IFC, NULL_CELL, NULL_CELL, _V_IP, NULL_CELL, 0);
@@ -501,5 +519,22 @@ mod tests {
         assert_eq!(st.display, "2", "StartType must be Auto");
         let dn = value(&r, &applier, "DisplayName").expect("DisplayName");
         assert!(dn.display.contains("Network Configuration Applier"), "DisplayName: {}", dn.display);
+    }
+
+    /// #372: the default hive must expose the resident `Netd` Ring 3 service
+    /// pointing at `netd.nxe`. Autostart is temporarily disabled (#376):
+    /// StartType=Demand (3) so it is not started by `sm_start_auto_services`
+    /// but remains manually startable.
+    #[test]
+    fn default_hive_has_netd_service() {
+        let r = build_default_system_hive(false, false);
+        let svc = "SYSTEM\\CurrentControlSet\\Services";
+        let netd = format!("{}\\Netd", svc);
+
+        assert!(find_key_path(&r, &netd).is_some(), "Netd service key missing");
+        let bp = value(&r, &netd, "BinaryPath").expect("BinaryPath");
+        assert!(bp.display.contains("netd.nxe"), "BinaryPath: {}", bp.display);
+        let st = value(&r, &netd, "StartType").expect("StartType");
+        assert_eq!(st.display, "3", "StartType must be Demand (autostart temporarily disabled, #376)");
     }
 }

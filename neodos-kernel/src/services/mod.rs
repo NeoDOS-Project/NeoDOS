@@ -455,4 +455,52 @@ pub fn register_service_tests() {
         // netcfg is the configuration CLI, never a service.
         test_true!(sm.find_by_name("Netcfg").is_none());
     });
+
+    // ── #372: netd Ring 3 network service identity ──
+
+    test_case!("sm_netd_service_identity", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Auto,
+            restart_policy: ServiceRestartPolicy::OnCrash,
+            max_failures: 3,
+        };
+        let idx = sm.register("Netd", "Network Service",
+            "C:\\System\\Tools\\netd.nxe", cfg, &[]).unwrap();
+        test_eq!(sm.services[idx].name, "Netd");
+        test_eq!(sm.services[idx].binary_path, "C:\\System\\Tools\\netd.nxe");
+        test_eq!(sm.services[idx].start_type as u8, ServiceStartType::Auto as u8);
+        // The Ring-0 RX pump is the kernel worker "netpump", never a service.
+        test_true!(sm.find_by_name("netpump").is_none());
+    });
+
+    // ── #375: shared process-creation path ──
+
+    test_case!("process_create_missing_binary_not_found", {
+        // The shared creation path is used by both ObCreate(Process) and the
+        // Service Manager; a missing image must fail before allocating a slot.
+        let r = crate::usermode::create_process_from_ob_path(
+            "\\Global\\FileSystem\\C:\\System\\Tools\\__no_such_binary__.nxe",
+            2, "\\", 0, "test",
+        );
+        test_true!(r.is_err());
+        if let Err(e) = r {
+            test_eq!(e, crate::usermode::CreateProcessError::NotFound);
+        }
+    });
+
+    test_case!("sm_start_missing_binary_failed", {
+        // ServiceManager::spawn_process uses the shared path; a missing image
+        // must mark the service Failed, not leak or panic.
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Demand,
+            restart_policy: ServiceRestartPolicy::Never,
+            max_failures: 3,
+        };
+        let idx = sm.register("MissingBin", "", "C:\\nonexistent-xyz.nxe", cfg, &[]).unwrap();
+        let r = sm.start_service(idx);
+        test_true!(r.is_err());
+        test_eq!(sm.services[idx].state, ServiceState::Failed);
+    });
 }

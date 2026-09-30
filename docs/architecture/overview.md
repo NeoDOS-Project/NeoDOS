@@ -60,7 +60,7 @@ NeoDOS Kernel (x86_64-unknown-none)
    - Service Manager init (PHASE 3.882): load service definitions from Registry, create \Service\ namespace, resolve dependencies
    - Power Manager runtime init (PHASE 3.883): load plans and policies from Registry
    - ABI validation + ABI freeze check (PHASE 3.9)
-   - Kernel self-tests (754 tests) + netd kthread spawn + benchmarks (PHASE 4)
+   - Kernel self-tests (754 tests) + netpump kernel-thread spawn + benchmarks (PHASE 4)
    - Auto-start services (PHASE 4): start System/Auto services in dependency order
    - Ring 3 shell via NeoInit PID 1 (neoshell.nxe, 754 kernel tests + user commands)
 ```
