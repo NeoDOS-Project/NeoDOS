@@ -47,6 +47,12 @@
 
 ### Fixed
 
+- **Default `/24` subnet mask is now correct (#367).** `DEFAULT_MASK` in
+  `libnet-config` was `0x00FF_FFFF` (byte-swapped: `0.255.255.255`), so an
+  interface with `SubnetMask = 0` got a wrong mask and same-subnet gateways were
+  treated as off-subnet. It is now `0xFFFF_FF00` (`255.255.255.0`), matching
+  `parse_ip`/`Ipv4Addr::to_u32`. `dhcpd`'s lease default (`0x00FFFFFF`) and the
+  APIPA `/16` mask (`0x0000FFFF` -> `0xFFFF0000`) were fixed as well.
 - **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**
   `init_e1000_hw()` previously set `RCTL.EN` **before** programming
   `RDBAL/RDBAH/RDLEN/RDH/RDT` and the per-descriptor `addr`/`status`, enabling

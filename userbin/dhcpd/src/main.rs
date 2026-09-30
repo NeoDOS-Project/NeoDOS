@@ -274,7 +274,7 @@ fn parse_dhcp_options(data: &[u8]) -> Option<DhcpOptions> {
     let options = &data[DHCP_HDR_LEN..];
     let mut msg_type = 0;
     let mut server_id = 0u32;
-    let mut subnet_mask = 0x00FFFFFFu32;
+    let mut subnet_mask = 0xFFFFFF00u32; // 255.255.255.0 (big-endian, #367)
     let mut gateway = 0u32;
     let mut dns = [0u32; MAX_DHCP_DNS];
     let mut dns_count = 0usize;
@@ -371,7 +371,7 @@ impl DhcpClient {
             state: DhcpState::Init,
             server_ip: 0,
             offered_ip: 0,
-            subnet_mask: 0x00FFFFFF,
+            subnet_mask: 0xFFFFFF00, // 255.255.255.0 (big-endian, #367)
             gateway: 0,
             dns: [0; MAX_DHCP_DNS],
             dns_count: 0,
@@ -568,11 +568,11 @@ impl DhcpClient {
 // ── Main entry ──
 
 /// Publish the APIPA fallback lease (169.254.1.1) through the shared config
-/// backend. The mask keeps the legacy value (see #367).
+/// backend. APIPA is 169.254.0.0/16 -> mask 255.255.0.0 (big-endian, #367).
 fn publish_apipa() {
     let mut cfg = config::load(0).unwrap_or_default();
     cfg.ip = 0xA9FE0101; // 169.254.1.1
-    cfg.mask = 0x0000FFFF;
+    cfg.mask = 0xFFFF0000; // 255.255.0.0
     cfg.gateway = 0;
     cfg.dhcp_server = 0;
     cfg.dhcp_bound = true;

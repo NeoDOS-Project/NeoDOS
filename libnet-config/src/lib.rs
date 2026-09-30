@@ -41,14 +41,11 @@ pub const VALUE_DHCP_SERVER: &str = "DHCPServer";
 /// `LeaseTime` — lease duration in seconds.
 pub const VALUE_LEASE_TIME: &str = "LeaseTime";
 
-/// `/24`, used when `SubnetMask` is absent or 0.
+/// `/24` (`255.255.255.0`), used when `SubnetMask` is absent or 0.
 ///
-/// NOTE: this is the legacy value shipped by `netcfg`/`ipconfig`. It is
-/// **byte-swapped** relative to the big-endian IPv4 representation used by
-/// `parse_ip`/`Ipv4Addr::to_u32` (`255.255.255.0` is `0xFFFF_FF00`). #363
-/// preserves the existing value to avoid a behavior change; the fix is tracked
-/// in #367.
-pub const DEFAULT_MASK: u32 = 0x00FF_FFFF;
+/// NeoDOS represents IPv4 big-endian (`Ipv4Addr::to_u32`), so the mask is
+/// `0xFFFF_FF00`. The previous `0x00FF_FFFF` value was byte-swapped (#367).
+pub const DEFAULT_MASK: u32 = 0xFFFF_FF00;
 /// Human-readable form of a `/24`.
 pub const DEFAULT_MASK_STR: &str = "255.255.255.0";
 
@@ -205,7 +202,12 @@ mod tests {
     fn effective_mask_defaults_to_slash24() {
         let cfg = NetConfig::default();
         assert_eq!(cfg.effective_mask(), DEFAULT_MASK);
-        assert_eq!(cfg.effective_mask(), 0x00FF_FFFF);
+        // #367: the default /24 must be 255.255.255.0 in big-endian form.
+        assert_eq!(DEFAULT_MASK, 0xFFFF_FF00);
+        assert_eq!(parse_ip("255.255.255.0"), Some(DEFAULT_MASK));
+        let mut buf = [0u8; 16];
+        let n = format_ip(DEFAULT_MASK, &mut buf);
+        assert_eq!(&buf[..n], b"255.255.255.0");
         let cfg = NetConfig { mask: 0xFFFF_0000, ..NetConfig::default() };
         assert_eq!(cfg.effective_mask(), 0xFFFF_0000);
     }

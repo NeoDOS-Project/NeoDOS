@@ -667,7 +667,7 @@ pub fn register_cm_tests() {
         .unwrap();
 
         let ip = 0x0A00_1E14u32; // 10.0.30.20
-        let mask = 0x00FF_FFFFu32; // 255.255.255.0
+        let mask = 0xFFFF_FF00u32; // 255.255.255.0 (big-endian)
         let gw = 0x0A00_1E01u32; // 10.0.30.1
         let dns = 0x0A00_1E0Au32; // 10.0.30.10
 
