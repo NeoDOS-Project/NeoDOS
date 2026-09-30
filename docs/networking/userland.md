@@ -1018,7 +1018,7 @@ en `netapplier`.
 `netapplier.nxe` es el **Network Configuration Applier**: un servicio Ring 3
 residente (`StartType = Auto`, servicio `NetApplier`) que mantiene la NIC
 sincronizada con `Network\Interfaces\0`. Es el **único aplicador**; no es
-`netcfg` (CLI) ni `netd` (capa de servicios de red del kernel). Se eligió el
+`netcfg` (CLI) ni el worker Ring 0 `netpump` (bombeo RX del kernel). Se eligió el
 nombre `netapplier` (y no `netcfgd`) para no recoplar la identidad del daemon con
 la CLI `netcfg`.
 
@@ -1037,7 +1037,25 @@ netcfg ─► Registry / apply explícito
 - Binario `C:\System\Tools\netapplier.nxe`; servicio `NetApplier`.
 
 > La notificación de cambios de configuración (en lugar del polling del
-> aplicador) y la capa de servicios `netd` se trackean por separado (#364/#362).
+> aplicador) y la capa de servicios `netd` (Ring 3) se trackean por separado (#364/#362).
+
+#### 4.4.2 netd.nxe — servicio de red Ring 3 (MVP, #372)
+
+`netd.nxe` es la **capa de servicios de red** Ring 3 (servicio `Netd`,
+`StartType = Auto`). **No** es el bombeo de RX: ese sigue siendo el worker
+Ring 0 `netpump` del kernel (`network_poll_all()`), que es independiente de que
+se programe un proceso Ring 3.
+
+```text
+netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
+netpump (Ring 0) ── network_poll_all() + arp_tick + dns_tick  (RX pump)
+```
+
+- v1: identidad de proceso/servicio, bucle con `yield` y monitorización de
+  enlace (subida/bajada por NIC). No aplica configuración (eso es `netapplier`).
+- Fuera de alcance de v1: DHCP (`dhcpd`), DNS, routing y firewall.
+- Binario `C:\System\Tools\netd.nxe`; servicio `Netd` en el hive por defecto.
+- Identidad y frontera se deciden en #362; implementación en #372.
 
 ### 4.5 Integración con la shell: servicios en background
 

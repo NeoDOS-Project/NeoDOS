@@ -455,4 +455,22 @@ pub fn register_service_tests() {
         // netcfg is the configuration CLI, never a service.
         test_true!(sm.find_by_name("Netcfg").is_none());
     });
+
+    // ── #372: netd Ring 3 network service identity ──
+
+    test_case!("sm_netd_service_identity", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Auto,
+            restart_policy: ServiceRestartPolicy::OnCrash,
+            max_failures: 3,
+        };
+        let idx = sm.register("Netd", "Network Service",
+            "C:\\System\\Tools\\netd.nxe", cfg, &[]).unwrap();
+        test_eq!(sm.services[idx].name, "Netd");
+        test_eq!(sm.services[idx].binary_path, "C:\\System\\Tools\\netd.nxe");
+        test_eq!(sm.services[idx].start_type as u8, ServiceStartType::Auto as u8);
+        // The Ring-0 RX pump is the kernel worker "netpump", never a service.
+        test_true!(sm.find_by_name("netpump").is_none());
+    });
 }
