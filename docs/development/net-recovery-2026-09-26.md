@@ -28,7 +28,7 @@
 
 ## 2. Arquitectura real (archivos concretos)
 
-```
+```text
 NIC (QEMU e1000 / VBox 82540EM)
   └─ drivers/e1000/src/lib.rs                 (NEM binario e1000.nem)
        registro vía hst_register_network_device
@@ -49,6 +49,7 @@ Con `smp-ap-sched` corre en un AP (CPU1) y hace `network_poll_all()` (polling, s
 ## 3. Root cause (primer punto de ruptura, en orden de cadena)
 
 ### RC-1 — L4/Bridge: `.nem` obsoleto con ABI incompatible
+
 - El disco embebía **byte a byte** el `e1000.nem` antiguo (5608 B) en el offset
   `107089920`; el binario nuevo (6051 B) **no** estaba. No contenía las cadenas
   de descripción del ABI nuevo (`Intel 82540EM...`).
@@ -60,6 +61,7 @@ Con `smp-ap-sched` corre en un AP (CPU1) y hace `network_poll_all()` (polling, s
 - Reproducido idéntico en VBox y QEMU, 1/2/4 CPUs.
 
 ### RC-2 — L3/DMA: el packer NEM no respetaba la alineación de secciones
+
 - `RX_DESCS`/`TX_DESCS` se declaran `#[repr(align(4096))]`, pero `tools/nem-pack.py`
   concatenaba las `.bss.<sym>` ignorando `sh_addralign`, y el loader coloca las
   secciones sin alinear la base → anillo TX en `0x1BD35E61` (`& 0xF == 1`).
@@ -69,6 +71,7 @@ Con `smp-ap-sched` corre en un AP (CPU1) y hace `network_poll_all()` (polling, s
 - `netd` no recibía nada porque el dispositivo no transmitía correctamente.
 
 ### RC-3 — L4/SM: el Service Manager dejaba el hilo del servicio `Suspended`
+
 - `spawn_usermode()` crea el hilo inicial en `Suspended`; el camino `ObCreate`/`ObWait`
   lo activa en el hand-off, pero el SM no pasa por ahí ⇒ `dhcpd` nunca era
   planificable ⇒ **sin DHCP automático en boot**.
@@ -125,7 +128,8 @@ Sin cambios en el ABI de syscalls ni en el scheduler.
 ## 8. Validación
 
 Comandos:
-```bash
+
+```markdown
 # Kernel con el feature SMP validado
 cd neodos-kernel && cargo +nightly build --target x86_64-unknown-none --release --features smp-ap-sched
 cp target/x86_64-unknown-none/release/neodos_kernel ../kernel.elf
@@ -138,6 +142,7 @@ qemu-system-x86_64 -machine q35,accel=tcg -smp 2 ... \
 ```
 
 Resultados:
+
 ```text
 [NET] NEM callbacks: send=0x3010008a poll=0x30100002      # RC-1 corregido
 [E1000TX] ring_phys=0x1BD39000 tdbal=0x1BD39000           # RC-2 corregido (alineado)
@@ -146,7 +151,9 @@ Resultados:
 [dhcpd] DORA complete, IP=10.0.1.80 mask=255.255.255.0 gw=10.0.1.1 lease=86400s
 [dhcpd] Network configured
 ```
+
 pcap:
+
 ```text
 0.0.0.0.68 > 255.255.255.255.67: BOOTP/DHCP, Request
 10.0.1.1.67 > 255.255.255.255.68: BOOTP/DHCP, Reply
@@ -154,7 +161,9 @@ pcap:
 10.0.1.1.67 > 255.255.255.255.68: BOOTP/DHCP, Reply
 ARP, Request who-has 10.0.1.80 tell 10.0.1.80
 ```
+
 `ipconfig`:
+
 ```text
 Driver: e1000_0003   PCI: 8086:100E   Link: Activa
 MAC: 52:54:00:12:34:56
@@ -191,7 +200,7 @@ Tests: 723 kernel + userbin/shell PASS.
 
 ---
 
-# RC-4 — Desbordamiento de hoja de directorio NE2 (image builder)
+## RC-4 — Desbordamiento de hoja de directorio NE2 (image builder)
 
 **Fecha:** 2026-09-26 · **Repo:** `neodev` v0.2.1 (externo) · **Sin cambios en kernel/red.
 
@@ -235,6 +244,7 @@ todas las entradas; nunca declara más de las que serializa. Diagnóstico con di
 entradas solicitadas, capacidad y bytes necesarios.
 
 **A — rebalanceo:**
+
 - `programs_nxe` 34 → 28; se movieron `reboot, shtest, stresscmd, tree, ver, vol` a
   `tools_nxe` (19). El PATH del shell incluye `System/Tools`, así que siguen visibles.
   Ningún programa se elimina, renombra ni modifica.
@@ -244,6 +254,7 @@ entradas solicitadas, capacidad y bytes necesarios.
   `es-ES` (28) + `es` (19); se conservan los 141 NLTs (47×3 idiomas). No se toca i18n.
 
 **Correcciones de `neodev` descubiertas por la validación:**
+
 - `build --userbin --nxl --nem --image` usaba `2560` bloques fijos (10 MB) en vez de
   `neodos_blocks` (25600 = 100 MB): imagen demasiado pequeña → `KERNEL PANIC
   (PAGE_TABLE_CORRUPTION)` al arrancar en QEMU. Corregido.
@@ -274,4 +285,3 @@ ICMP). La dirección `gateway → guest` ya quedó probada (`icmp_rx=97 icmp_tx=
 > El stack de red **ya era funcional antes** de este fix del image-builder; este
 > cambio solo recupera entradas de directorio perdidas (programas e i18n) y corrige
 > la herramienta de construcción.
-

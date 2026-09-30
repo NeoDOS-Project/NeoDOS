@@ -188,7 +188,7 @@ HIGH     (15) — NMI, machine check
 All inline assembly is strictly confined to `src/hal/raw/`. Run this after any
 code change:
 
-```bash
+```markdown
 # No asm! outside hal/ — MUST return 0 matches
 grep -rn 'asm!(' src/ --include='*.rs' | grep -v 'hal/' || echo "CLEAN"
 
@@ -217,6 +217,7 @@ without changing callers.
 ### ABI v0.3 — 23 extern "C" Functions
 
 #### CPU Control — `hal/x64/cpu.rs`
+
 ```rust
 pub extern "C" fn enable_interrupts();
 pub extern "C" fn disable_interrupts();
@@ -232,6 +233,7 @@ pub fn cpu_info() -> CpuInfo;                    // NOT extern "C"
 ```
 
 #### Port I/O — `hal/x64/io.rs`
+
 ```rust
 pub extern "C" fn inb(port: u16) -> u8;
 pub extern "C" fn outb(port: u16, val: u8);
@@ -242,6 +244,7 @@ pub extern "C" fn outl(port: u16, val: u32);
 ```
 
 #### Page Memory — `hal/x64/mem.rs`
+
 ```rust
 pub extern "C" fn alloc_page() -> *mut u8;
 pub extern "C" fn free_page(ptr: *mut u8);
@@ -252,6 +255,7 @@ pub fn walk_ptes_4k(virt: u64) -> Option<&'static mut PageTableEntry>;  // NOT e
 ```
 
 #### Interrupt Management — `hal/x64/irq.rs`
+
 ```rust
 pub type IrqHandler = extern "C" fn();
 pub extern "C" fn register_irq(vector: u8, handler: IrqHandler) -> i32;
@@ -259,6 +263,7 @@ pub extern "C" fn ack_irq(vector: u8);
 ```
 
 #### Timing — `hal/x64/time.rs`
+
 ```rust
 pub extern "C" fn get_ticks() -> u64;
 pub extern "C" fn increment_ticks();
@@ -295,22 +300,27 @@ Return: `rax`. Stack 16-byte aligned before `call`. Scratch regs: `rax`, `rcx`,
 ### Current Extensions (since v0.39.4)
 
 #### PCI Express ECAM (`src/hal/pci.rs`)
+
 ECAM addressing: `ECAM_BASE + (bus<<20) + (dev<<15) + (func<<12) + offset`.
 Activated at Phase 2.3 from ACPI MCFG table.
 
 #### I/O APIC (`src/interrupts/ioapic.rs`)
+
 ISA IRQs routed: IRQ0 (timer) → vec32, IRQ1 (keyboard) → vec33,
 IRQ4 (serial) → vec36, IRQ12 (PS/2 mouse) → vec44.
 
 #### MSI-X (`src/interrupts/msi.rs`)
+
 `configure_msix_entry` and `configure_msix_entries` for per-entry MSI-X setup.
 
 ### `ack_irq` Updated Contract (v0.39.4+)
+
 1. **APIC EOI** (always): Write 0 to Local APIC EOI register for ALL vectors
 2. **IOAPIC active**: Return immediately after APIC EOI — legacy PIC disabled
 3. **Legacy PIC fallback**: Proper EOI to master/slave PIC for vectors 32-47
 
 ### Error Return Convention
+
 - `0` = success
 - `-1` = generic failure
 
@@ -346,5 +356,6 @@ IDT maps 256 interrupt vectors. Exception vectors (0-31):
 | 14 | Page Fault | Fault | Panic |
 
 Hardware IRQs (32-47, PIC remapped):
+
 - **32 (IRQ0)**: System Timer (Context Switch)
 - **33 (IRQ1)**: PS/2 Keyboard

@@ -11,7 +11,7 @@ Two dispatch paths:
 - **Built-in commands**: CWD, SET, EXIT, CALL. Handled internally by neoshell without spawning a child process.
 - **PATH dispatch**: All other command names scanned against PATH directories. PATH is semicolon-delimited (`;`), read from Registry at startup. Default PATH:
 
-  ```
+  ```text
   \Programs;\System\Tools
   ```
 
@@ -28,7 +28,7 @@ Built-in commands are not pipeable. Only .NXE binaries can appear in pipelines.
 
 PATH is stored in the Registry at:
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Control\Session Manager\Environment\PATH
 ```
 

@@ -30,7 +30,7 @@ You are an expert OS kernel security specialist for NeoDOS.
 - Can user mode trigger a kernel panic via invalid args?
 
 ### 2. Unsafe Rust Audit
-```
+```text
 Check for:
 - [ ] Missing // Safety: comments
 - [ ] Pointer arithmetic without bounds
@@ -40,7 +40,7 @@ Check for:
 ```
 
 ### 3. Ob Security
-```
+```text
 - [ ] New ObType has security descriptor defined
 - [ ] ObOpen checks SeAccessCheck with caller's token
 - [ ] Default DACL grants minimum permissions
@@ -48,7 +48,7 @@ Check for:
 ```
 
 ### 4. NEM Driver Isolation
-```
+```text
 - [ ] Driver capability flags restrict what it can access
 - [ ] ABI version verified at load time
 - [ ] Driver cannot access memory outside its assigned range
@@ -92,7 +92,7 @@ if !granted {
 
 ## Report Format
 
-```
+```markdown
 # Security Review
 
 **Module:** [subsystem/mod.rs]

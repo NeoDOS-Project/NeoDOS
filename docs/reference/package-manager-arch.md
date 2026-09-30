@@ -979,7 +979,7 @@ pub enum Event {
 
 ### 12.4 Integration with shell scripts
 
-```bash
+```markdown
 # neoget returns 0 on success, non-zero on error
 # All errors go to stderr, normal output to stdout
 # Machine-readable mode:

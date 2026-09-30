@@ -27,7 +27,7 @@ la instrumentación que lo desbloquea y los registros clasificados.
 
 ## 2. Reproducción
 
-```bash
+```markdown
 # Imagen de diagnóstico (incluye el serial raw; ver §4)
 cd neodos
 RUSTUP_TOOLCHAIN=nightly neodev build --quick --image

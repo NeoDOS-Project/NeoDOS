@@ -39,7 +39,7 @@ Correctly implement network changes with proper protocol handling, socket lifecy
 
 ### Module Map
 
-```
+```text
 src/net/
 ├── types.rs      — MacAddr, Ipv4Addr, SocketAddrV4, TcpState, SocketType, SocketDirection
 ├── ethernet.rs   — EthernetHeader, ETH_TYPE_ARP (0x0806), ETH_TYPE_IPV4 (0x0800)
@@ -58,7 +58,7 @@ src/net/
 
 ### Packet Flow
 
-```
+```text
 e1000 poll_packet() → 2048 byte buffer
   → ethernet parse (dst MAC, src MAC, ethertype)
     → ARP (0x0806):     arp_resolve() → cache lookup / reply
@@ -105,6 +105,7 @@ e1000 poll_packet() → 2048 byte buffer
 ### DHCP (Userspace)
 
 DHCP runs as `dhcpd.nxe` (Ring 3). Uses UDP socket (port 68/67), performs DORA:
+
 1. DISCOVER (broadcast) → OFFER
 2. REQUEST → ACK
 3. On ACK: `ob_set_info(SetNicIp)` to configure NIC IP
@@ -130,6 +131,7 @@ pub fn handle_my_proto(payload: &[u8], src_ip: Ipv4Addr, dst_ip: Ipv4Addr) {
 ```
 
 Dispatch in `net_handle_incoming_packet()`:
+
 ```rust
 } else if ip_hdr.protocol() == MY_PROTO {
     handle_my_proto(payload, ip_hdr.src_ip(), ip_hdr.dst_ip());

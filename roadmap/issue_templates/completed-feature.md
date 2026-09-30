@@ -20,7 +20,7 @@ assignees: ""
 
 ## Archivos
 
-```
+```text
 src/...
 ```
 

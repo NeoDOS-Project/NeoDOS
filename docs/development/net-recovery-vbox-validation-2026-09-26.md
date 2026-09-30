@@ -9,6 +9,7 @@ MAC `00:0F:4B:DE:9D:E1`, cable on.
 **Disco:** `disk_image.vdi` regenerado desde `neodos/disk_image.img` (mismo GPT 212 MB).
 
 Método de arranque/control:
+
 ```bash
 VBoxManage storageattach NeoDOS --storagectl AHCI --port 0 --device 0 --type hdd --medium none
 VBoxManage closemedium disk disk_image.vdi --delete
@@ -38,6 +39,7 @@ VBoxManage controlvm NeoDOS keyboardputscancode 1c 9c
 | Sin GPF/PF/panic | PASS | 0 ocurrencias de `KERNEL PANIC/DOUBLE FAULT/GPF/[EXC]` |
 
 Evidencia literal:
+
 ```text
 [DRV] MATCH: 00:03.0 -> driver 'E1000' (v8086:100e, class=Network)
 [NEM] Loaded into isolated region @ 0x30000000 (124 KB, mode=basic)
@@ -54,6 +56,7 @@ Evidencia literal:
 ```
 
 `ipconfig` en VBox:
+
 ```text
 Adaptador Ethernet 0:
     Descripcin . . . . . . : Intel 82540EM Gigabit Ethernet
@@ -105,6 +108,7 @@ hace `break` **dejando el campo `count` con el total y el resto a cero**:
   (`reboot, shtest, stresscmd, tree, ver, vol`).
 
 Verificación local (imagen NE2 y partición 2 del GPT, byte a byte):
+
 ```text
 /Programs count=34
   ... nxverify.nxe (idx24)
@@ -113,6 +117,7 @@ Verificación local (imagen NE2 y partición 2 del GPT, byte a byte):
   ps.nxe (idx27)     <- presente, direntry válida
   idx28..33 = entradas vacías  <- 6 ficheros descartados
 ```
+
 `type C:\Programs\colors.nxe` y `type C:\System\Tools\ipconfig.nxe` funcionan;
 `type C:\Programs\ping.nxe` → `Archivo no encontrado`.
 

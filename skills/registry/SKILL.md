@@ -169,7 +169,7 @@ The `SecurityCell` type 3 already exists in the serialization format but no code
 
 ### 7. Offline hive inspection (MCP tools)
 
-```bash
+```markdown
 # Query a hive from the build image
 bash scripts/mcp-server.sh --tool registry_list \
     key_path='\CurrentControlSet\Services\NeoInit' \

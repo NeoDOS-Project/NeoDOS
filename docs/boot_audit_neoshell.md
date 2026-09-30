@@ -33,6 +33,7 @@ La causa raíz reside en el mecanismo de conmutación de contexto durante el ret
 5. **Selección del Scheduler:** El planificador `schedule()` selecciona como candidato a **`netd` (TID 2, Ring 0, `cs=0x08`)**.
 6. **Filtro de Ring 0 en Syscall Return:** `syscall_resched_if_needed` comprueba si el hilo destino es Ring 0 (`next_cs & 3 != 3`). Al ser `netd` un hilo de kernel, determina que no puede conmutar a un hilo de Ring 0 desde un marco de retorno de syscall de usuario.
 7. **Violación de Invariante del Scheduler:** Para abortar el cambio de contexto a Ring 0, `syscall_resched_if_needed` ejecuta:
+
    ```rust
    if next_cs & 3 != 3 {
        ...
@@ -44,6 +45,7 @@ La causa raíz reside en el mecanismo de conmutación de contexto durante el ret
        return current_rsp;
    }
    ```
+
 8. **Efecto Anómalo:** El estado `Blocked` de `NeoInit` es forzosamente sobrescrito y restaurado a `Running`, retornando inmediatamente de la syscall con valor `0`.
 9. `NeoInit` recibe el retorno `0` creyendo que la shell se ha cerrado, imprime `[neoinit] shell exited, respawning...` y reintenta `sys_ob_create` continuamente.
 10. **Resultado:** `NeoShell` (que estaba en `Ready`) **nunca es seleccionado para ejecutarse**, y los reintentos continuos de `NeoInit` agotan los slots de heap (`HEAP_SLOT_USED`).

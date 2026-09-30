@@ -25,7 +25,7 @@ NXE = ELF64 `ET_DYN` (PIE). The kernel loader in `elf.rs` only reads `PT_LOAD` s
 
 ### 2.2 NXE Metadata Note
 
-```
+```text
 Offset  Size  Field
 ──────  ────  ──────────────────────
 0       4     namesz: u32 = 8       ("NeoDOS\0\0")
@@ -39,7 +39,7 @@ Offset  Size  Field
 
 The metadata block uses a simple TLV encoding inside the note descriptor:
 
-```
+```text
 tag: u16 LE
 length: u16 LE
 value: [u8; length]
@@ -106,7 +106,7 @@ The metadata is emitted from Rust code using `#[link_section = ".note.neodos"]` 
 
 NXP = NeoDOS eXecutable Package. Binary container, little-endian, self-validating with CRC32 and optional signature space.
 
-```
+```text
 ┌──────────────────────────────────────────────────────┐
 │ Magic "NXP1" (4 bytes)                                │
 ├──────────────────────────────────────────────────────┤
@@ -176,7 +176,7 @@ NXP = NeoDOS eXecutable Package. Binary container, little-endian, self-validatin
 
 ### 3.5 Standard package layout
 
-```
+```text
 <package>.nxp
 ├── program.nxe              [EXECUTABLE, /Programs/<name>/<name>.nxe]
 ├── resources/
@@ -205,7 +205,7 @@ NXP = NeoDOS eXecutable Package. Binary container, little-endian, self-validatin
 
 Resources are files within an installed package, served through the Object Manager namespace at `\Resource\<app_name>\<path>`.
 
-```
+```text
 \Resource\
   neoshell\
     locale\en-US\strings.nlt     →  ob_open → ob_query_info(ReadContent)
@@ -248,6 +248,7 @@ pub fn res_enum(app: &str, dir: &str) -> Result<Vec<String>, i64>;
 ### 4.4 Locale-aware resource resolution
 
 `res_open_locale` implements the fallback chain:
+
 1. `\{lang}\{path}` (e.g. `es-ES\strings.nlt`)
 2. `\{lang-only}\{path}` (e.g. `es\strings.nlt`)
 3. `\en-US\{path}`
@@ -260,7 +261,8 @@ pub fn res_enum(app: &str, dir: &str) -> Result<Vec<String>, i64>;
 ### 5.1 NLT files as resources
 
 NLTv2 files are stored as resources within the package:
-```
+
+```text
 resources/locale/{lang}/{app}.nlt
 ```
 
@@ -280,9 +282,11 @@ pub fn i18n_load(app: &str) -> Result<(), ()> {
 ### 5.3 i18n_load_from_package
 
 New function that loads NLT from the app's own package resource directory:
+
 ```rust
 pub fn i18n_load_from_package() -> Result<(), ()>;
 ```
+
 This enables self-contained apps with bundled translations.
 
 ---
@@ -388,7 +392,7 @@ Commands:
 
 ### 7.1 Build pipeline additions
 
-```
+```text
 cargo build --release    →  NXE ELF binary
   └── nxeinfo --embed    →  Inject .note.neodos metadata section
       └── nxpkg create   →  Bundle into .nxp package
@@ -411,13 +415,14 @@ pub fn build_nxp_packages(disc: &Discovery) -> Result<()> {
 ### 7.3 NXE metadata generation
 
 Each NXE binary gets a `build.rs` (or NeoDev injects post-build) that:
+
 1. Reads `Cargo.toml` for name/version/description
 2. Generates the `.note.neodos` TLV metadata blob
 3. Injects it as a new ELF section via `objcopy --add-section`
 
 ### 7.4 File placement in image
 
-```
+```text
 C:\Programs\<name>\<name>.nxe     ← NXE binary
 C:\Programs\<name>\resources\...  ← Resource files
 C:\Packages\<name>.nxp            ← Full package (optional)
@@ -429,7 +434,7 @@ C:\Packages\<name>.nxp            ← Full package (optional)
 
 ### 8.1 Package install directory
 
-```
+```text
 C:\Programs\<name>\          ← Application root
   <name>.nxe                 ← Main executable
   resources\                 ← Read-only resource files
@@ -441,7 +446,7 @@ C:\Programs\<name>\          ← Application root
 
 ### 8.2 Registry database
 
-```
+```text
 \Registry\Machine\Packages\
   <name>\
     Version       REG_SZ     "1.2.0"

@@ -20,7 +20,7 @@ y en tiempo de ejecucion.
 
 ## Arquitectura general
 
-```
+```text
   ┌─────────────────────────────────────────────────────────┐
   │  Macros publicas                                       │
   │  kerror!  kwarn!  kinfo!  kdebug!  ktrace!  klog_raw! │
@@ -49,7 +49,7 @@ crate sin import explicito.
 
 ## Flujo de un mensaje de log
 
-```
+```text
 kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 
 1. La macro kinfo! expande a:
@@ -83,11 +83,13 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 
 - **Proposito:** Condicion fatal que impide continuar. Suele preceder a `halt()` o panic.
 - **Ejemplos:**
+
   ```rust
   kerror!(LogSubsys::Kernel, "Failed to read superblock: {:?}", e);
   kerror!(LogSubsys::Watchdog, "Timeout before storage init");
   kerror!(LogSubsys::Boot, "Failed to allocate stack for AP {}", cpu);
   ```
+
 - **Cuando usarlo:** Fallos de hardware, datos corruptos, out-of-memory critico.
 - **Cuando NO:** Recuperable (usar WARN). Esperable (usar INFO). Debug (usar DEBUG).
 
@@ -95,11 +97,13 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 
 - **Proposito:** Condicion anomala recuperable. El sistema sigue pero en estado degradado.
 - **Ejemplos:**
+
   ```rust
   kwarn!(LogSubsys::Kernel, "Version mismatch: bootloader v{:x}, kernel v{:x}");
   kwarn!(LogSubsys::Boot, "No APs detected (single CPU mode)");
   kwarn!(LogSubsys::Driver, "Driver {} faulted, continuing without it", name);
   ```
+
 - **Cuando usarlo:** Fallback a un camino menos optimo, timeout recuperable, recurso no encontrado con alternativa.
 - **Cuando NO:** Fatal (ERROR). Normal (INFO). Detalle (DEBUG).
 
@@ -107,11 +111,13 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 
 - **Proposito:** Hitos normales de operacion. Inicializacion, descubrimiento, cambios de estado.
 - **Ejemplos:**
+
   ```rust
   kinfo!(LogSubsys::Net, "Networking initialized ({} NIC(s))", nic_count);
   kinfo!(LogSubsys::Driver, "=== Driver Manager v1.0 ===");
   kinfo!(LogSubsys::Nvme, "Ready: {} sectors x {}B", nsze, block_size);
   ```
+
 - **Cuando usarlo:** Inicio/fin de fase, dispositivo detectado, servicio iniciado, cambio de estado significativo.
 - **Cuando NO:** Cada paquete o IO (TRACE). Valores de registro (DEBUG). Recuperable (WARN).
 
@@ -119,12 +125,14 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 
 - **Proposito:** Decisiones de rutas de codigo, transiciones de estado, configuraciones HW.
 - **Ejemplos:**
+
   ```rust
   kdebug!(LogSubsys::Sched, "ctx switch: {} -> {}", current.tid, next.tid);
   kdebug!(LogSubsys::Memory, "Split 2MB page @ 0x{:x}", virt);
   kdebug!(LogSubsys::Boot, "Sending SIPI (vector=0x{:x})...", sipi_vector);
   kdebug!(LogSubsys::Interrupts, "Spurious interrupt on vector {}", vector);
   ```
+
 - **Cuando usarlo:** Valores de registros HW, decisiones de routing, contenido de estructuras, transiciones de estado internas, timeouts notificados.
 - **Cuando NO:** Produccion con `LOG_DEFAULT=WARN` (se elimina). Hitos de usuario (INFO). Per-paquete (TRACE).
 
@@ -133,6 +141,7 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
 - **Proposito:** Maximo nivel de detalle. Cada evento atomico de bajo nivel. Solo se activa
   para depuracion profunda de un subsistema concreto.
 - **Ejemplos reales en el codigo actual:**
+
   ```rust
   // Scheduler: entrada a la funcion de planificacion
   ktrace!(LogSubsys::Sched, "schedule entry");
@@ -162,6 +171,7 @@ kinfo!(LogSubsys::Net, "NIC {} inicializada", nic_id);
   // Hot reload: carga/descarga individual de driver
   ktrace!(LogSubsys::Hotreload, "Driver {} ({}) transitioning to UNLOADING", name, id);
   ```
+
 - **Cuando usarlo:** Cada paquete RX/TX, cada CQE NVMe, cada page fault, cada context switch,
   cada escritura a registro de dispositivo, cada entrada de cache.
 - **Cuando NO:** Todo lo demas. TRACE produce un volumen extremo de salida. Solo activar
@@ -277,7 +287,7 @@ klog_raw!(fmt, args...)         // Sin tag ni nivel: mensaje
 
 - `subsys` debe ser una constante de `LogSubsys` (ej. `LogSubsys::Net`).
 - `fmt` y `args` siguen la sintaxis de `format_args!()`.
-- Las macros `kerror!`, `kwarn!`, `kdebug!` y `ktrace!` anaden `NIVEL: ` tras el tag.
+- Las macros `kerror!`, `kwarn!`, `kdebug!` y `ktrace!` anaden `NIVEL:` tras el tag.
 - `kinfo!` omite el nivel por concision (es el caso mas frecuente).
 - `klog_raw!` omite tag y nivel — util para continuar una linea empezada con
   `serial_print!`.
@@ -295,7 +305,7 @@ log::log_enabled(subsys, level) -> bool  // Consulta si un nivel esta activo
 
 ### Formato de salida
 
-```
+```text
 [KERN] ERROR: Failed to read superblock: IoError
 [NET] NIC 0 inicializada
 [DRV] MATCH: E1000 -> driver 'e1000'
@@ -304,7 +314,7 @@ log::log_enabled(subsys, level) -> bool  // Consulta si un nivel esta activo
 ```
 
 - `[TAG]` siempre presente (4-8 caracteres).
-- `NIVEL: ` presente en ERROR, WARN, DEBUG, TRACE. Ausente en INFO.
+- `NIVEL:` presente en ERROR, WARN, DEBUG, TRACE. Ausente en INFO.
 - `\r\n` al final de cada mensaje.
 
 ---
@@ -315,7 +325,7 @@ log::log_enabled(subsys, level) -> bool  // Consulta si un nivel esta activo
 
 Cada subsistema tiene un umbral definido por una variable de entorno:
 
-```bash
+```markdown
 # Nivel por defecto para todos los subsistemas (default: DEBUG)
 LOG_DEFAULT=DEBUG neodev build --image
 

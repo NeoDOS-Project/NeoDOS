@@ -8,7 +8,7 @@
 
 ## 1. Container Layout
 
-```
+```text
 ┌──────────────────────────────────────────────┐
 │ Magic "NXP1" (4 bytes)                        │
 ├──────────────────────────────────────────────┤
@@ -45,14 +45,14 @@
 | Tag | Multi | Value | Example |
 |-----|-------|-------|---------|
 | `NAME` | No | Qualified name | `org.neodos/NeoTop` |
-| `VER ` | No | Semver | `1.2.0` |
+| `VER` | No | Semver | `1.2.0` |
 | `DESC` | No | Free text | `Process monitor` |
 | `AUTH` | No | Author | `NeoDOS Team` |
 | `LICE` | No | SPDX | `MIT` |
 | `ARCH` | No | Target arch | `x86_64` |
 | `CORE` | No | 0/1 | `0` |
 | `BOOT` | No | 0/1 | `0` |
-| `DEP ` | Yes | `name:ver_req` | `libneodos:>=1.0` |
+| `DEP` | Yes | `name:ver_req` | `libneodos:>=1.0` |
 
 ### File Entry (32 bytes each)
 
@@ -85,7 +85,7 @@ license = "MIT"
 
 ## 3. Standard Package Layout
 
-```
+```text
 <name>/
 ├── neopkg.toml            # Package manifest
 ├── <name>.nxe             # Main executable (optional)
@@ -111,7 +111,7 @@ license = "MIT"
 
 ## 4. Commands
 
-```bash
+```markdown
 # Create package from directory
 nxpkg create ./myapp/ myapp.nxp
 

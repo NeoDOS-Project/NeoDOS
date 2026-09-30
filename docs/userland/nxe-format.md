@@ -86,7 +86,7 @@ The `.note.neodos` ELF note section (type `PT_NOTE` / `SHT_NOTE`) carries metada
 
 ## 3. Tool Inspection
 
-```bash
+```markdown
 # Display brief info
 nxinfo ver.nxe
 
@@ -124,6 +124,7 @@ static NXE_META: [u8; 64] = *b"\x08\x00\x00\x00...NeoDOS\0\0...";
 ```
 
 For host-side injection (without modifying source), `neodev` can use:
+
 ```bash
 objcopy --add-section .note.neodos=metadata.bin input.nxe output.nxe
 ```

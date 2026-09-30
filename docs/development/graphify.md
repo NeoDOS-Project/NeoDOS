@@ -6,19 +6,19 @@ Graphify es una herramienta auxiliar de análisis que construye un grafo de cono
 
 ## Qué proporciona
 
-* **God nodes**: hubs arquitectónicos más conectados (ej. `Scheduler`, `libneodos`, `HandleEntry`).
-* **Comunidades**: clusters por subsistema (VFS, HAL, ipc, scheduler, memory, drivers, net, security, usermode).
-* **Consultas** acotadas (`query`, `path`, `explain`) que devuelven subgrafos mucho más pequeños que `grep` o `GRAPH_REPORT.md`.
-* Detección automática de corpus Rust: NeoDOS no es un workspace Cargo único sino **~70 crates independientes** (kernel, bootloader, drivers, libneodos, ~40 binarios `userbin/`, 4 libs NXL, tools).
+- **God nodes**: hubs arquitectónicos más conectados (ej. `Scheduler`, `libneodos`, `HandleEntry`).
+- **Comunidades**: clusters por subsistema (VFS, HAL, ipc, scheduler, memory, drivers, net, security, usermode).
+- **Consultas** acotadas (`query`, `path`, `explain`) que devuelven subgrafos mucho más pequeños que `grep` o `GRAPH_REPORT.md`.
+- Detección automática de corpus Rust: NeoDOS no es un workspace Cargo único sino **~70 crates independientes** (kernel, bootloader, drivers, libneodos, ~40 binarios `userbin/`, 4 libs NXL, tools).
 
 ## Instalación
 
 ### Requisitos verificados en esta integración
 
-* Python `3.14.6`, `uv 0.12.15`, Rust `1.95.0` (stable + nightly `nightly-x86_64-unknown-linux-gnu`)
-* `uv` en `~/.local/bin`
+- Python `3.14.6`, `uv 0.12.15`, Rust `1.95.0` (stable + nightly `nightly-x86_64-unknown-linux-gnu`)
+- `uv` en `~/.local/bin`
 
-```bash
+```markdown
 # 1. Instalar uv (si falta)
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
@@ -42,10 +42,10 @@ OpenCode en NeoDOS usa `opencode.json` en la raíz + skill `skills/` + carpeta `
 
 Graphify ofrece `graphify install --platform opencode` que:
 
-* instala skill en `~/.config/opencode/skills/graphify/` (global, reutilizable por el usuario) y/o `.opencode/skills/graphify/` (project-scoped, reproducible)
-* crea plugin ` .opencode/plugins/graphify.js` (hook `tool.execute.before`)
-* registra el plugin en `.opencode/opencode.json`
-* (con `--project`) añade sección `## graphify` a `AGENTS.md`
+- instala skill en `~/.config/opencode/skills/graphify/` (global, reutilizable por el usuario) y/o `.opencode/skills/graphify/` (project-scoped, reproducible)
+- crea plugin `.opencode/plugins/graphify.js` (hook `tool.execute.before`)
+- registra el plugin en `.opencode/opencode.json`
+- (con `--project`) añade sección `## graphify` a `AGENTS.md`
 
 Comprobar antes de instalar:
 
@@ -56,7 +56,7 @@ ls -la .opencode/ AGENTS.md opencode.json
 
 Instalación **project-scoped** (preferida para NeoDOS — queda claro qué es del repo y qué es global del usuario):
 
-```bash
+```markdown
 # Instalación estándar (plugin project + skill global)
 graphify install --platform opencode
 
@@ -107,9 +107,9 @@ graphify extract . --code-only --force        # re-scan completo, ignora cache
 
 ### Resultado verificado
 
-* `graphify extract . --code-only` → `375 code files` detectados, `116 docs` saltados, `267` no clasificados (`.toml`, `.ld`, `.klc`, etc.)
-* `graph.json: 7260 nodes, 13038 edges, 379 communities` (tras `cluster-only`)
-* Token cost: `0` (AST-only)
+- `graphify extract . --code-only` → `375 code files` detectados, `116 docs` saltados, `267` no clasificados (`.toml`, `.ld`, `.klc`, etc.)
+- `graph.json: 7260 nodes, 13038 edges, 379 communities` (tras `cluster-only`)
+- Token cost: `0` (AST-only)
 
 Si hay `GEMINI_API_KEY`/`GOOGLE_API_KEY` configurado, `graphify extract .` sin `--code-only` intentará extracción semántica de docs con Gemini (`gemini-3-flash-preview`). Sin clave, usar `--code-only` es la vía headless soportada.
 
@@ -134,17 +134,17 @@ Todos los artefactos van a `graphify-out/` (respecta `GRAPHIFY_OUT` env var):
 
 **Versionar (reproducible, Commit):**
 
-* `.opencode/plugins/graphify.js` — plugin hook OpenCode
-* `.opencode/opencode.json` — registro del plugin (`{"plugin":[".opencode/plugins/graphify.js"]}`)
-* `.opencode/skills/graphify/SKILL.md` + `references/` — skill project-scoped (solo si se usó `--project`)
-* `AGENTS.md` — sección `## graphify` añadida (reglas para agentes)
-* `.gitignore` — línea `graphify-out/` + `.graphify_cache/`
+- `.opencode/plugins/graphify.js` — plugin hook OpenCode
+- `.opencode/opencode.json` — registro del plugin (`{"plugin":[".opencode/plugins/graphify.js"]}`)
+- `.opencode/skills/graphify/SKILL.md` + `references/` — skill project-scoped (solo si se usó `--project`)
+- `AGENTS.md` — sección `## graphify` añadida (reglas para agentes)
+- `.gitignore` — línea `graphify-out/` + `.graphify_cache/`
 
 **No versionar / ignorado:**
 
-* `graphify-out/` completo (ver tabla arriba) — declarado en `.gitignore` raíz como `graphify-out/` y `.graphify_cache/`
-* `~/.config/opencode/skills/graphify/` — instalación global del usuario (fuera del repo)
-* `~/.graphify/global-graph.json` — si se usa `graphify global add` (no usado en NeoDOS)
+- `graphify-out/` completo (ver tabla arriba) — declarado en `.gitignore` raíz como `graphify-out/` y `.graphify_cache/`
+- `~/.config/opencode/skills/graphify/` — instalación global del usuario (fuera del repo)
+- `~/.graphify/global-graph.json` — si se usa `graphify global add` (no usado en NeoDOS)
 
 ## Uso desde OpenCode / agente
 
@@ -154,7 +154,7 @@ El plugin `tool.execute.before` inyecta un recordatorio en cada `bash` cuando `g
 
 Comandos clave (todos verificados con `graphify 0.9.63`):
 
-```bash
+```markdown
 # BFS — contexto amplio
 graphify query "How does the scheduler work? Priorities and aging" --budget 2000
 
@@ -202,10 +202,10 @@ El CLI avisa si el skill está desactualizado comparando `.graphify_version` jun
 
 ## Limitaciones conocidas en NeoDOS
 
-* **Sin Cargo workspace raíz**: `--cargo` no extrae deps crate→crate; el grafo de dependencias Rust se infiere vía `tree-sitter` + imports, no vía `Cargo.toml` agregado.
-* **Sin API key**: docs (`*.md`, 116 files) se saltan con `--code-only`. Para incluir docs semánticamente se necesita `GEMINI_API_KEY` (Gemini) o backend local (`--backend openai` con `OPENAI_BASE_URL=http://localhost:1234/v1` si hay LM Studio). Sin clave, el grafo cubre solo código (`no_std`, Ring 0/3, UEFI bootloader, drivers NEM, userbin).
-* **Tamaño**: `graph.json` > 5 MiB activa vista agregada en `graph.html` (comunidades). Para detalle nodo-a-nodo usar `--obsidian` o `graphify query`.
-* **Labeling**: `cluster-only` intenta etiquetar comunidades con `claude -p`; sin login cae a placeholders `Community N` (funcional pero menos descriptivo). No bloquea generación del grafo.
+- **Sin Cargo workspace raíz**: `--cargo` no extrae deps crate→crate; el grafo de dependencias Rust se infiere vía `tree-sitter` + imports, no vía `Cargo.toml` agregado.
+- **Sin API key**: docs (`*.md`, 116 files) se saltan con `--code-only`. Para incluir docs semánticamente se necesita `GEMINI_API_KEY` (Gemini) o backend local (`--backend openai` con `OPENAI_BASE_URL=http://localhost:1234/v1` si hay LM Studio). Sin clave, el grafo cubre solo código (`no_std`, Ring 0/3, UEFI bootloader, drivers NEM, userbin).
+- **Tamaño**: `graph.json` > 5 MiB activa vista agregada en `graph.html` (comunidades). Para detalle nodo-a-nodo usar `--obsidian` o `graphify query`.
+- **Labeling**: `cluster-only` intenta etiquetar comunidades con `claude -p`; sin login cae a placeholders `Community N` (funcional pero menos descriptivo). No bloquea generación del grafo.
 
 ## Validación
 

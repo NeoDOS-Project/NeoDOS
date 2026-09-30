@@ -8,18 +8,18 @@
 
 ## Fase 1 — Baseline SMP=1
 
-```
+```bash
 qemu -smp 1 -machine q35,accel=tcg -m 512M -serial file:serial.log
 ```
 
-- `BSP APIC ID 0` (`msr::is_bsp()` true), `KPRCB 0x2403000`, `GS 0x2403000`, `CR3 0x1f401000`, `init_smp` → `Max LVT 6` but `AP_READY_COUNT 0` → `1 CPU online` → `I/O APIC` `0xfec00000` 24 pins → `STI` → `PAGING before/after` → `All 716 PASS` → `C:\> `_.
+- `BSP APIC ID 0` (`msr::is_bsp()` true), `KPRCB 0x2403000`, `GS 0x2403000`, `CR3 0x1f401000`, `init_smp` → `Max LVT 6` but `AP_READY_COUNT 0` → `1 CPU online` → `I/O APIC` `0xfec00000` 24 pins → `STI` → `PAGING before/after` → `All 716 PASS` → `C:\>`_.
 - **PASS**.
 
 ---
 
 ## Fase 2 — SMP=2
 
-```
+```bash
 qemu -smp 2
 ```
 
@@ -72,7 +72,7 @@ Próximo marcador: `out 'D'`/`'E'` tras `write_gs_base` y `init_ap` no se vieron
 
 ## Primer punto de fallo (actual)
 
-```
+```text
 BIOS/QEMU MADT(2 CPUs) → OK
   ↓
 RSDP 0x1fec1014 → find_madt_table → FAIL (no dump)
@@ -275,7 +275,7 @@ Fix (test isolation, NOT scheduler semantic change):
 - `testing.rs:29` + `main.rs:621` assert `!SCHED_TEST_MODE` tras cada test y
   tras la suite (debug_assert + check visible en release).
 - Contadores `smp.rs:STEAL_ATTEMPTS/SUCCESS`, `schedule.rs:SCHEDULE_CALLS`
-  + dump per-CPU `KPRCB/qlen` para F4–F6.
+  - dump per-CPU `KPRCB/qlen` para F4–F6.
 
 Important:
 This is test isolation, not a scheduler semantic change. Queue ownership,
@@ -321,13 +321,14 @@ Objetivo: localizar por qué el consumidor `neoshell` (TID5/PID4) queda
 
 ### Invariante violada (confirmada en runtime)
 
-```
+```text
 A thread in state Running MUST be the context actually dispatched on its CPU,
 and KPRCB.current_tid MUST equal the executing thread.
 ```
 
 Observado (SMP1, `SCHED_WARN`):
-```
+
+```text
 tids Running = [2, 5]  ambos cpu=0   (dos Running en la misma CPU)
 tid=5 pid=4 state=RUNNING wait=None  (shell stranded, VT_POP=0)
 kprcb_tid=Some(2)  sched.current=2   (desincronizado de tid5)
@@ -338,7 +339,7 @@ kprcb_tid=Some(2)  sched.current=2   (desincronizado de tid5)
 Con `[T5_SCHED]` en los puntos de asignación de `schedule()` y `[T5_RS]` en
 `syscall_try_resched`:
 
-```
+```text
 [T5_SCHED] step=1 prev=3 new=5 current=5 rq0=0 kprcb=Some(5)   shell despachado correcto (Ring3)
 [T5_RS]    entry=3 next=5 next_rsp=0x2495240 next_cs=0x1b       cs=0x1b (Ring3) OK
 --- shell llama read y bloquea ---
@@ -357,7 +358,7 @@ desincronizados. De ahí `sched.current != kprcb_tid` y el `Running` huérfano.
 
 ### schedule() — contrato actual vs correcto
 
-```
+```text
 ACTUAL:   mark Running + current_tid + KPRCB  ->  select  ->  caller valida frame
 CORRECTO: select + valida frame  ->  (si válido) mark Running + current_tid + KPRCB
 ```
@@ -387,7 +388,7 @@ núcleo del scheduler y debe validarse con 716/716 en SMP1/2/4 antes de commit.
 
 ### Resultado
 
-```
+```text
 INVARIANT VIOLATED: Running sin dispatch + KPRCB != Scheduler.current_tid
 OFFENDING PATH:     syscall_try_resched / timer branch next_cs&3!=3
                     (schedule() confirma estado antes de validar el frame)
@@ -425,21 +426,25 @@ Ficheros: `scheduler/schedule.rs` (`schedule_with` + `frame_is_ring3`),
 ### Evidencia (SMP1, traza T5)
 
 Antes (Phase 8):
-```
+
+```text
 [T5_SCHED] step=3 prev=5 new=2 current=2 rq0=0 kprcb=Some(5)
 [T5_RS]    entry=5 next=2 next_rsp=0x2479240 next_cs=0x8   <-- tid2 (Ring0) COMMIT
 ```
+
 Después (Phase 9):
-```
+
+```text
 [T5_RS] entry=3 next=5 next_rsp=0x2495240 next_cs=0x1b   shell despachado (Ring3 válido)
 [T5_RS] entry=5 next=1 next_rsp=0x4238ad0 next_cs=0x8    candidato Ring0 NO comprometido -> idle
 ```
+
 `SCHED_WARN` (dos `Running` en la misma CPU) = **0** en todas las ejecuciones
 post-fix, frente a las violaciones observadas en Phase 8.
 
 ### Regresión
 
-```
+```text
 neodev test (SMP1)  716/716 PASS
 git diff --check    CLEAN
 ```
@@ -453,7 +458,7 @@ verificado en Phase 6). Instrumentación añadida para futura verificación:
 `[VT_EV]` (primeros 200 eventos, activado post-boot) y `[AUTO]`. Es una
 limitación del arnés, no del kernel.
 
-```
+```text
 INVARIANT VIOLATED: resuelto a nivel de contrato (candidato inválido no compromete estado)
 INVALID FRAME:      antes commit + rollback incompleto -> ahora re-enqueue sin commit
 FIX:                APPLIED (commit point posterior a validación de frame)
@@ -461,4 +466,3 @@ REGRESSION:         716/716 PASS
 KEYBOARD E2E:       no demostrable por limitación del monitor QEMU (sendkey)
 READY:              NO (pendiente E2E)
 ```
-

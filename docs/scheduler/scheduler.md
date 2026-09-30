@@ -16,7 +16,7 @@ The scheduler uses a **two-tier** decision mechanism:
 | 2    | **Global Priority Scan** | Fair round-robin selection across all Ready threads |
 | 3    | **Idle fallback** | Select TID 1 (PRIORITY_IDLE) when no Ready thread exists |
 
-```
+```text
 Thread wakes / created / unblocked
         |
         v
@@ -41,6 +41,7 @@ Thread wakes / created / unblocked
 ### Key invariant: the run queue is NOT a scheduling cache
 
 The per-CPU run queue is used **only** for:
+
 - Notification of new threads (`add_ring3_process`, `add_thread_to_process`)
 - Remote wakeups (`wake_waiters`, `wake_blocked_on_magic` → IPI to target CPU)
 - SMP work stealing (`try_work_steal` → `steal_from_cpu_run_queue`)
@@ -56,7 +57,7 @@ bypassing the fairness guarantees of the scan.
 
 ### State transitions
 
-```
+```text
                  ┌─────────────────┐
                  │     READY       │
                  └────────┬────────┘
@@ -77,7 +78,7 @@ bypassing the fairness guarantees of the scan.
 
 ### Thread creation flow
 
-```
+```text
 spawn_kthread()          add_ring3_process()
     │                         │
     ├─ alloc_kthread_slot()   ├─ alloc_eprocess_slot()
@@ -305,6 +306,7 @@ timer_handler_asm:
 ## Kernel Threads (`spawn_kthread`)
 
 Kernel threads are created with:
+
 - A **heap-allocated stack** (`Box<AlignedKStack>` of 16 KB, 16-byte aligned)
 - An EPROCESS marked as kernel (`Eprocess::new_kernel`)
 - State `Ready`, enqueued in `kthreads` table but **not** in the per-CPU run queue
@@ -325,6 +327,7 @@ pub fn spawn_net_kthread(entry: u64) -> Option<u32> {
 
 `netd` is created during boot (in `main.rs`) after all kernel tests complete.
 It runs `net_kthread_entry()` which loops:
+
 ```rust
 pub fn net_kthread_entry() -> ! {
     loop {

@@ -9,7 +9,7 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 
 ## Usage
 
-```
+```text
 /graphify                                             # full pipeline on current directory (HTML viz; add --obsidian for a vault)
 /graphify <path>                                      # full pipeline on specific path
 /graphify https://github.com/<owner>/<repo>           # clone repo then run full pipeline on it
@@ -64,7 +64,7 @@ Only when the path is one or more `https://github.com/...` URLs, or several loca
 
 ### Step 1 - Ensure graphify is installed
 
-```bash
+```markdown
 # Detect the correct Python interpreter (handles uv tool, pipx, venv, system installs)
 PYTHON=""
 GRAPHIFY_BIN=$(which graphify 2>/dev/null)
@@ -121,7 +121,7 @@ print(f'Detected {result[\"total_files\"]} files')
 
 Replace INPUT_PATH with the actual path the user provided. Do NOT cat or print the JSON - read it silently and present a clean summary instead:
 
-```
+```text
 Corpus: X files · ~Y words
   code:     N files (.py .ts .go ...)
   docs:     N files (.md .txt ...)
@@ -256,7 +256,7 @@ Load files from `graphify-out/.graphify_uncached.txt`. Split into chunks of 20-2
 
 Dispatch one `@mention` per chunk — ALL in the same response:
 
-```
+```text
 @agent Chunk CHUNK_NUM of TOTAL_CHUNKS: [extraction prompt with FILE_LIST, CHUNK_NUM, TOTAL_CHUNKS, DEEP_MODE substituted]
 
 @agent Chunk 2 of TOTAL_CHUNKS: [next chunk]
@@ -618,7 +618,7 @@ rm -f graphify-out/.needs_update 2>/dev/null || true
 Replace INPUT_PATH with the actual path (same value used in Steps 4-5) so the manifest is relativized to the scan root.
 
 Tell the user (omit the obsidian line unless --obsidian was given):
-```
+```text
 Graph complete. Outputs in PATH_TO_DIR/graphify-out/
 
   graph.html            - interactive graph, open in browser
