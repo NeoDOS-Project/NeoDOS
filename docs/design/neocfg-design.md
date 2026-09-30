@@ -938,8 +938,11 @@ un **núcleo agnóstico de UI** con tres *seams* inyectables.
 
 ### A.2 Reparto de crates
 
+Tres capas: **lógica** (`libneocfg`), **toolkit de UI genérico** (`libneotui`,
+no específico de neocfg) y **binario** de glue. La UI no vive dentro de `neocfg`.
+
 ```text
-libneocfg/                     (crate de biblioteca; no_std en target, std en host tests)
+libneocfg/                     (LÓGICA de configuración; no_std target / std tests)
   src/lib.rs
   src/model.rs                 View / Intent / MenuOption / Field ...  (datos puros)
   src/ui.rs                    trait CfgUi      ← seam de presentación
@@ -950,21 +953,54 @@ libneocfg/                     (crate de biblioteca; no_std en target, std en ho
   src/registry.rs              MODULES (registro de módulos)
   src/i18n_keys.rs             constantes de claves i18n
   src/modules/{system,power,locale,keyboard,about}.rs
-  tests/                       tests host con MockUi / MockPlatform / MockTranslator
+  tests/                       MockUi / MockPlatform / MockTranslator
 
-userbin/neocfg/                (binario fino = backend TUI)
+libneotui/                     (TOOLKIT TUI genérico y reusable; no conoce neocfg)
+  src/lib.rs                   API de alto nivel (menu/list/dialog/input/progress)
+  src/keys.rs                  decodificación de teclas → Key/acción
+  src/widgets/{menu,list,dialog,input,progress}.rs
+  src/screen.rs                cursor, limpiar, marcos, color opcional
+  # lo usa neocfg y cualquier otra herramienta de consola (.NXE)
+
+userbin/neocfg/                (binario: glue = CfgUi + CfgPlatform + Translator)
   src/main.rs                  _start → App::run(...)
-  src/terminal_ui.rs           impl CfgUi sobre libneodos::console
+  src/tui.rs                   impl CfgUi sobre libneotui
   src/neodos_platform.rs       impl CfgPlatform sobre libneodos::syscall
   src/neodos_i18n.rs           impl Translator sobre libneodos::i18n
-  Cargo.toml                   deps: libneodos, libneocfg
+  Cargo.toml                   deps: libneodos, libneocfg, libneotui
 
-userbin/neocfggui/             (FUTURO: backend GUI, mismo libneocfg)
-  src/main.rs + src/gui_ui.rs  impl CfgUi con el subsistema gráfico
+# FUTURO (GUI): mismo libneocfg, otro backend CfgUi. Sin nombres tipo "neocfggui".
+libneogui/                     toolkit gráfico genérico (ventanas/widgets)
+<binario GUI>                  front-end de libneocfg usando libneogui
 ```
 
-Regla: **`libneocfg` no conoce terminal, ni `libneodos`, ni colores**. Las UIs
-implementan los *seams*.
+Reglas:
+- **`libneocfg` no conoce terminal, ni `libneodos`, ni colores**: solo los *seams*.
+- **`libneotui` es genérico y reusable**: no importa `libneocfg`; cualquier `.NXE` de consola puede usarlo.
+- Cambiar de UI = implementar `CfgUi`; **cero cambios en `libneocfg`** y cero en `libneotui`.
+
+#### A.2.1 Reutilización real de `libneotui`
+
+`libneotui` es un **framework de UI de consola para NeoDOS**, no un helper privado
+de neocfg. Requisitos de diseño:
+
+- **API pública estable y autocontenida**: construir una pantalla y obtener una
+  acción no requiere conocer neocfg ni nada del kernel más allá de
+  `libneodos::console`/`io`. Dependencia permitida: `libneodos` (entrada/salida).
+  Prohibido: depender de `libneocfg`, de Ob, del Registry o de cualquier app.
+- **Modelo propio**: `Screen`/`Widget`/`Key`/`Action` de `libneotui` son suyos; el
+  `View`/`Intent` de `libneocfg` es otro nivel (adapta uno a otro en el binario).
+- **Consumidores previstos**: `neocfg` hoy; y en el futuro cualquier herramienta
+  de consola con menús/diálogos (p. ej. instaladores, asistentes, `neotop`-style
+  paneles). Debe poder usarse en un `.NXE` nuevo **sin** incluir `libneocfg`.
+- **Prueba de reutilización obligatoria**: un test/ejemplo que renderice un menú
+  y un diálogo con `libneotui` **sin** `libneocfg` (host-testable con un `io` mock).
+- **Sin estado global**: cada uso crea su propia instancia/backend; nada de
+  `static mut` ni de asumir una sola pantalla.
+
+Así, "cambiar de UI" significa: `libneotui` (consola) o `libneogui` (gráfica)
+detrás del mismo `CfgUi`; y "otra app" significa reutilizar `libneotui` sin
+tocar neocfg.
 
 ### A.3 Modelo de vista (datos puros, sin formatear)
 
@@ -1102,10 +1138,11 @@ Keyboard, stubs de Power/Locale y todos los textos vía claves.
 
 | Elemento | Cambio |
 | --- | --- |
-| `libneocfg/` | **NUEVO** crate de biblioteca (raíz del repo, como `libnet`). |
-| `userbin/neocfg/` | Binario TUI; deps `libneodos` + `libneocfg`. |
+| `libneocfg/` | **NUEVO** crate de lógica (raíz del repo, como `libnet`). |
+| `libneotui/` | **NUEVO** toolkit TUI **reusable** (raíz del repo); dep. `libneodos`. |
+| `userbin/neocfg/` | Binario glue; deps `libneodos` + `libneocfg` + `libneotui`. |
 | `neodev/src/image.rs` | Añadir `'neocfg'` a la lista de binarios (igual que `netcfg`). |
-| `userbin/neocfggui/` | Futuro: nueva UI, **sin tocar `libneocfg`**. |
+| `libneogui/` + binario GUI | Futuro: nueva UI, **sin tocar `libneocfg` ni `libneotui`**. |
 | `docs/userland/shell.md` | Añadir `neocfg`. |
 
 ### A.10 Criterios de aceptación añadidos a #322
@@ -1114,6 +1151,9 @@ Keyboard, stubs de Power/Locale y todos los textos vía claves.
 - [ ] `userbin/neocfg` no contiene lógica de módulos: solo `CfgUi`/`CfgPlatform`/`Translator`.
 - [ ] `CfgModule`/`ModuleSession` no importan nada de terminal ni de `libneodos`.
 - [ ] Añadir una segunda UI (o un test) no requiere cambios en `libneocfg`.
+- [ ] `libneotui` compila y se usa en un test/ejemplo **sin** `libneocfg` (reutilización probada).
+- [ ] `libneotui` no depende de `libneocfg`, Ob, Registry ni de ninguna app.
+- [ ] `libneotui` no usa estado global (cada uso instancia su backend).
 
 ---
 
