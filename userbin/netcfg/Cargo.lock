@@ -16,7 +16,12 @@ version = "0.1.0"
 dependencies = [
  "libdns",
  "libneodos",
+ "libnet-config",
 ]
+
+[[package]]
+name = "libnet-config"
+version = "0.1.0"
 
 [[package]]
 name = "netcfg"

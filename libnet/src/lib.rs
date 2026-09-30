@@ -3,6 +3,7 @@
 
 extern crate alloc;
 
+pub mod config;
 pub mod dns;
 
 use core::sync::atomic::{AtomicU64, Ordering};

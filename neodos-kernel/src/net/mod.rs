@@ -298,7 +298,7 @@ pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::N
 pub fn network_poll_all() {
     if !net_is_initialized() { return; }
     // Refresh link state from the drivers first so the NicInfo query and
-    // netcfg's link-up edge detection observe real hardware state. The driver
+    // netapplier's link-up edge detection observe real hardware state. The driver
     // poll runs without NIC_REGISTRY held (lock order: registry → driver).
     crate::net::nic::nic_poll_link_state();
     let mut registry = NIC_REGISTRY.lock();

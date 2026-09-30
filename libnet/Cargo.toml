@@ -13,6 +13,7 @@ test = false
 [dependencies]
 libneodos = { path = "../libneodos" }
 libdns = { path = "../libdns" }
+libnet-config = { path = "../libnet-config" }
 
 [profile.release]
 panic = "abort"

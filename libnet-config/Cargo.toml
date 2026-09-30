@@ -1,0 +1,12 @@
+[package]
+name = "libnet-config"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS network interface configuration contract (canonical Registry names, defaults, IPv4 helpers) — no_std, dependency-free, host-testable"
+
+[lib]
+name = "libnet_config"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]

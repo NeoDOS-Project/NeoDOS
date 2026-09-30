@@ -3,14 +3,6 @@
 version = 4
 
 [[package]]
-name = "dhcpd"
-version = "0.1.0"
-dependencies = [
- "libneodos",
- "libnet",
-]
-
-[[package]]
 name = "libdns"
 version = "0.1.0"
 
@@ -30,3 +22,11 @@ dependencies = [
 [[package]]
 name = "libnet-config"
 version = "0.1.0"
+
+[[package]]
+name = "netapplier"
+version = "0.1.0"
+dependencies = [
+ "libneodos",
+ "libnet",
+]

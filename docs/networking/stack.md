@@ -134,8 +134,8 @@ Instead:
   (with a link-ready flag cached during `init_e1000_hw`) and publishes the
   state through `hst_set_network_link_state`.
 - `netd` calls `nic::nic_poll_link_state()` once per `network_poll_all()` and
-  stores the result in `NicSlot::link_up`; the `NicInfo` query and `netcfg`'s
-  link-up edge detection read that cached value.
+  stores the result in `NicSlot::link_up`; the `NicInfo` query and the
+  `netapplier` link-up edge detection read that cached value.
 - A NIC is never advertised as link-up before its driver reports a real link.
 
 The e1000 is polled, not interrupt-driven: RX is drained by `network_poll_all()`
@@ -169,11 +169,12 @@ dhcpd.nxe (Ring 3 user service)
   ├─ Performs DORA sequence:
   │   ├─ DISCOVER → wait → OFFER
   │   ├─ REQUEST  → wait → ACK
-  │   └─ On ACK: set NIC IP via libnet::set_ip()
+  │   └─ On ACK: publish IP/mask/gw/DNS to the Registry
+  │              (the netapplier service applies it to the NIC)
   │
   ├─ Manages lease renewal at 50% of lease time
   ├─ Falls back to APIPA (169.254.1.1) if DHCP fails
-  └─ Persists IP configuration to Registry
+  └─ Publishes IP configuration to the Registry (never applies it directly)
 
 Kernel (Ring 0) provides:
   ├─ NIC access (e1000 kernel stub or NEM driver)
@@ -187,7 +188,9 @@ Kernel (Ring 0) provides:
 1. **DISCOVER**: Broadcast UDP packet with DHCPDISCOVER message type
 2. **OFFER**: Received on bound UDP socket (port 68), parsed for offered IP and options
 3. **REQUEST**: Unicast or broadcast DHCPREQUEST with offered server ID
-4. **ACK**: Final acknowledgment, IP is configured via `ob_set_info(SetNicIp)`
+4. **ACK**: Final acknowledgment; the lease is published to the Registry and the
+   `netapplier` service applies it to the NIC (`SetNicIp`) — `dhcpd` never
+   configures the NIC directly
 
 ### Lease Renewal
 
@@ -205,7 +208,7 @@ The previous kernel-based DHCP implementation had fundamental architectural prob
 - `build_dhcp_packet()` used `Vec` (heap allocation) from timer IRQ context
 - `nic_send_packet()` acquired `NIC_REGISTRY.lock()` (spinlock) from IRQ context, risking deadlock
 - `dhcp_tick()` in the idle loop never ran because user threads were always `Ready`
-- Result: DHCP never progressed, and `netcfg` always fell back to APIPA
+- Result: DHCP never progressed, and the DHCP client always fell back to APIPA
 
 Moving DHCP to userspace resolves all these issues:
 
@@ -226,6 +229,9 @@ Moving DHCP to userspace resolves all these issues:
   DHCPBound   = 1/0 (DWORD, 1 when DHCP lease is active)
   DHCPServer  = <server IP> (DWORD)
 ```
+
+`dhcpd` only **publishes** here; the resident `netapplier` service reads this key
+and applies IP/mask/gateway to the runtime NIC (single applier; see #365).
 
 ## DNS Resolver (Userland)
 

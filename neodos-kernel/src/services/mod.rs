@@ -437,4 +437,22 @@ pub fn register_service_tests() {
         test_eq!(fresh_sm.services[0].name, "NeoInit");
         test_eq!(fresh_sm.services[0].start_type as u8, ServiceStartType::System as u8);
     });
+
+    // ── #365: canonical network configuration applier identity ──
+
+    test_case!("sm_net_applier_service_identity", {
+        let mut sm = ServiceManager::new();
+        let cfg = ServiceConfig {
+            start_type: ServiceStartType::Auto,
+            restart_policy: ServiceRestartPolicy::OnCrash,
+            max_failures: 3,
+        };
+        let idx = sm.register("NetApplier", "Network Configuration Applier",
+            "C:\\System\\Tools\\netapplier.nxe", cfg, &[]).unwrap();
+        test_eq!(sm.services[idx].name, "NetApplier");
+        test_eq!(sm.services[idx].binary_path, "C:\\System\\Tools\\netapplier.nxe");
+        test_eq!(sm.services[idx].start_type as u8, ServiceStartType::Auto as u8);
+        // netcfg is the configuration CLI, never a service.
+        test_true!(sm.find_by_name("Netcfg").is_none());
+    });
 }

@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Shared network configuration backend `libnet::config` (#363).** A single API
+  for reading/writing the interface configuration and applying it to the NIC.
+  `netcfg`, `dhcpd`, `ipconfig` and `netapplier` no longer hardcode
+  `Network\Interfaces\0` or its value names. The pure contract (canonical names,
+  `NetConfig`, IPv4 parse/format, `/24` default, interface path) lives in the
+  new dependency-free host-testable `libnet-config` crate (7 unit tests); the
+  syscall adapter (`load`/`store`/`publish_lease`/`apply`/…) lives in
+  `libnet::config`. The Registry remains the single source of truth.
 - **`ntpd` — persistent NTP/SNTP synchronization daemon (#26).** New Ring 3
   service (`userbin/ntpd/`, `C:\System\Tools\ntpd.nxe`) started by the Service
   Manager (`Services\Ntpd`, StartType=Auto). Reads `Services\Ntpd\Parameters`
@@ -23,8 +31,28 @@
 - Kernel tests `ob_set_datetime_accepts_valid` and
   `ob_set_datetime_rejects_invalid`.
 
+### Changed
+
+- **`netcfg` is now exclusively the network configuration CLI (#365).** The
+  resident configurator daemon was removed from `netcfg` (no more
+  `run_daemon()`, no `Netcfg` service); bare `netcfg` applies the Registry
+  configuration once and exits, so it can no longer block NeoShell. The
+  continuous application role moved to a new Ring 3 service, **`NetApplier`**
+  (`userbin/netapplier/`, `C:\System\Tools\netapplier.nxe`, StartType=Auto), the
+  single authority that reads `Network\Interfaces\0` and applies IP/mask/gateway
+  to the NIC. `dhcpd` still only publishes the lease. The generated Registry
+  hive (`tools/gen-hiv`) now creates `Services\NetApplier` instead of
+  `Services\Netcfg`. `netd` is not the applier (see #362). `SetNicIp` (27) /
+  `SetNicGateway` (28) and the interface value names are unchanged.
+
 ### Fixed
 
+- **Default `/24` subnet mask is now correct (#367).** `DEFAULT_MASK` in
+  `libnet-config` was `0x00FF_FFFF` (byte-swapped: `0.255.255.255`), so an
+  interface with `SubnetMask = 0` got a wrong mask and same-subnet gateways were
+  treated as off-subnet. It is now `0xFFFF_FF00` (`255.255.255.0`), matching
+  `parse_ip`/`Ipv4Addr::to_u32`. `dhcpd`'s lease default (`0x00FFFFFF`) and the
+  APIPA `/16` mask (`0x0000FFFF` -> `0xFFFF0000`) were fixed as well.
 - **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**
   `init_e1000_hw()` previously set `RCTL.EN` **before** programming
   `RDBAL/RDBAH/RDLEN/RDH/RDT` and the per-descriptor `addr`/`status`, enabling

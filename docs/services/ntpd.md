@@ -11,7 +11,7 @@
 `ntpd` is the persistent NTP/SNTP synchronization daemon for NeoDOS. It keeps
 the system clock aligned with external time servers. It is a Ring 3 `.NXE`
 service, managed by the kernel Service Manager exactly like `dhcpd` and
-`netcfg`.
+`netapplier`.
 
 ```text
                   ┌──────────────┐
