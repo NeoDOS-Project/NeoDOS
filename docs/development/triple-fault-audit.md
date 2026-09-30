@@ -84,4 +84,3 @@ Ring 0 Entry (Stack Top = TSS.RSP0)
    - Reemplazado el bucle spin-loop unsafe `sti; hlt; cli` en Ring 0 por una transición atómica (`without_interrupts`) a `ThreadState::Blocked { waiting_for: 0xFFFFFFFF }`.
    - `set_need_resched()` notifica al scheduler para desplanificar a NeoShell hacia `idle` limpiamente desde el syscall exit stub (`syscall_try_resched`).
    - Al recibir una pulsación de tecla, el handler de teclado invoca `wake_blocked_readers()`, despertando al hilo bloqueado y retornando `-EAGAIN` / byte leído sin violar la invariante de contexto.
-

@@ -20,8 +20,8 @@
 - [G. Scheduler — Invariantes](#g-scheduler--invariantes)
 - [H. DMA / Memory Corruption](#h-dma--memory-corruption)
 - [I. Root Cause Final](#i-root-cause-final)
-- [J. Fix Mínimo](#j-fix-mínimo)
-- [K. Experimento Definitivo](#k-experimento-definitivo)
+- [J. Fix Mínimo](#j-fix-mínimo-no-refactor-masivo)
+- [K. Experimento Definitivo](#k-experimento-definitivo--uno-solo-reproducible)
 - [L. Validación Forense 2026-09-17 — J1+J2+K (120s QEMU)](#l-validación-forense-2026-09-17--j1j2k-120s-qemu)
 - [Apéndice — Checklist Invariantes y Referencias](#apéndice--checklist-invariantes-y-referencias)
 
@@ -158,7 +158,7 @@ Posibilidades ordenadas (ver tabla A para pruebas):
 
 `timer_handler_asm:322-384`
 
-```
+```text
 Entrada IRQ Ring0: CPU push 3×8 → RSP1 = RSP0 -24 → RSP1%16 = (RSP0%16+8)%16
 Handler push 15×8=120 → RSP2 = RSP1 -120 → RSP2%16 = RSP0%16
 Call → RSP3 = RSP2 -8 → RSP3%16 = (RSP0%16+8)%16   // SysV requiere en callee entry RSP%16=8
@@ -166,7 +166,7 @@ Call → RSP3 = RSP2 -8 → RSP3%16 = (RSP0%16+8)%16   // SysV requiere en calle
 
 → Requiere `RSP0%16=0` (kernel habitualmente lo mantiene). Si `RSP0%16=8` → ambos calls misaligned → `movaps` podría #GP(0).
 
-```
+```text
 Ret → RSP2
 2º call: mov r12,rax; mov rdi,rax; add rdi,120; call
 RSP4 = RSP2 -8 → mismo alineamiento que 1er call
@@ -259,6 +259,7 @@ Se requiere experimento.
 ### J1 — Fixes CRITICAL inmediatos (2 líneas cada uno)
 
 **`.cargo/config.toml:5`**
+
 ```toml
 [target.x86_64-unknown-none]
 rustflags = [
@@ -271,6 +272,7 @@ rustflags = [
 ```
 
 **`src/hal/raw/cpu.rs:164`**
+
 ```rust
 // Antes:
 asm!("mov ds, {0:x}", "mov es, {0:x}", "mov ss, {0:x}", in(reg) ds)
@@ -279,6 +281,7 @@ asm!("mov ds, {0:x}", "mov es, {1:x}", "mov ss, {2:x}", in(reg) ds, in(reg) es, 
 ```
 
 **`src/arch/x64/gdt.rs:22`**
+
 ```rust
 #[link_section = ".data"]
 static mut GDT_MEM: [u8; 48] = [0; 48]; // o forzar lazy_static GDT a .data
@@ -480,18 +483,20 @@ drivers/e1000/src/lib.rs
 [GPF_DECODE] err=0x3ae0 EXT0 IDT0 TI0 index=0x75c (15072) → GDT selector 0x3ae0
 ```
 
-* `KERN SCHED` **sí selecciona netd:** `src/arch/x64/idt.rs:2021`
-  ```
+- `KERN SCHED` **sí selecciona netd:** `src/arch/x64/idt.rs:2021`
+
+  ```text
   [TD][229] KERN SCHED tick=3316 tid=0 cs=0x8 rsp=0x1fffd050 f=04 nxt_tid=2 nxt_rsp=0x2477250 ks=0x24772e0
   [TD][230] KERN RET   tick=3316 ... ret=0x2477250
   [TD][231] NOPRE IRETQ tick=3316 rsp=0x24772c8 frame=[rip=0x4119f20 cs=0x8 rflags=0x202]
   ```
+
   Coincide con audit `ks_top 0x24772e0, init 0x2477250, iret rsp 0x24772c8`. Netd corre `ticks=13` (`Scheduler state TID2 Running ticks=13`) antes de panic.
-* `DBG_IRET` **stale:** `RSP 0x2477028 / RIP 0x40e9551` corresponde a tick `3317-3318` (`NOPRE IRETQ tick=3317 rsp=0x2477028 rip=0x40e9551`), no al frame faulting `0x24772c8/0x4119f20/0x40000b0`. Prueba que `DBG_*` single-slot se sobrescribe cada `iretq` — K pedía first-write-wins (`CMPXCHG 0→val`), no implementado. Criterio K3 no aplicable aún.
-* `DBG_GDT` **estable:** `PRE==POST`, `base 0x4248450`, `limit 0x37` (56B, 6 entradas + TSS 16B), `TR 0x28`, `GS 0x10`, `CR3 0x4235000` — descarta H5 (GDT/TSS/CR3 corruption).
-* `FINAL_IRETQ` **MISMATCH** (`rsp 0x0`) — `push rax/pop rax` J2 rompe path de `FINAL_*` (no setea `FINAL_RSP`). Misma contradicción `FINAL vs GPF` que audit D, pero ahora sin dato.
-* `FRAME_DUMP[7]` **correcto:** 15 slots cero, `RIP 0x4119f20` (nuevo `netd_entry_wrapper`, antes `0x4040ba0` por ASLR/layout), `CS 0x08`, `RFLAGS 0x202`, canary OK — replica audit C pero fault `rip` es `0x40000b0` (kernel base, no `0x4119f20`), sugiere #GP no en `iretq` inmediato sino 13 ticks después, dentro de netd o idle.
-* `GDT entry 0x08` ahora `type 0xb` (vs esperado `0xA`) — `0xB = 0xA | ACCESSED`, flag `INVALID` del dump es check estricto, no corrupción.
+- `DBG_IRET` **stale:** `RSP 0x2477028 / RIP 0x40e9551` corresponde a tick `3317-3318` (`NOPRE IRETQ tick=3317 rsp=0x2477028 rip=0x40e9551`), no al frame faulting `0x24772c8/0x4119f20/0x40000b0`. Prueba que `DBG_*` single-slot se sobrescribe cada `iretq` — K pedía first-write-wins (`CMPXCHG 0→val`), no implementado. Criterio K3 no aplicable aún.
+- `DBG_GDT` **estable:** `PRE==POST`, `base 0x4248450`, `limit 0x37` (56B, 6 entradas + TSS 16B), `TR 0x28`, `GS 0x10`, `CR3 0x4235000` — descarta H5 (GDT/TSS/CR3 corruption).
+- `FINAL_IRETQ` **MISMATCH** (`rsp 0x0`) — `push rax/pop rax` J2 rompe path de `FINAL_*` (no setea `FINAL_RSP`). Misma contradicción `FINAL vs GPF` que audit D, pero ahora sin dato.
+- `FRAME_DUMP[7]` **correcto:** 15 slots cero, `RIP 0x4119f20` (nuevo `netd_entry_wrapper`, antes `0x4040ba0` por ASLR/layout), `CS 0x08`, `RFLAGS 0x202`, canary OK — replica audit C pero fault `rip` es `0x40000b0` (kernel base, no `0x4119f20`), sugiere #GP no en `iretq` inmediato sino 13 ticks después, dentro de netd o idle.
+- `GDT entry 0x08` ahora `type 0xb` (vs esperado `0xA`) — `0xB = 0xA | ACCESSED`, flag `INVALID` del dump es check estricto, no corrupción.
 
 ### L3. Comparativa vs firma original
 

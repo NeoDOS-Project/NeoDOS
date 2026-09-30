@@ -23,6 +23,7 @@ IDS_CANCEL = "Cancelar"
 ```
 
 ### Reglas
+
 - `[meta]` requiere `app` y `language` (tag IETF: `en-US`, `es-ES`, etc.)
 - `[ids]` asigna IDs numéricos a nombres simbólicos (opcional; auto-asignados si se omite)
 - `[strings]` mapea los mismos nombres simbólicos a las traducciones
@@ -33,7 +34,7 @@ IDS_CANCEL = "Cancelar"
 
 ## 2. Formato Binario NLTv2
 
-```
+```text
 Offset  Size  Campo
 ──────  ────  ──────────────────────
 0       4     Magic: "NLT2"
@@ -127,7 +128,7 @@ write_str(tr_id!(IDS_OK));
 
 ## 6. Localización de Archivos
 
-```
+```text
 C:\System\Locale\
   en-US\
     neoshell.nlt
@@ -140,6 +141,7 @@ C:\System\Locale\
 ```
 
 ### Cadena de fallback
+
 1. `C:\System\Locale\{lang}\{app}.nlt`
 2. `C:\System\Locale\{lang-only}\{app}.nlt` (ej. `es`)
 3. `C:\System\Locale\en-US\{app}.nlt`
@@ -149,7 +151,7 @@ C:\System\Locale\
 
 ## 7. Registry
 
-```
+```text
 HKLM\System\CurrentControlSet\Control\Locale
   Language   REG_SZ   "en-US"    (tag IETF del idioma activo)
 ```
@@ -206,7 +208,7 @@ Los IDs 0x8000+ se generan por hash.
 
 ### flujo de trabajo
 
-```bash
+```markdown
 # 1. Crear fuente
 nltc --scaffold miapp es-ES > miapp.toml
 
@@ -257,6 +259,7 @@ Cada una con traducciones completas a en-US, es-ES, ca-ES.
 
 **No se permiten cadenas visibles hardcodeadas en User-Bin nuevos o existentes.**
 Todo mensaje visible debe añadirse al sistema NLT y traducirse simultáneamente a:
+
 - en-US
 - es-ES
 - ca-ES
@@ -273,4 +276,5 @@ Todo mensaje visible debe añadirse al sistema NLT y traducirse simultáneamente
 1. Añadir la entrada en `[ids]` y `[strings]` en los tres archivos `.toml` (`en-US`, `es-ES`, `ca-ES`)
 2. Recompilar: `nltc --generate-all data/locale/{locale}`
 3. En el código: definir constante `const IDS_NUEVA: u32 = N;` y usar `tr_id!(IDS_NUEVA)`
-```
+
+```text

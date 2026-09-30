@@ -25,7 +25,7 @@ assignees: ""
 
 ## Logs / Capturas
 
-```
+```text
 ```
 
 ## Causa raíz (si se conoce)

@@ -11,7 +11,7 @@ LOCAL_PATH=$(graphify clone <github-url> [--branch <branch>])
 ```
 
 **Multiple repos (cross-repo graph):**
-```bash
+```markdown
 # Clone each repo, run the full pipeline on each, then merge
 graphify clone <url1>   # → ~/.graphify/repos/<owner1>/<repo1>
 graphify clone <url2>   # → ~/.graphify/repos/<owner2>/<repo2>

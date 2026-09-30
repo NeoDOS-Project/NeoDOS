@@ -19,7 +19,7 @@ Keep docs accurate and useful — they explain design, not replicate code.
    - Architecture change → `docs/architecture/source-of-truth.md` (invariants that are enforceable rules)
    - Subsystem change → the relevant `docs/<subsystem>/<doc>.md` (design explanation)
    - Public API change (syscall, struct, ObInfoClass) → subsystem doc + possibly `docs/userland/libneodos.md`
-    - Release/version change → `AGENTS.md` version field, `CHANGELOG.md`, run `scripts/sync-roadmap.sh sync`
+   - Release/version change → `AGENTS.md` version field, `CHANGELOG.md`, run `scripts/sync-roadmap.sh sync`
 
 2. **Read the existing doc**
    Before editing, read the doc you need to update. Understand the current framing. Don't duplicate what's already there.

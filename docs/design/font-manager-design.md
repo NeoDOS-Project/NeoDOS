@@ -45,7 +45,7 @@ NeoDOS embeds a single 8x16 monochrome bitmap font directly in the kernel binary
 
 ### 2.1 Architecture Overview
 
-```
+```text
 +--------------------------------------------------------------+
 |                    Font Manager (Ring 0)                      |
 |  +-------------+  +--------------+  +--------------------+    |
@@ -200,7 +200,7 @@ Added to `ObType` in `object/types.rs`:
 
 ### 2.5 Namespace Layout
 
-```
+```text
 \Font\
 |-- Default          -- symlink to default console font
 |-- Cascade\         -- directory of fallback fonts (future)
@@ -238,6 +238,7 @@ Total: 24 bytes.
 #### FontGlyph (39) -- Query + Result
 
 User provides:
+
 ```rust
 #[repr(C)]
 pub struct FontGlyphQuery {
@@ -248,6 +249,7 @@ pub struct FontGlyphQuery {
 ```
 
 Kernel writes at same buffer pointer:
+
 ```rust
 #[repr(C)]
 pub struct FontGlyphResult {
@@ -273,6 +275,7 @@ Added to `ObSetInfoClass` in `object/types.rs`:
 #### FontLoad (48)
 
 Input buffer:
+
 ```rust
 #[repr(C)]
 pub struct FontLoadInfo {
@@ -283,6 +286,7 @@ pub struct FontLoadInfo {
 ```
 
 Flow:
+
 1. Validate caller is admin.
 2. Resolve VFS path, read file into heap buffer.
 3. Run format detection (iterate registered providers).
@@ -295,6 +299,7 @@ Flow:
 #### FontSetDefault (49)
 
 Input buffer:
+
 ```rust
 #[repr(C)]
 pub struct FontSetDefaultInfo {
@@ -303,6 +308,7 @@ pub struct FontSetDefaultInfo {
 ```
 
 Flow:
+
 1. Validate caller is admin.
 2. Verify `\Font\<name>` exists and is `ObType::Font`.
 3. Update or create symlink at `\Font\Default -> \Font\<name>`.
@@ -368,14 +374,15 @@ After VFS is ready (Phase 5-6), `\Font\Default` is resolved to the on-disk font,
 
 The following keys are added to the SYSTEM hive:
 
-```
+```text
 \Registry\Machine\System\CurrentControlSet\Services\FontManager
     DefaultFont  REG_SZ   "Terminus"     -- name of default font
     FontPath     REG_SZ   "\System\Fonts" -- directory for font files
 ```
 
 Future:
-```
+
+```text
 \Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Fonts
     <name>  REG_SZ  path\to\font.psf
 ```
@@ -415,6 +422,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Keep the current `font.rs` as the only kernel font. Add a `sys_load_font` syscall that lets user-mode programs load PSF files and query glyphs via syscall.
 
 **Rejected because:**
+
 - The console runs in Ring 0 and needs a kernel font; we would need two parallel font systems (kernel embedded + user-mode loaded).
 - The hardcoded font would still be in the kernel binary, violating the goal of removing embedded fonts.
 - User-mode programs would need to duplicate text rendering logic.
@@ -425,6 +433,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Use FreeType or a minimalist TrueType rasterizer to load TTF/OTF fonts directly.
 
 **Rejected because:**
+
 - TTF rasterization is extremely complex (hinting, curve rendering, bytecode interpreter). Minimal TTF renderers still require >2000 lines of code.
 - Memory and CPU overhead is unacceptable for a console: TTF rasterization of a single glyph requires memory allocation, Bezier decomposition, and scanline filling.
 - The PSF format is designed for precisely this use case -- bitmap console fonts. Adding TTF support is deferred to the future GUI subsystem.
@@ -434,6 +443,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 **Description:** Use BDF (X11 bitmap font format) instead of PSF.
 
 **Rejected because:**
+
 - BDF is a text-based format (ASCII). Parsing text in `no_std` is more complex and memory-intensive than parsing a binary format.
 - BDF files are significantly larger than equivalent PSF files (text encoding vs raw bitmaps).
 - PSF is the standard for Linux console fonts, with better tooling and availability.

@@ -88,11 +88,11 @@ Stopped → Starting → Running → Stopping → Stopped
                          └──► Failed (restart policy OnCrash, max 3)
 ```
 
-* The default hive declares `Ntpd` with `StartType=Auto` and
+- The default hive declares `Ntpd` with `StartType=Auto` and
   `RestartPolicy=OnCrash`, so it starts at boot and is respawned on crash.
-* Process identity is the service name (`Ntpd`); see
+- Process identity is the service name (`Ntpd`); see
   `spawn_usermode(..., name, ...)` in the Service Manager.
-* Shutdown is initiated by the Service Manager (`ServiceStop`), which
+- Shutdown is initiated by the Service Manager (`ServiceStop`), which
   terminates the process. `ntpd` holds no lock or persistent handle across a
   sync, so termination is safe; there is currently no graceful
   shutdown-notification callback for services (tracked separately).
@@ -166,10 +166,9 @@ NeoDev (`src/image.rs::collect_files`). Adding `ntpd` required adding it to that
 list; otherwise the built `ntpd.nxe` is silently omitted from the image. The
 permanent fix (auto-discovery) is tracked in NeoDOS-Project/NeoDev#5.
 
-
 ## 8. Testing
 
-* `libntp` unit tests (host): request encoding, reply validation, offset/delay
+- `libntp` unit tests (host): request encoding, reply validation, offset/delay
   math, NTP↔Unix conversion, civil-time round trips, config parsing.
-* Kernel tests: `ObSetInfoClass::DateTime` field validation.
-* E2E (VirtualBox/QEMU): see `docs/development/testing.md`.
+- Kernel tests: `ObSetInfoClass::DateTime` field validation.
+- E2E (VirtualBox/QEMU): see `docs/development/testing.md`.

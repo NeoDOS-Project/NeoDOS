@@ -4,8 +4,8 @@
 > **Fecha:** 2026-07-15
 > **Versión del proyecto:** v0.50-dev
 > **Documentos relacionados:** [`docs/architecture/vision.md`](docs/architecture/vision.md),
->   [`docs/architecture/source-of-truth.md`](docs/architecture/source-of-truth.md),
->   [`docs/README.md`](docs/README.md) (índice completo de documentación)
+> [`docs/architecture/source-of-truth.md`](docs/architecture/source-of-truth.md),
+> [`docs/README.md`](docs/README.md) (índice completo de documentación)
 
 ---
 
@@ -24,7 +24,7 @@
 11. [Dependencias Críticas](#11-dependencias-críticas)
 12. [Priorización Global](#12-priorización-global)
 13. [Consistencia Arquitectónica](#13-consistencia-arquitectónica)
-14. [Apéndice: Mapa de Migración desde Roadmap Anterior](#14-apéndice-mapa-de-migración)
+14. [Apéndice: Mapa de Migración desde Roadmap Anterior](#14-apéndice-mapa-de-migración-desde-roadmap-anterior)
 
 ---
 
@@ -70,7 +70,7 @@ objetivos técnicos claros, dependencias verificadas y prioridades justificadas.
 | Tarea 1 | Tarea 2 | Resolución |
 |---------|---------|------------|
 | AUDIT-17 (user address space) | A3.2 (kernel debugger) | No duplicadas, pero mismo milestone |
-| CLEANUP-19 (arrays fijos) | Slab<T> contenedor (ya completado) | Slab<T> ya implementado en v0.41 |
+| CLEANUP-19 (arrays fijos) | `Slab<T>` contenedor (ya completado) | `Slab<T>` ya implementado en v0.41 |
 | VFS-6.4 (Async VFS via IRP) | IOCP (ARCHITECTURAL_VISION.md §7.5) | Unificar como IOCP |
 | B6.1 (zero-copy pipes) | Pipe 4KB×16 (sección 5.2 ARCHITECTURAL_VISION) | Misma tarea |
 
@@ -96,14 +96,14 @@ que sea posible.
 
 ### Convenciones
 
-```
+```text
 P = Prioridad: CRÍTICA | ALTA | MEDIA | BAJA | EXPERIMENTAL
 D = Dependencias: lista de IDs de milestones/tareas
 ```
 
 ### Mapa de Versiones
 
-```
+```text
 v0.50 ── Fase 0: Consolidación (objetivo: completar iniciativas en curso)
 v0.51–v0.55 ── Fase 1: Kernel Maduro (objetivo: eliminar deuda técnica crítica)
 v0.56–v0.60 ── Fase 2: Ecosistema de Usuario (objetivo: herramientas y executive)
@@ -539,7 +539,7 @@ Agrupar los 35 items de cleanup en paquetes de trabajo:
 
 ### 11.1 Dependencias Entre Milestones
 
-```
+```text
 M0.1 (v0.50): Sin dependencias externas (es el milestone actual)
   │
   ├──► M1.1 (NeoFS v2): Depende de page cache (ya existe)
@@ -753,7 +753,7 @@ M0.1 (v0.50): Sin dependencias externas (es el milestone actual)
 
 ### Estructura
 
-```
+```text
 roadmap/
 ├── improvements.md        # Ideas locales → convertidas a Issues por la IA
 ├── labels.yaml            # Definición de labels de GitHub

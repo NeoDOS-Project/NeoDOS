@@ -9,22 +9,27 @@
 
 ## Yield starvation
 
-**CONFIRMED**
+Resultado: **CONFIRMED**
 
 `userbin/neoshell/src/shell.rs:158` tenía:
+
 ```rust
 if b < 0 { continue; }
 ```
+
 sin `yield`. Medición con `empty_loops`/`max_empty` (log en 100k/1M/10M):
+
 - `abc` gap150ms → `max_empty ~2k` (timer preempta 1 KHz)
 - `hello` gap0 tras `aabc` sin yield → `empty_loops 500k` en 50 ms, `READB` bloqueado 5s, VT `head9 tail15 occ6` sin pop
 - Con `sys_yield()` → `hello` gap0 `pop` <10 ms, `max_empty <1k`
 
 Experiment `if b<0 { sys_yield(); continue; }` `shell.rs:158`:
-```
+
+```text
 neodev test 716/716 PASS
 gap0 hello  ~5s → <10ms
 ```
+
 **Evidence strongly implicates shell busy-wait/starvation.** Fix ya en rama.
 
 ---
@@ -32,11 +37,13 @@ gap0 hello  ~5s → <10ms
 ## SPSC producer count
 
 **1** — Observado en todos los `VT_DIAG` con `gap150ms` y prompt limpio:
-```
+
+```text
 VT_PUSH byte=0x61 h=4 t=4→5 cpu=0 tid=5
 VT_PUSH byte=0x61 h=5→6 cpu=0
 ...
 ```
+
 Todos `cpu=0`, `tid=5` (shell) para pop, `tid=2` (netd) o `tid=0` (IRQ) para push pero siempre `cpu=0`. Nunca `cpu=1`.
 
 Con `qemu -smp 2` el kernel reporta `1 CPU(s) online` y panica `PAGE_TABLE_CORRUPTION` tras `Enabling interrupts...`, por lo que **no se pudo observar un segundo producer**. La cola no llegó a usarse en SMP real.
@@ -52,10 +59,12 @@ Conclusión: con el kernel actual (1 CPU online) **existe exactamente 1 producer
 **Caso A — Fijado a CPU0 — CONFIRMADO por código:**
 
 - `interrupts/ioapic.rs:162` para ISA `has_handler irq==1`:
+
   ```rust
   let entry: u64 = vector as u64 | FIXED | PHYSICAL; // sin <<56
   ioapic_write_redir(pin, entry);
   ```
+
   Sin `apic_id <<56`, destino = 0 → APIC ID 0 → **CPU0**. No se usa `Logical` ni `LowestPriority`.
 
 - Si `IOAPIC.is_active()==false` (MADT no encontrado), se usa `arch/x64/pic.rs:74` `ChainedPics` con `outb 0x21/0xA1` y `idt[33]=keyboard_handler` — PIC también entrega a CPU0 (único BSP).
@@ -68,15 +77,15 @@ Conclusión: **producer = CPU0 exclusivo**, SPSC podría seguir siendo correcto 
 
 ## SMP2
 
-**FAIL (no por cola, por SMP init)**
+Resultado: **FAIL (no por cola, por SMP init)**
 
-```
+```bash
 qemu-system-x86_64 -smp 2 -monitor tcp:4445 ...
 ```
 
 Boot log `smp2_serial.log`:
 
-```
+```text
 [BOOT] BSP KPRCB at 0x2403000, GS base set
 [BOOT] WARN: No APs found (single CPU mode)
 [+] 1 CPU(s) online
@@ -95,7 +104,7 @@ No se pudo medir `produced==consumed+dropped+remaining` en SMP2 porque no hay pr
 
 ## Producer CPUs observed
 
-```
+```text
 SMP1: cpu=0 para todos los VT_PUSH (100×a, hello, abc)
 SMP2: N/A (no boot)
 SMP4: N/A
@@ -105,7 +114,7 @@ Nunca `cpu=1`.
 
 ## Consumer CPUs observed
 
-```
+```text
 READB cpu=0 tid=5 siempre
 pop cpu=0
 ```
@@ -122,16 +131,19 @@ Shell migra pero con 1 CPU siempre 0.
 Con 1 CPU, `Relaxed` es suficiente porque no hay concurrencia con `switch_vt` (hotkey y push no se solapan en mismo CPU sin preemption, y `switch_vt` deshabilita interrupciones vía `without_interrupts` implicitamente? No, `hotkey` se llama con `KBD` lock held en IRQ, sin `without_interrupts` extra, pero `active_vt` es `Atomic`).
 
 Con SMP y si IRQ puede migrar, `Relaxed` es **incorrecto**: necesita `Acquire` en `push_byte` y `Release` en `switch_vt` ya existe, pero `push_byte` usa `Relaxed` → podría leer `active_vt` viejo y empujar a VT equivocada:
-```
+
+```text
 CPU0: active_vt=0, IRQ decide queue0
 CPU1: switch_vt(1) → active_vt=1
 CPU0: push into queue0 (debería ser queue1)
 ```
+
 No se observó porque no hay SMP real.
 
 ## Queue corruption
 
 **NO** — `produced == consumed + dropped + remaining` se cumple en SMP1:
+
 - `VT_PUSH_CNT 100, VT_POP_CNT 0 (si shell ocupada) → remaining 100, dropped 0`
 - `VT_PUSH 6, VT_POP 6, remaining 0` para `abc` gap150
 
@@ -165,9 +177,11 @@ Con gap0 y sin yield, **latencia 5s** pero no pérdida (queda en queue). Con yie
 **Si SMP se arregla para traer APs (2/4 CPUs online):**
 
 - Opción A **KEEP SPSC + affinity** (preferida, mínima complejidad):
-  ```
+
+  ```text
   IRQ keyboard → CPU0 exclusivo → SPSC
   ```
+
   Ventaja: lock-free, sin CAS, latencia mínima, hotkey `active_vt` sigue en CPU0.
 
 - Opción B **MPSC** (`tail` con `compare_exchange_weak` loop) — más complejo, IRQ no puede dormir, necesita `Release` + `Acquire` correctos, pero soportaría IRQ en cualquier CPU.
@@ -178,7 +192,7 @@ Con gap0 y sin yield, **latencia 5s** pero no pérdida (queda en queue). Con yie
 
 ## neodev test
 
-```
+```text
 716/716 PASS
 ```
 
@@ -186,9 +200,9 @@ con `vt_diag` + `shell yield` + `e0_pending` + `handler_read` atomic.
 
 ## READY
 
-**NO**
+Resultado: **NO**
 
-```
+```text
 QEMU SMP1   PASS (SPSC, gap150ms, no drop, no corruption, no starvation con yield)
 QEMU SMP2   FAIL (kernel panic antes de prompt, no es cola, es SMP init)
 QEMU SMP4   NOT TESTED (mismo)
@@ -201,6 +215,7 @@ VirtualBox SMP1 PASS — NOT TESTED
 ```
 
 Para `READY:YES` se requiere:
+
 - Arreglar `smp_detect` para que `-smp 2` bootee con 2 CPUs y llegue a `C:\>` sin panic
 - Repetir matriz `6 inputs × 8 gaps × 3 smp` y verificar `produced==consumed+dropped+remaining` en cada caso
 - Probar `VirtualBox SMP1` con `abc`/`hello`/`rapid alphabet`
@@ -234,7 +249,7 @@ interactiva), monitor QEMU por socket UNIX + `sendkey`, y dump combinado
 
 ### SMP1 — (mismo binario que SMP2)
 
-```
+```text
 baseline: VT push=0 pop=0 drop=0 ; tid=5 pid=4 state=BLOCKED wait=Some(0xFFFFFFFF) cpu=0
           cpu0 runqueue_tids=[2] (tid=2 pid=1 READY)
 tras 'a': VT push=1 pop=0 drop=0
@@ -246,7 +261,7 @@ tras 'abc': VT push=3 pop=0 drop=0
 
 ### SMP2
 
-```
+```text
 baseline: VT push=0 pop=0 ; tid=5 BLOCKED wait=Some(0xFFFFFFFF) cpu=0
 base+1:   KBD_IRQ total=3 producer_cpus=1
 tras 'a': VT push=1 pop=0 drop=0 ; tid=5 RUNNING wait=None ; tid=2 RUNNING
@@ -288,7 +303,7 @@ Resultado: la cola acumula bytes correctamente pero nadie los `pop`.
 
 ### SMP4
 
-```
+```text
 baseline: VT push=0 pop=0 ; tid=5 BLOCKED wait=Some(0xFFFFFFFF) cpu=0
 base+1:   cpu0 runqueue_tids=[0]
 tras 'a': VT push=1 pop=0 drop=0 ; tid=5 RUNNING wait=None ; tid=2 RUNNING
@@ -303,6 +318,7 @@ Mismo patrón que SMP1/SMP2; `AP_READY=3`, 4 CPU(s) online.
 No aplicado en esta fase: el criterio de Phase 7 era localizar el punto exacto,
 y el fallo está en el handoff scheduler/syscall (`syscall_try_resched` /
 `schedule`), fuera del ámbito de keyboard. Candidatos a investigar en Phase 8:
+
 - `schedule()` step 3 (`schedule.rs`) fija `k.state = Running` antes de que el
   caller confirme el despacho; si el caller rechaza el frame (rama
   `next_cs & 3 != 3` / KEEP_CURRENT) el estado puede quedar `Running` huérfano.
@@ -337,7 +353,7 @@ previo + drain de timeout corto, los scancodes llegan al guest.
 
 ### Evidencia E2E real (SMP1, `sendkey a`)
 
-```
+```text
 [VT_EV] op=PUSH byte=0x61 cpu=0 tid=2 h=4 t=5 occ=1     (IRQ1 -> VT, producer CPU0)
 [VT_EV] op=POP  byte=0x61 cpu=0 tid=5 h=5 t=5 occ=0     (READB consume, consumer CPU0)
 [READB] enter pid=4 tid=5 vt=0
@@ -356,7 +372,7 @@ Reproducido también de forma independiente (`probe_mon.py`): mismo
 
 ### Resultado
 
-```
+```text
 SMP1: input -> KBD/IRQ1(CPU0) -> VT_PUSH -> VT_POP -> READB(bytes_read=1, 0x61) -> TID5/neoshell -> echo 'a'
 SMP2: idéntico (bytes_read=1 + eco 'a')
 SMP4: idéntico (bytes_read=1 + eco 'a')
@@ -371,7 +387,7 @@ neoshell → echo`) queda verificada con evidencia real en SMP1, SMP2 y SMP4.
 `abc<ENTER>` / `execute_line` no se capturó de forma estable por la
 intermitencia residual del `sendkey` con varias teclas seguidas.
 
-```
+```text
 SCHEDULER ROOT CAUSE: CONFIRMED + FIXED (Phase 9)
 KEYBOARD HARDWARE:    VERIFIED (IRQ1 -> CPU0 -> VT push)
 VT SPSC:              VERIFIED (Phase 6)
@@ -383,4 +399,3 @@ EXECUTE_LINE:         NOT CAPTURED (harness multi-tecla)
 
 `neodev test`: 716/716 PASS (suite forzada a 1 CPU; SMP2/SMP4 verificados en
 bring-up).
-

@@ -34,7 +34,7 @@
 
 ## 2. Pipeline completo (dónde cambia representación)
 
-```
+```text
 HARDWARE tecla física
   ↓  PS/2 scan set 1 (make=0x1E, break=0x9E)
 PS2 controller 0x64 status&0x01 → 0x60 data                [drivers/ps2.rs:141-148]
@@ -104,6 +104,7 @@ shell::Shell::run → execute_line()                              [shell.rs:535]
 ```
 
 **Cambios de representación:**
+
 - `u8 raw scancode` → `(code u8 0x00-0x7F, is_make bool)` → `modifiers u8 bitmask` → `u16 codepoint` → `utf8 [u8]` → `u8 VT byte` → `i32 syscall` → `u8 shell char`
 
 ---
@@ -111,27 +112,35 @@ shell::Shell::run → execute_line()                              [shell.rs:535]
 ## 3. Puntos críticos y sospechas iniciales (white-box, sin modificar)
 
 ### BUG-E1: Extended prefix 0xE0 descartado incorrectamente
+
 `process_scancode` hace `if scancode==0xE0 return` sin estado. El siguiente byte (ej. flecha arriba 0x48 con prefix E0) se interpreta como `code=0x48` normal (numpad 8). Además break extendido `0xE0 0xF0 ??` no existe en set1, pero QEMU emite `E0 xx` y `E0 xx|0x80`. Al descartar solo E0, el release siguiente se ve como make de otro scancode. Flechas, Delete, Home/End, etc. rotas. Caps/Shift state puede desincronizarse si se pierde un make/break.
 
 ### BUG-E2: PENDING_SCANCODES SPSC vs MPSC
+
 `ScancodeQueue` usa `head/tail` con `Relaxed/Acquire/Release` asumiendo SPSC (1 IRQ producer → 1 consumer cuando KBD lock disponible). En SMP, IRQ1 puede llegar en cualquier CPU (IOAPIC redirige). Dos CPUs pueden ejecutar `keyboard_handler` concurrentemente → dos productores concurrentes → race en `tail` (lost update, corrupción). Tamaño 256 oculta pero no elimina.
 
 ### BUG-E3: VtInputQueue SPSC vs MPSC + orden memoria
+
 `VtInputQueue::push` hace `head Acquire` + `tail Relaxed` y `pop` hace lo inverso. Correcto para SPSC single-producer-single-consumer. Pero productor es IRQ (cualquier CPU) y consumidor es `handler_read` en CPU del shell (puede migrar). Si dos IRQs en CPUs distintas empujan a la misma VT (active_vt global), es MPSC → race en `tail`. Además `push_byte` lee `active_vt` con `Relaxed` sin sincronización; si VT switch ocurre entre IRQ y push, byte va a cola equivocada.
 
 ### BUG-E4: handler_read double-pop race (Fase preemption)
+
 Fuera de `without_interrupts` hace `pop_byte_from_vt` sin lock. Entre ese `None` y el `without_interrupts` interior, un IRQ puede pushar byte y hacer `wake_blocked_readers`. El hilo aún no está Blocked, wake no hace nada. Luego dentro de `without_interrupts` re-chequea y encuentra byte → OK (se recupera). Pero si wake ocurrió antes de Blocked, se pierde wakeup → el hilo se bloquea con byte ya en cola pero nadie lo despertará hasta próxima tecla. En log `vbox_serial.log:2117-2118` se ve bloqueo incluso con byte disponible después: `[READB] enter ...` → `[READB] blocking` → siguiente IRQ despierta. Si timing es ajustado, podría causar latencia o pérdida percibida.
 
 ### BUG-E5: VT queue full → silent drop
+
 `push_byte` Err → solo `serial_println!("[KBD] VT input queue full (4096), byte 0x.. dropped")` [kbd/mod.rs:242]. Shell no sabe. Stress test `2N` (8192) debe perder 4095 bytes. No hay backpressure ni ACK.
 
 ### BUG-E6: KBD try_lock contención → latencia
+
 `KBD: Mutex<NeoKbd>` es `spin::Mutex`. Si shell está en `set_leds` (llamado desde `process_scancode` para Caps) que a su vez hace `ps2_wait_input` con polling 100k, IRQ no puede hacer `try_lock` y va a PENDING queue. `set_leds` dentro de IRQ deshabilitado? No, pero `ps2::set_leds` hace `outb 0x60 0xED` + `outb 0x60 leds` sin verificar ACK, puede bloquear IRQ por timeout. Además `process_scancode` mantiene lock durante `push_byte` + `wake_blocked_readers` que toma scheduler lock → potencial inversión con timer IRQ que también toma scheduler lock.
 
 ### BUG-E7: Handler_read magia 0xFFFFFFFF broadcast
+
 `wake_blocked_on_magic(0xFFFFFFFF)` despierta *todos* los hilos bloqueados en READ (normalmente solo shell). Si hay 2 shells en VTs distintas, ambos despiertan aunque solo una VT recibió byte → thundering herd, uno volverá a bloquear, otro consumirá byte de otra VT? Pero `handler_read` lee siempre `current_vt_num()` → el despertado en VT no activo leerá cola vacía → vuelve a bloquear. No es pérdida, es wakeup espurio.
 
-### Otros:
+### Otros
+
 - `clear_and_rewrite` en libconsole-nxl usa 200 bytes con `\x08` para flush QEMU — no afecta kernel.
 - `console::write_char` y `draw_char_at` acceden a `RENDERER` + `vt_shadow` sin lock; OK porque single consumer shell.
 - `EVENT_KEYBOARD_INPUT` ya no se usa; path directo es usado (5791a48 fix).
@@ -149,4 +158,3 @@ Fuera de `without_interrupts` hace `pop_byte_from_vt` sin lock. Entre ese `None`
 ## 5. Próximos pasos
 
 FASE 1: probar `a → abc → hello` vía `neodev shell send` + vía `sendkey` QEMU si disponible, capturar serial `[KBD]`/`[READB]` y comparar EXPECTED vs ACTUAL. FASE 2: instrumentar pipeline con logs de cada capa (ya existe `[KBD_IRQ]`, `[KBD]`, `[KBD_EVENT]`, `[READB]`). No se modificará lógica, solo se añadirá medición de pérdida/duplicación.
-

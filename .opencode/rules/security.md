@@ -26,7 +26,7 @@ Every named object has:
 - SACL (system audit control list)
 
 Access check flow:
-```
+```text
 ObOpen(name, desired_access)
   → lookup object
   → SeAccessCheck(sd, token, desired_access)

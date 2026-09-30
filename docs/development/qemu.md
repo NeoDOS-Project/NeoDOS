@@ -11,7 +11,7 @@ least privilege.
 
 ## Quick Start
 
-```bash
+```markdown
 # 1. Create the bridge (one-time, needs sudo)
 sudo bash data/setup-network.sh
 
@@ -268,7 +268,7 @@ dpkg -L qemu-system-x86 | grep bridge-helper
 
 ### Bridge not found
 
-```bash
+```markdown
 # Check if bridge exists
 ip link show neodos0
 
@@ -278,7 +278,7 @@ sudo bash data/setup-network.sh
 
 ### Permission denied: `qemu-bridge-helper`
 
-```bash
+```markdown
 # Check SUID bit
 ls -la /usr/libexec/qemu-bridge-helper
 # Should show: -rwsr-xr-x
@@ -293,7 +293,7 @@ dpkg -S /usr/lib/qemu/qemu-bridge-helper  # Debian
 
 ### Permission denied: `/dev/kvm`
 
-```bash
+```markdown
 # Check permissions
 ls -la /dev/kvm
 
@@ -304,7 +304,7 @@ sudo usermod -aG kvm $USER
 
 ### Permission denied: `/dev/net/tun`
 
-```bash
+```markdown
 # Check permissions
 ls -la /dev/net/tun
 
@@ -317,7 +317,7 @@ Note: Making `/dev/net/tun` world-accessible is less secure than using
 
 ### Guest has no internet access
 
-```bash
+```markdown
 # Check NAT rules
 sudo nft list table ip nat       # nftables
 sudo iptables -t nat -L -n      # iptables
@@ -332,7 +332,7 @@ sudo nft list chain ip filter FORWARD  # nftables
 
 ### Firewall blocking bridge traffic
 
-```bash
+```markdown
 # Fedora: allow forwarded traffic to the bridge subnet
 sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -s 10.0.2.0/24 -j ACCEPT
 sudo firewall-cmd --permanent --direct --add-rule ipv4 filter FORWARD 0 -d 10.0.2.0/24 -j ACCEPT

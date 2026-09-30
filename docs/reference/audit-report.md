@@ -41,6 +41,7 @@ NeoDOS ha alcanzado una madurez estructural que permite evaluar la separación d
 | Dependientes | bootloader (BootInfo ABI), libneodos (syscall ABI), NXLs (NXL ABI), drivers (NEM ABI) |
 
 **Criterios:**
+
 - **Responsabilidad definida:** Sí — núcleo del SO.
 - **Puede evolucionar independientemente:** No — es el centro de todas las dependencias.
 - **Ciclo de versiones propio:** Sí (v0.49.0).
@@ -62,6 +63,7 @@ NeoDOS ha alcanzado una madurez estructural que permite evaluar la separación d
 | Dependencias | uefi 0.37, log |
 
 **Criterios:**
+
 - **Responsabilidad definida:** Sí — cargar el kernel en memoria y pasarle BootInfo.
 - **Puede evolucionar independientemente:** Limitado — el BootInfo ABI está atado a la versión del kernel.
 - **Ciclo de versiones propio:** Sí, pero debe sincronizarse con el kernel.
@@ -81,6 +83,7 @@ NeoDOS ha alcanzado una madurez estructural que permite evaluar la separación d
 | Archivos | 13 (syscall.rs, io.rs, fs.rs, mem.rs, args.rs, console.rs, keyboard.rs, i18n.rs, res.rs, seh.rs, macros.rs, export.rs, lib.rs) |
 
 **Criterios:**
+
 - **Responsabilidad definida:** Sí — biblioteca estándar de usuario (wrappers de syscall).
 - **Puede evolucionar independientemente:** No — cada syscall wrapper debe coincidir exactamente con el SSDT del kernel.
 - **Ciclo de versiones propio:** Técnicamente sí, pero cualquier cambio requiere kernel sincronizado.
@@ -100,6 +103,7 @@ NeoDOS ha alcanzado una madurez estructural que permite evaluar la separación d
 | Targets | x86_64-unknown-none con linker scripts propios |
 
 **Criterios:**
+
 - **Responsabilidad definida:** Sí — bibliotecas compartidas Ring 3.
 - **Puede evolucionar independientemente:** No — cargadas por el kernel NXL loader en direcciones fijas.
 - **Ciclo de versiones propio:** Técnicamente sí, pero deben compilarse contra la misma ABI que el kernel espera.
@@ -127,6 +131,7 @@ Wrapper de red que depende de `libneodos` y `libnet-nxl`. Misma justificación q
 | Dependencias | libneodos (todos), libnet (los de red) |
 
 **Criterios:**
+
 - **Responsabilidad definida:** Parcial — mezcla herramientas core (copy, del, dir), utilidades de red (ipconfig, ping), herramientas de sistema (ps, kill, neotop), y el shell (neoshell).
 - **Puede evolucionar independientemente:** No — todos dependen de libneodos, que a su vez depende del kernel.
 - **Ciclo de versiones propio:** No práctico — cada binario compila contra una versión específica de libneodos.
@@ -159,12 +164,14 @@ Wrapper de red que depende de `libneodos` y `libnet-nxl`. Misma justificación q
 | Publicable como Open Source independiente | Sí — drivers de dispositivos estándar (PCI, ATA, AHCI, e1000) |
 
 **Ventajas de separar:**
+
 - Ciclo de releases independiente (un driver puede actualizarse sin tocar el kernel)
 - Comunidad puede contribuir drivers sin acceso al kernel completo
 - CI más rápida (solo compilar el driver modificado)
 - Posible reutilización cross-platform
 
 **Inconvenientes de separar:**
+
 - Complejidad de compatibilidad — driver compilado contra NEM ABI v8 debe funcionar con kernel v8
 - Necesidad de un proceso de certificación cross-repo
 - Riesgo de versiones incompatibles si la ABI cambia
@@ -283,11 +290,13 @@ Wrapper de red que depende de `libneodos` y `libnet-nxl`. Misma justificación q
 | Dependencias del kernel | Baja — documenta el kernel pero no depende de él |
 
 **Ventajas de separar:**
+
 - Comunidad puede contribuir docs sin clonar el kernel
 - CI de docs independiente (markdownlint, enlaces rotos)
 - Posible publicación en GitHub Pages
 
 **Inconvenientes:**
+
 - La documentación técnica referencia código fuente directamente (líneas, nombres de funciones)
 - Riesgo de desincronización entre docs y código
 - Los PRs que cambian API necesitarían PRs simultáneos en dos repos
@@ -356,12 +365,14 @@ Configuración del entorno de desarrollo AI.
 | `libnet-nxl` | No | Cargado por kernel NXL loader |
 
 **Análisis:** Un SDK tiene sentido cuando hay una API estable y aplicaciones de terceros. Actualmente:
+
 - La ABI de syscalls (SSDT) no está congelada (cambia entre versiones v0.x)
 - No hay aplicaciones de terceros
 - libneodos es pequeño y simple (~13 archivos)
 - El empaquetado .NXE aún está en desarrollo (M2.1, v0.56)
 
 **Veredicto: NO CREAR NeoSDK POR AHORA.** Mantener libneodos en NeoDOS. Evaluar la creación de un SDK público **post-v1.0** cuando:
+
 1. La ABI de syscalls esté congelada
 2. Existan aplicaciones de terceros
 3. Se pueda publicar libneodos como crate independiente en crates.io
@@ -385,12 +396,14 @@ Configuración del entorno de desarrollo AI.
 | `virtio-blk.nem` | Media | NEM ABI v8 | Igual |
 
 **Ventajas:**
+
 - La NEM ABI está versionada (v8) y permite compatibilidad hacia atrás
 - Cada driver ya compila independientemente
 - Drivers de dispositivos estándar tienen valor educativo propio
 - Comunidad podría contribuir drivers para hardware específico
 
 **Inconvenientes:**
+
 - La ABI NEM aún no está congelada (objetivo: v1.0)
 - El pipeline de build necesita coordinar versiones driver↔kernel
 - El kernel tiene stubs de arranque para algunos drivers (ata, ahci, ps2kbd, pci, rtc) que deben migrarse también
@@ -405,6 +418,7 @@ Configuración del entorno de desarrollo AI.
 **Propuesta:** Repositorio independiente para herramientas de análisis y manipulación de binarios.
 
 **Componentes:**
+
 - `nxeinfo` — inspector de binarios .NXE
 - `nxpkg` — empaquetador .NXP
 - `nxdump` — dump de ELF/NXE/NEM
@@ -423,6 +437,7 @@ Configuración del entorno de desarrollo AI.
 **Veredicto: MIGRAR INMEDIATAMENTE.** Crear repositorio `NeoTools` con workspace de Cargo conteniendo los tres crates. La CI debe compilar cada tool y validar contra formatos de ejemplo.
 
 **Quedan fuera de NeoTools:**
+
 - `nltc` → migrar con `NeoTranslations` (post-v1.0)
 - `kbdcompile` → migrar con `NeoTranslations` (post-v1.0)
 - `nem-pack.py` → mantener en NeoDOS (parte del pipeline de build de drivers)
@@ -443,11 +458,13 @@ Configuración del entorno de desarrollo AI.
 | Dependencias del kernel | Baja (referencia el código pero no depende de él) |
 
 **Ventajas:**
+
 - Contribuciones de documentación sin clonar el kernel
 - CI específica (markdownlint, enlaces, spelling)
 - GitHub Pages automático
 
 **Inconvenientes:**
+
 - La documentación técnica referencia líneas y funciones del código
 - Riesgo alto de desincronización durante desarrollo activo
 - Los PRs de API breaking necesitan PRs simultáneos en docs
@@ -461,6 +478,7 @@ Configuración del entorno de desarrollo AI.
 **Propuesta:** Repositorio independiente para framework de pruebas.
 
 **Evaluación:**
+
 - Tests unitarios: deben vivir con el código (754 tests en kernel)
 - Tests de integración: ya están en NeoDev (separado)
 - check_deps.py: validación arquitectónica, debe vivir con el código
@@ -525,6 +543,7 @@ Configuración del entorno de desarrollo AI.
 **Propuesta:** Repositorio independiente para datos de localización y herramientas de traducción.
 
 **Componentes:**
+
 - `data/locale/` — archivos fuente TOML + NLT compilados
 - `data/keyboard/` — layouts de teclado
 - `tools/nltc/` — compilador NLT
@@ -542,11 +561,13 @@ Configuración del entorno de desarrollo AI.
 | Dependencias del kernel | Baja — el runtime NLT está en libneodos, pero los datos son independientes |
 
 **Ventajas:**
+
 - Traductores pueden contribuir sin entorno de desarrollo Rust
 - CI independiente (validar sintaxis TOML, compilar NLT, verificar cobertura)
 - Las traducciones tienen cadencia distinta al kernel
 
 **Inconvenientes:**
+
 - Formato NLT aún en evolución (I18N-P7..P12 planean cambios)
 - El runtime NLT está en libneodos (kernel)
 
@@ -558,7 +579,7 @@ Configuración del entorno de desarrollo AI.
 
 ### 4.1 Mapa de Dependencias Actual
 
-```
+```text
 neodos-kernel ─────────────────────────────────────────┐
     │                                                   │
     ├── (BootInfo ABI) ──► neodos-bootloader           │
@@ -589,7 +610,7 @@ neodos-kernel ──────────────────────
 
 ### 4.2 Mapa de Dependencias Propuesto
 
-```
+```text
 NeoDOS (core)
 ├── neodos-kernel
 ├── neodos-bootloader
@@ -633,6 +654,7 @@ NeoDocs (EVALUAR POST-V1.0)
 ```
 
 **No hay dependencias circulares** en la estructura propuesta. Las dependencias son unidireccionales:
+
 - NeoTools/NeoDOS-LSP/NeoMCP no dependen de NeoDOS
 - NeoDrivers dependen de la NEM ABI (versión congelada, artefacto publicado)
 - NeoTranslations es independiente (consumido por NeoDOS en tiempo de build)
@@ -671,7 +693,7 @@ NeoDocs (EVALUAR POST-V1.0)
 
 ## 6. Organización Propuesta
 
-```
+```text
 NeoDOS-Project/ (GitHub Organization)
 │
 ├── NeoDOS (core OS)
@@ -730,6 +752,7 @@ NeoDOS-Project/ (GitHub Organization)
 | **NeoMCP** | MEDIA | Baja | Ninguna | Separación clara AI/kernel | Bajo — Python independiente |
 
 **Orden recomendado:**
+
 1. NeoTools (impacto inmediato, cero riesgo)
 2. NeoDOS-LSP (independencia total, dependencies host)
 3. NeoMCP (Python, ciclo diferente)
@@ -742,6 +765,7 @@ NeoDOS-Project/ (GitHub Organization)
 | **NeoTranslations** | MEDIA | Media | NLT format congelado | Contribuciones comunitarias sin Rust | Medio — sincronización con runtime NLT |
 
 **Orden recomendado:**
+
 1. NeoDrivers (mayor impacto, drivers de hardware estándar)
 2. NeoTranslations (comunidad, traducciones)
 
@@ -827,7 +851,7 @@ Los siguientes hallazgos deben trackearse como GitHub Issues:
 
 ## 10. Resumen de Decisiones
 
-```
+```text
 MIGRAR INMEDIATAMENTE (3):
   ✔ NeoTools (nxeinfo, nxpkg, nxdump)
   ✔ NeoDOS-LSP

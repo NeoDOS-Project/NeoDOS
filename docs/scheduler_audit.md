@@ -111,6 +111,7 @@ pub fn make_thread_ready(k: &mut Kthread) {
 ```
 
 **Note on the `Ready` early-return**: This is safe because:
+
 1. A thread that is `state == Ready` was either (a) already enqueued by a prior `make_thread_ready` call, or (b) is a stale entry from P0-1 that was never enqueued. In case (b), the global scan fallback in `schedule()` finds it anyway.
 2. After P0-1 is fixed, all transitions go through `make_thread_ready`, so case (b) disappears.
 3. `schedule()` already skips non-Ready threads on dequeue, so a duplicate enqueue is harmless (just wastes one dequeue slot).
@@ -122,48 +123,63 @@ This primitive should be used in ALL Running→Ready, Blocked→Ready, and Suspe
 ## Test Plan
 
 ### Test A — yield
-```
+
+```text
 Running → sys_yield() → Ready → runqueue → scheduler
 ```
+
 Verify exactly one runqueue entry after yield. Verify thread is schedulable.
 
 ### Test B — waitpid
-```
+
+```text
 Running → sys_waitpid() → [no child exited] → Ready (no child) → runqueue
 ```
+
 Verify no Ready thread is left outside runqueue. No duplicate entries.
 
 ### Test C — read block
-```
+
+```text
 Running → sys_read() → no input → Blocked → scheduler picks next thread
 ```
+
 Verify thread is not in runqueue while Blocked. Another thread executes.
 
 ### Test D — read wake
-```
+
+```text
 Blocked thread → keyboard IRQ → wake → Ready + enqueue → scheduler
 ```
+
 Verify exactly one runqueue entry after wake.
 
 ### Test E — read return
-```
+
+```text
 After wake → scheduler → Running → sys_read retry → character → Ring 3
 ```
+
 Verify syscall frame (RIP, RSP, RFLAGS, CS, SS) is correct on return.
 
 ### Test F — duplicate wake
-```
+
+```text
 Two wake-ups for same TID → one valid runqueue entry
 ```
+
 Verify no duplicate in runqueue.
 
 ### Test G — stress
-```
+
+```text
 100 iterations: Running → Blocked → Ready → Running
 ```
+
 No TID lost, no duplicate, no impossible state, no RSP/RIP corruption, no triple fault.
 
 ### Test H — regression
+
 All 678 existing kernel tests must pass.
 
 ---

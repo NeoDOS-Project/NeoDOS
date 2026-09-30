@@ -12,32 +12,38 @@ Install it first, then use:
 ## Steps
 
 1. **Build kernel + bootloader + image**
+
    ```bash
    neodev build --quick --image
    ```
 
 2. **Full build with user binaries**
+
    ```bash
    neodev build --image
    ```
 
 3. **Run in QEMU**
+
    ```bash
    neodev run
    neodev run --kvm   # with KVM
    ```
 
 4. **Run tests**
+
    ```bash
    neodev test
    ```
 
 5. **List projects**
+
    ```bash
    neodev list
    ```
 
 6. **Clean artifacts**
+
    ```bash
    neodev clean
    ```

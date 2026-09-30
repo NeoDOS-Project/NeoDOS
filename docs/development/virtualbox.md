@@ -14,28 +14,32 @@ VirtualBox is a fully supported backend alongside QEMU.
 ### Installation
 
 **Debian/Ubuntu:**
+
 ```bash
 sudo apt install virtualbox virtualbox-ext-pack
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install VirtualBox
 ```
 
 **Arch:**
+
 ```bash
 sudo pacman -S virtualbox
 ```
 
 Verify installation:
+
 ```bash
 VBoxManage --version
 ```
 
 ## Quick Start
 
-```bash
+```markdown
 # 1. Build NeoDOS disk image
 neodev build --image
 
@@ -49,38 +53,47 @@ neodev run --backend virtualbox --headless
 ## VM Lifecycle
 
 ### Create VM
+
 ```bash
 neodev vm create --backend virtualbox
 ```
+
 Creates and configures the VM if it doesn't exist. Automatically converts
 `disk_image.img` to `disk_image.vdi`.
 
 ### Start VM
+
 ```bash
 neodev vm start --backend virtualbox           # GUI mode
 neodev vm start --backend virtualbox --headless # Headless mode
 ```
 
 ### Stop VM
+
 ```bash
 neodev vm stop --backend virtualbox
 ```
+
 Sends ACPI power button signal. Forces poweroff if ACPI fails.
 
 ### Reset VM
+
 ```bash
 neodev vm reset --backend virtualbox
 ```
 
 ### Check Status
+
 ```bash
 neodev vm status --backend virtualbox
 ```
 
 ### Delete VM
+
 ```bash
 neodev vm delete --backend virtualbox
 ```
+
 Removes the VirtualBox VM and all associated files.
 
 ## Configuration
@@ -95,6 +108,7 @@ cpus = 4
 ```
 
 Override per-command with `--backend`:
+
 ```bash
 neodev run --backend qemu
 neodev run --backend virtualbox
@@ -122,7 +136,7 @@ The VirtualBox backend automatically configures:
 
 ## Running Tests
 
-```bash
+```markdown
 # With QEMU (default)
 neodev test
 
@@ -142,6 +156,7 @@ VDI that is older than the freshly built raw image. See
 ## Serial Output
 
 VirtualBox serial output is logged to file for debugging:
+
 - Default path during testing: `/tmp/neodos_serial.log`
 - During interactive runs: path specified via `--serial` flag
 
@@ -173,7 +188,7 @@ network router.
 
 ### Running the Test
 
-```bash
+```markdown
 # 1. Build NeoDOS with all components
 neodev build --image
 
@@ -196,7 +211,7 @@ neodev dhcp --backend virtualbox
 
 ### Expected Output
 
-```
+```text
 [*] NeoDOS DHCP Integration Test
   Backend: virtualbox
   Network: Bridged (real DHCP)
@@ -261,6 +276,7 @@ neodev dhcp --backend virtualbox --timeout 300
 ## Troubleshooting
 
 ### VBoxManage not found
+
 ```bash
 which VBoxManage
 # Should output a path like /usr/bin/VBoxManage
@@ -268,13 +284,16 @@ which VBoxManage
 ```
 
 ### VM already exists
+
 If the VM already exists, NeoDev reuses it automatically. To recreate:
+
 ```bash
 neodev vm delete --backend virtualbox
 neodev vm create --backend virtualbox
 ```
 
 ### Disk image updated
+
 When `disk_image.img` is rebuilt, NeoDev automatically re-converts it to
 `disk_image.vdi` on the next `run` **or** `test` if the raw image is newer.
 See [VDI synchronization](#vdi-synchronization).
@@ -317,7 +336,7 @@ Details:
 The validation harness ships with NeoDev at `scripts/vbox-vdi-sync-check.sh`.
 Run it from the NeoDev checkout, pointing it at this repository:
 
-```bash
+```markdown
 # Force IMG newer than VDI, then run the VirtualBox test suite and verify.
 /path/to/NeoDev/scripts/vbox-vdi-sync-check.sh --neodos-root /path/to/neodos
 
@@ -330,8 +349,10 @@ The script records the `IMG`/`VDI` mtimes before and after, runs
 raw image. Exit status is non-zero on failure.
 
 ### Permission denied
+
 Ensure your user has permission to run VirtualBox VMs:
-```bash
+
+```markdown
 # Add user to vboxusers group
 sudo usermod -aG vboxusers $USER
 # Log out and back in
@@ -341,6 +362,7 @@ sudo usermod -aG vboxusers $USER
 
 The old `scripts/vbox-setup.sh` has been removed. All VirtualBox management
 is now handled by NeoDev via:
+
 ```bash
 neodev vm create --backend virtualbox
 neodev run --backend virtualbox
