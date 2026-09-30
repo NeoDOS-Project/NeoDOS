@@ -1041,10 +1041,18 @@ netcfg ─► Registry / apply explícito
 
 #### 4.4.2 netd.nxe — servicio de red Ring 3 (MVP, #372)
 
-`netd.nxe` es la **capa de servicios de red** Ring 3 (servicio `Netd`,
-`StartType = Auto`). **No** es el bombeo de RX: ese sigue siendo el worker
-Ring 0 `netpump` del kernel (`network_poll_all()`), que es independiente de que
-se programe un proceso Ring 3.
+`netd.nxe` es la **capa de servicios de red** Ring 3 (servicio `Netd`).
+**No** es el bombeo de RX: ese sigue siendo el worker Ring 0 `netpump` del
+kernel (`network_poll_all()`), que es independiente de que se programe un
+proceso Ring 3.
+
+> **Nota temporal (#376):** el autostart de `netd` está **desactivado**
+> temporalmente (`StartType = Demand`), de modo que no participa en la ventana
+> de auto-arranque del boot. Motivo: #376 dejó un problema de
+> bootstrap/dispatch starvation sin root cause probada. Esto **NO** es una
+> corrección de #376. `netd` sigue registrado y **puede arrancarse
+> manualmente** (con `Demand`, a diferencia de `Disabled`). Se restaurará a
+> `Auto` cuando #376 se resuelva.
 
 ```text
 netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
