@@ -284,7 +284,7 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     // boot auto-start window; `Demand` (unlike `Disabled`) keeps the service
     // manually startable. This is an integration workaround, NOT a #376 fix.
     b.add_value(_V_NETD_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netd.nxe\0", NULL_CELL, _NETD);
-    b.add_value(_V_NETD_STYPE, "StartType", REG_DWORD, &3u32.to_le_bytes(), _V_NETD_BPATH, _NETD);
+    b.add_value(_V_NETD_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NETD_BPATH, _NETD);
     b.add_value(_V_NETD_DNAME, "DisplayName", REG_SZ, b"Network Service\0", _V_NETD_STYPE, _NETD);
 
     // Ntpd service values: DisplayName → BinaryPath → StartType → RestartPolicy → MaxFailures.
@@ -535,6 +535,6 @@ mod tests {
         let bp = value(&r, &netd, "BinaryPath").expect("BinaryPath");
         assert!(bp.display.contains("netd.nxe"), "BinaryPath: {}", bp.display);
         let st = value(&r, &netd, "StartType").expect("StartType");
-        assert_eq!(st.display, "3", "StartType must be Demand (autostart temporarily disabled, #376)");
+        assert_eq!(st.display, "2", "StartType must be Auto");
     }
 }

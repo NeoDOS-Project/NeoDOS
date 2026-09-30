@@ -1046,13 +1046,12 @@ netcfg ─► Registry / apply explícito
 kernel (`network_poll_all()`), que es independiente de que se programe un
 proceso Ring 3.
 
-> **Nota temporal (#376):** el autostart de `netd` está **desactivado**
-> temporalmente (`StartType = Demand`), de modo que no participa en la ventana
-> de auto-arranque del boot. Motivo: #376 dejó un problema de
-> bootstrap/dispatch starvation sin root cause probada. Esto **NO** es una
-> corrección de #376. `netd` sigue registrado y **puede arrancarse
-> manualmente** (con `Demand`, a diferencia de `Disabled`). Se restaurará a
-> `Auto` cuando #376 se resuelva.
+> **Nota (#355/#376):** el autostart de `netd` se desactivó temporalmente
+> (`StartType = Demand`) mientras #376 (boot stall) estaba sin causa raíz. Con
+> el fix de #355 (anti-starvation de kernel threads Ring-0) el boot stall S2 ya
+> no se reproduce (0/16 arranques con `netd` Auto), así que se **restaura a
+> `Auto`**. `netd` sigue registrado y arrancable; el flake restante de DHCP
+> (S3) es independiente de `netd`.
 
 ```text
 netd    (Ring 3) ── observa NIC / link state (NicInfo) y expone estado
