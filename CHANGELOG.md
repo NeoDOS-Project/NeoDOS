@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Shared network configuration backend `libnet::config` (#363).** A single API
+  for reading/writing the interface configuration and applying it to the NIC.
+  `netcfg`, `dhcpd`, `ipconfig` and `netapplier` no longer hardcode
+  `Network\Interfaces\0` or its value names. The pure contract (canonical names,
+  `NetConfig`, IPv4 parse/format, `/24` default, interface path) lives in the
+  new dependency-free host-testable `libnet-config` crate (7 unit tests); the
+  syscall adapter (`load`/`store`/`publish_lease`/`apply`/…) lives in
+  `libnet::config`. The Registry remains the single source of truth.
 - **`ntpd` — persistent NTP/SNTP synchronization daemon (#26).** New Ring 3
   service (`userbin/ntpd/`, `C:\System\Tools\ntpd.nxe`) started by the Service
   Manager (`Services\Ntpd`, StartType=Auto). Reads `Services\Ntpd\Parameters`

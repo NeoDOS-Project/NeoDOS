@@ -1,9 +1,33 @@
 #![no_std]
 #![no_main]
 
+//! `ipconfig` — read-only network interface state / diagnostics.
+//!
+//! Reads the Registry-backed configuration through the shared `libnet::config`
+//! backend (#363) and the runtime NIC state through `net.nxl`. It never writes
+//! configuration: that is `netcfg`/`neocfg` (and the `NetApplier` service).
+
+extern crate alloc;
+
+use core::alloc::{GlobalAlloc, Layout};
 use libneodos::i18n;
 use libneodos::syscall;
 use libneodos::tr_id;
+use libnet::config::{self, NetConfig};
+
+struct SbrkAlloc;
+
+unsafe impl GlobalAlloc for SbrkAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let size = layout.size().max(8) as i64;
+        let ptr = libneodos::mem::sbrk(size).ok().unwrap_or(0) as *mut u8;
+        if ptr.is_null() { core::ptr::null_mut() } else { ptr }
+    }
+    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {}
+}
+
+#[global_allocator]
+static ALLOC: SbrkAlloc = SbrkAlloc;
 
 const APP_NAME: &str = "ipconfig";
 const IDS_HEADER: u32 = 1001;
@@ -31,51 +55,9 @@ const IDS_NO: u32 = 1022;
 const IDS_ERR_NXL: u32 = 1023;
 const IDS_NO_IFACES: u32 = 1024;
 
-#[repr(C)]
-struct NetIfaceInfo {
-    nic_id: u32,
-    mac: [u8; 6],
-    ip: [u8; 4],
-    link_up: u8,
-    vendor_id: u16,
-    device_id: u16,
-    name: [u8; 16],
-    description: [u8; 48],
-}
-
-const NIC_INFO_SIZE: usize = 84;
-
-const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
-
 fn write_str(s: &[u8]) { let _ = syscall::sys_write(1, s); }
 
 fn write_label(id: u32) { write_str(tr_id!(id).as_bytes()); }
-
-fn format_ip(ip: u32, buf: &mut [u8]) -> usize {
-    let mut pos = 0;
-    let o = ip.to_be_bytes();
-    for (idx, &b) in o.iter().enumerate() {
-        if idx > 0 {
-            if pos >= buf.len() { break; }
-            buf[pos] = b'.';
-            pos += 1;
-        }
-        if b >= 100 {
-            if pos >= buf.len() { break; }
-            buf[pos] = b'0' + b / 100;
-            pos += 1;
-        }
-        if b >= 10 {
-            if pos >= buf.len() { break; }
-            buf[pos] = b'0' + (b / 10) % 10;
-            pos += 1;
-        }
-        if pos >= buf.len() { break; }
-        buf[pos] = b'0' + (b % 10);
-        pos += 1;
-    }
-    pos
-}
 
 fn fmt_u32(v: u32, buf: &mut [u8]) -> usize {
     if v == 0 { buf[0] = b'0'; return 1; }
@@ -91,7 +73,7 @@ fn fmt_u32(v: u32, buf: &mut [u8]) -> usize {
 fn write_ip_label(id: u32, ip: u32) {
     write_label(id);
     let mut b = [0u8; 16];
-    let n = format_ip(ip, &mut b);
+    let n = config::format_ip(ip, &mut b);
     write_str(&b[..n]);
     write_str(b"\r\n");
 }
@@ -124,27 +106,12 @@ fn write_mac(mac: &[u8; 6]) {
     write_str(b"\r\n");
 }
 
-fn read_reg_dword(fd: u8, name: &str) -> u32 {
-    let mut buf = [0u8; 16];
-    let r = syscall::sys_cm_query_value(fd, name, &mut buf);
-    match r {
-        Ok(n) if n >= 12 => {
-            let t = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
-            if t == syscall::REG_DWORD {
-                return u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
-            }
-        }
-        _ => {}
-    }
-    0
-}
-
 fn write_padded_str(buf: &[u8]) {
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     if end > 0 { write_str(&buf[..end]); }
 }
 
-fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
+fn print_iface(iface_idx: u32, info: &libnet::NetIfaceInfo, cfg: &NetConfig) {
     let _ = iface_idx;
     write_str(b"\r\n");
     write_label(IDS_ETHERNET);
@@ -176,38 +143,35 @@ fn print_iface(iface_idx: u32, info: &NetIfaceInfo, reg_fd: u8) {
     write_str(b"\r\n\r\n");
 
     let ip_u32 = u32::from_be_bytes(info.ip);
-    let mask = read_reg_dword(reg_fd, "SubnetMask");
-    let gw = read_reg_dword(reg_fd, "Gateway");
-    let dns1 = read_reg_dword(reg_fd, "DnsServer");
-    let dns2 = read_reg_dword(reg_fd, "DnsServer2");
-    let dns3 = read_reg_dword(reg_fd, "DnsServer3");
+    let mask = cfg.mask;
+    let gw = cfg.gateway;
+    let dns1 = cfg.dns[0];
+    let dns2 = cfg.dns[1];
+    let dns3 = cfg.dns[2];
 
     write_label(IDS_MAC);
     write_mac(&info.mac);
 
     write_ip_label(IDS_IPV4, ip_u32);
-    write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { 0x00FFFFFF });
+    write_ip_label(IDS_SUBNET_MASK, if mask != 0 { mask } else { config::DEFAULT_MASK });
     write_ip_label(IDS_GATEWAY, gw);
     if dns1 != 0 { write_ip_label(IDS_DNS, dns1); }
     if dns2 != 0 { write_ip_label(IDS_DNS, dns2); }
     if dns3 != 0 { write_ip_label(IDS_DNS, dns3); }
     write_str(b"\r\n");
 
-    let dhcp_enabled = read_reg_dword(reg_fd, "DHCPEnabled") != 0;
-    let dhcp_bound = read_reg_dword(reg_fd, "DHCPBound") != 0;
-
     write_label(IDS_DHCP_ENABLED);
-    if dhcp_enabled { write_label(IDS_YES); } else { write_label(IDS_NO); }
+    if cfg.dhcp_enabled { write_label(IDS_YES); } else { write_label(IDS_NO); }
     write_str(b"\r\n");
 
     write_label(IDS_CONFIG_SOURCE);
-    if dhcp_bound { write_label(IDS_DHCP); }
+    if cfg.dhcp_bound { write_label(IDS_DHCP); }
     else if ip_u32 != 0 { write_label(IDS_STATIC); }
     else { write_label(IDS_NONE); }
     write_str(b"\r\n");
 
-    if dhcp_bound {
-        let lease = read_reg_dword(reg_fd, "LeaseTime");
+    if cfg.dhcp_bound {
+        let lease = cfg.lease_time;
         if lease > 0 {
             write_val_label(IDS_LEASE_TIME, lease, b" s");
         }
@@ -238,65 +202,37 @@ pub extern "C" fn _start() -> ! {
     }
     write_str(b"\r\n\r\n");
 
-    let reg_fd = match syscall::sys_cm_open_key(REG_NET_PATH) {
-        Ok(fd) => fd,
-        Err(_) => {
+    let cfg = match config::load(0) {
+        Some(cfg) => cfg,
+        None => {
             write_label(IDS_NO_IFACES);
             write_str(b"\r\n");
             syscall::sys_exit(0);
         }
     };
 
-    let obj_fd = match syscall::sys_ob_open("\\Global\\Info\\Network", 1) {
-        Ok(fd) => fd,
-        Err(_) => {
-            write_label(IDS_NO_IFACES);
-            write_str(b"\r\n");
-            let _ = syscall::sys_close(reg_fd);
-            syscall::sys_exit(0);
-        }
-    };
-
-    let mut buf = [0u8; 256];
-    let r = syscall::sys_ob_query_info(obj_fd, syscall::ObInfoClass::NicInfo, &mut buf);
-    let _ = syscall::sys_close(obj_fd);
-
-    if r.is_err() { write_label(IDS_NO_IFACES); write_str(b"\r\n"); let _ = syscall::sys_close(reg_fd); syscall::sys_exit(0); }
-    let total = r.unwrap() as usize;
-    let entry_size = NIC_INFO_SIZE;
-    let count = total / entry_size;
+    let count = libnet::iface_count();
     if count == 0 {
         write_label(IDS_NO_IFACES);
         write_str(b"\r\n");
-        let _ = syscall::sys_close(reg_fd);
         syscall::sys_exit(0);
     }
 
     for i in 0..count {
-        let off = i * entry_size;
-        if off + entry_size > buf.len() { break; }
-        let raw = &buf[off..off+entry_size];
-        let info = NetIfaceInfo {
-            nic_id: u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]),
-            mac: [raw[4], raw[5], raw[6], raw[7], raw[8], raw[9]],
-            ip: [raw[10], raw[11], raw[12], raw[13]],
-            link_up: raw[14],
-            vendor_id: u16::from_le_bytes([raw[16], raw[17]]),
-            device_id: u16::from_le_bytes([raw[18], raw[19]]),
-            name: {
-                let mut n = [0u8; 16];
-                n.copy_from_slice(&raw[20..36]);
-                n
-            },
-            description: {
-                let mut d = [0u8; 48];
-                d.copy_from_slice(&raw[36..84]);
-                d
-            },
+        let mut info = libnet::NetIfaceInfo {
+            nic_id: 0,
+            mac: [0u8; 6],
+            ip: [0u8; 4],
+            link_up: 0,
+            vendor_id: 0,
+            device_id: 0,
+            name: [0u8; 16],
+            description: [0u8; 48],
         };
-        print_iface(i as u32, &info, reg_fd);
+        if libnet::iface_info(i, &mut info) == 0 {
+            print_iface(i, &info, &cfg);
+        }
     }
 
-    let _ = syscall::sys_close(reg_fd);
     syscall::sys_exit(0);
 }

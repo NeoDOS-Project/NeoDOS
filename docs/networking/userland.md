@@ -372,6 +372,31 @@ en PATH, pero si es un comando de red conocido, carga net.nxl y ejecuta.
 independiente que carga net.nxl via `loadlib()` al arrancar. No hay integración
 en el shell — el shell solo dispatching a PATH como ahora.
 
+### 2.6 libnet::config — backend de configuración compartido (#363)
+
+`netcfg`, `dhcpd`, `ipconfig`, `netapplier` (y el futuro `neocfg`) no deben
+conocer la ruta `...\Network\Interfaces\<n>` ni los nombres canónicos de sus
+valores. Todos pasan por `libnet::config`, el backend/API único:
+
+```text
+neocfg / netcfg / dhcpd / ipconfig / netapplier
+                    │
+                    ▼
+              libnet::config
+                │         │
+        Registry (Cm)   net.nxl SetNicIp/SetNicGateway
+```
+
+- `libnet-config` (crate `no_std` sin dependencias, host-testeable) define el
+  contrato puro: nombres canónicos (`VALUE_*`), `NetConfig`, `parse_ip`,
+  `format_ip`, `DEFAULT_MASK` y `build_interface_path`.
+- `libnet::config` añade el adaptador de syscalls: `load`/`store`/
+  `publish_lease`/`apply`/`apply_current`/`link_up`/`interface_ip`.
+
+Esto evita duplicar la lógica de configuración y permite que `neocfg` configure
+la red sin conocer internals de NIC. El Registry sigue siendo la única fuente de
+verdad (sin segunda fuente).
+
 ---
 
 ## 3. Herramientas NXE de Red
@@ -973,9 +998,10 @@ netcfg /test                    valida la config (dry-run)
 netcfg /? | help                ayuda
 ```
 
-El Registry es la **única fuente de verdad**. `netcfg` escribe en
-`Network\Interfaces\0` y, para los comandos que lo requieren, aplica el cambio de
-inmediato vía `SetNicIp = 27` / `SetNicGateway = 28`. La aplicación **continua**
+El Registry es la **única fuente de verdad**. `netcfg` lee/escribe la
+configuración a través del backend compartido `libnet::config` (§2.6, #363) y,
+para los comandos que lo requieren, aplica el cambio de inmediato vía
+`SetNicIp = 27` / `SetNicGateway = 28`. La aplicación **continua**
 (lease DHCP, cambios desde `neocfg`, etc.) la hace el aplicador residente
 (§4.4.1), no `netcfg`.
 
@@ -1002,6 +1028,7 @@ dhcpd ──► Registry ──► netapplier ──► NIC runtime
 netcfg ─► Registry / apply explícito
 ```
 
+- Lee y aplica a través del backend compartido `libnet::config` (§2.6, #363).
 - Cada iteración (~decenas de ms) lee `IPAddress`/`SubnetMask`/`Gateway` y el
   estado de enlace (`NicInfo`).
 - Si los valores cambian o el enlace sube (fl. 0→1), aplica

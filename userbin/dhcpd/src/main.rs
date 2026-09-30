@@ -5,6 +5,7 @@ extern crate alloc;
 
 use core::alloc::{GlobalAlloc, Layout};
 use libneodos::{i18n, mem, syscall, tr_id};
+use libnet::config;
 
 struct SbrkAlloc;
 
@@ -55,8 +56,6 @@ const LEASE_RENEW_DIVISOR: u64 = 2;
 const YIELD_BATCH: u32 = 100;
 /// Maximum DNS servers taken from DHCP option 6 (it is a list of IPv4 addrs).
 const MAX_DHCP_DNS: usize = 3;
-
-const REG_NET_PATH: &str = "\\Registry\\Machine\\System\\CurrentControlSet\\Services\\Network\\Interfaces\\0";
 
 #[repr(C, packed)]
 struct DhcpHeader {
@@ -166,26 +165,6 @@ fn yield_for(batches: u32) {
             let _ = syscall::sys_yield();
         }
     }
-}
-
-// ── Registry helpers ──
-
-fn read_reg_dword(key_fd: u8, name: &str) -> Option<u32> {
-    let mut reg_buf = [0u8; 12];
-    let total = syscall::sys_cm_query_value(key_fd, name, &mut reg_buf).ok()?;
-    if total < 12 { return None; }
-    let value_type = u32::from_le_bytes([reg_buf[0], reg_buf[1], reg_buf[2], reg_buf[3]]);
-    if value_type != syscall::REG_DWORD { return None; }
-    Some(u32::from_le_bytes([reg_buf[8], reg_buf[9], reg_buf[10], reg_buf[11]]))
-}
-
-fn write_reg_dword(key_fd: u8, name: &str, val: u32) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_DWORD, &val.to_le_bytes());
-}
-
-#[allow(dead_code)]
-fn write_reg_string(key_fd: u8, name: &str, val: &[u8]) {
-    let _ = syscall::sys_cm_set_value(key_fd, name, syscall::REG_SZ, val);
 }
 
 // ── DHCP packet construction ──
@@ -588,6 +567,18 @@ impl DhcpClient {
 
 // ── Main entry ──
 
+/// Publish the APIPA fallback lease (169.254.1.1) through the shared config
+/// backend. The mask keeps the legacy value (see #367).
+fn publish_apipa() {
+    let mut cfg = config::load(0).unwrap_or_default();
+    cfg.ip = 0xA9FE0101; // 169.254.1.1
+    cfg.mask = 0x0000FFFF;
+    cfg.gateway = 0;
+    cfg.dhcp_server = 0;
+    cfg.dhcp_bound = true;
+    let _ = config::publish_lease(0, &cfg);
+}
+
 #[no_mangle]
 pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
@@ -596,26 +587,22 @@ pub extern "C" fn _start() -> ! {
     write_str(tr_id!(IDS_PREFIX).as_bytes());
     write_str(b"NeoDOS DHCP Service v0.1\r\n");
 
-    let reg_key = syscall::sys_cm_open_key(REG_NET_PATH);
-    let key_fd;
-    match reg_key {
-        Ok(fd) => { key_fd = fd; }
-        Err(_) => {
+    let dhcp_enabled = match config::load(0) {
+        Some(cfg) => cfg.dhcp_enabled,
+        None => {
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"ERROR: registry key not found\r\n");
             loop { syscall::sys_yield(); }
         }
-    }
+    };
 
-    let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
-
-    if dhcp_enabled == 0 {
+    if !dhcp_enabled {
         // Static mode: the `netapplier` service applies the Registry values.
         // dhcpd only publishes DHCP leases, so there is nothing to do.
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
-                    write_str(b"DHCP disabled; static config handled by netcfg\r\n");
+                    write_str(b"DHCP disabled; static config handled by netapplier\r\n");
         loop { syscall::sys_yield(); }
     }
 
@@ -633,14 +620,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket create err=");
             write_hex(e as u32);
             write_str(b"\r\n");
-            let apipa = 0xA9FE0101;
             write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (socket create failed)\r\n");
-            write_reg_dword(key_fd, "IPAddress", apipa);
-            write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
-            write_reg_dword(key_fd, "Gateway", 0);
-            write_reg_dword(key_fd, "DHCPBound", 1);
+            publish_apipa();
             loop { syscall::sys_yield(); }
         }
     };
@@ -652,14 +635,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket bind err=");
         write_hex(e as u32);
         write_str(b"\r\n");
-        let apipa = 0xA9FE0101;
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (bind failed)\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
-        write_reg_dword(key_fd, "Gateway", 0);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
         loop { syscall::sys_yield(); }
     }
 
@@ -670,14 +649,10 @@ pub extern "C" fn _start() -> ! {
                     write_str(b"ERROR: socket connect err=");
         write_hex(e as u32);
         write_str(b"\r\n");
-        let apipa = 0xA9FE0101;
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1 (connect failed)\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
-        write_reg_dword(key_fd, "Gateway", 0);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
         loop { syscall::sys_yield(); }
     }
 
@@ -724,19 +699,23 @@ pub extern "C" fn _start() -> ! {
         write_dec_u32(client.lease_time);
         write_str(b"s\r\n");
 
-        // Publish the lease to the Registry. The `netapplier` service is the
-        // one that applies it to the NIC (single applier; see #320/#314/#365).
-        write_reg_dword(key_fd, "IPAddress", ip);
-        write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
-        write_reg_dword(key_fd, "Gateway", client.gateway);
-        // DHCP-provided DNS (option 6) is written to the interface DNS values.
-        // With DHCP enabled these are authoritative and overwrite any manual
-        // value; the default (no lease yet) is 0.0.0.0 = unset.
-        write_reg_dword(key_fd, "DnsServer", client.dns[0]);
-        write_reg_dword(key_fd, "DnsServer2", if client.dns_count > 1 { client.dns[1] } else { 0 });
-        write_reg_dword(key_fd, "DnsServer3", if client.dns_count > 2 { client.dns[2] } else { 0 });
-        write_reg_dword(key_fd, "LeaseTime", client.lease_time);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        // Publish the lease through the shared config backend. The `netapplier`
+        // service is the one that applies it to the NIC (single applier; see
+        // #320/#314/#365).
+        let mut cfg = config::load(0).unwrap_or_default();
+        cfg.ip = ip;
+        cfg.mask = client.subnet_mask;
+        cfg.gateway = client.gateway;
+        // DHCP-provided DNS (option 6) is authoritative; zero any slot beyond
+        // the number of servers actually offered.
+        let mut dns = [0u32; MAX_DHCP_DNS];
+        let n = client.dns_count.min(MAX_DHCP_DNS);
+        for i in 0..n { dns[i] = client.dns[i]; }
+        cfg.dns = dns;
+        cfg.lease_time = client.lease_time;
+        cfg.dhcp_server = client.server_ip;
+        cfg.dhcp_bound = true;
+        let _ = config::publish_lease(0, &cfg);
 
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
@@ -745,14 +724,10 @@ pub extern "C" fn _start() -> ! {
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"DORA failed, using APIPA fallback\r\n");
-        let apipa = 0xA9FE0101;
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"APIPA 169.254.1.1\r\n");
-        write_reg_dword(key_fd, "IPAddress", apipa);
-        write_reg_dword(key_fd, "SubnetMask", 0x0000FFFF);
-        write_reg_dword(key_fd, "Gateway", 0);
-        write_reg_dword(key_fd, "DHCPBound", 1);
+        publish_apipa();
     }
 
     // Main loop: yield forever (DHCP renew handled by OS)
