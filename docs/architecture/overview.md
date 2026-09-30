@@ -266,6 +266,7 @@ struct Event {
 | `EVENT_NMI_WATCHDOG` | 15 | NMI watchdog timeout |
 | `EVENT_MOUSE_INPUT` | 16 | PS/2 mouse raw bytes |
 | `EVENT_NETWORK_PACKET` | 17 | NIC received a packet |
+| `EVENT_RTC_WRITE` | 32 | RTC write request (kernel → rtc.nem) |
 | `EVENT_USER` | 0x2000 | User-defined event base |
 | `EVENT_WILDCARD` | 0xFFFFFFFF | Matches any type |
 

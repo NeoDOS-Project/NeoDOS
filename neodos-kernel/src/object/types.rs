@@ -203,6 +203,8 @@ pub enum ObSetInfoClass {
     KeyboardSetLeds = 46,
     KeyboardSetModifier = 47,
     SetHostname = 49,
+    /// Set the system (RTC) clock from a `SysDateTime` payload. Admin-only.
+    DateTime = 50,
 }
 
 // ═══════════════════════════════════════════════════════════════════════

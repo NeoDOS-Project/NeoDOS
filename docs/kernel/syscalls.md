@@ -282,6 +282,9 @@ Set object info by fd and set-info class (see `ObSetInfoClass`).
 
 - **Args**: `RBX`=fd, `RCX`=class, `RDX`=buf, `R8`=size.
 - **Returns**: `0` on success, or error code.
+- **Clock**: class `50` (`DateTime`) sets the system (RTC) clock from a
+  `SysDateTime` payload on `\Global\Info\DateTime`; admin only. `ntpd` uses it
+  to apply NTP-corrected time. See `docs/services/ntpd.md`.
 
 #### 44 — `sys_ob_enum`
 

@@ -242,6 +242,7 @@ Used for DPC dispatch, event bus delivery, background I/O completion callbacks.
 | `EVENT_KEY_CHAR` | 29 | Character typed (Unicode codepoint in data0) |
 | `EVENT_KBD_MODIFIER` | 30 | Modifier state change (new mods byte in data0) |
 | `EVENT_KBD_REPEAT` | 31 | Key repeat event |
+| `EVENT_RTC_WRITE` | 32 | RTC write request (kernel → rtc.nem) |
 | `USER` | 0x1000+ | User-defined event types |
 
 ### Event Sources

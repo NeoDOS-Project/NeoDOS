@@ -36,6 +36,10 @@ pub const EVENT_DRIVER_UNLOAD_ACK: EventType = 14;// FROZEN v0.42
 pub const EVENT_NMI_WATCHDOG: EventType = 15;     // FROZEN v0.42
 pub const EVENT_MOUSE_INPUT: EventType = 16;      // PS/2 mouse raw bytes
 pub const EVENT_NETWORK_PACKET: EventType = 17;   // NIC received a packet (data0=nic_id, data1=len)
+/// Kernel → rtc.nem: set the hardware clock. data0 = packed date/time
+/// (second | minute<<8 | hour<<16 | day<<24 | month<<32 | year<<40).
+/// Value 32 is the next free slot after the reserved 0–31 range.
+pub const EVENT_RTC_WRITE: EventType = 32;
 // ── PCI / MSI events (must match pci.nem constants) ──
 /// Kernel → pci.nem: read a config dword.  data0[31:0] = packed BDF+offset.
 pub const EVENT_PCI_READ_CONFIG: EventType    = 0x1000;

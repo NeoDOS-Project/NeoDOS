@@ -83,6 +83,7 @@
 | Document | Description |
 |----------|-------------|
 | [Power Manager](services/power-manager.md) | Power plans, ACPI, shutdown coordination |
+| [NTP Daemon](services/ntpd.md) | ntpd architecture, config, lifecycle, limitations |
 
 ## Userland
 
