@@ -16,6 +16,7 @@ pub use create::handler_ob_create;
 pub use query::handler_ob_query_info;
 pub use query::register_ob_stats_tests;
 pub use set::handler_ob_set_info;
+pub use set::register_ob_set_tests;
 pub use r#enum::handler_ob_enum;
 pub use wait::handler_ob_wait;
 pub use destroy::handler_ob_destroy;

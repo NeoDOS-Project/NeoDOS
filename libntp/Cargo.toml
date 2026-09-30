@@ -1,0 +1,12 @@
+[package]
+name = "libntp"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS shared NTP/SNTP wire format + offset math (no_std, dependency-free)"
+
+[lib]
+name = "libntp"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[dependencies]

@@ -1126,8 +1126,99 @@ pub fn handler_ob_set_info(regs: crate::syscall::Registers) -> u64 {
                 Err(_) => err_to_u64(SyscallError::Io),
             }
         }
+        _ if info_class == ObSetInfoClass::DateTime as u32 => {
+            if !crate::syscall::is_current_admin() {
+                return err_to_u64(SyscallError::Perm);
+            }
+            if entry.object_id == 0 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let obj = match crate::object::ob_lookup(entry.object_id) {
+                Some(o) => o,
+                None => return err_to_u64(SyscallError::BadF),
+            };
+            // Only the \Global\Info\DateTime object (Key native_id 5) accepts it.
+            if obj.obj_type != crate::object::ObType::Key || obj.native_id != 5 {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let sz = core::mem::size_of::<super::types::SysDateTime>();
+            if buf_size < sz {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let mut raw = [0u8; 7];
+            unsafe {
+                core::ptr::copy_nonoverlapping(buf_ptr as *const u8, raw.as_mut_ptr(), sz);
+            }
+            let (second, minute, hour, day, month, year) =
+                (raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+            if !validate_datetime(second, minute, hour, day, month, year) {
+                return err_to_u64(SyscallError::Inval);
+            }
+            let dt = crate::drivers::rtc_bridge::DateTime {
+                second, minute, hour, day, month, year,
+            };
+            if crate::drivers::rtc_bridge::set_datetime(&dt) {
+                0
+            } else {
+                err_to_u64(SyscallError::Io)
+            }
+        }
         _ => err_to_u64(SyscallError::Inval),
     }
+}
+
+/// Validate the field ranges of an `ObSetInfoClass::DateTime` payload.
+///
+/// `year` is a two-digit Gregorian year (0–99, interpreted as 2000–2099), so
+/// every year divisible by 4 in range is a leap year.
+pub fn validate_datetime(second: u8, minute: u8, hour: u8, day: u8, month: u8, year: u8) -> bool {
+    if month < 1 || month > 12 {
+        return false;
+    }
+    if day < 1 || day > 31 {
+        return false;
+    }
+    if hour > 23 || minute > 59 || second > 60 {
+        return false;
+    }
+    let max_day = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if year % 4 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return false,
+    };
+    day <= max_day
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════
+
+pub fn register_ob_set_tests() {
+    use crate::{test_case, test_true};
+
+    test_case!("ob_set_datetime_accepts_valid", {
+        test_true!(validate_datetime(0, 0, 0, 1, 1, 0));
+        test_true!(validate_datetime(59, 59, 23, 29, 2, 24)); // 2024-02-29
+        test_true!(validate_datetime(60, 0, 12, 31, 12, 99)); // leap second
+    });
+
+    test_case!("ob_set_datetime_rejects_invalid", {
+        test_true!(!validate_datetime(0, 0, 24, 1, 1, 0)); // hour
+        test_true!(!validate_datetime(0, 60, 0, 1, 1, 0)); // minute
+        test_true!(!validate_datetime(0, 0, 0, 0, 1, 0)); // day 0
+        test_true!(!validate_datetime(0, 0, 0, 1, 0, 0)); // month 0
+        test_true!(!validate_datetime(0, 0, 0, 1, 13, 0)); // month 13
+        test_true!(!validate_datetime(0, 0, 0, 30, 2, 24)); // Feb 30
+        test_true!(!validate_datetime(0, 0, 0, 29, 2, 23)); // 2023 not leap
+        test_true!(!validate_datetime(0, 0, 0, 31, 4, 24)); // Apr 31
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════

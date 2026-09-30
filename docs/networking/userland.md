@@ -673,6 +673,25 @@ hostname → libnet::dns::resolve() → IPv4 → sys_icmp_ping() (sin cambios)
 mantiene el error de IP; en caso contrario se intenta resolver por DNS y se
 muestra el error DNS específico.
 
+### 3.6 ntpd.nxe — daemon de sincronización horaria (implementado)
+
+`ntpd` es un servicio residente (StartType=Auto, gestionado por el Service
+Manager) que sincroniza el reloj del sistema con servidores NTP/SNTP. No
+configura nada: lee `Ntpd\Parameters` del Registry, consulta el servidor y
+aplica la hora vía `ob_set_datetime()` (objeto `\Global\Info\DateTime`).
+
+```text
+ntpd.nxe
+  ├─ libntp     (SNTP: request/reply, offset/delay, civil time — host-testeable)
+  ├─ libnet::dns (resolución de servidores)
+  └─ libneodos   (sockets UDP, Registry, ob_set_datetime)
+```
+
+La lógica de protocolo vive en `libntp`, igual que el DNS vive en `libdns`; el
+daemon solo aporta transporte, configuración y estado. La documentación
+completa (configuración, ciclo de vida, estado y limitaciones) está en
+[`docs/services/ntpd.md`](../services/ntpd.md).
+
 
 ---
 

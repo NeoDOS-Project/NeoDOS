@@ -228,8 +228,19 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     const _V_NC_BPATH: u32 = 64;
     const _V_NC_STYPE: u32 = 65;
     const _V_NC_DNAME: u32 = 66;
+    const _NTPD: u32 = 67;
+    const _NTPPARAM: u32 = 68;
+    const _V_NTP_DNAME: u32 = 69;
+    const _V_NTP_BPATH: u32 = 70;
+    const _V_NTP_STYPE: u32 = 71;
+    const _V_NTP_RPOL: u32 = 72;
+    const _V_NTP_MFAIL: u32 = 73;
+    const _V_NTP_EN: u32 = 74;
+    const _V_NTP_SRV: u32 = 75;
+    const _V_NTP_INT: u32 = 76;
+    const _V_NTP_TO: u32 = 77;
 
-    b.next_idx = 67;
+    b.next_idx = 78;
 
     let tests_val: u32 = if enable_tests { 1 } else { 0 };
     let net_test_val: u32 = if enable_network_test { 1 } else { 0 };
@@ -257,6 +268,21 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     b.add_value(_V_NC_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netcfg.nxe\0", NULL_CELL, _NETCFG);
     b.add_value(_V_NC_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NC_BPATH, _NETCFG);
     b.add_value(_V_NC_DNAME, "DisplayName", REG_SZ, b"netcfg\0", _V_NC_STYPE, _NETCFG);
+
+    // Ntpd service values: DisplayName → BinaryPath → StartType → RestartPolicy → MaxFailures.
+    // Persistent NTP/SNTP synchronization daemon. StartType=Auto, restart on crash.
+    b.add_value(_V_NTP_MFAIL, "MaxFailures", REG_DWORD, &3u32.to_le_bytes(), NULL_CELL, _NTPD);
+    b.add_value(_V_NTP_RPOL, "RestartPolicy", REG_DWORD, &1u32.to_le_bytes(), _V_NTP_MFAIL, _NTPD);
+    b.add_value(_V_NTP_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NTP_RPOL, _NTPD);
+    b.add_value(_V_NTP_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\ntpd.nxe\0", _V_NTP_STYPE, _NTPD);
+    b.add_value(_V_NTP_DNAME, "DisplayName", REG_SZ, b"NTP Client\0", _V_NTP_BPATH, _NTPD);
+
+    // Ntpd\Parameters: Enabled → Servers → Interval → Timeout. ntpd reads this
+    // subkey; it never writes configuration (single source of truth: Registry).
+    b.add_value(_V_NTP_TO, "Timeout", REG_DWORD, &3000u32.to_le_bytes(), NULL_CELL, _NTPPARAM);
+    b.add_value(_V_NTP_INT, "Interval", REG_DWORD, &3600u32.to_le_bytes(), _V_NTP_TO, _NTPPARAM);
+    b.add_value(_V_NTP_SRV, "Servers", REG_SZ, b"pool.ntp.org\0", _V_NTP_INT, _NTPPARAM);
+    b.add_value(_V_NTP_EN, "Enabled", REG_DWORD, &1u32.to_le_bytes(), _V_NTP_SRV, _NTPPARAM);
 
     // Interfaces\0: DHCPEnabled + DNS servers (default 0.0.0.0 = unset/automatic;
     // the DHCP client overwrites DnsServer with the leased value).
@@ -310,7 +336,9 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     // Keys
     b.add_key(_NEO, "NeoInit", _SVC, NULL_CELL, _DHCPC, _V_NETTEST, NULL_CELL, 0);
     b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NETCFG, _V_DNAME, NULL_CELL, 0);
-    b.add_key(_NETCFG, "Netcfg", _SVC, NULL_CELL, _NET, _V_NC_DNAME, NULL_CELL, 0);
+    b.add_key(_NETCFG, "Netcfg", _SVC, NULL_CELL, _NTPD, _V_NC_DNAME, NULL_CELL, 0);
+    b.add_key(_NTPD, "Ntpd", _SVC, _NTPPARAM, _NET, _V_NTP_DNAME, NULL_CELL, 0);
+    b.add_key(_NTPPARAM, "Parameters", _NTPD, NULL_CELL, NULL_CELL, _V_NTP_EN, NULL_CELL, 0);
     b.add_key(_IF0, "0", _IFC, NULL_CELL, NULL_CELL, _V_IP, NULL_CELL, 0);
     b.add_key(_IFC, "Interfaces", _NET, _IF0, NULL_CELL, NULL_CELL, NULL_CELL, 0);
     b.add_key(_NET, "Network", _SVC, _IFC, NULL_CELL, NULL_CELL, NULL_CELL, 0);

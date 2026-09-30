@@ -1,5 +1,5 @@
 use core::sync::atomic::{AtomicU8, AtomicBool, Ordering};
-use crate::eventbus::{EVENT_RTC_READ, EVENT_RTC_DATA, SOURCE_KERNEL};
+use crate::eventbus::{EVENT_RTC_READ, EVENT_RTC_DATA, EVENT_RTC_WRITE, SOURCE_KERNEL};
 
 static RTC_SECOND: AtomicU8 = AtomicU8::new(0);
 static RTC_MINUTE: AtomicU8 = AtomicU8::new(0);
@@ -56,4 +56,30 @@ pub fn request_datetime() -> Option<DateTime> {
     } else {
         None
     }
+}
+
+/// Pack a [`DateTime`] into the event payload used by the RTC driver.
+fn pack_datetime(dt: &DateTime) -> u64 {
+    (dt.second as u64)
+        | ((dt.minute as u64) << 8)
+        | ((dt.hour as u64) << 16)
+        | ((dt.day as u64) << 24)
+        | ((dt.month as u64) << 32)
+        | ((dt.year as u64) << 40)
+}
+
+/// Set the hardware clock through the RTC driver.
+///
+/// Returns `true` if the driver acknowledged the write by publishing a fresh
+/// `EVENT_RTC_DATA` read-back. Callers must validate the field ranges first
+/// (see `crate::syscall::ob::validate_datetime`).
+pub fn set_datetime(dt: &DateTime) -> bool {
+    let packed = pack_datetime(dt);
+    RTC_VALID.store(false, Ordering::Relaxed);
+    let _ = crate::eventbus::EVENT_BUS.push_event(
+        EVENT_RTC_WRITE, SOURCE_KERNEL, 0, packed, 0, 0,
+    );
+    crate::eventbus::EVENT_BUS.dispatch_pending();
+    crate::eventbus::EVENT_BUS.dispatch_pending();
+    RTC_VALID.load(Ordering::Acquire)
 }

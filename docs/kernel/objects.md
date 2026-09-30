@@ -108,7 +108,7 @@ offset for SeAccessCheck re-verification.
 │   ├── \Global\Info\              — virtual read-only objects
 │   │   ├── CpuInfo                — ob_query_info(class=7); CpuStats (class=24)
 │   │   ├── Threads                — ob_query_info(class=25) all-thread snapshot
-│   │   ├── DateTime               — RTC date/time (class=9)
+│   │   ├── DateTime               — RTC date/time (query class=9; set class=50 via ob_set_info)
 │   │   ├── Memory                 — physical + kernel heap stats (class=10)
 │   │   ├── Version                — kernel version string (class=8)
 │   │   ├── Cwd                    — current working directory per process
@@ -417,6 +417,7 @@ Supports 42 set classes:
 | 46 | KeyboardSetLeds | Set LED state byte — `\Device\Keyboard` |
 | 47 | KeyboardSetModifier | Set modifier byte (admin) — `\Device\Keyboard` |
 | 49 | SetHostname | Set system hostname (REG_SZ) — any Ob object, admin only |
+| 50 | DateTime | Set the system (RTC) clock from a `SysDateTime` (7 bytes) — `\Global\Info\DateTime` only, admin only |
 
 ### ob_enum (RAX=44)
 

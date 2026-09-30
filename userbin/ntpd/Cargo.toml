@@ -1,0 +1,23 @@
+[package]
+name = "ntpd"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ntpd"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+libneodos = { path = "../../libneodos" }
+libnet = { path = "../../libnet" }
+libntp = { path = "../../libntp" }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

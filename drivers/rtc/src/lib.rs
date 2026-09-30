@@ -38,13 +38,17 @@ const REG_HOURS: u8 = 0x04;
 const REG_DAY: u8 = 0x07;
 const REG_MONTH: u8 = 0x08;
 const REG_YEAR: u8 = 0x09;
+const REG_STATUS_A: u8 = 0x0A;
 const REG_STATUS_B: u8 = 0x0B;
 
 const EVENT_RTC_READ: u32 = 10;
 const EVENT_RTC_DATA: u32 = 11;
+const EVENT_RTC_WRITE: u32 = 32;
 const SOURCE_DRIVER: u32 = 1;
 
 const STATUS_B_BCD: u8 = 0x04;
+const STATUS_B_24H: u8 = 0x02;
+const STATUS_A_UIP: u8 = 0x80;
 
 static INITIALIZED: AtomicU8 = AtomicU8::new(0);
 static ACTIVE: AtomicU8 = AtomicU8::new(0);
@@ -53,11 +57,74 @@ fn bcd_to_bin(bcd: u8) -> u8 {
     ((bcd & 0xF0) >> 4) * 10 + (bcd & 0x0F)
 }
 
+fn bin_to_bcd(bin: u8) -> u8 {
+    ((bin / 10) << 4) | (bin % 10)
+}
+
 fn read_cmos(reg: u8) -> u8 {
     unsafe {
         hst_outb(CMOS_ADDR, reg);
         hst_inb(CMOS_DATA)
     }
+}
+
+fn write_cmos(reg: u8, val: u8) {
+    unsafe {
+        hst_outb(CMOS_ADDR, reg);
+        hst_outb(CMOS_DATA, val);
+    }
+}
+
+/// Wait (bounded) until the RTC is not mid-update so a write is not torn.
+fn wait_not_updating() {
+    for _ in 0..1_000_000 {
+        if (read_cmos(REG_STATUS_A) & STATUS_A_UIP) == 0 {
+            return;
+        }
+    }
+}
+
+/// Write a packed date/time (see `EVENT_RTC_WRITE`) to the CMOS clock.
+///
+/// Honors the RTC's current data mode (BCD vs binary) and 12/24-hour mode, as
+/// reported by status register B, so it round-trips with `read_datetime`.
+fn write_datetime(packed: u64) {
+    let second = packed as u8;
+    let minute = (packed >> 8) as u8;
+    let hour = (packed >> 16) as u8;
+    let day = (packed >> 24) as u8;
+    let month = (packed >> 32) as u8;
+    let year = (packed >> 40) as u8;
+
+    let reg_b = read_cmos(REG_STATUS_B);
+    // Per the MC146818: status B bit 2 clear = BCD, set = binary.
+    let bcd = (reg_b & STATUS_B_BCD) == 0;
+    let h24 = (reg_b & STATUS_B_24H) != 0;
+
+    let enc = |v: u8| -> u8 { if bcd { bin_to_bcd(v) } else { v } };
+
+    wait_not_updating();
+    write_cmos(REG_SECONDS, enc(second));
+    write_cmos(REG_MINUTES, enc(minute));
+
+    if h24 {
+        write_cmos(REG_HOURS, enc(hour));
+    } else {
+        let pm = hour >= 12;
+        let mut h = hour % 12;
+        if h == 0 {
+            h = 12;
+        }
+        let mut hv = enc(h);
+        if pm {
+            hv |= 0x80;
+        }
+        write_cmos(REG_HOURS, hv);
+    }
+
+    write_cmos(REG_DAY, enc(day));
+    write_cmos(REG_MONTH, enc(month));
+    write_cmos(REG_YEAR, enc(year));
 }
 
 fn read_datetime() -> u64 {
@@ -121,6 +188,15 @@ pub unsafe extern "C" fn driver_on_event(event: *const NeoEvent) -> i32 {
         return -1;
     }
     let ev = unsafe { &*event };
+    if ev.event_type == EVENT_RTC_WRITE {
+        write_datetime(ev.data0);
+        // Publish a read-back so the kernel bridge can confirm the write.
+        let packed = read_datetime();
+        let _ = unsafe {
+            hst_push_event(EVENT_RTC_DATA, SOURCE_DRIVER, 0, packed, 0, 0)
+        };
+        return 0;
+    }
     if ev.event_type != EVENT_RTC_READ {
         return 1;
     }

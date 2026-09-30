@@ -4,6 +4,25 @@
 
 ## Unreleased
 
+### Added
+
+- **`ntpd` — persistent NTP/SNTP synchronization daemon (#26).** New Ring 3
+  service (`userbin/ntpd/`, `C:\System\Tools\ntpd.nxe`) started by the Service
+  Manager (`Services\Ntpd`, StartType=Auto). Reads `Services\Ntpd\Parameters`
+  (`Enabled`, `Servers`, `Interval`, `Timeout`), resolves servers via
+  `libnet::dns`, performs SNTP unicast (UDP 123), computes offset/delay and
+  applies the corrected UTC time. Publishes status to `Services\Ntpd\Status`.
+  Retries with exponential backoff and tolerates missing network/DNS/servers.
+  Protocol logic lives in the new host-testable `libntp` crate (18 unit tests).
+- **System clock set API.** `ObSetInfoClass::DateTime` (50) on
+  `\Global\Info\DateTime` (admin-only), plumbed through `rtc_bridge` and a new
+  `EVENT_RTC_WRITE` (32) handled by `rtc.nem`; `libneodos::ob_set_datetime()`.
+  This is a direct step; slew/drift discipline is tracked in #356.
+- Default `Ntpd` service and `Parameters` key in the generated Registry hive
+  (`tools/gen-hiv`).
+- Kernel tests `ob_set_datetime_accepts_valid` and
+  `ob_set_datetime_rejects_invalid`.
+
 ### Fixed
 
 - **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**

@@ -74,6 +74,17 @@ Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespa
         \Services
           \NeoInit
             \DefaultShell
+          \Ntpd
+            \Parameters
+              Enabled
+              Servers
+              Interval
+              Timeout
+            \Status
+              State
+              Server
+              OffsetMs
+              LastError
     \Network
       \Interfaces
         \0
