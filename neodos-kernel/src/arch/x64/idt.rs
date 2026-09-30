@@ -1105,7 +1105,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             }
 
             // Pick next thread
-            let next = scheduler.schedule_with(true);
+            let next = scheduler.schedule_with_handoff(true, true);
             let next_tid = unsafe { (*next).tid };
 
             // Safety: if the next thread has rsp==0, proceeding would
@@ -1142,6 +1142,23 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             // 0 frame cannot be returned through this Ring 3 interrupt frame.
             let next_cs = unsafe { *((next_rsp + 128) as *const u64) };
             if next_cs & 3 != 3 {
+                // #355: accept the scheduler's idle hand-off (a Ring-0 kernel
+                // thread is starved). `schedule_with` already committed idle.
+                let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+                if crate::scheduler::Scheduler::take_kernel_handoff(this_cpu) {
+                    crate::serial_println!("[K355] timer handoff -> idle tid={}", next_tid);
+                    unsafe { prepare_timer_return(next); }
+                    unsafe {
+                        crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
+                            next, crate::scheduler::diag::SITE_SET_IDT);
+                        crate::arch::x64::cpu_local::this_cpu_set_current_pid((*next).pid);
+                        crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+                    }
+                    crate::hal::ack_irq(32);
+                    crate::invariants::timer_irq_exit();
+                    crate::invariants::irq_exit_clear();
+                    return next_rsp;
+                }
                 if (tid == 5 || next_tid == 5) && crate::scheduler::sched_forensic_verbose() {
                     crate::serial_println!("[T5_TM] userpreempt REVERT next={} cs=0x{:x} (non-Ring3) keep cur={}",
                         next_tid, next_cs, tid);
