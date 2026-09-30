@@ -2,7 +2,8 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use crate::log::LogSubsys;
-use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS};
+use crate::scheduler::types::{Kthread, ThreadState, BOOT_TID, PRIORITY_COUNT, IDLE_TIME_SLICE, AGING_INTERVAL_TICKS, MAX_STARVATION_TICKS};
+use crate::arch::x64::cpu_local::MAX_CPUS;
 use crate::scheduler::Scheduler;
 use crate::scheduler::lifecycle::reap_pending_zombies;
 
@@ -85,6 +86,17 @@ pub(crate) static STALE_RSP_DISPATCH: core::sync::atomic::AtomicU64 =
 pub(crate) static STACK_OWNERSHIP_CONFLICT: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
+// ── #355: bounded anti-starvation hand-off for Ring-0 kernel threads ─────
+// On a CPU whose current context is Ring-3, `schedule_with(true)` only commits
+// Ring-3 frames, so a Ready Ring-0 kernel thread (netd/netpump/boot) can be
+// starved forever. When one is starved past the threshold, the CPU hands off to
+// its own idle thread for one turn; the following selection runs from a Ring-0
+// context (`require_ring3 = false`) and can dispatch the kernel thread. The
+// per-CPU flag lets the callers (`resched`, timer user-preempt) accept the idle
+// dispatch instead of reverting a non-Ring-3 `next`.
+pub(crate) static KERNEL_HANDOFF: [core::sync::atomic::AtomicBool; MAX_CPUS] =
+    [const { core::sync::atomic::AtomicBool::new(false) }; MAX_CPUS];
+
 /// True when `kptr` is `KPRCB.current_thread` of a CPU other than `self_cpu`.
 /// The rejection is counted; the serial note is forensic-verbose only.
 #[inline]
@@ -129,6 +141,35 @@ impl Scheduler {
             }
         }
         None
+    }
+
+    /// #355: is a Ring-0 kernel thread on `cpu` Ready and starved past the
+    /// threshold? Such a thread cannot be committed from a Ring-3 selection.
+    pub(crate) fn kernel_thread_starved(&self, cpu: u32) -> bool {
+        self.kthreads.iter().flatten().any(|k| {
+            !k.is_idle
+                && k.state == ThreadState::Ready
+                && k.cpu == cpu
+                && k.ticks_since_scheduled >= MAX_STARVATION_TICKS
+                && self.is_kernel_thread(k)
+        })
+    }
+
+    /// #355: consume a pending idle hand-off for `cpu`.
+    pub(crate) fn take_kernel_handoff(cpu: u32) -> bool {
+        let idx = cpu as usize;
+        if idx < MAX_CPUS {
+            KERNEL_HANDOFF[idx].swap(false, core::sync::atomic::Ordering::Relaxed)
+        } else {
+            false
+        }
+    }
+
+    fn set_kernel_handoff(cpu: u32) {
+        let idx = cpu as usize;
+        if idx < MAX_CPUS {
+            KERNEL_HANDOFF[idx].store(true, core::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
@@ -462,6 +503,42 @@ impl Scheduler {
     }
 
 
+    /// Dispatch this CPU's idle thread (Ring-0) for one turn. Returns the idle
+    /// Kthread pointer, or null when no idle for `this_cpu` is available.
+    /// Used by the #355 anti-starvation hand-off and by the final idle fallback.
+    /// Must be called under the scheduler lock.
+    fn dispatch_idle(&mut self, this_cpu: u32) -> *mut Kthread {
+        let ptr = self.find_idle_ptr(this_cpu);
+        if ptr.is_null() {
+            return core::ptr::null_mut();
+        }
+        unsafe {
+            let idle = &mut *ptr;
+            if idle.state == ThreadState::Terminated {
+                return core::ptr::null_mut();
+            }
+            let idle_tid = idle.tid;
+            Scheduler::remove_from_run_queue(idle);
+            let prev = if self.kprcb_thread_in_self() {
+                crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
+            } else { self.current_tid };
+            let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
+            self.current_tid = idle_tid;
+            if self.kprcb_thread_in_self() {
+                crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
+            }
+            idle.state = ThreadState::Running;
+            idle.time_slice_remaining = IDLE_TIME_SLICE;
+            kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
+                prev, idle_tid);
+            crate::trace_cswitch!(prev as u64, idle_tid as u64);
+            crate::trace_sched_switch!(prev, prev_state, idle_tid, idle.state.to_u8());
+            let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
+            reap_pending_zombies(self, prev_pid);
+        }
+        ptr
+    }
+
     /// Schedule the next thread.  Tries per-CPU run queue first, falls back
     /// to global priority scan.  Returns a `*mut Kthread` for RSP/stack access.
     /// Phase 9: select+commit with an explicit dispatchability contract.
@@ -475,6 +552,14 @@ impl Scheduler {
     }
 
     pub fn schedule_with(&mut self, require_ring3: bool) -> *mut Kthread {
+        self.schedule_with_handoff(require_ring3, false)
+    }
+
+    /// Like [`schedule_with`], but `allow_handoff` additionally permits the
+    /// #355 anti-starvation idle hand-off. Only callers that correctly accept a
+    /// non-Ring-3 `next` (syscall return, timer user-preempt) pass `true`; the
+    /// exception path passes `false`.
+    pub fn schedule_with_handoff(&mut self, require_ring3: bool, allow_handoff: bool) -> *mut Kthread {
         ktrace!(LogSubsys::Sched, "schedule entry");
         SCHEDULE_CALLS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
         // Count every schedule decision, not just global-scan fallbacks.
@@ -484,6 +569,18 @@ impl Scheduler {
         // is still the live `KPRCB.current_thread` of a *different* CPU is
         // deferred (I-RUNREADY); see `candidate_owned_elsewhere`.
         let self_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+
+        // #355: bounded anti-starvation hand-off. A Ready Ring-0 kernel thread
+        // cannot be committed from a Ring-3 selection; when one has been starved
+        // past the threshold, run this CPU's idle for one turn so the next
+        // selection (from Ring-0) can dispatch it. Callers consume the signal.
+        if require_ring3 && allow_handoff && self.kernel_thread_starved(self_cpu) {
+            let ptr = self.dispatch_idle(self_cpu);
+            if !ptr.is_null() {
+                Self::set_kernel_handoff(self_cpu);
+                return ptr;
+            }
+        }
 
         // 1. Try per-CPU local run queue (fast path)
         if let Some(tid) = Self::try_dequeue_local() {
@@ -671,44 +768,17 @@ impl Scheduler {
             return picked_ptr;
         }
 
-        // Fallback to idle thread (TID 1, PRIORITY_IDLE).
-        // NOTE: By design, the idle thread is created with state=Ready but is never
-        // added to any runqueue. It is a special thread that only runs when no other
-        // threads are ready. The remove_from_run_queue() call here is defensive: if
-        // the idle thread were ever accidentally enqueued, we remove it to satisfy
-        // the invariant (Running => runqueue_count == 0).
+        // Fallback to this CPU's idle thread (see `dispatch_idle`).
+        // By design the idle thread is never enqueued; it runs only when no
+        // other thread is ready (or for the #355 hand-off).
         {
             if !self.has_non_idle_threads() {
                 kdebug!(LogSubsys::Sched, "[SCHED] idle_fallback: has_non_idle_threads=false (only idle or Suspended threads)");
             }
             let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
-            let ptr = self.find_idle_ptr(this_cpu);
+            let ptr = self.dispatch_idle(this_cpu);
             if !ptr.is_null() {
-                unsafe {
-                    let idle = &mut *ptr;
-                    if idle.state != ThreadState::Terminated {
-                        let idle_tid = idle.tid;
-                        Scheduler::remove_from_run_queue(idle);
-                        let prev = if self.kprcb_thread_in_self() {
-                            crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
-                        } else { self.current_tid };
-                        let prev_state = self.find_kthread(prev).map(|t| t.state.to_u8()).unwrap_or(255);
-                        self.current_tid = idle_tid;
-                        if self.kprcb_thread_in_self() {
-                            crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
-                        }
-                        idle.state = ThreadState::Running;
-                        idle.time_slice_remaining = IDLE_TIME_SLICE;
-                        kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
-                            prev, idle_tid);
-                        crate::trace_cswitch!(prev as u64, idle_tid as u64);
-                        crate::trace_sched_switch!(prev, prev_state, idle_tid, idle.state.to_u8());
-                        // F-02-A: exclude the pid being switched away from.
-                        let prev_pid = self.find_kthread(prev).map(|t| t.pid).unwrap_or(0);
-                        reap_pending_zombies(self, prev_pid);
-                        return ptr;
-                    }
-                }
+                return ptr;
             }
         }
         panic!("No ready threads and idle is unavailable");

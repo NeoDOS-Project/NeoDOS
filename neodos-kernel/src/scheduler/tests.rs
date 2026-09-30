@@ -497,6 +497,54 @@ pub fn register_tests() {
         test_eq!(sched.select_fallback_ring3(this_cpu), None);
     });
 
+    // ── #355: a starved Ring-0 kernel thread is reached via an idle hand-off ──
+
+    test_case!("n355_kernel_thread_starvation_handoff", {
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100; // let the global scan cover our synthetic tids
+
+        // Use the scheduler's own idle for this CPU (Scheduler::new registers
+        // TID 1 on cpu 0); re-home it to whichever CPU runs the test.
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+
+        // Current Ring-3 thread, Running (the spinner that keeps the CPU Ring-3).
+        let s3 = crate::scheduler::AlignedKStack::new_boxed();
+        let t3 = s3.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let r3 = crate::scheduler::init_ring3_frame(t3, 0x400000, 0x800000);
+        let mut k3 = Kthread::new_ring3_with_stack(10, 10, 0x400000, r3, t3, s3);
+        k3.state = ThreadState::Running;
+        k3.priority = PRIORITY_NORMAL;
+        k3.cpu = this_cpu;
+        let i3 = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[i3] = Some(Box::new(k3));
+        sched.current_tid = 10;
+
+        // A Ready Ring-0 kernel thread (no Eprocess -> kernel thread), starved.
+        let sk = crate::scheduler::AlignedKStack::new_boxed();
+        let tk = sk.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let rk = crate::scheduler::stack::init_ring0_frame(tk, 0x500000);
+        let mut kk = Kthread::new_ring3_with_stack(11, 11, 0x500000, rk, tk, sk);
+        kk.state = ThreadState::Ready;
+        kk.priority = PRIORITY_NORMAL;
+        kk.cpu = this_cpu;
+        kk.ticks_since_scheduled = MAX_STARVATION_TICKS + 1;
+        let ik = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[ik] = Some(Box::new(kk));
+
+        // Ring-3 selection cannot commit the kernel thread -> hand off to idle.
+        let next = sched.schedule_with_handoff(true, true);
+        test_true!(unsafe { (*next).is_idle });
+        test_true!(Scheduler::take_kernel_handoff(this_cpu));
+        test_true!(!Scheduler::take_kernel_handoff(this_cpu)); // consumed once
+
+        // From the Ring-0 (idle) context the kernel thread IS selectable.
+        let next2 = sched.schedule_with(false);
+        test_eq!(unsafe { (*next2).tid }, 11);
+    });
+
     // ── Phase 15-A.1: CPU execution accounting ──
     //
     // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and

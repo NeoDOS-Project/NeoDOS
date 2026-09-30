@@ -181,7 +181,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
             }
         }
 
-        let next = scheduler.schedule_with(true);
+        let next = scheduler.schedule_with_handoff(true, true);
         scheduler.consistency_check("resched");
         {
             let n = unsafe { &*next };
@@ -220,6 +220,21 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
         // current thread is Blocked, do NOT restore it to Running; instead
         // search for a Ring3 Ready thread (NeoShell) or fall back to idle.
         if next_cs & 3 != 3 {
+            // #355: the scheduler handed off to this CPU's idle so a starved
+            // Ring-0 kernel thread can run from Ring-0 on the next selection.
+            // `schedule_with` already committed the idle; accept the dispatch
+            // (do not revive the current thread).
+            let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+            if scheduler::Scheduler::take_kernel_handoff(this_cpu) {
+                crate::serial_println!("[K355] resched handoff -> idle tid={}", next_tid);
+                unsafe {
+                    crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(
+                        next, crate::scheduler::diag::SITE_SET_RESCHED_CHOSEN);
+                    crate::arch::x64::cpu_local::this_cpu_set_current_pid(next_pid);
+                    crate::arch::x64::cpu_local::this_cpu_inc_context_switch_count();
+                }
+                return next_rsp;
+            }
             let current_is_blocked = scheduler.find_kthread(tid)
                 .map(|k| matches!(k.state, ThreadState::Blocked { .. }))
                 .unwrap_or(false);
