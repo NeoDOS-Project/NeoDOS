@@ -975,6 +975,7 @@ libneogui/                     toolkit gráfico genérico (ventanas/widgets)
 ```
 
 Reglas:
+
 - **`libneocfg` no conoce terminal, ni `libneodos`, ni colores**: solo los *seams*.
 - **`libneotui` es genérico y reusable**: no importa `libneocfg`; cualquier `.NXE` de consola puede usarlo.
 - Cambiar de UI = implementar `CfgUi`; **cero cambios en `libneocfg`** y cero en `libneotui`.
