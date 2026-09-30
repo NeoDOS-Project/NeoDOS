@@ -168,8 +168,8 @@ pub extern "C" fn _start() -> ! {
     // ── Run user-mode test binaries (if enabled) ──
     if enable_tests != 0 {
         try_spawn_test("C:\\Programs\\cmdtest.nxe", "CMDTEST");
-        try_spawn_test("C:\\Programs\\stresscmd.nxe", "STRESSCMD");
-        try_spawn_test("C:\\Programs\\shtest.nxe", "SHTEST");
+        try_spawn_test("C:\\System\\Tools\\stresscmd.nxe", "STRESSCMD");
+        try_spawn_test("C:\\System\\Tools\\shtest.nxe", "SHTEST");
     }
 
     // ── Run network test if enabled (requires bridged networking) ──
