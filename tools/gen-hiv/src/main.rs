@@ -224,10 +224,10 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     const _V_IP: u32 = 60;
     const _V_MASK: u32 = 61;
     const _V_GW: u32 = 62;
-    const _NETCFG: u32 = 63;
-    const _V_NC_BPATH: u32 = 64;
-    const _V_NC_STYPE: u32 = 65;
-    const _V_NC_DNAME: u32 = 66;
+    const _NETAPPLIER: u32 = 63;
+    const _V_NA_BPATH: u32 = 64;
+    const _V_NA_STYPE: u32 = 65;
+    const _V_NA_DNAME: u32 = 66;
     const _NTPD: u32 = 67;
     const _NTPPARAM: u32 = 68;
     const _V_NTP_DNAME: u32 = 69;
@@ -262,12 +262,13 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
     b.add_value(_V_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\dhcpd.nxe\0", _V_IPATH, _DHCPC);
     b.add_value(_V_DNAME, "DisplayName", REG_SZ, b"DHCP Client\0", _V_BPATH, _DHCPC);
 
-    // Netcfg values: BinaryPath → StartType → DisplayName. Resident configurator
-    // daemon that applies the interface Registry config to the NIC (the single
-    // applier; dhcpd only publishes leases). See #314/#320.
-    b.add_value(_V_NC_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netcfg.nxe\0", NULL_CELL, _NETCFG);
-    b.add_value(_V_NC_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NC_BPATH, _NETCFG);
-    b.add_value(_V_NC_DNAME, "DisplayName", REG_SZ, b"netcfg\0", _V_NC_STYPE, _NETCFG);
+    // NetApplier values: BinaryPath → StartType → DisplayName. Resident network
+    // configuration applier: it applies the interface Registry config to the NIC
+    // (the single applier; dhcpd only publishes leases, netcfg is a one-shot
+    // CLI). `netcfg` is deliberately NOT a service. See #314/#320/#365.
+    b.add_value(_V_NA_BPATH, "BinaryPath", REG_SZ, b"C:\\System\\Tools\\netapplier.nxe\0", NULL_CELL, _NETAPPLIER);
+    b.add_value(_V_NA_STYPE, "StartType", REG_DWORD, &2u32.to_le_bytes(), _V_NA_BPATH, _NETAPPLIER);
+    b.add_value(_V_NA_DNAME, "DisplayName", REG_SZ, b"Network Configuration Applier\0", _V_NA_STYPE, _NETAPPLIER);
 
     // Ntpd service values: DisplayName → BinaryPath → StartType → RestartPolicy → MaxFailures.
     // Persistent NTP/SNTP synchronization daemon. StartType=Auto, restart on crash.
@@ -335,8 +336,8 @@ fn build_default_system_hive(enable_tests: bool, enable_network_test: bool) -> H
 
     // Keys
     b.add_key(_NEO, "NeoInit", _SVC, NULL_CELL, _DHCPC, _V_NETTEST, NULL_CELL, 0);
-    b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NETCFG, _V_DNAME, NULL_CELL, 0);
-    b.add_key(_NETCFG, "Netcfg", _SVC, NULL_CELL, _NTPD, _V_NC_DNAME, NULL_CELL, 0);
+    b.add_key(_DHCPC, "Dhcpc", _SVC, NULL_CELL, _NETAPPLIER, _V_DNAME, NULL_CELL, 0);
+    b.add_key(_NETAPPLIER, "NetApplier", _SVC, NULL_CELL, _NTPD, _V_NA_DNAME, NULL_CELL, 0);
     b.add_key(_NTPD, "Ntpd", _SVC, _NTPPARAM, _NET, _V_NTP_DNAME, NULL_CELL, 0);
     b.add_key(_NTPPARAM, "Parameters", _NTPD, NULL_CELL, NULL_CELL, _V_NTP_EN, NULL_CELL, 0);
     b.add_key(_IF0, "0", _IFC, NULL_CELL, NULL_CELL, _V_IP, NULL_CELL, 0);
@@ -447,5 +448,58 @@ fn main() {
             };
             println!("    {}\\{} = {} ({})", path, v.name, display, v.type_name);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn build_path(idx: u32, keys: &BTreeMap<u32, KeyMeta>,
+                  cache: &mut BTreeMap<u32, String>) -> String {
+        if let Some(path) = cache.get(&idx) {
+            return path.clone();
+        }
+        let name = &keys[&idx].name;
+        let parent = keys[&idx].parent;
+        let path = if parent == NULL_CELL {
+            name.clone()
+        } else {
+            format!("{}\\{}", build_path(parent, keys, cache), name)
+        };
+        cache.insert(idx, path.clone());
+        path
+    }
+
+    fn find_key_path(result: &HiveResult, path: &str) -> Option<u32> {
+        let mut cache = BTreeMap::new();
+        result.keys.keys().copied()
+            .find(|&idx| build_path(idx, &result.keys, &mut cache) == path)
+    }
+
+    fn value<'a>(result: &'a HiveResult, key_path: &str, name: &str) -> Option<&'a ValueMeta> {
+        let key = find_key_path(result, key_path)?;
+        let vids = result.key_values.get(&key)?;
+        vids.iter().map(|v| &result.values[v]).find(|v| v.name == name)
+    }
+
+    /// #365: the default hive must expose `NetApplier` (resident applier) and
+    /// must no longer expose the old `Netcfg` service (netcfg is CLI-only).
+    #[test]
+    fn default_hive_has_netapplier_service_and_no_netcfg() {
+        let r = build_default_system_hive(false, false);
+        let svc = "SYSTEM\\CurrentControlSet\\Services";
+
+        let applier = format!("{}\\NetApplier", svc);
+        assert!(find_key_path(&r, &applier).is_some(), "NetApplier service key missing");
+        assert!(find_key_path(&r, &format!("{}\\Netcfg", svc)).is_none(),
+                "Netcfg service key must not exist");
+
+        let bp = value(&r, &applier, "BinaryPath").expect("BinaryPath");
+        assert!(bp.display.contains("netapplier.nxe"), "BinaryPath: {}", bp.display);
+        let st = value(&r, &applier, "StartType").expect("StartType");
+        assert_eq!(st.display, "2", "StartType must be Auto");
+        let dn = value(&r, &applier, "DisplayName").expect("DisplayName");
+        assert!(dn.display.contains("Network Configuration Applier"), "DisplayName: {}", dn.display);
     }
 }

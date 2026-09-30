@@ -23,6 +23,20 @@
 - Kernel tests `ob_set_datetime_accepts_valid` and
   `ob_set_datetime_rejects_invalid`.
 
+### Changed
+
+- **`netcfg` is now exclusively the network configuration CLI (#365).** The
+  resident configurator daemon was removed from `netcfg` (no more
+  `run_daemon()`, no `Netcfg` service); bare `netcfg` applies the Registry
+  configuration once and exits, so it can no longer block NeoShell. The
+  continuous application role moved to a new Ring 3 service, **`NetApplier`**
+  (`userbin/netapplier/`, `C:\System\Tools\netapplier.nxe`, StartType=Auto), the
+  single authority that reads `Network\Interfaces\0` and applies IP/mask/gateway
+  to the NIC. `dhcpd` still only publishes the lease. The generated Registry
+  hive (`tools/gen-hiv`) now creates `Services\NetApplier` instead of
+  `Services\Netcfg`. `netd` is not the applier (see #362). `SetNicIp` (27) /
+  `SetNicGateway` (28) and the interface value names are unchanged.
+
 ### Fixed
 
 - **e1000 RX ring is now initialized before `RCTL.EN` is set (#341).**

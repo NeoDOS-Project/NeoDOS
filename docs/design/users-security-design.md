@@ -574,7 +574,7 @@ NeoInit Phase 1:
   ↓
 NeoInit Phase 2:
   - Reads AutoStartServices from Registry
-  - Auto-starts: netcfg, dhcpd
+  - Auto-starts: netapplier, dhcpd
   ↓
 NeoInit Phase 3 — Session 0 (system services):
   - All auto-started services run in Session 0

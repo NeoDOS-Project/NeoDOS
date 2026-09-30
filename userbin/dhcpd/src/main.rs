@@ -611,8 +611,8 @@ pub extern "C" fn _start() -> ! {
     let dhcp_enabled = read_reg_dword(key_fd, "DHCPEnabled").unwrap_or(1);
 
     if dhcp_enabled == 0 {
-        // Static mode: netcfg (the `Netcfg` service) applies the Registry
-        // values. dhcpd only publishes DHCP leases, so there is nothing to do.
+        // Static mode: the `netapplier` service applies the Registry values.
+        // dhcpd only publishes DHCP leases, so there is nothing to do.
         write_str(b"");
                     write_str(tr_id!(IDS_PREFIX).as_bytes());
                     write_str(b"DHCP disabled; static config handled by netcfg\r\n");
@@ -724,8 +724,8 @@ pub extern "C" fn _start() -> ! {
         write_dec_u32(client.lease_time);
         write_str(b"s\r\n");
 
-        // Publish the lease to the Registry. The `Netcfg` service is the one
-        // that applies it to the NIC (single applier; see #320/#314).
+        // Publish the lease to the Registry. The `netapplier` service is the
+        // one that applies it to the NIC (single applier; see #320/#314/#365).
         write_reg_dword(key_fd, "IPAddress", ip);
         write_reg_dword(key_fd, "SubnetMask", client.subnet_mask);
         write_reg_dword(key_fd, "Gateway", client.gateway);

@@ -2227,7 +2227,7 @@ pub fn register_tests() {
 
     // ── Test C: a long-lived daemon pattern (repeated yield/preempt cycles)
     //            keeps a user thread dispatchable across many iterations ──
-    // Mirrors `netcfg`/`dhcpd`: a Ring-3 thread alternating between executing
+    // Mirrors `netapplier`/`dhcpd`: a Ring-3 thread alternating between executing
     // on its Ring-3 frame and being preempted inside a syscall (Ring-0 frame),
     // then restored by the syscall return. The invariant must hold at every
     // step and the thread must be dispatchable after each cycle.

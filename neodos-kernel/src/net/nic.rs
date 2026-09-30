@@ -31,7 +31,7 @@ struct NicSlot {
     vendor_id: u16,
     device_id: u16,
     /// Last link state polled by [`NicRegistry::poll_link_state`]. The
-    /// `NicInfo` query and `netcfg` edge detection read this, so a missing NIC
+    /// `NicInfo` query and `netapplier` edge detection read this, so a missing NIC
     /// (interface `None`) can still report the last known state.
     link_up: bool,
 }
@@ -250,7 +250,7 @@ pub fn nic_unregister(id: u32) {
 /// driver's `is_link_up` without holding `NIC_REGISTRY`. Lock order is
 /// `NIC_REGISTRY → driver (no locks)`; the driver must not take the registry
 /// lock from `is_link_up`. This is what keeps the `NicInfo` link state and
-/// `netcfg`'s link-up edge detection live even though the NEM bridge bootstrap
+/// `netapplier`'s link-up edge detection live even though the NEM bridge bootstrap
 /// object has no pollable vtable at registration time.
 pub fn nic_poll_link_state() {
     let mut reg = NIC_REGISTRY.lock();

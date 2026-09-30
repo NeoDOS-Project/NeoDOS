@@ -104,7 +104,8 @@ fn write_ip(ip: u32) {
 }
 
 fn print_help() {
-    write_str(b"\r\nnetcfg - network configurator\r\n\r\n");
+    write_str(b"\r\nnetcfg - network configuration CLI\r\n\r\n");
+    write_str(b"  netcfg                          apply the Registry config (same as /apply)\r\n");
     write_str(b"  netcfg /apply                  apply the Registry config to the NIC\r\n");
     write_str(b"  netcfg /setip <ip> <mask> [gw]  set static IPv4 (disables DHCP)\r\n");
     write_str(b"  netcfg /setmask <mask>          set the subnet mask\r\n");
@@ -364,56 +365,6 @@ fn query_nic_ip() -> u32 {
     }
 }
 
-/// NIC link state from the kernel NicInfo (`link_up` at offset 14).
-fn query_nic_link() -> u8 {
-    let fd = match syscall::sys_ob_open("\\Global\\Info\\Network", 1) {
-        Ok(fd) => fd,
-        Err(_) => return 0,
-    };
-    let mut buf = [0u8; 256];
-    let r = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::NicInfo, &mut buf);
-    let _ = syscall::sys_close(fd);
-    match r {
-        Ok(n) if n as usize >= 84 => buf[14],
-        _ => 0,
-    }
-}
-
-/// Daemon mode (no arguments, i.e. the `Netcfg` service): keep the runtime NIC
-/// in sync with the interface Registry values. The Registry is the single
-/// source of truth; `dhcpd` publishes leases there and `netcfg` applies them.
-/// Re-applies on config changes and on link up. Never returns.
-fn run_daemon() -> ! {
-    let mut last_ip = u32::MAX;
-    let mut last_mask = u32::MAX;
-    let mut last_gw = u32::MAX;
-    let mut last_link = 0u8;
-    loop {
-        if let Ok(fd) = syscall::sys_cm_open_key(REG_NET_PATH) {
-            let ip = read_reg_dword(fd, "IPAddress").unwrap_or(0);
-            let mut mask = read_reg_dword(fd, "SubnetMask").unwrap_or(0);
-            if mask == 0 { mask = DEFAULT_MASK; }
-            let gw = read_reg_dword(fd, "Gateway").unwrap_or(0);
-            let _ = syscall::sys_close(fd);
-
-            let link = query_nic_link();
-            let link_up_edge = link != 0 && last_link == 0;
-            let changed = ip != last_ip || mask != last_mask || gw != last_gw;
-
-            if ip != 0 && (changed || link_up_edge) {
-                apply_ip(ip, mask, gw);
-                last_ip = ip;
-                last_mask = mask;
-                last_gw = gw;
-            }
-            last_link = link;
-        }
-        // ~ tens of ms between polls; yield so the rest of the system runs.
-        for _ in 0..5_000_000 { core::hint::spin_loop(); }
-        syscall::sys_yield();
-    }
-}
-
 /// `netcfg /status` — Registry config vs runtime NIC.
 fn cmd_status() -> ! {
     let fd = iface_fd();
@@ -520,9 +471,10 @@ pub extern "C" fn _start() -> ! {
     i18n::i18n_init();
     let _ = i18n::i18n_load(APP_NAME);
 
-    // netcfg has two roles: with no arguments it runs as the resident
-    // configurator daemon (the `Netcfg` service); with arguments it is a
-    // one-shot configuration CLI that writes/applies and exits.
+    // netcfg is exclusively the one-shot network configuration CLI: it reads,
+    // validates, writes the Registry and/or applies explicitly, then exits.
+    // The resident configuration applier is the separate `NetApplier` service;
+    // netcfg must never stay resident (see #365).
     let raw = libneodos::args::read_args();
     let args = libneodos::args::trim_ascii(&raw);
     let arg_str = core::str::from_utf8(args).unwrap_or("");
@@ -534,7 +486,8 @@ pub extern "C" fn _start() -> ! {
     let rest = arg_str[cmd_raw.len()..].trim();
 
     if cmd.is_empty() {
-        run_daemon();
+        // Bare invocation = one-shot apply, then exit (never resident).
+        cmd_apply();
     } else if cmd.eq_ignore_ascii_case("apply") {
         cmd_apply();
     } else if cmd.eq_ignore_ascii_case("setdns") {

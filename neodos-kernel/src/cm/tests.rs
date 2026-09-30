@@ -494,18 +494,18 @@ pub fn register_cm_tests() {
         let neoinit = hive.create_key(svc, "NeoInit").unwrap();
 
         hive.set_value(neoinit, "AutoStartServices", hive::REG_SZ,
-            b"C:\\System\\Tools\\dhcpd.nxe;C:\\Programs\\netcfg.nxe");
+            b"C:\\System\\Tools\\dhcpd.nxe;C:\\System\\Tools\\netapplier.nxe");
 
         let val = hive.query_value(neoinit, "AutoStartServices").unwrap();
         test_eq!(val.value_type, hive::REG_SZ);
 
         let services_str = val.as_str().unwrap();
-        test_true!(services_str == "C:\\System\\Tools\\dhcpd.nxe;C:\\Programs\\netcfg.nxe");
+        test_true!(services_str == "C:\\System\\Tools\\dhcpd.nxe;C:\\System\\Tools\\netapplier.nxe");
 
         let services: Vec<&str> = services_str.split(';').collect();
         test_eq!(services.len(), 2);
         test_eq!(services[0], "C:\\System\\Tools\\dhcpd.nxe");
-        test_eq!(services[1], "C:\\Programs\\netcfg.nxe");
+        test_eq!(services[1], "C:\\System\\Tools\\netapplier.nxe");
     });
 
     test_case!("cm_neoinit_autostart_empty", {
@@ -583,8 +583,8 @@ pub fn register_cm_tests() {
         let cases: [(&str, &str); 3] = [
             ("C:\\System\\Tools\\dhcpd.nxe",
              "\\Global\\FileSystem\\C:\\System\\Tools\\dhcpd.nxe"),
-            ("C:\\Programs\\netcfg.nxe",
-             "\\Global\\FileSystem\\C:\\Programs\\netcfg.nxe"),
+            ("C:\\System\\Tools\\netapplier.nxe",
+             "\\Global\\FileSystem\\C:\\System\\Tools\\netapplier.nxe"),
             ("C:\\Programs\\neoshell.nxe",
              "\\Global\\FileSystem\\C:\\Programs\\neoshell.nxe"),
         ];
@@ -654,9 +654,9 @@ pub fn register_cm_tests() {
         use crate::cm::hive;
 
         // The interface key is the single source of truth for static IPv4
-        // configuration. netcfg, dhcpd, ipconfig and libnet all read the
-        // canonical names below; no producer writes the legacy "IP"/"Mask"
-        // aliases (see #314).
+        // configuration. netcfg, dhcpd, ipconfig, netapplier and libnet all
+        // read the canonical names below; no producer writes the legacy
+        // "IP"/"Mask" aliases (see #314).
         let mut hive = Hive::new("TestNetIface");
         let root = hive.root_cell();
         let if0 = ensure_key_path(
