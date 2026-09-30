@@ -446,6 +446,22 @@ pub fn register_tests() {
         test_eq!(state, ThreadState::Ready);
     });
 
+    // ── #375: single activation path (ObWait hand-off / Service Manager) ──
+
+    test_case!("sched_activate_suspended_process_idempotent", {
+        let mut sched = Scheduler::new();
+        add_test_thread(&mut sched, 3, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Suspended);
+
+        // First activation publishes the initial thread Ready.
+        test_true!(sched.activate_suspended_process(2));
+        test_eq!(sched.find_kthread(3).unwrap().state, ThreadState::Ready);
+        // Second activation must not re-publish (no double Ready / double enqueue).
+        test_true!(!sched.activate_suspended_process(2));
+        test_eq!(sched.find_kthread(3).unwrap().state, ThreadState::Ready);
+        // Unknown pid is a no-op.
+        test_true!(!sched.activate_suspended_process(99));
+    });
+
     // ── Phase 15-A.1: CPU execution accounting ──
     //
     // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and

@@ -398,6 +398,23 @@ impl Scheduler {
         Ok(pid)
     }
 
+    /// Publish a freshly-created process's initial thread as `Ready`
+    /// (`Suspended -> Ready`). Idempotent: returns `true` only when a
+    /// `Suspended` thread for `pid` was activated. This is the single
+    /// activation path shared by the `ObWait` hand-off and the Service
+    /// Manager; it does not enqueue twice (a thread already `Ready`/`Running`
+    /// is left untouched).
+    pub fn activate_suspended_process(&mut self, pid: u32) -> bool {
+        let mut activated = false;
+        for k in self.kthreads.iter_mut().flatten() {
+            if k.pid == pid && k.state == ThreadState::Suspended {
+                Self::make_thread_ready(k);
+                activated = true;
+            }
+        }
+        activated
+    }
+
     /// Ensure the eprocesses and kthreads Vecs have at least one free slot,
     /// growing them now so no realloc happens inside the critical section.
     /// P0.2: use try_reserve to avoid panic on OOM (was push() panic).

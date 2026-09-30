@@ -91,13 +91,7 @@ pub fn handler_ob_wait(regs: crate::syscall::Registers) -> u64 {
                     // inherited handles are installed. ObWait is the
                     // hand-off point: activate the child before blocking
                     // the parent, otherwise the child is never schedulable.
-                    let mut activated = false;
-                    for child in lock.kthreads.iter_mut().flatten() {
-                        if child.pid == pid && child.state == ThreadState::Suspended {
-                            crate::scheduler::Scheduler::make_thread_ready(child);
-                            activated = true;
-                        }
-                    }
+                    let activated = lock.activate_suspended_process(pid);
                     if activated {
                         crate::serial_println!(
                             "[OB_WAIT] activated child pid={} before blocking parent pid={}",

@@ -167,42 +167,6 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
             let stdout_fd = ((attrs >> 8) & 0xFF) as u8;
             let stderr_fd = ((attrs >> 16) & 0xFF) as u8;
 
-            const MAX_BIN: usize = 65536;
-            let bin_data = {
-                let mut buf = alloc::vec![0u8; MAX_BIN];
-                let vfs_path = path_str.strip_prefix("\\Global\\FileSystem\\").unwrap_or(&path_str);
-                let bin_size = crate::globals::with_vfs(|vfs| {
-                    match vfs.resolve_path(vfs_path) {
-                        Ok((drive_idx, node)) => {
-                            if (node.mode & crate::fs::vfs::MODE_FILE) == 0 { return 0; }
-                            match vfs.read(drive_idx, node.inode, 0, &mut buf) {
-                                Ok(n) => { if n > MAX_BIN { 0 } else { n } }
-                                Err(e) => { crate::serial_println!("[OB] Process: vfs.read failed inode={}: {:?}", node.inode, e); 0 }
-                            }
-                        }
-                        Err(e) => { crate::serial_println!("[OB] Process: resolve_path failed for '{}': {:?}", vfs_path, e); 0 }
-                    }
-                });
-                if bin_size < 4 {
-                    return err_to_u64(SyscallError::NoEnt);
-                }
-                buf.truncate(bin_size);
-                buf
-            };
-
-            let slot = match crate::arch::x64::paging::alloc_user_slot() {
-                Some(s) => s,
-                None => return err_to_u64(SyscallError::NoMem),
-            };
-
-            let result = match crate::elf::load_elf(&bin_data, None, slot.code_base) {
-                Ok(r) => r,
-                Err(_) => {
-                    crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                    return err_to_u64(SyscallError::Inval);
-                }
-            };
-
             let (cwd_drive, cwd_path, parent_pid) = crate::hal::without_interrupts(|| {
                 let s = scheduler::current_scheduler().lock();
                 let pid = s.current_pid();
@@ -214,19 +178,18 @@ pub fn handler_ob_create(regs: crate::syscall::Registers) -> u64 {
                 (cwd.0, cwd.1, pid)
             });
 
-            let child_pid = match crate::usermode::spawn_usermode(
-                result.entry, slot.stack_top, slot.slot_idx,
-                cwd_drive, &cwd_path, parent_pid, &path_str,
+            // Shared kernel process-creation path (also used by the Service
+            // Manager): VFS read + user slot + ELF load + spawn_usermode.
+            let created = match crate::usermode::create_process_from_ob_path(
+                &path_str, cwd_drive, &cwd_path, parent_pid, &path_str,
             ) {
-                Ok(pid) => {
-                    crate::serial_println!("[OB] Process spawned: child_pid={} entry=0x{:x}", pid, result.entry);
-                    pid
-                }
-                Err(_) => {
-                    crate::arch::x64::paging::free_user_slot(slot.slot_idx);
-                    return err_to_u64(SyscallError::NoMem);
-                }
+                Ok(c) => c,
+                Err(crate::usermode::CreateProcessError::NotFound) => return err_to_u64(SyscallError::NoEnt),
+                Err(crate::usermode::CreateProcessError::InvalidElf) => return err_to_u64(SyscallError::Inval),
+                Err(crate::usermode::CreateProcessError::NoMemory) => return err_to_u64(SyscallError::NoMem),
             };
+            let child_pid = created.pid;
+            crate::serial_println!("[OB] Process spawned: child_pid={} entry=0x{:x}", child_pid, created.entry);
 
             // ── Fix 1.2: per-process args storage ──
             // Atomically copy args from the shared 0x41F000 buffer into the child's
