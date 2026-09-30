@@ -113,7 +113,7 @@ PHASE 3.875 Keyboard Manager (NeoKBD) init: `kbd::kbd_init()` — loads layouts,
 PHASE 3.882 Service Manager init: load service definitions from Registry,
            create `\Service\` namespace, resolve dependencies
 PHASE 3.883 Power Manager object init: creates `\System\PowerManager` Ob object
-PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\NeoInit.nxe`
+PHASE 4     NeoInit loader: `cmd_run` starts PID 1 from `C:\Programs\neoinit.nxe`
 ```
 
 **Rule 3.1.1**: Phases MUST execute in order. No phase may run before its predecessor completes.
@@ -461,10 +461,10 @@ and `device_id`.
 
 ### 10.1 Startup Contract
 
-**Rule 10.1.1**: NeoInit is loaded from `C:\Programs\NeoInit.nxe` at Phase 4.
+**Rule 10.1.1**: NeoInit is loaded from `C:\Programs\neoinit.nxe` at Phase 4.
 **Rule 10.1.2**: NeoInit is the only process that starts at boot. All other user processes
 are descendants of NeoInit.
-**Rule 10.1.3**: NeoInit receives argv `["/Programs/NeoInit.nxe"]` and inherits fds 0/1/2
+**Rule 10.1.3**: NeoInit receives argv `["/Programs/neoinit.nxe"]` and inherits fds 0/1/2
 pointing to the kernel console.
 
 ### 10.2 Privileges
@@ -858,7 +858,7 @@ The test suite MUST be run before every release.
 
 | # | Invariant | Test type | What to assert |
 | --- | ----------- | ----------- | ---------------- |
-| T1 | INV-1: No circular dep | Static analysis | `scripts/check_deps.py` exits 0 |
+| T1 | INV-1: No circular dep | Static analysis | `neodev check-deps` exits 0 |
 | T2 | INV-2: No alloc in IRQ | Code review + test | IRQ handlers never call heap alloc. Test IRQ handler list. |
 | T3 | INV-4: Scheduler not invoked from Ring 0 shell | Functional | Shell process priority stays unchanged across timer ticks |
 | T4 | INV-5: Frame has one owner | Unit | Allocate frame, read bitmap, free, confirm bitmap cleared |
@@ -895,8 +895,8 @@ The test suite MUST be run before every release.
 
 Before any commit, verify:
 
-- [ ] `scripts/check_deps.py` passes (T1)
-- [ ] `python3 scripts/auto_test.py` passes (all 320+ kernel tests + user-mode tests)
+- [ ] `neodev check-deps` passes (T1)
+- [ ] `neodev test` passes (all 320+ kernel tests + user-mode tests)
 - [ ] `cargo build` in `neodos-kernel/` compiles without warnings
 - [ ] No new `use` statements that create forbidden dependencies (INV-1)
 - [ ] No new heap allocation in IRQ handlers (INV-2)

@@ -1,5 +1,12 @@
 # CONFIG.SYS — System Configuration
 
+> **⚠️ OBSOLETO.** `CONFIG.SYS` ya **no existe** en el código (ni en kernel,
+> bootloader ni herramientas). La configuración de entorno se gestiona con el builtin
+> `SET` del shell (`userbin/neoshell/src/shell.rs`) y el parpadeo del cursor con el
+> syscall `sys_cursor_blink` (RAX=30). El script `scripts/create_ne2_image.py` citado
+> abajo también desapareció: el pipeline de imagen vive ahora en NeoDev
+> (`neodev/src/image.rs`). Este documento se conserva solo como referencia histórica.
+
 NeoDOS lee `CONFIG.SYS` de la raíz del disco al arrancar (antes de `AUTOEXEC.BAT`).
 
 ## Formato

@@ -5,28 +5,32 @@
 Run NeoDOS QEMU virtual machines without `sudo`, following the principle of
 least privilege.
 
+> **Nota:** los antiguos `scripts/qemu-debug.sh` y `scripts/setup-network.sh` fueron
+> sustituidos por NeoDev (`neodev run --net <user|bridge|tap>`) y por
+> `data/setup-network.sh` respectivamente.
+
 ## Quick Start
 
 ```bash
 # 1. Create the bridge (one-time, needs sudo)
-sudo bash scripts/setup-network.sh
+sudo bash data/setup-network.sh
 
 # 2. Run QEMU with bridge networking (no sudo)
-bash scripts/qemu-debug.sh --bridge
+neodev run --net bridge
 ```
 
 ## Networking Modes
 
-NeoDOS supports three networking modes, selected via flags to
-`scripts/qemu-debug.sh`:
+NeoDOS supports three networking modes, selected with
+`neodev run --net <modo>`:
 
 | Mode | Flag | Sudo needed? | Guest → Internet | Host → Guest | Setup |
 | ------ | ------ | ------------- | ----------------- | ------------- | ------- |
-| SLiRP | _(default)_ | No | Yes (NAT) | No | None |
-| Bridge | `--bridge` | Setup only | Yes (NAT) | Yes | `setup-network.sh` |
-| TAP | `--tap` | Each session | Configurable | Configurable | Manual |
+| SLiRP | `--net user` | No | Yes (NAT) | No | None |
+| Bridge | `--net bridge` | Setup only | Yes (NAT) | Yes | `data/setup-network.sh` |
+| TAP | `--net tap` | Each session | Configurable | Configurable | Manual |
 
-### SLiRP (Default)
+### SLiRP (User-mode)
 
 QEMU's built-in user-mode networking (SLiRP). No privileges required, works
 out of the box. The guest receives an IP via QEMU's virtual DHCP server and
@@ -41,7 +45,7 @@ can access the internet through NAT.
 ### Bridge (Recommended)
 
 Uses a persistent Linux bridge (`neodos0`) with `qemu-bridge-helper` to create
-TAP interfaces. The bridge is created by `setup-network.sh` and persists
+TAP interfaces. The bridge is created by `data/setup-network.sh` and persists
 across reboots.
 
 **Advantages:**
@@ -53,7 +57,7 @@ across reboots.
 
 **How it works:**
 
-1. `setup-network.sh` creates bridge `neodos0` via NetworkManager.
+1. `data/setup-network.sh` creates bridge `neodos0` via NetworkManager.
 2. QEMU's `-netdev bridge` option calls `qemu-bridge-helper` (SUID root) to
    create a TAP interface and attach it to the bridge.
 3. The bridge provides DHCP (via QEMU) in the `10.0.2.0/24` range.
@@ -82,7 +86,7 @@ sudo ip link set tap0 up
 - nftables or iptables (for NAT)
 - `/dev/kvm` and `/dev/net/tun` accessible
 
-### What `setup-network.sh` Does
+### What `data/setup-network.sh` Does
 
 1. **Creates bridge `neodos0`** via NetworkManager with static IP `10.0.2.1/24`.
 2. **Adds `allow neodos0`** to `/etc/qemu/bridge.conf`.
@@ -97,7 +101,7 @@ sudo ip link set tap0 up
 Override defaults:
 
 ```bash
-sudo NEODOS_BRIDGE=mybridge NEODOS_SUBNET=192.168.100.0/24 bash scripts/setup-network.sh
+sudo NEODOS_BRIDGE=mybridge NEODOS_SUBNET=192.168.100.0/24 bash data/setup-network.sh
 ```
 
 | Variable | Default | Description |
@@ -111,13 +115,13 @@ sudo NEODOS_BRIDGE=mybridge NEODOS_SUBNET=192.168.100.0/24 bash scripts/setup-ne
 ### Status Check
 
 ```bash
-sudo bash scripts/setup-network.sh --check
+sudo bash data/setup-network.sh --check
 ```
 
 ### Teardown
 
 ```bash
-sudo bash scripts/setup-network.sh --remove
+sudo bash data/setup-network.sh --remove
 ```
 
 This removes:
@@ -269,7 +273,7 @@ dpkg -L qemu-system-x86 | grep bridge-helper
 ip link show neodos0
 
 # Run setup
-sudo bash scripts/setup-network.sh
+sudo bash data/setup-network.sh
 ```
 
 ### Permission denied: `qemu-bridge-helper`
@@ -340,7 +344,7 @@ sudo firewall-cmd --reload
 | Approach | Runtime Sudo? | Setup Sudo? | Persistence | Security |
 | ---------- | :------------: | :-----------: | :-----------: | :--------: |
 | **Bridge + qemu-bridge-helper** | No | Yes (once) | ✓ Bridge persistent | ★★★ Granular |
-| SLiRP (default) | No | No | N/A | ★★★★★ No setup |
+| SLiRP (user) | No | No | N/A | ★★★★★ No setup |
 | TAP (pre-created) | No | Yes (per boot) | ✗ | ★★★★ |
 | `setcap cap_net_admin` | No | Yes (once) | ✓ | ★★ Broad |
 | sudo for every QEMU run | Yes | No | N/A | ★ Depends on sudoers |

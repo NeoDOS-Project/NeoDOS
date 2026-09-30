@@ -183,8 +183,8 @@ Heap managed by user-mode brk/sbrk:
 1. Create `userbin/<name>/` directory with a `Cargo.toml` depending on `libneodos`
 2. Implement `#![no_std]` entry point with `pub extern "C" fn _start() -> !`
 3. Use `libneodos` wrappers for I/O and syscalls
-4. Add build rule in `scripts/build.sh` for the new `.NXE`
+4. Add the binary to NeoDev's image list (`neodev/src/image.rs`) for the new `.nxe`
 5. Verify:
    - `cargo build` in `neodos-kernel/`
-   - `python3 scripts/auto_test.py`
-6. The binary is available at `\Programs\<name>.NXE` in the built image
+   - `neodev test`
+6. The binary is available at `\Programs\<name>.nxe` in the built image

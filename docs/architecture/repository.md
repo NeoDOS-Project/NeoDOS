@@ -3,6 +3,11 @@
 > **Version:** v1.0
 > **Date:** 2026-07-16
 > **Status:** Proposal — no automatic changes yet.
+>
+> **Nota (post-migración):** la migración descrita ya se ejecutó. Las rutas `scripts/*`
+> que aparecen abajo son históricas: `scripts/mcp_server/` vive ahora en
+> `neodos-dev-server` (`neodos-mcp`), `scripts/check_deps.py` es `neodev check-deps`,
+> `scripts/gen_nlt*.py` es `tools/nltc` y `scripts/gen_system_hiv.py` es `tools/gen-hiv`.
 
 This document contains the complete audit of the NeoDOS monorepo and a proposal for
 future multi-repository organization under the [NeoDOS-Project](https://github.com/NeoDOS-Project) organization.

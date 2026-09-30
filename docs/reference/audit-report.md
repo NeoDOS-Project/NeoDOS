@@ -4,6 +4,12 @@
 > **Proyecto:** NeoDOS v0.50-dev
 > **Alcance:** Árbol completo del repositorio `neodos/`
 > **Objetivo:** Identificar componentes separables, justificar cada decisión y proponer una hoja de ruta de migración.
+>
+> **Nota (estado actual, 2026-09-30):** auditoría histórica; la migración ya se ejecutó.
+> Los `scripts/*` citados cambiaron: `check_deps.py` → `neodev check-deps`,
+> `crash_analyzer.py` → `tools/crashdump`, `gen_nlt*.py` → `tools/nltc`,
+> `gen_system_hiv.py` → `tools/gen-hiv`, `setup-network.sh` → `data/setup-network.sh`,
+> `mcp_server/` → `neodos-dev-server` (`neodos-mcp`).
 
 ---
 

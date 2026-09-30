@@ -451,7 +451,7 @@ The console passes `RENDERER.put_pixel()` as the callback. A future GUI subsyste
 | **Framebuffer/Graphics** (`graphics.rs`) | No direct change; `font_render_glyph` uses callback | None |
 | **VT** (`input/vt.rs`) | No change to shadow buffer format | None |
 | **Syscall dispatch** (`syscall/`) | No new syscalls; existing `ob_query_info`/`ob_set_info` handle new classes | Low |
-| **Registry** (`cm/`, `scripts/gen_system_hiv.py`) | Add `Services\FontManager` and `Software\Fonts` keys | Low |
+| **Registry** (`cm/`, `tools/gen-hiv`) | Add `Services\FontManager` and `Software\Fonts` keys | Low |
 | **NeoDev** ([`NeoDev`](https://github.com/NeoDOS-Project/NeoDev)) | Add font validation, font copy to image, `fonts.list` generation | Moderate |
 | **Boot sequence** (`main.rs`) | Add `font::init()` call in appropriate phase | Low |
 | **Locking/Concurrency** | Font Manager uses `Mutex<FontRegistry>` for provider/object registry | Low |
@@ -652,7 +652,7 @@ No new syscall. New classes dispatched via existing handler.
 | `neodev/src/config.rs` | Add `fonts: Vec<String>` field |
 | `neodev/src/build.rs` | Add font validation stage |
 | `neodev/src/image.rs` | Add font collection to `collect_files()` |
-| `scripts/gen_system_hiv.py` | Add `Services\FontManager` and `Software\Fonts` keys |
+| `tools/gen-hiv` | Add `Services\FontManager` and `Software\Fonts` keys |
 | `docs/objects.md` | Add Font type to ObType table, namespace, info classes |
 | `docs/syscalls.md` | No new syscalls, but document new info classes |
 | `roadmap/improvements.md` | Add future Font Manager improvements |
@@ -730,7 +730,7 @@ No new syscall. New classes dispatched via existing handler.
 
 ### Step 8: Registry configuration
 
-- Add `Services\FontManager\DefaultFont = "Terminus"` to `gen_system_hiv.py`.
+- Add `Services\FontManager\DefaultFont = "Terminus"` to `tools/gen-hiv`.
 - Add `Services\FontManager\FontPath = "\System\Fonts"`.
 - Add `Software\Fonts` key structure for user-mode font queries.
 

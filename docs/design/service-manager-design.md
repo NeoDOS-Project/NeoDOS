@@ -698,7 +698,7 @@ pub fn handler_ob_service(fd: u64, control: u32, buf: u64, buf_len: u64) -> u64
 
 - Implement all unit tests from §7
 - Implement integration tests
-- Run `cargo build` + `python3 scripts/auto_test.py` + `scripts/check_deps.py`
+- Run `cargo build` + `neodev test` + `neodev check-deps`
 
 ---
 

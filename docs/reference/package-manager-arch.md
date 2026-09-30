@@ -89,7 +89,7 @@ The full qualified name is `namespace/name`. The user-visible short name is `nam
 | Content type | Installed to | Example |
 | ------------- | ------------- | --------- |
 | Executable | `C:\Programs\<name>\` | `neotop.nxe` |
-| Library | `C:\System\NXL\` | `libfoo.nxl` |
+| Library | `C:\System\Libraries\` | `libfoo.nxl` |
 | Driver | `C:\System\Drivers\` | `driver.nem` |
 | Config | `C:\Data\<name>\` | `config.toml` |
 | Data | `C:\Data\<name>\` | `assets/*` |

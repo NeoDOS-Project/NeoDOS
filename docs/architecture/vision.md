@@ -85,7 +85,7 @@ NeoDOS es un sistema operativo moderno de 64 bits para la plataforma x86-64, dis
 
 1. **Explícito sobre mágico.** Cada asignación de memoria, cada cambio de contexto, cada transición de estado debe ser rastreable en el código. Sin "scheduler magic", sin "memory manager magic".
 
-2. **Capas, no montones.** Separación clara de responsabilidades. HAL es HAL. VFS es VFS. Scheduler es scheduler. Las dependencias prohibidas se documentan y se verifican con herramientas automáticas (`check_deps.py`).
+2. **Capas, no montones.** Separación clara de responsabilidades. HAL es HAL. VFS es VFS. Scheduler es scheduler. Las dependencias prohibidas se documentan y se verifican con herramientas automáticas (`neodev check-deps`).
 
 3. **Fallo rápido, fallo claro.** Cuando algo va mal, el sistema debe detenerse con un mensaje que identifique el componente, el error y la posible causa. Sin pánicos genéricos.
 
@@ -495,7 +495,7 @@ pub struct DeviceNode {
 
 ### 7.4 Registry (Base de Datos de Configuración)
 
-**Qué es:** Una base de datos jerárquica tipo Windows Registry con claves, valores, y tipos. Persistente en disco en `C:\System\Config\`.
+**Qué es:** Una base de datos jerárquica tipo Windows Registry con claves, valores, y tipos. Persistente en disco en `C:\System\Registry\`.
 
 ```text
 HKEY_LOCAL_MACHINE\

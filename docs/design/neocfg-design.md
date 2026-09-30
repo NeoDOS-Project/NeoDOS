@@ -39,7 +39,7 @@ pub extern "C" fn _start() -> ! {
 }
 ```
 
-Dependen de `libneodos`, target `x86_64-unknown-none`, linker script `user.ld`, y se incluyen en la imagen vía `scripts/create_ne2_image.py`.
+Dependen de `libneodos`, target `x86_64-unknown-none`, linker script `user.ld`, y se incluyen en la imagen vía `neodev/src/image.rs`.
 
 ### 1.3 APIs específicas para cada módulo de NeoCfg
 
@@ -483,8 +483,8 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 | Archivo | Cambio |
 | --- | --- |
-| `scripts/build.sh` | Añadir `neocfg` al loop de build de user binaries (línea 82) |
-| `scripts/create_ne2_image.py` | Añadir `'neocfg'` a la lista de binarios (línea 226) |
+| `neodev build` | Añadir `neocfg` al loop de build de user binaries |
+| `neodev/src/image.rs` | Añadir `'neocfg'` a la lista de binarios |
 | `roadmap/improvements.md` | Mover ADM-5 (`neocfg`) a `completed` cuando se implemente |
 | `docs/userland/shell.md` | Añadir neocfg a la tabla de binarios (sección userbin/.NXE) |
 | `docs/design/neocfg-design.md` (nuevo) | Este documento o un resumen |
@@ -535,8 +535,8 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 | Subsistema | Impacto | Detalles |
 | --- | --- | --- |
 | **userbin/neocfg/** | **NUEVO** — Crear proyecto .NXE | 10+ archivos nuevos, ~700 líneas |
-| **scripts/build.sh** | Bajo | Añadir `neocfg` al loop de build |
-| **scripts/create_ne2_image.py** | Bajo | Añadir `'neocfg'` a la lista de binarios |
+| **neodev build** | Bajo | Añadir `neocfg` al loop de build |
+| **neodev/src/image.rs** | Bajo | Añadir `'neocfg'` a la lista de binarios |
 | **libneodos** | Ninguno | NeoCfg consume APIs existentes. No requiere cambios. |
 | **Kernel** | Ninguno | NeoCfg no extiende el kernel. No requiere cambios. |
 | **Object Manager** | Ninguno | NeoCfg usa Ob API via libneodos. Sin nuevos ObTypes. |
@@ -693,7 +693,7 @@ pub fn i18n_reload_all();
 | # | Test | Expected |
 | --- | --- | --- |
 | 21 | `cargo build --release` en userbin/neocfg/ → `neocfg.nxe` generado | Exit code 0, archivo existe |
-| 22 | El binario se incluye en la imagen de disco vía `create_ne2_image.py` | `'neocfg'` en la lista |
+| 22 | El binario se incluye en la imagen de disco vía `neodev/src/image.rs` | `'neocfg'` en la lista |
 | 23 | `NEOCFG` desde NeoShell → lanza NeoCfg | Proceso se ejecuta sin error |
 | 24 | NeoCfg usa solo libneodos (verificar imports) | No `core::` raw syscalls, solo `libneodos::*` |
 
@@ -817,10 +817,10 @@ userbin/neocfg/
 
 ### Step 10: Build integration (0.25 day)
 
-**Archivos:** `scripts/build.sh`, `scripts/create_ne2_image.py`
+**Archivos:** `neodev build`, `neodev/src/image.rs`
 
-1. Añadir `neocfg` al loop de build en `scripts/build.sh` (línea ~82)
-2. Añadir `'neocfg'` a la lista de binarios en `scripts/create_ne2_image.py` (línea ~226)
+1. Añadir `neocfg` al loop de build en `neodev build`
+2. Añadir `'neocfg'` a la lista de binarios en `neodev/src/image.rs`
 3. Verificar: `cargo build` en `neodos-kernel/` → genera `userbin/neocfg/target/x86_64-unknown-none/release/neocfg`
 
 ### Step 11: Tests (0.5 day)
@@ -829,7 +829,7 @@ userbin/neocfg/
 
 1. Tests unitarios de UI: navegación, renderizado (simular input buffer)
 2. Tests de módulos: verificar que las llamadas a libneodos son correctas
-3. Compilar y verificar: `cargo build` + `python3 scripts/auto_test.py`
+3. Compilar y verificar: `cargo build` + `neodev test`
 4. Prueba manual en QEMU: ejecutar `NEOCFG`, navegar menús, verificar System/Keyboard/About
 
 ### Step 12: Documentation (0.5 day)
