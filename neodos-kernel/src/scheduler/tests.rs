@@ -462,6 +462,41 @@ pub fn register_tests() {
         test_true!(!sched.activate_suspended_process(99));
     });
 
+    // ── #354: the syscall-return fallback selects only Ready Ring-3 threads ──
+
+    test_case!("n354_fallback_selects_only_ring3_ready", {
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        let mut sched = Scheduler::new();
+
+        // A Ready Ring-3-framed thread.
+        let s1 = crate::scheduler::AlignedKStack::new_boxed();
+        let t1 = s1.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let r1 = crate::scheduler::init_ring3_frame(t1, 0x400000, 0x800000);
+        let mut k1 = Kthread::new_ring3_with_stack(10, 10, 0x400000, r1, t1, s1);
+        k1.state = ThreadState::Ready;
+        k1.priority = PRIORITY_NORMAL;
+        k1.cpu = this_cpu;
+        let i1 = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[i1] = Some(Box::new(k1));
+
+        // A Ready Ring-0-framed thread: must be skipped by this fallback.
+        let s2 = crate::scheduler::AlignedKStack::new_boxed();
+        let t2 = s2.0.as_ptr() as u64 + crate::scheduler::KERNEL_STACK_SIZE as u64;
+        let r2 = crate::scheduler::stack::init_ring0_frame(t2, 0x400000);
+        let mut k2 = Kthread::new_ring3_with_stack(11, 11, 0x400000, r2, t2, s2);
+        k2.state = ThreadState::Ready;
+        k2.priority = PRIORITY_NORMAL;
+        k2.cpu = this_cpu;
+        let i2 = sched.alloc_kthread_slot().unwrap();
+        sched.kthreads[i2] = Some(Box::new(k2));
+
+        test_eq!(sched.select_fallback_ring3(this_cpu), Some(i1));
+
+        // With no Ready Ring-3 thread it selects nothing (idle fallback follows).
+        sched.kthreads[i1].as_mut().unwrap().state = ThreadState::Running;
+        test_eq!(sched.select_fallback_ring3(this_cpu), None);
+    });
+
     // ── Phase 15-A.1: CPU execution accounting ──
     //
     // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and
