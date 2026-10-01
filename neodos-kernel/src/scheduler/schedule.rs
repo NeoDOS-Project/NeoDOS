@@ -155,6 +155,21 @@ impl Scheduler {
         })
     }
 
+    /// Minimum priority among `Ready`, non-idle threads. `PRIORITY_COUNT` when
+    /// none. The per-CPU run queue is a FIFO, not priority-ordered, so the fast
+    /// path must consult this before committing its popped candidate: committing
+    /// a lower-priority candidate while a higher-priority thread is `Ready`
+    /// bypasses the priority scan and starves that thread (#382).
+    pub(crate) fn highest_ready_priority(&self) -> u8 {
+        let mut p = PRIORITY_COUNT;
+        for k in self.kthreads.iter().flatten() {
+            if !k.is_idle && k.state == ThreadState::Ready && k.priority < p {
+                p = k.priority;
+            }
+        }
+        p
+    }
+
     /// #355: consume a pending idle hand-off for `cpu`.
     pub(crate) fn take_kernel_handoff(cpu: u32) -> bool {
         let idx = cpu as usize;
@@ -591,6 +606,10 @@ impl Scheduler {
                     if k.state == ThreadState::Ready
                         && (!require_ring3 || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
+                        // #382: never commit a lower-priority candidate while a
+                        // higher-priority thread is Ready — fall through to the
+                        // priority scan instead of starving it.
+                        && k.priority <= self.highest_ready_priority()
                     {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
@@ -641,6 +660,10 @@ impl Scheduler {
                     if k.state == ThreadState::Ready
                         && (!require_ring3 || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
+                        // #382: never commit a lower-priority candidate while a
+                        // higher-priority thread is Ready — fall through to the
+                        // priority scan instead of starving it.
+                        && k.priority <= self.highest_ready_priority()
                     {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
