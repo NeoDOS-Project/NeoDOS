@@ -920,7 +920,15 @@ impl Scheduler {
                     // starved (it always interrupts in Ring 0).
                     let expose_to_ring3 =
                         (interrupted_cs & 3) == 3 || current_is_kernel_thread;
-                    if expose_to_ring3 {
+                    if crate::scheduler::preempt_disabled() {
+                        // #376: the current thread is inside a kernel spinlock
+                        // critical section. Do not deschedule it — a held lock
+                        // whose owner becomes an undispatchable Ready Ring-0
+                        // frame deadlocks every waiter. Grant a fresh slice and
+                        // continue; the switch happens once the lock is dropped.
+                        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+                        k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                    } else if expose_to_ring3 {
                         k.state = ThreadState::Ready;
                         if k.tid != BOOT_TID && !k.is_idle {
                             Self::enqueue_to_cpu_run_queue(k);

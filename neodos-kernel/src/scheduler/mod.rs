@@ -27,6 +27,44 @@ pub use snapshot::{
     MAX_SNAPSHOT_PROCESSES, MAX_SNAPSHOT_THREADS,
 };
 
+// ── Preempt-disable for kernel spinlock critical sections ──────────────────
+//
+// The per-CPU run queues are FIFO and the FS spinlocks (VFS/PAGE_CACHE/
+// BLOCK_DEVICES) are not IRQ-safe by themselves. A thread holding one of them
+// must not be descheduled by the timer: if it is published `Ready` with a
+// Ring-0 frame, the Ring-3 selection paths reject it while every waiter spins
+// on the held lock with interrupts disabled — a permanent deadlock (#376).
+//
+// `with_vfs`/`with_page_cache`/`with_block_devices` bracket their critical
+// sections with `preempt_disable()`/`preempt_enable()`; `on_timer_tick` does
+// not deschedule a thread while the counter is non-zero.
+use core::sync::atomic::{AtomicU32, Ordering};
+pub static PREEMPT_COUNT: [AtomicU32; crate::arch::x64::cpu_local::MAX_CPUS] =
+    [const { AtomicU32::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
+
+#[inline]
+pub fn preempt_disable() {
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    if cpu < PREEMPT_COUNT.len() {
+        PREEMPT_COUNT[cpu].fetch_add(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+pub fn preempt_enable() {
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    if cpu < PREEMPT_COUNT.len() {
+        PREEMPT_COUNT[cpu].fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+#[inline]
+pub fn preempt_disabled() -> bool {
+    let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
+    cpu < PREEMPT_COUNT.len() && PREEMPT_COUNT[cpu].load(Ordering::Acquire) > 0
+}
+
+
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};

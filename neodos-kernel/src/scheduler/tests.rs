@@ -581,6 +581,30 @@ pub fn register_tests() {
         }
     });
 
+    // ── #376: a thread inside a preempt-disabled critical section (FS spinlock)
+    //    must not be descheduled by the timer, even as a kernel thread. ──
+    test_case!("n376_preempt_disable_keeps_lock_holder_running", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        // pid 1 with no Eprocess => kernel thread (like boot/netpump).
+        let mut k = Kthread::new_ring3(3, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 1;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(Box::new(k));
+
+        crate::scheduler::preempt_disable();
+        test_true!(crate::scheduler::preempt_disabled());
+        sched.on_timer_tick(0x700000, 0x08); // Ring-0 interrupt, slice exhausted
+        let kk = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(kk.state, ThreadState::Running); // not published Ready
+        test_eq!(kk.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        crate::scheduler::preempt_enable();
+        test_true!(!crate::scheduler::preempt_disabled());
+    });
+
     // ── Phase 15-A.1: CPU execution accounting ──
     //
     // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and
