@@ -42,8 +42,26 @@ use core::sync::atomic::{AtomicU32, Ordering};
 pub static PREEMPT_COUNT: [AtomicU32; crate::arch::x64::cpu_local::MAX_CPUS] =
     [const { AtomicU32::new(0) }; crate::arch::x64::cpu_local::MAX_CPUS];
 
+/// Preempt tracking is only safe once the per-CPU `%gs` area exists. Enabled
+/// after SMP/per-CPU bring-up; before that `preempt_disable` is a no-op.
+static PREEMPT_TRACKING: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+#[inline]
+pub fn preempt_tracking_enable() {
+    PREEMPT_TRACKING.store(true, Ordering::Release);
+}
+
+#[inline]
+fn preempt_tracking_on() -> bool {
+    PREEMPT_TRACKING.load(Ordering::Acquire)
+}
+
 #[inline]
 pub fn preempt_disable() {
+    if !preempt_tracking_on() {
+        return;
+    }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     if cpu < PREEMPT_COUNT.len() {
         PREEMPT_COUNT[cpu].fetch_add(1, Ordering::AcqRel);
@@ -52,6 +70,9 @@ pub fn preempt_disable() {
 
 #[inline]
 pub fn preempt_enable() {
+    if !preempt_tracking_on() {
+        return;
+    }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     if cpu < PREEMPT_COUNT.len() {
         PREEMPT_COUNT[cpu].fetch_sub(1, Ordering::AcqRel);
@@ -60,6 +81,9 @@ pub fn preempt_enable() {
 
 #[inline]
 pub fn preempt_disabled() -> bool {
+    if !preempt_tracking_on() {
+        return false;
+    }
     let cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() } as usize;
     cpu < PREEMPT_COUNT.len() && PREEMPT_COUNT[cpu].load(Ordering::Acquire) > 0
 }

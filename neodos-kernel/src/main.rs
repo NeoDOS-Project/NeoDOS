@@ -313,6 +313,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // GS is programmed per-CPU now: pin CPU0's KPRCB to the boot thread so the
     // per-CPU identity (Rule 6.1.5) is valid before APs start scheduling.
     crate::scheduler::sync_bsp_identity();
+    // Per-CPU `%gs` is valid now: enable preempt-disable tracking so spinlock
+    // critical sections (FS/network/allocator) cannot be descheduled mid-hold.
+    crate::scheduler::preempt_tracking_enable();
     println!("[+] {} CPU(s) online", cpu_count);
     crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 

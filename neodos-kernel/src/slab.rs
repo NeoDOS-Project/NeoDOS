@@ -382,6 +382,22 @@ impl SlabAllocator {
 
 unsafe impl GlobalAlloc for SlabAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // #376: the global pool (`inner`) and the fallback heap are non-IRQ-safe
+        // spin locks. A thread descheduled — or merely interrupted — while
+        // holding one deadlocks another CPU that holds the scheduler lock and
+        // needs the allocator: the timer handler on the holder's CPU then spins
+        // on the scheduler lock. Disable interrupts across the allocation so the
+        // timer cannot fire while the lock is held.
+        crate::hal::without_interrupts(|| self.alloc_inner(layout))
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        crate::hal::without_interrupts(|| self.dealloc_inner(ptr, layout));
+    }
+}
+
+impl SlabAllocator {
+    unsafe fn alloc_inner(&self, layout: Layout) -> *mut u8 {
         if layout.size() <= MAX_SLAB_SIZE && layout.align() <= SLAB_ALIGN {
             if let Some(idx) = Self::cache_index(layout.size()) {
                 // Fast path: per-CPU hot cache (no lock, GS-segment only)
@@ -405,7 +421,7 @@ unsafe impl GlobalAlloc for SlabAllocator {
         self.fallback.alloc(layout)
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc_inner(&self, ptr: *mut u8, layout: Layout) {
         if ptr.is_null() {
             return;
         }
