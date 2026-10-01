@@ -301,6 +301,12 @@ pub fn net_handle_incoming_packet(_nic_id: u32, nic: &mut dyn crate::net::nic::N
 
 pub fn network_poll_all() {
     if !net_is_initialized() { return; }
+    // #376: NIC_REGISTRY is a non-IRQ-safe spin lock. If the polling thread is
+    // descheduled while holding it, every other CPU that polls RX (e.g. dhcpd's
+    // sys_yield -> network_poll_all) spins on it with interrupts disabled and
+    // the CPU wedges. Do not allow preemption across the poll (and the
+    // SOCKET_MANAGER lock taken by udp_dispatch inside it).
+    crate::scheduler::preempt_disable();
     // Refresh link state from the drivers first so the NicInfo query and
     // netapplier's link-up edge detection observe real hardware state. The driver
     // poll runs without NIC_REGISTRY held (lock order: registry → driver).
@@ -312,6 +318,8 @@ pub fn network_poll_all() {
             net_handle_incoming_packet(nic_id, &mut **nic, &buf[..len]);
         }
     });
+    drop(registry);
+    crate::scheduler::preempt_enable();
 }
 
 pub fn register_net_tests() {
