@@ -16,7 +16,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use crate::log::LogSubsys;
 
 /// Master switch for the diagnostic build.
-pub const ENABLED: bool = true;
+pub const ENABLED: bool = false;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {

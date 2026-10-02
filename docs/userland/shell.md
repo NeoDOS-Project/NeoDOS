@@ -99,7 +99,7 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | REBOOT | `ob_open(\\System\\PowerManager)` + `ob_set_info(PowerReboot)` — via Object Manager |
 | VER | `ob_open(\Global\Info\Version)` → `ob_query_info` → print version string |
 | VOL `<drive>` | `ob_query_info(VolumeLabel)` on volume object |
-| DATE | `ob_open(\Global\Info\DateTime)` → `ob_query_info` → formatted print |
+| DATE | `ob_open(\Global\Info\DateTime)` → `ob_query_info` → formatted print. `datetime /S <date> <time>` (or `date`/`time /S`) sets the clock via `ob_set_info(DateTime)`; admin-only, formats `DD/MM/YY HH:MM[:SS]` |
 | TIME | Same as DATE |
 | NEOMEM | `ob_open(\Global\Info\Memory)` → `ob_query_info` → print memory stats |
 | DRIVES | `ob_open(\Global\Info\Drives)` → `ob_query_info` → list mounted drives |
