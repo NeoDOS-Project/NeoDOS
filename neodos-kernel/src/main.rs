@@ -70,6 +70,7 @@ mod cm;
 mod services;
 mod virtio;
 mod kbd;
+mod stress_spawn; // #345 Phase 2 diagnostic spawn-storm harness
 mod abi_freeze;
 
 use drivers::fat32::Fat32Driver;
@@ -313,6 +314,9 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
     // GS is programmed per-CPU now: pin CPU0's KPRCB to the boot thread so the
     // per-CPU identity (Rule 6.1.5) is valid before APs start scheduling.
     crate::scheduler::sync_bsp_identity();
+    // Per-CPU `%gs` is valid now: enable preempt-disable tracking so spinlock
+    // critical sections (FS/network/allocator) cannot be descheduled mid-hold.
+    crate::scheduler::preempt_tracking_enable();
     println!("[+] {} CPU(s) online", cpu_count);
     crate::serial_println!("[SMP] SCHED_TEST_MODE after bring-up = {}", crate::scheduler::SCHED_TEST_MODE.load(core::sync::atomic::Ordering::Relaxed));
 
@@ -883,6 +887,10 @@ pub unsafe extern "sysv64" fn rust_start(boot_info: &BootInfo) -> ! {
 
     crate::object::namespace::ob_namespace_debug();
 
+    // #345 Phase 2: controlled spawn-storm harness (diagnostic; no-op when
+    // `stress_spawn::ENABLED` is false). Runs concurrently with NeoInit.
+    crate::stress_spawn::start();
+
     // Enter NeoInit (blocks until NeoInit exits, which it shouldn't)
     usermode::wait_for_process(pid);
 
@@ -912,6 +920,17 @@ fn panic(info: &PanicInfo) -> ! {
     crate::scheduler::diag::rsp_dump_raw();
     crate::scheduler::diag::dr_dump_raw();
     crate::scheduler::diag::kcpu_dump_raw();
+    crate::scheduler::diag::st_dump_raw(); // #345 Phase 2A stress trace
+    crate::raw_serial_println!(
+        "[VFS_STATE] owner_cpu={} owner_tid={} owner_pid={} owner_rip=0x{:x} owner_acq={} waiter_cpu={} waiter=0x{:x} waits={}",
+        crate::scheduler::diag::vfs_owner_cpu(),
+        crate::scheduler::diag::vfs_owner_tid(),
+        crate::scheduler::diag::vfs_owner_pid(),
+        crate::scheduler::diag::vfs_owner_rip(),
+        crate::scheduler::diag::vfs_owner_acq(),
+        crate::scheduler::diag::vfs_waiter_cpu(),
+        crate::scheduler::diag::vfs_waiter_word(),
+        crate::scheduler::diag::vfs_wait_count());
     crate::raw_serial_println!("[CORRELATION] last_DOUBLE_RUNNING_seq={}", crate::scheduler::diag::dr_last_seq());
     println!("\r\n!!! KERNEL PANIC (CLASS: {}) !!!", class.to_str());
 

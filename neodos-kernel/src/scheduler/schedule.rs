@@ -155,6 +155,21 @@ impl Scheduler {
         })
     }
 
+    /// Minimum priority among `Ready`, non-idle threads. `PRIORITY_COUNT` when
+    /// none. The per-CPU run queue is a FIFO, not priority-ordered, so the fast
+    /// path must consult this before committing its popped candidate: committing
+    /// a lower-priority candidate while a higher-priority thread is `Ready`
+    /// bypasses the priority scan and starves that thread (#382).
+    pub(crate) fn highest_ready_priority(&self) -> u8 {
+        let mut p = PRIORITY_COUNT;
+        for k in self.kthreads.iter().flatten() {
+            if !k.is_idle && k.state == ThreadState::Ready && k.priority < p {
+                p = k.priority;
+            }
+        }
+        p
+    }
+
     /// #355: consume a pending idle hand-off for `cpu`.
     pub(crate) fn take_kernel_handoff(cpu: u32) -> bool {
         let idx = cpu as usize;
@@ -289,6 +304,8 @@ impl Scheduler {
                         k.tid, k.pid, k.name(), state_name(k.state.to_u8()), k.cpu, k.waiting_for);
                 }
             }
+            // #345: dump the transition ring once, at the first occurrence.
+            crate::scheduler::diag::run_dump_first();
         }
 
         // Phase 293-B: detect the same Kthread being KPRCB.current_thread of
@@ -426,6 +443,7 @@ impl Scheduler {
         self.current_tid = tid;
         if let Some(current) = self.find_kthread_mut(tid) {
             Self::remove_from_run_queue(current);
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_RESUME_REJECT, current);
             current.state = ThreadState::Running;
         }
         Some((ptr, pid, ks_top))
@@ -490,6 +508,7 @@ impl Scheduler {
             );
         }
         idle.cpu = cpu;
+        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_AP_IDLE, &idle);
         idle.state = ThreadState::Running;
         {
             // Phase 14-A: per-CPU idle name ("idle/<cpu>"), bounded.
@@ -527,6 +546,7 @@ impl Scheduler {
             if self.kprcb_thread_in_self() {
                 crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
             }
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_DISPATCH_IDLE, idle);
             idle.state = ThreadState::Running;
             idle.time_slice_remaining = IDLE_TIME_SLICE;
             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
@@ -591,6 +611,10 @@ impl Scheduler {
                     if k.state == ThreadState::Ready
                         && (!require_ring3 || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
+                        // #382: never commit a lower-priority candidate while a
+                        // higher-priority thread is Ready — fall through to the
+                        // priority scan instead of starving it.
+                        && k.priority <= self.highest_ready_priority()
                     {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
@@ -601,6 +625,7 @@ impl Scheduler {
                         if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_FAST, k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
@@ -641,6 +666,10 @@ impl Scheduler {
                     if k.state == ThreadState::Ready
                         && (!require_ring3 || frame_is_ring3(k))
                         && !candidate_owned_elsewhere(ptr, self_cpu)
+                        // #382: never commit a lower-priority candidate while a
+                        // higher-priority thread is Ready — fall through to the
+                        // priority scan instead of starving it.
+                        && k.priority <= self.highest_ready_priority()
                     {
                         let prev = if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
@@ -650,6 +679,7 @@ impl Scheduler {
                         if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_STEAL, k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
@@ -730,6 +760,7 @@ impl Scheduler {
                                     check_tid, old_cpu, scan_cpu, scan_prev);
                             }
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_SCAN, &**k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
                         Self::account_dispatch(k);
@@ -897,7 +928,15 @@ impl Scheduler {
                     // starved (it always interrupts in Ring 0).
                     let expose_to_ring3 =
                         (interrupted_cs & 3) == 3 || current_is_kernel_thread;
-                    if expose_to_ring3 {
+                    if crate::scheduler::preempt_disabled() {
+                        // #376: the current thread is inside a kernel spinlock
+                        // critical section. Do not deschedule it — a held lock
+                        // whose owner becomes an undispatchable Ready Ring-0
+                        // frame deadlocks every waiter. Grant a fresh slice and
+                        // continue; the switch happens once the lock is dropped.
+                        let idx = (k.priority as usize).min(PRIORITY_COUNT as usize - 1);
+                        k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
+                    } else if expose_to_ring3 {
                         k.state = ThreadState::Ready;
                         if k.tid != BOOT_TID && !k.is_idle {
                             Self::enqueue_to_cpu_run_queue(k);

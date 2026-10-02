@@ -1169,6 +1169,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
                 }
                 if let Some(current) = scheduler.find_kthread_mut(tid) {
                     crate::scheduler::Scheduler::remove_from_run_queue(current);
+                    crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_REVERT, current);
                     current.state = ThreadState::Running;
                 }
                 scheduler.current_tid = tid;
@@ -1180,6 +1181,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
 
             if next_tid == tid {
                 unsafe {
+                    crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_SAME, &*next);
                     (*next).state = ThreadState::Running;
                     (*next).time_slice_remaining =
                         crate::scheduler::TIME_SLICES[((*next).priority as usize).min(
@@ -1406,6 +1408,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             if next_tid == tid {
                 // Same thread: no context switch needed
                 if let Some(k) = scheduler.current_kthread_mut() {
+                    crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_SAME, k);
                     k.state = ThreadState::Running;
                     let idx = (k.priority as usize).min(crate::scheduler::PRIORITY_COUNT as usize - 1);
                     k.time_slice_remaining = crate::scheduler::TIME_SLICES[idx];
@@ -1471,6 +1474,7 @@ pub extern "C" fn timer_handler_inner(current_rsp: u64) -> u64 {
             if let Some(k) = scheduler.current_kthread_mut() {
                 if k.state == ThreadState::Ready && k.tid == tid {
                     crate::scheduler::Scheduler::remove_from_run_queue(k);
+                    crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_IDT_RESTORE, k);
                     k.state = ThreadState::Running;
                     if k.tid == 5 && crate::scheduler::sched_forensic_verbose() {
                         crate::serial_println!("[T5_TM] KERNEL-MODE restore Running tid=5 sched.current={} kprcb={:?}",

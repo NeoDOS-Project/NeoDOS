@@ -313,6 +313,13 @@ impl SlabAllocator {
         (pages, capacity, allocated, used_bytes)
     }
 
+    /// Fallback-heap statistics: (free_bytes, used_bytes, size_bytes).
+    /// Diagnostic only; must not be called while the fallback lock is held.
+    pub fn fallback_stats(&self) -> (usize, usize, usize) {
+        let g = self.fallback.lock();
+        (g.free(), g.used(), g.size())
+    }
+
     pub fn init(&self, heap_start: *mut u8, heap_size: usize) {
         kinfo!(LogSubsys::Slab, "Initializing per-CPU slab allocator ({} caches, batch={})",
                        NUM_CACHES, BATCH_SIZE);
@@ -382,6 +389,22 @@ impl SlabAllocator {
 
 unsafe impl GlobalAlloc for SlabAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // #376: the global pool (`inner`) and the fallback heap are non-IRQ-safe
+        // spin locks. A thread descheduled — or merely interrupted — while
+        // holding one deadlocks another CPU that holds the scheduler lock and
+        // needs the allocator: the timer handler on the holder's CPU then spins
+        // on the scheduler lock. Disable interrupts across the allocation so the
+        // timer cannot fire while the lock is held.
+        crate::hal::without_interrupts(|| self.alloc_inner(layout))
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        crate::hal::without_interrupts(|| self.dealloc_inner(ptr, layout));
+    }
+}
+
+impl SlabAllocator {
+    unsafe fn alloc_inner(&self, layout: Layout) -> *mut u8 {
         if layout.size() <= MAX_SLAB_SIZE && layout.align() <= SLAB_ALIGN {
             if let Some(idx) = Self::cache_index(layout.size()) {
                 // Fast path: per-CPU hot cache (no lock, GS-segment only)
@@ -405,35 +428,41 @@ unsafe impl GlobalAlloc for SlabAllocator {
         self.fallback.alloc(layout)
     }
 
-    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+    unsafe fn dealloc_inner(&self, ptr: *mut u8, layout: Layout) {
         if ptr.is_null() {
             return;
         }
 
-        // Check if the pointer is from a slab page by inspecting the
-        // page-aligned header magic.
-        let page_base = (ptr as usize) & !(SLAB_PAGE_SIZE - 1);
-        if page_base != 0 {
-            let page = page_base as *const SlabPage;
-            if (*page).magic == SLAB_MAGIC {
-                let sz = (*page).slot_size as usize;
-                if let Some(idx) = Self::cache_index(sz) {
-                    // Fast path: return to per-CPU hot cache (no lock)
-                    if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
-                        return;
-                    }
+        // Route by address range, never by payload magic. The fallback heap is a
+        // fixed reserved region (see `allocator::HEAP_START`/`HEAP_SIZE`) and
+        // slab pages come from the buddy allocator outside it. The previous
+        // heuristic read a `SLAB_MAGIC` header at the page base of *any* pointer;
+        // a large fallback buffer (ELF/NXE image, kernel stack) can contain the
+        // bytes `SLAB` at a 4 KiB-aligned offset, so its free was misrouted into
+        // a slab cache — injecting a foreign pointer into the slab free list and
+        // corrupting the kernel heap (#383).
+        let addr = ptr as usize;
+        let fb_start = crate::allocator::HEAP_START as usize;
+        let fb_end = fb_start + crate::allocator::HEAP_SIZE as usize;
+        if addr >= fb_start && addr < fb_end {
+            self.fallback.dealloc(ptr, layout);
+            return;
+        }
 
-                    // Slow path: drain to global pool (acquires lock)
-                    self.drain_to_global(idx);
-                    // Now the local cache has room — retry
-                    if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
-                        return;
-                    }
-                    // Should never fail after drain, but fall through just in case
-                }
+        if let Some(idx) = Self::cache_index(layout.size()) {
+            // Fast path: return to per-CPU hot cache (no lock)
+            if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
+                return;
+            }
+            // Slow path: drain to global pool (acquires lock)
+            self.drain_to_global(idx);
+            // Now the local cache has room — retry
+            if cpu_local::this_cpu_slab_free_local(idx, ptr).is_ok() {
+                return;
             }
         }
 
-        self.fallback.dealloc(ptr, _layout);
+        // Should not normally be reached; fall back to the heap.
+        self.fallback.dealloc(ptr, layout);
     }
 }

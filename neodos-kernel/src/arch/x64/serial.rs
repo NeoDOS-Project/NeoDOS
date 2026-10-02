@@ -70,7 +70,13 @@ pub fn init() {
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
     use core::fmt::Write;
-    let _ = SERIAL1.lock().write_fmt(args);
+    // #376: `SERIAL1` is a non-IRQ-safe spin lock. Without disabling interrupts
+    // a printing thread can be preempted mid-`write_fmt` while holding it; the
+    // lock then stays held and *all* serial output on every CPU blocks (which
+    // also hides the stall watchdog). Disable interrupts across the write.
+    crate::hal::without_interrupts(|| {
+        let _ = SERIAL1.lock().write_fmt(args);
+    });
 }
 
 /// Lock-free raw serial writer for fault/panic paths.

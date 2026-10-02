@@ -163,7 +163,7 @@ pub fn create_process_from_ob_path(
 
     let bin_data = {
         let mut buf = alloc::vec![0u8; MAX_PROCESS_BIN];
-        let bin_size = crate::globals::with_vfs(|vfs| match vfs.resolve_path(vfs_path) {
+        let bin_size = crate::globals::with_vfs_site(crate::scheduler::diag::VFS_SITE_CREATE_PROC, |vfs| match vfs.resolve_path(vfs_path) {
             Ok((drive_idx, node)) => {
                 if (node.mode & crate::fs::vfs::MODE_FILE) == 0 {
                     return 0;
@@ -414,6 +414,7 @@ pub fn wait_for_process(pid: u32) {
         }
         crate::serial_println!("[USERMODE] activated TID={}", target_tid);
         if let Some(k) = s.current_kthread_mut() {
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_USERMODE, k);
             k.state = scheduler::ThreadState::Running;
         }
     });

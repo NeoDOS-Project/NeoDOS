@@ -545,6 +545,66 @@ pub fn register_tests() {
         test_eq!(unsafe { (*next2).tid }, 11);
     });
 
+    // ── #382: FIFO fast path must not starve a higher-priority Ready thread ──
+    test_case!("n382_fifo_fast_path_respects_priority", {
+        let this_cpu = unsafe { crate::arch::x64::cpu_local::this_cpu_id() };
+        // Isolate the real per-CPU run queue for this CPU.
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+        let mut sched = Scheduler::new();
+        sched.next_tid = 100;
+        for k in sched.kthreads.iter_mut().flatten() {
+            if k.is_idle { k.cpu = this_cpu; }
+        }
+
+        // Current thread: Running Ring-3, not enqueued.
+        add_test_thread(&mut sched, 10, 10, 0x400000, PRIORITY_NORMAL, ThreadState::Running);
+        sched.current_tid = 10;
+        // Enqueue low priority FIRST so it is the FIFO head.
+        add_test_thread(&mut sched, 12, 12, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // Then a higher-priority Ready thread behind it.
+        add_test_thread(&mut sched, 11, 11, 0x400000, PRIORITY_HIGH, ThreadState::Ready);
+
+        // The fast path pops tid 12 (low prio) but must fall through to the
+        // priority scan and select tid 11.
+        let next = sched.schedule_with(false);
+        test_eq!(unsafe { (*next).tid }, 11);
+
+        // Cleanup: leave the run queue empty for subsequent tests.
+        unsafe {
+            if crate::arch::x64::cpu_local::kprcb_page(this_cpu as usize).is_some() {
+                crate::arch::x64::cpu_local::cpu_run_queue_mut(this_cpu as usize).clear();
+            }
+        }
+    });
+
+    // ── #376: a thread inside a preempt-disabled critical section (FS spinlock)
+    //    must not be descheduled by the timer, even as a kernel thread. ──
+    test_case!("n376_preempt_disable_keeps_lock_holder_running", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 4;
+        sched.current_tid = 3;
+        let slot = sched.alloc_kthread_slot().unwrap();
+        // pid 1 with no Eprocess => kernel thread (like boot/netpump).
+        let mut k = Kthread::new_ring3(3, 1, 0x400000, 0x800000);
+        k.state = ThreadState::Running;
+        k.time_slice_remaining = 1;
+        k.priority = PRIORITY_NORMAL;
+        sched.kthreads[slot] = Some(Box::new(k));
+
+        crate::scheduler::preempt_disable();
+        test_true!(crate::scheduler::preempt_disabled());
+        sched.on_timer_tick(0x700000, 0x08); // Ring-0 interrupt, slice exhausted
+        let kk = sched.kthreads[slot].as_ref().unwrap();
+        test_eq!(kk.state, ThreadState::Running); // not published Ready
+        test_eq!(kk.time_slice_remaining, TIME_SLICES[PRIORITY_NORMAL as usize]);
+        crate::scheduler::preempt_enable();
+        test_true!(!crate::scheduler::preempt_disabled());
+    });
+
     // ── Phase 15-A.1: CPU execution accounting ──
     //
     // The host/unit-test target has no KPRCB pages, so `cpu_time_now` and
