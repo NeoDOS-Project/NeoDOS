@@ -403,15 +403,23 @@ impl Shell {
                                 else if iscd {
                                     let mut rb = [0u8; 256];
                                     unsafe { core::ptr::copy_nonoverlapping(ARGS_ADDR as *const u8, rb.as_mut_ptr(), 256); }
-                                    let r = trim_ascii(&rb);
-                                    if args_slice.is_empty() { if !r.is_empty() { write_str(b"\r\n"); write_str(r); write_str(b"\r\n"); } }
-                                    else if !r.is_empty() {
+                                    // CD publishes a NUL-padded buffer: trim NULs, not
+                                    // just whitespace, so an empty result is truly empty.
+                                    let r = libneodos::args::trim_ascii(&rb);
+                                    if args_slice.is_empty() {
+                                        // `cd` with no argument: CD published the cwd to display.
+                                        if !r.is_empty() { write_str(b"\r\n"); write_str(r); write_str(b"\r\n"); }
+                                    } else if !r.is_empty() {
+                                        // Commit the canonical path published by CD. The kernel
+                                        // re-validates existence and directory type atomically, so
+                                        // a failure leaves the current directory untouched.
                                         let p = core::str::from_utf8(r).unwrap_or("");
-                                        let pb = p.as_bytes();
+                                        let mut committed = false;
                                         if let Ok(cf) = syscall::sys_ob_open("\\Global\\Info\\Cwd", syscall::ob_access::WRITE) {
-                                            let _ = syscall::sys_ob_set_info(cf, syscall::ob_set_info_class::SET_CWD, pb);
+                                            committed = syscall::sys_ob_set_info(cf, syscall::ob_set_info_class::SET_CWD, p.as_bytes()).is_ok();
                                             let _ = syscall::sys_close(cf);
-                                        } else { write_err(tr_id!(IDS_CD_NOT_FOUND).as_bytes()); write_err(b"\r\n"); }
+                                        }
+                                        if !committed { write_err(tr_id!(IDS_CD_NOT_FOUND).as_bytes()); write_err(b"\r\n"); }
                                     }
                                 }
                                 let _ = syscall::sys_close(fd);

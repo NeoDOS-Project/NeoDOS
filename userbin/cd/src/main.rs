@@ -19,18 +19,11 @@ const IDS_USAGE_LINE2: u32 = 1002;
 const IDS_USAGE_LINE3: u32 = 1003;
 const IDS_ERR_NOT_FOUND: u32 = 1004;
 
+/// Shared result buffer read by NeoShell after the process exits.
 const ARGS_ADDR: u64 = 0x41F000;
 
-fn to_ob_path<'a>(vfs: &'a str, buf: &'a mut [u8; 512]) -> &'a str {
-    let prefix = b"\\Global\\FileSystem\\";
-    let vfs_bytes = vfs.as_bytes();
-    let total = prefix.len() + vfs_bytes.len();
-    if total > 510 { return vfs; }
-    buf[..prefix.len()].copy_from_slice(prefix);
-    buf[prefix.len()..total].copy_from_slice(vfs_bytes);
-    buf[total] = 0;
-    unsafe { core::str::from_utf8_unchecked(&buf[..total]) }
-}
+/// Ob path of the per-process current-directory object.
+const CWD_OBJ: &str = "\\Global\\Info\\Cwd";
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -40,6 +33,7 @@ fn write_err(s: &[u8]) {
     let _ = syscall::sys_write(2, s);
 }
 
+/// Publish the resolved directory back to the shell through the shared buffer.
 fn write_result(path: &[u8]) {
     unsafe {
         let dst = ARGS_ADDR as *mut u8;
@@ -50,145 +44,24 @@ fn write_result(path: &[u8]) {
     }
 }
 
-fn normalize_path(input: &[u8]) -> [u8; 260] {
-    let mut out = [0u8; 260];
-    let mut pos = 0usize;
-    let mut drive_len = 0usize;
-    let mut start = 0usize;
+/// Ask the kernel to make `path` this process's working directory.
+///
+/// This deliberately reuses the single canonicalization/validation layer that
+/// lives in the VFS path resolver behind `SET_CWD`: the kernel resolves the
+/// path relative to the current directory, canonicalizes `.` / `..`, checks
+/// that the target exists and is a directory, and only then commits the state.
+/// Doing it this way keeps exactly one canonicalizer in the system instead of
+/// a second (and subtly divergent) copy in userland.
+fn set_cwd(path: &[u8]) -> Result<(), ()> {
+    let mut buf = [0u8; 256];
+    let n = path.len().min(255);
+    buf[..n].copy_from_slice(&path[..n]);
+    // buf[n] stays 0, so the kernel's bounded string copy terminates here.
 
-    if input.len() >= 2 && input[1] == b':' {
-        let drive = input[0];
-        if pos < 259 {
-            out[pos] = if drive >= b'a' && drive <= b'z' { drive - 32 } else { drive };
-            pos += 1;
-        }
-        if pos < 259 {
-            out[pos] = b':';
-            pos += 1;
-        }
-        drive_len = 2;
-        start = 2;
-    }
-
-    let mut parts: [&[u8]; 32] = [&[]; 32];
-    let mut count = 0usize;
-    let rest = &input[start..];
-
-    let absolute = rest.starts_with(&[b'\\']) || rest.starts_with(&[b'/']);
-    if !absolute {
-        let mut cwd_buf = [0u8; 256];
-        if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
-            let cwd = libneodos::args::trim_ascii(&cwd_buf[..n]);
-            let cwd_path = core::str::from_utf8(cwd).unwrap_or("C:\\");
-            let cwd_bytes = cwd_path.as_bytes();
-            if cwd_bytes.len() >= 2 && cwd_bytes[1] == b':' {
-                out[0] = cwd_bytes[0];
-                out[1] = b':';
-                pos = 2;
-            }
-            let mut i = 2usize;
-            while i < cwd_bytes.len() {
-                let b = cwd_bytes[i];
-                if (b == b'\\' || b == b'/') && pos > 0 && out[pos - 1] != b'\\' {
-                    if pos < 259 {
-                        out[pos] = b'\\';
-                        pos += 1;
-                    }
-                } else if b != b':' {
-                    if pos < 259 {
-                        out[pos] = b;
-                        pos += 1;
-                    }
-                }
-                i += 1;
-            }
-        }
-    }
-
-    let mut i = 0usize;
-    let mut comp_start = 0usize;
-    while i <= rest.len() {
-        let end = if i == rest.len() || rest[i] == b'\\' || rest[i] == b'/' {
-            i
-        } else {
-            i += 1;
-            continue;
-        };
-
-        if end > comp_start {
-            let comp = &rest[comp_start..end];
-            if comp == b"." {
-            } else if comp == b".." {
-                if count > 0 {
-                    count -= 1;
-                } else {
-                    while pos > drive_len && out[pos - 1] == b'\\' {
-                        pos -= 1;
-                    }
-                    while pos > drive_len && out[pos - 1] != b'\\' {
-                        pos -= 1;
-                    }
-                }
-            } else if count < parts.len() {
-                parts[count] = comp;
-                count += 1;
-            }
-        }
-
-        i += 1;
-        comp_start = i;
-    }
-
-    for idx in 0..count {
-        if pos > drive_len && out[pos - 1] != b'\\' {
-            if pos < 259 {
-                out[pos] = b'\\';
-                pos += 1;
-            }
-        } else if pos == 0 {
-            if pos < 259 {
-                out[pos] = b'\\';
-                pos += 1;
-            }
-        }
-
-        for &b in parts[idx] {
-            if pos < 259 {
-                out[pos] = b;
-                pos += 1;
-            }
-        }
-    }
-
-    if pos == 0 {
-        out[0] = b'C';
-        out[1] = b':';
-        out[2] = b'\\';
-        pos = 3;
-    } else if out[pos - 1] != b'\\' {
-        if pos < 259 {
-            out[pos] = b'\\';
-            pos += 1;
-        }
-    }
-
-    if pos < 260 {
-        out[pos] = 0;
-    }
-
-    out
-}
-
-fn validate_directory(path: &str) -> bool {
-    let mut ob_buf = [0u8; 512];
-    let ob_path = to_ob_path(path, &mut ob_buf);
-    match syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ) {
-        Ok(fd) => {
-            let _ = syscall::sys_close(fd);
-            true
-        }
-        Err(_) => false,
-    }
+    let fd = syscall::sys_ob_open(CWD_OBJ, syscall::ob_access::WRITE).map_err(|_| ())?;
+    let r = syscall::sys_ob_set_info(fd, syscall::ob_set_info_class::SET_CWD, &buf[..n]);
+    let _ = syscall::sys_close(fd);
+    r.map_err(|_| ())
 }
 
 fn print_usage() {
@@ -209,6 +82,7 @@ pub extern "C" fn _start() -> ! {
     let args = libneodos::args::trim_ascii(&raw_args);
 
     if args.is_empty() {
+        // No argument: report the current directory through the result buffer.
         let mut cwd_buf = [0u8; 256];
         if let Ok(n) = syscall::sys_getcwd(&mut cwd_buf) {
             write_result(libneodos::args::trim_ascii(&cwd_buf[..n]));
@@ -232,17 +106,21 @@ pub extern "C" fn _start() -> ! {
         args
     };
 
-    let normalized = normalize_path(path_args);
-    let end = normalized.iter().position(|&b| b == 0).unwrap_or(normalized.len());
-    let path = core::str::from_utf8(&normalized[..end]).unwrap_or("C:\\");
-
-    if !validate_directory(path) {
+    // The kernel canonicalizes + validates + commits atomically on this child.
+    if set_cwd(path_args).is_err() {
         write_err(b"\r\n");
         write_err(tr_id!(IDS_ERR_NOT_FOUND).as_bytes());
         write_err(b"\r\n");
+        // Empty result tells the shell not to commit anything (cwd unchanged).
+        write_result(b"");
         syscall::sys_exit(1);
     }
 
-    write_result(path.as_bytes());
-    syscall::sys_exit(0);
+    // Return the canonical path so the shell can mirror it in its own process.
+    let mut cwd_buf = [0u8; 256];
+    match syscall::sys_getcwd(&mut cwd_buf) {
+        Ok(n) => write_result(libneodos::args::trim_ascii(&cwd_buf[..n])),
+        Err(_) => write_result(path_args),
+    }
+    syscall::sys_exit(0)
 }

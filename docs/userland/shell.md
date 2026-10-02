@@ -79,7 +79,7 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | TYPE `<path>` | `ob_query_info(ReadContent)` → `sys_write` stdout | read file content to buffer, print to stdout |
 | DIR `<path>` | `ob_enum` (RAX 44) on directory | `sys_ob_enum(dir, &entries)` → tabular output |
 | TREE `<path>` | `ob_enum` recursive (depth-first) | `sys_ob_enum` called per subdirectory |
-| CD `<path>` | `ob_set_info(SetCwd)` via `ARGS_ADDR` field | `sys_ob_set_info(cwd_handle, SetCwd, &path)` |
+| CD `<path>` | `ob_set_info(SetCwd)` via `ARGS_ADDR` field; the kernel VFS path resolver canonicalizes `.` / `..`, validates existence + directory type, then commits atomically | `sys_ob_set_info(cwd_handle, SetCwd, &path)` |
 | CLS | ANSI escape: `\x1B[2J\x1B[H` | `sys_write(1, escape, 7)` |
 | ECHO `<text>` | `sys_write` (RAX 20) to stdout | direct write |
 | MD `<dir>` | `ob_create(Directory)` (RAX 41) | `sys_ob_create(path, Directory)` |
