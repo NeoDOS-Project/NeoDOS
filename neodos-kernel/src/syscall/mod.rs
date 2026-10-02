@@ -525,3 +525,26 @@ pub fn wake_blocked_readers() {
         set_need_resched();
     });
 }
+
+/// Deferred Ctrl+C action: terminate the foreground process and wake whoever
+/// is waiting on it (the shell, blocked in `ObWait`).
+///
+/// This is queued as high-priority work by the keyboard IRQ
+/// (`crate::input::manager::request_foreground_interrupt`) and runs from the
+/// syscall-return path, never directly in IRQ context, because `kill_pid`
+/// touches the Object Manager and namespace.
+pub fn interrupt_foreground_work(data: *mut u8) {
+    let pid = data as usize as u32;
+    if pid == 0 {
+        return;
+    }
+    crate::serial_println!("[CTRLC] foreground interrupt -> pid={}", pid);
+    crate::hal::without_interrupts(|| {
+        let s = crate::scheduler::current_scheduler();
+        let mut scheduler = s.lock();
+        if scheduler.kill_pid(pid) {
+            scheduler.wake_waiters(pid);
+        }
+        set_need_resched();
+    });
+}

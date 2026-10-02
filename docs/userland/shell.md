@@ -24,6 +24,12 @@ Two dispatch paths:
 
 Built-in commands are not pipeable. Only .NXE binaries can appear in pipelines.
 
+## Process Interrupts (Ctrl+C)
+
+While a foreground command runs, NeoShell blocks in `ObWait` on the child process object; the kernel records that child as the foreground process of the active VT (`input::manager::set_foreground_pid`). Pressing Ctrl+C makes the keyboard handler (IRQ context) queue an IRQ-safe, high-priority work item, and the termination runs later from syscall context (`kill_pid` + `wake_waiters`) so `ObWait` returns and the shell reaches the prompt again. When the child exits or is terminated, the foreground marker is cleared.
+
+This is a default terminate action, not a POSIX signal API: no handler, job control or suspend/resume. `ping /t` (continuous) is the first consumer.
+
 ## PATH Configuration
 
 PATH is stored in the Registry at:
