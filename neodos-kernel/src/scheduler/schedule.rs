@@ -304,6 +304,8 @@ impl Scheduler {
                         k.tid, k.pid, k.name(), state_name(k.state.to_u8()), k.cpu, k.waiting_for);
                 }
             }
+            // #345: dump the transition ring once, at the first occurrence.
+            crate::scheduler::diag::run_dump_first();
         }
 
         // Phase 293-B: detect the same Kthread being KPRCB.current_thread of
@@ -441,6 +443,7 @@ impl Scheduler {
         self.current_tid = tid;
         if let Some(current) = self.find_kthread_mut(tid) {
             Self::remove_from_run_queue(current);
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_RESUME_REJECT, current);
             current.state = ThreadState::Running;
         }
         Some((ptr, pid, ks_top))
@@ -505,6 +508,7 @@ impl Scheduler {
             );
         }
         idle.cpu = cpu;
+        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_AP_IDLE, &idle);
         idle.state = ThreadState::Running;
         {
             // Phase 14-A: per-CPU idle name ("idle/<cpu>"), bounded.
@@ -542,6 +546,7 @@ impl Scheduler {
             if self.kprcb_thread_in_self() {
                 crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, (*ptr).pid);
             }
+            crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_DISPATCH_IDLE, idle);
             idle.state = ThreadState::Running;
             idle.time_slice_remaining = IDLE_TIME_SLICE;
             kdebug!(LogSubsys::Sched, "[SCHED] SWITCH old_tid={} new_tid={} reason=idle_fallback",
@@ -620,6 +625,7 @@ impl Scheduler {
                         if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_FAST, k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
@@ -673,6 +679,7 @@ impl Scheduler {
                         if self.kprcb_thread_in_self() {
                             crate::arch::x64::cpu_local::sync_per_cpu_current(ptr, k.pid);
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_STEAL, k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(ptr, self_cpu);
                         Self::account_dispatch(k);
@@ -753,6 +760,7 @@ impl Scheduler {
                                     check_tid, old_cpu, scan_cpu, scan_prev);
                             }
                         }
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_SCAN, &**k);
                         k.state = ThreadState::Running;
                         note_dispatch_owner_check(&**k as *const Kthread, scan_cpu);
                         Self::account_dispatch(k);

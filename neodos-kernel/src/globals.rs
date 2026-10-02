@@ -49,6 +49,14 @@ pub fn with_vfs<F, R>(f: F) -> R
 where
     F: FnOnce(&mut crate::fs::vfs::Vfs) -> R
 {
+    with_vfs_site(crate::scheduler::diag::VFS_SITE_OTHER, f)
+}
+
+/// Like [`with_vfs`] but tags the caller site for #345 Phase 2B diagnostics.
+pub fn with_vfs_site<F, R>(site: u64, f: F) -> R
+where
+    F: FnOnce(&mut crate::fs::vfs::Vfs) -> R
+{
     // #376: a thread holding VFS must not be descheduled by the timer; a
     // Ready Ring-0 frame is rejected by the Ring-3 selection paths and the
     // lock would be held forever.
@@ -59,18 +67,29 @@ where
         let tid = crate::scheduler::current_tid();
         let _ = tid;
         if let Some(mut lock) = VFS.try_lock() {
-            f(&mut lock)
+            crate::scheduler::diag::vfs_owner_acquired(site);
+            let res = f(&mut lock);
+            crate::scheduler::diag::vfs_owner_released();
+            res
         } else {
             lock_wait("VFS");
+            // #345 Phase 2B: record the waiter + a bounded snapshot of the owner.
+            let start = crate::scheduler::diag::vfs_waiter_begin(site);
             let mut lock = VFS.lock();
+            crate::scheduler::diag::vfs_wait_end(start, site);
+            crate::scheduler::diag::vfs_owner_acquired(site);
             lock_acquire("VFS");
             let res = f(&mut lock);
             lock_release("VFS");
+            crate::scheduler::diag::vfs_owner_released();
             res
         }
     } else {
         let mut lock = VFS.lock();
-        f(&mut lock)
+        crate::scheduler::diag::vfs_owner_acquired(site);
+        let res = f(&mut lock);
+        crate::scheduler::diag::vfs_owner_released();
+        res
     };
     crate::scheduler::preempt_enable();
     res

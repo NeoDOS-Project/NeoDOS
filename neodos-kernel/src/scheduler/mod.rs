@@ -193,6 +193,15 @@ impl Scheduler {
             if let Some(tid) = crate::arch::x64::cpu_local::try_per_cpu_tid() {
                 return tid;
             }
+        } else if crate::scheduler::ap_sched_active() {
+            // #345 diagnostic: the per-CPU KPRCB identity is unavailable, so the
+            // shared global `current_tid` is used. Record the reason.
+            let gs = crate::hal::safe::GsBase::read();
+            if gs != 0 {
+                let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+                crate::scheduler::diag::kprcb_fallback_ev(
+                    "current_tid_for_this_cpu", gs, ptr, self.current_tid);
+            }
         }
         self.current_tid
     }
@@ -212,6 +221,14 @@ impl Scheduler {
         let tid = if self.kprcb_thread_in_self() {
             crate::arch::x64::cpu_local::try_per_cpu_tid().unwrap_or(self.current_tid)
         } else {
+            if crate::scheduler::ap_sched_active() {
+                let gs = crate::hal::safe::GsBase::read();
+                if gs != 0 {
+                    let ptr = unsafe { crate::arch::x64::cpu_local::this_cpu_current_thread() };
+                    crate::scheduler::diag::kprcb_fallback_ev(
+                        "current_kthread_mut", gs, ptr, self.current_tid);
+                }
+            }
             self.current_tid
         };
         self.find_kthread_mut(tid)

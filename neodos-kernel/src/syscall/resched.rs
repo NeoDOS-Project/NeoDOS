@@ -290,6 +290,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                     let (chosen_tid, chosen_pid, chosen_rsp, chosen_ks_top, chosen_ks_size) = {
                         let k = scheduler.kthreads[chosen_idx].as_mut().unwrap();
                         k.cpu = this_cpu; // re-home: parity with the global scan
+                        crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_RESCHED_CHOSEN, k);
                         k.state = ThreadState::Running;
                         (k.tid, k.pid, k.rsp, k.kernel_stack_top, k.kernel_stack_size)
                     };
@@ -342,6 +343,7 @@ pub extern "C" fn syscall_try_resched(current_rsp: u64) -> u64 {
                             scheduler::Scheduler::remove_from_run_queue(idle);
                             if idle.state != ThreadState::Terminated {
                                 scheduler.current_tid = idle.tid;
+                                crate::scheduler::diag::run_ev(crate::scheduler::diag::RUN_SITE_RESCHED_IDLE, idle);
                                 idle.state = ThreadState::Running;
                                 idle.time_slice_remaining = scheduler::IDLE_TIME_SLICE;
                                 crate::arch::x64::cpu_local::this_cpu_set_current_thread_site(

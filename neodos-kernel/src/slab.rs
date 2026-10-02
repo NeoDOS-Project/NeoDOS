@@ -313,6 +313,13 @@ impl SlabAllocator {
         (pages, capacity, allocated, used_bytes)
     }
 
+    /// Fallback-heap statistics: (free_bytes, used_bytes, size_bytes).
+    /// Diagnostic only; must not be called while the fallback lock is held.
+    pub fn fallback_stats(&self) -> (usize, usize, usize) {
+        let g = self.fallback.lock();
+        (g.free(), g.used(), g.size())
+    }
+
     pub fn init(&self, heap_start: *mut u8, heap_size: usize) {
         kinfo!(LogSubsys::Slab, "Initializing per-CPU slab allocator ({} caches, batch={})",
                        NUM_CACHES, BATCH_SIZE);
