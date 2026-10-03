@@ -2,7 +2,7 @@
 
 > **Versión:** v0.1
 > **Estado:** Diseño completo
-> **Versión de NeoDOS:** v0.51.2+ (depende de PM-PHASE1+2 para Power, i18n runtime para Locale)
+> **Versión de NeoDOS:** v0.51.3+ (depende de PM-PHASE1+2 para Power, i18n runtime NLTv3 para Locale)
 > **Precedencia:** Este documento es la especificación. No se implementa código hasta aprobación.
 
 ---
@@ -184,7 +184,7 @@ Implementación: usar `console::read_byte()` para captura de teclas individuales
 ```text
 ===== tr!("module.system.title") =====
 
-tr!("system.kernel_version"):  NeoDOS v0.51.2
+tr!("system.kernel_version"):  NeoDOS v0.51.3
 tr!("system.build_date"):      2026-07-11
 tr!("system.uptime"):          1d 3h 42m
 tr!("system.cpu"):             Intel QEMU (fam 6, model 2)
@@ -327,8 +327,8 @@ Sin dependencias externas. Implementable inmediatamente.
 ```text
 ===== tr!("module.about.title") =====
 
-tr!("about.neodos"):          NeoDOS v0.51.2
-tr!("about.kernel"):          neodos-kernel v0.51.2
+tr!("about.neodos"):          NeoDOS v0.51.3
+tr!("about.kernel"):          neodos-kernel v0.51.3
 tr!("about.abi"):             v8 (syscall ABI)
 tr!("about.arch"):            x86_64
 tr!("about.neofs"):           NE2 v2

@@ -16,6 +16,43 @@
 
 ## Implementadas (issues cerradas en GitHub)
 
+### v0.51.3 — NLT i18n (NLTv3) + Regional Formats
+
+Milestone propio: el trabajo de i18n se completó antes que el resto del bloque
+v0.56–v0.60 y se publica como v0.51.3. Formato compartido en `libnlt`.
+
+- **I18N-P4**: format_str() con placeholders {0} `priority/medium` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  {0}/{0:d}/{0:u}/{0:x}/{0:X} vía libnlt::format + macro tr_fmt!(). (#90)
+  state: closed
+
+- **I18N-P5**: i18n_available_locales() `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  i18n_available_locales() + built-in LOCALE (list/set) en NeoShell + nxlocale list. (#91)
+  state: closed
+
+- **I18N-P7**: NLT compression (LZSS) `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Compresión LZSS del payload NLTv3 (libnlt::lzss). (#106)
+  state: closed
+
+- **I18N-P8**: UTF-16 support `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Almacenamiento UTF-16LE con transcodificación a UTF-8 al cargar + detección BOM. (#107)
+  state: closed
+
+- **I18N-P9**: Pluralization `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Categorías CLDR (zero/one/two/few/many/other) + macro plural_id!(). (#108)
+  state: closed
+
+- **I18N-P10**: Regional formats `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Formato de números/moneda/fecha/hora con bloque [region] por idioma. (#109)
+  state: closed
+
+- **I18N-P11**: RTL/bidi support `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Detección RTL + reordenación visual de runs (libnlt::bidi). (#110)
+  state: closed
+
+- **I18N-P12**: Digital signatures in NLT `priority/low` `area/i18n` `type/feature` `v0.51.3 — NLT i18n`
+  Firmas Ed25519 (libnlt/signatures), nltc --verify, verificación runtime opcional. (#111)
+  state: closed
+
 ### v0.50.2 — Hostname
 
 - **HN**: System hostname persistence with Registry `priority/medium` `area/kernel` `type/feature` `v0.50 — Consolidation`
@@ -1040,14 +1077,6 @@
 - **NXE-ECO-15**: Digital signature verification infrastructure `priority/low` `area/security` `type/feature` `v0.56 — NXE/NXP Ecosystem`
   state: open
 
-- **I18N-P4**: format_str() con placeholders {0} `priority/medium` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
-  {0}/{0:d}/{0:u}/{0:x}/{0:X} formatted via libnlt::format, tr_fmt!() macro.
-  state: closed
-
-- **I18N-P5**: i18n_available_locales() `priority/low` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
-  i18n_available_locales() + shell built-in LOCALE (list/set) + nxlocale list.
-  state: closed
-
 - **I18N-P6**: Per-user locale (Registry) `priority/low` `area/i18n` `type/feature` `v0.56 — NXE/NXP Ecosystem`
   Dependencies: USR-P1, I18N-P1
   state: open
@@ -1115,32 +1144,6 @@
 - **INSTALL-PACKAGES**: Despliegue de paquetes base `priority/medium` `area/install` `type/feature` `v0.59 — Installation & Bootstrap`
   Copiar NXP base, registrar servicios.
   state: open
-
-### v0.60 — NLT i18n + Regional Formats
-
-- **I18N-P7**: NLT compression (LZSS) `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  LZSS byte-oriented compression of the NLTv3 payload (libnlt::lzss).
-  state: closed
-
-- **I18N-P8**: UTF-16 support `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  UTF-16LE string storage with UTF-8 transcoding on load and BOM source detection.
-  state: closed
-
-- **I18N-P9**: Pluralization `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  CLDR plural categories (zero/one/two/few/many/other) and plural_id!() macro.
-  state: closed
-
-- **I18N-P10**: Regional formats (dates, currencies) `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Number/currency/date/time formatting with a per-locale [region] NLT block.
-  state: closed
-
-- **I18N-P11**: RTL/bidi support `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  RTL locale detection and visual run reordering (libnlt::bidi).
-  state: closed
-
-- **I18N-P12**: Digital signatures in NLT `priority/low` `area/i18n` `type/feature` `v0.60 — NLT i18n + Regional Formats`
-  Ed25519 signatures (libnlt/signatures), nltc --verify, optional runtime check.
-  state: closed
 
 ### v0.61 – v0.69 — Security & Stability
 
