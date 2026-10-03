@@ -462,7 +462,20 @@ impl SlabAllocator {
             }
         }
 
-        // Should not normally be reached; fall back to the heap.
-        self.fallback.dealloc(ptr, layout);
+        // The pointer is outside the fallback heap range, so it did NOT come
+        // from `self.fallback`. Handing it to the fallback free would inject a
+        // foreign pointer into the fallback heap free list — the exact
+        // corruption class of #383. This branch is not normally reachable
+        // (slab-sized frees that reach here always drain successfully), so
+        // leak-and-diagnose rather than corrupt the heap.
+        crate::raw_serial_println!(
+            "[SLAB_DEALLOC_LOST] ptr={:p} size={} not in fallback heap and could not be freed to a slab cache",
+            ptr, layout.size()
+        );
+        debug_assert!(
+            false,
+            "slab dealloc: ptr {:p} outside fallback heap and could not be freed to a slab cache",
+            ptr
+        );
     }
 }

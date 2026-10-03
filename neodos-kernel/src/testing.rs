@@ -492,4 +492,32 @@ pub fn register_slab_tests() {
             test_eq!(**b, (i as u32) * 10);
         }
     });
+
+    // #383: a large fallback allocation whose contents happen to contain the
+    // bytes "SLAB" at a 4 KiB-aligned offset must still free correctly. Under
+    // the old payload-magic heuristic the free was misrouted into a slab cache,
+    // injecting a foreign pointer and corrupting the heap. With range routing
+    // this must round-trip without corruption.
+    test_case!("slab_383_fallback_with_slab_magic_bytes", {
+        // 16 KiB is served by the fallback heap (larger than MAX_SLAB_SIZE).
+        let mut b = Box::new([0u8; 16384]);
+        // Plant "SLAB" at a 4 KiB-aligned offset inside the buffer.
+        for page in 0..4 {
+            let off = page * 4096;
+            b[off] = b'S';
+            b[off + 1] = b'L';
+            b[off + 2] = b'A';
+            b[off + 3] = b'B';
+        }
+        test_eq!(b[0], b'S');
+        core::mem::drop(b);
+        // Heap must still be usable and consistent after the free.
+        let mut v: Vec<Box<u64>> = Vec::new();
+        for i in 0..64 {
+            v.push(Box::new(i));
+        }
+        for (i, x) in v.iter().enumerate() {
+            test_eq!(**x, i as u64);
+        }
+    });
 }
