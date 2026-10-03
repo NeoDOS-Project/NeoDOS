@@ -131,9 +131,14 @@ while batch_offset < sectors_per_cluster {
 }
 ```
 
-#### 2. AHCI command retry with port reset (NOT YET IMPLEMENTED)
+#### 2. AHCI command retry with port reset (IMPLEMENTED)
 
-The current timeout in `dma_xfer()` returns an error immediately. Implement a retry loop:
+Implemented in `drivers/boot_ahci.rs`: the DMA transfer path uses a retry loop
+(`boot_ahci.rs:515`) that, on timeout, clears `PORT_IS`/`PORT_SERR`, stops the
+command engine (`CMD_ST | CMD_FRE`), and restarts it via `port_reset_and_start()`
+(`boot_ahci.rs:242`) before re-issuing the command table.
+
+The reference pseudo-code below is kept for historical context:
 
 ```rust
 for retry in 0..2 {

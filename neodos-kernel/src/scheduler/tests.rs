@@ -382,6 +382,19 @@ pub fn register_tests() {
         test_eq!(picked_tid, 2);
     });
 
+    // INV-10 (source-of-truth.md §INV-10): NeoInit (PID 1) must never be killed.
+    test_case!("inv10_kill_pid_1_refused", {
+        let mut sched = Scheduler::new();
+        sched.next_tid = 3;
+        add_test_thread(&mut sched, 1, 1, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        add_test_thread(&mut sched, 2, 2, 0x400000, PRIORITY_NORMAL, ThreadState::Ready);
+        // PID 1 must be refused; PID 0 is also refused.
+        test_true!(!sched.kill_pid(crate::scheduler::lifecycle::INIT_PID));
+        test_true!(!sched.kill_pid(0));
+        // PID 2 (a normal process) is killable.
+        test_true!(sched.kill_pid(2));
+    });
+
     test_case!("sched_priority_round_robin_same_level", {
         let mut sched = Scheduler::new();
         sched.next_tid = 3;

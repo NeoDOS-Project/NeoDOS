@@ -76,7 +76,7 @@ No other interrupt or exception vector may transfer control from Ring 3 to Ring 
 register state. The INT 0x80 handler is the sole entry point.
 
 **INV-10. NeoInit (PID 1) MUST NEVER BE KILLED.**
-`sched::kill_pid(1)` panics. `sys_exit` from PID 1 is equivalent to kernel panic.
+`sched::kill_pid(1)` is refused (returns `false`); `pid == 0` is likewise refused. `sys_exit` from PID 1 is equivalent to kernel panic.
 
 **INV-11. NO USER-FACING COMMANDS IN RING 0.**
 The legacy Ring 0 shell exists only as bootstrap glue. It MUST NOT expose or execute user-facing commands.
@@ -129,7 +129,7 @@ and boot continues.
 | Kernel image | 0x4000000 | ~1.2 MB | Kernel (read-only exec) |
 | Kernel .rodata | 0x00100000 | ~1 MB | Kernel (read-only) |
 | Kernel heap | 0x01000000 | 16 MB | Slab allocator (global) |
-| User window | 0x400000 | 4 MB | User processes (code+stack) |
+| User window | 0x400000 | 36 MB | User processes (code+stack) |
 | User heap | 0x10000000 | 32 MB | Per-process (demand paged) |
 | NXL region | 0x1E000000 | 2 MB | Shared libraries |
 | mmap region | 0x20000000 | 32 MB | Per-process mmap |
@@ -184,7 +184,7 @@ decrement refcount, files closed, devices detached).
 ### 4.3 User Process Memory
 
 **Rule 4.3.1**: Code/stack is loaded at `0x400000` (flat binary) or at ELF-specified `p_vaddr`
-(ELF binary). Max size: 4 MB (entire user window).
+(ELF binary). Max size: 36 MB (entire user window, `USER_BASE..USER_LIMIT` = `0x400000..0x2400000`).
 **Rule 4.3.2**: Heap grows from `PROCESS_HEAP_BASE` via demand paging. `sys_brk` adjusts the
 break but pages are allocated on first access (page fault).
 **Rule 4.3.3**: `heap_free_range` MUST be called on `sys_exit` to free all heap frames.
@@ -320,21 +320,33 @@ that collide with live IRPs. (Pool size 64 vs 32-bit ID space makes this safe.)
 
 ### 8.1 Header Format (v3)
 
-| Offset | Size | Field | Valid Range |
-| -------- | ------ | ------- | ------------- |
-| 0 | 4 | magic | `b"NEM\0"` |
+Matches `NemHeaderV3` in `neodos-kernel/src/nem/mod.rs` (80-byte header, magic `b"NEM3"`).
+
+| Offset | Size | Field | Notes |
+| -------- | ------ | ------- | ------- |
+| 0 | 4 | magic | `b"NEM3"` (legacy `b"NEM\0"` is rejected) |
 | 4 | 4 | version | 3 |
-| 8 | 2 | header_size | 48 |
-| 10 | 2 | driver_type | [0, 3] |
-| 12 | 4 | entry_offset | < code_size |
-| 16 | 4 | code_size | ≥ 1, ≤ MAX_DRIVER_SIZE |
-| 20 | 2 | compat_flags | any |
-| 22 | 2 | abi_min | 1..=ABI_MAX_VALID |
-| 24 | 2 | abi_target | ABI_MIN_VALID..=ABI_MAX_VALID |
-| 26 | 2 | abi_max | ABI_MIN_VALID..=ABI_MAX_VALID |
-| 28 | 1 | category | 0 (Boot), 1 (System), 2 (Demand) |
-| 29 | 3 | reserved | zero |
-| 32 | 16 | name | ASCII, null-terminated |
+| 8 | 4 | header_size | 80 |
+| 12 | 4 | flags | |
+| 16 | 2 | abi_min | 1..=ABI_MAX_VALID |
+| 18 | 2 | abi_target | ABI_MIN_VALID..=ABI_MAX_VALID |
+| 20 | 2 | abi_max | ABI_MIN_VALID..=ABI_MAX_VALID |
+| 22 | 2 | driver_type | [0, 3] |
+| 24 | 2 | category | 0 (Boot), 1 (System), 2 (Demand) |
+| 26 | 2 | reserved | zero (struct alignment) |
+| 28 | 4 | text_size | |
+| 32 | 4 | rodata_size | |
+| 36 | 4 | data_size | |
+| 40 | 4 | bss_size | |
+| 44 | 4 | total_mem_size | ≥ 1, ≤ MAX_DRIVER_SIZE |
+| 48 | 4 | entry_init | offset from text base |
+| 52 | 4 | entry_event | offset from text base |
+| 56 | 4 | entry_fini | offset from text base |
+| 60 | 4 | num_relocs | |
+| 64 | 4 | relocs_offset | |
+| 68 | 4 | syms_offset | |
+| 72 | 4 | strtab_offset | |
+| 76 | 4 | name_offset | ASCII, null-terminated |
 
 ### 8.2 Lifecycle States (W2 Hot Reload compatible)
 
@@ -864,7 +876,7 @@ The test suite MUST be run before every release.
 | T4 | INV-5: Frame has one owner | Unit | Allocate frame, read bitmap, free, confirm bitmap cleared |
 | T5 | INV-6: Process slots valid | Unit | Create process, read slot state, terminate, confirm recycled |
 | T6 | INV-8: Kernel heap not user-accessible | Functional | Try reading kernel heap from user mode → page fault |
-| T7 | INV-10: Kill PID 1 panics | Unit | Call `kill_pid(1)` → expect panic |
+| T7 | INV-10: Kill PID 1 refused | Unit | Call `kill_pid(1)` → expect `false` (never killed) |
 | T8 | Scheduler aging | Unit | Ready process with 1000+ ticks unscheduled → priority boosted |
 | T9 | Scheduler priority | Unit | Higher-priority process always scheduled before lower |
 | T10 | IRP lifecycle | Unit | Alloc → complete → callback → freed. Double-complete fails. |

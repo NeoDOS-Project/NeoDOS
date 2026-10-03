@@ -20,6 +20,9 @@ use crate::scheduler::Scheduler;
 /// without bound and heap/user slot exhaustion.
 const MAX_ZOMBIES: usize = 64;
 
+/// NeoInit's PID. INV-10: it MUST NEVER BE KILLED (source-of-truth.md §INV-10).
+pub const INIT_PID: u32 = 1;
+
 lazy_static! {
     static ref ZOMBIE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::with_capacity(MAX_ZOMBIES));
 }
@@ -548,6 +551,9 @@ impl Scheduler {
     /// Kill an entire EPROCESS and all its threads.
     pub fn kill_pid(&mut self, pid: u32) -> bool {
         if pid == 0 { return false; }
+        // INV-10 (source-of-truth.md): NeoInit (PID 1) must never be killed.
+        // Refuse silently; callers treat `false` as "not killed".
+        if pid == INIT_PID { return false; }
 
         // Unregister EPROCESS from Ob (OB-046)
         for ep in self.eprocesses.iter().flatten() {
