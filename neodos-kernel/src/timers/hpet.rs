@@ -1,5 +1,4 @@
-use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{fence, Ordering};
+use core::ptr::read_volatile;
 use crate::log::LogSubsys;
 
 // ── ACPI table signatures ──────────────────────────────────────────
@@ -80,16 +79,12 @@ struct GenericAddr {
 
 #[inline]
 unsafe fn hpet_read(base: u64, offset: u64) -> u64 {
-    let ptr = (base + offset) as *const u64;
-    fence(Ordering::SeqCst);
-    read_volatile(ptr)
+    crate::hal::mmio::read64((base + offset) as usize)
 }
 
 #[inline]
 unsafe fn hpet_write(base: u64, offset: u64, val: u64) {
-    let ptr = (base + offset) as *mut u64;
-    fence(Ordering::SeqCst);
-    write_volatile(ptr, val);
+    crate::hal::mmio::write64((base + offset) as usize, val);
 }
 
 // ── ACPI table scanning ────────────────────────────────────────────
