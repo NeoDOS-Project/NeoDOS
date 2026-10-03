@@ -96,7 +96,6 @@ Built-in commands (CWD, SET, EXIT, CALL) are not pipeable and produce an error i
 | --------- | --------------- |
 | FSCK `<drive>` | `ob_query_info(FsckStatus=33)` / `ob_set_info(FsckRepair=39)` on the Filesystem handle |
 | LOADLIB `<nxl>` | `sys_loadlib` (RAX 25) — loads NXL into slot region |
-| NDREG | Opens `\Global\Info\Drivers` — reads driver registration info |
 | PS | `ob_enum(\Ob\Process)` then `ob_query_info` per process for name/pid/state |
 | KILL `<pid>` | `ob_set_info(Process, ProcessTerminate)` on target process object |
 | PRI `<pid> <level>` | `ob_set_info(Process, ProcessPriority, &level)` |
@@ -156,8 +155,6 @@ All 42 user-mode binaries, each a standalone `.NXE` ELF file in `userbin/<name>/
 | pri | system | Set process priority |
 | label | utility | Volume label management |
 | fsck | system | Filesystem check |
-| ndreg | system | Driver registration viewer |
-| loadnem | system | Load NEM drivers |
 | progress | utility | Progress bar utility |
 | kobj | debug | Kernel object tree viewer |
 | cd | utility | Change directory |

@@ -128,7 +128,7 @@ pub fn ensure_boot_defaults() {
     }
 
     // ── CurrentControlSet\Control\TimeZoneInformation — timezone/DST (#357) ──
-    // Defaults: UTC, DST disabled. Configured via the Registry (ndreg); the
+    // Defaults: UTC, DST disabled. Configurable via the Registry; the
     // kernel derives local time from the authoritative UTC RTC.
     let tz = crate::cm::cm_open_key(ctrl, "TimeZoneInformation")
         .or_else(|_| crate::cm::cm_create_key(ctrl, "TimeZoneInformation"));

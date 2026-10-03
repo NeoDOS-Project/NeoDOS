@@ -483,14 +483,12 @@ as NEM modules under the repository-root `drivers/` directory.
 
 ### 8. Legacy: Driver Loading (removed in v0.46.2)
 
-The legacy `driver_loader.rs` was removed in v0.46.2. LOADNEM/UNLOADNEM/NEMLIST
-are now fully Ring 3 commands:
+The legacy `driver_loader.rs` was removed in v0.46.2; driver loading moved to
+Ring 3. The interim Ring 3 tools that followed (`loadnem.nxe`, `ndreg.nxe`) were
+retired in the driver-interface cleanup; a redesigned userland
+driver-administration tool is pending.
 
-- `loadnem.nxe` — uses `ob_create(Driver)` to load and `sys_driver_unload` to unload
-- `ndreg.nxe LIST` — uses `ob_query_info(Drivers)` to list drivers
-
-The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader,
-and unloading is handled by `hotreload::unload_driver()`.
+The underlying kernel loading path is `nem/loader.rs::load_nem()` → v3loader.
 
 ---
 
@@ -516,21 +514,14 @@ Shared library (NXL) loading subsystem for user-mode processes.
 
 ---
 
-### 9. NDREG — Registry CLI (`userbin/ndreg/` → `ndreg.nxe`)
+### 9. Driver management userland tooling
 
-A `regedit`-style tool for inspecting the driver registry.
-
-| Subcommand | Description |
-| ----------- | ------------- |
-| `NDREG LIST [path]` | List .nem drivers with state + error + visual progress bar (5 chars: L-I-R-B-A) |
-| `NDREG SHOW <name>` | Full details + certification check + error diagnostics |
-| `NDREG QUERY` | Summary: FS total, runtime state breakdown |
-| `NDREG RUNTIME` | Runtime snapshot: loaded/active/faulted with pipeline display |
-| `NDREG HEALTH` | Validate NEM header integrity for all .nem files |
-| `NDREG DEBUG <name>` | 5-stage diagnosis (LOAD → INIT → REG → BIND → CERTIFY) |
-| `NDREG LOAD <path>` | Load driver through full pipeline → Active if all pass |
-
-**Pipeline visualization:** `█████` = 5/5 steps completed, `█` = only Loaded.
+The interim Ring 3 tools `ndreg.nxe` (driver inspector) and `loadnem.nxe`
+(load/unload) were removed; a single redesigned driver-administration CLI is
+pending. Until then, driver state remains observable through the Object Manager
+(`ob_open("\Global\Info\Drivers")` + `ob_query_info(Drivers)`), and driver
+administration remains a kernel capability (`ob_create(Driver)` /
+`sys_driver_unload`).
 
 ---
 

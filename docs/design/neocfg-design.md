@@ -64,7 +64,7 @@ NeoDOS carece de una **interfaz de configuración unificada**. Actualmente:
    - `POWEROFF` para apagar (sin opción de plan de energía o reinicio)
    - Comandos de shell aislados (`PRI`, `KILL`, `VOL`, `LABEL`, `KEYB`) sin interfaz común
    - `neoinit` lee configuración del Registry directamente via `sys_cm_*`
-   - `NDREG` para drivers, `neotop` para procesos — herramientas independientes
+   - `neotop` para procesos — herramientas independientes
 
 2. **Sin panel de control**: no existe un punto de entrada único donde un administrador pueda:
    - Ver información del sistema
@@ -507,7 +507,7 @@ NeoCfg no extiende el kernel. Es una aplicación Ring 3 que **consume** APIs exi
 
 ### Alternative B: Herramientas independientes por subsistema (ej. `powercfg.nxe`, `langcfg.nxe`, `kbdcfg.nxe`)
 
-**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `keyb.nxe`, `ipconfig.nxe`, `ndreg.nxe`.
+**Descripción**: Crear un binario .NXE separado para cada área de configuración, como ya se hace con `keyb.nxe`, `ipconfig.nxe`.
 
 **Rechazada porque**:
 

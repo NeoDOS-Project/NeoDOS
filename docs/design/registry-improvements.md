@@ -44,7 +44,7 @@ The Registry (`src/cm/`) is an NT-style cell-based hive system:
 | 6 | **CellCache unused** — `cache.rs` exists but never wired in | **Low** — wasted code |
 | 7 | **WAL (write-ahead logging)** — no crash-safe transactions | **Medium** — power loss corrupts hives |
 | 8 | **Registry notifications** — no `RegNotifyChangeKeyValue` equivalent | **Low** — no event on config change |
-| 9 | **Registry editor** — `ndreg` is a driver inspector, not a registry editor | **Low** — no user-facing tool |
+| 9 | **Registry editor** — no dedicated registry editor exists | **Low** — no user-facing tool |
 
 ### Why Existing Abstractions Can't Solve These
 
@@ -309,7 +309,6 @@ All improvements use existing syscalls (RAX 67-76) and ObInfoClass/ObSetInfoClas
 | `src/object/types.rs` | No changes needed |
 | `libneodos/src/syscall.rs` | Add 7 missing cm_* wrappers |
 | `userbin/regedit/` | **New binary**: registry editor |
-| `userbin/ndreg/` | No change (driver inspector, unrelated) |
 | `docs/registry.md` | Update to reflect new capabilities |
 | `neodev/src/image.rs` | Add `regedit` to the image binary list |
 

@@ -767,8 +767,8 @@ with `Sandbox` mode — the driver is marked `Faulted` but the kernel continues.
 - `Basic` or `None` mode: kernel panics.
 
 **Rule 14.2.2**: A `Faulted` driver can only transition to `Unloaded`.
-**Rule 14.2.3**: `NDREG UNLOAD` on a Faulted driver cleans up isolation slot, unregisters
-from event bus, and marks `Unloaded`.
+**Rule 14.2.3**: Unloading a Faulted driver cleans up its isolation slot, unregisters
+it from the event bus, and marks it `Unloaded`.
 
 ### 14.3 OOM Policy
 

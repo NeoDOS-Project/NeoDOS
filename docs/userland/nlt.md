@@ -255,7 +255,7 @@ See `nltc --list-langs`. IDs `0x8000+` are CRC32-derived for unknown tags.
 
 | ID  | App      | ID   | App        |
 |-----|----------|------|------------|
-| 1   | neoshell | 15   | ndreg      |
+| 1   | neoshell | 15   | (unused)   |
 | 2   | neoinit  | 16   | poweroff   |
 | 3   | corehelp | 17   | reboot     |
 | 7   | neolocale| 34   | dhcpd      |

@@ -311,7 +311,7 @@ impl DriverRuntime {
             .count()
     }
 
-    /// Breakdown of drivers by state (for NDREG QUERY).
+    /// Breakdown of drivers by state (for driver diagnostics).
     pub fn state_counts(&self) -> alloc::vec::Vec<(DriverState, usize)> {
         let mut counts = [0usize; 8];
         for d in self.drivers.iter().flatten() {

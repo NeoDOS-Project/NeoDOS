@@ -4,7 +4,7 @@
 
 NEM (NeoDOS Executable Module) is the native driver binary format for NeoDOS.
 Drivers use the `.nem` extension and are loaded by the kernel at boot (PHASE 3.85)
-or on demand via `sys_driver_load` / `loadnem.nxe`.
+or by the kernel driver loader when a `Driver` object is created.
 
 ## Format Overview
 

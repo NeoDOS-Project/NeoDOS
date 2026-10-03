@@ -25,8 +25,8 @@ C:\
 │   └── datetime neomem echo label poweroff colors neokey
 │       nxres nxlocale nxverify ping hostname
 └── System\
-    ├── Tools\                     # 21 .NXE "de administración"
-    │   ├── kill pri fsck ndreg loadnem progress neotop
+    ├── Tools\                     # System administration .NXE
+    │   ├── kill pri fsck progress neotop
     │   ├── dhcpd netcfg netapplier ipconfig cpuinfo neolocale dhcptest
     │   ├── nslookup
     │   └── reboot shtest stresscmd tree ver vol   # movidos aquí por capacidad

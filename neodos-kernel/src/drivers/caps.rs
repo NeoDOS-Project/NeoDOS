@@ -54,7 +54,7 @@ pub fn cap_name(flag: u64) -> &'static str {
     }
 }
 
-/// List all defined capability flag names (for NDREG display).
+/// List all defined capability flag names (for driver-capability display).
 pub fn all_cap_names() -> &'static [(u64, &'static str)] {
     &[
         (CAP_IRQ, "IRQ"),
@@ -173,7 +173,7 @@ pub fn check_capabilities(driver_bits: u64, required: u64) -> Result<(), &'stati
             }
         }
         // We can't return a stack-based buffer, so return a static string for now.
-        // The detailed missing-caps is available via NDREG DEBUG.
+        // More detailed missing-capability reporting is a future diagnostic.
         Err("Capability denied")
     }
 }
