@@ -500,6 +500,12 @@ pub extern "C" fn syscall_dispatch(rax: u64, rbx: u64, rcx: u64, rdx: u64, r8: u
         crate::services::process_pending_exits();
     }
 
+    // #358: deliver deferred graceful-shutdown notifications and enforce their
+    // bounded timeouts. Also runs outside every kernel lock.
+    if crate::services::has_pending_shutdowns() {
+        crate::services::process_pending_shutdowns();
+    }
+
     result
 }
 

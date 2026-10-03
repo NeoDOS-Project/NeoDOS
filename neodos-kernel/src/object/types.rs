@@ -159,6 +159,10 @@ pub enum ObInfoClass {
     TimeZone = 40,
     /// RTC time converted to local time by the kernel — #357.
     LocalDateTime = 41,
+    /// #358: query whether a graceful shutdown has been requested for the
+    /// caller's service. Returns a single byte: 0 = normal, 1 = shutdown
+    /// requested. Read on the caller's own Process object.
+    ProcessShutdownState = 42,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).

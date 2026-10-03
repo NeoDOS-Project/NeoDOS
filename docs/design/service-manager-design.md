@@ -130,8 +130,9 @@ pub enum ServiceState {
     Stopped   = 0,  // Not running, ready to start
     Starting  = 1,  // Process spawned, waiting for init handshake
     Running   = 2,  // Process active (PID tracked)
-    Stopping  = 3,  // Stop requested, process being terminated
+    Stopping  = 3,  // Immediate termination in progress (legacy/forced)
     Failed    = 4,  // Process crashed and restart policy exhausted
+    StopPending = 5, // #358: graceful stop requested, awaiting voluntary exit
 }
 ```
 
@@ -339,6 +340,91 @@ Valid transitions with conditions:
 - Reads via `ob_query_info` lock only to copy data out, then release
 - Process exit monitoring via KWait (already thread-safe)
 - Dependency resolution runs once at init (boot), then cached
+
+### 3.10 Graceful Shutdown Notification (#358)
+
+`stop_service()` no longer terminates the process directly. It requests a
+graceful shutdown and lets the service clean up and exit voluntarily, with a
+bounded-timeout forced-termination fallback. This section is the authoritative
+description of the contract.
+
+#### Contract
+
+```text
+ServiceManager::stop_service(timeout_ms)
+        │  (holds SERVICE_MANAGER; must not block)
+        ▼
+Running → StopPending,  shutdown_requested = true,  stop_deadline = now + timeout
+        │  enqueue pending-shutdown request (bounded, allocation-free)
+        ▼
+process_pending_shutdowns()          ── runs in syscall context, outside all locks
+        │  (the request stays queued while the service is StopPending, so
+        │   the deadline is re-checked on every drain)
+        │
+        ├── first delivery → queue a user APC to each service thread
+        │                    (wakes an alertable wait / sets the flag)
+        │
+        └── deadline elapsed → kill_process(pid)   (forced termination)
+        │
+        ▼
+service observes request → cleanup → sys_exit(0)
+        │
+        ▼
+scheduler terminate_current ──┐
+scheduler kill_pid (forced) ──┴─→ notify_process_exit → deferred queue
+        │
+        ▼
+process_pending_exits → on_process_exit_by_pid
+        │
+        ▼
+StopPending → Stopped   (never restarted)
+```
+
+**Notification mechanism.** The Service Manager uses the existing **user APC**
+delivery (`crate::apc::queue_user_apc`) to wake a service that is in an alertable
+wait. The service observes the request by polling with `sys_sleep_ex`
+(RAX 3 — alertable yield that cedes the CPU and dispatches a pending user APC)
+and/or reading the flag. No new IPC mechanism, object type, or syscall is
+introduced. The authoritative "shutdown requested" state is the
+`Service.shutdown_requested` field, read from Ring 3 through
+`ObInfoClass::ProcessShutdownState` (42) on the caller's own Process object.
+A `Service.shutdown_notified` flag ensures the APC is delivered only once, even
+though the request is re-checked on later drains.
+
+**Service side.** A Ring 3 service polls `libneodos::service::shutdown_requested()`
+between alertable yields (`sys_sleep_ex`), then flushes its state, closes its
+handles, and calls `sys_exit(0)`.
+
+**Timeout.** `stop_service(timeout_ms)`; `timeout_ms == 0` selects
+`DEFAULT_STOP_TIMEOUT_MS` (5000 ms), matching the design document's 5 s
+start/stop handshake convention. Deadlines are absolute tick values
+(`hal::get_ticks()`), so behaviour is deterministic and never busy-waits. While a
+service remains `StopPending` its queued request is retained and its deadline is
+re-evaluated on each drain; the request is dropped only once the service exits
+(finished by #374) or the forced kill has been delivered.
+
+**Forced termination.** Still available and unchanged: when
+`stop_deadline_elapsed()` is true, the deferred drain calls `kill_process(pid)`.
+`kill_pid` enqueues the same #374 `notify_process_exit` notification that
+`terminate_current` uses for voluntary exits, so both paths converge on
+`on_process_exit_by_pid` — there is no second service-finalization mechanism. If
+the process is already gone when the forced kill is attempted, the exit is
+re-enqueued through the same #374 path so the service can never remain stuck in
+`StopPending`.
+
+**Intentional stop vs crash.** A service in `StopPending` that exits is
+`Stopped`, never restarted, regardless of restart policy or exit code. The
+`shutdown_requested` flag is cleared on exit, so a request that races a natural
+exit is still honoured as an intentional stop.
+
+**Lock order.** No lock is held while notifying or waiting. `stop_service` only
+mutates Service Manager state and enqueues; the actual APC queueing and
+`kill_process` happen in `process_pending_shutdowns` outside `SERVICE_MANAGER`
+and the scheduler lock, using `try_lock` + bounded queues exactly like #374. The
+scheduler-side notification (`kill_pid` → `notify_process_exit`,
+`apc::request_process_shutdown_notification`) runs under the scheduler lock and
+uses the same lock-free, `try_lock`-based deferred queues, so no
+`SCHEDULER → SERVICE_MANAGER` blocking acquisition is introduced.
 
 ---
 

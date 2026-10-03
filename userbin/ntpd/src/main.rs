@@ -128,17 +128,37 @@ fn rdtsc() -> u64 {
 }
 
 /// Wait approximately `secs` seconds by spinning on the TSC while yielding.
-fn wait_seconds(secs: u32) {
+///
+/// #358: the wait is interruptible. It periodically enters an alertable wait
+/// and checks for a graceful-shutdown request; it returns `true` when shutdown
+/// was requested so the caller can clean up and exit voluntarily.
+fn wait_seconds(secs: u32) -> bool {
     let budget = secs as u64 * 1000 * TICKS_PER_MS;
     let start = rdtsc();
     loop {
+        if libneodos::service::shutdown_requested() {
+            return true;
+        }
         if rdtsc().wrapping_sub(start) >= budget {
-            break;
+            return false;
         }
         for _ in 0..YIELD_BATCH {
-            let _ = syscall::sys_yield();
+            // Alertable yield: cedes the CPU and dispatches a pending user APC
+            // (the shutdown notification) without blocking indefinitely.
+            let _ = syscall::sys_sleep_ex();
         }
     }
+}
+
+/// Finish a voluntary shutdown: publish final state and exit Ring 3.
+///
+/// Only resources that actually exist are released. ntpd holds no long-lived
+/// handles (each operation opens and closes its own), so the cleanup is the
+/// status flush plus the final `sys_exit`.
+fn graceful_exit() -> ! {
+    write_str(b"[ntpd] shutdown requested; flushing status and exiting\r\n");
+    publish("Stopped", "", 0, 0, 0, 0, "", 0);
+    syscall::sys_exit(0);
 }
 
 // ── Clock ──
@@ -432,7 +452,11 @@ pub extern "C" fn _start() -> ! {
         write_str(b"[ntpd] NTP disabled by configuration; idling\r\n");
         publish("Disabled", "", 0, 0, 0, 0, "", 0);
         loop {
-            let _ = syscall::sys_yield();
+            // #358: observe graceful shutdown even while idling.
+            if libneodos::service::shutdown_requested() {
+                graceful_exit();
+            }
+            let _ = syscall::sys_sleep_ex();
         }
     }
 
@@ -443,7 +467,9 @@ pub extern "C" fn _start() -> ! {
         if !network_ready() {
             write_str(b"[ntpd] network not ready; waiting\r\n");
             publish("WaitingNetwork", "", 0, 0, 0, 0, "network unavailable", sync_count);
-            wait_seconds(backoff);
+            if wait_seconds(backoff) {
+                graceful_exit();
+            }
             backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
             continue;
         }
@@ -507,12 +533,16 @@ pub extern "C" fn _start() -> ! {
 
         if synced {
             backoff = INITIAL_BACKOFF_SECS;
-            wait_seconds(cfg.interval);
+            if wait_seconds(cfg.interval) {
+                graceful_exit();
+            }
         } else {
             write_str(b"[ntpd] all servers failed; backoff ");
             write_u32(backoff);
             write_str(b"s\r\n");
-            wait_seconds(backoff);
+            if wait_seconds(backoff) {
+                graceful_exit();
+            }
             backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
         }
     }

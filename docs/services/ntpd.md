@@ -92,10 +92,12 @@ Stopped → Starting → Running → Stopping → Stopped
   `RestartPolicy=OnCrash`, so it starts at boot and is respawned on crash.
 - Process identity is the service name (`Ntpd`); see
   `spawn_usermode(..., name, ...)` in the Service Manager.
-- Shutdown is initiated by the Service Manager (`ServiceStop`), which
-  terminates the process. `ntpd` holds no lock or persistent handle across a
-  sync, so termination is safe; there is currently no graceful
-  shutdown-notification callback for services (tracked separately).
+- Shutdown is initiated by the Service Manager (`ServiceStop`). Since #358 this
+  is a **graceful** shutdown: the service is notified (user APC + the
+  `ProcessShutdownState` flag), and `ntpd` observes it during its alertable
+  waits, publishes `State=Stopped`, and exits voluntarily. If it does not exit
+  within the bounded timeout, the Service Manager force-terminates it (see
+  `docs/design/service-manager-design.md` §3.10).
 
 ### Failure handling
 
@@ -157,7 +159,7 @@ admin-only, matching `SetHostname`.
 | RTC resolution is 1 second, bounding offset accuracy; `libntp` still computes sub-second offsets. | This document |
 | No timed sleep in userland; periodic waits use an RDTSC budget. | #283, #307 |
 | No NTP authentication (NTS/MAC); only unauthenticated SNTP unicast. | Out of scope (see Follow-up) |
-| Service shutdown is a hard terminate; no graceful notification. | New Issue: service shutdown notification |
+| Service shutdown is now graceful (notification + bounded timeout). | #358 (resolved) |
 
 ## 7.1 Build/packaging dependency
 
