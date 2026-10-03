@@ -219,6 +219,7 @@ pub fn map_bar_mmio(bus: u8, dev: u8, func: u8, bar_index: u8) -> Option<(u64, u
 
 pub fn register_tests() {
     use crate::test_case;
+    use crate::test_eq;
     use crate::test_true;
 
     test_case!("pci_bus0_has_devices", {
@@ -306,5 +307,18 @@ pub fn register_tests() {
         }
         test_true!(bridges == 0);
         test_true!(multi_devs >= 1);
+    });
+
+    // Moved from hal/pci.rs: this check crosses the HAL ECAM helpers and the
+    // legacy PIO path owned by this module.
+    test_case!("ecam_read_match_legacy_pio", {
+        if crate::hal::pci::ecam_is_active() {
+            let saved_base = crate::hal::pci::ecam_base();
+            let ecam_vendor = unsafe { crate::hal::pci::ecam_read_config_word(0, 0, 0, 0) };
+            crate::hal::pci::ecam_deactivate();
+            let pio_vendor = pci_config_read_word(0, 0, 0, 0);
+            test_eq!(ecam_vendor, pio_vendor);
+            crate::hal::pci::set_ecam_base(saved_base);
+        }
     });
 }

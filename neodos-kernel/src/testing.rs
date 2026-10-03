@@ -275,6 +275,8 @@ pub fn register_tests() {
     crate::security::register_security_tests();
     // A2.1: PCIe ECAM tests
     crate::hal::pci::register_tests();
+    // HPET/MCFG ownership tests
+    crate::timers::hpet::register_tests();
     // A2.2: I/O APIC tests
     crate::interrupts::ioapic::register_tests();
     // NT5.5: Unified resource namespace (URN) tests

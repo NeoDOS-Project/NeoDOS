@@ -716,4 +716,18 @@ pub fn sleep_us(us: u64) {
     }
 }
 
+// ── Tests ──────────────────────────────────────────────────────────
+
+/// Register HPET/ACPI tests. Called from the kernel test harness.
+pub fn register_tests() {
+    // Moved from hal/pci.rs: MCFG parsing owns the ECAM base, so the check
+    // belongs to the module that parses the table.
+    crate::testing::register("hpet_ecam_mcfg_table_parse", || {
+        if let Some((base, _seg, _start, _end)) = get_ecam_info() {
+            crate::test_true!(base > 0);
+        }
+        Ok(())
+    });
+}
+
 
