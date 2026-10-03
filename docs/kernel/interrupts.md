@@ -52,6 +52,8 @@ A page fault occurring while IRQL >= DISPATCH_LEVEL triggers a `BUGCHECK(KI_EXCE
 
 File: `src/interrupts/ioapic.rs`. Detected via MADT (ACPI Multiple APIC Description Table). Legacy PIC is masked and disabled during initialization.
 
+Register access uses the IOREGSEL/IOWIN window; a `fence(Ordering::SeqCst)` orders the select write before the window access. Migration of this MMIO access to `hal::mmio` is tracked in #428.
+
 ### ISA IRQ Routing
 
 | ISA IRQ | Device | Vector | I/O APIC Pin |
@@ -101,7 +103,7 @@ pub fn configure_msix_entries(
 );  // Batch setup with auto-vector allocation
 ```
 
-Each MSI-X table entry is 16 bytes: message address (64-bit), message data (32-bit), vector control (16-bit) + reserved. `configure_msix_entry` maps the MSI-X BAR, writes the table entry, and sets the function's MSI-X enable bit in the PCI capability register.
+Each MSI-X table entry is 16 bytes: message address (64-bit), message data (32-bit), vector control (16-bit) + reserved. `configure_msix_entry` maps the MSI-X BAR, writes the table entry, and sets the function's MSI-X enable bit in the PCI capability register. The table is device MMIO: entry writes use `write_volatile` (fixed in #421); migration to `hal::mmio` is tracked in #430.
 
 ## DPC Engine
 
@@ -124,7 +126,7 @@ pub fn dpc_dispatch_pending();
 
 ### Integration Points
 
-- **Timer ISR exit** (`src/interrupts/idt.rs`): `dpc_dispatch_pending()` called after timer interrupt handler completes
+- **Timer ISR exit** (`src/arch/x64/idt/mod.rs`): `dpc_dispatch_pending()` called after timer interrupt handler completes
 - **Syscall return** (`clear_need_resched`): flush pending DPCs before returning to user mode
 
 ### Tests
@@ -171,7 +173,7 @@ Uses `CallFunctionPayload` with atomic func pointer and ack counter. Target CPUs
 
 ### EOI
 
-All vectors >= 32: `ack_irq()` sends End-Of-Interrupt to the Local APIC. The IPI vectors (0xF0-0xF2) are below 32 but still go through the APIC; their ISR handlers call `ack_irq()` explicitly.
+All vectors >= 32: `ack_irq()` (in `src/hal/x64/irq.rs`) sends End-Of-Interrupt to the Local APIC. The IPI vectors (0xF0-0xF2) are below 32 but still go through the APIC; their ISR handlers call `ack_irq()` explicitly. `ack_irq` currently queries the IOAPIC/LAPIC state directly; removing that HAL → `interrupts`/`timers` dependency is tracked in #437.
 
 ## Source Files
 
@@ -182,4 +184,4 @@ All vectors >= 32: `ack_irq()` sends End-Of-Interrupt to the Local APIC. The IPI
 | `src/interrupts/msi.rs` | MSI-X entry programming, batch setup |
 | `src/dpc/mod.rs` | Per-CPU DPC queues, dispatch engine |
 | `src/arch/x64/ipi.rs` | IPI vectors, TLB shootdown, call function |
-| `src/interrupts/idt.rs` | IDT setup, timer ISR, DPC dispatch hook |
+| `src/arch/x64/idt/mod.rs` | IDT setup, timer ISR, DPC dispatch hook |

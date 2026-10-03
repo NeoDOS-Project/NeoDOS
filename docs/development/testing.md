@@ -2,7 +2,7 @@
 
 ## Overview
 
-In-kernel test harness. No external test runner required. 805 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
+In-kernel test harness. No external test runner required. 820 tests across 50+ suites compiled directly into the kernel image. Tests execute in kernel mode and can exercise all subsystems including privileged operations.
 
 Two execution paths:
 
@@ -50,7 +50,7 @@ test_case!("my_test", {
   neodev test
   ```
 
-  Expected result is `754/754 PASS`.
+  Expected result is `820/820 PASS`.
 - **Serial log growth.** `neodev test` writes `qemu_output.log` (gitignored). Very
   large logs (hundreds of MB) can destabilise the run; rotate/delete it if a run
   exits early.
@@ -117,3 +117,14 @@ test_case!("my_test", {
 6. Verify the new test appears in the PASS/FAIL output.
 
 The test name appears in the serial log and `neodev test` output, making it easy to identify failures in CI or manual testing.
+
+## HAL tests
+
+- HAL tests are registered from `src/hal/tests.rs` (`register_hal_tests`).
+- Tests that depend on x86_64 state use the `x64_` prefix (e.g.
+  `x64_cr2_page_fault_addr`, `x64_msr_raw_safe_match`).
+- Device-register MMIO has a smoke test, `hal_mmio_roundtrip`
+  (`src/hal/mmio.rs`), which round-trips the `hal::mmio` helpers over normal
+  mapped memory.
+- Asm placement (HAL assembly confined to `src/hal/raw/`) is enforced by
+  tooling/grep, not by a kernel test.
