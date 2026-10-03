@@ -14,8 +14,7 @@ pub extern "C" fn ack_irq(vector: u8) {
     unsafe {
         // Always send APIC EOI for all vectors when Local APIC is present.
         if let Some(base) = apic_eoi_base() {
-            let eoi_ptr = (base + 0x0B0) as *mut u32;
-            core::ptr::write_volatile(eoi_ptr, 0);
+            crate::hal::mmio::write32((base + 0x0B0) as usize, 0);
         }
 
         // If I/O APIC is active, the PIC is disabled — no PIO EOI needed.

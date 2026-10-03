@@ -1,5 +1,4 @@
-use core::ptr::{read_volatile, write_volatile};
-use core::sync::atomic::{fence, Ordering};
+use core::ptr::read_volatile;
 use crate::log::LogSubsys;
 
 // ── MSRs ───────────────────────────────────────────────────────────
@@ -61,16 +60,12 @@ unsafe fn wrmsr(msr: u32, val: u64) {
 
 #[inline]
 unsafe fn apic_read(offset: u64) -> u32 {
-    let ptr = (APIC_BASE + offset) as *const u32;
-    fence(Ordering::SeqCst);
-    read_volatile(ptr)
+    crate::hal::mmio::read32((APIC_BASE + offset) as usize)
 }
 
 #[inline]
 unsafe fn apic_write(offset: u64, val: u32) {
-    let ptr = (APIC_BASE + offset) as *mut u32;
-    fence(Ordering::SeqCst);
-    write_volatile(ptr, val);
+    crate::hal::mmio::write32((APIC_BASE + offset) as usize, val);
 }
 
 // ── Public API ─────────────────────────────────────────────────────
@@ -356,16 +351,16 @@ pub unsafe fn send_ipi(apic_id: u32, vector: u8) {
 
     // Write destination APIC ID to ICR high (bits 63:24)
     let icr_high = (apic_id as u64) << 24;
-    write_volatile((base + APIC_ICR_HIGH) as *mut u32, icr_high as u32);
+    crate::hal::mmio::write32((base + APIC_ICR_HIGH) as usize, icr_high as u32);
 
     // Write vector + delivery mode to ICR low
     // Delivery mode 0 = Fixed, destination shorthand 0 = use destination field
     let icr_low = vector as u32;
-    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+    crate::hal::mmio::write32((base + APIC_ICR_LOW) as usize, icr_low);
 
     // Wait for delivery status to clear (bit 12 of ICR low)
     loop {
-        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        let val = crate::hal::mmio::read32((base + APIC_ICR_LOW) as usize);
         if (val & (1 << 12)) == 0 {
             break;
         }
@@ -378,10 +373,10 @@ pub unsafe fn send_ipi_all(vector: u8) {
 
     // ICR low: vector + delivery mode + shorthand = all including self (0b11 << 18)
     let icr_low = vector as u32 | (0b11 << 18);
-    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+    crate::hal::mmio::write32((base + APIC_ICR_LOW) as usize, icr_low);
 
     loop {
-        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        let val = crate::hal::mmio::read32((base + APIC_ICR_LOW) as usize);
         if (val & (1 << 12)) == 0 {
             break;
         }
@@ -394,10 +389,10 @@ pub unsafe fn send_ipi_all_excl_self(vector: u8) {
 
     // ICR low: vector + delivery mode + shorthand = all excluding self (0b10 << 18)
     let icr_low = vector as u32 | (0b10 << 18);
-    write_volatile((base + APIC_ICR_LOW) as *mut u32, icr_low);
+    crate::hal::mmio::write32((base + APIC_ICR_LOW) as usize, icr_low);
 
     loop {
-        let val = read_volatile((base + APIC_ICR_LOW) as *const u32);
+        let val = crate::hal::mmio::read32((base + APIC_ICR_LOW) as usize);
         if (val & (1 << 12)) == 0 {
             break;
         }
