@@ -523,6 +523,9 @@ pub enum ObSetInfoClass {
     SetHostname = 49,
     /// Set the system (RTC) clock from a `DateTime` payload. Admin-only.
     DateTime = 50,
+    /// Mark the target process object as the foreground process of the caller's
+    /// VT (the Ctrl+C target). Used by the interactive shell.
+    SetForegroundProcess = 51,
 }
 
 /// Backward-compatible constants for `ObSetInfoClass`.
@@ -537,6 +540,7 @@ pub mod ob_set_info_class {
     pub const VFS_RENAME: ObSetInfoClass = ObSetInfoClass::VfsRename;
     pub const WRITE_CONTENT: ObSetInfoClass = ObSetInfoClass::WriteContent;
     pub const SET_CWD: ObSetInfoClass = ObSetInfoClass::SetCwd;
+    pub const SET_FOREGROUND: ObSetInfoClass = ObSetInfoClass::SetForegroundProcess;
     pub const SET_VOLUME_LABEL: ObSetInfoClass = ObSetInfoClass::SetVolumeLabel;
     pub const TIMER_START: ObSetInfoClass = ObSetInfoClass::TimerStart;
     pub const TIMER_CANCEL: ObSetInfoClass = ObSetInfoClass::TimerCancel;
