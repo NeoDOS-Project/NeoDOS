@@ -15,6 +15,11 @@ IDS_CALL_USAGE = 1009
 IDS_CALL_NOT_FOUND = 1010
 IDS_CALL_READ_ERROR = 1011
 IDS_PROMPT_PAUSE = 1012
+IDS_LOCALE_CURRENT = 1013
+IDS_LOCALE_AVAILABLE = 1014
+IDS_LOCALE_SET_OK = 1015
+IDS_LOCALE_SET_ERR = 1016
+IDS_LOCALE_USAGE = 1017
 
 [strings]
 IDS_STARTUP_HINT = "Type HELP for a list of commands."
@@ -29,3 +34,8 @@ IDS_CALL_USAGE = "Usage: CALL batchfile"
 IDS_CALL_NOT_FOUND = "Batch file not found"
 IDS_CALL_READ_ERROR = "Error reading batch"
 IDS_PROMPT_PAUSE = "Press any key to continue . . ."
+IDS_LOCALE_CURRENT = "Current locale: "
+IDS_LOCALE_AVAILABLE = "Available locales:"
+IDS_LOCALE_SET_OK = "Locale set to "
+IDS_LOCALE_SET_ERR = "Could not change locale"
+IDS_LOCALE_USAGE = "Usage: LOCALE [LIST | SET <tag>]"

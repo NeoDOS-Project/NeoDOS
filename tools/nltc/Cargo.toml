@@ -9,6 +9,7 @@ name = "nltc"
 path = "src/main.rs"
 
 [dependencies]
+libnlt = { path = "../../libnlt", features = ["signatures"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1.1.2+spec-1.1.0"

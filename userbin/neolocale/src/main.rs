@@ -1,215 +1,322 @@
-#![no_std]
-#![no_main]
+//! neolocale — NLT file validator and inspector (host tool).
+//!
+//! Operates directly on `.nlt` files on the host filesystem. It shares the
+//! `libnlt` format library with the runtime and the compiler, so what it
+//! validates is exactly what the kernel/userland will accept.
 
-use libneodos::i18n;
-use libneodos::syscall;
-use libneodos::tr_id;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
-const APP_NAME: &str = "neolocale";
-const IDS_TOOL_USAGE: u32 = 1001;
-const IDS_TOOL_VALIDATE: u32 = 1002;
-const IDS_TOOL_STATS: u32 = 1003;
-const IDS_TOOL_DIFF: u32 = 1004;
-const IDS_TOOL_CHECK: u32 = 1005;
-const IDS_TOOL_CREATE: u32 = 1006;
-const IDS_STATUS_VALID: u32 = 1007;
-const IDS_STATUS_INVALID: u32 = 1008;
-const IDS_ERROR_CANNOT_OPEN: u32 = 1009;
-const IDS_ERROR_UNKNOWN_CMD: u32 = 1010;
+use libnlt::lang::id_to_lang;
+use libnlt::{self, ENTRY_FLAG_PLURAL, MAGIC_V2, MAGIC_V3};
 
-fn write_str(s: &[u8]) {
-    let _ = syscall::sys_write(1, s);
+fn usage() {
+    eprintln!("neolocale — NLT file validator/inspector");
+    eprintln!();
+    eprintln!("Usage:");
+    eprintln!("  neolocale validate <file.nlt>      Validate a single NLT file");
+    eprintln!("  neolocale stats <file.nlt>         Show entry statistics");
+    eprintln!("  neolocale diff <a.nlt> <b.nlt>     Compare two NLT files");
+    eprintln!("  neolocale check <dir> [base]       Check translation coverage across locales");
+    eprintln!("  neolocale create <app> <language>  Print a starter TOML source");
+    eprintln!("  neolocale info <file.nlt>          Alias of stats");
 }
 
-fn write_err(s: &[u8]) {
-    let _ = syscall::sys_write(2, s);
-}
-
-fn print_usage() {
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TOOL_USAGE).as_bytes());
-    write_str(b"\r\n\r\n");
-    write_str(tr_id!(IDS_TOOL_VALIDATE).as_bytes());
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TOOL_STATS).as_bytes());
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TOOL_DIFF).as_bytes());
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TOOL_CHECK).as_bytes());
-    write_str(b"\r\n");
-    write_str(tr_id!(IDS_TOOL_CREATE).as_bytes());
-    write_str(b"\r\n\r\n");
-}
-
-fn read_nlt_header(path: &str) -> Result<[u8; 32], ()> {
-    let mut ob_buf = [0u8; 512];
-    let prefix = b"\\Global\\FileSystem\\";
-    let (total, is_prefixed) = if path.as_bytes().starts_with(prefix) {
-        let total = path.len();
-        if total > 511 { return Err(()); }
-        ob_buf[..total].copy_from_slice(path.as_bytes());
-        (total, true)
-    } else {
-        let total = prefix.len() + path.len();
-        if total > 511 { return Err(()); }
-        ob_buf[..prefix.len()].copy_from_slice(prefix);
-        ob_buf[prefix.len()..total].copy_from_slice(path.as_bytes());
-        (total, false)
-    };
-    let _ = is_prefixed;
-    let ob_path = core::str::from_utf8(&ob_buf[..total]).map_err(|_| ())?;
-
-    let fd = syscall::sys_ob_open(ob_path, libneodos::syscall::ob_access::READ).map_err(|_| ())?;
-    let mut header = [0u8; 32];
-    let n = syscall::sys_read(fd, &mut header).map_err(|_| ())?;
-    let _ = syscall::sys_close(fd);
-    if n < 32 { return Err(()); }
-    Ok(header)
-}
-
-fn cmd_validate(path: &[u8]) {
-    let path_str = core::str::from_utf8(path).unwrap_or("");
-    if path_str.is_empty() {
-        write_err(b"  ");
-        write_err(tr_id!(IDS_ERROR_CANNOT_OPEN).as_bytes());
-        write_err(b"\r\n");
-        return;
+fn read(path: &Path) -> Option<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            eprintln!("ERROR: cannot read '{}': {e}", path.display());
+            None
+        }
     }
+}
 
-    match read_nlt_header(path_str) {
-        Ok(header) => {
-            let magic = &header[0..4];
-            let valid = magic == b"NLT2"
-                && u16::from_le_bytes([header[4], header[5]]) == 2
-                && u16::from_le_bytes([header[6], header[7]]) >= 32;
-            write_str(b"  ");
-            if valid {
-                write_str(tr_id!(IDS_STATUS_VALID).as_bytes());
-            } else {
-                write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
+type EntryMap = Vec<(u32, String)>;
+
+fn decoded_entries(data: &[u8]) -> Option<(libnlt::Header, EntryMap)> {
+    let header = libnlt::parse_header(data)?;
+    let mut scratch = vec![0u8; header.payload_size as usize + 16];
+    let mut out = vec![0u8; header.payload_size as usize + header.region_size as usize + 16];
+    let decoded = libnlt::decode(data, &mut scratch, &mut out)?;
+
+    let mut map = EntryMap::new();
+    for i in 0..header.entry_count as usize {
+        let (id, off, flags) = libnlt::read_index(decoded.payload, header.version, i)?;
+        let text = if flags & ENTRY_FLAG_PLURAL != 0 {
+            let base = off as usize;
+            let count = *decoded.payload.get(base)? as usize;
+            let mut forms = Vec::new();
+            for c in 0..count {
+                let rel = *decoded.payload.get(base + 1 + c)? as usize;
+                let s = libnlt::str_at(decoded.payload, (base + rel) as u32).unwrap_or("");
+                if !s.is_empty() {
+                    forms.push(s.to_string());
+                }
             }
-            write_str(b"\r\n");
-        }
-        Err(_) => {
-            write_err(b"  ");
-            write_err(tr_id!(IDS_ERROR_CANNOT_OPEN).as_bytes());
-            write_err(b"\r\n");
-        }
+            format!("<plural: {}>", forms.join(" | "))
+        } else {
+            libnlt::str_at(decoded.payload, off).unwrap_or("").to_string()
+        };
+        map.push((id, text));
     }
+    Some((header, map))
 }
 
-fn cmd_stats(path: &[u8]) {
-    let path_str = core::str::from_utf8(path).unwrap_or("");
-    if path_str.is_empty() {
-        write_err(b"  ");
-        write_err(tr_id!(IDS_ERROR_CANNOT_OPEN).as_bytes());
-        write_err(b"\r\n");
-        return;
-    }
-
-    match read_nlt_header(path_str) {
-        Ok(header) => {
-            let magic = &header[0..4];
-            if magic != b"NLT2" {
-                write_str(b"  ");
-                write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
-                write_str(b"\r\n");
-                return;
-            }
-            let count = u32::from_le_bytes([header[16], header[17], header[18], header[19]]);
-            let lang_id = u32::from_le_bytes([header[8], header[9], header[10], header[11]]);
-            let app_id = u32::from_le_bytes([header[12], header[13], header[14], header[15]]);
-
-            write_str(b"  Strings: ");
-            write_u32(count);
-            write_str(b", Language ID: ");
-            write_u32(lang_id);
-            write_str(b", App ID: ");
-            write_u32(app_id);
-            write_str(b"\r\n");
-        }
-        Err(_) => {
-            write_str(b"  ");
-            write_str(tr_id!(IDS_STATUS_INVALID).as_bytes());
-            write_str(b"\r\n");
-        }
-    }
-}
-
-fn write_u32(mut v: u32) {
-    if v == 0 { write_str(b"0"); return; }
-    let mut buf = [0u8; 10];
-    let mut i = 9;
-    while v > 0 {
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-        i -= 1;
-    }
-    write_str(&buf[i + 1..]);
-}
-
-fn cmd_check(args: &[u8]) {
-    write_str(b"  ");
-    write_str(tr_id!(IDS_TOOL_CHECK).as_bytes());
-    write_str(b"\r\n");
-}
-
-fn cmd_diff(args: &[u8]) {
-    write_str(b"  ");
-    write_str(tr_id!(IDS_TOOL_DIFF).as_bytes());
-    write_str(b"\r\n");
-}
-
-fn cmd_create(args: &[u8]) {
-    write_str(b"  ");
-    write_str(tr_id!(IDS_TOOL_CREATE).as_bytes());
-    write_str(b"\r\n");
-}
-
-fn is_cmd(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.eq_ignore_ascii_case(b)
-}
-
-#[no_mangle]
-pub extern "C" fn _start() -> ! {
-    i18n::i18n_init();
-    let _ = i18n::i18n_load(APP_NAME);
-
-    let raw = libneodos::args::read_args();
-    if libneodos::args::is_help_flag(&raw) {
-        print_usage();
-        syscall::sys_exit(0);
-    }
-
-    let args = libneodos::args::trim_ascii(&raw);
-    if args.is_empty() {
-        print_usage();
-        syscall::sys_exit(0);
-    }
-
-    let space = args.iter().position(|&b| b == b' ' || b == b'\t');
-    let (cmd, rest) = if let Some(pos) = space {
-        (&args[..pos], libneodos::args::trim_ascii(&args[pos + 1..]))
-    } else {
-        (args, &[][..])
+fn cmd_validate(path: &Path) -> i32 {
+    let data = match read(path) {
+        Some(d) => d,
+        None => return 1,
     };
 
-    if is_cmd(cmd, b"validate") {
-        cmd_validate(rest);
-    } else if is_cmd(cmd, b"stats") {
-        cmd_stats(rest);
-    } else if is_cmd(cmd, b"diff") {
-        cmd_diff(rest);
-    } else if is_cmd(cmd, b"check") {
-        cmd_check(rest);
-    } else if is_cmd(cmd, b"create") {
-        cmd_create(rest);
-    } else {
-        write_err(b"\r\n");
-        write_err(tr_id!(IDS_ERROR_UNKNOWN_CMD).as_bytes());
-        write_err(b"\r\n\r\n");
-        syscall::sys_exit(1);
+    let mut errors = Vec::new();
+    let magic = &data[..data.len().min(4)];
+    if magic != MAGIC_V2 && magic != MAGIC_V3 {
+        errors.push("bad magic (expected NLT2 or NLT3)".to_string());
     }
 
-    syscall::sys_exit(0)
+    match libnlt::parse_header(&data) {
+        Some(header) => {
+            if header.entry_count == 0 {
+                errors.push("table has no entries".to_string());
+            }
+            if header.is_signed() && header.signature_size != 64 {
+                errors.push("signature flag set but size != 64".to_string());
+            }
+            if header.is_v3() {
+                let mut scratch = vec![0u8; header.payload_size as usize + 16];
+                let mut out =
+                    vec![0u8; header.payload_size as usize + header.region_size as usize + 16];
+                match libnlt::decode(&data, &mut scratch, &mut out) {
+                    Some(decoded) => {
+                        // Monotonic ID order (required for binary search).
+                        let mut prev: Option<u32> = None;
+                        for i in 0..header.entry_count as usize {
+                            if let Some((id, _off, _fl)) =
+                                libnlt::read_index(decoded.payload, header.version, i)
+                            {
+                                if let Some(p) = prev {
+                                    if id <= p {
+                                        errors.push(format!("IDs not strictly ascending at #{i}"));
+                                    }
+                                }
+                                prev = Some(id);
+                            }
+                        }
+                    }
+                    None => errors.push("payload failed to decode (crc/compression/utf16)".to_string()),
+                }
+            }
+        }
+        None => errors.push("header validation failed".to_string()),
+    }
+
+    if errors.is_empty() {
+        println!("OK  {} is valid", path.display());
+        0
+    } else {
+        println!("FAILED {}:", path.display());
+        for e in &errors {
+            println!("  - {e}");
+        }
+        1
+    }
+}
+
+fn cmd_stats(path: &Path) -> i32 {
+    let data = match read(path) {
+        Some(d) => d,
+        None => return 1,
+    };
+    let (header, entries) = match decoded_entries(&data) {
+        Some(v) => v,
+        None => {
+            eprintln!("ERROR: cannot decode '{}'", path.display());
+            return 1;
+        }
+    };
+
+    println!("=== {} ===", path.display());
+    println!("  Format:      NLTv{}", header.version);
+    println!("  Language:    {} (ID={})", id_to_lang(header.language_id), header.language_id);
+    println!("  AppID:       {}", header.application_id);
+    println!("  Entries:     {}", header.entry_count);
+    println!("  Payload:     {} bytes (stored {})", header.payload_size, header.payload_stored);
+    println!(
+        "  Flags:       compressed={} utf16={} rtl={} signed={} region={}",
+        header.is_compressed(),
+        header.is_utf16(),
+        header.is_rtl(),
+        header.is_signed(),
+        header.has_region()
+    );
+    println!();
+    let show = entries.len().min(24);
+    for (id, text) in entries.iter().take(show) {
+        println!("    {id:6}: {text}");
+    }
+    if entries.len() > show {
+        println!("    ... and {} more", entries.len() - show);
+    }
+    0
+}
+
+fn cmd_diff(a: &Path, b: &Path) -> i32 {
+    let da = match read(a) {
+        Some(d) => d,
+        None => return 1,
+    };
+    let db = match read(b) {
+        Some(d) => d,
+        None => return 1,
+    };
+    let (_, ea) = match decoded_entries(&da) {
+        Some(v) => v,
+        None => {
+            eprintln!("ERROR: cannot decode '{}'", a.display());
+            return 1;
+        }
+    };
+    let (_, eb) = match decoded_entries(&db) {
+        Some(v) => v,
+        None => {
+            eprintln!("ERROR: cannot decode '{}'", b.display());
+            return 1;
+        }
+    };
+
+    let map_a: BTreeMap<u32, &str> = ea.iter().map(|(id, s)| (*id, s.as_str())).collect();
+    let map_b: BTreeMap<u32, &str> = eb.iter().map(|(id, s)| (*id, s.as_str())).collect();
+
+    let mut only_a = 0;
+    let mut only_b = 0;
+    let mut different = 0;
+
+    println!("=== diff {} <-> {} ===", a.display(), b.display());
+    for (id, sa) in &map_a {
+        match map_b.get(id) {
+            Some(sb) if sb == sa => {}
+            Some(sb) => {
+                different += 1;
+                println!("  ~ {id}: {sa:?} != {sb:?}");
+            }
+            None => {
+                only_a += 1;
+                println!("  - {id}: only in {}", a.display());
+            }
+        }
+    }
+    for (id, _) in &map_b {
+        if !map_a.contains_key(id) {
+            only_b += 1;
+            println!("  + {id}: only in {}", b.display());
+        }
+    }
+    println!();
+    println!("  {only_a} only in A, {only_b} only in B, {different} different");
+    0
+}
+
+fn cmd_check(dir: &Path, base_lang: &str) -> i32 {
+    let mut locales: Vec<PathBuf> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().is_dir() {
+                locales.push(e.path());
+            }
+        }
+    }
+    locales.sort();
+    if locales.is_empty() {
+        eprintln!("ERROR: no locale subdirectories in '{}'", dir.display());
+        return 1;
+    }
+
+    let base_dir = dir.join(base_lang);
+    let mut missing = 0usize;
+
+    for loc in &locales {
+        let tag = loc.file_name().unwrap().to_string_lossy().to_string();
+        if tag == base_lang {
+            continue;
+        }
+        let mut app_names: Vec<String> = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&base_dir) {
+            for e in rd.flatten() {
+                if e.path().extension().and_then(|x| x.to_str()) == Some("nlt") {
+                    app_names.push(e.path().file_stem().unwrap().to_string_lossy().to_string());
+                }
+            }
+        }
+        app_names.sort();
+
+        for app in &app_names {
+            let target = loc.join(format!("{app}.nlt"));
+            if !target.exists() {
+                println!("  MISSING  {tag}/{app}.nlt");
+                missing += 1;
+                continue;
+            }
+            let base = base_dir.join(format!("{app}.nlt"));
+            let data_base = std::fs::read(&base).ok();
+            let data_tgt = std::fs::read(&target).ok();
+            if let (Some(dbb), Some(dbt)) = (data_base, data_tgt) {
+                if let (Some((_, eb)), Some((_, et))) = (decoded_entries(&dbb), decoded_entries(&dbt))
+                {
+                    let ids_b: BTreeSet<u32> = eb.iter().map(|(id, _)| *id).collect();
+                    let ids_t: BTreeSet<u32> = et.iter().map(|(id, _)| *id).collect();
+                    for id in ids_b.difference(&ids_t) {
+                        println!("  UNTRANSLATED {tag}/{app}.nlt id={id}");
+                        missing += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if missing == 0 {
+        println!("OK  all locales complete relative to {base_lang}");
+        0
+    } else {
+        println!();
+        println!("{missing} issue(s) found");
+        1
+    }
+}
+
+fn cmd_create(app: &str, language: &str) -> i32 {
+    println!(
+        r#"[meta]
+app = "{app}"
+language = "{language}"
+
+[ids]
+
+[strings]
+"#
+    );
+    0
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        usage();
+        std::process::exit(1);
+    }
+    let code = match args[1].as_str() {
+        "validate" if args.len() >= 3 => cmd_validate(Path::new(&args[2])),
+        "stats" | "info" if args.len() >= 3 => cmd_stats(Path::new(&args[2])),
+        "diff" if args.len() >= 4 => cmd_diff(Path::new(&args[2]), Path::new(&args[3])),
+        "check" if args.len() >= 3 => {
+            let base = args.get(3).map(|s| s.as_str()).unwrap_or("en-US");
+            cmd_check(Path::new(&args[2]), base)
+        }
+        "create" if args.len() >= 4 => cmd_create(&args[2], &args[3]),
+        _ => {
+            usage();
+            1
+        }
+    };
+    std::process::exit(code);
 }

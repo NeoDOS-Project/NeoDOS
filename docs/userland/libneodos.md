@@ -204,6 +204,28 @@ pub fn kbd_set_repeat(delay: u32, rate: u32) -> Result<(), i64>;
 Modifier constants: `KBD_SHIFT`, `KBD_CTRL`, `KBD_ALT`, `KBD_ALTGR`,
 `KBD_CAPS`, `KBD_NUMLOCK`, `KBD_SCROLLLOCK`.
 
+### i18n (`src/i18n.rs`)
+
+Internationalization runtime. Loads NLTv2/v3 tables and looks up translated
+strings. The binary format itself lives in the shared `libnlt` crate.
+
+```rust
+pub fn i18n_init();                              // read locale from Registry
+pub fn i18n_language() -> &'static str;          // "es-ES"
+pub fn i18n_load(app: &str) -> Result<(), ()>;   // NLTv2/v3, fallback chain
+pub fn i18n_get_id(id: u32) -> &'static str;     // "?" on miss
+pub fn i18n_plural(id: u32, n: u64) -> &'static str;
+pub fn i18n_format(id: u32, args: &[&str]) -> &'static str;
+pub fn i18n_region() -> Option<Region<'static>>;
+pub fn i18n_available_locales() -> &'static str;
+pub fn i18n_is_rtl() -> bool;
+pub fn i18n_set_language(tag: &str);
+pub fn i18n_reload_all();
+```
+
+Macros: `tr_id!(ID)`, `tr_fmt!(ID, args)`, `plural_id!(ID, n)`. See
+[`nlt.md`](nlt.md) for the format, compiler (`nltc`) and tooling.
+
 ### Macros (`src/macros.rs`)
 
 ```rust

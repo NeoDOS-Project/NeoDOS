@@ -1,29 +1,23 @@
+//! Internationalization runtime for NeoDOS (Ring 3).
+//!
+//! This module is a thin loader/orchestrator on top of [`libnlt`], which owns
+//! the NLT binary format (v2 compatibility + v3 features). The old, duplicated
+//! NLTv2 parser that used to live here was removed in favour of the shared
+//! library so there is a single source of truth.
+//!
+//! Format reference: `docs/userland/nlt.md`.
+
 use core::str;
-use crate::syscall;
 
-// ── NLTv2 Binary Format ───────────────────────────────────────────────
-//
-//   Offset  Size  Field
-//   ──────  ────  ─────
-//   0       4     Magic: "NLT2"
-//   4       2     Version: u16 = 2
-//   6       2     HeaderSize: u16
-//   8       4     LanguageID: u32 LE
-//   12      4     ApplicationID: u32 LE
-//   16      4     StringCount: u32 LE  (= N)
-//   20      4     Flags: u32 LE
-//   24      4     Checksum: u32 LE
-//   28      4     Reserved: u32
-//   32      8*N   IndexTable: { id: u32 LE, offset: u32 LE }[N]
-//   32+8*N  ~     StringData: UTF-8 null-terminated strings
-//
-//   The index table is sorted by ID for binary search.
-//   Only NLTv2 is supported. NLTv1 (string-key) is NOT supported.
+use libnlt::{self, lang, plural, region, Header};
 
-// ── Constants ──────────────────────────────────────────────────────────
+use crate::{res, syscall};
+
+// ── Limits ─────────────────────────────────────────────────────────────
 
 const MAX_TABLES: usize = 8;
-const MAX_NLT_SIZE: usize = 16384;
+/// Maximum raw `.nlt` file size (payload + optional region/signature blocks).
+const MAX_FILE: usize = 18432;
 const MAX_APP_NAME: usize = 32;
 const MAX_LANG: usize = 16;
 
@@ -32,22 +26,41 @@ const REG_LOCALE_KEY: &str =
 const REG_LANG_VALUE: &str = "Language";
 const DEFAULT_LANG: &str = "en-US";
 
-const NLT2_MAGIC: [u8; 4] = [b'N', b'L', b'T', b'2'];
-const NLT2_HEADER_SIZE: usize = 32;
+/// When the `i18n-signatures` feature is enabled, reject unsigned tables.
+/// Left `false` so development images keep loading unsigned tables; production
+/// images flip this to enforce signatures.
+#[cfg(feature = "i18n-signatures")]
+const REQUIRE_SIGNED: bool = false;
+
+/// Development public key embedded in builds that enable `i18n-signatures`.
+#[cfg(feature = "i18n-signatures")]
+pub const NLT_DEV_PUBLIC_KEY: [u8; 32] = [
+    0xA3, 0x16, 0x89, 0xB7, 0x75, 0x2B, 0x7B, 0xEE, 0x2E, 0xDD, 0x66, 0xA2,
+    0xD5, 0x48, 0x5C, 0xBE, 0x04, 0x32, 0x0B, 0x39, 0x53, 0x78, 0x41, 0x69,
+    0x37, 0x4E, 0xE5, 0x1C, 0xB9, 0x61, 0x89, 0xF8,
+];
 
 // ── Static state ───────────────────────────────────────────────────────
 
 static mut NLT_NAMES: [[u8; MAX_APP_NAME]; MAX_TABLES] = [[0; MAX_APP_NAME]; MAX_TABLES];
 static mut NLT_NAME_LENS: [usize; MAX_TABLES] = [0; MAX_TABLES];
-static mut NLT_DATA: [[u8; MAX_NLT_SIZE]; MAX_TABLES] = [[0; MAX_NLT_SIZE]; MAX_TABLES];
+static mut NLT_DATA: [[u8; MAX_FILE]; MAX_TABLES] = [[0; MAX_FILE]; MAX_TABLES];
 static mut NLT_DATA_LENS: [usize; MAX_TABLES] = [0; MAX_TABLES];
+static mut NLT_VERSION: [u16; MAX_TABLES] = [0; MAX_TABLES];
+static mut NLT_ENTRIES: [u32; MAX_TABLES] = [0; MAX_TABLES];
+static mut NLT_LANG: [u32; MAX_TABLES] = [0; MAX_TABLES];
+static mut NLT_REGION_LENS: [usize; MAX_TABLES] = [0; MAX_TABLES];
 static mut NLT_COUNT: usize = 0;
+
+static mut LOAD_RAW: [u8; MAX_FILE] = [0; MAX_FILE];
+static mut LOAD_SCRATCH: [u8; MAX_FILE] = [0; MAX_FILE];
+static mut LOAD_OUT: [u8; MAX_FILE] = [0; MAX_FILE];
 
 static mut LANG_BUF: [u8; MAX_LANG] = [0; MAX_LANG];
 static mut LANG_LEN: usize = 0;
 static mut INITIALIZED: bool = false;
 
-// ── Internal helpers ───────────────────────────────────────────────────
+// ── Language state ─────────────────────────────────────────────────────
 
 fn lang_str() -> &'static str {
     unsafe {
@@ -68,78 +81,136 @@ fn set_lang(s: &str) {
     }
 }
 
-/// Return a null-terminated string at offset `off` within `data`.
-fn nlt_str_at(data: &[u8], off: u32) -> Option<&str> {
-    let start = off as usize;
-    if start >= data.len() {
-        return None;
-    }
-    let end = data[start..].iter().position(|&b| b == 0)?;
-    str::from_utf8(&data[start..start + end]).ok()
+fn active_lang_id() -> u32 {
+    lang::lang_to_id(lang_str())
 }
 
-fn validate_nltv2(data: &[u8]) -> Option<u32> {
-    if data.len() < NLT2_HEADER_SIZE {
-        return None;
-    }
-    if &data[..4] != NLT2_MAGIC {
-        return None;
-    }
-    let ver = u16::from_le_bytes([data[4], data[5]]);
-    if ver != 2 {
-        return None;
-    }
-    let count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-    let min_size = NLT2_HEADER_SIZE + count as usize * 8;
-    if data.len() < min_size {
-        return None;
-    }
-    Some(count)
+// ── Table storage ──────────────────────────────────────────────────────
+
+unsafe fn table_name(idx: usize) -> &'static str {
+    let ptr = core::ptr::addr_of!(NLT_NAMES[idx]) as *const u8;
+    let s = core::slice::from_raw_parts(ptr, NLT_NAME_LENS[idx]);
+    str::from_utf8(s).unwrap_or("")
 }
 
-/// Binary search for string ID in NLTv2 data.
-/// Returns the string data slice or None.
-fn nlt_lookup_id(data: &[u8], id: u32) -> Option<&str> {
-    let count = u32::from_le_bytes([data[16], data[17], data[18], data[19]]);
-    if count == 0 {
+unsafe fn table_payload(idx: usize) -> &'static [u8] {
+    let ptr = core::ptr::addr_of!(NLT_DATA[idx]) as *const u8;
+    core::slice::from_raw_parts(ptr, NLT_DATA_LENS[idx])
+}
+
+unsafe fn table_region(idx: usize) -> Option<region::Region<'static>> {
+    let len = NLT_REGION_LENS[idx];
+    if len == 0 {
         return None;
     }
-
-    let entry_size = 8usize;
-    let index_start = NLT2_HEADER_SIZE;
-
-    let mut lo = 0i32;
-    let mut hi = count as i32 - 1;
-
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let off = index_start + mid as usize * entry_size;
-        let mid_id = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
-        if mid_id == id {
-            let str_off = u32::from_le_bytes([data[off + 4], data[off + 5], data[off + 6], data[off + 7]]);
-            return nlt_str_at(data, str_off);
-        } else if mid_id < id {
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    None
+    // The region block is stored immediately after the payload.
+    let ptr = (core::ptr::addr_of!(NLT_DATA[idx]) as *const u8).add(NLT_DATA_LENS[idx]);
+    region::parse(core::slice::from_raw_parts(ptr, len))
 }
 
 fn find_table_idx(app: &str) -> Option<usize> {
     unsafe {
         for i in 0..NLT_COUNT {
-            let ptr = core::ptr::addr_of!(NLT_NAMES[i]) as *const u8;
-            let name_slice = core::slice::from_raw_parts(ptr, NLT_NAME_LENS[i]);
-            if let Ok(name) = str::from_utf8(name_slice) {
-                if name == app {
-                    return Some(i);
-                }
+            if table_name(i) == app {
+                return Some(i);
             }
         }
     }
     None
+}
+
+/// Store a decoded table in the next free slot. Returns false when full or the
+/// payload does not fit.
+fn store_table(app: &str, header: &Header, payload: &[u8], region_raw: Option<&[u8]>) -> bool {
+    unsafe {
+        let idx = NLT_COUNT;
+        if idx >= MAX_TABLES || payload.len() > MAX_FILE {
+            return false;
+        }
+        let app_bytes = app.as_bytes();
+        if app_bytes.len() > MAX_APP_NAME {
+            return false;
+        }
+        let region_len = region_raw.map(|r| r.len()).unwrap_or(0);
+        if payload.len() + region_len > MAX_FILE {
+            return false;
+        }
+
+        NLT_DATA[idx][..payload.len()].copy_from_slice(payload);
+        if region_len > 0 {
+            NLT_DATA[idx][payload.len()..payload.len() + region_len]
+                .copy_from_slice(region_raw.unwrap());
+        }
+        NLT_DATA_LENS[idx] = payload.len();
+        NLT_REGION_LENS[idx] = region_len;
+        NLT_VERSION[idx] = header.version;
+        NLT_ENTRIES[idx] = header.entry_count;
+        NLT_LANG[idx] = header.language_id;
+
+        NLT_NAMES[idx][..app_bytes.len()].copy_from_slice(app_bytes);
+        NLT_NAME_LENS[idx] = app_bytes.len();
+        NLT_COUNT = idx + 1;
+    }
+    true
+}
+
+fn try_load_table(app: &str, locale: &str) -> Result<(), ()> {
+    let path_buf = build_nlt_path(app, locale)?;
+    let path_str = str::from_utf8(&path_buf.0[..path_buf.1]).map_err(|_| ())?;
+
+    const FS_PREFIX: &str = "\\Global\\FileSystem\\";
+    let mut ob_buf = [0u8; 512];
+    let ob_bytes = FS_PREFIX.as_bytes();
+    let vfs_bytes = path_str.as_bytes();
+    let total = ob_bytes.len() + vfs_bytes.len();
+    if total >= 510 {
+        return Err(());
+    }
+    ob_buf[..ob_bytes.len()].copy_from_slice(ob_bytes);
+    ob_buf[ob_bytes.len()..total].copy_from_slice(vfs_bytes);
+    let ob_path = unsafe { str::from_utf8_unchecked(&ob_buf[..total]) };
+
+    let fd = syscall::sys_ob_open(ob_path, syscall::ob_access::READ).map_err(|_| ())?;
+    let n = unsafe {
+        match syscall::sys_ob_query_info(
+            fd,
+            syscall::ObInfoClass::ReadContent,
+            &mut *core::ptr::addr_of_mut!(LOAD_RAW),
+        ) {
+            Ok(n) => n,
+            Err(_) => {
+                let _ = syscall::sys_close(fd);
+                return Err(());
+            }
+        }
+    };
+    let _ = syscall::sys_close(fd);
+
+    if n > MAX_FILE {
+        return Err(());
+    }
+
+    let data: &[u8] = unsafe { &LOAD_RAW[..n] };
+
+    // Optional signature verification.
+    if !verify_if_signed(data) {
+        return Err(());
+    }
+
+    let header = libnlt::parse_header(data).ok_or(())?;
+    let decoded = unsafe {
+        libnlt::decode(
+            data,
+            &mut *core::ptr::addr_of_mut!(LOAD_SCRATCH),
+            &mut *core::ptr::addr_of_mut!(LOAD_OUT),
+        )
+        .ok_or(())?
+    };
+
+    if !store_table(app, &header, decoded.payload, decoded.region_raw) {
+        return Err(());
+    }
+    Ok(())
 }
 
 fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
@@ -165,52 +236,9 @@ fn build_nlt_path(app: &str, locale: &str) -> Result<([u8; 256], usize), ()> {
     Ok((buf, pos))
 }
 
-fn try_load_table(app: &str, locale: &str) -> Result<(), ()> {
-    let (path_buf, path_len) = build_nlt_path(app, locale)?;
-    let path_slice = &path_buf[..path_len];
-    let path_str = str::from_utf8(path_slice).map_err(|_| ())?;
-
-    const FS_PREFIX: &str = "\\Global\\FileSystem\\";
-    let mut ob_buf = [0u8; 512];
-    let ob_bytes = FS_PREFIX.as_bytes();
-    let vfs_bytes = path_str.as_bytes();
-    let total = ob_bytes.len() + vfs_bytes.len();
-    if total >= 510 { return Err(()); }
-    ob_buf[..ob_bytes.len()].copy_from_slice(ob_bytes);
-    ob_buf[ob_bytes.len()..total].copy_from_slice(vfs_bytes);
-    let ob_path = unsafe { core::str::from_utf8_unchecked(&ob_buf[..total]) };
-
-    let fd = syscall::sys_ob_open(ob_path, syscall::ob_access::READ).map_err(|_| ())?;
-
-    let mut buf = [0u8; MAX_NLT_SIZE];
-    let n = syscall::sys_ob_query_info(fd, syscall::ObInfoClass::ReadContent, &mut buf)
-        .map_err(|_| ())?;
-
-    let _ = syscall::sys_close(fd);
-
-    if validate_nltv2(&buf[..n]).is_none() {
-        return Err(());
-    }
-
-    unsafe {
-        let idx = NLT_COUNT;
-        if idx >= MAX_TABLES {
-            return Err(());
-        }
-        let app_bytes = app.as_bytes();
-        NLT_NAMES[idx][..app_bytes.len()].copy_from_slice(app_bytes);
-        NLT_NAME_LENS[idx] = app_bytes.len();
-        NLT_DATA[idx][..n].copy_from_slice(&buf[..n]);
-        NLT_DATA_LENS[idx] = n;
-        NLT_COUNT = idx + 1;
-    }
-    Ok(())
-}
-
 // ── Public API ─────────────────────────────────────────────────────────
 
-/// Initialise the i18n subsystem.
-/// Reads `Language` from Registry, falls back to `"en-US"`.
+/// Initialise the i18n subsystem and read the active locale from the Registry.
 pub fn i18n_init() {
     unsafe {
         if INITIALIZED {
@@ -218,29 +246,25 @@ pub fn i18n_init() {
         }
         INITIALIZED = true;
     }
-    match syscall::sys_cm_open_key(REG_LOCALE_KEY) {
-        Ok(fd) => {
-            let mut buf = [0u8; 128];
-            if let Ok(size) = syscall::sys_cm_query_value(fd, REG_LANG_VALUE, &mut buf) {
-                if size > 8 {
-                    let data_len =
-                        u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-                    let end = buf.len().min(8 + data_len);
-                    let data = &buf[8..end];
-                    let trimmed = match data.iter().position(|&b| b == 0) {
-                        Some(z) => &data[..z],
-                        None => data,
-                    };
-                    if let Ok(lang) = str::from_utf8(trimmed) {
-                        if !lang.is_empty() {
-                            set_lang(lang);
-                        }
+    if let Ok(fd) = syscall::sys_cm_open_key(REG_LOCALE_KEY) {
+        let mut buf = [0u8; 128];
+        if let Ok(size) = syscall::sys_cm_query_value(fd, REG_LANG_VALUE, &mut buf) {
+            if size > 8 {
+                let data_len = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+                let end = buf.len().min(8 + data_len);
+                let data = &buf[8..end];
+                let trimmed = match data.iter().position(|&b| b == 0) {
+                    Some(z) => &data[..z],
+                    None => data,
+                };
+                if let Ok(l) = str::from_utf8(trimmed) {
+                    if !l.is_empty() {
+                        set_lang(l);
                     }
                 }
             }
-            let _ = syscall::sys_close(fd);
         }
-        Err(_) => {}
+        let _ = syscall::sys_close(fd);
     }
     unsafe {
         if LANG_LEN == 0 {
@@ -249,80 +273,145 @@ pub fn i18n_init() {
     }
 }
 
-/// Return the current language string (e.g. `"es-ES"`).
+/// Current language tag, e.g. `"es-ES"`.
 pub fn i18n_language() -> &'static str {
     lang_str()
 }
 
-/// Load the NLTv2 translation file for `app` under the current language.
+/// Active locale (alias of [`i18n_language`]).
+pub fn i18n_active_locale() -> &'static str {
+    lang_str()
+}
+
+/// Whether the active locale reads right-to-left.
+pub fn i18n_is_rtl() -> bool {
+    plural::is_rtl(active_lang_id())
+}
+
+/// Load the NLT file for `app` under the active language.
 ///
-/// Fallback chain:
-///   1. `C:\System\Locale\{lang}\{app}.nlt`
-///   2. `C:\System\Locale\{lang-only}\{app}.nlt`   (e.g. `es`)
-///   3. `C:\System\Locale\en-US\{app}.nlt`
-///
-/// Only NLTv2 format is supported.
+/// Fallback chain: `{lang}` → `{lang-only}` → `en-US`. Supports NLTv2 and
+/// NLTv3 (compressed / UTF-16 / plural / region / signed).
 pub fn i18n_load(app: &str) -> Result<(), ()> {
     if find_table_idx(app).is_some() {
         return Ok(());
     }
-    let lang = lang_str();
-
-    if try_load_table(app, lang).is_ok() {
+    let l = lang_str();
+    if try_load_table(app, l).is_ok() {
         return Ok(());
     }
-    if let Some(dash) = lang.find('-') {
-        let lang_only = &lang[..dash];
-        if lang_only != lang && try_load_table(app, lang_only).is_ok() {
+    if let Some(dash) = l.find('-') {
+        let lang_only = &l[..dash];
+        if lang_only != l && try_load_table(app, lang_only).is_ok() {
             return Ok(());
         }
     }
-    if lang != "en-US" {
-        if try_load_table(app, "en-US").is_ok() {
-            return Ok(());
-        }
+    if l != DEFAULT_LANG && try_load_table(app, DEFAULT_LANG).is_ok() {
+        return Ok(());
     }
     Err(())
 }
 
-/// Look up `id` in all loaded NLTv2 tables.
-/// Returns the translated string or `None`.
+unsafe fn lookup_in(idx: usize, id: u32) -> Option<&'static str> {
+    libnlt::lookup(table_payload(idx), NLT_VERSION[idx], NLT_ENTRIES[idx], id)
+}
+
+/// Look up `id` in all loaded tables. Returns `None` when missing.
 pub fn i18n_try_get_id(id: u32) -> Option<&'static str> {
     unsafe {
         for i in 0..NLT_COUNT {
-            let ptr = core::ptr::addr_of!(NLT_DATA[i]) as *const u8;
-            let data = core::slice::from_raw_parts(ptr, NLT_DATA_LENS[i]);
-            if let Some(val) = nlt_lookup_id(data, id) {
-                return Some(val);
+            if let Some(s) = lookup_in(i, id) {
+                return Some(s);
             }
         }
     }
     None
 }
 
-/// Look up `id` in all loaded NLTv2 tables.
-/// Returns the translation if found, otherwise returns `"?"`.
-/// **Never panics.**
+/// Look up `id`, falling back to `"?"`. **Never panics.**
 pub fn i18n_get_id(id: u32) -> &'static str {
-    match i18n_try_get_id(id) {
-        Some(s) => s,
-        None => "?",
+    i18n_try_get_id(id).unwrap_or("?")
+}
+
+/// Look up a plural group and select the form for `n`.
+pub fn i18n_plural(id: u32, n: u64) -> &'static str {
+    unsafe {
+        for i in 0..NLT_COUNT {
+            let payload = table_payload(i);
+            if let Some((off, flags)) =
+                libnlt::find_entry(payload, NLT_VERSION[i], NLT_ENTRIES[i], id)
+            {
+                if flags & libnlt::ENTRY_FLAG_PLURAL != 0 {
+                    return plural::select(payload, off, NLT_LANG[i], n).unwrap_or("?");
+                }
+                return libnlt::str_at(payload, off).unwrap_or("?");
+            }
+        }
+    }
+    "?"
+}
+
+/// Regional-format block of the first loaded table that has one.
+pub fn i18n_region() -> Option<region::Region<'static>> {
+    unsafe {
+        for i in 0..NLT_COUNT {
+            if let Some(r) = table_region(i) {
+                return Some(r);
+            }
+        }
+    }
+    None
+}
+
+/// Format a translated template identified by `id` with `{0}`, `{0:d}`, …
+pub fn i18n_format(id: u32, args: &[&str]) -> &'static str {
+    let template = i18n_get_id(id);
+    if template == "?" {
+        return "?";
+    }
+    i18n_format_str(template, args)
+}
+
+/// Format an arbitrary template with `{0}`, `{0:d}`, `{0:x}`, `{0:X}`, `{{`, `}}`.
+pub fn i18n_format_str(template: &str, args: &[&str]) -> &'static str {
+    unsafe {
+        static mut FORMAT_BUF: [u8; 256] = [0; 256];
+        let n = libnlt::format::format_template(
+            template,
+            args,
+            &mut *core::ptr::addr_of_mut!(FORMAT_BUF),
+        );
+        let s = core::slice::from_raw_parts(core::ptr::addr_of!(FORMAT_BUF) as *const u8, n);
+        str::from_utf8(s).unwrap_or("?")
     }
 }
 
-/// Unload the NLT table for `app`.
+/// Reorder a logical line into visual order for the active locale.
+pub fn i18n_reorder_visual(input: &str, out: &mut [u8]) -> usize {
+    let dir = if i18n_is_rtl() {
+        libnlt::bidi::Direction::Rtl
+    } else {
+        libnlt::bidi::Direction::Ltr
+    };
+    libnlt::bidi::reorder_visual(input, dir, out)
+}
+
+/// Unload the table for `app`.
 pub fn i18n_unload(app: &str) {
     unsafe {
         let idx = match find_table_idx(app) {
             Some(i) => i,
             None => return,
         };
-        // Shift remaining tables down
         for i in idx..NLT_COUNT - 1 {
             NLT_NAMES[i] = NLT_NAMES[i + 1];
             NLT_NAME_LENS[i] = NLT_NAME_LENS[i + 1];
             NLT_DATA[i] = NLT_DATA[i + 1];
             NLT_DATA_LENS[i] = NLT_DATA_LENS[i + 1];
+            NLT_VERSION[i] = NLT_VERSION[i + 1];
+            NLT_ENTRIES[i] = NLT_ENTRIES[i + 1];
+            NLT_LANG[i] = NLT_LANG[i + 1];
+            NLT_REGION_LENS[i] = NLT_REGION_LENS[i + 1];
         }
         if NLT_COUNT > 0 {
             NLT_COUNT -= 1;
@@ -330,10 +419,14 @@ pub fn i18n_unload(app: &str) {
     }
 }
 
-/// Reload all loaded NLT tables from disk (for hot language switching).
+/// Reload all loaded tables (hot language switch).
+pub fn i18n_set_language(tag: &str) {
+    set_lang(tag);
+}
+
+/// Reload all loaded tables (hot language switch).
 pub fn i18n_reload_all() {
     unsafe {
-        // Snapshot loaded app names
         let mut apps: [([u8; MAX_APP_NAME], usize); MAX_TABLES] =
             [([0; MAX_APP_NAME], 0); MAX_TABLES];
         let count = NLT_COUNT;
@@ -346,30 +439,23 @@ pub fn i18n_reload_all() {
             let ptr = core::ptr::addr_of!(apps[i].0) as *const u8;
             let name_slice = core::slice::from_raw_parts(ptr, apps[i].1);
             if let Ok(app_name) = str::from_utf8(name_slice) {
-                // Re-read language from registry
                 let _ = i18n_load(app_name);
             }
         }
     }
 }
 
-/// Return the active locale string (e.g. `"es-ES"`).
-pub fn i18n_active_locale() -> &'static str {
-    lang_str()
-}
-
-/// Return the number of currently loaded NLT tables (for diagnostics).
+/// Number of loaded tables (diagnostics).
 pub fn i18n_loaded_count() -> usize {
     unsafe { NLT_COUNT }
 }
 
-/// Check if a given app has its NLT table loaded.
+/// Whether `app` has a loaded table.
 pub fn i18n_is_loaded(app: &str) -> bool {
     find_table_idx(app).is_some()
 }
 
-// ── Current app name tracking ──────────────────────────────────────
-// Used by the resource system to know which app's resources to open.
+// ── Current app name ───────────────────────────────────────────────────
 
 static mut CURRENT_APP: [u8; MAX_APP_NAME] = [0; MAX_APP_NAME];
 static mut CURRENT_APP_LEN: usize = 0;
@@ -384,7 +470,7 @@ pub fn i18n_set_app_name(app: &str) {
     }
 }
 
-/// Get the current application name (for resource resolution).
+/// Current application name, if registered.
 pub fn current_app_name() -> Option<&'static str> {
     unsafe {
         if CURRENT_APP_LEN == 0 {
@@ -398,87 +484,71 @@ pub fn current_app_name() -> Option<&'static str> {
     }
 }
 
-// ── i18n_load_from_package ─────────────────────────────────────────
+// ── Package resources ──────────────────────────────────────────────────
 
-/// Load the NLTv2 translation file from the app's own package resources.
-/// This enables self-contained apps with bundled translations.
+/// Load the NLT file from the current app's own package resources.
 pub fn i18n_load_from_package() -> Result<(), ()> {
     let app = current_app_name().ok_or(())?;
     if i18n_is_loaded(app) {
         return Ok(());
     }
-    let lang = lang_str();
+    let l = lang_str();
 
-    // Build "locale/{lang}/{app}.nlt" manually (no format! in no_std)
-    let locale_prefix = b"locale/";
-    let sep = b"/";
-    let ext = b".nlt";
-    let total = locale_prefix.len() + lang.len() + sep.len() + app.len() + ext.len();
-    let mut locale_path_buf = [0u8; 256];
-    if total <= 255 {
-        let mut pos = 0;
-        locale_path_buf[pos..pos + locale_prefix.len()].copy_from_slice(locale_prefix);
-        pos += locale_prefix.len();
-        locale_path_buf[pos..pos + lang.len()].copy_from_slice(lang.as_bytes());
-        pos += lang.len();
-        locale_path_buf[pos..pos + sep.len()].copy_from_slice(sep);
-        pos += sep.len();
-        locale_path_buf[pos..pos + app.len()].copy_from_slice(app.as_bytes());
-        pos += app.len();
-        locale_path_buf[pos..pos + ext.len()].copy_from_slice(ext);
-        pos += ext.len();
+    let mut path = [0u8; 256];
+    let mut pos = 0;
+    for part in ["locale/", l, "/", app, ".nlt"] {
+        let b = part.as_bytes();
+        if pos + b.len() > path.len() {
+            return i18n_load(app);
+        }
+        path[pos..pos + b.len()].copy_from_slice(b);
+        pos += b.len();
+    }
+    let locale_path = str::from_utf8(&path[..pos]).map_err(|_| ())?;
 
-        let locale_path = str::from_utf8(&locale_path_buf[..pos]).map_err(|_| ())?;
-
-        // Try from package resources
-        if let Ok(fd) = crate::res::res_open_locale(app, locale_path) {
-            let mut buf = [0u8; MAX_NLT_SIZE];
-            let n = crate::res::res_read_all(fd, &mut buf).map_err(|_| ())?;
-            let _ = crate::syscall::sys_close(fd);
-
-            if validate_nltv2(&buf[..n]).is_none() {
-                return Err(());
-            }
-
-            unsafe {
-                let idx = NLT_COUNT;
-                if idx >= MAX_TABLES {
-                    return Err(());
-                }
-                let app_bytes = app.as_bytes();
-                NLT_NAMES[idx][..app_bytes.len()].copy_from_slice(app_bytes);
-                NLT_NAME_LENS[idx] = app_bytes.len();
-                NLT_DATA[idx][..n].copy_from_slice(&buf[..n]);
-                NLT_DATA_LENS[idx] = n;
-                NLT_COUNT = idx + 1;
-            }
+    if let Ok(fd) = res::res_open_locale(app, locale_path) {
+        let n = res::res_read_all(fd, unsafe { &mut *core::ptr::addr_of_mut!(LOAD_RAW) })
+            .map_err(|_| ())?;
+        let _ = syscall::sys_close(fd);
+        let data = unsafe { &LOAD_RAW[..n] };
+        let header = libnlt::parse_header(data).ok_or(())?;
+        let decoded = unsafe {
+            libnlt::decode(
+            data,
+            &mut *core::ptr::addr_of_mut!(LOAD_SCRATCH),
+            &mut *core::ptr::addr_of_mut!(LOAD_OUT),
+        )
+        .ok_or(())?
+        };
+        if store_table(app, &header, decoded.payload, decoded.region_raw) {
             return Ok(());
         }
     }
-
-    // Fall back to system locale directory
     i18n_load(app)
 }
 
-// ── i18n_available_locales ─────────────────────────────────────────
+// ── Available locales ──────────────────────────────────────────────────
 
-/// List available locales by enumerating `C:\System\Locale\` directories.
-/// Returns a semicolon-separated list of locale tags.
-/// Returns empty string on error.
+/// Semicolon-separated list of locales found under `C:\System\Locale\`.
 pub fn i18n_available_locales() -> &'static str {
     const LOCALE_PATH: &str = "\\Global\\FileSystem\\C:\\System\\Locale";
 
-    let mut result: [u8; 256] = [0; 256];
+    let mut result = [0u8; 256];
     let mut result_len = 0usize;
 
-    if let Ok(fd) = crate::syscall::sys_ob_open(LOCALE_PATH, crate::syscall::ob_access::READ) {
-        let mut entries: [crate::syscall::ObEnumEntry; 16] = core::array::from_fn(|_| {
-            crate::syscall::ObEnumEntry {
-                id: 0, obj_type: 0, name: [0; 32], mode: 0, _pad: [0; 2], size: 0,
+    if let Ok(fd) = syscall::sys_ob_open(LOCALE_PATH, syscall::ob_access::READ) {
+        let mut entries: [syscall::ObEnumEntry; 16] = core::array::from_fn(|_| {
+            syscall::ObEnumEntry {
+                id: 0,
+                obj_type: 0,
+                name: [0; 32],
+                mode: 0,
+                _pad: [0; 2],
+                size: 0,
             }
         });
         loop {
-            match crate::syscall::sys_ob_enum(fd, &mut entries) {
+            match syscall::sys_ob_enum(fd, &mut entries) {
                 Ok(0) | Err(_) => break,
                 Ok(count) => {
                     for i in 0..count.min(entries.len()) {
@@ -496,7 +566,7 @@ pub fn i18n_available_locales() -> &'static str {
                 }
             }
         }
-        let _ = crate::syscall::sys_close(fd);
+        let _ = syscall::sys_close(fd);
     }
 
     unsafe {
@@ -515,59 +585,43 @@ pub fn i18n_available_locales() -> &'static str {
     }
 }
 
-// ── i18n_format (placeholder-based formatting) ─────────────────────
+/// Alias of [`i18n_available_locales`].
+pub fn available_locales() -> &'static str {
+    i18n_available_locales()
+}
 
-/// Format a string with `{0}`, `{1}` placeholder substitution.
-/// Returns a formatted string from a fixed-size static buffer.
-/// The template is looked up via `i18n_get_id(id)`.
-///
-/// # Example
-/// ```ignore
-/// let s = i18n_format(1001, &["Hello", "World"]);
-/// // template "IDS_FORMAT = "{0}, {1}!" → "Hello, World!"
-/// ```
-pub fn i18n_format(id: u32, args: &[&str]) -> &'static str {
-    let template = i18n_get_id(id);
-    if template == "?" {
-        return "?";
+// ── Signature verification (optional) ──────────────────────────────────
+
+/// Verify the signature of a raw NLT file against `public_key`.
+#[cfg(feature = "i18n-signatures")]
+pub fn i18n_verify_signature(data: &[u8], public_key: &[u8; 32]) -> bool {
+    let header = match libnlt::parse_header(data) {
+        Some(h) => h,
+        None => return false,
+    };
+    if !header.is_signed() || header.signature_size != 64 {
+        return false;
     }
-
-    unsafe {
-        static mut FORMAT_BUF: [u8; 256] = [0; 256];
-        let mut pos = 0usize;
-        let template_bytes = template.as_bytes();
-        let mut i = 0;
-
-        while i < template_bytes.len() && pos < 250 {
-            if template_bytes[i] == b'{' {
-                let end = template_bytes[i + 1..].iter().position(|&b| b == b'}');
-                if let Some(end) = end {
-                    let num_str = core::str::from_utf8(&template_bytes[i + 1..i + 1 + end]);
-                    if let Ok(num_str) = num_str {
-                        if let Ok(idx) = num_str.parse::<usize>() {
-                            if idx < args.len() {
-                                let arg = args[idx].as_bytes();
-                                let to_copy = arg.len().min(255 - pos);
-                                FORMAT_BUF[pos..pos + to_copy].copy_from_slice(&arg[..to_copy]);
-                                pos += to_copy;
-                            }
-                            i += end + 2;
-                            continue;
-                        }
-                    }
-                }
-            }
-            if pos < 255 {
-                FORMAT_BUF[pos] = template_bytes[i];
-                pos += 1;
-            }
-            i += 1;
-        }
-
-        let s = core::slice::from_raw_parts(
-            core::ptr::addr_of!(FORMAT_BUF) as *const u8,
-            pos,
-        );
-        str::from_utf8(s).unwrap_or("?")
+    let sig_start = header.signature_offset as usize;
+    let sig_end = sig_start + 64;
+    if sig_end > data.len() {
+        return false;
     }
+    let mut sig = [0u8; 64];
+    sig.copy_from_slice(&data[sig_start..sig_end]);
+    // The signature covers everything before the signature block.
+    libnlt::signature::verify(public_key, &data[..sig_start], &sig)
+}
+
+#[cfg(feature = "i18n-signatures")]
+fn verify_if_signed(data: &[u8]) -> bool {
+    match libnlt::parse_header(data) {
+        Some(h) if h.is_signed() => i18n_verify_signature(data, &NLT_DEV_PUBLIC_KEY),
+        _ => !REQUIRE_SIGNED,
+    }
+}
+
+#[cfg(not(feature = "i18n-signatures"))]
+fn verify_if_signed(_data: &[u8]) -> bool {
+    true
 }

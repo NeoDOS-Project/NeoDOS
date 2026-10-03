@@ -15,6 +15,11 @@ IDS_CALL_USAGE = 1009
 IDS_CALL_NOT_FOUND = 1010
 IDS_CALL_READ_ERROR = 1011
 IDS_PROMPT_PAUSE = 1012
+IDS_LOCALE_CURRENT = 1013
+IDS_LOCALE_AVAILABLE = 1014
+IDS_LOCALE_SET_OK = 1015
+IDS_LOCALE_SET_ERR = 1016
+IDS_LOCALE_USAGE = 1017
 
 [strings]
 IDS_STARTUP_HINT = "Escriba AYUDA para una lista de comandos."
@@ -29,3 +34,8 @@ IDS_CALL_USAGE = "Uso: CALL archivo.bat"
 IDS_CALL_NOT_FOUND = "Archivo batch no encontrado"
 IDS_CALL_READ_ERROR = "Error al leer el archivo batch"
 IDS_PROMPT_PAUSE = "Presione una tecla para continuar . . ."
+IDS_LOCALE_CURRENT = "Idioma actual: "
+IDS_LOCALE_AVAILABLE = "Idiomas disponibles:"
+IDS_LOCALE_SET_OK = "Idioma cambiado a "
+IDS_LOCALE_SET_ERR = "No se pudo cambiar el idioma"
+IDS_LOCALE_USAGE = "Uso: LOCALE [LIST | SET <tag>]"

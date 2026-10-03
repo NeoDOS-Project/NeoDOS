@@ -6,6 +6,20 @@
 
 ### Added
 
+- **NLTv3 internationalization — complete NLT milestone (#90, #91, #106–#112).**
+  The NLT format now lives in a single shared, `no_std`, unit-tested crate
+  `libnlt` (39 tests) used by the compiler (`nltc`), the runtime
+  (`libneodos::i18n`) and the tools, replacing the duplicated NLTv2 parser that
+  used to live in `libneodos`. New in NLTv3: LZSS payload compression,
+  UTF-16LE string storage with UTF-8 transcoding on load, CLDR plural forms
+  (`plural_id!`), regional number/currency/date/time formatting
+  (`[region]` block), RTL detection and visual run reordering, and optional
+  Ed25519 signatures (`libnlt/signatures`, `nltc --verify`). The old
+  string-key design doc `docs/design/i18n-design.md` was removed;
+  `docs/userland/nlt.md` is now the format reference. NeoShell gained a
+  `LOCALE [LIST | SET <tag>]` built-in and `i18n_format`/`i18n_available_locales`
+  are wired up; `neolocale` was converted into a real host tool
+  (validate/stats/diff/check/create) and `nxlocale` gained a `region` command.
 - **Shared network configuration backend `libnet::config` (#363).** A single API
   for reading/writing the interface configuration and applying it to the NIC.
   `netcfg`, `dhcpd`, `ipconfig` and `netapplier` no longer hardcode

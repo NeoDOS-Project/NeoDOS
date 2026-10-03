@@ -9,6 +9,9 @@ version = "0.1.0"
 [[package]]
 name = "libneodos"
 version = "0.2.1"
+dependencies = [
+ "libnlt",
+]
 
 [[package]]
 name = "libnet"
@@ -21,6 +24,10 @@ dependencies = [
 
 [[package]]
 name = "libnet-config"
+version = "0.1.0"
+
+[[package]]
+name = "libnlt"
 version = "0.1.0"
 
 [[package]]

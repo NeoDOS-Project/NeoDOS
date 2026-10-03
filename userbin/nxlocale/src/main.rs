@@ -13,6 +13,10 @@ const IDS_ERR_UNKNOWN: u32 = 1010;
 const IDS_ERR_SET: u32 = 1011;
 const IDS_ERR_UNKNOWN_LOCALE: u32 = 1012;
 const IDS_NO_LOCALES: u32 = 1013;
+const IDS_REGION: u32 = 1014;
+const IDS_REGION_NONE: u32 = 1015;
+const IDS_RTL_ON: u32 = 1016;
+const IDS_RTL_OFF: u32 = 1017;
 
 fn write_str(s: &[u8]) {
     let _ = syscall::sys_write(1, s);
@@ -28,6 +32,7 @@ fn print_help() {
     write_str(b"  Locale management tool.\r\n");
     write_str(b"  NXLOCALE                  shows current locale\r\n");
     write_str(b"  NXLOCALE list             lists available locales\r\n");
+    write_str(b"  NXLOCALE region           shows regional formats + text direction\r\n");
     write_str(b"  NXLOCALE set <locale>     changes system locale\r\n\r\n");
 }
 
@@ -126,6 +131,40 @@ pub extern "C" fn _start() -> ! {
                 syscall::sys_exit(1);
             }
         }
+        syscall::sys_exit(0);
+    }
+
+    if is_cmd(cmd, b"region") || is_cmd(cmd, b"--region") {
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_REGION).as_bytes());
+        write_str(b"\r\n");
+        match i18n::i18n_region() {
+            Some(r) => {
+                write_str(b"  decimal: ");
+                write_str(r.decimal_separator.as_bytes());
+                write_str(b" thousands: ");
+                write_str(r.thousands_separator.as_bytes());
+                write_str(b" currency: ");
+                write_str(r.currency_symbol.as_bytes());
+                write_str(b" date: ");
+                write_str(r.date_short.as_bytes());
+                write_str(b" time: ");
+                write_str(r.time_pattern.as_bytes());
+                write_str(b"\r\n");
+            }
+            None => {
+                write_str(b"  ");
+                write_str(tr_id!(IDS_REGION_NONE).as_bytes());
+                write_str(b"\r\n");
+            }
+        }
+        write_str(b"  ");
+        if i18n::i18n_is_rtl() {
+            write_str(tr_id!(IDS_RTL_ON).as_bytes());
+        } else {
+            write_str(tr_id!(IDS_RTL_OFF).as_bytes());
+        }
+        write_str(b"\r\n\r\n");
         syscall::sys_exit(0);
     }
 

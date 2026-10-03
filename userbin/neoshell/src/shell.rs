@@ -1,4 +1,4 @@
-use libneodos::{console, syscall};
+use libneodos::{console, i18n, syscall};
 use libneodos::tr_id;
 use core;
 
@@ -15,6 +15,11 @@ const IDS_CALL_USAGE: u32 = 1009;
 const IDS_CALL_NOT_FOUND: u32 = 1010;
 const IDS_CALL_READ_ERROR: u32 = 1011;
 const IDS_PROMPT_PAUSE: u32 = 1012;
+const IDS_LOCALE_CURRENT: u32 = 1013;
+const IDS_LOCALE_AVAILABLE: u32 = 1014;
+const IDS_LOCALE_SET_OK: u32 = 1015;
+const IDS_LOCALE_SET_ERR: u32 = 1016;
+const IDS_LOCALE_USAGE: u32 = 1017;
 
 use neoshell_lib::env::{EnvVar, MAX_ENV};
 use neoshell_lib::pipeline::{self, MAX_PIPELINE};
@@ -365,6 +370,7 @@ impl Shell {
         match &cu[..cul] {
             b"CWD" => { fds.close_all(); self.cmd_cwd(); }
             b"SET" => { fds.close_all(); self.cmd_set(trimmed); }
+            b"LOCALE" | b"LANG" => { fds.close_all(); self.cmd_locale(args_slice); }
             b"EXIT" => { fds.close_all(); self.cmd_exit(); }
             b"CALL" => { fds.close_all(); self.cmd_call(trimmed); }
             b"VTDIAG" => {
@@ -545,6 +551,68 @@ impl Shell {
     }
 
     fn cmd_exit(&self) -> ! { syscall::sys_exit(0) }
+
+    /// `LOCALE` built-in — inspect and change the system locale at runtime.
+    ///
+    /// * `LOCALE`              show the active locale
+    /// * `LOCALE LIST`         list installed locales
+    /// * `LOCALE SET <tag>`    change the locale and reload all tables
+    fn cmd_locale(&mut self, args: &[u8]) {
+        let a = trim_ascii(args);
+        if a.is_empty() {
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_LOCALE_CURRENT).as_bytes());
+            write_str(i18n::i18n_language().as_bytes());
+            write_str(b"\r\n");
+            return;
+        }
+        let (sub, rest) = match a.iter().position(|&b| b == b' ' || b == b'\t') {
+            Some(p) => (&a[..p], trim_ascii(&a[p + 1..])),
+            None => (a, &[][..]),
+        };
+        if sub.eq_ignore_ascii_case(b"list") {
+            write_str(b"\r\n");
+            write_str(tr_id!(IDS_LOCALE_AVAILABLE).as_bytes());
+            write_str(b"\r\n");
+            let locales = i18n::i18n_available_locales();
+            for loc in locales.split(';') {
+                if !loc.is_empty() {
+                    write_str(b"  ");
+                    write_str(loc.as_bytes());
+                    write_str(b"\r\n");
+                }
+            }
+            return;
+        }
+        if sub.eq_ignore_ascii_case(b"set") && !rest.is_empty() {
+            let tag = match core::str::from_utf8(rest) {
+                Ok(s) => s,
+                Err(_) => { write_err(b"\r\n"); write_err(tr_id!(IDS_LOCALE_SET_ERR).as_bytes()); write_err(b"\r\n"); return; }
+            };
+            let key = "\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Locale";
+            let mut ok = false;
+            if let Ok(fd) = syscall::sys_cm_open_key(key) {
+                ok = syscall::sys_cm_set_value(fd, "Language", syscall::REG_SZ, tag.as_bytes()).is_ok();
+                let _ = syscall::sys_close(fd);
+            }
+            if ok {
+                i18n::i18n_set_language(tag);
+                i18n::i18n_reload_all();
+                write_str(b"\r\n");
+                write_str(tr_id!(IDS_LOCALE_SET_OK).as_bytes());
+                write_str(i18n::i18n_language().as_bytes());
+                write_str(b"\r\n");
+            } else {
+                write_err(b"\r\n");
+                write_err(tr_id!(IDS_LOCALE_SET_ERR).as_bytes());
+                write_err(b"\r\n");
+            }
+            return;
+        }
+        write_str(b"\r\n");
+        write_str(tr_id!(IDS_LOCALE_USAGE).as_bytes());
+        write_str(b"\r\n");
+    }
 
     fn cmd_call(&mut self, line: &[u8]) {
         let r = after_first_token(line);

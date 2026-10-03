@@ -1,0 +1,28 @@
+[package]
+name = "libnlt"
+version = "0.1.0"
+edition = "2021"
+description = "NeoDOS NLT (Neo Language Table) format library — NLTv2/v3 parse, lookup, compression, plurals, regional formats, bidi and signatures"
+
+[lib]
+name = "libnlt"
+path = "src/lib.rs"
+crate-type = ["lib"]
+
+[features]
+default = []
+# Enables Ed25519 signing/verification. Kept optional so Ring 3 binaries that
+# never verify signatures do not pay the size cost.
+signatures = ["dep:ed25519-compact"]
+
+[dependencies]
+ed25519-compact = { version = "2", default-features = false, optional = true }
+
+[profile.release]
+panic = "abort"
+opt-level = 3
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

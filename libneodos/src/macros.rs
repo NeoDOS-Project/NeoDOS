@@ -48,12 +48,23 @@ macro_rules! tr_id {
     };
 }
 
-/// Legacy translation (string-key). No longer performs lookups.
-/// Always returns the key string literal (no-op during migration).
-/// Use `tr_id!()` with numeric IDs instead.
+/// Translate a format template with positional placeholders `{0}`, `{0:d}`,
+/// `{0:x}`, `{0:X}`.
+///
+/// Expands to `i18n_format(id, args)`. Returns `"?"` on miss.
 #[macro_export]
-macro_rules! tr {
-    ($key:literal) => {
-        $key
+macro_rules! tr_fmt {
+    ($id:expr, $args:expr) => {
+        $crate::i18n::i18n_format($id, $args)
+    };
+}
+
+/// Select the plural form of a translated string for a count.
+///
+/// Expands to `i18n_plural(id, n)`. Returns `"?"` on miss.
+#[macro_export]
+macro_rules! plural_id {
+    ($id:expr, $n:expr) => {
+        $crate::i18n::i18n_plural($id, $n as u64)
     };
 }
