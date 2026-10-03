@@ -29,4 +29,6 @@ pub fn register_hal_tests() {
         crate::test_true!(cr3 != 0);
         Ok(())
     });
+
+    crate::hal::mmio::register_tests();
 }
