@@ -386,9 +386,8 @@ pub fn acpi_reset(state: &AcpiPowerState) {
                 }
             }
             0 => {
-                let ptr = reg.address as *mut u8;
                 unsafe {
-                    core::ptr::write_volatile(ptr, reg.value);
+                    crate::hal::mmio::write8(reg.address as usize, reg.value);
                 }
             }
             _ => {}
