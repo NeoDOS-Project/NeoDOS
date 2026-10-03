@@ -195,19 +195,19 @@ fn self_detect_ncq(abar: u64, port: usize, is_atapi: bool,
 }
 
 fn mmio_read32(base: u64, offset: u64) -> u32 {
-    unsafe { (base as *const u32).add(offset as usize / 4).read_volatile() }
+    unsafe { crate::hal::mmio::read32((base + offset) as usize) }
 }
 
 fn mmio_write32(base: u64, offset: u64, val: u32) {
-    unsafe { (base as *mut u32).add(offset as usize / 4).write_volatile(val); }
+    unsafe { crate::hal::mmio::write32((base + offset) as usize, val); }
 }
 
 fn mmio_read64(base: u64, offset: u64) -> u64 {
-    unsafe { (base as *const u64).add(offset as usize / 8).read_volatile() }
+    unsafe { crate::hal::mmio::read64((base + offset) as usize) }
 }
 
 fn mmio_write64(base: u64, offset: u64, val: u64) {
-    unsafe { (base as *mut u64).add(offset as usize / 8).write_volatile(val); }
+    unsafe { crate::hal::mmio::write64((base + offset) as usize, val); }
 }
 
 fn port_reg_addr(abar: u64, port: usize, reg: u64) -> u64 {
