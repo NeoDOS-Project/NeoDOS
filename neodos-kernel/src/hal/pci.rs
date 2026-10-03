@@ -1,5 +1,4 @@
 use core::sync::atomic::{AtomicU64, Ordering};
-use core::ptr::{read_volatile, write_volatile};
 
 /// ECAM (Enhanced Configuration Access Mechanism) base address.
 /// Set from MCFG ACPI table or default QEMU value.
@@ -48,7 +47,7 @@ fn ecam_address(bus: u8, dev: u8, func: u8, offset: u8) -> u64 {
 /// - `offset` must be 4-byte aligned; the function will align it.
 pub unsafe fn ecam_read_config_dword(bus: u8, dev: u8, func: u8, offset: u8) -> u32 {
     let addr = ecam_address(bus, dev, func, offset & 0xFC);
-    read_volatile(addr as *const u32)
+    crate::hal::mmio::read32(addr as usize)
 }
 
 /// Read a 16-bit value from PCI config space via ECAM MMIO.
@@ -70,7 +69,7 @@ pub unsafe fn ecam_read_config_byte(bus: u8, dev: u8, func: u8, offset: u8) -> u
 /// - `offset` must be 4-byte aligned; the function will align it.
 pub unsafe fn ecam_write_config_dword(bus: u8, dev: u8, func: u8, offset: u8, value: u32) {
     let addr = ecam_address(bus, dev, func, offset & 0xFC);
-    write_volatile(addr as *mut u32, value);
+    crate::hal::mmio::write32(addr as usize, value);
 }
 
 /// Write a 16-bit value to PCI config space via ECAM MMIO.
