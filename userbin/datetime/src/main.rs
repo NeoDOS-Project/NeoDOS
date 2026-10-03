@@ -25,6 +25,8 @@ const IDS_ERR_PERM: u32 = 1011;
 const IDS_USAGE_LINE6: u32 = 1012;
 const IDS_USAGE_LINE7: u32 = 1013;
 const IDS_ERR_SET_FAIL: u32 = 1014;
+const IDS_USAGE_LINE8: u32 = 1015;
+const IDS_UTC_SUFFIX: u32 = 1016;
 
 /// `SyscallError::Perm` maps to `-16` at the syscall boundary.
 const EPERM: i64 = -16;
@@ -58,11 +60,11 @@ fn show_time(dt: &DateTime) {
     write_u8_pad(dt.second);
 }
 
-fn get_datetime_via_ob(dt: &mut DateTime) -> Result<(), i64> {
+fn get_datetime_via_ob(dt: &mut DateTime, class: ObInfoClass) -> Result<(), i64> {
     let fd = syscall::sys_ob_open("\\Global\\Info\\DateTime", libneodos::syscall::ob_access::READ)?;
     let sz = core::mem::size_of::<DateTime>();
     let buf = unsafe { core::slice::from_raw_parts_mut(dt as *mut DateTime as *mut u8, sz) };
-    let n = syscall::sys_ob_query_info(fd, ObInfoClass::DateTime, buf)?;
+    let n = syscall::sys_ob_query_info(fd, class, buf)?;
     let _ = syscall::sys_close(fd);
     if n >= sz { Ok(()) } else { Err(-1) }
 }
@@ -144,6 +146,8 @@ fn print_usage() {
     write_str(b"\r\n");
     write_str(tr_id!(IDS_USAGE_LINE7).as_bytes());
     write_str(b"\r\n");
+    write_str(tr_id!(IDS_USAGE_LINE8).as_bytes());
+    write_str(b"\r\n");
 }
 
 fn set_datetime(date_tok: &str, time_tok: &str) -> ! {
@@ -211,6 +215,7 @@ pub extern "C" fn _start() -> ! {
 
     let mut show_d = false;
     let mut show_t = false;
+    let mut show_utc = false;
     let mut set_mode = false;
     let mut date_tok = "";
     let mut time_tok = "";
@@ -222,6 +227,7 @@ pub extern "C" fn _start() -> ! {
             match bytes[1].to_ascii_uppercase() {
                 b'D' => show_d = true,
                 b'T' => show_t = true,
+                b'U' => show_utc = true,
                 b'S' => set_mode = true,
                 _ => {}
             }
@@ -250,7 +256,9 @@ pub extern "C" fn _start() -> ! {
         day: 0, month: 0, year: 0, valid: 0,
     };
 
-    match get_datetime_via_ob(&mut dt) {
+    // Local time is derived by the kernel from the authoritative UTC RTC.
+    let class = if show_utc { ObInfoClass::DateTime } else { ObInfoClass::LocalDateTime };
+    match get_datetime_via_ob(&mut dt, class) {
         Ok(_) => {
             if dt.valid == 0 {
                 write_str(b"\r\n");
@@ -268,6 +276,9 @@ pub extern "C" fn _start() -> ! {
                 show_date(&dt);
             } else if show_t {
                 show_time(&dt);
+            }
+            if show_utc {
+                write_str(tr_id!(IDS_UTC_SUFFIX).as_bytes());
             }
             write_str(b"\r\n\r\n");
         }

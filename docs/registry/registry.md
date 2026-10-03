@@ -95,6 +95,14 @@ Root path: `\Registry\Machine` maps to an `ObType::Key` object in the Ob namespa
       \WaitForNetwork
       \Locale
         \Language
+      \TimeZoneInformation
+        UtcOffsetMinutes
+        DaylightOffsetMinutes
+        DaylightEnabled
+        DaylightStartMonth
+        DaylightStartDay
+        DaylightEndMonth
+        DaylightEndDay
 ```
 
 ### CmManager
@@ -113,6 +121,7 @@ Default keys created at boot (Phase 3.881):
 - `\Registry\Machine\Network\Interfaces\0\DHCPEnabled` = `1` (REG_DWORD)
 - `\Registry\Machine\Control\WaitForNetwork` = `0` (REG_DWORD)
 - `\Registry\Machine\System\CurrentControlSet\Control\ComputerName\ComputerName` = `"NeoDOS-PC"` (REG_SZ)
+- `\Registry\Machine\System\CurrentControlSet\Control\TimeZoneInformation\UtcOffsetMinutes` = `0` (REG_DWORD, signed minutes; `local = UTC + offset`). DST fields (`DaylightOffsetMinutes`, `DaylightEnabled`, `DaylightStartMonth/Day`, `DaylightEndMonth/Day`) default to disabled (#357).
 
 ### Power Plan Registry Structure (Phase 3.883, PM-PHASE2)
 

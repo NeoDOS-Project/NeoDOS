@@ -234,6 +234,18 @@ pub struct DateTime {
     pub valid: u8,
 }
 
+/// Timezone configuration — matches the kernel's `SysTimeZone` (RAX=44/#357).
+#[repr(C)]
+pub struct SysTimeZone {
+    pub utc_offset_minutes: i32,
+    pub dst_offset_minutes: i32,
+    pub dst_enabled: u32,
+    pub dst_start_month: u8,
+    pub dst_start_day: u8,
+    pub dst_end_month: u8,
+    pub dst_end_day: u8,
+}
+
 /// MemInfo — matches kernel's extended MemoryStats (NeoMem v0.1).
 /// Backward compatible: first 6 fields (48 bytes) match the v0.44 layout.
 #[repr(C)]
@@ -461,6 +473,10 @@ pub enum ObInfoClass {
     KeyboardLayouts = 37,
     Hostname = 38,
     ProcessArgs = 39,
+    /// Timezone configuration (standard offset + DST window) — #357.
+    TimeZone = 40,
+    /// RTC time converted to local time by the kernel — #357.
+    LocalDateTime = 41,
 }
 
 pub mod ob_type {

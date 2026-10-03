@@ -127,6 +127,28 @@ pub fn ensure_boot_defaults() {
         }
     }
 
+    // ── CurrentControlSet\Control\TimeZoneInformation — timezone/DST (#357) ──
+    // Defaults: UTC, DST disabled. Configured via the Registry (ndreg); the
+    // kernel derives local time from the authoritative UTC RTC.
+    let tz = crate::cm::cm_open_key(ctrl, "TimeZoneInformation")
+        .or_else(|_| crate::cm::cm_create_key(ctrl, "TimeZoneInformation"));
+    if let Ok(tz) = tz {
+        let defaults: [(&str, i32); 7] = [
+            ("UtcOffsetMinutes", 0),
+            ("DaylightOffsetMinutes", 0),
+            ("DaylightEnabled", 0),
+            ("DaylightStartMonth", 3),
+            ("DaylightStartDay", 1),
+            ("DaylightEndMonth", 10),
+            ("DaylightEndDay", 1),
+        ];
+        for (name, value) in defaults {
+            if crate::cm::cm_query_value(tz, name).is_err() {
+                let _ = crate::cm::cm_set_value(tz, name, hive::REG_DWORD, &value.to_le_bytes());
+            }
+        }
+    }
+
     // ── CurrentControlSet\Services\NeoInit — init process config ──
     let svc = crate::cm::cm_open_key(0, "CurrentControlSet\\Services\\NeoInit")
         .or_else(|_| crate::cm::cm_create_key(0, "CurrentControlSet\\Services\\NeoInit"));

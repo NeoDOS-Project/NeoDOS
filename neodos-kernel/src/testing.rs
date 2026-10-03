@@ -293,6 +293,7 @@ pub fn register_tests() {
     crate::drivers::virtio_blk::register_tests();
     // B2.1 Z6: Registry hive database (Cm) tests
     crate::cm::register_cm_tests();
+    crate::cm::timezone::register_timezone_tests();
     // SM-001: Service Manager tests
     crate::services::register_service_tests();
     // PM-PHASE1: HAL ACPI reboot/FADT/S5 primitives

@@ -155,6 +155,10 @@ pub enum ObInfoClass {
     KeyboardLayouts = 37,
     Hostname = 38,
     ProcessArgs = 39,
+    /// Timezone configuration (standard offset + DST window) — #357.
+    TimeZone = 40,
+    /// RTC time converted to local time by the kernel — #357.
+    LocalDateTime = 41,
 }
 
 /// Info classes for sys_ob_set_info (RAX=63).
