@@ -102,22 +102,6 @@ pub unsafe fn raw_invlpg(virt: u64) {
     asm!("invlpg [{}]", in(reg) virt, options(nostack, nomem, preserves_flags));
 }
 
-#[repr(C, packed)]
-pub struct InvpcidDescriptor {
-    pub pcid: u64,
-    pub addr: u64,
-}
-
-#[inline]
-pub unsafe fn raw_invpcid(descriptor: &InvpcidDescriptor, ty: u64) {
-    asm!(
-        "invpcid {0:r}, [{1}]",
-        in(reg) ty,
-        in(reg) descriptor,
-        options(nostack),
-    );
-}
-
 #[inline]
 pub unsafe fn raw_rdrand() -> Option<u64> {
     let mut val: u64;
