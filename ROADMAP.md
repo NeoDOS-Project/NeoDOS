@@ -2,7 +2,7 @@
 
 > **Versión del documento:** v2.0
 > **Fecha:** 2026-07-15
-> **Versión del proyecto:** v0.50-dev
+> **Versión del proyecto:** v0.51.3
 > **Documentos relacionados:** [`docs/architecture/vision.md`](docs/architecture/vision.md),
 > [`docs/architecture/source-of-truth.md`](docs/architecture/source-of-truth.md),
 > [`docs/README.md`](docs/README.md) (índice completo de documentación)
@@ -33,7 +33,7 @@
 NeoDOS ha completado su fase de prototipo funcional. El kernel tiene una base sólida:
 Object Manager completo (16 ObTypes, 7 syscalls Ob), stack TCP/IP, drivers NEM con
 aislamiento, Registry con persistencia, VFS con NeoFS v2, planificación SMP, IRQL,
-KWait, Service Manager, y subsistema de internacionalización NLTv2.
+KWait, Service Manager, y subsistema de internacionalización NLTv3 (`libnlt`).
 
 El roadmap anterior, concentrado en el antiguo `docs/IMPROVEMENTS.md` (eliminado en la reestructuración de docs), adolecía de:
 
@@ -139,6 +139,30 @@ v4.x ── Escalabilidad enterprise
 **Justificación:** Este milestone ya estaba definido como v0.50. Debe completarse
 antes de cualquier planificación futura. Las tareas de hardening (AUDIT-32..37)
 son críticas porque corrigen puntos de fallo que causarían pánico en producción.
+
+---
+
+### M0.2 — NLT i18n (NLTv3) + Regional Formats (v0.51.3) — COMPLETADO
+
+Milestone propio para el trabajo de internacionalización, completado antes que
+el resto del bloque v0.56–v0.60 y publicado como **v0.51.3**. El formato NLT se
+centraliza en la crate compartida `libnlt`.
+
+| ID | Tarea | Prioridad | Dependencias |
+|----|-------|-----------|--------------|
+| I18N-P1 | Runtime NLTv2 + IDs numéricos (✅) | ALTA | — |
+| I18N-P2 | Migrar apps core a tr_id!() (✅) | MEDIA | I18N-P1 |
+| I18N-P4 | format_str() con placeholders {0} (✅) | MEDIA | I18N-P1 |
+| I18N-P5 | i18n_available_locales() (✅) | BAJA | I18N-P1 |
+| I18N-P7 | Compresión NLT (LZSS) (✅) | BAJA | I18N-P1 |
+| I18N-P8 | UTF-16 support (✅) | BAJA | I18N-P1 |
+| I18N-P9 | Pluralización (✅) | BAJA | I18N-P1 |
+| I18N-P10 | Formatos regionales (fechas, monedas) (✅) | BAJA | I18N-P1 |
+| I18N-P11 | Soporte RTL/bidi (✅) | BAJA | I18N-P1 |
+| I18N-P12 | Firmas digitales en NLT (✅) | BAJA | I18N-P1 |
+
+**Objetivo:** Sistema de internacionalización completo (NLTv3, `libnlt`).
+**Estado: completado.** Pendiente per-user locale (I18N-P6) en v0.56.
 
 ---
 
@@ -362,19 +386,17 @@ documentado. NeoDev como herramienta única de desarrollo.
 
 **Objetivo:** Sistema instalable desde cero con asistente interactivo.
 
-### M2.5 — NLT i18n + Regional Formats (v0.60)
+### M2.5 — NLT i18n + Regional Formats (v0.60) — ABSORBIDO POR v0.51.3
+
+El bloque de i18n se adelantó y se publicó como **v0.51.3** (ver M0.2). El único
+resto de i18n que permanece aquí es el locale por usuario.
 
 | ID | Tarea | Prioridad | Dependencias |
 |----|-------|-----------|--------------|
-| I18N-P7 | Compresión NLT (LZSS) (✅) | BAJA | I18N-P1 |
-| I18N-P8 | UTF-16 support (✅) | BAJA | I18N-P1 |
-| I18N-P9 | Pluralización (✅) | BAJA | I18N-P1 |
-| I18N-P10 | Formatos regionales (fechas, monedas) (✅) | BAJA | I18N-P1 |
-| I18N-P11 | Soporte RTL/bidi (✅) | BAJA | I18N-P1 |
-| I18N-P12 | Firmas digitales en NLT (✅) | BAJA | I18N-P1 |
+| I18N-P6 | Per-user locale (Registry) | BAJA | I18N-P1, USR-P1 |
 
-**Objetivo:** Sistema de internacionalización completo con formatos regionales,
-pluralización y soporte de escritura RTL. **Estado: completado** (NLTv3, `libnlt`).
+**Objetivo:** Locale por usuario (`HKCU\Control\Locale`) sobre el runtime NLTv3 ya
+existente. `I18N-P7..P12` completados en v0.51.3.
 
 ---
 
@@ -716,7 +738,7 @@ M0.1 (v0.50): Sin dependencias externas (es el milestone actual)
 | Executive (nuevo) | — | v0.57 (M2.2) | Nuevo milestone |
 | Herramientas (nuevo) | — | v0.58 (M2.3) | Nuevo milestone |
 | Instalación (nuevo) | — | v0.59 (M2.4) | Nuevo milestone |
-| I18N-P7..P12 | v0.54 | v0.60 (M2.5) | Baja prioridad |
+| I18N-P7..P12 | v0.54 | v0.51.3 (M0.2) | ✅ Completado, milestone propio |
 | SEC-ASLR-V2 | v0.49 | v0.61 (M3.1) | Seguridad pre-1.0 |
 | Performance | v0.53 | v0.63 (M3.2) | Post-seguridad |
 | Documentación | v0.54 | v0.64 (M3.3) | Post-rendimiento |
