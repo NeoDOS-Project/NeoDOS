@@ -278,18 +278,18 @@ extern "C" {
 unsafe fn lapic_write_icr(val: u64) {
     let apic_base = msr::read_apic_base_msr();
     if apic_base == 0 { return; }
-    let icr_high = (apic_base + 0x310) as *mut u32;
-    let icr_low = (apic_base + 0x300) as *mut u32;
+    let icr_high = (apic_base + 0x310) as usize;
+    let icr_low = (apic_base + 0x300) as usize;
     // Write high dword (destination)
-    core::ptr::write_volatile(icr_high, (val >> 32) as u32);
+    crate::hal::mmio::write32(icr_high, (val >> 32) as u32);
     // Wait for delivery status to clear
     loop {
-        let status = core::ptr::read_volatile(icr_low);
+        let status = crate::hal::mmio::read32(icr_low);
         if (status & ICR_DELIVERY_STATUS) == 0 { break; }
         crate::hal::raw::raw_pause();
     }
     // Write low dword (vector + mode)
-    core::ptr::write_volatile(icr_low, val as u32);
+    crate::hal::mmio::write32(icr_low, val as u32);
 }
 
 /// Send INIT IPI to all APs (excluding self).
@@ -361,8 +361,7 @@ pub extern "sysv64" fn ap_entry(stack_top: u64) -> ! {
     let my_apic = unsafe {
         let apic_base = msr::read_apic_base_msr();
         if apic_base != 0 {
-            let id_reg = (apic_base + 0x020) as *const u32;
-            (core::ptr::read_volatile(id_reg) >> 24) & 0xFF
+            (crate::hal::mmio::read32((apic_base + 0x020) as usize) >> 24) & 0xFF
         } else {
             0
         }
@@ -604,8 +603,7 @@ unsafe fn detect_aps() -> bool {
     crate::serial_println!("[SMP_DETECT] apic_base=0x{:x}", apic_base);
     if apic_base == 0 { crate::serial_println!("[SMP_DETECT] no apic_base → false"); return false; }
     // Check APIC version register
-    let version_reg = (apic_base + 0x030) as *const u32;
-    let version = core::ptr::read_volatile(version_reg);
+    let version = crate::hal::mmio::read32((apic_base + 0x030) as usize);
     crate::serial_println!("[SMP_DETECT] version=0x{:x} max_lvt={}", version, ((version>>16)&0xFF)+1);
     if version == 0xFFFFFFFF || version == 0 { crate::serial_println!("[SMP_DETECT] version 0/FFFF → false"); return false; }
     // Max LVT entries is a rough proxy; 0 or 1 means single CPU
@@ -614,9 +612,9 @@ unsafe fn detect_aps() -> bool {
     // Also check: if ICR delivery status never clears, there are no APs
     let start: u64;
     core::arch::asm!("rdtsc", out("eax") start, out("edx") _);
-    let icr_low = (apic_base + 0x300) as *const u32;
+    let icr_low = (apic_base + 0x300) as usize;
     loop {
-        let status = core::ptr::read_volatile(icr_low);
+        let status = crate::hal::mmio::read32(icr_low);
         if (status & 0x1000) == 0 { crate::serial_println!("[SMP_DETECT] ICR clear → true"); break; } // ICR_DELIVERY_STATUS clear
         let now: u64;
         core::arch::asm!("rdtsc", out("eax") now, out("edx") _);
@@ -643,8 +641,7 @@ fn detect_apic_id_count() -> u32 {
     unsafe {
         let apic_base = msr::read_apic_base_msr();
         if apic_base == 0 { return 1; }
-        let version_reg = (apic_base + 0x030) as *const u32;
-        let version = core::ptr::read_volatile(version_reg);
+        let version = crate::hal::mmio::read32((apic_base + 0x030) as usize);
         let max_lvt = ((version >> 16) & 0xFF) + 1;
         // Max LVT entries is a rough proxy for CPU count
         // In practice we use the APIC IDs we discover

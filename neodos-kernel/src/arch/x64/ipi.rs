@@ -119,21 +119,21 @@ unsafe fn lapic_write_icr(val: u64) {
     let base = lapic_base();
     if base == 0 { return; }
 
-    let icr_high = (base + ICR_HIGH) as *mut u32;
-    let icr_low = (base + ICR_LOW) as *mut u32;
+    let icr_high = (base + ICR_HIGH) as usize;
+    let icr_low = (base + ICR_LOW) as usize;
 
     // Write high dword (destination APIC ID) first
-    core::ptr::write_volatile(icr_high, (val >> 32) as u32);
+    crate::hal::mmio::write32(icr_high, (val >> 32) as u32);
 
     // Wait for delivery status to clear before writing low dword
     loop {
-        let status = core::ptr::read_volatile(icr_low);
+        let status = crate::hal::mmio::read32(icr_low);
         if (status & ICR_DELIVERY_STATUS) == 0 { break; }
         crate::hal::raw::raw_pause();
     }
 
     // Write low dword (vector + delivery mode)
-    core::ptr::write_volatile(icr_low, val as u32);
+    crate::hal::mmio::write32(icr_low, val as u32);
 }
 
 // ── IPI sending ──────────────────────────────────────────────────────────
