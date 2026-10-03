@@ -33,7 +33,7 @@ El kernel se organiza en 5 capas verticales:
 
 | Aspecto | Estado |
 | --------- | -------- |
-| **Kernel** | v0.51.3 — 804 tests, SSDT RAX 0-99, 24 fases de boot |
+| **Kernel** | v0.51.3 — 805 tests, SSDT RAX 0-99, 24 fases de boot |
 | **Drivers NEM** | 7 drivers standalone (PS/2, serial, RTC, ACPI, PCI, ATA, AHCI) + 5 reference |
 | **User-mode** | NeoShell Ring 3, 27 binarios .NXE, 2 DLLs .NXL (libneodos, libmath) |
 | **Object Manager** | Ob unificado: handles, KOBJ, URN, seguridad (RAX 60-66) |
