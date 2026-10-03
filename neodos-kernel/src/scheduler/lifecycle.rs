@@ -625,6 +625,16 @@ impl Scheduler {
             defer_reap(pid);
         }
 
+        // #358: forced termination must converge through the same deferred
+        // process-exit path as a voluntary exit (#374), so the Service Manager
+        // observes a killed service and finalizes it. `terminate_current` does
+        // this for voluntary exits/exceptions; `kill_pid` is the forced path and
+        // never runs `terminate_current`, so it notifies here. The notification
+        // is bounded, allocation-free and lock-safe (called with the scheduler
+        // lock held), exactly like the `terminate_current` call site. `-1`
+        // denotes an abnormal/forced termination.
+        crate::services::notify_process_exit(pid, -1);
+
         crate::trace_sched!(2, pid, 0); // KILL_PROCESS
         true
     }

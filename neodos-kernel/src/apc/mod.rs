@@ -337,12 +337,13 @@ pub fn request_process_shutdown_notification(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
+    let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
     let tids = {
-        let old_irql = unsafe { crate::hal::irql::raise_irql(crate::hal::irql::DISPATCH_LEVEL) };
         let s = scheduler::current_scheduler();
         let lock = s.lock();
         lock.thread_tids_for_pid(pid)
     };
+    unsafe { crate::hal::irql::lower_irql(old_irql) };
     let mut delivered = false;
     for tid in tids {
         if queue_user_apc(tid, service_shutdown_apc_callback, core::ptr::null_mut()) {

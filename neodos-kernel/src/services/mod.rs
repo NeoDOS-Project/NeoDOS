@@ -195,56 +195,90 @@ pub fn process_pending_shutdowns() {
         if pid == 0 {
             continue;
         }
-        // Resolve the owning service and decide whether to notify and/or force.
+        // Resolve the owning service and capture the decision under a brief
+        // `try_lock`. We only read state here; notification and force-kill run
+        // after the guard is dropped. If contended, re-queue and retry later.
         //
-        // We take the Service Manager lock only briefly to read authoritative
-        // state, then release it before touching the scheduler. If it is
-        // contended we re-queue and retry on the next drain — never block.
-        let decision = {
-            match SERVICE_MANAGER.try_lock() {
-                Some(sm) => match sm.find_by_pid(pid) {
-                    Some(idx) if sm.services[idx].shutdown_requested => {
-                        Some((true, sm.stop_deadline_elapsed(idx)))
+        // `Decision`:
+        //   Gone           — no longer a pending service; drop the request.
+        //   Notify{force}  — first delivery; set the notified flag, then (after
+        //                    unlocking) send the APC and force-kill if due.
+        //   Recheck{force} — already notified; only re-evaluate the deadline.
+        //   Retry          — Service Manager contended; re-queue for later.
+        enum Decision { Gone, Notify(bool), Recheck(bool), Retry }
+        let decision = match SERVICE_MANAGER.try_lock() {
+            Some(mut sm) => match sm.find_by_pid(pid) {
+                Some(idx) if sm.services[idx].shutdown_requested => {
+                    let due = sm.stop_deadline_elapsed(idx);
+                    if sm.services[idx].shutdown_notified {
+                        Decision::Recheck(due)
+                    } else {
+                        sm.services[idx].shutdown_notified = true;
+                        Decision::Notify(due)
                     }
-                    _ => Some((false, false)), // exited/restarted already
-                },
-                None => None, // contended: retry later
-            }
+                }
+                _ => Decision::Gone, // exited/restarted already
+            },
+            None => Decision::Retry, // contended: retry later
         };
 
         match decision {
-            None => {
+            Decision::Retry => {
                 request_service_shutdown(pid);
             }
-            Some((false, _)) => {
+            Decision::Gone => {
                 // Service already exited or was restarted. #374 will (or has)
                 // finalized it; nothing to notify or kill.
             }
-            Some((true, deadline_elapsed)) => {
-                // 1. Notify: wake the service if it is in an alertable wait.
-                //    The authoritative flag lives on the service entry and is
-                //    read from Ring 3 via `ObInfoClass::ProcessShutdownState`.
+            Decision::Notify(deadline_elapsed) => {
+                // First delivery: wake the service if it is in an alertable wait.
+                // The authoritative flag lives on the service entry and is read
+                // from Ring 3 via `ObInfoClass::ProcessShutdownState`.
                 crate::apc::request_process_shutdown_notification(pid);
-
-                // 2. Enforce the bounded timeout.
                 if deadline_elapsed {
-                    kwarn!(LogSubsys::Services,
-                        "Graceful shutdown timed out for pid {} — forcing termination", pid);
-                    // Forced termination converges through #374.
-                    let kill_ok = {
-                        let sm = SERVICE_MANAGER.lock();
-                        sm.kill_process(pid).is_ok()
-                    };
-                    // If the process still exists (kill accepted but exit not yet
-                    // reaped, e.g. running on another CPU), keep the request
-                    // alive so the deadline keeps being enforced. If the PID is
-                    // already gone, #374 owns finalization and we stop.
-                    if kill_ok {
-                        request_service_shutdown(pid);
-                    }
+                    force_terminate_pending(pid);
+                } else {
+                    // Keep the request alive so the deadline keeps being checked
+                    // on later drains; already-notified entries only re-check.
+                    request_service_shutdown(pid);
+                }
+            }
+            Decision::Recheck(deadline_elapsed) => {
+                if deadline_elapsed {
+                    force_terminate_pending(pid);
+                } else {
+                    request_service_shutdown(pid);
                 }
             }
         }
+    }
+}
+
+/// Force-terminate a `StopPending` service whose graceful deadline elapsed.
+///
+/// Forced termination converges through #374: `kill_process` → `kill_pid` →
+/// `notify_process_exit` → `process_pending_exits` → `on_process_exit_by_pid`.
+/// Called without `SERVICE_MANAGER` held on entry (it acquires it briefly).
+fn force_terminate_pending(pid: u32) {
+    kwarn!(LogSubsys::Services,
+        "Graceful shutdown timed out for pid {} — forcing termination", pid);
+    let kill_result = {
+        let sm = SERVICE_MANAGER.lock();
+        sm.kill_process(pid)
+    };
+    match kill_result {
+        // The kill was accepted. `kill_pid` enqueues the #374 exit notification,
+        // which finalizes the service on the next drain. Re-queue the request so
+        // the deadline is re-checked until that happens (the process may still be
+        // running on another CPU).
+        Ok(()) => request_service_shutdown(pid),
+        // The process is already gone (or was already reaped). If #374's exit
+        // notification was delivered, the service is already finalized and this
+        // is a no-op; if it was lost (e.g. bounded-queue contention at kill
+        // time), re-enqueue it so finalization still travels the #374 path.
+        // Either way the service does not remain stuck in StopPending.
+        Err(SmError::NotFound) => crate::services::notify_process_exit(pid, -1),
+        Err(_) => {}
     }
 }
 
@@ -852,11 +886,23 @@ pub fn register_service_tests() {
         }
         test_true!(has_pending_shutdowns());
 
+        // First drain delivers the notification (deadline not reached) and
+        // re-queues for deadline re-checking.
+        process_pending_shutdowns();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_eq!(sm.services[idx].state, ServiceState::StopPending);
+            test_true!(sm.services[idx].shutdown_requested);
+            test_true!(sm.services[idx].shutdown_notified);
+            test_eq!(sm.services[idx].pid, 6161); // never force-killed inline
+        }
+
         // Simulate the service voluntarily exiting: converged through #374.
         notify_process_exit(6161, 0);
         process_pending_exits();
 
-        // Drain the shutdown queue too (notification + deadline enforcement).
+        // Drain the shutdown queue too: the service is gone, so the request
+        // is dropped.
         process_pending_shutdowns();
 
         {
@@ -890,17 +936,36 @@ pub fn register_service_tests() {
             // 1 ms timeout → deadline is already elapsed on the next drain.
             test_true!(sm.stop_service(idx, 1).is_ok());
             test_eq!(sm.services[idx].state, ServiceState::StopPending);
-            // Force the deadline into the past deterministically (tick rate /
-            // scheduling can otherwise make a 1 ms window racy in tests).
-            sm.services[idx].stop_deadline = 0;
-            test_true!(sm.stop_deadline_elapsed(idx));
         }
         test_true!(has_pending_shutdowns());
 
-        // Drain: notification queued, deadline elapsed → forced termination.
-        // `kill_process(6262)` finds no such process in a unit-test scheduler,
-        // so no exit is produced; the state remains StopPending, which is the
-        // documented state until #374 observes the real exit.
+        // First drain with a deadline that has NOT yet elapsed: the request must
+        // be notified once and then re-queued so the deadline keeps being
+        // checked on later drains (a one-shot queue entry would strand the
+        // service in StopPending forever).
+        {
+            let mut sm = SERVICE_MANAGER.lock();
+            // Push the deadline into the future deterministically.
+            sm.services[idx].stop_deadline = u64::MAX;
+            test_true!(!sm.stop_deadline_elapsed(idx));
+        }
+        process_pending_shutdowns();
+        {
+            let sm = SERVICE_MANAGER.lock();
+            test_true!(sm.services[idx].shutdown_notified);
+            test_eq!(sm.services[idx].state, ServiceState::StopPending);
+        }
+        test_true!(has_pending_shutdowns()); // re-queued for re-check
+
+        // Second drain with the deadline elapsed: forced termination is
+        // attempted. `kill_process(6262)` finds no such process in a unit-test
+        // scheduler, so no exit is produced; the state remains StopPending until
+        // #374 observes the real exit.
+        {
+            let mut sm = SERVICE_MANAGER.lock();
+            sm.services[idx].stop_deadline = 0;
+            test_true!(sm.stop_deadline_elapsed(idx));
+        }
         process_pending_shutdowns();
         {
             let sm = SERVICE_MANAGER.lock();
@@ -943,6 +1008,9 @@ pub fn register_service_tests() {
         test_eq!(sm.services[idx].failure_count, 0); // not counted as a failure
         test_eq!(sm.services[idx].exit_count, 1);
         test_true!(!sm.services[idx].shutdown_requested);
+        // Drain the request enqueued by stop_service (service already gone).
+        process_pending_shutdowns();
+        test_true!(!has_pending_shutdowns());
     });
 
     // Test 4 — #374 integration: forced/voluntary exit travels the deferred path.
@@ -976,6 +1044,9 @@ pub fn register_service_tests() {
             test_eq!(sm.services[idx].exit_count, 1);
             test_eq!(sm.services[idx].pid, 0);
         }
+        // The service is gone: the re-queued request is dropped cleanly.
+        process_pending_shutdowns();
+        test_true!(!has_pending_shutdowns());
         let _ = SERVICE_MANAGER.lock().remove("DeferredShutdownSvc");
     });
 
@@ -992,6 +1063,8 @@ pub fn register_service_tests() {
         test_true!(sm.stop_service(idx, 1000).is_ok());
         // Second stop while pending is rejected, never force-killed twice.
         test_eq!(sm.stop_service(idx, 1000).unwrap_err(), SmError::Busy);
+        drop(sm);
+        process_pending_shutdowns();
     });
 
     test_case!("sm_stop_while_stopping_busy", {

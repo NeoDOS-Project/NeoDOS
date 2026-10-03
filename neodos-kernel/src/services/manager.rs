@@ -121,6 +121,10 @@ pub struct Service {
     /// #358: set while a graceful shutdown has been requested and the service
     /// has not yet exited. Cleared when the process exits (or restarts).
     pub shutdown_requested: bool,
+    /// #358: true once the deferred drain has delivered the shutdown
+    /// notification (user APC) for this request. Prevents re-notifying on every
+    /// drain while the service is still exiting.
+    pub shutdown_notified: bool,
     /// #358: absolute tick deadline by which a `StopPending` service must exit
     /// before forced termination. Only meaningful while `shutdown_requested`.
     pub stop_deadline: u64,
@@ -212,6 +216,7 @@ impl ServiceManager {
             max_failures: config.max_failures,
             start_tick: 0,
             shutdown_requested: false,
+            shutdown_notified: false,
             stop_deadline: 0,
         });
 
@@ -466,6 +471,7 @@ impl ServiceManager {
         if pid == 0 {
             self.services[idx].state = ServiceState::Stopped;
             self.services[idx].shutdown_requested = false;
+            self.services[idx].shutdown_notified = false;
             self.services[idx].stop_deadline = 0;
             return Ok(());
         }
@@ -474,6 +480,7 @@ impl ServiceManager {
 
         self.services[idx].state = ServiceState::StopPending;
         self.services[idx].shutdown_requested = true;
+        self.services[idx].shutdown_notified = false;
         self.services[idx].stop_deadline = Self::deadline_from_now(timeout_ms);
 
         crate::services::request_service_shutdown(pid);
@@ -513,6 +520,7 @@ impl ServiceManager {
         }
         self.services[idx].state = ServiceState::Stopped;
         self.services[idx].shutdown_requested = false;
+        self.services[idx].shutdown_notified = false;
         self.services[idx].stop_deadline = 0;
         self.start_service(idx)
     }
@@ -547,6 +555,7 @@ impl ServiceManager {
         // for a crash and triggering a restart below.
         let was_shutdown_requested = self.services[idx].shutdown_requested;
         self.services[idx].shutdown_requested = false;
+        self.services[idx].shutdown_notified = false;
         self.services[idx].stop_deadline = 0;
 
         match state {
